@@ -31,6 +31,27 @@ must match `fixtures/time/conversions.json`, generated with BigInt arithmetic by
 document hashes in `fixtures/model/session-document-v1.json`, which the Node
 bridge's hash code computes.
 
+## siann-cli
+
+`apps/cli` builds `siann-cli`, the headless command line for M1. Every command
+prints one JSON object (`{"ok":true,...}` or `{"ok":false,"error":{...}}`); exit
+code 0 is success, 1 a command failure, 2 a usage error.
+
+```sh
+siann-cli create Song.siann --name "Demo"
+siann-cli import Song.siann kick.wav --media-id med_kick
+siann-cli plan Song.siann @plan.json        # a JSON array of commands, one revision
+siann-cli exec Song.siann @command.json     # one command
+siann-cli undo Song.siann
+siann-cli render Song.siann mix.wav
+siann-cli verify Song.siann                 # replays the journal, checks the checkpoint
+siann-cli info Song.siann
+siann-cli commands
+```
+
+`--actor` and `--time` set the revision envelope; `--time` defaults to the
+current UTC time.
+
 ## Build and test
 
 Windows (Visual Studio 2022 or Build Tools with the C++ workload; the helper
