@@ -40,6 +40,13 @@ struct Handoff {
 
 // One parameter change for the audio thread (revision 3.1, "Two channels into
 // the audio thread"). `slot` is a node of the graph with `epoch`.
+// A transport command for the audio thread (revision 3.1, "Locate"). The
+// dispatcher sends a locate only after the butler is ready for its generation.
+struct TransportCommand {
+    std::uint64_t generation = 0;
+    std::int64_t position = 0;
+};
+
 struct ParamChange {
     std::uint64_t epoch = 0;
     graph::NodeId slot = 0;
@@ -81,6 +88,12 @@ public:
     // the audio thread and the control side only across a device start or stop.
     bool pushParam(const ParamChange& change) noexcept;
 
+    // The control dispatcher's thread only. While playing, the audio thread
+    // ducks the output, moves the playhead, tells the graph (so streaming
+    // nodes switch to the prepared data) and fades back in. While stopped,
+    // the next poll() applies it.
+    bool pushLocate(const TransportCommand& command) noexcept;
+
     // Transport, applied at the next block. M2 step 1 uses atomics; the
     // dispatcher and paramInbox replace them.
     void play() noexcept { playing_.store(true, std::memory_order_release); }
@@ -99,6 +112,7 @@ private:
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     void renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept;
     void drainParams() noexcept;
+    void applyLocate(const TransportCommand& command) noexcept;
     void send(std::uint64_t epoch);
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
@@ -130,6 +144,10 @@ private:
     Handoff next_{};
     Handoff unsentRetire_{};
     bool retirePending_ = false;  // unsentRetire_ holds an acknowledgement to retry
+    rt::SpscQueue<TransportCommand> transportInbox_{64};
+    TransportCommand pendingLocate_{};
+    bool locatePending_ = false;
+    bool duckActive_ = false;  // ducking for a graph swap or a locate
     int duckRemaining_ = 0;
     int riseRemaining_ = 0;
     std::atomic<std::int64_t> playhead_{0};

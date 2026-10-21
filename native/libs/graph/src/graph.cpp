@@ -267,6 +267,12 @@ void PreparedGraph::setParameter(NodeId node, std::uint32_t paramId, double valu
     }
 }
 
+void PreparedGraph::locate(std::uint64_t generation, std::int64_t position) noexcept {
+    for (auto& state : impl_->nodes) {
+        state.node->onLocate(generation, position);
+    }
+}
+
 std::size_t PreparedGraph::nodeCount() const noexcept {
     return impl_->nodes.size();
 }
