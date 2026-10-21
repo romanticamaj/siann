@@ -2,7 +2,7 @@
 
 Date: 2026-10-14
 
-Status: Accepted, revision 3 (realtime data flow resolved for M2). Revision 2.1 was
+Status: Accepted, revision 3.1 (realtime data flow resolved for M2, after review). Revision 2.1 was
 accepted by [ADR-0016](../../adr/0016-build-native-cpp-daw-engine.md) on
 2026-10-21; revision 3 was accepted on the same day to unblock M2.
 
@@ -45,7 +45,12 @@ ownership through a graph driver state machine, a thread table with an acyclic
 wait graph, a control dispatcher as the single parameter producer, a complete
 queue table, duck-and-swap graph transitions with one transition in flight,
 generation-tagged locate, the recording offset per monitoring mode, and audition
-without cached runtime graphs.
+without cached runtime graphs. Revision 3.1 applies an independent review of
+revision 3: two ring slots per track for locate, pinned instance lifetimes,
+epoch handling across a pending swap, non-blocking cross-thread messages with
+device control on the main thread, a transition watchdog, parameter handling
+during offline render, a write-pass end marker, and a calibrated recording
+offset.
 Realtime topics found in the review of revision 2 (graph ownership without a
 callback, command-thread duties, queue completeness, locate, instance lifetime) are
 deferred to revision 3, which must be accepted before M2 starts. See "Deferred to
@@ -208,7 +213,7 @@ years. Milestones are designed so that something useful exists at every stage.
 |   audio thread      realtime; v1 processes the whole graph alone                   |
 |   command thread    the only session mutator; validates, applies, journals         |
 |   compiler worker   builds PreparedGraph from immutable inputs                     |
-|   control thread    gestures, parameter dispatch, meters to clients                |
+|   control dispatcher gestures, parameter dispatch, meters to clients               |
 |   butler thread(s)  disk read-ahead, seek prep, record write-through, peaks        |
 |   protocol thread   WebSocket/HTTP/MCP I/O                                         |
 +------------------------------------------------------------------------------------+
@@ -258,9 +263,11 @@ segments, tempo map as a lookup table).
 2. **Parameter channel**: gain, pan, mute, send level, plugin parameters, transport.
    A bounded SPSC queue of `ParamChange{slot, paramId, value, rampFrames, epoch}`
    applied at the start of the next block (or at a sample offset for sample-accurate
-   targets). `slot` is the node's index in the compiled graph with that `epoch`; the
-   audio thread drops changes whose epoch is not the current graph's. No snapshot,
-   no recompile. Throughput: up to hundreds per second.
+   targets). `slot` is the node's index in the compiled graph with that `epoch`. The
+   audio thread drops changes with an older epoch, applies changes with the current
+   epoch, and stops draining at the first change with a newer epoch, which stays at
+   the head of the queue until that graph is swapped in. Transport changes carry no
+   epoch. No snapshot, no recompile. Throughput: up to hundreds per second.
 
 The **control dispatcher** thread is the only producer of `paramInbox`. Gestures from
 the protocol thread, plugin editor edits from the main thread and committed values
@@ -279,18 +286,25 @@ gesture boundaries (see "Gestures").
 | Thread | Does | May block on |
 |---|---|---|
 | audio | processes the live graph; pushes outboxes | nothing |
-| main | JUCE message loop; plugin instantiate, destroy, state, editors | nothing it does not own |
-| command | validates, applies and journals commands; publishes documents; asks for compiles; installs graphs through the driver | `AudioDevice::stop()` only, bounded by one device buffer |
-| compiler | builds `PreparedGraph` from an immutable document and an immutable instance table | the main thread, for instantiation, with a timeout |
-| control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | its own inbox |
+| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()` |
+| command | validates, applies and journals commands; publishes documents; asks for compiles; installs graphs through the driver | journal and checkpoint I/O |
+| compiler | builds `PreparedGraph` from an immutable document and pinned instances | the main thread, for instantiation, with a timeout |
+| control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | nothing outside its own inbox |
 | butler | disk read-ahead, seek preparation, record write-through, peaks | disk I/O |
 | protocol | WebSocket/HTTP/MCP I/O | network I/O |
+| offline render | drives a graph for bounce and export | disk I/O |
+| MIDI driver | the platform's MIDI input callbacks | nothing (platform owned) |
 
-- Every request between non-realtime threads is a message with a completion message,
-  never a synchronous call, except the two blocking edges in the table.
-- The wait graph is therefore acyclic (compiler waits on main; command waits on the
-  device callback exiting), so the threads cannot deadlock. Adding a blocking call
-  requires updating this table and showing the graph stays acyclic.
+- Every message between threads is pushed without blocking. A full queue means the
+  sender coalesces (latest value per key) or receives a `queue_full` error for that
+  request; nobody waits for space.
+- Requests between non-realtime threads are messages with completion messages,
+  never synchronous calls. Device control runs on the main thread (JUCE and ASIO
+  expect that); the command thread asks for it and continues on the completion.
+- The only blocking edges are compiler → main (instantiation) and main → audio
+  callback (inside `stop()`). The audio thread blocks on nothing, so the wait graph is
+  acyclic and the threads cannot deadlock. Adding a blocking call requires updating
+  this table and showing the graph stays acyclic.
 - The compiler reads only immutable inputs: the document, the previous graph's
   descriptor (node identities, slots, latencies) and the instance table. It never
   reads live DSP state.
@@ -302,15 +316,15 @@ gesture boundaries (see "Gestures").
 | `graphInbox` | command → audio | SPSC, capacity 1 | `PreparedGraph*` + epoch | cannot overflow: one transition in flight |
 | `retireOutbox` | audio → command | SPSC, capacity 1 | retired `PreparedGraph*` + epoch | cannot overflow: one transition in flight |
 | `paramInbox` | dispatcher → audio | SPSC | `ParamChange` | dispatcher coalesces per (slot, param) and retries |
-| `controlInbox` | protocol, main, command → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate | bounded; producers are non-realtime and wait briefly |
-| `commandInbox` | protocol, main, compiler, butler → command | MPSC, mutex | requests and completions | bounded; non-realtime producers only |
+| `controlInbox` | protocol, main, command, butler → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate, seek-ready | bounded; never waited on: coalesce per key or reply `queue_full` |
+| `commandInbox` | protocol, main, compiler, butler, dispatcher → command | MPSC, mutex | requests, completions, gesture commits | bounded; never waited on: reply `queue_full`; gesture commits are coalesced per target |
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
-| `diskRing[track]` | butler → audio | SPSC ring per playing track | audio frames tagged with a seek generation | underrun outputs silence and counts an xrun |
-| `butlerRequest` | audio → butler | SPSC | refill hints (track, consumed position) | latest-wins per track; the butler also polls |
+| `diskRing[track][2]` | butler → audio | two SPSC rings per playing track: the current and the pending slot | audio frames of one seek generation per slot | underrun outputs silence and counts an xrun |
+| `butlerRequest` | audio → butler | SPSC | refill hints (track, consumed position); slot releases after a locate | latest-wins per track for hints; releases are never coalesced; the butler also polls |
 | `seekRequest` | dispatcher → butler | MPSC, mutex | target position + generation | a newer generation replaces an older one |
 | `recordOutbox` | audio → butler | SPSC ring | input blocks of armed tracks | overflow is a reported error, never a block |
 | `meterOutbox` | audio → dispatcher | SPSC | meter blocks, playhead | latest-value-wins; drop when full |
-| `automationOutbox` | audio → command | SPSC, per write pass | `(param, sample, value)` | thin in place and count |
+| `automationOutbox` | audio → command | SPSC, per write pass | `(param, sample, value)`, then an end marker | thin in place and count; the end marker always has a reserved slot |
 | `pluginEventRt` | audio → command | SPSC | events raised inside `process()` (parameter output, latency changed) | coalesced per instance |
 | `pluginEventAny` | plugin callbacks on any thread → command | lock-free bounded MPSC | editor edits, restart and latency requests | producer never blocks; on overflow sets the instance's atomic resync flag, and the command thread re-reads its parameters and latency |
 
@@ -328,12 +342,19 @@ records who that is:
 
 - `start`: the graph is handed to the audio state before the device starts, so no
   callback can see a half-installed graph.
-- `stop` and device loss: `AudioDevice::stop()` returns only after the callback has
-  exited and will not run again (a host contract). The command thread then takes the
-  graph back, drains `graphInbox` and `retireOutbox`, and moves to `stopped`.
+- `stop` and device loss: the main thread calls `AudioDevice::stop()`, which returns
+  only after the callback has exited and will not run again (a host contract). The
+  audio state's current-graph pointer is then authoritative: if `graphInbox` still
+  holds a pending graph, it is installed directly as live and the old graph retires;
+  `retireOutbox` is drained; the state becomes `stopped`.
+- Watchdog: a transition that is not acknowledged within 500 ms of audio time (or
+  when the device reports itself invalid) moves the driver to `stopping` and asks the
+  main thread to stop the device, so a silent device cannot block structural edits.
 - Bounce and export stop realtime playback and move the graph to the offline driver,
   then back. M2 does not render offline while playing, so instances are never driven
-  by two threads.
+  by two threads. During an offline render the dispatcher keeps parameter changes in
+  its overlay instead of `paramInbox`; the render uses only the document and its
+  automation. On return to realtime the overlay is re-sent with the live epoch.
 
 ### Publishing and retiring graphs
 
@@ -345,11 +366,16 @@ records who that is:
   graph ramps those paths up again. Unaffected paths are untouched. Exactly one
   graph is processed per block, so a reused plugin instance is never processed
   twice.
-- After the swap the audio thread pushes the old graph to `retireOutbox`. On that
-  acknowledgement the command thread computes which runtime instances the old graph
-  held and the new one does not (by instance identity, not by slot ID), and sends
-  their destruction to the main thread. Only then may the next transition publish;
-  compiling the next graph may already have started.
+- After the swap the audio thread pushes the old graph to `retireOutbox`. Only then
+  may the next transition publish; compiling the next graph may already have started.
+- Instance lifetime is tracked by pins in the instance table, owned by the command
+  thread and keyed by runtime instance identity (not slot ID). The live graph, a
+  published graph not yet swapped in, and every compile in progress each pin the
+  instances they use (a compile pins its inputs when it starts). On the retire
+  acknowledgement the old graph's pins are released, and an instance is sent to the
+  main thread for destruction only when its pin count reaches zero. A compile whose
+  result is discarded (superseded by a newer revision) releases its pins and
+  destroys the instances it created.
 - If several revisions arrive during one compile, the next compile uses the latest
   document only.
 - No `shared_ptr` whose count can reach zero is ever touched on the audio thread.
@@ -358,7 +384,8 @@ records who that is:
 ### State migration
 
 - The compiler reuses every plugin instance, delay line, smoother and meter whose
-  entity ID is unchanged, looked up in the instance table. New plugins are
+  entity ID is unchanged, looked up in the instance table and pinned for the
+  compile. New plugins are
   instantiated on the main thread at the compiler's request before publication;
   removed ones are destroyed after the retire acknowledgement.
 - Reverb tails and compressor envelopes survive unrelated edits.
@@ -369,11 +396,15 @@ records who that is:
 
 - `transport.locate(target)` goes to the dispatcher, which sends a `seekRequest` with
   a new generation to the butler.
-- The butler refills each playing track's `diskRing` from the target (default
-  prefill 250 ms), tags the rings with the generation and reports ready.
+- The butler fills the pending slot of each playing track's `diskRing` from the
+  target (default prefill 250 ms), tags it with the generation and reports ready to
+  the dispatcher through `controlInbox`. The current slot keeps serving the old
+  position, so playback continues untouched.
 - The dispatcher then sends the locate through `paramInbox`. At the next block
-  boundary the audio thread moves the playhead, reads only rings with the matching
-  generation, and ducks the master around the jump.
+  boundary the audio thread moves the playhead, swaps each track's current and
+  pending slots itself, ducks the master around the jump, and returns the old slot
+  to the butler through `butlerRequest`. The butler never touches a slot the audio
+  thread is reading, so each ring stays single-producer single-consumer.
 - Until ready, playback continues from the old position. A newer locate cancels an
   older one. If the butler is not ready within 1 s, the locate proceeds and any
   underrun is counted and reported.
@@ -419,18 +450,23 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
 - MIDI to instruments is scheduled earlier by the downstream compensation of the
   instrument's path, so instrument tracks line up with audio tracks.
 - Input monitoring uses a low-latency path that bypasses compensation delays.
-- Recording offset: what the performer hears trails the timeline by the graph's
-  total latency plus the device output latency (plus output SRC latency when
-  active), and what they play reaches the engine after the device input latency
-  (plus input SRC latency). A captured block whose audio-thread timeline start is
-  `t` is therefore placed at `t - totalLatency - outputLatency - inputLatency - srcLatency`.
+- Recording offset: realtime playback is not latency-shifted, so what the performer
+  hears trails the timeline by the total latency of the output path they monitor
+  (master or a cue mix) plus the device output latency (plus output SRC latency),
+  and what they play reaches the engine after the device input latency (plus input
+  SRC latency). A captured block whose audio-thread timeline start is `t` is placed
+  at `t - monitoredPathLatency - outputLatency - inputLatency - srcLatency`.
+- Device latencies are converted from the device rate to the session rate. Because
+  backends disagree on whether reported latency includes the buffer, a loopback
+  calibration (measured round trip) replaces `outputLatency + inputLatency` when
+  available; the reported values are the fallback.
 - The formula is the same in every monitoring mode. Input monitoring (auto or input)
   uses a low-latency path that bypasses compensation delays, which changes what the
   performer hears of themselves, not where the take lands. M2 tests this with a fake
   loopback device in each mode.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
-  to the command thread through `pluginEventOutbox`, and triggers a recompile with
+  to the command thread through `pluginEventRt` or `pluginEventAny`, and triggers a recompile with
   state migration.
 - A global compensation limit (configurable) bounds delay line memory. Paths above
   the limit are flagged to the user and agents; they are not silently misaligned.
@@ -462,9 +498,10 @@ The documented precision is shown to users and agents.
 ### Write modes
 
 - Write, Touch, Latch and Trim passes capture values on the audio thread into
-  `automationOutbox`. The command thread accumulates them and, at touch release or
-  transport stop, thins them and commits one `automation.write_pass` command
-  (one revision, one journal entry).
+  `automationOutbox`. When the audio thread processes the gesture end (or transport
+  stop) it pushes an end marker after the last captured value. The command thread
+  accumulates values and commits one `automation.write_pass` command (one revision,
+  one journal entry) only when it receives the marker, so no tail values are lost.
 
 ## Gestures
 
@@ -529,7 +566,8 @@ The documented precision is shown to users and agents.
   rate. Offline render and bounce never pass through it.
 - Pull model: the graph renders fixed-size session-rate blocks into a preallocated
   FIFO, and the output SRC consumes it to fill each device callback. The graph never
-  sees a variable block size. The FIFO adds at most one graph block of latency.
+  sees a variable block size. The FIFO is primed to a fixed fill of one graph block
+  before the device starts and kept there, so its latency is constant.
 - The SRC library runs on the audio thread, so it must be allocation-free after
   setup and pass the realtime checks. Candidate: r8brain-free-src streaming mode
   (MIT), verified with the allocation hooks and RealtimeSanitizer before adoption;
@@ -918,7 +956,7 @@ Shared by both targets:
   `setState`, `openEditor` on the main thread; `getState` on the main thread with
   processing paused where the format requires it.
 - Plugin-originated events (parameter edits from editors, latency changes, restart
-  requests) arrive on arbitrary threads and go into `pluginEventOutbox`.
+  requests) arrive on arbitrary threads and go into `pluginEventAny`.
 - The interface is message-shaped and never exposes raw pointers into plugin
   internals, so a later out-of-process worker (shared-memory audio ring, messages for
   params and state) can implement it without changing callers.
@@ -1221,6 +1259,15 @@ resolves them in the sections named here:
    duck-and-swap, identity-based retirement).
 6. Gestures, audition and recording offset: "Gestures", "Proposal audition" and
    "Latency model".
+
+Revision 3.1 changes after an independent review: two ring slots per track
+("Locate"); pinned instance lifetimes ("Publishing and retiring graphs"); newer
+epochs wait at the queue head ("Two channels into the audio thread");
+non-blocking messages, device control on the main thread, and the render and MIDI
+threads in the table ("Threads and waiting rules"); the watchdog, the pending-graph
+rule and offline parameters ("Graph ownership"); the write-pass end marker
+("Write modes"); the calibrated, monitored-path recording offset and a fixed SRC
+FIFO fill ("Latency model", "Device-side SRC").
 
 ## Open questions
 
