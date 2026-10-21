@@ -14,6 +14,7 @@ and r8brain-free-src (offline resampling, MIT). Tests use Catch2, also pinned.
 |---|---|---|
 | `libs/hash` (`siann-hash`) | `siann::hash` | SHA-256, strict I-JSON parser for hashed data, RFC 8785 JCS, RFC 6962 Merkle tree and the SIANN document hash |
 | `libs/time` (`siann-time`) | `siann::time` | `AudioTime`, `MusicTime`, `Position`, step `TempoMap`, exact tick and sample conversion through superclocks |
+| `libs/midi` (`siann-midi`) | `siann::midi` | MIDI 1.0 messages, event lists in MusicTime ticks, Standard MIDI File read and write (formats 0 and 1, tempo and meter) |
 | `libs/model` (`siann-model`) | `siann::model` | Immutable session document (root, media, track, clip) with structural sharing, strict JSON load and save, validation, entity and document hashes, diff |
 | `libs/command` (`siann-command`) | `siann::command` | Command catalog (pure document transforms with declared effects checked against the diff), transactions, revision history with undo and redo |
 | `libs/io` (`siann-io`) | `siann::io` | Durable file primitives: append with flush, atomic replace, directory flush |

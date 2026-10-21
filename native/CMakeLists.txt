@@ -32,6 +32,7 @@ endif()
 
 add_subdirectory(libs/hash)
 add_subdirectory(libs/time)
+add_subdirectory(libs/midi)
 add_subdirectory(libs/model)
 add_subdirectory(libs/command)
 add_subdirectory(libs/io)
