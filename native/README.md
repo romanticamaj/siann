@@ -4,8 +4,9 @@ C++20 code for the native SIANN engine described in the
 [native DAW architecture](../docs/superpowers/specs/2026-10-14-siann-native-daw-architecture.md)
 and accepted by [ADR-0016](../docs/adr/0016-build-native-cpp-daw-engine.md).
 
-The core builds with no JUCE and no third-party runtime dependencies. Tests use
-Catch2, fetched and pinned by CMake.
+The core builds with no JUCE. Third-party code is fetched and pinned by commit
+in `cmake/SiannThirdParty.cmake`: dr_libs (WAV decoding, public domain / MIT-0)
+and r8brain-free-src (offline resampling, MIT). Tests use Catch2, also pinned.
 
 ## Modules
 
@@ -16,7 +17,8 @@ Catch2, fetched and pinned by CMake.
 | `libs/model` (`siann-model`) | `siann::model` | Immutable session document (root, media, track, clip) with structural sharing, strict JSON load and save, validation, entity and document hashes, diff |
 | `libs/command` (`siann-command`) | `siann::command` | Command catalog (pure document transforms with declared effects checked against the diff), transactions, revision history with undo and redo |
 | `libs/io` (`siann-io`) | `siann::io` | Durable file primitives: append with flush, atomic replace, directory flush |
-| `libs/session` (`siann-session`) | `siann::session` | Session bundle, journal records with checksums (write-ahead log), checkpoints, crash recovery |
+| `libs/media` (`siann-media`) | `siann::media` | WAV decoding (dr_wav), 32-bit float WAV encoding, offline sample-rate conversion (r8brain) |
+| `libs/session` (`siann-session`) | `siann::session` | Session bundle, journal records with checksums (write-ahead log), checkpoints, crash recovery, the `media.import` job |
 
 `siann-hash` sits below `siann-model` and `siann-command`. It must pass the same
 fixtures as the Node bridge (`src/hash/`): `fixtures/jcs/cases.json`,
