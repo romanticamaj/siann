@@ -25,6 +25,7 @@ public:
         int outputLatencyFrames = 0;    // reported, and applied in loopback
         bool loopback = false;          // input[t] = output[t - input - output latency]
         std::int64_t stopAfterCallbacks = -1;  // the device stops itself; -1 runs until stop()
+        bool stall = false;             // the thread runs but never calls back (a hung driver)
     };
 
     explicit FakeAudioDevice(Options options);
@@ -37,7 +38,7 @@ public:
 
     // Called from the device thread after its last callback, when the device
     // stops on its own (unplug or stopAfterCallbacks).
-    void setOnStopped(std::function<void(bool lost)> handler);
+    void setOnStopped(std::function<void(bool lost)> handler) override;
 
     // Makes the next callback the last one, then reports the device as lost.
     void simulateUnplug() noexcept { unplug_.store(true, std::memory_order_release); }
