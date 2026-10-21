@@ -21,9 +21,6 @@ namespace siann::rt {
 #endif
 template <typename T>
 class MpscQueue {
-    static_assert(std::is_nothrow_move_assignable_v<T>, "queue items must be nothrow move-assignable");
-    static_assert(std::is_nothrow_default_constructible_v<T>, "queue items must be nothrow default-constructible");
-
 public:
     explicit MpscQueue(std::size_t capacity) : mask_(roundUp(capacity) - 1), cells_(new Cell[mask_ + 1]) {
         for (std::size_t i = 0; i <= mask_; ++i) {
@@ -38,6 +35,7 @@ public:
 
     // Any thread. Returns false when full.
     bool push(T item) noexcept {
+        checkItemType();
         std::size_t pos = enqueue_.load(std::memory_order_relaxed);
         for (;;) {
             Cell& cell = cells_[pos & mask_];
@@ -71,6 +69,13 @@ public:
     }
 
 private:
+    // Checked where the queue is used rather than in the class body: GCC cannot
+    // evaluate these traits for a type nested in a class still being defined.
+    static constexpr void checkItemType() noexcept {
+        static_assert(std::is_nothrow_move_assignable_v<T>, "queue items must be nothrow move-assignable");
+        static_assert(std::is_nothrow_default_constructible_v<T>, "queue items must be nothrow default-constructible");
+    }
+
     struct Cell {
         std::atomic<std::size_t> sequence{0};
         T value{};

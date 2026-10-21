@@ -62,6 +62,10 @@ void GraphDriver::stop() {
 void GraphDriver::poll() {
     if (state_ == DriverState::stopped) {
         drainParams();  // nobody else drives the graph; apply changes here
+        TransportCommand command;
+        while (transportInbox_.pop(command)) {
+            applyLocate(command);
+        }
         return;
     }
     if (state_ != DriverState::realtime) {
@@ -80,6 +84,17 @@ void GraphDriver::poll() {
 
 bool GraphDriver::pushParam(const ParamChange& change) noexcept {
     return paramInbox_.push(change);
+}
+
+bool GraphDriver::pushLocate(const TransportCommand& command) noexcept {
+    return transportInbox_.push(command);
+}
+
+void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
+    playhead_.store(command.position, std::memory_order_release);
+    if (current_ != nullptr) {
+        current_->locate(command.generation, command.position);
+    }
 }
 
 void GraphDriver::send(std::uint64_t epoch) {
@@ -136,7 +151,12 @@ void GraphDriver::finishStop() {
         current_ = next_.graph;
         currentEpoch_ = next_.epoch;
         next_ = {};
-        duckRemaining_ = 0;
+    }
+    duckActive_ = false;
+    duckRemaining_ = 0;
+    if (locatePending_) {
+        applyLocate(pendingLocate_);
+        locatePending_ = false;
     }
     if (retirePending_ && unsentRetire_.epoch != 0) {
         retire(unsentRetire_.epoch);
@@ -165,7 +185,7 @@ void GraphDriver::process(const host::AudioBufferView&, const host::AudioBufferV
     if (retirePending_ && retireOutbox_.push(unsentRetire_)) {
         retirePending_ = false;
     }
-    if (next_.graph == nullptr && duckRemaining_ == 0) {
+    if (!duckActive_) {
         Handoff h;
         if (graphInbox_.pop(h)) {
             if (current_ == nullptr) {
@@ -178,6 +198,20 @@ void GraphDriver::process(const host::AudioBufferView&, const host::AudioBufferV
                 }
             } else {
                 next_ = h;
+                duckActive_ = true;
+                duckRemaining_ = options_.fadeFrames;
+            }
+        }
+    }
+    if (!duckActive_ && !locatePending_) {
+        TransportCommand command;
+        if (transportInbox_.pop(command)) {
+            if (current_ == nullptr || !playing_.load(std::memory_order_acquire)) {
+                applyLocate(command);  // nothing audible to fade
+            } else {
+                pendingLocate_ = command;
+                locatePending_ = true;
+                duckActive_ = true;
                 duckRemaining_ = options_.fadeFrames;
             }
         }
@@ -190,16 +224,22 @@ void GraphDriver::process(const host::AudioBufferView&, const host::AudioBufferV
         renderBlock(output, offset, std::min(chunk, output.frames - offset));
     }
 
-    if (next_.graph != nullptr && duckRemaining_ == 0) {
-        const Handoff old{current_, currentEpoch_};
-        current_ = next_.graph;
-        currentEpoch_ = next_.epoch;
-        next_ = {};
-        riseRemaining_ = options_.fadeFrames;
-        if (!retireOutbox_.push(old)) {
-            unsentRetire_ = old;
-            retirePending_ = true;
+    if (duckActive_ && duckRemaining_ == 0) {
+        if (next_.graph != nullptr) {
+            const Handoff old{current_, currentEpoch_};
+            current_ = next_.graph;
+            currentEpoch_ = next_.epoch;
+            next_ = {};
+            if (!retireOutbox_.push(old)) {
+                unsentRetire_ = old;
+                retirePending_ = true;
+            }
+        } else if (locatePending_) {
+            applyLocate(pendingLocate_);
+            locatePending_ = false;
         }
+        duckActive_ = false;
+        riseRemaining_ = options_.fadeFrames;
     }
 }
 
@@ -237,7 +277,7 @@ void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, i
     const float fade = static_cast<float>(options_.fadeFrames);
     for (int i = 0; i < frames; ++i) {
         float gain = 1.0f;
-        if (next_.graph != nullptr) {
+        if (duckActive_) {
             gain = duckRemaining_ > 0 ? static_cast<float>(duckRemaining_) / fade : 0.0f;
             if (duckRemaining_ > 0) {
                 --duckRemaining_;

@@ -18,14 +18,14 @@ and r8brain-free-src (offline resampling, MIT). Tests use Catch2, also pinned.
 | `libs/model` (`siann-model`) | `siann::model` | Immutable session document (root, media, track, clip) with structural sharing, strict JSON load and save, validation, entity and document hashes, diff |
 | `libs/command` (`siann-command`) | `siann::command` | Command catalog (pure document transforms with declared effects checked against the diff), transactions, revision history with undo and redo |
 | `libs/io` (`siann-io`) | `siann::io` | Durable file primitives: append with flush, atomic replace, directory flush |
-| `libs/media` (`siann-media`) | `siann::media` | WAV and FLAC decoding (dr_wav, dr_flac), 32-bit float WAV encoding, offline sample-rate conversion (r8brain) |
+| `libs/media` (`siann-media`) | `siann::media` | WAV and FLAC decoding (dr_wav, dr_flac), streaming WAV reader, 32-bit float WAV encoding, offline sample-rate conversion (r8brain) |
 | `libs/session` (`siann-session`) | `siann::session` | Session bundle, journal records with checksums (write-ahead log), checkpoints, crash recovery, the `media.import` job |
 | `libs/host_api` (`siann-host-api`) | `siann::host_api` | Buffer views, block events, and the draft `AudioDevice`, `MidiDevice`, `PluginHost` and `MediaReader` interfaces (no implementation) |
 | `libs/graph` (`siann-graph`) | `siann::graph` | Graph builder and compiler with per-edge plugin delay compensation, allocation-free processing, clip player, track fader, bus and `FakeLatency` nodes |
 | `libs/engine` (`siann-engine`) | `siann::engine` | Media loading with hash checks, document-to-graph compilation, latency-aligned offline render |
 | `libs/rt` (`siann-rt`) | `siann::rt` | Lock-free SPSC and MPSC queues, realtime thread marker, allocation guard for tests |
 | `libs/host_fake` (`siann-host-fake`) | `siann::host_fake` | Software audio device for tests: realtime thread, stop contract, unplug, stall, loopback |
-| `libs/realtime` (`siann-realtime`) | `siann::realtime` | Graph driver: graph ownership states, duck-and-swap, one transition in flight, retirement on acknowledgement, watchdog |
+| `libs/realtime` (`siann-realtime`) | `siann::realtime` | Graph driver (ownership states, duck-and-swap, retirement on acknowledgement, watchdog), parameter channel and control dispatcher, transport locate, disk streaming (butler, two-slot rings, streaming player) |
 
 `siann-hash` sits below `siann-model` and `siann-command`. It must pass the same
 fixtures as the Node bridge (`src/hash/`): `fixtures/jcs/cases.json`,

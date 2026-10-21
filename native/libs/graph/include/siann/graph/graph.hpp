@@ -52,6 +52,13 @@ public:
         (void)value;
         (void)rampFrames;
     }
+
+    // Audio thread, between blocks: the transport jumped to `position` for the
+    // locate with `generation` (revision 3.1, "Locate").
+    virtual void onLocate(std::uint64_t generation, std::int64_t position) noexcept {
+        (void)generation;
+        (void)position;
+    }
 };
 
 class GraphError : public std::runtime_error {
@@ -119,6 +126,8 @@ public:
 
     // Audio thread, between blocks. Ignored for an unknown node.
     void setParameter(NodeId node, std::uint32_t paramId, double value, int rampFrames) noexcept;
+    // Audio thread, between blocks: tells every node about a locate.
+    void locate(std::uint64_t generation, std::int64_t position) noexcept;
     std::size_t nodeCount() const noexcept;
 
 private:
