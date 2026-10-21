@@ -695,6 +695,17 @@ Plan
   recovered.
 - M1 never truncates or rotates the journal; it keeps all valid history. Rotation
   and compaction come later.
+- M1 recovery replays the whole journal from its create record (which carries the
+  initial document), so undo and redo state survive a restart exactly. Every
+  replayed revision must reproduce its recorded envelope (`replay_mismatch`
+  otherwise). The checkpoint is cross-checked against the revision it covers
+  (`checkpoint_mismatch`), and a journal that ends before the checkpoint's
+  `coversSeq` is reported (`journal_behind_checkpoint`) instead of guessed at.
+  Loading the checkpoint and replaying only the tail arrives with rotation.
+- Code: `siann-io` holds the durable file primitives (append with flush, atomic
+  replace, directory flush; `F_FULLFSYNC` on macOS). `siann-session` holds the
+  journal record format, the bundle, checkpoints and recovery, above
+  `siann-command`.
 - Undo history depth in memory is bounded; older revisions are reconstructible from
   checkpoints plus journal.
 

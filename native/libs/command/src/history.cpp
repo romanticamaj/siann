@@ -48,6 +48,9 @@ const Revision& History::append(Revision revision) {
         revision.diff = model::diff(revisions_.back().document, revision.document);
     }
     revision.envelope.documentHash = revision.document.documentHash();
+    if (beforePublish_) {
+        beforePublish_(revision);
+    }
     revisions_.push_back(std::move(revision));
     return revisions_.back();
 }

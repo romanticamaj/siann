@@ -148,3 +148,28 @@ TEST_CASE("Revisions can be found by id", "[history]") {
     CHECK(history.find("r2")->document.track("trk_1") != nullptr);
     CHECK(history.find("r9") == nullptr);
 }
+
+TEST_CASE("A throwing before-publish hook leaves the history unchanged", "[history]") {
+    History history = fresh();
+    history.commit({addTrack("trk_1")}, "a", "t");
+    std::vector<std::string> seen;
+    bool fail = true;
+    history.setBeforePublish([&](const Revision& revision) {
+        seen.push_back(revision.envelope.id);
+        if (fail) {
+            throw std::runtime_error("disk full");
+        }
+    });
+
+    CHECK_THROWS_AS(history.commit({addTrack("trk_2")}, "a", "t"), std::runtime_error);
+    CHECK_THROWS_AS(history.undo("a", "t"), std::runtime_error);
+    CHECK(history.revisions().size() == 2);
+    CHECK(history.canUndo());
+    CHECK_FALSE(history.canRedo());
+    CHECK(history.head().document.track("trk_2") == nullptr);
+
+    fail = false;
+    const Revision& r3 = history.commit({addTrack("trk_2")}, "a", "t");
+    CHECK(r3.envelope.id == "r3");
+    CHECK(seen == std::vector<std::string>{"r3", "r3", "r3"});
+}
