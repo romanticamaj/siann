@@ -4,7 +4,7 @@
 #include <set>
 #include <utility>
 
-#include "json_fields.hpp"
+#include "siann/model/field_reader.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/merkle.hpp"
 #include "siann/time/tempo_map.hpp"
