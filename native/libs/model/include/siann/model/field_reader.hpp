@@ -1,7 +1,9 @@
 #pragma once
 
-// Strict readers for entity JSON: every field must be known, typed and in
-// range, so a document that loads always re-serializes to the same bytes.
+// Strict readers for entity and command JSON: every field must be known, typed
+// and in range, so anything that loads re-serializes to the same bytes.
+// Errors are ModelError with code missing_field, invalid_field, unknown_field
+// or unsupported_version.
 
 #include <charconv>
 #include <cmath>
