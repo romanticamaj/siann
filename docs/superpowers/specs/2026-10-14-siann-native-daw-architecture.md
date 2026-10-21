@@ -506,6 +506,10 @@ The documented precision is shown to users and agents.
 - `IoPort` models physical device inputs and outputs; `RouteTarget` can point at a
   bus, a track input or an `IoPort`.
 - Panning is defined by a `PanLaw` and a channel matrix, so surround is additive.
+  M1 default: mono sources use constant power (center -3 dB); stereo sources use
+  linear balance (unity at center, the far side attenuated toward zero).
+- M1 plays overlapping clips on one track by summing them; comping and
+  take-on-top rules come with playlists.
 - Plugin slots store their negotiated bus layout and sidechain configuration.
 
 ## Modules
@@ -764,7 +768,9 @@ PreparedGraph   nodes (TrackNode, ClipPlayerNode, MidiSourceNode, InstrumentNode
 Engine
   +process(block)       audio callback: drain graphInbox, paramInbox; render;
                         push outboxes
-  +renderOffline(range, target)   same graph code, driven by a non-realtime loop
+  +renderOffline(range, target)   same graph code, driven by a non-realtime loop;
+                        the output is shifted by the graph's total latency so
+                        it lines up with the timeline
                         (M1: a synchronous driver that owns its graph exclusively;
                         compile, render and destroy happen on one thread, never
                         concurrently, and it never shares instances with a live
