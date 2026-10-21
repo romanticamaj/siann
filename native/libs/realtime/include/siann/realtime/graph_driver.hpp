@@ -28,6 +28,16 @@ namespace siann::realtime {
 
 enum class DriverState { stopped, realtime, offline, stopping };
 
+namespace detail {
+// A graph passed between the control side and the audio thread. Defined at
+// namespace scope: GCC cannot evaluate the default member initializers of a
+// class nested in a still-incomplete class for the queue's noexcept checks.
+struct Handoff {
+    graph::PreparedGraph* graph = nullptr;
+    std::uint64_t epoch = 0;
+};
+}  // namespace detail
+
 class GraphDriver {
 public:
     struct Options {
@@ -68,10 +78,7 @@ public:
     std::uint64_t watchdogTrips() const noexcept { return watchdogTrips_; }
 
 private:
-    struct Handoff {
-        graph::PreparedGraph* graph = nullptr;
-        std::uint64_t epoch = 0;
-    };
+    using Handoff = detail::Handoff;
 
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     void renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept;
