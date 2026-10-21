@@ -14,6 +14,7 @@ set(SIANN_FIXTURES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures"
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SiannCompileOptions)
+include(SiannThirdParty)
 
 if(SIANN_BUILD_TESTS)
   enable_testing()
@@ -34,4 +35,5 @@ add_subdirectory(libs/time)
 add_subdirectory(libs/model)
 add_subdirectory(libs/command)
 add_subdirectory(libs/io)
+add_subdirectory(libs/media)
 add_subdirectory(libs/session)
