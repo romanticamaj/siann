@@ -401,6 +401,11 @@ The documented precision is shown to users and agents.
 - `TempoMap` and `MeterMap` support ramps in the model. M1 implements constant-tempo
   segments with step changes only; tempo ramps are deferred and rejected by
   validation until implemented.
+- Tempo is stored as integer milli-BPM (120 BPM is `120000`, range 1 to 999.999
+  BPM). Conversions use integer arithmetic only, through an internal superclock
+  of 282,240,000 units per second, which every common sample rate divides. A
+  tempo's superclocks per quarter is `round(282240000 * 60 * 1000 / milliBpm)`,
+  ties to even. Results are therefore bit-identical on every platform.
 - Conversions between domains are not exact in general. A conversion that lands
   between samples or ticks rounds to nearest, ties to even. Content keeps the domain
   it was placed in, so repeated conversions never accumulate drift. Shared fixtures

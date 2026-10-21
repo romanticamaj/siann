@@ -30,3 +30,4 @@ if(SIANN_BUILD_TESTS)
 endif()
 
 add_subdirectory(libs/hash)
+add_subdirectory(libs/time)
