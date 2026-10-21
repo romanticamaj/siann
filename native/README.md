@@ -12,10 +12,13 @@ Catch2, fetched and pinned by CMake.
 | Module | Target | Contents |
 |---|---|---|
 | `libs/hash` (`siann-hash`) | `siann::hash` | SHA-256, strict I-JSON parser for hashed data, RFC 8785 JCS, RFC 6962 Merkle tree and the SIANN document hash |
+| `libs/time` (`siann-time`) | `siann::time` | `AudioTime`, `MusicTime`, `Position`, step `TempoMap`, exact tick and sample conversion through superclocks |
 
 `siann-hash` sits below `siann-model` and `siann-command`. It must pass the same
 fixtures as the Node bridge (`src/hash/`): `fixtures/jcs/cases.json`,
-`fixtures/hash/rfc6962.json` and `fixtures/hash/document.json`.
+`fixtures/hash/rfc6962.json` and `fixtures/hash/document.json`. `siann-time`
+must match `fixtures/time/conversions.json`, generated with BigInt arithmetic by
+`scripts/generate-time-fixtures.js`.
 
 ## Build and test
 
