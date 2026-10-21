@@ -27,6 +27,8 @@ struct TempoPoint {
     MusicTime position;
     std::int32_t milliBpm = 120'000;
     TempoShape shape = TempoShape::step;
+
+    friend bool operator==(const TempoPoint&, const TempoPoint&) = default;
 };
 
 class TimeError : public std::runtime_error {
