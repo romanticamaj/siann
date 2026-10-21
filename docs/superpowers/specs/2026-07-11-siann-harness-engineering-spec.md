@@ -167,6 +167,8 @@ under `docs/schemas/`. Current registry:
 | `siann.observe.v0` | Canonical session read model | engine |
 | `siann.import_pack_plan.v1` | Reviewable import-pack plan with JCS integrity hash (v0 still accepted) | bridge workflows |
 | `siann.jcs_fixtures.v1` | Shared canonicalization fixtures (`fixtures/jcs/`) | maintained by hand from RFC 8785 |
+| `siann.rfc6962_fixtures.v1` | Merkle tree vectors (`fixtures/hash/rfc6962.json`) | Certificate Transparency reference data |
+| `siann.document_hash_fixtures.v1` | Document hash cases (`fixtures/hash/document.json`) | `scripts/generate-hash-fixtures.js` |
 | intake plan v0 | AI-to-deterministic-bridge intake boundary | intake planner |
 | DAWproject export v0 | Cubase-compatible exchange package | exporter |
 
