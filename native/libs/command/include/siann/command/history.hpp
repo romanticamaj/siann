@@ -5,6 +5,7 @@
 // revisions whose document equals an earlier one.
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -50,6 +51,12 @@ public:
     const Revision& commit(std::vector<Command> commands, std::string actor, std::string time,
                            Cause cause = Cause::command);
 
+    // Called with each new revision before it is published. If the hook
+    // throws, the revision is discarded and the history is unchanged. The
+    // session layer uses it to make the journal record durable first.
+    using BeforePublish = std::function<void(const Revision&)>;
+    void setBeforePublish(BeforePublish hook) { beforePublish_ = std::move(hook); }
+
     bool canUndo() const noexcept { return !undoStack_.empty(); }
     bool canRedo() const noexcept { return !redoStack_.empty(); }
     const Revision& undo(std::string actor, std::string time);
@@ -62,6 +69,7 @@ private:
     std::vector<Revision> revisions_;
     std::vector<std::size_t> undoStack_;  // indexes of command and plan revisions
     std::vector<std::size_t> redoStack_;
+    BeforePublish beforePublish_;
 };
 
 }  // namespace siann::command
