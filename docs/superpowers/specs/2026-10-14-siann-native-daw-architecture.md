@@ -519,6 +519,13 @@ capability types. It contains no implementation and depends only on `siann-time`
 interface definitions are listed under "siann-host". Control-only operations (scan,
 editors) live in separate interfaces from the realtime `process` path.
 
+### siann-hash (pure C++)
+
+SHA-256, a strict I-JSON parser for hashed data, the RFC 8785 serializer and the
+RFC 6962 Merkle tree with the document hash. It depends on nothing and sits below
+`siann-model` and `siann-command`. It passes the same fixtures as the Node bridge
+(`fixtures/jcs/`, `fixtures/hash/`).
+
 ### siann-time (pure C++)
 
 `AudioTime`, `MusicTime`, `Position` (domain-tagged), `TempoMap`, `MeterMap`,
@@ -566,6 +573,8 @@ Rules:
   Merkle root over entity hashes (exact encoding in "Canonical JSON and hashes"), so
   a revision only re-serializes changed entities.
 - IDs are ASCII `[A-Za-z0-9_-]`, 1 to 64 characters, so every sort order agrees.
+  Entity types are `[a-z][a-z0-9_]*`, at most 32 characters (for example `track`,
+  `plugin_slot`).
 - Ordered collections (track order, insert order, send order) are lists of IDs inside
   the parent entity, so order is part of the parent's hash.
 - Commands address IDs only. Name lookup is a dry-run helper and fails on ambiguity.
