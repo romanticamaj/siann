@@ -91,6 +91,10 @@ void FakeAudioDevice::run() {
         auto next = std::chrono::steady_clock::now();
 
         while (!stopRequested_.load(std::memory_order_acquire)) {
+            if (options_.stall) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
             if (options_.stopAfterCallbacks >= 0 && callbacks_.load() >= options_.stopAfterCallbacks) {
                 break;
             }

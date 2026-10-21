@@ -43,6 +43,9 @@ public:
     virtual ~AudioDevice() = default;
     virtual AudioDeviceStatus open(const AudioDeviceConfig& config) = 0;
     virtual void start(AudioCallback callback) = 0;
+    // Called (off the audio thread, after the last callback) when the device
+    // stops on its own; lost is true when the device disappeared.
+    virtual void setOnStopped(std::function<void(bool lost)> handler) = 0;
     // Returns only after the callback has exited and will not run again.
     virtual void stop() = 0;
     virtual void close() = 0;
