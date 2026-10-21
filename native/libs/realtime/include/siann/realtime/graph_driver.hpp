@@ -38,6 +38,16 @@ struct Handoff {
 };
 }  // namespace detail
 
+// One parameter change for the audio thread (revision 3.1, "Two channels into
+// the audio thread"). `slot` is a node of the graph with `epoch`.
+struct ParamChange {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::uint32_t paramId = 0;
+    double value = 0.0;
+    int rampFrames = 0;
+};
+
 class GraphDriver {
 public:
     struct Options {
@@ -65,6 +75,12 @@ public:
     // Handles swap acknowledgements, device loss and the watchdog.
     void poll();
 
+    // The control dispatcher's thread only (the single paramInbox producer).
+    // Returns false when the queue is full. While stopped, queued changes are
+    // applied to the live graph on the next poll(); the consumer moves between
+    // the audio thread and the control side only across a device start or stop.
+    bool pushParam(const ParamChange& change) noexcept;
+
     // Transport, applied at the next block. M2 step 1 uses atomics; the
     // dispatcher and paramInbox replace them.
     void play() noexcept { playing_.store(true, std::memory_order_release); }
@@ -82,6 +98,7 @@ private:
 
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     void renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept;
+    void drainParams() noexcept;
     void send(std::uint64_t epoch);
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
@@ -105,6 +122,9 @@ private:
     // Audio side.
     rt::SpscQueue<Handoff> graphInbox_{2};
     rt::SpscQueue<Handoff> retireOutbox_{2};
+    rt::SpscQueue<ParamChange> paramInbox_{1024};
+    ParamChange heldParam_{};
+    bool paramHeld_ = false;  // heldParam_ waits for a newer graph to be swapped in
     graph::PreparedGraph* current_ = nullptr;
     std::uint64_t currentEpoch_ = 0;
     Handoff next_{};

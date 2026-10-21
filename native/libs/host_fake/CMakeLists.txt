@@ -1,5 +1,6 @@
 add_library(siann_host_fake
   src/fake_audio_device.cpp
+  src/manual_audio_device.cpp
 )
 add_library(siann::host_fake ALIAS siann_host_fake)
 target_include_directories(siann_host_fake PUBLIC include)

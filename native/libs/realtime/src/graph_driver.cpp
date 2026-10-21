@@ -60,6 +60,10 @@ void GraphDriver::stop() {
 }
 
 void GraphDriver::poll() {
+    if (state_ == DriverState::stopped) {
+        drainParams();  // nobody else drives the graph; apply changes here
+        return;
+    }
     if (state_ != DriverState::realtime) {
         return;
     }
@@ -72,6 +76,10 @@ void GraphDriver::poll() {
         ++watchdogTrips_;
         stop();
     }
+}
+
+bool GraphDriver::pushParam(const ParamChange& change) noexcept {
+    return paramInbox_.push(change);
 }
 
 void GraphDriver::send(std::uint64_t epoch) {
@@ -175,6 +183,8 @@ void GraphDriver::process(const host::AudioBufferView&, const host::AudioBufferV
         }
     }
 
+    drainParams();
+
     const int chunk = current_ != nullptr ? current_->maxBlockFrames() : output.frames;
     for (int offset = 0; offset < output.frames; offset += chunk) {
         renderBlock(output, offset, std::min(chunk, output.frames - offset));
@@ -189,6 +199,28 @@ void GraphDriver::process(const host::AudioBufferView&, const host::AudioBufferV
         if (!retireOutbox_.push(old)) {
             unsentRetire_ = old;
             retirePending_ = true;
+        }
+    }
+}
+
+void GraphDriver::drainParams() noexcept {
+    // Older epochs are dropped, the current epoch applies, and the first change
+    // for a newer epoch waits until that graph has been swapped in.
+    for (;;) {
+        ParamChange change;
+        if (paramHeld_) {
+            change = heldParam_;
+        } else if (!paramInbox_.pop(change)) {
+            return;
+        }
+        if (change.epoch > currentEpoch_) {
+            heldParam_ = change;
+            paramHeld_ = true;
+            return;
+        }
+        paramHeld_ = false;
+        if (change.epoch == currentEpoch_ && current_ != nullptr) {
+            current_->setParameter(change.slot, change.paramId, change.value, change.rampFrames);
         }
     }
 }

@@ -261,6 +261,16 @@ std::int64_t PreparedGraph::edgeCompensation(NodeId from, NodeId to, int port) c
     return -1;
 }
 
+void PreparedGraph::setParameter(NodeId node, std::uint32_t paramId, double value, int rampFrames) noexcept {
+    if (node < impl_->nodes.size()) {
+        impl_->nodes[node].node->setParameter(paramId, value, rampFrames);
+    }
+}
+
+std::size_t PreparedGraph::nodeCount() const noexcept {
+    return impl_->nodes.size();
+}
+
 std::int64_t PreparedGraph::outputLatency(NodeId node) const noexcept {
     return node < impl_->nodes.size() ? impl_->nodes[node].outputLatency : -1;
 }

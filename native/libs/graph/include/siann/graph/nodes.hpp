@@ -48,20 +48,36 @@ private:
 // center, the far side attenuated toward zero).
 class TrackFaderNode final : public Node {
 public:
+    // Parameters for setParameter.
+    static constexpr std::uint32_t kGainMilliDb = 1;  // INT32_MIN is minus infinity
+    static constexpr std::uint32_t kPan = 2;          // [-10000, 10000]
+    static constexpr std::uint32_t kMute = 3;         // 0 or 1
+
     TrackFaderNode(int inputChannels, std::int32_t gainMilliDb, std::int32_t pan, bool mute);
     std::vector<int> inputPorts() const override { return {inputChannels_}; }
     int outputChannels() const override { return 2; }
     void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                  const AudioBufferView& output) noexcept override;
+    void setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept override;
 
+    // Current (ramping) per-side gains.
     float leftGain() const noexcept { return left_; }
     float rightGain() const noexcept { return right_; }
 
 private:
+    void retarget(int rampFrames) noexcept;
+
     int inputChannels_;
+    std::int32_t gainMilliDb_;
+    std::int32_t pan_;
+    bool mute_;
     float left_ = 0.0f;
     float right_ = 0.0f;
-    // For mono input only one pair is used; for stereo, each side scales itself.
+    float leftStep_ = 0.0f;
+    float rightStep_ = 0.0f;
+    float leftTarget_ = 0.0f;
+    float rightTarget_ = 0.0f;
+    int remaining_ = 0;
 };
 
 // A summing bus with a fixed gain.
