@@ -1075,6 +1075,25 @@ review instead of pushing on.
 | M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems | Production-level criteria list passes | — |
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
 
+### Status (2026-10-21)
+
+M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
+automated test that runs in CI on Windows, macOS and Linux:
+
+| M1 exit criterion | Evidence |
+|---|---|
+| CLI creates a session, imports audio, places clips, sets gain, renders WAV | `apps/cli` test "M1 exit criterion", run in a non-ASCII bundle path |
+| Replay gives identical document hashes | `siann-cli verify` in the same test; `siann-session` reopen tests compare every revision envelope |
+| Offline PDC null tests across direct, send, aux and sidechain paths | `siann-graph` tests; three paths cancel to exact zero, nested buses within 1e-6 |
+| A kill at each commit step recovers | `siann-session` tests: media written but not journaled, torn journal tail, corrupted record, interrupted and tampered checkpoint |
+| Node and C++ pass the same JCS, hash and time fixtures | `fixtures/` checked by `test/jcs.test.js`, `test/merkle.test.js`, `test/fixture-parity.test.js` and the native suites |
+| Kill criterion: structural sharing too slow for 500-track documents | Not triggered: 500 tracks and 5,000 clips with 100 edits take 0.16 s (MSVC Release) |
+
+Known limits carried into later milestones: the PDC tests build graphs
+directly, because the M1 document has no buses or sends yet; the history is a
+single chain (proposal branches arrive with audition in M3); overlapping clips
+sum. Revision 3 (realtime data flow) is still required before M2.
+
 M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
 
