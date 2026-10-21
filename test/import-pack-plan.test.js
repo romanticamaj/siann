@@ -63,7 +63,9 @@ test('buildImportPackPlan creates a reviewable plan before apply', () => {
   const root = '/tmp/siann-import-pack-plan-unit';
   const plan = buildImportPackPlan(manifest(root), '/repo/examples/import-pack/manifest.json');
 
-  assert.equal(plan.schemaVersion, 'siann.import_pack_plan.v0');
+  assert.equal(plan.schemaVersion, 'siann.import_pack_plan.v1');
+  assert.equal(plan.integrity.canonicalization, 'jcs-rfc8785');
+  assert.match(plan.integrity.commandHash, /^sha256:[a-f0-9]{64}$/);
   assert.equal(plan.workflow, 'import-pack');
   assert.equal(plan.manifestFile, '/repo/examples/import-pack/manifest.json');
   assert.deepEqual(plan.review, {
@@ -213,7 +215,7 @@ test('siann writes, validates, approves, and applies an import-pack plan through
   const planSummary = JSON.parse(planResult.stdout);
   assert.equal(planSummary.planFile, planFile);
   assert.equal(planSummary.reviewState, 'pending');
-  assert.equal(JSON.parse(fs.readFileSync(planFile, 'utf8')).schemaVersion, 'siann.import_pack_plan.v0');
+  assert.equal(JSON.parse(fs.readFileSync(planFile, 'utf8')).schemaVersion, 'siann.import_pack_plan.v1');
 
   const validateResult = spawnSync(process.execPath, [
     cli,
@@ -283,4 +285,67 @@ test('siann writes, validates, approves, and applies an import-pack plan through
   assert.equal(applySummary.workflow, 'apply-plan');
   assert.equal(applySummary.commandFile, commandFile);
   assert.equal(JSON.parse(fs.readFileSync(commandFile, 'utf8')).commands.at(-1).op, 'observe_session');
+});
+
+test('validateImportPackPlan still accepts v0 plans and verifies them with JCS', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-import-pack-plan-v0-'));
+  const manifestFile = path.join(tmp, 'manifest.json');
+  const planFile = path.join(tmp, 'plan.json');
+  writeJson(manifestFile, manifest(tmp));
+  writeImportPackPlan(manifestFile, planFile);
+
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  plan.schemaVersion = 'siann.import_pack_plan.v0';
+  delete plan.integrity.canonicalization;
+  writeJson(planFile, plan);
+
+  const result = validateImportPackPlan(planFile);
+  assert.equal(result.ok, true);
+  assert.equal(result.commandHash, plan.integrity.commandHash);
+});
+
+test('validateImportPackPlan rejects unknown plan schema versions', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-import-pack-plan-version-'));
+  const manifestFile = path.join(tmp, 'manifest.json');
+  const planFile = path.join(tmp, 'plan.json');
+  writeJson(manifestFile, manifest(tmp));
+  writeImportPackPlan(manifestFile, planFile);
+
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  plan.schemaVersion = 'siann.import_pack_plan.v9';
+  writeJson(planFile, plan);
+
+  assert.throws(() => validateImportPackPlan(planFile), /schemaVersion must be one of/);
+});
+
+test('validateImportPackPlan reports v1 plans with a different canonicalization', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-import-pack-plan-canon-'));
+  const manifestFile = path.join(tmp, 'manifest.json');
+  const planFile = path.join(tmp, 'plan.json');
+  writeJson(manifestFile, manifest(tmp));
+  writeImportPackPlan(manifestFile, planFile);
+
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  plan.integrity.canonicalization = 'sorted-json';
+  writeJson(planFile, plan);
+
+  const result = validateImportPackPlan(planFile);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.issues.map((issue) => issue.code), ['unsupported_canonicalization']);
+});
+
+test('validateImportPackPlan reports commands that cannot be canonicalized', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-import-pack-plan-surrogate-'));
+  const manifestFile = path.join(tmp, 'manifest.json');
+  const planFile = path.join(tmp, 'plan.json');
+  writeJson(manifestFile, manifest(tmp));
+  writeImportPackPlan(manifestFile, planFile);
+
+  const text = fs.readFileSync(planFile, 'utf8').replaceAll('Riser 01', 'Riser \\ud800');
+  fs.writeFileSync(planFile, text);
+
+  const result = validateImportPackPlan(planFile);
+  assert.equal(result.ok, false);
+  assert.equal(result.commandHash, null);
+  assert.ok(result.issues.some((issue) => issue.code === 'command_not_canonicalizable'));
 });

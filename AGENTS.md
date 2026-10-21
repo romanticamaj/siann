@@ -38,6 +38,7 @@ Key internal documents:
 - [Engine spike checklist](docs/research/engine-spike-checklist.md)
 - [Command journal v0](docs/schemas/command-journal-v0.md)
 - [DAWproject export v0](docs/schemas/dawproject-export-v0.md)
+- [Import pack plan v1](docs/schemas/import-pack-plan-v1.md)
 - [Intake plan v0](docs/schemas/intake-plan-v0.md)
 - [Session observation v0](docs/schemas/session-observation-v0.md)
 - [UI base evaluation](docs/research/ui-base-evaluation.md)

@@ -43,7 +43,7 @@ Four layers, top to bottom: **Studio UI** (not implemented) → **Agent Runtime*
 
 Key invariants baked into the code:
 
-- **Review-before-apply lifecycle**: workflows generate a plan, which is validated, then explicitly approved (or rejected), then applied. Plan integrity is enforced via canonical-JSON `sha256:` hashes (`src/workflows/import-pack-plan.js`) so an approved plan can't be silently altered before apply.
+- **Review-before-apply lifecycle**: workflows generate a plan, which is validated, then explicitly approved (or rejected), then applied. Plan integrity is enforced via RFC 8785 (JCS) canonical-JSON `sha256:` hashes (`src/hash/jcs.js`, shared fixtures in `fixtures/jcs/`) so an approved plan can't be silently altered before apply.
 - **Journaled rollback**: every engine run writes a command journal (`siann.command_journal.v0`) with pre-state snapshots; `src/workflows/rollback.js` generates rollback commands from it. Schemas are versioned strings (`siann.result.v0`, etc.) and documented in `docs/schemas/`.
 - **Commands target stable IDs, not mutable track names.** Name-based lookup may exist as a dry-run helper, but ambiguity must be rejected before mutation.
 

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "siann.jcs_fixtures.v1",
+  "description": "RFC 8785 canonicalization fixtures shared by the Node bridge and the C++ engine. \"input\" is JSON text, \"canonical\" is the exact expected output, \"sha256\" is over the UTF-8 bytes of \"canonical\".",
+  "valid": [
+    {
+      "name": "numbers_rfc8785",
+      "input": "[1.0, -1.0, 1e21, 1e30, -0, 0.000001, 1e-7, 4.50, 2e-3, 333333333.33333329, 9007199254740993, 5e-324, 1.7976931348623157e308]",
+      "canonical": "[1,-1,1e+21,1e+30,0,0.000001,1e-7,4.5,0.002,333333333.3333333,9007199254740992,5e-324,1.7976931348623157e+308]",
+      "sha256": "sha256:7b23b0b05b4241a42a5c4504c29a356b77938d9355a3e374726196a8791cb704"
+    },
+    {
+      "name": "key_order_rfc8785",
+      "input": "{\"€\":\"Euro Sign\",\"\\r\":\"Carriage Return\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\",\"1\":\"One\",\"😀\":\"Emoji: Grinning Face\",\"\\u0080\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\"}",
+      "canonical": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}",
+      "sha256": "sha256:5e321556d22018a9656991a9e94f77ec175fa193e52a2429d312f8419ec8b08c"
+    },
+    {
+      "name": "non_bmp_key_sorts_before_private_use",
+      "input": "{\"\":1,\"😀\":2}",
+      "canonical": "{\"😀\":2,\"\":1}",
+      "sha256": "sha256:28c95d1bbb2209223307e62f489020e8f9e0cfa16adf2daf6d88127a1e8dd22a"
+    },
+    {
+      "name": "nested_whitespace",
+      "input": "{ \"b\": [ true, false, null ], \"a\": { \"z\": 1, \"y\": \"x\" } }",
+      "canonical": "{\"a\":{\"y\":\"x\",\"z\":1},\"b\":[true,false,null]}",
+      "sha256": "sha256:e2103b535c7b4abb07652973277c68f13260dc2b3fc997e3b3478f56ab7125dd"
+    },
+    {
+      "name": "string_escapes",
+      "input": "\"\\u0000\\u001f\\b\\t\\n\\f\\r\\\"\\\\\\/\\u007f é\"",
+      "canonical": "\"\\u0000\\u001f\\b\\t\\n\\f\\r\\\"\\\\/ é\"",
+      "sha256": "sha256:1ef7c88c186fd1e853a1d26bed5079aec2be0386c6ec39f6993a441c4a2383e9"
+    },
+    {
+      "name": "empty_containers",
+      "input": "{\"a\":{},\"b\":[]}",
+      "canonical": "{\"a\":{},\"b\":[]}",
+      "sha256": "sha256:aeeba1e56a144077f89e26c930dad7cf933e9383cfb8e33ddff618233b29be76"
+    },
+    {
+      "name": "integer_and_string_encodings",
+      "input": "{\"start\":\"12\",\"sampleRate\":48000,\"gainMilliDb\":-2147483648}",
+      "canonical": "{\"gainMilliDb\":-2147483648,\"sampleRate\":48000,\"start\":\"12\"}",
+      "sha256": "sha256:a49fd3045416b00134de6b5a1719fdb079df4328541c7bc5b35aae129af0460a"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "lone_high_surrogate_value",
+      "input": "\"\\ud800\"",
+      "error": "lone_surrogate"
+    },
+    {
+      "name": "lone_low_surrogate_key",
+      "input": "{\"\\udc00\":1}",
+      "error": "lone_surrogate"
+    }
+  ]
+}
