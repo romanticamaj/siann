@@ -1,12 +1,19 @@
 const fs = require('node:fs');
-const crypto = require('node:crypto');
 const path = require('node:path');
+
+const { CANONICALIZATION, sha256Jcs } = require('../hash/jcs');
 
 const {
   buildImportPackCommand,
   loadImportPackManifest,
   validateManifest,
 } = require('./import-pack');
+
+const PLAN_SCHEMA_V0 = 'siann.import_pack_plan.v0';
+const PLAN_SCHEMA_V1 = 'siann.import_pack_plan.v1';
+// v0 plans hashed with sorted-key JSON.stringify, which equals RFC 8785 for every
+// value v0 could carry, so they are still verified with JCS and stay readable.
+const SUPPORTED_PLAN_SCHEMAS = [PLAN_SCHEMA_V0, PLAN_SCHEMA_V1];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -17,21 +24,6 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function canonicalJson(value) {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
-  }
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => (
-      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
-    )).join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function sha256(value) {
-  return `sha256:${crypto.createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
-}
 
 function commandStep(command, manifest) {
   if (command.op === 'create_session') {
@@ -93,7 +85,7 @@ function buildImportPackPlan(manifest, manifestFile) {
   const previewOutputPath = manifest.preview ? manifest.preview.outputPath : null;
 
   return {
-    schemaVersion: 'siann.import_pack_plan.v0',
+    schemaVersion: PLAN_SCHEMA_V1,
     workflow: 'import-pack',
     manifestFile: manifestFile ? path.resolve(manifestFile) : null,
     summary: {
@@ -113,7 +105,8 @@ function buildImportPackPlan(manifest, manifestFile) {
       instructions: 'Review this plan before running workflow apply-plan.',
     },
     integrity: {
-      commandHash: sha256(command),
+      canonicalization: CANONICALIZATION,
+      commandHash: sha256Jcs(command),
     },
     command,
   };
@@ -140,8 +133,8 @@ function loadImportPackPlan(planFile) {
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
     throw new Error('plan must be an object');
   }
-  if (plan.schemaVersion !== 'siann.import_pack_plan.v0') {
-    throw new Error('schemaVersion must be siann.import_pack_plan.v0');
+  if (!SUPPORTED_PLAN_SCHEMAS.includes(plan.schemaVersion)) {
+    throw new Error(`schemaVersion must be one of ${SUPPORTED_PLAN_SCHEMAS.join(', ')}`);
   }
   if (plan.workflow !== 'import-pack') {
     throw new Error('workflow must be import-pack');
@@ -160,9 +153,29 @@ function loadImportPackPlan(planFile) {
 
 function planValidationIssues(plan) {
   const issues = [];
-  const currentCommandHash = sha256(plan.command);
+  let currentCommandHash = null;
+  try {
+    currentCommandHash = sha256Jcs(plan.command);
+  } catch (error) {
+    if (error.name !== 'JcsError') {
+      throw error;
+    }
+    issues.push({
+      code: 'command_not_canonicalizable',
+      message: `plan command cannot be canonicalized: ${error.message}`,
+    });
+  }
+  if (plan.schemaVersion === PLAN_SCHEMA_V1
+    && (!plan.integrity || plan.integrity.canonicalization !== CANONICALIZATION)) {
+    issues.push({
+      code: 'unsupported_canonicalization',
+      message: `plan.integrity.canonicalization must be ${CANONICALIZATION}`,
+    });
+  }
   const expectedCommandHash = plan.integrity && plan.integrity.commandHash;
-  if (!expectedCommandHash) {
+  if (currentCommandHash === null) {
+    // already reported above
+  } else if (!expectedCommandHash) {
     issues.push({
       code: 'missing_command_hash',
       message: 'plan.integrity.commandHash is required',
