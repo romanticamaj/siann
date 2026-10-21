@@ -44,6 +44,14 @@ public:
     // inputs[i] holds the aligned sum of everything connected to port i.
     virtual void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                          const AudioBufferView& output) noexcept = 0;
+
+    // Audio thread, between blocks: moves a parameter to value over rampFrames
+    // (0 = immediately). Unknown parameter IDs are ignored.
+    virtual void setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept {
+        (void)paramId;
+        (void)value;
+        (void)rampFrames;
+    }
 };
 
 class GraphError : public std::runtime_error {
@@ -108,6 +116,10 @@ public:
     // Compensation delay applied on the edge from -> to at port; -1 if absent.
     std::int64_t edgeCompensation(NodeId from, NodeId to, int port = 0) const noexcept;
     std::int64_t outputLatency(NodeId node) const noexcept;
+
+    // Audio thread, between blocks. Ignored for an unknown node.
+    void setParameter(NodeId node, std::uint32_t paramId, double value, int rampFrames) noexcept;
+    std::size_t nodeCount() const noexcept;
 
 private:
     friend class GraphBuilder;

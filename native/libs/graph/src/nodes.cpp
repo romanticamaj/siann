@@ -63,20 +63,54 @@ void ClipPlayerNode::process(const ProcessContext& context, std::span<const Audi
 }
 
 TrackFaderNode::TrackFaderNode(int inputChannels, std::int32_t gainMilliDb, std::int32_t pan, bool mute)
-    : inputChannels_(inputChannels) {
-    if (mute) {
-        return;  // both gains stay zero
+    : inputChannels_(inputChannels), gainMilliDb_(gainMilliDb), pan_(pan), mute_(mute) {
+    retarget(0);
+}
+
+void TrackFaderNode::retarget(int rampFrames) noexcept {
+    float left = 0.0f;
+    float right = 0.0f;
+    if (!mute_) {
+        const float gain = gainFromMilliDb(gainMilliDb_);
+        const double p = std::clamp(static_cast<double>(pan_) / 10'000.0, -1.0, 1.0);
+        if (inputChannels_ == 1) {
+            const double theta = (p + 1.0) * std::numbers::pi / 4.0;
+            left = gain * static_cast<float>(std::cos(theta));
+            right = gain * static_cast<float>(std::sin(theta));
+        } else {
+            left = gain * static_cast<float>(std::min(1.0, 1.0 - p));
+            right = gain * static_cast<float>(std::min(1.0, 1.0 + p));
+        }
     }
-    const float gain = gainFromMilliDb(gainMilliDb);
-    const double p = std::clamp(static_cast<double>(pan) / 10'000.0, -1.0, 1.0);
-    if (inputChannels_ == 1) {
-        const double theta = (p + 1.0) * std::numbers::pi / 4.0;
-        left_ = gain * static_cast<float>(std::cos(theta));
-        right_ = gain * static_cast<float>(std::sin(theta));
-    } else {
-        left_ = gain * static_cast<float>(std::min(1.0, 1.0 - p));
-        right_ = gain * static_cast<float>(std::min(1.0, 1.0 + p));
+    leftTarget_ = left;
+    rightTarget_ = right;
+    if (rampFrames <= 0) {
+        left_ = left;
+        right_ = right;
+        remaining_ = 0;
+        return;
     }
+    remaining_ = rampFrames;
+    leftStep_ = (left - left_) / static_cast<float>(rampFrames);
+    rightStep_ = (right - right_) / static_cast<float>(rampFrames);
+}
+
+void TrackFaderNode::setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept {
+    switch (paramId) {
+        case kGainMilliDb:
+            gainMilliDb_ = value <= static_cast<double>(INT32_MIN) ? INT32_MIN
+                                                                   : static_cast<std::int32_t>(std::lround(value));
+            break;
+        case kPan:
+            pan_ = static_cast<std::int32_t>(std::lround(std::clamp(value, -10'000.0, 10'000.0)));
+            break;
+        case kMute:
+            mute_ = value != 0.0;
+            break;
+        default:
+            return;
+    }
+    retarget(rampFrames);
 }
 
 void TrackFaderNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
@@ -85,6 +119,15 @@ void TrackFaderNode::process(const ProcessContext& context, std::span<const Audi
     const float* l = in.channel(0);
     const float* r = inputChannels_ >= 2 ? in.channel(1) : in.channel(0);
     for (int i = 0; i < context.frames; ++i) {
+        if (remaining_ > 0) {
+            if (--remaining_ == 0) {
+                left_ = leftTarget_;  // land exactly on the target
+                right_ = rightTarget_;
+            } else {
+                left_ += leftStep_;
+                right_ += rightStep_;
+            }
+        }
         output.channel(0)[i] = l[i] * left_;
         output.channel(1)[i] = r[i] * right_;
     }

@@ -1,5 +1,6 @@
 add_library(siann_realtime
   src/graph_driver.cpp
+  src/control_dispatcher.cpp
 )
 add_library(siann::realtime ALIAS siann_realtime)
 target_include_directories(siann_realtime PUBLIC include)
@@ -10,6 +11,7 @@ siann_apply_compile_options(siann_realtime)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_realtime_tests
     tests/graph_driver_test.cpp
+    tests/params_test.cpp
   )
   target_link_libraries(siann_realtime_tests PRIVATE siann::realtime siann::host_fake siann_rt_alloc_guard
                         Catch2::Catch2WithMain)
