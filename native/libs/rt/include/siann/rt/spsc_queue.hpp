@@ -26,9 +26,6 @@ inline constexpr std::size_t kCacheLine = 64;
 #endif
 template <typename T>
 class SpscQueue {
-    static_assert(std::is_nothrow_move_assignable_v<T>, "queue items must be nothrow move-assignable");
-    static_assert(std::is_nothrow_default_constructible_v<T>, "queue items must be nothrow default-constructible");
-
 public:
     // Holds at least `capacity` items (rounded up to a power of two).
     explicit SpscQueue(std::size_t capacity) : mask_(roundUp(capacity) - 1), slots_(new T[mask_ + 1]) {}
@@ -40,6 +37,7 @@ public:
 
     // Producer side. Returns false when full.
     bool push(T item) noexcept {
+        checkItemType();
         const std::size_t tail = tail_.load(std::memory_order_relaxed);
         if (tail - headCache_ > mask_) {
             headCache_ = head_.load(std::memory_order_acquire);
@@ -72,6 +70,13 @@ public:
     }
 
 private:
+    // Checked where the queue is used rather than in the class body: GCC cannot
+    // evaluate these traits for a type nested in a class still being defined.
+    static constexpr void checkItemType() noexcept {
+        static_assert(std::is_nothrow_move_assignable_v<T>, "queue items must be nothrow move-assignable");
+        static_assert(std::is_nothrow_default_constructible_v<T>, "queue items must be nothrow default-constructible");
+    }
+
     static std::size_t roundUp(std::size_t n) {
         std::size_t c = 1;
         while (c < n) {
