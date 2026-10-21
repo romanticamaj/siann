@@ -4,9 +4,10 @@
 // output durable first, then submits the pure command media.add with the
 // content hash; replay never re-runs the job.
 //
-// A file already at the session rate is stored byte for byte. Any other rate
-// is converted offline and stored as 32-bit float WAV, and the source file's
-// hash is kept as originalHash. Files live at media/<sha256 hex>.wav.
+// A WAV or FLAC file already at the session rate is stored byte for byte. Any
+// other rate is converted offline and stored as 32-bit float WAV, and the
+// source file's hash is kept as originalHash. Files live at
+// media/<sha256 hex>.wav or .flac.
 
 #include <filesystem>
 #include <string>
@@ -29,6 +30,7 @@ ImportResult importMedia(Session& session, const std::filesystem::path& source, 
                          std::string actor, std::string time);
 
 // Path of a media file inside a bundle.
-std::filesystem::path mediaPath(const std::filesystem::path& bundle, const hash::Digest& contentHash);
+std::filesystem::path mediaPath(const std::filesystem::path& bundle, const hash::Digest& contentHash,
+                                model::MediaFormat format = model::MediaFormat::wav);
 
 }  // namespace siann::session

@@ -7,6 +7,8 @@
 
 #define DR_WAV_IMPLEMENTATION
 #define DR_WAV_NO_STDIO
+#define DR_FLAC_IMPLEMENTATION
+#define DR_FLAC_NO_STDIO
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__GNUC__)
@@ -17,6 +19,7 @@
 #pragma GCC diagnostic ignored "-Wshadow"
 #endif
 #include "dr_wav.h"
+#include "dr_flac.h"
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #elif defined(__GNUC__)
@@ -73,6 +76,39 @@ private:
     bool open_ = false;
 };
 
+class Flac {
+public:
+    explicit Flac(std::string_view bytes) {
+        if (bytes.size() < 4 || std::memcmp(bytes.data(), "fLaC", 4) != 0) {
+            throw MediaError("unsupported_media", "not a FLAC file");
+        }
+        flac_ = drflac_open_memory(bytes.data(), bytes.size(), nullptr);
+        if (flac_ == nullptr) {
+            throw MediaError("decode_failed", "the FLAC stream could not be opened");
+        }
+        if (flac_->channels == 0 || flac_->sampleRate == 0) {
+            throw MediaError("decode_failed", "the FLAC stream has no channels or sample rate");
+        }
+    }
+    ~Flac() {
+        if (flac_ != nullptr) {
+            drflac_close(flac_);
+        }
+    }
+    Flac(const Flac&) = delete;
+    Flac& operator=(const Flac&) = delete;
+
+    drflac* get() noexcept { return flac_; }
+
+    AudioInfo info() const {
+        return AudioInfo{static_cast<std::int32_t>(flac_->channels), static_cast<std::int64_t>(flac_->sampleRate),
+                         static_cast<std::int64_t>(flac_->totalPCMFrameCount)};
+    }
+
+private:
+    drflac* flac_ = nullptr;
+};
+
 void putU16(std::string& out, std::uint16_t v) {
     out.push_back(static_cast<char>(v & 0xFF));
     out.push_back(static_cast<char>(v >> 8));
@@ -98,6 +134,50 @@ std::int64_t roundedFrames(std::int64_t frames, std::int64_t from, std::int64_t 
 }
 
 }  // namespace
+
+FileFormat detectFormat(std::string_view bytes) {
+    if (bytes.size() >= 4 && std::memcmp(bytes.data(), "fLaC", 4) == 0) {
+        return FileFormat::flac;
+    }
+    if (bytes.size() >= 12 && (std::memcmp(bytes.data(), "RIFF", 4) == 0 || std::memcmp(bytes.data(), "RF64", 4) == 0) &&
+        std::memcmp(bytes.data() + 8, "WAVE", 4) == 0) {
+        return FileFormat::wav;
+    }
+    throw MediaError("unsupported_media", "not a WAV or FLAC file");
+}
+
+AudioInfo probe(std::string_view bytes) {
+    return detectFormat(bytes) == FileFormat::flac ? probeFlac(bytes) : probeWav(bytes);
+}
+
+AudioBuffer decode(std::string_view bytes) {
+    return detectFormat(bytes) == FileFormat::flac ? decodeFlac(bytes) : decodeWav(bytes);
+}
+
+AudioInfo probeFlac(std::string_view bytes) {
+    Flac flac(bytes);
+    return flac.info();
+}
+
+AudioBuffer decodeFlac(std::string_view bytes) {
+    Flac flac(bytes);
+    AudioBuffer buffer;
+    buffer.info = flac.info();
+    if (buffer.info.frames <= 0) {
+        throw MediaError("decode_failed", "FLAC streams without a known length are not supported");
+    }
+    const auto total = static_cast<std::uint64_t>(buffer.info.frames) * static_cast<std::uint64_t>(buffer.info.channels);
+    if (total > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
+        throw MediaError("too_large", "the FLAC file is too large to decode in memory");
+    }
+    buffer.samples.resize(static_cast<std::size_t>(total));
+    const drflac_uint64 read =
+        drflac_read_pcm_frames_f32(flac.get(), static_cast<drflac_uint64>(buffer.info.frames), buffer.samples.data());
+    if (read != static_cast<drflac_uint64>(buffer.info.frames)) {
+        throw MediaError("decode_failed", "the FLAC data ended early or failed its checksum");
+    }
+    return buffer;
+}
 
 AudioInfo probeWav(std::string_view bytes) {
     Wav wav(bytes);

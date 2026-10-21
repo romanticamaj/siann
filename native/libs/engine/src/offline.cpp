@@ -37,7 +37,7 @@ MediaLibrary loadMedia(const model::Document& document, const std::filesystem::p
         if (library.media.count(media->contentHash) != 0) {
             continue;
         }
-        const auto file = session::mediaPath(bundle, media->contentHash);
+        const auto file = session::mediaPath(bundle, media->contentHash, media->format);
         if (!std::filesystem::exists(file)) {
             throw EngineError("media_missing", "media " + media->id + " has no file at " + file.string());
         }
@@ -45,7 +45,7 @@ MediaLibrary loadMedia(const model::Document& document, const std::filesystem::p
         if (hash::sha256(bytes) != media->contentHash) {
             throw EngineError("media_hash_mismatch", "the file for media " + media->id + " does not match its hash");
         }
-        const media::AudioBuffer decoded = media::decodeWav(bytes);
+        const media::AudioBuffer decoded = media::decode(bytes);
         if (decoded.info.channels != media->channels || decoded.info.frames != media->frames ||
             decoded.info.sampleRate != media->sampleRate) {
             throw EngineError("media_mismatch", "the file for media " + media->id + " differs from its entity");

@@ -12,6 +12,7 @@ if(SIANN_BUILD_TESTS)
     tests/offline_test.cpp
   )
   target_link_libraries(siann_engine_tests PRIVATE siann::engine Catch2::Catch2WithMain)
+  target_include_directories(siann_engine_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/media/tests")
   siann_apply_compile_options(siann_engine_tests)
   catch_discover_tests(siann_engine_tests)
 endif()
