@@ -34,7 +34,7 @@ function writeFakeRuntime(file) {
     '  else if (request.method === "render.preview") { fs.writeFileSync(request.body.outputPath, "fake wav"); response(request, { sessionId, outputPath: request.body.outputPath, sampleRate: request.body.sampleRate, bitDepth: request.body.bitDepth }); }',
     '  else if (request.method === "session.save") response(request, { sessionId, saved: true });',
     '  else if (request.method === "session.close") response(request, { sessionId, closed: true });',
-    '  else if (request.method === "runtime.stop") { response(request, { stopped: true }); fs.writeFileSync(process.env.SIANN_FAKE_RUNTIME_CALLS, JSON.stringify(calls, null, 2)); process.exit(0); }',
+    '  else if (request.method === "runtime.stop") { calls.push({ method: request.method, body: request.body }); fs.writeFileSync(process.env.SIANN_FAKE_RUNTIME_CALLS, JSON.stringify(calls, null, 2)); calls.pop(); response(request, { stopped: true }); process.exit(0); }',
     '});',
   ].join('\n'));
   fs.chmodSync(file, 0o755);

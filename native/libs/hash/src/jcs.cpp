@@ -95,22 +95,22 @@ void appendString(std::string& out, std::string_view text, const std::string& po
 
 void serialize(std::string& out, const json::Value& value, const std::string& pointer) {
     switch (value.kind()) {
-        case json::Value::Kind::Null:
+        case json::Value::Kind::null:
             out += "null";
             return;
-        case json::Value::Kind::Bool:
+        case json::Value::Kind::boolean:
             out += value.asBool() ? "true" : "false";
             return;
-        case json::Value::Kind::Number:
+        case json::Value::Kind::number:
             if (!std::isfinite(value.asNumber())) {
                 throw CanonicalizeError("non_finite_number", pointer, "number must be finite");
             }
             out += formatNumber(value.asNumber());
             return;
-        case json::Value::Kind::String:
+        case json::Value::Kind::string:
             appendString(out, value.asString(), pointer);
             return;
-        case json::Value::Kind::Array: {
+        case json::Value::Kind::array: {
             const auto& items = value.asArray();
             out.push_back('[');
             for (std::size_t i = 0; i < items.size(); ++i) {
@@ -122,7 +122,7 @@ void serialize(std::string& out, const json::Value& value, const std::string& po
             out.push_back(']');
             return;
         }
-        case json::Value::Kind::Object: {
+        case json::Value::Kind::object: {
             const auto& members = value.asObject();
             std::vector<std::u16string> keys;
             keys.reserve(members.size());

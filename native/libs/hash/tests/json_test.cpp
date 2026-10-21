@@ -23,7 +23,7 @@ std::string errorCode(std::string_view text) {
 
 TEST_CASE("Parses scalars, arrays and objects", "[json]") {
     const Value value = parse(R"( { "a": [true, false, null, -1.5e2, "x"], "b": {} } )");
-    REQUIRE(value.kind() == Value::Kind::Object);
+    REQUIRE(value.kind() == Value::Kind::object);
     const Value* a = value.find("a");
     REQUIRE(a != nullptr);
     const auto& items = a->asArray();

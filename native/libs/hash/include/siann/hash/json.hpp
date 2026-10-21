@@ -21,7 +21,9 @@ using Object = std::vector<Member>;  // insertion order; keys are unique
 
 class Value {
 public:
-    enum class Kind { Null, Bool, Number, String, Array, Object };
+    // Lowercase enumerators, as in std::chars_format, so they do not shadow the
+    // Array and Object aliases.
+    enum class Kind { null, boolean, number, string, array, object };
 
     Value() noexcept = default;
     Value(std::nullptr_t) noexcept {}
@@ -34,7 +36,7 @@ public:
     Value(Object o) noexcept : data_(std::move(o)) {}
 
     Kind kind() const noexcept { return static_cast<Kind>(data_.index()); }
-    bool isNull() const noexcept { return kind() == Kind::Null; }
+    bool isNull() const noexcept { return kind() == Kind::null; }
 
     // Throw std::bad_variant_access on a kind mismatch.
     bool asBool() const { return std::get<bool>(data_); }
