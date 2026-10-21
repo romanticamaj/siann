@@ -2,11 +2,13 @@
 
 Date: 2026-10-14
 
-Status: Proposed, revision 2 (after review)
+Status: Proposed, revision 2.1 (M0 and M1 decisions recorded)
 
 Reviews of revision 1 (kept outside the repo):
 `D:\research\siann-arch-review\review-codex.md`,
 `review-claude-pane.md`, `review-fable-subagent.md`.
+Reviews of revision 2: `rev2-review-claude-pane.md`, `rev2-review-codex.md` in the
+same directory.
 
 ## Purpose
 
@@ -29,6 +31,17 @@ GUI dependency, a separate JUCE-free host for embedded), MIDI, channel layouts, 
 time model and the session format were specified, and milestones were reordered with
 kill criteria.
 
+Revision 2.1 records the decisions needed to start M0 and to freeze the M1
+contracts: repository layout, WebSocket library, a framework-free `siann-host-api`
+module, the hash and number encoding contracts, the revision envelope, write-ahead
+log ordering, the time rounding rule, the job-then-command rule, and the M1 scope.
+It also moves device-side realtime sample-rate conversion into M2, so sessions play
+on devices that cannot run at the session rate (Windows WASAPI shared mode).
+Realtime topics found in the review of revision 2 (graph ownership without a
+callback, command-thread duties, queue completeness, locate, instance lifetime) are
+deferred to revision 3, which must be accepted before M2 starts. See "Deferred to
+revision 3".
+
 ## Decision summary
 
 | Topic | Decision |
@@ -44,7 +57,10 @@ kill criteria.
 | Remote UI | The same web UI in a Chromium-based browser against a running engine |
 | Agent access | MCP adapter over the same command layer the UI uses |
 | History | One revision DAG is the single source of truth for undo, journal, plans and proposal branches |
-| Hashing | RFC 8785 (JCS) canonical JSON, shared by the Node bridge and the C++ engine |
+| Hashing | RFC 8785 (JCS) canonical JSON, shared by the Node bridge and the C++ engine; document hash is an RFC 6962 Merkle tree over entity hashes (see "Canonical JSON and hashes") |
+| Repository | Same repository: native code under `native/`, Electron app under `app/`, shared fixtures under `fixtures/` |
+| WebSocket | IXWebSocket, pinned, behind a thin adapter, from M0 |
+| Sample rate | Session rate is invariant; device-side realtime SRC in M2 when the device cannot run at the session rate |
 | Reference | SoundCraft (`storytold/soundcraft`, MIT/Apache, Rust) for module layering and "every action is a command". Its realtime internals are explicitly not a reference (see "What we do not copy from SoundCraft") |
 | Name | SIANN（聲） |
 
@@ -110,7 +126,6 @@ kill criteria.
 - Microcontroller targets.
 - AAX plugin support.
 - Real-time collaboration between multiple humans.
-- Realtime sample-rate conversion between session and device in v1.
 
 ## Production-level criteria
 
@@ -152,6 +167,9 @@ years. Milestones are designed so that something useful exists at every stage.
    siann-graph        GraphCompiler . PreparedGraph . LatencyModel . StateMigration
    siann-engine       Engine . AudioThread . ParamChannel . Outbox . Butler . Transport
    siann-dsp          built-in processors, meters, loudness
+                                          |
+   siann-host-api     PluginHost . AudioDevice . MidiDevice . MediaReader
+                      (pure interfaces, buffer views, event lists)
                                           |
    siann-host-desktop (JUCE)       |   siann-host-headless (no JUCE)
    AudioDevice, MidiDevice,        |   ALSA/JACK device, ALSA MIDI,
@@ -315,7 +333,7 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   instrument's path, so instrument tracks line up with audio tracks.
 - Input monitoring uses a low-latency path that bypasses compensation delays.
 - Recording offset = device input latency + device output latency (as reported by
-  the device) + the compensation applied to the monitoring reference; recorded clips
+  the device) + device-side SRC latency when active + the compensation applied to the monitoring reference; recorded clips
   are placed with that offset.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
@@ -361,8 +379,13 @@ The documented precision is shown to users and agents.
   `gesture.end(target, finalValue)`.
 - Only `gesture.end` creates a revision and a journal entry, containing start and
   end values (and the automation pass, if writing).
-- Gestures time out (for example 10 s without updates) and close automatically, so a
-  disconnected client cannot leave a gesture open.
+- A gesture is held under a client lease, not an update timer. Holding a fader still
+  is a valid gesture (Touch writes a constant value). The lease ends when the client
+  sends `gesture.end`, cancels, or stops answering the protocol heartbeat; the
+  gesture then commits the last accepted value and emits an event.
+- Plugin editors have no socket. Their gestures are owned by the plugin instance and
+  end on the plugin's end event, on editor close, or on instance destruction. If the
+  engine crashes mid-gesture, the session returns to the last durable revision.
 - Plugin editor edits arrive as plugin-originated begin/edit/end events and follow
   the same rule.
 
@@ -373,8 +396,13 @@ The documented precision is shown to users and agents.
 - Audio clips default to `AudioTime`; MIDI notes and tempo-anchored content use
   `MusicTime`. Changing the tempo map moves `MusicTime` content and leaves
   `AudioTime` content in place.
-- `TempoMap` and `MeterMap` support ramps. Conversions between domains are exact for
-  integer ticks within the map.
+- `TempoMap` and `MeterMap` support ramps in the model. M1 implements constant-tempo
+  segments with step changes only; tempo ramps are deferred and rejected by
+  validation until implemented.
+- Conversions between domains are not exact in general. A conversion that lands
+  between samples or ticks rounds to nearest, ties to even. Content keeps the domain
+  it was placed in, so repeated conversions never accumulate drift. Shared fixtures
+  cover the rounding boundaries.
 - Timecode (all frame rates including drop-frame), Bars|Beats, seconds and samples
   are display and input formats, never storage formats.
 
@@ -385,8 +413,39 @@ The documented precision is shown to users and agents.
   one revision.
 - Media whose rate differs from the session is converted offline at import
   (r8brain-free-src) and both the original hash and the converted hash are recorded.
-- The device runs at the session rate. If the device cannot, the engine refuses to
-  start playback and reports why. Realtime device-side SRC is a later option.
+  A failed conversion commits nothing. Changing the rate of an existing session is
+  deferred; M1 does not offer it.
+- New sessions default to the sample rate the output device actually runs at.
+- Opening a session whose rate differs from the device: the engine first asks the
+  device to run at the session rate (ASIO, CoreAudio nominal rate, WASAPI exclusive,
+  ALSA). If the device cannot, for example WASAPI shared mode fixed at the OS mix
+  rate, the engine plays through device-side sample-rate conversion (SRC). The
+  session is never silently converted.
+
+### Device-side SRC (M2)
+
+- The graph always runs at the session rate. SRC sits only at the device boundary:
+  output SRC from session rate to device rate, input SRC from device rate to session
+  rate. Offline render and bounce never pass through it.
+- Pull model: the graph renders fixed-size session-rate blocks into a preallocated
+  FIFO, and the output SRC consumes it to fill each device callback. The graph never
+  sees a variable block size. The FIFO adds at most one graph block of latency.
+- The SRC library runs on the audio thread, so it must be allocation-free after
+  setup and pass the realtime checks. Candidate: r8brain-free-src streaming mode
+  (MIT), verified with the allocation hooks and RealtimeSanitizer before adoption;
+  libsamplerate (BSD-2) is the fallback.
+- SRC latency (input and output filters plus the FIFO) is reported to the latency
+  model. The record offset includes it, so recorded clips stay aligned.
+- Recording through input SRC writes files at the session rate. Input monitoring
+  through SRC has higher latency; the UI and agents are told when SRC is active and
+  how much latency it adds.
+- The user and agents see a "resampling" state with the device rate, session rate
+  and added latency. Bypassing SRC is always possible by changing the device or its
+  mode.
+- Tests: sine and impulse through output and input SRC at 44.1 to 48 kHz and 48 to
+  44.1 kHz, with frequency response, aliasing and alignment limits; record-offset null
+  test through input SRC; the realtime-vs-offline parity test compares against the
+  offline render passed through the same SRC.
 - Playback streams from disk: a butler thread fills per-track ring buffers ahead of
   the playhead and refills on locate. Media is never fully decoded into RAM except
   for short files below a threshold.
@@ -404,6 +463,16 @@ The documented precision is shown to users and agents.
 - Punch in/out, pre-roll, loop record with one take per pass mapped to playlists.
 - Disk full or write failure stops recording, keeps everything written so far, and
   reports an error.
+- Before the first sample is written, the engine durably writes a take manifest
+  (`media/recording/<takeId>.json`: session, track, start position, sample rate,
+  channels, record offset, generation) and records into
+  `media/recording/<takeId>.wav`. The butler periodically records the last frame
+  boundary known to be on disk.
+- On start after a crash, the engine scans `media/recording/`, trims each file to its
+  last complete frame, flushes it, and offers an idempotent `record.recover_take`
+  command per take. Accepting it moves the file into content-addressed media and
+  commits the clips; rejecting it moves the file to `trash/`. Uncommitted takes are
+  never deleted automatically.
 - `record.stop` creates exactly one revision: new `MediaSource` entries plus new
   clips (`record.commit_take`). Undoing it removes the clips and media references;
   recorded files are never deleted by undo or rollback. Unreferenced takes move to a
@@ -438,6 +507,16 @@ Dependencies point downward only. CMake target visibility and a CI check enforce
 CI also builds and tests the core (everything except `siann-host-desktop` and the
 app) with no JUCE present.
 
+### siann-host-api (pure C++)
+
+The interfaces the graph and the engine use to reach devices, plugins and media,
+with SIANN-owned buffer views (`float* const* channels, int frames`), event lists and
+capability types. It contains no implementation and depends only on `siann-time` and
+`siann-midi`. `siann-graph` depends on it; `siann-host-desktop` and
+`siann-host-headless` implement it and are linked only into engine executables. The
+interface definitions are listed under "siann-host". Control-only operations (scan,
+editors) live in separate interfaces from the realtime `process` path.
+
 ### siann-time (pure C++)
 
 `AudioTime`, `MusicTime`, `Position` (domain-tagged), `TempoMap`, `MeterMap`,
@@ -455,7 +534,7 @@ is made in M1.
 
 ```text
 SessionDocument
- |- id: SessionId, revisionId
+ |- id: SessionId          (the revision ID lives in the revision envelope, not here)
  |- sampleRate (invariant)
  |- tracks, buses, auxInputs, vcas, groups, ioPorts
  |- tempoMap, meterMap, markers, loopRange, punchRange
@@ -482,7 +561,11 @@ AutomationLane  target ParamRef, points, mode
 Rules:
 
 - Every entity has a stable ID and a per-entity content hash. The document hash is a
-  Merkle root over entity hashes, so a revision only rehashes changed paths.
+  Merkle root over entity hashes (exact encoding in "Canonical JSON and hashes"), so
+  a revision only re-serializes changed entities.
+- IDs are ASCII `[A-Za-z0-9_-]`, 1 to 64 characters, so every sort order agrees.
+- Ordered collections (track order, insert order, send order) are lists of IDs inside
+  the parent entity, so order is part of the parent's hash.
 - Commands address IDs only. Name lookup is a dry-run helper and fails on ambiguity.
 - Loop range, punch range and solo-safe are document data. Playhead and transport
   state are engine state.
@@ -494,7 +577,7 @@ Rules:
 
 ```text
 <<interface>> Command                pure document transform
-  +id(): string                      e.g. "track.add", "clip.place", "mix.insert"
+  +id(): string                      e.g. "track.add", "clip.place", "plugin.insert"
   +validate(const Document&): Result<DeclaredEffects>
   +apply(const Document&): Result<Document>
   +toJson() / fromJson()
@@ -508,6 +591,14 @@ Rules:
 - Replaying the journal replays only pure commands and must reproduce identical
   document hashes. Jobs are never re-executed by replay; their outputs (media,
   blobs) are content-addressed files.
+- A job first makes its outputs durable (media and blob files written and flushed),
+  then submits a pure command carrying their hashes and descriptors. Example:
+  `plugin.instantiate` (job, main thread) produces a state blob, then
+  `plugin.insert {trackId, index, descriptor, stateBlob}` (pure command) enters the
+  history. `media.import` produces files, then `media.add` enters the history.
+- Rebuilding a document never requires a plugin to be installed or instantiable.
+  Instantiation happens when audio starts; a plugin that cannot be loaded is shown as
+  `missing` with its stored state preserved.
 - `validate()` returns the declared effects, including cascades (deleting a bus
   lists the sends it removes). After `apply()`, the processor diffs the two
   documents; the actual changed IDs must be a subset of the declared ones, otherwise
@@ -517,9 +608,16 @@ Rules:
 #### Revision DAG — single history
 
 ```text
-Revision { id, parent(s), document, cause, actor, time, hash }
+Revision { id, parents, documentHash, cause, actor, time }   (envelope)
 cause ∈ { command, plan(transaction), undo, redo, branch-merge, recovery }
 ```
+
+- `id`, `parents`, `actor` and `time` are envelope data and are never part of the
+  document or its hash. `documentHash` is the document hash defined in "Canonical
+  JSON and hashes".
+- Undo produces a new revision ID whose `documentHash` equals the earlier revision's.
+  Revision identity and document identity are therefore different things, and tests
+  compare `documentHash`, not revision IDs.
 
 - Every published document is a revision. The journal is the append-only log of
   the DAG.
@@ -555,11 +653,28 @@ Plan
 
 #### Journal as write-ahead log
 
-- `journal.ndjson` in the session bundle, append-only, one fsync per revision.
-- Checkpoints: the full document is written every N revisions or M seconds
-  (atomic write: temp file + rename). "Autosave" means checkpoint.
-- Recovery on start: load the latest checkpoint, replay journal entries after it up
-  to the last complete entry, report what was recovered.
+- `journal.ndjson` in the session bundle, append-only. One line is one complete
+  record and one record is one revision: schema `siann.journal_record.v1`, a
+  sequence number `seq` (decimal string, contiguous from 1), the revision envelope,
+  the commands, the actual diff, and a SHA-256 over the JCS of the record without
+  that field.
+- Commit order for every revision:
+  1. Everything the revision references (media, blobs) is written and flushed, and
+     on POSIX its directory is flushed.
+  2. The journal record is appended and flushed.
+  3. Only then is the revision published to the engine and the client answered.
+- Checkpoints: the full document is written every N revisions or M seconds, carrying
+  `coversSeq`, the last journal sequence it includes. It is written to a temp file,
+  flushed, then atomically replaced (`rename` plus directory flush on POSIX,
+  `ReplaceFileW` or `MoveFileExW` with write-through on Windows). "Autosave" means
+  checkpoint.
+- Recovery on start: load the newest valid checkpoint, replay records with
+  `seq > coversSeq` in order, and stop at the first record that fails to parse, fails
+  its checksum, or breaks sequence continuity. Bytes from that point on are moved to
+  `journal.corrupt-<time>` for diagnosis, never discarded silently. Report what was
+  recovered.
+- M1 never truncates or rotates the journal; it keeps all valid history. Rotation
+  and compaction come later.
 - Undo history depth in memory is bounded; older revisions are reconstructible from
   checkpoints plus journal.
 
@@ -567,13 +682,38 @@ Plan
 
 - Canonical form is RFC 8785 JSON Canonicalization Scheme (JCS): ECMAScript number
   serialization, keys sorted by UTF-16 code units, defined escaping.
-- Inside hashed regions, values should be integers or strings where practical
-  (gain stored as integer milli-dB, positions as integers), which removes most
-  floating-point formatting risk.
+- Number encoding inside hashed regions:
+  - 64-bit quantities (sample positions, ticks, lengths, sequence numbers) are
+    decimal strings matching `^-?(0|[1-9][0-9]*)$`, always, regardless of size.
+  - Gain is an integer milli-dB JSON number in `[-144000, 24000]`, with
+    `-2147483648` (`INT32_MIN`) meaning negative infinity. The sentinel is
+    special-cased before any arithmetic or interpolation; ramps into or out of it run
+    in linear amplitude. Mute stays a separate boolean.
+  - Pan is an integer in `[-10000, 10000]`.
+  - Values that are inherently floating point (normalized plugin parameters) are
+    JSON numbers in ECMAScript shortest round-trip form; `-0`, NaN and infinities are
+    rejected. The C++ serializer is tested against the same fixtures as Node.
+  - Out-of-range values and malformed strings are rejected at validation, not
+    clamped.
+- Hash payloads (each carries its own `schema` field, so a change is a version bump):
+  - `entityHash = sha256(JCS(entity))`, where the entity object excludes any hash
+    field of its own. Root settings (sample rate, tempo map, meter map, markers, loop
+    and punch ranges, top-level ID lists) form one entity with ID `root`.
+  - `planHash = sha256(JCS(plan))`, excluding `hash`, `state` and approval fields
+    (`approvedBy`, `approvedAt`, rejection notes).
+  - `documentHash` is the RFC 6962 Merkle Tree Hash over leaves sorted by
+    `"<entityType>:<id>"`. Leaf input is `0x00 || "<entityType>:<id>" || 0x00 ||
+    entityHashBytes`; internal nodes are `0x01 || left || right`; the split rule and
+    the empty tree follow RFC 6962 section 2.1.
+  - All hashes are written as `sha256:<lowercase hex>`.
+- `observationHash` in the harness spec is the `documentHash`. It identifies a full
+  snapshot. Direct commands may require it unchanged; plans keep per-entity
+  staleness through `readSet` and `writeSet`.
 - The Node bridge switches to JCS (a schema version bump of the plan format), and a
   shared fixture set covers numbers (`1.0`, `1e21`, `-0`), non-BMP keys and escapes.
-  Both implementations must pass the same fixtures. This rule is added to the
-  harness engineering spec section 1.2.
+  Both implementations must pass the same fixtures, including Merkle trees of 0, 1,
+  2, 3 and 5 leaves, the gain sentinel and the 64-bit string rule. These rules are
+  added to the harness engineering spec sections 1.2 and 1.4.
 
 ### siann-graph and siann-engine
 
@@ -594,6 +734,10 @@ Engine
   +process(block)       audio callback: drain graphInbox, paramInbox; render;
                         push outboxes
   +renderOffline(range, target)   same graph code, driven by a non-realtime loop
+                        (M1: a synchronous driver that owns its graph exclusively;
+                        compile, render and destroy happen on one thread, never
+                        concurrently, and it never shares instances with a live
+                        realtime graph)
 Transport       play, stop, locate, loop, punch; engine state, not document
 Butler          disk read-ahead, record write-through, peak pyramid
 ```
@@ -604,6 +748,8 @@ Built-in processors (EQ, dynamics, reverb, delay, utility), meters (peak, true
 peak), loudness (EBU R128), FFT. Original code or permissively licensed.
 
 ### siann-host: two targets, one interface
+
+The interfaces below are defined in `siann-host-api`.
 
 ```text
 <<interface>> AudioDevice   open(config) / close / setCallback; reports
@@ -728,7 +874,8 @@ Security rules:
 ```text
 MySong.siann/                    a directory
   session.json                   latest checkpoint, JCS canonical JSON
-  journal.ndjson                 append-only WAL since the checkpoint
+  journal.ndjson                 append-only WAL, all revisions (no rotation in M1)
+  media/recording/               in-progress takes and their manifests
   checkpoints/                   older checkpoints (bounded)
   media/<sha256>.<ext>           content-addressed audio and MIDI files
   media/originals.json           original file names and paths for relink
@@ -767,14 +914,14 @@ before adoption, including transitive dependencies.
 | CLAP hosting | CLAP SDK | MIT |
 | LV2 hosting (headless) | lilv, serd, sord | ISC |
 | Media decoding | dr_libs, libFLAC, libvorbis/libogg | public domain/MIT-0, BSD |
-| Resampling (offline) | r8brain-free-src | MIT |
+| Resampling (offline and device-side realtime) | r8brain-free-src; libsamplerate as realtime fallback | MIT; BSD-2 |
 | Time-stretch | signalsmith-stretch (default); Rubber Band optional | MIT; GPL or commercial |
 | Persistent data structures | immer or in-house | BSL-1.0 |
 | Lock-free queues | moodycamel ReaderWriterQueue (audio side: `try_*` only, preallocated) | Simplified BSD |
 | Realtime logging | rtlog-cpp or in-house ring | MIT |
 | Logging (non-realtime) | spdlog | MIT |
-| Plan hash | picosha2 + in-house JCS | MIT |
-| HTTP / WebSocket | candidates: IXWebSocket, libwebsockets, uWebSockets, Boost.Beast (chosen in M3) | BSD / MIT / Apache-2 / BSL-1.0 |
+| Plan and document hash | picosha2 + in-house JCS + in-house RFC 6962 Merkle | MIT |
+| HTTP / WebSocket | IXWebSocket, pinned, behind a thin adapter (chosen at M0; replaced only on a measured gap) | BSD-3 |
 | JSON | nlohmann/json (non-hashed I/O); JCS serializer in-house | MIT |
 | MCP | in-house thin JSON-RPC | — |
 | DAWproject | pugixml + miniz | MIT |
@@ -815,7 +962,7 @@ Test layers:
 | Realtime safety | audio-thread allocation hooks, RealtimeSanitizer, TSAN/ASAN/UBSAN builds |
 | Stress | fake device driving callbacks at small buffers; deadline-miss counting; rapid graph swaps; queue overflow; device hot-unplug; disk full; sample-rate mismatch |
 | PDC | null tests across direct, send, aux, sidechain; latency change during playback |
-| Parity | offline vs realtime null test; single vs multi-thread bit-identical (when threading exists) |
+| Parity | offline vs realtime null test (through the same SRC when SRC is active); single vs multi-thread bit-identical (when threading exists) |
 | Fuzz | command JSON and protocol messages |
 | Plugin (L3) | a built-in "hostile test plugin" (allocates, throws, changes latency, sleeps, calls back into the host) plus pluginval-checked real plugins |
 | Recovery | kill the engine at random points during recording and editing; verify recovery criteria |
@@ -851,7 +998,9 @@ To be updated together with the superseding ADR:
   descriptions; command catalog entries that require the Ardour engine.
 - `CLAUDE.md`: "The Ardour-derived audio engine lives in a separate sibling checkout".
 - Harness engineering spec: Part 3 (Engine Modification Harness, an Ardour fork
-  policy) and 3.5 licensing; section 1.2 gains the JCS rule.
+  policy, including 3.2 runtime protocol rules) and 3.5 licensing; section 1.2 gains
+  the JCS, number encoding and hash payload rules; section 1.4 and Part 4 point
+  `observationHash` at the document hash and keep per-entity plan staleness.
 - `docs/superpowers/specs/2026-07-07-siann-headless-engine-runtime-v0.md`: historical.
 - `docs/schemas/command-journal-v0.md`: v1 for the native engine (revision DAG,
   WAL, diff-based touched IDs).
@@ -867,8 +1016,9 @@ To be updated together with the superseding ADR:
   hashing in M1 so both implementations share fixtures.
 - The `siann-intake` skill keeps working against the Node path and later against the
   engine's MCP adapter.
-- Repository layout for new code (same repo under `native/` and `app/`, or a new
-  repository) is decided at M0.
+- New code lives in this repository: `native/` (CMake, C++), `app/` (Electron and
+  web UI), `fixtures/` (JCS, hash, time and recovery fixtures shared by Node and
+  C++). The Node bridge keeps building and testing on its own.
 
 ## Milestones
 
@@ -877,9 +1027,9 @@ review instead of pushing on.
 
 | Milestone | Scope | Exit criteria | Kill criterion |
 |---|---|---|---|
-| M0 Spike | Electron + engine helper app on macOS and Windows; JUCE hosting inside the headless child | Engine starts/stops with the app; renderer connects with token handshake; one third-party VST3 and one AU load, save/restore state, report latency, open editors; signed and notarized macOS build runs; focus/Cmd-Tab behavior acceptable | No acceptable editor-window behavior on macOS after 2 weeks: evaluate engine-in-main-process or Tracktion |
-| M1 Headless core | time, midi, model, command, revision DAG, journal WAL, checkpoints, session bundle, JCS, offline render, CLI | CLI creates a session, imports audio, places clips, sets gain, renders WAV; replay gives identical hashes; recovery test passes; Node and C++ pass the same JCS fixtures | Structural sharing too slow for 500-track documents: revisit data structure |
-| M2 Realtime engine | JUCE device, transport, single-threaded graph, structural and parameter channels, outboxes, retire queue, state migration, latency model with `FakeLatency`, disk streaming, input node, simple recording to disk | 32 tracks playback without xruns at 256 samples; PDC null tests pass; gesture via parameter channel; record 10 minutes and recover after kill; realtime-safety checks clean | Persistent xruns not fixable within the design: Tracktion decision gate |
+| M0 Spike | Electron + engine helper process on macOS and Windows; JUCE hosting inside the engine helper process; IXWebSocket server; `siann-host-api` interfaces drafted | Engine starts/stops with the app; renderer connects with token handshake; one third-party VST3 and one AU load, save/restore state, report latency, open editors; signed (Developer ID, hardened runtime) and notarized macOS build runs, built by hand once; focus/Cmd-Tab behavior acceptable | No acceptable editor-window behavior on macOS after 2 weeks: evaluate engine-in-main-process or Tracktion |
+| M1 Headless core | time, midi, model, command, revision DAG, journal WAL, checkpoints, session bundle, JCS and Merkle hashing, `siann-host-api`, minimal graph (GraphCompiler, PreparedGraph, ClipPlayerNode, TrackNode with gain, BusNode, SendNode, SidechainNode, MeterNode, FakeLatency), WAV/FLAC decode via dr_libs, offline import conversion, synchronous offline render, CLI | CLI creates a session, imports audio, places clips, sets gain, renders WAV; replay gives identical document hashes; offline PDC null tests pass across direct, send, aux and sidechain paths with static `FakeLatency`; a kill at each commit step (after blob write, after journal append, during checkpoint replace) recovers correctly; Node and C++ pass the same JCS, hash and time fixtures | Structural sharing too slow for 500-track documents: revisit data structure |
+| M2 Realtime engine | JUCE device, transport, single-threaded graph, structural and parameter channels, outboxes, retire queue, state migration, runtime latency changes, disk streaming, input node, simple recording to disk, device-side SRC | 32 tracks playback without xruns at 256 samples, also with SRC active (44.1 kHz session on a 48 kHz WASAPI shared device); SRC quality and record-offset tests pass; realtime PDC null tests pass, including a latency change during playback; gesture via parameter channel; record 10 minutes and recover after kill; realtime-safety checks clean | Persistent xruns not fixable within the design: Tracktion decision gate |
 | M3 Agent access | Protocol server, consistency and security rules, MCP adapter, plans with approval, rollback, audition | An MCP client builds a session through approved plans, rolls back, auditions a branch; reconnect and gap sync tested | — |
 | M4 Plugins | CLAP host first (both targets), then JUCE VST3/AU/LV2; capabilities; hostile test plugin | Third-party plugins load, save state, compensate latency, survive restart; capability flags exposed to agents | — |
 | M5 Desktop UI v1 | Timeline, mixer, plan review UI in Electron | Arrange and mix by hand; review and approve an agent plan visually | — |
@@ -905,15 +1055,46 @@ protocol.
 7. Protocol latency for gestures. Mitigation: parameter channel and optimistic UI for
    continuous gestures only.
 
+## Deferred to revision 3 (required before M2)
+
+The review of revision 2 found these gaps in "Realtime data flow". They do not
+affect M0 or M1, whose offline driver owns its graph synchronously. Revision 3 must
+resolve them before any audio-thread code is written.
+
+1. Graph ownership without a callback: the "command thread waits for the audio
+   thread" rule in `graphInbox` deadlocks when no device callback runs (device closed
+   or unplugged, offline render). Direction: a graph driver state machine (Stopped,
+   Realtime, Offline, Stopping) where whoever drives `process()` owns the graph, with
+   acknowledged handover on start, stop and unplug.
+2. Command-thread duties: compiling, waiting on the main thread for instantiation,
+   and being the only `paramInbox` writer let a slow compile stall a fader gesture,
+   and command and main threads can wait on each other. Direction: compile on a
+   worker, asynchronous requests between main and command threads, a light parameter
+   dispatcher as the single `paramInbox` producer, and the rule that the main thread
+   never blocks on the command thread.
+3. Queue table completeness: add `midiInbox`, per-track `diskRing`, and
+   `butlerRequest`; split `pluginEventOutbox` into a realtime SPSC queue and a bounded
+   queue for non-realtime producers, with a lock-free entry for callbacks on unknown
+   threads.
+4. Locate: a seek with a generation number, prepared by the butler before the audio
+   thread switches the playhead at a block boundary, so locates do not underrun.
+5. Instance lifetime: at most one structural transition in flight; the audio thread
+   returns one retired bundle with its generation; the non-realtime side frees
+   instances (compared by runtime instance identity, not slot ID) only after that
+   acknowledgement. Audition A/B never shares mutable plugin instances, and
+   non-auditioned branches keep only state blobs.
+6. Gestures, audition and recording offset per monitoring mode, revisited against
+   the items above.
+
 ## Open questions
 
 1. JUCE license choice and verified current version.
 2. Ship ASIO builds or not.
-3. Same repository or new repository for native code and the Electron app.
-4. immer or in-house persistent structures.
-5. HTTP/WebSocket library.
-6. When to introduce plugin worker processes.
-7. Default plan approval granularity in the UI (whole plan vs step list).
+3. immer or in-house persistent structures (decided in M1).
+4. When to introduce plugin worker processes.
+5. Default plan approval granularity in the UI (whole plan vs step list).
+6. An Apple Developer account with a Developer ID certificate must exist before the
+   end of M0.
 
 ## References
 
