@@ -2,7 +2,9 @@
 
 Date: 2026-10-14
 
-Status: Proposed, revision 2.1 (M0 and M1 decisions recorded)
+Status: Accepted, revision 2.1 (M0 and M1 decisions recorded). Accepted by
+[ADR-0016](../../adr/0016-build-native-cpp-daw-engine.md) on 2026-10-21; revision 3
+(realtime data flow) must be accepted before M2.
 
 Reviews of revision 1 (kept outside the repo):
 `D:\research\siann-arch-review\review-codex.md`,
@@ -19,8 +21,8 @@ share equally.
 
 It replaces the Ardour-derived engine direction (ADR-0003, ADR-0014). ADR-0015
 (DAWproject export from the Node bridge) remains the shippable product and the
-interchange path until the native app reaches M5. A superseding ADR will be written
-once this revision is accepted; see "Documents made stale by this decision".
+interchange path until the native app reaches M5. ADR-0016 supersedes ADR-0003 and
+ADR-0014; see "Documents made stale by this decision".
 
 Revision 2 incorporates three independent reviews. The main changes: the realtime
 data flow is now specified (document vs prepared graph vs audio state, structural vs

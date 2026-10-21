@@ -2,7 +2,7 @@
 
 Date: 2026-07-07
 
-Status: Accepted
+Status: Superseded by [ADR-0016: Build A Native C++ DAW Engine From Scratch](0016-build-native-cpp-daw-engine.md)
 
 ## Context
 
