@@ -12,6 +12,7 @@ if(SIANN_BUILD_TESTS)
     tests/audio_test.cpp
   )
   target_link_libraries(siann_media_tests PRIVATE siann::media Catch2::Catch2WithMain)
+  target_include_directories(siann_media_tests PRIVATE tests)
   siann_apply_compile_options(siann_media_tests)
   catch_discover_tests(siann_media_tests)
 endif()

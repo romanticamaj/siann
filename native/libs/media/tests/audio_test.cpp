@@ -176,3 +176,45 @@ TEST_CASE("Resampling to the same rate is a copy", "[media]") {
     const AudioBuffer input = sine(48'000, 100, 100.0);
     CHECK(resample(input, 48'000).samples == input.samples);
 }
+
+#include "support/flac_test_encoder.hpp"
+
+TEST_CASE("FLAC decodes to exact floats across frames and channels", "[media][flac]") {
+    std::vector<std::int16_t> samples;
+    for (int i = 0; i < 40; ++i) {  // 40 stereo frames: 3 FLAC frames at block size 16
+        samples.push_back(static_cast<std::int16_t>(i * 800 - 16'000));
+        samples.push_back(static_cast<std::int16_t>(i == 7 ? -32'768 : 32'767 - i));
+    }
+    const std::string flac = siann::test::encodeFlac16(2, 44'100, samples);
+    CHECK(siann::media::detectFormat(flac) == siann::media::FileFormat::flac);
+    const AudioInfo info = siann::media::probe(flac);
+    CHECK(info.channels == 2);
+    CHECK(info.sampleRate == 44'100);
+    CHECK(info.frames == 40);
+
+    const AudioBuffer decoded = siann::media::decode(flac);
+    REQUIRE(decoded.samples.size() == samples.size());
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        INFO("sample " << i);
+        CHECK(decoded.samples[i] == static_cast<float>(samples[i]) / 32768.0f);
+    }
+}
+
+TEST_CASE("Format detection covers WAV and rejects other files", "[media][flac]") {
+    const std::string wav = pcmWav(1, 48'000, 16, pcm16({1, 2}));
+    CHECK(siann::media::detectFormat(wav) == siann::media::FileFormat::wav);
+    CHECK(siann::media::decode(wav).samples.size() == 2);
+    CHECK_THROWS_AS(siann::media::detectFormat("OggS0000"), MediaError);
+}
+
+TEST_CASE("A FLAC frame with a bad checksum is rejected", "[media][flac]") {
+    std::vector<std::int16_t> samples(32, 1'000);
+    std::string flac = siann::test::encodeFlac16(1, 48'000, samples);
+    flac[flac.size() - 3] ^= 0x01;  // a sample byte in the last frame
+    try {
+        (void)siann::media::decode(flac);
+        FAIL("expected decode_failed");
+    } catch (const MediaError& error) {
+        CHECK(error.code() == "decode_failed");
+    }
+}

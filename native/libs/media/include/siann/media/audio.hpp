@@ -1,6 +1,7 @@
 #pragma once
 
-// Media decoding, encoding and offline sample-rate conversion (M1: WAV only).
+// Media decoding, encoding and offline sample-rate conversion (M1: WAV and
+// FLAC decoding, float WAV encoding).
 // Non-realtime code. Samples are float, interleaved, nominal range [-1, 1].
 
 #include <cstdint>
@@ -33,11 +34,26 @@ struct AudioBuffer {
     std::vector<float> samples;  // frames * channels, interleaved
 };
 
+enum class FileFormat { wav, flac };
+
+// Detects the container from its magic bytes; throws unsupported_media.
+FileFormat detectFormat(std::string_view bytes);
+
+// Header only, for any supported format.
+AudioInfo probe(std::string_view bytes);
+
+// Decodes any supported format to float samples.
+AudioBuffer decode(std::string_view bytes);
+
 // Reads only the header. Throws unsupported_media for anything but WAV.
 AudioInfo probeWav(std::string_view bytes);
 
 // Decodes any PCM (8/16/24/32-bit) or IEEE float (32/64-bit) WAV.
 AudioBuffer decodeWav(std::string_view bytes);
+
+// Decodes FLAC (any bit depth dr_flac supports).
+AudioInfo probeFlac(std::string_view bytes);
+AudioBuffer decodeFlac(std::string_view bytes);
 
 // 32-bit IEEE float WAV with a fact chunk. Throws too_large above 4 GiB.
 std::string encodeWavFloat32(const AudioBuffer& buffer);

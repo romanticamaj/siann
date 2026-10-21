@@ -149,3 +149,64 @@ TEST_CASE("Unsupported files are rejected before anything is stored", "[import]"
     CHECK(fs::is_empty(session.bundlePath() / "media"));
     CHECK(session.lastSeq() == 1);
 }
+
+#include "support/flac_test_encoder.hpp"
+
+TEST_CASE("FLAC at the session rate is stored verbatim as .flac", "[import][flac]") {
+    TempDir dir;
+    const fs::path source = dir.path() / "take.flac";
+    std::vector<std::int16_t> samples;
+    for (int i = 0; i < 64; ++i) {
+        samples.push_back(static_cast<std::int16_t>(i * 100));
+    }
+    const std::string flac = siann::test::encodeFlac16(1, 48'000, samples);
+    siann::io::writeFileAtomic(source, flac);
+    Session session = newSession(dir.path() / "Song.siann");
+
+    const auto result = importMedia(session, source, "med_take", "agent", "t1");
+    CHECK_FALSE(result.converted);
+    const auto* media = result.revision->document.media("med_take");
+    REQUIRE(media != nullptr);
+    CHECK(media->format == siann::model::MediaFormat::flac);
+    CHECK(media->frames == 64);
+    CHECK(result.storedFile.extension() == ".flac");
+    CHECK(siann::io::readFile(result.storedFile) == flac);
+}
+
+TEST_CASE("FLAC at another rate is converted to float WAV", "[import][flac]") {
+    TempDir dir;
+    const fs::path source = dir.path() / "take44.flac";
+    std::vector<std::int16_t> samples(2 * 441, 0);
+    siann::io::writeFileAtomic(source, siann::test::encodeFlac16(2, 44'100, samples, 256));
+    Session session = newSession(dir.path() / "Song.siann");
+
+    const auto result = importMedia(session, source, "med_take", "agent", "t1");
+    CHECK(result.converted);
+    const auto* media = result.revision->document.media("med_take");
+    CHECK(media->format == siann::model::MediaFormat::wav);
+    CHECK(media->frames == 480);
+    CHECK(result.storedFile.extension() == ".wav");
+}
+
+TEST_CASE("A crash after the media write but before the journal append recovers", "[import][recovery]") {
+    TempDir dir;
+    const fs::path source = writeSine(dir.path() / "loop.wav", 48'000, 480);
+    const fs::path bundle = dir.path() / "Song.siann";
+    const std::string bytes = siann::io::readFile(source);
+    const auto hash = siann::hash::sha256(bytes);
+    {
+        Session session = newSession(bundle);
+        // The job wrote its output, then the process died before media.add.
+        siann::io::writeFileAtomic(mediaPath(bundle, hash), bytes);
+    }
+    OpenReport report;
+    Session reopened = Session::open(bundle, &report);
+    CHECK(report.recordsReplayed == 1);
+    CHECK(reopened.history().head().document.allMedia().empty());
+    CHECK(fs::exists(mediaPath(bundle, hash)));  // unreferenced, kept, harmless
+
+    // Running the import again commits it and reuses the stored file.
+    const auto result = importMedia(reopened, source, "med_loop", "agent", "t2");
+    CHECK(result.storedFile == mediaPath(bundle, hash));
+    CHECK(reopened.lastSeq() == 2);
+}

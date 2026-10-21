@@ -219,3 +219,21 @@ TEST_CASE("An empty session renders nothing", "[engine]") {
     CHECK(renderOffline(f.doc(), f.library()).info.frames == 0);
     CHECK_THROWS_AS(renderOffline(f.doc(), f.library(), RenderOptions{-1, 10, 512}), EngineError);
 }
+
+#include "support/flac_test_encoder.hpp"
+
+TEST_CASE("FLAC media renders like WAV media", "[engine][flac]") {
+    Fixture f;
+    std::vector<std::int16_t> samples(2 * 32, 0);
+    samples[2 * 5] = 16'384;      // left, frame 5: 0.5
+    samples[2 * 5 + 1] = -16'384; // right, frame 5: -0.5
+    const fs::path source = f.dir.path() / "hit.flac";
+    siann::io::writeFileAtomic(source, siann::test::encodeFlac16(2, 48'000, samples));
+    siann::session::importMedia(f.session, source, "med_hit", "test", "t");
+    f.exec(R"({"op":"clip.place","clipId":"clp_f","trackId":"trk_a","mediaId":"med_hit",
+        "position":{"domain":"audio","value":"100"},"sourceStart":"0","length":"32"})");
+    const AudioBuffer out = renderOffline(f.doc(), f.library());
+    CHECK(left(out, 105) == 0.5f);
+    CHECK(right(out, 105) == -0.5f);
+    CHECK(nonZero(out) == 2);
+}
