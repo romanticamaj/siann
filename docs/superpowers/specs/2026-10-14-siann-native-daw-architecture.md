@@ -542,9 +542,13 @@ Event types, event lists, MIDI file import/export.
 
 ### siann-model (pure C++)
 
-The session document. Immutable values with structural sharing via a persistent
-data structure library (immer, BSL-1.0) or an in-house chunked vector; this choice
-is made in M1.
+The session document. Immutable values with structural sharing. M1 decision: an
+in-house structure, with one copy-on-write table per entity type (a sorted vector
+of `shared_ptr<const Entity>` plus the cached entity hash). An edit copies only the
+pointer vector of the changed table; every unchanged entity is shared. Measured on
+2026-10-21 (MSVC Release): building 500 tracks and 5,000 clips, then 100 edits with
+document hashes, takes 0.16 s in total, so the M1 kill criterion is not triggered.
+immer (BSL-1.0) remains the fallback if larger sessions need sub-linear edits.
 
 ```text
 SessionDocument
@@ -1106,10 +1110,9 @@ resolve them before any audio-thread code is written.
 
 1. JUCE license choice and verified current version.
 2. Ship ASIO builds or not.
-3. immer or in-house persistent structures (decided in M1).
-4. When to introduce plugin worker processes.
-5. Default plan approval granularity in the UI (whole plan vs step list).
-6. An Apple Developer account with a Developer ID certificate must exist before the
+3. When to introduce plugin worker processes.
+4. Default plan approval granularity in the UI (whole plan vs step list).
+5. An Apple Developer account with a Developer ID certificate must exist before the
    end of M0.
 
 ## References

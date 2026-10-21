@@ -31,3 +31,4 @@ endif()
 
 add_subdirectory(libs/hash)
 add_subdirectory(libs/time)
+add_subdirectory(libs/model)
