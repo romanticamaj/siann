@@ -105,6 +105,7 @@ const document = {
   ],
 };
 
+function buildFixture() {
 const leaves = [
   { type: 'root', entity: document.root },
   ...document.media.map((entity) => ({ type: 'media', entity })),
@@ -125,7 +126,16 @@ const out = {
   documentHash: documentHash(leaves),
 };
 
-const outFile = path.join(__dirname, '..', 'fixtures', 'model', 'session-document-v1.json');
-fs.mkdirSync(path.dirname(outFile), { recursive: true });
-fs.writeFileSync(outFile, `${JSON.stringify(out, null, 2)}\n`);
-console.log(`wrote ${outFile}: ${leaves.length} entities, ${out.documentHash}`);
+return out;
+}
+
+const FIXTURE_FILE = path.join(__dirname, '..', 'fixtures', 'model', 'session-document-v1.json');
+
+module.exports = { FIXTURE_FILE, buildFixture };
+
+if (require.main === module) {
+  const out = buildFixture();
+  fs.mkdirSync(path.dirname(FIXTURE_FILE), { recursive: true });
+  fs.writeFileSync(FIXTURE_FILE, `${JSON.stringify(out, null, 2)}\n`);
+  console.log(`wrote ${FIXTURE_FILE}: ${out.entityHashes.length} entities, ${out.documentHash}`);
+}

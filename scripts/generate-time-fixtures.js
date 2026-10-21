@@ -84,6 +84,7 @@ const ticks = [0, 1, 2, 3, 7, 959, 960, 1919, 1920, 3839, 3840, 3841, 7680, 7681
 const samples = [0, 1, 2, 11, 12, 13, 22050, 24000, 47999, 48000, 48001, 96000, 1234567, 2 ** 31, 2 ** 40, MAX,
   -1, -12, -24000, -MAX];
 
+function buildFixture() {
 const cases = maps.map(({ name, points }) => {
   const segments = segmentsOf(points);
   return {
@@ -106,7 +107,16 @@ const out = {
   cases,
 };
 
-const outFile = path.join(__dirname, '..', 'fixtures', 'time', 'conversions.json');
-fs.mkdirSync(path.dirname(outFile), { recursive: true });
-fs.writeFileSync(outFile, `${JSON.stringify(out, null, 2)}\n`);
-console.log(`wrote ${outFile}: ${cases.length} tempo maps x ${sampleRates.length} sample rates`);
+return out;
+}
+
+const FIXTURE_FILE = path.join(__dirname, '..', 'fixtures', 'time', 'conversions.json');
+
+module.exports = { FIXTURE_FILE, buildFixture, superclocksPerQuarter, toAudio, toMusic, segmentsOf };
+
+if (require.main === module) {
+  const out = buildFixture();
+  fs.mkdirSync(path.dirname(FIXTURE_FILE), { recursive: true });
+  fs.writeFileSync(FIXTURE_FILE, `${JSON.stringify(out, null, 2)}\n`);
+  console.log(`wrote ${FIXTURE_FILE}: ${out.cases.length} tempo maps`);
+}

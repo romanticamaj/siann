@@ -42,6 +42,7 @@ function expectedDocumentHash(entities) {
 const h = (text) => `sha256:${sha(Buffer.from(text, 'utf8')).toString('hex')}`;
 const entity = (type, id) => ({ type, id, entityHash: h(`${type}/${id}/content`) });
 
+function buildFixture() {
 const valid = [
   ['empty_document', []],
   ['root_only', [entity('root', 'root')]],
@@ -86,6 +87,15 @@ const out = {
   invalid,
 };
 
-const outFile = path.join(__dirname, '..', 'fixtures', 'hash', 'document.json');
-fs.writeFileSync(outFile, `${JSON.stringify(out, null, 2)}\n`);
-console.log(`wrote ${outFile}: valid=${valid.length} invalid=${invalid.length}`);
+return out;
+}
+
+const FIXTURE_FILE = path.join(__dirname, '..', 'fixtures', 'hash', 'document.json');
+
+module.exports = { FIXTURE_FILE, buildFixture };
+
+if (require.main === module) {
+  const out = buildFixture();
+  fs.writeFileSync(FIXTURE_FILE, `${JSON.stringify(out, null, 2)}\n`);
+  console.log(`wrote ${FIXTURE_FILE}: valid=${out.valid.length} invalid=${out.invalid.length}`);
+}
