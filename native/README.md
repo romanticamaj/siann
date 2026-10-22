@@ -26,6 +26,7 @@ and r8brain-free-src (offline resampling, MIT). Tests use Catch2, also pinned.
 | `libs/rt` (`siann-rt`) | `siann::rt` | Lock-free SPSC and MPSC queues, realtime thread marker, allocation guard for tests |
 | `libs/host_fake` (`siann-host-fake`) | `siann::host_fake` | Software audio device for tests: realtime thread, stop contract, unplug, stall, loopback |
 | `libs/realtime` (`siann-realtime`) | `siann::realtime` | Graph driver (ownership states, duck-and-swap, retirement on acknowledgement, watchdog), parameter channel and control dispatcher, transport locate, disk streaming (butler, two-slot rings, streaming player) |
+| `libs/host_desktop` (`siann-host-desktop`) | `siann::host_desktop` | JUCE 9 audio devices (WASAPI, ASIO, CoreAudio, ALSA) behind `AudioDevice`; built with `SIANN_WITH_JUCE=ON` (preset `desktop`), AGPLv3 per ADR-0017 |
 
 `siann-hash` sits below `siann-model` and `siann-command`. It must pass the same
 fixtures as the Node bridge (`src/hash/`): `fixtures/jcs/cases.json`,
@@ -77,7 +78,9 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-The `dev` preset treats warnings as errors. CI builds and tests on Windows,
+The `dev` preset treats warnings as errors. The `desktop` preset adds the JUCE
+host target (`SIANN_WITH_JUCE=ON`); its device tests run against the machine's
+real audio hardware, output silence only, and skip when there is no device. CI builds and tests on Windows,
 macOS and Linux (`.github/workflows/ci.yml`).
 
 ## Rules

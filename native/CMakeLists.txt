@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(SIANN_BUILD_TESTS "Build SIANN native tests" ON)
 option(SIANN_WERROR "Treat compiler warnings as errors" OFF)
+option(SIANN_WITH_JUCE "Build the JUCE desktop host target (AGPLv3, ADR-0017)" OFF)
 set(SIANN_FIXTURES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures"
     CACHE PATH "Fixtures shared by the Node bridge and the native engine")
 
@@ -45,3 +46,8 @@ add_subdirectory(libs/graph)
 add_subdirectory(libs/engine)
 add_subdirectory(libs/realtime)
 add_subdirectory(apps/cli)
+
+if(SIANN_WITH_JUCE)
+  include(SiannJuce)
+  add_subdirectory(libs/host_desktop)
+endif()
