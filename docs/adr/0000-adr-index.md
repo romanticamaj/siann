@@ -22,6 +22,7 @@ Status values:
 - [ADR-0013: Rename Project To SIANN](0013-rename-project-to-siann.md)
 - [ADR-0015: Use DAWproject Export As An Engine-Independent First Slice](0015-use-dawproject-export-as-engine-independent-first-slice.md)
 - [ADR-0016: Build A Native C++ DAW Engine From Scratch](0016-build-native-cpp-daw-engine.md)
+- [ADR-0017: License The Desktop Engine Under AGPLv3, With ASIO](0017-license-desktop-engine-under-agplv3.md)
 
 ## Superseded
 

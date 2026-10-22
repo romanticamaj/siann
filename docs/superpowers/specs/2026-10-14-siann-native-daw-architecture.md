@@ -1078,9 +1078,9 @@ before adoption, including transitive dependencies.
 
 | Area | Library | License note |
 |---|---|---|
-| Desktop audio devices, VST3/AU/LV2 hosting, editors | JUCE (current major version; JUCE 9 is reported as current and must be verified) | AGPLv3 or commercial; tier conditions to verify |
-| ASIO | Steinberg ASIO SDK | Proprietary; compatibility with GPL/AGPL distribution is disputed (Audacity does not ship ASIO builds). Decision required |
-| VST3 | Steinberg VST3 SDK (via JUCE) | Check current terms for the chosen distribution model |
+| Desktop audio devices, VST3/AU/LV2 hosting, editors | JUCE 9.0.3 (verified current major on 2026-10-22) | AGPLv3 (ADR-0017) |
+| ASIO | Steinberg ASIO SDK, bundled with JUCE 9 | GPLv3 option since October 2025; shipped (ADR-0017) |
+| VST3 | Steinberg VST3 SDK (via JUCE) | MIT since VST 3.8 |
 | CLAP hosting | CLAP SDK | MIT |
 | LV2 hosting (headless) | lilv, serd, sord | ISC |
 | Media decoding | dr_libs, libFLAC, libvorbis/libogg | public domain/MIT-0, BSD |
@@ -1101,19 +1101,16 @@ before adoption, including transitive dependencies.
 
 Not used: Taskflow (allocates at runtime).
 
-### Licensing decisions required before M2
+### Licensing decisions (decided 2026-10-22, ADR-0017)
 
-These must be decided before the first build that links JUCE devices:
-
-1. JUCE open source (AGPLv3) or commercial license, for the verified current
-   version.
-2. AGPL section 13: remote browser control and embedded devices are network
-   interaction, so anyone offering a SIANN engine over a network must offer source.
-   Acceptable for an open-source project; it matters for any hardware partner.
-3. ASIO: ship ASIO builds or not, given the SDK license.
-4. VST3 SDK terms under the chosen model.
-5. Rubber Band: keep optional, so a future commercial path does not require a
-   Rubber Band license.
+1. JUCE 9 under the AGPLv3, pinned to 9.0.3. Distributed desktop engine builds are
+   offered under the AGPLv3 as a whole; SIANN's own code stays GPL-2.0-or-later,
+   which may be combined with AGPLv3 code through GPLv3 section 13.
+2. AGPL section 13: the protocol exposes the source location and exact commit of
+   the running build to every client, and the UI shows it.
+3. ASIO ships, using the GPLv3 ASIO SDK bundled with JUCE 9.
+4. VST3 through JUCE under the SDK's MIT licence (VST 3.8 and later).
+5. Rubber Band stays optional.
 
 ## Build, test and CI
 
@@ -1271,12 +1268,10 @@ FIFO fill ("Latency model", "Device-side SRC").
 
 ## Open questions
 
-1. JUCE license choice and verified current version.
-2. Ship ASIO builds or not.
-3. When to introduce plugin worker processes.
-4. Default plan approval granularity in the UI (whole plan vs step list).
-5. An Apple Developer account with a Developer ID certificate must exist before the
-   end of M0.
+1. When to introduce plugin worker processes.
+2. Default plan approval granularity in the UI (whole plan vs step list).
+3. Developer ID certificate and notarization key: the maintainer's Apple Developer
+   account exists; the certificate and key are created at the end of M0 (ADR-0017).
 
 ## References
 
