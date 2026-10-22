@@ -1,5 +1,6 @@
 #include "siann/session/session.hpp"
 
+#include <algorithm>
 #include <utility>
 
 #include "siann/hash/jcs.hpp"
@@ -196,6 +197,16 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
             throw SessionError("checkpoint_mismatch", error.what());
         }
         out.checkpointVerified = true;
+    }
+
+    const fs::path recording = bundle / "media" / "recording";
+    if (fs::exists(recording)) {
+        for (const auto& entry : fs::directory_iterator(recording)) {
+            if (entry.path().extension() == ".json") {
+                out.pendingTakes.push_back(entry.path().stem().string());
+            }
+        }
+        std::sort(out.pendingTakes.begin(), out.pendingTakes.end());
     }
 
     auto state = std::make_unique<State>(bundle, std::move(history), recordCount);

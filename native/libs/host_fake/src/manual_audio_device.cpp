@@ -32,6 +32,14 @@ void ManualAudioDevice::pump(int blocks, std::vector<float>* capture, int channe
     const AudioBufferView in{inputPointers_.data(), static_cast<int>(inputPointers_.size()), config_.bufferFrames};
     const AudioBufferView out{outputPointers_.data(), static_cast<int>(outputPointers_.size()), config_.bufferFrames};
     for (int b = 0; b < blocks; ++b) {
+        if (generator_) {
+            for (std::size_t c = 0; c < input_.size(); ++c) {
+                for (int i = 0; i < config_.bufferFrames; ++i) {
+                    input_[c][static_cast<std::size_t>(i)] = generator_(static_cast<int>(c), inputFrame_ + i);
+                }
+            }
+        }
+        inputFrame_ += config_.bufferFrames;
         {
             const rt::ScopedRealtimeThread realtime;
             callback_(in, out);

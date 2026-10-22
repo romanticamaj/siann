@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cstdio>
+
+#if defined(_WIN32)
+#include <share.h>
+#endif
 #include <vector>
 
 #include "siann/media/audio.hpp"
@@ -27,11 +31,7 @@ namespace {
 
 std::FILE* openForReading(const std::filesystem::path& path) {
 #if defined(_WIN32)
-    std::FILE* file = nullptr;
-    if (_wfopen_s(&file, path.c_str(), L"rb") != 0) {
-        return nullptr;
-    }
-    return file;
+    return _wfsopen(path.c_str(), L"rb", _SH_DENYNO);  // a take may still be recording
 #else
     return std::fopen(path.c_str(), "rb");
 #endif

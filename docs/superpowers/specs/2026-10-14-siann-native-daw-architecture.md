@@ -611,6 +611,15 @@ The documented precision is shown to users and agents.
   command per take. Accepting it moves the file into content-addressed media and
   commits the clips; rejecting it moves the file to `trash/`. Uncommitted takes are
   never deleted automatically.
+- Implementation (M2): the manifest is `siann.take_manifest.v1`. The recorder's
+  writer thread records the timeline position of the first frame in the manifest
+  before writing any audio, so audio on disk always has a known position. Commit
+  and recovery are the same operation: repair the file, move it into
+  content-addressed media (durable before the journal record), then commit
+  `media.add` and `clip.place` as one revision; if the commit fails, the file moves
+  back and the take stays pending. Opening a session lists pending takes. Takes are
+  32-bit float WAV with the header rewritten every second; RF64 above 4 GiB
+  follows.
 - `record.stop` creates exactly one revision: new `MediaSource` entries plus new
   clips (`record.commit_take`). Undoing it removes the clips and media references;
   recorded files are never deleted by undo or rollback. Unreferenced takes move to a
