@@ -25,6 +25,10 @@
 #include "siann/rt/spsc_queue.hpp"
 
 namespace siann::realtime {
+class Recorder;
+}
+
+namespace siann::realtime {
 
 enum class DriverState { stopped, realtime, offline, stopping };
 
@@ -100,6 +104,13 @@ public:
     void pause() noexcept { playing_.store(false, std::memory_order_release); }
     std::int64_t playhead() const noexcept { return playhead_.load(std::memory_order_acquire); }
 
+    // While stopped: the recorder receives every input block (its own
+    // arming decides what is kept). Pass nullptr to detach.
+    void attachRecorder(Recorder* recorder);
+
+    // What the device reported when it was opened by start().
+    const host::AudioDeviceStatus& deviceStatus() const noexcept { return deviceStatus_; }
+
     DriverState state() const noexcept { return state_; }
     std::uint64_t liveEpoch() const noexcept { return liveEpoch_; }
     bool transitionInFlight() const noexcept { return inFlight_.has_value(); }
@@ -122,6 +133,8 @@ private:
     Options options_;
     DriverState state_ = DriverState::stopped;
     host::AudioDevice* device_ = nullptr;
+    host::AudioDeviceStatus deviceStatus_{};
+    Recorder* recorder_ = nullptr;
 
     // Control side: every graph this driver owns, by epoch.
     std::map<std::uint64_t, std::unique_ptr<graph::PreparedGraph>> owned_;

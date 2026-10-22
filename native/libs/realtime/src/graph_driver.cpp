@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "siann/realtime/recorder.hpp"
+
 namespace siann::realtime {
 
 GraphDriver::GraphDriver(Options options) : options_(options) {
@@ -40,7 +42,7 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
     if (state_ != DriverState::stopped) {
         throw std::logic_error("the graph driver is already running");
     }
-    device.open(config);
+    deviceStatus_ = device.open(config);
     deviceLost_.store(false, std::memory_order_release);
     device.setOnStopped([this](bool) { deviceLost_.store(true, std::memory_order_release); });
     device_ = &device;
@@ -48,6 +50,13 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
     // The live graph is already in current_; starting the device thread
     // publishes it to the callback.
     device.start([this](const host::AudioBufferView& in, const host::AudioBufferView& out) { process(in, out); });
+}
+
+void GraphDriver::attachRecorder(Recorder* recorder) {
+    if (state_ != DriverState::stopped) {
+        throw std::logic_error("attach a recorder while the driver is stopped");
+    }
+    recorder_ = recorder;
 }
 
 void GraphDriver::stop() {
@@ -181,7 +190,12 @@ void GraphDriver::finishStop() {
 
 // ---- audio thread ----------------------------------------------------------
 
-void GraphDriver::process(const host::AudioBufferView&, const host::AudioBufferView& output) noexcept {
+void GraphDriver::process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept {
+    if (recorder_ != nullptr) {
+        // The input block lines up with the output block rendered from the
+        // current playhead in this same callback.
+        recorder_->capture(input, playhead_.load(std::memory_order_relaxed), playing_.load(std::memory_order_acquire));
+    }
     if (retirePending_ && retireOutbox_.push(unsentRetire_)) {
         retirePending_ = false;
     }

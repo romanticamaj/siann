@@ -34,6 +34,8 @@ struct OpenReport {
     std::optional<std::string> tailError;
     // Temporary files left by an interrupted atomic write, now removed.
     std::vector<std::filesystem::path> removedTempFiles;
+    // Recorded takes never committed or discarded (see takes.hpp).
+    std::vector<std::string> pendingTakes;
 };
 
 class Session {

@@ -1,6 +1,7 @@
 add_library(siann_media
   src/audio.cpp
   src/wav_file_reader.cpp
+  src/wav_stream_writer.cpp
 )
 add_library(siann::media ALIAS siann_media)
 target_include_directories(siann_media PUBLIC include)
@@ -12,6 +13,7 @@ if(SIANN_BUILD_TESTS)
   add_executable(siann_media_tests
     tests/audio_test.cpp
     tests/wav_reader_test.cpp
+    tests/wav_writer_test.cpp
   )
   target_link_libraries(siann_media_tests PRIVATE siann::media Catch2::Catch2WithMain)
   target_include_directories(siann_media_tests PRIVATE tests)
