@@ -1,140 +1,25 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
-#include <cmath>
-#include <filesystem>
-#include <fstream>
-#include <memory>
-#include <random>
-#include <string>
 #include <thread>
 #include <vector>
 
-#include "siann/graph/graph.hpp"
-#include "siann/graph/nodes.hpp"
 #include "siann/host/fake_audio_device.hpp"
 #include "siann/host/manual_audio_device.hpp"
-#include "siann/media/audio.hpp"
-#include "siann/media/wav_file_reader.hpp"
 #include "siann/realtime/disk_stream.hpp"
 #include "siann/realtime/graph_driver.hpp"
 #include "siann/rt/realtime_thread.hpp"
+#include "support/streaming_rig.hpp"
 
-namespace fs = std::filesystem;
 using namespace siann;
+using namespace siann::realtime_test;
 using realtime::Butler;
 using realtime::DiskStream;
 using realtime::FrameRing;
 using realtime::GraphDriver;
-using realtime::StreamClip;
-using realtime::StreamingPlayerNode;
 using realtime::TransportCommand;
 
 namespace {
-
-constexpr int kBlock = 64;
-
-class TempDir {
-public:
-    TempDir() {
-        std::random_device rd;
-        path_ = fs::temp_directory_path() / ("siann-stream-" + std::to_string(rd()) + "-" + std::to_string(rd()));
-        fs::create_directories(path_);
-    }
-    ~TempDir() {
-        std::error_code ec;
-        fs::remove_all(path_, ec);
-    }
-    const fs::path& path() const { return path_; }
-
-private:
-    fs::path path_;
-};
-
-// A stereo file whose every sample is distinct, so misalignment shows.
-fs::path writeMedia(const fs::path& file, std::int64_t frames) {
-    media::AudioBuffer b;
-    b.info = media::AudioInfo{2, 48'000, frames};
-    for (std::int64_t i = 0; i < frames; ++i) {
-        b.samples.push_back(static_cast<float>(i % 9'973) / 10'000.0f);
-        b.samples.push_back(-static_cast<float>(i % 7'919) / 10'000.0f);
-    }
-    const std::string bytes = media::encodeWavFloat32(b);
-    std::ofstream(file, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    return file;
-}
-
-struct Clips {
-    std::vector<graph::ClipPlayerNode::Clip> reference;
-    std::vector<StreamClip> streamed;
-};
-
-Clips makeClips(const fs::path& file) {
-    const auto decoded = media::decodeWav([&] {
-        std::ifstream in(file, std::ios::binary);
-        return std::string(std::istreambuf_iterator<char>(in), {});
-    }());
-    auto planar = std::make_shared<graph::PlanarAudio>();
-    planar->channels = 2;
-    planar->frames = decoded.info.frames;
-    planar->data.assign(2, std::vector<float>(static_cast<std::size_t>(planar->frames)));
-    for (std::size_t i = 0; i < static_cast<std::size_t>(planar->frames); ++i) {
-        planar->data[0][i] = decoded.samples[i * 2];
-        planar->data[1][i] = decoded.samples[i * 2 + 1];
-    }
-    auto reader = std::make_shared<media::WavFileReader>(file);
-    // Three clips, two of them overlapping, with gains and trims.
-    const struct {
-        std::int64_t at, from, length;
-        float gain;
-    } layout[] = {{1'000, 0, 20'000, 1.0f}, {15'000, 5'000, 30'000, 0.5f}, {60'000, 100, 10'000, 0.25f}};
-    Clips clips;
-    for (const auto& l : layout) {
-        clips.reference.push_back({l.at, l.from, l.length, l.gain, planar});
-        clips.streamed.push_back({l.at, l.from, l.length, l.gain, reader});
-    }
-    return clips;
-}
-
-// The reference: the offline clip player rendered at the given position.
-class Reference {
-public:
-    explicit Reference(std::vector<graph::ClipPlayerNode::Clip> clips) {
-        graph::GraphBuilder b;
-        b.setOutput(b.add(std::make_unique<graph::ClipPlayerNode>(2, std::move(clips)), "clips"));
-        graph_ = std::move(b).compile(kBlock);
-    }
-    std::vector<float> left(std::int64_t position, int frames) {
-        std::vector<float> out;
-        for (int done = 0; done < frames; done += kBlock) {
-            graph_->process(graph::ProcessContext{position + done, kBlock});
-            out.insert(out.end(), graph_->output().channel(0), graph_->output().channel(0) + kBlock);
-        }
-        return out;
-    }
-
-private:
-    std::unique_ptr<graph::PreparedGraph> graph_;
-};
-
-std::unique_ptr<graph::PreparedGraph> streamingGraph(DiskStream& stream) {
-    graph::GraphBuilder b;
-    b.setOutput(b.add(std::make_unique<StreamingPlayerNode>(stream), "stream"));
-    return std::move(b).compile(kBlock);
-}
-
-host::AudioDeviceConfig config() {
-    host::AudioDeviceConfig c;
-    c.sampleRate = 48'000;
-    c.bufferFrames = kBlock;
-    c.outputChannels = 2;
-    return c;
-}
-
-std::vector<float> slice(const std::vector<float>& v, std::size_t from, std::size_t count) {
-    return std::vector<float>(v.begin() + static_cast<std::ptrdiff_t>(from),
-                              v.begin() + static_cast<std::ptrdiff_t>(from + count));
-}
 
 struct Rig {
     TempDir dir;
