@@ -140,13 +140,8 @@ AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
         impl_->device.reset();
         throw DeviceError("device_open_failed", error.toStdString());
     }
+    // The rate the device actually runs at, which may differ from the request.
     const double rate = impl_->device->getCurrentSampleRate();
-    if (std::lround(rate) != config.sampleRate) {
-        impl_->device->close();
-        impl_->device.reset();
-        throw DeviceError("sample_rate_unsupported", "the device runs at " + std::to_string(std::lround(rate)) +
-                                                         " Hz, not " + std::to_string(config.sampleRate) + " Hz");
-    }
     impl_->inputPointers.assign(static_cast<std::size_t>(std::max(config.inputChannels, 0)), nullptr);
     impl_->outputPointers.assign(static_cast<std::size_t>(config.outputChannels), nullptr);
     return AudioDeviceStatus{std::lround(rate), impl_->device->getCurrentBufferSizeSamples(),

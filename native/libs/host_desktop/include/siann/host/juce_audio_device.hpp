@@ -25,7 +25,7 @@ public:
     DeviceError(std::string code, const std::string& message)
         : std::runtime_error(message), code_(std::move(code)) {}
 
-    // One of: no_device, device_open_failed, sample_rate_unsupported.
+    // One of: no_device, device_open_failed.
     const std::string& code() const noexcept { return code_; }
 
 private:
@@ -43,8 +43,10 @@ public:
     static std::vector<DeviceDescription> listOutputDevices();
 
     // deviceId is "<type>/<name>", or empty for the default output device of
-    // the first available type. The device must run at the requested sample
-    // rate (sample_rate_unsupported otherwise; device-side SRC comes later).
+    // the first available type. The device is asked for the requested sample
+    // rate; if it cannot run at it (WASAPI shared mode at the OS mix rate, for
+    // example), it opens at its own rate and the status reports that rate.
+    // The graph driver then plays through device-side SRC.
     AudioDeviceStatus open(const AudioDeviceConfig& config) override;
     void start(AudioCallback callback) override;
     void stop() override;
