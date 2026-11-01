@@ -62,15 +62,16 @@ void ClipPlayerNode::process(const ProcessContext& context, std::span<const Audi
     }
 }
 
-TrackFaderNode::TrackFaderNode(int inputChannels, std::int32_t gainMilliDb, std::int32_t pan, bool mute)
-    : inputChannels_(inputChannels), gainMilliDb_(gainMilliDb), pan_(pan), mute_(mute) {
+TrackFaderNode::TrackFaderNode(int inputChannels, std::int32_t gainMilliDb, std::int32_t pan, bool mute,
+                               bool soloSilenced)
+    : inputChannels_(inputChannels), gainMilliDb_(gainMilliDb), pan_(pan), mute_(mute), soloSilenced_(soloSilenced) {
     retarget(0);
 }
 
 void TrackFaderNode::retarget(int rampFrames) noexcept {
     float left = 0.0f;
     float right = 0.0f;
-    if (!mute_) {
+    if (!mute_ && !soloSilenced_) {
         const float gain = gainFromMilliDb(gainMilliDb_);
         const double p = std::clamp(static_cast<double>(pan_) / 10'000.0, -1.0, 1.0);
         if (inputChannels_ == 1) {

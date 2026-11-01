@@ -267,6 +267,20 @@ TEST_CASE("Track fader pan laws", "[nodes]") {
     CHECK(muted.rightGain() == 0.0f);
 }
 
+TEST_CASE("Track fader solo silence is not the mute parameter", "[nodes]") {
+    TrackFaderNode soloSilenced(2, 0, 0, false, true);
+    CHECK(soloSilenced.leftGain() == 0.0f);
+    soloSilenced.setParameter(TrackFaderNode::kMute, 0.0, 0);
+    CHECK(soloSilenced.leftGain() == 0.0f);
+    CHECK(soloSilenced.rightGain() == 0.0f);
+    soloSilenced.setParameter(TrackFaderNode::kMute, 1.0, 0);
+    soloSilenced.setParameter(TrackFaderNode::kMute, 0.0, 0);
+    CHECK(soloSilenced.leftGain() == 0.0f);
+    TrackFaderNode audible(2, 0, 0, true, false);
+    audible.setParameter(TrackFaderNode::kMute, 0.0, 0);
+    CHECK(audible.leftGain() == 1.0f);
+}
+
 TEST_CASE("Clip player places media on the timeline", "[nodes]") {
     auto media = std::make_shared<PlanarAudio>();
     media->channels = 1;

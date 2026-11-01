@@ -45,6 +45,7 @@ add_subdirectory(libs/host_fake)
 add_subdirectory(libs/graph)
 add_subdirectory(libs/engine)
 add_subdirectory(libs/realtime)
+add_subdirectory(libs/playback)
 add_subdirectory(apps/cli)
 
 if(SIANN_WITH_JUCE)

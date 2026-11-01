@@ -31,25 +31,30 @@ std::int64_t timelineStart(const model::Clip& clip, const time::TempoMap& tempo,
 
 }  // namespace
 
+media::AudioBuffer readMedia(const model::Media& entity, const std::filesystem::path& bundle) {
+    const auto file = session::mediaPath(bundle, entity.contentHash, entity.format);
+    if (!std::filesystem::exists(file)) {
+        throw EngineError("media_missing", "media " + entity.id + " has no file at " + file.string());
+    }
+    const std::string bytes = io::readFile(file);
+    if (hash::sha256(bytes) != entity.contentHash) {
+        throw EngineError("media_hash_mismatch", "the file for media " + entity.id + " does not match its hash");
+    }
+    media::AudioBuffer decoded = media::decode(bytes);
+    if (decoded.info.channels != entity.channels || decoded.info.frames != entity.frames ||
+        decoded.info.sampleRate != entity.sampleRate) {
+        throw EngineError("media_mismatch", "the file for media " + entity.id + " differs from its entity");
+    }
+    return decoded;
+}
+
 MediaLibrary loadMedia(const model::Document& document, const std::filesystem::path& bundle) {
     MediaLibrary library;
     for (const model::Media* media : document.allMedia()) {
         if (library.media.count(media->contentHash) != 0) {
             continue;
         }
-        const auto file = session::mediaPath(bundle, media->contentHash, media->format);
-        if (!std::filesystem::exists(file)) {
-            throw EngineError("media_missing", "media " + media->id + " has no file at " + file.string());
-        }
-        const std::string bytes = io::readFile(file);
-        if (hash::sha256(bytes) != media->contentHash) {
-            throw EngineError("media_hash_mismatch", "the file for media " + media->id + " does not match its hash");
-        }
-        const media::AudioBuffer decoded = media::decode(bytes);
-        if (decoded.info.channels != media->channels || decoded.info.frames != media->frames ||
-            decoded.info.sampleRate != media->sampleRate) {
-            throw EngineError("media_mismatch", "the file for media " + media->id + " differs from its entity");
-        }
+        const media::AudioBuffer decoded = readMedia(*media, bundle);
         auto planar = std::make_shared<PlanarAudio>();
         planar->channels = decoded.info.channels;
         planar->frames = decoded.info.frames;
@@ -66,13 +71,32 @@ MediaLibrary loadMedia(const model::Document& document, const std::filesystem::p
     return library;
 }
 
-std::int64_t documentEnd(const model::Document& document) {
+std::vector<FlatTrack> flattenClips(const model::Document& document) {
     const auto& root = document.root();
     const time::TempoMap tempo(root.tempo);
-    std::int64_t end = 0;
-    for (const model::Track* track : document.tracksInOrder()) {
+    const auto tracks = document.tracksInOrder();
+    const bool anySolo = std::any_of(tracks.begin(), tracks.end(), [](const model::Track* t) { return t->solo; });
+    std::vector<FlatTrack> flat;
+    flat.reserve(tracks.size());
+    for (const model::Track* track : tracks) {
+        FlatTrack& entry = flat.emplace_back();
+        entry.track = track;
+        entry.soloSilenced = anySolo && !track->solo;
+        entry.silenced = track->mute || entry.soloSilenced;
         for (const model::Clip* clip : document.clipsOnTrack(track->id)) {
-            end = std::max(end, timelineStart(*clip, tempo, root.sampleRate) + clip->length);
+            entry.clips.push_back(FlatClip{timelineStart(*clip, tempo, root.sampleRate), clip->sourceStart,
+                                           clip->length, graph::gainFromMilliDb(clip->gain.milliDb),
+                                           document.media(clip->mediaId)});
+        }
+    }
+    return flat;
+}
+
+std::int64_t documentEnd(const model::Document& document) {
+    std::int64_t end = 0;
+    for (const FlatTrack& track : flattenClips(document)) {
+        for (const FlatClip& clip : track.clips) {
+            end = std::max(end, clip.timelineStart + clip.length);
         }
     }
     return end;
@@ -80,31 +104,25 @@ std::int64_t documentEnd(const model::Document& document) {
 
 std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& document, const MediaLibrary& library,
                                                       int maxBlockFrames) {
-    const auto& root = document.root();
-    const time::TempoMap tempo(root.tempo);
-    const auto tracks = document.tracksInOrder();
-    const bool anySolo = std::any_of(tracks.begin(), tracks.end(), [](const model::Track* t) { return t->solo; });
-
     GraphBuilder builder;
     const NodeId master = builder.add(std::make_unique<BusNode>(2), "master");
-    for (const model::Track* track : tracks) {
+    for (const FlatTrack& flat : flattenClips(document)) {
+        const model::Track& track = *flat.track;
         std::vector<ClipPlayerNode::Clip> clips;
-        for (const model::Clip* clip : document.clipsOnTrack(track->id)) {
-            const model::Media* media = document.media(clip->mediaId);
-            const auto found = library.media.find(media->contentHash);
+        for (const FlatClip& clip : flat.clips) {
+            const auto found = library.media.find(clip.media->contentHash);
             if (found == library.media.end()) {
-                throw EngineError("media_missing", "media " + media->id + " is not loaded");
+                throw EngineError("media_missing", "media " + clip.media->id + " is not loaded");
             }
-            clips.push_back(ClipPlayerNode::Clip{timelineStart(*clip, tempo, root.sampleRate), clip->sourceStart,
-                                                 clip->length, graph::gainFromMilliDb(clip->gain.milliDb),
-                                                 found->second});
+            clips.push_back(
+                ClipPlayerNode::Clip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, found->second});
         }
-        const bool silenced = track->mute || (anySolo && !track->solo);
-        const NodeId player = builder.add(std::make_unique<ClipPlayerNode>(track->channels, std::move(clips)),
-                                          track->id + ".clips");
+        const NodeId player =
+            builder.add(std::make_unique<ClipPlayerNode>(track.channels, std::move(clips)), track.id + ".clips");
         const NodeId fader = builder.add(
-            std::make_unique<TrackFaderNode>(track->channels, track->gain.milliDb, track->pan, silenced),
-            track->id + ".fader");
+            std::make_unique<TrackFaderNode>(track.channels, track.gain.milliDb, track.pan, track.mute,
+                                             flat.soloSilenced),
+            track.id + ".fader");
         builder.connect(player, fader);
         builder.connect(fader, master);
     }
