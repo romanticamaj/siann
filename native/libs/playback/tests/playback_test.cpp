@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -367,6 +368,83 @@ TEST_CASE("A fader gesture moves the sound through the parameter channel and end
     }
 }
 
+TEST_CASE("Pan and mute gestures move the sound and ending them commits their own track command",
+          "[playback][gesture]") {
+    Fixture f;
+    f.importWav("med_st", 2, 40'000);
+    f.exec(addTrack("trk_a"));
+    f.exec(place("clp_a", "trk_a", "med_st", 0, 0, 40'000));
+    const fs::path bundle = f.bundle();
+    const auto frames = static_cast<std::int64_t>(40) * kBlock;
+    const std::size_t before = f.session.history().revisions().size();
+    const realtime::ParamKey panKey{playback::trackSlotKey("trk_a"), TrackFaderNode::kPan};
+    const realtime::ParamKey muteKey{playback::trackSlotKey("trk_a"), TrackFaderNode::kMute};
+
+    Player p(f.session);
+    p.pump(2);
+
+    SECTION("pan") {
+        const auto panned = offline(
+            withCommand(f.doc(), R"({"op":"track.set_pan","trackId":"trk_a","pan":-4000})"), bundle, frames);
+        p.engine.beginGesture("trk_a", TrackFaderNode::kPan);
+        p.engine.updateGesture("trk_a", TrackFaderNode::kPan, -4'000.0, 0);
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 2, 4) == blocks(panned[0], 2, 4));
+        CHECK(blocks(p.out[1], 2, 4) == blocks(panned[1], 2, 4));
+        const command::Revision* revision = p.engine.endGesture("trk_a", TrackFaderNode::kPan, "user", "t9");
+        REQUIRE(revision != nullptr);
+        CHECK_FALSE(p.engine.dispatcher().gestureOpen(panKey));
+        CHECK(f.session.history().revisions().size() == before + 1);
+        REQUIRE(revision->commands.size() == 1);
+        CHECK(revision->commands[0].op() == "track.set_pan");
+        CHECK(revision->document.track("trk_a")->pan == -4'000);
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 4, 6) == blocks(panned[0], 4, 6));
+    }
+
+    SECTION("mute") {
+        p.engine.beginGesture("trk_a", TrackFaderNode::kMute);
+        p.engine.updateGesture("trk_a", TrackFaderNode::kMute, 1.0, 0);
+        p.engine.tick();
+        p.pump(2);
+        const command::Revision* revision = p.engine.endGesture("trk_a", TrackFaderNode::kMute, "user", "t9");
+        REQUIRE(revision != nullptr);
+        CHECK_FALSE(p.engine.dispatcher().gestureOpen(muteKey));
+        REQUIRE(revision->commands.size() == 1);
+        CHECK(revision->commands[0].op() == "track.set_mute");
+        CHECK(revision->document.track("trk_a")->mute);
+        p.engine.tick();
+        p.pump(2);
+        CHECK(silent(blocks(p.out[0], 4, 6)));
+    }
+
+    SECTION("an invalid pan commits nothing and the sound returns to the document") {
+        p.engine.beginGesture("trk_a", TrackFaderNode::kPan);
+        p.engine.updateGesture("trk_a", TrackFaderNode::kPan, 20'000.0, 0);
+        try {
+            p.engine.endGesture("trk_a", TrackFaderNode::kPan, "user", "t9");
+            FAIL("expected invalid_pan");
+        } catch (const command::CommandError& error) {
+            CHECK(error.code() == "invalid_pan");
+        }
+        CHECK_FALSE(p.engine.dispatcher().gestureOpen(panKey));
+        CHECK(f.session.history().revisions().size() == before);
+        p.engine.tick();
+        p.pump(1);
+        const auto reference = offline(f.doc(), bundle, frames);
+        CHECK(blocks(p.out[0], 2, 3) == blocks(reference[0], 2, 3));
+    }
+
+    SECTION("a parameter that cannot be committed is rejected before any gesture opens") {
+        const realtime::ParamKey unknown{playback::trackSlotKey("trk_a"), 99};
+        CHECK_THROWS_AS(p.engine.beginGesture("trk_a", 99), std::invalid_argument);
+        CHECK_THROWS_AS(p.engine.updateGesture("trk_a", 99, 1.0, 0), std::invalid_argument);
+        CHECK_FALSE(p.engine.dispatcher().gestureOpen(unknown));
+    }
+}
+
 TEST_CASE("No allocations on the audio thread during playback and gestures", "[playback][rt]") {
     Fixture f;
     f.importWav("med_st", 2, 30'000);
@@ -391,6 +469,8 @@ TEST_CASE("No allocations on the audio thread during playback and gestures", "[p
         }
     }
     CHECK(rt::allocationViolations() == before);
+    CHECK(p.engine.endGesture("trk_b", TrackFaderNode::kPan, "user", "t") != nullptr);
+    CHECK_FALSE(p.engine.dispatcher().gestureOpen({playback::trackSlotKey("trk_b"), TrackFaderNode::kPan}));
     CHECK(p.engine.underruns() == 0);
     CHECK_FALSE(silent(p.out[0]));
 }
