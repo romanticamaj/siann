@@ -584,7 +584,11 @@ The documented precision is shown to users and agents.
   device to run at the session rate (ASIO, CoreAudio nominal rate, WASAPI exclusive,
   ALSA). If the device cannot, for example WASAPI shared mode fixed at the OS mix
   rate, the engine plays through device-side sample-rate conversion (SRC). The
-  session is never silently converted.
+  session is never silently converted. A backend that would accept any rate and
+  convert it itself (JUCE's WASAPI shared mode, "Windows Audio", which asks the OS
+  converter with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) is not asked for the session
+  rate: it is opened at its own mix rate, so the conversion is the engine's SRC and
+  is reported, not the OS's default-quality converter.
 
 ### Device-side SRC (M2)
 
