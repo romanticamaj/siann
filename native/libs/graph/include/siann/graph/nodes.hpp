@@ -51,9 +51,12 @@ public:
     // Parameters for setParameter.
     static constexpr std::uint32_t kGainMilliDb = 1;  // INT32_MIN is minus infinity
     static constexpr std::uint32_t kPan = 2;          // [-10000, 10000]
-    static constexpr std::uint32_t kMute = 3;         // 0 or 1
+    static constexpr std::uint32_t kMute = 3;         // 0 or 1: the track's own mute
 
-    TrackFaderNode(int inputChannels, std::int32_t gainMilliDb, std::int32_t pan, bool mute);
+    // soloSilenced: another track is soloed and this one is not. It silences
+    // the fader independently of kMute, so a mute change cannot unsilence it.
+    TrackFaderNode(int inputChannels, std::int32_t gainMilliDb, std::int32_t pan, bool mute,
+                   bool soloSilenced = false);
     std::vector<int> inputPorts() const override { return {inputChannels_}; }
     int outputChannels() const override { return 2; }
     void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
@@ -71,6 +74,7 @@ private:
     std::int32_t gainMilliDb_;
     std::int32_t pan_;
     bool mute_;
+    bool soloSilenced_;
     float left_ = 0.0f;
     float right_ = 0.0f;
     float leftStep_ = 0.0f;

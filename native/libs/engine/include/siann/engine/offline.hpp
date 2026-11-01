@@ -61,7 +61,8 @@ struct FlatClip {
 
 struct FlatTrack {
     const model::Track* track = nullptr;
-    bool silenced = false;  // muted, or not soloed while another track is
+    bool silenced = false;      // muted, or not soloed while another track is
+    bool soloSilenced = false;  // not soloed while another track is
     std::vector<FlatClip> clips;
 };
 

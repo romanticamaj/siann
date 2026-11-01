@@ -81,7 +81,8 @@ std::vector<FlatTrack> flattenClips(const model::Document& document) {
     for (const model::Track* track : tracks) {
         FlatTrack& entry = flat.emplace_back();
         entry.track = track;
-        entry.silenced = track->mute || (anySolo && !track->solo);
+        entry.soloSilenced = anySolo && !track->solo;
+        entry.silenced = track->mute || entry.soloSilenced;
         for (const model::Clip* clip : document.clipsOnTrack(track->id)) {
             entry.clips.push_back(FlatClip{timelineStart(*clip, tempo, root.sampleRate), clip->sourceStart,
                                            clip->length, graph::gainFromMilliDb(clip->gain.milliDb),
@@ -119,7 +120,8 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
         const NodeId player =
             builder.add(std::make_unique<ClipPlayerNode>(track.channels, std::move(clips)), track.id + ".clips");
         const NodeId fader = builder.add(
-            std::make_unique<TrackFaderNode>(track.channels, track.gain.milliDb, track.pan, flat.silenced),
+            std::make_unique<TrackFaderNode>(track.channels, track.gain.milliDb, track.pan, track.mute,
+                                             flat.soloSilenced),
             track.id + ".fader");
         builder.connect(player, fader);
         builder.connect(fader, master);

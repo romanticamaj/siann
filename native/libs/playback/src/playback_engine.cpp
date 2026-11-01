@@ -132,9 +132,12 @@ CompiledPlayback compileForPlayback(const model::Document& document, const std::
         auto stream = std::make_unique<realtime::DiskStream>(track.channels, std::move(clips), options.ringFrames);
         const graph::NodeId player =
             builder.add(std::make_unique<realtime::StreamingPlayerNode>(*stream), track.id + ".stream");
-        const graph::NodeId fader = builder.add(
-            std::make_unique<graph::TrackFaderNode>(track.channels, track.gain.milliDb, track.pan, flat.silenced),
-            track.id + ".fader");
+        // The fader's kMute is the track's own mute, the value a mute gesture
+        // writes; solo silence stays separate so no gesture can lift it.
+        const graph::NodeId fader = builder.add(std::make_unique<graph::TrackFaderNode>(
+                                                    track.channels, track.gain.milliDb, track.pan, track.mute,
+                                                    flat.soloSilenced),
+                                                track.id + ".fader");
         builder.connect(player, fader);
         builder.connect(fader, master);
         compiled.streams.push_back(std::move(stream));
