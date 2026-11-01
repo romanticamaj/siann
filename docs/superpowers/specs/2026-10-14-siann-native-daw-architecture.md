@@ -1233,6 +1233,12 @@ directly, because the M1 document has no buses or sends yet; the history is a
 single chain (proposal branches arrive with audition in M3); overlapping clips
 sum. Revision 3 (realtime data flow) is still required before M2.
 
+M2 interim (playback engine): the playback assembly (session document to
+streaming graph plus the entity-to-slot map for the control dispatcher) lives
+in `siann-playback`, above `siann-engine` and `siann-realtime`. FLAC media plays
+through an in-memory `MediaReader` (decoded once when the graph is compiled)
+until a streaming FLAC reader exists; WAV media streams from disk.
+
 M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
 
