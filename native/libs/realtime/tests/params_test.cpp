@@ -59,7 +59,7 @@ host::AudioDeviceConfig config() {
 }
 
 struct Rig {
-    GraphDriver driver{GraphDriver::Options{kBlock, std::chrono::milliseconds(500)}};
+    GraphDriver driver{GraphDriver::Options{kBlock, std::chrono::milliseconds(500), {}}};
     host::ManualAudioDevice device;
     std::uint64_t first = 0;
 
