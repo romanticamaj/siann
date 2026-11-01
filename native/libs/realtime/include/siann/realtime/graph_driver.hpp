@@ -62,6 +62,18 @@ struct ParamChange {
     int rampFrames = 0;
 };
 
+// One meter reading for the dispatcher (spec, "Queues": meterOutbox). `slot`
+// is a MeterNode of the graph with `epoch`; the reading covers the `frames`
+// frames from timeline position `blockStart`, measured inside the graph, so
+// before the driver's duck and rise fades.
+struct MeterSample {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::int64_t blockStart = 0;
+    int frames = 0;
+    graph::MeterReading reading{};
+};
+
 class GraphDriver {
 public:
     struct Options {
@@ -102,6 +114,15 @@ public:
     // unless pause() named its generation or a later one.
     bool pushLocate(const TransportCommand& command) noexcept;
 
+    // The control dispatcher's thread only (the single meterOutbox consumer).
+    // Every processed block pushes one sample per MeterNode of the live graph;
+    // when the queue is full the audio thread drops the sample and counts it.
+    bool popMeter(MeterSample& sample) noexcept;
+    std::uint64_t meterDrops() const noexcept { return meterDrops_.load(std::memory_order_relaxed); }
+    std::size_t meterCapacity() const noexcept { return meterOutbox_.capacity(); }
+    // Samples waiting; exact only while the audio thread is idle.
+    std::size_t meterBacklog() const noexcept { return meterOutbox_.sizeApprox(); }
+
     // Immediate transport, applied at the next block. Transport (transport.hpp)
     // is the production path: it starts through pushLocate() and pauses here,
     // passing the newest generation it has sent so that a start still queued
@@ -138,6 +159,7 @@ private:
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     void renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept;
     void drainParams() noexcept;
+    void pushMeters(std::int64_t position, int frames) noexcept;
     void applyLocate(const TransportCommand& command) noexcept;
     void send(std::uint64_t epoch);
     void installDirectly(std::uint64_t epoch);
@@ -184,6 +206,8 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<std::uint64_t> pausedThrough_{0};
     std::atomic<std::uint64_t> appliedLocate_{0};
+    rt::SpscQueue<MeterSample> meterOutbox_{4096};
+    std::atomic<std::uint64_t> meterDrops_{0};
 };
 
 }  // namespace siann::realtime

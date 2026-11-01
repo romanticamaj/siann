@@ -99,6 +99,10 @@ bool GraphDriver::pushLocate(const TransportCommand& command) noexcept {
     return transportInbox_.push(command);
 }
 
+bool GraphDriver::popMeter(MeterSample& sample) noexcept {
+    return meterOutbox_.pop(sample);
+}
+
 void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
     playhead_.store(command.position, std::memory_order_release);
     if (current_ != nullptr) {
@@ -292,12 +296,21 @@ void GraphDriver::drainParams() noexcept {
     }
 }
 
+void GraphDriver::pushMeters(std::int64_t position, int frames) noexcept {
+    for (const graph::NodeId slot : current_->meteredNodes()) {
+        if (!meterOutbox_.push(MeterSample{currentEpoch_, slot, position, frames, current_->meterReading(slot)})) {
+            meterDrops_.fetch_add(1, std::memory_order_relaxed);  // full: drop, never wait
+        }
+    }
+}
+
 void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept {
     const bool playing = playing_.load(std::memory_order_acquire);
     const std::int64_t position = playhead_.load(std::memory_order_relaxed);
     const host::AudioBufferView* source = nullptr;
     if (current_ != nullptr && playing) {
         current_->process(graph::ProcessContext{position, frames});
+        pushMeters(position, frames);
         source = &current_->output();
         playhead_.store(position + frames, std::memory_order_release);
     }
