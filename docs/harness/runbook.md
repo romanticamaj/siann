@@ -23,7 +23,11 @@ M2 → M3 → M0 → M4 → M5 → M6a → M6b → M6c → M7. M0 waits for the 
 3. In Claude Code `/config`, raise **Dynamic workflow size** (a milestone uses roughly 5 to 8 agents per feature; M2 with 7 features needs about 50).
 4. Read the manifest's `humanGates` and `prerequisites`; settle what you can up front.
 
-## Run
+## Run everything
+
+`/siann-all` runs every remaining milestone in order and stops only at human gates, failures it cannot fix, or anything touching secrets. `/siann-all M3` starts at M3; `/siann-all --only M2,M3` runs just those. The steps are in `.claude/commands/siann-all.md`.
+
+## Run one milestone
 
 Type in Claude Code:
 
