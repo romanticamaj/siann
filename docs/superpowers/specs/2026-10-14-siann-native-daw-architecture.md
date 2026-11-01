@@ -257,7 +257,8 @@ segments, tempo map as a lookup table).
 ### Two channels into the audio thread
 
 1. **Structural channel**: adding/removing tracks, plugins, sends, routing changes,
-   latency changes. A compiler worker builds a new `PreparedGraph`, and the command
+   latency changes, and clip or media edits (anything that changes a track's
+   flattened clip list). A compiler worker builds a new `PreparedGraph`, and the command
    thread publishes it through the graph driver (see "Graph ownership"). At most one
    structural transition is in flight. Throughput: occasional.
 2. **Parameter channel**: gain, pan, mute, send level, plugin parameters, transport.
@@ -323,6 +324,7 @@ gesture boundaries (see "Gestures").
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
 | `diskRing[track][2]` | butler → audio | two SPSC rings per playing track: the current and the pending slot | audio frames of one seek generation per slot | underrun outputs silence and counts an xrun |
 | `butlerRequest` | audio → butler | SPSC | refill hints (track, consumed position); slot releases after a locate | latest-wins per track for hints; releases are never coalesced; the butler also polls |
+| `butlerControl` | command → butler | MPSC, mutex | add stream (with start position), remove stream | bounded; never waited on; completions (stream ready, stream released) are atomics read by the command thread on its tick |
 | `seekRequest` | dispatcher → butler | MPSC, mutex | target position + generation | a newer generation replaces an older one |
 | `recordOutbox` | audio → butler | SPSC ring | input blocks of armed tracks | overflow is a reported error, never a block |
 | `meterOutbox` | audio → dispatcher | SPSC | meter blocks, playhead | latest-value-wins; drop when full |
@@ -390,6 +392,15 @@ records who that is:
   compile. New plugins are
   instantiated on the main thread at the compiler's request before publication;
   removed ones are destroyed after the retire acknowledgement.
+- Disk streams are reused when the track's flattened clip list is unchanged. A new
+  or changed track gets a new `DiskStream`, registered with the butler and prefilled
+  from the current playhead before the graph is published; the streaming player
+  aligns to the timeline by position (slot start plus frames consumed versus the
+  block start), so a stream created at compile time plays in time after a later
+  swap. On the retire acknowledgement of the last graph that used a stream, the
+  command thread asks the butler to remove it; the stream is destroyed only after
+  the butler acknowledges the removal. A discarded compile removes the streams it
+  created the same way.
 - Reverb tails and compressor envelopes survive unrelated edits.
 - When a plugin's latency changes, the affected paths recompile; their delay lines
   are rebuilt and the paths are ducked and restored as above.
