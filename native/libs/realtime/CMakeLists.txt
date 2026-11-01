@@ -21,6 +21,7 @@ if(SIANN_BUILD_TESTS)
     tests/recording_test.cpp
     tests/transport_test.cpp
     tests/pdc_realtime_test.cpp
+    tests/src_test.cpp
   )
   target_link_libraries(siann_realtime_tests PRIVATE siann::realtime siann::host_fake siann::media siann_rt_alloc_guard
                         siann::engine Catch2::Catch2WithMain)

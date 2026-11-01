@@ -30,7 +30,7 @@ public:
     }
 };
 
-// Opens the default output at a rate it supports, preferring 48 kHz.
+// A configuration the default output runs at exactly, preferring 48 kHz.
 host::AudioDeviceConfig workingConfig() {
     host::AudioDeviceConfig config;
     config.outputChannels = 2;
@@ -39,8 +39,9 @@ host::AudioDeviceConfig workingConfig() {
         config.sampleRate = rate;
         try {
             host::JuceAudioDevice probe;
-            probe.open(config);
-            return config;
+            if (probe.open(config).sampleRate == rate) {
+                return config;
+            }
         } catch (const host::DeviceError&) {
         }
     }
@@ -131,4 +132,32 @@ TEST_CASE("An unsupported device is reported clearly", "[juce]") {
     } catch (const host::DeviceError& error) {
         CHECK(error.code() == "no_device");
     }
+}
+
+TEST_CASE("Opening at a rate the device cannot run reports the rate it runs at", "[juce][hardware]") {
+    if (host::JuceAudioDevice::listOutputDevices().empty()) {
+        SKIP("no audio output device on this machine");
+    }
+    host::AudioDeviceConfig config;
+    config.outputChannels = 2;
+    config.bufferFrames = 256;
+    // Device-side SRC (spec, "Sample rate and media"): a device that cannot
+    // run at the session rate opens at its own rate instead of failing.
+    for (const std::int64_t rate : {11'025, 22'050, 32'000, 44'100, 48'000, 88'200, 96'000}) {
+        config.sampleRate = rate;
+        host::JuceAudioDevice device;
+        host::AudioDeviceStatus status;
+        try {
+            status = device.open(config);
+        } catch (const host::DeviceError& error) {
+            CHECK(error.code() != "sample_rate_unsupported");
+            continue;
+        }
+        device.close();
+        if (status.sampleRate != rate) {
+            CHECK(status.sampleRate > 0);
+            return;
+        }
+    }
+    SKIP("the default device accepts every tested rate");
 }
