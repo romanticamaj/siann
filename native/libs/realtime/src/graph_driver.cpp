@@ -84,6 +84,7 @@ void GraphDriver::poll() {
         while (transportInbox_.pop(command)) {
             applyLocate(command);
         }
+        drainLatencyChanges();
         return;
     }
     if (state_ != DriverState::realtime) {
@@ -94,9 +95,34 @@ void GraphDriver::poll() {
         return;
     }
     drainRetired();
+    drainLatencyChanges();
     if (inFlight_ && std::chrono::steady_clock::now() - sentAt_ > options_.ackTimeout) {
         ++watchdogTrips_;
         stop();
+    }
+}
+
+std::vector<LatencyChange> GraphDriver::takeLatencyChanges() {
+    drainLatencyChanges();
+    std::vector<LatencyChange> changes;
+    changes.swap(latencyChanges_);
+    return changes;
+}
+
+void GraphDriver::drainLatencyChanges() {
+    // The live graph's outbox: the audio thread produces, this side consumes.
+    // A graph sent or waiting to be sent replaces the live one, so the live
+    // graph's changes are stale then; drop them (a recompile is under way).
+    const auto live = owned_.find(liveEpoch_);
+    if (live == owned_.end()) {
+        return;
+    }
+    const bool superseded = inFlight_.has_value() || waiting_.has_value();
+    graph::LatencyChange change;
+    while (live->second->popLatencyChange(change)) {
+        if (!superseded) {
+            latencyChanges_.push_back(LatencyChange{liveEpoch_, change.slot, change.latency});
+        }
     }
 }
 

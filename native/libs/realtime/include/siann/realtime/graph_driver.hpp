@@ -68,6 +68,14 @@ struct TransportCommand {
     bool play = false;
 };
 
+// A node of the graph with `epoch` reported a new latency (pluginEventRt for
+// built-in nodes). The command thread answers with a recompile.
+struct LatencyChange {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::int64_t latency = 0;
+};
+
 // One parameter change for the audio thread (revision 3.1, "Two channels into
 // the audio thread"). `slot` is a node of the graph with `epoch`.
 struct ParamChange {
@@ -163,6 +171,11 @@ public:
     // stopped) applied.
     std::uint64_t appliedLocate() const noexcept { return appliedLocate_.load(std::memory_order_acquire); }
 
+    // Control side: the latency changes the live graph has reported since
+    // the last call, oldest first. poll() drains the graph's realtime outbox;
+    // changes from a graph that is already being replaced are dropped.
+    std::vector<LatencyChange> takeLatencyChanges();
+
     // While stopped: the recorder receives every input block (its own
     // arming decides what is kept). Pass nullptr to detach.
     void attachRecorder(Recorder* recorder);
@@ -188,6 +201,7 @@ private:
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
     void drainRetired();
+    void drainLatencyChanges();
     void finishStop();
 
     Options options_;
@@ -205,6 +219,7 @@ private:
     std::chrono::steady_clock::time_point sentAt_{};
     std::uint64_t watchdogTrips_ = 0;
     std::atomic<bool> deviceLost_{false};
+    std::vector<LatencyChange> latencyChanges_;
 
     // Audio side.
     rt::SpscQueue<Handoff> graphInbox_{2};

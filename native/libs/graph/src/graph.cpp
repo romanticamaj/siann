@@ -3,8 +3,11 @@
 #include <algorithm>
 
 #include "siann/graph/nodes.hpp"
+#include <atomic>
 #include <queue>
 #include <utility>
+
+#include "siann/rt/spsc_queue.hpp"
 
 namespace siann::graph {
 
@@ -63,6 +66,8 @@ struct PreparedGraph::Impl {
         std::vector<std::size_t> incoming;  // edge indexes in insertion order
         std::int64_t outputLatency = 0;
         const MeterNode* meter = nullptr;  // set at compile time for a MeterNode
+        std::int64_t compiledLatency = 0;  // node->latency() when compiled
+        std::int64_t reportedLatency = 0;  // the latest latency pushed to the outbox
     };
 
     std::vector<NodeState> nodes;
@@ -72,6 +77,11 @@ struct PreparedGraph::Impl {
     int maxBlock = 0;
     AudioBufferView outputView;
     std::vector<NodeId> meters;  // MeterNodes in schedule order
+    // Audio thread -> control side. latencyQueued[n] is set while node n has
+    // a change in the outbox, so the outbox holds at most one per node and
+    // never fills.
+    std::unique_ptr<rt::SpscQueue<LatencyChange>> latencyOutbox;
+    std::unique_ptr<std::atomic<bool>[]> latencyQueued;
 };
 
 NodeId GraphBuilder::add(std::unique_ptr<Node> node, std::string name) {
@@ -171,7 +181,9 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
                                                            " samples of compensation, above the limit");
             }
         }
-        state.outputLatency = arrival + state.node->latency();
+        state.compiledLatency = state.node->latency();
+        state.reportedLatency = state.compiledLatency;
+        state.outputLatency = arrival + state.compiledLatency;
     }
 
     // Preallocate every buffer and delay line.
@@ -198,6 +210,8 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
         }
     }
     impl->outputView = impl->nodes[impl->outputNode].output.view;
+    impl->latencyOutbox = std::make_unique<rt::SpscQueue<LatencyChange>>(count);
+    impl->latencyQueued = std::make_unique<std::atomic<bool>[]>(count);
     return std::unique_ptr<PreparedGraph>(new PreparedGraph(std::move(impl)));
 }
 
@@ -243,6 +257,18 @@ void PreparedGraph::process(const ProcessContext& context) noexcept {
         }
         const AudioBufferView out = state.output.sized(frames);
         state.node->process(block, state.inputViews, out);
+        // While the node's previous change is still queued, a newer latency
+        // waits; it is pushed once the control side has taken the old one.
+        const std::int64_t now = state.node->latency();
+        auto& queued = impl_->latencyQueued[n];
+        if (now != state.reportedLatency && !queued.load(std::memory_order_acquire)) {
+            queued.store(true, std::memory_order_relaxed);  // published by the push
+            if (impl_->latencyOutbox->push(LatencyChange{n, now})) {
+                state.reportedLatency = now;
+            } else {
+                queued.store(false, std::memory_order_relaxed);
+            }
+        }
     }
     impl_->outputView = impl_->nodes[impl_->outputNode].output.sized(frames);
 }
@@ -297,6 +323,14 @@ MeterReading PreparedGraph::meterReading(NodeId node) const noexcept {
 
 std::size_t PreparedGraph::nodeCount() const noexcept {
     return impl_->nodes.size();
+}
+
+bool PreparedGraph::popLatencyChange(LatencyChange& change) noexcept {
+    if (!impl_->latencyOutbox->pop(change)) {
+        return false;
+    }
+    impl_->latencyQueued[change.slot].store(false, std::memory_order_release);
+    return true;
 }
 
 std::int64_t PreparedGraph::outputLatency(NodeId node) const noexcept {

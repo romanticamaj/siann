@@ -10,6 +10,12 @@
 // the main input); its output latency adds its own reported latency. Every
 // edge is delayed by arrival(destination) - output(source). Summation follows
 // edge insertion order, so results are deterministic.
+//
+// A node whose reported latency changes after compile (a plugin's
+// pluginEventRt for built-in nodes) is reported through a preallocated
+// realtime outbox: process() compares each node's latency() with what it last
+// reported and pushes one LatencyChange per change. The graph's compensation
+// stays as compiled; the control side answers with a recompile.
 
 #include <array>
 #include <cstdint>
@@ -89,6 +95,12 @@ struct MeterReading {
 
 class PreparedGraph;
 
+// A node of a compiled graph now reports `latency` (audio thread to control side).
+struct LatencyChange {
+    NodeId slot = 0;
+    std::int64_t latency = 0;
+};
+
 class GraphBuilder {
 public:
     NodeId add(std::unique_ptr<Node> node, std::string name);
@@ -146,6 +158,11 @@ public:
     std::span<const NodeId> meteredNodes() const noexcept;
     // The reading of a MeterNode after process(); empty for any other node.
     MeterReading meterReading(NodeId node) const noexcept;
+    // Control side: the next latency change reported by process(), oldest
+    // first. Single consumer; the thread that calls process() is the producer.
+    // Each change is reported once; while a node's change waits here, its
+    // later changes coalesce and the newest follows once this one is taken.
+    bool popLatencyChange(LatencyChange& change) noexcept;
 
 private:
     friend class GraphBuilder;
