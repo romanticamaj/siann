@@ -225,6 +225,7 @@ TEST_CASE("Adding a track while playing swaps with duck-and-swap and then matche
     CHECK(matches(p, newReference, duck + 2, n));
 
     // The duck block fades the old graph out; the rise block fades the new one in.
+    // M2 ducks the whole mix, unaffected tracks included (spec, M2 interim note).
     bool withinEnvelope = true;
     for (int c = 0; c < 2; ++c) {
         for (int i = 0; i < kBlock; ++i) {

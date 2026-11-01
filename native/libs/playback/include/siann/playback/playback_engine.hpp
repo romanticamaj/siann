@@ -22,8 +22,9 @@
 // the latest one when no transition is in flight, reuses every disk stream
 // whose track has the same flattened clip list, registers new streams with
 // the butler prefilled from the playhead, and publishes the graph once they
-// are ready. A stream is destroyed only after the last graph that used it has
-// retired and the butler has released it.
+// are ready, or after 1 s regardless (their underruns are then counted until
+// the butler catches up). A stream is destroyed only after the last graph that
+// used it has retired and the butler has released it.
 
 #include <chrono>
 #include <cstddef>
