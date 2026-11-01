@@ -8,6 +8,8 @@
 // engine::compileDocument(): per track a streaming player over a disk stream
 // and a track fader, all into the master bus, plus the entity-to-slot map the
 // control dispatcher addresses parameters with ("track:<trackId>" -> fader).
+// A MeterNode follows each fader and the master bus; their slots go to the
+// dispatcher too, which collects the meters from the driver's meterOutbox.
 //
 // PlaybackEngine owns the graph driver, the control dispatcher, the transport,
 // the butler and the disk streams. Its methods run on one non-realtime control thread; the
@@ -52,10 +54,15 @@ struct CompiledPlayback {
     std::unique_ptr<graph::PreparedGraph> graph;
     std::vector<std::unique_ptr<realtime::DiskStream>> streams;  // must outlive graph
     std::map<std::string, graph::NodeId> slots;
+    // MeterNode per metered entity: trackSlotKey(id) after each fader and
+    // masterMeterKey() after the master bus (the graph's output).
+    std::map<std::string, graph::NodeId> meterSlots;
 };
 
 // Slot key of a track's fader in the dispatcher's map.
 std::string trackSlotKey(const std::string& trackId);
+// Meter key of the master bus in the dispatcher's meter map.
+std::string masterMeterKey();
 
 // Throws engine::EngineError (media_missing, media_hash_mismatch,
 // media_mismatch) like engine::loadMedia().
@@ -102,6 +109,7 @@ public:
     realtime::ControlDispatcher& dispatcher() noexcept { return dispatcher_; }
     realtime::Transport& transport() noexcept { return transport_; }
     const std::map<std::string, graph::NodeId>& slots() const noexcept { return slots_; }
+    const std::map<std::string, graph::NodeId>& meterSlots() const noexcept { return meterSlots_; }
     std::size_t streamCount() const noexcept { return streams_.size(); }
     session::Session& session() noexcept { return session_; }
 
@@ -115,6 +123,7 @@ private:
     realtime::ControlDispatcher dispatcher_;
     realtime::Transport transport_;
     std::map<std::string, graph::NodeId> slots_;
+    std::map<std::string, graph::NodeId> meterSlots_;
     bool loaded_ = false;
 };
 
