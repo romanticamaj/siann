@@ -508,7 +508,8 @@ The documented precision is shown to users and agents.
 - `gesture.begin(target)` → many `param.set` on the parameter channel →
   `gesture.end(target, finalValue)`.
 - Only `gesture.end` creates a revision and a journal entry, containing start and
-  end values (and the automation pass, if writing).
+  end values (and the automation pass, if writing). The M2 playback engine
+  records the end value only (see the M2 interim note under "Status").
 - The control dispatcher owns open gestures and their overlay values (see "Two
   channels into the audio thread"), so a recompile never snaps a held fader back.
 - A gesture is held under a client lease, not an update timer. Holding a fader still
@@ -1238,6 +1239,14 @@ streaming graph plus the entity-to-slot map for the control dispatcher) lives
 in `siann-playback`, above `siann-engine` and `siann-realtime`. FLAC media plays
 through an in-memory `MediaReader` (decoded once when the graph is compiled)
 until a streaming FLAC reader exists; WAV media streams from disk.
+Gestures on a track fader (gain, pan, mute) commit at `gesture.end` as one
+plain `track.set_gain`, `track.set_pan` or `track.set_mute` revision carrying
+only the end value. The start value is not recorded in the command: the
+overlay never changes the document mid-gesture, so the start value is the
+value in the parent revision. Recording both values in the
+journal entry, as "Gestures" requires, arrives with the protocol's
+`gesture.end` and automation write passes; other parameters are rejected
+before a gesture opens, so every open gesture can be ended.
 
 M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
