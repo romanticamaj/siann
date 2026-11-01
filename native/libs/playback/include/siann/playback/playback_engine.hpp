@@ -73,11 +73,14 @@ public:
     void start(host::AudioDevice& device, const host::AudioDeviceConfig& config);
     void stop();
 
-    // Parameter gestures on a track fader (TrackFaderNode parameter ids).
+    // Parameter gestures on a track fader: gain, pan or mute (TrackFaderNode
+    // parameter ids). Any other id throws std::invalid_argument before a
+    // gesture opens, so every open gesture can be ended.
     void beginGesture(const std::string& trackId, std::uint32_t paramId);
     void updateGesture(const std::string& trackId, std::uint32_t paramId, double value, int rampFrames);
-    // Commits the gesture's last value as one revision and sends the committed
-    // value to the audio thread. Returns nullptr when the gesture never moved.
+    // Commits the gesture's last value as one revision (track.set_gain,
+    // track.set_pan or track.set_mute) and sends the committed value to the
+    // audio thread. Returns nullptr when the gesture never moved.
     // A command::CommandError propagates and commits nothing; the sound then
     // returns to the document's value.
     const command::Revision* endGesture(const std::string& trackId, std::uint32_t paramId, std::string actor,

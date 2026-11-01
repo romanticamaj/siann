@@ -49,6 +49,63 @@ std::int32_t gainValue(double value) {
     return static_cast<std::int32_t>(std::llround(value));
 }
 
+std::int32_t panValue(double value) {
+    if (!std::isfinite(value)) {
+        throw command::CommandError("invalid_pan", "a pan gesture ended on a value that is not a pan");
+    }
+    // Out-of-range values reach the document's own range check.
+    return static_cast<std::int32_t>(
+        std::llround(std::clamp(value, static_cast<double>(INT32_MIN), static_cast<double>(INT32_MAX))));
+}
+
+// Fader parameters a gesture can commit, each through its own track command.
+void requireCommittable(std::uint32_t paramId) {
+    if (paramId != graph::TrackFaderNode::kGainMilliDb && paramId != graph::TrackFaderNode::kPan &&
+        paramId != graph::TrackFaderNode::kMute) {
+        throw std::invalid_argument("track fader parameter " + std::to_string(paramId) +
+                                    " cannot be committed by a gesture");
+    }
+}
+
+// The command that commits a gesture's last value, and the value the audio
+// thread then holds.
+struct GestureCommit {
+    command::Command command;
+    double value = 0.0;
+};
+
+GestureCommit gestureCommit(const std::string& trackId, std::uint32_t paramId, double value) {
+    if (paramId == graph::TrackFaderNode::kPan) {
+        const std::int32_t pan = panValue(value);
+        return {command::Command::fromJson(
+                    json::Object{{"op", "track.set_pan"}, {"trackId", trackId}, {"pan", static_cast<double>(pan)}}),
+                static_cast<double>(pan)};
+    }
+    if (paramId == graph::TrackFaderNode::kMute) {
+        if (std::isnan(value)) {
+            throw command::CommandError("invalid_mute", "a mute gesture ended on a value that is not a mute");
+        }
+        const bool mute = value != 0.0;
+        return {command::Command::fromJson(json::Object{{"op", "track.set_mute"}, {"trackId", trackId}, {"mute", mute}}),
+                mute ? 1.0 : 0.0};
+    }
+    const std::int32_t milliDb = gainValue(value);
+    return {command::Command::fromJson(json::Object{
+                {"op", "track.set_gain"}, {"trackId", trackId}, {"gainMilliDb", static_cast<double>(milliDb)}}),
+            static_cast<double>(milliDb)};
+}
+
+// The document's value of a fader parameter, as the audio thread holds it.
+double documentValue(const model::Track& track, std::uint32_t paramId) {
+    if (paramId == graph::TrackFaderNode::kPan) {
+        return static_cast<double>(track.pan);
+    }
+    if (paramId == graph::TrackFaderNode::kMute) {
+        return track.mute ? 1.0 : 0.0;
+    }
+    return static_cast<double>(track.gain.milliDb);
+}
+
 }  // namespace
 
 std::string trackSlotKey(const std::string& trackId) {
@@ -131,35 +188,33 @@ void PlaybackEngine::stop() {
 }
 
 void PlaybackEngine::beginGesture(const std::string& trackId, std::uint32_t paramId) {
+    requireCommittable(paramId);  // so no gesture opens that endGesture cannot close
     dispatcher_.beginGesture(realtime::ParamKey{trackSlotKey(trackId), paramId});
 }
 
 void PlaybackEngine::updateGesture(const std::string& trackId, std::uint32_t paramId, double value, int rampFrames) {
+    requireCommittable(paramId);
     dispatcher_.updateGesture(realtime::ParamKey{trackSlotKey(trackId), paramId}, value, rampFrames);
 }
 
 const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, std::uint32_t paramId,
                                                     std::string actor, std::string time) {
-    if (paramId != graph::TrackFaderNode::kGainMilliDb) {
-        throw std::invalid_argument("only track gain gestures can be committed");
-    }
+    requireCommittable(paramId);
     const realtime::ParamKey key{trackSlotKey(trackId), paramId};
     const std::optional<double> value = dispatcher_.endGesture(key);
     if (!value) {
         return nullptr;
     }
     try {
-        const std::int32_t milliDb = gainValue(*value);
-        const command::Command command = command::Command::fromJson(json::Object{
-            {"op", "track.set_gain"}, {"trackId", trackId}, {"gainMilliDb", static_cast<double>(milliDb)}});
-        const command::Revision& revision = session_.commit({command}, std::move(actor), std::move(time));
+        const GestureCommit commit = gestureCommit(trackId, paramId, *value);
+        const command::Revision& revision = session_.commit({commit.command}, std::move(actor), std::move(time));
         // The committed value reaches the audio thread through the dispatcher.
-        dispatcher_.setParameter(key, static_cast<double>(milliDb), 0);
+        dispatcher_.setParameter(key, commit.value, 0);
         return &revision;
     } catch (...) {
         // Nothing was committed: the sound returns to the document's value.
         if (const model::Track* track = session_.history().head().document.track(trackId)) {
-            dispatcher_.setParameter(key, static_cast<double>(track->gain.milliDb), 0);
+            dispatcher_.setParameter(key, documentValue(*track, paramId), 0);
         }
         throw;
     }
