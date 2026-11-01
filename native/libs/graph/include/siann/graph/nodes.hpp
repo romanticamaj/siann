@@ -98,6 +98,24 @@ private:
     float gain_;
 };
 
+// Passes its input through unchanged and measures each block: per channel,
+// the peak max|x| and the RMS sqrt(mean(x^2)). The reading is replaced every
+// block, never held. compile() lists every MeterNode (meteredNodes()).
+class MeterNode final : public Node {
+public:
+    explicit MeterNode(int channels) : channels_(channels) {}
+    std::vector<int> inputPorts() const override { return {channels_}; }
+    int outputChannels() const override { return channels_; }
+    void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                 const AudioBufferView& output) noexcept override;
+
+    const MeterReading& reading() const noexcept { return reading_; }
+
+private:
+    int channels_;
+    MeterReading reading_{};
+};
+
 // Delays its input by a fixed latency and reports it. Used to test PDC.
 class FakeLatencyNode final : public Node {
 public:

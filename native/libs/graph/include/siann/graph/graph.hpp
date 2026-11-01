@@ -11,6 +11,7 @@
 // edge is delayed by arrival(destination) - output(source). Summation follows
 // edge insertion order, so results are deterministic.
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -75,6 +76,17 @@ private:
 
 using NodeId = std::size_t;
 
+// Channels a meter reports; wider nodes report their first channels.
+inline constexpr int kMaxMeterChannels = 2;
+
+// Peak and RMS of one block, per channel. Fixed size, so it travels through
+// the realtime queues without allocating. channels == 0 means no reading.
+struct MeterReading {
+    int channels = 0;
+    std::array<float, kMaxMeterChannels> peak{};
+    std::array<float, kMaxMeterChannels> rms{};
+};
+
 class PreparedGraph;
 
 class GraphBuilder {
@@ -129,6 +141,11 @@ public:
     // Audio thread, between blocks: tells every node about a locate.
     void locate(std::uint64_t generation, std::int64_t position) noexcept;
     std::size_t nodeCount() const noexcept;
+
+    // Every MeterNode, in schedule order.
+    std::span<const NodeId> meteredNodes() const noexcept;
+    // The reading of a MeterNode after process(); empty for any other node.
+    MeterReading meterReading(NodeId node) const noexcept;
 
 private:
     friend class GraphBuilder;
