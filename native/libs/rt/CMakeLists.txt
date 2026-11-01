@@ -15,6 +15,7 @@ siann_apply_compile_options(siann_rt_alloc_guard)
 if(SIANN_BUILD_TESTS)
   find_package(Threads REQUIRED)
   add_executable(siann_rt_tests
+    tests/latest_mailbox_test.cpp
     tests/queue_test.cpp
   )
   target_link_libraries(siann_rt_tests PRIVATE siann::rt siann_rt_alloc_guard Catch2::Catch2WithMain Threads::Threads)

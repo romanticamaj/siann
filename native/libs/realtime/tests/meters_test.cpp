@@ -83,13 +83,14 @@ host::AudioDeviceConfig config() {
 // The fade is one block long, so block 0 is the fade-in and block 1 is at
 // full level.
 struct Rig {
-    GraphDriver driver{GraphDriver::Options{kBlock, std::chrono::milliseconds(500)}};
+    GraphDriver driver;
     ControlDispatcher dispatcher{driver};
     host::ManualAudioDevice device;
     std::uint64_t first = 0;
     std::int64_t blocks = 0;
 
-    explicit Rig(std::int32_t gainMilliDb = -6'000) {
+    explicit Rig(std::int32_t gainMilliDb = -6'000, std::size_t meterCapacity = GraphDriver::Options{}.meterCapacity)
+        : driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), meterCapacity}) {
         MeteredGraph g = meteredGraph(gainMilliDb);
         const auto slots = g.slots();
         const auto meterSlots = g.meterSlots();
@@ -214,6 +215,21 @@ TEST_CASE("A stalled dispatcher reads the newest meter block, never a stale one"
     CHECK(rig.dispatcher.meter("track:t1")->blockStart == static_cast<std::int64_t>(kTotal) * kBlock);
     CHECK(rig.dispatcher.meterPlayhead() == static_cast<std::int64_t>(kTotal) * kBlock);
     CHECK(rig.driver.meterDrops() == (kTotal - 1) * kMetered);
+}
+
+TEST_CASE("MeterNodes past the meter capacity are dropped and counted", "[meters]") {
+    // Capacity 1: the track meter comes first in schedule order and fits; the
+    // master meter of every block is dropped.
+    Rig rig(-6'000, 1);
+    CHECK(rig.driver.meterCapacity() == 1);
+    for (int b = 0; b < 3; ++b) {
+        rig.pump(1);
+        rig.dispatcher.tick();
+        REQUIRE(rig.dispatcher.meter("track:t1").has_value());
+        CHECK(rig.dispatcher.meter("track:t1")->blockStart == static_cast<std::int64_t>(b) * kBlock);
+        CHECK_FALSE(rig.dispatcher.meter("master").has_value());
+        CHECK(rig.driver.meterDrops() == static_cast<std::uint64_t>(b + 1));
+    }
 }
 
 TEST_CASE("No audio-thread allocations while metering", "[meters]") {

@@ -58,8 +58,9 @@ std::size_t ControlDispatcher::tick() {
     std::vector<std::pair<ParamKey, ParamChange>> batch;
     {
         std::lock_guard lock(mutex_);
-        // Latest value wins: samples arrive in block order, so the last one
-        // per slot is the newest. Samples of an older graph are dropped.
+        // Latest value wins: the driver hands over the newest metered block
+        // (superseded blocks never arrive). Samples of an older graph are
+        // dropped.
         MeterSample sample;
         while (driver_.popMeter(sample)) {
             if (sample.epoch != epoch_) {
