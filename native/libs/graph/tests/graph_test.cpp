@@ -2,59 +2,24 @@
 
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "siann/graph/graph.hpp"
 #include "siann/graph/nodes.hpp"
+#include "pdc_fixtures.hpp"
 
 using namespace siann::graph;
+using pdc::DifferenceNode;
+using pdc::NoiseNode;
 
 namespace {
 
-// A deterministic noise source: every sample differs, so a misaligned null
-// test cannot cancel by accident.
-class NoiseNode final : public Node {
-public:
-    explicit NoiseNode(int channels) : channels_(channels) {}
-    int outputChannels() const override { return channels_; }
-    void process(const ProcessContext& context, std::span<const AudioBufferView>,
-                 const AudioBufferView& output) noexcept override {
-        for (int c = 0; c < channels_; ++c) {
-            for (int i = 0; i < context.frames; ++i) {
-                const auto n = static_cast<std::uint64_t>(context.blockStart + i) * 2654435761u + static_cast<unsigned>(c) * 97u;
-                output.channel(c)[i] = static_cast<float>((n % 2001u)) / 1000.0f - 1.0f;
-            }
-        }
-    }
-
-private:
-    int channels_;
-};
-
-// Two input ports: output = port 0 minus port 1. Stands in for a sidechain.
-class DifferenceNode final : public Node {
-public:
-    explicit DifferenceNode(int channels) : channels_(channels) {}
-    std::vector<int> inputPorts() const override { return {channels_, channels_}; }
-    int outputChannels() const override { return channels_; }
-    void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
-                 const AudioBufferView& output) noexcept override {
-        for (int c = 0; c < channels_; ++c) {
-            for (int i = 0; i < context.frames; ++i) {
-                output.channel(c)[i] = inputs[0].channel(c)[i] - inputs[1].channel(c)[i];
-            }
-        }
-    }
-
-private:
-    int channels_;
-};
-
-// Renders the graph block by block and returns channel 0.
-std::vector<float> run(PreparedGraph& graph, std::int64_t frames, int block) {
+// Renders the graph block by block from `from` and returns channel 0.
+std::vector<float> run(PreparedGraph& graph, std::int64_t frames, int block, std::int64_t from = 0) {
     std::vector<float> out;
-    for (std::int64_t start = 0; start < frames; start += block) {
-        const int n = static_cast<int>(std::min<std::int64_t>(block, frames - start));
+    for (std::int64_t start = from; start < from + frames; start += block) {
+        const int n = static_cast<int>(std::min<std::int64_t>(block, from + frames - start));
         graph.process(ProcessContext{start, n});
         for (int i = 0; i < n; ++i) {
             out.push_back(graph.output().channel(0)[i]);
@@ -84,15 +49,11 @@ std::string errorCode(GraphBuilder&& builder) {
 }  // namespace
 
 TEST_CASE("PDC null test: direct path against a delayed path", "[graph][pdc]") {
-    GraphBuilder b;
-    const NodeId source = b.add(std::make_unique<NoiseNode>(1), "source");
-    const NodeId delayed = b.add(std::make_unique<FakeLatencyNode>(1, 100), "latency");
-    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
-    b.connect(source, delayed);
-    b.connect(delayed, master);
-    b.connect(source, master, 0, -1.0f);  // inverted dry path
-    b.setOutput(master);
-    auto graph = std::move(b).compile(64);
+    auto d = pdc::buildDirect(100);
+    const NodeId source = d.source;
+    const NodeId delayed = d.delayed;
+    const NodeId master = d.master;
+    auto graph = pdc::compile(std::move(d), 64);
 
     CHECK(graph->edgeCompensation(source, master) == 100);
     CHECK(graph->edgeCompensation(delayed, master) == 0);
@@ -101,19 +62,11 @@ TEST_CASE("PDC null test: direct path against a delayed path", "[graph][pdc]") {
 }
 
 TEST_CASE("PDC null test: a send to an aux bus with its own latency", "[graph][pdc]") {
-    GraphBuilder b;
-    const NodeId source = b.add(std::make_unique<NoiseNode>(2), "track");
-    const NodeId insert = b.add(std::make_unique<FakeLatencyNode>(2, 64), "insert");
-    const NodeId aux = b.add(std::make_unique<BusNode>(2), "aux");
-    const NodeId auxInsert = b.add(std::make_unique<FakeLatencyNode>(2, 256), "aux insert");
-    const NodeId master = b.add(std::make_unique<BusNode>(2), "master");
-    b.connect(source, insert);
-    b.connect(insert, master);                 // post-insert main path, latency 64
-    b.connect(source, aux, 0, -1.0f);          // pre-insert send, inverted
-    b.connect(aux, auxInsert);
-    b.connect(auxInsert, master);              // aux return, latency 256
-    b.setOutput(master);
-    auto graph = std::move(b).compile(128);
+    auto s = pdc::buildSend(64, 256);
+    const NodeId insert = s.insert;
+    const NodeId auxInsert = s.auxInsert;
+    const NodeId master = s.master;
+    auto graph = pdc::compile(std::move(s), 128);
 
     CHECK(graph->edgeCompensation(insert, master) == 192);
     CHECK(graph->edgeCompensation(auxInsert, master) == 0);
@@ -122,24 +75,12 @@ TEST_CASE("PDC null test: a send to an aux bus with its own latency", "[graph][p
 }
 
 TEST_CASE("PDC null test: nested aux buses at different depths", "[graph][pdc]") {
-    GraphBuilder b;
-    const NodeId source = b.add(std::make_unique<NoiseNode>(1), "source");
-    const NodeId a = b.add(std::make_unique<FakeLatencyNode>(1, 10), "a");
-    const NodeId bus1 = b.add(std::make_unique<BusNode>(1), "bus1");
-    const NodeId c = b.add(std::make_unique<FakeLatencyNode>(1, 33), "c");
-    const NodeId bus2 = b.add(std::make_unique<BusNode>(1), "bus2");
-    const NodeId d = b.add(std::make_unique<FakeLatencyNode>(1, 7), "d");
-    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
-    b.connect(source, a);
-    b.connect(a, bus1);
-    b.connect(bus1, c);
-    b.connect(c, bus2);
-    b.connect(source, bus2, 0, 0.5f);
-    b.connect(bus2, master);          // 43 + half the dry signal, aligned
-    b.connect(source, d);
-    b.connect(d, master, 0, -1.5f);   // cancels 1.0 + 0.5 of the source
-    b.setOutput(master);
-    auto graph = std::move(b).compile(32);
+    auto n = pdc::buildNested(10, 33, 7);
+    const NodeId source = n.source;
+    const NodeId bus2 = n.bus2;
+    const NodeId d = n.d;
+    const NodeId master = n.master;
+    auto graph = pdc::compile(std::move(n), 32);
 
     CHECK(graph->outputLatency(bus2) == 43);
     CHECK(graph->edgeCompensation(source, bus2) == 43);
@@ -155,18 +96,87 @@ TEST_CASE("PDC null test: nested aux buses at different depths", "[graph][pdc]")
 }
 
 TEST_CASE("PDC null test: a sidechain input lines up with the main input", "[graph][pdc]") {
-    GraphBuilder b;
-    const NodeId source = b.add(std::make_unique<NoiseNode>(2), "source");
-    const NodeId insert = b.add(std::make_unique<FakeLatencyNode>(2, 300), "insert");
-    const NodeId comp = b.add(std::make_unique<DifferenceNode>(2), "compressor");
-    b.connect(source, insert);
-    b.connect(insert, comp, 0);  // main input
-    b.connect(source, comp, 1);  // sidechain key, undelayed at the source
-    b.setOutput(comp);
-    auto graph = std::move(b).compile(100);
+    auto s = pdc::buildSidechain(300);
+    const NodeId source = s.source;
+    const NodeId comp = s.comp;
+    auto graph = pdc::compile(std::move(s), 100);
 
     CHECK(graph->edgeCompensation(source, comp, 1) == 300);
     CHECK(allZero(run(*graph, 3'000, 100)));
+}
+
+TEST_CASE("pdc: a requested latency takes effect at the start of the next block", "[graph][pdc][latency]") {
+    GraphBuilder b;
+    const NodeId source = b.add(std::make_unique<NoiseNode>(1), "source");
+    auto owned = std::make_unique<FakeLatencyNode>(1, 4, 16);
+    FakeLatencyNode* node = owned.get();
+    const NodeId delayed = b.add(std::move(owned), "latency");
+    b.connect(source, delayed);
+    b.setOutput(delayed);
+    auto graph = std::move(b).compile(8);
+
+    const auto before = run(*graph, 8, 8);
+    for (std::int64_t t = 4; t < 8; ++t) {
+        CHECK(before[static_cast<std::size_t>(t)] == NoiseNode::sample(0, t - 4));
+    }
+    REQUIRE(node->requestLatency(10));
+    CHECK(node->latency() == 4);  // nothing changes between blocks
+    const auto after = run(*graph, 32, 8, 8);
+    CHECK(node->latency() == 10);
+    // The switch restarts the delay line: silence for the new latency, then the
+    // input delayed by 10 samples.
+    for (std::int64_t t = 8; t < 40; ++t) {
+        INFO("t = " << t);
+        const float expected = t < 18 ? 0.0f : NoiseNode::sample(0, t - 10);
+        CHECK(after[static_cast<std::size_t>(t - 8)] == expected);
+    }
+}
+
+TEST_CASE("pdc: the graph reports one coalesced latency change per node", "[graph][pdc][latency]") {
+    auto d = pdc::buildDirect(100, 512);
+    FakeLatencyNode* node = d.changingNode;
+    const NodeId slot = d.changing;
+    auto graph = pdc::compile(std::move(d), 64);
+    LatencyChange change;
+
+    run(*graph, 640, 64);
+    CHECK_FALSE(graph->popLatencyChange(change));  // nothing changed
+
+    REQUIRE(node->requestLatency(100));  // the latency it already has
+    run(*graph, 64, 64, 640);
+    CHECK_FALSE(graph->popLatencyChange(change));
+
+    REQUIRE(node->requestLatency(200));  // superseded before the next block
+    REQUIRE(node->requestLatency(250));
+    run(*graph, 192, 64, 704);
+    REQUIRE(graph->popLatencyChange(change));
+    CHECK(change.slot == slot);
+    CHECK(change.latency == 250);
+    CHECK_FALSE(graph->popLatencyChange(change));  // one event, not one per block
+    CHECK(graph->totalLatency() == 100);            // compensation changes only on a recompile
+
+    REQUIRE(node->requestLatency(300));
+    run(*graph, 64, 64, 896);
+    REQUIRE(graph->popLatencyChange(change));
+    CHECK(change.latency == 300);
+    CHECK_FALSE(graph->popLatencyChange(change));
+}
+
+TEST_CASE("pdc: a latency outside zero to maxLatency is rejected", "[graph][pdc][latency]") {
+    CHECK_THROWS_AS(FakeLatencyNode(1, 20, 16), std::invalid_argument);
+    CHECK_THROWS_AS(FakeLatencyNode(1, -1), std::invalid_argument);
+
+    auto d = pdc::buildDirect(100, 128);
+    FakeLatencyNode* node = d.changingNode;
+    auto graph = pdc::compile(std::move(d), 64);
+    CHECK_FALSE(node->requestLatency(129));
+    CHECK_FALSE(node->requestLatency(-1));
+    run(*graph, 128, 64);
+    CHECK(node->latency() == 100);
+    LatencyChange change;
+    CHECK_FALSE(graph->popLatencyChange(change));
+    CHECK(allZero(run(*graph, 1'024, 64, 128)));  // still nulls
+    CHECK(node->requestLatency(128));             // the maximum itself is allowed
 }
 
 TEST_CASE("Block size does not change the result", "[graph]") {
