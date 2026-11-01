@@ -8,6 +8,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "siann/command/command.hpp"
@@ -131,7 +132,7 @@ struct Player {
     PlaybackEngine engine;
     std::vector<std::vector<float>> out{2};
 
-    explicit Player(Session& session) : engine(session, testOptions()) {
+    explicit Player(Session& session, PlaybackOptions options = testOptions()) : engine(session, std::move(options)) {
         engine.load();
         engine.start(device, deviceConfig());
     }
@@ -283,6 +284,44 @@ TEST_CASE("Playing a session on the manual device is sample-identical to renderO
     CHECK(blocks(p.out[0], 1, n) == blocks(reference[0], 1, n));
     CHECK(blocks(p.out[1], 1, n) == blocks(reference[1], 1, n));
     CHECK_FALSE(silent(blocks(p.out[0], 1, n)));
+    CHECK(p.engine.underruns() == 0);
+}
+
+TEST_CASE("Play from stop through the transport is sample-identical to renderOffline after the fade-in",
+          "[playback][transport]") {
+    Fixture f;
+    f.importWav("med_st", 2, 30'000);
+    f.importWav("med_mono", 1, 20'000);
+    f.exec(addTrack("trk_a"));
+    f.exec(addTrack("trk_b"));
+    f.exec(place("clp_a", "trk_a", "med_st", 0, 0, 30'000));
+    f.exec(place("clp_b", "trk_b", "med_mono", 3'000, 100, 19'000));
+    f.exec(setGain("trk_b", -6'000));
+
+    PlaybackOptions options = testOptions();
+    options.playOnStart = false;
+    Player p(f.session, std::move(options));
+    p.pump(4);
+    CHECK(silent(p.out[0]));
+    CHECK(p.engine.driver().playhead() == 0);
+    CHECK_FALSE(p.engine.transport().playing());
+
+    p.engine.transport().play();  // a locate to the current position carrying the start
+    CHECK(p.engine.transport().playing());
+    p.engine.butler().runOnce();
+    p.engine.tick();
+    CHECK_FALSE(p.engine.transport().pendingLocate());
+    p.out.assign(2, {});
+    const std::int64_t end = engine::documentEnd(f.doc());
+    const int n = blocksFor(end);
+    p.pump(n);
+    const auto reference = offline(f.doc(), f.bundle(), static_cast<std::int64_t>(n) * kBlock);
+    // Block 0 fades in from silence; from block 1 on the output is exact.
+    CHECK(blocks(p.out[0], 0, 1) != blocks(reference[0], 0, 1));
+    CHECK(blocks(p.out[0], 1, n) == blocks(reference[0], 1, n));
+    CHECK(blocks(p.out[1], 1, n) == blocks(reference[1], 1, n));
+    CHECK_FALSE(silent(blocks(p.out[0], 1, n)));
+    CHECK(p.engine.transport().lateLocates() == 0);
     CHECK(p.engine.underruns() == 0);
 }
 

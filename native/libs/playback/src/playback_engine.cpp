@@ -153,7 +153,8 @@ PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions option
       options_(std::move(options)),
       butler_(options_.butler),
       driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500)}),
-      dispatcher_(driver_) {}
+      dispatcher_(driver_),
+      transport_(driver_, butler_, options_.transport) {}
 
 PlaybackEngine::~PlaybackEngine() {
     stop();
@@ -181,7 +182,9 @@ void PlaybackEngine::start(host::AudioDevice& device, const host::AudioDeviceCon
     if (options_.butlerThread) {
         butler_.start();
     }
-    driver_.play();
+    if (options_.playOnStart) {
+        driver_.play();
+    }
     driver_.start(device, config);
 }
 
@@ -224,6 +227,7 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
 }
 
 void PlaybackEngine::tick() {
+    transport_.tick();
     dispatcher_.tick();
     driver_.poll();
 }
