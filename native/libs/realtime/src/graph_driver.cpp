@@ -214,8 +214,10 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
 }
 
 void GraphDriver::retire(std::uint64_t epoch) {
-    owned_.erase(epoch);
     families_.erase(epoch);
+    if (owned_.erase(epoch) != 0 && options_.onRetired) {
+        options_.onRetired(epoch);
+    }
 }
 
 void GraphDriver::drainRetired() {

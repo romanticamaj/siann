@@ -33,6 +33,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -140,6 +141,11 @@ public:
         // MeterNodes metered per block; readings of further ones are dropped
         // and counted.
         std::size_t meterCapacity = 1024;
+        // Called on the control side (inside publish, poll or stop, never on
+        // the audio thread) after a graph was retired and destroyed: swapped
+        // out and acknowledged, superseded before it was sent, or released by
+        // stop. The owner frees what only that graph used, such as streams.
+        std::function<void(std::uint64_t epoch)> onRetired;
     };
 
     explicit GraphDriver(Options options);

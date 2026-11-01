@@ -12,6 +12,13 @@
 // The audio thread claims an offered slot with compare-exchange g -> kLive;
 // the butler withdraws an offer with compare-exchange g -> 0. Exactly one of
 // them wins, so the butler never resets a slot the audio thread is reading.
+//
+// Streams come and go while playing (revision 3.1, "State migration"): the
+// command thread asks the butler to add a stream (prefilled from a start
+// position) or remove one through the `butlerControl` queue; completions are
+// the stream's ready() and released() flags. A player aligns to the timeline
+// by position: the live slot's start plus the frames it consumed, compared
+// with the block start.
 
 #include <atomic>
 #include <chrono>
@@ -45,6 +52,8 @@ public:
     std::size_t readable() const noexcept;
     std::size_t read(const host::AudioBufferView& destination, int offset, std::size_t frames) noexcept;
     std::size_t skip(std::size_t frames) noexcept;
+    // Frames read or skipped since the last reset.
+    std::size_t consumed() const noexcept { return read_.load(std::memory_order_relaxed); }
 
     // Only while neither side is using the ring.
     void reset() noexcept;
@@ -74,6 +83,10 @@ public:
 
     int channels() const noexcept { return channels_; }
     std::uint64_t underruns() const noexcept { return underruns_.load(std::memory_order_relaxed); }
+    // The butler took the stream and prefilled its first slot.
+    bool ready() const noexcept { return ready_.load(std::memory_order_acquire); }
+    // The butler dropped the stream after removeStream(); it may be destroyed.
+    bool released() const noexcept { return released_.load(std::memory_order_acquire); }
 
 private:
     friend class Butler;
@@ -90,12 +103,13 @@ private:
     std::vector<StreamClip> clips_;
     std::unique_ptr<Slot> slots_[2];
     std::atomic<std::uint64_t> underruns_{0};
+    std::atomic<bool> ready_{false};
+    std::atomic<bool> released_{false};
     Butler* butler_ = nullptr;
 
     // Audio side.
     int liveSlot_ = 0;
     std::uint64_t waitingGeneration_ = 0;  // a locate whose data was not ready yet
-    std::size_t framesToSkip_ = 0;         // frames the timeline moved while waiting
 
     // Butler side.
     int butlerLive_ = 0;
@@ -136,8 +150,16 @@ public:
     Butler(const Butler&) = delete;
     Butler& operator=(const Butler&) = delete;
 
-    // Before start(): registers a stream and fills its first slot from 0.
+    // Before start(): registers a stream and fills its first slot from 0 at once.
     void addStream(DiskStream& stream);
+
+    // Any non-realtime thread, also while running: queues a request that the
+    // next pass handles. An added stream is prefilled from `startPosition` and
+    // then reports ready(); a removed stream is no longer filled and reports
+    // released(). The stream must outlive released(). Throws std::length_error
+    // when the request queue is full.
+    void addStream(DiskStream& stream, std::int64_t startPosition);
+    void removeStream(DiskStream& stream);
 
     void start();
     void stop();
@@ -163,6 +185,15 @@ private:
         DiskStream* stream = nullptr;
         int newLive = 0;
     };
+    struct Control {
+        DiskStream* stream = nullptr;
+        bool add = true;
+        std::int64_t start = 0;
+    };
+    static constexpr std::size_t kMaxControl = 1'024;
+
+    void pushControl(const Control& request);
+    void takeStream(DiskStream& stream, std::int64_t startPosition);
 
     void render(DiskStream& stream, std::int64_t position, std::size_t frames);
     void topUp(DiskStream& stream, int slot, std::int64_t& writePosition, std::size_t limit);
@@ -174,6 +205,9 @@ private:
     std::mutex seekMutex_;
     std::optional<std::pair<std::uint64_t, std::int64_t>> seekRequest_;
     std::atomic<std::uint64_t> readyGeneration_{0};
+    std::optional<std::pair<std::uint64_t, std::int64_t>> lastSeek_;  // butler thread
+    std::mutex controlMutex_;
+    std::vector<Control> control_;
     std::vector<std::vector<float>> scratch_;
     std::vector<float*> scratchPointers_;
     std::vector<std::vector<float>> readBuffer_;
