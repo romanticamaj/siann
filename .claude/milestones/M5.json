@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M5",
+  "title": "Desktop UI v1",
+  "goal": "Arrange and mix by hand in the Electron app, and review and approve an agent plan visually.",
+  "specSections": ["Frontend", "siann-protocol", "Plans", "Proposal audition (A/B)", "Milestones"],
+  "status": "not_started",
+  "done": [],
+  "prerequisites": ["M3 protocol and plans; M0 Electron shell."],
+  "humanGates": [
+    {"id": "framework-choice", "text": "Choose the frontend framework (React or Svelte) at the start of M5, as the spec requires.", "how": "The plan phase presents a short comparison; the maintainer decides."},
+    {"id": "ux-review", "text": "Review timeline, mixer and plan review usability.", "how": "The maintainer uses the app and lists required changes before the exit check."}
+  ],
+  "features": [
+    {"id": "m5-read-model", "title": "Frontend read model keyed by revision", "wave": 1, "dependsOn": [], "specRefs": ["Frontend", "siann-protocol"],
+     "acceptance": ["The renderer holds a read model keyed by revision, applies session.changed deltas, recovers with session.sync, and is optimistic only for continuous gestures."]},
+    {"id": "m5-timeline", "title": "Timeline with Canvas/WebGL waveforms and clips", "wave": 2, "dependsOn": ["m5-read-model"], "specRefs": ["Frontend"],
+     "acceptance": ["Clips render from peak pyramids; place, move, trim and remove issue commands; Playwright tests cover each command path."]},
+    {"id": "m5-mixer", "title": "Mixer with faders, pan, mute, solo and meters", "wave": 2, "dependsOn": ["m5-read-model"], "specRefs": ["Gestures", "siann-protocol"],
+     "acceptance": ["Fader gestures use the parameter channel with leases; one revision per gesture end; meters from binary frames."]},
+    {"id": "m5-plan-review", "title": "Plan review UI", "wave": 3, "dependsOn": ["m5-timeline", "m5-mixer"], "specRefs": ["Plans", "Proposal audition (A/B)"],
+     "acceptance": ["Diff of a plan against the current revision, audition of the branch, approve, reject and partial approve."]}
+  ],
+  "exit": [
+    {"id": "m5-exit-manual", "text": "Arrange and mix by hand.", "how": "Playwright scenario plus the maintainer's UX review (human gate)."},
+    {"id": "m5-exit-plan", "text": "Review and approve an agent plan visually.", "how": "Playwright scenario with an MCP-submitted plan."}
+  ],
+  "killCriterion": null
+}

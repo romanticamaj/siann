@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M6a",
+  "title": "Automation",
+  "goal": "Automation lanes with Write, Touch, Latch and Trim passes recorded as single revisions, with the documented precision per target.",
+  "specSections": ["Automation", "Gestures", "Two channels into the audio thread", "Milestones"],
+  "status": "not_started",
+  "done": [],
+  "prerequisites": ["M2; M4 for plugin parameter automation."],
+  "humanGates": [],
+  "features": [
+    {"id": "m6a-lanes", "title": "Automation lanes in the document and segments in the graph", "wave": 1, "dependsOn": [], "specRefs": ["Automation"],
+     "acceptance": ["Breakpoint lanes compile to preevaluated segments; built-in targets are sample-accurate; interpolation domains as specified; offline and realtime renders agree."]},
+    {"id": "m6a-write-passes", "title": "Write, Touch, Latch and Trim passes", "wave": 2, "dependsOn": ["m6a-lanes"], "specRefs": ["Automation", "Gestures"],
+     "acceptance": ["Captured values go through automationOutbox with an end marker; one automation.write_pass revision per pass after thinning; no tail values lost."]},
+    {"id": "m6a-precision", "title": "Precision contract per format", "wave": 2, "dependsOn": ["m6a-lanes"], "specRefs": ["Automation"],
+     "acceptance": ["CLAP sample-accurate, VST3 and AU block-accurate through JUCE, documented and exposed to users and agents; tests measure the actual precision."]}
+  ],
+  "exit": [
+    {"id": "m6a-exit", "text": "Automation passes are recorded as single revisions; precision is documented per format.", "how": "Tests per mode and format."}
+  ],
+  "killCriterion": null
+}

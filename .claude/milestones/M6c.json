@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M6c",
+  "title": "Mixing structure",
+  "goal": "Buses, sends, groups, VCAs, sidechain and bounce/stems in the document, meeting the production-level criteria list.",
+  "specSections": ["siann-model (pure C++)", "Latency model", "Channels and I/O", "Production-level criteria", "Milestones"],
+  "status": "not_started",
+  "done": ["Graph-level PDC across send, aux and sidechain paths (M1)."],
+  "prerequisites": ["M2, M4, M6a."],
+  "humanGates": [
+    {"id": "reference-machines", "text": "Name the reference machine per platform for the 64-track criterion.", "how": "The maintainer names the machines; runs are recorded per release."}
+  ],
+  "features": [
+    {"id": "m6c-buses-sends", "title": "Buses, aux inputs and sends in the document", "wave": 1, "dependsOn": [], "specRefs": ["siann-model (pure C++)", "Channels and I/O"],
+     "acceptance": ["bus.add, send.add (pre/post) and routing commands with declared cascades; document-level PDC null tests across sends and aux returns."]},
+    {"id": "m6c-groups-vca", "title": "Groups and VCAs", "wave": 2, "dependsOn": ["m6c-buses-sends"], "specRefs": ["siann-model (pure C++)", "Commands and jobs"],
+     "acceptance": ["VCA effects on derived gain are not touched entities; group edits are one revision."]},
+    {"id": "m6c-sidechain", "title": "Sidechain routing", "wave": 2, "dependsOn": ["m6c-buses-sends"], "specRefs": ["Latency model"],
+     "acceptance": ["Sidechain inputs from the document line up with the main input (null test)."]},
+    {"id": "m6c-bounce", "title": "Bounce and stems", "wave": 3, "dependsOn": ["m6c-groups-vca"], "specRefs": ["siann-graph and siann-engine"],
+     "acceptance": ["render.bounce job produces content-addressed outputs; stems per track or bus; offline equals realtime null test."]}
+  ],
+  "exit": [
+    {"id": "m6c-exit-production", "text": "The production-level criteria list passes.", "how": "64 tracks at 48 kHz/128 samples for 30 minutes with zero xruns on the reference machines (human gate), PDC null tests, recovery and parity tests."}
+  ],
+  "killCriterion": null
+}

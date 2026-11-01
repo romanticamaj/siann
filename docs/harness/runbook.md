@@ -1,0 +1,70 @@
+# Milestone runbook
+
+How to run one milestone of the native engine with the harness. One milestone per run; check the result before starting the next.
+
+## Pieces
+
+| Piece | Path | Role |
+|---|---|---|
+| Manifests | `.claude/milestones/<M>.json` | Features, waves, acceptance, exit criteria, human gates |
+| Workflow | `.claude/workflows/siann-milestone.js` | Preflight → Plan (Fable spec check) → Build (Opus TDD + verifier + Fable spec review, fix loop) → Land → Exit |
+| Agent rules | `docs/harness/agent-rules.md` | What every subagent must follow |
+| Local checks | `scripts/check-all.js` | One command for Node, native, desktop and GCC checks |
+| Manifest tests | `test/milestones.test.js` | Keeps manifests and the workflow consistent |
+
+## Recommended order
+
+M2 → M3 → M0 → M4 → M5 → M6a → M6b → M6c → M7. M0 waits for the M3 protocol server because the renderer connects through it; M6a–M6c can be reordered.
+
+## Before each run
+
+1. `git checkout main && git pull`, working tree clean.
+2. `node scripts/check-all.js --gcc` passes locally.
+3. In Claude Code `/config`, raise **Dynamic workflow size** (a milestone uses roughly 5 to 8 agents per feature; M2 with 7 features needs about 50).
+4. Read the manifest's `humanGates` and `prerequisites`; settle what you can up front.
+
+## Run
+
+Type in Claude Code:
+
+```
+用 siann-milestone workflow 跑 M2
+```
+
+Options (pass as workflow args):
+
+- `features: ["m2-transport"]` — only these features (no exit check).
+- `maxRounds: 3` — more fix rounds per feature (default 2).
+- `land: false` — verify but do not open PRs; branches stay local.
+
+Progress: `/workflows`. Each feature lands as its own PR, merged only after CI is green on Windows, macOS and Linux.
+
+## When it stops
+
+| Stop | Meaning | What you do |
+|---|---|---|
+| `preflight` | main is red, dirty tree or prerequisite missing | Fix or tell Claude to fix, rerun |
+| `plan` / `needsHuman` | Fable found a decision that is yours | Answer the question; Claude updates the manifest or spec; rerun |
+| feature `failed` | findings left after the fix rounds, or CI red twice | Read the reason and branch; rerun with `features: [id]` after deciding |
+| feature `skipped` | a dependency failed | Rerun after the dependency lands |
+| exit `needs_human` | hardware, long run or judgement | Do the check, report back, Claude records evidence |
+
+## After each run
+
+1. Read the summary: merged PRs, failed features, exit criteria.
+2. Do the human gates (devices, long runs, macOS hands-on, accounts).
+3. Ask Claude to record the results; the manifest status becomes `done` when every exit criterion is met.
+4. Start the next milestone.
+
+## Human gates by milestone
+
+| Milestone | Gates |
+|---|---|
+| M2 | Exit runs on your audio interface (xrun bench at 256 samples, 10-minute record + kill) |
+| M3 | — |
+| M0 | Apple Developer ID and notarization key (asked before storing secrets), macOS hands-on, choice of test plugins |
+| M4 | Choice of third-party plugins |
+| M5 | React or Svelte, UX review |
+| M6b | One-hour 16-track recording run |
+| M6c | Reference machines for the 64-track criterion |
+| M7 | Raspberry Pi class board |

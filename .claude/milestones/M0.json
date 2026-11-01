@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M0",
+  "title": "Desktop spike: Electron shell, engine helper process, plugin hosting, signed macOS build",
+  "goal": "Prove the process model and plugin hosting on Windows and macOS: Electron starts the engine helper, the UI connects with the token handshake, third-party VST3 and AU plugins load, save and restore state, report latency and open editors, and a signed and notarized macOS build runs.",
+  "specSections": [
+    "Process model",
+    "Plugin editor windows",
+    "siann-host: two targets, one interface",
+    "Licensing decisions (decided 2026-10-22, ADR-0017)",
+    "Milestones"
+  ],
+  "status": "not_started",
+  "done": ["JUCE desktop audio device (#20) covers the device half of JUCE hosting."],
+  "prerequisites": ["M3 protocol server (the renderer connects through it)."],
+  "humanGates": [
+    {
+      "id": "apple-signing",
+      "text": "Create a Developer ID Application certificate and a notarization API key in the maintainer's Apple Developer account, and approve storing them as GitHub Actions secrets.",
+      "how": "The maintainer logs in; Claude can drive the portal through Claude in Chrome with the maintainer present, and must ask before storing any secret."
+    },
+    {
+      "id": "macos-hands-on",
+      "text": "Judge editor-window focus and Cmd-Tab behaviour on a real Mac.",
+      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour."
+    },
+    {
+      "id": "plugin-set",
+      "text": "Name one third-party VST3 and one AU plugin installed on the maintainer's machines for the hosting tests.",
+      "how": "The maintainer lists them; tests reference them by path through an environment variable."
+    }
+  ],
+  "features": [
+    {
+      "id": "m0-electron-shell",
+      "title": "Electron app under app/ that spawns and supervises the engine helper",
+      "wave": 1,
+      "dependsOn": [],
+      "specRefs": ["Process model"],
+      "acceptance": [
+        "app/ holds an Electron app (TypeScript, contextIsolation on, nodeIntegration off) that starts the engine helper, restarts it with crash-loop backoff and passes port and token to the renderer through preload.",
+        "Playwright (Electron) tests start the app, see the renderer connect with the token handshake, kill the engine and see it restart."
+      ]
+    },
+    {
+      "id": "m0-plugin-hosting",
+      "title": "JUCE plugin hosting in the engine helper",
+      "wave": 2,
+      "dependsOn": ["m0-electron-shell"],
+      "specRefs": ["siann-host: two targets, one interface", "Plugin editor windows"],
+      "acceptance": [
+        "JucePluginHost implements PluginHost: scan, instantiate on the main thread, process on the audio thread, state get/set as blobs, latency and capability reporting.",
+        "Hosting tests load the maintainer's VST3 (and AU on macOS), save and restore state, read latency and open and close the editor.",
+        "Windows editors are owned by the Electron window via GWLP_HWNDPARENT; macOS editors float and the engine activates itself."
+      ]
+    },
+    {
+      "id": "m0-macos-bundle",
+      "title": "macOS helper app bundle, hardened runtime, signing and notarization in CI",
+      "wave": 3,
+      "dependsOn": ["m0-plugin-hosting"],
+      "specRefs": ["Process model"],
+      "acceptance": [
+        "The engine ships as SIANN.app/Contents/Helpers/SIANN Engine.app with LSUIElement=1 and com.apple.security.cs.disable-library-validation.",
+        "A macOS CI job signs with the Developer ID certificate and notarizes with the API key from secrets, then verifies with spctl and stapler."
+      ]
+    }
+  ],
+  "exit": [
+    {"id": "m0-exit-lifecycle", "text": "Engine starts and stops with the app; the renderer connects with the token handshake.", "how": "Playwright Electron tests."},
+    {"id": "m0-exit-plugins", "text": "One third-party VST3 and one AU load, save and restore state, report latency and open editors.", "how": "Hosting tests on the maintainer's machines."},
+    {"id": "m0-exit-signed", "text": "A signed and notarized macOS build runs; focus and Cmd-Tab behaviour is acceptable.", "how": "CI notarization plus the maintainer's hands-on check (human gate)."}
+  ],
+  "killCriterion": "No acceptable editor-window behaviour on macOS after two weeks: evaluate engine-in-main-process or Tracktion with the maintainer."
+}

@@ -5,6 +5,7 @@ const {
 const {
   loadImportPackManifest,
 } = require('./import-pack');
+const { scriptInvocation } = require('../bridge/script-invocation');
 
 function buildLiveImportCommands(manifest) {
   const commands = [];
@@ -43,11 +44,7 @@ function runtimeInvocation(options = {}) {
     return options.runtime;
   }
   if (options.runner) {
-    return {
-      command: options.runner,
-      args: [],
-      cwd: process.cwd(),
-    };
+    return scriptInvocation(options.runner);
   }
   return engineRuntimeCommand({ engineDir: options.engineDir });
 }
