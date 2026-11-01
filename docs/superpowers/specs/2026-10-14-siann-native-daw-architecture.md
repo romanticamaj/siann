@@ -267,7 +267,8 @@ segments, tempo map as a lookup table).
    audio thread drops changes with an older epoch, applies changes with the current
    epoch, and stops draining at the first change with a newer epoch, which stays at
    the head of the queue until that graph is swapped in. Transport changes carry no
-   epoch. No snapshot, no recompile. Throughput: up to hundreds per second.
+   epoch and travel on their own SPSC lane of the parameter channel, `transportInbox`,
+   so a graph swap in flight never holds them back. No snapshot, no recompile. Throughput: up to hundreds per second.
 
 The **control dispatcher** thread is the only producer of `paramInbox`. Gestures from
 the protocol thread, plugin editor edits from the main thread and committed values
@@ -316,6 +317,7 @@ gesture boundaries (see "Gestures").
 | `graphInbox` | command → audio | SPSC, capacity 1 | `PreparedGraph*` + epoch | cannot overflow: one transition in flight |
 | `retireOutbox` | audio → command | SPSC, capacity 1 | retired `PreparedGraph*` + epoch | cannot overflow: one transition in flight |
 | `paramInbox` | dispatcher → audio | SPSC | `ParamChange` | dispatcher coalesces per (slot, param) and retries |
+| `transportInbox` | dispatcher → audio | SPSC | `TransportCommand{generation, position, play}` | bounded; the dispatcher keeps the latest locate pending and retries on its next tick |
 | `controlInbox` | protocol, main, command, butler → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate, seek-ready | bounded; never waited on: coalesce per key or reply `queue_full` |
 | `commandInbox` | protocol, main, compiler, butler, dispatcher → command | MPSC, mutex | requests, completions, gesture commits | bounded; never waited on: reply `queue_full`; gesture commits are coalesced per target |
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
@@ -397,10 +399,11 @@ records who that is:
 - `transport.locate(target)` goes to the dispatcher, which sends a `seekRequest` with
   a new generation to the butler.
 - The butler fills the pending slot of each playing track's `diskRing` from the
-  target (default prefill 250 ms), tags it with the generation and reports ready to
-  the dispatcher through `controlInbox`. The current slot keeps serving the old
+  target (default prefill 250 ms), tags it with the generation and publishes the
+  ready generation, which the dispatcher reads on its tick (a `controlInbox` message
+  once the protocol thread exists in M3). The current slot keeps serving the old
   position, so playback continues untouched.
-- The dispatcher then sends the locate through `paramInbox`. At the next block
+- The dispatcher then sends the locate through `transportInbox`. At the next block
   boundary the audio thread moves the playhead, swaps each track's current and
   pending slots itself, ducks the master around the jump, and returns the old slot
   to the butler through `butlerRequest`. The butler never touches a slot the audio
@@ -408,7 +411,9 @@ records who that is:
 - Until ready, playback continues from the old position. A newer locate cancels an
   older one. If the butler is not ready within 1 s, the locate proceeds and any
   underrun is counted and reported.
-- Play from stop is a locate to the current position followed by start. The offline
+- Play from stop is a locate to the current position followed by transport start.
+  The locate command carries the start, so the playhead moves and starts advancing
+  at the same block boundary. The offline
   driver reads media synchronously and needs no handshake.
 
 ### Realtime rules and enforcement
