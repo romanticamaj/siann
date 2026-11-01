@@ -29,8 +29,23 @@
 //
 // Any other publish (a structural edit) ducks the whole output, as does a
 // locate ("ducks the master around the jump").
+//
+// Device-side SRC (spec, "Device-side SRC (M2)"): when the device opens at a
+// rate other than the session rate (AudioDeviceConfig::sampleRate), the graph
+// keeps running at the session rate in fixed blocks. Each step renders one
+// block into a FIFO that holds exactly one block between steps (primed with
+// silence) and feeds the oldest block to the output resampler; the device
+// callback is filled from the resampler's output, carried over between
+// callbacks. The output resampler is fed its lookahead in silence at start,
+// so the output path delays the session by exactly srcOutputLatencyFrames.
+// Device input goes through an input resampler to the recorder. Because the
+// playhead runs up to one block further ahead than that latency, captured
+// input is stamped with the playhead-equivalent position (the timeline
+// position the output path reached for the matching device sample plus the
+// reported SRC latency), which keeps the record offset exact.
 
 #include <atomic>
+#include <cstddef>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -109,6 +124,29 @@ struct LatencyFault {
     std::int64_t latency = 0;
     std::string code;  // GraphError::code(), e.g. compensation_limit
     std::string message;
+};
+
+// What the engine tells users and agents about device-side SRC.
+struct ResamplingState {
+    bool active = false;
+    std::int64_t deviceRate = 0;
+    std::int64_t sessionRate = 0;
+    std::int64_t addedLatencyFrames = 0;  // session frames, output plus input SRC
+};
+
+// The latency model's inputs for the running (or last started) device, all in
+// session frames (spec, "Latency model"). Device latencies are converted from
+// the device rate, rounding to nearest.
+struct LatencyReport {
+    std::int64_t sessionRate = 0;
+    std::int64_t deviceRate = 0;
+    std::int64_t inputLatencyFrames = 0;
+    std::int64_t outputLatencyFrames = 0;
+    std::int64_t srcOutputLatencyFrames = 0;  // output resampler lookahead plus the primed FIFO block
+    std::int64_t srcInputLatencyFrames = 0;   // input resampler lookahead
+    std::int64_t monitoredPathLatencyFrames = 0;  // 0 in M2: the master path has no latency yet
+    // A captured block stamped t lands at t - recordOffsetFrames.
+    std::int64_t recordOffsetFrames = 0;
 };
 
 // One parameter change for the audio thread (revision 3.1, "Two channels into
@@ -246,6 +284,13 @@ public:
     // What the device reported when it was opened by start().
     const host::AudioDeviceStatus& deviceStatus() const noexcept { return deviceStatus_; }
 
+    // Set by start() and kept after stop() until the next start().
+    const ResamplingState& resampling() const noexcept { return resampling_; }
+    const LatencyReport& latency() const noexcept { return latency_; }
+
+    // Device frames the SRC path could not fill (output as silence).
+    std::uint64_t xruns() const noexcept { return xruns_.load(std::memory_order_acquire); }
+
     DriverState state() const noexcept { return state_; }
     std::uint64_t liveEpoch() const noexcept { return liveEpoch_; }
     bool transitionInFlight() const noexcept { return inFlight_.has_value(); }
@@ -254,9 +299,14 @@ public:
 
 private:
     using Handoff = detail::Handoff;
+    struct SrcPath;
 
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
-    void renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept;
+    void renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept;
+    void processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
+                          bool playing) noexcept;
+    void srcStep(bool playing) noexcept;
+    void setUpResampling(const host::AudioDeviceConfig& config);
     void drainParams() noexcept;
     void pushMeters(std::int64_t position, int frames) noexcept;
     void applyLocate(const TransportCommand& command) noexcept;
@@ -274,6 +324,10 @@ private:
     host::AudioDevice* device_ = nullptr;
     host::AudioDeviceStatus deviceStatus_{};
     Recorder* recorder_ = nullptr;
+    ResamplingState resampling_{};
+    LatencyReport latency_{};
+    std::unique_ptr<SrcPath> src_;  // built by start() when the rates differ
+    std::atomic<std::uint64_t> xruns_{0};
 
     // Control side: every graph this driver owns, by epoch.
     std::map<std::uint64_t, std::unique_ptr<graph::PreparedGraph>> owned_;

@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <climits>
 #include <stdexcept>
+#include <vector>
 
 #include "siann/realtime/recorder.hpp"
+#include "siann/realtime/stream_resampler.hpp"
 
 namespace siann::realtime {
 
@@ -15,7 +17,60 @@ detail::MeterFrame emptyMeterFrame(std::size_t capacity) {
     frame.entries.resize(capacity);
     return frame;
 }
+
+constexpr int kDefaultSrcBlock = 64;  // session frames per step when no graph is live at start
+
+// Device frames to session frames, rounding to nearest.
+std::int64_t toSessionFrames(std::int64_t frames, std::int64_t sessionRate, std::int64_t deviceRate) {
+    return (frames * sessionRate + deviceRate / 2) / deviceRate;
+}
+
+struct PlanarBuffer {
+    std::vector<std::vector<float>> data;
+    std::vector<float*> pointers;
+
+    void allocate(int channels, int frames) {
+        data.assign(static_cast<std::size_t>(channels), std::vector<float>(static_cast<std::size_t>(frames), 0.0f));
+        pointers.clear();
+        for (auto& c : data) {
+            pointers.push_back(c.data());
+        }
+    }
+};
+
 }  // namespace
+
+// Everything the SRC path needs on the audio thread, built on the control
+// side by start() and dropped by stop().
+struct GraphDriver::SrcPath {
+    std::int64_t sessionRate = 0;
+    std::int64_t deviceRate = 0;
+    int block = 0;  // session frames per step
+    int outputChannels = 0;
+    std::unique_ptr<StreamResampler> output;  // session -> device
+    std::unique_ptr<StreamResampler> input;   // device -> session; null without inputs
+
+    // The FIFO: two block slots per channel; `head` is the block fed next, so
+    // between steps the FIFO holds exactly one block.
+    PlanarBuffer slots[2];
+    int head = 0;
+    // Device-rate output produced but not yet sent to the device.
+    PlanarBuffer carry;
+    int carryRead = 0;
+    int carryCount = 0;
+    // Session frames fed to the output resampler so far (including the silent
+    // lookahead and the primed block), and the timeline position of resampler
+    // input index 0 while playing contiguously: timeline = index + base.
+    std::int64_t fed = 0;
+    std::int64_t base = 0;
+
+    // Input path.
+    int maxInputFrames = 0;
+    std::vector<const float*> inputPointers;
+    PlanarBuffer inputScratch;
+    std::int64_t inputProduced = 0;  // session frames the input resampler produced so far
+    std::int64_t stampLead = 0;      // srcOutputLatencyFrames + srcInputLatencyFrames
+};
 
 GraphDriver::GraphDriver(Options options) : options_(options), meterOutbox_(emptyMeterFrame(options.meterCapacity)) {
     if (options_.fadeFrames <= 0) {
@@ -27,6 +82,70 @@ GraphDriver::~GraphDriver() {
     if (state_ == DriverState::realtime) {
         stop();
     }
+}
+
+void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
+    src_.reset();
+    const std::int64_t sessionRate = config.sampleRate;
+    const std::int64_t deviceRate = deviceStatus_.sampleRate > 0 ? deviceStatus_.sampleRate : sessionRate;
+    latency_ = LatencyReport{};
+    latency_.sessionRate = sessionRate;
+    latency_.deviceRate = deviceRate;
+    latency_.inputLatencyFrames = toSessionFrames(deviceStatus_.inputLatencyFrames, sessionRate, deviceRate);
+    latency_.outputLatencyFrames = toSessionFrames(deviceStatus_.outputLatencyFrames, sessionRate, deviceRate);
+
+    if (deviceRate != sessionRate) {
+        auto path = std::make_unique<SrcPath>();
+        path->sessionRate = sessionRate;
+        path->deviceRate = deviceRate;
+        path->block = current_ != nullptr ? current_->maxBlockFrames() : kDefaultSrcBlock;
+        path->outputChannels = config.outputChannels;
+        path->output = std::make_unique<StreamResampler>(static_cast<double>(sessionRate),
+                                                         static_cast<double>(deviceRate), config.outputChannels,
+                                                         path->block);
+        path->slots[0].allocate(config.outputChannels, path->block);
+        path->slots[1].allocate(config.outputChannels, path->block);
+        path->carry.allocate(config.outputChannels, 2 * path->output->maxOutputFrames());
+
+        // Feed the resampler its lookahead in silence, so the first callback
+        // renders only its share and the output delay is exactly the report.
+        const int lookahead = path->output->lookaheadFrames();
+        PlanarBuffer produced;
+        produced.allocate(config.outputChannels, path->output->maxOutputFrames());
+        for (int done = 0; done < lookahead;) {
+            const int n = std::min(path->block, lookahead - done);
+            const int out = path->output->process(path->slots[0].pointers.data(), n, produced.pointers.data());
+            for (int c = 0; c < config.outputChannels; ++c) {
+                std::copy_n(produced.data[static_cast<std::size_t>(c)].begin(), out,
+                            path->carry.data[static_cast<std::size_t>(c)].begin() + path->carryCount);
+            }
+            path->carryCount += out;
+            done += n;
+        }
+        path->fed = lookahead;  // slots[0] (silence) is the primed FIFO block
+        path->base = playhead_.load(std::memory_order_relaxed) - (path->fed + path->block);
+        latency_.srcOutputLatencyFrames = lookahead + path->block;
+
+        if (config.inputChannels > 0) {
+            const int maxIn = deviceStatus_.bufferFrames > 0 ? deviceStatus_.bufferFrames : config.bufferFrames;
+            path->maxInputFrames = maxIn;
+            path->input = std::make_unique<StreamResampler>(static_cast<double>(deviceRate),
+                                                            static_cast<double>(sessionRate), config.inputChannels,
+                                                            maxIn);
+            path->inputPointers.assign(static_cast<std::size_t>(config.inputChannels), nullptr);
+            path->inputScratch.allocate(config.inputChannels, path->input->maxOutputFrames());
+            latency_.srcInputLatencyFrames =
+                toSessionFrames(path->input->lookaheadFrames(), sessionRate, deviceRate);
+        }
+        path->stampLead = latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames;
+        src_ = std::move(path);
+    }
+
+    latency_.recordOffsetFrames = latency_.monitoredPathLatencyFrames + latency_.outputLatencyFrames +
+                                  latency_.inputLatencyFrames + latency_.srcOutputLatencyFrames +
+                                  latency_.srcInputLatencyFrames;
+    resampling_ = ResamplingState{src_ != nullptr, deviceRate, sessionRate,
+                                  latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames};
 }
 
 std::uint64_t GraphDriver::publish(std::unique_ptr<graph::PreparedGraph> graph) {
@@ -59,6 +178,8 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
         throw std::logic_error("the graph driver is already running");
     }
     deviceStatus_ = device.open(config);
+    setUpResampling(config);
+    xruns_.store(0, std::memory_order_relaxed);
     deviceLost_.store(false, std::memory_order_release);
     device.setOnStopped([this](bool) { deviceLost_.store(true, std::memory_order_release); });
     device_ = &device;
@@ -296,6 +417,7 @@ void GraphDriver::finishStop() {
     inFlight_.reset();
     state_ = DriverState::stopped;
     device_ = nullptr;
+    src_.reset();
     if (waiting_) {
         const std::uint64_t epoch = *waiting_;
         waiting_.reset();
@@ -306,7 +428,7 @@ void GraphDriver::finishStop() {
 // ---- audio thread ----------------------------------------------------------
 
 void GraphDriver::process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept {
-    if (recorder_ != nullptr) {
+    if (recorder_ != nullptr && src_ == nullptr) {
         // The input block lines up with the output block rendered from the
         // current playhead in this same callback.
         recorder_->capture(input, playhead_.load(std::memory_order_relaxed), playing_.load(std::memory_order_acquire));
@@ -353,9 +475,14 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
 
     drainParams();
 
-    const int chunk = current_ != nullptr ? current_->maxBlockFrames() : output.frames;
-    for (int offset = 0; offset < output.frames; offset += chunk) {
-        renderBlock(output, offset, std::min(chunk, output.frames - offset));
+    const bool playing = playing_.load(std::memory_order_acquire);
+    if (src_ != nullptr) {
+        processResampled(input, output, playing);
+    } else {
+        const int chunk = current_ != nullptr ? current_->maxBlockFrames() : output.frames;
+        for (int offset = 0; offset < output.frames; offset += chunk) {
+            renderBlock(output, offset, std::min(chunk, output.frames - offset), playing);
+        }
     }
 
     if (duckActive_ && duckRemaining_ == 0) {
@@ -447,8 +574,80 @@ void GraphDriver::pushMeters(std::int64_t position, int frames) noexcept {
     }
 }
 
-void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept {
-    const bool playing = playing_.load(std::memory_order_acquire);
+void GraphDriver::processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
+                                   bool playing) noexcept {
+    SrcPath& s = *src_;
+    if (recorder_ != nullptr && s.input != nullptr && input.channelCount >= s.input->channels()) {
+        // Session frame m of the input resampler is device input time
+        // m * deviceRate / sessionRate; the output path played timeline position
+        // m + base there. Stamped as the playhead would be with that latency.
+        const int channels = s.input->channels();
+        for (int offset = 0; offset < input.frames; offset += s.maxInputFrames) {
+            const int n = std::min(s.maxInputFrames, input.frames - offset);
+            for (int c = 0; c < channels; ++c) {
+                s.inputPointers[static_cast<std::size_t>(c)] = input.channel(c) + offset;
+            }
+            const int produced = s.input->process(s.inputPointers.data(), n, s.inputScratch.pointers.data());
+            const std::int64_t stamp = s.inputProduced + s.base + s.stampLead;
+            s.inputProduced += produced;
+            recorder_->capture(host::AudioBufferView{s.inputScratch.pointers.data(), channels, produced}, stamp,
+                               playing);
+        }
+    }
+
+    // Each step yields at least block * deviceRate / sessionRate - 1 frames
+    // once the lookahead is in, so this bound is never reached in practice.
+    const std::int64_t maxSteps =
+        static_cast<std::int64_t>(output.frames) * s.sessionRate / s.deviceRate / s.block + 3;
+    const int channels = std::min(output.channelCount, s.outputChannels);
+    std::int64_t steps = 0;
+    int written = 0;
+    while (written < output.frames) {
+        if (s.carryCount > 0) {
+            const int n = std::min(s.carryCount, output.frames - written);
+            for (int c = 0; c < channels; ++c) {
+                const float* from = s.carry.pointers[static_cast<std::size_t>(c)] + s.carryRead;
+                std::copy_n(from, n, output.channel(c) + written);
+            }
+            for (int c = channels; c < output.channelCount; ++c) {
+                std::fill_n(output.channel(c) + written, n, 0.0f);
+            }
+            s.carryRead += n;
+            s.carryCount -= n;
+            written += n;
+            continue;
+        }
+        if (steps == maxSteps) {
+            for (int c = 0; c < output.channelCount; ++c) {
+                std::fill_n(output.channel(c) + written, output.frames - written, 0.0f);
+            }
+            xruns_.fetch_add(static_cast<std::uint64_t>(output.frames - written), std::memory_order_relaxed);
+            break;
+        }
+        srcStep(playing);
+        ++steps;
+    }
+}
+
+void GraphDriver::srcStep(bool playing) noexcept {
+    SrcPath& s = *src_;
+    const int fresh = s.head ^ 1;
+    const host::AudioBufferView view{s.slots[fresh].pointers.data(), s.outputChannels, s.block};
+    if (playing && current_ != nullptr) {
+        // The fresh block is resampler input [fed + block, fed + 2 * block).
+        s.base = playhead_.load(std::memory_order_relaxed) - (s.fed + s.block);
+    }
+    const int chunk = current_ != nullptr ? std::min(current_->maxBlockFrames(), s.block) : s.block;
+    for (int offset = 0; offset < s.block; offset += chunk) {
+        renderBlock(view, offset, std::min(chunk, s.block - offset), playing);
+    }
+    s.carryCount = s.output->process(s.slots[s.head].pointers.data(), s.block, s.carry.pointers.data());
+    s.carryRead = 0;
+    s.fed += s.block;
+    s.head = fresh;
+}
+
+void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept {
     const std::int64_t position = playhead_.load(std::memory_order_relaxed);
     const host::AudioBufferView* source = nullptr;
     // Path ramps run inside the graph on the affected edges only: the duck in
