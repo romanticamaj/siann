@@ -30,6 +30,10 @@ public:
     // Runs `blocks` callbacks and appends channel `channel` of each output.
     void pump(int blocks, std::vector<float>* capture = nullptr, int channel = 0);
 
+    // Runs `blocks` callbacks and appends every output channel of each block
+    // to captures[channel] (resized to the device's output channel count).
+    void pumpAll(int blocks, std::vector<std::vector<float>>& captures);
+
     // Reports the device as lost, as a real backend would after its last callback.
     void reportLost() {
         callback_ = nullptr;

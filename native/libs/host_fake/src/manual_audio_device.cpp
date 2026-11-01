@@ -51,4 +51,14 @@ void ManualAudioDevice::pump(int blocks, std::vector<float>* capture, int channe
     }
 }
 
+void ManualAudioDevice::pumpAll(int blocks, std::vector<std::vector<float>>& captures) {
+    captures.resize(output_.size());
+    for (int b = 0; b < blocks; ++b) {
+        pump(1);
+        for (std::size_t c = 0; c < output_.size(); ++c) {
+            captures[c].insert(captures[c].end(), output_[c].begin(), output_[c].end());
+        }
+    }
+}
+
 }  // namespace siann::host
