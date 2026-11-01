@@ -59,10 +59,12 @@ struct GraphDriver::SrcPath {
     int carryRead = 0;
     int carryCount = 0;
     // Session frames fed to the output resampler so far (including the silent
-    // lookahead and the primed block), and the timeline position of resampler
-    // input index 0 while playing contiguously: timeline = index + base.
+    // lookahead). Between steps the next block rendered is resampler input
+    // [fed + block, fed + 2 * block) and starts at the playhead, so the
+    // timeline position of input index 0 is playhead - (fed + block). It is
+    // computed when needed, never stored: while stopped `fed` keeps growing
+    // and a locate moves the playhead, and both must show up at once.
     std::int64_t fed = 0;
-    std::int64_t base = 0;
 
     // Input path.
     int maxInputFrames = 0;
@@ -126,7 +128,6 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
             done += n;
         }
         path->fed = lookahead;  // slots[0] (silence) is the primed FIFO block
-        path->base = playhead_.load(std::memory_order_relaxed) - (path->fed + path->block);
         latency_.srcOutputLatencyFrames = lookahead + path->block;
 
         if (config.inputChannels > 0) {
@@ -584,6 +585,9 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
         // Session frame m of the input resampler is device input time
         // m * deviceRate / sessionRate; the output path played timeline position
         // m + base there. Stamped as the playhead would be with that latency.
+        // base is taken now, before this callback renders: after a stop or a
+        // locate it is the base the blocks rendered from here on will use.
+        const std::int64_t base = playhead_.load(std::memory_order_relaxed) - (s.fed + s.block);
         const int channels = s.input->channels();
         for (int offset = 0; offset < input.frames; offset += s.maxInputFrames) {
             const int n = std::min(s.maxInputFrames, input.frames - offset);
@@ -591,7 +595,7 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
                 s.inputPointers[static_cast<std::size_t>(c)] = input.channel(c) + offset;
             }
             const int produced = s.input->process(s.inputPointers.data(), n, s.inputScratch.pointers.data());
-            const std::int64_t stamp = s.inputProduced + s.base + s.stampLead;
+            const std::int64_t stamp = s.inputProduced + base + s.stampLead;
             s.inputProduced += produced;
             recorder_->capture(host::AudioBufferView{s.inputScratch.pointers.data(), channels, produced}, stamp,
                                playing);
@@ -636,10 +640,6 @@ void GraphDriver::srcStep(bool playing) noexcept {
     SrcPath& s = *src_;
     const int fresh = s.head ^ 1;
     const host::AudioBufferView view{s.slots[fresh].pointers.data(), s.outputChannels, s.block};
-    if (playing && current_ != nullptr) {
-        // The fresh block is resampler input [fed + block, fed + 2 * block).
-        s.base = playhead_.load(std::memory_order_relaxed) - (s.fed + s.block);
-    }
     const int chunk = current_ != nullptr ? std::min(current_->maxBlockFrames(), s.block) : s.block;
     for (int offset = 0; offset < s.block; offset += chunk) {
         renderBlock(view, offset, std::min(chunk, s.block - offset), playing);
