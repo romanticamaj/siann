@@ -37,6 +37,11 @@ struct MediaLibrary {
     std::map<hash::Digest, std::shared_ptr<const graph::PlanarAudio>> media;
 };
 
+// Reads and decodes one media file from <bundle>/media, checking its hash and
+// shape against the entity (media_missing, media_hash_mismatch,
+// media_mismatch).
+media::AudioBuffer readMedia(const model::Media& entity, const std::filesystem::path& bundle);
+
 // Decodes every media file the document references from <bundle>/media and
 // checks each file's hash and shape against its media entity.
 MediaLibrary loadMedia(const model::Document& document, const std::filesystem::path& bundle);

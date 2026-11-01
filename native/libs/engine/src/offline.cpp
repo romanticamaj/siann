@@ -31,25 +31,30 @@ std::int64_t timelineStart(const model::Clip& clip, const time::TempoMap& tempo,
 
 }  // namespace
 
+media::AudioBuffer readMedia(const model::Media& entity, const std::filesystem::path& bundle) {
+    const auto file = session::mediaPath(bundle, entity.contentHash, entity.format);
+    if (!std::filesystem::exists(file)) {
+        throw EngineError("media_missing", "media " + entity.id + " has no file at " + file.string());
+    }
+    const std::string bytes = io::readFile(file);
+    if (hash::sha256(bytes) != entity.contentHash) {
+        throw EngineError("media_hash_mismatch", "the file for media " + entity.id + " does not match its hash");
+    }
+    media::AudioBuffer decoded = media::decode(bytes);
+    if (decoded.info.channels != entity.channels || decoded.info.frames != entity.frames ||
+        decoded.info.sampleRate != entity.sampleRate) {
+        throw EngineError("media_mismatch", "the file for media " + entity.id + " differs from its entity");
+    }
+    return decoded;
+}
+
 MediaLibrary loadMedia(const model::Document& document, const std::filesystem::path& bundle) {
     MediaLibrary library;
     for (const model::Media* media : document.allMedia()) {
         if (library.media.count(media->contentHash) != 0) {
             continue;
         }
-        const auto file = session::mediaPath(bundle, media->contentHash, media->format);
-        if (!std::filesystem::exists(file)) {
-            throw EngineError("media_missing", "media " + media->id + " has no file at " + file.string());
-        }
-        const std::string bytes = io::readFile(file);
-        if (hash::sha256(bytes) != media->contentHash) {
-            throw EngineError("media_hash_mismatch", "the file for media " + media->id + " does not match its hash");
-        }
-        const media::AudioBuffer decoded = media::decode(bytes);
-        if (decoded.info.channels != media->channels || decoded.info.frames != media->frames ||
-            decoded.info.sampleRate != media->sampleRate) {
-            throw EngineError("media_mismatch", "the file for media " + media->id + " differs from its entity");
-        }
+        const media::AudioBuffer decoded = readMedia(*media, bundle);
         auto planar = std::make_shared<PlanarAudio>();
         planar->channels = decoded.info.channels;
         planar->frames = decoded.info.frames;
