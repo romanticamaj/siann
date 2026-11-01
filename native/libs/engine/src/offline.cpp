@@ -139,26 +139,34 @@ media::AudioBuffer renderOffline(const model::Document& document, const MediaLib
         options.frames >= 0 ? options.frames : std::max<std::int64_t>(0, documentEnd(document) - options.start);
 
     auto graph = compileDocument(document, library, options.blockFrames);
-    const std::int64_t latency = graph->totalLatency();
+    return renderGraph(*graph, options.start, frames, document.root().sampleRate);
+}
+
+media::AudioBuffer renderGraph(graph::PreparedGraph& prepared, std::int64_t start, std::int64_t frames,
+                               std::int64_t sampleRate) {
+    const std::int64_t latency = prepared.totalLatency();
+    const int block = prepared.maxBlockFrames();
+    const int channels = prepared.outputChannels();
 
     media::AudioBuffer out;
-    out.info = media::AudioInfo{2, document.root().sampleRate, frames};
-    out.samples.assign(static_cast<std::size_t>(frames * 2), 0.0f);
+    out.info = media::AudioInfo{channels, sampleRate, frames};
+    out.samples.assign(static_cast<std::size_t>(frames * channels), 0.0f);
 
     // Process latency extra frames and drop the first `latency` outputs, so the
     // output frame i is the timeline sample start + i.
     const std::int64_t total = frames + latency;
-    for (std::int64_t done = 0; done < total; done += options.blockFrames) {
-        const int n = static_cast<int>(std::min<std::int64_t>(options.blockFrames, total - done));
-        graph->process(graph::ProcessContext{options.start + done, n});
-        const auto& view = graph->output();
+    for (std::int64_t done = 0; done < total; done += block) {
+        const int n = static_cast<int>(std::min<std::int64_t>(block, total - done));
+        prepared.process(graph::ProcessContext{start + done, n});
+        const auto& view = prepared.output();
         for (int i = 0; i < n; ++i) {
             const std::int64_t index = done + i - latency;
             if (index < 0) {
                 continue;
             }
-            out.samples[static_cast<std::size_t>(index * 2)] = view.channel(0)[i];
-            out.samples[static_cast<std::size_t>(index * 2 + 1)] = view.channel(1)[i];
+            for (int c = 0; c < channels; ++c) {
+                out.samples[static_cast<std::size_t>(index * channels + c)] = view.channel(c)[i];
+            }
         }
     }
     return out;
