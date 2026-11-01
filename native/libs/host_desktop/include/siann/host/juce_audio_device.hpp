@@ -42,6 +42,11 @@ public:
     // Output devices of every available type, after a fresh scan.
     static std::vector<DeviceDescription> listOutputDevices();
 
+    // True for device types whose backend accepts any rate and converts it
+    // itself with the OS converter: JUCE's WASAPI shared mode ("Windows
+    // Audio"), which opens with AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM.
+    static bool convertsSampleRateItself(const std::string& deviceType);
+
     // deviceId is "<type>/<name>", or empty for the default output device of
     // the first available type. The device is asked for the requested sample
     // rate; if it cannot run at it (WASAPI shared mode at the OS mix rate, for

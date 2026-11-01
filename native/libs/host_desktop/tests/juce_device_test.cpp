@@ -5,7 +5,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <thread>
 
 #include "siann/graph/graph.hpp"
@@ -160,4 +162,49 @@ TEST_CASE("Opening at a rate the device cannot run reports the rate it runs at",
         }
     }
     SKIP("the default device accepts every tested rate");
+}
+
+TEST_CASE("Backends that convert any rate themselves are known by type", "[juce]") {
+    // JUCE's WASAPI shared mode accepts any rate and converts it with the OS
+    // converter (AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM); the other modes and
+    // backends run the device at the rate asked or refuse it.
+    CHECK(host::JuceAudioDevice::convertsSampleRateItself("Windows Audio"));
+    CHECK_FALSE(host::JuceAudioDevice::convertsSampleRateItself("Windows Audio (Low Latency Mode)"));
+    CHECK_FALSE(host::JuceAudioDevice::convertsSampleRateItself("Windows Audio (Exclusive Mode)"));
+    CHECK_FALSE(host::JuceAudioDevice::convertsSampleRateItself("ASIO"));
+    CHECK_FALSE(host::JuceAudioDevice::convertsSampleRateItself("CoreAudio"));
+    CHECK_FALSE(host::JuceAudioDevice::convertsSampleRateItself("ALSA"));
+}
+
+TEST_CASE("A device that would convert the session rate itself opens at its own rate", "[juce][hardware]") {
+    std::string deviceId;
+    for (const auto& d : host::JuceAudioDevice::listOutputDevices()) {
+        if (host::JuceAudioDevice::convertsSampleRateItself(d.type) && (deviceId.empty() || d.isDefault)) {
+            deviceId = d.type + "/" + d.name;
+        }
+    }
+    if (deviceId.empty()) {
+        SKIP("no output device whose backend converts rates itself");
+    }
+    // Spec, "Sample rate and media": the session is never silently converted.
+    // Whatever rate is asked for, the device opens at its mix rate, so a
+    // session at another rate plays through the engine's own SRC.
+    INFO("device " << deviceId);
+    host::AudioDeviceConfig config;
+    config.deviceId = deviceId;
+    config.outputChannels = 2;
+    config.bufferFrames = 256;
+    std::int64_t mixRate = 0;
+    for (const std::int64_t rate : {44'100, 48'000, 96'000}) {
+        INFO("asked for " << rate << " Hz");
+        config.sampleRate = rate;
+        host::JuceAudioDevice device;
+        const auto status = device.open(config);
+        device.close();
+        CHECK(status.sampleRate > 0);
+        if (mixRate == 0) {
+            mixRate = status.sampleRate;
+        }
+        CHECK(status.sampleRate == mixRate);
+    }
 }

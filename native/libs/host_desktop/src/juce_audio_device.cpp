@@ -93,6 +93,10 @@ std::vector<DeviceDescription> JuceAudioDevice::listOutputDevices() {
     return out;
 }
 
+bool JuceAudioDevice::convertsSampleRateItself(const std::string& deviceType) {
+    return deviceType == "Windows Audio";
+}
+
 AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
     close();
     impl_->types = createTypes();
