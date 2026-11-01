@@ -581,6 +581,39 @@ TEST_CASE("No allocations on the audio thread during playback and gestures", "[p
     CHECK_FALSE(silent(p.out[0]));
 }
 
+TEST_CASE("A session asks the device for its own rate and resamples when the device runs at another",
+          "[playback][src]") {
+    Fixture f;  // a 48 kHz session
+    PlaybackEngine engine(f.session, testOptions());
+    engine.load();
+
+    host::ManualAudioDevice same;
+    auto config = deviceConfig();
+    config.sampleRate = 44'100;  // the session's rate wins over the caller's
+    engine.start(same, config);
+    CHECK(engine.driver().deviceStatus().sampleRate == 48'000);
+    CHECK_FALSE(engine.resampling().active);
+    engine.stop();
+
+    host::ManualAudioDevice::Options fixed;
+    fixed.fixedSampleRate = 44'100;
+    host::ManualAudioDevice device(fixed);
+    engine.start(device, deviceConfig());
+    const auto state = engine.resampling();
+    CHECK(state.active);
+    CHECK(state.sessionRate == 48'000);
+    CHECK(state.deviceRate == 44'100);
+    CHECK(state.addedLatencyFrames > 0);
+    for (int b = 0; b < 20; ++b) {
+        device.pump(1);
+        engine.butler().runOnce();
+        engine.tick();
+    }
+    CHECK(engine.driver().xruns() == 0);
+    CHECK(engine.underruns() == 0);
+    engine.stop();
+}
+
 TEST_CASE("An empty document plays silence with no underruns", "[playback]") {
     Fixture f;
     const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
