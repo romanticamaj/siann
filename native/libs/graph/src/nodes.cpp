@@ -4,6 +4,7 @@
 #include <climits>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
 
 namespace siann::graph {
 
@@ -168,15 +169,37 @@ void MeterNode::process(const ProcessContext& context, std::span<const AudioBuff
     reading_.channels = std::min(channels_, kMaxMeterChannels);
 }
 
-FakeLatencyNode::FakeLatencyNode(int channels, std::int64_t latency) : channels_(channels), latency_(latency) {}
+FakeLatencyNode::FakeLatencyNode(int channels, std::int64_t latency, std::int64_t maxLatency)
+    : channels_(channels), latency_(latency), maxLatency_(maxLatency), requested_(latency) {
+    if (latency < 0 || maxLatency < latency) {
+        throw std::invalid_argument("FakeLatency needs 0 <= latency <= maxLatency");
+    }
+}
+
+bool FakeLatencyNode::requestLatency(std::int64_t samples) noexcept {
+    if (samples < 0 || samples > maxLatency_) {
+        return false;
+    }
+    requested_.store(samples, std::memory_order_release);
+    return true;
+}
 
 void FakeLatencyNode::prepare(int) {
-    ring_.assign(static_cast<std::size_t>(channels_), std::vector<float>(static_cast<std::size_t>(latency_), 0.0f));
+    ring_.assign(static_cast<std::size_t>(channels_), std::vector<float>(static_cast<std::size_t>(maxLatency_), 0.0f));
     position_ = 0;
 }
 
 void FakeLatencyNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                               const AudioBufferView& output) noexcept {
+    const std::int64_t requested = requested_.load(std::memory_order_acquire);
+    if (requested != latency_) {
+        // A new latency: restart the delay line with silence, in place.
+        latency_ = requested;
+        position_ = 0;
+        for (auto& ring : ring_) {
+            std::fill(ring.begin(), ring.begin() + static_cast<std::ptrdiff_t>(latency_), 0.0f);
+        }
+    }
     if (latency_ == 0) {
         for (int c = 0; c < channels_; ++c) {
             for (int i = 0; i < context.frames; ++i) {
