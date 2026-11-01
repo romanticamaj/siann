@@ -11,6 +11,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "siann/graph/graph.hpp"
 #include "siann/graph/nodes.hpp"
@@ -45,6 +46,26 @@ media::AudioBuffer readMedia(const model::Media& entity, const std::filesystem::
 // Decodes every media file the document references from <bundle>/media and
 // checks each file's hash and shape against its media entity.
 MediaLibrary loadMedia(const model::Document& document, const std::filesystem::path& bundle);
+
+// A document's clips resolved to the timeline, per track in track order. The
+// offline graph (compileDocument) and the streaming graph (siann-playback)
+// are both built from this, so they agree by construction. Pointers refer
+// into the document.
+struct FlatClip {
+    std::int64_t timelineStart = 0;  // samples
+    std::int64_t sourceStart = 0;    // media frames
+    std::int64_t length = 0;         // frames
+    float gain = 1.0f;
+    const model::Media* media = nullptr;
+};
+
+struct FlatTrack {
+    const model::Track* track = nullptr;
+    bool silenced = false;  // muted, or not soloed while another track is
+    std::vector<FlatClip> clips;
+};
+
+std::vector<FlatTrack> flattenClips(const model::Document& document);
 
 std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& document, const MediaLibrary& library,
                                                       int maxBlockFrames);

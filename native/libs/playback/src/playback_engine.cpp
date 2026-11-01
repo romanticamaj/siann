@@ -13,18 +13,10 @@
 #include "siann/media/memory_reader.hpp"
 #include "siann/media/wav_file_reader.hpp"
 #include "siann/session/media_import.hpp"
-#include "siann/time/tempo_map.hpp"
 
 namespace siann::playback {
 
 namespace {
-
-std::int64_t timelineStart(const model::Clip& clip, const time::TempoMap& tempo, std::int64_t rate) {
-    if (clip.position.domain == time::Domain::audio) {
-        return clip.position.value;
-    }
-    return tempo.toAudio(time::MusicTime{clip.position.value}, rate).samples;
-}
 
 // One reader per content hash. WAV streams from the bundle; FLAC is decoded
 // into memory (with engine::loadMedia's checks) until a streaming reader exists.
@@ -65,38 +57,31 @@ std::string trackSlotKey(const std::string& trackId) {
 
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
                                     const PlaybackOptions& options) {
-    const auto& root = document.root();
-    const time::TempoMap tempo(root.tempo);
-    const auto tracks = document.tracksInOrder();
-    const bool anySolo = std::any_of(tracks.begin(), tracks.end(), [](const model::Track* t) { return t->solo; });
-
     std::map<hash::Digest, std::shared_ptr<host::MediaReader>> readers;
     CompiledPlayback compiled;
     graph::GraphBuilder builder;
     const graph::NodeId master = builder.add(std::make_unique<graph::BusNode>(2), "master");
-    for (const model::Track* track : tracks) {
+    for (const engine::FlatTrack& flat : engine::flattenClips(document)) {
+        const model::Track& track = *flat.track;
         std::vector<realtime::StreamClip> clips;
-        for (const model::Clip* clip : document.clipsOnTrack(track->id)) {
-            const model::Media* entity = document.media(clip->mediaId);
-            auto found = readers.find(entity->contentHash);
+        for (const engine::FlatClip& clip : flat.clips) {
+            auto found = readers.find(clip.media->contentHash);
             if (found == readers.end()) {
-                found = readers.emplace(entity->contentHash, openReader(*entity, bundle)).first;
+                found = readers.emplace(clip.media->contentHash, openReader(*clip.media, bundle)).first;
             }
-            clips.push_back(realtime::StreamClip{timelineStart(*clip, tempo, root.sampleRate), clip->sourceStart,
-                                                 clip->length, graph::gainFromMilliDb(clip->gain.milliDb),
-                                                 found->second});
+            clips.push_back(
+                realtime::StreamClip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, found->second});
         }
-        auto stream = std::make_unique<realtime::DiskStream>(track->channels, std::move(clips), options.ringFrames);
-        const bool silenced = track->mute || (anySolo && !track->solo);
+        auto stream = std::make_unique<realtime::DiskStream>(track.channels, std::move(clips), options.ringFrames);
         const graph::NodeId player =
-            builder.add(std::make_unique<realtime::StreamingPlayerNode>(*stream), track->id + ".stream");
+            builder.add(std::make_unique<realtime::StreamingPlayerNode>(*stream), track.id + ".stream");
         const graph::NodeId fader = builder.add(
-            std::make_unique<graph::TrackFaderNode>(track->channels, track->gain.milliDb, track->pan, silenced),
-            track->id + ".fader");
+            std::make_unique<graph::TrackFaderNode>(track.channels, track.gain.milliDb, track.pan, flat.silenced),
+            track.id + ".fader");
         builder.connect(player, fader);
         builder.connect(fader, master);
         compiled.streams.push_back(std::move(stream));
-        compiled.slots.emplace(trackSlotKey(track->id), fader);
+        compiled.slots.emplace(trackSlotKey(track.id), fader);
     }
     builder.setOutput(master);
     compiled.graph = std::move(builder).compile(options.maxBlockFrames);
