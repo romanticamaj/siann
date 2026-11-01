@@ -4,12 +4,14 @@ add_library(siann_realtime
   src/disk_stream.cpp
   src/recorder.cpp
   src/transport.cpp
+  src/stream_resampler.cpp
 )
 add_library(siann::realtime ALIAS siann_realtime)
 target_include_directories(siann_realtime PUBLIC include)
 find_package(Threads REQUIRED)
 target_link_libraries(siann_realtime PUBLIC siann::graph siann::host_api siann::rt siann::media Threads::Threads)
 target_compile_features(siann_realtime PUBLIC cxx_std_20)
+target_link_libraries(siann_realtime PRIVATE siann_third_party_r8brain)
 siann_apply_compile_options(siann_realtime)
 
 if(SIANN_BUILD_TESTS)
