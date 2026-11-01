@@ -378,3 +378,72 @@ TEST_CASE("A stream added while a locate is prepared joins that locate", "[strea
     CHECK(slice(out, 2 * kBlock, 18 * kBlock) == slice(expected, kBlock, 18 * kBlock));
     CHECK(stream2.underruns() == 0);
 }
+
+TEST_CASE("A stream added before a locate lands follows that locate in the graph swapped in later",
+          "[stream][live][locate]") {
+    Rig rig;
+    rig.pump(200);  // the playhead is well past the locate target
+    constexpr std::int64_t kTarget = 1'000;
+    const std::int64_t compiledAt = rig.driver.playhead();  // what a compile reads
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+
+    const auto locateOnOldGraph = [&] {
+        rig.butler.seek(2, kTarget);
+        rig.butler.runOnce();
+        REQUIRE(rig.butler.ready(2));
+        REQUIRE(rig.driver.pushLocate(TransportCommand{2, kTarget}));
+        rig.pump(3);  // the old graph ducks, jumps and rises
+        REQUIRE(rig.driver.playhead() < compiledAt);
+    };
+    const auto swapAndCheck = [&] {
+        rig.driver.publish(streamingGraph(stream2));
+        const std::int64_t start = rig.driver.playhead();
+        const auto out = rig.pump(30);
+        REQUIRE_FALSE(rig.driver.transitionInFlight());
+        // Block 0 ducks the old graph, block 1 rises with the new one.
+        const auto expected = rig.reference.left(start, 30 * kBlock);
+        CHECK(slice(out, 2 * kBlock, 28 * kBlock) == slice(expected, 2 * kBlock, 28 * kBlock));
+    };
+
+    SECTION("the butler took the stream before the locate was prepared") {
+        rig.butler.addStream(stream2, compiledAt);
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        locateOnOldGraph();
+        swapAndCheck();
+        CHECK(stream2.underruns() == 0);
+    }
+
+    SECTION("the butler took the stream after the old graph claimed the locate") {
+        locateOnOldGraph();
+        rig.butler.addStream(stream2, compiledAt);
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        swapAndCheck();
+        CHECK(stream2.underruns() == 0);
+    }
+
+    SECTION("the graph was published before the butler took the stream") {
+        locateOnOldGraph();
+        rig.butler.addStream(stream2, compiledAt);
+        rig.driver.publish(streamingGraph(stream2));  // as on the prefill timeout
+        std::vector<float> early;
+        rig.device.pump(4, &early);
+        rig.driver.poll();
+        REQUIRE_FALSE(stream2.ready());
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        const std::int64_t start = rig.driver.playhead();
+        const auto out = rig.pump(10);
+        CHECK(out == rig.reference.left(start, 10 * kBlock));
+    }
+
+    SECTION("a position read after the locate does not join it again") {
+        locateOnOldGraph();
+        rig.butler.addStream(stream2, rig.driver.playhead());
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        swapAndCheck();
+        CHECK(stream2.underruns() == 0);
+    }
+}

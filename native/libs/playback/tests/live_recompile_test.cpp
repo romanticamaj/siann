@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -324,6 +325,51 @@ TEST_CASE("Rapid successive edits coalesce: the next compile uses the latest doc
     CHECK(matches(p, reference, duck + 2, p.blockCount()));
     CHECK(p.engine.underruns() == 0);
     CHECK(rt::allocationViolations() == allocations);
+}
+
+TEST_CASE("A locate that lands between the compile and the publish reaches the new track's stream",
+          "[playback][live][locate]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(100);  // the playhead is well past the locate target
+    constexpr std::int64_t kTarget = 2'000;
+
+    f.session.commit({cmd(addTrack("trk_c")), cmd(place("clp_c", "trk_c", "med_st", 0, 3'000, 40'000))}, "test", "t");
+    p.engine.update(f.doc());
+    p.engine.tick();  // compiles from the playhead; the new stream is not prefilled yet
+    REQUIRE_FALSE(p.engine.driver().transitionInFlight());
+
+    // The butler takes the new stream and prepares the locate for every stream;
+    // the locate then lands on the old graph before the new one is published.
+    p.engine.butler().seek(2, kTarget);
+    p.engine.butler().runOnce();
+    REQUIRE(p.engine.butler().ready(2));
+    REQUIRE(p.engine.driver().pushLocate(realtime::TransportCommand{2, kTarget}));
+    const int locateBlock = p.blockCount();
+    p.inFlightBefore.push_back(p.engine.driver().transitionInFlight());
+    p.device.pumpAll(1, p.out);  // the old graph ducks; the jump lands at the block's end
+    p.pump(30);                  // publishes, swaps and plays the new graph
+
+    REQUIRE_FALSE(p.engine.driver().transitionInFlight());
+    CHECK(p.engine.slots().count(playback::trackSlotKey("trk_c")) == 1);
+    const int duck = p.lastDuckBlock();
+    REQUIRE(duck > locateBlock);
+    // From the block after the locate on, block b plays the timeline from
+    // kTarget + (b - locateBlock - 1) blocks.
+    const auto reference = offline(f.doc(), f.bundle(), kTarget + framesOf(p));
+    bool inTime = true;
+    for (int b = duck + 2; b < p.blockCount(); ++b) {
+        const std::int64_t at = kTarget + static_cast<std::int64_t>(b - locateBlock - 1) * kBlock;
+        for (int c = 0; c < 2; ++c) {
+            const auto& o = p.out[static_cast<std::size_t>(c)];
+            const auto& r = reference[static_cast<std::size_t>(c)];
+            inTime = inTime && std::equal(o.begin() + static_cast<std::ptrdiff_t>(b) * kBlock,
+                                          o.begin() + static_cast<std::ptrdiff_t>(b + 1) * kBlock,
+                                          r.begin() + static_cast<std::ptrdiff_t>(at));
+        }
+    }
+    CHECK(inTime);
+    CHECK(p.engine.underruns() == 0);
 }
 
 TEST_CASE("An edit that only changes fader parameters does not recompile", "[playback][live]") {
