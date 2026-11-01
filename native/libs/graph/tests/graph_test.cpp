@@ -161,6 +161,74 @@ TEST_CASE("pdc: the graph reports one coalesced latency change per node", "[grap
     CHECK_FALSE(graph->popLatencyChange(change));
 }
 
+TEST_CASE("pdc: a recompile after a latency change migrates nodes and unchanged delay lines", "[graph][pdc][latency]") {
+    // source -> a (100, changing; at gain 0) -> master, source -> b (400) ->
+    // master, source -> c (10) -> master. a rising to 250 rebuilds only a's
+    // compensation edge; c's 390-frame delay line and every node carry over.
+    auto build = [](FakeLatencyNode** changing, NodeId* ids) {
+        GraphBuilder b;
+        ids[0] = b.add(std::make_unique<NoiseNode>(1), "source");
+        auto a = std::make_unique<FakeLatencyNode>(1, 100, 512);
+        *changing = a.get();
+        ids[1] = b.add(std::move(a), "a");
+        ids[2] = b.add(std::make_unique<FakeLatencyNode>(1, 400), "b");
+        ids[3] = b.add(std::make_unique<FakeLatencyNode>(1, 10), "c");
+        ids[4] = b.add(std::make_unique<BusNode>(1), "master");
+        b.connect(ids[0], ids[1]);
+        b.connect(ids[0], ids[2]);
+        b.connect(ids[0], ids[3]);
+        b.connect(ids[1], ids[4], 0, 0.0f);
+        b.connect(ids[2], ids[4]);
+        b.connect(ids[3], ids[4]);
+        b.setOutput(ids[4]);
+        return std::move(b).compile(64);
+    };
+    FakeLatencyNode* node = nullptr;
+    NodeId id[5]{};
+    auto first = build(&node, id);
+    FakeLatencyNode* refNode = nullptr;
+    NodeId refId[5]{};
+    auto reference = build(&refNode, refId);  // never recompiled
+    CHECK(first->recompiledFrom() == nullptr);
+    CHECK(first->settleFrames() == 0);
+
+    const auto a1 = run(*first, 640, 64);
+    const auto r1 = run(*reference, 640, 64);
+    CHECK(a1 == r1);
+    REQUIRE(node->requestLatency(250));
+    REQUIRE(refNode->requestLatency(250));
+    run(*first, 64, 64, 640);
+    run(*reference, 64, 64, 640);
+    LatencyChange change;
+    REQUIRE(first->popLatencyChange(change));
+
+    const auto second = first->recompile();
+    REQUIRE(second != nullptr);
+    CHECK(second->recompiledFrom() == first.get());
+    CHECK(second->nodeCount() == first->nodeCount());
+    for (NodeId n = 0; n < 5; ++n) {
+        CHECK(second->node(n) == first->node(n));  // the same instances
+    }
+    CHECK(first->edgeCompensation(id[1], id[4]) == 300);
+    CHECK(second->edgeCompensation(id[1], id[4]) == 150);
+    CHECK(second->edgeCompensation(id[3], id[4]) == 390);
+    CHECK(second->totalLatency() == 400);
+    CHECK(second->edgeRamped(id[1], id[4]));
+    CHECK_FALSE(second->edgeRamped(id[2], id[4]));
+    CHECK_FALSE(second->edgeRamped(id[3], id[4]));
+    CHECK_FALSE(second->edgeRamped(id[0], id[1]));
+    CHECK(second->settleFrames() == 150);
+    CHECK_FALSE(second->popLatencyChange(change));  // compiled at the new latency
+
+    // The recompiled graph continues where the first stopped: b's and c's
+    // history (in b's node and c's compensation delay line) survives, so the
+    // output matches the graph that was never recompiled.
+    const auto a2 = run(*second, 1'024, 64, 704);
+    const auto r2 = run(*reference, 1'024, 64, 704);
+    CHECK(a2 == r2);
+    CHECK_FALSE(allZero(a2));
+}
+
 TEST_CASE("pdc: a latency outside zero to maxLatency is rejected", "[graph][pdc][latency]") {
     CHECK_THROWS_AS(FakeLatencyNode(1, 20, 16), std::invalid_argument);
     CHECK_THROWS_AS(FakeLatencyNode(1, -1), std::invalid_argument);
