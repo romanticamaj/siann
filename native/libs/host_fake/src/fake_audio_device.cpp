@@ -21,6 +21,9 @@ AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
         throw std::invalid_argument("invalid fake device configuration");
     }
     config_ = config;
+    if (options_.fixedSampleRate > 0) {
+        config_.sampleRate = options_.fixedSampleRate;  // blocks run (and are paced) at the device rate
+    }
     const auto frames = static_cast<std::size_t>(config.bufferFrames);
     input_.assign(static_cast<std::size_t>(config.inputChannels), std::vector<float>(frames, 0.0f));
     output_.assign(static_cast<std::size_t>(config.outputChannels), std::vector<float>(frames, 0.0f));
@@ -40,7 +43,7 @@ AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
     }
     loop_.assign(options_.loopback ? output_.size() : 0, std::vector<float>(loopLength, 0.0f));
     loopPosition_ = 0;
-    return AudioDeviceStatus{config.sampleRate, config.bufferFrames, options_.inputLatencyFrames,
+    return AudioDeviceStatus{config_.sampleRate, config.bufferFrames, options_.inputLatencyFrames,
                              options_.outputLatencyFrames};
 }
 

@@ -14,6 +14,14 @@ namespace siann::host {
 
 class ManualAudioDevice final : public AudioDevice {
 public:
+    struct Options {
+        // Non-zero: open() reports this rate whatever it is asked for.
+        std::int64_t fixedSampleRate = 0;
+    };
+
+    ManualAudioDevice() = default;
+    explicit ManualAudioDevice(Options options) : options_(options) {}
+
     AudioDeviceStatus open(const AudioDeviceConfig& config) override;
     void start(AudioCallback callback) override { callback_ = std::move(callback); }
     // pump() is synchronous, so the callback has always exited when stop() runs.
@@ -43,6 +51,7 @@ public:
     }
 
 private:
+    Options options_;
     AudioDeviceConfig config_;
     AudioCallback callback_;
     std::function<void(bool)> onStopped_;

@@ -4,7 +4,7 @@
 // "fake device driving callbacks"). Its thread is marked realtime, it honours
 // the AudioDevice contract that stop() returns only after the callback has
 // exited, and it can loop output back to input with a fixed latency and
-// simulate unplugging.
+// simulate unplugging, and run at a fixed rate of its own.
 
 #include <atomic>
 #include <cstdint>
@@ -26,6 +26,9 @@ public:
         bool loopback = false;          // input[t] = output[t - input - output latency]
         std::int64_t stopAfterCallbacks = -1;  // the device stops itself; -1 runs until stop()
         bool stall = false;             // the thread runs but never calls back (a hung driver)
+        // Non-zero: the device runs at this rate whatever open() asks for, like
+        // WASAPI shared mode at the OS mix rate. Latencies are in its frames.
+        std::int64_t fixedSampleRate = 0;
     };
 
     explicit FakeAudioDevice(Options options);
