@@ -178,36 +178,42 @@ TEST_CASE("Samples from an older epoch are ignored after a recompile", "[meters]
     CHECK(rig.dispatcher.meterPlayhead() == 4 * kBlock);
 }
 
-TEST_CASE("A full meter queue drops samples and never blocks", "[meters]") {
+TEST_CASE("A stalled dispatcher reads the newest meter block, never a stale one", "[meters]") {
+    // Spec, "Queues": meterOutbox is latest-value-wins. However long the
+    // dispatcher stalls, the next read is the block the audio thread metered
+    // last; every block it never read was superseded and is counted as dropped.
     Rig rig;
     const float gain = graph::gainFromMilliDb(-6'000);
-    const std::size_t capacity = rig.driver.meterCapacity();
-    REQUIRE(capacity >= 2);
-    constexpr std::size_t kMetered = 2;
-    const auto fitting = static_cast<int>(capacity / kMetered);
-    const int total = fitting + 10;
+    constexpr std::uint64_t kMetered = 2;
+    constexpr int kTotal = 5'000;  // more blocks than any bounded FIFO of samples here holds
 
-    // Nobody drains the queue. pump() is synchronous: a block that waited for
-    // queue space would hang here.
-    const auto out = rig.pump(total);
-    REQUIRE(out.size() == static_cast<std::size_t>(total) * kBlock);
+    // Nobody reads the meters. pump() is synchronous: a block that waited for
+    // the reader would hang here.
+    const auto out = rig.pump(kTotal);
+    REQUIRE(out.size() == static_cast<std::size_t>(kTotal) * kBlock);
     CHECK(out.back() == gain);
-    CHECK(rig.driver.meterDrops() == 10 * kMetered);
-    CHECK(rig.driver.meterBacklog() == capacity);
+    CHECK(rig.driver.meterDrops() == (kTotal - 1) * kMetered);
 
     rig.dispatcher.tick();
-    CHECK(rig.driver.meterBacklog() == 0);
-    const auto master = rig.dispatcher.meter("master");
-    REQUIRE(master.has_value());
-    CHECK(master->blockStart == static_cast<std::int64_t>(fitting - 1) * kBlock);  // the newest that fit
-    CHECK(rig.dispatcher.meterPlayhead() == static_cast<std::int64_t>(fitting - 1) * kBlock);
+    const std::int64_t newest = static_cast<std::int64_t>(kTotal - 1) * kBlock;
+    REQUIRE(rig.dispatcher.meter("master").has_value());
+    REQUIRE(rig.dispatcher.meter("track:t1").has_value());
+    CHECK(rig.dispatcher.meter("master")->blockStart == newest);
+    CHECK(rig.dispatcher.meter("track:t1")->blockStart == newest);
+    CHECK(rig.dispatcher.meter("master")->reading.peak[0] == gain);
+    CHECK(rig.dispatcher.meterPlayhead() == newest);
 
-    // The ring recovers: the next block arrives again.
+    // Nothing new: the reading stays.
+    rig.dispatcher.tick();
+    CHECK(rig.dispatcher.meter("master")->blockStart == newest);
+
+    // The next block arrives, and nothing more is dropped.
     rig.pump(1);
     rig.dispatcher.tick();
-    CHECK(rig.dispatcher.meter("master")->blockStart == static_cast<std::int64_t>(total) * kBlock);
-    CHECK(rig.dispatcher.meter("track:t1")->blockStart == static_cast<std::int64_t>(total) * kBlock);
-    CHECK(rig.driver.meterDrops() == 10 * kMetered);
+    CHECK(rig.dispatcher.meter("master")->blockStart == static_cast<std::int64_t>(kTotal) * kBlock);
+    CHECK(rig.dispatcher.meter("track:t1")->blockStart == static_cast<std::int64_t>(kTotal) * kBlock);
+    CHECK(rig.dispatcher.meterPlayhead() == static_cast<std::int64_t>(kTotal) * kBlock);
+    CHECK(rig.driver.meterDrops() == (kTotal - 1) * kMetered);
 }
 
 TEST_CASE("No audio-thread allocations while metering", "[meters]") {
@@ -221,7 +227,7 @@ TEST_CASE("No audio-thread allocations while metering", "[meters]") {
     CHECK(rt::allocationViolations() == before);
     REQUIRE(rig.dispatcher.meter("master").has_value());
 
-    rig.pump(static_cast<int>(rig.driver.meterCapacity() / 2) + 200);  // and with the queue full
+    rig.pump(500);  // and with nobody reading
     CHECK(rig.driver.meterDrops() > 0);
     CHECK(rt::allocationViolations() == before);
 }
