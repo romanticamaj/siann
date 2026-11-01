@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <random>
@@ -442,6 +443,61 @@ TEST_CASE("Pan and mute gestures move the sound and ending them commits their ow
         CHECK_THROWS_AS(p.engine.beginGesture("trk_a", 99), std::invalid_argument);
         CHECK_THROWS_AS(p.engine.updateGesture("trk_a", 99, 1.0, 0), std::invalid_argument);
         CHECK_FALSE(p.engine.dispatcher().gestureOpen(unknown));
+    }
+}
+
+TEST_CASE("A mute gesture on a track silenced by another track's solo keeps it silent, as renderOffline does",
+          "[playback][gesture][solo]") {
+    Fixture f;
+    f.importWav("med_st", 2, 40'000);
+    f.importWav("med_mono", 1, 40'000);
+    f.exec(addTrack("trk_a"));
+    f.exec(addTrack("trk_b"));
+    f.exec(place("clp_a", "trk_a", "med_st", 0, 0, 40'000));
+    f.exec(place("clp_b", "trk_b", "med_mono", 0, 0, 40'000));
+    f.exec(R"({"op":"track.set_solo","trackId":"trk_b","solo":true})");
+    const fs::path bundle = f.bundle();
+    const auto frames = static_cast<std::int64_t>(40) * kBlock;
+    const std::size_t before = f.session.history().revisions().size();
+    constexpr std::uint32_t kMute = TrackFaderNode::kMute;
+
+    SECTION("unmuting a muted, solo-silenced track commits the mute and keeps it silent") {
+        f.exec(R"({"op":"track.set_mute","trackId":"trk_a","mute":true})");
+        Player p(f.session);
+        p.pump(2);
+        p.engine.beginGesture("trk_a", kMute);
+        p.engine.updateGesture("trk_a", kMute, 0.0, 0);
+        p.engine.tick();
+        p.pump(2);
+        const command::Revision* revision = p.engine.endGesture("trk_a", kMute, "user", "t9");
+        REQUIRE(revision != nullptr);
+        CHECK_FALSE(revision->document.track("trk_a")->mute);
+        p.engine.tick();
+        p.pump(2);
+        const auto reference = offline(f.doc(), bundle, frames);
+        // Mid-gesture and after the commit, only the soloed track sounds.
+        CHECK(blocks(p.out[0], 2, 6) == blocks(reference[0], 2, 6));
+        CHECK(blocks(p.out[1], 2, 6) == blocks(reference[1], 2, 6));
+        CHECK_FALSE(silent(blocks(p.out[0], 2, 6)));
+    }
+
+    SECTION("a rejected mute gesture returns to the document's sound, still silenced by the solo") {
+        Player p(f.session);
+        p.pump(2);
+        p.engine.beginGesture("trk_a", kMute);
+        p.engine.updateGesture("trk_a", kMute, std::nan(""), 0);
+        try {
+            p.engine.endGesture("trk_a", kMute, "user", "t9");
+            FAIL("expected invalid_mute");
+        } catch (const command::CommandError& error) {
+            CHECK(error.code() == "invalid_mute");
+        }
+        CHECK(f.session.history().revisions().size() == before);
+        p.engine.tick();
+        p.pump(2);
+        const auto reference = offline(f.doc(), bundle, frames);
+        CHECK(blocks(p.out[0], 2, 4) == blocks(reference[0], 2, 4));
+        CHECK(blocks(p.out[1], 2, 4) == blocks(reference[1], 2, 4));
     }
 }
 
