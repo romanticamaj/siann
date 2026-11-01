@@ -415,9 +415,12 @@ void PlaybackEngine::tick() {
         const model::Document document = std::move(*pendingDoc_);
         pendingDoc_.reset();
         compile(document);
+        // The generation first: the playhead then belongs to it or a newer
+        // locate, and a stream joins any locate prepared after it.
+        const std::uint64_t generation = driver_.appliedLocate();
         const std::int64_t playhead = driver_.playhead();
         for (realtime::DiskStream* stream : prepared_->fresh) {
-            butler_.addStream(*stream, playhead);
+            butler_.addStream(*stream, playhead, generation);
         }
         if (preparedReady()) {
             publishPrepared();

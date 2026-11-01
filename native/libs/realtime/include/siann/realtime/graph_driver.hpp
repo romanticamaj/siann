@@ -179,6 +179,10 @@ public:
     // nodes switch to the prepared data) and fades back in. While stopped,
     // the next poll() applies it. A command with `play` starts the transport
     // unless pause() named its generation or a later one.
+    //
+    // The last applied locate is replayed on every graph that becomes live
+    // afterwards, so a graph compiled before a locate but swapped in after it
+    // still follows that locate (nodes ignore a generation they already follow).
     bool pushLocate(const TransportCommand& command) noexcept;
 
     // The control dispatcher's thread only (the single meterOutbox consumer).
@@ -208,7 +212,8 @@ public:
     bool playing() const noexcept { return playing_.load(); }
     std::int64_t playhead() const noexcept { return playhead_.load(std::memory_order_acquire); }
     // The generation of the last locate the audio thread (or poll() while
-    // stopped) applied.
+    // stopped) applied (0: none). Read it before playhead(): the playhead then
+    // belongs to that locate or a newer one.
     std::uint64_t appliedLocate() const noexcept { return appliedLocate_.load(std::memory_order_acquire); }
 
     // Control side. poll() drains the live graph's realtime outbox and
@@ -250,6 +255,7 @@ private:
     void drainParams() noexcept;
     void pushMeters(std::int64_t position, int frames) noexcept;
     void applyLocate(const TransportCommand& command) noexcept;
+    void replayLocate() noexcept;
     void send(std::uint64_t epoch);
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
@@ -294,6 +300,7 @@ private:
     rt::SpscQueue<TransportCommand> transportInbox_{64};
     TransportCommand pendingLocate_{};
     bool locatePending_ = false;
+    TransportCommand lastLocate_{};  // replayed on each graph that becomes live
     bool duckActive_ = false;  // ducking for a graph swap or a locate
     // The duck in progress ramps only the recompiled graph's affected edges.
     bool pathDuck_ = false;

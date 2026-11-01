@@ -107,9 +107,12 @@ private:
     std::atomic<bool> released_{false};
     Butler* butler_ = nullptr;
 
-    // Audio side.
+    // Audio side. The butler sets liveSlot_ and generation_ before ready().
     int liveSlot_ = 0;
-    std::uint64_t waitingGeneration_ = 0;  // a locate whose data was not ready yet
+    std::uint64_t generation_ = 0;  // the locate generation the live slot belongs to
+    // The newest locate generation a graph told the player about. Written only
+    // by the audio thread, also before ready(), so the butler never touches it.
+    std::uint64_t heard_ = 0;
 
     // Butler side.
     int butlerLive_ = 0;
@@ -134,6 +137,9 @@ public:
 
 private:
     bool tryClaim(std::uint64_t generation) noexcept;
+    // Switches to the slot of the newest heard locate if needed; false while
+    // its data is not offered yet.
+    bool follow() noexcept;
     DiskStream& stream_;
 };
 
@@ -158,7 +164,15 @@ public:
     // then reports ready(); a removed stream is no longer filled and reports
     // released(). The stream must outlive released(). Throws std::length_error
     // when the request queue is full.
-    void addStream(DiskStream& stream, std::int64_t startPosition);
+    //
+    // `generation` is the newest locate generation the audio thread had applied
+    // when `startPosition` was read (GraphDriver::appliedLocate(), read
+    // before the playhead). When the butler has prepared a newer locate, the
+    // stream joins it: a second slot is prefilled from that locate's target and
+    // offered under its generation, and the player switches to it once a graph
+    // tells it about that locate (directly, or when the driver replays the
+    // last applied locate on a graph it swaps in).
+    void addStream(DiskStream& stream, std::int64_t startPosition, std::uint64_t generation);
     void removeStream(DiskStream& stream);
 
     void start();
@@ -189,11 +203,12 @@ private:
         DiskStream* stream = nullptr;
         bool add = true;
         std::int64_t start = 0;
+        std::uint64_t generation = 0;
     };
     static constexpr std::size_t kMaxControl = 1'024;
 
     void pushControl(const Control& request);
-    void takeStream(DiskStream& stream, std::int64_t startPosition);
+    void takeStream(DiskStream& stream, std::int64_t startPosition, std::uint64_t generation);
 
     void render(DiskStream& stream, std::int64_t position, std::size_t frames);
     void topUp(DiskStream& stream, int slot, std::int64_t& writePosition, std::size_t limit);

@@ -97,10 +97,24 @@ bool StreamingPlayerNode::tryClaim(std::uint64_t generation) noexcept {
 }
 
 void StreamingPlayerNode::onLocate(std::uint64_t generation, std::int64_t) noexcept {
-    if (!stream_.ready()) {
-        return;  // the butler has not taken the stream yet; it joins a prepared locate itself
+    // Remembered even before the butler took the stream; a graph swapped in
+    // after a locate hears it again from the driver, which changes nothing for
+    // a stream that already follows it.
+    stream_.heard_ = std::max(stream_.heard_, generation);
+    if (stream_.ready()) {
+        follow();
     }
-    stream_.waitingGeneration_ = tryClaim(generation) ? 0 : generation;
+}
+
+bool StreamingPlayerNode::follow() noexcept {
+    if (stream_.heard_ <= stream_.generation_) {
+        return true;
+    }
+    if (!tryClaim(stream_.heard_)) {
+        return false;  // the data for that locate is not ready yet
+    }
+    stream_.generation_ = stream_.heard_;
+    return true;
 }
 
 void StreamingPlayerNode::process(const graph::ProcessContext& context, std::span<const graph::AudioBufferView>,
@@ -113,13 +127,10 @@ void StreamingPlayerNode::process(const graph::ProcessContext& context, std::spa
         stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (stream_.waitingGeneration_ != 0) {
-        if (!tryClaim(stream_.waitingGeneration_)) {
-            output.clear();
-            stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        stream_.waitingGeneration_ = 0;
+    if (!follow()) {
+        output.clear();
+        stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
+        return;
     }
     // One rule aligns the stream after a late locate, after a swap to a graph
     // whose stream was prefilled earlier, and after an underrun: the live
@@ -162,19 +173,19 @@ Butler::~Butler() {
 
 void Butler::addStream(DiskStream& stream) {
     if (running_.load()) {
-        throw std::logic_error("use addStream(stream, position) while the butler runs");
+        throw std::logic_error("use addStream(stream, position, generation) while the butler runs");
     }
-    takeStream(stream, 0);
+    takeStream(stream, 0, 0);
 }
 
-void Butler::addStream(DiskStream& stream, std::int64_t startPosition) {
+void Butler::addStream(DiskStream& stream, std::int64_t startPosition, std::uint64_t generation) {
     stream.ready_.store(false, std::memory_order_relaxed);
     stream.released_.store(false, std::memory_order_relaxed);
-    pushControl(Control{&stream, true, startPosition});
+    pushControl(Control{&stream, true, startPosition, generation});
 }
 
 void Butler::removeStream(DiskStream& stream) {
-    pushControl(Control{&stream, false, 0});
+    pushControl(Control{&stream, false, 0, 0});
 }
 
 void Butler::pushControl(const Control& request) {
@@ -186,7 +197,7 @@ void Butler::pushControl(const Control& request) {
 }
 
 // Butler thread (or the caller before start()).
-void Butler::takeStream(DiskStream& stream, std::int64_t startPosition) {
+void Butler::takeStream(DiskStream& stream, std::int64_t startPosition, std::uint64_t generation) {
     stream.butler_ = this;
     int maxChannels = stream.channels();
     for (const auto& clip : stream.clips_) {
@@ -214,29 +225,26 @@ void Butler::takeStream(DiskStream& stream, std::int64_t startPosition) {
     slot.ring.reset();
     slot.start = startPosition;
     stream.liveSlot_ = 0;
-    stream.waitingGeneration_ = 0;
+    stream.generation_ = generation;
     stream.butlerLive_ = 0;
     stream.liveWritePosition_ = startPosition;
     stream.pending_ = DiskStream::Pending{};
     topUp(stream, 0, stream.liveWritePosition_, slot.ring.capacity());
     slot.state.store(DiskStream::kLive, std::memory_order_release);
 
-    // A locate prepared but not yet claimed everywhere: the new stream joins
-    // it, so a graph that plays it follows that locate too.
-    if (lastSeek_) {
+    // A locate prepared after the start position was read: the new stream
+    // joins it, whether or not the other streams have claimed it already, so
+    // a graph that plays it follows that locate too. The player switches only
+    // once a graph tells it about the locate, so an unapplied one stays unheard.
+    if (lastSeek_ && lastSeek_->first > generation) {
         const std::uint64_t seekGeneration = lastSeek_->first;
-        const bool open = std::any_of(streams_.begin(), streams_.end(), [&](const DiskStream* s) {
-            return s != &stream && s->pending_.active && s->pending_.generation == seekGeneration;
-        });
-        if (open) {
-            auto& target = *stream.slots_[1];
-            target.ring.reset();
-            target.start = lastSeek_->second;
-            stream.pending_ = DiskStream::Pending{true, seekGeneration, 1, lastSeek_->second, false};
-            topUp(stream, 1, stream.pending_.writePosition, target.ring.capacity());
-            target.state.store(seekGeneration, std::memory_order_release);
-            stream.pending_.offered = true;
-        }
+        auto& target = *stream.slots_[1];
+        target.ring.reset();
+        target.start = lastSeek_->second;
+        stream.pending_ = DiskStream::Pending{true, seekGeneration, 1, lastSeek_->second, false};
+        topUp(stream, 1, stream.pending_.writePosition, target.ring.capacity());
+        target.state.store(seekGeneration, std::memory_order_release);
+        stream.pending_.offered = true;
     }
     stream.ready_.store(true, std::memory_order_release);
 }
@@ -345,7 +353,7 @@ void Butler::runOnce() {
     std::vector<DiskStream*> removed;
     for (const Control& request : requests) {
         if (request.add) {
-            takeStream(*request.stream, request.start);
+            takeStream(*request.stream, request.start, request.generation);
         } else {
             streams_.erase(std::remove(streams_.begin(), streams_.end(), request.stream), streams_.end());
             request.stream->butler_ = nullptr;
