@@ -3,6 +3,7 @@ add_library(siann_realtime
   src/control_dispatcher.cpp
   src/disk_stream.cpp
   src/recorder.cpp
+  src/transport.cpp
 )
 add_library(siann::realtime ALIAS siann_realtime)
 target_include_directories(siann_realtime PUBLIC include)

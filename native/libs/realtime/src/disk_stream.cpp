@@ -212,6 +212,14 @@ void Butler::seek(std::uint64_t generation, std::int64_t target) {
     }
 }
 
+std::uint64_t Butler::underruns() const noexcept {
+    std::uint64_t total = 0;
+    for (const DiskStream* stream : streams_) {
+        total += stream->underruns();
+    }
+    return total;
+}
+
 bool Butler::releaseSlot(const Release& release) noexcept {
     return releases_.push(release);
 }

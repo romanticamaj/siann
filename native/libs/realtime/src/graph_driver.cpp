@@ -104,6 +104,19 @@ void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
     if (current_ != nullptr) {
         current_->locate(command.generation, command.position);
     }
+    if (command.play && !playing_.load()) {
+        // Start, then undo it if pause() covers this generation. With
+        // sequentially consistent operations either this thread sees the
+        // pause or pause()'s store of false comes after ours, so a pause
+        // racing a queued start always wins.
+        playing_.store(true);
+        if (command.generation <= pausedThrough_.load()) {
+            playing_.store(false);
+        } else {
+            riseRemaining_ = options_.fadeFrames;  // from silence: fade in
+        }
+    }
+    appliedLocate_.store(command.generation, std::memory_order_release);
 }
 
 void GraphDriver::send(std::uint64_t epoch) {
