@@ -354,3 +354,79 @@ TEST_CASE("Device blocks larger and smaller than the graph block give the same o
         }
     }
 }
+
+namespace {
+
+enum class Start { playBeforeStart, playAfterStopped, locateWhileStoppedThenPlay };
+
+// A take recorded through both SRC paths on a manual device whose input is its
+// own output one device block later. Returns the timeline position the take
+// places the impulse at, from the recorder's start stamp and the record offset.
+std::int64_t loopbackPlacement(RatePair rates, std::int64_t impulseAt, Start start, const fs::path& file) {
+    constexpr int block = 128;
+    GraphDriver driver({});
+    driver.publish(impulseGraph(impulseAt));
+    Recorder::Options options;
+    options.writerThread = false;
+    Recorder recorder(1, options);
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device(fixedRate(rates.device));
+    std::vector<float> output;
+    device.setInputGenerator([&output](int, std::int64_t frame) {
+        const std::int64_t from = frame - block;
+        return from >= 0 && from < static_cast<std::int64_t>(output.size()) ? output[static_cast<std::size_t>(from)]
+                                                                            : 0.0f;
+    });
+    recorder.start(file, rates.session);
+    if (start == Start::playBeforeStart) {
+        driver.play();
+    }
+    driver.start(device, config(rates.session, block, 1));
+    if (start != Start::playBeforeStart) {
+        // Armed and stopped for a while; the device keeps running.
+        for (int i = 0; i < 200; ++i) {
+            device.pump(1, &output);
+            recorder.drain();
+        }
+        if (start == Start::locateWhileStoppedThenPlay) {
+            REQUIRE(driver.pushLocate({1, impulseAt / 3}));
+            for (int i = 0; i < 3; ++i) {
+                device.pump(1, &output);
+            }
+            REQUIRE(driver.playhead() == impulseAt / 3);
+        }
+        driver.play();
+    }
+    const std::int64_t deviceFrames = (impulseAt + rates.session / 4) * rates.device / rates.session;
+    for (std::int64_t done = 0; done < deviceFrames; done += block) {
+        device.pump(1, &output);
+        recorder.drain();
+    }
+    const auto offset = driver.latency().recordOffsetFrames;
+    auto result = recorder.stop();
+    driver.stop();
+    const auto peak = test::peakIndex(channel0(readWav(result.file)));
+    REQUIRE(peak >= 0);
+    return result.startPosition - offset + peak;
+}
+
+}  // namespace
+
+TEST_CASE("A take armed while stopped and then played lands where one played from the start does", "[src][record]") {
+    TempDir dir;
+    for (const auto& [rates, impulseAt] :
+         {std::pair{kUp, std::int64_t{14'700}}, std::pair{kDown, std::int64_t{16'000}}}) {
+        INFO("session " << rates.session << " Hz, device " << rates.device << " Hz");
+        const auto reference = loopbackPlacement(rates, impulseAt, Start::playBeforeStart, dir.path() / "a.wav");
+        INFO("played from the start: placed at " << reference);
+        // The loopback adds one device block that the device does not report.
+        CHECK(std::llabs(reference - (impulseAt + 128 * rates.session / rates.device)) <= 2);
+        const auto afterStop = loopbackPlacement(rates, impulseAt, Start::playAfterStopped, dir.path() / "b.wav");
+        INFO("armed while stopped, then played: placed at " << afterStop);
+        CHECK(std::llabs(afterStop - reference) <= 2);
+        const auto afterLocate =
+            loopbackPlacement(rates, impulseAt, Start::locateWhileStoppedThenPlay, dir.path() / "c.wav");
+        INFO("located while stopped, then played: placed at " << afterLocate);
+        CHECK(std::llabs(afterLocate - reference) <= 2);
+    }
+}
