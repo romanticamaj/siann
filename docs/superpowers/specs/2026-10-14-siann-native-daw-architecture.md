@@ -610,7 +610,30 @@ The documented precision is shown to users and agents.
 - Tests: sine and impulse through output and input SRC at 44.1 to 48 kHz and 48 to
   44.1 kHz, with frequency response, aliasing and alignment limits; record-offset null
   test through input SRC; the realtime-vs-offline parity test compares against the
-  offline render passed through the same SRC.
+  offline render passed through the same SRC. The limits:
+  - Frequency response: the amplitude of a sine at 1 kHz, 10 kHz and 18 kHz is
+    within +/-0.1 dB after the first second.
+  - Aliasing and noise: the residual after subtracting the least-squares fitted sine
+    is below -96 dB relative to the tone (it covers images, ripple and noise; float32
+    and the attenuation of r8brain's 16-bit-class filter both leave margin).
+  - Alignment: an impulse at a session position that is integral at both rates lands
+    on the expected device sample +/-1 (the peak of |x|, since the linear-phase
+    filter pre-rings).
+  - Record offset: the loopback null test through both SRCs places the impulse peak
+    at its timeline position +/-1 sample.
+- Implementation (M2): r8brain streaming mode, one resampler per channel, built on
+  the control thread. At start the output resampler is fed its lookahead in silence
+  and the FIFO is primed with one block of silence, so the output path delays the
+  session by exactly `srcOutputLatency = lookahead + one graph block` and the first
+  callback never renders more than its share. Each step renders one graph block into
+  the FIFO and feeds the oldest block to the resampler, so the FIFO holds exactly one
+  block between steps; the device-rate output carries over between callbacks.
+  Because whole blocks are rendered, the playhead runs ahead of the audible position
+  by the reported latency plus up to one block of carried output. Recording therefore
+  does not stamp input with the raw playhead under SRC: the audio thread stamps it
+  with the playhead-equivalent position (the timeline position the output path had
+  reached for the matching device sample, plus the reported SRC latency), so the
+  record-offset formula above places takes exactly.
 - Playback streams from disk: a butler thread fills per-track ring buffers ahead of
   the playhead and refills on locate. Media is never fully decoded into RAM except
   for short files below a threshold.
