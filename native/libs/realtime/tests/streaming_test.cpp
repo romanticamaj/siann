@@ -308,6 +308,26 @@ TEST_CASE("A stream created at publish time plays in time after a later swap", "
     CHECK(rt::allocationViolations() == before);
 }
 
+TEST_CASE("A graph published before the butler took its stream plays silence, then catches up", "[stream][live]") {
+    Rig rig;
+    rig.pump(10);
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+    rig.butler.addStream(stream2, rig.driver.playhead());
+    rig.driver.publish(streamingGraph(stream2));  // as on the prefill timeout
+    std::vector<float> early;
+    rig.device.pump(4, &early);  // no butler pass: the stream is not taken yet
+    rig.driver.poll();
+    REQUIRE_FALSE(stream2.ready());
+    CHECK(allZero(slice(early, kBlock, 3 * kBlock)));  // block 0 still ducks the old graph
+    CHECK(stream2.underruns() > 0);
+
+    rig.butler.runOnce();
+    REQUIRE(stream2.ready());
+    const std::int64_t start = rig.driver.playhead();
+    const auto out = rig.pump(10);
+    CHECK(out == rig.reference.left(start, 10 * kBlock));
+}
+
 TEST_CASE("removeStream releases a stream only on the butler's pass", "[stream][live]") {
     TempDir dir;
     Clips clips = makeClips(writeMedia(dir.path() / "media.wav", 50'000));

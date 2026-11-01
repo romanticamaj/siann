@@ -97,12 +97,22 @@ bool StreamingPlayerNode::tryClaim(std::uint64_t generation) noexcept {
 }
 
 void StreamingPlayerNode::onLocate(std::uint64_t generation, std::int64_t) noexcept {
+    if (!stream_.ready()) {
+        return;  // the butler has not taken the stream yet; it joins a prepared locate itself
+    }
     stream_.waitingGeneration_ = tryClaim(generation) ? 0 : generation;
 }
 
 void StreamingPlayerNode::process(const graph::ProcessContext& context, std::span<const graph::AudioBufferView>,
                                   const graph::AudioBufferView& output) noexcept {
     const auto frames = static_cast<std::size_t>(context.frames);
+    // A graph published on the prefill timeout may reach a stream the butler
+    // has not taken yet; its audio-side fields belong to the butler until then.
+    if (!stream_.ready()) {
+        output.clear();
+        stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     if (stream_.waitingGeneration_ != 0) {
         if (!tryClaim(stream_.waitingGeneration_)) {
             output.clear();
