@@ -16,7 +16,16 @@
 // audio thread only runs the driver's callback. Fader gestures move the sound
 // through the parameter channel; ending one commits exactly one revision on
 // the caller's thread.
+//
+// Structural edits while playing ("Publishing and retiring graphs", "State
+// migration"): update() hands the engine a newer document; tick() compiles
+// the latest one when no transition is in flight, reuses every disk stream
+// whose track has the same flattened clip list, registers new streams with
+// the butler prefilled from the playhead, and publishes the graph once they
+// are ready. A stream is destroyed only after the last graph that used it has
+// retired and the butler has released it.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -65,6 +74,48 @@ std::string trackSlotKey(const std::string& trackId);
 // Meter key of the master bus in the dispatcher's meter map.
 std::string masterMeterKey();
 
+namespace detail {
+
+// What a track's disk stream renders: equal keys mean the stream can be reused.
+struct StreamClipKey {
+    std::int64_t timelineStart = 0;
+    std::int64_t sourceStart = 0;
+    std::int64_t length = 0;
+    float gain = 1.0f;
+    hash::Digest media{};
+    friend bool operator==(const StreamClipKey&, const StreamClipKey&) = default;
+};
+
+struct StreamKey {
+    int channels = 0;
+    std::vector<StreamClipKey> clips;
+    friend bool operator==(const StreamKey&, const StreamKey&) = default;
+};
+
+struct TrackStream {
+    realtime::DiskStream* stream = nullptr;
+    StreamKey key;
+};
+
+// A compiled graph that waits for its new streams to be prefilled. Defined at
+// namespace scope so GCC sees the default member initializers when
+// std::optional checks its traits inside PlaybackEngine.
+struct PreparedPlayback {
+    std::unique_ptr<graph::PreparedGraph> graph;
+    std::map<std::string, graph::NodeId> slots;
+    std::map<std::string, graph::NodeId> meterSlots;
+    std::map<std::string, TrackStream> tracks;    // by track id
+    std::vector<realtime::DiskStream*> fresh;     // created by this compile
+    std::chrono::steady_clock::time_point since{};
+};
+
+struct OwnedStream {
+    std::unique_ptr<realtime::DiskStream> stream;
+    bool removing = false;  // the butler was asked to drop it
+};
+
+}  // namespace detail
+
 // Throws engine::EngineError (media_missing, media_hash_mismatch,
 // media_mismatch) like engine::loadMedia().
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
@@ -99,13 +150,22 @@ public:
     const command::Revision* endGesture(const std::string& trackId, std::uint32_t paramId, std::string actor,
                                         std::string time);
 
-    // Control thread: transport and dispatcher ticks, then the driver poll.
-    // The poll also answers a node's latency change with a recompile; the
-    // recompiled graph keeps every slot and the dispatcher's epoch, so nothing
+    // Control thread: a newer document, normally the session's head after a
+    // commit. An edit that only changes track gain, pan or mute goes through
+    // the parameter channel; anything else is structural and is compiled by
+    // the next tick(). Only the latest document is kept, so rapid edits
+    // coalesce into one compile.
+    void update(const model::Document& document);
+
+    // Control thread: transport and dispatcher ticks, driver poll
+    // (retirements), destruction of released streams, then compile and
+    // publish the pending document. The poll also answers a node's latency
+    // change with a recompile; the recompiled graph keeps every slot, the
+    // dispatcher's epoch and the streams of the graph it came from, so nothing
     // else changes here.
     void tick();
 
-    // Underruns summed over every stream.
+    // Underruns summed over every stream, including destroyed ones.
     std::uint64_t underruns() const noexcept;
 
     // Latency changes the engine could not compensate (spec, "Latency
@@ -114,20 +174,41 @@ public:
     std::uint64_t latencyRecompileFailures() const noexcept { return driver_.latencyRecompileFailures(); }
     const std::optional<realtime::LatencyFault>& latencyFault() const noexcept { return driver_.latencyFault(); }
 
+    // Graphs compiled so far, the one load() publishes included.
+    std::size_t compileCount() const noexcept { return compileCount_; }
+    // The stream of a track in the most recently published graph, or nullptr.
+    const realtime::DiskStream* streamFor(const std::string& trackId) const noexcept;
+
     realtime::GraphDriver& driver() noexcept { return driver_; }
     realtime::Butler& butler() noexcept { return butler_; }
     realtime::ControlDispatcher& dispatcher() noexcept { return dispatcher_; }
     realtime::Transport& transport() noexcept { return transport_; }
     const std::map<std::string, graph::NodeId>& slots() const noexcept { return slots_; }
     const std::map<std::string, graph::NodeId>& meterSlots() const noexcept { return meterSlots_; }
+    // Streams alive: used by a graph, or waiting to be released and destroyed.
     std::size_t streamCount() const noexcept { return streams_.size(); }
     session::Session& session() noexcept { return session_; }
 
 private:
+    void compile(const model::Document& document);
+    bool preparedReady() const;
+    void publishPrepared();
+    void retired(std::uint64_t epoch);
+    bool inUse(const realtime::DiskStream* stream) const;
+    void destroyReleased();
+
     session::Session& session_;
     PlaybackOptions options_;
-    // Declared before the butler and the driver: both refer to the streams.
-    std::vector<std::unique_ptr<realtime::DiskStream>> streams_;
+    // Declared before the butler and the driver: both refer to the streams,
+    // and the driver's retire callback uses everything up to the butler.
+    std::map<const realtime::DiskStream*, detail::OwnedStream> streams_;
+    std::map<std::uint64_t, std::vector<realtime::DiskStream*>> epochStreams_;
+    std::optional<detail::PreparedPlayback> prepared_;
+    std::map<std::string, detail::TrackStream> liveTracks_;  // newest published graph
+    std::optional<model::Document> latest_;
+    std::optional<model::Document> pendingDoc_;
+    std::size_t compileCount_ = 0;
+    std::uint64_t destroyedUnderruns_ = 0;
     realtime::Butler butler_;
     realtime::GraphDriver driver_;
     realtime::ControlDispatcher dispatcher_;

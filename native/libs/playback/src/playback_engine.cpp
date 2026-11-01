@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <functional>
 #include <stdexcept>
 #include <utility>
 
@@ -106,34 +107,49 @@ double documentValue(const model::Track& track, std::uint32_t paramId) {
     return static_cast<double>(track.gain.milliDb);
 }
 
-}  // namespace
-
-std::string trackSlotKey(const std::string& trackId) {
-    return "track:" + trackId;
+detail::StreamKey streamKey(const engine::FlatTrack& flat) {
+    detail::StreamKey key;
+    key.channels = flat.track->channels;
+    for (const engine::FlatClip& clip : flat.clips) {
+        key.clips.push_back(
+            detail::StreamClipKey{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, clip.media->contentHash});
+    }
+    return key;
 }
 
-std::string masterMeterKey() {
-    return "master";
-}
+// Returns an existing stream to reuse for a track, or nullptr for a new one.
+using StreamReuse = std::function<realtime::DiskStream*(const std::string& trackId, const detail::StreamKey& key)>;
 
-CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
-                                    const PlaybackOptions& options) {
+// compileForPlayback() with stream reuse. `tracks` receives every track's
+// stream (reused or new); compiled.streams holds only the new ones.
+CompiledPlayback compileWith(const model::Document& document, const std::filesystem::path& bundle,
+                             const PlaybackOptions& options, const StreamReuse& reuse,
+                             std::map<std::string, detail::TrackStream>* tracks) {
     std::map<hash::Digest, std::shared_ptr<host::MediaReader>> readers;
     CompiledPlayback compiled;
     graph::GraphBuilder builder;
     const graph::NodeId master = builder.add(std::make_unique<graph::BusNode>(2), "master");
     for (const engine::FlatTrack& flat : engine::flattenClips(document)) {
         const model::Track& track = *flat.track;
-        std::vector<realtime::StreamClip> clips;
-        for (const engine::FlatClip& clip : flat.clips) {
-            auto found = readers.find(clip.media->contentHash);
-            if (found == readers.end()) {
-                found = readers.emplace(clip.media->contentHash, openReader(*clip.media, bundle)).first;
+        detail::StreamKey key = streamKey(flat);
+        realtime::DiskStream* stream = reuse ? reuse(track.id, key) : nullptr;
+        if (stream == nullptr) {
+            std::vector<realtime::StreamClip> clips;
+            for (const engine::FlatClip& clip : flat.clips) {
+                auto found = readers.find(clip.media->contentHash);
+                if (found == readers.end()) {
+                    found = readers.emplace(clip.media->contentHash, openReader(*clip.media, bundle)).first;
+                }
+                clips.push_back(realtime::StreamClip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
+                                                     found->second});
             }
-            clips.push_back(
-                realtime::StreamClip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, found->second});
+            compiled.streams.push_back(
+                std::make_unique<realtime::DiskStream>(track.channels, std::move(clips), options.ringFrames));
+            stream = compiled.streams.back().get();
         }
-        auto stream = std::make_unique<realtime::DiskStream>(track.channels, std::move(clips), options.ringFrames);
+        if (tracks != nullptr) {
+            tracks->insert_or_assign(track.id, detail::TrackStream{stream, std::move(key)});
+        }
         const graph::NodeId player =
             builder.add(std::make_unique<realtime::StreamingPlayerNode>(*stream), track.id + ".stream");
         // The fader's kMute is the track's own mute, the value a mute gesture
@@ -146,7 +162,6 @@ CompiledPlayback compileForPlayback(const model::Document& document, const std::
         builder.connect(player, fader);
         builder.connect(fader, meter);
         builder.connect(meter, master);
-        compiled.streams.push_back(std::move(stream));
         compiled.slots.emplace(trackSlotKey(track.id), fader);
         compiled.meterSlots.emplace(trackSlotKey(track.id), meter);
     }
@@ -159,11 +174,53 @@ CompiledPlayback compileForPlayback(const model::Document& document, const std::
     return compiled;
 }
 
+// True when the edit changes nothing but track gain, pan or mute.
+bool onlyFaderChanges(const model::Document& before, const model::Document& after) {
+    for (const model::DiffEntry& entry : model::diff(before, after)) {
+        if (entry.entity.type != model::EntityType::track || entry.change != model::DiffEntry::Change::modified) {
+            return false;
+        }
+        const model::Track* old = before.track(entry.entity.id);
+        const model::Track* now = after.track(entry.entity.id);
+        if (old == nullptr || now == nullptr) {
+            return false;
+        }
+        model::Track faderOnly = *old;
+        faderOnly.gain = now->gain;
+        faderOnly.pan = now->pan;
+        faderOnly.mute = now->mute;
+        if (!(faderOnly == *now)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A new stream that does not report ready within this time is published
+// anyway; it counts underruns until the butler catches up (as a late locate).
+constexpr std::chrono::seconds kPrefillTimeout{1};
+
+}  // namespace
+
+std::string trackSlotKey(const std::string& trackId) {
+    return "track:" + trackId;
+}
+
+std::string masterMeterKey() {
+    return "master";
+}
+
+CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
+                                    const PlaybackOptions& options) {
+    return compileWith(document, bundle, options, nullptr, nullptr);
+}
+
 PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions options)
     : session_(session),
       options_(std::move(options)),
       butler_(options_.butler),
-      driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500)}),
+      driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500), 1024,
+                                             [this](std::uint64_t epoch) { retired(epoch); }}),
       dispatcher_(driver_),
       transport_(driver_, butler_, options_.transport) {}
 
@@ -175,16 +232,123 @@ void PlaybackEngine::load() {
     if (loaded_) {
         throw std::logic_error("the playback engine is already loaded");
     }
-    CompiledPlayback compiled = compileForPlayback(session_.history().head().document, session_.bundlePath(), options_);
-    streams_ = std::move(compiled.streams);
-    for (const auto& stream : streams_) {
-        butler_.addStream(*stream);
+    const model::Document& head = session_.history().head().document;
+    compile(head);
+    for (realtime::DiskStream* stream : prepared_->fresh) {
+        butler_.addStream(*stream);  // the butler is not running yet: filled from 0 at once
     }
-    const std::uint64_t epoch = driver_.publish(std::move(compiled.graph));
-    slots_ = compiled.slots;
-    meterSlots_ = compiled.meterSlots;
-    dispatcher_.graphPublished(epoch, std::move(compiled.slots), std::move(compiled.meterSlots));
+    publishPrepared();
+    latest_ = head;
     loaded_ = true;
+}
+
+void PlaybackEngine::compile(const model::Document& document) {
+    detail::PreparedPlayback prepared;
+    CompiledPlayback compiled = compileWith(
+        document, session_.bundlePath(), options_,
+        [this](const std::string& trackId, const detail::StreamKey& key) -> realtime::DiskStream* {
+            const auto live = liveTracks_.find(trackId);
+            return live != liveTracks_.end() && live->second.key == key ? live->second.stream : nullptr;
+        },
+        &prepared.tracks);
+    ++compileCount_;
+    prepared.graph = std::move(compiled.graph);
+    prepared.slots = std::move(compiled.slots);
+    prepared.meterSlots = std::move(compiled.meterSlots);
+    for (auto& stream : compiled.streams) {
+        realtime::DiskStream* raw = stream.get();
+        streams_.emplace(raw, detail::OwnedStream{std::move(stream), false});
+        prepared.fresh.push_back(raw);
+    }
+    prepared.since = std::chrono::steady_clock::now();
+    prepared_ = std::move(prepared);
+}
+
+bool PlaybackEngine::preparedReady() const {
+    return std::all_of(prepared_->fresh.begin(), prepared_->fresh.end(),
+                       [](const realtime::DiskStream* stream) { return stream->ready(); }) ||
+           std::chrono::steady_clock::now() - prepared_->since >= kPrefillTimeout;
+}
+
+void PlaybackEngine::publishPrepared() {
+    // prepared_ stays set across publish(): retiring the old graph while
+    // stopped happens inside it, and the new graph's streams must count as used.
+    const std::uint64_t epoch = driver_.publish(std::move(prepared_->graph));
+    std::vector<realtime::DiskStream*>& used = epochStreams_[epoch];
+    for (const auto& [trackId, track] : prepared_->tracks) {
+        used.push_back(track.stream);
+    }
+    liveTracks_ = std::move(prepared_->tracks);
+    slots_ = prepared_->slots;
+    meterSlots_ = prepared_->meterSlots;
+    dispatcher_.graphPublished(epoch, std::move(prepared_->slots), std::move(prepared_->meterSlots));
+    prepared_.reset();
+}
+
+bool PlaybackEngine::inUse(const realtime::DiskStream* stream) const {
+    for (const auto& [epoch, used] : epochStreams_) {
+        if (std::find(used.begin(), used.end(), stream) != used.end()) {
+            return true;
+        }
+    }
+    if (prepared_) {
+        for (const auto& [trackId, track] : prepared_->tracks) {
+            if (track.stream == stream) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void PlaybackEngine::retired(std::uint64_t epoch) {
+    const auto found = epochStreams_.find(epoch);
+    if (found == epochStreams_.end()) {
+        return;
+    }
+    const std::vector<realtime::DiskStream*> used = std::move(found->second);
+    epochStreams_.erase(found);
+    for (realtime::DiskStream* stream : used) {
+        detail::OwnedStream& owned = streams_.at(stream);
+        if (!owned.removing && !inUse(stream)) {
+            owned.removing = true;
+            butler_.removeStream(*stream);  // destroyed once the butler released it
+        }
+    }
+}
+
+void PlaybackEngine::destroyReleased() {
+    for (auto it = streams_.begin(); it != streams_.end();) {
+        if (it->second.removing && it->second.stream->released()) {
+            destroyedUnderruns_ += it->second.stream->underruns();
+            it = streams_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void PlaybackEngine::update(const model::Document& document) {
+    if (!loaded_) {
+        throw std::logic_error("load the playback engine before updating it");
+    }
+    // A compile that waits or is pending is older than this document: recompile.
+    if (!prepared_ && !pendingDoc_ && onlyFaderChanges(*latest_, document)) {
+        for (const model::DiffEntry& entry : model::diff(*latest_, document)) {
+            const model::Track& old = *latest_->track(entry.entity.id);
+            const model::Track& now = *document.track(entry.entity.id);
+            const std::string key = trackSlotKey(now.id);
+            for (const std::uint32_t paramId :
+                 {graph::TrackFaderNode::kGainMilliDb, graph::TrackFaderNode::kPan, graph::TrackFaderNode::kMute}) {
+                if (documentValue(old, paramId) != documentValue(now, paramId)) {
+                    dispatcher_.setParameter(realtime::ParamKey{key, paramId}, documentValue(now, paramId), 0);
+                }
+            }
+        }
+    } else {
+        pendingDoc_ = document;
+    }
+    latest_ = document;
 }
 
 void PlaybackEngine::start(host::AudioDevice& device, const host::AudioDeviceConfig& config) {
@@ -242,14 +406,36 @@ void PlaybackEngine::tick() {
     transport_.tick();
     dispatcher_.tick();
     driver_.poll();
+    destroyReleased();
+    if (prepared_ && preparedReady()) {
+        publishPrepared();
+    }
+    // One transition at a time; the compile always takes the latest document.
+    if (!prepared_ && pendingDoc_ && !driver_.transitionInFlight()) {
+        const model::Document document = std::move(*pendingDoc_);
+        pendingDoc_.reset();
+        compile(document);
+        const std::int64_t playhead = driver_.playhead();
+        for (realtime::DiskStream* stream : prepared_->fresh) {
+            butler_.addStream(*stream, playhead);
+        }
+        if (preparedReady()) {
+            publishPrepared();
+        }
+    }
 }
 
 std::uint64_t PlaybackEngine::underruns() const noexcept {
-    std::uint64_t total = 0;
-    for (const auto& stream : streams_) {
-        total += stream->underruns();
+    std::uint64_t total = destroyedUnderruns_;
+    for (const auto& [stream, owned] : streams_) {
+        total += owned.stream->underruns();
     }
     return total;
+}
+
+const realtime::DiskStream* PlaybackEngine::streamFor(const std::string& trackId) const noexcept {
+    const auto found = liveTracks_.find(trackId);
+    return found != liveTracks_.end() ? found->second.stream : nullptr;
 }
 
 }  // namespace siann::playback
