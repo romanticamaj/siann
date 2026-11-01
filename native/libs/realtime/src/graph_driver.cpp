@@ -115,6 +115,9 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
         for (int done = 0; done < lookahead;) {
             const int n = std::min(path->block, lookahead - done);
             const int out = path->output->process(path->slots[0].pointers.data(), n, produced.pointers.data());
+            if (path->carryCount + out > 2 * path->output->maxOutputFrames()) {
+                throw std::logic_error("the resampler produced more than its lookahead allows");
+            }
             for (int c = 0; c < config.outputChannels; ++c) {
                 std::copy_n(produced.data[static_cast<std::size_t>(c)].begin(), out,
                             path->carry.data[static_cast<std::size_t>(c)].begin() + path->carryCount);
