@@ -10,8 +10,12 @@
 // must be called from one non-realtime thread. process() runs on the audio
 // thread inside the device callback and never allocates, locks or blocks.
 //
+// Latency changes reported by the live graph's nodes are drained from its
+// realtime outbox in poll() and handed to the command thread by
+// takeLatencyChanges(); the answer is a recompile published as usual.
+//
 // M2 step 1 ducks the whole output during a transition; ducking only the
-// affected paths follows once the compiler reports them.
+// affected paths follows once the compiler reports them (m2-live-recompile).
 
 #include <atomic>
 #include <chrono>

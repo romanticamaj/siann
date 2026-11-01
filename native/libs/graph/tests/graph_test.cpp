@@ -10,7 +10,6 @@
 #include "pdc_fixtures.hpp"
 
 using namespace siann::graph;
-using pdc::DifferenceNode;
 using pdc::NoiseNode;
 
 namespace {
