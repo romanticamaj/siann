@@ -67,7 +67,7 @@ test('buildImportPackPlan creates a reviewable plan before apply', () => {
   assert.equal(plan.integrity.canonicalization, 'jcs-rfc8785');
   assert.match(plan.integrity.commandHash, /^sha256:[a-f0-9]{64}$/);
   assert.equal(plan.workflow, 'import-pack');
-  assert.equal(plan.manifestFile, '/repo/examples/import-pack/manifest.json');
+  assert.equal(plan.manifestFile, path.resolve('/repo/examples/import-pack/manifest.json'));
   assert.deepEqual(plan.review, {
     required: true,
     state: 'pending',

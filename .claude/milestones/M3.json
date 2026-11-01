@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M3",
+  "title": "Agent access",
+  "goal": "Agents and clients reach the engine only through the SIANN protocol and an MCP adapter, building sessions through reviewed plans with rollback and audition.",
+  "specSections": [
+    "siann-protocol",
+    "Plans",
+    "Revision DAG — single history",
+    "Proposal audition (A/B)",
+    "Licensing decisions (decided 2026-10-22, ADR-0017)",
+    "Milestones"
+  ],
+  "status": "not_started",
+  "done": [],
+  "prerequisites": ["M2 merged, or at least m2-playback-engine and m2-meters (the meter page needs the protocol)."],
+  "humanGates": [],
+  "features": [
+    {
+      "id": "m3-protocol-server",
+      "title": "WebSocket/HTTP protocol server with token handshake",
+      "wave": 1,
+      "dependsOn": [],
+      "specRefs": ["siann-protocol"],
+      "acceptance": [
+        "IXWebSocket (pinned, behind a thin adapter) serves 127.0.0.1 with a random per-launch token sent in the first message; no request is accepted before it.",
+        "Origin checks use an explicit allow list including the app scheme.",
+        "Every request carries sessionId and an idempotency requestId and gets exactly one response with a stable error code; a duplicate requestId returns the original response."
+      ]
+    },
+    {
+      "id": "m3-events-sync",
+      "title": "Events, gap detection and session.sync",
+      "wave": 2,
+      "dependsOn": ["m3-protocol-server"],
+      "specRefs": ["siann-protocol"],
+      "acceptance": [
+        "Events carry a monotonically increasing sequence and the revision; a client that detects a gap calls session.sync and continues from a full read model.",
+        "session.changed carries changed IDs; large sessions sync in chunks.",
+        "Meters and playhead go as binary latest-wins frames on a separate channel and never queue behind commands.",
+        "The protocol exposes the running build's source location and commit (AGPL section 13, ADR-0017)."
+      ]
+    },
+    {
+      "id": "m3-plans",
+      "title": "Plans in the engine: per-entity staleness, approval, partial approval",
+      "wave": 2,
+      "dependsOn": ["m3-protocol-server"],
+      "specRefs": ["Plans", "Revision DAG — single history", "Canonical JSON and hashes"],
+      "acceptance": [
+        "Plans carry readSet and writeSet with entity hashes; a plan stays valid while those entities are unchanged; approval returns plan_stale with the changed entities otherwise.",
+        "Partial approval produces a new sub-plan with a new hash, revalidated; the original is marked rejected.",
+        "planHash follows the shared JCS rules and matches the Node bridge for shared fixtures."
+      ]
+    },
+    {
+      "id": "m3-rollback",
+      "title": "Rollback of applied plans",
+      "wave": 3,
+      "dependsOn": ["m3-plans"],
+      "specRefs": ["Revision DAG — single history"],
+      "acceptance": [
+        "Rolling back an applied plan creates an inverse revision when its entities are unchanged since, and returns rollback_conflict listing the entities otherwise.",
+        "External side effects (media, renders) are never deleted by rollback."
+      ]
+    },
+    {
+      "id": "m3-audition",
+      "title": "Proposal branches and A/B audition",
+      "wave": 3,
+      "dependsOn": ["m3-plans"],
+      "specRefs": ["Proposal audition (A/B)", "Publishing and retiring graphs"],
+      "acceptance": [
+        "A proposal is a DAG branch; committing merges it into main, discarding leaves it unreachable but journaled.",
+        "Auditioning switches the live graph with duck-and-swap; only the live graph exists; a memory/CPU budget refusal returns a reason."
+      ]
+    },
+    {
+      "id": "m3-mcp",
+      "title": "MCP adapter",
+      "wave": 4,
+      "dependsOn": ["m3-events-sync", "m3-rollback", "m3-audition"],
+      "specRefs": ["siann-protocol"],
+      "acceptance": [
+        "MCP tools map onto the command registry: list_commands, describe_capabilities, inspect_session, submit_plan, plan_status, approve_plan (trusted scope only), execute (trusted only), job_status, render, open/save session.",
+        "MCP clients default to the propose scope.",
+        "An end-to-end test drives the MCP adapter to build a session through approved plans, roll back and audition a branch."
+      ]
+    }
+  ],
+  "exit": [
+    {"id": "m3-exit-e2e", "text": "An MCP client builds a session through approved plans, rolls back and auditions a branch.", "how": "End-to-end test in CI."},
+    {"id": "m3-exit-sync", "text": "Reconnect and gap sync are tested.", "how": "Protocol tests that drop events and reconnect."}
+  ],
+  "killCriterion": null
+}

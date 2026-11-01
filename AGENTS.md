@@ -14,6 +14,7 @@ paths, generated artifacts, and local repository references.
 - `docs/research/` stores engine spike findings, commandability maps, and implementation research.
 - `docs/schemas/` stores command, observation, journal, and bridge contract drafts.
 - `docs/superpowers/specs/` stores larger design specifications.
+- `docs/harness/` holds the milestone harness: agent rules and the per-milestone runbook; manifests live in `.claude/milestones/` and the workflow in `.claude/workflows/siann-milestone.js`.
 - `.codex/skills/siann-intake/SKILL.md` is the canonical agent-facing intake skill for arbitrary audio files, placement notes, and DAWproject export.
 - `.claude/skills/siann-intake/SKILL.md` points Claude-style agents at the same SIANN intake boundary.
 - `src/bridge/` contains the Node-based developer bridge wrapper around the engine command runner.
@@ -21,6 +22,7 @@ paths, generated artifacts, and local repository references.
 - `examples/bridge/` contains command fixtures that developers can run against a local engine checkout.
 - `examples/import-pack/` contains the first product workflow fixture: manifest-driven asset placement and preview rendering.
 - `scripts/create-demo-audio.js` writes small WAV fixtures for workflow smoke tests and examples.
+- `scripts/check-all.js` runs every local check (`--gcc` adds a g++ -Werror syntax check through WSL, `--desktop` the JUCE preset).
 - `scripts/create-daw-manifest.js` converts extracted `_DAW/` plus `_SpliceSFX/` packs into multi-track manifests with placement trim metadata.
 - `test/` contains Node test-runner coverage for the bridge wrapper, CLI, and fixtures.
 
@@ -43,6 +45,8 @@ Key internal documents:
 - [Session observation v0](docs/schemas/session-observation-v0.md)
 - [UI base evaluation](docs/research/ui-base-evaluation.md)
 - [Windows setup](docs/setup/windows.md)
+- [Milestone runbook](docs/harness/runbook.md)
+- [Harness agent rules](docs/harness/agent-rules.md)
 
 ## Architecture & Implementation Boundaries
 

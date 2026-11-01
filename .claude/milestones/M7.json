@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M7",
+  "title": "Embedded",
+  "goal": "The headless engine runs on an arm64 Linux board without JUCE and is controlled from a browser on the LAN.",
+  "specSections": ["Embedded Linux", "siann-host: two targets, one interface", "siann-protocol", "Milestones"],
+  "status": "not_started",
+  "done": [],
+  "prerequisites": ["M3 protocol; M4 CLAP host."],
+  "humanGates": [
+    {"id": "board", "text": "Provide a Raspberry Pi class board with an audio interface on the LAN.", "how": "The maintainer sets it up and gives SSH access details for the final check."}
+  ],
+  "features": [
+    {"id": "m7-headless-host", "title": "siann-host-headless: ALSA/JACK devices, ALSA MIDI, LV2 via lilv", "wave": 1, "dependsOn": [], "specRefs": ["siann-host: two targets, one interface", "Embedded Linux"],
+     "acceptance": ["No JUCE and no X11 in the headless build; ALSA device implements AudioDevice with the stop contract; LV2 through lilv implements PluginHost."]},
+    {"id": "m7-arm64-ci", "title": "arm64 cross build in CI", "wave": 1, "dependsOn": [], "specRefs": ["Build, test and CI"],
+     "acceptance": ["A Linux arm64 headless build and test job (native runner or emulation)."]},
+    {"id": "m7-lan-mode", "title": "LAN mode: TLS, pairing and per-client scopes", "wave": 2, "dependsOn": ["m7-headless-host"], "specRefs": ["siann-protocol"],
+     "acceptance": ["Explicit opt-in; the engine serves the UI over https so the self-signed certificate is accepted once, or pairing installs a local CA; read-only, operate and approve scopes."]}
+  ],
+  "exit": [
+    {"id": "m7-exit-board", "text": "The engine runs on a Raspberry Pi class board controlled from a browser.", "how": "The maintainer's board (human gate)."}
+  ],
+  "killCriterion": null
+}

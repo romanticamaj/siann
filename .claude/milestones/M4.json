@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M4",
+  "title": "Plugins",
+  "goal": "Host CLAP on both targets and VST3, AU and LV2 through JUCE inside the graph, with latency compensation, state, capabilities and crash survival.",
+  "specSections": ["siann-host: two targets, one interface", "Latency model", "Publishing and retiring graphs", "Automation", "Milestones"],
+  "status": "not_started",
+  "done": [],
+  "prerequisites": ["M0 plugin hosting spike."],
+  "humanGates": [
+    {"id": "real-plugins", "text": "Choose the third-party plugins used for compatibility runs.", "how": "The maintainer lists installed plugins; pluginval-checked runs use them."}
+  ],
+  "features": [
+    {"id": "m4-clap-host", "title": "CLAP host for both targets", "wave": 1, "dependsOn": [], "specRefs": ["siann-host: two targets, one interface"],
+     "acceptance": ["ClapPluginHost loads CLAP plugins in the desktop and headless builds; sample-accurate parameter events; latency and state through the PluginHost contract."]},
+    {"id": "m4-plugin-node", "title": "Plugin slots in the document and PluginNode in the graph", "wave": 2, "dependsOn": ["m4-clap-host"], "specRefs": ["siann-model (pure C++)", "Commands and jobs", "State migration"],
+     "acceptance": ["plugin.instantiate (job) then plugin.insert (pure command) with a state blob; missing plugins show as missing with state preserved; instances survive unrelated edits through the pinned instance table."]},
+    {"id": "m4-hostile-plugin", "title": "Hostile test plugin", "wave": 2, "dependsOn": ["m4-clap-host"], "specRefs": ["Build, test and CI"],
+     "acceptance": ["A built-in CLAP test plugin that allocates, throws, changes latency, sleeps and calls back into the host; the engine survives each behaviour with the documented outcome."]},
+    {"id": "m4-juce-formats", "title": "VST3, AU and LV2 through JUCE", "wave": 3, "dependsOn": ["m4-plugin-node"], "specRefs": ["siann-host: two targets, one interface"],
+     "acceptance": ["JucePluginHost formats behind the same PluginHost interface; capability flags exposed to agents; pluginval runs on the chosen plugins."]},
+    {"id": "m4-crash-recovery", "title": "Plugin crash recovery", "wave": 3, "dependsOn": ["m4-plugin-node"], "specRefs": ["Process model", "Production-level criteria"],
+     "acceptance": ["A plugin crash during playback leaves the UI alive; the engine restarts and recovers the session from checkpoint plus journal."]}
+  ],
+  "exit": [
+    {"id": "m4-exit-plugins", "text": "Third-party plugins load, save state, compensate latency and survive restart; capability flags are exposed to agents.", "how": "Plugin tests plus pluginval runs on the chosen plugins."}
+  ],
+  "killCriterion": null
+}

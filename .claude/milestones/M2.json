@@ -1,0 +1,151 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M2",
+  "title": "Realtime engine",
+  "goal": "Play, edit, locate and record a session through a real audio device with the realtime data flow of revision 3.1, meeting the M2 exit criteria.",
+  "specSections": [
+    "Realtime data flow",
+    "Latency model",
+    "Sample rate and media",
+    "Device-side SRC (M2)",
+    "Recording",
+    "Gestures",
+    "Milestones"
+  ],
+  "status": "in_progress",
+  "done": [
+    "Realtime queues, allocation guard, fake and manual devices (#14)",
+    "Graph driver: ownership states, duck-and-swap, retirement, watchdog (#16)",
+    "Parameter channel and control dispatcher (#17)",
+    "Disk streaming with two-slot locate (#18)",
+    "JUCE desktop audio device (#20)",
+    "Write-through recording and crash-safe takes (#21)"
+  ],
+  "prerequisites": [],
+  "humanGates": [],
+  "features": [
+    {
+      "id": "m2-playback-engine",
+      "title": "Playback engine: play a session document through the graph driver",
+      "wave": 1,
+      "dependsOn": [],
+      "specRefs": ["Realtime data flow", "Two channels into the audio thread", "Gestures"],
+      "acceptance": [
+        "A new module (siann-playback) builds a realtime graph from a session document: per track a streaming player, a track fader and the master bus, plus the entity-to-slot map for the control dispatcher.",
+        "FLAC media plays through an in-memory MediaReader until a streaming FLAC reader exists.",
+        "Playing a session on the manual device produces output sample-identical to renderOffline for the same document, after the initial fade-in.",
+        "A gesture on a track fader moves the sound through the parameter channel, and ending it commits exactly one revision with the final value; reopening the bundle replays it.",
+        "No allocations on the audio thread during playback and gestures (allocation guard)."
+      ]
+    },
+    {
+      "id": "m2-live-recompile",
+      "title": "Structural edits while playing",
+      "wave": 2,
+      "dependsOn": ["m2-playback-engine"],
+      "specRefs": ["Publishing and retiring graphs", "State migration", "Locate"],
+      "acceptance": [
+        "The butler adds and removes disk streams while running; a stream is destroyed only after the graph that used it has been retired and the butler has released it.",
+        "Streaming players align to the timeline by position (slot start plus frames consumed versus the block start), so a stream created at publish time plays correctly after a later swap.",
+        "Committing a structural edit while playing recompiles and swaps the graph with duck-and-swap; after the swap the output is sample-identical to the offline render of the new document.",
+        "Rapid successive edits coalesce: the next compile uses the latest document; no underruns and no audio-thread allocations."
+      ]
+    },
+    {
+      "id": "m2-transport",
+      "title": "Transport orchestration: play, stop, locate with butler handshake and timeout",
+      "wave": 2,
+      "dependsOn": ["m2-playback-engine"],
+      "specRefs": ["Locate", "Queues (all bounded, preallocated)"],
+      "acceptance": [
+        "locate(target) goes dispatcher -> butler seek -> ready -> paramInbox locate, with a new generation each time; a newer locate cancels an older one.",
+        "If the butler is not ready within 1 s the locate proceeds and underruns are counted and reported.",
+        "Play from stop is a locate to the current position followed by start.",
+        "Tests on the manual and fake devices cover locate during playback, repeated locates, the timeout path and stop/start."
+      ]
+    },
+    {
+      "id": "m2-meters",
+      "title": "Meters through meterOutbox",
+      "wave": 2,
+      "dependsOn": ["m2-playback-engine"],
+      "specRefs": ["Queues (all bounded, preallocated)"],
+      "acceptance": [
+        "Track and master peak and RMS per block go audio -> dispatcher through a latest-value-wins SPSC queue and are readable by a non-realtime consumer with the playhead.",
+        "Meter values match values computed offline from the rendered output for a known signal.",
+        "A full meter queue drops values and never blocks; no audio-thread allocations."
+      ]
+    },
+    {
+      "id": "m2-device-src",
+      "title": "Device-side sample-rate conversion",
+      "wave": 2,
+      "dependsOn": ["m2-playback-engine"],
+      "specRefs": ["Sample rate and media", "Device-side SRC (M2)", "Latency model"],
+      "acceptance": [
+        "When the device cannot run at the session rate, playback goes through output SRC (pull model, FIFO primed to a fixed fill of one graph block) and recording through input SRC.",
+        "The SRC library runs allocation-free on the audio thread after setup (allocation guard); r8brain streaming mode, or libsamplerate as the documented fallback.",
+        "Sine and impulse tests at 44.1->48 kHz and 48->44.1 kHz meet stated frequency-response, aliasing and alignment limits.",
+        "SRC latency is reported to the latency model; the record-offset loopback null test passes through input and output SRC.",
+        "The engine exposes a resampling state with device rate, session rate and added latency."
+      ]
+    },
+    {
+      "id": "m2-realtime-pdc",
+      "title": "Realtime PDC and runtime latency changes",
+      "wave": 2,
+      "dependsOn": ["m2-playback-engine"],
+      "specRefs": ["Latency model", "State migration"],
+      "acceptance": [
+        "PDC null tests (direct, send, aux, sidechain) pass when played through the graph driver on the manual device, not only offline.",
+        "Changing a node's reported latency during playback recompiles the affected paths; delay lines are rebuilt and the paths ducked and restored; the null tests cancel again after the change.",
+        "The offline render and the realtime render of the same graph are identical (parity test)."
+      ]
+    },
+    {
+      "id": "m2-cli-realtime",
+      "title": "siann-cli device, play, record and bench commands",
+      "wave": 3,
+      "dependsOn": ["m2-transport", "m2-meters", "m2-live-recompile"],
+      "specRefs": ["Recording", "Production-level criteria"],
+      "acceptance": [
+        "siann-cli devices lists output devices (desktop build); play <bundle> [--seconds]; record <bundle> --track <id> [--seconds] commits a take; bench <bundle> --tracks N --buffer F --seconds S reports callbacks, xruns (deadline misses measured against the buffer period) and max callback time as JSON.",
+        "Without JUCE the commands report a clear error code instead of failing to build.",
+        "A test kills a recording siann-cli process mid-take and verifies the take is listed as pending and recovers on the next open."
+      ]
+    }
+  ],
+  "exit": [
+    {
+      "id": "m2-exit-xruns",
+      "text": "32 tracks play for 60 s at 256 samples with zero xruns on the maintainer's machine through the default device (desktop build, siann-cli bench).",
+      "how": "Run siann-cli bench on a generated 32-track session with the desktop preset; record the JSON in the milestone status."
+    },
+    {
+      "id": "m2-exit-src",
+      "text": "With SRC active (44.1 kHz session on a 48 kHz device), the same bench has zero xruns and the SRC quality and record-offset tests pass.",
+      "how": "Same bench with a 44.1 kHz session; SRC tests in ctest."
+    },
+    {
+      "id": "m2-exit-pdc",
+      "text": "Realtime PDC null tests pass, including a latency change during playback.",
+      "how": "ctest -R pdc"
+    },
+    {
+      "id": "m2-exit-gesture",
+      "text": "A fader gesture through the parameter channel commits one revision.",
+      "how": "ctest, playback engine tests"
+    },
+    {
+      "id": "m2-exit-record",
+      "text": "Record 10 minutes and recover after a kill.",
+      "how": "The long recording test (tagged [long]) and the CLI kill test."
+    },
+    {
+      "id": "m2-exit-rt-safety",
+      "text": "Realtime-safety checks are clean: allocation guard on every realtime test, and RealtimeSanitizer where Clang is available.",
+      "how": "ctest; add a Clang RTSan CI job if the toolchain supports it, otherwise record why not."
+    }
+  ],
+  "killCriterion": "Persistent xruns not fixable within the design: stop and hold the Tracktion decision gate with the maintainer."
+}

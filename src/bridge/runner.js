@@ -1,6 +1,7 @@
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { scriptInvocation } = require('./script-invocation');
 
 const HASH_RE = /^sha256:[a-f0-9]{64}$/;
 
@@ -69,11 +70,7 @@ function defaultEngineDir() {
 
 function engineCommand(commandFile, options = {}) {
   if (options.runner) {
-    return {
-      command: options.runner,
-      args: [commandFile],
-      cwd: options.cwd || process.cwd(),
-    };
+    return scriptInvocation(options.runner, [commandFile], options.cwd || process.cwd());
   }
 
   const engineDir = options.engineDir || defaultEngineDir();

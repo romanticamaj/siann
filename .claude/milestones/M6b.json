@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M6b",
+  "title": "Recording production",
+  "goal": "Production recording: punch, loop record with takes and playlists, monitoring modes, MIDI recording, RF64, meeting the one-hour 16-track criterion.",
+  "specSections": ["Recording", "MIDI", "Latency model", "Production-level criteria", "Milestones"],
+  "status": "not_started",
+  "done": ["Write-through recording and crash-safe takes (#21)."],
+  "prerequisites": ["M2."],
+  "humanGates": [
+    {"id": "long-run", "text": "Allow a one-hour 16-track recording run with a random kill on the maintainer's machine and device.", "how": "The maintainer starts the run and leaves the machine idle; results are recorded."}
+  ],
+  "features": [
+    {"id": "m6b-rf64", "title": "RF64/BWF for takes above 4 GiB", "wave": 1, "dependsOn": [], "specRefs": ["Recording"],
+     "acceptance": ["Takes switch to RF64 above 4 GiB; repair handles RF64; BWF timestamps carry the timeline position."]},
+    {"id": "m6b-punch-loop", "title": "Punch in/out, pre-roll and loop record with takes per pass", "wave": 1, "dependsOn": [], "specRefs": ["Recording"],
+     "acceptance": ["Punch and loop ranges from the document; one take per loop pass mapped to playlists; seamless loop playback with butler prefetch."]},
+    {"id": "m6b-monitoring", "title": "Monitoring modes and the low-latency monitoring path", "wave": 2, "dependsOn": ["m6b-punch-loop"], "specRefs": ["Latency model", "Recording"],
+     "acceptance": ["Off, auto and input monitoring; the loopback offset test passes in every mode."]},
+    {"id": "m6b-midi-record", "title": "MIDI input and MIDI takes", "wave": 2, "dependsOn": [], "specRefs": ["MIDI"],
+     "acceptance": ["midiInbox per device with timestamps converted to sample offsets; MIDI takes become MidiClips in MusicTime; overflow drops and sends all-notes-off."]}
+  ],
+  "exit": [
+    {"id": "m6b-exit-hour", "text": "One hour of 16-track recording with a forced kill at a random time loses at most the last second of audio and no edits before the last journal fsync.", "how": "Long run on the maintainer's machine (human gate)."}
+  ],
+  "killCriterion": null
+}
