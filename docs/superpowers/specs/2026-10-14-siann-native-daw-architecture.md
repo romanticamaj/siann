@@ -606,7 +606,21 @@ The documented precision is shown to users and agents.
 - The SRC library runs on the audio thread, so it must be allocation-free after
   setup and pass the realtime checks. Candidate: r8brain-free-src streaming mode
   (MIT), verified with the allocation hooks and RealtimeSanitizer before adoption;
-  libsamplerate (BSD-2) is the fallback.
+  libsamplerate (BSD-2) is the fallback. M2 adopts r8brain on two of those three
+  checks, and the third is still owed:
+  - Allocations: the allocation-guard tests run `process()` on a marked audio
+    thread and pump every SRC test through the guarded driver.
+  - Locks and blocking calls: the allocation guard cannot see them, so this rests
+    on a review of r8brain 6.5's source. Its only locks (`CSyncObject`, taken
+    through `R8BSYNC`) guard the shared filter, filter-bank and FFT-object caches.
+    They are taken only when a resampler is constructed or destroyed, which
+    happens on the control thread. `process()` and `clear()` take none and make no
+    system calls.
+  - RealtimeSanitizer: no repo build runs it yet. The M2 exit criterion
+    `m2-exit-rt-safety` adds the Clang RTSan job (or records why the toolchain
+    cannot run it). That job must cover the SRC tests. Until it runs clean,
+    r8brain's adoption is provisional. If RTSan flags its streaming path, M2
+    switches to libsamplerate.
 - SRC latency (input and output filters plus the FIFO) is reported to the latency
   model. The record offset includes it, so recorded clips stay aligned.
 - Recording through input SRC writes files at the session rate. Input monitoring
@@ -624,11 +638,14 @@ The documented precision is shown to users and agents.
   - Aliasing and noise: the residual after subtracting the least-squares fitted sine
     is below -96 dB relative to the tone (it covers images, ripple and noise; float32
     and the attenuation of r8brain's 16-bit-class filter both leave margin). That
-    measures in-band tones only; aliasing proper is tested in the downsampling
-    direction (48 to 44.1 kHz): a sine between the device Nyquist and the session
-    Nyquist (22.06 to 23.99 kHz), which would fold to device rate minus its
-    frequency, comes out with everything left of it (the folded tone and any other
-    residue) below -96 dB relative to the tone.
+    measures in-band tones only. Aliasing proper is tested on both paths wherever
+    they downsample. On output, a 48 kHz session on a 44.1 kHz device plays a sine
+    between the device Nyquist and the session Nyquist (22.06 to 23.99 kHz). That
+    tone would fold to the device rate minus its frequency. On input, a 44.1 kHz
+    session on a 48 kHz device (the M2 exit setup) records a device-input sine in
+    the same band, which would fold into the take at the session rate minus its
+    frequency. In both cases, everything left of the tone (the folded tone and any
+    other residue) must be below -96 dB relative to the tone.
   - Parity: the session played through the graph driver on the manual device with
     SRC active is sample-identical to `renderOffline()` passed through a
     `StreamResampler` primed and fed as the driver's output SRC is (lookahead and
