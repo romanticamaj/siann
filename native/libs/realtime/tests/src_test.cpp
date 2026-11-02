@@ -1,6 +1,7 @@
 // Device-side sample-rate conversion (architecture spec, "Device-side SRC
 // (M2)"). The limits come from the spec's Tests bullet: +/-0.1 dB at 1, 10 and
-// 18 kHz, residual below -96 dB, impulses on the expected sample +/-1.
+// 18 kHz, residual below -96 dB, tones between the device and session Nyquist
+// below -96 dB when downsampling, impulses on the expected sample +/-1.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -226,6 +227,40 @@ TEST_CASE("Sine through output SRC keeps amplitude and is clean", "[src]") {
             CHECK(std::fabs(test::toDb(fit.amplitude / kAmplitude)) <= 0.1);
             CHECK(fit.residualDb <= -96.0);
         }
+    }
+}
+
+TEST_CASE("Tones above the device Nyquist do not alias when downsampling", "[src]") {
+    // A 48 kHz session on a 44.1 kHz device: a tone between the device Nyquist
+    // (22.05 kHz) and the session Nyquist (24 kHz) cannot be represented at the
+    // device rate. Anything left of it folds to deviceRate - f (21.1 kHz for
+    // 23 kHz), inside the audible band, so all that may remain is below -96 dB
+    // relative to the tone (the spec's aliasing limit). The tones span the band
+    // from just above 22.05 kHz to just below 24 kHz.
+    for (const double frequency : {22'060.0, 22'100.0, 22'500.0, 23'000.0, 23'500.0, 23'990.0}) {
+        INFO("tone " << frequency << " Hz");
+        const auto played = play(sineGraph(frequency, kDown.session, 3 * kDown.session), kDown, 128,
+                                 2 * kDown.device);
+        CHECK(played.allocations == 0);
+        CHECK(played.xruns == 0);
+        REQUIRE(static_cast<std::int64_t>(played.output.size()) >= 2 * kDown.device);
+        const std::span<const float> second(played.output.data() + kDown.device,
+                                            static_cast<std::size_t>(kDown.device));
+        // Everything in the output is alias, image or noise: its RMS relative to
+        // the tone's (amplitude / sqrt 2).
+        double sum = 0.0;
+        for (const float v : second) {
+            sum += static_cast<double>(v) * static_cast<double>(v);
+        }
+        const double rms = std::sqrt(sum / static_cast<double>(second.size()));
+        const double levelDb = test::toDb(rms / (kAmplitude / std::numbers::sqrt2));
+        // The alias itself, measured as a fitted sine at its folded frequency.
+        const double alias = static_cast<double>(kDown.device) - frequency;
+        const auto fit = test::fitSine(second, alias, static_cast<double>(kDown.device));
+        const double aliasDb = test::toDb(fit.amplitude / kAmplitude);
+        INFO("output level " << levelDb << " dB, alias at " << alias << " Hz " << aliasDb << " dB");
+        CHECK(levelDb <= -96.0);
+        CHECK(aliasDb <= -96.0);
     }
 }
 

@@ -20,6 +20,7 @@
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
 #include "siann/playback/playback_engine.hpp"
+#include "siann/realtime/stream_resampler.hpp"
 #include "siann/rt/realtime_thread.hpp"
 #include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
@@ -612,6 +613,103 @@ TEST_CASE("A session asks the device for its own rate and resamples when the dev
     CHECK(engine.driver().xruns() == 0);
     CHECK(engine.underruns() == 0);
     engine.stop();
+}
+
+TEST_CASE("Playing through device-side SRC is sample-identical to renderOffline through the same SRC",
+          "[playback][src][parity]") {
+    // Spec, "Device-side SRC (M2)" and "Parity": the realtime-vs-offline
+    // parity test through the same SRC. A 48 kHz session on a 44.1 kHz device.
+    Fixture f;
+    f.importWav("med_st", 2, 30'000);
+    f.importWav("med_mono", 1, 20'000);
+    f.exec(addTrack("trk_a"));
+    f.exec(addTrack("trk_b"));
+    // Nothing before frame 1,000, so the driver's fade-in (block 0) scales
+    // only silence and the comparison can start at the first device sample.
+    f.exec(place("clp_a", "trk_a", "med_st", 1'000, 0, 30'000));
+    f.exec(place("clp_b", "trk_b", "med_mono", 3'000, 100, 19'000));
+    f.exec(setGain("trk_b", -6'000));
+    f.exec(R"({"op":"track.set_pan","trackId":"trk_b","pan":-4000})");
+    constexpr std::int64_t sessionRate = 48'000;
+    constexpr std::int64_t deviceRate = 44'100;
+    const std::int64_t end = engine::documentEnd(f.doc());
+
+    // Realtime: the engine on a manual device fixed at 44.1 kHz.
+    host::ManualAudioDevice::Options fixed;
+    fixed.fixedSampleRate = deviceRate;
+    host::ManualAudioDevice device(fixed);
+    PlaybackEngine engine(f.session, testOptions());
+    engine.load();
+    engine.start(device, deviceConfig());
+    REQUIRE(engine.resampling().active);
+    const realtime::LatencyReport latency = engine.driver().latency();
+    // The device output covers the whole document after the SRC latency.
+    const int callbacks =
+        static_cast<int>(((end + latency.srcOutputLatencyFrames) * deviceRate / sessionRate + kBlock - 1) / kBlock) + 2;
+    std::vector<std::vector<float>> played(2);
+    for (int b = 0; b < callbacks; ++b) {
+        device.pumpAll(1, played);
+        engine.butler().runOnce();
+        engine.tick();
+    }
+    CHECK(engine.driver().xruns() == 0);
+    CHECK(engine.underruns() == 0);
+    engine.stop();
+
+    // Offline: renderOffline through a StreamResampler primed and fed as the
+    // driver's output SRC is: its lookahead in silence (in chunks of at most
+    // one graph block), the primed FIFO block of silence, then the render one
+    // graph block at a time.
+    realtime::StreamResampler src(static_cast<double>(sessionRate), static_cast<double>(deviceRate), 2, kBlock);
+    REQUIRE(latency.srcOutputLatencyFrames == src.lookaheadFrames() + kBlock);
+    const std::int64_t renderFrames = static_cast<std::int64_t>(callbacks) * kBlock * sessionRate / deviceRate + kBlock;
+    const auto rendered = offline(f.doc(), f.bundle(), renderFrames);
+    std::vector<std::vector<float>> expected(2);
+    std::vector<std::vector<float>> in(2, std::vector<float>(kBlock, 0.0f));
+    std::vector<std::vector<float>> out(2, std::vector<float>(static_cast<std::size_t>(src.maxOutputFrames())));
+    const float* inPointers[2] = {in[0].data(), in[1].data()};
+    float* outPointers[2] = {out[0].data(), out[1].data()};
+    const auto feed = [&](int frames) {
+        const int produced = src.process(inPointers, frames, outPointers);
+        for (int c = 0; c < 2; ++c) {
+            expected[static_cast<std::size_t>(c)].insert(expected[static_cast<std::size_t>(c)].end(),
+                                                         out[static_cast<std::size_t>(c)].begin(),
+                                                         out[static_cast<std::size_t>(c)].begin() + produced);
+        }
+    };
+    for (int done = 0; done < src.lookaheadFrames();) {
+        const int n = std::min(kBlock, src.lookaheadFrames() - done);
+        feed(n);
+        done += n;
+    }
+    feed(kBlock);  // the primed FIFO block
+    for (std::int64_t at = 0; at + kBlock <= renderFrames; at += kBlock) {
+        for (int c = 0; c < 2; ++c) {
+            std::copy_n(rendered[static_cast<std::size_t>(c)].begin() + at, kBlock,
+                        in[static_cast<std::size_t>(c)].begin());
+        }
+        feed(kBlock);
+    }
+
+    const std::size_t compared = static_cast<std::size_t>(callbacks) * kBlock;
+    REQUIRE(played[0].size() == compared);
+    REQUIRE(expected[0].size() >= compared);
+    for (int c = 0; c < 2; ++c) {
+        INFO("channel " << c);
+        const auto& a = played[static_cast<std::size_t>(c)];
+        const auto& e = expected[static_cast<std::size_t>(c)];
+        std::size_t mismatches = 0;
+        std::size_t first = compared;
+        for (std::size_t i = 0; i < compared; ++i) {
+            if (a[i] != e[i]) {
+                ++mismatches;
+                first = std::min(first, i);
+            }
+        }
+        INFO("first mismatch at device sample " << first);
+        CHECK(mismatches == 0);
+        CHECK_FALSE(silent(a));
+    }
 }
 
 TEST_CASE("An empty document plays silence with no underruns", "[playback]") {
