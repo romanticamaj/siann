@@ -1253,6 +1253,19 @@ journal entry, as "Gestures" requires, arrives with the protocol's
 `gesture.end` and automation write passes; other parameters are rejected
 before a gesture opens, so every open gesture can be ended.
 
+M2 interim (realtime PDC): a runtime latency change is answered by the graph
+driver itself, in its control-side `poll()`, with
+`PreparedGraph::recompile()`. Until the instance table exists (plugins, M4),
+state migration is done by the recompiled graph sharing the previous graph's
+node instances and every compensation delay line whose length is unchanged
+(shared ownership, released on the control side when the last graph using
+them retires); only the delay lines whose compensation changed are rebuilt.
+The swap ramps only the affected edges (rebuilt delay lines and edges leaving
+the node whose latency changed), holds them at zero until the rebuilt lines
+are full, then raises them; unaffected paths are untouched. A recompile keeps
+every slot, so parameter changes for the original epoch still apply.
+Structural edits (other publishes) and locates still duck the whole output.
+
 M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
 
