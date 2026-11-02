@@ -208,7 +208,10 @@ void checkLatencyChangeDuringStartupRise(const Topology& topology) {
 // Rapid latency changes: each one after the first arrives while the previous
 // recompile's affected paths are still held (or rising, after `waitBlocks`).
 // Every swap's rebuilt delay lines, and the previous ones still filling, stay
-// held, so the output is a null from the first swap on.
+// held, so the output is a null from the last swap on. Changes during the
+// hold arrive while the affected paths are at zero: a null from the first
+// swap on. (During a rise, the graph playing between a change and its swap
+// is misaligned, as before any recompile.)
 void checkRepeatedLatencyChanges(const Topology& topology, int waitBlocks,
                                  const std::vector<std::int64_t>& latencies = {kChanged, 300}) {
     GraphDriver driver(options(kBlock));
@@ -224,6 +227,7 @@ void checkRepeatedLatencyChanges(const Topology& topology, int waitBlocks,
     pumpBlocks(driver, device, 20, out);
     const std::size_t changedAt = out[0].size();
     std::size_t firstSwapAt = 0;
+    std::size_t lastSwapAt = 0;
     std::uint64_t recompiles = 0;
     for (const std::int64_t latency : latencies) {
         REQUIRE(node->requestLatency(latency));
@@ -231,8 +235,9 @@ void checkRepeatedLatencyChanges(const Topology& topology, int waitBlocks,
         REQUIRE(driver.latencyRecompiles() == ++recompiles);
         pumpUntilSwapped(driver, device, epoch, out);
         epoch = driver.liveEpoch();
+        lastSwapAt = out[0].size();
         if (firstSwapAt == 0) {
-            firstSwapAt = out[0].size();
+            firstSwapAt = lastSwapAt;
         }
         pumpBlocks(driver, device, waitBlocks, out);
     }
@@ -243,8 +248,7 @@ void checkRepeatedLatencyChanges(const Topology& topology, int waitBlocks,
     driver.stop();
 
     CHECK(maxAbs(out, changedAt, firstSwapAt) > 0.01);  // the first change was real
-    CHECK(maxAbs(out, firstSwapAt) <= topology.tolerance);
-    CHECK(maxAbs(out, out[0].size() - 20 * kBlock) <= topology.tolerance);
+    CHECK(maxAbs(out, waitBlocks == 0 ? firstSwapAt : lastSwapAt) <= topology.tolerance);
 }
 
 }  // namespace
