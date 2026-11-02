@@ -40,6 +40,7 @@ std::uint64_t GraphDriver::publishInFamily(std::unique_ptr<graph::PreparedGraph>
     const std::uint64_t epoch = nextEpoch_++;
     owned_.emplace(epoch, std::move(graph));
     families_[epoch] = family != 0 ? family : epoch;
+    latencyFault_.reset();  // compiled or recompiled for the nodes' current latencies
     if (state_ == DriverState::stopped) {
         installDirectly(epoch);
     } else if (inFlight_ || state_ != DriverState::realtime) {
@@ -137,8 +138,12 @@ void GraphDriver::handleLatencyChanges() {
     std::unique_ptr<graph::PreparedGraph> recompiled;
     try {
         recompiled = live->second->recompile();
-    } catch (const graph::GraphError&) {
+    } catch (const graph::GraphError& error) {
+        // Flagged, not silently misaligned: the live graph keeps its old
+        // compensation until a later change recompiles successfully.
         ++latencyRecompileFailures_;
+        latencyFault_ = LatencyFault{lastLatencyChange_->epoch, lastLatencyChange_->slot, lastLatencyChange_->latency,
+                                     error.code(), error.what()};
         return;
     }
     ++latencyRecompiles_;
@@ -202,6 +207,7 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
     liveEpoch_ = epoch;
     riseRemaining_ = options_.fadeFrames;
     pathRise_ = 0;
+    pathEdges_ = {};
     if (old != 0 && old != epoch) {
         retire(old);
     }
@@ -249,6 +255,7 @@ void GraphDriver::finishStop() {
     duckRemaining_ = 0;
     pathDuck_ = false;
     pathRise_ = 0;
+    pathEdges_ = {};
     if (locatePending_) {
         applyLocate(pendingLocate_);
         locatePending_ = false;
@@ -332,10 +339,27 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
         const bool swapped = next_.graph != nullptr;
         if (swapped) {
             const Handoff old{current_, currentEpoch_, currentFamily_};
+            const bool recompiled = next_.graph->recompiledFrom() == current_;
             current_ = next_.graph;
             currentEpoch_ = next_.epoch;
             currentFamily_ = next_.family;
             next_ = {};
+            if (recompiled) {
+                // Hold the affected edges at zero until the rebuilt delay
+                // lines are full, then raise them (EdgeRamp: remaining above
+                // the fade holds). A hold or rise still running from an
+                // earlier recompile carries over: its delay lines are shared
+                // with this graph and may still be filling. Merged before the
+                // old graph (which owns pathEdges_) goes to the butler.
+                const std::int64_t settle = std::min<std::int64_t>(current_->settleFrames(), INT_MAX / 2);
+                const std::span<const std::uint8_t> carried =
+                    pathRise_ > 0 ? pathEdges_ : std::span<const std::uint8_t>{};
+                pathEdges_ = current_->holdEdges(carried);
+                pathRise_ = std::max(static_cast<int>(settle) + options_.fadeFrames, pathRise_);
+            } else {
+                pathEdges_ = {};
+                pathRise_ = 0;  // a new graph rises as a whole
+            }
             if (!retireOutbox_.push(old)) {
                 unsentRetire_ = old;
                 retirePending_ = true;
@@ -346,16 +370,8 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
         }
         duckActive_ = false;
         if (pathDuck_) {
-            // Hold the affected edges at zero until the rebuilt delay lines
-            // are full, then raise them (EdgeRamp: remaining above the fade
-            // holds). The output itself is not ramped.
-            const std::int64_t settle = std::min<std::int64_t>(current_->settleFrames(), INT_MAX / 2);
-            pathRise_ = static_cast<int>(settle) + options_.fadeFrames;
-            pathDuck_ = false;
+            pathDuck_ = false;  // the output itself was not ramped
         } else {
-            if (swapped) {
-                pathRise_ = 0;  // a new graph rises as a whole
-            }
             riseRemaining_ = options_.fadeFrames;
         }
     }
@@ -413,15 +429,16 @@ void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, i
     const host::AudioBufferView* source = nullptr;
     // Path ramps run inside the graph on the affected edges only: the duck in
     // the old graph (with the recompiled graph's mask; the edges are the same)
-    // and, after the swap, the hold and rise in the new one. A later locate or
-    // structural publish may duck the whole output on top of a path rise.
+    // and, after the swap, the hold and rise in the new one. A later locate,
+    // recompile or structural publish may duck the whole output on top of a
+    // path rise (which keeps counting down meanwhile).
     graph::EdgeRamp ramp;
     ramp.fadeFrames = options_.fadeFrames;
     if (pathDuck_) {
         ramp.edges = next_.graph->rampedEdges();
         ramp.remaining = duckRemaining_;
     } else if (pathRise_ > 0 && current_ != nullptr) {
-        ramp.edges = current_->rampedEdges();
+        ramp.edges = pathEdges_;
         ramp.remaining = pathRise_;
         ramp.rising = true;
     }

@@ -19,6 +19,14 @@
 // graph, stay at zero after the swap until the rebuilt delay lines are full
 // (settleFrames()), then rise. Unaffected paths are untouched.
 //
+// When the recompile arrives while a rise is still running (the start-up or
+// post-locate rise of the whole output, or the hold and rise after an earlier
+// recompile), the swap ducks the whole output instead, but the affected edges
+// are still held after it: the recompiled graph's own plus those the earlier
+// hold still covers (their delay lines may still be filling), for whichever
+// lasts longer. A recompile that fails (compensation limit) is flagged by
+// latencyFault() until a later one succeeds.
+//
 // Any other publish (a structural edit) ducks the whole output, as does a
 // locate ("ducks the master around the jump").
 
@@ -283,9 +291,11 @@ private:
     bool duckActive_ = false;  // ducking for a graph swap or a locate
     // The duck in progress ramps only the recompiled graph's affected edges.
     bool pathDuck_ = false;
-    // After such a swap: frames until the affected edges are fully up
-    // (the hold while rebuilt delay lines fill, then the rise).
+    // After a recompile's swap: frames until the held edges are fully up
+    // (the hold while rebuilt delay lines fill, then the rise), and which
+    // edges (the live graph's holdEdges()).
     int pathRise_ = 0;
+    std::span<const std::uint8_t> pathEdges_;
     int duckRemaining_ = 0;
     int riseRemaining_ = 0;
     std::atomic<std::int64_t> playhead_{0};
