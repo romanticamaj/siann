@@ -10,12 +10,17 @@
 // must be called from one non-realtime thread. process() runs on the audio
 // thread inside the device callback and never allocates, locks or blocks.
 //
-// Latency changes reported by the live graph's nodes are drained from its
-// realtime outbox in poll() and handed to the command thread by
-// takeLatencyChanges(); the answer is a recompile published as usual.
+// Latency changes (spec, "Latency model" and "State migration"): poll()
+// drains the live graph's realtime outbox and answers a change itself with
+// PreparedGraph::recompile(), published like any other graph. The recompiled
+// graph shares the node instances and unchanged delay lines, keeps every slot
+// (parameter changes for the original epoch still apply to it), and the
+// transition ramps only the affected edges: they duck to zero in the old
+// graph, stay at zero after the swap until the rebuilt delay lines are full
+// (settleFrames()), then rise. Unaffected paths are untouched.
 //
-// M2 step 1 ducks the whole output during a transition; ducking only the
-// affected paths follows once the compiler reports them (m2-live-recompile).
+// Any other publish (a structural edit) ducks the whole output, as does a
+// locate ("ducks the master around the jump").
 
 #include <atomic>
 #include <chrono>
@@ -45,6 +50,9 @@ namespace detail {
 struct Handoff {
     graph::PreparedGraph* graph = nullptr;
     std::uint64_t epoch = 0;
+    // The epoch whose slots this graph keeps: its own, or for a latency
+    // recompile the family of the graph it was recompiled from.
+    std::uint64_t family = 0;
 };
 
 // The readings of every MeterNode for one block, in schedule order. `entries`
@@ -73,7 +81,7 @@ struct TransportCommand {
 };
 
 // A node of the graph with `epoch` reported a new latency (pluginEventRt for
-// built-in nodes). The command thread answers with a recompile.
+// built-in nodes). The driver answers with a recompile.
 struct LatencyChange {
     std::uint64_t epoch = 0;
     graph::NodeId slot = 0;
@@ -175,10 +183,19 @@ public:
     // stopped) applied.
     std::uint64_t appliedLocate() const noexcept { return appliedLocate_.load(std::memory_order_acquire); }
 
-    // Control side: the latency changes the live graph has reported since
-    // the last call, oldest first. poll() drains the graph's realtime outbox;
-    // changes from a graph that is already being replaced are dropped.
-    std::vector<LatencyChange> takeLatencyChanges();
+    // Control side. poll() drains the live graph's realtime outbox and
+    // recompiles once per poll that saw a change. Changes from a graph that is
+    // already being replaced are dropped: a recompiled successor compares
+    // its nodes' latencies itself and reports again, and any other graph was
+    // compiled from the nodes' latencies of its own.
+    std::uint64_t latencyRecompiles() const noexcept { return latencyRecompiles_; }
+    // Recompiles that failed (GraphError, e.g. compensation_limit); the live
+    // graph then keeps playing with its old compensation.
+    std::uint64_t latencyRecompileFailures() const noexcept { return latencyRecompileFailures_; }
+    const std::optional<LatencyChange>& lastLatencyChange() const noexcept { return lastLatencyChange_; }
+
+    // Control side: the live graph (nullptr when none), for inspection only.
+    const graph::PreparedGraph* liveGraph() const noexcept;
 
     // While stopped: the recorder receives every input block (its own
     // arming decides what is kept). Pass nullptr to detach.
@@ -205,7 +222,8 @@ private:
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
     void drainRetired();
-    void drainLatencyChanges();
+    void handleLatencyChanges();
+    std::uint64_t publishInFamily(std::unique_ptr<graph::PreparedGraph> graph, std::uint64_t family);
     void finishStop();
 
     Options options_;
@@ -223,7 +241,10 @@ private:
     std::chrono::steady_clock::time_point sentAt_{};
     std::uint64_t watchdogTrips_ = 0;
     std::atomic<bool> deviceLost_{false};
-    std::vector<LatencyChange> latencyChanges_;
+    std::map<std::uint64_t, std::uint64_t> families_;  // epoch -> family, for every owned graph
+    std::uint64_t latencyRecompiles_ = 0;
+    std::uint64_t latencyRecompileFailures_ = 0;
+    std::optional<LatencyChange> lastLatencyChange_;
 
     // Audio side.
     rt::SpscQueue<Handoff> graphInbox_{2};
@@ -233,6 +254,7 @@ private:
     bool paramHeld_ = false;  // heldParam_ waits for a newer graph to be swapped in
     graph::PreparedGraph* current_ = nullptr;
     std::uint64_t currentEpoch_ = 0;
+    std::uint64_t currentFamily_ = 0;
     Handoff next_{};
     Handoff unsentRetire_{};
     bool retirePending_ = false;  // unsentRetire_ holds an acknowledgement to retry
@@ -240,6 +262,11 @@ private:
     TransportCommand pendingLocate_{};
     bool locatePending_ = false;
     bool duckActive_ = false;  // ducking for a graph swap or a locate
+    // The duck in progress ramps only the recompiled graph's affected edges.
+    bool pathDuck_ = false;
+    // After such a swap: frames until the affected edges are fully up
+    // (the hold while rebuilt delay lines fill, then the rise).
+    int pathRise_ = 0;
     int duckRemaining_ = 0;
     int riseRemaining_ = 0;
     std::atomic<std::int64_t> playhead_{0};

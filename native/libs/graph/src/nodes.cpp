@@ -192,15 +192,17 @@ void FakeLatencyNode::prepare(int) {
 void FakeLatencyNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                               const AudioBufferView& output) noexcept {
     const std::int64_t requested = requested_.load(std::memory_order_acquire);
-    if (requested != latency_) {
+    std::int64_t current = latency_.load(std::memory_order_relaxed);  // this thread is the only writer
+    if (requested != current) {
         // A new latency: restart the delay line with silence, in place.
-        latency_ = requested;
+        current = requested;
         position_ = 0;
         for (auto& ring : ring_) {
-            std::fill(ring.begin(), ring.begin() + static_cast<std::ptrdiff_t>(latency_), 0.0f);
+            std::fill(ring.begin(), ring.begin() + static_cast<std::ptrdiff_t>(current), 0.0f);
         }
+        latency_.store(current, std::memory_order_release);
     }
-    if (latency_ == 0) {
+    if (current == 0) {
         for (int c = 0; c < channels_; ++c) {
             for (int i = 0; i < context.frames; ++i) {
                 output.channel(c)[i] = inputs[0].channel(c)[i];
@@ -208,7 +210,7 @@ void FakeLatencyNode::process(const ProcessContext& context, std::span<const Aud
         }
         return;
     }
-    const auto length = static_cast<std::size_t>(latency_);
+    const auto length = static_cast<std::size_t>(current);
     for (int c = 0; c < channels_; ++c) {
         auto& ring = ring_[static_cast<std::size_t>(c)];
         std::size_t pos = position_;

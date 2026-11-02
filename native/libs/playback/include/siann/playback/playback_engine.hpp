@@ -99,6 +99,9 @@ public:
                                         std::string time);
 
     // Control thread: transport and dispatcher ticks, then the driver poll.
+    // The poll also answers a node's latency change with a recompile; the
+    // recompiled graph keeps every slot and the dispatcher's epoch, so nothing
+    // else changes here.
     void tick();
 
     // Underruns summed over every stream.

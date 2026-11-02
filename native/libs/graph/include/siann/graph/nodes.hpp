@@ -131,8 +131,9 @@ public:
     FakeLatencyNode(int channels, std::int64_t latency) : FakeLatencyNode(channels, latency, latency) {}
     std::vector<int> inputPorts() const override { return {channels_}; }
     int outputChannels() const override { return channels_; }
-    // The latency in effect for the current block (audio thread once playing).
-    std::int64_t latency() const override { return latency_; }
+    // The latency in effect for the current block. Written by process(), so
+    // the control side can read it while the graph plays (a recompile does).
+    std::int64_t latency() const override { return latency_.load(std::memory_order_acquire); }
     std::int64_t maxLatency() const noexcept { return maxLatency_; }
     void prepare(int maxBlockFrames) override;
     void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
@@ -144,7 +145,7 @@ public:
 
 private:
     int channels_;
-    std::int64_t latency_;
+    std::atomic<std::int64_t> latency_;
     std::int64_t maxLatency_;
     std::atomic<std::int64_t> requested_;
     std::vector<std::vector<float>> ring_;  // maxLatency_ frames per channel; latency_ in use

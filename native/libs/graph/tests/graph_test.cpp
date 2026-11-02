@@ -207,7 +207,7 @@ TEST_CASE("pdc: a recompile after a latency change migrates nodes and unchanged 
     CHECK(second->recompiledFrom() == first.get());
     CHECK(second->nodeCount() == first->nodeCount());
     for (NodeId n = 0; n < 5; ++n) {
-        CHECK(second->node(n) == first->node(n));  // the same instances
+        CHECK(second->nodeAt(n) == first->nodeAt(n));  // the same instances
     }
     CHECK(first->edgeCompensation(id[1], id[4]) == 300);
     CHECK(second->edgeCompensation(id[1], id[4]) == 150);

@@ -1,11 +1,11 @@
 #include "siann/graph/graph.hpp"
 
 #include <algorithm>
-
-#include "siann/graph/nodes.hpp"
 #include <atomic>
 #include <queue>
 #include <utility>
+
+#include "siann/graph/nodes.hpp"
 
 #include "siann/rt/spsc_queue.hpp"
 
@@ -34,17 +34,22 @@ struct Storage {
     AudioBufferView sized(int frames) const noexcept { return AudioBufferView{view.channels, view.channelCount, frames}; }
 };
 
-// A per-edge delay line used for compensation.
+// A per-edge delay line used for compensation. Shared between a graph and
+// the graphs recompiled from it while its length is unchanged.
 struct DelayLine {
     std::vector<std::vector<float>> ring;
     std::size_t position = 0;
 
-    void allocate(int channels, std::int64_t delay) {
-        ring.assign(static_cast<std::size_t>(channels), std::vector<float>(static_cast<std::size_t>(delay), 0.0f));
-        position = 0;
-    }
-    bool active() const noexcept { return !ring.empty() && !ring.front().empty(); }
+    DelayLine(int channels, std::int64_t delay)
+        : ring(static_cast<std::size_t>(channels), std::vector<float>(static_cast<std::size_t>(delay), 0.0f)) {}
 };
+
+// The gain of a ramped edge at frame i of the block (see EdgeRamp).
+float rampGain(const EdgeRamp& ramp, int i) noexcept {
+    const int r = std::min(std::max(ramp.remaining - i, 0), ramp.fadeFrames);
+    const float level = static_cast<float>(r) / static_cast<float>(ramp.fadeFrames);
+    return ramp.rising ? 1.0f - level : level;
+}
 
 }  // namespace
 
@@ -55,10 +60,10 @@ struct PreparedGraph::Impl {
         int port;
         float gain;
         std::int64_t compensation;
-        DelayLine delay;
+        std::shared_ptr<DelayLine> delay;  // null without compensation
     };
     struct NodeState {
-        std::unique_ptr<Node> node;
+        std::shared_ptr<Node> node;  // shared with recompiled graphs
         std::string name;
         std::vector<Storage> inputs;
         std::vector<AudioBufferView> inputViews;  // resized views, rebuilt per block
@@ -75,13 +80,80 @@ struct PreparedGraph::Impl {
     std::vector<std::size_t> order;
     std::size_t outputNode = 0;
     int maxBlock = 0;
+    std::int64_t compensationLimit = 0;
     AudioBufferView outputView;
     std::vector<NodeId> meters;  // MeterNodes in schedule order
+    // Set by recompile() only.
+    const PreparedGraph* recompiledFrom = nullptr;
+    std::vector<std::uint8_t> ramped;
+    std::int64_t settle = 0;
     // Audio thread -> control side. latencyQueued[n] is set while node n has
     // a change in the outbox, so the outbox holds at most one per node and
     // never fills.
     std::unique_ptr<rt::SpscQueue<LatencyChange>> latencyOutbox;
     std::unique_ptr<std::atomic<bool>[]> latencyQueued;
+
+    // Latency and compensation in topological order, from each node's
+    // current latency().
+    void computeLatency() {
+        for (const std::size_t n : order) {
+            auto& state = nodes[n];
+            std::int64_t arrival = 0;
+            for (const std::size_t e : state.incoming) {
+                arrival = std::max(arrival, nodes[edges[e].from].outputLatency);
+            }
+            for (const std::size_t e : state.incoming) {
+                auto& edge = edges[e];
+                edge.compensation = arrival - nodes[edge.from].outputLatency;
+                if (edge.compensation > compensationLimit) {
+                    throw GraphError("compensation_limit", "edge '" + nodes[edge.from].name + "' -> '" + state.name +
+                                                               "' needs " + std::to_string(edge.compensation) +
+                                                               " samples of compensation, above the limit");
+                }
+            }
+            state.compiledLatency = state.node->latency();
+            state.reportedLatency = state.compiledLatency;
+            state.outputLatency = arrival + state.compiledLatency;
+        }
+    }
+
+    // This graph's own buffers (never shared); prepares the nodes when asked.
+    void allocateBuffers(bool prepareNodes) {
+        for (auto& state : nodes) {
+            const auto ports = state.node->inputPorts();
+            state.inputs.resize(ports.size());
+            state.inputViews.resize(ports.size());
+            for (std::size_t p = 0; p < ports.size(); ++p) {
+                state.inputs[p].allocate(ports[p], maxBlock);
+            }
+            state.output.allocate(state.node->outputChannels(), maxBlock);
+            if (prepareNodes) {
+                state.node->prepare(maxBlock);
+            }
+        }
+        outputView = nodes[outputNode].output.view;
+        latencyOutbox = std::make_unique<rt::SpscQueue<LatencyChange>>(nodes.size());
+        latencyQueued = std::make_unique<std::atomic<bool>[]>(nodes.size());
+    }
+
+    // Lists every MeterNode in schedule order.
+    void listMeters() {
+        meters.clear();
+        for (const std::size_t n : order) {
+            auto& state = nodes[n];
+            state.meter = dynamic_cast<const MeterNode*>(state.node.get());
+            if (state.meter != nullptr) {
+                meters.push_back(n);
+            }
+        }
+    }
+
+    std::shared_ptr<DelayLine> newDelay(const Edge& edge) const {
+        if (edge.compensation <= 0) {
+            return nullptr;
+        }
+        return std::make_shared<DelayLine>(nodes[edge.from].node->outputChannels(), edge.compensation);
+    }
 };
 
 NodeId GraphBuilder::add(std::unique_ptr<Node> node, std::string name) {
@@ -114,6 +186,7 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
     auto impl = std::make_unique<PreparedGraph::Impl>();
     impl->maxBlock = maxBlockFrames;
     impl->outputNode = output_;
+    impl->compensationLimit = compensationLimit;
 
     const std::size_t count = nodes_.size();
     impl->nodes.resize(count);
@@ -133,7 +206,7 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
                                                      "' connects different channel counts");
         }
         impl->nodes[spec.to].incoming.push_back(impl->edges.size());
-        impl->edges.push_back(PreparedGraph::Impl::Edge{spec.from, spec.to, spec.port, spec.gain, 0, {}});
+        impl->edges.push_back(PreparedGraph::Impl::Edge{spec.from, spec.to, spec.port, spec.gain, 0, nullptr});
     }
 
     // Kahn's algorithm with the lowest node id first, for a deterministic order.
@@ -165,62 +238,71 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
         throw GraphError("cycle", "the graph contains a cycle");
     }
 
-    // Latency and compensation, in topological order.
-    for (const std::size_t n : impl->order) {
-        auto& state = impl->nodes[n];
-        std::int64_t arrival = 0;
-        for (const std::size_t e : state.incoming) {
-            arrival = std::max(arrival, impl->nodes[impl->edges[e].from].outputLatency);
-        }
-        for (const std::size_t e : state.incoming) {
-            auto& edge = impl->edges[e];
-            edge.compensation = arrival - impl->nodes[edge.from].outputLatency;
-            if (edge.compensation > compensationLimit) {
-                throw GraphError("compensation_limit", "edge '" + impl->nodes[edge.from].name + "' -> '" + state.name +
-                                                           "' needs " + std::to_string(edge.compensation) +
-                                                           " samples of compensation, above the limit");
-            }
-        }
-        state.compiledLatency = state.node->latency();
-        state.reportedLatency = state.compiledLatency;
-        state.outputLatency = arrival + state.compiledLatency;
-    }
+    impl->computeLatency();
 
     // Preallocate every buffer and delay line.
-    for (auto& state : impl->nodes) {
-        const auto ports = state.node->inputPorts();
-        state.inputs.resize(ports.size());
-        state.inputViews.resize(ports.size());
-        for (std::size_t p = 0; p < ports.size(); ++p) {
-            state.inputs[p].allocate(ports[p], maxBlockFrames);
-        }
-        state.output.allocate(state.node->outputChannels(), maxBlockFrames);
-        state.node->prepare(maxBlockFrames);
-    }
+    impl->allocateBuffers(true);
     for (auto& edge : impl->edges) {
-        if (edge.compensation > 0) {
-            edge.delay.allocate(impl->nodes[edge.from].node->outputChannels(), edge.compensation);
-        }
+        edge.delay = impl->newDelay(edge);
     }
-    for (const std::size_t n : impl->order) {
-        auto& state = impl->nodes[n];
-        state.meter = dynamic_cast<const MeterNode*>(state.node.get());
-        if (state.meter != nullptr) {
-            impl->meters.push_back(n);
-        }
-    }
-    impl->outputView = impl->nodes[impl->outputNode].output.view;
-    impl->latencyOutbox = std::make_unique<rt::SpscQueue<LatencyChange>>(count);
-    impl->latencyQueued = std::make_unique<std::atomic<bool>[]>(count);
+    impl->listMeters();
     return std::unique_ptr<PreparedGraph>(new PreparedGraph(std::move(impl)));
 }
 
 PreparedGraph::PreparedGraph(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 PreparedGraph::~PreparedGraph() = default;
 
+std::unique_ptr<PreparedGraph> PreparedGraph::recompile() const {
+    const Impl& old = *impl_;
+    auto impl = std::make_unique<Impl>();
+    impl->maxBlock = old.maxBlock;
+    impl->outputNode = old.outputNode;
+    impl->compensationLimit = old.compensationLimit;
+    impl->order = old.order;
+    impl->nodes.resize(old.nodes.size());
+    for (std::size_t n = 0; n < old.nodes.size(); ++n) {
+        impl->nodes[n].node = old.nodes[n].node;  // the same instance: its state carries over
+        impl->nodes[n].name = old.nodes[n].name;
+        impl->nodes[n].incoming = old.nodes[n].incoming;
+    }
+    impl->edges.reserve(old.edges.size());
+    for (const auto& edge : old.edges) {
+        impl->edges.push_back(Impl::Edge{edge.from, edge.to, edge.port, edge.gain, 0, nullptr});
+    }
+    impl->computeLatency();
+    // The nodes are already prepared for this block size (and may be running).
+    impl->allocateBuffers(false);
+    impl->listMeters();
+
+    const std::int64_t total = impl->nodes[impl->outputNode].outputLatency;
+    impl->ramped.assign(impl->edges.size(), 0);
+    for (std::size_t e = 0; e < impl->edges.size(); ++e) {
+        auto& edge = impl->edges[e];
+        const auto& before = old.edges[e];
+        const bool rebuilt = edge.compensation != before.compensation;
+        const bool sourceChanged = impl->nodes[edge.from].compiledLatency != old.nodes[edge.from].compiledLatency;
+        edge.delay = rebuilt ? impl->newDelay(edge) : before.delay;
+        impl->ramped[e] = (rebuilt || sourceChanged) ? 1 : 0;
+        if (rebuilt && edge.compensation > 0) {
+            // The rebuilt line starts silent: full after its length, heard at
+            // the output after at most the rest of the path's latency.
+            const auto& to = impl->nodes[edge.to];
+            const std::int64_t arrival = to.outputLatency - to.compiledLatency;
+            impl->settle = std::max(impl->settle, edge.compensation + total - arrival);
+        }
+    }
+    impl->recompiledFrom = this;
+    return std::unique_ptr<PreparedGraph>(new PreparedGraph(std::move(impl)));
+}
+
 void PreparedGraph::process(const ProcessContext& context) noexcept {
+    process(context, EdgeRamp{});
+}
+
+void PreparedGraph::process(const ProcessContext& context, const EdgeRamp& ramp) noexcept {
     const int frames = std::clamp(context.frames, 0, impl_->maxBlock);
     const ProcessContext block{context.blockStart, frames};
+    const bool ramping = ramp.fadeFrames > 0 && ramp.edges.size() == impl_->edges.size();
 
     for (const std::size_t n : impl_->order) {
         auto& state = impl_->nodes[n];
@@ -232,25 +314,29 @@ void PreparedGraph::process(const ProcessContext& context) noexcept {
             auto& edge = impl_->edges[e];
             const AudioBufferView source = impl_->nodes[edge.from].output.sized(frames);
             const AudioBufferView& target = state.inputViews[static_cast<std::size_t>(edge.port)];
-            if (edge.delay.active()) {
-                const std::size_t length = edge.delay.ring.front().size();
+            const bool ramped = ramping && ramp.edges[e] != 0;
+            if (edge.delay) {
+                DelayLine& delay = *edge.delay;
+                const std::size_t length = delay.ring.front().size();
                 for (int c = 0; c < source.channelCount; ++c) {
-                    auto& ring = edge.delay.ring[static_cast<std::size_t>(c)];
-                    std::size_t pos = edge.delay.position;
+                    auto& ring = delay.ring[static_cast<std::size_t>(c)];
+                    std::size_t pos = delay.position;
                     for (int i = 0; i < frames; ++i) {
                         const float delayed = ring[pos];
                         ring[pos] = source.channel(c)[i];
-                        target.channel(c)[i] += delayed * edge.gain;
+                        const float gain = ramped ? edge.gain * rampGain(ramp, i) : edge.gain;
+                        target.channel(c)[i] += delayed * gain;
                         if (++pos == length) {
                             pos = 0;
                         }
                     }
                 }
-                edge.delay.position = (edge.delay.position + static_cast<std::size_t>(frames)) % length;
+                delay.position = (delay.position + static_cast<std::size_t>(frames)) % length;
             } else {
                 for (int c = 0; c < source.channelCount; ++c) {
                     for (int i = 0; i < frames; ++i) {
-                        target.channel(c)[i] += source.channel(c)[i] * edge.gain;
+                        const float gain = ramped ? edge.gain * rampGain(ramp, i) : edge.gain;
+                        target.channel(c)[i] += source.channel(c)[i] * gain;
                     }
                 }
             }
@@ -296,6 +382,32 @@ std::int64_t PreparedGraph::edgeCompensation(NodeId from, NodeId to, int port) c
         }
     }
     return -1;
+}
+
+const PreparedGraph* PreparedGraph::recompiledFrom() const noexcept {
+    return impl_->recompiledFrom;
+}
+
+std::span<const std::uint8_t> PreparedGraph::rampedEdges() const noexcept {
+    return impl_->ramped;
+}
+
+bool PreparedGraph::edgeRamped(NodeId from, NodeId to, int port) const noexcept {
+    for (std::size_t e = 0; e < impl_->edges.size(); ++e) {
+        const auto& edge = impl_->edges[e];
+        if (edge.from == from && edge.to == to && edge.port == port) {
+            return e < impl_->ramped.size() && impl_->ramped[e] != 0;
+        }
+    }
+    return false;
+}
+
+std::int64_t PreparedGraph::settleFrames() const noexcept {
+    return impl_->settle;
+}
+
+const Node* PreparedGraph::nodeAt(NodeId slot) const noexcept {
+    return slot < impl_->nodes.size() ? impl_->nodes[slot].node.get() : nullptr;
 }
 
 void PreparedGraph::setParameter(NodeId node, std::uint32_t paramId, double value, int rampFrames) noexcept {
