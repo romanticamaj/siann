@@ -86,6 +86,7 @@ struct PreparedGraph::Impl {
     // Set by recompile() only.
     const PreparedGraph* recompiledFrom = nullptr;
     std::vector<std::uint8_t> ramped;
+    std::vector<std::uint8_t> held;  // holdEdges() output, preallocated
     std::int64_t settle = 0;
     // Audio thread -> control side. latencyQueued[n] is set while node n has
     // a change in the outbox, so the outbox holds at most one per node and
@@ -276,6 +277,7 @@ std::unique_ptr<PreparedGraph> PreparedGraph::recompile() const {
 
     const std::int64_t total = impl->nodes[impl->outputNode].outputLatency;
     impl->ramped.assign(impl->edges.size(), 0);
+    impl->held.assign(impl->edges.size(), 0);
     for (std::size_t e = 0; e < impl->edges.size(); ++e) {
         auto& edge = impl->edges[e];
         const auto& before = old.edges[e];
@@ -404,6 +406,15 @@ bool PreparedGraph::edgeRamped(NodeId from, NodeId to, int port) const noexcept 
 
 std::int64_t PreparedGraph::settleFrames() const noexcept {
     return impl_->settle;
+}
+
+std::span<const std::uint8_t> PreparedGraph::holdEdges(std::span<const std::uint8_t> carried) noexcept {
+    auto& held = impl_->held;
+    const bool merge = carried.size() == held.size();
+    for (std::size_t e = 0; e < held.size(); ++e) {
+        held[e] = (impl_->ramped[e] != 0 || (merge && carried[e] != 0)) ? 1 : 0;
+    }
+    return held;
 }
 
 const Node* PreparedGraph::nodeAt(NodeId slot) const noexcept {

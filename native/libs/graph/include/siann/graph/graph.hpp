@@ -176,6 +176,13 @@ public:
     // Frames after the swap until every rebuilt delay line has filled and its
     // signal reached the output: the affected edges stay at zero that long.
     std::int64_t settleFrames() const noexcept;
+    // Audio thread, when this recompiled graph is swapped in: the edges to
+    // hold and raise after the swap, rampedEdges() plus `carried` (edges a
+    // previous recompile's hold or rise still covers: their delay lines,
+    // shared with this graph, may still be filling). Written into a buffer
+    // preallocated by recompile(); valid until the next call. A `carried`
+    // that does not fit this graph's edges is ignored; empty after compile().
+    std::span<const std::uint8_t> holdEdges(std::span<const std::uint8_t> carried) noexcept;
     // The node instance in a slot (nullptr for an unknown slot).
     const Node* nodeAt(NodeId slot) const noexcept;
 

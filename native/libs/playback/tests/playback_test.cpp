@@ -233,6 +233,9 @@ TEST_CASE("compileForPlayback builds one streaming player and fader per track pl
     CHECK(silent(blocks(p.out[0], 5, 7)));
     CHECK(silent(blocks(p.out[1], 5, 7)));
     CHECK(p.engine.underruns() == 0);
+    // A latency recompile above the compensation limit would be flagged here.
+    CHECK(p.engine.latencyRecompileFailures() == 0);
+    CHECK_FALSE(p.engine.latencyFault().has_value());
 }
 
 TEST_CASE("A FLAC clip plays through the in-memory reader", "[playback][flac]") {

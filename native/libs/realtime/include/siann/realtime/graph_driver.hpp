@@ -28,6 +28,8 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "siann/graph/graph.hpp"
@@ -86,6 +88,18 @@ struct LatencyChange {
     std::uint64_t epoch = 0;
     graph::NodeId slot = 0;
     std::int64_t latency = 0;
+};
+
+// A latency change the driver could not compensate (spec, "Latency model":
+// paths above the compensation limit are flagged, not silently misaligned).
+// The recompile for `latency` on `slot` of the graph with `epoch` failed with
+// a GraphError; that graph keeps playing with its old, now wrong compensation.
+struct LatencyFault {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::int64_t latency = 0;
+    std::string code;  // GraphError::code(), e.g. compensation_limit
+    std::string message;
 };
 
 // One parameter change for the audio thread (revision 3.1, "Two channels into
@@ -190,8 +204,12 @@ public:
     // compiled from the nodes' latencies of its own.
     std::uint64_t latencyRecompiles() const noexcept { return latencyRecompiles_; }
     // Recompiles that failed (GraphError, e.g. compensation_limit); the live
-    // graph then keeps playing with its old compensation.
+    // graph then keeps playing with its old compensation, and latencyFault()
+    // says so until a later recompile or publish succeeds.
     std::uint64_t latencyRecompileFailures() const noexcept { return latencyRecompileFailures_; }
+    // Set while the live graph is misaligned because its latest recompile
+    // failed; cleared by the next successful recompile or publish.
+    const std::optional<LatencyFault>& latencyFault() const noexcept { return latencyFault_; }
     const std::optional<LatencyChange>& lastLatencyChange() const noexcept { return lastLatencyChange_; }
 
     // Control side: the live graph (nullptr when none), for inspection only.
@@ -244,6 +262,7 @@ private:
     std::map<std::uint64_t, std::uint64_t> families_;  // epoch -> family, for every owned graph
     std::uint64_t latencyRecompiles_ = 0;
     std::uint64_t latencyRecompileFailures_ = 0;
+    std::optional<LatencyFault> latencyFault_;
     std::optional<LatencyChange> lastLatencyChange_;
 
     // Audio side.

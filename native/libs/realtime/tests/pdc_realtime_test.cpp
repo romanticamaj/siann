@@ -13,6 +13,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "pdc_fixtures.hpp"
@@ -165,6 +166,87 @@ void checkLatencyChange(const Topology& topology) {
     CHECK(maxAbs(out, swappedAt) <= topology.tolerance);
 }
 
+// Pumps until a graph other than `epoch` is live and no transition is in flight.
+void pumpUntilSwapped(GraphDriver& driver, host::ManualAudioDevice& device, std::uint64_t epoch, Capture& out) {
+    for (int guard = 0; guard < 50 && (driver.transitionInFlight() || driver.liveEpoch() == epoch); ++guard) {
+        pumpBlocks(driver, device, 1, out);
+    }
+    REQUIRE(driver.liveEpoch() != epoch);
+    REQUIRE_FALSE(driver.transitionInFlight());
+}
+
+// The node changes its latency before the first block, while the start-up
+// rise (four blocks long) is still running: the recompile arrives during a
+// whole-output rise, so the swap ducks the whole output, and the rebuilt
+// delay lines must still be held until they are full.
+void checkLatencyChangeDuringStartupRise(const Topology& topology) {
+    constexpr int kLongFade = 4 * kBlock;
+    GraphDriver driver(options(kLongFade));
+    host::ManualAudioDevice device;
+    Built first = topology.build(topology.original);
+    graph::FakeLatencyNode* node = first.changingNode;
+    const auto firstEpoch = driver.publish(graph::pdc::compile(std::move(first), kBlock));
+    driver.play();
+    driver.start(device, config(kBlock));
+    const auto before = rt::allocationViolations();
+    REQUIRE(node->requestLatency(kChanged));
+
+    Capture out;
+    pumpBlocks(driver, device, 1, out);
+    REQUIRE(driver.latencyRecompiles() == 1);
+    pumpUntilSwapped(driver, device, firstEpoch, out);
+    const std::size_t swappedAt = out[0].size();
+    pumpBlocks(driver, device, 40, out);
+    CHECK(rt::allocationViolations() == before);
+    CHECK(driver.latencyRecompiles() == 1);
+    driver.stop();
+
+    CHECK(maxAbs(out, 0, swappedAt) > 0.01);  // the old graph was misaligned
+    CHECK(maxAbs(out, swappedAt) <= topology.tolerance);
+}
+
+// Rapid latency changes: each one after the first arrives while the previous
+// recompile's affected paths are still held (or rising, after `waitBlocks`).
+// Every swap's rebuilt delay lines, and the previous ones still filling, stay
+// held, so the output is a null from the first swap on.
+void checkRepeatedLatencyChanges(const Topology& topology, int waitBlocks,
+                                 const std::vector<std::int64_t>& latencies = {kChanged, 300}) {
+    GraphDriver driver(options(kBlock));
+    host::ManualAudioDevice device;
+    Built first = topology.build(topology.original);
+    graph::FakeLatencyNode* node = first.changingNode;
+    std::uint64_t epoch = driver.publish(graph::pdc::compile(std::move(first), kBlock));
+    driver.play();
+    driver.start(device, config(kBlock));
+    const auto before = rt::allocationViolations();
+
+    Capture out;
+    pumpBlocks(driver, device, 20, out);
+    const std::size_t changedAt = out[0].size();
+    std::size_t firstSwapAt = 0;
+    std::uint64_t recompiles = 0;
+    for (const std::int64_t latency : latencies) {
+        REQUIRE(node->requestLatency(latency));
+        pumpBlocks(driver, device, 1, out);
+        REQUIRE(driver.latencyRecompiles() == ++recompiles);
+        pumpUntilSwapped(driver, device, epoch, out);
+        epoch = driver.liveEpoch();
+        if (firstSwapAt == 0) {
+            firstSwapAt = out[0].size();
+        }
+        pumpBlocks(driver, device, waitBlocks, out);
+    }
+    pumpBlocks(driver, device, 40, out);
+    CHECK(rt::allocationViolations() == before);
+    CHECK(driver.latencyRecompiles() == latencies.size());
+    CHECK(driver.latencyRecompileFailures() == 0);
+    driver.stop();
+
+    CHECK(maxAbs(out, changedAt, firstSwapAt) > 0.01);  // the first change was real
+    CHECK(maxAbs(out, firstSwapAt) <= topology.tolerance);
+    CHECK(maxAbs(out, out[0].size() - 20 * kBlock) <= topology.tolerance);
+}
+
 }  // namespace
 
 TEST_CASE("pdc realtime: direct null through the graph driver", "[pdc][realtime]") {
@@ -260,6 +342,81 @@ TEST_CASE("pdc realtime: a latency change during playback is recompiled and null
     checkLatencyChange(sidechain());
 }
 
+TEST_CASE("pdc realtime: a latency change during the start-up rise is held until the delay lines are full",
+          "[pdc][realtime][latency]") {
+    SECTION("direct") { checkLatencyChangeDuringStartupRise(direct()); }
+    SECTION("send") { checkLatencyChangeDuringStartupRise(send()); }
+    SECTION("nested") { checkLatencyChangeDuringStartupRise(nested()); }
+    SECTION("sidechain") { checkLatencyChangeDuringStartupRise(sidechain()); }
+}
+
+TEST_CASE("pdc realtime: repeated latency changes during the hold null after every swap",
+          "[pdc][realtime][latency]") {
+    SECTION("direct") { checkRepeatedLatencyChanges(direct(), 0); }
+    SECTION("send") { checkRepeatedLatencyChanges(send(), 0); }
+    SECTION("nested") { checkRepeatedLatencyChanges(nested(), 0); }
+    SECTION("sidechain") { checkRepeatedLatencyChanges(sidechain(), 0); }
+    SECTION("three changes, direct") { checkRepeatedLatencyChanges(direct(), 0, {kChanged, 300, 180}); }
+    SECTION("three changes, send") { checkRepeatedLatencyChanges(send(), 0, {kChanged, 300, 180}); }
+}
+
+TEST_CASE("pdc realtime: repeated latency changes during the rise null after every swap",
+          "[pdc][realtime][latency]") {
+    // Three blocks after the swap the affected edges of a 250-frame hold and
+    // a 64-frame fade are rising.
+    SECTION("direct") { checkRepeatedLatencyChanges(direct(), 3); }
+    SECTION("send") { checkRepeatedLatencyChanges(send(), 3); }
+    SECTION("nested") { checkRepeatedLatencyChanges(nested(), 3); }
+    SECTION("sidechain") { checkRepeatedLatencyChanges(sidechain(), 3); }
+}
+
+TEST_CASE("pdc realtime: a latency change above the compensation limit is flagged, not silently misaligned",
+          "[pdc][realtime][latency]") {
+    GraphDriver driver(options(kBlock));
+    host::ManualAudioDevice device;
+    auto built = graph::pdc::buildDirect(100, kMaxLatency);
+    graph::FakeLatencyNode* node = built.changingNode;
+    const graph::NodeId slot = built.changing;
+    // The dry path needs the latency node's latency as compensation: 100
+    // fits a 200-sample limit, 250 does not.
+    const auto firstEpoch = driver.publish(std::move(built.builder).compile(kBlock, 200));
+    driver.play();
+    driver.start(device, config(kBlock));
+    const auto before = rt::allocationViolations();
+
+    Capture out;
+    pumpBlocks(driver, device, 10, out);
+    CHECK_FALSE(driver.latencyFault().has_value());
+    REQUIRE(node->requestLatency(kChanged));
+    pumpBlocks(driver, device, 1, out);
+    CHECK(driver.latencyRecompiles() == 0);
+    CHECK(driver.latencyRecompileFailures() == 1);
+    CHECK_FALSE(driver.transitionInFlight());
+    CHECK(driver.liveEpoch() == firstEpoch);  // still playing, now misaligned ...
+    REQUIRE(driver.latencyFault().has_value());  // ... and flagged as such
+    const realtime::LatencyFault& fault = *driver.latencyFault();
+    CHECK(fault.epoch == firstEpoch);
+    CHECK(fault.slot == slot);
+    CHECK(fault.latency == kChanged);
+    CHECK(fault.code == "compensation_limit");
+    CHECK_FALSE(fault.message.empty());
+    pumpBlocks(driver, device, 4, out);
+    CHECK(maxAbs(out, out[0].size() - kBlock) > 0.01);
+    CHECK(driver.latencyFault().has_value());  // stays flagged while misaligned
+
+    // Back within the limit: the recompile succeeds and clears the flag.
+    REQUIRE(node->requestLatency(150));
+    pumpBlocks(driver, device, 1, out);
+    CHECK(driver.latencyRecompiles() == 1);
+    CHECK_FALSE(driver.latencyFault().has_value());
+    pumpUntilSwapped(driver, device, firstEpoch, out);
+    const std::size_t swappedAt = out[0].size();
+    pumpBlocks(driver, device, 20, out);
+    CHECK(rt::allocationViolations() == before);
+    driver.stop();
+    CHECK(maxAbs(out, swappedAt) <= 0.0);
+}
+
 namespace {
 
 // Renders a graph block by block without a driver: what the graph plays when
@@ -280,15 +437,6 @@ struct DirectRender {
         }
     }
 };
-
-// Pumps until a graph other than `epoch` is live and no transition is in flight.
-void pumpUntilSwapped(GraphDriver& driver, host::ManualAudioDevice& device, std::uint64_t epoch, Capture& out) {
-    for (int guard = 0; guard < 50 && (driver.transitionInFlight() || driver.liveEpoch() == epoch); ++guard) {
-        pumpBlocks(driver, device, 1, out);
-    }
-    REQUIRE(driver.liveEpoch() != epoch);
-    REQUIRE_FALSE(driver.transitionInFlight());
-}
 
 // Direct topology with the dry path added instead of inverted: the output is
 // twice the source delayed by the latency, so a duck is visible.

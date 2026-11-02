@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -219,6 +220,19 @@ TEST_CASE("pdc: a recompile after a latency change migrates nodes and unchanged 
     CHECK_FALSE(second->edgeRamped(id[0], id[1]));
     CHECK(second->settleFrames() == 150);
     CHECK_FALSE(second->popLatencyChange(change));  // compiled at the new latency
+
+    // The edges the driver holds after the swap: rampedEdges() plus the edges
+    // a previous recompile's hold still covers (edges in insertion order:
+    // source->a, source->b, source->c, a->master, b->master, c->master).
+    const std::vector<std::uint8_t> carried{0, 0, 0, 0, 1, 0};
+    const auto held = second->holdEdges(carried);
+    CHECK(std::vector<std::uint8_t>(held.begin(), held.end()) == std::vector<std::uint8_t>{0, 0, 0, 1, 1, 0});
+    const auto own = second->holdEdges({});
+    CHECK(std::vector<std::uint8_t>(own.begin(), own.end()) == std::vector<std::uint8_t>{0, 0, 0, 1, 0, 0});
+    const std::vector<std::uint8_t> mismatched{1, 1};
+    const auto ignored = second->holdEdges(mismatched);
+    CHECK(std::vector<std::uint8_t>(ignored.begin(), ignored.end()) == std::vector<std::uint8_t>{0, 0, 0, 1, 0, 0});
+    CHECK(first->holdEdges(carried).empty());  // compiled, not recompiled: nothing to hold
 
     // The recompiled graph continues where the first stopped: b's and c's
     // history (in b's node and c's compensation delay line) survives, so the
