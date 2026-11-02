@@ -623,7 +623,17 @@ The documented precision is shown to users and agents.
     within +/-0.1 dB after the first second.
   - Aliasing and noise: the residual after subtracting the least-squares fitted sine
     is below -96 dB relative to the tone (it covers images, ripple and noise; float32
-    and the attenuation of r8brain's 16-bit-class filter both leave margin).
+    and the attenuation of r8brain's 16-bit-class filter both leave margin). That
+    measures in-band tones only; aliasing proper is tested in the downsampling
+    direction (48 to 44.1 kHz): a sine between the device Nyquist and the session
+    Nyquist (22.06 to 23.99 kHz), which would fold to device rate minus its
+    frequency, comes out with everything left of it (the folded tone and any other
+    residue) below -96 dB relative to the tone.
+  - Parity: the session played through the graph driver on the manual device with
+    SRC active is sample-identical to `renderOffline()` passed through a
+    `StreamResampler` primed and fed as the driver's output SRC is (lookahead and
+    one FIFO block of silence, then whole graph blocks). The document is silent
+    during the driver's start-up fade, so no tolerance is needed.
   - Alignment: an impulse at a session position that is integral at both rates lands
     on the expected device sample +/-1 (the peak of |x|, since the linear-phase
     filter pre-rings).
