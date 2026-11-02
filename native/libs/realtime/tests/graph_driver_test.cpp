@@ -158,6 +158,43 @@ TEST_CASE("A swap acknowledges, retires the old graph after the swap, and keeps 
     driver.stop();
 }
 
+TEST_CASE("The driver reports retired epochs on the control side", "[driver][retire]") {
+    std::vector<std::uint64_t> retired;
+    const auto control = std::this_thread::get_id();
+    bool offThread = false;
+    GraphDriver::Options options;
+    options.onRetired = [&](std::uint64_t epoch) {
+        offThread = offThread || std::this_thread::get_id() != control;
+        retired.push_back(epoch);
+    };
+    GraphDriver driver(options);
+    const auto a = driver.publish(constantGraph(1.0f));
+    CHECK(retired.empty());
+    host::FakeAudioDevice device({});
+    driver.play();
+    driver.start(device, config());
+
+    const auto b = driver.publish(constantGraph(0.5f));
+    REQUIRE(waitFor([&] { return !driver.transitionInFlight(); }, &driver));
+    CHECK(retired == std::vector<std::uint64_t>{a});
+
+    // c is sent, d waits behind it, e supersedes d before it is ever sent.
+    const auto c = driver.publish(constantGraph(0.4f));
+    const auto d = driver.publish(constantGraph(0.3f));
+    const auto e = driver.publish(constantGraph(0.2f));
+    CHECK(retired == std::vector<std::uint64_t>{a, d});
+    REQUIRE(waitFor([&] { return driver.liveEpoch() == e && !driver.transitionInFlight(); }, &driver));
+    CHECK(retired == std::vector<std::uint64_t>{a, d, b, c});
+
+    // Stopping right after a publish still reports what it retires.
+    const auto f = driver.publish(constantGraph(0.1f));
+    driver.stop();
+    CHECK(driver.liveEpoch() == f);
+    CHECK(retired == std::vector<std::uint64_t>{a, d, b, c, e});
+    CHECK(driver.ownedGraphs() == 1);
+    CHECK_FALSE(offThread);
+}
+
 TEST_CASE("Duck-and-swap fades out, swaps at a block boundary, then fades in", "[driver]") {
     GraphDriver::Options options;
     options.fadeFrames = 100;

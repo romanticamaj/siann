@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -35,7 +36,7 @@ struct Rig {
           reference(clips.reference),
           stream(2, clips.streamed, 8'192),
           butler(Butler::Options{2'048, 512, std::chrono::microseconds(200)}),
-          driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500)}) {
+          driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), GraphDriver::kDefaultMeterCapacity, {}}) {
         butler.addStream(stream);
         driver.publish(streamingGraph(stream));
         driver.play();
@@ -183,7 +184,7 @@ TEST_CASE("With a butler thread and a paced device, playback and a locate run cl
     DiskStream stream(2, clips.streamed, 16'384);
     Butler butler(Butler::Options{2'048, 512, std::chrono::microseconds(200)});
     butler.addStream(stream);
-    GraphDriver driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500)});
+    GraphDriver driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), GraphDriver::kDefaultMeterCapacity, {}});
     driver.publish(streamingGraph(stream));
     host::FakeAudioDevice::Options options;
     options.paced = true;
@@ -213,4 +214,239 @@ TEST_CASE("With a butler thread and a paced device, playback and a locate run cl
     CHECK(driver.playhead() >= 30'000);
     CHECK(stream.underruns() == 0);
     CHECK(rt::allocationViolations() == before);
+}
+
+// ---- Live recompile: streams added and removed while running ------------------
+
+namespace {
+
+// Processes a graph directly, block after block from `from`; returns channel 0.
+std::vector<float> processFrom(graph::PreparedGraph& g, std::int64_t from, int blocks) {
+    std::vector<float> out;
+    for (int b = 0; b < blocks; ++b) {
+        g.process(graph::ProcessContext{from + static_cast<std::int64_t>(b) * kBlock, kBlock});
+        out.insert(out.end(), g.output().channel(0), g.output().channel(0) + kBlock);
+    }
+    return out;
+}
+
+bool allZero(const std::vector<float>& v) {
+    return std::all_of(v.begin(), v.end(), [](float s) { return s == 0.0f; });
+}
+
+}  // namespace
+
+TEST_CASE("The butler takes a stream while running and prefills it from the given position", "[stream][live]") {
+    Rig rig;
+    rig.pump(10);
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+    REQUIRE_NOTHROW(rig.butler.addStream(stream2, 30'000, 0));
+    CHECK_FALSE(stream2.ready());  // the request waits for the butler's pass
+    rig.butler.runOnce();
+    CHECK(stream2.ready());
+    // Filled from the requested position, not from 0.
+    auto g = streamingGraph(stream2);
+    CHECK(processFrom(*g, 30'000, 20) == rig.reference.left(30'000, 20 * kBlock));
+    CHECK(stream2.underruns() == 0);
+}
+
+TEST_CASE("A streaming player aligns to the block position", "[stream][live]") {
+    TempDir dir;
+    Clips clips = makeClips(writeMedia(dir.path() / "media.wav", 50'000));
+    Reference reference(clips.reference);
+    Butler butler(Butler::Options{2'048, 512, std::chrono::microseconds(200)});
+
+    SECTION("behind: the ring skips to the block start") {
+        DiskStream stream(2, clips.streamed, 8'192);
+        butler.addStream(stream);  // filled from 0
+        auto g = streamingGraph(stream);
+        CHECK(processFrom(*g, 5'000, 40) == reference.left(5'000, 40 * kBlock));
+        CHECK(stream.underruns() == 0);
+    }
+
+    SECTION("ahead: silence and counted underruns until the timeline reaches the data") {
+        DiskStream stream(2, clips.streamed, 8'192);
+        butler.addStream(stream, 20'000, 0);
+        butler.runOnce();
+        REQUIRE(stream.ready());
+        auto g = streamingGraph(stream);
+        const auto early = processFrom(*g, 10'000, 4);
+        CHECK(allZero(early));
+        CHECK(stream.underruns() > 0);
+        // The block that straddles 20'000 starts with silence, and from the
+        // data's first frame on the stream is in time.
+        constexpr std::int64_t kFirst = 10'000 + 4 * kBlock;
+        const int blocks = static_cast<int>((20'000 - kFirst) / kBlock) + 12;
+        const auto later = processFrom(*g, kFirst, blocks);
+        const auto expected = reference.left(kFirst, blocks * kBlock);
+        const auto from = static_cast<std::size_t>(20'000 - kFirst);
+        CHECK(allZero(slice(later, 0, from)));
+        CHECK(slice(later, from, later.size() - from) == slice(expected, from, expected.size() - from));
+    }
+}
+
+TEST_CASE("A stream created at publish time plays in time after a later swap", "[stream][live]") {
+    Rig rig;
+    rig.pump(50);
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+    rig.butler.addStream(stream2, rig.driver.playhead(), 0);
+    for (int i = 0; i < 10 && !stream2.ready(); ++i) {
+        rig.butler.runOnce();
+    }
+    REQUIRE(stream2.ready());
+    rig.pump(5);  // the timeline moves on before the graph is published
+    const auto before = rt::allocationViolations();
+    const std::uint64_t epoch = rig.driver.publish(streamingGraph(stream2));
+    const std::int64_t start = rig.driver.playhead();
+    const auto out = rig.pump(30);
+    CHECK_FALSE(rig.driver.transitionInFlight());
+    CHECK(rig.driver.liveEpoch() == epoch);
+    // Block 0 ducks the old graph, block 1 rises with the new one.
+    const auto expected = rig.reference.left(start, 30 * kBlock);
+    CHECK(slice(out, 2 * kBlock, 28 * kBlock) == slice(expected, 2 * kBlock, 28 * kBlock));
+    CHECK(stream2.underruns() == 0);
+    CHECK(rt::allocationViolations() == before);
+}
+
+TEST_CASE("A graph published before the butler took its stream plays silence, then catches up", "[stream][live]") {
+    Rig rig;
+    rig.pump(10);
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+    rig.butler.addStream(stream2, rig.driver.playhead(), 0);
+    rig.driver.publish(streamingGraph(stream2));  // as on the prefill timeout
+    std::vector<float> early;
+    rig.device.pump(4, &early);  // no butler pass: the stream is not taken yet
+    rig.driver.poll();
+    REQUIRE_FALSE(stream2.ready());
+    CHECK(allZero(slice(early, kBlock, 3 * kBlock)));  // block 0 still ducks the old graph
+    CHECK(stream2.underruns() > 0);
+
+    rig.butler.runOnce();
+    REQUIRE(stream2.ready());
+    const std::int64_t start = rig.driver.playhead();
+    const auto out = rig.pump(10);
+    CHECK(out == rig.reference.left(start, 10 * kBlock));
+}
+
+TEST_CASE("removeStream releases a stream only on the butler's pass", "[stream][live]") {
+    TempDir dir;
+    Clips clips = makeClips(writeMedia(dir.path() / "media.wav", 50'000));
+    Butler butler(Butler::Options{2'048, 256, std::chrono::microseconds(200)});
+    DiskStream stream(2, clips.streamed, 1'024);
+    butler.addStream(stream, 0, 0);
+    butler.runOnce();
+    REQUIRE(stream.ready());
+    auto g = streamingGraph(stream);
+    std::int64_t position = 0;
+    const auto play = [&](int blocks) {
+        for (int b = 0; b < blocks; ++b) {
+            g->process(graph::ProcessContext{position, kBlock});
+            position += kBlock;
+            butler.runOnce();
+        }
+    };
+    play(40);  // 2'560 frames through a 1'024-frame ring: the butler keeps up
+    CHECK(stream.underruns() == 0);
+
+    butler.removeStream(stream);
+    CHECK_FALSE(stream.released());
+    butler.runOnce();
+    CHECK(stream.released());
+    play(40);  // nobody refills the ring now
+    CHECK(stream.underruns() > 0);
+}
+
+TEST_CASE("A stream added while a locate is prepared joins that locate", "[stream][live][locate]") {
+    Rig rig;
+    rig.pump(5);
+    rig.butler.seek(2, 30'000);
+    rig.butler.runOnce();
+    REQUIRE(rig.butler.ready(2));
+
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+    rig.butler.addStream(stream2, rig.driver.playhead(), 0);
+    rig.butler.runOnce();
+    REQUIRE(stream2.ready());
+    CHECK(rig.butler.ready(2));  // still ready: the new stream offered the generation too
+    rig.driver.publish(streamingGraph(stream2));
+    rig.pump(3);
+    REQUIRE_FALSE(rig.driver.transitionInFlight());
+
+    REQUIRE(rig.driver.pushLocate(TransportCommand{2, 30'000}));
+    const auto out = rig.pump(20);
+    const auto expected = rig.reference.left(30'000, 19 * kBlock);
+    CHECK(slice(out, 2 * kBlock, 18 * kBlock) == slice(expected, kBlock, 18 * kBlock));
+    CHECK(stream2.underruns() == 0);
+}
+
+TEST_CASE("A stream added before a locate lands follows that locate in the graph swapped in later",
+          "[stream][live][locate]") {
+    Rig rig;
+    rig.pump(200);  // the playhead is well past the locate target
+    constexpr std::int64_t kTarget = 1'000;
+    // What a compile reads: the locate generation first, then the playhead.
+    const std::uint64_t compiledGeneration = rig.driver.appliedLocate();
+    const std::int64_t compiledAt = rig.driver.playhead();
+    DiskStream stream2(2, rig.clips.streamed, 8'192);
+
+    const auto locateOnOldGraph = [&] {
+        rig.butler.seek(2, kTarget);
+        rig.butler.runOnce();
+        REQUIRE(rig.butler.ready(2));
+        REQUIRE(rig.driver.pushLocate(TransportCommand{2, kTarget}));
+        rig.pump(3);  // the old graph ducks, jumps and rises
+        REQUIRE(rig.driver.playhead() < compiledAt);
+        REQUIRE(rig.driver.appliedLocate() == 2);
+    };
+    const auto swapAndCheck = [&] {
+        rig.driver.publish(streamingGraph(stream2));
+        const std::int64_t start = rig.driver.playhead();
+        const auto out = rig.pump(30);
+        REQUIRE_FALSE(rig.driver.transitionInFlight());
+        // Block 0 ducks the old graph, block 1 rises with the new one.
+        const auto expected = rig.reference.left(start, 30 * kBlock);
+        CHECK(slice(out, 2 * kBlock, 28 * kBlock) == slice(expected, 2 * kBlock, 28 * kBlock));
+    };
+
+    SECTION("the butler took the stream before the locate was prepared") {
+        rig.butler.addStream(stream2, compiledAt, compiledGeneration);
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        locateOnOldGraph();
+        swapAndCheck();
+        CHECK(stream2.underruns() == 0);
+    }
+
+    SECTION("the butler took the stream after the old graph claimed the locate") {
+        locateOnOldGraph();
+        rig.butler.addStream(stream2, compiledAt, compiledGeneration);
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        swapAndCheck();
+        CHECK(stream2.underruns() == 0);
+    }
+
+    SECTION("the graph was published before the butler took the stream") {
+        locateOnOldGraph();
+        rig.butler.addStream(stream2, compiledAt, compiledGeneration);
+        rig.driver.publish(streamingGraph(stream2));  // as on the prefill timeout
+        std::vector<float> early;
+        rig.device.pump(4, &early);
+        rig.driver.poll();
+        REQUIRE_FALSE(stream2.ready());
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        const std::int64_t start = rig.driver.playhead();
+        const auto out = rig.pump(10);
+        CHECK(out == rig.reference.left(start, 10 * kBlock));
+    }
+
+    SECTION("a position read after the locate does not join it again") {
+        locateOnOldGraph();
+        rig.butler.addStream(stream2, rig.driver.playhead(), rig.driver.appliedLocate());
+        rig.butler.runOnce();
+        REQUIRE(stream2.ready());
+        swapAndCheck();
+        CHECK(stream2.underruns() == 0);
+    }
 }

@@ -33,6 +33,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -134,12 +135,22 @@ struct MeterSample {
 
 class GraphDriver {
 public:
+    static constexpr std::size_t kDefaultMeterCapacity = 1024;
+
     struct Options {
         int fadeFrames = 240;  // 5 ms at 48 kHz
         std::chrono::milliseconds ackTimeout{500};
         // MeterNodes metered per block; readings of further ones are dropped
         // and counted.
-        std::size_t meterCapacity = 1024;
+        std::size_t meterCapacity = kDefaultMeterCapacity;
+        // Called on the control side (inside publish, poll or stop, never on
+        // the audio thread) after a graph was retired and destroyed: swapped
+        // out and acknowledged, superseded before it was sent, or released by
+        // stop. The owner frees what only that graph used, such as streams.
+        // A latency recompile shares the node instances of the graph it came
+        // from, so the callback fires once per family: with the epoch
+        // publish() returned, when the last graph of that family is retired.
+        std::function<void(std::uint64_t epoch)> onRetired;
     };
 
     explicit GraphDriver(Options options);
@@ -173,6 +184,10 @@ public:
     // nodes switch to the prepared data) and fades back in. While stopped,
     // the next poll() applies it. A command with `play` starts the transport
     // unless pause() named its generation or a later one.
+    //
+    // The last applied locate is replayed on every graph that becomes live
+    // afterwards, so a graph compiled before a locate but swapped in after it
+    // still follows that locate (nodes ignore a generation they already follow).
     bool pushLocate(const TransportCommand& command) noexcept;
 
     // The control dispatcher's thread only (the single meterOutbox consumer).
@@ -202,7 +217,8 @@ public:
     bool playing() const noexcept { return playing_.load(); }
     std::int64_t playhead() const noexcept { return playhead_.load(std::memory_order_acquire); }
     // The generation of the last locate the audio thread (or poll() while
-    // stopped) applied.
+    // stopped) applied (0: none). Read it before playhead(): the playhead then
+    // belongs to that locate or a newer one.
     std::uint64_t appliedLocate() const noexcept { return appliedLocate_.load(std::memory_order_acquire); }
 
     // Control side. poll() drains the live graph's realtime outbox and
@@ -244,6 +260,7 @@ private:
     void drainParams() noexcept;
     void pushMeters(std::int64_t position, int frames) noexcept;
     void applyLocate(const TransportCommand& command) noexcept;
+    void replayLocate() noexcept;
     void send(std::uint64_t epoch);
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
@@ -288,6 +305,7 @@ private:
     rt::SpscQueue<TransportCommand> transportInbox_{64};
     TransportCommand pendingLocate_{};
     bool locatePending_ = false;
+    TransportCommand lastLocate_{};  // replayed on each graph that becomes live
     bool duckActive_ = false;  // ducking for a graph swap or a locate
     // The duck in progress ramps only the recompiled graph's affected edges.
     bool pathDuck_ = false;

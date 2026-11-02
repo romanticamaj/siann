@@ -257,7 +257,8 @@ segments, tempo map as a lookup table).
 ### Two channels into the audio thread
 
 1. **Structural channel**: adding/removing tracks, plugins, sends, routing changes,
-   latency changes. A compiler worker builds a new `PreparedGraph`, and the command
+   latency changes, and clip or media edits (anything that changes a track's
+   flattened clip list). A compiler worker builds a new `PreparedGraph`, and the command
    thread publishes it through the graph driver (see "Graph ownership"). At most one
    structural transition is in flight. Throughput: occasional.
 2. **Parameter channel**: gain, pan, mute, send level, plugin parameters, transport.
@@ -323,6 +324,7 @@ gesture boundaries (see "Gestures").
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
 | `diskRing[track][2]` | butler → audio | two SPSC rings per playing track: the current and the pending slot | audio frames of one seek generation per slot | underrun outputs silence and counts an xrun |
 | `butlerRequest` | audio → butler | SPSC | refill hints (track, consumed position); slot releases after a locate | latest-wins per track for hints; releases are never coalesced; the butler also polls |
+| `butlerControl` | command → butler | MPSC, mutex | add stream (with start position and the locate generation it was read under), remove stream | bounded; never waited on; completions (stream ready, stream released) are atomics read by the command thread on its tick; if a new stream is not ready within 1 s the graph is published anyway, and the player outputs silence and counts underruns until the butler has taken it |
 | `seekRequest` | dispatcher → butler | MPSC, mutex | target position + generation | a newer generation replaces an older one |
 | `recordOutbox` | audio → butler | SPSC ring | input blocks of armed tracks | overflow is a reported error, never a block |
 | `meterOutbox` | audio → dispatcher | SPSC | meter blocks, playhead | latest-value-wins; drop when full |
@@ -365,7 +367,9 @@ records who that is:
 - A transition is duck-and-swap, not a crossfade between two running graphs: the
   audio thread ramps the outputs of affected paths in the old graph to zero over
   the fade length (default 5 ms), swaps at the next block boundary, and the new
-  graph ramps those paths up again. Unaffected paths are untouched. Exactly one
+  graph ramps those paths up again. Unaffected paths are untouched (M2 ducks the
+  whole output for structural edits; see the M2 interim notes under "Status").
+  Exactly one
   graph is processed per block, so a reused plugin instance is never processed
   twice.
 - After the swap the audio thread pushes the old graph to `retireOutbox`. Only then
@@ -390,6 +394,23 @@ records who that is:
   compile. New plugins are
   instantiated on the main thread at the compiler's request before publication;
   removed ones are destroyed after the retire acknowledgement.
+- Disk streams are reused when the track's flattened clip list is unchanged. A new
+  or changed track gets a new `DiskStream`, registered with the butler and prefilled
+  from the current playhead before the graph is published. If the butler is not
+  ready within 1 s, the graph is published anyway (as a late locate proceeds) and
+  the stream's underruns are counted and reported until it catches up. The
+  registration carries the generation of the last applied locate, read before the
+  playhead; when the butler has prepared a newer locate, the stream joins it with
+  a second slot prefilled from that locate's target. The graph driver replays the
+  last applied locate on every graph it swaps in, so a stream compiled before a
+  locate that lands before its graph is published still follows it; streams that
+  already follow that generation ignore the replay. The streaming player
+  aligns to the timeline by position (slot start plus frames consumed versus the
+  block start), so a stream created at compile time plays in time after a later
+  swap. On the retire acknowledgement of the last graph that used a stream, the
+  command thread asks the butler to remove it; the stream is destroyed only after
+  the butler acknowledges the removal. A discarded compile removes the streams it
+  created the same way.
 - Reverb tails and compressor envelopes survive unrelated edits.
 - When a plugin's latency changes, the affected paths recompile; their delay lines
   are rebuilt and the paths are ducked and restored as above.
@@ -1252,6 +1273,14 @@ value in the parent revision. Recording both values in the
 journal entry, as "Gestures" requires, arrives with the protocol's
 `gesture.end` and automation write passes; other parameters are rejected
 before a gesture opens, so every open gesture can be ended.
+Duck-and-swap for a structural edit ducks the whole master output in M2, not
+only the affected paths ("Publishing and retiring graphs"): a structural
+compile builds a new graph from the document and does not yet report which
+streams and instances it reused, so every structural recompile (a track added,
+removed or changed in anything but gain, pan and mute) dips the full mix for
+one fade length (5 ms) down and back up. Ducking only the affected paths
+follows when buses and plugins make the recompile paths distinct (latency
+recompiles already ramp only their affected edges; see the next note).
 
 M2 interim (realtime PDC): a runtime latency change is answered by the graph
 driver itself, in its control-side `poll()`, with
@@ -1260,6 +1289,9 @@ state migration is done by the recompiled graph sharing the previous graph's
 node instances and every compensation delay line whose length is unchanged
 (shared ownership, released on the control side when the last graph using
 them retires); only the delay lines whose compensation changed are rebuilt.
+The disk streams the shared instances read stay alive with them: the driver
+reports a graph as retired to the playback engine only when the last graph
+recompiled from it is retired.
 The swap ramps only the affected edges (rebuilt delay lines and edges leaving
 the node whose latency changed), holds them at zero until the rebuilt lines
 are full, then raises them; unaffected paths are untouched. A recompile that

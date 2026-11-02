@@ -97,43 +97,64 @@ bool StreamingPlayerNode::tryClaim(std::uint64_t generation) noexcept {
 }
 
 void StreamingPlayerNode::onLocate(std::uint64_t generation, std::int64_t) noexcept {
-    if (tryClaim(generation)) {
-        stream_.waitingGeneration_ = 0;
-        stream_.framesToSkip_ = 0;
-    } else {
-        stream_.waitingGeneration_ = generation;
-        stream_.framesToSkip_ = 0;
+    // Remembered even before the butler took the stream; a graph swapped in
+    // after a locate hears it again from the driver, which changes nothing for
+    // a stream that already follows it.
+    stream_.heard_ = std::max(stream_.heard_, generation);
+    if (stream_.ready()) {
+        follow();
     }
+}
+
+bool StreamingPlayerNode::follow() noexcept {
+    if (stream_.heard_ <= stream_.generation_) {
+        return true;
+    }
+    if (!tryClaim(stream_.heard_)) {
+        return false;  // the data for that locate is not ready yet
+    }
+    stream_.generation_ = stream_.heard_;
+    return true;
 }
 
 void StreamingPlayerNode::process(const graph::ProcessContext& context, std::span<const graph::AudioBufferView>,
                                   const graph::AudioBufferView& output) noexcept {
     const auto frames = static_cast<std::size_t>(context.frames);
-    if (stream_.waitingGeneration_ != 0) {
-        if (tryClaim(stream_.waitingGeneration_)) {
-            stream_.waitingGeneration_ = 0;
-        } else {
-            output.clear();
-            stream_.framesToSkip_ += frames;
+    // A graph published on the prefill timeout may reach a stream the butler
+    // has not taken yet; its audio-side fields belong to the butler until then.
+    if (!stream_.ready()) {
+        output.clear();
+        stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (!follow()) {
+        output.clear();
+        stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    // One rule aligns the stream after a late locate, after a swap to a graph
+    // whose stream was prefilled earlier, and after an underrun: the live
+    // slot's position is its start plus the frames consumed from it.
+    DiskStream::Slot& slot = *stream_.slots_[stream_.liveSlot_];
+    FrameRing& ring = slot.ring;
+    const std::int64_t position = slot.start + static_cast<std::int64_t>(ring.consumed());
+    std::size_t lead = 0;  // frames of this block before the stream's next frame
+    if (position < context.blockStart) {
+        const auto behind = static_cast<std::size_t>(context.blockStart - position);
+        if (ring.skip(behind) < behind) {
+            output.clear();  // still catching up; the rest is skipped next block
             stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
+    } else if (position > context.blockStart) {
+        lead = std::min(frames, static_cast<std::size_t>(position - context.blockStart));
     }
-    FrameRing& ring = stream_.slots_[stream_.liveSlot_]->ring;
-    if (stream_.framesToSkip_ > 0) {
-        stream_.framesToSkip_ -= ring.skip(stream_.framesToSkip_);
-        if (stream_.framesToSkip_ > 0) {
-            stream_.framesToSkip_ += frames;  // still catching up: this block is lost too
-            output.clear();
-            stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
+    const std::size_t got = lead < frames ? ring.read(output, static_cast<int>(lead), frames - lead) : 0;
+    for (int c = 0; c < output.channelCount; ++c) {
+        std::fill(output.channel(c), output.channel(c) + lead, 0.0f);
+        std::fill(output.channel(c) + lead + got, output.channel(c) + frames, 0.0f);
     }
-    const std::size_t got = ring.read(output, 0, frames);
-    if (got < frames) {
-        for (int c = 0; c < output.channelCount; ++c) {
-            std::fill(output.channel(c) + got, output.channel(c) + frames, 0.0f);
-        }
+    if (lead > 0 || lead + got < frames) {
         stream_.underruns_.fetch_add(1, std::memory_order_relaxed);
     }
 }
@@ -152,8 +173,31 @@ Butler::~Butler() {
 
 void Butler::addStream(DiskStream& stream) {
     if (running_.load()) {
-        throw std::logic_error("streams must be added before the butler starts");
+        throw std::logic_error("use addStream(stream, position, generation) while the butler runs");
     }
+    takeStream(stream, 0, 0);
+}
+
+void Butler::addStream(DiskStream& stream, std::int64_t startPosition, std::uint64_t generation) {
+    stream.ready_.store(false, std::memory_order_relaxed);
+    stream.released_.store(false, std::memory_order_relaxed);
+    pushControl(Control{&stream, true, startPosition, generation});
+}
+
+void Butler::removeStream(DiskStream& stream) {
+    pushControl(Control{&stream, false, 0, 0});
+}
+
+void Butler::pushControl(const Control& request) {
+    std::lock_guard lock(controlMutex_);
+    if (control_.size() >= kMaxControl) {
+        throw std::length_error("the butler's control queue is full");
+    }
+    control_.push_back(request);
+}
+
+// Butler thread (or the caller before start()).
+void Butler::takeStream(DiskStream& stream, std::int64_t startPosition, std::uint64_t generation) {
     stream.butler_ = this;
     int maxChannels = stream.channels();
     for (const auto& clip : stream.clips_) {
@@ -175,15 +219,34 @@ void Butler::addStream(DiskStream& stream) {
     }
     streams_.push_back(&stream);
 
-    // The first slot starts live at timeline position 0.
+    // The first slot starts live at the start position. No graph plays the
+    // stream before ready() is published, so the audio-side fields are free.
     auto& slot = *stream.slots_[0];
     slot.ring.reset();
-    slot.start = 0;
+    slot.start = startPosition;
     stream.liveSlot_ = 0;
+    stream.generation_ = generation;
     stream.butlerLive_ = 0;
-    stream.liveWritePosition_ = 0;
+    stream.liveWritePosition_ = startPosition;
+    stream.pending_ = DiskStream::Pending{};
     topUp(stream, 0, stream.liveWritePosition_, slot.ring.capacity());
     slot.state.store(DiskStream::kLive, std::memory_order_release);
+
+    // A locate prepared after the start position was read: the new stream
+    // joins it, whether or not the other streams have claimed it already, so
+    // a graph that plays it follows that locate too. The player switches only
+    // once a graph tells it about the locate, so an unapplied one stays unheard.
+    if (lastSeek_ && lastSeek_->first > generation) {
+        const std::uint64_t seekGeneration = lastSeek_->first;
+        auto& target = *stream.slots_[1];
+        target.ring.reset();
+        target.start = lastSeek_->second;
+        stream.pending_ = DiskStream::Pending{true, seekGeneration, 1, lastSeek_->second, false};
+        topUp(stream, 1, stream.pending_.writePosition, target.ring.capacity());
+        target.state.store(seekGeneration, std::memory_order_release);
+        stream.pending_.offered = true;
+    }
+    stream.ready_.store(true, std::memory_order_release);
 }
 
 void Butler::start() {
@@ -280,9 +343,30 @@ void Butler::topUp(DiskStream& stream, int slot, std::int64_t& writePosition, st
 }
 
 void Butler::runOnce() {
+    // 0. Streams added and removed by the command thread. A removed stream's
+    //    graph has retired, so every slot release it pushed is visible below.
+    std::vector<Control> requests;
+    {
+        std::lock_guard lock(controlMutex_);
+        requests.swap(control_);
+    }
+    std::vector<DiskStream*> removed;
+    for (const Control& request : requests) {
+        if (request.add) {
+            takeStream(*request.stream, request.start, request.generation);
+        } else {
+            streams_.erase(std::remove(streams_.begin(), streams_.end(), request.stream), streams_.end());
+            request.stream->butler_ = nullptr;
+            removed.push_back(request.stream);
+        }
+    }
+
     // 1. The audio thread claimed an offered slot: it is the live slot now.
     Release release;
     while (releases_.pop(release)) {
+        if (std::find(removed.begin(), removed.end(), release.stream) != removed.end()) {
+            continue;
+        }
         DiskStream& s = *release.stream;
         s.butlerLive_ = release.newLive;
         if (s.pending_.active && s.pending_.slot == release.newLive) {
@@ -319,6 +403,7 @@ void Butler::runOnce() {
                 }
             }
             readyGeneration_.store(0, std::memory_order_release);
+            lastSeek_ = request;
             for (DiskStream* s : streams_) {
                 const int slot = 1 - s->butlerLive_;
                 auto& target = *s->slots_[slot];
@@ -332,14 +417,17 @@ void Butler::runOnce() {
         }
     }
 
-    // 3. Fill pending slots and offer them once prefilled.
-    bool allOffered = !streams_.empty();
+    // 3. Fill pending slots and offer them once prefilled. Streams without a
+    //    pending slot (already claimed, or added after the locate) do not hold
+    //    back readiness.
+    bool anyPending = false;
+    bool allOffered = true;
     std::uint64_t generation = 0;
     for (DiskStream* s : streams_) {
         if (!s->pending_.active) {
-            allOffered = false;
             continue;
         }
+        anyPending = true;
         auto& slot = *s->slots_[s->pending_.slot];
         topUp(*s, s->pending_.slot, s->pending_.writePosition, slot.ring.capacity());
         if (!s->pending_.offered &&
@@ -350,13 +438,18 @@ void Butler::runOnce() {
         allOffered = allOffered && s->pending_.offered;
         generation = s->pending_.generation;
     }
-    if (allOffered && generation != 0) {
+    if (anyPending && allOffered && generation != 0) {
         readyGeneration_.store(generation, std::memory_order_release);
     }
 
     // 4. Keep live slots topped up.
     for (DiskStream* s : streams_) {
         topUp(*s, s->butlerLive_, s->liveWritePosition_, s->slots_[s->butlerLive_]->ring.capacity());
+    }
+
+    // 5. Nothing in this pass touches a removed stream any more.
+    for (DiskStream* s : removed) {
+        s->released_.store(true, std::memory_order_release);
     }
 }
 

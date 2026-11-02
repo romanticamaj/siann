@@ -172,6 +172,7 @@ bool GraphDriver::popMeter(MeterSample& sample) noexcept {
 }
 
 void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
+    lastLocate_ = command;
     playhead_.store(command.position, std::memory_order_release);
     if (current_ != nullptr) {
         current_->locate(command.generation, command.position);
@@ -188,7 +189,14 @@ void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
             riseRemaining_ = options_.fadeFrames;  // from silence: fade in
         }
     }
+    // After the playhead: a reader that sees this generation sees its position.
     appliedLocate_.store(command.generation, std::memory_order_release);
+}
+
+void GraphDriver::replayLocate() noexcept {
+    if (current_ != nullptr && lastLocate_.generation != 0) {
+        current_->locate(lastLocate_.generation, lastLocate_.position);
+    }
 }
 
 void GraphDriver::send(std::uint64_t epoch) {
@@ -205,6 +213,7 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
     currentEpoch_ = epoch;
     currentFamily_ = families_.at(epoch);
     liveEpoch_ = epoch;
+    replayLocate();
     riseRemaining_ = options_.fadeFrames;
     pathRise_ = 0;
     pathEdges_ = {};
@@ -214,8 +223,20 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
 }
 
 void GraphDriver::retire(std::uint64_t epoch) {
-    owned_.erase(epoch);
-    families_.erase(epoch);
+    const auto found = families_.find(epoch);
+    const std::uint64_t family = found != families_.end() ? found->second : epoch;
+    if (found != families_.end()) {
+        families_.erase(found);
+    }
+    if (owned_.erase(epoch) == 0 || !options_.onRetired) {
+        return;
+    }
+    // A latency recompile still playing keeps the family's instances alive.
+    const bool familyLeft = std::any_of(families_.begin(), families_.end(),
+                                        [family](const auto& entry) { return entry.second == family; });
+    if (!familyLeft) {
+        options_.onRetired(family);
+    }
 }
 
 void GraphDriver::drainRetired() {
@@ -250,6 +271,7 @@ void GraphDriver::finishStop() {
         currentEpoch_ = next_.epoch;
         currentFamily_ = next_.family;
         next_ = {};
+        replayLocate();
     }
     duckActive_ = false;
     duckRemaining_ = 0;
@@ -299,6 +321,7 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
                 current_ = h.graph;
                 currentEpoch_ = h.epoch;
                 currentFamily_ = h.family;
+                replayLocate();
                 riseRemaining_ = options_.fadeFrames;
                 if (!retireOutbox_.push(Handoff{nullptr, 0})) {  // acknowledge: nothing retired
                     unsentRetire_ = Handoff{nullptr, 0};
@@ -344,6 +367,7 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
             currentEpoch_ = next_.epoch;
             currentFamily_ = next_.family;
             next_ = {};
+            replayLocate();
             if (recompiled) {
                 // Hold the affected edges at zero until the rebuilt delay
                 // lines are full, then raise them (EdgeRamp: remaining above
