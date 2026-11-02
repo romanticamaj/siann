@@ -43,7 +43,7 @@ struct TransportRig {
           reference(clips.reference),
           stream(2, clips.streamed, 8'192),
           butler(Butler::Options{2'048, 512, std::chrono::microseconds(200)}),
-          driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500)}),
+          driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), GraphDriver::kDefaultMeterCapacity, {}}),
           transport(driver, butler, Transport::Options{std::chrono::milliseconds(1'000)}) {
         butler.addStream(stream);
         driver.publish(streamingGraph(stream));
@@ -335,7 +335,7 @@ TEST_CASE("On a paced device with a butler thread, play, locate and stop run cle
     DiskStream stream(2, clips.streamed, 16'384);
     Butler butler(Butler::Options{2'048, 512, std::chrono::microseconds(200)});
     butler.addStream(stream);
-    GraphDriver driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500)});
+    GraphDriver driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), GraphDriver::kDefaultMeterCapacity, {}});
     driver.publish(streamingGraph(stream));
     host::FakeAudioDevice::Options options;
     options.paced = true;
@@ -376,7 +376,7 @@ TEST_CASE("On a paced device with a stalled butler, a locate proceeds after the 
     DiskStream stream(2, clips.streamed, 16'384);
     Butler butler(Butler::Options{2'048, 512, std::chrono::microseconds(200)});
     butler.addStream(stream);
-    GraphDriver driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500)});
+    GraphDriver driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), GraphDriver::kDefaultMeterCapacity, {}});
     driver.publish(streamingGraph(stream));
     host::FakeAudioDevice::Options options;
     options.paced = true;

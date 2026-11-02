@@ -90,7 +90,7 @@ struct Rig {
     std::int64_t blocks = 0;
 
     explicit Rig(std::int32_t gainMilliDb = -6'000, std::size_t meterCapacity = GraphDriver::Options{}.meterCapacity)
-        : driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), meterCapacity}) {
+        : driver(GraphDriver::Options{kBlock, std::chrono::milliseconds(500), meterCapacity, {}}) {
         MeteredGraph g = meteredGraph(gainMilliDb);
         const auto slots = g.slots();
         const auto meterSlots = g.meterSlots();

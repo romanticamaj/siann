@@ -219,7 +219,8 @@ PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions option
     : session_(session),
       options_(std::move(options)),
       butler_(options_.butler),
-      driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500), 1024,
+      driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500),
+                                             realtime::GraphDriver::kDefaultMeterCapacity,
                                              [this](std::uint64_t epoch) { retired(epoch); }}),
       dispatcher_(driver_),
       transport_(driver_, butler_, options_.transport) {}

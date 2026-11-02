@@ -135,12 +135,14 @@ struct MeterSample {
 
 class GraphDriver {
 public:
+    static constexpr std::size_t kDefaultMeterCapacity = 1024;
+
     struct Options {
         int fadeFrames = 240;  // 5 ms at 48 kHz
         std::chrono::milliseconds ackTimeout{500};
         // MeterNodes metered per block; readings of further ones are dropped
         // and counted.
-        std::size_t meterCapacity = 1024;
+        std::size_t meterCapacity = kDefaultMeterCapacity;
         // Called on the control side (inside publish, poll or stop, never on
         // the audio thread) after a graph was retired and destroyed: swapped
         // out and acknowledged, superseded before it was sent, or released by
