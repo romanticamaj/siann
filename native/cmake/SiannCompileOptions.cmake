@@ -12,6 +12,11 @@ function(siann_apply_compile_options target)
     endif()
   else()
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow)
+    # No fused multiply-add contraction: `t += a * g` must round the product,
+    # as MSVC's /fp:precise does, or PDC nulls leave a residual on FMA targets
+    # (Apple arm64 clang contracts by default) and offline/realtime parity
+    # would depend on the compiler.
+    target_compile_options(${target} PRIVATE -ffp-contract=off)
     if(SIANN_WERROR)
       target_compile_options(${target} PRIVATE -Werror)
     endif()
