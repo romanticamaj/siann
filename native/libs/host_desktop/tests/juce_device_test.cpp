@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "siann/graph/graph.hpp"
 #include "siann/host/juce_audio_device.hpp"
@@ -152,8 +153,9 @@ TEST_CASE("Opening at a rate the device cannot run reports the rate it runs at",
         try {
             status = device.open(config);
         } catch (const host::DeviceError& error) {
-            CHECK(error.code() != "sample_rate_unsupported");
-            continue;
+            // A device that refuses the rate is reopened at its own rate, so
+            // the default device must open for every session rate.
+            FAIL("the default device did not open for a " << rate << " Hz session: " << error.what());
         }
         device.close();
         if (status.sampleRate != rate) {
@@ -162,6 +164,53 @@ TEST_CASE("Opening at a rate the device cannot run reports the rate it runs at",
         }
     }
     SKIP("the default device accepts every tested rate");
+}
+
+TEST_CASE("A device that refuses the session rate is reopened at its own rate", "[juce]") {
+    // WASAPI exclusive mode and CoreAudio fail to open at a rate they cannot
+    // run at instead of falling back like ASIO; the session then plays through
+    // device-side SRC at whatever rate the device runs at (rate 0 in JUCE).
+    std::vector<double> asked;
+    host::JuceAudioDevice::openWithRateFallback("Windows Audio (Exclusive Mode)", 44'100, [&](double rate) {
+        asked.push_back(rate);
+        return rate == 0.0 ? std::string() : std::string("Couldn't open the output device!");
+    });
+    CHECK(asked == std::vector<double>{44'100.0, 0.0});
+}
+
+TEST_CASE("A device that accepts the session rate is opened once", "[juce]") {
+    std::vector<double> asked;
+    host::JuceAudioDevice::openWithRateFallback("CoreAudio", 48'000, [&](double rate) {
+        asked.push_back(rate);
+        return std::string();
+    });
+    CHECK(asked == std::vector<double>{48'000.0});
+}
+
+TEST_CASE("A backend that converts rates itself is asked only for its own rate", "[juce]") {
+    std::vector<double> asked;
+    host::JuceAudioDevice::openWithRateFallback("Windows Audio", 44'100, [&](double rate) {
+        asked.push_back(rate);
+        return std::string();
+    });
+    CHECK(asked == std::vector<double>{0.0});
+}
+
+TEST_CASE("A device that opens at neither rate reports both failures", "[juce]") {
+    std::vector<double> asked;
+    try {
+        host::JuceAudioDevice::openWithRateFallback("CoreAudio", 44'100, [&](double rate) {
+            asked.push_back(rate);
+            return rate == 0.0 ? std::string("device busy") : std::string("Failed to set sample rate");
+        });
+        FAIL("expected device_open_failed");
+    } catch (const host::DeviceError& error) {
+        CHECK(error.code() == "device_open_failed");
+        const std::string message = error.what();
+        CHECK(message.find("Failed to set sample rate") != std::string::npos);
+        CHECK(message.find("device busy") != std::string::npos);
+    }
+    CHECK(asked == std::vector<double>{44'100.0, 0.0});
 }
 
 TEST_CASE("Backends that convert any rate themselves are known by type", "[juce]") {
