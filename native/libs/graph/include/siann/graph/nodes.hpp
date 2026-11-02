@@ -2,6 +2,7 @@
 
 // Built-in nodes for M1.
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -116,21 +117,38 @@ private:
     MeterReading reading_{};
 };
 
-// Delays its input by a fixed latency and reports it. Used to test PDC.
+// Delays its input by its latency and reports it. Used to test PDC.
+//
+// The latency can change at runtime, like a plugin reporting a new latency:
+// requestLatency() stores the request (any thread); process() picks it up at
+// the start of its next block on the audio thread, restarts the delay line
+// with silence and reports the new latency() from then on. The delay line is
+// allocated for maxLatency in prepare(), so the switch never allocates.
 class FakeLatencyNode final : public Node {
 public:
-    FakeLatencyNode(int channels, std::int64_t latency);
+    // Throws std::invalid_argument unless 0 <= latency <= maxLatency.
+    FakeLatencyNode(int channels, std::int64_t latency, std::int64_t maxLatency);
+    FakeLatencyNode(int channels, std::int64_t latency) : FakeLatencyNode(channels, latency, latency) {}
     std::vector<int> inputPorts() const override { return {channels_}; }
     int outputChannels() const override { return channels_; }
-    std::int64_t latency() const override { return latency_; }
+    // The latency in effect for the current block. Written by process(), so
+    // the control side can read it while the graph plays (a recompile does).
+    std::int64_t latency() const override { return latency_.load(std::memory_order_acquire); }
+    std::int64_t maxLatency() const noexcept { return maxLatency_; }
     void prepare(int maxBlockFrames) override;
     void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                  const AudioBufferView& output) noexcept override;
 
+    // Any thread. Rejects (returns false, nothing changes) a request outside
+    // [0, maxLatency]; the latest accepted request wins at the next block.
+    bool requestLatency(std::int64_t samples) noexcept;
+
 private:
     int channels_;
-    std::int64_t latency_;
-    std::vector<std::vector<float>> ring_;
+    std::atomic<std::int64_t> latency_;
+    std::int64_t maxLatency_;
+    std::atomic<std::int64_t> requested_;
+    std::vector<std::vector<float>> ring_;  // maxLatency_ frames per channel; latency_ in use
     std::size_t position_ = 0;
 };
 

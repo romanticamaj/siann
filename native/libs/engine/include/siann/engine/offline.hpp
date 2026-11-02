@@ -80,6 +80,15 @@ struct RenderOptions {
     int blockFrames = 512;
 };
 
+// Renders `frames` frames of a compiled graph from timeline position `start`,
+// in blocks of its maximum block size, shifted by its total latency (it
+// processes frames + totalLatency() and drops the first totalLatency()), so
+// output frame i is timeline sample start + i. Interleaved, with the graph's
+// output channel count; info.sampleRate is `sampleRate`. The graph must be
+// fresh: its delay lines start silent.
+media::AudioBuffer renderGraph(graph::PreparedGraph& prepared, std::int64_t start, std::int64_t frames,
+                               std::int64_t sampleRate = 0);
+
 // Stereo, 32-bit float, at the session rate.
 media::AudioBuffer renderOffline(const model::Document& document, const MediaLibrary& library,
                                  const RenderOptions& options = {});

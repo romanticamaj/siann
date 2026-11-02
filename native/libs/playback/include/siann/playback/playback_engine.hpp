@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -99,10 +100,19 @@ public:
                                         std::string time);
 
     // Control thread: transport and dispatcher ticks, then the driver poll.
+    // The poll also answers a node's latency change with a recompile; the
+    // recompiled graph keeps every slot and the dispatcher's epoch, so nothing
+    // else changes here.
     void tick();
 
     // Underruns summed over every stream.
     std::uint64_t underruns() const noexcept;
+
+    // Latency changes the engine could not compensate (spec, "Latency
+    // model"): the count, and the fault while the live graph is misaligned
+    // because of one (the node, its new latency and the GraphError code).
+    std::uint64_t latencyRecompileFailures() const noexcept { return driver_.latencyRecompileFailures(); }
+    const std::optional<realtime::LatencyFault>& latencyFault() const noexcept { return driver_.latencyFault(); }
 
     realtime::GraphDriver& driver() noexcept { return driver_; }
     realtime::Butler& butler() noexcept { return butler_; }

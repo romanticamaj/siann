@@ -20,9 +20,13 @@ if(SIANN_BUILD_TESTS)
     tests/streaming_test.cpp
     tests/recording_test.cpp
     tests/transport_test.cpp
+    tests/pdc_realtime_test.cpp
   )
   target_link_libraries(siann_realtime_tests PRIVATE siann::realtime siann::host_fake siann::media siann_rt_alloc_guard
-                        Catch2::Catch2WithMain)
+                        siann::engine Catch2::Catch2WithMain)
+  # The PDC fixtures are shared with siann-graph's tests; siann-engine is for the
+  # offline/realtime parity test only (no library dependency).
+  target_include_directories(siann_realtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/graph/tests")
   siann_apply_compile_options(siann_realtime_tests)
   catch_discover_tests(siann_realtime_tests)
 endif()

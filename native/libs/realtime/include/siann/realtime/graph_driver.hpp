@@ -10,8 +10,25 @@
 // must be called from one non-realtime thread. process() runs on the audio
 // thread inside the device callback and never allocates, locks or blocks.
 //
-// M2 step 1 ducks the whole output during a transition; ducking only the
-// affected paths follows once the compiler reports them.
+// Latency changes (spec, "Latency model" and "State migration"): poll()
+// drains the live graph's realtime outbox and answers a change itself with
+// PreparedGraph::recompile(), published like any other graph. The recompiled
+// graph shares the node instances and unchanged delay lines, keeps every slot
+// (parameter changes for the original epoch still apply to it), and the
+// transition ramps only the affected edges: they duck to zero in the old
+// graph, stay at zero after the swap until the rebuilt delay lines are full
+// (settleFrames()), then rise. Unaffected paths are untouched.
+//
+// When the recompile arrives while a rise is still running (the start-up or
+// post-locate rise of the whole output, or the hold and rise after an earlier
+// recompile), the swap ducks the whole output instead, but the affected edges
+// are still held after it: the recompiled graph's own plus those the earlier
+// hold still covers (their delay lines may still be filling), for whichever
+// lasts longer. A recompile that fails (compensation limit) is flagged by
+// latencyFault() until a later one succeeds.
+//
+// Any other publish (a structural edit) ducks the whole output, as does a
+// locate ("ducks the master around the jump").
 
 #include <atomic>
 #include <chrono>
@@ -19,6 +36,8 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "siann/graph/graph.hpp"
@@ -41,6 +60,9 @@ namespace detail {
 struct Handoff {
     graph::PreparedGraph* graph = nullptr;
     std::uint64_t epoch = 0;
+    // The epoch whose slots this graph keeps: its own, or for a latency
+    // recompile the family of the graph it was recompiled from.
+    std::uint64_t family = 0;
 };
 
 // The readings of every MeterNode for one block, in schedule order. `entries`
@@ -66,6 +88,26 @@ struct TransportCommand {
     std::uint64_t generation = 0;
     std::int64_t position = 0;
     bool play = false;
+};
+
+// A node of the graph with `epoch` reported a new latency (pluginEventRt for
+// built-in nodes). The driver answers with a recompile.
+struct LatencyChange {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::int64_t latency = 0;
+};
+
+// A latency change the driver could not compensate (spec, "Latency model":
+// paths above the compensation limit are flagged, not silently misaligned).
+// The recompile for `latency` on `slot` of the graph with `epoch` failed with
+// a GraphError; that graph keeps playing with its old, now wrong compensation.
+struct LatencyFault {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::int64_t latency = 0;
+    std::string code;  // GraphError::code(), e.g. compensation_limit
+    std::string message;
 };
 
 // One parameter change for the audio thread (revision 3.1, "Two channels into
@@ -163,6 +205,24 @@ public:
     // stopped) applied.
     std::uint64_t appliedLocate() const noexcept { return appliedLocate_.load(std::memory_order_acquire); }
 
+    // Control side. poll() drains the live graph's realtime outbox and
+    // recompiles once per poll that saw a change. Changes from a graph that is
+    // already being replaced are dropped: a recompiled successor compares
+    // its nodes' latencies itself and reports again, and any other graph was
+    // compiled from the nodes' latencies of its own.
+    std::uint64_t latencyRecompiles() const noexcept { return latencyRecompiles_; }
+    // Recompiles that failed (GraphError, e.g. compensation_limit); the live
+    // graph then keeps playing with its old compensation, and latencyFault()
+    // says so until a later recompile or publish succeeds.
+    std::uint64_t latencyRecompileFailures() const noexcept { return latencyRecompileFailures_; }
+    // Set while the live graph is misaligned because its latest recompile
+    // failed; cleared by the next successful recompile or publish.
+    const std::optional<LatencyFault>& latencyFault() const noexcept { return latencyFault_; }
+    const std::optional<LatencyChange>& lastLatencyChange() const noexcept { return lastLatencyChange_; }
+
+    // Control side: the live graph (nullptr when none), for inspection only.
+    const graph::PreparedGraph* liveGraph() const noexcept;
+
     // While stopped: the recorder receives every input block (its own
     // arming decides what is kept). Pass nullptr to detach.
     void attachRecorder(Recorder* recorder);
@@ -188,6 +248,8 @@ private:
     void installDirectly(std::uint64_t epoch);
     void retire(std::uint64_t epoch);
     void drainRetired();
+    void handleLatencyChanges();
+    std::uint64_t publishInFamily(std::unique_ptr<graph::PreparedGraph> graph, std::uint64_t family);
     void finishStop();
 
     Options options_;
@@ -205,6 +267,11 @@ private:
     std::chrono::steady_clock::time_point sentAt_{};
     std::uint64_t watchdogTrips_ = 0;
     std::atomic<bool> deviceLost_{false};
+    std::map<std::uint64_t, std::uint64_t> families_;  // epoch -> family, for every owned graph
+    std::uint64_t latencyRecompiles_ = 0;
+    std::uint64_t latencyRecompileFailures_ = 0;
+    std::optional<LatencyFault> latencyFault_;
+    std::optional<LatencyChange> lastLatencyChange_;
 
     // Audio side.
     rt::SpscQueue<Handoff> graphInbox_{2};
@@ -214,6 +281,7 @@ private:
     bool paramHeld_ = false;  // heldParam_ waits for a newer graph to be swapped in
     graph::PreparedGraph* current_ = nullptr;
     std::uint64_t currentEpoch_ = 0;
+    std::uint64_t currentFamily_ = 0;
     Handoff next_{};
     Handoff unsentRetire_{};
     bool retirePending_ = false;  // unsentRetire_ holds an acknowledgement to retry
@@ -221,6 +289,13 @@ private:
     TransportCommand pendingLocate_{};
     bool locatePending_ = false;
     bool duckActive_ = false;  // ducking for a graph swap or a locate
+    // The duck in progress ramps only the recompiled graph's affected edges.
+    bool pathDuck_ = false;
+    // After a recompile's swap: frames until the held edges are fully up
+    // (the hold while rebuilt delay lines fill, then the rise), and which
+    // edges (the live graph's holdEdges()).
+    int pathRise_ = 0;
+    std::span<const std::uint8_t> pathEdges_;
     int duckRemaining_ = 0;
     int riseRemaining_ = 0;
     std::atomic<std::int64_t> playhead_{0};

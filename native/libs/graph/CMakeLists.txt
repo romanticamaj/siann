@@ -4,7 +4,7 @@ add_library(siann_graph
 )
 add_library(siann::graph ALIAS siann_graph)
 target_include_directories(siann_graph PUBLIC include)
-target_link_libraries(siann_graph PUBLIC siann::host_api)
+target_link_libraries(siann_graph PUBLIC siann::host_api PRIVATE siann::rt)
 target_compile_features(siann_graph PUBLIC cxx_std_20)
 siann_apply_compile_options(siann_graph)
 

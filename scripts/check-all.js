@@ -101,6 +101,7 @@ function gcc() {
     }
   }
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'media', 'tests'))}`);
+  includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'graph', 'tests'))}`);
   for (const d of ['dr_libs-src', 'r8brain-src', path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
     includes.push('-isystem', toPosix(path.join(deps, d)));
   }

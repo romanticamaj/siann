@@ -10,6 +10,21 @@
 // the main input); its output latency adds its own reported latency. Every
 // edge is delayed by arrival(destination) - output(source). Summation follows
 // edge insertion order, so results are deterministic.
+//
+// A node whose reported latency changes after compile (a plugin's
+// pluginEventRt for built-in nodes) is reported through a preallocated
+// realtime outbox: process() compares each node's latency() with what it last
+// reported and pushes one LatencyChange per change. The graph's compensation
+// stays as compiled; the control side answers with recompile().
+//
+// recompile() is the latency model's "recompile with state migration": the
+// new graph shares every node instance and every compensation delay line
+// whose length is unchanged with the graph it came from, rebuilds only the
+// delay lines whose compensation changed, and marks the affected edges (those
+// with a rebuilt delay line or leaving a node whose latency changed). The
+// graph driver ramps only those edges around the swap. Exactly one of the two
+// graphs is processed per block, so shared instances are never processed
+// twice; whichever graph is destroyed last frees them, on the control side.
 
 #include <array>
 #include <cstdint>
@@ -89,6 +104,26 @@ struct MeterReading {
 
 class PreparedGraph;
 
+// A node of a compiled graph now reports `latency` (audio thread to control side).
+struct LatencyChange {
+    NodeId slot = 0;
+    std::int64_t latency = 0;
+};
+
+// A duck-and-swap ramp on some edges of a graph (revision 3.1, "Publishing
+// and retiring graphs"). At frame i of the block, with r = max(remaining - i, 0),
+// a ramped edge's gain is min(r, fadeFrames) / fadeFrames while ducking and
+// 1 - min(r, fadeFrames) / fadeFrames while rising, so a rise with remaining
+// above fadeFrames first holds the edges at zero. `edges` is indexed like the
+// graph's edges (rampedEdges() of a recompiled graph fits the graph it was
+// recompiled from); an empty or mismatched mask ramps nothing.
+struct EdgeRamp {
+    std::span<const std::uint8_t> edges;
+    int fadeFrames = 0;
+    int remaining = 0;
+    bool rising = false;
+};
+
 class GraphBuilder {
 public:
     NodeId add(std::unique_ptr<Node> node, std::string name);
@@ -123,6 +158,33 @@ public:
 
     // Processes one block of at most maxBlockFrames frames.
     void process(const ProcessContext& context) noexcept;
+    // The same, with the edges in `ramp` scaled by its gain.
+    void process(const ProcessContext& context, const EdgeRamp& ramp) noexcept;
+
+    // Control side: a new graph for the nodes' current latencies, migrating
+    // state (see the header comment). Safe while this graph is live on the
+    // audio thread: it reads only compiled data and each node's latency().
+    // Throws GraphError("compensation_limit") like compile().
+    std::unique_ptr<PreparedGraph> recompile() const;
+
+    // The graph this one was recompiled from (nullptr after compile()).
+    // Only for identity checks: that graph may have been destroyed.
+    const PreparedGraph* recompiledFrom() const noexcept;
+    // Per edge, 1 when a recompile changed it (empty after compile()).
+    std::span<const std::uint8_t> rampedEdges() const noexcept;
+    bool edgeRamped(NodeId from, NodeId to, int port = 0) const noexcept;
+    // Frames after the swap until every rebuilt delay line has filled and its
+    // signal reached the output: the affected edges stay at zero that long.
+    std::int64_t settleFrames() const noexcept;
+    // Audio thread, when this recompiled graph is swapped in: the edges to
+    // hold and raise after the swap, rampedEdges() plus `carried` (edges a
+    // previous recompile's hold or rise still covers: their delay lines,
+    // shared with this graph, may still be filling). Written into a buffer
+    // preallocated by recompile(); valid until the next call. A `carried`
+    // that does not fit this graph's edges is ignored; empty after compile().
+    std::span<const std::uint8_t> holdEdges(std::span<const std::uint8_t> carried) noexcept;
+    // The node instance in a slot (nullptr for an unknown slot).
+    const Node* nodeAt(NodeId slot) const noexcept;
 
     // The output node's buffer after process().
     const AudioBufferView& output() const noexcept;
@@ -146,6 +208,11 @@ public:
     std::span<const NodeId> meteredNodes() const noexcept;
     // The reading of a MeterNode after process(); empty for any other node.
     MeterReading meterReading(NodeId node) const noexcept;
+    // Control side: the next latency change reported by process(), oldest
+    // first. Single consumer; the thread that calls process() is the producer.
+    // Each change is reported once; while a node's change waits here, its
+    // later changes coalesce and the newest follows once this one is taken.
+    bool popLatencyChange(LatencyChange& change) noexcept;
 
 private:
     friend class GraphBuilder;
