@@ -138,8 +138,12 @@ AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
         inputs.setRange(0, config.inputChannels, true);
     }
     outputs.setRange(0, config.outputChannels, true);
-    const juce::String error = impl_->device->open(inputs, outputs, static_cast<double>(config.sampleRate),
-                                                   config.bufferFrames);
+    // A backend that converts any rate itself is opened at its own rate (0 asks
+    // JUCE for the device default, the OS mix rate), so a session at another
+    // rate plays through the engine's SRC and is never silently converted.
+    const double requested =
+        convertsSampleRateItself(type->getTypeName().toStdString()) ? 0.0 : static_cast<double>(config.sampleRate);
+    const juce::String error = impl_->device->open(inputs, outputs, requested, config.bufferFrames);
     if (error.isNotEmpty()) {
         impl_->device.reset();
         throw DeviceError("device_open_failed", error.toStdString());

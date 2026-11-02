@@ -49,9 +49,12 @@ public:
 
     // deviceId is "<type>/<name>", or empty for the default output device of
     // the first available type. The device is asked for the requested sample
-    // rate; if it cannot run at it (WASAPI shared mode at the OS mix rate, for
-    // example), it opens at its own rate and the status reports that rate.
-    // The graph driver then plays through device-side SRC.
+    // rate; if it cannot run at it (ASIO falls back to a rate it supports), it
+    // opens at its own rate and the status reports that rate. A backend that
+    // would convert any rate itself (convertsSampleRateItself: WASAPI shared
+    // mode) is never asked for the session rate; it opens at the OS mix rate.
+    // Either way the graph driver then plays through device-side SRC, so the
+    // session is never silently converted.
     AudioDeviceStatus open(const AudioDeviceConfig& config) override;
     void start(AudioCallback callback) override;
     void stop() override;
