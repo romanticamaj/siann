@@ -522,3 +522,20 @@ TEST_CASE("pdc realtime: parameter changes for the original epoch apply after a 
     driver.stop();
     CHECK(maxAbs(out, out[0].size() - kBlock) == 0.0);
 }
+
+TEST_CASE("pdc realtime: a locate during the hold after a latency recompile is not delayed",
+          "[pdc][realtime][latency]") {
+    DoublingRig rig;
+    rig.pump(20);
+    REQUIRE(rig.node->requestLatency(kChanged));
+    rig.pump(1);
+    REQUIRE(rig.driver.latencyRecompiles() == 1);
+    pumpUntilSwapped(rig.driver, rig.device, rig.epoch, rig.out);
+    // The affected paths are held for 250 frames, then rise over 100: about
+    // six blocks. A locate sent now is taken at the next block regardless.
+    const std::int64_t at = rig.driver.playhead();
+    REQUIRE(rig.driver.pushLocate(realtime::TransportCommand{1, 0}));
+    rig.pump(3);  // duck (100 frames, two blocks), jump, one block from 0
+    CHECK(rig.driver.playhead() < at);
+    CHECK(rig.driver.playhead() <= 2 * kBlock);
+}
