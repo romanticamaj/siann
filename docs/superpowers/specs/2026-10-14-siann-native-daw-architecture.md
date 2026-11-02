@@ -1289,6 +1289,9 @@ state migration is done by the recompiled graph sharing the previous graph's
 node instances and every compensation delay line whose length is unchanged
 (shared ownership, released on the control side when the last graph using
 them retires); only the delay lines whose compensation changed are rebuilt.
+The disk streams the shared instances read stay alive with them: the driver
+reports a graph as retired to the playback engine only when the last graph
+recompiled from it is retired.
 The swap ramps only the affected edges (rebuilt delay lines and edges leaving
 the node whose latency changed), holds them at zero until the rebuilt lines
 are full, then raises them; unaffected paths are untouched. A recompile that
