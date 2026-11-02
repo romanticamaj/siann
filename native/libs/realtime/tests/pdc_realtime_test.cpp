@@ -691,3 +691,41 @@ TEST_CASE("pdc realtime: a locate during the hold after a latency recompile is n
     CHECK(rig.driver.playhead() < at);
     CHECK(rig.driver.playhead() <= 2 * kBlock);
 }
+
+TEST_CASE("pdc realtime: the retire callback waits for the last graph of a latency-recompiled family",
+          "[pdc][realtime][latency]") {
+    // The recompiled graph shares the node instances (and whatever they read,
+    // such as disk streams) of the graph it came from, so the owner may free
+    // what the published epoch used only once no graph of that family is left.
+    std::vector<std::uint64_t> retired;
+    GraphDriver::Options o = options(kBlock);
+    o.onRetired = [&retired](std::uint64_t epoch) { retired.push_back(epoch); };
+    GraphDriver driver(o);
+    host::ManualAudioDevice device;
+    Built first = graph::pdc::buildDirect(100, kMaxLatency);
+    graph::FakeLatencyNode* node = first.changingNode;
+    const auto epoch = driver.publish(graph::pdc::compile(std::move(first), kBlock));
+    driver.play();
+    driver.start(device, config(kBlock));
+
+    Capture out;
+    pumpBlocks(driver, device, 10, out);
+    REQUIRE(node->requestLatency(kChanged));
+    pumpBlocks(driver, device, 1, out);
+    REQUIRE(driver.latencyRecompiles() == 1);
+    pumpUntilSwapped(driver, device, epoch, out);
+    CHECK(driver.ownedGraphs() == 1);  // the original graph itself is gone
+    CHECK(retired.empty());            // but its family still plays
+
+    // A structural publish replaces the family: now it is reported, once,
+    // under the epoch its owner was given by publish().
+    const auto next = driver.publish(graph::pdc::compile(graph::pdc::buildDirect(100, kMaxLatency), kBlock));
+    for (int guard = 0; guard < 50 && (driver.transitionInFlight() || driver.liveEpoch() != next); ++guard) {
+        pumpBlocks(driver, device, 1, out);
+    }
+    REQUIRE(driver.liveEpoch() == next);
+    CHECK(retired == std::vector<std::uint64_t>{epoch});
+
+    driver.stop();
+    CHECK(retired == std::vector<std::uint64_t>{epoch});
+}
