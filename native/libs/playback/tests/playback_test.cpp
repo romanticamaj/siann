@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -195,7 +196,14 @@ TEST_CASE("compileForPlayback builds one streaming player and fader per track pl
 
     const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
     REQUIRE(compiled.graph);
-    CHECK(compiled.graph->nodeCount() == 5);
+    CHECK(compiled.graph->nodeCount() == 8);  // per track player, fader, meter; master bus and meter
+    REQUIRE(compiled.meterSlots.size() == 3);
+    CHECK(compiled.meterSlots.count("track:trk_a") == 1);
+    CHECK(compiled.meterSlots.count("track:trk_b") == 1);
+    CHECK(compiled.meterSlots.count("master") == 1);
+    const auto metered = compiled.graph->meteredNodes();
+    CHECK(metered.size() == 3);
+    CHECK(metered.back() == compiled.meterSlots.at("master"));  // the master meter runs last
     CHECK(compiled.streams.size() == 2);
     REQUIRE(compiled.slots.size() == 2);
     CHECK(compiled.slots.count("track:trk_a") == 1);
@@ -574,9 +582,11 @@ TEST_CASE("An empty document plays silence with no underruns", "[playback]") {
     Fixture f;
     const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
     REQUIRE(compiled.graph);
-    CHECK(compiled.graph->nodeCount() == 1);
+    CHECK(compiled.graph->nodeCount() == 2);  // the master bus and its meter
     CHECK(compiled.streams.empty());
     CHECK(compiled.slots.empty());
+    CHECK(compiled.meterSlots.size() == 1);
+    CHECK(compiled.meterSlots.count(playback::masterMeterKey()) == 1);
 
     Player p(f.session);
     p.pump(10);
@@ -585,4 +595,91 @@ TEST_CASE("An empty document plays silence with no underruns", "[playback]") {
     CHECK(silent(p.out[1]));
     CHECK(p.engine.underruns() == 0);
     CHECK(p.engine.streamCount() == 0);
+}
+
+TEST_CASE("Meter values match values computed offline from the rendered output", "[playback][meters]") {
+    constexpr int kMeterBlock = 64;
+    constexpr std::int64_t kFrames = 40 * kMeterBlock;
+    Fixture f;
+    // A stereo sine whose amplitude rises and falls, different per channel, so
+    // every block reads differently.
+    media::AudioBuffer sine;
+    sine.info = media::AudioInfo{2, 48'000, kFrames};
+    for (std::int64_t i = 0; i < kFrames; ++i) {
+        const double t = static_cast<double>(i);
+        const double envelope = 0.5 + 0.45 * std::sin(2.0 * 3.14159265358979323846 * t / 1'500.0);
+        const double s = std::sin(2.0 * 3.14159265358979323846 * t / 37.0);
+        sine.samples.push_back(static_cast<float>(envelope * s));
+        sine.samples.push_back(static_cast<float>(0.8 * envelope * envelope * s));
+    }
+    const fs::path file = f.dir.path() / "sine.wav";
+    io::writeFileAtomic(file, media::encodeWavFloat32(sine));
+    session::importMedia(f.session, file, "med_sine", "test", "t");
+    f.exec(addTrack("trk_a"));
+    f.exec(place("clp_a", "trk_a", "med_sine", 0, 0, kFrames));
+
+    // Reference: per-block peak and RMS of the offline render's master.
+    const media::AudioBuffer rendered = engine::renderOffline(
+        f.doc(), engine::loadMedia(f.doc(), f.bundle()), engine::RenderOptions{0, kFrames, kMeterBlock});
+    REQUIRE(rendered.info.frames == kFrames);
+    struct Expected {
+        float peak[2];
+        float rms[2];
+    };
+    std::vector<Expected> reference;
+    for (std::int64_t start = 0; start < kFrames; start += kMeterBlock) {
+        Expected e{};
+        for (int c = 0; c < 2; ++c) {
+            float peak = 0.0f;
+            double sum = 0.0;
+            for (std::int64_t i = start; i < start + kMeterBlock; ++i) {
+                const float v = rendered.samples[static_cast<std::size_t>(i * 2 + c)];
+                peak = std::max(peak, std::abs(v));
+                sum += static_cast<double>(v) * static_cast<double>(v);
+            }
+            e.peak[c] = peak;
+            e.rms[c] = static_cast<float>(std::sqrt(sum / kMeterBlock));
+        }
+        reference.push_back(e);
+    }
+
+    PlaybackOptions options = testOptions();
+    options.maxBlockFrames = kMeterBlock;
+    options.fadeFrames = kMeterBlock;
+    host::AudioDeviceConfig config = deviceConfig();
+    config.bufferFrames = kMeterBlock;
+    host::ManualAudioDevice device;
+    PlaybackEngine engine(f.session, options);
+    engine.load();
+    CHECK(engine.meterSlots().count("track:trk_a") == 1);
+    CHECK(engine.meterSlots().count(playback::masterMeterKey()) == 1);
+    engine.start(device, config);
+    std::vector<std::vector<float>> out{2};
+    // Drained after every block, so nothing drops; block 0 is the fade-in,
+    // which the meters must not see.
+    for (std::size_t b = 0; b < reference.size(); ++b) {
+        INFO("block " << b);
+        device.pumpAll(1, out);
+        engine.butler().runOnce();
+        engine.tick();
+        const auto master = engine.dispatcher().meter(playback::masterMeterKey());
+        const auto track = engine.dispatcher().meter("track:trk_a");
+        REQUIRE(master.has_value());
+        REQUIRE(track.has_value());
+        CHECK(master->blockStart == static_cast<std::int64_t>(b) * kMeterBlock);
+        CHECK(master->frames == kMeterBlock);
+        CHECK(engine.dispatcher().meterPlayhead() == static_cast<std::int64_t>(b) * kMeterBlock);
+        REQUIRE(master->reading.channels == 2);
+        for (std::size_t c = 0; c < 2; ++c) {
+            CHECK(master->reading.peak[c] == reference[b].peak[c]);
+            CHECK(std::abs(master->reading.rms[c] - reference[b].rms[c]) < 1e-6f);
+            // One track at unity master gain: the track meter reads the mix.
+            CHECK(track->reading.peak[c] == master->reading.peak[c]);
+            CHECK(track->reading.rms[c] == master->reading.rms[c]);
+        }
+    }
+    CHECK(engine.driver().meterDrops() == 0);
+    CHECK(engine.underruns() == 0);
+    CHECK(reference[0].peak[0] > 0.0f);
+    engine.stop();
 }

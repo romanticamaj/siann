@@ -1,6 +1,8 @@
 #include "siann/graph/graph.hpp"
 
 #include <algorithm>
+
+#include "siann/graph/nodes.hpp"
 #include <queue>
 #include <utility>
 
@@ -60,6 +62,7 @@ struct PreparedGraph::Impl {
         Storage output;
         std::vector<std::size_t> incoming;  // edge indexes in insertion order
         std::int64_t outputLatency = 0;
+        const MeterNode* meter = nullptr;  // set at compile time for a MeterNode
     };
 
     std::vector<NodeState> nodes;
@@ -68,6 +71,7 @@ struct PreparedGraph::Impl {
     std::size_t outputNode = 0;
     int maxBlock = 0;
     AudioBufferView outputView;
+    std::vector<NodeId> meters;  // MeterNodes in schedule order
 };
 
 NodeId GraphBuilder::add(std::unique_ptr<Node> node, std::string name) {
@@ -186,6 +190,13 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
             edge.delay.allocate(impl->nodes[edge.from].node->outputChannels(), edge.compensation);
         }
     }
+    for (const std::size_t n : impl->order) {
+        auto& state = impl->nodes[n];
+        state.meter = dynamic_cast<const MeterNode*>(state.node.get());
+        if (state.meter != nullptr) {
+            impl->meters.push_back(n);
+        }
+    }
     impl->outputView = impl->nodes[impl->outputNode].output.view;
     return std::unique_ptr<PreparedGraph>(new PreparedGraph(std::move(impl)));
 }
@@ -271,6 +282,17 @@ void PreparedGraph::locate(std::uint64_t generation, std::int64_t position) noex
     for (auto& state : impl_->nodes) {
         state.node->onLocate(generation, position);
     }
+}
+
+std::span<const NodeId> PreparedGraph::meteredNodes() const noexcept {
+    return impl_->meters;
+}
+
+MeterReading PreparedGraph::meterReading(NodeId node) const noexcept {
+    if (node < impl_->nodes.size() && impl_->nodes[node].meter != nullptr) {
+        return impl_->nodes[node].meter->reading();
+    }
+    return {};
 }
 
 std::size_t PreparedGraph::nodeCount() const noexcept {

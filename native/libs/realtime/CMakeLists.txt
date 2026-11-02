@@ -16,6 +16,7 @@ if(SIANN_BUILD_TESTS)
   add_executable(siann_realtime_tests
     tests/graph_driver_test.cpp
     tests/params_test.cpp
+    tests/meters_test.cpp
     tests/streaming_test.cpp
     tests/recording_test.cpp
     tests/transport_test.cpp

@@ -112,6 +112,10 @@ std::string trackSlotKey(const std::string& trackId) {
     return "track:" + trackId;
 }
 
+std::string masterMeterKey() {
+    return "master";
+}
+
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
                                     const PlaybackOptions& options) {
     std::map<hash::Digest, std::shared_ptr<host::MediaReader>> readers;
@@ -138,12 +142,19 @@ CompiledPlayback compileForPlayback(const model::Document& document, const std::
                                                     track.channels, track.gain.milliDb, track.pan, track.mute,
                                                     flat.soloSilenced),
                                                 track.id + ".fader");
+        const graph::NodeId meter = builder.add(std::make_unique<graph::MeterNode>(2), track.id + ".meter");
         builder.connect(player, fader);
-        builder.connect(fader, master);
+        builder.connect(fader, meter);
+        builder.connect(meter, master);
         compiled.streams.push_back(std::move(stream));
         compiled.slots.emplace(trackSlotKey(track.id), fader);
+        compiled.meterSlots.emplace(trackSlotKey(track.id), meter);
     }
-    builder.setOutput(master);
+    // The master meter is the output, so it sees the final mix.
+    const graph::NodeId masterMeter = builder.add(std::make_unique<graph::MeterNode>(2), "master.meter");
+    builder.connect(master, masterMeter);
+    compiled.meterSlots.emplace(masterMeterKey(), masterMeter);
+    builder.setOutput(masterMeter);
     compiled.graph = std::move(builder).compile(options.maxBlockFrames);
     return compiled;
 }
@@ -171,7 +182,8 @@ void PlaybackEngine::load() {
     }
     const std::uint64_t epoch = driver_.publish(std::move(compiled.graph));
     slots_ = compiled.slots;
-    dispatcher_.graphPublished(epoch, std::move(compiled.slots));
+    meterSlots_ = compiled.meterSlots;
+    dispatcher_.graphPublished(epoch, std::move(compiled.slots), std::move(compiled.meterSlots));
     loaded_ = true;
 }
 

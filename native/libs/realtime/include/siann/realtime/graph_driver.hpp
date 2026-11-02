@@ -19,9 +19,11 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "siann/graph/graph.hpp"
 #include "siann/host/interfaces.hpp"
+#include "siann/rt/latest_mailbox.hpp"
 #include "siann/rt/spsc_queue.hpp"
 
 namespace siann::realtime {
@@ -39,6 +41,20 @@ namespace detail {
 struct Handoff {
     graph::PreparedGraph* graph = nullptr;
     std::uint64_t epoch = 0;
+};
+
+// The readings of every MeterNode for one block, in schedule order. `entries`
+// is sized once on the control side; the audio thread fills its first `count`.
+struct MeterFrame {
+    struct Entry {
+        graph::NodeId slot = 0;
+        graph::MeterReading reading{};
+    };
+    std::uint64_t epoch = 0;
+    std::int64_t blockStart = 0;
+    int frames = 0;
+    std::size_t count = 0;
+    std::vector<Entry> entries;
 };
 }  // namespace detail
 
@@ -62,11 +78,26 @@ struct ParamChange {
     int rampFrames = 0;
 };
 
+// One meter reading for the dispatcher (spec, "Queues": meterOutbox). `slot`
+// is a MeterNode of the graph with `epoch`; the reading covers the `frames`
+// frames from timeline position `blockStart`, measured inside the graph, so
+// before the driver's duck and rise fades.
+struct MeterSample {
+    std::uint64_t epoch = 0;
+    graph::NodeId slot = 0;
+    std::int64_t blockStart = 0;
+    int frames = 0;
+    graph::MeterReading reading{};
+};
+
 class GraphDriver {
 public:
     struct Options {
         int fadeFrames = 240;  // 5 ms at 48 kHz
         std::chrono::milliseconds ackTimeout{500};
+        // MeterNodes metered per block; readings of further ones are dropped
+        // and counted.
+        std::size_t meterCapacity = 1024;
     };
 
     explicit GraphDriver(Options options);
@@ -101,6 +132,19 @@ public:
     // the next poll() applies it. A command with `play` starts the transport
     // unless pause() named its generation or a later one.
     bool pushLocate(const TransportCommand& command) noexcept;
+
+    // The control dispatcher's thread only (the single meterOutbox consumer).
+    // meterOutbox is latest-value-wins (spec, "Queues"): every processed block
+    // publishes one frame with a sample per MeterNode of the live graph and
+    // replaces the frame the dispatcher has not read yet, so a read after any
+    // stall returns the newest block, never a stale one. popMeter() returns
+    // the samples of the newest frame not read yet, one per call, and false
+    // when there is none.
+    bool popMeter(MeterSample& sample) noexcept;
+    // Samples that never reached the dispatcher: those of superseded frames
+    // and of MeterNodes past meterCapacity().
+    std::uint64_t meterDrops() const noexcept { return meterDrops_.load(std::memory_order_relaxed); }
+    std::size_t meterCapacity() const noexcept { return options_.meterCapacity; }
 
     // Immediate transport, applied at the next block. Transport (transport.hpp)
     // is the production path: it starts through pushLocate() and pauses here,
@@ -138,6 +182,7 @@ private:
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     void renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept;
     void drainParams() noexcept;
+    void pushMeters(std::int64_t position, int frames) noexcept;
     void applyLocate(const TransportCommand& command) noexcept;
     void send(std::uint64_t epoch);
     void installDirectly(std::uint64_t epoch);
@@ -184,6 +229,9 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<std::uint64_t> pausedThrough_{0};
     std::atomic<std::uint64_t> appliedLocate_{0};
+    rt::LatestMailbox<detail::MeterFrame> meterOutbox_;
+    std::size_t meterCursor_ = 0;  // dispatcher side: next entry of meterOutbox_.front()
+    std::atomic<std::uint64_t> meterDrops_{0};
 };
 
 }  // namespace siann::realtime

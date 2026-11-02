@@ -143,6 +143,31 @@ void BusNode::process(const ProcessContext& context, std::span<const AudioBuffer
     }
 }
 
+void MeterNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                        const AudioBufferView& output) noexcept {
+    const AudioBufferView& in = inputs[0];
+    for (int c = 0; c < channels_; ++c) {
+        const float* src = in.channel(c);
+        float* dst = output.channel(c);
+        float peak = 0.0f;
+        double sumSquares = 0.0;
+        for (int i = 0; i < context.frames; ++i) {
+            const float v = src[i];
+            dst[i] = v;
+            peak = std::max(peak, std::abs(v));
+            sumSquares += static_cast<double>(v) * static_cast<double>(v);
+        }
+        if (c < kMaxMeterChannels) {
+            const auto k = static_cast<std::size_t>(c);
+            reading_.peak[k] = peak;
+            reading_.rms[k] = context.frames > 0
+                                  ? static_cast<float>(std::sqrt(sumSquares / static_cast<double>(context.frames)))
+                                  : 0.0f;
+        }
+    }
+    reading_.channels = std::min(channels_, kMaxMeterChannels);
+}
+
 FakeLatencyNode::FakeLatencyNode(int channels, std::int64_t latency) : channels_(channels), latency_(latency) {}
 
 void FakeLatencyNode::prepare(int) {

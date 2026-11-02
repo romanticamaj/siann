@@ -300,3 +300,100 @@ TEST_CASE("Clip player places media on the timeline", "[nodes]") {
     const std::vector<float> expected = {0, 0, 0, 0, 0, 1.5f, 2.0f, 3.5f, 5.0f, 0, 0, 0};
     CHECK(out == expected);
 }
+
+namespace {
+
+// Block 0: a 0.5-amplitude sine with whole periods on L and a full-scale
+// square on R. Every later block is silence.
+class TestSignalNode final : public Node {
+public:
+    int outputChannels() const override { return 2; }
+    void process(const ProcessContext& context, std::span<const AudioBufferView>,
+                 const AudioBufferView& output) noexcept override {
+        for (int i = 0; i < context.frames; ++i) {
+            if (context.blockStart == 0) {
+                output.channel(0)[i] = sineAt(i);
+                output.channel(1)[i] = (i / 8) % 2 == 0 ? 1.0f : -1.0f;
+            } else {
+                output.channel(0)[i] = 0.0f;
+                output.channel(1)[i] = 0.0f;
+            }
+        }
+    }
+
+    // Period 16, so a 64-frame block holds four whole periods.
+    static float sineAt(int frame) noexcept {
+        const double phase = 2.0 * 3.14159265358979323846 * static_cast<double>(frame % 16) / 16.0;
+        return static_cast<float>(0.5 * std::sin(phase));
+    }
+};
+
+}  // namespace
+
+TEST_CASE("MeterNode passes its input through and reports per-channel peak and RMS per block", "[nodes][meter]") {
+    GraphBuilder b;
+    const NodeId source = b.add(std::make_unique<TestSignalNode>(), "source");
+    auto meterNode = std::make_unique<MeterNode>(2);
+    const MeterNode* meter = meterNode.get();
+    const NodeId m = b.add(std::move(meterNode), "meter");
+    b.connect(source, m);
+    b.setOutput(m);
+    auto graph = std::move(b).compile(64);
+
+    graph->process(ProcessContext{0, 64});
+    for (int i = 0; i < 64; ++i) {
+        CHECK(graph->output().channel(0)[i] == TestSignalNode::sineAt(i));
+        CHECK(graph->output().channel(1)[i] == ((i / 8) % 2 == 0 ? 1.0f : -1.0f));
+    }
+    const MeterReading first = meter->reading();
+    CHECK(first.channels == 2);
+    CHECK(first.peak[0] == 0.5f);
+    CHECK(first.peak[1] == 1.0f);
+    CHECK(std::abs(first.rms[0] - 0.5f / std::sqrt(2.0f)) < 1e-5f);
+    CHECK(std::abs(first.rms[1] - 1.0f) < 1e-6f);
+
+    // Per block, not held.
+    graph->process(ProcessContext{64, 64});
+    const MeterReading second = meter->reading();
+    CHECK(second.peak[0] == 0.0f);
+    CHECK(second.peak[1] == 0.0f);
+    CHECK(second.rms[0] == 0.0f);
+    CHECK(second.rms[1] == 0.0f);
+}
+
+TEST_CASE("compile() lists metered nodes with their NodeIds in schedule order", "[graph][meter]") {
+    GraphBuilder b;
+    // The master meter is added before the track meter but runs after it.
+    const NodeId source = b.add(std::make_unique<TestSignalNode>(), "source");
+    const NodeId masterMeter = b.add(std::make_unique<MeterNode>(2), "master.meter");
+    const NodeId fader = b.add(std::make_unique<TrackFaderNode>(2, -6'000, 0, false), "fader");
+    const NodeId trackMeter = b.add(std::make_unique<MeterNode>(2), "track.meter");
+    const NodeId master = b.add(std::make_unique<BusNode>(2), "master");
+    b.connect(source, fader);
+    b.connect(fader, trackMeter);
+    b.connect(trackMeter, master);
+    b.connect(master, masterMeter);
+    b.setOutput(masterMeter);
+    auto graph = std::move(b).compile(64);
+
+    const auto metered = graph->meteredNodes();
+    REQUIRE(metered.size() == 2);
+    CHECK(metered[0] == trackMeter);
+    CHECK(metered[1] == masterMeter);
+
+    graph->process(ProcessContext{0, 64});
+    const MeterReading track = graph->meterReading(trackMeter);
+    const MeterReading mix = graph->meterReading(masterMeter);
+    CHECK(track.channels == 2);
+    CHECK(track.peak[1] == gainFromMilliDb(-6'000));
+    CHECK(mix.peak[0] == track.peak[0]);
+    CHECK(mix.rms[1] == track.rms[1]);
+    // An unmetered or unknown node reads as empty.
+    CHECK(graph->meterReading(fader).channels == 0);
+    CHECK(graph->meterReading(99).channels == 0);
+
+    GraphBuilder plain;
+    const NodeId only = plain.add(std::make_unique<BusNode>(1), "bus");
+    plain.setOutput(only);
+    CHECK(std::move(plain).compile(64)->meteredNodes().empty());
+}

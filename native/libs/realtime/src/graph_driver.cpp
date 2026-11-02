@@ -7,7 +7,16 @@
 
 namespace siann::realtime {
 
-GraphDriver::GraphDriver(Options options) : options_(options) {
+namespace {
+// Every meterOutbox buffer gets its entries here, on the control side.
+detail::MeterFrame emptyMeterFrame(std::size_t capacity) {
+    detail::MeterFrame frame;
+    frame.entries.resize(capacity);
+    return frame;
+}
+}  // namespace
+
+GraphDriver::GraphDriver(Options options) : options_(options), meterOutbox_(emptyMeterFrame(options.meterCapacity)) {
     if (options_.fadeFrames <= 0) {
         throw std::invalid_argument("fadeFrames must be positive");
     }
@@ -97,6 +106,19 @@ bool GraphDriver::pushParam(const ParamChange& change) noexcept {
 
 bool GraphDriver::pushLocate(const TransportCommand& command) noexcept {
     return transportInbox_.push(command);
+}
+
+bool GraphDriver::popMeter(MeterSample& sample) noexcept {
+    while (meterCursor_ >= meterOutbox_.front().count) {
+        if (!meterOutbox_.take()) {
+            return false;
+        }
+        meterCursor_ = 0;
+    }
+    const detail::MeterFrame& frame = meterOutbox_.front();
+    const detail::MeterFrame::Entry& entry = frame.entries[meterCursor_++];
+    sample = MeterSample{frame.epoch, entry.slot, frame.blockStart, frame.frames, entry.reading};
+    return true;
 }
 
 void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
@@ -292,12 +314,35 @@ void GraphDriver::drainParams() noexcept {
     }
 }
 
+void GraphDriver::pushMeters(std::int64_t position, int frames) noexcept {
+    detail::MeterFrame& frame = meterOutbox_.back();
+    frame.epoch = currentEpoch_;
+    frame.blockStart = position;
+    frame.frames = frames;
+    frame.count = 0;
+    std::uint64_t dropped = 0;
+    for (const graph::NodeId slot : current_->meteredNodes()) {
+        if (frame.count < frame.entries.size()) {
+            frame.entries[frame.count++] = detail::MeterFrame::Entry{slot, current_->meterReading(slot)};
+        } else {
+            ++dropped;  // full: drop, never wait
+        }
+    }
+    if (meterOutbox_.publish()) {
+        dropped += meterOutbox_.back().count;  // the dispatcher never read that frame
+    }
+    if (dropped != 0) {
+        meterDrops_.fetch_add(dropped, std::memory_order_relaxed);
+    }
+}
+
 void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames) noexcept {
     const bool playing = playing_.load(std::memory_order_acquire);
     const std::int64_t position = playhead_.load(std::memory_order_relaxed);
     const host::AudioBufferView* source = nullptr;
     if (current_ != nullptr && playing) {
         current_->process(graph::ProcessContext{position, frames});
+        pushMeters(position, frames);
         source = &current_->output();
         playhead_.store(position + frames, std::memory_order_release);
     }
