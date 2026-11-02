@@ -154,6 +154,9 @@ public:
     // One pass of the butler loop; tests call it instead of start().
     void runOnce();
 
+    // Non-realtime: underruns summed over every registered stream.
+    std::uint64_t underruns() const noexcept;
+
 private:
     friend class StreamingPlayerNode;
     struct Release {

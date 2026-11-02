@@ -9,8 +9,8 @@
 // and a track fader, all into the master bus, plus the entity-to-slot map the
 // control dispatcher addresses parameters with ("track:<trackId>" -> fader).
 //
-// PlaybackEngine owns the graph driver, the control dispatcher, the butler and
-// the disk streams. Its methods run on one non-realtime control thread; the
+// PlaybackEngine owns the graph driver, the control dispatcher, the transport,
+// the butler and the disk streams. Its methods run on one non-realtime control thread; the
 // audio thread only runs the driver's callback. Fader gestures move the sound
 // through the parameter channel; ending one commits exactly one revision on
 // the caller's thread.
@@ -30,6 +30,7 @@
 #include "siann/realtime/control_dispatcher.hpp"
 #include "siann/realtime/disk_stream.hpp"
 #include "siann/realtime/graph_driver.hpp"
+#include "siann/realtime/transport.hpp"
 #include "siann/session/session.hpp"
 
 namespace siann::playback {
@@ -41,6 +42,10 @@ struct PlaybackOptions {
     realtime::Butler::Options butler{};
     // false: the caller drives butler().runOnce() itself (tests).
     bool butlerThread = true;
+    // true: start() plays at once from the playhead. false: the transport
+    // stays stopped until transport().play().
+    bool playOnStart = true;
+    realtime::Transport::Options transport{};
 };
 
 struct CompiledPlayback {
@@ -69,7 +74,7 @@ public:
     void load();
 
     // Starts the butler thread (unless disabled), then plays the driver from
-    // the playhead and starts the device.
+    // the playhead (unless playOnStart is false) and starts the device.
     void start(host::AudioDevice& device, const host::AudioDeviceConfig& config);
     void stop();
 
@@ -86,7 +91,7 @@ public:
     const command::Revision* endGesture(const std::string& trackId, std::uint32_t paramId, std::string actor,
                                         std::string time);
 
-    // Control thread: dispatcher tick and driver poll.
+    // Control thread: transport and dispatcher ticks, then the driver poll.
     void tick();
 
     // Underruns summed over every stream.
@@ -95,6 +100,7 @@ public:
     realtime::GraphDriver& driver() noexcept { return driver_; }
     realtime::Butler& butler() noexcept { return butler_; }
     realtime::ControlDispatcher& dispatcher() noexcept { return dispatcher_; }
+    realtime::Transport& transport() noexcept { return transport_; }
     const std::map<std::string, graph::NodeId>& slots() const noexcept { return slots_; }
     std::size_t streamCount() const noexcept { return streams_.size(); }
     session::Session& session() noexcept { return session_; }
@@ -107,6 +113,7 @@ private:
     realtime::Butler butler_;
     realtime::GraphDriver driver_;
     realtime::ControlDispatcher dispatcher_;
+    realtime::Transport transport_;
     std::map<std::string, graph::NodeId> slots_;
     bool loaded_ = false;
 };

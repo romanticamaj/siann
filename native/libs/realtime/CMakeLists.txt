@@ -3,6 +3,7 @@ add_library(siann_realtime
   src/control_dispatcher.cpp
   src/disk_stream.cpp
   src/recorder.cpp
+  src/transport.cpp
 )
 add_library(siann::realtime ALIAS siann_realtime)
 target_include_directories(siann_realtime PUBLIC include)
@@ -17,6 +18,7 @@ if(SIANN_BUILD_TESTS)
     tests/params_test.cpp
     tests/streaming_test.cpp
     tests/recording_test.cpp
+    tests/transport_test.cpp
   )
   target_link_libraries(siann_realtime_tests PRIVATE siann::realtime siann::host_fake siann::media siann_rt_alloc_guard
                         Catch2::Catch2WithMain)

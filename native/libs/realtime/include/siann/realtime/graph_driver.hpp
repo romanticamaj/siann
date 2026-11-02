@@ -42,15 +42,18 @@ struct Handoff {
 };
 }  // namespace detail
 
-// One parameter change for the audio thread (revision 3.1, "Two channels into
-// the audio thread"). `slot` is a node of the graph with `epoch`.
 // A transport command for the audio thread (revision 3.1, "Locate"). The
-// dispatcher sends a locate only after the butler is ready for its generation.
+// dispatcher sends a locate only after the butler is ready for its generation
+// (or its timeout passed). `play` starts the transport at the same block
+// boundary: play from stop is a locate to the current position with `play`.
 struct TransportCommand {
     std::uint64_t generation = 0;
     std::int64_t position = 0;
+    bool play = false;
 };
 
+// One parameter change for the audio thread (revision 3.1, "Two channels into
+// the audio thread"). `slot` is a node of the graph with `epoch`.
 struct ParamChange {
     std::uint64_t epoch = 0;
     graph::NodeId slot = 0;
@@ -95,14 +98,26 @@ public:
     // The control dispatcher's thread only. While playing, the audio thread
     // ducks the output, moves the playhead, tells the graph (so streaming
     // nodes switch to the prepared data) and fades back in. While stopped,
-    // the next poll() applies it.
+    // the next poll() applies it. A command with `play` starts the transport
+    // unless pause() named its generation or a later one.
     bool pushLocate(const TransportCommand& command) noexcept;
 
-    // Transport, applied at the next block. M2 step 1 uses atomics; the
-    // dispatcher and paramInbox replace them.
-    void play() noexcept { playing_.store(true, std::memory_order_release); }
-    void pause() noexcept { playing_.store(false, std::memory_order_release); }
+    // Immediate transport, applied at the next block. Transport (transport.hpp)
+    // is the production path: it starts through pushLocate() and pauses here,
+    // passing the newest generation it has sent so that a start still queued
+    // in transportInbox cannot restart the transport.
+    void play() noexcept { playing_.store(true); }
+    void pause(std::uint64_t throughGeneration = 0) noexcept {
+        if (throughGeneration > pausedThrough_.load()) {
+            pausedThrough_.store(throughGeneration);
+        }
+        playing_.store(false);
+    }
+    bool playing() const noexcept { return playing_.load(); }
     std::int64_t playhead() const noexcept { return playhead_.load(std::memory_order_acquire); }
+    // The generation of the last locate the audio thread (or poll() while
+    // stopped) applied.
+    std::uint64_t appliedLocate() const noexcept { return appliedLocate_.load(std::memory_order_acquire); }
 
     // While stopped: the recorder receives every input block (its own
     // arming decides what is kept). Pass nullptr to detach.
@@ -164,7 +179,11 @@ private:
     int duckRemaining_ = 0;
     int riseRemaining_ = 0;
     std::atomic<std::int64_t> playhead_{0};
+    // Sequentially consistent: pause() and a starting locate must agree on
+    // the final state (see applyLocate).
     std::atomic<bool> playing_{false};
+    std::atomic<std::uint64_t> pausedThrough_{0};
+    std::atomic<std::uint64_t> appliedLocate_{0};
 };
 
 }  // namespace siann::realtime
