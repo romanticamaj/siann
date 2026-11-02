@@ -583,8 +583,12 @@ The documented precision is shown to users and agents.
 - Opening a session whose rate differs from the device: the engine first asks the
   device to run at the session rate (ASIO, CoreAudio nominal rate, WASAPI exclusive,
   ALSA). If the device cannot, for example WASAPI shared mode fixed at the OS mix
-  rate, the engine plays through device-side sample-rate conversion (SRC). The
-  session is never silently converted. A backend that would accept any rate and
+  rate, the engine plays through device-side sample-rate conversion (SRC). Backends
+  differ in how "cannot" shows: ASIO falls back to a rate it supports on its own,
+  while WASAPI exclusive mode and CoreAudio refuse to open at an unsupported rate.
+  A refused open is therefore retried once at the device's own current rate, and
+  only a device that opens at neither is an error. The session is never silently
+  converted. A backend that would accept any rate and
   convert it itself (JUCE's WASAPI shared mode, "Windows Audio", which asks the OS
   converter with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) is not asked for the session
   rate: it is opened at its own mix rate, so the conversion is the engine's SRC and
