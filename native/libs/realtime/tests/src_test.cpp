@@ -1,7 +1,8 @@
 // Device-side sample-rate conversion (architecture spec, "Device-side SRC
 // (M2)"). The limits come from the spec's Tests bullet: +/-0.1 dB at 1, 10 and
 // 18 kHz, residual below -96 dB, tones between the device and session Nyquist
-// below -96 dB when downsampling, impulses on the expected sample +/-1.
+// below -96 dB wherever output or input SRC downsamples, impulses on the
+// expected sample +/-1.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -328,6 +329,49 @@ TEST_CASE("Sine and impulse through input SRC", "[src][record]") {
         const auto peak = test::peakIndex(samples);
         INFO("peak at " << peak);
         CHECK(std::llabs(peak - expected) <= 1);
+    }
+}
+
+TEST_CASE("Device-input tones above the session Nyquist do not alias into the take", "[src][record]") {
+    // A 44.1 kHz session on a 48 kHz device (the M2 exit setup): the input SRC
+    // downsamples. A device-input tone between the session Nyquist (22.05 kHz)
+    // and the device Nyquist (24 kHz) cannot be represented in the take.
+    // Anything left of it folds to sessionRate - f (21.1 kHz for 23 kHz), so
+    // all that may remain in the take is below -96 dB relative to the tone.
+    TempDir dir;
+    const auto rate = static_cast<double>(kUp.device);
+    for (const double frequency : {22'060.0, 22'100.0, 22'500.0, 23'000.0, 23'500.0, 23'990.0}) {
+        INFO("device-input tone " << frequency << " Hz");
+        std::uint64_t allocations = 0;
+        const auto result = record(
+            kUp,
+            [&](int, std::int64_t frame) {
+                return static_cast<float>(kAmplitude *
+                                          std::sin(2.0 * std::numbers::pi * frequency * static_cast<double>(frame) / rate));
+            },
+            3 * kUp.device, dir.path() / "alias.wav", &allocations);
+        CHECK(allocations == 0);
+        CHECK(result.overflows == 0);
+        const auto take = readWav(result.file);
+        CHECK(take.info.sampleRate == kUp.session);
+        REQUIRE(take.info.frames >= 2 * kUp.session);
+        const auto samples = channel0(take);
+        const std::span<const float> second(samples.data() + kUp.session, static_cast<std::size_t>(kUp.session));
+        // Everything in the take is alias, image or noise: its RMS relative to
+        // the tone's (amplitude / sqrt 2).
+        double sum = 0.0;
+        for (const float v : second) {
+            sum += static_cast<double>(v) * static_cast<double>(v);
+        }
+        const double rms = std::sqrt(sum / static_cast<double>(second.size()));
+        const double levelDb = test::toDb(rms / (kAmplitude / std::numbers::sqrt2));
+        // The alias itself, measured as a fitted sine at its folded frequency.
+        const double alias = static_cast<double>(kUp.session) - frequency;
+        const auto fit = test::fitSine(second, alias, static_cast<double>(kUp.session));
+        const double aliasDb = test::toDb(fit.amplitude / kAmplitude);
+        INFO("take level " << levelDb << " dB, alias at " << alias << " Hz " << aliasDb << " dB");
+        CHECK(levelDb <= -96.0);
+        CHECK(aliasDb <= -96.0);
     }
 }
 
