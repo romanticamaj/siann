@@ -147,6 +147,9 @@ public:
         // the audio thread) after a graph was retired and destroyed: swapped
         // out and acknowledged, superseded before it was sent, or released by
         // stop. The owner frees what only that graph used, such as streams.
+        // A latency recompile shares the node instances of the graph it came
+        // from, so the callback fires once per family: with the epoch
+        // publish() returned, when the last graph of that family is retired.
         std::function<void(std::uint64_t epoch)> onRetired;
     };
 

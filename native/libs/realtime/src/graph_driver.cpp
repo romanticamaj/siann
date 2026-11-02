@@ -223,9 +223,19 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
 }
 
 void GraphDriver::retire(std::uint64_t epoch) {
-    families_.erase(epoch);
-    if (owned_.erase(epoch) != 0 && options_.onRetired) {
-        options_.onRetired(epoch);
+    const auto found = families_.find(epoch);
+    const std::uint64_t family = found != families_.end() ? found->second : epoch;
+    if (found != families_.end()) {
+        families_.erase(found);
+    }
+    if (owned_.erase(epoch) == 0 || !options_.onRetired) {
+        return;
+    }
+    // A latency recompile still playing keeps the family's instances alive.
+    const bool familyLeft = std::any_of(families_.begin(), families_.end(),
+                                        [family](const auto& entry) { return entry.second == family; });
+    if (!familyLeft) {
+        options_.onRetired(family);
     }
 }
 
