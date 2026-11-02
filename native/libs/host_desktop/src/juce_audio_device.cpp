@@ -97,6 +97,31 @@ bool JuceAudioDevice::convertsSampleRateItself(const std::string& deviceType) {
     return deviceType == "Windows Audio";
 }
 
+void JuceAudioDevice::openWithRateFallback(const std::string& deviceType, std::int64_t sessionRate,
+                                           const std::function<std::string(double rate)>& tryOpen) {
+    // A backend that converts any rate itself is opened at its own rate (0 asks
+    // JUCE for the device default, the OS mix rate), so a session at another
+    // rate plays through the engine's SRC and is never silently converted.
+    if (convertsSampleRateItself(deviceType) || sessionRate <= 0) {
+        const std::string error = tryOpen(0.0);
+        if (!error.empty()) {
+            throw DeviceError("device_open_failed", error);
+        }
+        return;
+    }
+    const std::string refused = tryOpen(static_cast<double>(sessionRate));
+    if (refused.empty()) {
+        return;
+    }
+    // WASAPI exclusive mode and CoreAudio refuse a rate they cannot run at
+    // instead of falling back; the device's own rate plays through SRC.
+    const std::string error = tryOpen(0.0);
+    if (!error.empty()) {
+        throw DeviceError("device_open_failed", "at " + std::to_string(sessionRate) + " Hz: " + refused +
+                                                    "; at the device's own rate: " + error);
+    }
+}
+
 AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
     close();
     impl_->types = createTypes();
@@ -138,15 +163,14 @@ AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
         inputs.setRange(0, config.inputChannels, true);
     }
     outputs.setRange(0, config.outputChannels, true);
-    // A backend that converts any rate itself is opened at its own rate (0 asks
-    // JUCE for the device default, the OS mix rate), so a session at another
-    // rate plays through the engine's SRC and is never silently converted.
-    const double requested =
-        convertsSampleRateItself(type->getTypeName().toStdString()) ? 0.0 : static_cast<double>(config.sampleRate);
-    const juce::String error = impl_->device->open(inputs, outputs, requested, config.bufferFrames);
-    if (error.isNotEmpty()) {
+    try {
+        openWithRateFallback(type->getTypeName().toStdString(), config.sampleRate, [&](double rate) {
+            impl_->device->close();  // a no-op unless a refused attempt left it half open
+            return impl_->device->open(inputs, outputs, rate, config.bufferFrames).toStdString();
+        });
+    } catch (const DeviceError&) {
         impl_->device.reset();
-        throw DeviceError("device_open_failed", error.toStdString());
+        throw;
     }
     // The rate the device actually runs at, which may differ from the request.
     const double rate = impl_->device->getCurrentSampleRate();
