@@ -1262,8 +1262,16 @@ node instances and every compensation delay line whose length is unchanged
 them retires); only the delay lines whose compensation changed are rebuilt.
 The swap ramps only the affected edges (rebuilt delay lines and edges leaving
 the node whose latency changed), holds them at zero until the rebuilt lines
-are full, then raises them; unaffected paths are untouched. A recompile keeps
-every slot, so parameter changes for the original epoch still apply.
+are full, then raises them; unaffected paths are untouched. A recompile that
+arrives while a rise is still running (start-up, after a locate, or the hold
+and rise of an earlier recompile) ducks the whole output instead, and the
+affected edges, plus those an earlier hold still covers, are held after the
+swap all the same. A recompile keeps every slot, so parameter changes for the
+original epoch still apply. A recompile that fails (a path above the
+compensation limit) leaves the live graph playing with its old compensation
+and is flagged through `latencyFault()` on the graph driver and the playback
+engine (node, new latency, error code) until a later recompile succeeds; the
+protocol event that reports it to clients and agents arrives with M3.
 Structural edits (other publishes) and locates still duck the whole output.
 
 M3 can start in parallel with M2 because M2's meter test page already needs the
