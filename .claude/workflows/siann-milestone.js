@@ -1,7 +1,7 @@
 export const meta = {
   name: 'siann-milestone',
   description: 'Run one SIANN milestone: spec check, TDD implementation per feature in worktrees, independent verification, spec review, landing, exit check',
-  whenToUse: 'When the maintainer asks to run a milestone, e.g. "用 siann-milestone workflow 跑 M2". Args: {milestone: "M2", features?: [ids], maxRounds?: 2, land?: true}',
+  whenToUse: 'When the maintainer asks to run a milestone, e.g. "用 siann-milestone workflow 跑 M2". Args: {milestone: "M2", features?: [ids], maxRounds?: 2, land?: true, checked?: false}',
   phases: [
     { title: 'Preflight', detail: 'read the manifest, check main, CI and the local checks' },
     { title: 'Plan', detail: 'Fable checks each feature against the spec', model: 'fable' },
@@ -17,6 +17,8 @@ const M = input.milestone
 if (!M) throw new Error('args.milestone is required, e.g. {milestone: "M2"}')
 const MAX_ROUNDS = input.maxRounds || 2
 const LAND = input.land !== false
+// checked: true means the caller already confirmed main CI is green; preflight then only reads the manifest.
+const CHECKED = input.checked === true
 const ONLY = Array.isArray(input.features) && input.features.length ? input.features : null
 
 const RULES = 'docs/harness/agent-rules.md'
@@ -146,6 +148,7 @@ const pre = await agent(
   `1. Read ${MANIFEST} and return it (id, status, humanGates, features with done=true for features whose work is already merged on main — check git log and the code, exit).\n` +
   `2. Check: the working tree of the main checkout is clean or only has unrelated untracked files; origin/main is fetched; the latest CI run on main is green (gh run list --branch main --limit 1; if it is still running, wait for it with gh run watch <id> --exit-status and do not give up early).\n` +
   `3. CI on main covers Windows, macOS, Linux and GCC, so a green run for the current origin/main commit is enough. Only if that run is red or missing, run \`node scripts/check-all.js\` on a fresh worktree of origin/main (git worktree add, then remove it) and wait for it to finish (several minutes: run it in the foreground with a long timeout) before reporting.\n` +
+  (CHECKED ? `The caller already confirmed that CI on main is green: skip steps 2 and 3 and only do step 1 plus the prerequisite check.\n` : ``) +
   `Set ok=false with problems listed when any check fails or a prerequisite in the manifest is not met.`,
   { label: `preflight ${M}`, schema: PREFLIGHT, effort: 'medium' },
 )
