@@ -78,10 +78,17 @@ public:
         return status_;
     }
 
+    // Control side, before start(): the run's length in device frames, given
+    // the rate the inner device reported at open(). start() applies it as the
+    // frame limit before the inner device starts, so callbacks that run before
+    // start() returns count toward it. Without one, start() sets no limit.
+    void setRunLength(std::function<std::int64_t(std::int64_t deviceRate)> length) { runLength_ = std::move(length); }
+
     void start(host::AudioCallback callback) override {
         callback_ = std::move(callback);
         frames_.store(0, std::memory_order_release);
         reached_.store(false, std::memory_order_release);
+        limit_.store(runLength_ ? runLength_(status_.sampleRate) : kNoLimit, std::memory_order_release);
         inner_.start([this](const host::AudioBufferView& input, const host::AudioBufferView& output) {
             onCallback(input, output);
         });
@@ -125,6 +132,7 @@ private:
     host::AudioDevice& inner_;
     CallbackTimer& timer_;
     host::AudioCallback callback_;
+    std::function<std::int64_t(std::int64_t)> runLength_;
     host::AudioDeviceStatus status_{};
     std::atomic<std::int64_t> rate_{0};
     std::atomic<std::int64_t> frames_{0};

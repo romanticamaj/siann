@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <random>
@@ -103,7 +104,12 @@ public:
         engine_.load();
     }
 
-    void start(const std::string& deviceId, int bufferFrames, int inputChannels) {
+    // `runLength` (device frames for the device rate, optional) bounds the run
+    // from the device's first callback: it is set before the device starts,
+    // so callbacks that race ahead of the control thread are not added to it.
+    void start(const std::string& deviceId, int bufferFrames, int inputChannels,
+               std::function<std::int64_t(std::int64_t deviceRate)> runLength = nullptr) {
+        timed_.setRunLength(std::move(runLength));
         host::AudioDeviceConfig config;
         config.deviceId = deviceId;
         config.bufferFrames = bufferFrames;
@@ -114,7 +120,9 @@ public:
 
     std::int64_t deviceRate() const noexcept { return timed_.status().sampleRate; }
 
-    // Stops after `frames` more device frames (whole buffers).
+    // Stops after `frames` more device frames (whole buffers), counted from
+    // now: for a run whose length counts from a later event (record counts
+    // from the transport start), not from the device start.
     void runFor(std::int64_t frames) { timed_.setFrameLimit(timed_.frames() + frames); }
 
     // Ticks the engine until the frame limit is reached, the device stops on
@@ -287,8 +295,9 @@ Value cmdPlay(const Args& args, const std::atomic<bool>* interrupt) {
     const std::int64_t end = engine::documentEnd(document);
 
     RealtimeRun run(s, std::move(device), true);
-    run.start(deviceIdOf(args), buffer, 0);
-    run.runFor(seconds ? *seconds * run.deviceRate() : toDeviceFrames(end, sessionRate, run.deviceRate()));
+    run.start(deviceIdOf(args), buffer, 0, [seconds, end, sessionRate](std::int64_t deviceRate) {
+        return seconds ? *seconds * deviceRate : toDeviceFrames(end, sessionRate, deviceRate);
+    });
     run.wait(interrupt);
     run.stop();
 
@@ -415,11 +424,11 @@ Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
     }
 
     RealtimeRun run(s, std::move(device), true);
-    run.start(deviceIdOf(args), buffer, 0);
+    // Without a device rate the run length is 0 frames and bench fails below.
+    run.start(deviceIdOf(args), buffer, 0, [seconds](std::int64_t deviceRate) { return seconds * deviceRate; });
     if (run.deviceRate() <= 0) {
         throw CliError("bench_rate_unknown", "the device reported no sample rate");
     }
-    run.runFor(seconds * run.deviceRate());
     run.wait(interrupt);
     run.stop();
 
