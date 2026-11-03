@@ -583,8 +583,16 @@ The documented precision is shown to users and agents.
 - Opening a session whose rate differs from the device: the engine first asks the
   device to run at the session rate (ASIO, CoreAudio nominal rate, WASAPI exclusive,
   ALSA). If the device cannot, for example WASAPI shared mode fixed at the OS mix
-  rate, the engine plays through device-side sample-rate conversion (SRC). The
-  session is never silently converted.
+  rate, the engine plays through device-side sample-rate conversion (SRC). Backends
+  differ in how "cannot" shows: ASIO falls back to a rate it supports on its own,
+  while WASAPI exclusive mode and CoreAudio refuse to open at an unsupported rate.
+  A refused open is therefore retried once at the device's own current rate, and
+  only a device that opens at neither is an error. The session is never silently
+  converted. A backend that would accept any rate and
+  convert it itself (JUCE's WASAPI shared mode, "Windows Audio", which asks the OS
+  converter with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) is not asked for the session
+  rate: it is opened at its own mix rate, so the conversion is the engine's SRC and
+  is reported, not the OS's default-quality converter.
 
 ### Device-side SRC (M2)
 
@@ -598,7 +606,21 @@ The documented precision is shown to users and agents.
 - The SRC library runs on the audio thread, so it must be allocation-free after
   setup and pass the realtime checks. Candidate: r8brain-free-src streaming mode
   (MIT), verified with the allocation hooks and RealtimeSanitizer before adoption;
-  libsamplerate (BSD-2) is the fallback.
+  libsamplerate (BSD-2) is the fallback. M2 adopts r8brain on two of those three
+  checks, and the third is still owed:
+  - Allocations: the allocation-guard tests run `process()` on a marked audio
+    thread and pump every SRC test through the guarded driver.
+  - Locks and blocking calls: the allocation guard cannot see them, so this rests
+    on a review of r8brain 6.5's source. Its only locks (`CSyncObject`, taken
+    through `R8BSYNC`) guard the shared filter, filter-bank and FFT-object caches.
+    They are taken only when a resampler is constructed or destroyed, which
+    happens on the control thread. `process()` and `clear()` take none and make no
+    system calls.
+  - RealtimeSanitizer: no repo build runs it yet. The M2 exit criterion
+    `m2-exit-rt-safety` adds the Clang RTSan job (or records why the toolchain
+    cannot run it). That job must cover the SRC tests. Until it runs clean,
+    r8brain's adoption is provisional. If RTSan flags its streaming path, M2
+    switches to libsamplerate.
 - SRC latency (input and output filters plus the FIFO) is reported to the latency
   model. The record offset includes it, so recorded clips stay aligned.
 - Recording through input SRC writes files at the session rate. Input monitoring
@@ -610,7 +632,43 @@ The documented precision is shown to users and agents.
 - Tests: sine and impulse through output and input SRC at 44.1 to 48 kHz and 48 to
   44.1 kHz, with frequency response, aliasing and alignment limits; record-offset null
   test through input SRC; the realtime-vs-offline parity test compares against the
-  offline render passed through the same SRC.
+  offline render passed through the same SRC. The limits:
+  - Frequency response: the amplitude of a sine at 1 kHz, 10 kHz and 18 kHz is
+    within +/-0.1 dB after the first second.
+  - Aliasing and noise: the residual after subtracting the least-squares fitted sine
+    is below -96 dB relative to the tone (it covers images, ripple and noise; float32
+    and the attenuation of r8brain's 16-bit-class filter both leave margin). That
+    measures in-band tones only. Aliasing proper is tested on both paths wherever
+    they downsample. On output, a 48 kHz session on a 44.1 kHz device plays a sine
+    between the device Nyquist and the session Nyquist (22.06 to 23.99 kHz). That
+    tone would fold to the device rate minus its frequency. On input, a 44.1 kHz
+    session on a 48 kHz device (the M2 exit setup) records a device-input sine in
+    the same band, which would fold into the take at the session rate minus its
+    frequency. In both cases, everything left of the tone (the folded tone and any
+    other residue) must be below -96 dB relative to the tone.
+  - Parity: the session played through the graph driver on the manual device with
+    SRC active is sample-identical to `renderOffline()` passed through a
+    `StreamResampler` primed and fed as the driver's output SRC is (lookahead and
+    one FIFO block of silence, then whole graph blocks). The document is silent
+    during the driver's start-up fade, so no tolerance is needed.
+  - Alignment: an impulse at a session position that is integral at both rates lands
+    on the expected device sample +/-1 (the peak of |x|, since the linear-phase
+    filter pre-rings).
+  - Record offset: the loopback null test through both SRCs places the impulse peak
+    at its timeline position +/-1 sample.
+- Implementation (M2): r8brain streaming mode, one resampler per channel, built on
+  the control thread. At start the output resampler is fed its lookahead in silence
+  and the FIFO is primed with one block of silence, so the output path delays the
+  session by exactly `srcOutputLatency = lookahead + one graph block` and the first
+  callback never renders more than its share. Each step renders one graph block into
+  the FIFO and feeds the oldest block to the resampler, so the FIFO holds exactly one
+  block between steps; the device-rate output carries over between callbacks.
+  Because whole blocks are rendered, the playhead runs ahead of the audible position
+  by the reported latency plus up to one block of carried output. Recording therefore
+  does not stamp input with the raw playhead under SRC: the audio thread stamps it
+  with the playhead-equivalent position (the timeline position the output path had
+  reached for the matching device sample, plus the reported SRC latency), so the
+  record-offset formula above places takes exactly.
 - Playback streams from disk: a butler thread fills per-track ring buffers ahead of
   the playhead and refills on locate. Media is never fully decoded into RAM except
   for short files below a threshold.

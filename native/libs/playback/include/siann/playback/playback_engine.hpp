@@ -134,7 +134,10 @@ public:
     void load();
 
     // Starts the butler thread (unless disabled), then plays the driver from
-    // the playhead (unless playOnStart is false) and starts the device.
+    // the playhead (unless playOnStart is false) and starts the device, asking
+    // it for the session's sample rate (config.sampleRate is replaced). A
+    // device that runs at another rate plays through device-side SRC;
+    // resampling() says so.
     void start(host::AudioDevice& device, const host::AudioDeviceConfig& config);
     void stop();
 
@@ -179,6 +182,9 @@ public:
     std::size_t compileCount() const noexcept { return compileCount_; }
     // The stream of a track in the most recently published graph, or nullptr.
     const realtime::DiskStream* streamFor(const std::string& trackId) const noexcept;
+
+    // Device-side SRC state of the running (or last started) device.
+    const realtime::ResamplingState& resampling() const noexcept { return driver_.resampling(); }
 
     realtime::GraphDriver& driver() noexcept { return driver_; }
     realtime::Butler& butler() noexcept { return butler_; }

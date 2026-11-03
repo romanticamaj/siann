@@ -11,6 +11,9 @@ AudioDeviceStatus ManualAudioDevice::open(const AudioDeviceConfig& config) {
         throw std::invalid_argument("invalid manual device configuration");
     }
     config_ = config;
+    if (options_.fixedSampleRate > 0) {
+        config_.sampleRate = options_.fixedSampleRate;
+    }
     const auto frames = static_cast<std::size_t>(config.bufferFrames);
     input_.assign(static_cast<std::size_t>(config.inputChannels), std::vector<float>(frames, 0.0f));
     output_.assign(static_cast<std::size_t>(config.outputChannels), std::vector<float>(frames, 0.0f));
@@ -22,7 +25,7 @@ AudioDeviceStatus ManualAudioDevice::open(const AudioDeviceConfig& config) {
     for (auto& c : output_) {
         outputPointers_.push_back(c.data());
     }
-    return AudioDeviceStatus{config.sampleRate, config.bufferFrames, 0, 0};
+    return AudioDeviceStatus{config_.sampleRate, config.bufferFrames, 0, 0};
 }
 
 void ManualAudioDevice::pump(int blocks, std::vector<float>* capture, int channel) {

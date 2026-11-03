@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,6 +19,7 @@
 #include "siann/realtime/graph_driver.hpp"
 #include "siann/realtime/recorder.hpp"
 #include "siann/rt/realtime_thread.hpp"
+#include "support/signal_metrics.hpp"
 
 namespace fs = std::filesystem;
 using namespace siann;
@@ -54,9 +58,9 @@ media::AudioBuffer readWav(const fs::path& file) {
     return media::decodeWav(std::string(std::istreambuf_iterator<char>(in), {}));
 }
 
-host::AudioDeviceConfig config(int inputs) {
+host::AudioDeviceConfig config(int inputs, std::int64_t sampleRate = 48'000) {
     host::AudioDeviceConfig c;
-    c.sampleRate = 48'000;
+    c.sampleRate = sampleRate;
     c.bufferFrames = kBlock;
     c.inputChannels = inputs;
     c.outputChannels = 2;
@@ -179,7 +183,57 @@ TEST_CASE("Loopback null test: a recorded take lands where it was played", "[rec
     REQUIRE(found >= 0);
     // Recording offset (spec, "Latency model"): the monitored path's latency
     // (0 here) plus the device's output and input latency.
-    const std::int64_t offset = 0 + driver.deviceStatus().outputLatencyFrames + driver.deviceStatus().inputLatencyFrames;
+    const std::int64_t offset = driver.latency().recordOffsetFrames;
+    CHECK(offset == 0 + driver.deviceStatus().outputLatencyFrames + driver.deviceStatus().inputLatencyFrames);
     CHECK(offset == 128);
     CHECK(result.startPosition - offset + found == 10'000);
+}
+
+TEST_CASE("Loopback null test through input and output SRC", "[record][latency][src]") {
+    TempDir dir;
+    // A 44.1 kHz session on a device fixed at 48 kHz; the impulse at timeline
+    // sample 14,700 (1/3 s). Device latencies of 160 and 320 frames are 147 and
+    // 294 session frames.
+    auto impulse = std::make_shared<graph::PlanarAudio>();
+    impulse->channels = 1;
+    impulse->frames = 1;
+    impulse->data = {{1.0f}};
+    GraphDriver driver({});
+    driver.publish(clipGraph({{14'700, 0, 1, 1.0f, impulse}}));
+    Recorder recorder(1, Recorder::Options{});
+    driver.attachRecorder(&recorder);
+
+    host::FakeAudioDevice::Options options;
+    options.fixedSampleRate = 48'000;
+    options.loopback = true;
+    options.inputLatencyFrames = 160;
+    options.outputLatencyFrames = 320;
+    host::FakeAudioDevice device(options);
+    recorder.start(dir.path() / "take.wav", 44'100);
+    driver.play();
+    const auto before = rt::allocationViolations();
+    driver.start(device, config(1, 44'100));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (driver.playhead() < 22'050 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    driver.stop();
+    CHECK(rt::allocationViolations() == before);
+    const auto result = recorder.stop();
+    CHECK(result.overflows == 0);
+
+    const auto latency = driver.latency();
+    CHECK(driver.resampling().active);
+    CHECK(latency.inputLatencyFrames == 147);
+    CHECK(latency.outputLatencyFrames == 294);
+    CHECK(latency.recordOffsetFrames ==
+          294 + 147 + latency.srcOutputLatencyFrames + latency.srcInputLatencyFrames);
+
+    const auto take = readWav(result.file);
+    CHECK(take.info.sampleRate == 44'100);
+    const auto peak = test::peakIndex(std::span<const float>(take.samples.data(), take.samples.size()));
+    REQUIRE(peak >= 0);
+    const std::int64_t placed = result.startPosition - latency.recordOffsetFrames + peak;
+    INFO("placed at " << placed);
+    CHECK(std::llabs(placed - 14'700) <= 1);
 }

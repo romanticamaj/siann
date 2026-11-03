@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "siann/host/fake_audio_device.hpp"
+#include "siann/host/manual_audio_device.hpp"
 #include "siann/rt/realtime_thread.hpp"
 
 using siann::host::AudioBufferView;
@@ -147,4 +148,39 @@ TEST_CASE("The device loop itself does not allocate", "[fake_device][alloc]") {
     waitFor([&] { return !device.running(); });
     device.stop();
     CHECK(siann::rt::allocationViolations() == before);
+}
+
+TEST_CASE("A rate-fixed device reports its own rate", "[fake_device]") {
+    // Like WASAPI shared mode: the device runs at its mix rate whatever is asked.
+    FakeAudioDevice::Options options;
+    options.fixedSampleRate = 48'000;
+    FakeAudioDevice device(options);
+    auto requested = config();
+    requested.sampleRate = 44'100;
+    const auto status = device.open(requested);
+    CHECK(status.sampleRate == 48'000);
+    CHECK(status.bufferFrames == 64);
+    std::atomic<bool> sized{true};
+    device.start([&](const AudioBufferView&, const AudioBufferView& out) {
+        sized.store(sized.load() && out.frames == 64);
+        out.clear();
+    });
+    waitFor([&] { return device.callbacks() > 10; });
+    device.stop();
+    CHECK(sized.load());
+
+    // Without the option the device follows the request.
+    FakeAudioDevice follows({});
+    CHECK(follows.open(requested).sampleRate == 44'100);
+
+    siann::host::ManualAudioDevice::Options manualOptions;
+    manualOptions.fixedSampleRate = 48'000;
+    siann::host::ManualAudioDevice manual(manualOptions);
+    CHECK(manual.open(requested).sampleRate == 48'000);
+    int frames = 0;
+    manual.start([&](const AudioBufferView&, const AudioBufferView& out) { frames += out.frames; });
+    manual.pump(3);
+    CHECK(frames == 3 * 64);
+    siann::host::ManualAudioDevice manualFollows;
+    CHECK(manualFollows.open(requested).sampleRate == 44'100);
 }

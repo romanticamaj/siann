@@ -359,10 +359,12 @@ void PlaybackEngine::start(host::AudioDevice& device, const host::AudioDeviceCon
     if (options_.butlerThread) {
         butler_.start();
     }
+    host::AudioDeviceConfig sessionConfig = config;
+    sessionConfig.sampleRate = session_.history().head().document.root().sampleRate;
     if (options_.playOnStart) {
         driver_.play();
     }
-    driver_.start(device, config);
+    driver_.start(device, sessionConfig);
 }
 
 void PlaybackEngine::stop() {
