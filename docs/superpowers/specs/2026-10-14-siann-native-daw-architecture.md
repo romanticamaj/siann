@@ -628,7 +628,8 @@ The documented precision is shown to users and agents.
 - The SRC library runs on the audio thread, so it must be allocation-free after
   setup and pass the realtime checks. Candidate: r8brain-free-src streaming mode
   (MIT), verified with the allocation hooks and RealtimeSanitizer before adoption;
-  libsamplerate (BSD-2) is the fallback. M2 adopts r8brain on all three checks:
+  libsamplerate (BSD-2) is the fallback. M2 adopts r8brain on two of those three
+  checks; the third is wired up but not yet observed:
   - Allocations: the allocation-guard tests run `process()` on a marked audio
     thread and pump every SRC test through the guarded driver.
   - Locks and blocking calls: the allocation guard cannot see them, so this rests
@@ -642,9 +643,15 @@ The documented precision is shown to users and agents.
     test inside a realtime scope, and the sine, aliasing, impulse and
     record-offset tests through the graph driver on the manual device), both in
     the full ctest run and as an explicit `siann_realtime_tests "[src]"` step.
-    It runs clean: r8brain's streaming path makes no allocation, lock or
-    blocking call, so the adoption is final and libsamplerate is not needed.
-    Bringing the job up fixed these, none of them in SIANN's realtime path or
+    The result is pending the first green run of the RTSan job (on the
+    `m2-rtsan-ci` pull request, then on `main`); until then r8brain's adoption
+    is provisional. The job has not been run locally: no machine used for M2
+    has Clang 20. When it is green, this bullet records that run (its Actions
+    link) and r8brain's adoption becomes final. If RTSan flags r8brain's
+    streaming path, M2 switches to libsamplerate; any other report is listed
+    here with its fix.
+    Before the first run, a review against the realtime rules (not a sanitizer
+    report) found and fixed these, none of them in SIANN's realtime path or
     r8brain: the fake device held the realtime scope across its pacing and
     stall sleeps (now per callback), a capture vector grew inside a
     fake-device callback (now reserved), the SRC test asserted inside its
@@ -1473,7 +1480,7 @@ M2 exit check (2026-11-03), on `main` at 0ca829a. `node scripts/check-all.js
 | Realtime PDC null tests, including a latency change during playback (`m2-exit-pdc`) | Met | `ctest -R pdc`: 22 tests pass, including the four realtime null tests through the graph driver, the four "latency change during playback is recompiled and nulls again" tests and the offline/realtime parity test. |
 | A fader gesture through the parameter channel commits one revision (`m2-exit-gesture`) | Met | `siann-playback` test "A fader gesture moves the sound through the parameter channel and ending it commits exactly one revision", plus the pan and mute gesture tests. |
 | Record 10 minutes and recover after a kill (`m2-exit-record`) | Met locally; the scheduled CI run is owed after merge | `siann_cli_tests "[long]"` (hidden from the default ctest run, guarded by `siann_cli_long_tests_hidden` and `siann_cli_long_tests_listed`): "A 10-minute take records every frame of the counter and commits" records 600 s of device time on the fake device at 4x with the counter input and checks 28,800,000 frames, zero overflows and every sample on one consecutive counter; "A 10-minute take killed at 9 minutes recovers every flushed block" kills the child once its ready file reports 540 s durable and recovers at least those frames, content checked the same way. Both pass on Windows (dev preset, Debug): 154 s and 139 s. They run nightly and on `workflow_dispatch` in `.github/workflows/long-tests.yml` (Linux and Windows). The CLI kill test "A recording siann-cli killed mid-take leaves a pending take that recovers" now waits on `--ready-file` instead of polling the WAV header and the manifest the child rewrites (a reader could make the child's atomic replace fail on Windows) and passed 20 consecutive runs (`ctest -R "killed mid-take" --repeat until-fail:20`). |
-| Realtime-safety checks clean: allocation guard on every realtime test, RTSan where Clang is available (`m2-exit-rt-safety`) | Met | Every realtime test binary links `siann_rt_alloc_guard` (rt, realtime, playback, host_fake, host_desktop, cli). The CI job "Native core RTSan (ubuntu, Clang 20)" (`m2-rtsan-ci`) builds the core with Clang 20 from apt.llvm.org and `-DSIANN_RTSAN=ON`, runs all 300 ctest tests with `RTSAN_OPTIONS=halt_on_error=1` (the 296 of the dev preset plus the four `siann_rtsan_canary_*` tests: allocation, lock and sleep inside the realtime scope are reported, and nothing is reported under the disabler), then `siann_realtime_tests "[src]"` explicitly. It must be green on the PR and on `main`; r8brain's adoption is final (see "Device-side SRC (M2)"). |
+| Realtime-safety checks clean: allocation guard on every realtime test, RTSan where Clang is available (`m2-exit-rt-safety`) | Not met; pending the first green run of the RTSan job | Every realtime test binary links `siann_rt_alloc_guard` (rt, realtime, playback, host_fake, host_desktop, cli). The CI job "Native core RTSan (ubuntu, Clang 20)" (`m2-rtsan-ci`) is defined: it builds the core with Clang 20 from apt.llvm.org, `-DSIANN_RTSAN=ON` and `-DSIANN_WERROR=ON`, runs the whole ctest suite with `RTSAN_OPTIONS=halt_on_error=1` (the dev preset's tests plus the four `siann_rtsan_canary_*` tests, which expect allocation, lock and sleep inside the realtime scope to be reported and nothing under the disabler), then `siann_realtime_tests "[src]"` explicitly. It has not run yet (no machine used for M2 has Clang 20), so whether it builds and passes is pending the first green run of the RTSan job on the PR and on `main`. On green, this row becomes Met with the run's Actions link and test count, and r8brain's adoption becomes final (see "Device-side SRC (M2)"). |
 
 Kill criterion (persistent xruns): not triggered so far; it can only be judged
 after the device bench runs.
