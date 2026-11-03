@@ -380,6 +380,20 @@ Value cmdRecover(const Args& args) {
     return ok({{"takeId", Value(takeId)}, {"revision", revisionJson(*revision)}});
 }
 
+Object benchTiming(const CallbackTimer& timer) {
+    if (timer.callbacks() == 0) {
+        throw CliError("bench_no_callbacks", "the device ran no callback");
+    }
+    if (timer.unmeasured() > 0) {
+        throw CliError("bench_rate_unknown",
+                       "the device reported no sample rate, so callbacks cannot be checked against a deadline");
+    }
+    return Object{{"callbacks", decimal(timer.callbacks())},
+                  // Deadline misses: callbacks longer than their buffer period.
+                  {"xruns", decimal(timer.misses())},
+                  {"maxCallbackMicros", Value(static_cast<double>(timer.maxCallbackNanos()) / 1'000.0)}};
+}
+
 Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
     const fs::path bundle = pathFromUtf8(args.at(1, "bundle"));
     const std::int64_t tracks = requiredPositive(args, "tracks");
@@ -402,22 +416,24 @@ Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
 
     RealtimeRun run(s, std::move(device), true);
     run.start(deviceIdOf(args), buffer, 0);
+    if (run.deviceRate() <= 0) {
+        throw CliError("bench_rate_unknown", "the device reported no sample rate");
+    }
     run.runFor(seconds * run.deviceRate());
     run.wait(interrupt);
     run.stop();
 
-    const CallbackTimer& timer = run.timer();
+    Object timing = benchTiming(run.timer());
     Object out{{"bundle", Value(pathToUtf8(bundle))},
                {"generated", Value(generate)},
                {"tracks", number(tracks)},
                {"seconds", number(seconds)},
                {"bufferFrames", number(run.engine().driver().deviceStatus().bufferFrames)},
                {"deviceRate", number(run.deviceRate())},
-               {"sessionRate", number(document.root().sampleRate)},
-               {"callbacks", decimal(timer.callbacks())},
-               // Deadline misses: callbacks longer than their buffer period.
-               {"xruns", decimal(timer.misses())},
-               {"maxCallbackMicros", Value(static_cast<double>(timer.maxCallbackNanos()) / 1'000.0)}};
+               {"sessionRate", number(document.root().sampleRate)}};
+    for (auto& field : timing) {
+        out.push_back(std::move(field));
+    }
     run.report(out);
     return ok(std::move(out));
 }

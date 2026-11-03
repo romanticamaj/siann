@@ -14,6 +14,10 @@
 #include "siann/command/history.hpp"
 #include "siann/hash/json.hpp"
 
+namespace siann::cli {
+class CallbackTimer;
+}
+
 namespace siann::cli::detail {
 
 class UsageError : public std::runtime_error {
@@ -76,5 +80,11 @@ json::Value cmdPlay(const Args& args, const std::atomic<bool>* interrupt);
 json::Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt);
 json::Value cmdBench(const Args& args, const std::atomic<bool>* interrupt);
 json::Value cmdRecover(const Args& args);
+
+// The timing fields of a bench result: `callbacks`, `xruns` (the timer's
+// deadline misses) and `maxCallbackMicros`. CliError `bench_no_callbacks` when
+// nothing ran and `bench_rate_unknown` when a callback had no device rate, so
+// an unmeasured run never reports zero xruns.
+json::Object benchTiming(const CallbackTimer& timer);
 
 }  // namespace siann::cli::detail
