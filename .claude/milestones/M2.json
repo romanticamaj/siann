@@ -12,14 +12,21 @@
     "Gestures",
     "Milestones"
   ],
-  "status": "in_progress",
+  "status": "exit_pending",
   "done": [
     "Realtime queues, allocation guard, fake and manual devices (#14)",
     "Graph driver: ownership states, duck-and-swap, retirement, watchdog (#16)",
     "Parameter channel and control dispatcher (#17)",
     "Disk streaming with two-slot locate (#18)",
     "JUCE desktop audio device (#20)",
-    "Write-through recording and crash-safe takes (#21)"
+    "Write-through recording and crash-safe takes (#21)",
+    "Playback engine: play a session document through the graph driver (#24)",
+    "Structural edits while playing (#25)",
+    "Transport orchestration: play, stop, locate with butler handshake and timeout (#26)",
+    "Meters through meterOutbox (#27)",
+    "Realtime PDC and runtime latency changes (#28)",
+    "Device-side sample-rate conversion (#29)",
+    "siann-cli device, play, record and bench commands (#30)"
   ],
   "prerequisites": [],
   "humanGates": [],
