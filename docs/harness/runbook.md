@@ -19,7 +19,7 @@ M2 → M3 → M0 → M4 → M5 → M6a → M6b → M6c → M7. M0 waits for the 
 ## Before each run
 
 1. `git checkout main && git pull`, working tree clean.
-2. `node scripts/check-all.js --gcc` passes locally.
+2. The latest CI run on main is green (preflight waits for it; the local `node scripts/check-all.js --gcc` is optional).
 3. In Claude Code `/config`, raise **Dynamic workflow size** (a milestone uses roughly 5 to 8 agents per feature; M2 with 7 features needs about 50).
 4. Read the manifest's `humanGates` and `prerequisites`; settle what you can up front.
 
