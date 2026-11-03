@@ -118,11 +118,16 @@ TEST_CASE("bench generates a bundle and reports callbacks, deadline misses and c
     CHECK(j.find("generated")->asBool());
     REQUIRE(isDecimalString(j.find("callbacks")));
     CHECK(j.find("callbacks")->asString() == std::to_string((48'000 + 255) / 256));
-    // Deadline misses depend on the machine: CI only checks the field's shape.
-    CHECK(isDecimalString(j.find("xruns")));
+    // Whether a deadline is missed depends on the machine, but xruns must agree
+    // with the longest callback: at least one miss exactly when it exceeded the
+    // 256 / 48000 s period (callback_timer_test forces misses deterministically).
+    REQUIRE(isDecimalString(j.find("xruns")));
     REQUIRE(j.find("maxCallbackMicros") != nullptr);
     CHECK(j.find("maxCallbackMicros")->kind() == Value::Kind::number);
     CHECK(j.find("maxCallbackMicros")->asNumber() > 0.0);
+    const double periodMicros = 256.0 * 1'000'000.0 / 48'000.0;
+    const bool missed = std::stoll(j.find("xruns")->asString()) > 0;
+    CHECK(missed == (j.find("maxCallbackMicros")->asNumber() > periodMicros));
     CHECK(j.find("bufferFrames")->asNumber() == 256);
     CHECK(j.find("deviceRate")->asNumber() == 48'000);
     CHECK(j.find("sessionRate")->asNumber() == 48'000);
