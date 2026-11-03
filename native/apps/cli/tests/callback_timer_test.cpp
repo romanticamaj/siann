@@ -2,7 +2,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../src/callback_timer.hpp"
@@ -118,6 +120,95 @@ TEST_CASE("TimedDevice times every forwarded callback and stops forwarding at it
     CHECK(captured[3 * 256 - 1] == 1.0f);
     CHECK(captured[3 * 256] == 0.0f);  // past the limit the device outputs silence
     CHECK(captured[4 * 256 - 1] == 0.0f);
+    device.stop();
+    device.close();
+}
+
+// A device whose first callbacks run inside start(), before start() returns,
+// as FakeAudioDevice's thread may do (its first callback is issued as soon as
+// the thread starts): nothing the control thread sets after start() can
+// bound them.
+namespace {
+class EagerDevice final : public siann::host::AudioDevice {
+public:
+    explicit EagerDevice(int blocksInStart) : blocksInStart_(blocksInStart) {}
+    siann::host::AudioDeviceStatus open(const siann::host::AudioDeviceConfig& config) override {
+        return inner.open(config);
+    }
+    void start(siann::host::AudioCallback callback) override {
+        inner.start(std::move(callback));
+        inner.pump(blocksInStart_, &captured);
+    }
+    void setOnStopped(std::function<void(bool lost)> handler) override { inner.setOnStopped(std::move(handler)); }
+    void stop() override { inner.stop(); }
+    void close() override { inner.close(); }
+
+    siann::host::ManualAudioDevice inner;
+    std::vector<float> captured;
+
+private:
+    int blocksInStart_;
+};
+}  // namespace
+
+TEST_CASE("TimedDevice bounds a run length set before start, callbacks that run inside start included", "[cli][bench]") {
+    EagerDevice inner(4);  // four blocks of 256 run before start() returns
+    CallbackTimer timer;
+    TimedDevice device(inner, timer);
+    std::int64_t rateSeen = 0;
+    // 1/100 s of device frames: 480 at 48 kHz, reached inside the second block.
+    device.setRunLength([&rateSeen](std::int64_t deviceRate) {
+        rateSeen = deviceRate;
+        return deviceRate / 100;
+    });
+    REQUIRE(device.open(siann::host::AudioDeviceConfig{"", 48'000, 256, 0, 1}).sampleRate == 48'000);
+
+    int calls = 0;
+    device.start([&calls](const siann::host::AudioBufferView&, const siann::host::AudioBufferView& output) {
+        ++calls;
+        for (int i = 0; i < output.frames; ++i) {
+            output.channel(0)[i] = 1.0f;
+        }
+    });
+    CHECK(rateSeen == 48'000);  // the length is computed from the rate the device opened at
+    CHECK(calls == 2);
+    CHECK(timer.callbacks() == 2);
+    CHECK(device.frames() == 512);
+    CHECK(device.limitReached());
+    REQUIRE(inner.captured.size() == 4 * 256);
+    CHECK(inner.captured[2 * 256 - 1] == 1.0f);
+    CHECK(inner.captured[2 * 256] == 0.0f);
+
+    // A later start runs for the same length again, from zero.
+    device.stop();
+    inner.captured.clear();
+    calls = 0;
+    device.start([&calls](const siann::host::AudioBufferView&, const siann::host::AudioBufferView& output) {
+        ++calls;
+        output.clear();
+    });
+    CHECK(calls == 2);
+    CHECK(device.frames() == 512);
+    device.stop();
+    device.close();
+}
+
+TEST_CASE("TimedDevice without a run length forwards every callback until a frame limit is set", "[cli][bench]") {
+    EagerDevice inner(3);
+    CallbackTimer timer;
+    TimedDevice device(inner, timer);
+    REQUIRE(device.open(siann::host::AudioDeviceConfig{"", 48'000, 256, 0, 1}).sampleRate == 48'000);
+    int calls = 0;
+    device.start([&calls](const siann::host::AudioBufferView&, const siann::host::AudioBufferView& output) {
+        ++calls;
+        output.clear();
+    });
+    CHECK(calls == 3);
+    CHECK_FALSE(device.limitReached());
+    device.setFrameLimit(device.frames() + 256);
+    inner.inner.pump(3);
+    CHECK(calls == 4);
+    CHECK(device.limitReached());
     device.stop();
     device.close();
 }
