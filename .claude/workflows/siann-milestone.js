@@ -144,8 +144,8 @@ phase('Preflight')
 const pre = await agent(
   `${common}\n\nPreflight for milestone ${M}. Do not modify any file.\n` +
   `1. Read ${MANIFEST} and return it (id, status, humanGates, features with done=true for features whose work is already merged on main — check git log and the code, exit).\n` +
-  `2. Check: the working tree of the main checkout is clean or only has unrelated untracked files; origin/main is fetched; the latest CI run on main is green (gh run list --branch main --limit 1).\n` +
-  `3. Run \`node scripts/check-all.js --gcc\` on a fresh worktree of origin/main (git worktree add, then remove it) and report failures.\n` +
+  `2. Check: the working tree of the main checkout is clean or only has unrelated untracked files; origin/main is fetched; the latest CI run on main is green (gh run list --branch main --limit 1; if it is still running, wait for it with gh run watch <id> --exit-status and do not give up early).\n` +
+  `3. CI on main covers Windows, macOS, Linux and GCC, so a green run for the current origin/main commit is enough. Only if that run is red or missing, run \`node scripts/check-all.js\` on a fresh worktree of origin/main (git worktree add, then remove it) and wait for it to finish (several minutes: run it in the foreground with a long timeout) before reporting.\n` +
   `Set ok=false with problems listed when any check fails or a prerequisite in the manifest is not met.`,
   { label: `preflight ${M}`, schema: PREFLIGHT, effort: 'medium' },
 )
