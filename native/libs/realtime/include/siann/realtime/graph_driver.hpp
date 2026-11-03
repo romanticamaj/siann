@@ -288,7 +288,8 @@ public:
     const ResamplingState& resampling() const noexcept { return resampling_; }
     const LatencyReport& latency() const noexcept { return latency_; }
 
-    // Device frames the SRC path could not fill (output as silence).
+    // Device frames the SRC path could not fill (output as silence). This is SRC
+    // underfill, reported as `srcUnderruns`; it is not an xrun (deadline miss).
     std::uint64_t xruns() const noexcept { return xruns_.load(std::memory_order_acquire); }
 
     DriverState state() const noexcept { return state_; }

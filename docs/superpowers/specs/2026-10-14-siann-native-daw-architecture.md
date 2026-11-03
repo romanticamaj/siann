@@ -325,7 +325,7 @@ gesture boundaries (see "Gestures").
 | `controlInbox` | protocol, main, command, butler → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate, seek-ready | bounded; never waited on: coalesce per key or reply `queue_full` |
 | `commandInbox` | protocol, main, compiler, butler, dispatcher → command | MPSC, mutex | requests, completions, gesture commits | bounded; never waited on: reply `queue_full`; gesture commits are coalesced per target |
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
-| `diskRing[track][2]` | butler → audio | two SPSC rings per playing track: the current and the pending slot | audio frames of one seek generation per slot | underrun outputs silence and counts an xrun |
+| `diskRing[track][2]` | butler → audio | two SPSC rings per playing track: the current and the pending slot | audio frames of one seek generation per slot | underrun outputs silence and counts a disk underrun (not an xrun) |
 | `butlerRequest` | audio → butler | SPSC | refill hints (track, consumed position); slot releases after a locate | latest-wins per track for hints; releases are never coalesced; the butler also polls |
 | `butlerControl` | command → butler | MPSC, mutex | add stream (with start position and the locate generation it was read under), remove stream | bounded; never waited on; completions (stream ready, stream released) are atomics read by the command thread on its tick; if a new stream is not ready within 1 s the graph is published anyway, and the player outputs silence and counts underruns until the butler has taken it |
 | `seekRequest` | dispatcher → butler | MPSC, mutex | target position + generation | a newer generation replaces an older one |
@@ -676,7 +676,7 @@ The documented precision is shown to users and agents.
   the playhead and refills on locate. Media is never fully decoded into RAM except
   for short files below a threshold.
 - Underrun: the audio thread outputs silence for the missing samples, increments an
-  xrun counter and emits an event; it never waits.
+  underrun counter (not an xrun) and emits an event; it never waits.
 - Peak data is a multi-resolution pyramid computed on the butler thread and cached
   beside the media.
 
