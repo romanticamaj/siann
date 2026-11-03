@@ -27,17 +27,19 @@ Recorder::~Recorder() {
 }
 
 void Recorder::start(const std::filesystem::path& file, std::int64_t sampleRate,
-                     std::function<void(std::int64_t)> onStart) {
+                     std::function<void(std::int64_t)> onStart, std::function<void(std::int64_t)> onCheckpoint) {
     if (writer_) {
         throw std::logic_error("the recorder is already recording");
     }
     writer_ = std::make_unique<media::WavStreamWriter>(file, channels_, sampleRate);
     file_ = file;
     onStart_ = std::move(onStart);
+    onCheckpoint_ = std::move(onCheckpoint);
     startReported_ = false;
     ring_.reset();  // the audio thread is not capturing: armed_ is false
     startPosition_.store(kNoStart, std::memory_order_relaxed);
     overflows_.store(0, std::memory_order_relaxed);
+    captured_.store(0, std::memory_order_relaxed);
     lastCheckpoint_ = std::chrono::steady_clock::now();
     if (options_.writerThread) {
         writerRunning_.store(true, std::memory_order_release);
@@ -68,6 +70,12 @@ Recorder::Result Recorder::stop() {
         result.startPosition = 0;
     }
     writer_.reset();
+    std::function<void(std::int64_t)> onCheckpoint = std::move(onCheckpoint_);
+    onStart_ = nullptr;
+    onCheckpoint_ = nullptr;
+    if (onCheckpoint) {
+        onCheckpoint(result.frames);  // close() checkpointed every frame
+    }
     return result;
 }
 
@@ -96,6 +104,9 @@ void Recorder::drain() {
     if (now - lastCheckpoint_ >= options_.checkpointInterval) {
         writer_->checkpoint();
         lastCheckpoint_ = now;
+        if (onCheckpoint_) {
+            onCheckpoint_(writer_->frames());  // every appended frame is in the flushed header
+        }
     }
 }
 
@@ -108,15 +119,21 @@ void Recorder::writerLoop() {
 
 void Recorder::capture(const host::AudioBufferView& input, std::int64_t timelinePosition, bool playing) noexcept {
     inCapture_.store(true);
-    if (armed_.load() && playing && input.frames > 0) {
+    std::int64_t frames = input.frames;
+    if (options_.maxFrames >= 0) {
+        // Only this thread writes captured_ while armed.
+        frames = std::min(frames, options_.maxFrames - captured_.load(std::memory_order_relaxed));
+    }
+    if (armed_.load() && playing && frames > 0) {
         if (startPosition_.load(std::memory_order_relaxed) == kNoStart) {
             startPosition_.store(timelinePosition, std::memory_order_release);
         }
-        const auto frames = static_cast<std::size_t>(input.frames);
-        if (ring_.writable() < frames) {
+        const auto n = static_cast<std::size_t>(frames);
+        if (ring_.writable() < n) {
             overflows_.fetch_add(1, std::memory_order_relaxed);  // reported, never a block
         } else {
-            ring_.write(input, frames);
+            ring_.write(input, n);
+            captured_.fetch_add(frames, std::memory_order_release);
         }
     }
     inCapture_.store(false, std::memory_order_release);

@@ -31,6 +31,9 @@ public:
         std::size_t ringFrames = 1u << 18;  // about 5 s at 48 kHz
         std::chrono::milliseconds checkpointInterval{1'000};
         bool writerThread = true;  // tests may drain by hand with drain()
+        // Captures at most this many frames per take (mid-block if needed);
+        // negative: no cap.
+        std::int64_t maxFrames = -1;
     };
 
     struct Result {
@@ -50,14 +53,24 @@ public:
     int channels() const noexcept { return channels_; }
 
     // Control side. onStart runs on the writer thread before the first write.
+    // onCheckpoint runs on the writer side after each checkpoint has been
+    // flushed, with the frames the WAV header now makes durable; stop() reports
+    // its final checkpoint too (on the calling thread, after the writer thread
+    // has ended).
     void start(const std::filesystem::path& file, std::int64_t sampleRate,
-               std::function<void(std::int64_t startPosition)> onStart = {});
+               std::function<void(std::int64_t startPosition)> onStart = {},
+               std::function<void(std::int64_t durableFrames)> onCheckpoint = {});
 
     // Control side. Stops capturing, waits until the audio thread has left
     // capture() (at most one block), writes the rest and closes the file.
     Result stop();
 
     bool recording() const noexcept { return armed_.load(std::memory_order_acquire); }
+
+    // Any thread: the take has reached Options::maxFrames.
+    bool captureComplete() const noexcept {
+        return options_.maxFrames >= 0 && captured_.load(std::memory_order_acquire) >= options_.maxFrames;
+    }
 
     // Writer side, for tests that run without the writer thread.
     void drain();
@@ -73,6 +86,7 @@ private:
     FrameRing ring_;
     std::unique_ptr<media::WavStreamWriter> writer_;
     std::function<void(std::int64_t)> onStart_;
+    std::function<void(std::int64_t)> onCheckpoint_;
     bool startReported_ = false;
     std::filesystem::path file_;
     std::chrono::steady_clock::time_point lastCheckpoint_{};
@@ -85,6 +99,7 @@ private:
     std::atomic<bool> writerRunning_{false};
     std::atomic<std::int64_t> startPosition_{kNoStart};
     std::atomic<std::uint64_t> overflows_{0};
+    std::atomic<std::int64_t> captured_{0};  // frames written to the ring this take
 };
 
 }  // namespace siann::realtime
