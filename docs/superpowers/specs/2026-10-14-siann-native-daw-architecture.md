@@ -744,7 +744,9 @@ Every command prints one JSON object; exit codes stay 0, 1 (error with a code) a
   sine), checks the track count of an existing one (`bench_track_mismatch`), plays
   it and reports `callbacks`, `xruns` (deadline misses: callback time above
   `frames / deviceRate`, measured around the device callback), `maxCallbackMicros`,
-  and `underruns` and `srcUnderruns` separately.
+  and `underruns` and `srcUnderruns` separately. A run that cannot measure deadlines
+  fails instead of reporting zero xruns: `bench_rate_unknown` when the device
+  reports no sample rate, `bench_no_callbacks` when no callback ran.
 
 ## MIDI
 
