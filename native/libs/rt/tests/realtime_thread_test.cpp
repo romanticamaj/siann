@@ -7,8 +7,11 @@ using siann::rt::realtimeSanitizerActive;
 using siann::rt::ScopedRealtimeSanitizerDisabler;
 using siann::rt::ScopedRealtimeThread;
 
+// Set by the rt test target from the SIANN_RTSAN option. The fallback serves
+// builds outside CMake (the g++ syntax check); an RTSan build that lost the
+// definition still fails below, since the sanitizer would then be active.
 #ifndef SIANN_TEST_EXPECT_RTSAN
-#error "the rt test target must define SIANN_TEST_EXPECT_RTSAN from the SIANN_RTSAN option"
+#define SIANN_TEST_EXPECT_RTSAN 0
 #endif
 
 TEST_CASE("The RealtimeSanitizer hook follows the SIANN_RTSAN build option", "[rt][rtsan]") {
