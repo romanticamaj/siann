@@ -35,6 +35,34 @@ jobs:
       - name: Test
         run: ctest --test-dir native/build/ci -C Debug --output-on-failure
 
+  # Clang RealtimeSanitizer over the whole native suite (realtime, playback,
+  # host_fake, cli and the sanitizer canaries). Every audio callback runs in
+  # siann::rt::ScopedRealtimeThread, which is the sanitizer's realtime context
+  # in this build, so any allocation, lock or blocking call on the audio path
+  # fails the job. RTSan needs Clang 20+, which ubuntu-24.04 does not ship;
+  # apt.llvm.org provides it. Apple Clang has no RTSan, so macOS is not covered.
+  rtsan:
+    name: Native core RTSan (ubuntu, Clang 20)
+    runs-on: ubuntu-24.04
+    env:
+      RTSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Clang 20 from apt.llvm.org
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          sudo apt-get install -y libclang-rt-20-dev ninja-build
+          clang++-20 --version
+      - name: Configure
+        run: cmake -S native -B native/build/rtsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_RTSAN=ON
+      - name: Build
+        run: cmake --build native/build/rtsan --parallel
+      - name: Test
+        run: ctest --test-dir native/build/rtsan --output-on-failure --no-tests=error
+      - name: SRC tests through r8brain under RTSan
+        run: native/build/rtsan/libs/realtime/siann_realtime_tests "[src]"
+
   desktop:
     name: Desktop host with JUCE (${{ matrix.os }})
     strategy:
