@@ -66,3 +66,45 @@ test('the RTSan job runs the [src] tests through r8brain explicitly', () => {
   const { text } = rtsanJob();
   assert.match(text, /native\/build\/rtsan\/libs\/realtime\/siann_realtime_tests\s+"\[src\]"/);
 });
+
+// The spec may only report the job's outcome (green, clean, r8brain adoption
+// final, m2-exit-rt-safety Met) once a run has been observed, and then it
+// cites that run. Until then it says the result is pending the first green run.
+const SPEC = path.join(__dirname, '..', 'docs', 'superpowers', 'specs', '2026-10-14-siann-native-daw-architecture.md');
+const RUN_LINK = /github\.com\/romanticamaj\/siann\/actions\/runs\/\d+/;
+
+function specText() {
+  return fs.readFileSync(SPEC, 'utf8').replace(/\r\n/g, '\n');
+}
+
+// The RealtimeSanitizer sub-bullet of "Device-side SRC (M2)", up to the next bullet.
+function srcRtsanBullet(spec) {
+  const start = spec.indexOf('\n  - RealtimeSanitizer:');
+  assert.ok(start >= 0, 'the "Device-side SRC (M2)" section has a RealtimeSanitizer bullet');
+  const rest = spec.slice(start + 1);
+  const end = rest.slice(1).search(/\n {0,2}- /);
+  return end < 0 ? rest : rest.slice(0, end + 1);
+}
+
+test('the spec claims a clean RTSan run and final r8brain adoption only with a cited run', () => {
+  const bullet = srcRtsanBullet(specText());
+  const claims = /runs clean|adoption is final|libsamplerate is not needed|bringing the job up fixed/i;
+  if (claims.test(bullet)) {
+    assert.match(bullet, RUN_LINK, 'a clean-run claim cites the CI run that showed it');
+  } else {
+    assert.match(bullet, /pending the first green run/i, 'without a cited run the bullet says the result is pending');
+    assert.match(bullet, /provisional/i, 'without a cited run r8brain adoption stays provisional');
+  }
+});
+
+test('m2-exit-rt-safety is marked Met only with a cited green RTSan run', () => {
+  const row = specText().split('\n').find((line) => /^\|.*\(`m2-exit-rt-safety`\)/.test(line));
+  assert.ok(row, 'the M2 exit table has an m2-exit-rt-safety row');
+  const [, , status, evidence] = row.split('|').map((cell) => cell.trim());
+  if (status === 'Met') {
+    assert.match(evidence, RUN_LINK, 'Met cites the green RTSan CI run');
+  } else {
+    assert.match(evidence, /pending the first green run/i);
+  }
+  assert.doesNotMatch(evidence, /runs all \d+ ctest tests/, 'the test count is reported from a run, not derived');
+});
