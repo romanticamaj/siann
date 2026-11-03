@@ -147,7 +147,10 @@ revision 3".
 manual runs:
 
 - 64 tracks at 48 kHz, 128-sample buffer, 30 minutes playback, zero xruns on a
-  reference machine per platform.
+  reference machine per platform. An xrun here is a deadline miss: a device
+  callback that took longer than its buffer period (`frames / deviceRate`).
+  Disk-stream underruns and device-side SRC underfill are counted and reported
+  separately, and must be zero as well (`siann-cli bench` reports all three).
 - PDC error of 0 samples across direct, send, aux and sidechain paths (null tests).
 - One hour of 16-track recording with a forced engine kill at a random time loses at
   most the last 1 second of audio and no session edits before the last journal fsync.
@@ -710,6 +713,38 @@ The documented precision is shown to users and agents.
   recorded files are never deleted by undo or rollback. Unreferenced takes move to a
   trash folder inside the session and are purged only by an explicit command.
 - The record offset follows the latency model.
+
+### siann-cli realtime commands (M2)
+
+The headless CLI drives the realtime engine for tests, benchmarks and manual runs.
+Every command prints one JSON object; exit codes stay 0, 1 (error with a code) and
+2 (usage).
+
+- `devices` lists output devices as `{type, name, isDefault}`; the device id
+  accepted by `--device` is `"<type>/<name>"`. `--device fake` selects a paced
+  software device with loopback (`FakeAudioDevice`), so every command runs on CI
+  without hardware. A CLI built without JUCE (the dev preset) reports
+  `no_audio_backend` for every real device instead of failing to build; device
+  failures report `no_device` or `device_open_failed`.
+- `play <bundle> [--seconds S] [--buffer F] [--device ID]` plays from the start
+  (default: to the document end) and reports `framesPlayed` in device frames,
+  disk-stream `underruns`, SRC underfill as `srcUnderruns`, the resampling state
+  and the latency report.
+- `record <bundle> --track ID [--seconds S] [--take-id ID]` attaches a recorder
+  while the driver is stopped, starts the device with the transport stopped,
+  begins the take with `recordOffset = recordOffsetFrames` of the opened device,
+  starts the recorder (its first frame marks the take start), then plays. It runs
+  for S seconds of device frames, or until SIGINT / Ctrl+C without `--seconds`,
+  then stops and commits the take as one revision. Recorder overflows are reported;
+  the take is still committed.
+- `info` lists pending takes; `recover <bundle> <takeId>` commits a pending take
+  (the same operation as the commit after recording).
+- `bench <bundle> --tracks N --buffer F --seconds S [--rate HZ]` generates the
+  bundle when it does not exist (N tracks, one clip each on one shared generated
+  sine), checks the track count of an existing one (`bench_track_mismatch`), plays
+  it and reports `callbacks`, `xruns` (deadline misses: callback time above
+  `frames / deviceRate`, measured around the device callback), `maxCallbackMicros`,
+  and `underruns` and `srcUnderruns` separately.
 
 ## MIDI
 
@@ -1290,7 +1325,7 @@ review instead of pushing on.
 |---|---|---|---|
 | M0 Spike | Electron + engine helper process on macOS and Windows; JUCE hosting inside the engine helper process; IXWebSocket server; `siann-host-api` interfaces drafted | Engine starts/stops with the app; renderer connects with token handshake; one third-party VST3 and one AU load, save/restore state, report latency, open editors; signed (Developer ID, hardened runtime) and notarized macOS build runs, built by hand once; focus/Cmd-Tab behavior acceptable | No acceptable editor-window behavior on macOS after 2 weeks: evaluate engine-in-main-process or Tracktion |
 | M1 Headless core | time, midi, model, command, revision DAG, journal WAL, checkpoints, session bundle, JCS and Merkle hashing, `siann-host-api`, minimal graph (GraphCompiler, PreparedGraph, ClipPlayerNode, TrackNode with gain, BusNode, SendNode, SidechainNode, MeterNode, FakeLatency), WAV/FLAC decode via dr_libs, offline import conversion, synchronous offline render, CLI | CLI creates a session, imports audio, places clips, sets gain, renders WAV; replay gives identical document hashes; offline PDC null tests pass across direct, send, aux and sidechain paths with static `FakeLatency`; a kill at each commit step (after blob write, after journal append, during checkpoint replace) recovers correctly; Node and C++ pass the same JCS, hash and time fixtures | Structural sharing too slow for 500-track documents: revisit data structure |
-| M2 Realtime engine | graph driver, control dispatcher and queues from revision 3 (tested first against a fake audio device), JUCE device, transport, single-threaded graph, structural and parameter channels, outboxes, retire queue, state migration, runtime latency changes, disk streaming, input node, simple recording to disk, device-side SRC | 32 tracks playback without xruns at 256 samples, also with SRC active (44.1 kHz session on a 48 kHz WASAPI shared device); SRC quality and record-offset tests pass; realtime PDC null tests pass, including a latency change during playback; gesture via parameter channel; record 10 minutes and recover after kill; realtime-safety checks clean | Persistent xruns not fixable within the design: Tracktion decision gate |
+| M2 Realtime engine | graph driver, control dispatcher and queues from revision 3 (tested first against a fake audio device), JUCE device, transport, single-threaded graph, structural and parameter channels, outboxes, retire queue, state migration, runtime latency changes, disk streaming, input node, simple recording to disk, device-side SRC | 32 tracks playback without xruns (deadline misses, measured by `siann-cli bench`; disk underruns and SRC underfill also zero) at 256 samples, also with SRC active (44.1 kHz session on a 48 kHz WASAPI shared device); SRC quality and record-offset tests pass; realtime PDC null tests pass, including a latency change during playback; gesture via parameter channel; record 10 minutes and recover after kill; realtime-safety checks clean | Persistent xruns not fixable within the design: Tracktion decision gate |
 | M3 Agent access | Protocol server, consistency and security rules, MCP adapter, plans with approval, rollback, audition | An MCP client builds a session through approved plans, rolls back, auditions a branch; reconnect and gap sync tested | — |
 | M4 Plugins | CLAP host first (both targets), then JUCE VST3/AU/LV2; capabilities; hostile test plugin | Third-party plugins load, save state, compensate latency, survive restart; capability flags exposed to agents | — |
 | M5 Desktop UI v1 | Timeline, mixer, plan review UI in Electron | Arrange and mix by hand; review and approve an agent plan visually | — |
