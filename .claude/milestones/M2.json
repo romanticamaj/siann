@@ -12,7 +12,7 @@
     "Gestures",
     "Milestones"
   ],
-  "status": "exit_pending",
+  "status": "in_progress",
   "done": [
     "Realtime queues, allocation guard, fake and manual devices (#14)",
     "Graph driver: ownership states, duck-and-swap, retirement, watchdog (#16)",
@@ -36,7 +36,11 @@
       "title": "Playback engine: play a session document through the graph driver",
       "wave": 1,
       "dependsOn": [],
-      "specRefs": ["Realtime data flow", "Two channels into the audio thread", "Gestures"],
+      "specRefs": [
+        "Realtime data flow",
+        "Two channels into the audio thread",
+        "Gestures"
+      ],
       "acceptance": [
         "A new module (siann-playback) builds a realtime graph from a session document: per track a streaming player, a track fader and the master bus, plus the entity-to-slot map for the control dispatcher.",
         "FLAC media plays through an in-memory MediaReader until a streaming FLAC reader exists.",
@@ -49,8 +53,14 @@
       "id": "m2-live-recompile",
       "title": "Structural edits while playing",
       "wave": 2,
-      "dependsOn": ["m2-playback-engine"],
-      "specRefs": ["Publishing and retiring graphs", "State migration", "Locate"],
+      "dependsOn": [
+        "m2-playback-engine"
+      ],
+      "specRefs": [
+        "Publishing and retiring graphs",
+        "State migration",
+        "Locate"
+      ],
       "acceptance": [
         "The butler adds and removes disk streams while running; a stream is destroyed only after the graph that used it has been retired and the butler has released it.",
         "Streaming players align to the timeline by position (slot start plus frames consumed versus the block start), so a stream created at publish time plays correctly after a later swap.",
@@ -62,8 +72,13 @@
       "id": "m2-transport",
       "title": "Transport orchestration: play, stop, locate with butler handshake and timeout",
       "wave": 2,
-      "dependsOn": ["m2-playback-engine"],
-      "specRefs": ["Locate", "Queues (all bounded, preallocated)"],
+      "dependsOn": [
+        "m2-playback-engine"
+      ],
+      "specRefs": [
+        "Locate",
+        "Queues (all bounded, preallocated)"
+      ],
       "acceptance": [
         "locate(target) goes dispatcher -> butler seek -> ready -> paramInbox locate, with a new generation each time; a newer locate cancels an older one.",
         "If the butler is not ready within 1 s the locate proceeds and underruns are counted and reported.",
@@ -75,8 +90,12 @@
       "id": "m2-meters",
       "title": "Meters through meterOutbox",
       "wave": 2,
-      "dependsOn": ["m2-playback-engine"],
-      "specRefs": ["Queues (all bounded, preallocated)"],
+      "dependsOn": [
+        "m2-playback-engine"
+      ],
+      "specRefs": [
+        "Queues (all bounded, preallocated)"
+      ],
       "acceptance": [
         "Track and master peak and RMS per block go audio -> dispatcher through a latest-value-wins SPSC queue and are readable by a non-realtime consumer with the playhead.",
         "Meter values match values computed offline from the rendered output for a known signal.",
@@ -87,8 +106,14 @@
       "id": "m2-device-src",
       "title": "Device-side sample-rate conversion",
       "wave": 2,
-      "dependsOn": ["m2-playback-engine"],
-      "specRefs": ["Sample rate and media", "Device-side SRC (M2)", "Latency model"],
+      "dependsOn": [
+        "m2-playback-engine"
+      ],
+      "specRefs": [
+        "Sample rate and media",
+        "Device-side SRC (M2)",
+        "Latency model"
+      ],
       "acceptance": [
         "When the device cannot run at the session rate, playback goes through output SRC (pull model, FIFO primed to a fixed fill of one graph block) and recording through input SRC.",
         "The SRC library runs allocation-free on the audio thread after setup (allocation guard); r8brain streaming mode, or libsamplerate as the documented fallback.",
@@ -101,8 +126,13 @@
       "id": "m2-realtime-pdc",
       "title": "Realtime PDC and runtime latency changes",
       "wave": 2,
-      "dependsOn": ["m2-playback-engine"],
-      "specRefs": ["Latency model", "State migration"],
+      "dependsOn": [
+        "m2-playback-engine"
+      ],
+      "specRefs": [
+        "Latency model",
+        "State migration"
+      ],
       "acceptance": [
         "PDC null tests (direct, send, aux, sidechain) pass when played through the graph driver on the manual device, not only offline.",
         "Changing a node's reported latency during playback recompiles the affected paths; delay lines are rebuilt and the paths ducked and restored; the null tests cancel again after the change.",
@@ -113,12 +143,53 @@
       "id": "m2-cli-realtime",
       "title": "siann-cli device, play, record and bench commands",
       "wave": 3,
-      "dependsOn": ["m2-transport", "m2-meters", "m2-live-recompile"],
-      "specRefs": ["Recording", "Production-level criteria"],
+      "dependsOn": [
+        "m2-transport",
+        "m2-meters",
+        "m2-live-recompile"
+      ],
+      "specRefs": [
+        "Recording",
+        "Production-level criteria"
+      ],
       "acceptance": [
         "siann-cli devices lists output devices (desktop build); play <bundle> [--seconds]; record <bundle> --track <id> [--seconds] commits a take; bench <bundle> --tracks N --buffer F --seconds S reports callbacks, xruns (deadline misses measured against the buffer period) and max callback time as JSON.",
         "Without JUCE the commands report a clear error code instead of failing to build.",
         "A test kills a recording siann-cli process mid-take and verifies the take is listed as pending and recovers on the next open."
+      ]
+    },
+    {
+      "id": "m2-long-record",
+      "title": "Long recording test and a stable CLI kill test",
+      "wave": 4,
+      "dependsOn": [
+        "m2-cli-realtime"
+      ],
+      "specRefs": [
+        "Recording",
+        "Production-level criteria"
+      ],
+      "acceptance": [
+        "A test tagged [long] records 10 minutes of device time through the record path (fake device, run faster than realtime where the clock allows) and verifies the committed take: length, sample-exact content and no dropped blocks. It is excluded from the default ctest run and runs in a scheduled or manually triggered CI job.",
+        "The long test also kills the process (or simulates a crash) late in the take and verifies the pending take recovers with every flushed block.",
+        "The CLI kill test (apps/cli/tests/cli_kill_test.cpp) no longer flakes: it waits on an explicit readiness signal instead of a fixed timeout; it passes 20 consecutive local runs."
+      ]
+    },
+    {
+      "id": "m2-rtsan-ci",
+      "title": "RealtimeSanitizer CI job",
+      "wave": 4,
+      "dependsOn": [
+        "m2-cli-realtime"
+      ],
+      "specRefs": [
+        "Build, test and CI",
+        "Production-level criteria"
+      ],
+      "acceptance": [
+        "A Linux CI job builds the native core with Clang 20+ (apt.llvm.org) and -fsanitize=realtime, and runs the realtime, playback, host_fake and cli tests, including the [src] tests through r8brain.",
+        "Realtime entry points (audio callback, graph process) are marked [[clang::nonblocking]] or covered by the sanitizer scope so violations fail the job; any known-unavoidable call is suppressed with a documented reason.",
+        "The job passes on main; the spec records that r8brain adoption is no longer provisional, or lists the violations found and how they were fixed."
       ]
     }
   ],
