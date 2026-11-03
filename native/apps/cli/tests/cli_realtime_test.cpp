@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #include "siann/hash/jcs.hpp"
 #include "siann/rt/realtime_thread.hpp"
+#include "siann/session/session.hpp"
 #include "support/cli_support.hpp"
 
 using namespace siann::cli::test;
@@ -87,6 +89,68 @@ TEST_CASE("record commits a take on a track", "[cli][realtime][record]") {
     REQUIRE(info.json.find("pendingTakes") != nullptr);
     CHECK(info.json.find("pendingTakes")->asArray().empty());
     CHECK(runJson({"verify", bundle}).exitCode == 0);
+}
+
+TEST_CASE("record --seconds records exactly that many session frames from the transport start",
+          "[cli][realtime][record]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+    // 48,000 is not a whole number of 256-frame buffers: the take ends mid-block.
+    const CliResult recorded = runJson({"record", bundle, "--track", "t1", "--device", "fake", "--seconds", "1"});
+    INFO(siann::jcs::canonicalize(recorded.json));
+    REQUIRE(recorded.exitCode == 0);
+    CHECK(recorded.json.find("frames")->asString() == "48000");
+    const std::string takeId = recorded.json.find("takeId")->asString();
+    const auto session = siann::session::Session::open(u8path(bundle));
+    const siann::model::Clip* clip = session.history().head().document.clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->length == 48'000);
+}
+
+TEST_CASE("record --fake-input counter records one consecutive run of the counter, and --ready-file reports it",
+          "[cli][realtime][record][counter]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+    const std::string ready = dir.str("ready.json");
+    const CliResult recorded =
+        runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-input", "counter", "--fake-speed", "4",
+                 "--seconds", "2", "--take-id", "take_counter", "--ready-file", ready});
+    INFO(siann::jcs::canonicalize(recorded.json));
+    REQUIRE(recorded.exitCode == 0);
+    CHECK(recorded.json.find("frames")->asString() == "96000");
+    CHECK(recorded.json.find("overflows")->asString() == "0");
+
+    const CounterCheck content = checkCounterWav(takeMediaFile(u8path(bundle), "take_counter"));
+    INFO(content.problem);
+    REQUIRE(content.readable);
+    CHECK(content.frames == 96'000);
+    CHECK(content.mismatchAt == -1);
+    CHECK(content.firstCounter >= 0);
+
+    // The ready file holds the final checkpoint: every frame of the take.
+    const std::optional<ReadyState> state = readReadyFile(u8path(ready));
+    REQUIRE(state);
+    CHECK(state->takeId == "take_counter");
+    REQUIRE(state->startPosition);
+    CHECK(std::to_string(*state->startPosition) == recorded.json.find("startPosition")->asString());
+    CHECK(state->durableFrames == 96'000);
+    CHECK(runJson({"verify", bundle}).exitCode == 0);
+}
+
+TEST_CASE("The fake device options need --device fake", "[cli][realtime][record]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+    const auto usage = [](const CliResult& r) { return r.exitCode == 2 && errorCode(r) == "usage"; };
+    CHECK(usage(runJson({"record", bundle, "--track", "t1", "--fake-speed", "4", "--seconds", "1"})));
+    CHECK(usage(runJson({"record", bundle, "--track", "t1", "--fake-input", "counter", "--seconds", "1"})));
+    CHECK(usage(runJson({"play", bundle, "--fake-speed", "4", "--seconds", "1"})));
+    CHECK(usage(runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-speed", "0", "--seconds", "1"})));
+    CHECK(usage(runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-input", "noise", "--seconds",
+                         "1"})));
+    CHECK(runJson({"info", bundle}).json.find("pendingTakes")->asArray().empty());
 }
 
 TEST_CASE("record and recover reject unknown tracks and takes", "[cli][realtime][record]") {

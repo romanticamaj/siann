@@ -2,8 +2,10 @@
 
 // A child process that a test can hard-kill: TerminateProcess on Windows,
 // SIGKILL on POSIX. Nothing in the child runs after the kill, as after a
-// crash or a power cut of the engine process.
+// crash or a power cut of the engine process. A test can also wait for it to
+// exit and read what it printed (stdout redirected to a file).
 
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,6 +17,7 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/types.h>
@@ -27,8 +30,10 @@ namespace siann::cli::test {
 
 class ChildProcess {
 public:
-    // Starts `executable` with `args` (UTF-8, without the program name).
-    ChildProcess(const std::string& executable, const std::vector<std::string>& args) {
+    // Starts `executable` with `args` (UTF-8, without the program name). With
+    // `stdoutFile`, the child's stdout goes to that file (created or truncated).
+    ChildProcess(const std::string& executable, const std::vector<std::string>& args,
+                 const std::filesystem::path& stdoutFile = {}) {
 #if defined(_WIN32)
         std::wstring commandLine = quote(widen(executable));
         for (const std::string& arg : args) {
@@ -37,11 +42,32 @@ public:
         }
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
+        HANDLE out = INVALID_HANDLE_VALUE;
+        if (!stdoutFile.empty()) {
+            SECURITY_ATTRIBUTES inherit{};
+            inherit.nLength = sizeof(inherit);
+            inherit.bInheritHandle = TRUE;
+            out = CreateFileW(stdoutFile.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (out == INVALID_HANDLE_VALUE) {
+                throw std::runtime_error("cannot create the child's stdout file: " + std::to_string(GetLastError()));
+            }
+            startup.dwFlags = STARTF_USESTDHANDLES;
+            startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            startup.hStdOutput = out;
+            startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        }
         PROCESS_INFORMATION info{};
         const std::wstring exe = widen(executable);
-        if (!CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup,
-                            &info)) {
-            throw std::runtime_error("CreateProcessW failed: " + std::to_string(GetLastError()));
+        const BOOL created = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr,
+                                            out != INVALID_HANDLE_VALUE ? TRUE : FALSE, 0, nullptr, nullptr, &startup,
+                                            &info);
+        const DWORD error = GetLastError();
+        if (out != INVALID_HANDLE_VALUE) {
+            CloseHandle(out);  // the child holds its own copy
+        }
+        if (!created) {
+            throw std::runtime_error("CreateProcessW failed: " + std::to_string(error));
         }
         CloseHandle(info.hThread);
         process_ = info.hProcess;
@@ -54,7 +80,14 @@ public:
             argv.push_back(s.data());
         }
         argv.push_back(nullptr);
-        const int rc = posix_spawn(&pid_, executable.c_str(), nullptr, nullptr, argv.data(), environ);
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        const std::string out = stdoutFile.string();
+        if (!out.empty()) {
+            posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        }
+        const int rc = posix_spawn(&pid_, executable.c_str(), &actions, nullptr, argv.data(), environ);
+        posix_spawn_file_actions_destroy(&actions);
         if (rc != 0) {
             throw std::runtime_error("posix_spawn failed: " + std::to_string(rc));
         }
@@ -83,9 +116,36 @@ public:
         const pid_t done = waitpid(pid_, &status, WNOHANG);
         if (done == pid_) {
             reaped_ = true;
+            exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
             return false;
         }
         return true;
+#endif
+    }
+
+    // Waits until the child exits on its own and returns its exit code (-1 if
+    // it did not exit normally).
+    int wait() {
+#if defined(_WIN32)
+        if (process_ == nullptr) {
+            return exitCode_;
+        }
+        WaitForSingleObject(process_, INFINITE);
+        DWORD code = 0;
+        exitCode_ = GetExitCodeProcess(process_, &code) ? static_cast<int>(code) : -1;
+        CloseHandle(process_);
+        process_ = nullptr;
+        return exitCode_;
+#else
+        if (pid_ <= 0 || reaped_) {
+            return exitCode_;
+        }
+        int status = 0;
+        while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {
+        }
+        reaped_ = true;
+        exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        return exitCode_;
 #endif
     }
 
@@ -151,6 +211,7 @@ private:
     pid_t pid_ = -1;
     bool reaped_ = false;
 #endif
+    int exitCode_ = -1;
 };
 
 }  // namespace siann::cli::test
