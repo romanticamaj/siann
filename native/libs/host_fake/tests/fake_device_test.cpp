@@ -124,6 +124,9 @@ TEST_CASE("stop() returns only after a slow callback has finished", "[fake_devic
     std::atomic<bool> finished{false};
     device.start([&](const AudioBufferView&, const AudioBufferView&) {
         inside.store(true);
+        // Reason: a callback that blocks on purpose, to check that stop()
+        // waits for it; RealtimeSanitizer would rightly report the sleep.
+        const siann::rt::ScopedRealtimeSanitizerDisabler allowed;
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         finished.store(true);
     });
@@ -172,6 +175,7 @@ TEST_CASE("Loopback delays output into input by the total device latency", "[fak
 
     std::int64_t frame = 0;
     std::vector<float> captured;
+    captured.reserve(20u * 64u);  // filled in the callback: no allocation there
     device.start([&](const AudioBufferView& in, const AudioBufferView& out) {
         for (int i = 0; i < out.frames; ++i) {
             const float v = frame + i == 300 ? 1.0f : 0.0f;  // an impulse at output frame 300

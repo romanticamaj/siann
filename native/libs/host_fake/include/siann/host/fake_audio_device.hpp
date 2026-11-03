@@ -1,7 +1,8 @@
 #pragma once
 
 // A software audio device for tests (architecture spec, "Build, test and CI":
-// "fake device driving callbacks"). Its thread is marked realtime, it honours
+// "fake device driving callbacks"). Each callback runs with its thread marked
+// realtime (the pacing and stall sleeps between callbacks do not), it honours
 // the AudioDevice contract that stop() returns only after the callback has
 // exited, and it can loop output back to input with a fixed latency and
 // simulate unplugging, and run at a fixed rate of its own. Paced, it can run
