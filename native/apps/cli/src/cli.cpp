@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 
+#include "cli_internal.hpp"
 #include "siann/command/command.hpp"
 #include "siann/engine/offline.hpp"
 #include "siann/hash/jcs.hpp"
@@ -15,6 +16,10 @@
 #include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
 
+#if defined(SIANN_CLI_WITH_JUCE)
+#include "siann/host/juce_audio_device.hpp"
+#endif
+
 namespace siann::cli {
 
 namespace fs = std::filesystem;
@@ -22,34 +27,7 @@ using json::Array;
 using json::Object;
 using json::Value;
 
-namespace {
-
-constexpr const char* kUsage =
-    "usage: siann-cli <command> [arguments] [--actor NAME] [--time ISO8601]\n"
-    "  create <bundle> --name NAME [--rate HZ] [--milli-bpm N]\n"
-    "  import <bundle> <file.wav> --media-id ID\n"
-    "  exec <bundle> <command-json | @file>      one command\n"
-    "  plan <bundle> <commands-json | @file>     a JSON array, applied as one revision\n"
-    "  undo <bundle>\n"
-    "  redo <bundle>\n"
-    "  render <bundle> <out.wav> [--start N] [--frames N]\n"
-    "  info <bundle>\n"
-    "  verify <bundle>\n"
-    "  commands\n";
-
-class UsageError : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-class CliError : public std::runtime_error {
-public:
-    CliError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
-    const std::string& code() const noexcept { return code_; }
-
-private:
-    std::string code_;
-};
+namespace detail {
 
 fs::path pathFromUtf8(const std::string& text) {
     return fs::path(std::u8string(text.begin(), text.end()));
@@ -58,58 +36,6 @@ fs::path pathFromUtf8(const std::string& text) {
 std::string pathToUtf8(const fs::path& path) {
     const std::u8string u8 = path.u8string();
     return std::string(u8.begin(), u8.end());
-}
-
-std::string nowUtc() {
-    const std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm tm{};
-#if defined(_WIN32)
-    gmtime_s(&tm, &t);
-#else
-    gmtime_r(&t, &tm);
-#endif
-    char buffer[32];
-    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm);
-    return buffer;
-}
-
-struct Args {
-    std::vector<std::string> positional;
-    std::map<std::string, std::string> options;
-
-    const std::string& at(std::size_t i, const char* what) const {
-        if (i >= positional.size()) {
-            throw UsageError(std::string("missing ") + what);
-        }
-        return positional[i];
-    }
-    std::optional<std::string> option(const std::string& name) const {
-        const auto it = options.find(name);
-        return it == options.end() ? std::nullopt : std::optional<std::string>(it->second);
-    }
-    std::string required(const std::string& name) const {
-        const auto value = option(name);
-        if (!value) {
-            throw UsageError("missing --" + name);
-        }
-        return *value;
-    }
-};
-
-Args parseArgs(const std::vector<std::string>& args) {
-    Args parsed;
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        const std::string& arg = args[i];
-        if (arg.rfind("--", 0) == 0) {
-            if (i + 1 >= args.size()) {
-                throw UsageError("option " + arg + " needs a value");
-            }
-            parsed.options[arg.substr(2)] = args[++i];
-        } else {
-            parsed.positional.push_back(arg);
-        }
-    }
-    return parsed;
 }
 
 std::int64_t integerOption(const Args& args, const std::string& name, std::int64_t fallback) {
@@ -129,20 +55,17 @@ std::int64_t integerOption(const Args& args, const std::string& name, std::int64
     }
 }
 
-Value readJsonArgument(const std::string& argument) {
-    std::string text = argument;
-    if (!argument.empty() && argument[0] == '@') {
-        text = io::readFile(pathFromUtf8(argument.substr(1)));
+std::int64_t positiveOption(const Args& args, const std::string& name, std::int64_t fallback) {
+    const std::int64_t value = integerOption(args, name, fallback);
+    if (value < 1) {
+        throw UsageError("--" + name + " must be a positive integer");
     }
-    try {
-        return json::parse(text);
-    } catch (const json::ParseError& error) {
-        throw CliError("invalid_json", error.what());
-    }
+    return value;
 }
 
-Value str(const std::string& s) {
-    return Value(s);
+std::int64_t requiredPositive(const Args& args, const std::string& name) {
+    args.required(name);
+    return positiveOption(args, name, 0);
 }
 
 Value revisionJson(const command::Revision& revision) {
@@ -163,12 +86,90 @@ Value ok(Object fields) {
     return Value(std::move(fields));
 }
 
+namespace {
+
+std::string nowUtc() {
+    const std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buffer;
+}
+
+}  // namespace
+
 std::string actorOf(const Args& args) {
     return args.option("actor").value_or("cli");
 }
 
 std::string timeOf(const Args& args) {
     return args.option("time").value_or(nowUtc());
+}
+
+}  // namespace detail
+
+namespace {
+
+using namespace detail;
+
+constexpr const char* kUsage =
+    "usage: siann-cli <command> [arguments] [--actor NAME] [--time ISO8601]\n"
+    "  create <bundle> --name NAME [--rate HZ] [--milli-bpm N]\n"
+    "  import <bundle> <file.wav> --media-id ID\n"
+    "  exec <bundle> <command-json | @file>      one command\n"
+    "  plan <bundle> <commands-json | @file>     a JSON array, applied as one revision\n"
+    "  undo <bundle>\n"
+    "  redo <bundle>\n"
+    "  render <bundle> <out.wav> [--start N] [--frames N]\n"
+    "  info <bundle>                             includes pending takes\n"
+    "  verify <bundle>\n"
+    "  commands\n"
+    "realtime (--device fake: a paced software device with loopback; otherwise\n"
+    "a device id from `devices`, or the default output device; real devices\n"
+    "need the desktop build):\n"
+    "  devices\n"
+    "  play <bundle> [--seconds S] [--buffer F] [--device ID]\n"
+    "  record <bundle> --track ID [--seconds S] [--take-id ID] [--buffer F] [--device ID]\n"
+    "                                            without --seconds: until Ctrl+C\n"
+    "  recover <bundle> <takeId>                 commit a take left pending by a crash\n"
+    "  bench <bundle> --tracks N --buffer F --seconds S [--rate HZ] [--device ID]\n"
+    "                                            generates the bundle if it does not exist\n";
+
+Value str(const std::string& s) {
+    return Value(s);
+}
+
+Value readJsonArgument(const std::string& argument) {
+    std::string text = argument;
+    if (!argument.empty() && argument[0] == '@') {
+        text = io::readFile(pathFromUtf8(argument.substr(1)));
+    }
+    try {
+        return json::parse(text);
+    } catch (const json::ParseError& error) {
+        throw CliError("invalid_json", error.what());
+    }
+}
+
+Args parseArgs(const std::vector<std::string>& args) {
+    Args parsed;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if (arg.rfind("--", 0) == 0) {
+            if (i + 1 >= args.size()) {
+                throw UsageError("option " + arg + " needs a value");
+            }
+            parsed.options[arg.substr(2)] = args[++i];
+        } else {
+            parsed.positional.push_back(arg);
+        }
+    }
+    return parsed;
 }
 
 Value cmdCreate(const Args& args) {
@@ -236,7 +237,8 @@ Value cmdRender(const Args& args) {
 }
 
 Value cmdInfo(const Args& args) {
-    const session::Session s = session::Session::open(pathFromUtf8(args.at(1, "bundle")));
+    session::OpenReport report;
+    const session::Session s = session::Session::open(pathFromUtf8(args.at(1, "bundle")), &report);
     const auto& head = s.history().head();
     Array tracks;
     for (const model::Track* t : head.document.tracksInOrder()) {
@@ -244,13 +246,19 @@ Value cmdInfo(const Args& args) {
                                       {"name", str(t->name)},
                                       {"clips", Value(static_cast<double>(head.document.clipsOnTrack(t->id).size()))}}));
     }
+    // Takes left by an interrupted recording; `recover` commits one.
+    Array pending;
+    for (const std::string& takeId : report.pendingTakes) {
+        pending.push_back(str(takeId));
+    }
     return ok({{"head", revisionJson(head)},
                {"seq", Value(std::to_string(s.lastSeq()))},
                {"canUndo", Value(s.history().canUndo())},
                {"canRedo", Value(s.history().canRedo())},
                {"tracks", Value(std::move(tracks))},
                {"media", Value(static_cast<double>(head.document.allMedia().size()))},
-               {"endFrames", Value(std::to_string(engine::documentEnd(head.document)))}});
+               {"endFrames", Value(std::to_string(engine::documentEnd(head.document)))},
+               {"pendingTakes", Value(std::move(pending))}});
 }
 
 Value cmdVerify(const Args& args) {
@@ -281,7 +289,7 @@ Value failure(const std::string& code, const std::string& message) {
 
 }  // namespace
 
-int runCli(const std::vector<std::string>& rawArgs, std::ostream& out) {
+int runCli(const std::vector<std::string>& rawArgs, std::ostream& out, const std::atomic<bool>* interrupt) {
     int exitCode = 0;
     Value result;
     try {
@@ -300,6 +308,11 @@ int runCli(const std::vector<std::string>& rawArgs, std::ostream& out) {
         else if (name == "info") result = cmdInfo(args);
         else if (name == "verify") result = cmdVerify(args);
         else if (name == "commands") result = cmdCommands();
+        else if (name == "devices") result = cmdDevices();
+        else if (name == "play") result = cmdPlay(args, interrupt);
+        else if (name == "record") result = cmdRecord(args, interrupt);
+        else if (name == "recover") result = cmdRecover(args);
+        else if (name == "bench") result = cmdBench(args, interrupt);
         else throw UsageError("unknown command " + name);
     } catch (const UsageError& error) {
         result = failure("usage", std::string(error.what()) + "\n" + kUsage);
@@ -307,6 +320,11 @@ int runCli(const std::vector<std::string>& rawArgs, std::ostream& out) {
     } catch (const CliError& error) {
         result = failure(error.code(), error.what());
         exitCode = 1;
+#if defined(SIANN_CLI_WITH_JUCE)
+    } catch (const host::DeviceError& error) {
+        result = failure(error.code(), error.what());
+        exitCode = 1;
+#endif
     } catch (const command::CommandError& error) {
         result = failure(error.code(), error.what());
         exitCode = 1;
