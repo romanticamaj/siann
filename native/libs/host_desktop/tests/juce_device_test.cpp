@@ -144,6 +144,17 @@ TEST_CASE("Opening at a rate the device cannot run reports the rate it runs at",
     host::AudioDeviceConfig config;
     config.outputChannels = 2;
     config.bufferFrames = 256;
+    // A listed device can still be unusable (an ASIO driver that fails to
+    // initialise, a device held by another program). Rate 0 asks for the
+    // device's own rate, the fallback every refused rate ends in, so a device
+    // that does not open even there says nothing about rate fallback.
+    config.sampleRate = 0;
+    try {
+        host::JuceAudioDevice probe;
+        probe.open(config);
+    } catch (const host::DeviceError& error) {
+        SKIP("the default device does not open at its own rate: " << error.what());
+    }
     // Device-side SRC (spec, "Sample rate and media"): a device that cannot
     // run at the session rate opens at its own rate instead of failing.
     for (const std::int64_t rate : {11'025, 22'050, 32'000, 44'100, 48'000, 88'200, 96'000}) {
