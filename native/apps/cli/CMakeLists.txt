@@ -1,5 +1,6 @@
 add_library(siann_cli_lib
   src/cli.cpp
+  src/realtime_commands.cpp
 )
 target_include_directories(siann_cli_lib PUBLIC include)
 target_link_libraries(siann_cli_lib PUBLIC siann::engine siann::session siann::playback siann::host_fake)

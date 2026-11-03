@@ -58,6 +58,23 @@ siann-cli commands
 `--actor` and `--time` set the revision envelope; `--time` defaults to the
 current UTC time.
 
+Realtime commands (M2). `--device fake` is a paced software device with
+loopback and runs anywhere; real devices (`devices`, a device id
+`"<type>/<name>"`, or the default output) need the desktop build and report
+`no_audio_backend` otherwise.
+
+```sh
+siann-cli devices
+siann-cli play Song.siann --seconds 10 --device fake
+siann-cli record Song.siann --track trk_vox --seconds 30   # without --seconds: until Ctrl+C
+siann-cli recover Song.siann take_123        # commit a take left pending by a crash
+siann-cli bench Bench.siann --tracks 32 --buffer 256 --seconds 60
+```
+
+`bench` generates the bundle when it does not exist and reports `callbacks`,
+`xruns` (deadline misses: callbacks longer than their buffer period),
+`maxCallbackMicros`, and disk `underruns` and SRC `srcUnderruns` separately.
+
 ## Build and test
 
 Windows (Visual Studio 2022 or Build Tools with the C++ workload; the helper
