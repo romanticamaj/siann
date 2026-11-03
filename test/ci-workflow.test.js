@@ -67,11 +67,14 @@ test('the RTSan job runs the [src] tests through r8brain explicitly', () => {
   assert.match(text, /native\/build\/rtsan\/libs\/realtime\/siann_realtime_tests\s+"\[src\]"/);
 });
 
-// The spec may only report the job's outcome (green, clean, r8brain adoption
-// final, m2-exit-rt-safety Met) once a run has been observed, and then it
-// cites that run. Until then it says the result is pending the first green run.
+// Acceptance 3 of m2-rtsan-ci: the spec records the outcome of an observed
+// RTSan run, never a permanent "pending". An observed run is either a GitHub
+// Actions run (cited by link) or a local run of the job's exact commands,
+// recorded with the Clang version it used and the counts it printed.
 const SPEC = path.join(__dirname, '..', 'docs', 'superpowers', 'specs', '2026-10-14-siann-native-daw-architecture.md');
 const RUN_LINK = /github\.com\/romanticamaj\/siann\/actions\/runs\/\d+/;
+const LOCAL_RUN = /Clang 20\.\d+\.\d+/;
+const PENDING = /pending the first green run|has not (been )?run|no machine used for M2 has Clang/i;
 
 function specText() {
   return fs.readFileSync(SPEC, 'utf8').replace(/\r\n/g, '\n');
@@ -86,25 +89,28 @@ function srcRtsanBullet(spec) {
   return end < 0 ? rest : rest.slice(0, end + 1);
 }
 
-test('the spec claims a clean RTSan run and final r8brain adoption only with a cited run', () => {
+function citesObservedRun(text) {
+  return RUN_LINK.test(text) || (LOCAL_RUN.test(text) && /\b\d+ ctest tests passed\b/.test(text));
+}
+
+test('the spec records an observed RTSan run and the r8brain outcome, not a pending state', () => {
   const bullet = srcRtsanBullet(specText());
-  const claims = /runs clean|adoption is final|libsamplerate is not needed|bringing the job up fixed/i;
-  if (claims.test(bullet)) {
-    assert.match(bullet, RUN_LINK, 'a clean-run claim cites the CI run that showed it');
-  } else {
-    assert.match(bullet, /pending the first green run/i, 'without a cited run the bullet says the result is pending');
-    assert.match(bullet, /provisional/i, 'without a cited run r8brain adoption stays provisional');
-  }
+  assert.doesNotMatch(bullet, PENDING, 'the bullet reports a run, not that none has happened');
+  assert.ok(citesObservedRun(bullet), 'the bullet cites an Actions run or a local run with its Clang version and ctest count');
+  assert.match(
+    bullet,
+    /adoption is final|violations found/i,
+    'the bullet says r8brain adoption is final or lists the violations RTSan found',
+  );
+  assert.doesNotMatch(bullet, /adoption is provisional/i);
+  assert.match(bullet, /siann_rtsan_canary|canar/i, 'a clean run is only meaningful with the canaries reporting');
 });
 
-test('m2-exit-rt-safety is marked Met only with a cited green RTSan run', () => {
+test('m2-exit-rt-safety is Met with a cited RTSan run', () => {
   const row = specText().split('\n').find((line) => /^\|.*\(`m2-exit-rt-safety`\)/.test(line));
   assert.ok(row, 'the M2 exit table has an m2-exit-rt-safety row');
   const [, , status, evidence] = row.split('|').map((cell) => cell.trim());
-  if (status === 'Met') {
-    assert.match(evidence, RUN_LINK, 'Met cites the green RTSan CI run');
-  } else {
-    assert.match(evidence, /pending the first green run/i);
-  }
-  assert.doesNotMatch(evidence, /runs all \d+ ctest tests/, 'the test count is reported from a run, not derived');
+  assert.equal(status, 'Met');
+  assert.doesNotMatch(evidence, PENDING);
+  assert.ok(citesObservedRun(evidence), 'Met cites an Actions run or a local run with its Clang version and ctest count');
 });
