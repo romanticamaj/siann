@@ -708,6 +708,12 @@ The documented precision is shown to users and agents.
   back and the take stays pending. Opening a session lists pending takes. Takes are
   32-bit float WAV with the header rewritten every second; RF64 above 4 GiB
   follows.
+- A take can be capped at a number of frames (`Recorder::Options::maxFrames`):
+  the audio thread stops capturing after exactly that many frames, mid-block if
+  needed, without allocating. After each checkpoint has been flushed, the
+  writer thread reports the frames now durable in the WAV header
+  (`onCheckpoint(durableFrames)`), so the owner can publish how much of the take
+  a crash would keep; the final checkpoint at stop is reported too.
 - `record.stop` creates exactly one revision: new `MediaSource` entries plus new
   clips (`record.commit_take`). Undoing it removes the clips and media references;
   recorded files are never deleted by undo or rollback. Unreferenced takes move to a
@@ -725,18 +731,31 @@ Every command prints one JSON object; exit codes stay 0, 1 (error with a code) a
   software device with loopback (`FakeAudioDevice`), so every command runs on CI
   without hardware. A CLI built without JUCE (the dev preset) reports
   `no_audio_backend` for every real device instead of failing to build; device
-  failures report `no_device` or `device_open_failed`.
+  failures report `no_device` or `device_open_failed`. Two options shape the fake
+  device and are a usage error without `--device fake`: `--fake-speed N` paces it
+  N times faster than real time (long runs in less wall time; device time is
+  unchanged), and `--fake-input counter` replaces loopback input with a counter
+  (each input sample is `(frame mod 2^24) * 2^-24`, exact in float32 and
+  continuous across blocks), so a take's content can be checked sample by sample.
 - `play <bundle> [--seconds S] [--buffer F] [--device ID]` plays from the start
   (default: to the document end) and reports `framesPlayed` in device frames,
   disk-stream `underruns`, SRC underfill as `srcUnderruns`, the resampling state
   and the latency report.
-- `record <bundle> --track ID [--seconds S] [--take-id ID]` attaches a recorder
-  while the driver is stopped, starts the device with the transport stopped,
-  begins the take with `recordOffset = recordOffsetFrames` of the opened device,
-  starts the recorder (its first frame marks the take start), then plays. It runs
-  for S seconds of device frames, or until SIGINT / Ctrl+C without `--seconds`,
-  then stops and commits the take as one revision. Recorder overflows are reported;
-  the take is still committed.
+- `record <bundle> --track ID [--seconds S] [--take-id ID] [--ready-file P]`
+  attaches a recorder while the driver is stopped, starts the device with the
+  transport stopped, begins the take with `recordOffset = recordOffsetFrames` of
+  the opened device, starts the recorder (its first frame marks the take start),
+  then plays. `--seconds` count from the start of the transport: the recorder is
+  capped at S seconds of session frames, so the take is exactly `S * rate` frames
+  long (the device run is only bounded above, a second past that). Without
+  `--seconds` it runs until SIGINT / Ctrl+C. Then it stops and commits the take as
+  one revision. Recorder overflows are reported; the take is still committed.
+  `--ready-file P` is a readiness signal for tests and supervisors: P is replaced
+  atomically with `{takeId, startPosition, durableFrames}` (decimal strings;
+  `startPosition` null until known) when the take start is marked and after every
+  checkpoint, from the recorder's writer thread; after the final checkpoint
+  `durableFrames` equals the take's `frames`. A failed write is retried at the next
+  checkpoint and never stops the recording.
 - `info` lists pending takes; `recover <bundle> <takeId>` commits a pending take
   (the same operation as the commit after recording).
 - `bench <bundle> --tracks N --buffer F --seconds S [--rate HZ]` generates the
@@ -1249,6 +1268,10 @@ Not used: Taskflow (allocates at runtime).
   cross-compile).
 - CI matrix: Windows x64, macOS universal, Linux x64, Linux arm64 headless build.
 - A core-only build with no JUCE present runs on every CI job.
+- Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
+  leaves them out (a ctest guard checks that), and run by the scheduled or
+  manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
+  10-minute recording and kill test is the first.
 
 Test layers:
 
