@@ -9,6 +9,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <random>
 #include <thread>
 #include <unordered_map>
@@ -76,8 +77,63 @@ const Value* stringMember(const Value& object, std::string_view key) {
     return member != nullptr && member->kind() == Value::Kind::string ? member : nullptr;
 }
 
+// Length of the well-formed UTF-8 sequence at text[pos] (RFC 3629: no
+// overlong forms, no surrogates, nothing above U+10FFFF), or 0.
+std::size_t utf8Length(std::string_view text, std::size_t pos) noexcept {
+    const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(text[pos + i]); };
+    const unsigned char first = byte(0);
+    if (first < 0x80) {
+        return 1;
+    }
+    std::size_t length = 0;
+    unsigned char low = 0x80;
+    unsigned char high = 0xBF;
+    if (first >= 0xC2 && first <= 0xDF) {
+        length = 2;
+    } else if (first >= 0xE0 && first <= 0xEF) {
+        length = 3;
+        low = first == 0xE0 ? 0xA0 : 0x80;
+        high = first == 0xED ? 0x9F : 0xBF;
+    } else if (first >= 0xF0 && first <= 0xF4) {
+        length = 4;
+        low = first == 0xF0 ? 0x90 : 0x80;
+        high = first == 0xF4 ? 0x8F : 0xBF;
+    } else {
+        return 0;
+    }
+    if (pos + length > text.size() || byte(1) < low || byte(1) > high) {
+        return 0;
+    }
+    for (std::size_t i = 2; i < length; ++i) {
+        if (byte(i) < 0x80 || byte(i) > 0xBF) {
+            return 0;
+        }
+    }
+    return length;
+}
+
+// Messages can carry bytes that are not UTF-8 (an exception's what() with a
+// Windows path in the ANSI code page); canonical JSON would throw on them.
+// Each offending byte becomes U+FFFD.
+std::string validUtf8(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        const std::size_t length = utf8Length(text, pos);
+        if (length == 0) {
+            out += "\xEF\xBF\xBD";
+            ++pos;
+        } else {
+            out.append(text.substr(pos, length));
+            pos += length;
+        }
+    }
+    return out;
+}
+
 Value errorValue(const std::string& code, const std::string& message, std::optional<std::size_t> step = {}) {
-    Object error{{"code", Value(code)}, {"message", Value(message)}};
+    Object error{{"code", Value(validUtf8(code))}, {"message", Value(validUtf8(message))}};
     if (step) {
         error.emplace_back("step", Value(static_cast<double>(*step)));
     }
@@ -363,6 +419,8 @@ struct ProtocolServer::Impl {
             return failure(Value(request.requestId), e.code(), e.what());
         } catch (const std::exception& e) {
             return failure(Value(request.requestId), "internal_error", e.what());
+        } catch (...) {
+            return failure(Value(request.requestId), "internal_error", "the method threw a non-standard exception");
         }
     }
 
@@ -430,7 +488,14 @@ void ProtocolServer::start() {
                 // timeout only bounds a missed wake-up.
                 auto requests = impl->inbox.waitDrain(std::chrono::milliseconds(250));
                 std::lock_guard lock(impl->pumpMutex);
-                impl->handle(std::move(requests));
+                try {
+                    impl->handle(std::move(requests));
+                } catch (...) {
+                    // execute() answers every exception itself; this only
+                    // keeps the thread alive if sending or caching throws
+                    // (bad_alloc, say). An exception leaving a thread
+                    // function would end the process.
+                }
             }
         });
     }
