@@ -83,11 +83,16 @@ struct Fixture {
         return connection;
     }
 
-    std::string request(const std::string& requestId, const std::string& method, Value params = Value(Object{})) {
-        return siann::jcs::canonicalize(Value(Object{{"requestId", Value(requestId)},
-                                                     {"sessionId", Value(server.sessionId())},
-                                                     {"method", Value(method)},
-                                                     {"params", std::move(params)}}));
+    std::string request(const std::string& requestId, const std::string& method, Value params = Value(Object{}),
+                        const std::string& expectedRevision = {}) {
+        Object envelope{{"requestId", Value(requestId)},
+                        {"sessionId", Value(server.sessionId())},
+                        {"method", Value(method)},
+                        {"params", std::move(params)}};
+        if (!expectedRevision.empty()) {
+            envelope.emplace_back("expectedRevision", Value(expectedRevision));
+        }
+        return siann::jcs::canonicalize(Value(std::move(envelope)));
     }
 
     std::vector<std::string> sent(ConnectionId connection) const { return transport.sent(connection); }
@@ -226,6 +231,9 @@ TEST_CASE("malformed requests get exactly one bad_request", "[protocol]") {
         {R"({"requestId":"q-nomethod","sessionId":")" + sid + R"("})", "q-nomethod"},
         {R"({"requestId":"q-params","sessionId":")" + sid + R"(","method":"session.inspect","params":3})",
          "q-params"},
+        {R"({"requestId":"q-expected","sessionId":")" + sid +
+             R"(","method":"session.inspect","expectedRevision":1})",
+         "q-expected"},
     };
     std::size_t expected = 1;
     for (const auto& c : cases) {
@@ -286,6 +294,51 @@ TEST_CASE("command.execute commits one revision and returns its envelope", "[pro
     CHECK(at(*revision, "time").asString() == "2026-11-04T00:00:00Z");
     CHECK(at(*revision, "documentHash").asString() ==
           siann::hash::formatHash(f.session.history().head().envelope.documentHash));
+}
+
+TEST_CASE("expectedRevision on the head lets command.execute commit", "[protocol]") {
+    Fixture f;
+    const ConnectionId connection = f.authed();
+    f.transport.deliver(connection, f.request("q1", "command.execute", commandsParams({trackAdd("trk_a")}), "r1"));
+    f.server.pump();
+
+    REQUIRE(f.revisions() == 2);
+    const auto sent = f.sent(connection);
+    REQUIRE(sent.size() == 2);
+    const Value response = parse(sent[1]);
+    REQUIRE(at(response, "ok").asBool());
+    CHECK(at(at(at(response, "result"), "revision"), "id").asString() == "r2");
+}
+
+TEST_CASE("a stale expectedRevision gets revision_mismatch and nothing is committed", "[protocol]") {
+    Fixture f;
+    const ConnectionId connection = f.authed();
+    f.transport.deliver(connection, f.request("q1", "command.execute", commandsParams({trackAdd("trk_a")})));
+    f.server.pump();
+    REQUIRE(f.revisions() == 2);
+
+    // The head is r2 now; a client that last saw r1 must not commit over it.
+    f.transport.deliver(connection, f.request("q2", "command.execute", commandsParams({trackAdd("trk_b")}), "r1"));
+    f.transport.deliver(connection, f.request("q3", "session.inspect", Value(Object{}), "r1"));
+    f.server.pump();
+
+    CHECK(f.revisions() == 2);
+    const auto sent = f.sent(connection);
+    REQUIRE(sent.size() == 4);
+    const Value stale = parse(sent[2]);
+    CHECK(at(stale, "requestId").asString() == "q2");
+    CHECK_FALSE(at(stale, "ok").asBool());
+    CHECK(errorCode(stale) == "revision_mismatch");
+    const Value inspect = parse(sent[3]);
+    CHECK(at(inspect, "requestId").asString() == "q3");
+    CHECK(errorCode(inspect) == "revision_mismatch");
+
+    // The mismatch is the executed answer: a duplicate returns it unchanged.
+    f.transport.deliver(connection, f.request("q2", "command.execute", commandsParams({trackAdd("trk_b")}), "r1"));
+    f.server.pump();
+    REQUIRE(f.sent(connection).size() == 5);
+    CHECK(f.sent(connection)[4] == sent[2]);
+    CHECK(f.revisions() == 2);
 }
 
 TEST_CASE("command errors pass through with their stable code and step", "[protocol]") {
