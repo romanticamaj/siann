@@ -1013,10 +1013,24 @@ Decisions of 2026-11-05 (m3-audition):
   branch's commands, and a diff against main's head (so it lists only the
   branch's entities). The merge closes the branch, enters main's undo stack
   (one undo restores the pre-merge document, through the first parent) and
-  clears redo. The same rule as plan staleness: no three-way merge in v1.
+  clears redo. No three-way merge in v1. The checked entities are the write set
+  plus, for a branch a plan was proposed onto (below), every entity of that
+  plan's `readSet` and `writeSet`: merging a proposed plan is never less strict
+  than applying it on main, so an entity the agent declared it read that main
+  changed since the base also refuses the merge with `branch_conflict`.
 - Discard closes the branch. Its revisions stay in the history and the journal,
   findable by id, but unreachable: a revision is reachable when it is main's head
   or an ancestor of it through any parent.
+- Proposed plans. Proposing an approved plan opens a branch at its
+  `baseRevision` and commits its steps there as one revision with cause `plan`.
+  The plan stays `approved` (no new state; `siann.plan.v1` is unchanged) and the
+  plan store links it to the branch (one open branch per plan, one plan per
+  branch). While linked, the plan cannot be applied on main, proposed again or
+  rejected (`invalid_state`); discard the branch first. Merging the branch
+  lands the plan: `state: applied`, `appliedRevision` = the merge revision.
+  Discarding the branch removes the link and leaves the plan `approved`. The
+  link is in-memory like the plan store and, like open branches, does not
+  survive a restart.
 - Restart rule. Open proposals do not survive a restart: branch creation and
   discard are not journaled. On open every branch revision is replayed (findable,
   unreachable unless merged) but no branch is open. A branch commit's journal
@@ -1410,9 +1424,15 @@ Decisions of 2026-11-05 (m3-audition):
 - One side is heard: main or one open proposal. Auditioning another proposal
   replaces the one heard. Edits that end while a proposal is heard (fader
   gestures) commit onto that proposal's branch; main commits made meanwhile do
-  not change the sound until main is heard again. Discarding the heard proposal
-  returns the sound to main; after a merge, hearing main plays the merged head
-  (no recompile when the documents are equal).
+  not change the sound until main is heard again. Merging and discarding go
+  through the auditioner: discarding the heard proposal returns the sound to
+  main, and merging it makes main heard at once, playing the merged head (no
+  recompile when the documents are equal); gestures commit onto main again. A
+  refused merge (`branch_conflict`) keeps the proposal heard. If the heard
+  branch is closed on the session directly instead, a gesture that ends before
+  main is heard again is refused with `audition_not_found` and commits nothing
+  (the sound returns to main's value for that parameter); hearing main
+  recovers.
 - M3 budget stand-in. Until the instance table and plugins exist (M4), the cost
   of a switch is estimated from the document before anything is allocated:
   memory is the bytes of the disk-stream rings the switch would create (per
@@ -1696,11 +1716,15 @@ M3 interim (proposal audition, m3-audition): proposal branches live in
 `siann-command`'s `History` (`branch`, `commitOn`, `merge`, `discard`,
 `reachable`, plus `commitOnParent` and `mergeReplay` for replay) and are
 journaled by `siann-session`, whose branch commit records carry `branch`.
-`session::proposeFromPlan` applies an approved plan onto a new branch at its
-base revision (the plan stays approved; merging lands it), the entry point for
-m3-mcp. Audition is an `Auditioner` in `siann-playback` over the playback engine:
+`Session::proposePlan` applies an approved plan onto a new branch at its base
+revision, the entry point for m3-mcp; the plan-to-branch link lives in
+`PlanStore` (`proposalBranch`, `proposedPlan`), `Session::merge` guards the
+plan's read and write sets through `History::merge`'s guarded entities and
+marks the plan applied at the merge revision, and `Session::discard` drops the
+link. Audition is an `Auditioner` in `siann-playback` over the playback engine:
 it hands the heard side's document to `PlaybackEngine::update`, points gesture
-commits at the heard branch (`setGestureBranch`) and checks
+commits at the heard branch (`setGestureBranch`), merges and discards through
+`Auditioner::merge` and `Auditioner::discard`, and checks
 `PlaybackEngine::estimateCost` against `PlaybackOptions::auditionBudget` first.
 M2's whole-output duck applies to an A/B switch as to any structural edit. The
 budget is the stand-in described under "Proposal audition (A/B)". The protocol
