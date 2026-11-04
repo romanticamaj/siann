@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "fake_transport.hpp"
+#include "../fake_transport.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/model/document.hpp"
