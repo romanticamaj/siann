@@ -22,7 +22,8 @@
 
 namespace siann::protocol {
 
-// A protocol-level error with a stable code (sync_cursor_invalid, invalid_params).
+// A protocol-level error with a stable code (sync_cursor_invalid,
+// revision_unavailable, invalid_params).
 class ProtocolError : public std::runtime_error {
 public:
     ProtocolError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
