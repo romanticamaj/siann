@@ -696,12 +696,12 @@ TEST_CASE("An approved plan applies onto a proposal branch from its base revisio
     Session session = newSession(dir.bundle());
     session.commit({addTrack("trk_1")}, "user", "t1");
     const std::string hash = *session.submitPlan({setGain("trk_1", -600), addTrack("trk_2")}, {}, "r2").hashText;
-    CHECK(errorCodeOf([&] { (void)siann::session::proposeFromPlan(session, *session.plans().find(hash), "a", "t"); }) ==
-          "invalid_state");  // validated, not approved
+    CHECK(errorCodeOf([&] { (void)session.proposePlan(hash, "a", "t"); }) == "invalid_state");  // not approved
+    CHECK(errorCodeOf([&] { (void)session.proposePlan("sha256:00", "a", "t"); }) == "not_found");
     session.approvePlan(hash, "user", "t2");
     const std::int64_t before = session.lastSeq();
 
-    const auto b = siann::session::proposeFromPlan(session, *session.plans().find(hash), "agent", "t3");
+    const auto b = session.proposePlan(hash, "agent", "t3");
     CHECK(session.history().branches() == std::vector<std::string>{b});
     CHECK(session.lastSeq() == before + 1);
     CHECK(session.history().head().envelope.id == "r2");  // main is untouched
@@ -710,11 +710,85 @@ TEST_CASE("An approved plan applies onto a proposal branch from its base revisio
     CHECK(proposed.envelope.parents == std::vector<std::string>{"r2"});
     CHECK(proposed.branch == std::optional<std::string>{b});
     CHECK(proposed.commands.size() == 2);
-    // A proposal is not an apply: the plan stays approved.
+    // A proposal is not an apply: the plan stays approved and names its branch.
     CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+    CHECK(session.plans().proposalBranch(hash) == std::optional<std::string>{b});
+    CHECK(session.plans().proposedPlan(b) == std::optional<std::string>{hash});
 
-    // The same plan applied on main from the same base gives the same document.
-    const auto& applied = session.applyPlan(hash, "agent", "t4");
-    CHECK(applied.envelope.documentHash == proposed.envelope.documentHash);
-    CHECK(applied.envelope.parents == std::vector<std::string>{"r2"});
+    // While proposed, the plan cannot also be applied on main, proposed again or rejected.
+    const std::size_t revisions = session.history().revisions().size();
+    CHECK(errorCodeOf([&] { (void)session.applyPlan(hash, "agent", "t4"); }) == "invalid_state");
+    CHECK(errorCodeOf([&] { (void)session.proposePlan(hash, "agent", "t4"); }) == "invalid_state");
+    CHECK(errorCodeOf([&] { (void)session.rejectPlan(hash, "user", "t4", "no"); }) == "invalid_state");
+    CHECK(session.history().revisions().size() == revisions);
+    CHECK(session.history().branches() == std::vector<std::string>{b});
+
+    // Merging the branch lands the plan: applied, at the merge revision.
+    const std::string mergedId = session.merge(b, "user", "t5").envelope.id;
+    CHECK(session.history().head().envelope.documentHash == proposed.envelope.documentHash);
+    const auto* landed = session.plans().find(hash);
+    CHECK(landed->state == siann::command::PlanState::applied);
+    CHECK(landed->appliedRevision == std::optional<std::string>{mergedId});
+    CHECK_FALSE(session.plans().proposalBranch(hash).has_value());
+    CHECK(errorCodeOf([&] { (void)session.applyPlan(hash, "agent", "t6"); }) == "invalid_state");
+}
+
+TEST_CASE("Discarding a proposed plan's branch leaves the plan approved", "[session][branch][plan]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600)}, {}, "r2").hashText;
+    session.approvePlan(hash, "user", "t2");
+    const auto b = session.proposePlan(hash, "agent", "t3");
+
+    session.discard(b);
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+    CHECK_FALSE(session.plans().proposalBranch(hash).has_value());
+    CHECK_FALSE(session.plans().proposedPlan(b).has_value());
+    // It can be proposed again, or applied on main.
+    const auto again = session.proposePlan(hash, "agent", "t4");
+    CHECK(again != b);
+    session.discard(again);
+    const std::string appliedId = session.applyPlan(hash, "agent", "t5").envelope.id;
+    CHECK(session.plans().find(hash)->appliedRevision == std::optional<std::string>{appliedId});
+}
+
+TEST_CASE("Merging a proposed plan is refused when main changed an entity of its read set",
+          "[session][branch][plan]") {
+    using siann::model::EntityRef;
+    using siann::model::EntityType;
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1"), addTrack("trk_2")}, "user", "t1");
+    // The plan writes trk_1 and declares that it read trk_2.
+    const std::string hash =
+        *session.submitPlan({setGain("trk_1", -600)}, {EntityRef{EntityType::track, "trk_2"}}, "r2").hashText;
+    session.approvePlan(hash, "user", "t2");
+    const auto b = session.proposePlan(hash, "agent", "t3");
+
+    session.commit({setGain("trk_2", -1200)}, "user", "t4");  // main changes the read entity
+    const std::int64_t seq = session.lastSeq();
+    const std::string mainHead = session.history().head().envelope.id;
+    try {
+        session.merge(b, "user", "t5");
+        FAIL("expected branch_conflict");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "branch_conflict");
+        CHECK(std::string(error.what()).find("track:trk_2") != std::string::npos);
+    }
+    CHECK(session.lastSeq() == seq);
+    CHECK(session.history().head().envelope.id == mainHead);
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+    CHECK(session.plans().proposalBranch(hash) == std::optional<std::string>{b});
+
+    SECTION("a branch not made from a plan has no read set to guard") {
+        const auto plain = session.branch("r2");
+        session.commitOn(plain, {setGain("trk_1", -900)}, "agent", "t6");
+        CHECK(session.merge(plain, "user", "t7").envelope.cause == Cause::branchMerge);
+    }
+    SECTION("once main undoes its change the merge lands the plan") {
+        session.undo("user", "t6");
+        const std::string mergedId = session.merge(b, "user", "t7").envelope.id;
+        CHECK(session.plans().find(hash)->appliedRevision == std::optional<std::string>{mergedId});
+    }
 }

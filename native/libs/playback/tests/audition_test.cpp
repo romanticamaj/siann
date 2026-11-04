@@ -306,12 +306,14 @@ TEST_CASE("Merging the auditioned proposal makes main the heard document without
     const std::uint64_t epoch = p.engine.driver().liveEpoch();
     const std::size_t compiles = p.engine.compileCount();
 
-    const command::Revision& merged = f.session.merge(b, "user", "t");
+    // Merging through the auditioner: main is heard as soon as the merge lands.
+    const command::Revision& merged = a.merge(b, "user", "t");
     const Document mergedDoc = merged.document;
-    a.hear(Auditioner::Side::main);
+    CHECK_FALSE(a.heard().has_value());
+    CHECK_FALSE(p.engine.gestureBranch().has_value());
+    CHECK(f.session.history().head().envelope.id == merged.envelope.id);
     p.pump(20);
 
-    CHECK_FALSE(a.heard().has_value());
     CHECK(p.engine.compileCount() == compiles);
     CHECK(p.engine.driver().liveEpoch() == epoch);
     CHECK(p.lastDuckBlock() == duck);
@@ -319,6 +321,64 @@ TEST_CASE("Merging the auditioned proposal makes main the heard document without
     CHECK(matches(p, ref, duck + 2, p.blockCount()));
     CHECK(p.engine.driver().ownedGraphs() == 1);
     CHECK(p.engine.underruns() == 0);
+
+    // Gestures commit onto main again.
+    constexpr auto kGain = graph::TrackFaderNode::kGainMilliDb;
+    p.engine.beginGesture("trk_a", kGain);
+    p.engine.updateGesture("trk_a", kGain, -3'000, 0);
+    const command::Revision* onMain = p.engine.endGesture("trk_a", kGain, "user", "t");
+    REQUIRE(onMain != nullptr);
+    CHECK_FALSE(onMain->branch.has_value());
+    CHECK(auditionCode([&] { (void)a.merge(b, "user", "t"); }) == "audition_not_found");
+}
+
+TEST_CASE("A conflicting merge through the auditioner keeps the proposal heard", "[playback][audition]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(20);
+    const command::BranchId b = f.session.branch(f.session.history().head().envelope.id);
+    f.session.commitOn(b, {cmd(R"({"op":"track.set_gain","trackId":"trk_a","gainMilliDb":-6000})")}, "agent", "t");
+    f.session.commit({cmd(R"({"op":"track.set_gain","trackId":"trk_a","gainMilliDb":-3000})")}, "user", "t");
+    Auditioner a(p.engine, f.session);
+    a.audition(b);
+    p.pump(10);
+
+    try {
+        (void)a.merge(b, "user", "t");
+        FAIL("expected branch_conflict");
+    } catch (const command::CommandError& error) {
+        CHECK(error.code() == "branch_conflict");
+    }
+    CHECK(a.heard() == std::optional<command::BranchId>{b});
+    CHECK(p.engine.gestureBranch() == std::optional<command::BranchId>{b});
+}
+
+TEST_CASE("A gesture ending after the heard proposal was closed on the session commits nothing",
+          "[playback][audition]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(20);
+    const command::BranchId b = proposeTrackC(f);
+    Auditioner a(p.engine, f.session);
+    a.audition(b);
+    p.pump(10);
+    // Bypassing the auditioner: the session merges the heard branch directly.
+    f.session.merge(b, "user", "t");
+    const std::size_t revisions = f.session.history().revisions().size();
+
+    constexpr auto kGain = graph::TrackFaderNode::kGainMilliDb;
+    p.engine.beginGesture("trk_a", kGain);
+    p.engine.updateGesture("trk_a", kGain, -6'000, 0);
+    CHECK(auditionCode([&] { (void)p.engine.endGesture("trk_a", kGain, "user", "t"); }) == "audition_not_found");
+    CHECK(f.session.history().revisions().size() == revisions);
+    // hear(main) recovers.
+    a.hear(Auditioner::Side::main);
+    CHECK_FALSE(a.heard().has_value());
+    p.engine.beginGesture("trk_a", kGain);
+    p.engine.updateGesture("trk_a", kGain, -6'000, 0);
+    const command::Revision* onMain = p.engine.endGesture("trk_a", kGain, "user", "t");
+    REQUIRE(onMain != nullptr);
+    CHECK_FALSE(onMain->branch.has_value());
 }
 
 TEST_CASE("Discarding the auditioned proposal returns the sound to main", "[playback][audition]") {
@@ -362,7 +422,7 @@ TEST_CASE("An approved plan proposed onto a branch can be auditioned end to end"
                          {}, base)
              .hashText;
     f.session.approvePlan(hash, "user", "t");
-    const command::BranchId b = session::proposeFromPlan(f.session, *f.session.plans().find(hash), "agent", "t");
+    const command::BranchId b = f.session.proposePlan(hash, "agent", "t");
     CHECK(f.session.history().branchHead(b).envelope.parents == std::vector<std::string>{base});
     Auditioner a(p.engine, f.session);
 
@@ -383,4 +443,9 @@ TEST_CASE("An approved plan proposed onto a branch can be auditioned end to end"
     CHECK(p.engine.driver().ownedGraphs() == 1);
     CHECK(p.engine.streamCount() == 2);
     CHECK(p.engine.underruns() == 0);
+
+    // Merging the proposal lands the plan at the merge revision.
+    const std::string mergedId = a.merge(b, "user", "t").envelope.id;
+    CHECK(f.session.plans().find(hash)->state == command::PlanState::applied);
+    CHECK(f.session.plans().find(hash)->appliedRevision == std::optional<std::string>{mergedId});
 }

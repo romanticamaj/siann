@@ -670,6 +670,38 @@ TEST_CASE("Merging when main changed an entity the branch wrote is refused with 
     }
 }
 
+TEST_CASE("Merging also guards the entities passed in, as a proposed plan's read set", "[history][branch]") {
+    History h = withTwoTracks();
+    const BranchId b = h.branch("r3");
+    h.commit({setGain("trk_b", -1200)}, "user", "t3");  // the branch never writes trk_b
+    h.commitOn(b, {setGain("trk_a", -300)}, "agent", "t4");
+    const std::vector<EntityRef> guarded{EntityRef{EntityType::track, "trk_b"}};
+    const std::size_t count = h.revisions().size();
+
+    try {
+        h.merge(b, "user", "t5", guarded);
+        FAIL("expected branch_conflict");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "branch_conflict");
+        CHECK(std::string(error.what()).find("track:trk_b") != std::string::npos);
+    }
+    CHECK(h.revisions().size() == count);
+    CHECK(h.branches() == std::vector<BranchId>{b});
+
+    // Main undoes its change: the guarded entity is as it was at the base.
+    h.undo("user", "t6");
+    const Revision& merged = h.merge(b, "user", "t7", guarded);
+    CHECK(merged.document.track("trk_a")->gain.milliDb == -300);
+
+    SECTION("without the guard the write set alone decides") {
+        History g = withTwoTracks();
+        const BranchId p = g.branch("r3");
+        g.commit({setGain("trk_b", -1200)}, "user", "t3");
+        g.commitOn(p, {setGain("trk_a", -300)}, "agent", "t4");
+        CHECK(g.merge(p, "user", "t5").envelope.cause == Cause::branchMerge);
+    }
+}
+
 TEST_CASE("Discarding a proposal leaves its revisions unreachable but present", "[history][branch]") {
     History h = withTwoTracks();
     const BranchId b = h.branch("r3");
