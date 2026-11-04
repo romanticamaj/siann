@@ -1402,13 +1402,13 @@ review instead of pushing on.
 | M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems | Production-level criteria list passes | — |
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
 
-### Status (2026-11-03)
+### Status (2026-11-04)
 
 M1 is done (status as of 2026-10-21 below). M2 is exit pending: every feature
-is merged (PRs #14, #16 to #18, #20, #21, #24 to #30 and #35, plus the RTSan
-job), four exit criteria have passing tests (the long recording test still owes
-its first scheduled CI run), and two need a run on the maintainer's machine (see
-"M2 exit check (2026-11-03)").
+is merged (PRs #14, #16 to #18, #20, #21, #24 to #30, #35 and #36), four exit
+criteria are met with passing tests in CI (the long recording test included),
+and two need the device bench on the maintainer's machine (see "M2 exit check
+(2026-11-04)").
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
@@ -1473,18 +1473,19 @@ engine (node, new latency, error code) until a later recompile succeeds; the
 protocol event that reports it to clients and agents arrives with M3.
 Structural edits (other publishes) and locates still duck the whole output.
 
-M2 exit check (2026-11-03), on `main` at 0ca829a. `node scripts/check-all.js
---gcc --desktop` passes (Node tests, dev preset 291 ctest tests, desktop preset
-303 ctest tests, g++ -Werror syntax check):
+M2 exit check (2026-11-04), on `main` at 9c6c00c. `node scripts/check-all.js
+--gcc --desktop` passes (Node tests, dev preset 307 ctest tests, desktop preset
+319 ctest tests, g++ -Werror syntax check), and CI on that commit is green
+(run 41753381539, every job including "Native core RTSan (ubuntu, Clang 20)"):
 
 | M2 exit criterion | Status | Evidence |
 |---|---|---|
 | 32 tracks for 60 s at 256 samples, zero xruns, default device (`m2-exit-xruns`) | Needs the maintainer | Not run by the harness: the default device is the maintainer's studio monitors, and the bench session sums 32 in-phase 440 Hz sines at 0.1 each (peak 3.2, clipped at full scale). Run `siann-cli bench <dir> --tracks 32 --buffer 256 --seconds 60` from the desktop preset (Release recommended) with the monitors muted or on a silent output, and record the JSON here. On the paced fake device the same run reports 11,250 callbacks, 0 xruns, 0 underruns, 0 SRC underruns and a 3.9 ms maximum callback against a 5.3 ms period (Debug build); this does not replace the device run. |
-| Same bench with SRC active (44.1 kHz session, 48 kHz device); SRC quality and record-offset tests (`m2-exit-src`) | Partly met; device run needs the maintainer | The `[src]` tests in `siann-realtime` (sine, aliasing and impulse through output and input SRC, block-size independence, resampling state), the playback parity test through SRC and "Loopback null test through input and output SRC" pass. The bench with `--rate 44100` on the 48 kHz WASAPI shared default device is owed, with the same caution as above. On the fake device (which runs at the session rate, so no SRC) the 44.1 kHz run reports 0 xruns. |
+| Same bench with SRC active (44.1 kHz session, 48 kHz device); SRC quality and record-offset tests (`m2-exit-src`) | Tests met; device run needs the maintainer | The `[src]` tests in `siann-realtime` (sine, aliasing and impulse through output and input SRC, block-size independence, resampling state), the playback parity test through SRC and "Loopback null test through input and output SRC" pass. The bench with `--rate 44100` on the 48 kHz WASAPI shared default device is owed, with the same caution as above. On the fake device (which runs at the session rate, so no SRC) the 44.1 kHz run reports 0 xruns. |
 | Realtime PDC null tests, including a latency change during playback (`m2-exit-pdc`) | Met | `ctest -R pdc`: 22 tests pass, including the four realtime null tests through the graph driver, the four "latency change during playback is recompiled and nulls again" tests and the offline/realtime parity test. |
 | A fader gesture through the parameter channel commits one revision (`m2-exit-gesture`) | Met | `siann-playback` test "A fader gesture moves the sound through the parameter channel and ending it commits exactly one revision", plus the pan and mute gesture tests. |
-| Record 10 minutes and recover after a kill (`m2-exit-record`) | Met locally; the scheduled CI run is owed after merge | `siann_cli_tests "[long]"` (hidden from the default ctest run, guarded by `siann_cli_long_tests_hidden` and `siann_cli_long_tests_listed`): "A 10-minute take records every frame of the counter and commits" records 600 s of device time on the fake device at 4x with the counter input and checks 28,800,000 frames, zero overflows and every sample on one consecutive counter; "A 10-minute take killed at 9 minutes recovers every flushed block" kills the child once its ready file reports 540 s durable and recovers at least those frames, content checked the same way. Both pass on Windows (dev preset, Debug): 154 s and 139 s. They run nightly and on `workflow_dispatch` in `.github/workflows/long-tests.yml` (Linux and Windows). The CLI kill test "A recording siann-cli killed mid-take leaves a pending take that recovers" now waits on `--ready-file` instead of polling the WAV header and the manifest the child rewrites (a reader could make the child's atomic replace fail on Windows) and passed 20 consecutive runs (`ctest -R "killed mid-take" --repeat until-fail:20`). |
-| Realtime-safety checks clean: allocation guard on every realtime test, RTSan where Clang is available (`m2-exit-rt-safety`) | Met | Every realtime test binary links `siann_rt_alloc_guard` (rt, realtime, playback, host_fake, host_desktop, cli). The CI job "Native core RTSan (ubuntu, Clang 20)" (`m2-rtsan-ci`) builds the core with Clang 20 from apt.llvm.org, `-DSIANN_RTSAN=ON` and `-DSIANN_WERROR=ON`, runs the whole ctest suite with `RTSAN_OPTIONS=halt_on_error=1` (the dev preset's tests plus the four `siann_rtsan_canary_*` tests, which expect allocation, lock and sleep inside the realtime scope to be reported and nothing under the disabler), then `siann_realtime_tests "[src]"` explicitly. Its commands, run as written in WSL with Clang 20.1.8 before the pull request: build clean, 300 ctest tests passed, `[src]` passed, no RTSan report outside the canaries (see "Device-side SRC (M2)"). The job reruns on every pull request and on `main`. |
+| Record 10 minutes and recover after a kill (`m2-exit-record`) | Met | `siann_cli_tests "[long]"` (hidden from the default ctest run, guarded by `siann_cli_long_tests_hidden` and `siann_cli_long_tests_listed`): "A 10-minute take records every frame of the counter and commits" records 600 s of device time on the fake device at 4x with the counter input and checks 28,800,000 frames, zero overflows and every sample on one consecutive counter; "A 10-minute take killed at 9 minutes recovers every flushed block" kills the child once its ready file reports 540 s durable and recovers at least those frames, content checked the same way. Both pass on Windows (dev preset, Debug): 154 s and 139 s. They run nightly and on `workflow_dispatch` in `.github/workflows/long-tests.yml` (Linux and Windows); its first run, dispatched on `main` at 9c6c00c (run 41755387142, 2026-11-04), passed on ubuntu-latest and windows-latest. The CLI kill test "A recording siann-cli killed mid-take leaves a pending take that recovers" now waits on `--ready-file` instead of polling the WAV header and the manifest the child rewrites (a reader could make the child's atomic replace fail on Windows) and passed 20 consecutive runs (`ctest -R "killed mid-take" --repeat until-fail:20`). |
+| Realtime-safety checks clean: allocation guard on every realtime test, RTSan where Clang is available (`m2-exit-rt-safety`) | Met | Every realtime test binary links `siann_rt_alloc_guard` (rt, realtime, playback, host_fake, host_desktop, cli). The CI job "Native core RTSan (ubuntu, Clang 20)" (`m2-rtsan-ci`) builds the core with Clang 20 from apt.llvm.org, `-DSIANN_RTSAN=ON` and `-DSIANN_WERROR=ON`, runs the whole ctest suite with `RTSAN_OPTIONS=halt_on_error=1` (the dev preset's tests plus the four `siann_rtsan_canary_*` tests, which expect allocation, lock and sleep inside the realtime scope to be reported and nothing under the disabler), then `siann_realtime_tests "[src]"` explicitly. Its commands, run as written in WSL with Clang 20.1.8 before the pull request: build clean, 300 ctest tests passed, `[src]` passed, no RTSan report outside the canaries (see "Device-side SRC (M2)"). The job reruns on every pull request and on `main`; it passed on `main` at 9c6c00c (run 41753381539). |
 
 Kill criterion (persistent xruns): not triggered so far; it can only be judged
 after the device bench runs.
