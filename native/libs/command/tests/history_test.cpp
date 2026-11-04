@@ -605,8 +605,9 @@ TEST_CASE("Merging a proposal creates a branch-merge revision on main with two p
     CHECK(h.branches().empty());
     CHECK(h.reachable(tip.envelope.id));
 
+    const std::string mergedId = merged.envelope.id;  // the next revision may move `merged`
     const Revision& undone = h.undo("user", "t6");
-    CHECK(undone.target == std::optional<std::string>{merged.envelope.id});
+    CHECK(undone.target == std::optional<std::string>{mergedId});
     CHECK(undone.envelope.documentHash == preMerge.envelope.documentHash);
     CHECK(h.redo("user", "t7").envelope.documentHash == tip.envelope.documentHash);
 }

@@ -1,7 +1,11 @@
 #include "siann/command/history.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <set>
 #include <utility>
+
+#include "siann/command/plan.hpp"
 
 namespace siann::command {
 
@@ -38,6 +42,29 @@ std::vector<std::string> without(const std::vector<std::string>& ids, const std:
         if (!containsId(excluded, id)) {
             out.push_back(id);
         }
+    }
+    return out;
+}
+
+// The number in "<prefix><n>" (n >= 1), or nothing.
+std::optional<std::uint64_t> numberAfter(std::string_view id, char prefix) noexcept {
+    if (id.size() < 2 || id.front() != prefix || id[1] == '0') {
+        return std::nullopt;
+    }
+    std::uint64_t n = 0;
+    const char* first = id.data() + 1;
+    const char* last = id.data() + id.size();
+    const auto [ptr, ec] = std::from_chars(first, last, n);
+    if (ec != std::errc() || ptr != last) {
+        return std::nullopt;
+    }
+    return n;
+}
+
+std::string joined(const std::vector<std::string>& items) {
+    std::string out;
+    for (const std::string& item : items) {
+        out += out.empty() ? item : ", " + item;
     }
     return out;
 }
@@ -144,6 +171,20 @@ model::Document restoreEntity(const model::Document& document, const model::Docu
     return document;
 }
 
+void requireCommitCause(Cause cause) {
+    if (cause != Cause::command && cause != Cause::plan) {
+        throw CommandError("invalid_params", "commit cause must be command or plan");
+    }
+}
+
+Revision newRevision(Cause cause, std::string actor, std::string time, model::Document document) {
+    RevisionEnvelope envelope;
+    envelope.cause = cause;
+    envelope.actor = std::move(actor);
+    envelope.time = std::move(time);
+    return Revision{std::move(envelope), {}, std::nullopt, {}, std::move(document), std::nullopt};
+}
+
 }  // namespace
 
 std::string entityKey(const EntityRef& ref) {
@@ -174,41 +215,42 @@ std::string_view causeName(Cause cause) noexcept {
         case Cause::undo: return "undo";
         case Cause::redo: return "redo";
         case Cause::rollback: return "rollback";
+        case Cause::branchMerge: return "branch-merge";
     }
     return "unknown";
 }
 
 History::History(model::Document initial, std::string actor, std::string time) {
-    RevisionEnvelope envelope;
-    envelope.cause = Cause::create;
-    envelope.actor = std::move(actor);
-    envelope.time = std::move(time);
-    append(Revision{std::move(envelope), {}, std::nullopt, {}, std::move(initial)});
+    Revision revision = newRevision(Cause::create, std::move(actor), std::move(time), std::move(initial));
+    append(std::move(revision), {});
+    mainHead_ = 0;
 }
 
 const Revision* History::find(std::string_view id) const noexcept {
-    for (const Revision& revision : revisions_) {
-        if (revision.envelope.id == id) {
-            return &revision;
-        }
+    const auto n = numberAfter(id, 'r');
+    if (!n || *n > revisions_.size()) {
+        return nullptr;
     }
-    return nullptr;
+    const Revision& revision = revisions_[static_cast<std::size_t>(*n - 1)];
+    return revision.envelope.id == id ? &revision : nullptr;
 }
 
 std::size_t History::indexOf(std::string_view id) const {
-    for (std::size_t i = 0; i < revisions_.size(); ++i) {
-        if (revisions_[i].envelope.id == id) {
-            return i;
-        }
+    const Revision* revision = find(id);
+    if (revision == nullptr) {
+        throw CommandError("not_found", "no revision with id " + std::string(id));
     }
-    throw CommandError("not_found", "no revision with id " + std::string(id));
+    return static_cast<std::size_t>(revision - revisions_.data());
 }
 
-const Revision& History::append(Revision revision) {
+const Revision& History::append(Revision revision, std::vector<std::size_t> parents) {
     revision.envelope.id = "r" + std::to_string(revisions_.size() + 1);
-    if (!revisions_.empty()) {
-        revision.envelope.parents = {revisions_.back().envelope.id};
-        revision.diff = model::diff(revisions_.back().document, revision.document);
+    revision.envelope.parents.clear();
+    for (const std::size_t parent : parents) {
+        revision.envelope.parents.push_back(revisions_[parent].envelope.id);
+    }
+    if (!parents.empty()) {
+        revision.diff = model::diff(revisions_[parents.front()].document, revision.document);
     }
     revision.envelope.documentHash = revision.document.documentHash();
     if (beforePublish_) {
@@ -219,19 +261,15 @@ const Revision& History::append(Revision revision) {
 }
 
 const Revision& History::commit(std::vector<Command> commands, std::string actor, std::string time, Cause cause) {
-    if (cause != Cause::command && cause != Cause::plan) {
-        throw CommandError("invalid_params", "commit cause must be command or plan");
-    }
+    requireCommitCause(cause);
     Prepared prepared = prepareTransaction(head().document, commands);
-    RevisionEnvelope envelope;
-    envelope.cause = cause;
-    envelope.actor = std::move(actor);
-    envelope.time = std::move(time);
-    const Revision& revision =
-        append(Revision{std::move(envelope), std::move(commands), std::nullopt, {}, std::move(prepared.result)});
-    undoStack_.push_back(revisions_.size() - 1);
+    Revision revision = newRevision(cause, std::move(actor), std::move(time), std::move(prepared.result));
+    revision.commands = std::move(commands);
+    const Revision& appended = append(std::move(revision), {mainHead_});
+    mainHead_ = revisions_.size() - 1;
+    undoStack_.push_back(mainHead_);
     redoStack_.clear();
-    return revision;
+    return appended;
 }
 
 const Revision& History::undo(std::string actor, std::string time) {
@@ -239,18 +277,16 @@ const Revision& History::undo(std::string actor, std::string time) {
         throw CommandError("nothing_to_undo", "there is nothing to undo");
     }
     const std::size_t target = undoStack_.back();
+    // A merge's first parent is main before the merge.
     const std::size_t parent = indexOf(revisions_[target].envelope.parents.front());
-    model::Document restored = revisions_[parent].document;
-    const std::string targetId = revisions_[target].envelope.id;
 
-    RevisionEnvelope envelope;
-    envelope.cause = Cause::undo;
-    envelope.actor = std::move(actor);
-    envelope.time = std::move(time);
-    const Revision& revision = append(Revision{std::move(envelope), {}, targetId, {}, std::move(restored)});
+    Revision revision = newRevision(Cause::undo, std::move(actor), std::move(time), revisions_[parent].document);
+    revision.target = revisions_[target].envelope.id;
+    const Revision& appended = append(std::move(revision), {mainHead_});
+    mainHead_ = revisions_.size() - 1;
     undoStack_.pop_back();
     redoStack_.push_back(target);
-    return revision;
+    return appended;
 }
 
 const Revision& History::redo(std::string actor, std::string time) {
@@ -258,17 +294,205 @@ const Revision& History::redo(std::string actor, std::string time) {
         throw CommandError("nothing_to_redo", "there is nothing to redo");
     }
     const std::size_t target = redoStack_.back();
-    model::Document restored = revisions_[target].document;
-    const std::string targetId = revisions_[target].envelope.id;
 
-    RevisionEnvelope envelope;
-    envelope.cause = Cause::redo;
-    envelope.actor = std::move(actor);
-    envelope.time = std::move(time);
-    const Revision& revision = append(Revision{std::move(envelope), {}, targetId, {}, std::move(restored)});
+    Revision revision = newRevision(Cause::redo, std::move(actor), std::move(time), revisions_[target].document);
+    revision.target = revisions_[target].envelope.id;
+    const Revision& appended = append(std::move(revision), {mainHead_});
+    mainHead_ = revisions_.size() - 1;
     redoStack_.pop_back();
     undoStack_.push_back(target);
-    return revision;
+    return appended;
+}
+
+bool History::reachable(std::string_view id) const {
+    const Revision* revision = find(id);
+    if (revision == nullptr) {
+        return false;
+    }
+    const auto wanted = static_cast<std::size_t>(revision - revisions_.data());
+    if (wanted > mainHead_) {
+        return false;
+    }
+    // Parents always precede their children, so one backward sweep marks
+    // every ancestor of main's head.
+    std::vector<bool> marked(mainHead_ + 1, false);
+    marked[mainHead_] = true;
+    for (std::size_t i = mainHead_ + 1; i-- > wanted;) {
+        if (!marked[i]) {
+            continue;
+        }
+        if (i == wanted) {
+            return true;
+        }
+        for (const std::string& parent : revisions_[i].envelope.parents) {
+            marked[indexOf(parent)] = true;
+        }
+    }
+    return false;
+}
+
+History::OpenBranch& History::requireBranch(const BranchId& branchId) {
+    const auto found = std::find_if(branches_.begin(), branches_.end(),
+                                    [&](const OpenBranch& open) { return open.id == branchId; });
+    if (found == branches_.end()) {
+        throw CommandError("not_found", "no open proposal branch " + branchId);
+    }
+    return *found;
+}
+
+const History::OpenBranch& History::requireBranch(const BranchId& branchId) const {
+    return const_cast<History*>(this)->requireBranch(branchId);
+}
+
+BranchId History::branch(std::string_view baseId) {
+    const std::size_t base = indexOf(baseId);
+    if (!reachable(baseId)) {
+        throw CommandError("invalid_params", "a proposal branch must start at a revision on main; " +
+                                                 std::string(baseId) + " is not reachable from main's head");
+    }
+    BranchId id = "p" + std::to_string(nextBranch_++);
+    branches_.push_back(OpenBranch{id, base, base, {}});
+    return id;
+}
+
+std::vector<BranchId> History::branches() const {
+    std::vector<BranchId> out;
+    for (const OpenBranch& open : branches_) {
+        out.push_back(open.id);
+    }
+    return out;
+}
+
+const Revision& History::branchHead(const BranchId& branchId) const {
+    return revisions_[requireBranch(branchId).tip];
+}
+
+const Revision& History::appendBranchCommit(std::size_t parent, const BranchId& branchId,
+                                            std::vector<Command> commands, std::string actor, std::string time,
+                                            Cause cause) {
+    requireCommitCause(cause);
+    Prepared prepared = prepareTransaction(revisions_[parent].document, commands);
+    Revision revision = newRevision(cause, std::move(actor), std::move(time), std::move(prepared.result));
+    revision.commands = std::move(commands);
+    revision.branch = branchId;
+    return append(std::move(revision), {parent});
+}
+
+const Revision& History::commitOn(const BranchId& branchId, std::vector<Command> commands, std::string actor,
+                                  std::string time, Cause cause) {
+    OpenBranch& open = requireBranch(branchId);
+    const Revision& appended =
+        appendBranchCommit(open.tip, branchId, std::move(commands), std::move(actor), std::move(time), cause);
+    open.tip = revisions_.size() - 1;
+    open.commits.push_back(open.tip);
+    return appended;
+}
+
+const Revision& History::appendMerge(std::size_t branchTip, std::vector<Command> commands, model::Document merged,
+                                     std::string actor, std::string time, std::optional<BranchId> branchId) {
+    Revision revision = newRevision(Cause::branchMerge, std::move(actor), std::move(time), std::move(merged));
+    revision.commands = std::move(commands);
+    revision.branch = std::move(branchId);
+    const Revision& appended = append(std::move(revision), {mainHead_, branchTip});
+    mainHead_ = revisions_.size() - 1;
+    undoStack_.push_back(mainHead_);
+    redoStack_.clear();
+    return appended;
+}
+
+const Revision& History::merge(const BranchId& branchId, std::string actor, std::string time) {
+    const OpenBranch& open = requireBranch(branchId);
+    if (open.commits.empty()) {
+        throw CommandError("empty_transaction", "proposal branch " + branchId + " has no commits to merge");
+    }
+    const model::Document& base = revisions_[open.base].document;
+    const model::Document& tip = revisions_[open.tip].document;
+    const model::Document& mainDoc = head().document;
+
+    std::set<model::EntityRef> written;
+    std::vector<Command> commands;
+    for (const std::size_t index : open.commits) {
+        for (const model::DiffEntry& entry : revisions_[index].diff) {
+            written.insert(entry.entity);
+        }
+        commands.insert(commands.end(), revisions_[index].commands.begin(), revisions_[index].commands.end());
+    }
+
+    std::vector<std::string> conflicts;
+    for (const model::EntityRef& ref : written) {
+        if (base.findEntityHash(ref) != mainDoc.findEntityHash(ref)) {
+            conflicts.push_back(entityKey(ref));
+        }
+    }
+    if (!conflicts.empty()) {
+        throw CommandError("branch_conflict", "main changed entities proposal branch " + branchId +
+                                                  " also wrote since " + revisions_[open.base].envelope.id + ": " +
+                                                  joined(conflicts));
+    }
+
+    std::optional<Prepared> prepared;
+    try {
+        prepared = prepareTransaction(mainDoc, commands);
+    } catch (const CommandError& error) {
+        throw CommandError("branch_conflict",
+                           "proposal branch " + branchId + " does not apply to main's head: " + error.what(),
+                           error.step());
+    }
+    // The entities the branch wrote must come out as they are on the branch.
+    for (const model::EntityRef& ref : written) {
+        if (prepared->result.findEntityHash(ref) != tip.findEntityHash(ref)) {
+            conflicts.push_back(entityKey(ref));
+        }
+    }
+    if (!conflicts.empty()) {
+        throw CommandError("branch_conflict", "proposal branch " + branchId +
+                                                  " gives a different result on main's head for: " +
+                                                  joined(conflicts));
+    }
+
+    const std::size_t tipIndex = open.tip;
+    const Revision& appended =
+        appendMerge(tipIndex, std::move(commands), std::move(prepared->result), std::move(actor), std::move(time),
+                    branchId);
+    branches_.erase(std::find_if(branches_.begin(), branches_.end(),
+                                 [&](const OpenBranch& entry) { return entry.id == branchId; }));
+    return appended;
+}
+
+void History::discard(const BranchId& branchId) {
+    (void)requireBranch(branchId);
+    branches_.erase(std::find_if(branches_.begin(), branches_.end(),
+                                 [&](const OpenBranch& entry) { return entry.id == branchId; }));
+}
+
+void History::noteBranchId(const BranchId& branchId) {
+    const auto n = numberAfter(branchId, 'p');
+    if (!n) {
+        throw CommandError("invalid_params", "invalid proposal branch id " + branchId);
+    }
+    nextBranch_ = std::max(nextBranch_, *n + 1);
+}
+
+const Revision& History::commitOnParent(const BranchId& branchId, std::string_view parentId,
+                                        std::vector<Command> commands, std::string actor, std::string time,
+                                        Cause cause) {
+    const std::size_t parent = indexOf(parentId);
+    noteBranchId(branchId);
+    return appendBranchCommit(parent, branchId, std::move(commands), std::move(actor), std::move(time), cause);
+}
+
+const Revision& History::mergeReplay(const std::vector<std::string>& parents, std::vector<Command> commands,
+                                     std::string actor, std::string time, std::optional<BranchId> branchId) {
+    if (parents.size() != 2 || parents.front() != head().envelope.id) {
+        throw CommandError("invalid_params", "a merge has two parents, main's head first");
+    }
+    const std::size_t tip = indexOf(parents.back());
+    if (branchId) {
+        noteBranchId(*branchId);
+    }
+    Prepared prepared = prepareTransaction(head().document, commands);
+    return appendMerge(tip, std::move(commands), std::move(prepared.result), std::move(actor), std::move(time),
+                       std::move(branchId));
 }
 
 const Revision& History::rollback(std::string_view planRevisionId, std::string actor, std::string time) {
@@ -318,14 +542,13 @@ const Revision& History::rollback(std::string_view planRevisionId, std::string a
     }
 
     const std::string planId = plan.envelope.id;
-    RevisionEnvelope envelope;
-    envelope.cause = Cause::rollback;
-    envelope.actor = std::move(actor);
-    envelope.time = std::move(time);
-    const Revision& revision = append(Revision{std::move(envelope), {}, planId, {}, std::move(inverse)});
-    undoStack_.push_back(revisions_.size() - 1);
+    Revision revision = newRevision(Cause::rollback, std::move(actor), std::move(time), std::move(inverse));
+    revision.target = planId;
+    const Revision& appended = append(std::move(revision), {mainHead_});
+    mainHead_ = revisions_.size() - 1;
+    undoStack_.push_back(mainHead_);
     redoStack_.clear();
-    return revision;
+    return appended;
 }
 
 }  // namespace siann::command
