@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -508,5 +510,282 @@ TEST_CASE("Rolling back a track remove reinserts it after its old neighbour", "[
         history.commit({addTrackAt("z", 0)}, "x", "t");                 // r4: z b
         const Revision& r5 = history.rollback("r3", "user", "t");
         CHECK(r5.document.root().trackOrder == std::vector<std::string>{"a", "z", "b"});
+    }
+}
+
+// Proposal branches (architecture spec, "Revision DAG — single history",
+// decisions of 2026-11-05).
+
+namespace {
+
+using siann::command::BranchId;
+using siann::model::DiffEntry;
+using siann::model::EntityRef;
+using siann::model::EntityType;
+
+// r2 adds trk_a, r3 adds trk_b: the base the branch tests start from.
+History withTwoTracks() {
+    History history = fresh();
+    history.commit({addTrack("trk_a")}, "a", "t1");
+    history.commit({addTrack("trk_b")}, "a", "t2");
+    return history;
+}
+
+std::vector<EntityRef> diffEntities(const Revision& revision) {
+    std::vector<EntityRef> out;
+    for (const DiffEntry& entry : revision.diff) {
+        out.push_back(entry.entity);
+    }
+    return out;
+}
+
+std::string errorCode(const std::function<void()>& action) {
+    try {
+        action();
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "no error";
+}
+
+}  // namespace
+
+TEST_CASE("A proposal branch starts at a base revision and its commits do not move main", "[history][branch]") {
+    History h = withTwoTracks();
+    const std::string mainHead = h.head().envelope.id;
+    const bool couldUndo = h.canUndo();
+
+    const BranchId b = h.branch("r2");
+    CHECK(b == "p1");
+    CHECK(h.branches() == std::vector<BranchId>{"p1"});
+    CHECK(h.branchHead(b).envelope.id == "r2");
+
+    const Revision& r4 = h.commitOn(b, {setGain("trk_a", -600)}, "agent", "t3");
+    CHECK(r4.envelope.id == "r4");
+    CHECK(r4.envelope.parents == std::vector<std::string>{"r2"});
+    CHECK(r4.envelope.cause == Cause::command);
+    CHECK(r4.branch == std::optional<std::string>{"p1"});
+    CHECK(r4.document.track("trk_a")->gain.milliDb == -600);
+    CHECK(r4.document.track("trk_b") == nullptr);  // the branch starts at r2
+
+    const Revision& r5 = h.commitOn(b, {addTrack("trk_c"), setGain("trk_c", -300)}, "agent", "t4", Cause::plan);
+    CHECK(r5.envelope.parents == std::vector<std::string>{"r4"});
+    CHECK(r5.envelope.cause == Cause::plan);
+
+    CHECK(h.head().envelope.id == mainHead);
+    CHECK(h.branchHead(b).envelope.id == "r5");
+    CHECK(h.canUndo() == couldUndo);
+    // Undo on main undoes main's last commit, never a branch commit.
+    CHECK(h.undo("a", "t5").target == std::optional<std::string>{"r3"});
+    CHECK(h.branchHead(b).envelope.id == "r5");
+
+    CHECK(errorCode([&] { h.commitOn(b, {addTrack("trk_x")}, "a", "t", Cause::undo); }) == "invalid_params");
+    CHECK(errorCode([&] { (void)h.branch("r99"); }) == "not_found");
+    CHECK(errorCode([&] { (void)h.branch("r4"); }) == "invalid_params");  // not on main
+}
+
+TEST_CASE("Merging a proposal creates a branch-merge revision on main with two parents", "[history][branch]") {
+    History h = withTwoTracks();
+    const Revision preMerge = h.head();
+    const BranchId b = h.branch(preMerge.envelope.id);
+    h.commitOn(b, {addTrack("trk_c")}, "agent", "t3");
+    h.commitOn(b, {setGain("trk_c", -900)}, "agent", "t4");
+    const Revision tip = h.branchHead(b);
+
+    const Revision& merged = h.merge(b, "user", "t5");
+    CHECK(merged.envelope.cause == Cause::branchMerge);
+    CHECK(siann::command::causeName(Cause::branchMerge) == "branch-merge");
+    CHECK(merged.envelope.parents == std::vector<std::string>{preMerge.envelope.id, tip.envelope.id});
+    CHECK(merged.envelope.documentHash == tip.envelope.documentHash);
+    REQUIRE(merged.commands.size() == 2);
+    CHECK(merged.commands[0].op() == "track.add");
+    CHECK(merged.commands[1].op() == "track.set_gain");
+    CHECK(merged.envelope.actor == "user");
+    CHECK(h.head().envelope.id == merged.envelope.id);
+    CHECK(h.branches().empty());
+    CHECK(h.reachable(tip.envelope.id));
+
+    const Revision& undone = h.undo("user", "t6");
+    CHECK(undone.target == std::optional<std::string>{merged.envelope.id});
+    CHECK(undone.envelope.documentHash == preMerge.envelope.documentHash);
+    CHECK(h.redo("user", "t7").envelope.documentHash == tip.envelope.documentHash);
+}
+
+TEST_CASE("Merging when main changed unrelated entities keeps both", "[history][branch]") {
+    History h = withTwoTracks();
+    const BranchId b = h.branch("r3");
+    h.commit({setGain("trk_a", -1200)}, "user", "t3");
+    const Revision branchCommit = h.commitOn(b, {addTrack("trk_c")}, "agent", "t4");
+
+    const Revision& merged = h.merge(b, "user", "t5");
+    CHECK(merged.document.track("trk_a")->gain.milliDb == -1200);
+    CHECK(merged.document.track("trk_c") != nullptr);
+    CHECK(merged.envelope.parents == std::vector<std::string>{"r4", branchCommit.envelope.id});
+    CHECK(diffEntities(merged) == diffEntities(branchCommit));
+    CHECK(diffEntities(merged) ==
+          std::vector<EntityRef>{EntityRef{EntityType::root, "root"}, EntityRef{EntityType::track, "trk_c"}});
+}
+
+TEST_CASE("Merging when main changed an entity the branch wrote is refused with branch_conflict",
+          "[history][branch]") {
+    History h = withTwoTracks();
+    const BranchId b = h.branch("r3");
+    h.commit({setGain("trk_a", -1200)}, "user", "t3");
+    h.commitOn(b, {setGain("trk_a", -300)}, "agent", "t4");
+    const std::string mainHead = h.head().envelope.id;
+    const std::size_t count = h.revisions().size();
+
+    try {
+        h.merge(b, "user", "t5");
+        FAIL("expected branch_conflict");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "branch_conflict");
+        CHECK(std::string(error.what()).find("track:trk_a") != std::string::npos);
+    }
+    CHECK(h.head().envelope.id == mainHead);
+    CHECK(h.revisions().size() == count);
+    CHECK(h.branches() == std::vector<BranchId>{b});
+    CHECK(h.branchHead(b).envelope.id == "r5");
+
+    SECTION("an entity main removed counts as changed") {
+        History g = withTwoTracks();
+        const BranchId p = g.branch("r3");
+        g.commit({cmd(R"({"op":"track.remove","trackId":"trk_b"})")}, "user", "t3");
+        g.commitOn(p, {setGain("trk_b", -300)}, "agent", "t4");
+        CHECK(errorCode([&] { g.merge(p, "user", "t5"); }) == "branch_conflict");
+    }
+    SECTION("an entity main added that the branch also adds counts as changed") {
+        History g = withTwoTracks();
+        const BranchId p = g.branch("r3");
+        g.commit({addTrack("trk_c")}, "user", "t3");
+        g.commitOn(p, {addTrack("trk_c")}, "agent", "t4");
+        CHECK(errorCode([&] { g.merge(p, "user", "t5"); }) == "branch_conflict");
+    }
+    SECTION("a branch without commits cannot be merged") {
+        History g = withTwoTracks();
+        const BranchId p = g.branch("r3");
+        CHECK(errorCode([&] { g.merge(p, "user", "t5"); }) == "empty_transaction");
+        CHECK(g.branches() == std::vector<BranchId>{p});
+    }
+}
+
+TEST_CASE("Discarding a proposal leaves its revisions unreachable but present", "[history][branch]") {
+    History h = withTwoTracks();
+    const BranchId b = h.branch("r3");
+    const std::string branchRev = h.commitOn(b, {addTrack("trk_c")}, "agent", "t3").envelope.id;
+    CHECK_FALSE(h.reachable(branchRev));
+    CHECK(h.reachable("r3"));
+    CHECK(h.reachable("r1"));
+
+    h.discard(b);
+    REQUIRE(h.find(branchRev) != nullptr);
+    CHECK(h.find(branchRev)->document.track("trk_c") != nullptr);
+    CHECK_FALSE(h.reachable(branchRev));
+    CHECK_FALSE(h.reachable("r99"));
+    CHECK(h.branches().empty());
+    CHECK(errorCode([&] { h.commitOn(b, {addTrack("trk_d")}, "a", "t"); }) == "not_found");
+    CHECK(errorCode([&] { h.merge(b, "a", "t"); }) == "not_found");
+    CHECK(errorCode([&] { h.discard(b); }) == "not_found");
+    CHECK(errorCode([&] { (void)h.branchHead(b); }) == "not_found");
+
+    // A later commit on main is unaffected, and the next branch gets a new id.
+    h.commit({addTrack("trk_d")}, "user", "t4");
+    CHECK(h.head().envelope.parents == std::vector<std::string>{"r3"});
+    CHECK(h.branch("r5") == "p2");
+}
+
+TEST_CASE("Only one branch can be merged into a given main head per call; two open branches may coexist",
+          "[history][branch]") {
+    History h = withTwoTracks();
+    const BranchId p1 = h.branch("r3");
+    const BranchId p2 = h.branch("r3");
+    CHECK(p1 != p2);
+    h.commitOn(p1, {addTrack("trk_c")}, "agent", "t3");
+    h.commitOn(p2, {setGain("trk_a", -600)}, "agent", "t4");
+    CHECK(h.branches() == std::vector<BranchId>{p1, p2});
+
+    h.merge(p1, "user", "t5");
+    CHECK(h.branches() == std::vector<BranchId>{p2});
+    CHECK(h.branchHead(p2).envelope.id == "r5");
+
+    // p2 wrote only trk_a, which main has not changed since r3.
+    const Revision& second = h.merge(p2, "user", "t6");
+    CHECK(second.envelope.parents == std::vector<std::string>{"r6", "r5"});
+    CHECK(second.document.track("trk_c") != nullptr);
+    CHECK(second.document.track("trk_a")->gain.milliDb == -600);
+
+    // Two branches that both add a track write root: the second conflicts (rule d).
+    History g = withTwoTracks();
+    const BranchId q1 = g.branch("r3");
+    const BranchId q2 = g.branch("r3");
+    g.commitOn(q1, {addTrack("trk_c")}, "agent", "t3");
+    g.commitOn(q2, {addTrack("trk_d")}, "agent", "t4");
+    g.merge(q1, "user", "t5");
+    CHECK(errorCode([&] { g.merge(q2, "user", "t6"); }) == "branch_conflict");
+}
+
+TEST_CASE("Replaying branch, merge and discard reproduces revision ids, parents and hashes", "[history][branch]") {
+    auto run = [] {
+        History history = fresh();
+        history.commit({addTrack("trk_a")}, "a", "t1");
+        const BranchId p1 = history.branch("r2");
+        history.commitOn(p1, {addTrack("trk_c")}, "a", "t2");
+        history.commit({setGain("trk_a", -300)}, "a", "t3");
+        const BranchId p2 = history.branch("r2");
+        history.commitOn(p2, {addTrack("trk_d")}, "a", "t4");
+        history.commitOn(p1, {setGain("trk_c", -600)}, "a", "t5", Cause::plan);
+        history.merge(p1, "a", "t6");
+        history.discard(p2);
+        history.undo("a", "t7");
+        history.redo("a", "t8");
+        return history;
+    };
+    const History a = run();
+    const History b = run();
+    REQUIRE(a.revisions().size() == b.revisions().size());
+    CHECK(ids(a) == std::vector<std::string>{"r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"});
+    for (std::size_t i = 0; i < a.revisions().size(); ++i) {
+        INFO("revision " << i);
+        CHECK(a.revisions()[i].envelope.documentHash == b.revisions()[i].envelope.documentHash);
+        CHECK(a.revisions()[i].envelope.parents == b.revisions()[i].envelope.parents);
+        CHECK(a.revisions()[i].envelope.cause == b.revisions()[i].envelope.cause);
+        CHECK(a.revisions()[i].branch == b.revisions()[i].branch);
+    }
+    CHECK(a.find("r7")->envelope.parents == std::vector<std::string>{"r4", "r6"});
+    CHECK(a.head().document.track("trk_c")->gain.milliDb == -600);
+    CHECK(a.head().document.track("trk_d") == nullptr);
+    CHECK_FALSE(a.reachable("r5"));
+    CHECK(a.reachable("r6"));
+
+    SECTION("the replay entry points rebuild the same revisions from their records") {
+        History replayed = fresh();
+        for (std::size_t i = 1; i < a.revisions().size(); ++i) {
+            const Revision& r = a.revisions()[i];
+            const auto& e = r.envelope;
+            if (e.cause == Cause::branchMerge) {
+                replayed.mergeReplay(e.parents, r.commands, e.actor, e.time, r.branch);
+            } else if (r.branch) {
+                replayed.commitOnParent(*r.branch, e.parents.front(), r.commands, e.actor, e.time, e.cause);
+            } else if (e.cause == Cause::undo) {
+                replayed.undo(e.actor, e.time);
+            } else if (e.cause == Cause::redo) {
+                replayed.redo(e.actor, e.time);
+            } else {
+                replayed.commit(r.commands, e.actor, e.time, e.cause);
+            }
+        }
+        REQUIRE(replayed.revisions().size() == a.revisions().size());
+        for (std::size_t i = 0; i < a.revisions().size(); ++i) {
+            INFO("revision " << i);
+            CHECK(replayed.revisions()[i].envelope.id == a.revisions()[i].envelope.id);
+            CHECK(replayed.revisions()[i].envelope.parents == a.revisions()[i].envelope.parents);
+            CHECK(replayed.revisions()[i].envelope.documentHash == a.revisions()[i].envelope.documentHash);
+            CHECK(replayed.revisions()[i].branch == a.revisions()[i].branch);
+        }
+        CHECK(replayed.head().envelope.id == a.head().envelope.id);
+        CHECK_FALSE(replayed.reachable("r5"));
+        // Open proposals do not survive a replay; new ids continue after p2.
+        CHECK(replayed.branches().empty());
+        CHECK(replayed.branch("r2") == "p3");
     }
 }
