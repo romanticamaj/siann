@@ -950,8 +950,11 @@ Rules:
 
 ```text
 Revision { id, parents, documentHash, cause, actor, time }   (envelope)
-cause ∈ { command, plan(transaction), undo, redo, rollback, branch-merge, recovery }
+cause ∈ { create, command, plan(transaction), undo, redo, rollback, branch-merge, recovery }
 ```
+
+`create` is the cause of the first revision (the journal's create record, which
+carries the initial document).
 
 - `id`, `parents`, `actor` and `time` are envelope data and are never part of the
   document or its hash. `documentHash` is the document hash defined in "Canonical
@@ -991,6 +994,42 @@ cause ∈ { command, plan(transaction), undo, redo, rollback, branch-merge, reco
   plan's jobs produced (media, blobs, renders) stay in the bundle,
   content-addressed and merely unreferenced; removing them is a separate explicit
   purge, never a side effect of rollback.
+
+Decisions of 2026-11-05 (m3-audition):
+
+- Branches. A proposal branch (id `p1`, `p2`, ... in creation order) starts at a
+  base revision that is reachable from main's head. Its commits are revisions
+  like any other (ids `r<n>` in commit order across main and every branch, cause
+  `command` or `plan`, one parent: the branch's previous tip or the base). They
+  never move main's head and never enter main's undo stack. Opening and
+  discarding a branch are not revisions.
+- Merge rule. The branch's write set is the union of the entities in its
+  revisions' diffs. Merging is refused with `branch_conflict`, listing the
+  entities as `"<type>:<id>"`, when any of them has a different entity hash at
+  main's head than at the base revision (an entity added or removed on main
+  counts as changed); nothing changes then. Otherwise the branch's commands, in
+  order, are applied to main's head as one transaction. The result is one
+  revision with cause `branch-merge`, parents `[main head, branch tip]`, the
+  branch's commands, and a diff against main's head (so it lists only the
+  branch's entities). The merge closes the branch, enters main's undo stack
+  (one undo restores the pre-merge document, through the first parent) and
+  clears redo. The same rule as plan staleness: no three-way merge in v1.
+- Discard closes the branch. Its revisions stay in the history and the journal,
+  findable by id, but unreachable: a revision is reachable when it is main's head
+  or an ancestor of it through any parent.
+- Restart rule. Open proposals do not survive a restart: branch creation and
+  discard are not journaled. On open every branch revision is replayed (findable,
+  unreachable unless merged) but no branch is open. A branch commit's journal
+  record carries the optional record field `branch: "p<n>"` (outside the
+  envelope, so not in any hash but the record checksum), because parents alone
+  cannot tell a branch commit from a main commit when the branch starts at main's
+  head. The schema stays `siann.journal_record.v1`: `parents` is already an array
+  and journals without the field read unchanged. A merge record carries `branch`
+  too, for audit; replay rebuilds it from its parents and commands, and new
+  branch ids continue after the highest recorded one.
+- The checkpoint is verified against the revision its `head.id` names, not the
+  revision at index `coversSeq`: with branches, the newest record need not be
+  main's head.
 
 #### Plans
 
@@ -1366,6 +1405,24 @@ contradicts none of them):
   and CPU budget; if the budget is exceeded, audition is refused with a reason.
 - Transport and playhead are shared; automation follows the auditioned branch.
 
+Decisions of 2026-11-05 (m3-audition):
+
+- One side is heard: main or one open proposal. Auditioning another proposal
+  replaces the one heard. Edits that end while a proposal is heard (fader
+  gestures) commit onto that proposal's branch; main commits made meanwhile do
+  not change the sound until main is heard again. Discarding the heard proposal
+  returns the sound to main; after a merge, hearing main plays the merged head
+  (no recompile when the documents are equal).
+- M3 budget stand-in. Until the instance table and plugins exist (M4), the cost
+  of a switch is estimated from the document before anything is allocated:
+  memory is the bytes of the disk-stream rings the switch would create (tracks
+  whose stream cannot be reused × ring frames × channels × 4 bytes), CPU is the
+  node count of the compiled graph. Both limits default to unlimited. A refusal
+  is `audition_budget_exceeded` with the bytes or nodes needed against the
+  budget, and changes nothing (the live graph, the compile count and the streams
+  stay as they were). An unknown or closed proposal is `audition_not_found`.
+  Per-plugin instantiation cost replaces the node count with M4.
+
 ## Session bundle
 
 ```text
@@ -1633,6 +1690,12 @@ after the device bench runs.
 
 M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
+
+M3 interim (proposal audition, m3-audition): proposal branches live in
+`siann-command`'s `History` and are journaled by `siann-session`; audition is an
+`Auditioner` in `siann-playback` over the playback engine. M2's whole-output duck
+applies to an A/B switch as to any structural edit. The budget is the stand-in
+described under "Proposal audition (A/B)".
 
 ## Risks
 
