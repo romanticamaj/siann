@@ -57,10 +57,19 @@ private:
     fs::path path_;
 };
 
+// The IXWebSocket client always sends an Origin (ws://host:port unless one is
+// given), so the loopback clients present the app's. A request without Origin
+// is covered by the fake-transport tests.
+ix::WebSocketHttpHeaders appOrigin() {
+    ix::WebSocketHttpHeaders headers;
+    headers["Origin"] = std::string(kAppOrigin);
+    return headers;
+}
+
 // A WebSocket client that queues what it receives.
 class Client {
 public:
-    explicit Client(std::uint16_t port, ix::WebSocketHttpHeaders headers = {}) {
+    explicit Client(std::uint16_t port, ix::WebSocketHttpHeaders headers = appOrigin()) {
         socket_.setUrl("ws://127.0.0.1:" + std::to_string(port) + "/");
         socket_.setExtraHeaders(headers);
         socket_.disableAutomaticReconnection();
@@ -79,6 +88,7 @@ public:
                 case ix::WebSocketMessageType::Error:
                     failed_ = true;
                     httpStatus_ = message->errorInfo.http_status;
+                    reason_ = message->errorInfo.reason;
                     break;
                 default:
                     break;
@@ -95,6 +105,7 @@ public:
         socket_.start();
         std::unique_lock lock(mutex_);
         REQUIRE(changed_.wait_for(lock, kTimeout, [this] { return open_ || failed_; }));
+        UNSCOPED_INFO("upgrade failed: " << reason_);
         return open_;
     }
 
@@ -134,6 +145,7 @@ private:
     bool closed_ = false;
     bool failed_ = false;
     int httpStatus_ = 0;
+    std::string reason_;
 };
 
 struct Server {
