@@ -6,6 +6,7 @@
 #include <cctype>
 #include <filesystem>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "siann/hash/sha256.hpp"
 #include "siann/model/document.hpp"
 #include "siann/protocol/protocol_server.hpp"
+#include "siann/session/journal.hpp"
 #include "siann/session/session.hpp"
 
 namespace fs = std::filesystem;
@@ -411,6 +413,94 @@ TEST_CASE("a duplicate of a failed request returns the same error without retryi
     REQUIRE(sent.size() == 3);
     CHECK(sent[1] == sent[2]);
     CHECK(errorCode(parse(sent[1])) == "unknown_command");
+}
+
+namespace {
+
+// A path in the ANSI code page (CP950 on a Traditional Chinese Windows) is not
+// UTF-8; IoError and SessionError carry such paths in their messages.
+constexpr const char* kNotUtf8 = "cannot write D:/\xad\xb5\xbc\xd6/Song.siann/journal: \xff";
+constexpr const char* kReplacement = "\xEF\xBF\xBD";  // U+FFFD
+
+enum class Throw { nothing, runtimeError, sessionError, notAnException };
+
+// A clock that throws as the commit asks for the time, the way a journal
+// write that fails during command.execute throws out of Session::commit.
+ServerOptions throwingClockOptions(const Throw& mode, bool pumpThread) {
+    ServerOptions options = manualOptions();
+    options.pumpThread = pumpThread;
+    options.clock = [&mode]() -> std::string {
+        switch (mode) {
+            case Throw::runtimeError: throw std::runtime_error(kNotUtf8);
+            case Throw::sessionError: throw siann::session::SessionError("corrupt_record", kNotUtf8);
+            case Throw::notAnException: throw 42;
+            case Throw::nothing: break;
+        }
+        return "2026-11-04T00:00:00Z";
+    };
+    return options;
+}
+
+}  // namespace
+
+TEST_CASE("an exception whose message is not UTF-8 still gets exactly one error response", "[protocol]") {
+    Throw mode = Throw::nothing;
+    Fixture f(throwingClockOptions(mode, false));
+    const ConnectionId connection = f.authed();
+
+    std::string code;
+    bool replaced = true;
+    SECTION("std::exception") {
+        mode = Throw::runtimeError;
+        code = "internal_error";
+    }
+    SECTION("SessionError keeps its code") {
+        mode = Throw::sessionError;
+        code = "corrupt_record";
+    }
+    SECTION("an exception that is not a std::exception") {
+        mode = Throw::notAnException;
+        code = "internal_error";
+        replaced = false;
+    }
+    f.transport.deliver(connection, f.request("q1", "command.execute", commandsParams({trackAdd("trk_a")})));
+    REQUIRE_NOTHROW(f.server.pump());
+    auto sent = f.sent(connection);
+    REQUIRE(sent.size() == 2);
+    const Value response = parse(sent[1]);
+    CHECK(at(response, "requestId").asString() == "q1");
+    CHECK_FALSE(at(response, "ok").asBool());
+    CHECK(errorCode(response) == code);
+    if (replaced) {
+        CHECK(at(at(response, "error"), "message").asString().find(kReplacement) != std::string::npos);
+    }
+    CHECK(f.revisions() == 1);
+
+    // The server keeps serving.
+    mode = Throw::nothing;
+    f.transport.deliver(connection, f.request("q2", "command.execute", commandsParams({trackAdd("trk_a")})));
+    f.server.pump();
+    sent = f.sent(connection);
+    REQUIRE(sent.size() == 3);
+    CHECK(at(parse(sent[2]), "ok").asBool());
+    CHECK(f.revisions() == 2);
+}
+
+TEST_CASE("on the pump thread, an exception whose message is not UTF-8 gets one error and the thread lives",
+          "[protocol]") {
+    Throw mode = Throw::runtimeError;
+    Fixture f(throwingClockOptions(mode, true));
+    const ConnectionId connection = f.authed();
+    f.transport.deliver(connection, f.request("q1", "command.execute", commandsParams({trackAdd("trk_a")})));
+    REQUIRE(f.transport.waitSent(connection, 2));
+    CHECK(errorCode(parse(f.sent(connection)[1])) == "internal_error");
+
+    f.transport.deliver(connection, f.request("q2", "session.inspect"));
+    REQUIRE(f.transport.waitSent(connection, 3));
+    const auto sent = f.sent(connection);
+    CHECK(at(parse(sent[2]), "requestId").asString() == "q2");
+    CHECK(at(parse(sent[2]), "ok").asBool());
+    f.server.stop();
 }
 
 TEST_CASE("requests in flight get exactly one response each, in order", "[protocol]") {

@@ -5,6 +5,9 @@
 // handler, deliver() hands a text frame to the server, sent() returns what
 // the server answered on a connection.
 
+#include <chrono>
+#include <condition_variable>
+#include <cstddef>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -39,6 +42,7 @@ public:
         if (it != connections_.end() && !it->second.closed) {
             it->second.sent.push_back(text);
         }
+        sentChanged_.notify_all();
     }
 
     void close(ConnectionId connection, int code, const std::string&) override {
@@ -94,6 +98,14 @@ public:
         return connections_.at(connection).sent;
     }
 
+    // Waits until the server has sent at least count frames on the connection
+    // (for tests with the pump thread on). The timeout only bounds a hang.
+    bool waitSent(ConnectionId connection, std::size_t count,
+                  std::chrono::milliseconds timeout = std::chrono::seconds(10)) const {
+        std::unique_lock lock(mutex_);
+        return sentChanged_.wait_for(lock, timeout, [&] { return connections_.at(connection).sent.size() >= count; });
+    }
+
     bool closed(ConnectionId connection) const {
         std::lock_guard lock(mutex_);
         return connections_.at(connection).closed;
@@ -111,6 +123,7 @@ private:
 
     TransportHandlers handlers_;
     mutable std::mutex mutex_;
+    mutable std::condition_variable sentChanged_;
     std::map<ConnectionId, Connection> connections_;
     ConnectionId nextId_ = 1;
     bool listening_ = false;
