@@ -1415,8 +1415,9 @@ Protocol events v1 (decided 2026-11-04 with m3-events-sync; the wire details are
     v1, so the client sees a `seq` gap and calls `session.sync`.
 11. `session.changed {revision, parents, cause, actor, time, documentHash,
     changedIds: [{ref: "<type>:<id>", change}]}` follows every commit, undo and
-    redo after it is durable and published. `session.fetch {refs}` returns entities
-    at the head (`missing: true` for absent ones). `session.sync {cursor?}` pins the
+    redo after it is durable and published. `session.fetch {refs, revision?}` returns
+    entities at that revision or the head (`missing: true` for absent ones;
+    `revision_unavailable` for a revision no longer kept). `session.sync {cursor?}` pins the
     head document for the connection and returns it in chunks of at most
     `syncChunkEntities` entities (default 500), all at the pinned revision, chained
     by `next` cursors; a cursor that does not match the connection's pinned sync is

@@ -84,9 +84,9 @@ published (never from the journal's pre-publish hook).
 
 `changedIds` is the revision's diff against its parent, sorted by entity type and
 id; `change` is `added`, `removed` or `modified`. A client fetches the added and
-modified entities with `session.fetch` and drops the removed ones. When the fetch
-answers a later revision than the event (more commits happened in between), the
-client syncs instead.
+modified entities with `session.fetch` at the event's `revision` (so later commits
+do not leak into the step) and drops the removed ones. When that revision is no
+longer kept (`revision_unavailable`), the client syncs instead.
 
 ### `meters.legend`
 
@@ -130,15 +130,18 @@ happen in between.
 
 ### `session.fetch`
 
-Params `{refs: ["<type>:<id>", ...]}` (non-empty; `type` is `root`, `media`,
-`track` or `clip`; the root is `root:root`). Result at the head revision:
+Params `{refs: ["<type>:<id>", ...], revision?: "rN"}` (`refs` non-empty; `type`
+is `root`, `media`, `track` or `clip`; the root is `root:root`). Result at
+`revision`, or at the head without it:
 
 ```json
 {"revision": "r13", "documentHash": "sha256:...",
  "entities": [{"ref": "track:trk_1", "entity": {...}}, {"ref": "clip:clp_9", "missing": true}]}
 ```
 
-A ref that is not of that form is `invalid_params`.
+A ref that is not of that form, or a `revision` that is not a string, is
+`invalid_params`. A revision the history does not hold is `revision_unavailable`
+(M1 keeps every revision; later history pruning may not).
 
 ### `session.undo`, `session.redo`
 
