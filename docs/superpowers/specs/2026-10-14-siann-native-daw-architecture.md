@@ -445,8 +445,27 @@ records who that is:
 - The audio thread never locks, allocates, frees, logs, throws, or performs I/O.
 - Debug builds mark the audio thread with a thread-local flag; global `operator
   new/delete` and malloc hooks abort if called on a marked thread.
-- Clang RealtimeSanitizer (`-fsanitize=realtime`, `[[clang::nonblocking]]`) runs in
-  CI on platforms where Clang is available.
+- Clang RealtimeSanitizer (`-fsanitize=realtime`) runs in CI on platforms where
+  Clang 20 or later is available (the Linux RTSan job; see "Build, test and CI").
+  The sanitizer's realtime context is tied to `siann::rt::ScopedRealtimeThread`:
+  in an RTSan build (`SIANN_RTSAN=ON`) its constructor and destructor call
+  `__rtsan_realtime_enter` and `__rtsan_realtime_exit`. Every device (manual,
+  fake, JUCE) opens that scope around each audio callback, so the graph driver's
+  `process()` and everything it calls (nodes, recorder, disk streams, SRC) are
+  checked without annotations. The fake device's pacing and stall sleeps run
+  outside the scope, as a real driver's wait for the hardware would.
+- `[[clang::nonblocking]]` is not put on `process()` or the callbacks: Clang's
+  function-effect analysis then warns on every call to an unannotated callee
+  (`std::function`, node virtuals, r8brain), which `-Werror` turns into a build
+  failure across the whole graph; GCC and MSVC also warn on the unknown
+  attribute. The runtime scope gives the same coverage.
+- Tests that break the rules on purpose (the allocation guard's self-test, a
+  callback that sleeps to test `stop()`) open
+  `siann::rt::ScopedRealtimeSanitizerDisabler`, with the reason in a comment at
+  each use; production code never does. Known-unavoidable calls would go in a
+  suppressions file passed through `RTSAN_OPTIONS`, one documented reason per
+  entry; there are none, so the job runs without one. Canaries (an allocation, a
+  lock and a sleep inside the scope) must be reported, or the job fails.
 - Diagnostics from the audio thread go through a lock-free log ring drained by a
   non-realtime thread (for example rtlog-cpp); spdlog is used only off the audio
   thread.
@@ -609,8 +628,7 @@ The documented precision is shown to users and agents.
 - The SRC library runs on the audio thread, so it must be allocation-free after
   setup and pass the realtime checks. Candidate: r8brain-free-src streaming mode
   (MIT), verified with the allocation hooks and RealtimeSanitizer before adoption;
-  libsamplerate (BSD-2) is the fallback. M2 adopts r8brain on two of those three
-  checks, and the third is still owed:
+  libsamplerate (BSD-2) is the fallback. M2 adopts r8brain on these three checks:
   - Allocations: the allocation-guard tests run `process()` on a marked audio
     thread and pump every SRC test through the guarded driver.
   - Locks and blocking calls: the allocation guard cannot see them, so this rests
@@ -619,11 +637,29 @@ The documented precision is shown to users and agents.
     They are taken only when a resampler is constructed or destroyed, which
     happens on the control thread. `process()` and `clear()` take none and make no
     system calls.
-  - RealtimeSanitizer: no repo build runs it yet. The M2 exit criterion
-    `m2-exit-rt-safety` adds the Clang RTSan job (or records why the toolchain
-    cannot run it). That job must cover the SRC tests. Until it runs clean,
-    r8brain's adoption is provisional. If RTSan flags its streaming path, M2
-    switches to libsamplerate.
+  - RealtimeSanitizer: the Linux RTSan CI job builds r8brain with
+    `-fsanitize=realtime` and runs every `[src]` test (the direct `process()`
+    test inside a realtime scope, and the sine, aliasing, impulse and
+    record-offset tests through the graph driver on the manual device), both in
+    the full ctest run and as an explicit `siann_realtime_tests "[src]"` step.
+    Before the pull request, the job's commands were run as written in WSL
+    (Ubuntu 24.04, Clang 20.1.8 from apt.llvm.org, CMake 3.28, Ninja): the
+    `-Werror` build of the whole tree with `-fsanitize=realtime` (Catch2,
+    dr_libs and r8brain included) succeeded, all 300 ctest tests passed with
+    `RTSAN_OPTIONS=halt_on_error=1`, the `siann_rtsan_canary_*` tests saw
+    RTSan's reports for `malloc`, `pthread_mutex_lock` and `nanosleep` (and
+    none under the disabler), and `siann_realtime_tests "[src]"` passed (10
+    test cases). RTSan reported nothing in r8brain's streaming path, so
+    r8brain's adoption is final and libsamplerate is not needed. The CI job
+    repeats this on every pull request and on `main`; a report there fails CI
+    and is listed here with its fix.
+    Before that run, a review against the realtime rules (not a sanitizer
+    report) found and fixed these, none of them in SIANN's realtime path or
+    r8brain: the fake device held the realtime scope across its pacing and
+    stall sleeps (now per callback), a capture vector grew inside a
+    fake-device callback (now reserved), the SRC test asserted inside its
+    realtime scope (now after it), and two deliberate rule breaks in tests now
+    run under the disabler.
 - SRC latency (input and output filters plus the FIFO) is reported to the latency
   model. The record offset includes it, so recorded clips stay aligned.
 - Recording through input SRC writes files at the session rate. Input monitoring
@@ -1267,6 +1303,13 @@ Not used: Taskflow (allocates at runtime).
 - CMake, C++20; MSVC (Windows), Apple Clang (macOS), GCC/Clang (Linux, arm64
   cross-compile).
 - CI matrix: Windows x64, macOS universal, Linux x64, Linux arm64 headless build.
+  Plus a Linux x64 RealtimeSanitizer job ("Native core RTSan (ubuntu, Clang 20)"):
+  Clang 20 from apt.llvm.org, the core built with `-DSIANN_RTSAN=ON`
+  (`-fsanitize=realtime` on every target, third-party code included), the whole
+  ctest suite with `RTSAN_OPTIONS=halt_on_error=1`, then the `[src]` tests
+  explicitly. macOS is not covered: Apple Clang ships no RealtimeSanitizer
+  runtime, and the Linux job already runs the same platform-independent core.
+  Windows has no RTSan; the allocation guard runs there.
 - A core-only build with no JUCE present runs on every CI job.
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
@@ -1362,9 +1405,10 @@ review instead of pushing on.
 ### Status (2026-11-03)
 
 M1 is done (status as of 2026-10-21 below). M2 is exit pending: every feature
-is merged (PRs #14, #16 to #18, #20, #21 and #24 to #30), three exit criteria
-have passing tests, two need a run on the maintainer's machine, and two need
-work that has not been done yet (see "M2 exit check (2026-11-03)").
+is merged (PRs #14, #16 to #18, #20, #21, #24 to #30 and #35, plus the RTSan
+job), four exit criteria have passing tests (the long recording test still owes
+its first scheduled CI run), and two need a run on the maintainer's machine (see
+"M2 exit check (2026-11-03)").
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
@@ -1440,7 +1484,7 @@ M2 exit check (2026-11-03), on `main` at 0ca829a. `node scripts/check-all.js
 | Realtime PDC null tests, including a latency change during playback (`m2-exit-pdc`) | Met | `ctest -R pdc`: 22 tests pass, including the four realtime null tests through the graph driver, the four "latency change during playback is recompiled and nulls again" tests and the offline/realtime parity test. |
 | A fader gesture through the parameter channel commits one revision (`m2-exit-gesture`) | Met | `siann-playback` test "A fader gesture moves the sound through the parameter channel and ending it commits exactly one revision", plus the pan and mute gesture tests. |
 | Record 10 minutes and recover after a kill (`m2-exit-record`) | Met locally; the scheduled CI run is owed after merge | `siann_cli_tests "[long]"` (hidden from the default ctest run, guarded by `siann_cli_long_tests_hidden` and `siann_cli_long_tests_listed`): "A 10-minute take records every frame of the counter and commits" records 600 s of device time on the fake device at 4x with the counter input and checks 28,800,000 frames, zero overflows and every sample on one consecutive counter; "A 10-minute take killed at 9 minutes recovers every flushed block" kills the child once its ready file reports 540 s durable and recovers at least those frames, content checked the same way. Both pass on Windows (dev preset, Debug): 154 s and 139 s. They run nightly and on `workflow_dispatch` in `.github/workflows/long-tests.yml` (Linux and Windows). The CLI kill test "A recording siann-cli killed mid-take leaves a pending take that recovers" now waits on `--ready-file` instead of polling the WAV header and the manifest the child rewrites (a reader could make the child's atomic replace fail on Windows) and passed 20 consecutive runs (`ctest -R "killed mid-take" --repeat until-fail:20`). |
-| Realtime-safety checks clean: allocation guard on every realtime test, RTSan where Clang is available (`m2-exit-rt-safety`) | Not met | Every realtime test binary links `siann_rt_alloc_guard` (rt, realtime, playback, host_fake, host_desktop, cli). No CI job builds with Clang `-fsanitize=realtime`. RTSan needs Clang 20 or later; the default Clang on `ubuntu-latest` is older, but Clang 20 installs from apt.llvm.org, so the toolchain does not rule the job out and it is owed; it must cover the SRC tests, and r8brain's adoption stays provisional until it runs clean. |
+| Realtime-safety checks clean: allocation guard on every realtime test, RTSan where Clang is available (`m2-exit-rt-safety`) | Met | Every realtime test binary links `siann_rt_alloc_guard` (rt, realtime, playback, host_fake, host_desktop, cli). The CI job "Native core RTSan (ubuntu, Clang 20)" (`m2-rtsan-ci`) builds the core with Clang 20 from apt.llvm.org, `-DSIANN_RTSAN=ON` and `-DSIANN_WERROR=ON`, runs the whole ctest suite with `RTSAN_OPTIONS=halt_on_error=1` (the dev preset's tests plus the four `siann_rtsan_canary_*` tests, which expect allocation, lock and sleep inside the realtime scope to be reported and nothing under the disabler), then `siann_realtime_tests "[src]"` explicitly. Its commands, run as written in WSL with Clang 20.1.8 before the pull request: build clean, 300 ctest tests passed, `[src]` passed, no RTSan report outside the canaries (see "Device-side SRC (M2)"). The job reruns on every pull request and on `main`. |
 
 Kill criterion (persistent xruns): not triggered so far; it can only be judged
 after the device bench runs.

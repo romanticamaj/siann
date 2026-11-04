@@ -101,6 +101,29 @@ host target (`SIANN_WITH_JUCE=ON`); its device tests run against the machine's
 real audio hardware, output silence only, and skip when there is no device. CI builds and tests on Windows,
 macOS and Linux (`.github/workflows/ci.yml`).
 
+### RealtimeSanitizer (Linux or WSL, Clang 20+)
+
+The `rtsan` preset builds everything with `-fsanitize=realtime`
+(`SIANN_RTSAN=ON`). Each audio callback runs in `siann::rt::ScopedRealtimeThread`,
+which is the sanitizer's realtime context in this build, so any allocation,
+lock, sleep or blocking call on the audio path stops the test with a
+`RealtimeSanitizer` report. The `siann_rtsan_canary_*` tests check that the
+sanitizer is live. Install Clang 20 from apt.llvm.org (Ubuntu or WSL), then:
+
+```sh
+wget https://apt.llvm.org/llvm.sh && sudo bash llvm.sh 20
+sudo apt-get install -y libclang-rt-20-dev ninja-build
+cd native
+cmake --preset rtsan -DCMAKE_CXX_COMPILER=clang++-20
+cmake --build --preset rtsan
+ctest --preset rtsan                      # sets RTSAN_OPTIONS=halt_on_error=1
+build/rtsan/libs/realtime/siann_realtime_tests "[src]"
+```
+
+A test that breaks the rules on purpose opens
+`siann::rt::ScopedRealtimeSanitizerDisabler` and says why in a comment;
+production code never does. Configuring with another compiler fails.
+
 ## Rules
 
 - Hashed data never goes through a general JSON library: it is parsed with

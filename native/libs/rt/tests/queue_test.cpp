@@ -132,6 +132,9 @@ TEST_CASE("The allocation guard counts allocations on realtime threads only", "[
     CHECK(allocationViolations() == before);
     {
         const ScopedRealtimeThread realtime;
+        // Reason: the guard's self-test allocates on a realtime thread on
+        // purpose; RealtimeSanitizer would rightly report it.
+        const siann::rt::ScopedRealtimeSanitizerDisabler allowed;
         auto* p = new int(2);
         delete p;
     }

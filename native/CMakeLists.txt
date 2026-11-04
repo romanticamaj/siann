@@ -13,6 +13,21 @@ option(SIANN_WITH_JUCE "Build the JUCE desktop host target (AGPLv3, ADR-0017)" O
 set(SIANN_FIXTURES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures"
     CACHE PATH "Fixtures shared by the Node bridge and the native engine")
 
+option(SIANN_RTSAN "Build everything with Clang RealtimeSanitizer (-fsanitize=realtime, Clang 20+)" OFF)
+
+# Before any target, third-party code included: r8brain's process() and
+# Catch2 run inside realtime scopes in the tests, so they are instrumented
+# and linked against the sanitizer runtime too.
+if(SIANN_RTSAN)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 20)
+    message(FATAL_ERROR "SIANN_RTSAN needs Clang 20 or later (found ${CMAKE_CXX_COMPILER_ID} "
+                        "${CMAKE_CXX_COMPILER_VERSION}); install it from apt.llvm.org")
+  endif()
+  add_compile_options(-fsanitize=realtime -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=realtime)
+  add_compile_definitions(SIANN_RTSAN=1)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SiannCompileOptions)
 include(SiannThirdParty)

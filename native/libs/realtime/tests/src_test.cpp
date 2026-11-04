@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -192,7 +194,11 @@ TEST_CASE("StreamResampler is allocation-free after setup", "[src][rt]") {
         float* outPointers[2] = {out[0].data(), out[1].data()};
         const auto before = rt::allocationViolations();
         std::int64_t produced = 0;
+        int fewest = INT_MAX;
+        int most = INT_MIN;
         {
+            // Only the resampler runs in the realtime scope (and under
+            // RealtimeSanitizer in an RTSan build); assertions come after.
             const rt::ScopedRealtimeThread realtime;
             for (int block = 0; block < 10'000; ++block) {
                 for (int i = 0; i < 64; ++i) {
@@ -200,12 +206,14 @@ TEST_CASE("StreamResampler is allocation-free after setup", "[src][rt]") {
                     in[1][static_cast<std::size_t>(i)] = -in[0][static_cast<std::size_t>(i)];
                 }
                 const int n = src.process(inPointers, 64, outPointers);
-                REQUIRE(n >= 0);
-                REQUIRE(n <= src.maxOutputFrames());
+                fewest = std::min(fewest, n);
+                most = std::max(most, n);
                 produced += n;
             }
         }
         CHECK(rt::allocationViolations() == before);
+        CHECK(fewest >= 0);
+        CHECK(most <= src.maxOutputFrames());
         // Every input frame past the lookahead comes out at the new rate.
         const std::int64_t expected = (640'000 - src.lookaheadFrames()) * rates.device / rates.session;
         CHECK(std::llabs(produced - expected) <= 2);

@@ -29,6 +29,20 @@
       "cacheVariables": {
         "SIANN_WITH_JUCE": "ON"
       }
+    },
+    {
+      "name": "rtsan",
+      "displayName": "Debug, Ninja, Clang RealtimeSanitizer (Linux, Clang 20+; set CMAKE_CXX_COMPILER)",
+      "inherits": "dev",
+      "binaryDir": "${sourceDir}/build/rtsan",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "SIANN_RTSAN": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -43,6 +57,10 @@
     {
       "name": "desktop",
       "configurePreset": "desktop"
+    },
+    {
+      "name": "rtsan",
+      "configurePreset": "rtsan"
     }
   ],
   "testPresets": [
@@ -65,6 +83,19 @@
       "configurePreset": "desktop",
       "output": {
         "outputOnFailure": true
+      }
+    },
+    {
+      "name": "rtsan",
+      "configurePreset": "rtsan",
+      "environment": {
+        "RTSAN_OPTIONS": "halt_on_error=1"
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
       }
     }
   ]

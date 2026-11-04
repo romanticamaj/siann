@@ -55,6 +55,68 @@ TEST_CASE("The fake device calls back on a realtime thread until stopped", "[fak
     CHECK_FALSE(device.contractViolated());
 }
 
+// Every callback runs inside the realtime scope, which is RealtimeSanitizer's
+// realtime context in an RTSan build; the device's own pacing and stall
+// sleeps stay outside it, so a paced or stalled run raises no report.
+TEST_CASE("Paced fake device callbacks run on a realtime thread, the pacing outside it", "[fake_device][rtsan]") {
+    FakeAudioDevice::Options options;
+    options.paced = true;
+    options.stopAfterCallbacks = 20;
+    FakeAudioDevice device(options);
+    device.open(config());
+    std::atomic<int> realtimeCallbacks{0};
+    std::atomic<int> otherCallbacks{0};
+    std::atomic<bool> stoppedOnRealtime{true};
+    std::atomic<bool> stopped{false};
+    device.setOnStopped([&](bool) {
+        stoppedOnRealtime.store(siann::rt::isRealtimeThread());
+        stopped.store(true);
+    });
+    device.start([&](const AudioBufferView&, const AudioBufferView& out) {
+        (siann::rt::isRealtimeThread() ? realtimeCallbacks : otherCallbacks).fetch_add(1);
+        out.clear();
+    });
+    waitFor([&] { return stopped.load(); });
+    device.stop();
+    CHECK(device.callbacks() == 20);
+    CHECK(realtimeCallbacks.load() == 20);
+    CHECK(otherCallbacks.load() == 0);
+    CHECK(stopped.load());
+    CHECK_FALSE(stoppedOnRealtime.load());  // the device thread is realtime only inside a callback
+}
+
+TEST_CASE("A stalled fake device sleeps outside the realtime scope", "[fake_device][rtsan]") {
+    FakeAudioDevice::Options options;
+    options.stall = true;
+    FakeAudioDevice device(options);
+    device.open(config());
+    std::atomic<int> calls{0};
+    device.start([&](const AudioBufferView&, const AudioBufferView&) { calls.fetch_add(1); });
+    // The stall loop sleeps 1 ms per turn; let it turn a few times.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(device.running());
+    device.stop();
+    CHECK(calls.load() == 0);
+    CHECK(device.callbacks() == 0);
+    CHECK_FALSE(device.running());
+}
+
+TEST_CASE("Manual device callbacks run on a realtime thread, the pump outside it", "[fake_device][rtsan]") {
+    siann::host::ManualAudioDevice device;
+    device.open(config());
+    int realtimeCallbacks = 0;
+    device.start([&](const AudioBufferView&, const AudioBufferView& out) {
+        realtimeCallbacks += siann::rt::isRealtimeThread() ? 1 : 0;
+        out.clear();
+    });
+    std::vector<float> captured;
+    captured.reserve(4 * 64);
+    device.pump(4, &captured);
+    CHECK(realtimeCallbacks == 4);
+    CHECK(captured.size() == 4u * 64u);
+    CHECK_FALSE(siann::rt::isRealtimeThread());
+}
+
 TEST_CASE("stop() returns only after a slow callback has finished", "[fake_device]") {
     FakeAudioDevice device({});
     device.open(config());
@@ -62,6 +124,9 @@ TEST_CASE("stop() returns only after a slow callback has finished", "[fake_devic
     std::atomic<bool> finished{false};
     device.start([&](const AudioBufferView&, const AudioBufferView&) {
         inside.store(true);
+        // Reason: a callback that blocks on purpose, to check that stop()
+        // waits for it; RealtimeSanitizer would rightly report the sleep.
+        const siann::rt::ScopedRealtimeSanitizerDisabler allowed;
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         finished.store(true);
     });
@@ -110,6 +175,7 @@ TEST_CASE("Loopback delays output into input by the total device latency", "[fak
 
     std::int64_t frame = 0;
     std::vector<float> captured;
+    captured.reserve(20u * 64u);  // filled in the callback: no allocation there
     device.start([&](const AudioBufferView& in, const AudioBufferView& out) {
         for (int i = 0; i < out.frames; ++i) {
             const float v = frame + i == 300 ? 1.0f : 0.0f;  // an impulse at output frame 300
