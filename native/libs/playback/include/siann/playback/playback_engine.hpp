@@ -168,7 +168,9 @@ public:
     // track.set_pan or track.set_mute) and sends the committed value to the
     // audio thread. Returns nullptr when the gesture never moved.
     // A command::CommandError propagates and commits nothing; the sound then
-    // returns to the document's value.
+    // returns to the document's value. So does AuditionError
+    // audition_not_found when the gesture branch was closed (merged or
+    // discarded on the session, not through the Auditioner).
     const command::Revision* endGesture(const std::string& trackId, std::uint32_t paramId, std::string actor,
                                         std::string time);
 

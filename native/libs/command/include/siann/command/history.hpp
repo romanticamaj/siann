@@ -126,8 +126,10 @@ public:
     // Merges an open branch into main (see the header comment). Throws
     // not_found, empty_transaction (no commits on the branch) or
     // branch_conflict listing the entities ("<type>:<id>") main changed since
-    // the base that the branch also wrote; nothing changes then.
-    const Revision& merge(const BranchId& branchId, std::string actor, std::string time);
+    // the base that the branch also wrote, or that are among the guarded
+    // entities (a proposed plan's read and write sets); nothing changes then.
+    const Revision& merge(const BranchId& branchId, std::string actor, std::string time,
+                          const std::vector<model::EntityRef>& guarded = {});
     // Closes an open branch; its revisions stay. Throws not_found.
     void discard(const BranchId& branchId);
     // Open branches in creation order.

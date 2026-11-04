@@ -59,6 +59,15 @@ void Auditioner::onBranchCommitted(const command::BranchId& branchId) {
     }
 }
 
+const command::Revision& Auditioner::merge(const command::BranchId& branchId, std::string actor, std::string time) {
+    (void)proposalDocument(branchId);  // audition_not_found
+    const command::Revision& merged = session_.merge(branchId, std::move(actor), std::move(time));
+    if (heard_ == branchId) {
+        hear(Side::main);
+    }
+    return merged;
+}
+
 void Auditioner::discard(const command::BranchId& branchId) {
     (void)proposalDocument(branchId);  // audition_not_found
     session_.discard(branchId);

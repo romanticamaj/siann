@@ -310,13 +310,17 @@ const Revision& Session::commitOn(const command::BranchId& branchId, std::vector
 }
 
 const Revision& Session::merge(const command::BranchId& branchId, std::string actor, std::string time) {
-    const Revision& revision = state_->history.merge(branchId, std::move(actor), std::move(time));
+    // A proposed plan's read and write sets guard the merge as they would guard its apply.
+    const Revision& revision = state_->history.merge(branchId, std::move(actor), std::move(time),
+                                                     state_->plans.guardedEntities(branchId));
     state_->afterRevision();
+    state_->plans.landProposal(branchId, revision.envelope.id);
     return revision;
 }
 
 void Session::discard(const command::BranchId& branchId) {
     state_->history.discard(branchId);
+    state_->plans.withdrawProposal(branchId);
 }
 
 const command::PlanStore& Session::plans() const noexcept {
@@ -351,20 +355,17 @@ const Revision& Session::applyPlan(std::string_view planHashText, std::string ac
                                                                       Cause::plan); });
 }
 
-command::BranchId proposeFromPlan(Session& session, const command::Plan& plan, std::string actor,
-                                  std::string time) {
-    if (plan.state != command::PlanState::approved) {
-        throw command::CommandError("invalid_state", "only an approved plan can be proposed, this one is " +
-                                                         std::string(command::planStateName(plan.state)));
-    }
-    const command::BranchId branchId = session.branch(plan.baseRevision);
-    try {
-        session.commitOn(branchId, plan.steps, std::move(actor), std::move(time), Cause::plan);
-    } catch (...) {
-        session.discard(branchId);
-        throw;
-    }
-    return branchId;
+command::BranchId Session::proposePlan(std::string_view planHashText, std::string actor, std::string time) {
+    return state_->plans.propose(planHashText, [&](const command::Plan& plan) {
+        const command::BranchId branchId = state_->history.branch(plan.baseRevision);
+        try {
+            commitOn(branchId, plan.steps, std::move(actor), std::move(time), Cause::plan);
+        } catch (...) {
+            state_->history.discard(branchId);
+            throw;
+        }
+        return branchId;
+    });
 }
 
 }  // namespace siann::session

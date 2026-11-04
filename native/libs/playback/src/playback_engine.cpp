@@ -13,6 +13,7 @@
 #include "siann/hash/json.hpp"
 #include "siann/media/memory_reader.hpp"
 #include "siann/media/wav_file_reader.hpp"
+#include "siann/playback/audition.hpp"
 #include "siann/session/media_import.hpp"
 
 namespace siann::playback {
@@ -391,6 +392,12 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
         return nullptr;
     }
     try {
+        if (gestureBranch_ && !session_.history().isOpen(*gestureBranch_)) {
+            // The heard branch was merged or discarded on the session, not
+            // through the Auditioner (spec, "Proposal audition (A/B)").
+            throw AuditionError("audition_not_found", "the proposal branch " + *gestureBranch_ +
+                                                          " heard for this gesture is closed; hear main first");
+        }
         const GestureCommit commit = gestureCommit(trackId, paramId, *value);
         const command::Revision& revision =
             gestureBranch_ ? session_.commitOn(*gestureBranch_, {commit.command}, std::move(actor), std::move(time))

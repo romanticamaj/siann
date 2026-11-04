@@ -405,7 +405,8 @@ const Revision& History::appendMerge(std::size_t branchTip, std::vector<Command>
     return appended;
 }
 
-const Revision& History::merge(const BranchId& branchId, std::string actor, std::string time) {
+const Revision& History::merge(const BranchId& branchId, std::string actor, std::string time,
+                               const std::vector<model::EntityRef>& guarded) {
     const OpenBranch& open = requireBranch(branchId);
     if (open.commits.empty()) {
         throw CommandError("empty_transaction", "proposal branch " + branchId + " has no commits to merge");
@@ -423,15 +424,17 @@ const Revision& History::merge(const BranchId& branchId, std::string actor, std:
         commands.insert(commands.end(), revisions_[index].commands.begin(), revisions_[index].commands.end());
     }
 
+    std::set<model::EntityRef> checked = written;
+    checked.insert(guarded.begin(), guarded.end());
     std::vector<std::string> conflicts;
-    for (const model::EntityRef& ref : written) {
+    for (const model::EntityRef& ref : checked) {
         if (base.findEntityHash(ref) != mainDoc.findEntityHash(ref)) {
             conflicts.push_back(entityKey(ref));
         }
     }
     if (!conflicts.empty()) {
         throw CommandError("branch_conflict", "main changed entities proposal branch " + branchId +
-                                                  " also wrote since " + revisions_[open.base].envelope.id + ": " +
+                                                  " wrote or guards since " + revisions_[open.base].envelope.id + ": " +
                                                   joined(conflicts));
     }
 

@@ -98,19 +98,20 @@ public:
     // Rolls back an applied plan through rollback(), so the inverse revision
     // is journaled before it is published (PlanStore::rollback).
     const command::Revision& rollbackPlan(std::string_view planHashText, std::string actor, std::string time);
+    // Applies an approved plan onto a new proposal branch instead of main: the
+    // branch starts at the plan's base revision and gets one revision with
+    // cause plan and the plan's steps (the entry point the MCP adapter
+    // drives). The plan stays approved and is linked to the branch
+    // (PlanStore::proposalBranch): merge() then guards its read and write sets
+    // and marks it applied at the merge revision; discard() drops the link.
+    // Throws CommandError not_found, invalid_state (not approved, or already
+    // proposed), or the error of a failing step (no branch is left open then).
+    command::BranchId proposePlan(std::string_view planHashText, std::string actor, std::string time);
 
 private:
     struct State;
     explicit Session(std::unique_ptr<State> state);
     std::unique_ptr<State> state_;
 };
-
-// Applies an approved plan onto a new proposal branch instead of main: the
-// branch starts at the plan's base revision and gets one revision with cause
-// plan and the plan's steps (the entry point the MCP adapter drives). The plan
-// stays approved; merging the branch is what lands it on main. Throws
-// command::CommandError invalid_state for a plan that is not approved, or the
-// error of a failing step (no branch is left open then).
-command::BranchId proposeFromPlan(Session& session, const command::Plan& plan, std::string actor, std::string time);
 
 }  // namespace siann::session

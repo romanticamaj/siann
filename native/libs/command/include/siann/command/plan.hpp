@@ -150,12 +150,34 @@ public:
     const Plan* find(std::string_view planHashText) const noexcept;
     std::size_t size() const noexcept { return plans_.size(); }
 
+    // Proposed plans (spec, "Revision DAG — single history", proposed plans):
+    // an approved plan linked to the open branch it was proposed onto. While
+    // linked, apply, reject and propose are invalid_state; the plan stays
+    // approved until the branch is merged (landProposal: applied at the merge
+    // revision) or discarded (withdrawProposal: the link goes).
+    //
+    // propose checks the plan (not_found, invalid_state), then calls open,
+    // which opens the branch and commits the steps and returns its id, then
+    // links them. If open throws, nothing is linked.
+    using Propose = std::function<BranchId(const Plan& plan)>;
+    BranchId propose(std::string_view planHashText, const Propose& open);
+    std::optional<BranchId> proposalBranch(std::string_view planHashText) const;
+    std::optional<std::string> proposedPlan(const BranchId& branchId) const;
+    // What a merge of the branch guards besides its write set: the proposed
+    // plan's read and write sets (nothing for a branch without a plan).
+    std::vector<model::EntityRef> guardedEntities(const BranchId& branchId) const;
+    // Both are no-ops for a branch without a plan.
+    void landProposal(const BranchId& branchId, const std::string& revisionId);
+    void withdrawProposal(const BranchId& branchId);
+
 private:
     Plan& require(std::string_view planHashText);
     const Plan& store(Plan plan);
     void requireFresh(const History& history, const Plan& plan) const;
+    void requireNotProposed(std::string_view planHashText) const;
 
     std::map<std::string, Plan, std::less<>> plans_;
+    std::map<BranchId, std::string> proposals_;  // open branch -> plan hash text
 };
 
 }  // namespace siann::command

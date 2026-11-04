@@ -57,8 +57,17 @@ public:
     void onMainCommitted();
     void onBranchCommitted(const command::BranchId& branchId);
 
+    // Merges a proposal into main (session.merge); if it was heard, main is
+    // heard at once and gestures commit onto main again. Throws AuditionError
+    // audition_not_found, or the merge's CommandError (branch_conflict, ...),
+    // which changes nothing: the proposal stays heard.
+    const command::Revision& merge(const command::BranchId& branchId, std::string actor, std::string time);
     // Discards a proposal (session.discard); if it was heard, main is heard.
     // Throws AuditionError audition_not_found.
+    //
+    // Close branches through these two: a heard branch closed on the session
+    // directly leaves heard() naming it until hear(main), and a gesture that
+    // ends meanwhile is audition_not_found.
     void discard(const command::BranchId& branchId);
 
 private:
