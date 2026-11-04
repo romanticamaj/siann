@@ -30,6 +30,7 @@ additions:
   "type": "auth", "ok": true,
   "sessionId": "ses_...", "revision": "r12", "documentHash": "sha256:...",
   "seq": "41",
+  "meters": {"epoch": "3", "entities": ["master", "track:trk_1"]},
   "about": {
     "name": "siann-engine", "version": "0.1.0",
     "source": {"url": "https://github.com/romanticamaj/siann", "commit": "<40 hex>", "dirty": false},
@@ -41,6 +42,12 @@ additions:
 `seq` is the sequence number of the last event published before the connection
 subscribed; every event this connection receives has a larger `seq`. A client
 that reconnects with a `lastSeq` smaller than `seq` missed events and syncs.
+
+`meters` is the newest `meters.legend` payload published at or before `seq`
+(`null` before the engine published a graph with meters). It is in every auth
+reply, with or without `events: true`, because a client that opens the realtime
+channel needs it to decode frames; a newer legend arrives as a `meters.legend`
+event with a larger `seq`.
 
 ## Event envelope
 
@@ -97,7 +104,13 @@ Published when the engine publishes a graph with meters:
 ```
 
 `entities[i]` is the entity behind `entityIndex == i` in meter frames of that
-`epoch`. Frames of an epoch without a legend are ignored.
+`epoch`. The engine keeps the newest legend as part of the stream position, so a
+client never depends on having been connected when it was published: the auth
+reply and `session.sync` carry it as `meters`. A client keeps the legend of the
+auth reply, replaces it with each `meters.legend` event and with the `meters` of
+a sync. Frames of an epoch whose legend the client does not hold are ignored
+(between a graph publication and the event, the publisher may already send
+frames of the new epoch).
 
 ## Methods
 
@@ -112,6 +125,7 @@ happen in between.
 ```json
 {
   "revision": "r13", "seq": "42", "documentHash": "sha256:...", "entities": 32,
+  "meters": {"epoch": "3", "entities": ["master", "track:trk_1"]},
   "chunk": {"root": {...}, "media": [...], "tracks": [...], "clips": [...]},
   "next": "sync_1:4"
 }
@@ -126,7 +140,9 @@ happen in between.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.
-- `seq` is the last published event's `seq` at the time the sync was pinned.
+- `seq` is the last published event's `seq` at the time the sync was pinned, and
+  `meters` the meter legend at that `seq` (as in the auth reply), so a sync after a
+  gap also restores a `meters.legend` event the gap swallowed.
 
 ### `session.fetch`
 

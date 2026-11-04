@@ -1427,7 +1427,12 @@ Protocol events v1 (decided 2026-11-04 with m3-events-sync; the wire details are
     by the same first frame, carrying only binary frames (`"SMTR"`, version 1,
     epoch, engine timestamp, playhead, playing flag, per-entity peak and RMS). The
     entity indexes refer to a `meters.legend {epoch, entities}` event sent after each
-    graph publication. The publisher sends the newest values once per tick and drops
+    graph publication. The newest legend is also part of the stream position: the
+    auth reply and every `session.sync` chunk carry it as `meters` (null before the
+    first graph), taken at the same `seq`, so a client that connects after the
+    graph was published (the normal case: the engine publishes at open, the UI
+    connects later) or lost the event in a gap can decode frames without waiting
+    for the next structural edit. The publisher sends the newest values once per tick and drops
     the frame for a connection whose socket is congested; the audio thread still
     only writes the meterOutbox.
 13. The auth reply and `engine.about` carry `{name, version, source: {url, commit,
