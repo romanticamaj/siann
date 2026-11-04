@@ -1208,7 +1208,7 @@ contradicts none of them):
    `sessionId` is assigned by the server for the open session (`ses_<random hex>`,
    new on every open) and returned by the authentication reply. A request for
    another session gets `session_mismatch`.
-2. Envelope. Request `{requestId, sessionId, method, params}`. Response
+2. Envelope. Request `{requestId, sessionId, method, params, expectedRevision?}`. Response
    `{requestId, ok: true, result}` or
    `{requestId, ok: false, error: {code, message, step?}}`. Authentication: the
    first text frame is `{type: "auth", token}`; the reply is
@@ -1217,8 +1217,14 @@ contradicts none of them):
    Any other frame before authentication gets one `unauthenticated` error response
    and the socket is closed. Malformed JSON or a missing field gets `bad_request`,
    with the `requestId` echoed when it can be read and `null` otherwise.
+   `expectedRevision`, when present, is a revision id (`r<n>`, a string; anything
+   else is `bad_request`). The command thread compares it with the head revision
+   before the method runs, for any method; when they differ the answer is
+   `revision_mismatch` and nothing is executed. Like any executed answer it is
+   cached under its `requestId`.
 3. Stable codes so far: `unauthenticated`, `invalid_token`, `bad_request`,
-   `session_mismatch`, `unknown_method`, `queue_full`, `internal_error`, plus the
+   `session_mismatch`, `revision_mismatch`, `unknown_method`, `queue_full`,
+   `internal_error`, plus the
    `CommandError` and `SessionError` codes passed through unchanged (with `step` for
    commands).
 4. Origin is checked at the HTTP upgrade. No Origin header (non-browser clients) is
