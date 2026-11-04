@@ -132,6 +132,7 @@ public:
     void discard(const BranchId& branchId);
     // Open branches in creation order.
     std::vector<BranchId> branches() const;
+    bool isOpen(const BranchId& branchId) const noexcept;
     // The branch's newest revision (its base before its first commit). Throws not_found.
     const Revision& branchHead(const BranchId& branchId) const;
     // True when the revision is main's head or an ancestor of it through any parent.

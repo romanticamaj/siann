@@ -401,12 +401,9 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
     } catch (...) {
         // Nothing was committed: the sound returns to the document's value.
         const command::History& history = session_.history();
-        const bool onBranch = gestureBranch_ && [&] {
-            const auto open = history.branches();
-            return std::find(open.begin(), open.end(), *gestureBranch_) != open.end();
-        }();
-        const model::Document& document =
-            onBranch ? history.branchHead(*gestureBranch_).document : history.head().document;
+        const model::Document& document = gestureBranch_ && history.isOpen(*gestureBranch_)
+                                              ? history.branchHead(*gestureBranch_).document
+                                              : history.head().document;
         if (const model::Track* track = document.track(trackId)) {
             dispatcher_.setParameter(key, documentValue(*track, paramId), 0);
         }

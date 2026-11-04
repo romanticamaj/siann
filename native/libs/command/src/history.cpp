@@ -355,6 +355,11 @@ BranchId History::branch(std::string_view baseId) {
     return id;
 }
 
+bool History::isOpen(const BranchId& branchId) const noexcept {
+    return std::any_of(branches_.begin(), branches_.end(),
+                       [&](const OpenBranch& open) { return open.id == branchId; });
+}
+
 std::vector<BranchId> History::branches() const {
     std::vector<BranchId> out;
     for (const OpenBranch& open : branches_) {

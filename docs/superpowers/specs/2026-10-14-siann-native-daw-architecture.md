@@ -1415,9 +1415,10 @@ Decisions of 2026-11-05 (m3-audition):
   (no recompile when the documents are equal).
 - M3 budget stand-in. Until the instance table and plugins exist (M4), the cost
   of a switch is estimated from the document before anything is allocated:
-  memory is the bytes of the disk-stream rings the switch would create (tracks
-  whose stream cannot be reused × ring frames × channels × 4 bytes), CPU is the
-  node count of the compiled graph. Both limits default to unlimited. A refusal
+  memory is the bytes of the disk-stream rings the switch would create (per
+  track whose stream cannot be reused: 2 ring slots × ring frames, rounded up to
+  a power of two, × channels × 4 bytes), CPU is the node count of the compiled
+  graph. Both limits default to unlimited. A refusal
   is `audition_budget_exceeded` with the bytes or nodes needed against the
   budget, and changes nothing (the live graph, the compile count and the streams
   stay as they were). An unknown or closed proposal is `audition_not_found`.
@@ -1692,10 +1693,18 @@ M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
 
 M3 interim (proposal audition, m3-audition): proposal branches live in
-`siann-command`'s `History` and are journaled by `siann-session`; audition is an
-`Auditioner` in `siann-playback` over the playback engine. M2's whole-output duck
-applies to an A/B switch as to any structural edit. The budget is the stand-in
-described under "Proposal audition (A/B)".
+`siann-command`'s `History` (`branch`, `commitOn`, `merge`, `discard`,
+`reachable`, plus `commitOnParent` and `mergeReplay` for replay) and are
+journaled by `siann-session`, whose branch commit records carry `branch`.
+`session::proposeFromPlan` applies an approved plan onto a new branch at its
+base revision (the plan stays approved; merging lands it), the entry point for
+m3-mcp. Audition is an `Auditioner` in `siann-playback` over the playback engine:
+it hands the heard side's document to `PlaybackEngine::update`, points gesture
+commits at the heard branch (`setGestureBranch`) and checks
+`PlaybackEngine::estimateCost` against `PlaybackOptions::auditionBudget` first.
+M2's whole-output duck applies to an A/B switch as to any structural edit. The
+budget is the stand-in described under "Proposal audition (A/B)". The protocol
+methods for proposals arrive with m3-mcp.
 
 ## Risks
 

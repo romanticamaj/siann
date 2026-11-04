@@ -1,8 +1,6 @@
 #include "siann/playback/audition.hpp"
 
-#include <algorithm>
 #include <utility>
-#include <vector>
 
 namespace siann::playback {
 
@@ -16,8 +14,7 @@ Auditioner::~Auditioner() {
 }
 
 const model::Document& Auditioner::proposalDocument(const command::BranchId& branchId) const {
-    const std::vector<command::BranchId> open = session_.history().branches();
-    if (std::find(open.begin(), open.end(), branchId) == open.end()) {
+    if (!session_.history().isOpen(branchId)) {
         throw AuditionError("audition_not_found", "no open proposal branch " + branchId);
     }
     return session_.history().branchHead(branchId).document;

@@ -667,7 +667,8 @@ TEST_CASE("A journal with an unknown cause is still corrupt_record", "[session][
     second.replace(second.find("\"cause\":\"command\""), 17, "\"cause\":\"rebase\"");
     // A valid checksum, so only the cause is wrong.
     siann::json::Object members;
-    for (const auto& member : siann::json::parse(second).asObject()) {
+    const siann::json::Value parsed = siann::json::parse(second);
+    for (const auto& member : parsed.asObject()) {
         if (member.first != "checksum") {
             members.push_back(member);
         }
