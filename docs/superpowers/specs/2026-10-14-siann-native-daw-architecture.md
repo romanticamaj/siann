@@ -974,7 +974,15 @@ cause ∈ { command, plan(transaction), undo, redo, rollback, branch-merge, reco
   its revision's recorded diff (added, removed, modified). If every one of them is
   unchanged at the current head (same entity hash; an added entity still present, a
   removed entity still absent), an inverse revision is created: the head document
-  with those entities restored to their state in the plan revision's parent. The
+  with those entities restored to their state in the plan revision's parent.
+  `root` is shared session state, so it is compared and restored per field, not
+  by entity hash: the plan owns only the root fields it changed (`name`,
+  `sampleRate`, `tempo`; `trackOrder` as a whole only if it reordered tracks it
+  neither added nor removed) and the order slots of the tracks it added or
+  removed. Later unrelated root edits (another track added or removed, a rename,
+  a tempo change) are kept and are not a conflict, so every track-adding plan
+  stays rollbackable; a plan-removed track goes back right after its nearest
+  earlier neighbour in the old order that is still present, or first. The
   inverse document must pass document validation like any command result; an
   entity that a later revision references (a clip placed on a plan-added track or
   media) is reported as a conflict on that referenced entity. Otherwise rollback is
