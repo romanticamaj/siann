@@ -122,6 +122,7 @@ struct Pending {
     std::string requestId;
     std::string method;
     Value params;
+    std::optional<std::string> expectedRevision;  // checked against the head before the method runs
 };
 
 // What the authentication reply reports, kept current by the command thread.
@@ -295,12 +296,21 @@ struct ProtocolServer::Impl {
             }
             params = *given;
         }
+        std::optional<std::string> expectedRevision;
+        if (const Value* expected = parsed->find("expectedRevision")) {
+            if (expected->kind() != Value::Kind::string) {
+                transport.send(connection, failure(requestId, "bad_request", "expectedRevision must be a string"));
+                return;
+            }
+            expectedRevision = expected->asString();
+        }
         if (targetSession->asString() != sessionId) {
             transport.send(connection,
                            failure(requestId, "session_mismatch", "this server serves session " + sessionId));
             return;
         }
-        if (!inbox.tryPush(Pending{connection, requestIdMember->asString(), method->asString(), std::move(params)})) {
+        if (!inbox.tryPush(Pending{connection, requestIdMember->asString(), method->asString(), std::move(params),
+                                   std::move(expectedRevision)})) {
             transport.send(connection, failure(requestId, "queue_full", "the command inbox is full; retry"));
         }
     }
@@ -308,6 +318,13 @@ struct ProtocolServer::Impl {
     // Command thread.
     std::string execute(const Pending& request) {
         try {
+            if (request.expectedRevision) {
+                const std::string& current = session.history().head().envelope.id;
+                if (*request.expectedRevision != current) {
+                    return failure(Value(request.requestId), "revision_mismatch",
+                                   "expected revision " + *request.expectedRevision + " but the head is " + current);
+                }
+            }
             if (request.method == "session.inspect") {
                 const auto& history = session.history();
                 return success(request.requestId,

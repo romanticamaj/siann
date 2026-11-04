@@ -6,8 +6,10 @@
 //   client                                server
 //   {type:"auth", token}             ->   {type:"auth", ok, sessionId, revision, documentHash}
 //   {requestId, sessionId, method,   ->   {requestId, ok:true, result}
-//    params}                              {requestId, ok:false, error:{code, message, step?}}
+//    params, expectedRevision?}           {requestId, ok:false, error:{code, message, step?}}
 //
+// A request with expectedRevision other than the head revision is answered
+// revision_mismatch without running the method.
 // Transport threads parse and validate frames and hand requests to a bounded
 // inbox; pump() executes them on the caller's thread, which is the only thread
 // that touches the session (the command thread). A full inbox answers
