@@ -110,7 +110,9 @@ public:
                    Options options = {});
 
     // With the same meter slots as ControlDispatcher::graphPublished: sets the
-    // legend for `epoch` and publishes meters.legend on the event stream.
+    // legend for `epoch` and publishes meters.legend on the event stream,
+    // which also keeps it as the position's `meters` for the auth reply and
+    // session.sync of clients that connect or sync later.
     void graphPublished(std::uint64_t epoch, const std::map<std::string, graph::NodeId>& meterSlots);
 
     // Builds one frame from the newest samples of the legend's epoch and sends

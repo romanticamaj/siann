@@ -32,12 +32,15 @@ struct EventStreamOptions {
     std::size_t highWaterBytes = std::size_t{1} << 20;  // flush only while the socket buffers at most this
 };
 
-// Where the stream stands: the last published seq (0 before any event) and the
-// head revision it was published at.
+// Where the stream stands: the last published seq (0 before any event), the
+// head revision it was published at, and the newest meter legend at that seq.
 struct StreamPosition {
     std::uint64_t seq = 0;
     std::string revision;
     std::string documentHash;  // "sha256:<hex>"
+    // {epoch, entities} of the newest meters.legend event, null before one. A
+    // client that subscribes or syncs later decodes meter frames with it.
+    json::Value meters;
 };
 
 class EventStream {
@@ -59,6 +62,10 @@ public:
     std::uint64_t publish(std::string_view type, json::Object payload);
     // Moves the head to `revision` and publishes session.changed for it.
     std::uint64_t publishRevision(const command::Revision& revision);
+    // Makes `legend` ({epoch, entities}) the position's meters and publishes
+    // it as meters.legend, atomically: a subscriber gets either the new legend
+    // in its position or the event, never neither.
+    std::uint64_t publishMeterLegend(json::Object legend);
 
     // Sends queued events while each connection's socket buffers at most
     // highWaterBytes. Returns the number of events sent.

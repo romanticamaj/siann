@@ -230,8 +230,8 @@ void MeterPublisher::graphPublished(std::uint64_t epoch, const std::map<std::str
         legend_.push_back(entity);
         entities.push_back(json::Value(entity));
     }
-    events_.publish("meters.legend", json::Object{{"epoch", json::Value(std::to_string(epoch))},
-                                                  {"entities", json::Value(std::move(entities))}});
+    events_.publishMeterLegend(json::Object{{"epoch", json::Value(std::to_string(epoch))},
+                                            {"entities", json::Value(std::move(entities))}});
 }
 
 bool MeterPublisher::tick() {

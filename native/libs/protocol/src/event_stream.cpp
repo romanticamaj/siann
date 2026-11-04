@@ -118,6 +118,12 @@ std::uint64_t EventStream::publishRevision(const command::Revision& revision) {
     return publishLocked("session.changed", std::move(payload));
 }
 
+std::uint64_t EventStream::publishMeterLegend(json::Object legend) {
+    std::lock_guard lock(mutex_);
+    head_.meters = Value(legend);
+    return publishLocked("meters.legend", std::move(legend));
+}
+
 std::size_t EventStream::flush() {
     std::lock_guard flushLock(flushMutex_);
     std::vector<ConnectionId> connections;

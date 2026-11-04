@@ -178,7 +178,7 @@ TEST_CASE("the event stream never blocks a publisher", "[protocol][events]") {
 
     EventStreamOptions options;
     options.outboxCapacity = 2;
-    EventStream stream(transport, "ses_test", StreamPosition{0, "r1", "sha256:x"}, options);
+    EventStream stream(transport, "ses_test", StreamPosition{0, "r1", "sha256:x", Value()}, options);
     CHECK(stream.subscribe(connection).seq == 0);
     for (int i = 0; i < 5; ++i) {
         CHECK(stream.publish("test.tick", Object{{"n", Value(i)}}) == static_cast<std::uint64_t>(i + 1));

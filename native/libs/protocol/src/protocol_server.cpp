@@ -200,7 +200,7 @@ struct ProtocolServer::Impl {
           inbox(options.inboxCapacity),
           events(t, sessionId,
                  StreamPosition{0, s.history().head().envelope.id,
-                                hash::formatHash(s.history().head().envelope.documentHash)},
+                                hash::formatHash(s.history().head().envelope.documentHash), json::Value()},
                  options.events),
           readModel(options.syncChunkEntities),
           realtime(t, options.realtime) {
@@ -355,6 +355,7 @@ struct ProtocolServer::Impl {
                                                       {"revision", Value(current.revision)},
                                                       {"documentHash", Value(current.documentHash)},
                                                       {"seq", Value(std::to_string(current.seq))},
+                                                      {"meters", current.meters},
                                                       {"about", aboutJson()}}));
             };
             std::lock_guard lock(mutex);
@@ -468,8 +469,8 @@ struct ProtocolServer::Impl {
                 return published(request, session.redo(options.actor, options.clock()));
             }
             if (request.method == "session.sync") {
-                return success(request.requestId, readModel.sync(request.connection, request.params, session.history(),
-                                                                 events.position().seq));
+                return success(request.requestId,
+                               readModel.sync(request.connection, request.params, session.history(), events.position()));
             }
             if (request.method == "session.fetch") {
                 return success(request.requestId, readModel.fetch(request.params, session.history()));

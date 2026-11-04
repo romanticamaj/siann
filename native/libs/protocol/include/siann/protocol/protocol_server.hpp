@@ -18,7 +18,7 @@
 //
 // Events v1 (docs/schemas/protocol-events-v1.md): {type:"auth", token,
 // events:true} subscribes the connection to the event stream; the reply adds
-// the stream's seq and the build's `about`. pump() flushes the event outboxes
+// the stream's seq, the current meter legend `meters` and the build's `about`. pump() flushes the event outboxes
 // after the responses. Connections on kRealtimePath authenticate the same way
 // and then receive only binary meter frames.
 

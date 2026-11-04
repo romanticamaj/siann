@@ -18,6 +18,7 @@
 #include "siann/command/history.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/model/document.hpp"
+#include "siann/protocol/event_stream.hpp"
 #include "siann/protocol/transport.hpp"
 
 namespace siann::protocol {
@@ -47,10 +48,10 @@ class ReadModel {
 public:
     explicit ReadModel(std::size_t chunkEntities = 500);
 
-    // The command thread. `seq` is the event stream's position now. Throws
-    // ProtocolError.
+    // The command thread. `position` is the event stream's position now; a new
+    // sync pins its seq and meter legend with the head. Throws ProtocolError.
     json::Value sync(ConnectionId connection, const json::Value& params, const command::History& history,
-                     std::uint64_t seq);
+                     const StreamPosition& position);
     json::Value fetch(const json::Value& params, const command::History& history) const;
 
     // Any thread: drops the connection's pinned sync.
@@ -63,6 +64,7 @@ private:
         model::Document document;
         std::vector<model::EntityRef> order;
         std::uint64_t seq = 0;
+        json::Value meters;
     };
 
     const std::size_t chunkEntities_;

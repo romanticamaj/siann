@@ -108,7 +108,7 @@ std::optional<json::Value> entityJson(const model::Document& document, const mod
 ReadModel::ReadModel(std::size_t chunkEntities) : chunkEntities_(std::max<std::size_t>(chunkEntities, 1)) {}
 
 json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, const command::History& history,
-                            std::uint64_t seq) {
+                            const StreamPosition& position) {
     const Value* cursor = params.find("cursor");
     if (cursor != nullptr && cursor->kind() != Value::Kind::string) {
         throw ProtocolError("invalid_params", "cursor must be a string");
@@ -120,7 +120,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
         // A new sync: pin the head for this connection.
         const command::Revision& head = history.head();
         Pinned pin{std::string(kSyncPrefix) + std::to_string(nextSync_++), head.envelope, head.document,
-                   syncOrder(head.document), seq};
+                   syncOrder(head.document), position.seq, position.meters};
         pinned_.insert_or_assign(connection, std::move(pin));
     } else {
         const std::string& text = cursor->asString();
@@ -163,6 +163,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     const Value next = end < pin.order.size() ? Value(pin.syncId + ":" + std::to_string(end)) : Value(nullptr);
     return Value(Object{{"revision", Value(pin.envelope.id)},
                         {"seq", Value(std::to_string(pin.seq))},
+                        {"meters", pin.meters},
                         {"documentHash", Value(hash::formatHash(pin.envelope.documentHash))},
                         {"entities", Value(static_cast<double>(pin.order.size()))},
                         {"chunk", Value(std::move(chunk))},
