@@ -25,7 +25,9 @@ public:
     // Stable codes: unknown_command, invalid_params, not_found,
     // already_exists, media_in_use, undeclared_effect, empty_transaction,
     // nothing_to_undo, nothing_to_redo, or a model validation code such as
-    // clip_exceeds_media or invalid_gain.
+    // clip_exceeds_media or invalid_gain. Plans (plan.hpp) add plan_stale
+    // (PlanStaleError, with the changed entities), invalid_state,
+    // invalid_plan, invalid_entity_set and plan_not_canonicalizable.
     const std::string& code() const noexcept { return code_; }
     // Index of the failing command inside a transaction.
     std::size_t step() const noexcept { return step_; }

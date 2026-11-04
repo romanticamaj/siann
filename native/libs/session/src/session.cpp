@@ -47,6 +47,7 @@ struct Session::State {
     fs::path bundle;
     History history;
     std::int64_t lastSeq = 0;
+    command::PlanStore plans;  // in memory only (M3)
 
     State(fs::path path, History h, std::int64_t seq) : bundle(std::move(path)), history(std::move(h)), lastSeq(seq) {}
 
@@ -247,6 +248,38 @@ const Revision& Session::redo(std::string actor, std::string time) {
 
 void Session::checkpoint() {
     state_->writeCheckpoint();
+}
+
+const command::PlanStore& Session::plans() const noexcept {
+    return state_->plans;
+}
+
+const command::Plan& Session::submitPlan(std::vector<command::Command> steps, std::vector<model::EntityRef> readSet,
+                                         const std::string& baseRevision) {
+    return state_->plans.submit(state_->history, std::move(steps), std::move(readSet), baseRevision);
+}
+
+const command::Plan& Session::approvePlan(std::string_view planHashText, std::string approvedBy, std::string time) {
+    return state_->plans.approve(state_->history, planHashText, std::move(approvedBy), std::move(time));
+}
+
+const command::Plan& Session::approvePlanPartial(std::string_view planHashText,
+                                                 const std::vector<std::size_t>& stepIndexes, std::string approvedBy,
+                                                 std::string time) {
+    return state_->plans.approvePartial(state_->history, planHashText, stepIndexes, std::move(approvedBy),
+                                        std::move(time));
+}
+
+const command::Plan& Session::rejectPlan(std::string_view planHashText, std::string rejectedBy, std::string time,
+                                         std::string note) {
+    return state_->plans.reject(planHashText, std::move(rejectedBy), std::move(time), std::move(note));
+}
+
+const Revision& Session::applyPlan(std::string_view planHashText, std::string actor, std::string time) {
+    return state_->plans.apply(state_->history, planHashText, std::move(actor), std::move(time),
+                               [this](std::vector<command::Command> steps, std::string a, std::string t)
+                                   -> const Revision& { return commit(std::move(steps), std::move(a), std::move(t),
+                                                                      Cause::plan); });
 }
 
 }  // namespace siann::session

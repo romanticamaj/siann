@@ -5,6 +5,7 @@
 // Entity hashes are computed once, when an entity enters a document.
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -89,7 +90,10 @@ public:
     // Structural and referential checks; empty means valid.
     std::vector<ValidationIssue> validate() const;
 
+    // Throws ModelError unknown_entity when the entity is absent.
     hash::Digest entityHash(const EntityRef& ref) const;
+    // The entity hash, or nothing when the entity is absent.
+    std::optional<hash::Digest> findEntityHash(const EntityRef& ref) const noexcept;
     hash::Digest documentHash() const;
 
     // True when both documents hold the same stored entity object (shared).

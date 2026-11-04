@@ -104,6 +104,17 @@ TEST_CASE("The shared fixture document gives the Node bridge's hashes", "[model]
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
 }
 
+TEST_CASE("findEntityHash returns the entity hash or nothing for an absent entity", "[model]") {
+    Document doc = Document::create("Song", 48'000);
+    doc = addTrack(doc, track("trk_1"));
+    const EntityRef present{EntityType::track, "trk_1"};
+    CHECK(doc.findEntityHash(present) == std::optional{doc.entityHash(present)});
+    CHECK(doc.findEntityHash(EntityRef{EntityType::root, "root"}).has_value());
+    CHECK_FALSE(doc.findEntityHash(EntityRef{EntityType::track, "trk_9"}).has_value());
+    CHECK_FALSE(doc.findEntityHash(EntityRef{EntityType::root, "other"}).has_value());
+    CHECK_FALSE(doc.findEntityHash(EntityRef{EntityType::clip, "trk_1"}).has_value());
+}
+
 TEST_CASE("JSON round trip is byte-identical under JCS", "[model]") {
     const Value fixture = readFixture("model/session-document-v1.json");
     const Value& original = *fixture.find("document");

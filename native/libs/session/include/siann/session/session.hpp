@@ -18,9 +18,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "siann/command/history.hpp"
+#include "siann/command/plan.hpp"
 #include "siann/model/document.hpp"
 #include "siann/session/journal.hpp"
 
@@ -64,6 +66,20 @@ public:
 
     // Writes session.json for the current head.
     void checkpoint();
+
+    // Plans against this session's history (command/plan.hpp). Plans are
+    // in-memory engine state in M3: they are not written to the bundle and a
+    // reopened session starts with an empty store. applyPlan commits through
+    // commit(), so the plan revision is journaled before it is published.
+    const command::PlanStore& plans() const noexcept;
+    const command::Plan& submitPlan(std::vector<command::Command> steps, std::vector<model::EntityRef> readSet,
+                                    const std::string& baseRevision);
+    const command::Plan& approvePlan(std::string_view planHashText, std::string approvedBy, std::string time);
+    const command::Plan& approvePlanPartial(std::string_view planHashText, const std::vector<std::size_t>& stepIndexes,
+                                            std::string approvedBy, std::string time);
+    const command::Plan& rejectPlan(std::string_view planHashText, std::string rejectedBy, std::string time,
+                                    std::string note);
+    const command::Revision& applyPlan(std::string_view planHashText, std::string actor, std::string time);
 
 private:
     struct State;
