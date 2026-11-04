@@ -308,3 +308,64 @@ TEST_CASE("Opening something that is not a bundle fails clearly", "[session]") {
         CHECK(error.code() == "not_a_bundle");
     }
 }
+
+TEST_CASE("A plan applied through Session writes one journal record with cause plan whose diff equals the plan's writeSet",
+          "[session][plan]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1"), addTrack("trk_3")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600), addTrack("trk_2")}, {}, "r2").hashText;
+    session.commit({setGain("trk_3", -900)}, "user", "t2");  // unrelated to the plan
+    session.approvePlan(hash, "user", "t3");
+
+    const std::int64_t before = session.lastSeq();
+    const auto& revision = session.applyPlan(hash, "agent", "t4");
+    CHECK(revision.envelope.cause == Cause::plan);
+    CHECK(session.lastSeq() == before + 1);
+    CHECK(session.plans().find(hash)->appliedRevision == std::optional{revision.envelope.id});
+
+    const auto scan = scanJournal(journalOf(dir.bundle()));
+    REQUIRE(scan.records.size() == static_cast<std::size_t>(before + 1));
+    const JournalRecord& record = scan.records.back();
+    CHECK(record.envelope.cause == Cause::plan);
+    CHECK(record.envelope.id == revision.envelope.id);
+    CHECK(record.commands.size() == 2);
+    const auto& writeSet = session.plans().find(hash)->writeSet;
+    REQUIRE(writeSet.size() == 3);  // root, trk_1, trk_2
+    REQUIRE(record.diff.size() == writeSet.size());
+    for (std::size_t i = 0; i < writeSet.size(); ++i) {
+        CHECK(record.diff[i].entity == writeSet[i].ref);
+    }
+}
+
+TEST_CASE("Reopen replays the plan revision with identical documentHash", "[session][plan]") {
+    TempDir dir;
+    siann::hash::Digest headHash{};
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1"), addTrack("trk_2"), addTrack("trk_3")}, "user", "t1");
+        const std::string original =
+            *session.submitPlan({setGain("trk_1", -600), setGain("trk_2", -1200), setGain("trk_3", -300)}, {}, "r2")
+                 .hashText;
+        const auto& sub = session.approvePlanPartial(original, {0, 2}, "user", "t2");
+        session.applyPlan(*sub.hashText, "agent", "t3");
+        CHECK(session.plans().find(original)->state == siann::command::PlanState::rejected);
+        headHash = session.history().head().envelope.documentHash;
+    }
+    Session reopened = Session::open(dir.bundle());
+    CHECK(reopened.history().head().envelope.cause == Cause::plan);
+    CHECK(reopened.history().head().envelope.documentHash == headHash);
+    CHECK(reopened.history().head().document.track("trk_2")->gain.milliDb == 0);
+    CHECK(reopened.plans().size() == 0);  // plans are in-memory engine state in M3
+}
+
+TEST_CASE("Rejecting a plan through Session leaves the journal unchanged", "[session][plan]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600)}, {}, "r2").hashText;
+    const std::string before = journalOf(dir.bundle());
+    CHECK(session.rejectPlan(hash, "user", "t2", "no").state == siann::command::PlanState::rejected);
+    CHECK_THROWS_AS(session.applyPlan(hash, "agent", "t3"), CommandError);
+    CHECK(journalOf(dir.bundle()) == before);
+}

@@ -12,8 +12,12 @@ if(SIANN_BUILD_TESTS)
   add_executable(siann_command_tests
     tests/commands_test.cpp
     tests/history_test.cpp
+    tests/plan_hash_test.cpp
+    tests/plan_test.cpp
   )
   target_link_libraries(siann_command_tests PRIVATE siann::command Catch2::Catch2WithMain)
+  target_include_directories(siann_command_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/hash/tests")
+  target_compile_definitions(siann_command_tests PRIVATE SIANN_FIXTURES_DIR="${SIANN_FIXTURES_DIR}")
   siann_apply_compile_options(siann_command_tests)
   catch_discover_tests(siann_command_tests)
 endif()

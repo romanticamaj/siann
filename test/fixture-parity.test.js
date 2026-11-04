@@ -11,6 +11,7 @@ const generators = {
   time: require('../scripts/generate-time-fixtures'),
   hash: require('../scripts/generate-hash-fixtures'),
   model: require('../scripts/generate-model-fixtures'),
+  plan: require('../scripts/generate-plan-fixtures'),
 };
 
 for (const [name, generator] of Object.entries(generators)) {
