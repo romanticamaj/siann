@@ -5,13 +5,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
@@ -133,6 +136,14 @@ public:
         return lastText_;
     }
 
+    // True once the server closed the socket.
+    bool waitClosed() {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, kTimeout, [this] { return closed_; });
+    }
+
+    void send(const std::string& text) { socket_.sendText(text); }
+
     void stop() { socket_.stop(); }
 
 private:
@@ -249,6 +260,71 @@ TEST_CASE("the IX transport rejects a foreign Origin with 403", "[protocol][ix]"
     Client app(s.server.port(), {{"Origin", std::string(kAppOrigin)}});
     CHECK(app.start());
     CHECK(at(app.call(s.auth()), "ok").asBool());
+}
+
+TEST_CASE("the IX transport rejects an Origin that is not valid UTF-8 with 403 and keeps serving", "[protocol][ix]") {
+    Server s;
+    // IXWebSocket writes extra headers byte for byte, and its server copies
+    // them unchecked: the raw bytes reach onUpgrade before authentication.
+    Client evil(s.server.port(), {{"Origin", "http://x\xff"}});
+    CHECK_FALSE(evil.start());
+    CHECK(evil.httpStatus() == 403);
+
+    Client app(s.server.port());
+    REQUIRE(app.start());
+    CHECK(at(app.call(s.auth()), "ok").asBool());
+}
+
+TEST_CASE("an exception from a handler on an IX thread does not end the process", "[protocol][ix]") {
+    // Handlers that throw stand in for any bug below them: the transport
+    // answers 500 or closes the connection, and keeps accepting.
+    IxTransport transport;
+    siann::protocol::TransportHandlers handlers;
+    handlers.onUpgrade = [](const siann::protocol::HttpRequest& request) -> std::optional<siann::protocol::HttpResponse> {
+        if (request.headers.count("x-throw") != 0) {
+            throw std::runtime_error("upgrade handler failed");
+        }
+        return std::nullopt;
+    };
+    handlers.onOpen = [](siann::protocol::ConnectionId) {};
+    handlers.onMessage = [&transport](siann::protocol::ConnectionId connection, const std::string& text) {
+        if (text == "throw") {
+            throw std::runtime_error("message handler failed");
+        }
+        transport.send(connection, text);
+    };
+    handlers.onClose = [](siann::protocol::ConnectionId) {};
+    handlers.onHttp = [](const siann::protocol::HttpRequest& request) -> siann::protocol::HttpResponse {
+        if (request.path == "/throw") {
+            throw std::runtime_error("http handler failed");
+        }
+        return siann::protocol::HttpResponse{200, "application/json", R"({"ok":true})"};
+    };
+    transport.setHandlers(std::move(handlers));
+    const std::uint16_t port = transport.listen("127.0.0.1", 0).port;
+
+    auto thrown = appOrigin();
+    thrown["X-Throw"] = "1";
+    Client failing(port, thrown);
+    CHECK_FALSE(failing.start());
+    CHECK(failing.httpStatus() == 500);
+
+    const auto failed = httpGet(port, "/throw", std::nullopt);
+    CHECK(failed->statusCode == 500);
+    CHECK(siann::json::parse(failed->body).find("ok") != nullptr);
+    CHECK(httpGet(port, "/fine", std::nullopt)->statusCode == 200);
+
+    Client closing(port);
+    REQUIRE(closing.start());
+    closing.send("throw");
+    CHECK(closing.waitClosed());
+
+    Client echo(port);
+    REQUIRE(echo.start());
+    echo.send("[1]");
+    CHECK(echo.next().asArray().size() == 1);
+    echo.stop();
+    transport.stop();
 }
 
 TEST_CASE("the IX transport answers plain HTTP with the bearer token only", "[protocol][ix]") {

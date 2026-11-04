@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "fake_transport.hpp"
@@ -474,6 +475,33 @@ TEST_CASE("Origin is checked against the allow list at the upgrade", "[protocol]
         const auto upgrade = f.transport.connect({{"origin", origin}});
         CHECK_FALSE(upgrade.connection.has_value());
         CHECK(upgrade.rejection.status == 403);
+    }
+}
+
+TEST_CASE("an Origin that is not valid UTF-8 gets a 403 with a JSON body", "[protocol]") {
+    Fixture f;
+    // Raw header bytes reach the handler unchecked; the rejection must not
+    // echo them into canonical JSON, which only takes valid UTF-8.
+    for (const std::string origin : {std::string("http://x\xff"), std::string("http://\xc3("),
+                                     std::string("\xed\xa0\x80")}) {
+        siann::protocol::testing::FakeTransport::Upgrade upgrade;
+        REQUIRE_NOTHROW(upgrade = f.transport.connect({{"origin", origin}}));
+        CHECK_FALSE(upgrade.connection.has_value());
+        CHECK(upgrade.rejection.status == 403);
+        const Value body = parse(upgrade.rejection.body);
+        CHECK(at(at(body, "error"), "code").asString() == "origin_not_allowed");
+    }
+}
+
+TEST_CASE("an authenticated HTTP request with a non-UTF-8 method or path gets a 404 with a JSON body", "[protocol]") {
+    Fixture f;
+    const std::string bearer = "Bearer " + f.server.token();
+    for (const auto& [method, path] : {std::pair<std::string, std::string>{"GET", "/v0/\xff"},
+                                       std::pair<std::string, std::string>{"G\xfe", "/v0/health"}}) {
+        siann::protocol::HttpResponse response;
+        REQUIRE_NOTHROW(response = f.transport.http(HttpRequest{method, path, {{"authorization", bearer}}, {}}));
+        CHECK(response.status == 404);
+        CHECK(at(at(parse(response.body), "error"), "code").asString() == "not_found");
     }
 }
 
