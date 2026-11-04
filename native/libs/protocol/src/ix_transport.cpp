@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -51,6 +52,7 @@ std::string reasonPhrase(int status) {
         case 401: return "Unauthorized";
         case 403: return "Forbidden";
         case 404: return "Not Found";
+        case 500: return "Internal Server Error";
         default: return "Error";
     }
 }
@@ -62,6 +64,16 @@ ix::HttpResponsePtr toIx(const HttpResponse& response) {
     return std::make_shared<ix::HttpResponse>(response.status, reasonPhrase(response.status), ix::HttpErrorCode::Ok,
                                               headers, response.body);
 }
+
+// IX runs every connection on a bare std::thread with no handler of its own:
+// an exception escaping a handler there would reach std::terminate.
+HttpResponse internalError() {
+    return HttpResponse{500, "application/json",
+                        R"({"error":{"code":"internal_error","message":"the server failed on this request"},"ok":false})"};
+}
+
+// WebSocket close code 1011: internal error (RFC 6455, section 7.4.1).
+constexpr std::uint16_t kCloseInternalError = 1011;
 
 }  // namespace
 
@@ -81,23 +93,39 @@ struct IxTransport::Impl {
     private:
         void handleConnection(std::unique_ptr<ix::Socket> socket,
                               std::shared_ptr<ix::ConnectionState> state) override {
-            auto [ok, error, request] = ix::Http::parseRequest(socket, kHttpTimeoutSecs);
-            (void)error;
-            if (ok && request) {
-                const HttpRequest converted = toRequest(*request);
-                auto upgrade = converted.headers.find("upgrade");
-                if (upgrade != converted.headers.end() && lower(upgrade->second) == "websocket") {
-                    if (auto rejection = owner_.handlers.onUpgrade(converted)) {
-                        ix::Http::sendResponse(toIx(*rejection), socket);
-                    } else {
-                        handleUpgrade(std::move(socket), state, request);
-                        owner_.finish(state.get());
+            try {
+                serve(socket, state);
+            } catch (...) {
+                // A handler failed before the upgrade (after it, the message
+                // callback catches its own): answer 500 while the socket is ours.
+                if (socket) {
+                    try {
+                        ix::Http::sendResponse(toIx(internalError()), socket);
+                    } catch (...) {
                     }
-                } else {
-                    ix::Http::sendResponse(toIx(owner_.handlers.onHttp(converted)), socket);
                 }
             }
             state->setTerminated();
+        }
+
+        void serve(std::unique_ptr<ix::Socket>& socket, const std::shared_ptr<ix::ConnectionState>& state) {
+            auto [ok, error, request] = ix::Http::parseRequest(socket, kHttpTimeoutSecs);
+            (void)error;
+            if (!ok || !request) {
+                return;
+            }
+            const HttpRequest converted = toRequest(*request);
+            auto upgrade = converted.headers.find("upgrade");
+            if (upgrade != converted.headers.end() && lower(upgrade->second) == "websocket") {
+                if (auto rejection = owner_.handlers.onUpgrade(converted)) {
+                    ix::Http::sendResponse(toIx(*rejection), socket);
+                } else {
+                    handleUpgrade(std::move(socket), state, request);
+                    owner_.finish(state.get());
+                }
+            } else {
+                ix::Http::sendResponse(toIx(owner_.handlers.onHttp(converted)), socket);
+            }
         }
 
         Impl& owner_;
@@ -124,30 +152,42 @@ struct IxTransport::Impl {
             connections[id] = Connection{weak, false};
             byState[state.get()] = id;
         }
-        socket->setOnMessageCallback([this, id](const ix::WebSocketMessagePtr& message) {
-            switch (message->type) {
-                case ix::WebSocketMessageType::Open: {
-                    {
-                        std::lock_guard lock(mutex);
-                        auto it = connections.find(id);
-                        if (it == connections.end()) {
-                            return;
-                        }
-                        it->second.open = true;
-                    }
-                    handlers.onOpen(id);
-                    break;
+        socket->setOnMessageCallback([this, id, weak](const ix::WebSocketMessagePtr& message) {
+            try {
+                dispatch(id, message);
+            } catch (...) {
+                // The connection's state is unknown after a failed handler: close it.
+                if (auto live = weak.lock()) {
+                    live->close(kCloseInternalError, "internal_error");
                 }
-                case ix::WebSocketMessageType::Message:
-                    handlers.onMessage(id, message->str);
-                    break;
-                case ix::WebSocketMessageType::Close:
-                    finish(id);
-                    break;
-                default:
-                    break;
             }
         });
+    }
+
+    // The connection's thread, inside its message callback.
+    void dispatch(ConnectionId id, const ix::WebSocketMessagePtr& message) {
+        switch (message->type) {
+            case ix::WebSocketMessageType::Open: {
+                {
+                    std::lock_guard lock(mutex);
+                    auto it = connections.find(id);
+                    if (it == connections.end()) {
+                        return;
+                    }
+                    it->second.open = true;
+                }
+                handlers.onOpen(id);
+                break;
+            }
+            case ix::WebSocketMessageType::Message:
+                handlers.onMessage(id, message->str);
+                break;
+            case ix::WebSocketMessageType::Close:
+                finish(id);
+                break;
+            default:
+                break;
+        }
     }
 
     void finish(ConnectionId id) {

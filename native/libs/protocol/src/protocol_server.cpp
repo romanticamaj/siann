@@ -186,7 +186,9 @@ struct ProtocolServer::Impl {
         if (std::find(allowed.begin(), allowed.end(), origin->second) != allowed.end()) {
             return std::nullopt;
         }
-        return jsonResponse(403, httpError("origin_not_allowed", "Origin " + origin->second + " is not allowed"));
+        // The header bytes are not echoed: they come unchecked from the client
+        // and need not be valid UTF-8, which canonical JSON requires.
+        return jsonResponse(403, httpError("origin_not_allowed", "this Origin is not allowed"));
     }
 
     HttpResponse onHttp(const HttpRequest& request) const {
@@ -198,7 +200,8 @@ struct ProtocolServer::Impl {
         if (request.method == "GET" && request.path == "/v0/health") {
             return jsonResponse(200, R"({"ok":true})");
         }
-        return jsonResponse(404, httpError("not_found", "no route " + request.method + " " + request.path));
+        // Method and path are not echoed, for the same reason as the Origin.
+        return jsonResponse(404, httpError("not_found", "no route for this method and path"));
     }
 
     void onOpen(ConnectionId connection) {
