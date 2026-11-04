@@ -1405,9 +1405,10 @@ review instead of pushing on.
 ### Status (2026-11-03)
 
 M1 is done (status as of 2026-10-21 below). M2 is exit pending: every feature
-is merged (PRs #14, #16 to #18, #20, #21 and #24 to #30), three exit criteria
-have passing tests, two need a run on the maintainer's machine, and two need
-work that has not been done yet (see "M2 exit check (2026-11-03)").
+is merged (PRs #14, #16 to #18, #20, #21, #24 to #30 and #35, plus the RTSan
+job), four exit criteria have passing tests (the long recording test still owes
+its first scheduled CI run), and two need a run on the maintainer's machine (see
+"M2 exit check (2026-11-03)").
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
