@@ -6,7 +6,11 @@ and accepted by [ADR-0016](../docs/adr/0016-build-native-cpp-daw-engine.md).
 
 The core builds with no JUCE. Third-party code is fetched and pinned by commit
 in `cmake/SiannThirdParty.cmake`: dr_libs (WAV and FLAC decoding, public domain / MIT-0)
-and r8brain-free-src (offline resampling, MIT). Tests use Catch2, also pinned.
+and r8brain-free-src (offline resampling, MIT), and IXWebSocket v11.4.6
+(commit `2efe037c9cc96fd536774f17bdb5215161ee5087`, BSD-3-Clause per its
+`LICENSE.txt`; HTTP and WebSocket for `siann-protocol`, built without zlib and
+TLS because the server binds `127.0.0.1` only; TLS arrives with LAN mode). Tests
+use Catch2, also pinned.
 
 ## Modules
 
@@ -27,6 +31,7 @@ and r8brain-free-src (offline resampling, MIT). Tests use Catch2, also pinned.
 | `libs/host_fake` (`siann-host-fake`) | `siann::host_fake` | Software audio device for tests: realtime thread, stop contract, unplug, stall, loopback, a fixed device rate |
 | `libs/realtime` (`siann-realtime`) | `siann::realtime` | Graph driver (ownership states, duck-and-swap, retirement on acknowledgement, watchdog, latency changes answered by a recompile that ramps only the affected paths), realtime PDC null and offline/realtime parity tests, parameter channel and control dispatcher, transport (`transport.hpp`: play, stop and locate through the butler handshake with a ready timeout, on the driver's `transportInbox`), disk streaming (butler, two-slot rings, streaming player), recorder (input capture, write-through), device-side SRC (r8brain streaming resampler, one-block FIFO, resampling state and latency report) |
 | `libs/playback` (`siann-playback`) | `siann::playback` | Playback assembly above `siann-engine` and `siann-realtime`: session document to streaming graph (streaming player and track fader per track, master bus) with the entity-to-slot map, playback engine owning the driver, dispatcher and butler, fader gestures committed as one revision; in-memory `MediaReader` for FLAC |
+| `libs/protocol` (`siann-protocol`) | `siann::protocol` | Protocol server v0 (spec "siann-protocol"): per-launch token handshake in the first message, Origin allow list with the app scheme `siann://app`, request envelope with `sessionId` and idempotency `requestId`, one response per request with stable error codes, bounded inbox to the command thread, idempotency cache; the transport is a thin adapter interface with one IXWebSocket implementation (`127.0.0.1`, `GET /v0/health` with a bearer token) |
 | `libs/host_desktop` (`siann-host-desktop`) | `siann::host_desktop` | JUCE 9 audio devices (WASAPI, ASIO, CoreAudio, ALSA) behind `AudioDevice`, opening at the device's own rate when it cannot run at the session's; built with `SIANN_WITH_JUCE=ON` (preset `desktop`), AGPLv3 per ADR-0017 |
 
 `siann-hash` sits below `siann-model` and `siann-command`. It must pass the same
