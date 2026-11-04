@@ -170,14 +170,14 @@ TEST_CASE("Auditioning another proposal replaces the one heard", "[playback][aud
 TEST_CASE("A memory budget refusal returns a reason and changes nothing", "[playback][audition][budget]") {
     Fixture f;
     PlaybackOptions options = testOptions();
-    options.auditionBudget.maxBytes = 1'000;  // one new stereo ring is 8,192 x 2 x 4 bytes
+    options.auditionBudget.maxBytes = 1'000;  // one new stereo stream needs 2 x 8,192 x 2 x 4 bytes
     Live p(f.session, options);
     p.pump(20);
     const command::BranchId b = proposeTrackC(f);
     Auditioner a(p.engine, f.session);
 
     const playback::AuditionCost cost = p.engine.estimateCost(branchDoc(f, b));
-    CHECK(cost.bytes == 8'192u * 2u * sizeof(float));
+    CHECK(cost.bytes == 2u * 8'192u * 2u * sizeof(float));  // two ring slots of 8,192 stereo frames
     CHECK(p.engine.estimateCost(f.doc()).bytes == 0);  // every live stream is reused
 
     const std::uint64_t epoch = p.engine.driver().liveEpoch();
@@ -189,7 +189,7 @@ TEST_CASE("A memory budget refusal returns a reason and changes nothing", "[play
     } catch (const AuditionError& error) {
         CHECK(error.code() == "audition_budget_exceeded");
         const std::string reason = error.what();
-        CHECK(reason.find("65536 bytes") != std::string::npos);
+        CHECK(reason.find("131072 bytes") != std::string::npos);
         CHECK(reason.find("1000") != std::string::npos);
     }
     CHECK(p.engine.streamCount() == streams);  // the estimate allocates no stream

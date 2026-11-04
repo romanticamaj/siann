@@ -48,6 +48,23 @@
 
 namespace siann::playback {
 
+// The limits on what switching the live graph to an auditioned proposal may
+// instantiate (spec, "Proposal audition (A/B)", M3 budget stand-in): bytes of
+// new disk-stream buffers and nodes in the compiled graph. Unlimited by
+// default. At namespace scope so GCC sees the default member initializers
+// when traits are checked inside PlaybackOptions.
+struct AuditionBudget {
+    std::size_t maxBytes = SIZE_MAX;
+    std::size_t maxNodes = SIZE_MAX;
+};
+
+// What compiling a document would instantiate against the live graph.
+struct AuditionCost {
+    std::size_t bytes = 0;       // buffers of the disk streams that cannot be reused
+    std::size_t newStreams = 0;  // tracks whose stream cannot be reused
+    std::size_t nodes = 0;       // nodes of the compiled graph
+};
+
 struct PlaybackOptions {
     int maxBlockFrames = 512;
     int fadeFrames = 240;
@@ -59,6 +76,7 @@ struct PlaybackOptions {
     // stays stopped until transport().play().
     bool playOnStart = true;
     realtime::Transport::Options transport{};
+    AuditionBudget auditionBudget{};
 };
 
 struct CompiledPlayback {
@@ -154,6 +172,18 @@ public:
     const command::Revision* endGesture(const std::string& trackId, std::uint32_t paramId, std::string actor,
                                         std::string time);
 
+    // Where endGesture commits: main (nothing, the default) or the proposal
+    // branch being heard (session.commitOn). The Auditioner sets it.
+    void setGestureBranch(std::optional<command::BranchId> branchId) { gestureBranch_ = std::move(branchId); }
+    const std::optional<command::BranchId>& gestureBranch() const noexcept { return gestureBranch_; }
+
+    // What compiling the document now would instantiate: the streams of the
+    // newest published graph that it could not reuse (two ring slots of
+    // ringFrames, rounded up to a power of two, per channel) and its node
+    // count. Reads the document only; nothing is opened or allocated for audio.
+    AuditionCost estimateCost(const model::Document& document) const;
+    const PlaybackOptions& options() const noexcept { return options_; }
+
     // Control thread: a newer document, normally the session's head after a
     // commit. An edit that only changes track gain, pan or mute goes through
     // the parameter channel; anything else is structural and is compiled by
@@ -223,6 +253,7 @@ private:
     std::map<std::string, graph::NodeId> slots_;
     std::map<std::string, graph::NodeId> meterSlots_;
     bool loaded_ = false;
+    std::optional<command::BranchId> gestureBranch_;
 };
 
 }  // namespace siann::playback

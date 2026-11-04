@@ -1,4 +1,5 @@
 add_library(siann_playback
+  src/audition.cpp
   src/playback_engine.cpp
 )
 add_library(siann::playback ALIAS siann_playback)
