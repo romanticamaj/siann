@@ -5,6 +5,7 @@
 #include <string>
 
 #include "siann/io/durable_file.hpp"
+#include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
 
 namespace fs = std::filesystem;
@@ -357,6 +358,160 @@ TEST_CASE("Reopen replays the plan revision with identical documentHash", "[sess
     CHECK(reopened.history().head().envelope.documentHash == headHash);
     CHECK(reopened.history().head().document.track("trk_2")->gain.milliDb == 0);
     CHECK(reopened.plans().size() == 0);  // plans are in-memory engine state in M3
+}
+
+TEST_CASE("Journal records for rollback carry the target", "[journal][rollback]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "agent", "t1", Cause::plan);
+    const auto& revision = session.rollback("r2", "user", "t2");
+    JournalRecord record = recordFromRevision(3, revision);
+    const std::string line = encodeRecord(record);
+    CHECK(line.find(R"("cause":"rollback")") != std::string::npos);
+    CHECK(line.find(R"("target":"r2")") != std::string::npos);
+
+    const JournalRecord decoded = decodeRecord(line);
+    CHECK(decoded.envelope.cause == Cause::rollback);
+    CHECK(decoded.target == std::optional<std::string>{"r2"});
+    CHECK(decoded.commands.empty());
+    CHECK(encodeRecord(decoded) == line);
+
+    record.target.reset();
+    try {
+        (void)decodeRecord(encodeRecord(record));
+        FAIL("expected corrupt_record");
+    } catch (const SessionError& error) {
+        CHECK(error.code() == "corrupt_record");
+    }
+}
+
+TEST_CASE("A rolled back plan is journaled and replays on reopen", "[session][rollback]") {
+    TempDir dir;
+    siann::hash::Digest headHash{};
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1"), setGain("trk_1", -600)}, "agent", "t1", Cause::plan);  // r2
+        session.commit({cmd(R"({"op":"media.add","mediaId":"m1","contentHash":"sha256:)" + std::string(64, 'd') +
+                            R"(","format":"wav","channels":2,"sampleRate":48000,"frames":"48000"})")},
+                       "user", "t2");  // r3, unrelated to the plan
+        const auto& rolled = session.rollback("r2", "user", "t3");
+        CHECK(rolled.document.track("trk_1") == nullptr);
+        CHECK(rolled.document.media("m1") != nullptr);
+        headHash = rolled.envelope.documentHash;
+        const auto scan = scanJournal(journalOf(dir.bundle()));
+        REQUIRE(scan.records.size() == 4);
+        CHECK(scan.records.back().envelope.cause == Cause::rollback);
+        CHECK(scan.records.back().target == std::optional<std::string>{"r2"});
+        CHECK(journalOf(dir.bundle()).find(R"("cause":"rollback")") != std::string::npos);
+    }
+    OpenReport report;
+    Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.recordsReplayed == 4);
+    CHECK(reopened.history().head().envelope.documentHash == headHash);
+    CHECK(reopened.history().head().envelope.cause == Cause::rollback);
+    CHECK(reopened.history().head().target == std::optional<std::string>{"r2"});
+}
+
+TEST_CASE("Rollbacks, refused rollbacks and later edits replay on reopen", "[session][rollback]") {
+    TempDir dir;
+    siann::hash::Digest headHash{};
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1"), setGain("trk_1", -600)}, "agent", "t1", Cause::plan);  // r2
+        session.commit({addTrack("trk_2")}, "user", "t2");                                         // r3
+        session.commit({setGain("trk_2", -300)}, "user", "t3");                                    // r4
+        (void)session;
+    }
+    {
+        // trk_2 was added after the plan, so root changed: this plan conflicts.
+        Session session = Session::open(dir.bundle());
+        try {
+            session.rollback("r2", "user", "t4");
+            FAIL("expected rollback_conflict");
+        } catch (const siann::command::RollbackError& error) {
+            CHECK(error.conflictKeys() == std::vector<std::string>{"root:root"});
+        }
+        CHECK(session.lastSeq() == 4);
+        session.commit({setGain("trk_2", 0)}, "user", "t5");                                           // r5
+        session.commit({addTrack("trk_3"), setGain("trk_3", -900)}, "agent", "t6", Cause::plan);  // r6
+        session.commit({setGain("trk_1", -1200)}, "user", "t7");                                      // r7
+        const std::int64_t before = session.lastSeq();
+        const auto& rolled = session.rollback("r6", "user", "t8");  // r8
+        CHECK(rolled.envelope.cause == Cause::rollback);
+        CHECK(session.lastSeq() == before + 1);
+        CHECK(rolled.document.track("trk_3") == nullptr);
+        CHECK(rolled.document.track("trk_1")->gain.milliDb == -1200);
+        headHash = rolled.envelope.documentHash;
+
+        const std::string journal = journalOf(dir.bundle());
+        const std::string last = journal.substr(journal.rfind('\n', journal.size() - 2) + 1);
+        CHECK(last.find(R"("cause":"rollback")") != std::string::npos);
+        CHECK(last.find(R"("target":"r6")") != std::string::npos);
+    }
+    OpenReport report;
+    Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.recordsReplayed == 8);
+    CHECK(reopened.history().head().envelope.documentHash == headHash);
+    CHECK(reopened.history().head().envelope.cause == Cause::rollback);
+    CHECK(reopened.history().head().target == std::optional<std::string>{"r6"});
+    CHECK(reopened.history().canUndo());
+}
+
+TEST_CASE("Rolling back a plan through Session journals the inverse revision", "[session][plan][rollback]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600)}, {}, "r2").hashText;
+    session.approvePlan(hash, "user", "t2");
+    const auto& applied = session.applyPlan(hash, "agent", "t3");
+    const std::string appliedId = applied.envelope.id;
+    session.commit({addTrack("trk_2")}, "user", "t4");  // unrelated to the plan's entities
+
+    const std::int64_t before = session.lastSeq();
+    const auto& rolled = session.rollbackPlan(hash, "user", "t5");
+    CHECK(rolled.envelope.cause == Cause::rollback);
+    CHECK(rolled.target == std::optional{appliedId});
+    CHECK(rolled.document.track("trk_1")->gain.milliDb == 0);
+    CHECK(rolled.document.track("trk_2") != nullptr);
+    CHECK(session.lastSeq() == before + 1);
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::rolled_back);
+
+    try {
+        session.rollbackPlan(hash, "user", "t6");
+        FAIL("expected plan_not_applied");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "plan_not_applied");
+    }
+    CHECK(session.lastSeq() == before + 1);
+}
+
+TEST_CASE("Rollback never deletes media files or renders", "[session][rollback]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    const std::string hex(64, 'c');
+    const auto digest = siann::hash::parseHash("sha256:" + hex);
+    REQUIRE(digest.has_value());
+    const fs::path media = siann::session::mediaPath(dir.bundle(), *digest);
+    siann::io::writeFileAtomic(media, "RIFF not really a wav");
+    fs::create_directories(dir.bundle() / "renders");
+    const fs::path render = dir.bundle() / "renders" / "mix.wav";
+    siann::io::writeFileAtomic(render, "rendered");
+
+    session.commit({cmd(R"({"op":"media.add","mediaId":"m1","contentHash":"sha256:)" + hex +
+                        R"(","format":"wav","channels":2,"sampleRate":48000,"frames":"48000"})")},
+                   "agent", "t1", Cause::plan);  // r2
+    REQUIRE(session.history().head().document.media("m1") != nullptr);
+
+    const auto& rolled = session.rollback("r2", "user", "t2");
+    CHECK(rolled.document.media("m1") == nullptr);
+    CHECK(fs::exists(media));
+    CHECK(siann::io::readFile(media) == "RIFF not really a wav");
+    CHECK(fs::exists(render));
+
+    Session reopened = Session::open(dir.bundle());
+    CHECK(reopened.history().head().document.media("m1") == nullptr);
+    CHECK(fs::exists(media));
+    CHECK(fs::exists(render));
 }
 
 TEST_CASE("Rejecting a plan through Session leaves the journal unchanged", "[session][plan]") {

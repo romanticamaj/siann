@@ -17,6 +17,7 @@ using siann::command::PlanStaleError;
 using siann::command::PlanState;
 using siann::command::PlanStore;
 using siann::command::Revision;
+using siann::command::RollbackError;
 using siann::command::planHash;
 using siann::hash::formatHash;
 using siann::model::DiffEntry;
@@ -403,4 +404,74 @@ TEST_CASE("Partial approval of a plan that is not validated is invalid_state", "
     const std::string original = *store.submit(history, {setGain("t1", -600), setPan("t2", 300)}, {}, "r2").hashText;
     store.reject(original, "user", "t", "");
     CHECK(errorCode([&] { store.approvePartial(history, original, {0}, "user", "t"); }) == "invalid_state");
+}
+
+namespace {
+
+// Submits, approves and applies the steps at the head; returns the plan hash.
+std::string appliedPlan(History& history, PlanStore& store, std::vector<Command> steps) {
+    const std::string hash = *store.submit(history, std::move(steps), {}, history.head().envelope.id).hashText;
+    store.approve(history, hash, "user", "t");
+    store.apply(history, hash, "agent", "t");
+    return hash;
+}
+
+}  // namespace
+
+TEST_CASE("Rolling back an applied plan marks it rolled_back and returns the inverse revision",
+          "[plan][rollback]") {
+    History history = base();
+    PlanStore store;
+    const auto before = history.head().envelope.documentHash;
+    const std::string hash = appliedPlan(history, store, {setGain("t1", -600), addTrack("t4")});
+    const std::string appliedId = *store.find(hash)->appliedRevision;
+
+    const Revision& revision = store.rollback(history, hash, "user", "t2");
+    CHECK(revision.envelope.cause == Cause::rollback);
+    CHECK(revision.target == std::optional{appliedId});
+    CHECK(&revision == &history.head());
+    CHECK(revision.envelope.documentHash == before);
+    CHECK(store.find(hash)->state == PlanState::rolled_back);
+    CHECK(store.find(hash)->appliedRevision == std::optional{appliedId});
+}
+
+TEST_CASE("A rollback conflict leaves the plan applied and lists the entities", "[plan][rollback]") {
+    History history = base();
+    PlanStore store;
+    const std::string hash = appliedPlan(history, store, {setGain("t1", -600), addTrack("t4")});
+    history.commit({setGain("t4", -300), setGain("t1", -900)}, "user", "t");
+    const std::size_t count = history.revisions().size();
+
+    try {
+        store.rollback(history, hash, "user", "t");
+        FAIL("expected rollback_conflict");
+    } catch (const RollbackError& error) {
+        CHECK(error.code() == "rollback_conflict");
+        CHECK(error.conflictKeys() == std::vector<std::string>{"track:t1", "track:t4"});
+    }
+    CHECK(store.find(hash)->state == PlanState::applied);
+    CHECK(history.revisions().size() == count);
+}
+
+TEST_CASE("Only an applied plan can be rolled back", "[plan][rollback]") {
+    History history = base();
+    PlanStore store;
+    const std::string validated = *store.submit(history, {setGain("t1", -600)}, {}, "r2").hashText;
+    const std::string approved = *store.submit(history, {setGain("t2", -600)}, {}, "r2").hashText;
+    store.approve(history, approved, "user", "t");
+    const std::string rejected = *store.submit(history, {setGain("t3", -600)}, {}, "r2").hashText;
+    store.reject(rejected, "user", "t", "no");
+    const std::string rolledBack = appliedPlan(history, store, {setPan("t1", 500)});
+    store.rollback(history, rolledBack, "user", "t");
+    const std::size_t count = history.revisions().size();
+
+    for (const std::string& hash : {validated, approved, rejected, rolledBack}) {
+        INFO(hash);
+        CHECK(errorCode([&] { store.rollback(history, hash, "user", "t"); }) == "plan_not_applied");
+    }
+    CHECK(errorCode([&] { store.rollback(history, "sha256:" + std::string(64, '0'), "user", "t"); }) ==
+          "not_found");
+    CHECK(history.revisions().size() == count);
+    CHECK(store.find(validated)->state == PlanState::validated);
+    CHECK(store.find(approved)->state == PlanState::approved);
 }

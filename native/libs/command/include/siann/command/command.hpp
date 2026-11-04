@@ -28,6 +28,8 @@ public:
     // clip_exceeds_media or invalid_gain. Plans (plan.hpp) add plan_stale
     // (PlanStaleError, with the changed entities), invalid_state,
     // invalid_plan, invalid_entity_set and plan_not_canonicalizable.
+    // Rollback (history.hpp) adds rollback_conflict (RollbackError, with the
+    // conflicting entities), not_a_plan and plan_not_applied.
     const std::string& code() const noexcept { return code_; }
     // Index of the failing command inside a transaction.
     std::size_t step() const noexcept { return step_; }

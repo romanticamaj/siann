@@ -501,4 +501,12 @@ const Revision& PlanStore::apply(const History& history, std::string_view planHa
     return revision;
 }
 
+const Revision& PlanStore::rollback(History&, std::string_view, std::string, std::string) {
+    throw CommandError("not_implemented", "PlanStore::rollback");
+}
+
+const Revision& PlanStore::rollback(std::string_view, std::string, std::string, const Rollback&) {
+    throw CommandError("not_implemented", "PlanStore::rollback");
+}
+
 }  // namespace siann::command

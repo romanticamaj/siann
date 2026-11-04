@@ -2,11 +2,13 @@
 
 // The revision DAG: one history for undo, journal, plans and (later) proposal
 // branches. Every published document is a revision. Undo and redo create new
-// revisions whose document equals an earlier one.
+// revisions whose document equals an earlier one. Rollback of a plan revision
+// creates an inverse revision that restores only the plan's entities.
 
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -16,7 +18,7 @@
 
 namespace siann::command {
 
-enum class Cause { create, command, plan, undo, redo };
+enum class Cause { create, command, plan, undo, redo, rollback };
 
 std::string_view causeName(Cause cause) noexcept;
 
@@ -33,9 +35,29 @@ struct RevisionEnvelope {
 struct Revision {
     RevisionEnvelope envelope;
     std::vector<Command> commands;               // command and plan revisions
-    std::optional<std::string> target;           // undo and redo: the revision undone or redone
+    std::optional<std::string> target;           // undo, redo, rollback: the revision undone, redone or rolled back
     std::vector<model::DiffEntry> diff;          // against the parent revision
     model::Document document;
+};
+
+// "<type>:<id>"
+std::string entityKey(const model::EntityRef& ref);
+
+// The entities a revision changed: its recorded diff against its parent.
+std::vector<model::DiffEntry> affectedEntities(const Revision& revision);
+
+// Code rollback_conflict. conflicts() are the entities that changed since the
+// plan revision (or that a later revision references), sorted by
+// "<type>:<id>" like the document hash leaves.
+class RollbackError : public CommandError {
+public:
+    explicit RollbackError(std::vector<model::EntityRef> conflicts);
+
+    const std::vector<model::EntityRef>& conflicts() const noexcept { return conflicts_; }
+    std::vector<std::string> conflictKeys() const;
+
+private:
+    std::vector<model::EntityRef> conflicts_;
 };
 
 class History {
@@ -61,6 +83,19 @@ public:
     bool canRedo() const noexcept { return !redoStack_.empty(); }
     const Revision& undo(std::string actor, std::string time);
     const Revision& redo(std::string actor, std::string time);
+
+    // Rolls back a plan revision (architecture spec, "Revision DAG — single
+    // history"). Every entity in the plan revision's diff must be unchanged at
+    // the head (an added entity still present with the same hash, a removed
+    // one still absent); the new revision is the head document with those
+    // entities restored to the plan revision's parent, cause rollback, target
+    // the plan revision. It is undoable like a commit and clears redo. Only
+    // the document changes: no file is touched. In v1 any later track add or
+    // remove changes root, so a plan that added or removed tracks then
+    // conflicts on root. Errors: not_found, not_a_plan, rollback_conflict
+    // (RollbackError, nothing appended), or a validation code of the inverse
+    // document.
+    const Revision& rollback(std::string_view planRevisionId, std::string actor, std::string time);
 
 private:
     const Revision& append(Revision revision);

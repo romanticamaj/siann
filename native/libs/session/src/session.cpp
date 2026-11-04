@@ -246,6 +246,14 @@ const Revision& Session::redo(std::string actor, std::string time) {
     return revision;
 }
 
+const Revision& Session::rollback(std::string_view, std::string, std::string) {
+    throw command::CommandError("not_implemented", "Session::rollback");
+}
+
+const Revision& Session::rollbackPlan(std::string_view, std::string, std::string) {
+    throw command::CommandError("not_implemented", "Session::rollbackPlan");
+}
+
 void Session::checkpoint() {
     state_->writeCheckpoint();
 }

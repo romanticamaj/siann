@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -10,7 +11,11 @@ using siann::command::Command;
 using siann::command::CommandError;
 using siann::command::History;
 using siann::command::Revision;
+using siann::command::RollbackError;
+using siann::model::DiffEntry;
 using siann::model::Document;
+using siann::model::EntityRef;
+using siann::model::EntityType;
 
 namespace {
 
@@ -24,6 +29,75 @@ Command addTrack(const std::string& id) {
 
 Command setGain(const std::string& id, int milliDb) {
     return cmd(R"({"op":"track.set_gain","trackId":")" + id + R"(","gainMilliDb":)" + std::to_string(milliDb) + "}");
+}
+
+Command removeTrack(const std::string& id) {
+    return cmd(R"({"op":"track.remove","trackId":")" + id + R"("})");
+}
+
+Command addMedia(const std::string& id) {
+    return cmd(R"({"op":"media.add","mediaId":")" + id + R"(","contentHash":"sha256:)" + std::string(64, 'b') +
+               R"(","format":"wav","channels":2,"sampleRate":48000,"frames":"48000"})");
+}
+
+Command placeClip(const std::string& clipId, const std::string& trackId, const std::string& mediaId) {
+    return cmd(R"({"op":"clip.place","clipId":")" + clipId + R"(","trackId":")" + trackId + R"(","mediaId":")" +
+               mediaId + R"(","position":{"domain":"audio","value":"0"},"sourceStart":"0","length":"4800"})");
+}
+
+const EntityRef kRoot{EntityType::root, "root"};
+
+EntityRef trackRef(const std::string& id) {
+    return EntityRef{EntityType::track, id};
+}
+
+EntityRef mediaRef(const std::string& id) {
+    return EntityRef{EntityType::media, id};
+}
+
+std::vector<EntityRef> refsOf(const std::vector<DiffEntry>& diff) {
+    std::vector<EntityRef> out;
+    for (const DiffEntry& entry : diff) {
+        out.push_back(entry.entity);
+    }
+    return out;
+}
+
+bool contains(const std::vector<EntityRef>& refs, const EntityRef& ref) {
+    return std::find(refs.begin(), refs.end(), ref) != refs.end();
+}
+
+// Runs rollback and returns the RollbackError's conflicts; fails the test when
+// it does not throw rollback_conflict. The history must stay unchanged.
+std::vector<EntityRef> rollbackConflicts(History& history, const std::string& planRevision) {
+    const std::size_t count = history.revisions().size();
+    const std::string headId = history.head().envelope.id;
+    const bool couldUndo = history.canUndo();
+    const bool couldRedo = history.canRedo();
+    std::vector<EntityRef> conflicts;
+    try {
+        history.rollback(planRevision, "user", "t");
+        FAIL("expected rollback_conflict");
+    } catch (const RollbackError& error) {
+        CHECK(error.code() == "rollback_conflict");
+        conflicts = error.conflicts();
+    }
+    CHECK(history.revisions().size() == count);
+    CHECK(history.head().envelope.id == headId);
+    CHECK(history.canUndo() == couldUndo);
+    CHECK(history.canRedo() == couldRedo);
+    return conflicts;
+}
+
+std::string errorCodeOf(History& history, const std::string& id) {
+    try {
+        history.rollback(id, "user", "t");
+    } catch (const RollbackError&) {
+        return "rollback_conflict";
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "none";
 }
 
 History fresh() {
@@ -125,12 +199,16 @@ TEST_CASE("Replaying the same operations reproduces revisions exactly", "[histor
         history.commit({setGain("trk_1", -900)}, "a", "t4");
         history.undo("a", "t5");
         history.redo("a", "t6");
+        history.commit({addTrack("trk_3")}, "a", "t7", Cause::plan);
+        history.rollback("r8", "a", "t8");
         return history;
     };
     const History a = run();
     const History b = run();
     REQUIRE(a.revisions().size() == b.revisions().size());
-    CHECK(ids(a) == std::vector<std::string>{"r1", "r2", "r3", "r4", "r5", "r6", "r7"});
+    CHECK(ids(a) == std::vector<std::string>{"r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"});
+    CHECK(a.head().envelope.cause == Cause::rollback);
+    CHECK(a.head().target == std::optional<std::string>{"r8"});
     for (std::size_t i = 0; i < a.revisions().size(); ++i) {
         INFO("revision " << i);
         CHECK(a.revisions()[i].envelope.documentHash == b.revisions()[i].envelope.documentHash);
@@ -169,7 +247,173 @@ TEST_CASE("A throwing before-publish hook leaves the history unchanged", "[histo
     CHECK(history.head().document.track("trk_2") == nullptr);
 
     fail = false;
-    const Revision& r3 = history.commit({addTrack("trk_2")}, "a", "t");
+    const Revision& r3 = history.commit({addTrack("trk_2")}, "a", "t", Cause::plan);
     CHECK(r3.envelope.id == "r3");
     CHECK(seen == std::vector<std::string>{"r3", "r3", "r3"});
+
+    fail = true;
+    CHECK_THROWS_AS(history.rollback("r3", "a", "t"), std::runtime_error);
+    CHECK(history.revisions().size() == 3);
+    CHECK(history.head().envelope.id == "r3");
+    CHECK(history.head().document.track("trk_2") != nullptr);
+    CHECK(history.canUndo());
+    CHECK(seen == std::vector<std::string>{"r3", "r3", "r3", "r4"});
+
+    fail = false;
+    CHECK(history.rollback("r3", "a", "t").envelope.id == "r4");
+}
+
+TEST_CASE("Rolling back a plan with no later edits creates an inverse revision", "[history][rollback]") {
+    History history = fresh();
+    const auto h1 = history.head().envelope.documentHash;
+    history.commit({addTrack("t1"), setGain("t1", -600)}, "agent", "t1", Cause::plan);
+    CHECK(refsOf(siann::command::affectedEntities(*history.find("r2"))) ==
+          std::vector<EntityRef>{kRoot, trackRef("t1")});
+
+    const Revision& r3 = history.rollback("r2", "user", "t2");
+    CHECK(r3.envelope.id == "r3");
+    CHECK(r3.envelope.cause == Cause::rollback);
+    CHECK(siann::command::causeName(Cause::rollback) == "rollback");
+    CHECK(r3.target == std::optional<std::string>{"r2"});
+    CHECK(r3.envelope.parents == std::vector<std::string>{"r2"});
+    CHECK(r3.envelope.actor == "user");
+    CHECK(r3.envelope.time == "t2");
+    CHECK(r3.commands.empty());
+    CHECK(r3.envelope.documentHash == h1);
+    REQUIRE(r3.diff.size() == 2);
+    CHECK(r3.diff[0].entity == kRoot);
+    CHECK(r3.diff[0].change == DiffEntry::Change::modified);
+    CHECK(r3.diff[1].entity == trackRef("t1"));
+    CHECK(r3.diff[1].change == DiffEntry::Change::removed);
+}
+
+TEST_CASE("Rollback with unrelated later edits restores only the plan's entities", "[history][rollback]") {
+    History history = fresh();
+    history.commit({addTrack("t0")}, "a", "t");
+    history.commit({addTrack("t1"), setGain("t1", -600)}, "agent", "t", Cause::plan);  // r3
+    history.commit({setGain("t0", -300)}, "a", "t");                                    // r4
+
+    const Revision& r5 = history.rollback("r3", "user", "t");
+    CHECK(r5.envelope.id == "r5");
+    CHECK(r5.document.track("t1") == nullptr);
+    REQUIRE(r5.document.track("t0") != nullptr);
+    CHECK(r5.document.track("t0")->gain.milliDb == -300);
+    CHECK(r5.document.root().trackOrder == std::vector<std::string>{"t0"});
+    for (std::size_t i = 0; i + 1 < history.revisions().size(); ++i) {
+        INFO("revision " << i);
+        CHECK(history.revisions()[i].envelope.documentHash != r5.envelope.documentHash);
+    }
+    CHECK(refsOf(r5.diff) == std::vector<EntityRef>{kRoot, trackRef("t1")});
+    CHECK(r5.diff[1].change == DiffEntry::Change::removed);
+    CHECK(r5.document.validate().empty());
+}
+
+TEST_CASE("Rollback restores a modified entity to its pre-plan value", "[history][rollback]") {
+    History history = fresh();
+    history.commit({addTrack("t0"), addTrack("t9"), addMedia("m1"), setGain("t0", -150)}, "a", "t");  // r2
+    history.commit({setGain("t0", -600)}, "agent", "t", Cause::plan);                                 // r3
+    history.commit({placeClip("c1", "t9", "m1")}, "a", "t");                                          // r4
+
+    const Revision& r5 = history.rollback("r3", "user", "t");
+    REQUIRE(r5.document.track("t0") != nullptr);
+    CHECK(r5.document.track("t0")->gain.milliDb == -150);
+    CHECK(r5.document.clip("c1") != nullptr);
+    CHECK(refsOf(r5.diff) == std::vector<EntityRef>{trackRef("t0")});
+    CHECK(r5.diff[0].change == DiffEntry::Change::modified);
+}
+
+TEST_CASE("Rollback is refused with rollback_conflict listing the changed entities", "[history][rollback]") {
+    SECTION("an added entity changed afterwards") {
+        History history = fresh();
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+        history.commit({setGain("t1", -300)}, "a", "t");
+        CHECK(rollbackConflicts(history, "r2") == std::vector<EntityRef>{trackRef("t1")});
+    }
+    SECTION("a later track add changes root") {
+        History history = fresh();
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+        history.commit({addTrack("t2")}, "a", "t");
+        CHECK(rollbackConflicts(history, "r2") == std::vector<EntityRef>{kRoot});
+    }
+    SECTION("a removed entity exists again") {
+        History history = fresh();
+        history.commit({addTrack("t0")}, "a", "t");
+        history.commit({removeTrack("t0")}, "agent", "t", Cause::plan);  // r3
+        history.commit({addTrack("t0")}, "a", "t");
+        const auto conflicts = rollbackConflicts(history, "r3");
+        CHECK(contains(conflicts, trackRef("t0")));
+        CHECK(contains(conflicts, kRoot));
+    }
+    SECTION("the error lists every conflict sorted by <type>:<id>") {
+        History history = fresh();
+        history.commit({addTrack("t1"), addTrack("t2")}, "agent", "t", Cause::plan);  // r2
+        history.commit({setGain("t2", -300), setGain("t1", -300), addTrack("t3")}, "a", "t");
+        try {
+            history.rollback("r2", "user", "t");
+            FAIL("expected rollback_conflict");
+        } catch (const RollbackError& error) {
+            CHECK(error.conflictKeys() == std::vector<std::string>{"root:root", "track:t1", "track:t2"});
+        }
+    }
+}
+
+TEST_CASE("A later revision that references a plan-added entity is a conflict", "[history][rollback]") {
+    SECTION("a clip on a plan-added track") {
+        History history = fresh();
+        history.commit({addMedia("m0")}, "a", "t");                   // r2
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r3
+        history.commit({placeClip("c1", "t1", "m0")}, "a", "t");      // r4
+        CHECK(rollbackConflicts(history, "r3") == std::vector<EntityRef>{trackRef("t1")});
+        CHECK(history.head().document.clip("c1") != nullptr);
+    }
+    SECTION("a clip on plan-added media") {
+        History history = fresh();
+        history.commit({addTrack("t0")}, "a", "t");                   // r2
+        history.commit({addMedia("m1")}, "agent", "t", Cause::plan);  // r3
+        history.commit({placeClip("c1", "t0", "m1")}, "a", "t");      // r4
+        CHECK(rollbackConflicts(history, "r3") == std::vector<EntityRef>{mediaRef("m1")});
+        CHECK(history.head().document.media("m1") != nullptr);
+    }
+}
+
+TEST_CASE("A rolled back plan cannot be rolled back twice", "[history][rollback]") {
+    History history = fresh();
+    history.commit({addTrack("t0")}, "a", "t");                   // r2
+    history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r3
+    history.rollback("r3", "user", "t");                          // r4
+    const auto conflicts = rollbackConflicts(history, "r3");
+    CHECK(contains(conflicts, trackRef("t1")));
+}
+
+TEST_CASE("Only plan revisions can be rolled back", "[history][rollback]") {
+    History history = fresh();
+    history.commit({addTrack("t0")}, "a", "t");                   // r2 command
+    history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r3 plan
+    history.undo("a", "t");                                       // r4 undo
+    const std::size_t count = history.revisions().size();
+    CHECK(errorCodeOf(history, "r2") == "not_a_plan");
+    CHECK(errorCodeOf(history, "r1") == "not_a_plan");
+    CHECK(errorCodeOf(history, "r4") == "not_a_plan");
+    CHECK(errorCodeOf(history, "r99") == "not_found");
+    CHECK(history.revisions().size() == count);
+}
+
+TEST_CASE("Rollback is undoable like a commit and clears redo", "[history][rollback]") {
+    History history = fresh();
+    history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+    history.commit({addTrack("t2")}, "a", "t");                   // r3
+    history.undo("a", "t");                                       // r4, back to r2's document
+    CHECK(history.canRedo());
+    const auto before = history.head().envelope.documentHash;
+
+    const Revision& rolled = history.rollback("r2", "user", "t");  // r5
+    CHECK(rolled.document.track("t1") == nullptr);
+    CHECK_FALSE(history.canRedo());
+
+    const Revision& undone = history.undo("user", "t");
+    CHECK(undone.target == std::optional<std::string>{"r5"});
+    CHECK(undone.envelope.documentHash == before);
+    CHECK(history.head().document.track("t1") != nullptr);
+    const Revision& redone = history.redo("user", "t");
+    CHECK(redone.envelope.documentHash == rolled.envelope.documentHash);
 }

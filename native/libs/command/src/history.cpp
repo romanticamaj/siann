@@ -11,8 +11,24 @@ std::string_view causeName(Cause cause) noexcept {
         case Cause::plan: return "plan";
         case Cause::undo: return "undo";
         case Cause::redo: return "redo";
+        case Cause::rollback: return "rollback";
     }
     return "unknown";
+}
+
+std::vector<model::DiffEntry> affectedEntities(const Revision& revision) {
+    return revision.diff;
+}
+
+RollbackError::RollbackError(std::vector<model::EntityRef> conflicts)
+    : CommandError("rollback_conflict", "not implemented"), conflicts_(std::move(conflicts)) {}
+
+std::vector<std::string> RollbackError::conflictKeys() const {
+    throw CommandError("not_implemented", "RollbackError::conflictKeys");
+}
+
+const Revision& History::rollback(std::string_view, std::string, std::string) {
+    throw CommandError("not_implemented", "History::rollback");
 }
 
 History::History(model::Document initial, std::string actor, std::string time) {
