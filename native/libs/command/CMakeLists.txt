@@ -1,6 +1,7 @@
 add_library(siann_command
   src/commands.cpp
   src/history.cpp
+  src/plan.cpp
 )
 add_library(siann::command ALIAS siann_command)
 target_include_directories(siann_command PUBLIC include)

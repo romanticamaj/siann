@@ -573,6 +573,15 @@ std::vector<ValidationIssue> Document::validate() const {
 }
 
 hash::Digest Document::entityHash(const EntityRef& ref) const {
+    const std::optional<hash::Digest> found = findEntityHash(ref);
+    if (!found) {
+        throw ModelError("unknown_entity",
+                         "no " + std::string(entityTypeName(ref.type)) + " with id " + ref.id);
+    }
+    return *found;
+}
+
+std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const noexcept {
     const hash::Digest* found = nullptr;
     switch (ref.type) {
         case EntityType::root:
@@ -591,8 +600,7 @@ hash::Digest Document::entityHash(const EntityRef& ref) const {
             break;
     }
     if (found == nullptr) {
-        throw ModelError("unknown_entity",
-                         "no " + std::string(entityTypeName(ref.type)) + " with id " + ref.id);
+        return std::nullopt;
     }
     return *found;
 }

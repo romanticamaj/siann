@@ -317,6 +317,16 @@
       "name": "malformed_parent_plan",
       "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"readSet\":[],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}],\"parentPlan\":\"sha256:abc\"}",
       "error": "invalid_plan"
+    },
+    {
+      "name": "unknown_state",
+      "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"readSet\":[],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}],\"state\":\"pending\"}",
+      "error": "invalid_plan"
+    },
+    {
+      "name": "missing_read_set",
+      "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}]}",
+      "error": "invalid_entity_set"
     }
   ]
 }

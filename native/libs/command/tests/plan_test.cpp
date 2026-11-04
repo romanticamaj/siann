@@ -46,7 +46,7 @@ Command setPan(const std::string& id, int pan) {
     return cmd(R"({"op":"track.set_pan","trackId":")" + id + R"(","pan":)" + std::to_string(pan) + "}");
 }
 
-Command rename(const std::string& id, const std::string& name) {
+Command renameTrack(const std::string& id, const std::string& name) {
     return cmd(R"({"op":"track.rename","trackId":")" + id + R"(","name":")" + name + R"("})");
 }
 
@@ -218,7 +218,7 @@ TEST_CASE("A changed read entity returns plan_stale", "[plan]") {
     History history = base();
     PlanStore store;
     const std::string hash = *store.submit(history, {setGain("t1", -600)}, {track("t2")}, "r2").hashText;
-    history.commit({rename("t2", "Bass")}, "user", "t");
+    history.commit({renameTrack("t2", "Bass")}, "user", "t");
 
     const auto error = staleError([&] { store.approve(history, hash, "user", "t"); });
     REQUIRE(error.has_value());
@@ -318,7 +318,7 @@ TEST_CASE("Partial approval creates a sub-plan with a new hash and parentPlan, t
     History history = base();
     PlanStore store;
     const std::string original =
-        *store.submit(history, {setGain("t1", -600), setPan("t2", 300), rename("t3", "Keys")}, {track("t2")}, "r2")
+        *store.submit(history, {setGain("t1", -600), setPan("t2", 300), renameTrack("t3", "Keys")}, {track("t2")}, "r2")
              .hashText;
 
     const Plan& sub = store.approvePartial(history, original, {0, 2}, "user", "2026-11-04T00:06:00Z");
@@ -368,7 +368,7 @@ TEST_CASE("A stale sub-plan returns plan_stale, is stored validated, and the ori
     History history = base();
     PlanStore store;
     const std::string original =
-        *store.submit(history, {setGain("t1", -600), setPan("t2", 300), rename("t3", "Keys")}, {}, "r2").hashText;
+        *store.submit(history, {setGain("t1", -600), setPan("t2", 300), renameTrack("t3", "Keys")}, {}, "r2").hashText;
     history.commit({setGain("t1", -300)}, "user", "t");
 
     const auto error = staleError([&] { store.approvePartial(history, original, {0, 1}, "user", "t"); });
@@ -386,7 +386,7 @@ TEST_CASE("Partial approval with every step or no step is invalid_params", "[pla
     History history = base();
     PlanStore store;
     const std::string original =
-        *store.submit(history, {setGain("t1", -600), setPan("t2", 300), rename("t3", "Keys")}, {}, "r2").hashText;
+        *store.submit(history, {setGain("t1", -600), setPan("t2", 300), renameTrack("t3", "Keys")}, {}, "r2").hashText;
 
     using Indexes = std::vector<std::size_t>;
     for (const Indexes& indexes : {Indexes{}, Indexes{0, 1, 2}, Indexes{2, 0, 1}, Indexes{3}, Indexes{0, 0}}) {

@@ -108,6 +108,8 @@ function buildFixture() {
     ['empty_steps', text({ ...minimal, steps: [] }), 'invalid_plan'],
     ['step_without_op', text({ ...minimal, steps: [{ trackId: 'trk_1' }] }), 'invalid_plan'],
     ['malformed_parent_plan', text({ ...minimal, parentPlan: 'sha256:abc' }), 'invalid_plan'],
+    ['unknown_state', text({ ...minimal, state: 'pending' }), 'invalid_plan'],
+    ['missing_read_set', text({ ...minimal, readSet: undefined }), 'invalid_entity_set'],
   ].map(([name, planText, error]) => ({ name, planText, error }));
 
   return {
