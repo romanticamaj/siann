@@ -12,7 +12,7 @@
     "Gestures",
     "Milestones"
   ],
-  "status": "in_progress",
+  "status": "exit_pending",
   "done": [
     "Realtime queues, allocation guard, fake and manual devices (#14)",
     "Graph driver: ownership states, duck-and-swap, retirement, watchdog (#16)",
@@ -26,7 +26,9 @@
     "Meters through meterOutbox (#27)",
     "Realtime PDC and runtime latency changes (#28)",
     "Device-side sample-rate conversion (#29)",
-    "siann-cli device, play, record and bench commands (#30)"
+    "siann-cli device, play, record and bench commands (#30)",
+    "Long recording test and a stable CLI kill test (#35)",
+    "RealtimeSanitizer CI job (#36)"
   ],
   "prerequisites": [],
   "humanGates": [],
