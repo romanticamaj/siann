@@ -1,8 +1,79 @@
 #include "siann/command/history.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace siann::command {
+
+using model::DiffEntry;
+using model::EntityRef;
+using model::EntityType;
+
+namespace {
+
+// Sorted by "<type>:<id>", the order of the document hash leaves, unique.
+std::vector<EntityRef> sortedByKey(std::vector<EntityRef> refs) {
+    std::sort(refs.begin(), refs.end(),
+              [](const EntityRef& a, const EntityRef& b) { return entityKey(a) < entityKey(b); });
+    refs.erase(std::unique(refs.begin(), refs.end()), refs.end());
+    return refs;
+}
+
+std::string conflictMessage(const std::vector<EntityRef>& entities) {
+    std::string message = "the plan's entities changed since it was applied:";
+    for (const EntityRef& ref : sortedByKey(entities)) {
+        message += " " + entityKey(ref);
+    }
+    return message;
+}
+
+// The document with one entity set to its state in source (removed when
+// source lacks it).
+model::Document restoreEntity(const model::Document& document, const model::Document& source,
+                              const EntityRef& ref) {
+    switch (ref.type) {
+        case EntityType::root:
+            return document.withRoot(source.root());
+        case EntityType::media:
+            if (const model::Media* media = source.media(ref.id)) {
+                return document.withMedia(*media);
+            }
+            return document.withoutMedia(ref.id);
+        case EntityType::track:
+            if (const model::Track* track = source.track(ref.id)) {
+                return document.withTrack(*track);
+            }
+            return document.withoutTrack(ref.id);
+        case EntityType::clip:
+            if (const model::Clip* clip = source.clip(ref.id)) {
+                return document.withClip(*clip);
+            }
+            return document.withoutClip(ref.id);
+    }
+    return document;
+}
+
+}  // namespace
+
+std::string entityKey(const EntityRef& ref) {
+    return std::string(model::entityTypeName(ref.type)) + ":" + ref.id;
+}
+
+std::vector<DiffEntry> affectedEntities(const Revision& revision) {
+    return revision.diff;
+}
+
+RollbackError::RollbackError(std::vector<EntityRef> entities)
+    : CommandError("rollback_conflict", conflictMessage(entities)), conflicts_(sortedByKey(std::move(entities))) {}
+
+std::vector<std::string> RollbackError::conflictKeys() const {
+    std::vector<std::string> keys;
+    keys.reserve(conflicts_.size());
+    for (const EntityRef& ref : conflicts_) {
+        keys.push_back(entityKey(ref));
+    }
+    return keys;
+}
 
 std::string_view causeName(Cause cause) noexcept {
     switch (cause) {
@@ -14,21 +85,6 @@ std::string_view causeName(Cause cause) noexcept {
         case Cause::rollback: return "rollback";
     }
     return "unknown";
-}
-
-std::vector<model::DiffEntry> affectedEntities(const Revision& revision) {
-    return revision.diff;
-}
-
-RollbackError::RollbackError(std::vector<model::EntityRef> conflicts)
-    : CommandError("rollback_conflict", "not implemented"), conflicts_(std::move(conflicts)) {}
-
-std::vector<std::string> RollbackError::conflictKeys() const {
-    throw CommandError("not_implemented", "RollbackError::conflictKeys");
-}
-
-const Revision& History::rollback(std::string_view, std::string, std::string) {
-    throw CommandError("not_implemented", "History::rollback");
 }
 
 History::History(model::Document initial, std::string actor, std::string time) {
@@ -121,6 +177,58 @@ const Revision& History::redo(std::string actor, std::string time) {
     const Revision& revision = append(Revision{std::move(envelope), {}, targetId, {}, std::move(restored)});
     redoStack_.pop_back();
     undoStack_.push_back(target);
+    return revision;
+}
+
+const Revision& History::rollback(std::string_view planRevisionId, std::string actor, std::string time) {
+    const Revision& plan = revisions_[indexOf(planRevisionId)];
+    if (plan.envelope.cause != Cause::plan) {
+        throw CommandError("not_a_plan", "revision " + plan.envelope.id + " has cause " +
+                                             std::string(causeName(plan.envelope.cause)) +
+                                             "; only plan revisions can be rolled back");
+    }
+    const model::Document& before = revisions_[indexOf(plan.envelope.parents.front())].document;
+    const model::Document& current = head().document;
+
+    // Every affected entity must be as the plan left it.
+    std::vector<EntityRef> conflicts;
+    for (const DiffEntry& entry : affectedEntities(plan)) {
+        if (plan.document.findEntityHash(entry.entity) != current.findEntityHash(entry.entity)) {
+            conflicts.push_back(entry.entity);
+        }
+    }
+    if (!conflicts.empty()) {
+        throw RollbackError(std::move(conflicts));
+    }
+
+    model::Document inverse = current;
+    for (const DiffEntry& entry : affectedEntities(plan)) {
+        inverse = restoreEntity(inverse, before, entry.entity);
+    }
+    // A later revision may reference an entity the plan added (a clip on a
+    // plan-added track or media): that entity is the conflict.
+    for (const model::ValidationIssue& issue : inverse.validate()) {
+        const model::Clip* clip = issue.entity.type == EntityType::clip ? inverse.clip(issue.entity.id) : nullptr;
+        if (issue.code == "unknown_track" && clip != nullptr) {
+            conflicts.push_back(EntityRef{EntityType::track, clip->trackId});
+        } else if (issue.code == "unknown_media" && clip != nullptr) {
+            conflicts.push_back(EntityRef{EntityType::media, clip->mediaId});
+        } else {
+            throw CommandError(issue.code, "rolling back " + plan.envelope.id + ": " + issue.message);
+        }
+    }
+    if (!conflicts.empty()) {
+        throw RollbackError(std::move(conflicts));
+    }
+
+    const std::string planId = plan.envelope.id;
+    RevisionEnvelope envelope;
+    envelope.cause = Cause::rollback;
+    envelope.actor = std::move(actor);
+    envelope.time = std::move(time);
+    const Revision& revision = append(Revision{std::move(envelope), {}, planId, {}, std::move(inverse)});
+    undoStack_.push_back(revisions_.size() - 1);
+    redoStack_.clear();
     return revision;
 }
 

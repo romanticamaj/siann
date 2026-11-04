@@ -407,6 +407,7 @@ TEST_CASE("Rollback is undoable like a commit and clears redo", "[history][rollb
     const auto before = history.head().envelope.documentHash;
 
     const Revision& rolled = history.rollback("r2", "user", "t");  // r5
+    const auto rolledHash = rolled.envelope.documentHash;  // later appends may move revisions
     CHECK(rolled.document.track("t1") == nullptr);
     CHECK_FALSE(history.canRedo());
 
@@ -415,5 +416,5 @@ TEST_CASE("Rollback is undoable like a commit and clears redo", "[history][rollb
     CHECK(undone.envelope.documentHash == before);
     CHECK(history.head().document.track("t1") != nullptr);
     const Revision& redone = history.redo("user", "t");
-    CHECK(redone.envelope.documentHash == rolled.envelope.documentHash);
+    CHECK(redone.envelope.documentHash == rolledHash);
 }

@@ -28,6 +28,7 @@ Cause causeFromName(const std::string& name) {
     if (name == "plan") return Cause::plan;
     if (name == "undo") return Cause::undo;
     if (name == "redo") return Cause::redo;
+    if (name == "rollback") return Cause::rollback;
     throw SessionError("corrupt_record", "unknown cause " + name);
 }
 
@@ -201,6 +202,9 @@ JournalRecord decodeRecord(std::string_view line) {
         }
         if (r.optional("target") != nullptr) {
             record.target = r.string("target");
+        }
+        if (record.envelope.cause == Cause::rollback && !record.target) {
+            throw SessionError("corrupt_record", "a rollback record needs a target");
         }
         if (const Value* document = r.optional("document")) {
             record.document = model::Document::fromJson(*document);

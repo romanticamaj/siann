@@ -335,9 +335,6 @@ hash::Digest planHash(const Plan& plan) {
     }
 }
 
-std::string entityKey(const EntityRef& ref) {
-    return std::string(model::entityTypeName(ref.type)) + ":" + ref.id;
-}
 
 PlanStaleError::PlanStaleError(std::string planHashText, std::vector<StaleEntity> changed)
     : CommandError("plan_stale", staleMessage(changed)), plan_(std::move(planHashText)), changed_(std::move(changed)) {}
@@ -501,12 +498,24 @@ const Revision& PlanStore::apply(const History& history, std::string_view planHa
     return revision;
 }
 
-const Revision& PlanStore::rollback(History&, std::string_view, std::string, std::string) {
-    throw CommandError("not_implemented", "PlanStore::rollback");
+const Revision& PlanStore::rollback(History& history, std::string_view planHashText, std::string actor,
+                                    std::string time) {
+    return rollback(planHashText, std::move(actor), std::move(time),
+                    [&history](const std::string& planRevisionId, std::string a, std::string t) -> const Revision& {
+                        return history.rollback(planRevisionId, std::move(a), std::move(t));
+                    });
 }
 
-const Revision& PlanStore::rollback(std::string_view, std::string, std::string, const Rollback&) {
-    throw CommandError("not_implemented", "PlanStore::rollback");
+const Revision& PlanStore::rollback(std::string_view planHashText, std::string actor, std::string time,
+                                    const Rollback& rollbackRevision) {
+    Plan& plan = require(planHashText);
+    if (plan.state != PlanState::applied || !plan.appliedRevision) {
+        throw CommandError("plan_not_applied", "only an applied plan can be rolled back; this one is " +
+                                                   std::string(planStateName(plan.state)));
+    }
+    const Revision& revision = rollbackRevision(*plan.appliedRevision, std::move(actor), std::move(time));
+    plan.state = PlanState::rolled_back;
+    return revision;
 }
 
 }  // namespace siann::command
