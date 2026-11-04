@@ -3,7 +3,6 @@
 #include "siann/protocol/ix_transport.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <map>
 #include <memory>

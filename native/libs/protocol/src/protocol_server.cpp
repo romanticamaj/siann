@@ -10,7 +10,6 @@
 #include <mutex>
 #include <optional>
 #include <random>
-#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <utility>
