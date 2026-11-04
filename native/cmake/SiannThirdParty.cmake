@@ -19,7 +19,17 @@ FetchContent_Declare(
   SOURCE_SUBDIR siann-no-cmake
 )
 
-FetchContent_MakeAvailable(dr_libs r8brain)
+# IXWebSocket v11.4.6 (BSD-3-Clause): HTTP and WebSocket for siann-protocol.
+# Built without zlib and TLS (IXWEBSOCKET_USE_ZLIB / IXWEBSOCKET_USE_TLS
+# undefined): the server binds 127.0.0.1 only; TLS arrives with LAN mode.
+FetchContent_Declare(
+  ixwebsocket
+  GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+  GIT_TAG 2efe037c9cc96fd536774f17bdb5215161ee5087
+  SOURCE_SUBDIR siann-no-cmake
+)
+
+FetchContent_MakeAvailable(dr_libs r8brain ixwebsocket)
 
 add_library(siann_third_party_dr_libs INTERFACE)
 target_include_directories(siann_third_party_dr_libs SYSTEM INTERFACE "${dr_libs_SOURCE_DIR}")
@@ -31,4 +41,60 @@ if(MSVC)
   target_compile_options(siann_third_party_r8brain PRIVATE /W0 /utf-8)
 else()
   target_compile_options(siann_third_party_r8brain PRIVATE -w)
+endif()
+
+# Upstream's source list without the TLS back ends (OpenSSL, MbedTLS, Apple).
+set(SIANN_IXWEBSOCKET_SOURCES
+  IXBench.cpp
+  IXCancellationRequest.cpp
+  IXConnectionState.cpp
+  IXDNSLookup.cpp
+  IXExponentialBackoff.cpp
+  IXGetFreePort.cpp
+  IXGzipCodec.cpp
+  IXHttp.cpp
+  IXHttpClient.cpp
+  IXHttpServer.cpp
+  IXNetSystem.cpp
+  IXSelectInterrupt.cpp
+  IXSelectInterruptFactory.cpp
+  IXSelectInterruptPipe.cpp
+  IXSelectInterruptEvent.cpp
+  IXSetThreadName.cpp
+  IXSocket.cpp
+  IXSocketConnect.cpp
+  IXSocketFactory.cpp
+  IXSocketServer.cpp
+  IXSocketTLSOptions.cpp
+  IXStrCaseCompare.cpp
+  IXUdpSocket.cpp
+  IXUrlParser.cpp
+  IXUuid.cpp
+  IXUserAgent.cpp
+  IXWebSocket.cpp
+  IXWebSocketCloseConstants.cpp
+  IXWebSocketHandshake.cpp
+  IXWebSocketHttpHeaders.cpp
+  IXWebSocketPerMessageDeflate.cpp
+  IXWebSocketPerMessageDeflateCodec.cpp
+  IXWebSocketPerMessageDeflateOptions.cpp
+  IXWebSocketProxyServer.cpp
+  IXWebSocketServer.cpp
+  IXWebSocketTransport.cpp
+)
+list(TRANSFORM SIANN_IXWEBSOCKET_SOURCES PREPEND "${ixwebsocket_SOURCE_DIR}/ixwebsocket/")
+add_library(siann_third_party_ixwebsocket STATIC ${SIANN_IXWEBSOCKET_SOURCES})
+target_include_directories(siann_third_party_ixwebsocket SYSTEM PUBLIC "${ixwebsocket_SOURCE_DIR}")
+target_compile_features(siann_third_party_ixwebsocket PUBLIC cxx_std_20)
+if(MSVC)
+  target_compile_options(siann_third_party_ixwebsocket PRIVATE /W0 /utf-8)
+else()
+  target_compile_options(siann_third_party_ixwebsocket PRIVATE -w)
+endif()
+if(WIN32)
+  target_compile_definitions(siann_third_party_ixwebsocket PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_link_libraries(siann_third_party_ixwebsocket PUBLIC ws2_32 wsock32 shlwapi)
+else()
+  find_package(Threads REQUIRED)
+  target_link_libraries(siann_third_party_ixwebsocket PUBLIC Threads::Threads)
 endif()

@@ -1201,6 +1201,76 @@ Security rules:
 - MCP clients default to the "propose" scope: they can submit plans but not approve
   them unless the user grants that scope.
 
+Protocol v0 (decided 2026-11-04 with m3-protocol-server; refines the rules above,
+contradicts none of them):
+
+1. Every request, not only mutating ones, carries `sessionId` and `requestId`.
+   `sessionId` is assigned by the server for the open session (`ses_<random hex>`,
+   new on every open) and returned by the authentication reply. A request for
+   another session gets `session_mismatch`.
+2. Envelope. Request `{requestId, sessionId, method, params, expectedRevision?}`. Response
+   `{requestId, ok: true, result}` or
+   `{requestId, ok: false, error: {code, message, step?}}`. Authentication: the
+   first text frame is `{type: "auth", token}`; the reply is
+   `{type: "auth", ok: true, sessionId, revision, documentHash}`, or
+   `{type: "auth", ok: false, error: {code: "invalid_token"}}` followed by a close.
+   Any other frame before authentication gets one `unauthenticated` error response
+   and the socket is closed. Malformed JSON or a missing field gets `bad_request`,
+   with the `requestId` echoed when it can be read and `null` otherwise.
+   `expectedRevision`, when present, is a revision id (`r<n>`, a string; anything
+   else is `bad_request`). The command thread compares it with the head revision
+   before the method runs, for any method; when they differ the answer is
+   `revision_mismatch` and nothing is executed. Like any executed answer it is
+   cached under its `requestId`.
+3. Stable codes so far: `unauthenticated`, `invalid_token`, `bad_request`,
+   `session_mismatch`, `revision_mismatch`, `unknown_method`, `invalid_params`,
+   `queue_full`, `internal_error`, plus the
+   `CommandError` and `SessionError` codes passed through unchanged (with `step` for
+   commands). HTTP error bodies are `{ok: false, error: {code, message}}` with
+   `unauthenticated` (401), `origin_not_allowed` (403) and `not_found` (404).
+   `message` is for people and not stable. It is always valid UTF-8: the server never
+   echoes request bytes it has not parsed as JSON (Origin, HTTP method and path), and
+   replaces each byte of an exception message that is not UTF-8 (for example a
+   Windows path in the ANSI code page inside an `IoError`) with U+FFFD. Every
+   executed request gets exactly one response, also when the method throws
+   something that is not a `std::exception` (`internal_error`).
+4. Origin is checked at the HTTP upgrade. No Origin header (non-browser clients) is
+   accepted; the token is still required. An Origin in the allow list is accepted.
+   Anything else, including the literal `null` unless it is listed, gets 403 and no
+   socket. The app scheme is the constant `siann://app` in `siann-protocol` (the
+   Electron shell reuses it); the default allow list is that constant alone and the
+   server options can replace it.
+5. Idempotency: the server keeps, per `sessionId`, the exact response text of the
+   last 1024 executed requests keyed by `requestId` (oldest evicted). The cache
+   lives in the server, not the connection, so a duplicate after a reconnect still
+   returns the original response. Envelope errors answered before execution
+   (`bad_request`, `session_mismatch`, `queue_full`) are not cached: the request was
+   never executed and may be retried with the same `requestId`.
+6. Plain HTTP requests need `Authorization: Bearer <token>` (401 otherwise). The
+   only route so far is `GET /v0/health` returning `200 {"ok":true}`; everything
+   else is 404. Further routes come with later features.
+7. The token is 32 random bytes from `std::random_device` as lowercase hex,
+   generated when the server is constructed, and handed to the launcher (Electron
+   or the CLI). The protocol thread hands validated requests to the command thread
+   through a bounded inbox; a full inbox answers `queue_full` at once and is never
+   waited on. Protocol JSON uses the in-house strict parser and JCS serializer;
+   nlohmann/json is not adopted while those suffice.
+8. Methods so far (the surface m3-events-sync, m3-plans and m3-mcp build on; later
+   features add methods, and an unknown name is `unknown_method`):
+   - `session.inspect`, params `{}` (ignored). Result
+     `{revision, documentHash, revisions}`: the head revision id, its
+     `sha256:<hex>` document hash, and the number of revisions in the history.
+   - `command.execute`, params `{commands: [command, ...]}` with the commands in
+     their journal JSON form (`op` plus fields). A missing, non-array or empty
+     `commands` is `invalid_params` without `step` (the `CommandError` code of the
+     same name, for a bad field in one command, carries `step`). The list commits as one revision
+     (all or nothing) with the server's `actor` and clock. Result
+     `{revision: {...envelope, diff, target?}}`: the revision envelope as journaled
+     (`id`, `parents`, `documentHash`, `cause`, `actor`, `time`), `diff` as
+     `"<entityType>:<id>"` strings, and `target` when the cause has one. A command
+     that does not parse or fails validation answers its `CommandError` code with
+     `step`, the index in `commands`, and nothing is committed.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -1277,8 +1347,8 @@ before adoption, including transitive dependencies.
 | Realtime logging | rtlog-cpp or in-house ring | MIT |
 | Logging (non-realtime) | spdlog | MIT |
 | Plan and document hash | picosha2 + in-house JCS + in-house RFC 6962 Merkle | MIT |
-| HTTP / WebSocket | IXWebSocket, pinned, behind a thin adapter (chosen at M0; replaced only on a measured gap) | BSD-3 |
-| JSON | nlohmann/json (non-hashed I/O); JCS serializer in-house | MIT |
+| HTTP / WebSocket | IXWebSocket, pinned, behind a thin adapter (first adopted in M3 by m3-protocol-server, v11.4.6 without zlib or TLS; replaced only on a measured gap) | BSD-3 |
+| JSON | nlohmann/json (non-hashed I/O) when the in-house strict parser stops sufficing; not adopted yet. JCS serializer in-house | MIT |
 | MCP | in-house thin JSON-RPC | — |
 | DAWproject | pugixml + miniz | MIT |
 | Build / packages | CMake + vcpkg or CPM | — |

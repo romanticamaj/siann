@@ -102,7 +102,7 @@ function gcc() {
   }
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'media', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'graph', 'tests'))}`);
-  for (const d of ['dr_libs-src', 'r8brain-src', path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
+  for (const d of ['dr_libs-src', 'r8brain-src', 'ixwebsocket-src', path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
     includes.push('-isystem', toPosix(path.join(deps, d)));
   }
   const flags = ['-std=c++20', '-Wall', '-Wextra', '-Wpedantic', '-Wshadow', '-Werror', '-fsyntax-only',
@@ -120,8 +120,15 @@ function gcc() {
   return { ok: failures.length === 0, output: failures.length ? `failed: ${failures.join(', ')}\n${output}` : '' };
 }
 
+// The bridge's tests only: a bare `node --test` would also pick up JavaScript
+// under native/build/dev/_deps (IXWebSocket ships test/*.js).
+function nodeTests() {
+  const dir = path.join(ROOT, 'test');
+  return fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort().map((f) => path.join('test', f));
+}
+
 const STEPS = {
-  node: () => run(process.execPath, ['--test'], ROOT),
+  node: () => run(process.execPath, ['--test', ...nodeTests()], ROOT),
   native: preset('dev'),
   desktop: preset('desktop'),
   gcc,
