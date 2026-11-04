@@ -90,9 +90,14 @@ public:
     // one still absent); the new revision is the head document with those
     // entities restored to the plan revision's parent, cause rollback, target
     // the plan revision. It is undoable like a commit and clears redo. Only
-    // the document changes: no file is touched. In v1 any later track add or
-    // remove changes root, so a plan that added or removed tracks then
-    // conflicts on root. Errors: not_found, not_a_plan, rollback_conflict
+    // the document changes: no file is touched. Root is shared session state
+    // and is compared and restored field by field: the plan owns the root
+    // fields it changed (name, sample rate, tempo, and the whole track order
+    // only if it reordered existing tracks) and the order slots of the tracks
+    // it added or removed. Later unrelated root edits (another track added or
+    // removed, a rename, a tempo change) are kept and are not a conflict; a
+    // plan-removed track goes back right after its nearest earlier neighbour
+    // still present, or first. Errors: not_found, not_a_plan, rollback_conflict
     // (RollbackError, nothing appended), or a validation code of the inverse
     // document.
     const Revision& rollback(std::string_view planRevisionId, std::string actor, std::string time);

@@ -27,13 +27,104 @@ std::string conflictMessage(const std::vector<EntityRef>& entities) {
     return message;
 }
 
+bool containsId(const std::vector<std::string>& ids, const std::string& id) {
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+// ids without the entries of excluded, order kept.
+std::vector<std::string> without(const std::vector<std::string>& ids, const std::vector<std::string>& excluded) {
+    std::vector<std::string> out;
+    for (const std::string& id : ids) {
+        if (!containsId(excluded, id)) {
+            out.push_back(id);
+        }
+    }
+    return out;
+}
+
+// What a plan changed in root, field by field. Root is shared session state
+// (name, sample rate, tempo, track order): the plan owns only the fields it
+// changed and the order slots of the tracks it added or removed.
+struct RootChange {
+    bool name = false;
+    bool sampleRate = false;
+    bool tempo = false;
+    bool order = false;               // the plan reordered tracks it neither added nor removed
+    std::vector<std::string> added;   // in the plan's order, not before it
+    std::vector<std::string> removed; // in the order before the plan, not after it
+};
+
+RootChange rootChange(const model::Root& before, const model::Root& after) {
+    RootChange change;
+    change.name = before.name != after.name;
+    change.sampleRate = before.sampleRate != after.sampleRate;
+    change.tempo = before.tempo != after.tempo;
+    for (const std::string& id : after.trackOrder) {
+        if (!containsId(before.trackOrder, id)) {
+            change.added.push_back(id);
+        }
+    }
+    for (const std::string& id : before.trackOrder) {
+        if (!containsId(after.trackOrder, id)) {
+            change.removed.push_back(id);
+        }
+    }
+    change.order = without(before.trackOrder, change.removed) != without(after.trackOrder, change.added);
+    return change;
+}
+
+// A root field the plan changed that is no longer as the plan left it.
+// Membership of added and removed tracks is checked on the track entities.
+bool rootConflicts(const RootChange& change, const model::Root& planned, const model::Root& current) {
+    return (change.name && current.name != planned.name) ||
+           (change.sampleRate && current.sampleRate != planned.sampleRate) ||
+           (change.tempo && current.tempo != planned.tempo) ||
+           (change.order && current.trackOrder != planned.trackOrder);
+}
+
+// The current root with the plan's fields set back to before. Plan-added
+// tracks leave the order; a plan-removed track goes back right after its
+// nearest earlier neighbour in the old order that is still present, or first.
+model::Root restoreRoot(const RootChange& change, const model::Root& before, model::Root current) {
+    if (change.name) {
+        current.name = before.name;
+    }
+    if (change.sampleRate) {
+        current.sampleRate = before.sampleRate;
+    }
+    if (change.tempo) {
+        current.tempo = before.tempo;
+    }
+    if (change.order) {
+        current.trackOrder = before.trackOrder;
+        return current;
+    }
+    current.trackOrder = without(current.trackOrder, change.added);
+    for (std::size_t i = 0; i < before.trackOrder.size(); ++i) {
+        const std::string& id = before.trackOrder[i];
+        if (!containsId(change.removed, id)) {
+            continue;
+        }
+        auto at = current.trackOrder.begin();
+        for (std::size_t j = i; j-- > 0;) {
+            auto found = std::find(current.trackOrder.begin(), current.trackOrder.end(), before.trackOrder[j]);
+            if (found != current.trackOrder.end()) {
+                at = found + 1;
+                break;
+            }
+        }
+        current.trackOrder.insert(at, id);
+    }
+    return current;
+}
+
 // The document with one entity set to its state in source (removed when
-// source lacks it).
+// source lacks it). Root is restored field by field (restoreRoot).
 model::Document restoreEntity(const model::Document& document, const model::Document& source,
-                              const EntityRef& ref) {
+                              const EntityRef& ref, const RootChange& change) {
     switch (ref.type) {
         case EntityType::root:
-            return document.withRoot(source.root());
+            return document.withRoot(restoreRoot(change, source.root(), document.root()));
         case EntityType::media:
             if (const model::Media* media = source.media(ref.id)) {
                 return document.withMedia(*media);
@@ -190,10 +281,15 @@ const Revision& History::rollback(std::string_view planRevisionId, std::string a
     const model::Document& before = revisions_[indexOf(plan.envelope.parents.front())].document;
     const model::Document& current = head().document;
 
-    // Every affected entity must be as the plan left it.
+    // Every affected entity must be as the plan left it; root only in the
+    // fields the plan changed.
+    const RootChange change = rootChange(before.root(), plan.document.root());
     std::vector<EntityRef> conflicts;
     for (const DiffEntry& entry : affectedEntities(plan)) {
-        if (plan.document.findEntityHash(entry.entity) != current.findEntityHash(entry.entity)) {
+        const bool changed = entry.entity.type == EntityType::root
+                                 ? rootConflicts(change, plan.document.root(), current.root())
+                                 : plan.document.findEntityHash(entry.entity) != current.findEntityHash(entry.entity);
+        if (changed) {
             conflicts.push_back(entry.entity);
         }
     }
@@ -203,7 +299,7 @@ const Revision& History::rollback(std::string_view planRevisionId, std::string a
 
     model::Document inverse = current;
     for (const DiffEntry& entry : affectedEntities(plan)) {
-        inverse = restoreEntity(inverse, before, entry.entity);
+        inverse = restoreEntity(inverse, before, entry.entity, change);
     }
     // A later revision may reference an entity the plan added (a clip on a
     // plan-added track or media): that entity is the conflict.
