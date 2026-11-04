@@ -419,17 +419,18 @@ TEST_CASE("Rollbacks, refused rollbacks and later edits replay on reopen", "[ses
         Session session = newSession(dir.bundle());
         session.commit({addTrack("trk_1"), setGain("trk_1", -600)}, "agent", "t1", Cause::plan);  // r2
         session.commit({addTrack("trk_2")}, "user", "t2");                                         // r3
-        session.commit({setGain("trk_2", -300)}, "user", "t3");                                    // r4
+        session.commit({setGain("trk_1", -300)}, "user", "t3");                                    // r4
         (void)session;
     }
     {
-        // trk_2 was added after the plan, so root changed: this plan conflicts.
+        // trk_1 (added by the plan) changed afterwards: this plan conflicts on
+        // it, not on root, although trk_2 was added after the plan too.
         Session session = Session::open(dir.bundle());
         try {
             session.rollback("r2", "user", "t4");
             FAIL("expected rollback_conflict");
         } catch (const siann::command::RollbackError& error) {
-            CHECK(error.conflictKeys() == std::vector<std::string>{"root:root"});
+            CHECK(error.conflictKeys() == std::vector<std::string>{"track:trk_1"});
         }
         CHECK(session.lastSeq() == 4);
         session.commit({setGain("trk_2", 0)}, "user", "t5");                                           // r5

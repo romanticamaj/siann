@@ -31,6 +31,19 @@ Command setGain(const std::string& id, int milliDb) {
     return cmd(R"({"op":"track.set_gain","trackId":")" + id + R"(","gainMilliDb":)" + std::to_string(milliDb) + "}");
 }
 
+Command addTrackAt(const std::string& id, int index) {
+    return cmd(R"({"op":"track.add","trackId":")" + id + R"(","name":")" + id + R"(","channels":2,"index":)" +
+               std::to_string(index) + "}");
+}
+
+Command rename(const std::string& name) {
+    return cmd(R"({"op":"session.rename","name":")" + name + R"("})");
+}
+
+Command setTempo(int milliBpm) {
+    return cmd(R"({"op":"session.set_tempo","tempo":[{"ticks":"0","milliBpm":)" + std::to_string(milliBpm) + "}]}");
+}
+
 Command removeTrack(const std::string& id) {
     return cmd(R"({"op":"track.remove","trackId":")" + id + R"("})");
 }
@@ -329,10 +342,16 @@ TEST_CASE("Rollback is refused with rollback_conflict listing the changed entiti
         history.commit({setGain("t1", -300)}, "a", "t");
         CHECK(rollbackConflicts(history, "r2") == std::vector<EntityRef>{trackRef("t1")});
     }
-    SECTION("a later track add changes root") {
+    SECTION("a root field the plan changed was changed afterwards") {
         History history = fresh();
-        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
-        history.commit({addTrack("t2")}, "a", "t");
+        history.commit({rename("Plan name"), addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+        history.commit({rename("User name")}, "a", "t");
+        CHECK(rollbackConflicts(history, "r2") == std::vector<EntityRef>{kRoot});
+    }
+    SECTION("the plan's tempo was changed afterwards") {
+        History history = fresh();
+        history.commit({setTempo(90'000)}, "agent", "t", Cause::plan);  // r2
+        history.commit({setTempo(100'000)}, "a", "t");
         CHECK(rollbackConflicts(history, "r2") == std::vector<EntityRef>{kRoot});
     }
     SECTION("a removed entity exists again") {
@@ -340,14 +359,12 @@ TEST_CASE("Rollback is refused with rollback_conflict listing the changed entiti
         history.commit({addTrack("t0")}, "a", "t");
         history.commit({removeTrack("t0")}, "agent", "t", Cause::plan);  // r3
         history.commit({addTrack("t0")}, "a", "t");
-        const auto conflicts = rollbackConflicts(history, "r3");
-        CHECK(contains(conflicts, trackRef("t0")));
-        CHECK(contains(conflicts, kRoot));
+        CHECK(rollbackConflicts(history, "r3") == std::vector<EntityRef>{trackRef("t0")});
     }
     SECTION("the error lists every conflict sorted by <type>:<id>") {
         History history = fresh();
-        history.commit({addTrack("t1"), addTrack("t2")}, "agent", "t", Cause::plan);  // r2
-        history.commit({setGain("t2", -300), setGain("t1", -300), addTrack("t3")}, "a", "t");
+        history.commit({addTrack("t1"), addTrack("t2"), rename("Plan")}, "agent", "t", Cause::plan);  // r2
+        history.commit({setGain("t2", -300), setGain("t1", -300), addTrack("t3"), rename("User")}, "a", "t");
         try {
             history.rollback("r2", "user", "t");
             FAIL("expected rollback_conflict");
@@ -417,4 +434,79 @@ TEST_CASE("Rollback is undoable like a commit and clears redo", "[history][rollb
     CHECK(history.head().document.track("t1") != nullptr);
     const Revision& redone = history.redo("user", "t");
     CHECK(redone.envelope.documentHash == rolledHash);
+}
+
+// Root holds session fields and the track order. A plan owns only the root
+// fields it changed and the order slots of the tracks it added or removed, so
+// unrelated later edits to root do not block its rollback.
+TEST_CASE("Unrelated later edits to root do not block rollback", "[history][rollback]") {
+    SECTION("a later track add") {
+        History history = fresh();
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+        history.commit({addTrack("t2")}, "a", "t");                   // r3
+        const Revision& r4 = history.rollback("r2", "user", "t");
+        CHECK(r4.document.track("t1") == nullptr);
+        CHECK(r4.document.track("t2") != nullptr);
+        CHECK(r4.document.root().trackOrder == std::vector<std::string>{"t2"});
+        CHECK(r4.document.validate().empty());
+    }
+    SECTION("a later track remove") {
+        History history = fresh();
+        history.commit({addTrack("t0")}, "a", "t");                   // r2
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r3
+        history.commit({removeTrack("t0")}, "a", "t");                // r4
+        const Revision& r5 = history.rollback("r3", "user", "t");
+        CHECK(r5.document.root().trackOrder.empty());
+        CHECK(r5.document.validate().empty());
+    }
+    SECTION("a later session rename and tempo change") {
+        History history = fresh();
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+        history.commit({rename("Renamed"), setTempo(90'000)}, "a", "t");
+        const Revision& r4 = history.rollback("r2", "user", "t");
+        CHECK(r4.document.track("t1") == nullptr);
+        CHECK(r4.document.root().name == "Renamed");
+        CHECK(r4.document.root().tempo.front().milliBpm == 90'000);
+        CHECK(r4.document.root().trackOrder.empty());
+    }
+    SECTION("several track-adding plans roll back in any order") {
+        History history = fresh();
+        history.commit({addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+        history.commit({addTrack("t2")}, "agent", "t", Cause::plan);  // r3
+        history.rollback("r2", "user", "t");                          // r4
+        CHECK(history.head().document.root().trackOrder == std::vector<std::string>{"t2"});
+        history.rollback("r3", "user", "t");                          // r5
+        CHECK(history.head().document.root().trackOrder.empty());
+    }
+}
+
+TEST_CASE("Rollback keeps later root fields and restores only the plan's", "[history][rollback]") {
+    History history = fresh();
+    history.commit({rename("Plan"), addTrack("t1")}, "agent", "t", Cause::plan);  // r2
+    history.commit({setTempo(90'000), addTrack("t2")}, "a", "t");                 // r3
+    const Revision& r4 = history.rollback("r2", "user", "t");
+    CHECK(r4.document.root().name == "Song");
+    CHECK(r4.document.root().tempo.front().milliBpm == 90'000);
+    CHECK(r4.document.root().trackOrder == std::vector<std::string>{"t2"});
+}
+
+TEST_CASE("Rolling back a track remove reinserts it after its old neighbour", "[history][rollback]") {
+    SECTION("after the nearest earlier neighbour still present") {
+        History history = fresh();
+        history.commit({addTrack("a"), addTrack("b"), addTrack("c")}, "x", "t");  // r2
+        history.commit({removeTrack("b")}, "agent", "t", Cause::plan);            // r3
+        history.commit({addTrackAt("d", 1), addTrackAt("e", 0)}, "x", "t");       // r4: e a d c
+        const Revision& r5 = history.rollback("r3", "user", "t");
+        REQUIRE(r5.document.track("b") != nullptr);
+        CHECK(r5.document.root().trackOrder == std::vector<std::string>{"e", "a", "b", "d", "c"});
+        CHECK(r5.document.validate().empty());
+    }
+    SECTION("at the front when no earlier neighbour is left") {
+        History history = fresh();
+        history.commit({addTrack("a"), addTrack("b")}, "x", "t");       // r2
+        history.commit({removeTrack("a")}, "agent", "t", Cause::plan);  // r3
+        history.commit({addTrackAt("z", 0)}, "x", "t");                 // r4: z b
+        const Revision& r5 = history.rollback("r3", "user", "t");
+        CHECK(r5.document.root().trackOrder == std::vector<std::string>{"a", "z", "b"});
+    }
 }
