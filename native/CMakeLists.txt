@@ -31,6 +31,7 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SiannCompileOptions)
 include(SiannThirdParty)
+include(SiannBuildInfo)
 
 if(SIANN_BUILD_TESTS)
   enable_testing()

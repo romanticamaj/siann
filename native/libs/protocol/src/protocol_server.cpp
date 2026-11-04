@@ -16,6 +16,8 @@
 #include <utility>
 
 #include "request_inbox.hpp"
+#include "siann/protocol/about.hpp"
+#include "siann/protocol/read_model.hpp"
 #include "siann/command/command.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
@@ -197,7 +199,13 @@ struct ProtocolServer::Impl {
           options(std::move(o)),
           token(randomHex(32)),
           sessionId("ses_" + randomHex(16)),
-          inbox(options.inboxCapacity) {
+          inbox(options.inboxCapacity),
+          events(t, sessionId,
+                 StreamPosition{0, s.history().head().envelope.id,
+                                hash::formatHash(s.history().head().envelope.documentHash)},
+                 options.events),
+          readModel(options.syncChunkEntities),
+          realtime(t, options.realtime) {
         if (!options.clock) {
             options.clock = nowUtc;
         }
@@ -211,6 +219,9 @@ struct ProtocolServer::Impl {
     const std::string sessionId;
     std::uint16_t port = 0;
     detail::RequestInbox<Pending> inbox;
+    EventStream events;
+    ReadModel readModel;
+    RealtimeChannel realtime;
 
     std::mutex mutex;                              // guards connections and head
     std::map<ConnectionId, bool> connections;      // open connection -> authenticated
@@ -260,7 +271,7 @@ struct ProtocolServer::Impl {
         return jsonResponse(404, httpError("not_found", "no route for this method and path"));
     }
 
-    void onOpen(ConnectionId connection) {
+    void onOpen(ConnectionId connection, const std::string&) {
         std::lock_guard lock(mutex);
         connections[connection] = false;
     }
@@ -462,7 +473,7 @@ ProtocolServer::ProtocolServer(Transport& transport, session::Session& session, 
     Impl* impl = impl_.get();
     TransportHandlers handlers;
     handlers.onUpgrade = [impl](const HttpRequest& request) { return impl->onUpgrade(request); };
-    handlers.onOpen = [impl](ConnectionId connection) { impl->onOpen(connection); };
+    handlers.onOpen = [impl](ConnectionId connection, const std::string& path) { impl->onOpen(connection, path); };
     handlers.onMessage = [impl](ConnectionId connection, const std::string& text) { impl->onMessage(connection, text); };
     handlers.onClose = [impl](ConnectionId connection) { impl->onClose(connection); };
     handlers.onHttp = [impl](const HttpRequest& request) { return impl->onHttp(request); };
@@ -527,6 +538,16 @@ const std::string& ProtocolServer::sessionId() const noexcept {
 
 std::uint16_t ProtocolServer::port() const noexcept {
     return impl_->port;
+}
+
+void ProtocolServer::publishRevision(const command::Revision&) {}
+
+EventStream& ProtocolServer::events() noexcept {
+    return impl_->events;
+}
+
+RealtimeChannel& ProtocolServer::realtime() noexcept {
+    return impl_->realtime;
 }
 
 }  // namespace siann::protocol

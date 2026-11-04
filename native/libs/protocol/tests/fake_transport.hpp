@@ -45,6 +45,21 @@ public:
         sentChanged_.notify_all();
     }
 
+    void sendBinary(ConnectionId connection, const std::string& bytes) override {
+        std::lock_guard lock(mutex_);
+        auto it = connections_.find(connection);
+        if (it != connections_.end() && !it->second.closed) {
+            it->second.binary.push_back(bytes);
+        }
+        sentChanged_.notify_all();
+    }
+
+    std::size_t bufferedAmount(ConnectionId connection) const override {
+        std::lock_guard lock(mutex_);
+        auto it = connections_.find(connection);
+        return it == connections_.end() || it->second.closed ? 0 : it->second.buffered;
+    }
+
     void close(ConnectionId connection, int code, const std::string&) override {
         {
             std::lock_guard lock(mutex_);
@@ -62,8 +77,8 @@ public:
 
     // Client side.
 
-    Upgrade connect(Headers headers = {}) {
-        HttpRequest request{"GET", "/", std::move(headers), {}};
+    Upgrade connect(Headers headers = {}, const std::string& path = "/") {
+        HttpRequest request{"GET", path, std::move(headers), {}};
         request.headers.emplace("upgrade", "websocket");
         if (auto rejection = handlers_.onUpgrade(request)) {
             return Upgrade{std::nullopt, *rejection};
@@ -74,9 +89,12 @@ public:
             id = nextId_++;
             connections_[id];
         }
-        handlers_.onOpen(id);
+        handlers_.onOpen(id, path);
         return Upgrade{id, {}};
     }
+
+    // Opens a connection on the realtime path.
+    Upgrade connectRealtime(Headers headers = {}) { return connect(std::move(headers), "/v1/realtime"); }
 
     void deliver(ConnectionId connection, const std::string& text) {
         {
@@ -106,9 +124,26 @@ public:
         return sentChanged_.wait_for(lock, timeout, [&] { return connections_.at(connection).sent.size() >= count; });
     }
 
+    // Binary frames the server sent on the connection.
+    std::vector<std::string> binary(ConnectionId connection) const {
+        std::lock_guard lock(mutex_);
+        return connections_.at(connection).binary;
+    }
+
+    // Simulates a congested socket: bufferedAmount() reports `bytes`.
+    void setBufferedAmount(ConnectionId connection, std::size_t bytes) {
+        std::lock_guard lock(mutex_);
+        connections_.at(connection).buffered = bytes;
+    }
+
     bool closed(ConnectionId connection) const {
         std::lock_guard lock(mutex_);
         return connections_.at(connection).closed;
+    }
+
+    int closeCode(ConnectionId connection) const {
+        std::lock_guard lock(mutex_);
+        return connections_.at(connection).closeCode;
     }
 
     bool listening() const noexcept { return listening_; }
@@ -117,6 +152,8 @@ public:
 private:
     struct Connection {
         std::vector<std::string> sent;
+        std::vector<std::string> binary;
+        std::size_t buffered = 0;
         bool closed = false;
         int closeCode = 0;
     };
