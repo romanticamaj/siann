@@ -85,6 +85,16 @@ void expectSameHistory(const Session& a, const Session& b) {
     }
 }
 
+template <typename Action>
+std::string errorCodeOf(Action action) {
+    try {
+        action();
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "no error";
+}
+
 }  // namespace
 
 TEST_CASE("Journal records round-trip and carry a checksum", "[journal]") {
@@ -678,4 +688,32 @@ TEST_CASE("A journal with an unknown cause is still corrupt_record", "[session][
     CHECK(report.recordsReplayed == 1);
     REQUIRE(report.tailError.has_value());
     CHECK(report.tailError->find("corrupt_record") != std::string::npos);
+}
+
+TEST_CASE("An approved plan applies onto a proposal branch from its base revision", "[session][branch][plan]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600), addTrack("trk_2")}, {}, "r2").hashText;
+    CHECK(errorCodeOf([&] { (void)siann::session::proposeFromPlan(session, *session.plans().find(hash), "a", "t"); }) ==
+          "invalid_state");  // validated, not approved
+    session.approvePlan(hash, "user", "t2");
+    const std::int64_t before = session.lastSeq();
+
+    const auto b = siann::session::proposeFromPlan(session, *session.plans().find(hash), "agent", "t3");
+    CHECK(session.history().branches() == std::vector<std::string>{b});
+    CHECK(session.lastSeq() == before + 1);
+    CHECK(session.history().head().envelope.id == "r2");  // main is untouched
+    const auto proposed = session.history().branchHead(b);
+    CHECK(proposed.envelope.cause == Cause::plan);
+    CHECK(proposed.envelope.parents == std::vector<std::string>{"r2"});
+    CHECK(proposed.branch == std::optional<std::string>{b});
+    CHECK(proposed.commands.size() == 2);
+    // A proposal is not an apply: the plan stays approved.
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+
+    // The same plan applied on main from the same base gives the same document.
+    const auto& applied = session.applyPlan(hash, "agent", "t4");
+    CHECK(applied.envelope.documentHash == proposed.envelope.documentHash);
+    CHECK(applied.envelope.parents == std::vector<std::string>{"r2"});
 }

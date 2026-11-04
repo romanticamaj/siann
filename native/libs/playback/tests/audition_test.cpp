@@ -348,3 +348,38 @@ TEST_CASE("Discarding the auditioned proposal returns the sound to main", "[play
     CHECK(p.engine.driver().ownedGraphs() == 1);
     CHECK(auditionCode([&] { a.audition(b); }) == "audition_not_found");
 }
+
+TEST_CASE("An approved plan proposed onto a branch can be auditioned end to end", "[playback][audition][plan]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(20);
+    const Document mainDoc = f.doc();
+    const std::string base = f.session.history().head().envelope.id;
+    const std::string hash =
+        *f.session
+             .submitPlan({cmd(addTrack("trk_c")), cmd(place("clp_c", "trk_c", "med_st", 2'000, 3'000, 40'000)),
+                          cmd(R"({"op":"track.set_gain","trackId":"trk_a","gainMilliDb":-6000})")},
+                         {}, base)
+             .hashText;
+    f.session.approvePlan(hash, "user", "t");
+    const command::BranchId b = session::proposeFromPlan(f.session, *f.session.plans().find(hash), "agent", "t");
+    CHECK(f.session.history().branchHead(b).envelope.parents == std::vector<std::string>{base});
+    Auditioner a(p.engine, f.session);
+
+    a.audition(b);
+    p.pump(30);
+    const int duck = p.lastDuckBlock();
+    REQUIRE(duck >= 20);
+    const auto mainRef = offline(mainDoc, f.bundle(), framesOf(p));
+    const auto planRef = offline(branchDoc(f, b), f.bundle(), framesOf(p));
+    CHECK(matches(p, mainRef, 1, duck));
+    CHECK(matches(p, planRef, duck + 2, p.blockCount()));
+    CHECK(withinDuckEnvelope(p, mainRef, planRef, duck));
+
+    a.hear(Auditioner::Side::main);
+    p.pump(30);
+    CHECK(matches(p, mainRef, p.lastDuckBlock() + 2, p.blockCount()));
+    CHECK(p.engine.driver().ownedGraphs() == 1);
+    CHECK(p.engine.streamCount() == 2);
+    CHECK(p.engine.underruns() == 0);
+}
