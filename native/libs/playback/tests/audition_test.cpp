@@ -378,7 +378,8 @@ TEST_CASE("An approved plan proposed onto a branch can be auditioned end to end"
 
     a.hear(Auditioner::Side::main);
     p.pump(30);
-    CHECK(matches(p, mainRef, p.lastDuckBlock() + 2, p.blockCount()));
+    const auto mainAgain = offline(mainDoc, f.bundle(), framesOf(p));
+    CHECK(matches(p, mainAgain, p.lastDuckBlock() + 2, p.blockCount()));
     CHECK(p.engine.driver().ownedGraphs() == 1);
     CHECK(p.engine.streamCount() == 2);
     CHECK(p.engine.underruns() == 0);

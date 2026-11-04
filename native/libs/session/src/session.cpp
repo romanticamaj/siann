@@ -351,4 +351,20 @@ const Revision& Session::applyPlan(std::string_view planHashText, std::string ac
                                                                       Cause::plan); });
 }
 
+command::BranchId proposeFromPlan(Session& session, const command::Plan& plan, std::string actor,
+                                  std::string time) {
+    if (plan.state != command::PlanState::approved) {
+        throw command::CommandError("invalid_state", "only an approved plan can be proposed, this one is " +
+                                                         std::string(command::planStateName(plan.state)));
+    }
+    const command::BranchId branchId = session.branch(plan.baseRevision);
+    try {
+        session.commitOn(branchId, plan.steps, std::move(actor), std::move(time), Cause::plan);
+    } catch (...) {
+        session.discard(branchId);
+        throw;
+    }
+    return branchId;
+}
+
 }  // namespace siann::session
