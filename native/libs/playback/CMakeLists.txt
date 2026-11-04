@@ -11,6 +11,7 @@ if(SIANN_BUILD_TESTS)
   add_executable(siann_playback_tests
     tests/playback_test.cpp
     tests/live_recompile_test.cpp
+    tests/audition_test.cpp
   )
   target_link_libraries(siann_playback_tests PRIVATE siann::playback siann::host_fake siann_rt_alloc_guard
                         Catch2::Catch2WithMain)
