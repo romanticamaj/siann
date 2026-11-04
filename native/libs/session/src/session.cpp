@@ -168,7 +168,23 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
             switch (record.envelope.cause) {
                 case Cause::command:
                 case Cause::plan:
-                    history.commit(record.commands, record.envelope.actor, record.envelope.time, record.envelope.cause);
+                    // A branch commit names its branch: its parent alone may
+                    // equal main's head (a branch that starts there).
+                    if (record.branch) {
+                        if (record.envelope.parents.size() != 1) {
+                            throw SessionError("replay_mismatch",
+                                               "branch commit " + record.envelope.id + " must have one parent");
+                        }
+                        history.commitOnParent(*record.branch, record.envelope.parents.front(), record.commands,
+                                               record.envelope.actor, record.envelope.time, record.envelope.cause);
+                    } else {
+                        history.commit(record.commands, record.envelope.actor, record.envelope.time,
+                                       record.envelope.cause);
+                    }
+                    break;
+                case Cause::branchMerge:
+                    history.mergeReplay(record.envelope.parents, record.commands, record.envelope.actor,
+                                        record.envelope.time, record.branch);
                     break;
                 case Cause::undo:
                     history.undo(record.envelope.actor, record.envelope.time);
@@ -186,17 +202,32 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
         } catch (const command::CommandError& error) {
             throw SessionError("replay_mismatch", "replaying " + record.envelope.id + " failed: " + error.what());
         }
-        requireSameEnvelope(record.envelope, history.head(), record.target);
+        // The revision just replayed, on main or on a branch.
+        requireSameEnvelope(record.envelope, history.revisions().back(), record.target);
     }
     out.recordsReplayed = recordCount;
 
     if (checkpoint && coversSeq > 0) {
         try {
-            const model::Document document = model::Document::fromJson(*checkpoint->find("document"));
-            const Revision& covered = history.revisions()[static_cast<std::size_t>(coversSeq - 1)];
-            if (document.documentHash() != covered.envelope.documentHash) {
+            const Value* document = checkpoint->find("document");
+            const Value* head = checkpoint->find("head");
+            if (document == nullptr || head == nullptr) {
+                throw SessionError("checkpoint_mismatch", "the checkpoint has no head or no document");
+            }
+            // The revision the checkpoint's head names: with branches, the
+            // record at coversSeq need not be main's head. Revision rN is
+            // journal record N.
+            const command::RevisionEnvelope named = envelopeFromJson(*head);
+            const Revision* covered = history.find(named.id);
+            if (covered == nullptr ||
+                static_cast<std::int64_t>(covered - history.revisions().data()) + 1 > coversSeq) {
+                throw SessionError("checkpoint_mismatch", "the checkpoint names revision " + named.id +
+                                                              ", which the journal up to its coversSeq lacks");
+            }
+            if (named.documentHash != covered->envelope.documentHash ||
+                model::Document::fromJson(*document).documentHash() != covered->envelope.documentHash) {
                 throw SessionError("checkpoint_mismatch",
-                                   "the checkpoint document differs from revision " + covered.envelope.id);
+                                   "the checkpoint document differs from revision " + covered->envelope.id);
             }
         } catch (const model::ModelError& error) {
             throw SessionError("checkpoint_mismatch", error.what());
@@ -264,6 +295,28 @@ const Revision& Session::rollbackPlan(std::string_view planHashText, std::string
 
 void Session::checkpoint() {
     state_->writeCheckpoint();
+}
+
+command::BranchId Session::branch(std::string_view baseId) {
+    return state_->history.branch(baseId);
+}
+
+const Revision& Session::commitOn(const command::BranchId& branchId, std::vector<command::Command> commands,
+                                  std::string actor, std::string time, Cause cause) {
+    const Revision& revision =
+        state_->history.commitOn(branchId, std::move(commands), std::move(actor), std::move(time), cause);
+    state_->afterRevision();
+    return revision;
+}
+
+const Revision& Session::merge(const command::BranchId& branchId, std::string actor, std::string time) {
+    const Revision& revision = state_->history.merge(branchId, std::move(actor), std::move(time));
+    state_->afterRevision();
+    return revision;
+}
+
+void Session::discard(const command::BranchId& branchId) {
+    state_->history.discard(branchId);
 }
 
 const command::PlanStore& Session::plans() const noexcept {

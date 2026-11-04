@@ -10,7 +10,7 @@
 // Every revision is made durable in the journal before it is published. On
 // open, the whole journal is replayed (M1 keeps all history), every replayed
 // revision is checked against its recorded envelope, and the checkpoint is
-// checked against the replayed revision it covers. A damaged journal tail is
+// checked against the replayed revision its head names. A damaged journal tail is
 // moved aside, never discarded.
 
 #include <cstdint>
@@ -69,6 +69,18 @@ public:
 
     // Writes session.json for the current head.
     void checkpoint();
+
+    // Proposal branches (command/history.hpp). Every branch commit and merge
+    // is one journal record, durable before it is published. Opening and
+    // discarding a branch are not revisions and are not journaled, so a
+    // reopened session has no open branch; its branch revisions are replayed
+    // and stay findable (unreachable unless merged).
+    command::BranchId branch(std::string_view baseId);
+    const command::Revision& commitOn(const command::BranchId& branchId, std::vector<command::Command> commands,
+                                      std::string actor, std::string time,
+                                      command::Cause cause = command::Cause::command);
+    const command::Revision& merge(const command::BranchId& branchId, std::string actor, std::string time);
+    void discard(const command::BranchId& branchId);
 
     // Plans against this session's history (command/plan.hpp). Plans are
     // in-memory engine state in M3: they are not written to the bundle and a
