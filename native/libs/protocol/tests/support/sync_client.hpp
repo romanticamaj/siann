@@ -89,9 +89,10 @@ public:
                 sync();
                 continue;
             }
-            apply(frame);
-            lastSeq_ = seq;
-            seqsApplied_.push_back(seq);
+            if (apply(frame)) {
+                lastSeq_ = seq;
+                seqsApplied_.push_back(seq);
+            }
         }
     }
 
@@ -244,12 +245,13 @@ private:
         syncs_.push_back(result);
     }
 
-    void apply(const json::Value& event) {
+    // False when it had to sync instead (lastSeq is then the sync's).
+    bool apply(const json::Value& event) {
         const std::string type = member(event, "type").asString();
         const std::string revision = member(event, "revision").asString();
         if (type != "session.changed") {
             revision_ = revision;
-            return;
+            return true;
         }
         json::Array refs;
         for (const auto& changed : member(event, "changedIds").asArray()) {
@@ -262,15 +264,19 @@ private:
         }
         if (!refs.empty()) {
             ++fetches_;
-            const json::Value response = request("session.fetch", json::Value(json::Object{{"refs", json::Value(refs)}}));
-            REQUIRE(member(response, "ok").asBool());
-            const json::Value& body = member(response, "result");
-            if (member(body, "revision").asString() != revision) {
-                // More commits happened since this event: fetch is at a later
-                // head, so start over from a full read model.
+            // The entities as of the event's revision, also when later
+            // commits moved the head meanwhile.
+            const json::Value response = request(
+                "session.fetch",
+                json::Value(json::Object{{"refs", json::Value(refs)}, {"revision", json::Value(revision)}}));
+            if (!member(response, "ok").asBool()) {
+                // That revision is no longer kept: start over from a full read model.
+                REQUIRE(member(member(response, "error"), "code").asString() == "revision_unavailable");
                 sync();
-                return;
+                return false;
             }
+            const json::Value& body = member(response, "result");
+            REQUIRE(member(body, "revision").asString() == revision);
             for (const auto& item : member(body, "entities").asArray()) {
                 const std::string ref = member(item, "ref").asString();
                 if (const json::Value* entity = item.find("entity")) {
@@ -282,6 +288,7 @@ private:
         }
         revision_ = revision;
         documentHash_ = member(event, "documentHash").asString();
+        return true;
     }
 
     std::map<std::string, json::Value>* table(const std::string& type) {

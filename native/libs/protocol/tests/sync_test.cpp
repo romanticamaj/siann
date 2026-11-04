@@ -97,16 +97,16 @@ TEST_CASE("a client that detects a gap syncs and continues", "[protocol][sync]")
     f.server.pump();
     client.poll();
     CHECK(client.gaps() == 0);
-    CHECK(client.lastSeq() == 2);
+    CHECK(client.lastSeq() == 3);  // seq 1 was the first commit, before the client connected
 
-    // The next event (seq 6) reveals the gap: the client syncs.
+    // The next event (seq 7) reveals the gap: the client syncs.
     f.commit(operatorConnection, Array{trackAdd("trk_6")});
     client.poll();
     CHECK(client.gaps() == 1);
     REQUIRE(client.syncs() == 2);
     const auto synced = client.lastSync();
     CHECK(synced.revision == f.head().envelope.id);
-    CHECK(synced.seq >= 6);
+    CHECK(synced.seq >= 7);
     CHECK(synced.seq == f.server.events().position().seq);
     checkModelAtHead(client, f);
     CHECK(client.document().documentHash() == f.head().envelope.documentHash);
@@ -256,6 +256,7 @@ TEST_CASE("session.fetch returns entities at the head revision", "[protocol][syn
     const ConnectionId connection = f.authed(false);
     f.commit(connection, Array{mediaAdd("med_1"), trackAdd("trk_1"), clipPlace("clp_1", "trk_1", "med_1", 0),
                                clipPlace("clp_2", "trk_1", "med_1", 48'000)});
+    const std::string placed = f.head().envelope.id;
     f.commit(connection, Array{clipRemove("clp_2")});
     const auto& head = f.head();
 
@@ -287,4 +288,18 @@ TEST_CASE("session.fetch returns entities at the head revision", "[protocol][syn
         INFO(canonical(bad));
         CHECK(errorCode(f.call(connection, "session.fetch", bad)) == "invalid_params");
     }
+
+    // At an earlier revision named by an event: the removed clip is still there.
+    const Value earlier = f.ok(connection, "session.fetch",
+                               Value(Object{{"refs", Value(Array{Value("clip:clp_2")})}, {"revision", Value(placed)}}));
+    CHECK(at(earlier, "revision").asString() == placed);
+    const auto& old = at(earlier, "entities").asArray();
+    REQUIRE(old.size() == 1);
+    CHECK(old[0].find("entity") != nullptr);
+    CHECK(errorCode(f.call(connection, "session.fetch",
+                           Value(Object{{"refs", Value(Array{Value("clip:clp_1")})}, {"revision", Value("r999")}}))) ==
+          "revision_unavailable");
+    CHECK(errorCode(f.call(connection, "session.fetch",
+                           Value(Object{{"refs", Value(Array{Value("clip:clp_1")})}, {"revision", Value(2)}}))) ==
+          "invalid_params");
 }
