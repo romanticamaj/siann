@@ -22,6 +22,7 @@
 #include "cli_internal.hpp"
 #include "siann/command/command.hpp"
 #include "siann/engine/offline.hpp"
+#include "siann/hash/jcs.hpp"
 #include "siann/host/fake_audio_device.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
@@ -69,16 +70,44 @@ CliError noAudioBackend() {
 }
 #endif
 
-// --device fake: a paced software device with loopback, so every command runs
-// without hardware. It reports one buffer of input and one of output latency,
-// as a real device would, which loopback needs. Anything else is a real device
-// of the desktop build.
+// --fake-speed and --fake-input shape the fake device; without --device fake
+// they are a usage error.
+struct FakeDeviceChoice {
+    std::int64_t speed = 1;
+    host::FakeAudioDevice::InputSignal input = host::FakeAudioDevice::InputSignal::none;
+};
+
+FakeDeviceChoice fakeDeviceChoice(const Args& args) {
+    const auto id = args.option("device");
+    const bool fake = id && *id == kFakeDevice;
+    if (!fake && (args.option("fake-speed") || args.option("fake-input"))) {
+        throw UsageError("--fake-speed and --fake-input need --device fake");
+    }
+    FakeDeviceChoice choice;
+    choice.speed = positiveOption(args, "fake-speed", 1);
+    if (const auto input = args.option("fake-input")) {
+        if (*input == "counter") {
+            choice.input = host::FakeAudioDevice::InputSignal::counter;
+        } else if (*input != "loopback") {
+            throw UsageError("--fake-input must be loopback or counter");
+        }
+    }
+    return choice;
+}
+
+// --device fake: a paced software device with loopback (or the counter input),
+// so every command runs without hardware. It reports one buffer of input and
+// one of output latency, as a real device would, which loopback needs.
+// Anything else is a real device of the desktop build.
 std::unique_ptr<host::AudioDevice> openDevice(const Args& args, int bufferFrames) {
+    const FakeDeviceChoice choice = fakeDeviceChoice(args);
     const auto id = args.option("device");
     if (id && *id == kFakeDevice) {
         host::FakeAudioDevice::Options options;
         options.paced = true;
-        options.loopback = true;
+        options.speed = static_cast<double>(choice.speed);
+        options.inputSignal = choice.input;
+        options.loopback = choice.input == host::FakeAudioDevice::InputSignal::none;
         options.inputLatencyFrames = bufferFrames;
         options.outputLatencyFrames = bufferFrames;
         return std::make_unique<host::FakeAudioDevice>(options);
@@ -126,10 +155,10 @@ public:
     void runFor(std::int64_t frames) { timed_.setFrameLimit(timed_.frames() + frames); }
 
     // Ticks the engine until the frame limit is reached, the device stops on
-    // its own, or `interrupt` is set.
-    void wait(const std::atomic<bool>* interrupt) {
+    // its own, `interrupt` is set or `done` (optional) returns true.
+    void wait(const std::atomic<bool>* interrupt, const std::function<bool()>& done = nullptr) {
         while (!timed_.limitReached() && engine_.driver().state() == realtime::DriverState::realtime &&
-               !(interrupt != nullptr && interrupt->load())) {
+               !(interrupt != nullptr && interrupt->load()) && !(done && done())) {
             engine_.tick();
             std::this_thread::sleep_for(kTickInterval);
         }
@@ -191,6 +220,46 @@ private:
     TimedDevice timed_;
     playback::PlaybackEngine engine_;
     bool deviceLost_ = false;
+};
+
+// record --ready-file: `{takeId, startPosition, durableFrames}`, replaced
+// atomically when the take start is marked and after every checkpoint, so a
+// test or supervisor can wait for an explicit signal instead of reading files
+// the recorder is rewriting. Called from the recorder's writer side only (one
+// thread at a time). A failed write is retried at the next checkpoint; it
+// never stops the recording.
+class ReadyFile {
+public:
+    ReadyFile(fs::path path, std::string takeId) : path_(std::move(path)), takeId_(std::move(takeId)) {}
+
+    void started(std::int64_t startPosition) {
+        startPosition_ = startPosition;
+        write();
+    }
+
+    void checkpointed(std::int64_t durableFrames) {
+        durableFrames_ = durableFrames;
+        write();
+    }
+
+private:
+    void write() noexcept {
+        if (path_.empty()) {
+            return;
+        }
+        try {
+            const Value state(Object{{"takeId", Value(takeId_)},
+                                     {"startPosition", startPosition_ ? decimal(*startPosition_) : Value(nullptr)},
+                                     {"durableFrames", decimal(durableFrames_)}});
+            io::writeFileAtomic(path_, jcs::canonicalize(state) + "\n");
+        } catch (...) {
+        }
+    }
+
+    fs::path path_;
+    std::string takeId_;
+    std::optional<std::int64_t> startPosition_;
+    std::int64_t durableFrames_ = 0;
 };
 
 // Device frames for `frames` session frames, rounded up.
@@ -324,9 +393,18 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
     const int channels = track->channels;
     const std::int64_t sessionRate = document.root().sampleRate;
 
-    // Declared before the run: the driver refers to it until it stops.
-    realtime::Recorder recorder(channels, realtime::Recorder::Options{});
+    // Declared before the recorder, whose callbacks use them until it stops.
     std::atomic<bool> startNotRecorded{false};
+    ReadyFile ready(args.option("ready-file") ? pathFromUtf8(*args.option("ready-file")) : fs::path(), takeId);
+
+    // Declared before the run: the driver refers to it until it stops.
+    // --seconds count from the start of the transport: the recorder captures
+    // exactly S seconds of session frames, mid-block if needed.
+    realtime::Recorder::Options recorderOptions;
+    if (seconds) {
+        recorderOptions.maxFrames = *seconds * sessionRate;
+    }
+    realtime::Recorder recorder(channels, recorderOptions);
 
     // 1. Recorder attached while the driver is stopped; the device starts
     //    with the transport stopped, so the record offset is known first.
@@ -343,23 +421,30 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
     manifest.recordOffset = run.engine().driver().latency().recordOffsetFrames;
     const fs::path audio = session::beginTake(s, manifest);
 
-    // 3. The writer thread marks the take's start before writing its first frame.
-    recorder.start(audio, sessionRate, [bundle, takeId, &startNotRecorded](std::int64_t startPosition) {
-        try {
-            session::markTakeStart(bundle, takeId, startPosition);
-        } catch (...) {
-            startNotRecorded.store(true);  // the commit then reports take_has_no_audio
-        }
-    });
+    // 3. The writer thread marks the take's start before writing its first
+    //    frame, and reports each checkpoint to the ready file.
+    recorder.start(
+        audio, sessionRate,
+        [bundle, takeId, &startNotRecorded, &ready](std::int64_t startPosition) {
+            try {
+                session::markTakeStart(bundle, takeId, startPosition);
+            } catch (...) {
+                startNotRecorded.store(true);  // the commit then reports take_has_no_audio
+                return;
+            }
+            ready.started(startPosition);
+        },
+        [&ready](std::int64_t durableFrames) { ready.checkpointed(durableFrames); });
 
-    // 4. Play; 5. run for --seconds of device frames, or until interrupted.
-    // --seconds count from the start of the transport, so the take is that long.
+    // 4. Play; 5. run until the recorder holds --seconds of session frames, or
+    //    until interrupted. The device run is only bounded above, a second
+    //    past the take, in case the device delivers fewer frames (SRC).
     run.engine().transport().play();
     run.waitUntilPlaying(interrupt);
     if (seconds) {
-        run.runFor(*seconds * run.deviceRate());
+        run.runFor((*seconds + 1) * run.deviceRate());
     }
-    run.wait(interrupt);
+    run.wait(interrupt, [&recorder] { return recorder.captureComplete(); });
 
     // 6. Stop, then commit the take as one revision.
     run.engine().transport().stop();

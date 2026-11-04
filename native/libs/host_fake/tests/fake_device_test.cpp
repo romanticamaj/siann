@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -183,4 +184,85 @@ TEST_CASE("A rate-fixed device reports its own rate", "[fake_device]") {
     CHECK(frames == 3 * 64);
     siann::host::ManualAudioDevice manualFollows;
     CHECK(manualFollows.open(requested).sampleRate == 44'100);
+}
+
+TEST_CASE("speed divides the paced period", "[fake_device][speed]") {
+    // 64 frames at 48 kHz: 1,333,333 ns per buffer in real time.
+    FakeAudioDevice::Options options;
+    options.paced = true;
+    FakeAudioDevice realtime(options);
+    CHECK(realtime.options().speed == 1.0);
+    realtime.open(config());
+    CHECK(realtime.pacePeriod() == std::chrono::nanoseconds(1'333'333));
+
+    options.speed = 4.0;
+    FakeAudioDevice fast(options);
+    fast.open(config());
+    CHECK(fast.pacePeriod() == std::chrono::nanoseconds(333'333));
+
+    // The rate the device reports is unchanged: only wall time shrinks.
+    FakeAudioDevice::Options rated = options;
+    rated.fixedSampleRate = 96'000;
+    FakeAudioDevice fastFixed(rated);
+    CHECK(fastFixed.open(config()).sampleRate == 96'000);
+    CHECK(fastFixed.pacePeriod() == std::chrono::nanoseconds(166'666));
+}
+
+TEST_CASE("A speed that is not positive is rejected", "[fake_device][speed]") {
+    for (const double speed : {0.0, -1.0}) {
+        FakeAudioDevice::Options options;
+        options.paced = true;
+        options.speed = speed;
+        FakeAudioDevice device(options);
+        CHECK_THROWS_AS(device.open(config()), std::invalid_argument);
+    }
+}
+
+TEST_CASE("A counter input fills every channel with the frame index, continuous across blocks",
+          "[fake_device][counter]") {
+    FakeAudioDevice::Options options;
+    options.inputSignal = FakeAudioDevice::InputSignal::counter;
+    options.inputLatencyFrames = 64;  // still reported: the record offset depends on it
+    options.outputLatencyFrames = 32;
+    options.stopAfterCallbacks = 40;
+    FakeAudioDevice device(options);
+    const auto status = device.open(config(48, 2));
+    CHECK(status.inputLatencyFrames == 64);
+    CHECK(status.outputLatencyFrames == 32);
+
+    std::vector<float> left;
+    std::vector<float> right;
+    left.reserve(40 * 48);
+    right.reserve(40 * 48);
+    const auto before = siann::rt::allocationViolations();
+    device.start([&](const AudioBufferView& in, const AudioBufferView& out) {
+        for (int i = 0; i < in.frames; ++i) {
+            left.push_back(in.channel(0)[i]);
+            right.push_back(in.channel(1)[i]);
+        }
+        out.clear();
+    });
+    waitFor([&] { return !device.running(); });
+    device.stop();
+    CHECK(siann::rt::allocationViolations() == before);
+
+    REQUIRE(left.size() == 40u * 48u);
+    constexpr double kStep = 1.0 / 16'777'216.0;  // 2^-24
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        // (frame mod 2^24) * 2^-24 is exact in float32.
+        const auto expected = static_cast<float>(static_cast<double>(i % 16'777'216u) * kStep);
+        if (left[i] != expected || right[i] != expected) {
+            FAIL("counter differs at frame " << i);
+        }
+    }
+}
+
+TEST_CASE("A counter input together with loopback is rejected", "[fake_device][counter]") {
+    FakeAudioDevice::Options options;
+    options.inputSignal = FakeAudioDevice::InputSignal::counter;
+    options.loopback = true;
+    options.inputLatencyFrames = 64;
+    options.outputLatencyFrames = 64;
+    FakeAudioDevice device(options);
+    CHECK_THROWS_AS(device.open(config(64, 1)), std::invalid_argument);
 }

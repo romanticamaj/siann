@@ -25,6 +25,7 @@ if(SIANN_BUILD_TESTS)
     tests/callback_timer_test.cpp
     tests/cli_realtime_test.cpp
     tests/cli_kill_test.cpp
+    tests/cli_long_record_test.cpp
   )
   target_link_libraries(siann_cli_tests PRIVATE siann_cli_lib siann_rt_alloc_guard Catch2::Catch2WithMain)
   # The kill test runs the real executable as a child process.
@@ -36,4 +37,15 @@ if(SIANN_BUILD_TESTS)
   # The real executable starts and answers.
   add_test(NAME siann_cli_smoke COMMAND siann-cli commands)
   set_tests_properties(siann_cli_smoke PROPERTIES PASS_REGULAR_EXPRESSION "\"ok\":true")
+
+  # Long tests ([.][long], the 10-minute recording) are hidden: the default
+  # listing, which catch_discover_tests turns into ctest tests, leaves them out,
+  # and the long-tests workflow selects them with "[long]".
+  add_test(NAME siann_cli_long_tests_hidden COMMAND siann_cli_tests --list-tests)
+  set_tests_properties(siann_cli_long_tests_hidden PROPERTIES
+    PASS_REGULAR_EXPRESSION "killed mid-take"
+    FAIL_REGULAR_EXPRESSION "10-minute take")
+  add_test(NAME siann_cli_long_tests_listed COMMAND siann_cli_tests --list-tests "[long]")
+  set_tests_properties(siann_cli_long_tests_listed PROPERTIES
+    PASS_REGULAR_EXPRESSION "records every frame of the counter.*killed at 9 minutes")
 endif()

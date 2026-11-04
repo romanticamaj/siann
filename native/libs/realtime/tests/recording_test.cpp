@@ -67,6 +67,28 @@ host::AudioDeviceConfig config(int inputs, std::int64_t sampleRate = 48'000) {
     return c;
 }
 
+// Frames in the data chunk as the WAV header on disk states them (-1 if the
+// header cannot be read). Parsed here, not with the writer under test.
+std::int64_t wavHeaderDataFrames(const fs::path& file, int channels) {
+    std::ifstream in(file, std::ios::binary);
+    char riff[12];
+    if (!in.read(riff, 12) || std::string(riff, 4) != "RIFF" || std::string(riff + 8, 4) != "WAVE") {
+        return -1;
+    }
+    char chunk[8];
+    while (in.read(chunk, 8)) {
+        const auto size = static_cast<std::uint32_t>(static_cast<unsigned char>(chunk[4])) |
+                          static_cast<std::uint32_t>(static_cast<unsigned char>(chunk[5])) << 8 |
+                          static_cast<std::uint32_t>(static_cast<unsigned char>(chunk[6])) << 16 |
+                          static_cast<std::uint32_t>(static_cast<unsigned char>(chunk[7])) << 24;
+        if (std::string(chunk, 4) == "data") {
+            return static_cast<std::int64_t>(size) / (channels * 4);
+        }
+        in.seekg(static_cast<std::streamoff>(size + (size & 1u)), std::ios::cur);
+    }
+    return -1;
+}
+
 float inputValue(int channel, std::int64_t frame) {
     const float v = static_cast<float>(frame % 50'000) / 100'000.0f;
     return channel == 0 ? v : -v;
@@ -107,6 +129,96 @@ TEST_CASE("Recording captures the input from the block where it was armed", "[re
             FAIL("recorded sample differs at frame " << i);
         }
     }
+}
+
+TEST_CASE("maxFrames stops the capture after exactly that many frames, mid-block", "[record][maxframes]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder::Options options;
+    options.maxFrames = 3 * kBlock + 17;
+    options.writerThread = false;
+    Recorder recorder(2, options);
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.play();
+    driver.start(device, config(2));
+    device.pump(2);
+
+    recorder.start(dir.path() / "take.wav", 48'000);
+    CHECK_FALSE(recorder.captureComplete());
+    const auto before = rt::allocationViolations();
+    device.pump(3);
+    CHECK_FALSE(recorder.captureComplete());
+    device.pump(7);
+    CHECK(rt::allocationViolations() == before);
+    CHECK(recorder.captureComplete());
+    recorder.drain();
+    const auto result = recorder.stop();
+
+    // A new take starts a new count.
+    recorder.start(dir.path() / "second.wav", 48'000);
+    CHECK_FALSE(recorder.captureComplete());
+    device.pump(1);
+    CHECK(recorder.stop().frames == kBlock);
+    driver.stop();
+
+    CHECK(result.frames == 3 * kBlock + 17);
+    CHECK(result.startPosition == 2 * kBlock);
+    CHECK(result.overflows == 0);
+    const auto take = readWav(result.file);
+    REQUIRE(take.info.frames == 3 * kBlock + 17);
+    for (std::int64_t i = 0; i < take.info.frames; ++i) {
+        const std::int64_t frame = 2 * kBlock + i;
+        if (take.samples[static_cast<std::size_t>(i * 2)] != inputValue(0, frame) ||
+            take.samples[static_cast<std::size_t>(i * 2 + 1)] != inputValue(1, frame)) {
+            FAIL("recorded sample differs at frame " << i);
+        }
+    }
+}
+
+TEST_CASE("onCheckpoint reports the frames the WAV header makes durable", "[record][checkpoint]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder::Options options;
+    options.writerThread = false;
+    options.checkpointInterval = std::chrono::milliseconds(0);  // every drain() checkpoints
+    Recorder recorder(1, options);
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.play();
+    driver.start(device, config(1));
+
+    const fs::path file = dir.path() / "take.wav";
+    std::vector<std::int64_t> reported;
+    std::vector<std::int64_t> onDisk;
+    recorder.start(file, 48'000, {}, [&](std::int64_t durableFrames) {
+        reported.push_back(durableFrames);
+        onDisk.push_back(wavHeaderDataFrames(file, 1));
+    });
+    device.pump(5);
+    recorder.drain();
+    REQUIRE(reported.size() == 1);
+    CHECK(reported.back() == 5 * kBlock);
+    CHECK(onDisk.back() == reported.back());
+    CHECK(wavHeaderDataFrames(file, 1) == 5 * kBlock);
+
+    device.pump(3);
+    recorder.drain();
+    REQUIRE(reported.size() == 2);
+    CHECK(reported.back() == 8 * kBlock);
+    CHECK(onDisk.back() == 8 * kBlock);
+
+    device.pump(2);
+    const auto result = recorder.stop();  // the final checkpoint is reported too
+    driver.stop();
+    REQUIRE(reported.size() >= 3);
+    CHECK(reported.back() == result.frames);
+    CHECK(result.frames == 10 * kBlock);
+    CHECK(wavHeaderDataFrames(file, 1) == result.frames);
 }
 
 TEST_CASE("Nothing is captured while the transport is stopped", "[record]") {

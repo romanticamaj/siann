@@ -20,6 +20,12 @@ AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
         config.inputChannels < 0) {
         throw std::invalid_argument("invalid fake device configuration");
     }
+    if (!(options_.speed > 0.0)) {
+        throw std::invalid_argument("fake device speed must be positive");
+    }
+    if (options_.inputSignal == InputSignal::counter && options_.loopback) {
+        throw std::invalid_argument("a counter input excludes loopback");
+    }
     config_ = config;
     if (options_.fixedSampleRate > 0) {
         config_.sampleRate = options_.fixedSampleRate;  // blocks run (and are paced) at the device rate
@@ -43,6 +49,8 @@ AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
     }
     loop_.assign(options_.loopback ? output_.size() : 0, std::vector<float>(loopLength, 0.0f));
     loopPosition_ = 0;
+    pacePeriod_ = std::chrono::nanoseconds(static_cast<std::int64_t>(
+        1e9 * static_cast<double>(config_.bufferFrames) / (static_cast<double>(config_.sampleRate) * options_.speed)));
     return AudioDeviceStatus{config_.sampleRate, config.bufferFrames, options_.inputLatencyFrames,
                              options_.outputLatencyFrames};
 }
@@ -61,6 +69,7 @@ void FakeAudioDevice::start(AudioCallback callback) {
         thread_.join();  // a previous run ended on its own
     }
     callback_ = std::move(callback);
+    counterFrame_ = 0;  // the device thread is not running
     stopRequested_.store(false);
     unplug_.store(false);
     lost_.store(false);
@@ -90,7 +99,7 @@ void FakeAudioDevice::run() {
         const auto frames = config_.bufferFrames;
         const AudioBufferView in{inputPointers_.data(), static_cast<int>(inputPointers_.size()), frames};
         const AudioBufferView out{outputPointers_.data(), static_cast<int>(outputPointers_.size()), frames};
-        const auto period = std::chrono::nanoseconds(static_cast<std::int64_t>(1e9 * frames / config_.sampleRate));
+        const auto period = pacePeriod_;
         auto next = std::chrono::steady_clock::now();
 
         while (!stopRequested_.load(std::memory_order_acquire)) {
@@ -110,6 +119,18 @@ void FakeAudioDevice::run() {
                         input_[c][static_cast<std::size_t>(i)] = ring[(loopPosition_ + static_cast<std::size_t>(i)) % length];
                     }
                 }
+            } else if (options_.inputSignal == InputSignal::counter) {
+                // (frame mod 2^24) * 2^-24: an integer below 2^24 scaled by a
+                // power of two, so exact in float32.
+                constexpr std::int64_t kWrap = std::int64_t{1} << 24;
+                constexpr float kStep = 1.0f / static_cast<float>(kWrap);
+                for (int i = 0; i < frames; ++i) {
+                    const float v = static_cast<float>((counterFrame_ + i) % kWrap) * kStep;
+                    for (auto& channel : input_) {
+                        channel[static_cast<std::size_t>(i)] = v;
+                    }
+                }
+                counterFrame_ += frames;
             }
 
             inCallback_.store(true, std::memory_order_release);

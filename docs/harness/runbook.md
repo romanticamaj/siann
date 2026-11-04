@@ -64,7 +64,7 @@ Progress: `/workflows`. Each feature lands as its own PR, merged only after CI i
 
 | Milestone | Gates |
 |---|---|
-| M2 | Exit runs on your audio interface (xrun bench at 256 samples, 10-minute record + kill) |
+| M2 | Exit runs on your audio interface (xrun bench at 256 samples). The 10-minute record + kill runs on the fake device in the `long-tests` workflow (`siann_cli_tests "[long]"`, scheduled or `workflow_dispatch`); trigger it once after merge and check it is green |
 | M3 | — |
 | M0 | Apple Developer ID and notarization key (asked before storing secrets), macOS hands-on, choice of test plugins |
 | M4 | Choice of third-party plugins |
