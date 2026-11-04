@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <map>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -46,8 +47,10 @@ public:
     EventStream& operator=(const EventStream&) = delete;
 
     // Subscribes a connection; every event published afterwards has a seq
-    // above the returned one.
-    StreamPosition subscribe(ConnectionId connection);
+    // above the returned one. When `first` is given, its text is sent on the
+    // connection before any event (the auth reply carrying the position).
+    StreamPosition subscribe(ConnectionId connection,
+                             const std::function<std::string(const StreamPosition&)>& first = {});
     void unsubscribe(ConnectionId connection);
     StreamPosition position() const;
 
@@ -69,6 +72,8 @@ private:
         std::deque<std::string> events;
         std::uint64_t dropped = 0;
     };
+
+    std::uint64_t publishLocked(std::string_view type, json::Object payload);
 
     Transport& transport_;
     const std::string sessionId_;
