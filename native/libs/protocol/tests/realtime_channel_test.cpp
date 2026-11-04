@@ -399,3 +399,87 @@ TEST_CASE("realtime connections need the token and get only binary frames", "[pr
     CHECK(f.transport.sent(silent).empty());
     CHECK(f.transport.sent(good).empty());
 }
+
+namespace {
+
+// The legend a client needs to decode meter frames, as the `meters` snapshot
+// of the auth reply and of session.sync: {epoch, entities}, or null.
+std::vector<std::string> legendOf(const Value& meters) {
+    std::vector<std::string> out;
+    for (const auto& entity : at(meters, "entities").asArray()) {
+        out.push_back(entity.asString());
+    }
+    return out;
+}
+
+Value authReply(const Fixture& f, ConnectionId connection) {
+    return json::parse(f.transport.sent(connection)[0]);
+}
+
+}  // namespace
+
+TEST_CASE("a client that connects after the graph publication gets the legend", "[protocol][realtime]") {
+    Rig rig;
+    Fixture f;
+    // Before any graph: no legend, also not in a sync.
+    const ConnectionId early = f.authed(false);
+    CHECK(at(authReply(f, early), "meters").kind() == Value::Kind::null);
+    CHECK(at(f.ok(early, "session.sync"), "meters").kind() == Value::Kind::null);
+
+    // The engine publishes its graph at open; the UI connects afterwards.
+    MeterPublisher publisher(rig.dispatcher, f.server.realtime(), f.server.events(), publisherOptions(rig));
+    publisher.graphPublished(rig.epoch, rig.meterSlots);
+    f.server.pump();
+
+    for (const bool subscribed : {true, false}) {
+        INFO("events: " << subscribed);
+        const ConnectionId late = f.authed(subscribed);
+        const Value meters = at(authReply(f, late), "meters");
+        REQUIRE(meters.kind() == Value::Kind::object);
+        CHECK(at(meters, "epoch").asString() == std::to_string(rig.epoch));
+        CHECK(legendOf(meters) == publisher.legend());
+        // The legend was published before the reply's seq, so no event repeats it.
+        f.server.pump();
+        CHECK(f.events(late).empty());
+
+        // session.sync carries the same legend, so a client that lost the
+        // meters.legend event in a gap recovers it with the sync.
+        const Value sync = f.ok(late, "session.sync");
+        CHECK(canonical(at(sync, "meters")) == canonical(meters));
+    }
+
+    // A realtime connection opened now decodes the frames with that legend.
+    const ConnectionId late = f.authed(false);
+    const Value meters = at(authReply(f, late), "meters");
+    const ConnectionId rt = f.realtimeAuthed();
+    rig.pump(2);
+    REQUIRE(publisher.tick());
+    const auto frames = f.transport.binary(rt);
+    REQUIRE(frames.size() == 1);
+    const Decoded d = decodeByLayout(frames[0]);
+    CHECK(std::to_string(d.epoch) == at(meters, "epoch").asString());
+    const auto legend = legendOf(meters);
+    REQUIRE(d.entries.size() == legend.size());
+    for (const auto& entry : d.entries) {
+        REQUIRE(entry.index < legend.size());
+        const auto sample = rig.dispatcher.meter(legend[entry.index]);
+        REQUIRE(sample.has_value());
+        REQUIRE(entry.channels >= 1);
+        CHECK(within(entry.peak[0], sample->reading.peak[0]));
+    }
+
+    // A newer graph is an event above the reply's seq; later replies and syncs carry it.
+    const ConnectionId listener = f.authed(true);
+    const std::uint64_t replySeq = std::stoull(at(authReply(f, listener), "seq").asString());
+    publisher.graphPublished(rig.epoch + 1, std::map<std::string, graph::NodeId>{{"master", 0}});
+    f.server.pump();
+    const auto events = f.events(listener);
+    REQUIRE(events.size() == 1);
+    CHECK(at(events[0], "type").asString() == "meters.legend");
+    CHECK(std::stoull(at(events[0], "seq").asString()) == replySeq + 1);
+    const ConnectionId later = f.authed(false);
+    const Value newer = at(authReply(f, later), "meters");
+    CHECK(at(newer, "epoch").asString() == std::to_string(rig.epoch + 1));
+    CHECK(legendOf(newer) == std::vector<std::string>{"master"});
+    CHECK(canonical(at(f.ok(later, "session.sync"), "meters")) == canonical(newer));
+}
