@@ -482,7 +482,7 @@ TEST_CASE("an Origin that is not valid UTF-8 gets a 403 with a JSON body", "[pro
     Fixture f;
     // Raw header bytes reach the handler unchecked; the rejection must not
     // echo them into canonical JSON, which only takes valid UTF-8.
-    for (const std::string origin : {std::string("http://x\xff"), std::string("http://\xc3("),
+    for (const std::string& origin : {std::string("http://x\xff"), std::string("http://\xc3("),
                                      std::string("\xed\xa0\x80")}) {
         siann::protocol::testing::FakeTransport::Upgrade upgrade;
         REQUIRE_NOTHROW(upgrade = f.transport.connect({{"origin", origin}}));
