@@ -3,7 +3,10 @@
 // Recording (architecture spec, "Recording" and the `recordOutbox` queue). The
 // audio thread copies input blocks into an SPSC frame ring together with the
 // timeline position of the first captured frame; a writer thread drains the
-// ring into a WavStreamWriter and checkpoints the file every second.
+// ring into a WavStreamWriter and checkpoints the file every second. A block
+// that does not fit (the writer fell behind) ends the take: it is counted as an
+// overflow and nothing later is captured, so a take is always one contiguous
+// run of the input.
 //
 // Before the first audio is written, the writer thread calls onStart with the
 // timeline position of the first frame, so the session can make the take
@@ -40,7 +43,9 @@ public:
         std::filesystem::path file;
         std::int64_t frames = 0;
         std::int64_t startPosition = 0;  // timeline sample of the first frame
-        std::uint64_t overflows = 0;     // blocks that did not fit (an error)
+        // Blocks not captured because of an overflow (an error): the block that
+        // did not fit and every later one. The take ends before the first.
+        std::uint64_t overflows = 0;
     };
 
     static constexpr std::int64_t kNoStart = std::numeric_limits<std::int64_t>::min();
