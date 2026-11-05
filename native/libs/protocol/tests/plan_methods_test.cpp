@@ -46,7 +46,8 @@ std::vector<std::string> types(const std::vector<Value>& events) {
     return out;
 }
 
-const Value& errorOf(const Value& response) {
+// A copy: callers pass the temporary response of call().
+Value errorOf(const Value& response) {
     INFO(canonical(response));
     REQUIRE_FALSE(at(response, "ok").asBool());
     return at(response, "error");

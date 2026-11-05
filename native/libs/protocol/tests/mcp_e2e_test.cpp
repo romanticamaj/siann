@@ -66,6 +66,9 @@ public:
         args->connectTimeout = 10;
         args->transferTimeout = 30;
         args->extraHeaders["Content-Type"] = "application/json";
+        // IX's client sends Origin http://<host>:<port> unless given one; an
+        // MCP client is no browser, it presents the app origin like the UI.
+        args->extraHeaders["Origin"] = std::string(protocol::kAppOrigin);
         if (withToken) {
             args->extraHeaders["Authorization"] = "Bearer " + token_;
         }
