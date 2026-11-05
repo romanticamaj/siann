@@ -82,8 +82,6 @@ struct StaleEntity {
     friend bool operator==(const StaleEntity&, const StaleEntity&) = default;
 };
 
-// "<type>:<id>"
-std::string entityKey(const model::EntityRef& ref);
 
 // Code plan_stale. plan() is the hash of the stale plan (for partial approval,
 // the sub-plan).
@@ -102,11 +100,15 @@ private:
 
 // Holds plans by hash text. Errors are CommandError: not_found (unknown plan
 // or base revision), invalid_state, invalid_params, plan_stale
-// (PlanStaleError), or the error of a failing step.
+// (PlanStaleError), plan_not_applied, rollback_conflict (RollbackError), or
+// the error of a failing step.
 class PlanStore {
 public:
     // Commits the steps as one plan revision and returns it.
     using Commit = std::function<const Revision&(std::vector<Command> steps, std::string actor, std::string time)>;
+    // Rolls back the plan revision with the given id and returns the new revision.
+    using Rollback =
+        std::function<const Revision&(const std::string& planRevisionId, std::string actor, std::string time)>;
 
     // Prepares the steps at baseRevision, computes writeSet from their
     // declared effects and resolves readSet hashes there. The plan is stored
@@ -136,6 +138,14 @@ public:
     const Revision& apply(History& history, std::string_view planHashText, std::string actor, std::string time);
     const Revision& apply(const History& history, std::string_view planHashText, std::string actor,
                           std::string time, const Commit& commit);
+
+    // Rolls back an applied plan through history.rollback (or the given
+    // function, which the session uses for its journal) and marks it
+    // rolled_back. A plan in any other state is plan_not_applied; on
+    // rollback_conflict the plan stays applied.
+    const Revision& rollback(History& history, std::string_view planHashText, std::string actor, std::string time);
+    const Revision& rollback(std::string_view planHashText, std::string actor, std::string time,
+                             const Rollback& rollbackRevision);
 
     const Plan* find(std::string_view planHashText) const noexcept;
     std::size_t size() const noexcept { return plans_.size(); }

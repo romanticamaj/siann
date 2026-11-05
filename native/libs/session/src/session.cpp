@@ -176,6 +176,10 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
                 case Cause::redo:
                     history.redo(record.envelope.actor, record.envelope.time);
                     break;
+                case Cause::rollback:
+                    // decodeRecord guarantees the target.
+                    history.rollback(*record.target, record.envelope.actor, record.envelope.time);
+                    break;
                 case Cause::create:
                     throw SessionError("replay_mismatch", "a create record can only be first");
             }
@@ -244,6 +248,18 @@ const Revision& Session::redo(std::string actor, std::string time) {
     const Revision& revision = state_->history.redo(std::move(actor), std::move(time));
     state_->afterRevision();
     return revision;
+}
+
+const Revision& Session::rollback(std::string_view planRevisionId, std::string actor, std::string time) {
+    const Revision& revision = state_->history.rollback(planRevisionId, std::move(actor), std::move(time));
+    state_->afterRevision();
+    return revision;
+}
+
+const Revision& Session::rollbackPlan(std::string_view planHashText, std::string actor, std::string time) {
+    return state_->plans.rollback(planHashText, std::move(actor), std::move(time),
+                                  [this](const std::string& planRevisionId, std::string a, std::string t)
+                                      -> const Revision& { return rollback(planRevisionId, std::move(a), std::move(t)); });
 }
 
 void Session::checkpoint() {

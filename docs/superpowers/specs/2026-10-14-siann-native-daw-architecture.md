@@ -950,7 +950,7 @@ Rules:
 
 ```text
 Revision { id, parents, documentHash, cause, actor, time }   (envelope)
-cause ∈ { command, plan(transaction), undo, redo, branch-merge, recovery }
+cause ∈ { command, plan(transaction), undo, redo, rollback, branch-merge, recovery }
 ```
 
 - `id`, `parents`, `actor` and `time` are envelope data and are never part of the
@@ -964,13 +964,33 @@ cause ∈ { command, plan(transaction), undo, redo, branch-merge, recovery }
   the DAG.
 - Undo creates a new revision whose document equals an earlier one (like `git
   revert`); it is journaled. Redo likewise.
+- A rollback revision records `target` (the rolled-back plan's revision ID) like
+  undo and redo; replay recomputes the inverse from the DAG and must reproduce the
+  recorded envelope.
 - A plan applies as one transaction producing one revision.
 - A proposal branch is a DAG branch. Committing it creates a merge revision on main;
   discarding it leaves it unreachable (kept in the journal for audit).
-- Rollback of an applied plan when later edits exist: if the plan's affected
-  entities were not changed afterwards, an inverse revision is created; otherwise
-  rollback is refused with `rollback_conflict` and the conflicting entities are
-  listed. No automatic three-way merge in v1.
+- Rollback of an applied plan: the plan's affected entities are the entities in
+  its revision's recorded diff (added, removed, modified). If every one of them is
+  unchanged at the current head (same entity hash; an added entity still present, a
+  removed entity still absent), an inverse revision is created: the head document
+  with those entities restored to their state in the plan revision's parent.
+  `root` is shared session state, so it is compared and restored per field, not
+  by entity hash: the plan owns only the root fields it changed (`name`,
+  `sampleRate`, `tempo`; `trackOrder` as a whole only if it reordered tracks it
+  neither added nor removed) and the order slots of the tracks it added or
+  removed. Later unrelated root edits (another track added or removed, a rename,
+  a tempo change) are kept and are not a conflict, so every track-adding plan
+  stays rollbackable; a plan-removed track goes back right after its nearest
+  earlier neighbour in the old order that is still present, or first. The
+  inverse document must pass document validation like any command result; an
+  entity that a later revision references (a clip placed on a plan-added track or
+  media) is reported as a conflict on that referenced entity. Otherwise rollback is
+  refused with `rollback_conflict` and the conflicting entities are listed. No
+  automatic three-way merge in v1. Rollback changes only the document. Files the
+  plan's jobs produced (media, blobs, renders) stay in the bundle,
+  content-addressed and merely unreferenced; removing them is a separate explicit
+  purge, never a side effect of rollback.
 
 #### Plans
 
@@ -1042,7 +1062,7 @@ Decisions of 2026-11-04 (m3-plans):
 - `journal.ndjson` in the session bundle, append-only. One line is one complete
   record and one record is one revision: schema `siann.journal_record.v1`, a
   sequence number `seq` (decimal string, contiguous from 1), the revision envelope,
-  the commands, the actual diff, and a SHA-256 over the JCS of the record without
+  the commands, or the undo/redo/rollback target, the actual diff, and a SHA-256 over the JCS of the record without
   that field.
 - Commit order for every revision:
   1. Everything the revision references (media, blobs) is written and flushed, and

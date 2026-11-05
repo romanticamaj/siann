@@ -63,6 +63,9 @@ public:
                                     command::Cause cause = command::Cause::command);
     const command::Revision& undo(std::string actor, std::string time);
     const command::Revision& redo(std::string actor, std::string time);
+    // Rolls back a plan revision (History::rollback); journaled like a commit.
+    // Only the document changes: media, blobs and renders stay in the bundle.
+    const command::Revision& rollback(std::string_view planRevisionId, std::string actor, std::string time);
 
     // Writes session.json for the current head.
     void checkpoint();
@@ -80,6 +83,9 @@ public:
     const command::Plan& rejectPlan(std::string_view planHashText, std::string rejectedBy, std::string time,
                                     std::string note);
     const command::Revision& applyPlan(std::string_view planHashText, std::string actor, std::string time);
+    // Rolls back an applied plan through rollback(), so the inverse revision
+    // is journaled before it is published (PlanStore::rollback).
+    const command::Revision& rollbackPlan(std::string_view planHashText, std::string actor, std::string time);
 
 private:
     struct State;
