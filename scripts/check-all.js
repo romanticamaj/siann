@@ -103,6 +103,8 @@ function gcc() {
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'media', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'graph', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'hash', 'tests'))}`);
+  // The protocol tests reuse the playback tests' live rig (as in their CMake target).
+  includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'playback', 'tests', 'support'))}`);
   for (const d of ['dr_libs-src', 'r8brain-src', 'ixwebsocket-src', path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
     includes.push('-isystem', toPosix(path.join(deps, d)));
   }

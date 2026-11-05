@@ -215,4 +215,9 @@ void ReadModel::forget(ConnectionId connection) {
     pinned_.erase(connection);
 }
 
+void ReadModel::forgetAll() {
+    std::lock_guard lock(mutex_);
+    pinned_.clear();
+}
+
 }  // namespace siann::protocol

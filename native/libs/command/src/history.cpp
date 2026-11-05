@@ -433,18 +433,17 @@ const Revision& History::merge(const BranchId& branchId, std::string actor, std:
         }
     }
     if (!conflicts.empty()) {
-        throw CommandError("branch_conflict", "main changed entities proposal branch " + branchId +
-                                                  " wrote or guards since " + revisions_[open.base].envelope.id + ": " +
-                                                  joined(conflicts));
+        throw BranchConflictError("main changed entities proposal branch " + branchId + " wrote or guards since " +
+                                      revisions_[open.base].envelope.id + ": " + joined(conflicts),
+                                  conflicts);
     }
 
     std::optional<Prepared> prepared;
     try {
         prepared = prepareTransaction(mainDoc, commands);
     } catch (const CommandError& error) {
-        throw CommandError("branch_conflict",
-                           "proposal branch " + branchId + " does not apply to main's head: " + error.what(),
-                           error.step());
+        throw BranchConflictError("proposal branch " + branchId + " does not apply to main's head: " + error.what(),
+                                  {}, error.step());
     }
     // The entities the branch wrote must come out as they are on the branch.
     for (const model::EntityRef& ref : written) {
@@ -461,9 +460,9 @@ const Revision& History::merge(const BranchId& branchId, std::string actor, std:
         }
     }
     if (!conflicts.empty()) {
-        throw CommandError("branch_conflict", "proposal branch " + branchId +
-                                                  " gives a different result on main's head for: " +
-                                                  joined(conflicts));
+        throw BranchConflictError("proposal branch " + branchId + " gives a different result on main's head for: " +
+                                      joined(conflicts),
+                                  conflicts);
     }
 
     const std::size_t tipIndex = open.tip;
@@ -513,10 +512,12 @@ const Revision& History::mergeReplay(const std::vector<std::string>& parents, st
 
 const Revision& History::rollback(std::string_view planRevisionId, std::string actor, std::string time) {
     const Revision& plan = revisions_[indexOf(planRevisionId)];
-    if (plan.envelope.cause != Cause::plan) {
+    // A proposed plan lands through the branch-merge revision; both carry
+    // their diff against the first parent (main before them).
+    if (plan.envelope.cause != Cause::plan && plan.envelope.cause != Cause::branchMerge) {
         throw CommandError("not_a_plan", "revision " + plan.envelope.id + " has cause " +
                                              std::string(causeName(plan.envelope.cause)) +
-                                             "; only plan revisions can be rolled back");
+                                             "; only plan and branch-merge revisions can be rolled back");
     }
     const model::Document& before = revisions_[indexOf(plan.envelope.parents.front())].document;
     const model::Document& current = head().document;

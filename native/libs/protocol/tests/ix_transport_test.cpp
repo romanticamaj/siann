@@ -315,7 +315,7 @@ TEST_CASE("an exception from a handler on an IX thread does not end the process"
         if (request.path == "/throw") {
             throw std::runtime_error("http handler failed");
         }
-        return siann::protocol::HttpResponse{200, "application/json", R"({"ok":true})"};
+        return siann::protocol::HttpResponse{200, "application/json", R"({"ok":true})", {}};
     };
     transport.setHandlers(std::move(handlers));
     const std::uint16_t port = transport.listen("127.0.0.1", 0).port;

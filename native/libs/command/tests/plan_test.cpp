@@ -475,3 +475,25 @@ TEST_CASE("Only an applied plan can be rolled back", "[plan][rollback]") {
     CHECK(store.find(validated)->state == PlanState::validated);
     CHECK(store.find(approved)->state == PlanState::approved);
 }
+
+TEST_CASE("A proposed plan merged into main can be rolled back", "[plan][rollback][proposal]") {
+    History history = base();
+    PlanStore store;
+    const std::string hash = *store.submit(history, {setGain("t1", -600), addTrack("t4")}, {}, "r2").hashText;
+    store.approve(history, hash, "user", "t");
+    const auto before = history.head().envelope.documentHash;
+    const siann::command::BranchId branch = store.propose(hash, [&](const Plan& plan) {
+        const siann::command::BranchId opened = history.branch(plan.baseRevision);
+        history.commitOn(opened, plan.steps, "agent", "t", Cause::plan);
+        return opened;
+    });
+    const std::string mergedId = history.merge(branch, "user", "t", store.guardedEntities(branch)).envelope.id;
+    store.landProposal(branch, mergedId);
+    REQUIRE(store.find(hash)->appliedRevision == std::optional{mergedId});
+
+    const Revision& revision = store.rollback(history, hash, "user", "t2");
+    CHECK(revision.envelope.cause == Cause::rollback);
+    CHECK(revision.target == std::optional{mergedId});
+    CHECK(revision.envelope.documentHash == before);
+    CHECK(store.find(hash)->state == PlanState::rolled_back);
+}

@@ -73,6 +73,20 @@ private:
     std::vector<model::EntityRef> conflicts_;
 };
 
+// Code branch_conflict. entities() are "<type>:<id>" keys: what main changed
+// since the base that the branch wrote or guards, or what the branch's
+// commands give differently on main's head (empty when they do not apply).
+class BranchConflictError : public CommandError {
+public:
+    BranchConflictError(const std::string& message, std::vector<std::string> entities, std::size_t step = 0)
+        : CommandError("branch_conflict", message, step), entities_(std::move(entities)) {}
+
+    const std::vector<std::string>& entities() const noexcept { return entities_; }
+
+private:
+    std::vector<std::string> entities_;
+};
+
 class History {
 public:
     History(model::Document initial, std::string actor, std::string time);
@@ -125,7 +139,7 @@ public:
                              std::string time, Cause cause = Cause::command);
     // Merges an open branch into main (see the header comment). Throws
     // not_found, empty_transaction (no commits on the branch) or
-    // branch_conflict listing the entities ("<type>:<id>") main changed since
+    // branch_conflict (BranchConflictError) listing the entities ("<type>:<id>") main changed since
     // the base that the branch also wrote, or that are among the guarded
     // entities (a proposed plan's read and write sets); nothing changes then.
     const Revision& merge(const BranchId& branchId, std::string actor, std::string time,

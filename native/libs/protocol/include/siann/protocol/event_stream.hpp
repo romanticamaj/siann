@@ -66,6 +66,14 @@ public:
     // it as meters.legend, atomically: a subscriber gets either the new legend
     // in its position or the event, never neither.
     std::uint64_t publishMeterLegend(json::Object legend);
+    // A commit onto a proposal branch: proposal.changed {branch, changedIds}
+    // with the branch revision as the event's revision. The head stays.
+    std::uint64_t publishBranchRevision(const command::Revision& revision);
+    // session.open switched the served session: from now on events carry
+    // `sessionId`, the head moves to `head` (main's head of the new session),
+    // the meter legend is cleared and session.opened {documentHash} goes out.
+    // seq keeps counting.
+    std::uint64_t publishSessionOpened(std::string sessionId, const command::Revision& head);
 
     // Sends queued events while each connection's socket buffers at most
     // highWaterBytes. Returns the number of events sent.
@@ -83,7 +91,7 @@ private:
     std::uint64_t publishLocked(std::string_view type, json::Object payload);
 
     Transport& transport_;
-    const std::string sessionId_;
+    std::string sessionId_;  // guarded by mutex_
     const EventStreamOptions options_;
     mutable std::mutex mutex_;
     std::mutex flushMutex_;

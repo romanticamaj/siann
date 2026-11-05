@@ -4,8 +4,8 @@
 
 namespace siann::playback {
 
-AuditionError::AuditionError(std::string code, const std::string& message)
-    : std::runtime_error(message), code_(std::move(code)) {}
+AuditionError::AuditionError(std::string code, const std::string& message, std::optional<AuditionBudgetDetail> detail)
+    : std::runtime_error(message), code_(std::move(code)), detail_(std::move(detail)) {}
 
 Auditioner::Auditioner(PlaybackEngine& engine, session::Session& session) : engine_(engine), session_(session) {}
 
@@ -28,13 +28,15 @@ void Auditioner::audition(const command::BranchId& branchId) {
         throw AuditionError("audition_budget_exceeded",
                             "auditioning " + branchId + " needs " + std::to_string(cost.bytes) + " bytes for " +
                                 std::to_string(cost.newStreams) + " new streams, over the memory budget of " +
-                                std::to_string(budget.maxBytes) + " bytes");
+                                std::to_string(budget.maxBytes) + " bytes",
+                            AuditionBudgetDetail{"memory", cost.bytes, budget.maxBytes});
     }
     if (cost.nodes > budget.maxNodes) {
         throw AuditionError("audition_budget_exceeded", "auditioning " + branchId + " needs " +
                                                             std::to_string(cost.nodes) +
                                                             " nodes, over the CPU budget of " +
-                                                            std::to_string(budget.maxNodes) + " nodes");
+                                                            std::to_string(budget.maxNodes) + " nodes",
+                            AuditionBudgetDetail{"cpu", cost.nodes, budget.maxNodes});
     }
     engine_.update(document);
     heard_ = branchId;

@@ -98,11 +98,10 @@ inline Value clipRemove(const std::string& id) {
     return Value(Object{{"op", Value("clip.remove")}, {"clipId", Value(id)}});
 }
 
-struct Fixture {
-    explicit Fixture(ServerOptions options = manualOptions())
-        : session(session::Session::create(dir.bundle(), model::Document::create("Song", 48'000), "tester",
-                                           "2026-11-04T00:00:00Z")),
-          server(transport, session, std::move(options)) {
+// A server over the in-memory transport and a session the caller owns, with
+// the client-side helpers.
+struct Harness {
+    Harness(session::Session& served, ServerOptions options) : server(transport, served, std::move(options)) {
         server.start();
     }
 
@@ -180,13 +179,24 @@ struct Fixture {
         return out;
     }
 
-    const command::Revision& head() const { return session.history().head(); }
-
-    TempDir dir;
-    session::Session session;
     FakeTransport transport;
     ProtocolServer server;
     int nextRequest = 0;
+};
+
+// A new bundle in a temporary directory.
+struct SessionHolder {
+    SessionHolder()
+        : session(session::Session::create(dir.bundle(), model::Document::create("Song", 48'000), "tester",
+                                           "2026-11-04T00:00:00Z")) {}
+    TempDir dir;
+    session::Session session;
+};
+
+struct Fixture : SessionHolder, Harness {
+    explicit Fixture(ServerOptions options = manualOptions()) : SessionHolder(), Harness(session, std::move(options)) {}
+
+    const command::Revision& head() const { return session.history().head(); }
 };
 
 inline std::string errorCode(const Value& response) {

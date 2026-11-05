@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <ctime>
 #include <deque>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -14,11 +17,15 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "jobs.hpp"
+#include "mcp_adapter.hpp"
 #include "request_inbox.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/read_model.hpp"
 #include "siann/command/command.hpp"
+#include "siann/command/plan.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
@@ -45,6 +52,15 @@ std::string randomHex(std::size_t bytes) {
         const unsigned b = byte(device);
         out.push_back(kDigits[b >> 4]);
         out.push_back(kDigits[b & 0xF]);
+    }
+    return out;
+}
+
+// A second 32-byte secret that differs from `other`.
+std::string distinctHex(const std::string& other) {
+    std::string out = randomHex(32);
+    while (out == other) {
+        out = randomHex(32);
     }
     return out;
 }
@@ -134,19 +150,25 @@ std::string validUtf8(std::string_view text) {
     return out;
 }
 
-Value errorValue(const std::string& code, const std::string& message, std::optional<std::size_t> step = {}) {
+// {code, message, step?, data?}; data carries the structured details of
+// plan_stale, rollback_conflict, branch_conflict and audition_budget_exceeded.
+Value errorValue(const std::string& code, const std::string& message, std::optional<std::size_t> step = {},
+                 std::optional<Value> data = {}) {
     Object error{{"code", Value(validUtf8(code))}, {"message", Value(validUtf8(message))}};
     if (step) {
         error.emplace_back("step", Value(static_cast<double>(*step)));
+    }
+    if (data) {
+        error.emplace_back("data", std::move(*data));
     }
     return Value(std::move(error));
 }
 
 std::string failure(Value requestId, const std::string& code, const std::string& message,
-                    std::optional<std::size_t> step = {}) {
+                    std::optional<std::size_t> step = {}, std::optional<Value> data = {}) {
     return jcs::canonicalize(Value(Object{{"requestId", std::move(requestId)},
                                           {"ok", Value(false)},
-                                          {"error", errorValue(code, message, step)}}));
+                                          {"error", errorValue(code, message, step, std::move(data))}}));
 }
 
 std::string success(const std::string& requestId, Value result) {
@@ -168,7 +190,7 @@ Value revisionJson(const command::Revision& revision) {
 }
 
 HttpResponse jsonResponse(int status, std::string body) {
-    return HttpResponse{status, "application/json", std::move(body)};
+    return HttpResponse{status, "application/json", std::move(body), {}};
 }
 
 std::string httpError(const std::string& code, const std::string& message) {
@@ -178,9 +200,15 @@ std::string httpError(const std::string& code, const std::string& message) {
 struct Pending {
     ConnectionId connection = 0;
     std::string requestId;
+    std::string sessionId;  // the session the request named
     std::string method;
     Value params;
     std::optional<std::string> expectedRevision;  // checked against the head before the method runs
+    // MCP: receives the response text instead of a connection.
+    std::function<void(const std::string&)> done;
+    // MCP: the scope of the credential the request came with (mcpToken
+    // carries ServerOptions::mcpScope). Empty: the UI (token), unscoped.
+    std::optional<McpScope> scope;
 };
 
 struct Connection {
@@ -188,14 +216,117 @@ struct Connection {
     bool realtime = false;  // opened on kRealtimePath: binary frames only
 };
 
+// The methods engine.capabilities lists, in this order.
+const std::vector<std::string_view> kMethods = {
+    "session.inspect", "session.sync",    "session.fetch",   "session.undo",      "session.redo",
+    "session.save",    "session.open",    "command.execute", "command.list",      "engine.about",
+    "engine.capabilities", "plan.submit", "plan.status",     "plan.approve",      "plan.reject",
+    "plan.apply",      "plan.rollback",   "plan.propose",    "proposal.merge",    "proposal.discard",
+    "audition.hear",   "render.start",    "job.status",
+};
+
+std::string_view changeName(model::DiffEntry::Change change) noexcept {
+    switch (change) {
+        case model::DiffEntry::Change::added: return "added";
+        case model::DiffEntry::Change::removed: return "removed";
+        case model::DiffEntry::Change::modified: return "modified";
+    }
+    return "modified";
+}
+
+std::string utf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+std::filesystem::path fromUtf8(const std::string& text) {
+    return std::filesystem::path(std::u8string(text.begin(), text.end()));
+}
+
+Value stringArray(const std::vector<std::string>& items) {
+    Array out;
+    for (const std::string& item : items) {
+        out.push_back(Value(item));
+    }
+    return Value(std::move(out));
+}
+
+Value commandNamesJson() {
+    return stringArray(command::commandNames());
+}
+
+// Params. Each throws ProtocolError invalid_params.
+const std::string& requireString(const Value& params, std::string_view key, std::string_view method) {
+    const Value* member = stringMember(params, key);
+    if (member == nullptr) {
+        throw ProtocolError("invalid_params", std::string(method) + " needs a string " + std::string(key));
+    }
+    return member->asString();
+}
+
+std::optional<std::string> optionalString(const Value& params, std::string_view key, std::string_view method) {
+    const Value* member = params.find(key);
+    if (member == nullptr) {
+        return std::nullopt;
+    }
+    if (member->kind() != Value::Kind::string) {
+        throw ProtocolError("invalid_params", std::string(method) + ": " + std::string(key) + " must be a string");
+    }
+    return member->asString();
+}
+
+// A non-negative decimal integer in a string (sample positions are strings).
+std::optional<std::int64_t> optionalCount(const Value& params, std::string_view key, std::string_view method) {
+    const std::optional<std::string> text = optionalString(params, key, method);
+    if (!text) {
+        return std::nullopt;
+    }
+    const bool digits = !text->empty() && text->size() <= 18 &&
+                        std::all_of(text->begin(), text->end(), [](char c) { return c >= '0' && c <= '9'; });
+    if (!digits) {
+        throw ProtocolError("invalid_params",
+                            std::string(method) + ": " + std::string(key) + " must be a decimal integer string");
+    }
+    return std::stoll(*text);
+}
+
+std::vector<command::Command> commandList(const Value& params, std::string_view key, std::string_view method) {
+    const Value* list = params.find(key);
+    if (list == nullptr || list->kind() != Value::Kind::array || list->asArray().empty()) {
+        throw ProtocolError("invalid_params", std::string(method) + " needs a non-empty " + std::string(key) + " array");
+    }
+    std::vector<command::Command> commands;
+    const auto& items = list->asArray();
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        try {
+            commands.push_back(command::Command::fromJson(items[i]));
+        } catch (const command::CommandError& e) {
+            throw command::CommandError(e.code(), e.what(), i);
+        }
+    }
+    return commands;
+}
+
+// ^[A-Za-z0-9._-]{1,64}$ and not "." or "..": a file name, never a path.
+bool validRenderName(const std::string& name) {
+    if (name.empty() || name.size() > 64 || name == "." || name == "..") {
+        return false;
+    }
+    return std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+               c == '-';
+    });
+}
+
 }  // namespace
 
 struct ProtocolServer::Impl {
     Impl(Transport& t, session::Session& s, ServerOptions o)
         : transport(t),
-          session(s),
+          session(&s),
           options(std::move(o)),
           token(randomHex(32)),
+          mcpToken(distinctHex(token)),
           sessionId("ses_" + randomHex(16)),
           inbox(options.inboxCapacity),
           events(t, sessionId,
@@ -203,24 +334,32 @@ struct ProtocolServer::Impl {
                                 hash::formatHash(s.history().head().envelope.documentHash), json::Value()},
                  options.events),
           readModel(options.syncChunkEntities),
-          realtime(t, options.realtime) {
+          realtime(t, options.realtime),
+          jobs(options.jobs.workerThread),
+          mcp([this](std::string requestId, std::string method, Value params,
+                     std::function<void(const std::string&)> done) {
+              return submitMcp(std::move(requestId), std::move(method), std::move(params), std::move(done));
+          }) {
         if (!options.clock) {
             options.clock = nowUtc;
         }
     }
 
     Transport& transport;
-    session::Session& session;
+    session::Session* session;  // command thread; session.open replaces it
     ServerOptions options;
-    const std::string token;
-    const std::string sessionId;
+    const std::string token;     // the UI: WebSocket, realtime, plain HTTP
+    const std::string mcpToken;  // MCP clients: /v0/mcp only, under options.mcpScope
+    std::string sessionId;  // written on the command thread under `mutex`
     std::uint16_t port = 0;
     detail::RequestInbox<Pending> inbox;
     EventStream events;
     ReadModel readModel;
     RealtimeChannel realtime;
+    detail::JobRunner jobs;
+    detail::McpAdapter mcp;
 
-    std::mutex mutex;                              // guards connections
+    std::mutex mutex;                              // guards connections and sessionId
     std::map<ConnectionId, Connection> connections;
 
     std::mutex pumpMutex;                          // one consumer at a time
@@ -231,7 +370,12 @@ struct ProtocolServer::Impl {
     std::atomic<bool> running{false};
     std::thread pumpThread;
 
-    std::optional<HttpResponse> onUpgrade(const HttpRequest& request) const {
+    std::string currentSessionId() {
+        std::lock_guard lock(mutex);
+        return sessionId;
+    }
+
+    std::optional<HttpResponse> checkOrigin(const HttpRequest& request) const {
         auto origin = request.headers.find("origin");
         if (origin == request.headers.end()) {
             return std::nullopt;
@@ -245,17 +389,95 @@ struct ProtocolServer::Impl {
         return jsonResponse(403, httpError("origin_not_allowed", "this Origin is not allowed"));
     }
 
-    HttpResponse onHttp(const HttpRequest& request) const {
+    std::optional<HttpResponse> onUpgrade(const HttpRequest& request) const { return checkOrigin(request); }
+
+    // `secret` is token for plain HTTP and mcpToken for /v0/mcp: neither
+    // credential opens the other's routes.
+    static bool authorized(const HttpRequest& request, const std::string& secret) {
         auto authorization = request.headers.find("authorization");
-        if (authorization == request.headers.end() ||
-            !sameSecret(authorization->second, "Bearer " + token)) {
-            return jsonResponse(401, httpError("unauthenticated", "Authorization: Bearer <token> is required"));
+        return authorization != request.headers.end() && sameSecret(authorization->second, "Bearer " + secret);
+    }
+
+    static HttpResponse unauthenticated() {
+        return jsonResponse(401, httpError("unauthenticated", "Authorization: Bearer <token> is required"));
+    }
+
+    // Any thread: one POST /v0/mcp without blocking.
+    void handleMcp(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
+        if (!authorized(request, mcpToken)) {
+            complete(unauthenticated());
+            return;
+        }
+        if (auto rejection = checkOrigin(request)) {
+            complete(*rejection);
+            return;
+        }
+        if (request.method != "POST") {
+            complete(jsonResponse(405, httpError("method_not_allowed", "POST /v0/mcp only; no SSE stream in v0")));
+            return;
+        }
+        mcp.handle(request, complete);
+    }
+
+    // A transport thread: waits for the command thread's answer, bounded by
+    // mcpRequestTimeout (the protocol -> command edge of the thread table).
+    HttpResponse waitMcp(const HttpRequest& request) {
+        struct Slot {
+            std::mutex mutex;
+            std::condition_variable ready;
+            std::optional<HttpResponse> response;
+        };
+        auto slot = std::make_shared<Slot>();
+        handleMcp(request, [slot](HttpResponse response) {
+            {
+                std::lock_guard lock(slot->mutex);
+                slot->response = std::move(response);
+            }
+            slot->ready.notify_all();
+        });
+        std::unique_lock lock(slot->mutex);
+        if (slot->ready.wait_for(lock, options.mcpRequestTimeout, [&] { return slot->response.has_value(); })) {
+            return *slot->response;
+        }
+        Value id(nullptr);
+        try {
+            const Value body = json::parse(request.body);
+            if (const Value* given = body.find("id")) {
+                if (given->kind() == Value::Kind::string || given->kind() == Value::Kind::number) {
+                    id = *given;
+                }
+            }
+        } catch (const json::ParseError&) {
+        }
+        return jsonResponse(
+            200, jcs::canonicalize(Value(Object{
+                     {"jsonrpc", Value("2.0")},
+                     {"id", id},
+                     {"error", Value(Object{{"code", Value(-32000)},
+                                            {"message", Value("the command thread did not answer in time; retry "
+                                                              "with the same id")},
+                                            {"data", Value(Object{{"code", Value("request_timeout")}})}})}})));
+    }
+
+    HttpResponse onHttp(const HttpRequest& request) {
+        if (request.path == kMcpPath) {
+            return waitMcp(request);
+        }
+        if (!authorized(request, token)) {
+            return unauthenticated();
         }
         if (request.method == "GET" && request.path == "/v0/health") {
             return jsonResponse(200, R"({"ok":true})");
         }
         // Method and path are not echoed, for the same reason as the Origin.
         return jsonResponse(404, httpError("not_found", "no route for this method and path"));
+    }
+
+    // Any thread: an MCP tool call into the inbox, under the current session.
+    bool submitMcp(std::string requestId, std::string method, Value params,
+                   std::function<void(const std::string&)> done) {
+        return inbox.tryPush(Pending{0, std::move(requestId), currentSessionId(), std::move(method), std::move(params),
+                                     std::nullopt, std::move(done), options.mcpScope});
     }
 
     void onOpen(ConnectionId connection, const std::string& path) {
@@ -306,6 +528,7 @@ struct ProtocolServer::Impl {
 
     void onMessage(ConnectionId connection, const std::string& text) {
         Connection state;
+        std::string served;
         {
             std::lock_guard lock(mutex);
             auto it = connections.find(connection);
@@ -313,6 +536,7 @@ struct ProtocolServer::Impl {
                 return;
             }
             state = it->second;
+            served = sessionId;
         }
         const bool authenticated = state.authenticated;
 
@@ -348,6 +572,7 @@ struct ProtocolServer::Impl {
             const Value* wantsEvents = parsed->find("events");
             const bool subscribe = wantsEvents != nullptr && wantsEvents->kind() == Value::Kind::boolean &&
                                    wantsEvents->asBool();
+            // Runs under the connection lock, which also guards sessionId.
             const auto reply = [this](const StreamPosition& current) {
                 return jcs::canonicalize(Value(Object{{"type", Value("auth")},
                                                       {"ok", Value(true)},
@@ -408,87 +633,384 @@ struct ProtocolServer::Impl {
             }
             expectedRevision = expected->asString();
         }
-        if (targetSession->asString() != sessionId) {
-            transport.send(connection,
-                           failure(requestId, "session_mismatch", "this server serves session " + sessionId));
+        if (targetSession->asString() != served) {
+            transport.send(connection, failure(requestId, "session_mismatch", "this server serves session " + served));
             return;
         }
-        if (!inbox.tryPush(Pending{connection, requestIdMember->asString(), method->asString(), std::move(params),
-                                   std::move(expectedRevision)})) {
+        if (!inbox.tryPush(Pending{connection, requestIdMember->asString(), served, method->asString(),
+                                   std::move(params), std::move(expectedRevision), {}, std::nullopt})) {
             transport.send(connection, failure(requestId, "queue_full", "the command inbox is full; retry"));
         }
     }
 
-    // Command thread: a revision the method just committed. The event goes
-    // out after the response (handle() flushes after sending it).
+    // Command thread: a revision the method just committed on main. The
+    // event goes out after the response (handle() flushes after sending it).
     std::string published(const Pending& request, const command::Revision& revision) {
         std::string response = success(request.requestId, Value(Object{{"revision", revisionJson(revision)}}));
         events.publishRevision(revision);
+        if (options.auditionPort != nullptr) {
+            options.auditionPort->mainCommitted();
+        }
         return response;
     }
 
+    const command::Plan& requirePlan(const std::string& planHash) const {
+        const command::Plan* plan = session->plans().find(planHash);
+        if (plan == nullptr) {
+            throw command::CommandError("not_found", "no plan " + planHash);
+        }
+        return *plan;
+    }
+
+    command::BranchId requireOpenBranch(const Value& params, std::string_view method) const {
+        const std::string& branch = requireString(params, "branch", method);
+        if (!session->history().isOpen(branch)) {
+            throw command::CommandError("not_found", "no open proposal branch " + branch);
+        }
+        return branch;
+    }
+
+    AuditionPort& requirePort() const {
+        if (options.auditionPort == nullptr) {
+            throw ProtocolError("audition_unavailable", "this engine host has no auditioner");
+        }
+        return *options.auditionPort;
+    }
+
+    Value inspectJson() const {
+        const auto& history = session->history();
+        Object out{{"revision", Value(history.head().envelope.id)},
+                   {"documentHash", Value(hash::formatHash(history.head().envelope.documentHash))},
+                   {"revisions", Value(static_cast<double>(history.revisions().size()))},
+                   {"branches", stringArray(history.branches())}};
+        if (options.auditionPort != nullptr) {
+            out.emplace_back("heard", Value(options.auditionPort->heard().value_or("main")));
+        }
+        return Value(std::move(out));
+    }
+
+    Value capabilitiesJson() const {
+        Array methods;
+        for (const std::string_view name : kMethods) {
+            methods.push_back(Value(std::string(name)));
+        }
+        return Value(Object{
+            {"about", aboutJson()},
+            {"scope", Value(std::string(mcpScopeName(options.mcpScope)))},
+            {"scopes", Value(Array{Value("propose"), Value("trusted")})},
+            {"commands", commandNamesJson()},
+            {"methods", Value(std::move(methods))},
+            {"features", Value(Object{{"plans", Value(true)},
+                                      {"proposals", Value(true)},
+                                      {"audition", Value(options.auditionPort != nullptr)},
+                                      {"render", Value(true)},
+                                      {"plugins", Value(false)}})},
+            {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
+                                    {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
+                                    {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
+        });
+    }
+
+    std::string planSubmit(const Pending& request) {
+        const std::string_view method = "plan.submit";
+        std::vector<command::Command> steps = commandList(request.params, "steps", method);
+        std::vector<model::EntityRef> readSet;
+        if (const Value* given = request.params.find("readSet")) {
+            if (given->kind() != Value::Kind::array) {
+                throw ProtocolError("invalid_params", "plan.submit: readSet must be an array of \"<type>:<id>\"");
+            }
+            for (const Value& entry : given->asArray()) {
+                std::optional<model::EntityRef> ref;
+                if (entry.kind() == Value::Kind::string) {
+                    ref = parseRef(entry.asString());
+                }
+                if (!ref) {
+                    throw ProtocolError("invalid_params", "plan.submit: readSet entries are \"<type>:<id>\"");
+                }
+                readSet.push_back(*ref);
+            }
+        }
+        const std::string base =
+            optionalString(request.params, "baseRevision", method).value_or(session->history().head().envelope.id);
+        const command::Plan& plan = session->submitPlan(std::move(steps), std::move(readSet), base);
+        return success(request.requestId, plan.toJson());
+    }
+
+    std::string planStatus(const Pending& request) {
+        const std::string& planHash = requireString(request.params, "plan", "plan.status");
+        const command::Plan& plan = requirePlan(planHash);
+        Object out = plan.toJson().asObject();
+        Array stale;
+        for (const command::StaleEntity& entity : session->plans().validate(session->history(), planHash)) {
+            stale.push_back(Value(Object{{"ref", Value(formatRef(entity.entity))},
+                                         {"change", Value(std::string(changeName(entity.change)))}}));
+        }
+        out.emplace_back("stale", Value(std::move(stale)));
+        if (const auto branch = session->plans().proposalBranch(planHash)) {
+            out.emplace_back("proposalBranch", Value(*branch));
+        }
+        return success(request.requestId, Value(std::move(out)));
+    }
+
+    std::string planApprove(const Pending& request) {
+        const std::string& planHash = requireString(request.params, "plan", "plan.approve");
+        const Value* given = request.params.find("steps");
+        if (given == nullptr) {
+            return success(request.requestId,
+                           session->approvePlan(planHash, options.actor, options.clock()).toJson());
+        }
+        if (given->kind() != Value::Kind::array) {
+            throw ProtocolError("invalid_params", "plan.approve: steps must be an array of step indexes");
+        }
+        std::vector<std::size_t> indexes;
+        for (const Value& entry : given->asArray()) {
+            const bool index = entry.kind() == Value::Kind::number && entry.asNumber() >= 0 &&
+                               entry.asNumber() <= 1e9 &&
+                               entry.asNumber() == static_cast<double>(static_cast<std::size_t>(entry.asNumber()));
+            if (!index) {
+                throw ProtocolError("invalid_params", "plan.approve: steps are non-negative integers");
+            }
+            indexes.push_back(static_cast<std::size_t>(entry.asNumber()));
+        }
+        return success(request.requestId,
+                       session->approvePlanPartial(planHash, indexes, options.actor, options.clock()).toJson());
+    }
+
+    std::string planPropose(const Pending& request) {
+        const std::string& planHash = requireString(request.params, "plan", "plan.propose");
+        const command::BranchId branch = session->proposePlan(planHash, options.actor, options.clock());
+        const command::Revision& revision = session->history().branchHead(branch);
+        std::string response = success(request.requestId, Value(Object{{"branch", Value(branch)},
+                                                                         {"revision", revisionJson(revision)}}));
+        events.publishBranchRevision(revision);
+        if (options.auditionPort != nullptr) {
+            options.auditionPort->branchCommitted(branch);
+        }
+        return response;
+    }
+
+    std::string proposalMerge(const Pending& request) {
+        const command::BranchId branch = requireOpenBranch(request.params, "proposal.merge");
+        // Through the auditioner when there is one, so the sound follows.
+        const command::Revision& revision =
+            options.auditionPort != nullptr ? options.auditionPort->merge(branch, options.actor, options.clock())
+                                            : session->merge(branch, options.actor, options.clock());
+        std::string response = success(request.requestId, Value(Object{{"revision", revisionJson(revision)}}));
+        events.publishRevision(revision);
+        // The envelope's revision is the merge revision, now main's head.
+        events.publish("proposal.closed", Object{{"branch", Value(branch)}, {"merged", Value(true)}});
+        return response;
+    }
+
+    std::string proposalDiscard(const Pending& request) {
+        const command::BranchId branch = requireOpenBranch(request.params, "proposal.discard");
+        if (options.auditionPort != nullptr) {
+            options.auditionPort->discard(branch);
+        } else {
+            session->discard(branch);
+        }
+        events.publish("proposal.closed", Object{{"branch", Value(branch)}, {"merged", Value(false)}});
+        return success(request.requestId, Value(Object{}));
+    }
+
+    std::string auditionHear(const Pending& request) {
+        AuditionPort& auditionPort = requirePort();
+        const std::string& side = requireString(request.params, "side", "audition.hear");
+        if (side == "main") {
+            auditionPort.hearMain();
+        } else {
+            auditionPort.audition(side);
+        }
+        return success(request.requestId, Value(Object{{"heard", Value(auditionPort.heard().value_or("main"))}}));
+    }
+
+    std::string renderStart(const Pending& request) {
+        const std::string_view method = "render.start";
+        const std::string& name = requireString(request.params, "name", method);
+        if (!validRenderName(name)) {
+            throw ProtocolError("invalid_params",
+                                "render.start: name must match ^[A-Za-z0-9._-]{1,64}$ and not be . or ..");
+        }
+        const std::int64_t start = optionalCount(request.params, "start", method).value_or(0);
+        const std::int64_t frames = optionalCount(request.params, "frames", method).value_or(-1);
+        // The head document is immutable: later commits do not change the job.
+        std::string jobId = jobs.startRender(detail::RenderRequest{name, start, frames, session->history().head().document,
+                                                                   session->bundlePath()});
+        return success(request.requestId, Value(Object{{"jobId", Value(std::move(jobId))},
+                                                         {"kind", Value("render")},
+                                                         {"state", Value("queued")}}));
+    }
+
+    std::string jobStatus(const Pending& request) {
+        const std::string& jobId = requireString(request.params, "jobId", "job.status");
+        std::optional<Value> status = jobs.status(jobId);
+        if (!status) {
+            throw ProtocolError("not_found", "no job " + jobId);
+        }
+        return success(request.requestId, std::move(*status));
+    }
+
+    std::string sessionSave(const Pending& request) {
+        session->checkpoint();
+        return success(request.requestId, Value(Object{{"revision", Value(session->history().head().envelope.id)},
+                                                         {"path", Value(utf8(session->bundlePath() / "session.json"))}}));
+    }
+
+    std::string sessionOpen(const Pending& request) {
+        const std::string& pathText = requireString(request.params, "path", "session.open");
+        if (!options.openSession) {
+            throw ProtocolError("not_supported", "this engine host cannot open another session");
+        }
+        const std::filesystem::path path = fromUtf8(pathText);
+        std::error_code ec;
+        if (!std::filesystem::is_directory(path, ec)) {
+            throw ProtocolError("not_found", "no session bundle at this path");
+        }
+        session::Session& next = options.openSession(path);
+        session = &next;
+        const command::Revision& head = next.history().head();
+        const std::string nextId = "ses_" + randomHex(16);
+        {
+            // Requests naming the old id are refused from here on; the event
+            // and the auth replies agree on the new id.
+            std::lock_guard lock(mutex);
+            sessionId = nextId;
+            events.publishSessionOpened(nextId, head);
+        }
+        readModel.forgetAll();
+        cache.clear();
+        cacheOrder.clear();
+        return success(request.requestId,
+                       Value(Object{{"sessionId", Value(nextId)},
+                                    {"revision", Value(head.envelope.id)},
+                                    {"documentHash", Value(hash::formatHash(head.envelope.documentHash))}}));
+    }
+
     // Command thread.
+    std::string dispatch(const Pending& request) {
+        const std::string& method = request.method;
+        if (method == "session.inspect") {
+            return success(request.requestId, inspectJson());
+        }
+        if (method == "command.execute") {
+            return published(request, session->commit(commandList(request.params, "commands", method), options.actor,
+                                                      options.clock()));
+        }
+        if (method == "session.undo") {
+            return published(request, session->undo(options.actor, options.clock()));
+        }
+        if (method == "session.redo") {
+            return published(request, session->redo(options.actor, options.clock()));
+        }
+        if (method == "session.sync") {
+            return success(request.requestId,
+                           readModel.sync(request.connection, request.params, session->history(), events.position()));
+        }
+        if (method == "session.fetch") {
+            return success(request.requestId, readModel.fetch(request.params, session->history()));
+        }
+        if (method == "engine.about") {
+            return success(request.requestId, aboutJson());
+        }
+        if (method == "command.list") {
+            return success(request.requestId, Value(Object{{"commands", commandNamesJson()}}));
+        }
+        if (method == "engine.capabilities") {
+            return success(request.requestId, capabilitiesJson());
+        }
+        if (method == "plan.submit") {
+            return planSubmit(request);
+        }
+        if (method == "plan.status") {
+            return planStatus(request);
+        }
+        if (method == "plan.approve") {
+            return planApprove(request);
+        }
+        if (method == "plan.reject") {
+            const std::string& planHash = requireString(request.params, "plan", method);
+            const std::string note = optionalString(request.params, "note", method).value_or("");
+            return success(request.requestId,
+                           session->rejectPlan(planHash, options.actor, options.clock(), note).toJson());
+        }
+        if (method == "plan.apply") {
+            return published(request, session->applyPlan(requireString(request.params, "plan", method), options.actor,
+                                                         options.clock()));
+        }
+        if (method == "plan.rollback") {
+            return published(request, session->rollbackPlan(requireString(request.params, "plan", method),
+                                                            options.actor, options.clock()));
+        }
+        if (method == "plan.propose") {
+            return planPropose(request);
+        }
+        if (method == "proposal.merge") {
+            return proposalMerge(request);
+        }
+        if (method == "proposal.discard") {
+            return proposalDiscard(request);
+        }
+        if (method == "audition.hear") {
+            return auditionHear(request);
+        }
+        if (method == "render.start") {
+            return renderStart(request);
+        }
+        if (method == "job.status") {
+            return jobStatus(request);
+        }
+        if (method == "session.save") {
+            return sessionSave(request);
+        }
+        if (method == "session.open") {
+            return sessionOpen(request);
+        }
+        return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
+    }
+
+    // Command thread: every exception becomes one error response.
     std::string execute(const Pending& request) {
+        const Value id(request.requestId);
         try {
             if (request.expectedRevision) {
-                const std::string& current = session.history().head().envelope.id;
+                const std::string& current = session->history().head().envelope.id;
                 if (*request.expectedRevision != current) {
-                    return failure(Value(request.requestId), "revision_mismatch",
+                    return failure(id, "revision_mismatch",
                                    "expected revision " + *request.expectedRevision + " but the head is " + current);
                 }
             }
-            if (request.method == "session.inspect") {
-                const auto& history = session.history();
-                return success(request.requestId,
-                               Value(Object{{"revision", Value(history.head().envelope.id)},
-                                            {"documentHash", Value(hash::formatHash(history.head().envelope.documentHash))},
-                                            {"revisions", Value(static_cast<double>(history.revisions().size()))}}));
-            }
-            if (request.method == "command.execute") {
-                const Value* list = request.params.find("commands");
-                if (list == nullptr || list->kind() != Value::Kind::array || list->asArray().empty()) {
-                    return failure(Value(request.requestId), "invalid_params",
-                                   "command.execute needs a non-empty commands array");
-                }
-                std::vector<command::Command> commands;
-                const auto& items = list->asArray();
-                for (std::size_t i = 0; i < items.size(); ++i) {
-                    try {
-                        commands.push_back(command::Command::fromJson(items[i]));
-                    } catch (const command::CommandError& e) {
-                        throw command::CommandError(e.code(), e.what(), i);
-                    }
-                }
-                const command::Revision* revision = &session.commit(std::move(commands), options.actor, options.clock());
-                return published(request, *revision);
-            }
-            if (request.method == "session.undo") {
-                return published(request, session.undo(options.actor, options.clock()));
-            }
-            if (request.method == "session.redo") {
-                return published(request, session.redo(options.actor, options.clock()));
-            }
-            if (request.method == "session.sync") {
-                return success(request.requestId,
-                               readModel.sync(request.connection, request.params, session.history(), events.position()));
-            }
-            if (request.method == "session.fetch") {
-                return success(request.requestId, readModel.fetch(request.params, session.history()));
-            }
-            if (request.method == "engine.about") {
-                return success(request.requestId, aboutJson());
-            }
-            return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
+            return dispatch(request);
         } catch (const ProtocolError& e) {
-            return failure(Value(request.requestId), e.code(), e.what());
+            return failure(id, e.code(), e.what());
+        } catch (const command::PlanStaleError& e) {
+            Array changed;
+            for (const command::StaleEntity& entity : e.changedEntities()) {
+                changed.push_back(Value(Object{{"ref", Value(formatRef(entity.entity))},
+                                               {"change", Value(std::string(changeName(entity.change)))}}));
+            }
+            return failure(id, e.code(), e.what(), e.step(),
+                           Value(Object{{"plan", Value(e.plan())}, {"changedEntities", Value(std::move(changed))}}));
+        } catch (const command::RollbackError& e) {
+            return failure(id, e.code(), e.what(), e.step(),
+                           Value(Object{{"entities", stringArray(e.conflictKeys())}}));
+        } catch (const command::BranchConflictError& e) {
+            return failure(id, e.code(), e.what(), e.step(), Value(Object{{"entities", stringArray(e.entities())}}));
         } catch (const command::CommandError& e) {
-            return failure(Value(request.requestId), e.code(), e.what(), e.step());
+            return failure(id, e.code(), e.what(), e.step());
         } catch (const session::SessionError& e) {
-            return failure(Value(request.requestId), e.code(), e.what());
+            return failure(id, e.code(), e.what());
+        } catch (const AuditionPortError& e) {
+            std::optional<Value> data;
+            if (const auto& budget = e.budget()) {
+                data = Value(Object{{"resource", Value(budget->resource)},
+                                    {"needed", Value(std::to_string(budget->needed))},
+                                    {"budget", Value(std::to_string(budget->budget))}});
+            }
+            return failure(id, e.code(), e.what(), std::nullopt, std::move(data));
         } catch (const std::exception& e) {
-            return failure(Value(request.requestId), "internal_error", e.what());
+            return failure(id, "internal_error", e.what());
         } catch (...) {
-            return failure(Value(request.requestId), "internal_error", "the method threw a non-standard exception");
+            return failure(id, "internal_error", "the method threw a non-standard exception");
         }
     }
 
@@ -502,17 +1024,58 @@ struct ProtocolServer::Impl {
         cacheOrder.push_back(requestId);
     }
 
+    void deliver(const Pending& request, const std::string& response) {
+        if (request.done) {
+            request.done(response);
+        } else {
+            transport.send(request.connection, response);
+        }
+    }
+
+    // Command thread: scope_denied for an MCP request whose credential's scope
+    // does not cover its method (spec, Scopes v0). The scope comes from the
+    // credential (Pending::scope), so the check holds whatever the adapter
+    // sent; a method no tool maps is denied too.
+    std::optional<std::string> scopeDenied(const Pending& request) const {
+        if (!request.scope || *request.scope == McpScope::trusted) {
+            return std::nullopt;
+        }
+        const Value id(request.requestId);
+        for (const detail::McpTool& tool : detail::mcpTools()) {
+            if (tool.method == request.method) {
+                if (tool.scope == McpScope::propose) {
+                    return std::nullopt;
+                }
+                return failure(id, "scope_denied", std::string(tool.name) + " needs the trusted scope");
+            }
+        }
+        return failure(id, "scope_denied", "no MCP tool runs " + request.method);
+    }
+
     // Command thread, under pumpMutex.
     void handle(std::vector<Pending> requests) {
         for (const auto& request : requests) {
+            // Envelope errors are answered before the cache and never cached
+            // (Protocol v0 item 5), so a retry with the same requestId runs.
+            // A request queued before a session.open in the same pump still
+            // names the old session: session_mismatch, not a cached answer.
+            if (request.sessionId != sessionId) {
+                deliver(request,
+                        failure(Value(request.requestId), "session_mismatch", "this server serves session " + sessionId));
+                continue;
+            }
+            if (auto denied = scopeDenied(request)) {
+                deliver(request, *denied);
+                continue;
+            }
             auto cached = cache.find(request.requestId);
             if (cached != cache.end()) {
-                transport.send(request.connection, cached->second);
+                deliver(request, cached->second);
                 continue;
             }
             std::string response = execute(request);
             remember(request.requestId, response);
-            transport.send(request.connection, response);
+            deliver(request, response);
         }
         events.flush();
     }
@@ -573,9 +1136,11 @@ void ProtocolServer::start() {
 void ProtocolServer::stop() {
     impl_->stopPumpThread();
     if (impl_->started) {
+        // No transport thread is left waiting on an MCP answer after this.
         impl_->transport.stop();
         impl_->started = false;
     }
+    impl_->jobs.stop();
 }
 
 std::size_t ProtocolServer::pump() {
@@ -588,6 +1153,10 @@ std::size_t ProtocolServer::pump() {
 
 const std::string& ProtocolServer::token() const noexcept {
     return impl_->token;
+}
+
+const std::string& ProtocolServer::mcpToken() const noexcept {
+    return impl_->mcpToken;
 }
 
 const std::string& ProtocolServer::sessionId() const noexcept {
@@ -608,6 +1177,26 @@ EventStream& ProtocolServer::events() noexcept {
 
 RealtimeChannel& ProtocolServer::realtime() noexcept {
     return impl_->realtime;
+}
+
+std::string_view mcpScopeName(McpScope scope) noexcept {
+    return scope == McpScope::trusted ? "trusted" : "propose";
+}
+
+session::Session& ProtocolServer::session() noexcept {
+    return *impl_->session;
+}
+
+void ProtocolServer::handleMcp(const HttpRequest& request, std::function<void(HttpResponse)> complete) {
+    impl_->handleMcp(request, complete);
+}
+
+std::size_t ProtocolServer::runJobs() {
+    return impl_->jobs.runQueued();
+}
+
+bool ProtocolServer::waitJob(const std::string& jobId, std::chrono::milliseconds timeout) {
+    return impl_->jobs.wait(jobId, timeout);
 }
 
 }  // namespace siann::protocol

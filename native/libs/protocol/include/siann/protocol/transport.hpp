@@ -31,6 +31,8 @@ struct HttpResponse {
     int status = 200;
     std::string contentType = "application/json";
     std::string body;
+    // Extra response headers, as written (for example "Mcp-Session-Id").
+    Headers headers{};
 };
 
 struct TransportHandlers {

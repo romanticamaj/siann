@@ -48,10 +48,12 @@ HttpRequest toRequest(const ix::HttpRequest& request) {
 std::string reasonPhrase(int status) {
     switch (status) {
         case 200: return "OK";
+        case 202: return "Accepted";
         case 400: return "Bad Request";
         case 401: return "Unauthorized";
         case 403: return "Forbidden";
         case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
         case 500: return "Internal Server Error";
         default: return "Error";
     }
@@ -59,6 +61,9 @@ std::string reasonPhrase(int status) {
 
 ix::HttpResponsePtr toIx(const HttpResponse& response) {
     ix::WebSocketHttpHeaders headers;
+    for (const auto& [name, value] : response.headers) {
+        headers[name] = value;
+    }
     headers["Content-Type"] = response.contentType;
     headers["Connection"] = "close";
     return std::make_shared<ix::HttpResponse>(response.status, reasonPhrase(response.status), ix::HttpErrorCode::Ok,
@@ -69,7 +74,8 @@ ix::HttpResponsePtr toIx(const HttpResponse& response) {
 // an exception escaping a handler there would reach std::terminate.
 HttpResponse internalError() {
     return HttpResponse{500, "application/json",
-                        R"({"error":{"code":"internal_error","message":"the server failed on this request"},"ok":false})"};
+                        R"({"error":{"code":"internal_error","message":"the server failed on this request"},"ok":false})",
+                        {}};
 }
 
 // WebSocket close code 1011: internal error (RFC 6455, section 7.4.1).
