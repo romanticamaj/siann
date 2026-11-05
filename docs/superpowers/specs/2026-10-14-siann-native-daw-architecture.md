@@ -1825,13 +1825,15 @@ review instead of pushing on.
 | M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems | Production-level criteria list passes | — |
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
 
-### Status (2026-11-04)
+### Status (2026-11-06)
 
 M1 is done (status as of 2026-10-21 below). M2 is exit pending: every feature
 is merged (PRs #14, #16 to #18, #20, #21, #24 to #30, #35 and #36), four exit
 criteria are met with passing tests in CI (the long recording test included),
 and two need the device bench on the maintainer's machine (see "M2 exit check
-(2026-11-04)").
+(2026-11-04)"). M3 is done: every feature is merged (PRs #38 to #43) and both
+exit criteria are met with tests that pass in CI (see "M3 exit check
+(2026-11-06)").
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
@@ -1933,6 +1935,23 @@ commits at the heard branch (`setGestureBranch`), merges and discards through
 M2's whole-output duck applies to an A/B switch as to any structural edit. The
 budget is the stand-in described under "Proposal audition (A/B)". The protocol
 methods for proposals arrive with m3-mcp.
+
+M3 exit check (2026-11-06), on `main` at 04c8f6c. CI on that commit is green
+(run 42105732783, every job: Node bridge, native core on Windows, macOS and
+Linux, the JUCE desktop host on all three, and RTSan); the native core runs
+467 ctest tests on each platform. `node scripts/check-all.js --gcc` on the
+exit branch: CHECKALL_RESULT.
+
+| M3 exit criterion | Status | Evidence |
+|---|---|---|
+| An MCP client builds a session through approved plans, rolls back and auditions a branch (`m3-exit-e2e`) | Met | `siann_protocol_tests` "an MCP client builds a session through approved plans, rolls back and auditions a branch" (`[protocol][mcp][e2e]`) passes in CI on Windows, macOS and Linux. Over real HTTP (IXWebSocket, 127.0.0.1) with the MCP bearer token (a request without it is 401) it submits, approves and applies a plan that adds a track and a clip, submits and approves a second plan, proposes it onto branch `p1`, auditions `p1`, merges it (`branch-merge`), rolls the merged plan back (`rollback`, document hash back to the pre-merge hash), renders and polls the job, saves, and opens another bundle. The MCP scope rules (propose by default, `approve_plan` and `execute` scope_denied there) are covered by the `[protocol][mcp]` adapter tests. |
+| Reconnect and gap sync are tested (`m3-exit-sync`) | Met | `siann_protocol_tests` `[protocol][sync]` and `[protocol][events]`, all passing in CI on the three platforms: "a client that detects a gap syncs and continues" (an outbox of two on a congested socket drops three events; the next event reveals the gap, the client calls `session.sync`, its read model matches the head document hash and the following event applies without another sync), "a reconnecting client resyncs" (two commits while disconnected; the hello reports seq, revision and document hash, the client syncs once, and a reconnect that missed nothing does not sync), "large sessions sync in chunks at one revision", "an overflowing outbox drops events and leaves a visible gap", and "a duplicate requestId returns the original response, also after a reconnect". |
+
+Seen during the check, outside M3: the scheduled "Long tests" run on `main`
+(run 42014565325, 2026-11-05) failed on windows-latest in "A 10-minute take
+killed at 9 minutes recovers every flushed block" (`content.mismatchAt` was
+22,782,208, a sample off the counter, after recovery); ubuntu-latest passed.
+It belongs to `m2-exit-record` and is a follow-up for M2.
 
 ## Risks
 

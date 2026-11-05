@@ -11,8 +11,15 @@
     "Licensing decisions (decided 2026-10-22, ADR-0017)",
     "Milestones"
   ],
-  "status": "not_started",
-  "done": [],
+  "status": "done",
+  "done": [
+    "WebSocket/HTTP protocol server with token handshake (#38)",
+    "Events, gap detection and session.sync (#39)",
+    "Plans in the engine: per-entity staleness, approval, partial approval (#40)",
+    "Rollback of applied plans (#41)",
+    "Proposal branches and A/B audition (#42)",
+    "MCP adapter (#43)"
+  ],
   "prerequisites": ["M2 merged, or at least m2-playback-engine and m2-meters (the meter page needs the protocol)."],
   "humanGates": [],
   "features": [
