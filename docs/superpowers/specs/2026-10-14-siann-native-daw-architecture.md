@@ -1011,7 +1011,11 @@ Decisions of 2026-11-05 (m3-audition):
   order, are applied to main's head as one transaction. The result is one
   revision with cause `branch-merge`, parents `[main head, branch tip]`, the
   branch's commands, and a diff against main's head (so it lists only the
-  branch's entities). The merge closes the branch, enters main's undo stack
+  branch's entities). If that diff would name an entity outside the write set
+  (the commands reach further on main's head, e.g. `track.remove` also removing
+  a clip main placed on the track since the base), or an entity of the write
+  set does not come out as at the branch tip, the merge is refused with
+  `branch_conflict` listing those entities. The merge closes the branch, enters main's undo stack
   (one undo restores the pre-merge document, through the first parent) and
   clears redo. No three-way merge in v1. The checked entities are the write set
   plus, for a branch a plan was proposed onto (below), every entity of that
