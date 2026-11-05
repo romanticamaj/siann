@@ -83,8 +83,8 @@ struct ServerOptions {
     // Entities per session.sync chunk.
     std::size_t syncChunkEntities = 500;
     RealtimeOptions realtime{};
-    // MCP (docs/schemas/protocol-mcp-v0.md): the scope every MCP client gets,
-    // and how long the protocol thread waits for the command thread's answer.
+    // MCP (docs/schemas/protocol-mcp-v0.md): the scope every MCP client gets
+    // (the scope of mcpToken(), checked on the command thread), and how long the protocol thread waits for the command thread's answer.
     McpScope mcpScope = McpScope::propose;
     std::chrono::milliseconds mcpRequestTimeout{30'000};
     // The engine host's auditioner; nullptr: audition.hear is audition_unavailable.
@@ -112,8 +112,13 @@ public:
     // responses. Returns the number of requests handled.
     std::size_t pump();
 
-    // 64 lowercase hex characters, random per server.
+    // The UI's credential: 64 lowercase hex characters, random per server. It
+    // authenticates the WebSocket, the realtime path and plain HTTP, never
+    // /v0/mcp.
     const std::string& token() const noexcept;
+    // The MCP clients' credential (Bearer on /v0/mcp only), random per server
+    // and distinct from token(); it carries ServerOptions::mcpScope.
+    const std::string& mcpToken() const noexcept;
     // "ses_<hex>", random per server.
     const std::string& sessionId() const noexcept;
     // The bound port after start().

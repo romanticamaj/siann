@@ -56,6 +56,15 @@ std::string randomHex(std::size_t bytes) {
     return out;
 }
 
+// A second 32-byte secret that differs from `other`.
+std::string distinctHex(const std::string& other) {
+    std::string out = randomHex(32);
+    while (out == other) {
+        out = randomHex(32);
+    }
+    return out;
+}
+
 // Compares secrets without an early exit on the first differing byte.
 bool sameSecret(std::string_view a, std::string_view b) noexcept {
     if (a.size() != b.size()) {
@@ -197,6 +206,9 @@ struct Pending {
     std::optional<std::string> expectedRevision;  // checked against the head before the method runs
     // MCP: receives the response text instead of a connection.
     std::function<void(const std::string&)> done;
+    // MCP: the scope of the credential the request came with (mcpToken
+    // carries ServerOptions::mcpScope). Empty: the UI (token), unscoped.
+    std::optional<McpScope> scope;
 };
 
 struct Connection {
@@ -314,6 +326,7 @@ struct ProtocolServer::Impl {
           session(&s),
           options(std::move(o)),
           token(randomHex(32)),
+          mcpToken(distinctHex(token)),
           sessionId("ses_" + randomHex(16)),
           inbox(options.inboxCapacity),
           events(t, sessionId,
@@ -323,8 +336,8 @@ struct ProtocolServer::Impl {
           readModel(options.syncChunkEntities),
           realtime(t, options.realtime),
           jobs(options.jobs.workerThread),
-          mcp(options.mcpScope, [this](std::string requestId, std::string method, Value params,
-                                       std::function<void(const std::string&)> done) {
+          mcp([this](std::string requestId, std::string method, Value params,
+                     std::function<void(const std::string&)> done) {
               return submitMcp(std::move(requestId), std::move(method), std::move(params), std::move(done));
           }) {
         if (!options.clock) {
@@ -335,7 +348,8 @@ struct ProtocolServer::Impl {
     Transport& transport;
     session::Session* session;  // command thread; session.open replaces it
     ServerOptions options;
-    const std::string token;
+    const std::string token;     // the UI: WebSocket, realtime, plain HTTP
+    const std::string mcpToken;  // MCP clients: /v0/mcp only, under options.mcpScope
     std::string sessionId;  // written on the command thread under `mutex`
     std::uint16_t port = 0;
     detail::RequestInbox<Pending> inbox;
@@ -377,9 +391,11 @@ struct ProtocolServer::Impl {
 
     std::optional<HttpResponse> onUpgrade(const HttpRequest& request) const { return checkOrigin(request); }
 
-    bool authorized(const HttpRequest& request) const {
+    // `secret` is token for plain HTTP and mcpToken for /v0/mcp: neither
+    // credential opens the other's routes.
+    static bool authorized(const HttpRequest& request, const std::string& secret) {
         auto authorization = request.headers.find("authorization");
-        return authorization != request.headers.end() && sameSecret(authorization->second, "Bearer " + token);
+        return authorization != request.headers.end() && sameSecret(authorization->second, "Bearer " + secret);
     }
 
     static HttpResponse unauthenticated() {
@@ -388,7 +404,7 @@ struct ProtocolServer::Impl {
 
     // Any thread: one POST /v0/mcp without blocking.
     void handleMcp(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
-        if (!authorized(request)) {
+        if (!authorized(request, mcpToken)) {
             complete(unauthenticated());
             return;
         }
@@ -447,7 +463,7 @@ struct ProtocolServer::Impl {
         if (request.path == kMcpPath) {
             return waitMcp(request);
         }
-        if (!authorized(request)) {
+        if (!authorized(request, token)) {
             return unauthenticated();
         }
         if (request.method == "GET" && request.path == "/v0/health") {
@@ -461,7 +477,7 @@ struct ProtocolServer::Impl {
     bool submitMcp(std::string requestId, std::string method, Value params,
                    std::function<void(const std::string&)> done) {
         return inbox.tryPush(Pending{0, std::move(requestId), currentSessionId(), std::move(method), std::move(params),
-                                     std::nullopt, std::move(done)});
+                                     std::nullopt, std::move(done), options.mcpScope});
     }
 
     void onOpen(ConnectionId connection, const std::string& path) {
@@ -622,7 +638,7 @@ struct ProtocolServer::Impl {
             return;
         }
         if (!inbox.tryPush(Pending{connection, requestIdMember->asString(), served, method->asString(),
-                                   std::move(params), std::move(expectedRevision), {}})) {
+                                   std::move(params), std::move(expectedRevision), {}, std::nullopt})) {
             transport.send(connection, failure(requestId, "queue_full", "the command inbox is full; retry"));
         }
     }
@@ -956,9 +972,6 @@ struct ProtocolServer::Impl {
     std::string execute(const Pending& request) {
         const Value id(request.requestId);
         try {
-            if (request.sessionId != sessionId) {
-                return failure(id, "session_mismatch", "this server serves session " + sessionId);
-            }
             if (request.expectedRevision) {
                 const std::string& current = session->history().head().envelope.id;
                 if (*request.expectedRevision != current) {
@@ -1019,9 +1032,42 @@ struct ProtocolServer::Impl {
         }
     }
 
+    // Command thread: scope_denied for an MCP request whose credential's scope
+    // does not cover its method (spec, Scopes v0). The scope comes from the
+    // credential (Pending::scope), so the check holds whatever the adapter
+    // sent; a method no tool maps is denied too.
+    std::optional<std::string> scopeDenied(const Pending& request) const {
+        if (!request.scope || *request.scope == McpScope::trusted) {
+            return std::nullopt;
+        }
+        const Value id(request.requestId);
+        for (const detail::McpTool& tool : detail::mcpTools()) {
+            if (tool.method == request.method) {
+                if (tool.scope == McpScope::propose) {
+                    return std::nullopt;
+                }
+                return failure(id, "scope_denied", std::string(tool.name) + " needs the trusted scope");
+            }
+        }
+        return failure(id, "scope_denied", "no MCP tool runs " + request.method);
+    }
+
     // Command thread, under pumpMutex.
     void handle(std::vector<Pending> requests) {
         for (const auto& request : requests) {
+            // Envelope errors are answered before the cache and never cached
+            // (Protocol v0 item 5), so a retry with the same requestId runs.
+            // A request queued before a session.open in the same pump still
+            // names the old session: session_mismatch, not a cached answer.
+            if (request.sessionId != sessionId) {
+                deliver(request,
+                        failure(Value(request.requestId), "session_mismatch", "this server serves session " + sessionId));
+                continue;
+            }
+            if (auto denied = scopeDenied(request)) {
+                deliver(request, *denied);
+                continue;
+            }
             auto cached = cache.find(request.requestId);
             if (cached != cache.end()) {
                 deliver(request, cached->second);
@@ -1107,6 +1153,10 @@ std::size_t ProtocolServer::pump() {
 
 const std::string& ProtocolServer::token() const noexcept {
     return impl_->token;
+}
+
+const std::string& ProtocolServer::mcpToken() const noexcept {
+    return impl_->mcpToken;
 }
 
 const std::string& ProtocolServer::sessionId() const noexcept {

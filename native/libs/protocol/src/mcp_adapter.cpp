@@ -119,21 +119,13 @@ Value toolResult(const std::string& responseText) {
                         {"isError", Value(true)}});
 }
 
-Value toolError(const std::string& code, const std::string& message) {
-    Value error(Object{{"code", Value(code)}, {"message", Value(message)}});
-    return Value(Object{{"content", Value(json::Array{Value(Object{{"type", Value("text")},
-                                                                     {"text", Value(jcs::canonicalize(error))}})})},
-                        {"structuredContent", Value(Object{{"error", error}})},
-                        {"isError", Value(true)}});
-}
-
 }  // namespace
 
 const std::vector<McpTool>& mcpTools() {
     return kTools;
 }
 
-McpAdapter::McpAdapter(McpScope scope, Submit submit) : scope_(scope), submit_(std::move(submit)) {}
+McpAdapter::McpAdapter(Submit submit) : submit_(std::move(submit)) {}
 
 void McpAdapter::handle(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
     const Value nullId(nullptr);
@@ -237,13 +229,8 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
         complete(reply(200, rpcError(id, kInvalidParams, "arguments must be an object")));
         return;
     }
-    if (tool->scope == McpScope::trusted && scope_ != McpScope::trusted) {
-        // Not executed and not cached: a retry after the grant runs.
-        complete(reply(200, rpcResult(id, toolError("scope_denied", std::string(tool->name) +
-                                                                         " needs the trusted scope"))));
-        return;
-    }
-
+    // The scope is the credential's and is checked by the server on the
+    // command thread (scope_denied, not cached), not here.
     const std::string requestId = session + "/" + jcs::canonicalize(id);
     const bool queued = submit_(requestId, std::string(tool->method), arguments != nullptr ? *arguments : Value(Object{}),
                                 [complete, id](const std::string& responseText) {
