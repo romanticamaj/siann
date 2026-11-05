@@ -5,7 +5,8 @@
 // schema siann.journal_record.v1, a contiguous sequence number, the revision
 // envelope, the commands or undo/redo target, the diff, and a SHA-256 over the
 // JCS of the record without its checksum field. The first record (cause
-// create) also carries the initial document.
+// create) also carries the initial document; branch commits and merges carry
+// their proposal branch.
 
 #include <cstddef>
 #include <cstdint>
@@ -41,6 +42,9 @@ struct JournalRecord {
     std::optional<std::string> target;
     std::vector<model::DiffEntry> diff;
     std::optional<model::Document> document;  // create records only
+    // Branch commits and merges: the proposal branch ("p<n>"). Outside the
+    // envelope; replay uses it to tell a branch commit from a main commit.
+    std::optional<std::string> branch;
 };
 
 json::Value envelopeToJson(const command::RevisionEnvelope& envelope);

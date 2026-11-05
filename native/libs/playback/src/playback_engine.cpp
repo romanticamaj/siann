@@ -13,6 +13,7 @@
 #include "siann/hash/json.hpp"
 #include "siann/media/memory_reader.hpp"
 #include "siann/media/wav_file_reader.hpp"
+#include "siann/playback/audition.hpp"
 #include "siann/session/media_import.hpp"
 
 namespace siann::playback {
@@ -391,14 +392,26 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
         return nullptr;
     }
     try {
+        if (gestureBranch_ && !session_.history().isOpen(*gestureBranch_)) {
+            // The heard branch was merged or discarded on the session, not
+            // through the Auditioner (spec, "Proposal audition (A/B)").
+            throw AuditionError("audition_not_found", "the proposal branch " + *gestureBranch_ +
+                                                          " heard for this gesture is closed; hear main first");
+        }
         const GestureCommit commit = gestureCommit(trackId, paramId, *value);
-        const command::Revision& revision = session_.commit({commit.command}, std::move(actor), std::move(time));
+        const command::Revision& revision =
+            gestureBranch_ ? session_.commitOn(*gestureBranch_, {commit.command}, std::move(actor), std::move(time))
+                           : session_.commit({commit.command}, std::move(actor), std::move(time));
         // The committed value reaches the audio thread through the dispatcher.
         dispatcher_.setParameter(key, commit.value, 0);
         return &revision;
     } catch (...) {
         // Nothing was committed: the sound returns to the document's value.
-        if (const model::Track* track = session_.history().head().document.track(trackId)) {
+        const command::History& history = session_.history();
+        const model::Document& document = gestureBranch_ && history.isOpen(*gestureBranch_)
+                                              ? history.branchHead(*gestureBranch_).document
+                                              : history.head().document;
+        if (const model::Track* track = document.track(trackId)) {
             dispatcher_.setParameter(key, documentValue(*track, paramId), 0);
         }
         throw;
@@ -429,6 +442,27 @@ void PlaybackEngine::tick() {
             publishPrepared();
         }
     }
+}
+
+AuditionCost PlaybackEngine::estimateCost(const model::Document& document) const {
+    AuditionCost cost;
+    std::size_t ringFrames = 1;
+    while (ringFrames < options_.ringFrames) {
+        ringFrames <<= 1;  // as realtime::FrameRing rounds its capacity
+    }
+    const std::vector<engine::FlatTrack> flat = engine::flattenClips(document);
+    for (const engine::FlatTrack& track : flat) {
+        const auto live = liveTracks_.find(track.track->id);
+        if (live != liveTracks_.end() && live->second.key == streamKey(track)) {
+            continue;
+        }
+        ++cost.newStreams;
+        cost.bytes += 2 * ringFrames * static_cast<std::size_t>(track.track->channels) * sizeof(float);
+    }
+    // As compileWith(): the master bus and its meter, and per track a player,
+    // a fader and a meter.
+    cost.nodes = 2 + 3 * flat.size();
+    return cost;
 }
 
 std::uint64_t PlaybackEngine::underruns() const noexcept {

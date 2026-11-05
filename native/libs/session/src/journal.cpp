@@ -29,6 +29,7 @@ Cause causeFromName(const std::string& name) {
     if (name == "undo") return Cause::undo;
     if (name == "redo") return Cause::redo;
     if (name == "rollback") return Cause::rollback;
+    if (name == "branch-merge") return Cause::branchMerge;
     throw SessionError("corrupt_record", "unknown cause " + name);
 }
 
@@ -80,6 +81,9 @@ Value recordBody(const JournalRecord& record) {
     if (record.document) {
         body.emplace_back("document", record.document->toJson());
     }
+    if (record.branch) {
+        body.emplace_back("branch", Value(*record.branch));
+    }
     return Value(std::move(body));
 }
 
@@ -129,6 +133,7 @@ JournalRecord recordFromRevision(std::int64_t seq, const command::Revision& revi
     record.commands = revision.commands;
     record.target = revision.target;
     record.diff = revision.diff;
+    record.branch = revision.branch;
     if (revision.envelope.cause == Cause::create) {
         record.document = revision.document;
     }
@@ -208,6 +213,9 @@ JournalRecord decodeRecord(std::string_view line) {
         }
         if (const Value* document = r.optional("document")) {
             record.document = model::Document::fromJson(*document);
+        }
+        if (r.optional("branch") != nullptr) {
+            record.branch = r.string("branch");
         }
         r.finish();
         return record;

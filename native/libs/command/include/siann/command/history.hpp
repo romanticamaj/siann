@@ -1,15 +1,22 @@
 #pragma once
 
-// The revision DAG: one history for undo, journal, plans and (later) proposal
+// The revision DAG: one history for undo, journal, plans and proposal
 // branches. Every published document is a revision. Undo and redo create new
 // revisions whose document equals an earlier one. Rollback of a plan revision
 // creates an inverse revision that restores only the plan's entities.
+//
+// Main is the line head() follows. A proposal branch (architecture spec,
+// "Revision DAG — single history", decisions of 2026-11-05) starts at a base
+// revision reachable from main's head; its commits are revisions with one
+// parent that never move main and never enter main's undo stack. Merging
+// creates one branch-merge revision on main with parents {main head, branch
+// tip}; discarding closes the branch and leaves its revisions unreachable.
 
 #include <cstdint>
 #include <functional>
 #include <optional>
-#include <string_view>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "siann/command/command.hpp"
@@ -18,14 +25,18 @@
 
 namespace siann::command {
 
-enum class Cause { create, command, plan, undo, redo, rollback };
+enum class Cause { create, command, plan, undo, redo, rollback, branchMerge };
 
+// "create", "command", "plan", "undo", "redo", "rollback", "branch-merge".
 std::string_view causeName(Cause cause) noexcept;
+
+// "p1", "p2", ... in creation order.
+using BranchId = std::string;
 
 // Envelope data is never part of the document or its hash.
 struct RevisionEnvelope {
-    std::string id;                    // "r1", "r2", ... in commit order
-    std::vector<std::string> parents;  // empty for the first revision
+    std::string id;                    // "r1", "r2", ... in commit order, across main and every branch
+    std::vector<std::string> parents;  // empty for the first revision, two for a merge
     hash::Digest documentHash{};
     Cause cause = Cause::create;
     std::string actor;
@@ -34,10 +45,12 @@ struct RevisionEnvelope {
 
 struct Revision {
     RevisionEnvelope envelope;
-    std::vector<Command> commands;               // command and plan revisions
+    std::vector<Command> commands;               // command, plan and branch-merge revisions
     std::optional<std::string> target;           // undo, redo, rollback: the revision undone, redone or rolled back
-    std::vector<model::DiffEntry> diff;          // against the parent revision
+    std::vector<model::DiffEntry> diff;          // against the first parent
     model::Document document;
+    // Branch commits: the branch committed on. Merges: the branch merged.
+    std::optional<BranchId> branch;
 };
 
 // "<type>:<id>"
@@ -64,12 +77,14 @@ class History {
 public:
     History(model::Document initial, std::string actor, std::string time);
 
-    const Revision& head() const noexcept { return revisions_.back(); }
+    // Main's head.
+    const Revision& head() const noexcept { return revisions_[mainHead_]; }
     const Revision* find(std::string_view id) const noexcept;
+    // Every revision in commit order, branch revisions included.
     const std::vector<Revision>& revisions() const noexcept { return revisions_; }
 
-    // Applies commands as one revision (cause command for one, plan for a
-    // transaction marked as a plan). Clears the redo stack.
+    // Applies commands as one revision on main (cause command for one, plan
+    // for a transaction marked as a plan). Clears the redo stack.
     const Revision& commit(std::vector<Command> commands, std::string actor, std::string time,
                            Cause cause = Cause::command);
 
@@ -102,13 +117,61 @@ public:
     // document.
     const Revision& rollback(std::string_view planRevisionId, std::string actor, std::string time);
 
+    // Opens a proposal branch at baseId, which must be reachable from main's
+    // head (not_found for an unknown revision, invalid_params otherwise).
+    BranchId branch(std::string_view baseId);
+    // Commits onto an open branch (not_found otherwise); cause command or plan.
+    const Revision& commitOn(const BranchId& branchId, std::vector<Command> commands, std::string actor,
+                             std::string time, Cause cause = Cause::command);
+    // Merges an open branch into main (see the header comment). Throws
+    // not_found, empty_transaction (no commits on the branch) or
+    // branch_conflict listing the entities ("<type>:<id>") main changed since
+    // the base that the branch also wrote, or that are among the guarded
+    // entities (a proposed plan's read and write sets); nothing changes then.
+    const Revision& merge(const BranchId& branchId, std::string actor, std::string time,
+                          const std::vector<model::EntityRef>& guarded = {});
+    // Closes an open branch; its revisions stay. Throws not_found.
+    void discard(const BranchId& branchId);
+    // Open branches in creation order.
+    std::vector<BranchId> branches() const;
+    bool isOpen(const BranchId& branchId) const noexcept;
+    // The branch's newest revision (its base before its first commit). Throws not_found.
+    const Revision& branchHead(const BranchId& branchId) const;
+    // True when the revision is main's head or an ancestor of it through any parent.
+    bool reachable(std::string_view id) const;
+
+    // Replay (siann-session): a branch commit recorded with its branch and
+    // parent, and a merge recorded with its parents and commands. Neither
+    // opens a branch; later branch ids continue after the highest replayed one.
+    const Revision& commitOnParent(const BranchId& branchId, std::string_view parentId, std::vector<Command> commands,
+                                   std::string actor, std::string time, Cause cause);
+    const Revision& mergeReplay(const std::vector<std::string>& parents, std::vector<Command> commands,
+                                std::string actor, std::string time, std::optional<BranchId> branchId);
+
 private:
-    const Revision& append(Revision revision);
+    struct OpenBranch {
+        BranchId id;
+        std::size_t base = 0;
+        std::size_t tip = 0;
+        std::vector<std::size_t> commits;
+    };
+
+    const Revision& append(Revision revision, std::vector<std::size_t> parents);
     std::size_t indexOf(std::string_view id) const;
+    OpenBranch& requireBranch(const BranchId& branchId);
+    const OpenBranch& requireBranch(const BranchId& branchId) const;
+    const Revision& appendBranchCommit(std::size_t parent, const BranchId& branchId, std::vector<Command> commands,
+                                       std::string actor, std::string time, Cause cause);
+    const Revision& appendMerge(std::size_t branchTip, std::vector<Command> commands, model::Document merged,
+                                std::string actor, std::string time, std::optional<BranchId> branchId);
+    void noteBranchId(const BranchId& branchId);
 
     std::vector<Revision> revisions_;
-    std::vector<std::size_t> undoStack_;  // indexes of command and plan revisions
+    std::size_t mainHead_ = 0;
+    std::vector<std::size_t> undoStack_;  // indexes of command, plan, rollback and merge revisions on main
     std::vector<std::size_t> redoStack_;
+    std::vector<OpenBranch> branches_;
+    std::uint64_t nextBranch_ = 1;
     BeforePublish beforePublish_;
 };
 

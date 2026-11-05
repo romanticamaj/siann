@@ -469,6 +469,7 @@ const Plan& PlanStore::reject(std::string_view planHashText, std::string rejecte
         throw CommandError("invalid_state", "a plan that is " + std::string(planStateName(plan.state)) +
                                                 " cannot be rejected");
     }
+    requireNotProposed(planHashText);
     plan.state = PlanState::rejected;
     plan.rejectedBy = std::move(rejectedBy);
     plan.rejectedAt = std::move(time);
@@ -491,6 +492,7 @@ const Revision& PlanStore::apply(const History& history, std::string_view planHa
         throw CommandError("invalid_state", "only an approved plan can be applied; this one is " +
                                                 std::string(planStateName(plan.state)));
     }
+    requireNotProposed(planHashText);
     requireFresh(history, plan);
     const Revision& revision = commit(plan.steps, std::move(actor), std::move(time));
     plan.state = PlanState::applied;
@@ -516,6 +518,70 @@ const Revision& PlanStore::rollback(std::string_view planHashText, std::string a
     const Revision& revision = rollbackRevision(*plan.appliedRevision, std::move(actor), std::move(time));
     plan.state = PlanState::rolled_back;
     return revision;
+}
+
+void PlanStore::requireNotProposed(std::string_view planHashText) const {
+    if (const std::optional<BranchId> branchId = proposalBranch(planHashText)) {
+        throw CommandError("invalid_state", "the plan is proposed on branch " + *branchId +
+                                                "; merge or discard the branch first");
+    }
+}
+
+BranchId PlanStore::propose(std::string_view planHashText, const Propose& open) {
+    const Plan& plan = require(planHashText);
+    if (plan.state != PlanState::approved) {
+        throw CommandError("invalid_state", "only an approved plan can be proposed; this one is " +
+                                                std::string(planStateName(plan.state)));
+    }
+    requireNotProposed(planHashText);
+    BranchId branchId = open(plan);
+    proposals_[branchId] = *plan.hashText;
+    return branchId;
+}
+
+std::optional<BranchId> PlanStore::proposalBranch(std::string_view planHashText) const {
+    for (const auto& [branchId, planHashKey] : proposals_) {
+        if (planHashKey == planHashText) {
+            return branchId;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> PlanStore::proposedPlan(const BranchId& branchId) const {
+    const auto it = proposals_.find(branchId);
+    return it == proposals_.end() ? std::nullopt : std::optional<std::string>{it->second};
+}
+
+std::vector<EntityRef> PlanStore::guardedEntities(const BranchId& branchId) const {
+    std::vector<EntityRef> refs;
+    const auto it = proposals_.find(branchId);
+    if (it == proposals_.end()) {
+        return refs;
+    }
+    const Plan& plan = plans_.find(it->second)->second;
+    for (const EntitySnapshot& entry : plan.readSet) {
+        refs.push_back(entry.ref);
+    }
+    for (const EntitySnapshot& entry : plan.writeSet) {
+        refs.push_back(entry.ref);
+    }
+    return refs;
+}
+
+void PlanStore::landProposal(const BranchId& branchId, const std::string& revisionId) {
+    const auto it = proposals_.find(branchId);
+    if (it == proposals_.end()) {
+        return;
+    }
+    Plan& plan = plans_.find(it->second)->second;
+    plan.state = PlanState::applied;
+    plan.appliedRevision = revisionId;
+    proposals_.erase(it);
+}
+
+void PlanStore::withdrawProposal(const BranchId& branchId) {
+    proposals_.erase(branchId);
 }
 
 }  // namespace siann::command

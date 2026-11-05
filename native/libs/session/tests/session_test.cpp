@@ -1,9 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <random>
 #include <string>
+#include <vector>
 
+#include "siann/hash/jcs.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
@@ -79,6 +83,16 @@ void expectSameHistory(const Session& a, const Session& b) {
         CHECK(ra[i].envelope.time == rb[i].envelope.time);
         CHECK(ra[i].target == rb[i].target);
     }
+}
+
+template <typename Action>
+std::string errorCodeOf(Action action) {
+    try {
+        action();
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "no error";
 }
 
 }  // namespace
@@ -524,4 +538,257 @@ TEST_CASE("Rejecting a plan through Session leaves the journal unchanged", "[ses
     CHECK(session.rejectPlan(hash, "user", "t2", "no").state == siann::command::PlanState::rejected);
     CHECK_THROWS_AS(session.applyPlan(hash, "agent", "t3"), CommandError);
     CHECK(journalOf(dir.bundle()) == before);
+}
+
+// Proposal branches in the journal (architecture spec, "Revision DAG — single
+// history" and "Journal as write-ahead log", decisions of 2026-11-05).
+
+TEST_CASE("Branch revisions and the merge are journaled with their parents and replay on open",
+          "[session][branch]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1")}, "user", "t1");
+        const auto b = session.branch(session.history().head().envelope.id);
+        session.commitOn(b, {addTrack("trk_2")}, "agent", "t2");
+        session.commitOn(b, {setGain("trk_2", -600)}, "agent", "t3", Cause::plan);
+        const auto& merged = session.merge(b, "user", "t4");
+        CHECK(merged.envelope.parents == std::vector<std::string>{"r2", "r4"});
+        CHECK(session.lastSeq() == 5);
+    }
+    const auto scan = scanJournal(journalOf(dir.bundle()));
+    REQUIRE(scan.records.size() == 5);
+    CHECK_FALSE(scan.records[1].branch.has_value());
+    CHECK(scan.records[2].branch == std::optional<std::string>{"p1"});
+    CHECK(scan.records[3].branch == std::optional<std::string>{"p1"});
+    CHECK(scan.records[3].envelope.parents == std::vector<std::string>{"r3"});
+    CHECK(scan.records[4].envelope.cause == Cause::branchMerge);
+    CHECK(scan.records[4].envelope.parents == std::vector<std::string>{"r2", "r4"});
+    CHECK(scan.records[4].commands.size() == 2);
+    CHECK(journalOf(dir.bundle()).find("\"cause\":\"branch-merge\"") != std::string::npos);
+
+    OpenReport report;
+    Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.recordsReplayed == 5);
+    CHECK(reopened.history().head().envelope.id == "r5");
+    CHECK(reopened.history().head().document.track("trk_2")->gain.milliDb == -600);
+    for (std::size_t i = 0; i < scan.records.size(); ++i) {
+        INFO("record " << i);
+        const auto& revision = reopened.history().revisions()[i];
+        CHECK(revision.envelope.id == scan.records[i].envelope.id);
+        CHECK(revision.envelope.parents == scan.records[i].envelope.parents);
+        CHECK(revision.envelope.cause == scan.records[i].envelope.cause);
+        CHECK(revision.envelope.documentHash == scan.records[i].envelope.documentHash);
+        CHECK(revision.branch == scan.records[i].branch);
+    }
+    // The merge stays undoable in one step after the reopen.
+    CHECK(reopened.undo("user", "t5").envelope.documentHash == reopened.history().find("r2")->envelope.documentHash);
+    Session again = Session::open(dir.bundle());
+    expectSameHistory(reopened, again);
+}
+
+TEST_CASE("A discarded branch's revisions survive in the journal and are unreachable after reopen",
+          "[session][branch]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1")}, "user", "t1");
+        const auto b = session.branch("r2");
+        session.commitOn(b, {addTrack("trk_2")}, "agent", "t2");
+        session.discard(b);
+        session.commit({addTrack("trk_3")}, "user", "t3");  // parent r2, like the branch commit
+        const auto open = session.branch("r4");             // open proposals do not survive a restart
+        session.commitOn(open, {setGain("trk_3", -300)}, "agent", "t4");
+        CHECK(session.history().branches() == std::vector<std::string>{open});
+    }
+    OpenReport report;
+    Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.recordsReplayed == 5);
+    const auto& history = reopened.history();
+    CHECK(history.head().envelope.id == "r4");
+    CHECK(history.head().document.track("trk_2") == nullptr);
+    CHECK(history.head().document.track("trk_3") != nullptr);
+    REQUIRE(history.find("r3") != nullptr);
+    CHECK(history.find("r3")->document.track("trk_2") != nullptr);
+    CHECK_FALSE(history.reachable("r3"));
+    CHECK_FALSE(history.reachable("r5"));
+    CHECK(history.reachable("r4"));
+    CHECK(history.branches().empty());
+    // Undo on main undoes trk_3, not a branch commit.
+    CHECK(reopened.undo("user", "t5").target == std::optional<std::string>{"r4"});
+    // New proposals continue after the recorded ids.
+    CHECK(reopened.branch("r2") == "p3");
+}
+
+TEST_CASE("A checkpoint written while a branch is open verifies on reopen", "[session][branch][recovery]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        // seq 2 .. kCheckpointInterval - 1 on main, then the branch commit is seq kCheckpointInterval.
+        for (std::int64_t i = 2; i < Session::kCheckpointInterval; ++i) {
+            session.commit({addTrack("trk_" + std::to_string(i))}, "user", "t");
+        }
+        const auto b = session.branch(session.history().head().envelope.id);
+        session.commitOn(b, {addTrack("trk_branch")}, "agent", "t");
+        REQUIRE(session.lastSeq() == Session::kCheckpointInterval);
+    }
+    const auto checkpoint = siann::json::parse(siann::io::readFile(dir.bundle() / "session.json"));
+    CHECK(checkpoint.find("coversSeq")->asString() == std::to_string(Session::kCheckpointInterval));
+    const std::string mainHead = "r" + std::to_string(Session::kCheckpointInterval - 1);
+    CHECK(checkpoint.find("head")->find("id")->asString() == mainHead);
+
+    OpenReport report;
+    Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.checkpointVerified);
+    CHECK(reopened.history().head().envelope.id == mainHead);
+
+    SECTION("a checkpoint naming a revision whose document differs is still checkpoint_mismatch") {
+        std::string text = siann::io::readFile(dir.bundle() / "session.json");
+        text.replace(text.find("\"name\":\"trk_2\""), 14, "\"name\":\"trk_X\"");
+        siann::io::writeFileAtomic(dir.bundle() / "session.json", text);
+        try {
+            (void)Session::open(dir.bundle());
+            FAIL("expected checkpoint_mismatch");
+        } catch (const SessionError& error) {
+            CHECK(error.code() == "checkpoint_mismatch");
+        }
+    }
+}
+
+TEST_CASE("A journal with an unknown cause is still corrupt_record", "[session][branch][recovery]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1")}, "user", "t1");
+    }
+    const std::string journal = journalOf(dir.bundle());
+    const auto firstEnd = journal.find('\n') + 1;
+    std::string second = journal.substr(firstEnd, journal.size() - firstEnd - 1);
+    second.replace(second.find("\"cause\":\"command\""), 17, "\"cause\":\"rebase\"");
+    // A valid checksum, so only the cause is wrong.
+    siann::json::Object members;
+    const siann::json::Value parsed = siann::json::parse(second);
+    for (const auto& member : parsed.asObject()) {
+        if (member.first != "checksum") {
+            members.push_back(member);
+        }
+    }
+    const std::string checksum = siann::jcs::sha256Jcs(siann::json::Value(members));
+    members.emplace_back("checksum", siann::json::Value(checksum));
+    const std::string resealed = siann::jcs::canonicalize(siann::json::Value(std::move(members)));
+    try {
+        (void)decodeRecord(resealed);
+        FAIL("expected corrupt_record");
+    } catch (const SessionError& error) {
+        CHECK(error.code() == "corrupt_record");
+    }
+
+    writeJournal(dir.bundle(), journal.substr(0, firstEnd) + resealed + "\n");
+    OpenReport report;
+    const Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.recordsReplayed == 1);
+    REQUIRE(report.tailError.has_value());
+    CHECK(report.tailError->find("corrupt_record") != std::string::npos);
+}
+
+TEST_CASE("An approved plan applies onto a proposal branch from its base revision", "[session][branch][plan]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600), addTrack("trk_2")}, {}, "r2").hashText;
+    CHECK(errorCodeOf([&] { (void)session.proposePlan(hash, "a", "t"); }) == "invalid_state");  // not approved
+    CHECK(errorCodeOf([&] { (void)session.proposePlan("sha256:00", "a", "t"); }) == "not_found");
+    session.approvePlan(hash, "user", "t2");
+    const std::int64_t before = session.lastSeq();
+
+    const auto b = session.proposePlan(hash, "agent", "t3");
+    CHECK(session.history().branches() == std::vector<std::string>{b});
+    CHECK(session.lastSeq() == before + 1);
+    CHECK(session.history().head().envelope.id == "r2");  // main is untouched
+    const auto proposed = session.history().branchHead(b);
+    CHECK(proposed.envelope.cause == Cause::plan);
+    CHECK(proposed.envelope.parents == std::vector<std::string>{"r2"});
+    CHECK(proposed.branch == std::optional<std::string>{b});
+    CHECK(proposed.commands.size() == 2);
+    // A proposal is not an apply: the plan stays approved and names its branch.
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+    CHECK(session.plans().proposalBranch(hash) == std::optional<std::string>{b});
+    CHECK(session.plans().proposedPlan(b) == std::optional<std::string>{hash});
+
+    // While proposed, the plan cannot also be applied on main, proposed again or rejected.
+    const std::size_t revisions = session.history().revisions().size();
+    CHECK(errorCodeOf([&] { (void)session.applyPlan(hash, "agent", "t4"); }) == "invalid_state");
+    CHECK(errorCodeOf([&] { (void)session.proposePlan(hash, "agent", "t4"); }) == "invalid_state");
+    CHECK(errorCodeOf([&] { (void)session.rejectPlan(hash, "user", "t4", "no"); }) == "invalid_state");
+    CHECK(session.history().revisions().size() == revisions);
+    CHECK(session.history().branches() == std::vector<std::string>{b});
+
+    // Merging the branch lands the plan: applied, at the merge revision.
+    const std::string mergedId = session.merge(b, "user", "t5").envelope.id;
+    CHECK(session.history().head().envelope.documentHash == proposed.envelope.documentHash);
+    const auto* landed = session.plans().find(hash);
+    CHECK(landed->state == siann::command::PlanState::applied);
+    CHECK(landed->appliedRevision == std::optional<std::string>{mergedId});
+    CHECK_FALSE(session.plans().proposalBranch(hash).has_value());
+    CHECK(errorCodeOf([&] { (void)session.applyPlan(hash, "agent", "t6"); }) == "invalid_state");
+}
+
+TEST_CASE("Discarding a proposed plan's branch leaves the plan approved", "[session][branch][plan]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1")}, "user", "t1");
+    const std::string hash = *session.submitPlan({setGain("trk_1", -600)}, {}, "r2").hashText;
+    session.approvePlan(hash, "user", "t2");
+    const auto b = session.proposePlan(hash, "agent", "t3");
+
+    session.discard(b);
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+    CHECK_FALSE(session.plans().proposalBranch(hash).has_value());
+    CHECK_FALSE(session.plans().proposedPlan(b).has_value());
+    // It can be proposed again, or applied on main.
+    const auto again = session.proposePlan(hash, "agent", "t4");
+    CHECK(again != b);
+    session.discard(again);
+    const std::string appliedId = session.applyPlan(hash, "agent", "t5").envelope.id;
+    CHECK(session.plans().find(hash)->appliedRevision == std::optional<std::string>{appliedId});
+}
+
+TEST_CASE("Merging a proposed plan is refused when main changed an entity of its read set",
+          "[session][branch][plan]") {
+    using siann::model::EntityRef;
+    using siann::model::EntityType;
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_1"), addTrack("trk_2")}, "user", "t1");
+    // The plan writes trk_1 and declares that it read trk_2.
+    const std::string hash =
+        *session.submitPlan({setGain("trk_1", -600)}, {EntityRef{EntityType::track, "trk_2"}}, "r2").hashText;
+    session.approvePlan(hash, "user", "t2");
+    const auto b = session.proposePlan(hash, "agent", "t3");
+
+    session.commit({setGain("trk_2", -1200)}, "user", "t4");  // main changes the read entity
+    const std::int64_t seq = session.lastSeq();
+    const std::string mainHead = session.history().head().envelope.id;
+    try {
+        session.merge(b, "user", "t5");
+        FAIL("expected branch_conflict");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "branch_conflict");
+        CHECK(std::string(error.what()).find("track:trk_2") != std::string::npos);
+    }
+    CHECK(session.lastSeq() == seq);
+    CHECK(session.history().head().envelope.id == mainHead);
+    CHECK(session.plans().find(hash)->state == siann::command::PlanState::approved);
+    CHECK(session.plans().proposalBranch(hash) == std::optional<std::string>{b});
+
+    SECTION("a branch not made from a plan has no read set to guard") {
+        const auto plain = session.branch("r2");
+        session.commitOn(plain, {setGain("trk_1", -900)}, "agent", "t6");
+        CHECK(session.merge(plain, "user", "t7").envelope.cause == Cause::branchMerge);
+    }
+    SECTION("once main undoes its change the merge lands the plan") {
+        session.undo("user", "t6");
+        const std::string mergedId = session.merge(b, "user", "t7").envelope.id;
+        CHECK(session.plans().find(hash)->appliedRevision == std::optional<std::string>{mergedId});
+    }
 }
