@@ -670,6 +670,44 @@ TEST_CASE("Merging when main changed an entity the branch wrote is refused with 
     }
 }
 
+TEST_CASE("A merge whose commands reach entities the branch never wrote on main's head is refused",
+          "[history][branch]") {
+    // track.remove cascades to every clip on the track. On main the track has
+    // a clip that did not exist at the base: re-running the branch's remove on
+    // main's head would delete main's clip, an entity outside the write set.
+    History h = withTwoTracks();
+    h.commit({cmd(R"({"op":"media.add","mediaId":"med_1","contentHash":"sha256:)" + std::string(64, 'a') +
+                  R"(","format":"wav","channels":2,"sampleRate":48000,"frames":"48000"})")},
+             "a", "t3");
+    const BranchId b = h.branch("r4");
+    h.commitOn(b, {cmd(R"({"op":"track.remove","trackId":"trk_a"})")}, "agent", "t4");
+    h.commit({cmd(R"({"op":"clip.place","clipId":"clp_main","trackId":"trk_a","mediaId":"med_1",)"
+                  R"("position":{"domain":"audio","value":"0"},"sourceStart":"0","length":"4800"})")},
+             "user", "t5");
+    REQUIRE(h.head().document.clip("clp_main") != nullptr);
+    const std::string mainHead = h.head().envelope.id;
+    const std::size_t count = h.revisions().size();
+
+    try {
+        h.merge(b, "user", "t6");
+        FAIL("expected branch_conflict");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "branch_conflict");
+        CHECK(std::string(error.what()).find("clip:clp_main") != std::string::npos);
+    }
+    CHECK(h.head().envelope.id == mainHead);
+    CHECK(h.head().document.clip("clp_main") != nullptr);
+    CHECK(h.revisions().size() == count);
+    CHECK(h.branches() == std::vector<BranchId>{b});
+
+    // Main removes its clip again: the merge reaches only the branch's entities.
+    h.undo("user", "t7");
+    const Revision& merged = h.merge(b, "user", "t8");
+    CHECK(merged.document.track("trk_a") == nullptr);
+    CHECK(diffEntities(merged) ==
+          std::vector<EntityRef>{EntityRef{EntityType::root, "root"}, EntityRef{EntityType::track, "trk_a"}});
+}
+
 TEST_CASE("Merging also guards the entities passed in, as a proposed plan's read set", "[history][branch]") {
     History h = withTwoTracks();
     const BranchId b = h.branch("r3");
