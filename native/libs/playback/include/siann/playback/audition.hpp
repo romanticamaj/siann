@@ -58,7 +58,8 @@ public:
     void onBranchCommitted(const command::BranchId& branchId);
 
     // Merges a proposal into main (session.merge); if it was heard, main is
-    // heard at once and gestures commit onto main again. Throws AuditionError
+    // heard at once and gestures commit onto main again; if main was heard,
+    // the engine follows main's new head. Throws AuditionError
     // audition_not_found, or the merge's CommandError (branch_conflict, ...),
     // which changes nothing: the proposal stays heard.
     const command::Revision& merge(const command::BranchId& branchId, std::string actor, std::string time);

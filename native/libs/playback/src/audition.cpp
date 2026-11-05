@@ -64,6 +64,8 @@ const command::Revision& Auditioner::merge(const command::BranchId& branchId, st
     const command::Revision& merged = session_.merge(branchId, std::move(actor), std::move(time));
     if (heard_ == branchId) {
         hear(Side::main);
+    } else {
+        onMainCommitted();  // main moved: follow it when main is heard
     }
     return merged;
 }
