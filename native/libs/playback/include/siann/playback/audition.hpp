@@ -12,6 +12,7 @@
 // main commit and onBranchCommitted() after a branch commit. Fader gestures
 // that end while a proposal is heard commit onto its branch.
 
+#include <cstddef>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -22,16 +23,26 @@
 
 namespace siann::playback {
 
+// What a budget refusal needed against which budget.
+struct AuditionBudgetDetail {
+    std::string resource;  // "memory" (bytes) or "cpu" (graph nodes)
+    std::size_t needed = 0;
+    std::size_t budget = 0;
+};
+
 class AuditionError : public std::runtime_error {
 public:
-    AuditionError(std::string code, const std::string& message);
+    AuditionError(std::string code, const std::string& message, std::optional<AuditionBudgetDetail> detail = {});
 
     // Stable codes: audition_budget_exceeded (the reason names what the switch
-    // needs against the budget), audition_not_found (no open proposal).
+    // needs against the budget, and detail() gives it as data),
+    // audition_not_found (no open proposal).
     const std::string& code() const noexcept { return code_; }
+    const std::optional<AuditionBudgetDetail>& detail() const noexcept { return detail_; }
 
 private:
     std::string code_;
+    std::optional<AuditionBudgetDetail> detail_;
 };
 
 class Auditioner {

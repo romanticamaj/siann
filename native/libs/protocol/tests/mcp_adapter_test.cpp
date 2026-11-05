@@ -1,0 +1,363 @@
+// The MCP adapter (docs/schemas/protocol-mcp-v0.md) through the thread-free
+// seam ProtocolServer::handleMcp: the response arrives at once or from
+// pump() on the test thread.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "support/protocol_fixture.hpp"
+#include "siann/command/command.hpp"
+#include "siann/protocol/about.hpp"
+
+using namespace siann;
+using namespace siann::protocol::testing;
+using protocol::HttpRequest;
+using protocol::HttpResponse;
+using protocol::McpScope;
+using protocol::ServerOptions;
+
+namespace {
+
+const std::vector<std::string> kTools = {
+    "list_commands",  "describe_capabilities", "inspect_session", "submit_plan",   "plan_status",
+    "approve_plan",   "reject_plan",           "apply_plan",      "rollback_plan", "propose_plan",
+    "audition",       "merge_proposal",        "discard_proposal", "execute",      "job_status",
+    "render",         "open_session",          "save_session",
+};
+
+// An MCP client over handleMcp.
+struct Mcp {
+    explicit Mcp(Fixture& fixture) : f(fixture) {}
+
+    HttpRequest request(const std::string& body, bool withSession = true) const {
+        HttpRequest r{"POST", "/v0/mcp", {{"authorization", "Bearer " + f.server.token()}}, body};
+        r.headers["content-type"] = "application/json";
+        if (withSession && !sessionHeader.empty()) {
+            r.headers["mcp-session-id"] = sessionHeader;
+        }
+        return r;
+    }
+
+    HttpResponse send(const HttpRequest& r) {
+        std::optional<HttpResponse> got;
+        f.server.handleMcp(r, [&got](HttpResponse response) { got = std::move(response); });
+        if (!got) {
+            f.server.pump();
+        }
+        REQUIRE(got.has_value());
+        return *got;
+    }
+
+    HttpResponse post(const std::string& body, bool withSession = true) { return send(request(body, withSession)); }
+
+    static std::string rpc(const Value& id, const std::string& method, Value params = Value(Object{})) {
+        return jcs::canonicalize(Value(Object{{"jsonrpc", Value("2.0")},
+                                              {"id", id},
+                                              {"method", Value(method)},
+                                              {"params", std::move(params)}}));
+    }
+
+    Value call(const Value& id, const std::string& method, Value params = Value(Object{})) {
+        const HttpResponse response = post(rpc(id, method, std::move(params)));
+        INFO(response.body);
+        REQUIRE(response.status == 200);
+        CHECK(response.contentType == "application/json");
+        return json::parse(response.body);
+    }
+
+    // tools/call; returns the JSON-RPC result.
+    Value tool(const std::string& name, Value arguments = Value(Object{})) {
+        const Value response = call(Value(++nextId), "tools/call",
+                                    Value(Object{{"name", Value(name)}, {"arguments", std::move(arguments)}}));
+        INFO(canonical(response));
+        return at(response, "result");
+    }
+
+    // A successful tool call's structured result.
+    Value ok(const std::string& name, Value arguments = Value(Object{})) {
+        const Value result = tool(name, std::move(arguments));
+        INFO(canonical(result));
+        REQUIRE_FALSE(at(result, "isError").asBool());
+        return at(result, "structuredContent");
+    }
+
+    // A failed tool call's error object.
+    Value error(const std::string& name, Value arguments = Value(Object{})) {
+        const Value result = tool(name, std::move(arguments));
+        INFO(canonical(result));
+        REQUIRE(at(result, "isError").asBool());
+        const Value& content = at(result, "content").asArray().at(0);
+        const Value& structured = at(at(result, "structuredContent"), "error");
+        CHECK(json::parse(at(content, "text").asString()).kind() == Value::Kind::object);
+        CHECK(at(content, "text").asString() == canonical(structured));
+        return structured;
+    }
+
+    void initialize() {
+        const HttpResponse response =
+            post(rpc(Value(0), "initialize",
+                     Value(Object{{"protocolVersion", Value("2025-06-18")},
+                                  {"capabilities", Value(Object{})},
+                                  {"clientInfo", Value(Object{{"name", Value("test")}, {"version", Value("1")}})}})),
+                 false);
+        REQUIRE(response.status == 200);
+        const auto header = response.headers.find("Mcp-Session-Id");
+        REQUIRE(header != response.headers.end());
+        sessionHeader = header->second;
+    }
+
+    Fixture& f;
+    std::string sessionHeader;
+    int nextId = 100;
+};
+
+ServerOptions trusted() {
+    ServerOptions options = manualOptions();
+    options.mcpScope = McpScope::trusted;
+    return options;
+}
+
+Value commandsArray() {
+    Array out;
+    for (const std::string& name : command::commandNames()) {
+        out.push_back(Value(name));
+    }
+    return Value(std::move(out));
+}
+
+}  // namespace
+
+TEST_CASE("initialize assigns an Mcp-Session-Id and reports the build", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    const HttpResponse response =
+        mcp.post(Mcp::rpc(Value(1), "initialize", Value(Object{{"protocolVersion", Value("2025-06-18")}})), false);
+    REQUIRE(response.status == 200);
+    const auto header = response.headers.find("Mcp-Session-Id");
+    REQUIRE(header != response.headers.end());
+    CHECK(header->second.rfind("mcp_", 0) == 0);
+    CHECK(header->second.size() == 4 + 32);
+    const Value body = json::parse(response.body);
+    CHECK(at(body, "jsonrpc").asString() == "2.0");
+    CHECK(at(body, "id").asNumber() == 1);
+    const Value& result = at(body, "result");
+    CHECK(at(result, "protocolVersion").asString() == "2025-06-18");
+    CHECK(at(at(result, "capabilities"), "tools").kind() == Value::Kind::object);
+    CHECK(at(at(result, "serverInfo"), "name").asString() == protocol::buildInfo().name);
+    CHECK(at(at(result, "serverInfo"), "version").asString() == protocol::buildInfo().version);
+
+    // A second initialize gets another session.
+    const HttpResponse again = mcp.post(Mcp::rpc(Value(2), "initialize", Value(Object{})), false);
+    CHECK(again.headers.at("Mcp-Session-Id") != header->second);
+}
+
+TEST_CASE("requests need a known Mcp-Session-Id; notifications get 202", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    CHECK(mcp.post(Mcp::rpc(Value(1), "tools/list"), false).status == 400);
+    mcp.sessionHeader = "mcp_" + std::string(32, '0');
+    CHECK(mcp.post(Mcp::rpc(Value(1), "tools/list")).status == 404);
+
+    mcp.initialize();
+    const HttpResponse note = mcp.post(R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
+    CHECK(note.status == 202);
+    CHECK(note.body.empty());
+    CHECK(at(mcp.call(Value("p"), "ping"), "result").asObject().empty());
+}
+
+TEST_CASE("the bearer token, the Origin and the HTTP method are checked", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    HttpRequest r = mcp.request(Mcp::rpc(Value(1), "initialize"), false);
+    r.headers.erase("authorization");
+    CHECK(mcp.send(r).status == 401);
+    CHECK(f.transport.http(r).status == 401);
+    r = mcp.request(Mcp::rpc(Value(1), "initialize"), false);
+    r.headers["origin"] = "http://evil.example";
+    CHECK(mcp.send(r).status == 403);
+    r = mcp.request("", false);
+    r.method = "GET";
+    CHECK(mcp.send(r).status == 405);
+}
+
+TEST_CASE("JSON-RPC errors: parse error, bad envelope, unknown method, unknown tool", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const auto code = [&](const std::string& body) {
+        const HttpResponse response = mcp.post(body);
+        INFO(response.body);
+        REQUIRE(response.status == 200);
+        const Value parsed = json::parse(response.body);
+        return at(at(parsed, "error"), "code").asNumber();
+    };
+    CHECK(code("{not json") == -32700);
+    CHECK(code(R"([1,2])") == -32600);
+    CHECK(code(R"({"jsonrpc":"1.0","id":1,"method":"ping"})") == -32600);
+    CHECK(code(R"({"jsonrpc":"2.0","id":{},"method":"ping"})") == -32600);
+    CHECK(code(R"({"jsonrpc":"2.0","id":1,"method":"resources/list"})") == -32601);
+    CHECK(code(Mcp::rpc(Value(2), "tools/call", Value(Object{{"name", Value("nope")}}))) == -32602);
+    CHECK(code(Mcp::rpc(Value(3), "tools/call",
+                        Value(Object{{"name", Value("list_commands")}, {"arguments", Value(3)}}))) == -32602);
+}
+
+TEST_CASE("tools/list returns the 18 tools with input schemas", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    std::vector<std::string> names;
+    for (const Value& tool : tools.asArray()) {
+        names.push_back(at(tool, "name").asString());
+        CHECK_FALSE(at(tool, "description").asString().empty());
+        const Value& schema = at(tool, "inputSchema");
+        CHECK(at(schema, "type").asString() == "object");
+        CHECK(at(schema, "properties").kind() == Value::Kind::object);
+    }
+    CHECK(names == kTools);
+}
+
+TEST_CASE("list_commands returns the registry as text and structured content", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value result = mcp.tool("list_commands");
+    CHECK_FALSE(at(result, "isError").asBool());
+    const Value expected = Value(Object{{"commands", commandsArray()}});
+    const Value& content = at(result, "content").asArray().at(0);
+    CHECK(at(content, "type").asString() == "text");
+    CHECK(at(content, "text").asString() == canonical(expected));
+    CHECK(canonical(at(result, "structuredContent")) == canonical(expected));
+
+    const Value capabilities = mcp.ok("describe_capabilities");
+    CHECK(at(capabilities, "scope").asString() == "propose");
+    CHECK(at(mcp.ok("inspect_session"), "revision").asString() == "r1");
+}
+
+TEST_CASE("a trusted tool under the default propose scope is scope_denied and runs nothing", "[protocol][mcp]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value plan = mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{trackAdd("trk_a")})}}));
+    const std::string hash = at(plan, "hash").asString();
+
+    for (const auto& [name, arguments] :
+         std::vector<std::pair<std::string, Value>>{{"approve_plan", Value(Object{{"plan", Value(hash)}})},
+                                                    {"apply_plan", Value(Object{{"plan", Value(hash)}})},
+                                                    {"rollback_plan", Value(Object{{"plan", Value(hash)}})},
+                                                    {"merge_proposal", Value(Object{{"branch", Value("p1")}})},
+                                                    {"execute", Value(Object{{"commands", Value(Array{trackAdd("x")})}})},
+                                                    {"open_session", Value(Object{{"path", Value("x")}})}}) {
+        INFO(name);
+        CHECK(at(mcp.error(name, arguments), "code").asString() == "scope_denied");
+    }
+    CHECK(at(mcp.ok("plan_status", Value(Object{{"plan", Value(hash)}})), "state").asString() == "validated");
+    CHECK(f.session.history().revisions().size() == 1);
+
+    // Not cached: the same JSON-RPC id answers again from the scope check.
+    const std::string body = Mcp::rpc(Value(7), "tools/call",
+                                      Value(Object{{"name", Value("approve_plan")},
+                                                   {"arguments", Value(Object{{"plan", Value(hash)}})}}));
+    CHECK(mcp.post(body).body == mcp.post(body).body);
+    CHECK(at(mcp.ok("plan_status", Value(Object{{"plan", Value(hash)}})), "state").asString() == "validated");
+    // propose-scope tools that only read or branch work.
+    CHECK(at(mcp.ok("reject_plan", Value(Object{{"plan", Value(hash)}})), "state").asString() == "rejected");
+}
+
+TEST_CASE("under the trusted scope approve_plan and execute run", "[protocol][mcp]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const std::string hash =
+        at(mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{trackAdd("trk_a")})}})), "hash").asString();
+    CHECK(at(mcp.ok("approve_plan", Value(Object{{"plan", Value(hash)}})), "state").asString() == "approved");
+    CHECK(at(at(mcp.ok("apply_plan", Value(Object{{"plan", Value(hash)}})), "revision"), "cause").asString() ==
+          "plan");
+    CHECK(at(mcp.ok("describe_capabilities"), "scope").asString() == "trusted");
+}
+
+TEST_CASE("a retried JSON-RPC id returns the identical response and executes once", "[protocol][mcp]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const std::string body =
+        Mcp::rpc(Value(9), "tools/call",
+                 Value(Object{{"name", Value("execute")},
+                              {"arguments", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}})}}));
+    const HttpResponse first = mcp.post(body);
+    const HttpResponse second = mcp.post(body);
+    CHECK(first.status == 200);
+    CHECK(second.body == first.body);
+    CHECK(f.session.history().revisions().size() == 2);
+
+    // A string id "9" is another request.
+    const std::string other =
+        Mcp::rpc(Value("9"), "tools/call",
+                 Value(Object{{"name", Value("execute")},
+                              {"arguments", Value(Object{{"commands", Value(Array{trackAdd("trk_b")})}})}}));
+    CHECK(mcp.post(other).body != first.body);
+    CHECK(f.session.history().revisions().size() == 3);
+
+    // Another MCP session with the same id does not collide.
+    Mcp second_client(f);
+    second_client.initialize();
+    const std::string third =
+        Mcp::rpc(Value(9), "tools/call",
+                 Value(Object{{"name", Value("execute")},
+                              {"arguments", Value(Object{{"commands", Value(Array{trackAdd("trk_c")})}})}}));
+    CHECK(second_client.post(third).body != first.body);
+    CHECK(f.session.history().revisions().size() == 4);
+}
+
+TEST_CASE("a tool error is isError with the protocol error object and its data", "[protocol][mcp]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}}));
+    const Value gain = Value(Object{{"op", Value("track.set_gain")}, {"trackId", Value("trk_a")},
+                                    {"gainMilliDb", Value(-600)}});
+    const std::string hash = at(mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{gain})}})), "hash").asString();
+    const Value other = Value(Object{{"op", Value("track.set_gain")}, {"trackId", Value("trk_a")},
+                                     {"gainMilliDb", Value(-100)}});
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{other})}}));
+
+    const Value error = mcp.error("approve_plan", Value(Object{{"plan", Value(hash)}}));
+    CHECK(at(error, "code").asString() == "plan_stale");
+    CHECK_FALSE(at(error, "message").asString().empty());
+    CHECK(at(at(error, "data"), "plan").asString() == hash);
+    REQUIRE(at(at(error, "data"), "changedEntities").asArray().size() == 1);
+    CHECK(at(at(at(error, "data"), "changedEntities").asArray()[0], "ref").asString() == "track:trk_a");
+
+    // A failing command carries step.
+    const Value bad = mcp.error("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_z"), trackAdd("trk_z")})}}));
+    CHECK(at(bad, "code").asString() == "already_exists");
+    CHECK(at(bad, "step").asNumber() == 1);
+}
+
+TEST_CASE("every tool maps onto its protocol method", "[protocol][mcp]") {
+    // With no audition port, no openSession and an unknown job, each tool
+    // still reaches its method: the answer is that method's own error.
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const std::string none = "sha256:" + std::string(64, '0');
+    CHECK(at(mcp.error("plan_status", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("approve_plan", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("reject_plan", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("apply_plan", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("rollback_plan", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("propose_plan", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("audition", Value(Object{{"side", Value("main")}})), "code").asString() ==
+          "audition_unavailable");
+    CHECK(at(mcp.error("merge_proposal", Value(Object{{"branch", Value("p1")}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("discard_proposal", Value(Object{{"branch", Value("p1")}})), "code").asString() ==
+          "not_found");
+    CHECK(at(mcp.error("job_status", Value(Object{{"jobId", Value("job_1")}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("render", Value(Object{{"name", Value("a/b")}})), "code").asString() == "invalid_params");
+    CHECK(at(mcp.error("open_session", Value(Object{{"path", Value("x")}})), "code").asString() == "not_supported");
+    CHECK(at(mcp.ok("save_session"), "revision").asString() == "r1");
+}

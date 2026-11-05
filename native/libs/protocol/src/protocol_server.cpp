@@ -168,7 +168,7 @@ Value revisionJson(const command::Revision& revision) {
 }
 
 HttpResponse jsonResponse(int status, std::string body) {
-    return HttpResponse{status, "application/json", std::move(body)};
+    return HttpResponse{status, "application/json", std::move(body), {}};
 }
 
 std::string httpError(const std::string& code, const std::string& message) {
@@ -608,6 +608,27 @@ EventStream& ProtocolServer::events() noexcept {
 
 RealtimeChannel& ProtocolServer::realtime() noexcept {
     return impl_->realtime;
+}
+
+// Interface stubs for the m3-mcp tests; the implementation follows.
+std::string_view mcpScopeName(McpScope scope) noexcept {
+    return scope == McpScope::trusted ? "trusted" : "propose";
+}
+
+session::Session& ProtocolServer::session() noexcept {
+    return impl_->session;
+}
+
+void ProtocolServer::handleMcp(const HttpRequest&, std::function<void(HttpResponse)> complete) {
+    complete(jsonResponse(404, httpError("not_found", "no route for this method and path")));
+}
+
+std::size_t ProtocolServer::runJobs() {
+    return 0;
+}
+
+bool ProtocolServer::waitJob(const std::string&, std::chrono::milliseconds) {
+    return false;
 }
 
 }  // namespace siann::protocol

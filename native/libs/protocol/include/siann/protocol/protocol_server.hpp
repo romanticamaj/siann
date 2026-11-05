@@ -22,14 +22,17 @@
 // after the responses. Connections on kRealtimePath authenticate the same way
 // and then receive only binary meter frames.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "siann/protocol/audition_port.hpp"
 #include "siann/protocol/event_stream.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport.hpp"
@@ -39,6 +42,21 @@ namespace siann::protocol {
 
 // The Origin of the SIANN app (the Electron shell loads the UI from this scheme).
 inline constexpr std::string_view kAppOrigin = "siann://app";
+
+// The MCP path (docs/schemas/protocol-mcp-v0.md).
+inline constexpr std::string_view kMcpPath = "/v0/mcp";
+
+// MCP scopes v0 (spec, "Security rules", Scopes v0).
+enum class McpScope { propose, trusted };
+
+// "propose" or "trusted".
+std::string_view mcpScopeName(McpScope scope) noexcept;
+
+struct JobOptions {
+    // true: one worker thread runs the jobs (the offline-render thread).
+    // false: queued jobs wait for runJobs() on the caller's thread (tests).
+    bool workerThread = true;
+};
 
 struct ServerOptions {
     std::string host = "127.0.0.1";
@@ -59,6 +77,18 @@ struct ServerOptions {
     // Entities per session.sync chunk.
     std::size_t syncChunkEntities = 500;
     RealtimeOptions realtime{};
+    // MCP (docs/schemas/protocol-mcp-v0.md): the scope every MCP client gets,
+    // and how long the protocol thread waits for the command thread's answer.
+    McpScope mcpScope = McpScope::propose;
+    std::chrono::milliseconds mcpRequestTimeout{30'000};
+    // The engine host's auditioner; nullptr: audition.hear is audition_unavailable.
+    // Must outlive the server.
+    AuditionPort* auditionPort = nullptr;
+    // session.open: opens the bundle and returns the session to serve from now
+    // on (owned by the launcher, which rebinds its engine inside). Runs on the
+    // command thread. Empty: session.open is not_supported.
+    std::function<session::Session&(const std::filesystem::path&)> openSession;
+    JobOptions jobs{};
 };
 
 class ProtocolServer {
@@ -92,6 +122,22 @@ public:
     // (authenticated kRealtimePath connections), for the engine's publishers.
     EventStream& events() noexcept;
     RealtimeChannel& realtime() noexcept;
+
+    // The session served now (session.open replaces it). Command thread.
+    session::Session& session() noexcept;
+
+    // One MCP HTTP request (POST /v0/mcp, docs/schemas/protocol-mcp-v0.md)
+    // without blocking: `complete` runs with the response, at once when no
+    // method has to run, otherwise on the command thread when pump() handles
+    // the tool call. The transport's onHttp handler uses it and waits.
+    void handleMcp(const HttpRequest& request, std::function<void(HttpResponse)> complete);
+
+    // Jobs (render.start): with JobOptions::workerThread false, runs every
+    // queued job on the calling thread and returns how many ran.
+    std::size_t runJobs();
+    // Waits on the job's condition until it is done or failed; false on
+    // timeout or for an unknown id.
+    bool waitJob(const std::string& jobId, std::chrono::milliseconds timeout);
 
 private:
     struct Impl;

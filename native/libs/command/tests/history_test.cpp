@@ -860,3 +860,31 @@ TEST_CASE("Replaying branch, merge and discard reproduces revision ids, parents 
         CHECK(replayed.branch("r2") == "p3");
     }
 }
+
+// m3-mcp: a proposed plan lands through a branch-merge revision, and rolling
+// back the plan rolls back that revision (diff against its first parent).
+TEST_CASE("Rolling back a branch-merge revision creates an inverse revision", "[history][branch][rollback]") {
+    History h = withTwoTracks();
+    const Revision preMerge = h.head();
+    const BranchId b = h.branch(preMerge.envelope.id);
+    h.commitOn(b, {addTrack("trk_c"), setGain("trk_a", -600)}, "agent", "t3", Cause::plan);
+    const std::string mergedId = h.merge(b, "user", "t4").envelope.id;
+
+    const Revision& inverse = h.rollback(mergedId, "user", "t5");
+    CHECK(inverse.envelope.cause == Cause::rollback);
+    CHECK(inverse.target == std::optional<std::string>{mergedId});
+    CHECK(inverse.envelope.parents == std::vector<std::string>{mergedId});
+    CHECK(inverse.envelope.documentHash == preMerge.envelope.documentHash);
+    CHECK(h.head().document.track("trk_c") == nullptr);
+}
+
+TEST_CASE("Rolling back a branch-merge revision after main changed one of its entities is rollback_conflict",
+          "[history][branch][rollback]") {
+    History h = withTwoTracks();
+    const BranchId b = h.branch(h.head().envelope.id);
+    h.commitOn(b, {addTrack("trk_c")}, "agent", "t3", Cause::plan);
+    const std::string mergedId = h.merge(b, "user", "t4").envelope.id;
+    h.commit({setGain("trk_c", -300)}, "user", "t5");
+
+    CHECK(rollbackConflicts(h, mergedId) == std::vector<EntityRef>{EntityRef{EntityType::track, "trk_c"}});
+}

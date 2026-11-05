@@ -22,12 +22,20 @@ if(SIANN_BUILD_TESTS)
     tests/sync_test.cpp
     tests/realtime_channel_test.cpp
     tests/build_info_test.cpp
+    tests/plan_methods_test.cpp
+    tests/audition_methods_test.cpp
+    tests/jobs_test.cpp
+    tests/session_open_test.cpp
+    tests/mcp_adapter_test.cpp
+    tests/mcp_e2e_test.cpp
   )
   # The IXWebSocket client drives the loopback tests; the realtime tests run
-  # the graph driver on a ManualAudioDevice with the allocation guard.
+  # the graph driver on a ManualAudioDevice with the allocation guard. The
+  # audition, jobs and MCP tests put a real playback::Auditioner behind the
+  # AuditionPort and reuse the playback tests' live rig (live_rig.hpp).
   target_link_libraries(siann_protocol_tests PRIVATE siann::protocol siann::realtime siann::host_fake
-    siann_rt_alloc_guard siann_third_party_ixwebsocket Catch2::Catch2WithMain)
-  target_include_directories(siann_protocol_tests PRIVATE tests)
+    siann::playback siann_rt_alloc_guard siann_third_party_ixwebsocket Catch2::Catch2WithMain)
+  target_include_directories(siann_protocol_tests PRIVATE tests "${PROJECT_SOURCE_DIR}/libs/playback/tests/support")
   if(SIANN_WITH_JUCE)
     set(siann_test_with_juce 1)
   else()

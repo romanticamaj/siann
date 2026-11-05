@@ -69,7 +69,8 @@ ix::HttpResponsePtr toIx(const HttpResponse& response) {
 // an exception escaping a handler there would reach std::terminate.
 HttpResponse internalError() {
     return HttpResponse{500, "application/json",
-                        R"({"error":{"code":"internal_error","message":"the server failed on this request"},"ok":false})"};
+                        R"({"error":{"code":"internal_error","message":"the server failed on this request"},"ok":false})",
+                        {}};
 }
 
 // WebSocket close code 1011: internal error (RFC 6455, section 7.4.1).
