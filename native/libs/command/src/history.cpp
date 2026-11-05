@@ -452,6 +452,14 @@ const Revision& History::merge(const BranchId& branchId, std::string actor, std:
             conflicts.push_back(entityKey(ref));
         }
     }
+    // On main's head the commands may reach further than on the branch (a
+    // track.remove also removes clips main placed on the track since the
+    // base). The merge may change only entities the branch wrote.
+    for (const model::DiffEntry& entry : model::diff(mainDoc, prepared->result)) {
+        if (written.count(entry.entity) == 0) {
+            conflicts.push_back(entityKey(entry.entity));
+        }
+    }
     if (!conflicts.empty()) {
         throw CommandError("branch_conflict", "proposal branch " + branchId +
                                                   " gives a different result on main's head for: " +
