@@ -48,10 +48,12 @@ HttpRequest toRequest(const ix::HttpRequest& request) {
 std::string reasonPhrase(int status) {
     switch (status) {
         case 200: return "OK";
+        case 202: return "Accepted";
         case 400: return "Bad Request";
         case 401: return "Unauthorized";
         case 403: return "Forbidden";
         case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
         case 500: return "Internal Server Error";
         default: return "Error";
     }
@@ -59,6 +61,9 @@ std::string reasonPhrase(int status) {
 
 ix::HttpResponsePtr toIx(const HttpResponse& response) {
     ix::WebSocketHttpHeaders headers;
+    for (const auto& [name, value] : response.headers) {
+        headers[name] = value;
+    }
     headers["Content-Type"] = response.contentType;
     headers["Connection"] = "close";
     return std::make_shared<ix::HttpResponse>(response.status, reasonPhrase(response.status), ix::HttpErrorCode::Ok,

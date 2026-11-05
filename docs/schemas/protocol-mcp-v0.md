@@ -39,7 +39,9 @@ JSON-RPC errors: malformed JSON `-32700`, a bad envelope (not an object,
 `-32601`, unknown tool or non-object `arguments` `-32602`, a command-thread
 answer later than `mcpRequestTimeout` (default 30 s) `-32000` with
 `data: {code: "request_timeout"}`, a full inbox `-32000` with
-`data: {code: "queue_full"}`. Neither of the last two was executed or cached.
+`data: {code: "queue_full"}`. A full inbox queued nothing. A timed-out call may
+still run on the command thread; its answer is cached, so a retry with the same
+`id` returns it instead of running the call again.
 
 ### Tool calls
 
@@ -74,8 +76,9 @@ The error object is the protocol's `{code, message, step?, data?}`.
 
 ## Scopes
 
-`ServerOptions::mcpScope` is `propose` (default) or `trusted`; `siann-cli serve
---mcp-trusted` sets `trusted`. A tool whose scope is `trusted` called under
+`ServerOptions::mcpScope` is `propose` (default) or `trusted`, set by the engine
+host that launches the server (a `siann-cli serve --mcp-trusted` launcher is a
+follow-up). A tool whose scope is `trusted` called under
 `propose` answers `isError` with code `scope_denied`, executes nothing and is not
 cached (retry with the same id after the grant).
 

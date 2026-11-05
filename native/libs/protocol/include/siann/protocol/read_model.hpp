@@ -56,6 +56,8 @@ public:
 
     // Any thread: drops the connection's pinned sync.
     void forget(ConnectionId connection);
+    // Any thread: drops every pinned sync (session.open).
+    void forgetAll();
 
 private:
     struct Pinned {

@@ -124,6 +124,31 @@ std::uint64_t EventStream::publishMeterLegend(json::Object legend) {
     return publishLocked("meters.legend", std::move(legend));
 }
 
+std::uint64_t EventStream::publishBranchRevision(const command::Revision& revision) {
+    json::Object changed = sessionChangedPayload(revision);
+    Object payload{{"branch", Value(revision.branch.value_or(std::string()))}};
+    for (auto& member : changed) {
+        if (member.first == "changedIds") {
+            payload.push_back(std::move(member));
+        }
+    }
+    std::lock_guard lock(mutex_);
+    // The event's revision is the branch revision; main's head did not move.
+    const std::string head = std::exchange(head_.revision, revision.envelope.id);
+    const std::uint64_t seq = publishLocked("proposal.changed", std::move(payload));
+    head_.revision = head;
+    return seq;
+}
+
+std::uint64_t EventStream::publishSessionOpened(std::string sessionId, const command::Revision& head) {
+    std::lock_guard lock(mutex_);
+    sessionId_ = std::move(sessionId);
+    head_.revision = head.envelope.id;
+    head_.documentHash = hash::formatHash(head.envelope.documentHash);
+    head_.meters = Value();
+    return publishLocked("session.opened", Object{{"documentHash", Value(head_.documentHash)}});
+}
+
 std::size_t EventStream::flush() {
     std::lock_guard flushLock(flushMutex_);
     std::vector<ConnectionId> connections;

@@ -6,7 +6,7 @@
 //   client                                server
 //   {type:"auth", token}             ->   {type:"auth", ok, sessionId, revision, documentHash}
 //   {requestId, sessionId, method,   ->   {requestId, ok:true, result}
-//    params, expectedRevision?}           {requestId, ok:false, error:{code, message, step?}}
+//    params, expectedRevision?}           {requestId, ok:false, error:{code, message, step?, data?}}
 //
 // A request with expectedRevision other than the head revision is answered
 // revision_mismatch without running the method.
@@ -21,6 +21,12 @@
 // the stream's seq, the current meter legend `meters` and the build's `about`. pump() flushes the event outboxes
 // after the responses. Connections on kRealtimePath authenticate the same way
 // and then receive only binary meter frames.
+//
+// m3-mcp (spec, Protocol v0 items 14 to 16): plan.*, proposal.*,
+// audition.hear (through ServerOptions::auditionPort), render.start and
+// job.status (Jobs v0), session.save and session.open, command.list and
+// engine.capabilities; the MCP adapter serves them as tools on POST
+// /v0/mcp (docs/schemas/protocol-mcp-v0.md).
 
 #include <chrono>
 #include <cstddef>

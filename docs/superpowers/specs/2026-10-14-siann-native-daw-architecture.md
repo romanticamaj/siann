@@ -1379,7 +1379,7 @@ redo are not tools in v0 and would be `trusted`), `merge_proposal`,
 `describe_capabilities`, `inspect_session`, `submit_plan`, `plan_status`,
 `reject_plan`, `propose_plan` (a branch; main is unchanged), `audition`,
 `discard_proposal`, `render`, `job_status`, `save_session`. In M3 the scope is set
-by the launcher (`ServerOptions::mcpScope`, `siann-cli serve --mcp-trusted`); the
+by the launcher (`ServerOptions::mcpScope`; a `siann-cli serve --mcp-trusted` launcher is a follow-up); the
 per-client grant in the UI arrives with M5. A denied tool call answers
 `scope_denied` (a stable code), executes nothing and is not cached, so it can be
 retried with the same id once the scope is granted. Note for the maintainer:

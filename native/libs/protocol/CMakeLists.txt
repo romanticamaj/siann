@@ -5,10 +5,14 @@ add_library(siann_protocol
   src/read_model.cpp
   src/realtime_channel.cpp
   src/about.cpp
+  src/jobs.cpp
+  src/mcp_adapter.cpp
 )
 add_library(siann::protocol ALIAS siann_protocol)
 target_include_directories(siann_protocol PUBLIC include)
-target_link_libraries(siann_protocol PUBLIC siann::session siann::realtime PRIVATE siann_third_party_ixwebsocket)
+# siann::engine (offline render for render.start) is pure: no device, no playback.
+target_link_libraries(siann_protocol PUBLIC siann::session siann::realtime PRIVATE siann::engine siann::io
+  siann_third_party_ixwebsocket)
 target_compile_features(siann_protocol PUBLIC cxx_std_20)
 siann_apply_compile_options(siann_protocol)
 # The source commit and URL for engine.about (ADR-0017), captured at build time.
