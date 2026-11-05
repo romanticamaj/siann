@@ -1385,8 +1385,24 @@ per-client grant in the UI arrives with M5. A denied tool call answers
 retried with the same id once the scope is granted. Note for the maintainer:
 `propose_plan` and `audition` under `propose` let an agent change what the user
 hears without changing main; if that is unwanted, flip them to `trusted` (one row
-of the tool table in `docs/schemas/protocol-mcp-v0.md`). WebSocket clients hold the
-launcher's token and are not scoped in v0.
+of the tool table in `docs/schemas/protocol-mcp-v0.md`).
+
+The scope is tied to a credential and enforced by the server, so it cannot be
+side-stepped (m3-mcp, fix round 1). The server holds two per-launch secrets, made
+the same way (item 7) and never equal: the UI token (`ProtocolServer::token()`),
+which authenticates the WebSocket, the realtime path and plain HTTP, and the MCP
+token (`ProtocolServer::mcpToken()`), which authenticates `POST /v0/mcp` only and
+carries `ServerOptions::mcpScope`. Neither opens the other's routes: the UI token
+on `/v0/mcp` is 401, the MCP token in a WebSocket auth frame is `invalid_token`.
+The launcher hands the UI token to the UI and only the MCP token to agents, so a
+`propose` agent has no way to send `plan.approve` over the WebSocket. The command
+thread checks every MCP request's method against the scope its credential carries
+(a method no tool maps is denied), not the adapter. The UI is the user acting and
+is not scoped in v0; LAN mode's per-client scopes (above) replace this split.
+Maintainer decision recorded here: a separate MCP credential was chosen over
+scoping the one shared token, because a shared token gives the WebSocket path the
+same reach as the agent. If you would rather scope the WebSocket instead, this
+paragraph and `docs/schemas/protocol-mcp-v0.md`, Transport, change together.
 
 Protocol v0 (decided 2026-11-04 with m3-protocol-server; refines the rules above,
 contradicts none of them):
@@ -1437,7 +1453,11 @@ contradicts none of them):
    lives in the server, not the connection, so a duplicate after a reconnect still
    returns the original response. Envelope errors answered before execution
    (`bad_request`, `session_mismatch`, `queue_full`) are not cached: the request was
-   never executed and may be retried with the same `requestId`.
+   never executed and may be retried with the same `requestId`. (m3-mcp) The
+   command thread checks `sessionId` again before the cache, for a request queued
+   before a `session.open` in the same pump: it is `session_mismatch`, not cached,
+   and never answered from the cache. The MCP `scope_denied` is checked there too
+   and is not cached either.
 6. Plain HTTP requests need `Authorization: Bearer <token>` (401 otherwise). The
    only route so far is `GET /v0/health` returning `200 {"ok":true}`; everything
    else is 404. Further routes come with later features.
@@ -1539,7 +1559,8 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     through unchanged, with `data` as in item 2. New stable codes: `scope_denied`,
     `audition_unavailable`, `not_supported`, `request_timeout`.
 15. MCP transport: Streamable HTTP on the protocol server. `POST /v0/mcp` with
-    `Authorization: Bearer <token>` (401 otherwise; a request with an Origin header
+    `Authorization: Bearer <mcp token>` (the MCP credential, not the UI token; see
+    Scopes v0; 401 otherwise; a request with an Origin header
     not in the allow list is 403, as at upgrades); the body is one JSON-RPC 2.0
     request or notification. The reply is `application/json` with exactly one
     JSON-RPC response (no SSE in v0); a notification gets 202 with an empty body.

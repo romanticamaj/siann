@@ -11,8 +11,12 @@ same params, same result, same error codes. There is no second API.
 
 ## Transport (Streamable HTTP, JSON responses only)
 
-- `POST /v0/mcp` on the protocol server, `Authorization: Bearer <token>` (the
-  launcher's per-launch token). Without it: `401` with the HTTP error body
+- `POST /v0/mcp` on the protocol server, `Authorization: Bearer <mcp token>`
+  (`ProtocolServer::mcpToken()`: per launch, 32 random bytes as lowercase hex,
+  never equal to the UI token). The MCP token carries the MCP scope and opens
+  nothing else: in a WebSocket or realtime auth frame it is `invalid_token`, on
+  plain HTTP it is `401`. The UI token (`ProtocolServer::token()`) on `/v0/mcp`
+  is `401`. The launcher hands agents the MCP token only. Without it: `401` with the HTTP error body
   `{ok: false, error: {code: "unauthenticated", message}}`. A request with an
   `Origin` header not in the allow list: `403 origin_not_allowed`.
 - The body is one JSON-RPC 2.0 request or notification (no batches).
@@ -80,7 +84,13 @@ The error object is the protocol's `{code, message, step?, data?}`.
 host that launches the server (a `siann-cli serve --mcp-trusted` launcher is a
 follow-up). A tool whose scope is `trusted` called under
 `propose` answers `isError` with code `scope_denied`, executes nothing and is not
-cached (retry with the same id after the grant).
+cached (retry with the same id after the grant). The server checks the scope on
+the command thread against the credential the request came with, not in the
+adapter.
+
+A tool call queued before a `session.open` that ran first in the same pump
+answers `isError` with `session_mismatch`. It is not cached: a retry with the
+same JSON-RPC `id` runs against the session served now.
 
 | Tool | Method | Scope | Arguments |
 |---|---|---|---|
@@ -110,7 +120,7 @@ their rows to `trusted`.
 ## Example
 
 ```text
-POST /v0/mcp                      Authorization: Bearer <token>
+POST /v0/mcp                      Authorization: Bearer <mcp token>
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agent","version":"1"}}}
 -> 200  Mcp-Session-Id: mcp_4f...
 {"id":1,"jsonrpc":"2.0","result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"siann-engine","version":"0.1.0"}}}
