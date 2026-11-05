@@ -1940,7 +1940,8 @@ M3 exit check (2026-11-06), on `main` at 04c8f6c. CI on that commit is green
 (run 42105732783, every job: Node bridge, native core on Windows, macOS and
 Linux, the JUCE desktop host on all three, and RTSan); the native core runs
 467 ctest tests on each platform. `node scripts/check-all.js --gcc` on the
-exit branch: CHECKALL_RESULT.
+exit branch passes (Node tests, dev preset build and ctest, g++ -Werror syntax
+check).
 
 | M3 exit criterion | Status | Evidence |
 |---|---|---|
