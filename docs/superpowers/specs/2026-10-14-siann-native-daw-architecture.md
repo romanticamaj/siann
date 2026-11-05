@@ -1399,6 +1399,46 @@ contradicts none of them):
      that does not parse or fails validation answers its `CommandError` code with
      `step`, the index in `commands`, and nothing is committed.
 
+Protocol events v1 (decided 2026-11-04 with m3-events-sync; the wire details are in
+`docs/schemas/protocol-events-v1.md`):
+
+9. Events are opt-in per connection (`events: true` in the auth frame), so v0
+   clients are unchanged. Envelope `{schema: "siann.event.v1", seq, sessionId,
+   revision, type, ...payload}`. `seq` is one counter per session and server
+   process for every event type, starting at 1, independent of the journal `seq`;
+   `revision` is the head revision id. 64-bit values (`seq`, epochs, sample
+   positions) are decimal strings. The auth reply carries the current `seq`, so a
+   reconnecting client knows whether it missed events.
+10. Each subscribed connection has a bounded outbox, flushed while the socket's
+    buffered amount is below a high-water mark. A full outbox drops the event for
+    that connection and counts it; nothing blocks and there is no replay buffer in
+    v1, so the client sees a `seq` gap and calls `session.sync`.
+11. `session.changed {revision, parents, cause, actor, time, documentHash,
+    changedIds: [{ref: "<type>:<id>", change}]}` follows every commit, undo and
+    redo after it is durable and published. `session.fetch {refs, revision?}` returns
+    entities at that revision or the head (`missing: true` for absent ones;
+    `revision_unavailable` for a revision no longer kept). `session.sync {cursor?}` pins the
+    head document for the connection and returns it in chunks of at most
+    `syncChunkEntities` entities (default 500), all at the pinned revision, chained
+    by `next` cursors; a cursor that does not match the connection's pinned sync is
+    `sync_cursor_invalid`. Entity JSON is the hashed form, so clients recompute
+    hashes. `session.undo` and `session.redo` complete the command methods.
+12. Meters and playhead go on a separate WebSocket (`/v1/realtime`), authenticated
+    by the same first frame, carrying only binary frames (`"SMTR"`, version 1,
+    epoch, engine timestamp, playhead, playing flag, per-entity peak and RMS). The
+    entity indexes refer to a `meters.legend {epoch, entities}` event sent after each
+    graph publication. The newest legend is also part of the stream position: the
+    auth reply and every `session.sync` chunk carry it as `meters` (null before the
+    first graph), taken at the same `seq`, so a client that connects after the
+    graph was published (the normal case: the engine publishes at open, the UI
+    connects later) or lost the event in a gap can decode frames without waiting
+    for the next structural edit. The publisher sends the newest values once per tick and drops
+    the frame for a connection whose socket is congested; the audio thread still
+    only writes the meterOutbox.
+13. The auth reply and `engine.about` carry `{name, version, source: {url, commit,
+    dirty}, license}` (ADR-0017, point 4), captured from git at build time with cache
+    overrides `SIANN_SOURCE_URL` and `SIANN_SOURCE_COMMIT` for tarball builds.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same

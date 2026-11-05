@@ -16,6 +16,8 @@
 #include <utility>
 
 #include "request_inbox.hpp"
+#include "siann/protocol/about.hpp"
+#include "siann/protocol/read_model.hpp"
 #include "siann/command/command.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
@@ -181,11 +183,9 @@ struct Pending {
     std::optional<std::string> expectedRevision;  // checked against the head before the method runs
 };
 
-// What the authentication reply reports, kept current by the command thread.
-struct Head {
-    std::string revision;
-    std::string documentHash;
-    std::size_t revisions = 0;
+struct Connection {
+    bool authenticated = false;
+    bool realtime = false;  // opened on kRealtimePath: binary frames only
 };
 
 }  // namespace
@@ -197,11 +197,16 @@ struct ProtocolServer::Impl {
           options(std::move(o)),
           token(randomHex(32)),
           sessionId("ses_" + randomHex(16)),
-          inbox(options.inboxCapacity) {
+          inbox(options.inboxCapacity),
+          events(t, sessionId,
+                 StreamPosition{0, s.history().head().envelope.id,
+                                hash::formatHash(s.history().head().envelope.documentHash), json::Value()},
+                 options.events),
+          readModel(options.syncChunkEntities),
+          realtime(t, options.realtime) {
         if (!options.clock) {
             options.clock = nowUtc;
         }
-        refreshHead();
     }
 
     Transport& transport;
@@ -211,10 +216,12 @@ struct ProtocolServer::Impl {
     const std::string sessionId;
     std::uint16_t port = 0;
     detail::RequestInbox<Pending> inbox;
+    EventStream events;
+    ReadModel readModel;
+    RealtimeChannel realtime;
 
-    std::mutex mutex;                              // guards connections and head
-    std::map<ConnectionId, bool> connections;      // open connection -> authenticated
-    Head head;
+    std::mutex mutex;                              // guards connections
+    std::map<ConnectionId, Connection> connections;
 
     std::mutex pumpMutex;                          // one consumer at a time
     std::unordered_map<std::string, std::string> cache;  // requestId -> response text
@@ -223,15 +230,6 @@ struct ProtocolServer::Impl {
     bool started = false;
     std::atomic<bool> running{false};
     std::thread pumpThread;
-
-    // Command thread only (under pumpMutex), or the constructor.
-    void refreshHead() {
-        const auto& history = session.history();
-        Head next{history.head().envelope.id, hash::formatHash(history.head().envelope.documentHash),
-                  history.revisions().size()};
-        std::lock_guard lock(mutex);
-        head = std::move(next);
-    }
 
     std::optional<HttpResponse> onUpgrade(const HttpRequest& request) const {
         auto origin = request.headers.find("origin");
@@ -260,14 +258,45 @@ struct ProtocolServer::Impl {
         return jsonResponse(404, httpError("not_found", "no route for this method and path"));
     }
 
-    void onOpen(ConnectionId connection) {
+    void onOpen(ConnectionId connection, const std::string& path) {
         std::lock_guard lock(mutex);
-        connections[connection] = false;
+        connections[connection] = Connection{false, path == kRealtimePath};
     }
 
     void onClose(ConnectionId connection) {
         std::lock_guard lock(mutex);
         connections.erase(connection);
+        events.unsubscribe(connection);
+        realtime.remove(connection);
+        readModel.forget(connection);
+    }
+
+    // A realtime connection: one auth frame, then nothing but outgoing binary
+    // frames. No text is ever sent on it; refusals are a close with a reason.
+    void onRealtimeMessage(ConnectionId connection, bool authenticated, const std::optional<Value>& parsed) {
+        if (authenticated) {
+            realtime.remove(connection);
+            transport.close(connection, kClosePolicy, "binary_only");
+            return;
+        }
+        const bool isObject = parsed && parsed->kind() == Value::Kind::object;
+        const Value* type = isObject ? stringMember(*parsed, "type") : nullptr;
+        if (type == nullptr || type->asString() != "auth") {
+            transport.close(connection, kClosePolicy, "unauthenticated");
+            return;
+        }
+        const Value* given = stringMember(*parsed, "token");
+        if (given == nullptr || !sameSecret(given->asString(), token)) {
+            transport.close(connection, kClosePolicy, "invalid_token");
+            return;
+        }
+        std::lock_guard lock(mutex);
+        auto it = connections.find(connection);
+        if (it == connections.end()) {
+            return;
+        }
+        it->second.authenticated = true;
+        realtime.add(connection);
     }
 
     void reject(ConnectionId connection, const std::string& text, const std::string& code) {
@@ -276,20 +305,25 @@ struct ProtocolServer::Impl {
     }
 
     void onMessage(ConnectionId connection, const std::string& text) {
-        bool authenticated = false;
+        Connection state;
         {
             std::lock_guard lock(mutex);
             auto it = connections.find(connection);
             if (it == connections.end()) {
                 return;
             }
-            authenticated = it->second;
+            state = it->second;
         }
+        const bool authenticated = state.authenticated;
 
         std::optional<Value> parsed;
         try {
             parsed = json::parse(text);
         } catch (const json::ParseError&) {
+        }
+        if (state.realtime) {
+            onRealtimeMessage(connection, authenticated, parsed);
+            return;
         }
         const bool isObject = parsed && parsed->kind() == Value::Kind::object;
         const Value* requestIdMember = isObject ? stringMember(*parsed, "requestId") : nullptr;
@@ -311,21 +345,32 @@ struct ProtocolServer::Impl {
                        "invalid_token");
                 return;
             }
-            Head current;
-            {
-                std::lock_guard lock(mutex);
-                auto it = connections.find(connection);
-                if (it == connections.end()) {
-                    return;
-                }
-                it->second = true;
-                current = head;
+            const Value* wantsEvents = parsed->find("events");
+            const bool subscribe = wantsEvents != nullptr && wantsEvents->kind() == Value::Kind::boolean &&
+                                   wantsEvents->asBool();
+            const auto reply = [this](const StreamPosition& current) {
+                return jcs::canonicalize(Value(Object{{"type", Value("auth")},
+                                                      {"ok", Value(true)},
+                                                      {"sessionId", Value(sessionId)},
+                                                      {"revision", Value(current.revision)},
+                                                      {"documentHash", Value(current.documentHash)},
+                                                      {"seq", Value(std::to_string(current.seq))},
+                                                      {"meters", current.meters},
+                                                      {"about", aboutJson()}}));
+            };
+            std::lock_guard lock(mutex);
+            auto it = connections.find(connection);
+            if (it == connections.end()) {
+                return;
             }
-            transport.send(connection, jcs::canonicalize(Value(Object{{"type", Value("auth")},
-                                                                      {"ok", Value(true)},
-                                                                      {"sessionId", Value(sessionId)},
-                                                                      {"revision", Value(current.revision)},
-                                                                      {"documentHash", Value(current.documentHash)}})));
+            it->second.authenticated = true;
+            // Under the connection lock, so a close cannot leave an outbox
+            // behind; the stream sends the reply before any event.
+            if (subscribe) {
+                events.subscribe(connection, reply);
+            } else {
+                transport.send(connection, reply(events.position()));
+            }
             return;
         }
 
@@ -374,6 +419,14 @@ struct ProtocolServer::Impl {
         }
     }
 
+    // Command thread: a revision the method just committed. The event goes
+    // out after the response (handle() flushes after sending it).
+    std::string published(const Pending& request, const command::Revision& revision) {
+        std::string response = success(request.requestId, Value(Object{{"revision", revisionJson(revision)}}));
+        events.publishRevision(revision);
+        return response;
+    }
+
     // Command thread.
     std::string execute(const Pending& request) {
         try {
@@ -406,13 +459,28 @@ struct ProtocolServer::Impl {
                         throw command::CommandError(e.code(), e.what(), i);
                     }
                 }
-                const command::Revision& revision =
-                    session.commit(std::move(commands), options.actor, options.clock());
-                Value result(Object{{"revision", revisionJson(revision)}});
-                refreshHead();
-                return success(request.requestId, std::move(result));
+                const command::Revision* revision = &session.commit(std::move(commands), options.actor, options.clock());
+                return published(request, *revision);
+            }
+            if (request.method == "session.undo") {
+                return published(request, session.undo(options.actor, options.clock()));
+            }
+            if (request.method == "session.redo") {
+                return published(request, session.redo(options.actor, options.clock()));
+            }
+            if (request.method == "session.sync") {
+                return success(request.requestId,
+                               readModel.sync(request.connection, request.params, session.history(), events.position()));
+            }
+            if (request.method == "session.fetch") {
+                return success(request.requestId, readModel.fetch(request.params, session.history()));
+            }
+            if (request.method == "engine.about") {
+                return success(request.requestId, aboutJson());
             }
             return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
+        } catch (const ProtocolError& e) {
+            return failure(Value(request.requestId), e.code(), e.what());
         } catch (const command::CommandError& e) {
             return failure(Value(request.requestId), e.code(), e.what(), e.step());
         } catch (const session::SessionError& e) {
@@ -446,6 +514,7 @@ struct ProtocolServer::Impl {
             remember(request.requestId, response);
             transport.send(request.connection, response);
         }
+        events.flush();
     }
 
     void stopPumpThread() {
@@ -462,7 +531,7 @@ ProtocolServer::ProtocolServer(Transport& transport, session::Session& session, 
     Impl* impl = impl_.get();
     TransportHandlers handlers;
     handlers.onUpgrade = [impl](const HttpRequest& request) { return impl->onUpgrade(request); };
-    handlers.onOpen = [impl](ConnectionId connection) { impl->onOpen(connection); };
+    handlers.onOpen = [impl](ConnectionId connection, const std::string& path) { impl->onOpen(connection, path); };
     handlers.onMessage = [impl](ConnectionId connection, const std::string& text) { impl->onMessage(connection, text); };
     handlers.onClose = [impl](ConnectionId connection) { impl->onClose(connection); };
     handlers.onHttp = [impl](const HttpRequest& request) { return impl->onHttp(request); };
@@ -527,6 +596,18 @@ const std::string& ProtocolServer::sessionId() const noexcept {
 
 std::uint16_t ProtocolServer::port() const noexcept {
     return impl_->port;
+}
+
+void ProtocolServer::publishRevision(const command::Revision& revision) {
+    impl_->events.publishRevision(revision);
+}
+
+EventStream& ProtocolServer::events() noexcept {
+    return impl_->events;
+}
+
+RealtimeChannel& ProtocolServer::realtime() noexcept {
+    return impl_->realtime;
 }
 
 }  // namespace siann::protocol

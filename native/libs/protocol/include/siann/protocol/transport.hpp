@@ -7,6 +7,7 @@
 // in-memory transport.
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <map>
 #include <optional>
@@ -36,8 +37,9 @@ struct TransportHandlers {
     // Called with the HTTP upgrade request. std::nullopt accepts it; a response
     // rejects it and no socket is opened.
     std::function<std::optional<HttpResponse>(const HttpRequest&)> onUpgrade;
-    std::function<void(ConnectionId)> onOpen;
-    // One text frame.
+    // The socket is open; `path` is the upgrade request's path (no query string).
+    std::function<void(ConnectionId, const std::string& path)> onOpen;
+    // One text frame (binary frames from clients are ignored).
     std::function<void(ConnectionId, const std::string&)> onMessage;
     std::function<void(ConnectionId)> onClose;
     // A plain (non-upgrade) HTTP request.
@@ -58,8 +60,12 @@ public:
     virtual Listening listen(const std::string& host, std::uint16_t port) = 0;
     // Closes every connection and stops listening; no handler runs afterwards.
     virtual void stop() = 0;
-    // Both are ignored for a connection that is already closed.
+    // send, sendBinary and close are ignored for a connection that is already closed.
     virtual void send(ConnectionId connection, const std::string& text) = 0;
+    // One binary frame.
+    virtual void sendBinary(ConnectionId connection, const std::string& bytes) = 0;
+    // Bytes queued on the socket and not yet written; 0 for a closed connection.
+    virtual std::size_t bufferedAmount(ConnectionId connection) const = 0;
     virtual void close(ConnectionId connection, int code, const std::string& reason) = 0;
 };
 

@@ -21,6 +21,8 @@ public:
     Listening listen(const std::string& host, std::uint16_t port) override;
     void stop() override;
     void send(ConnectionId connection, const std::string& text) override;
+    void sendBinary(ConnectionId connection, const std::string& bytes) override;
+    std::size_t bufferedAmount(ConnectionId connection) const override;
     void close(ConnectionId connection, int code, const std::string& reason) override;
 
 private:

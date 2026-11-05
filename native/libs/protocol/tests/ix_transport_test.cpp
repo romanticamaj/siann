@@ -72,8 +72,8 @@ ix::WebSocketHttpHeaders appOrigin() {
 // A WebSocket client that queues what it receives.
 class Client {
 public:
-    explicit Client(std::uint16_t port, ix::WebSocketHttpHeaders headers = appOrigin()) {
-        socket_.setUrl("ws://127.0.0.1:" + std::to_string(port) + "/");
+    explicit Client(std::uint16_t port, ix::WebSocketHttpHeaders headers = appOrigin(), const std::string& path = "/") {
+        socket_.setUrl("ws://127.0.0.1:" + std::to_string(port) + path);
         socket_.setExtraHeaders(headers);
         socket_.disableAutomaticReconnection();
         socket_.setOnMessageCallback([this](const ix::WebSocketMessagePtr& message) {
@@ -83,7 +83,7 @@ public:
                     open_ = true;
                     break;
                 case ix::WebSocketMessageType::Message:
-                    received_.push_back(message->str);
+                    (message->binary ? binary_ : received_).push_back(message->str);
                     break;
                 case ix::WebSocketMessageType::Close:
                     closed_ = true;
@@ -146,11 +146,28 @@ public:
 
     void stop() { socket_.stop(); }
 
+    // The next binary frame (WebSocket binary opcode).
+    std::string nextBinary() {
+        std::unique_lock lock(mutex_);
+        REQUIRE(changed_.wait_for(lock, kTimeout, [this] { return !binary_.empty() || closed_; }));
+        REQUIRE_FALSE(binary_.empty());
+        std::string out = binary_.front();
+        binary_.pop_front();
+        return out;
+    }
+
+    // Frames received so far, of either kind.
+    std::size_t receivedCount() const {
+        std::lock_guard lock(mutex_);
+        return received_.size() + binary_.size();
+    }
+
 private:
     ix::WebSocket socket_;
     mutable std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<std::string> received_;
+    std::deque<std::string> binary_;
     std::string lastText_;
     bool open_ = false;
     bool closed_ = false;
@@ -286,7 +303,7 @@ TEST_CASE("an exception from a handler on an IX thread does not end the process"
         }
         return std::nullopt;
     };
-    handlers.onOpen = [](siann::protocol::ConnectionId) {};
+    handlers.onOpen = [](siann::protocol::ConnectionId, const std::string&) {};
     handlers.onMessage = [&transport](siann::protocol::ConnectionId connection, const std::string& text) {
         if (text == "throw") {
             throw std::runtime_error("message handler failed");
@@ -325,6 +342,28 @@ TEST_CASE("an exception from a handler on an IX thread does not end the process"
     CHECK(echo.next().asArray().size() == 1);
     echo.stop();
     transport.stop();
+}
+
+TEST_CASE("the IX transport carries meter frames as binary on the realtime path", "[protocol][ix]") {
+    Server s;
+    const std::uint16_t port = s.server.port();
+    Client realtime(port, appOrigin(), std::string(siann::protocol::kRealtimePath));
+    REQUIRE(realtime.start());
+    realtime.send(s.auth());
+    Client silent(port, appOrigin(), std::string(siann::protocol::kRealtimePath));
+    REQUIRE(silent.start());  // open but never authenticated
+    REQUIRE(s.server.realtime().waitForConnections(1, kTimeout));
+
+    siann::protocol::MeterFrame frame;
+    frame.epoch = 7;
+    frame.playheadSamples = 4800;
+    frame.playing = true;
+    frame.entries.push_back(siann::protocol::MeterFrameEntry{0, 2, {0.5f, 0.25f}, {0.375f, 0.125f}});
+    const std::string bytes = siann::protocol::encodeMeterFrame(frame);
+    CHECK(s.server.realtime().send(bytes) == 1);
+    CHECK(realtime.nextBinary() == bytes);
+    CHECK(s.server.realtime().connections() == 1);
+    CHECK(silent.receivedCount() == 0);
 }
 
 TEST_CASE("the IX transport answers plain HTTP with the bearer token only", "[protocol][ix]") {

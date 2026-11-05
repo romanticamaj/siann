@@ -15,6 +15,12 @@
 // that touches the session (the command thread). A full inbox answers
 // queue_full at once. Executed responses are cached by requestId, so a
 // duplicate returns the original response text, also after a reconnect.
+//
+// Events v1 (docs/schemas/protocol-events-v1.md): {type:"auth", token,
+// events:true} subscribes the connection to the event stream; the reply adds
+// the stream's seq, the current meter legend `meters` and the build's `about`. pump() flushes the event outboxes
+// after the responses. Connections on kRealtimePath authenticate the same way
+// and then receive only binary meter frames.
 
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +30,8 @@
 #include <string_view>
 #include <vector>
 
+#include "siann/protocol/event_stream.hpp"
+#include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport.hpp"
 #include "siann/session/session.hpp"
 
@@ -46,6 +54,11 @@ struct ServerOptions {
     std::string actor = "protocol";
     // ISO 8601 UTC time for revision envelopes; defaults to the system clock.
     std::function<std::string()> clock;
+    // Event outboxes (docs/schemas/protocol-events-v1.md).
+    EventStreamOptions events{};
+    // Entities per session.sync chunk.
+    std::size_t syncChunkEntities = 500;
+    RealtimeOptions realtime{};
 };
 
 class ProtocolServer {
@@ -69,6 +82,16 @@ public:
     const std::string& sessionId() const noexcept;
     // The bound port after start().
     std::uint16_t port() const noexcept;
+
+    // A revision committed on the command thread outside the protocol (the
+    // engine's own commands): moves the stream's head and publishes
+    // session.changed. The protocol's own methods do this themselves.
+    void publishRevision(const command::Revision& revision);
+
+    // The event stream (subscribed connections) and the realtime channel
+    // (authenticated kRealtimePath connections), for the engine's publishers.
+    EventStream& events() noexcept;
+    RealtimeChannel& realtime() noexcept;
 
 private:
     struct Impl;

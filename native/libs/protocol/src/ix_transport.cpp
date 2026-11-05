@@ -81,6 +81,7 @@ struct IxTransport::Impl {
     struct Connection {
         std::weak_ptr<ix::WebSocket> socket;
         bool open = false;
+        std::string path;
     };
 
     // A WebSocket server that sees the HTTP request first: it answers plain
@@ -120,6 +121,8 @@ struct IxTransport::Impl {
                 if (auto rejection = owner_.handlers.onUpgrade(converted)) {
                     ix::Http::sendResponse(toIx(*rejection), socket);
                 } else {
+                    // attach() runs inside handleUpgrade, on this thread.
+                    owner_.rememberPath(state.get(), converted.path);
                     handleUpgrade(std::move(socket), state, request);
                     owner_.finish(state.get());
                 }
@@ -137,7 +140,13 @@ struct IxTransport::Impl {
     std::mutex mutex;
     std::map<ConnectionId, Connection> connections;
     std::map<const ix::ConnectionState*, ConnectionId> byState;
+    std::map<const ix::ConnectionState*, std::string> pendingPaths;  // upgrade path until attach()
     ConnectionId nextId = 1;
+
+    void rememberPath(const ix::ConnectionState* state, std::string path) {
+        std::lock_guard lock(mutex);
+        pendingPaths[state] = std::move(path);
+    }
 
     // An IX connection thread, before the handshake.
     void attach(std::weak_ptr<ix::WebSocket> weak, const std::shared_ptr<ix::ConnectionState>& state) {
@@ -149,7 +158,12 @@ struct IxTransport::Impl {
         {
             std::lock_guard lock(mutex);
             id = nextId++;
-            connections[id] = Connection{weak, false};
+            std::string path;
+            if (auto pending = pendingPaths.find(state.get()); pending != pendingPaths.end()) {
+                path = std::move(pending->second);
+                pendingPaths.erase(pending);
+            }
+            connections[id] = Connection{weak, false, std::move(path)};
             byState[state.get()] = id;
         }
         socket->setOnMessageCallback([this, id, weak](const ix::WebSocketMessagePtr& message) {
@@ -168,6 +182,7 @@ struct IxTransport::Impl {
     void dispatch(ConnectionId id, const ix::WebSocketMessagePtr& message) {
         switch (message->type) {
             case ix::WebSocketMessageType::Open: {
+                std::string path;
                 {
                     std::lock_guard lock(mutex);
                     auto it = connections.find(id);
@@ -175,12 +190,15 @@ struct IxTransport::Impl {
                         return;
                     }
                     it->second.open = true;
+                    path = it->second.path;
                 }
-                handlers.onOpen(id);
+                handlers.onOpen(id, path);
                 break;
             }
             case ix::WebSocketMessageType::Message:
-                handlers.onMessage(id, message->str);
+                if (!message->binary) {
+                    handlers.onMessage(id, message->str);
+                }
                 break;
             case ix::WebSocketMessageType::Close:
                 finish(id);
@@ -217,6 +235,7 @@ struct IxTransport::Impl {
             }
             id = it->second;
             byState.erase(it);
+            pendingPaths.erase(state);
         }
         finish(id);
     }
@@ -278,6 +297,17 @@ void IxTransport::send(ConnectionId connection, const std::string& text) {
     if (auto socket = impl_->socketOf(connection)) {
         socket->sendText(text);
     }
+}
+
+void IxTransport::sendBinary(ConnectionId connection, const std::string& bytes) {
+    if (auto socket = impl_->socketOf(connection)) {
+        socket->sendBinary(bytes);
+    }
+}
+
+std::size_t IxTransport::bufferedAmount(ConnectionId connection) const {
+    auto socket = impl_->socketOf(connection);
+    return socket ? socket->bufferedAmount() : 0;
 }
 
 void IxTransport::close(ConnectionId connection, int code, const std::string& reason) {

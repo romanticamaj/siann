@@ -1,0 +1,10 @@
+#pragma once
+
+// Generated at build time by cmake/SiannBuildInfo.cmake. Do not edit.
+
+#define SIANN_BUILD_NAME "@SIANN_BUILD_NAME@"
+#define SIANN_BUILD_VERSION "@SIANN_BUILD_VERSION@"
+#define SIANN_BUILD_SOURCE_URL "@SIANN_BUILD_URL@"
+#define SIANN_BUILD_SOURCE_COMMIT "@SIANN_BUILD_COMMIT@"
+#define SIANN_BUILD_SOURCE_DIRTY @SIANN_BUILD_DIRTY@
+#define SIANN_BUILD_LICENSE "@SIANN_BUILD_LICENSE@"
