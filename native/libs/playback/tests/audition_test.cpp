@@ -332,6 +332,47 @@ TEST_CASE("Merging the auditioned proposal makes main the heard document without
     CHECK(auditionCode([&] { (void)a.merge(b, "user", "t"); }) == "audition_not_found");
 }
 
+TEST_CASE("Merging a proposal while main is heard makes the sound follow main's new head", "[playback][audition]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(20);
+    const command::BranchId b = proposeTrackC(f);
+    Auditioner a(p.engine, f.session);
+    REQUIRE_FALSE(a.heard().has_value());
+    const std::size_t compiles = p.engine.compileCount();
+
+    const command::Revision& merged = a.merge(b, "user", "t");
+    const Document mergedDoc = merged.document;
+    CHECK_FALSE(a.heard().has_value());
+    CHECK_FALSE(p.engine.gestureBranch().has_value());
+    p.pump(30);
+
+    CHECK(p.engine.compileCount() == compiles + 1);
+    const int duck = p.lastDuckBlock();
+    REQUIRE(duck >= 20);
+    const auto ref = offline(mergedDoc, f.bundle(), framesOf(p));
+    CHECK(matches(p, ref, duck + 2, p.blockCount()));
+    CHECK(p.engine.driver().ownedGraphs() == 1);
+    CHECK(p.engine.underruns() == 0);
+
+    // Merging one proposal while another is heard leaves the heard one alone.
+    const command::BranchId other = f.session.branch(f.session.history().head().envelope.id);
+    f.session.commitOn(other, {cmd(R"({"op":"track.set_gain","trackId":"trk_b","gainMilliDb":-6000})")}, "agent",
+                       "t");
+    const command::BranchId heardBranch = f.session.branch(f.session.history().head().envelope.id);
+    f.session.commitOn(heardBranch, {cmd(R"({"op":"track.set_gain","trackId":"trk_a","gainMilliDb":-3000})")},
+                       "agent", "t");
+    a.audition(heardBranch);
+    p.pump(30);
+    const std::size_t heardCompiles = p.engine.compileCount();
+    const int heardDuck = p.lastDuckBlock();
+    (void)a.merge(other, "user", "t");
+    p.pump(20);
+    CHECK(a.heard() == std::optional<command::BranchId>{heardBranch});
+    CHECK(p.engine.compileCount() == heardCompiles);
+    CHECK(p.lastDuckBlock() == heardDuck);
+}
+
 TEST_CASE("A conflicting merge through the auditioner keeps the proposal heard", "[playback][audition]") {
     Fixture f;
     Live p(f.session);
