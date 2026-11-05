@@ -224,7 +224,7 @@ TEST_CASE("an MCP client builds a session through approved plans, rolls back and
     protocol::ProtocolServer server(transport, host.media.session, options);
     server.start();
 
-    McpClient mcp(server.port(), server.token());
+    McpClient mcp(server.port(), server.mcpToken());
     // Without the bearer token the MCP route is 401.
     CHECK(mcp.post(R"({"jsonrpc":"2.0","id":1,"method":"initialize"})", false)->statusCode == 401);
     mcp.initialize();

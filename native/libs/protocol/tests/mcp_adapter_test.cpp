@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -11,10 +12,12 @@
 
 #include "support/protocol_fixture.hpp"
 #include "siann/command/command.hpp"
+#include "siann/hash/sha256.hpp"
 #include "siann/protocol/about.hpp"
 
 using namespace siann;
 using namespace siann::protocol::testing;
+using protocol::ConnectionId;
 using protocol::HttpRequest;
 using protocol::HttpResponse;
 using protocol::McpScope;
@@ -34,7 +37,7 @@ struct Mcp {
     explicit Mcp(Fixture& fixture) : f(fixture) {}
 
     HttpRequest request(const std::string& body, bool withSession = true) const {
-        HttpRequest r{"POST", "/v0/mcp", {{"authorization", "Bearer " + f.server.token()}}, body};
+        HttpRequest r{"POST", "/v0/mcp", {{"authorization", "Bearer " + f.server.mcpToken()}}, body};
         r.headers["content-type"] = "application/json";
         if (withSession && !sessionHeader.empty()) {
             r.headers["mcp-session-id"] = sessionHeader;
@@ -360,4 +363,93 @@ TEST_CASE("every tool maps onto its protocol method", "[protocol][mcp]") {
     CHECK(at(mcp.error("render", Value(Object{{"name", Value("a/b")}})), "code").asString() == "invalid_params");
     CHECK(at(mcp.error("open_session", Value(Object{{"path", Value("x")}})), "code").asString() == "not_supported");
     CHECK(at(mcp.ok("save_session"), "revision").asString() == "r1");
+}
+
+TEST_CASE("MCP clients hold their own credential: the UI token and the MCP token do not cross", "[protocol][mcp]") {
+    // Spec, Security rules: a propose-scope agent must not reach plan.approve
+    // by authenticating the WebSocket with the token it was given.
+    Fixture f;
+    const std::string& ui = f.server.token();
+    const std::string& agent = f.server.mcpToken();
+    CHECK(agent.size() == 64);
+    CHECK(agent.find_first_not_of("0123456789abcdef") == std::string::npos);
+    CHECK(agent != ui);
+
+    // The UI token is refused on /v0/mcp.
+    Mcp mcp(f);
+    HttpRequest r = mcp.request(Mcp::rpc(Value(1), "initialize"), false);
+    r.headers["authorization"] = "Bearer " + ui;
+    CHECK(mcp.send(r).status == 401);
+    CHECK(f.transport.http(r).status == 401);
+
+    // The MCP token authenticates no WebSocket, realtime or plain HTTP route.
+    const std::string authFrame =
+        canonical(Value(Object{{"type", Value("auth")}, {"token", Value(agent)}, {"events", Value(true)}}));
+    auto command = f.transport.connect();
+    REQUIRE(command.connection.has_value());
+    f.transport.deliver(*command.connection, authFrame);
+    REQUIRE(f.transport.sent(*command.connection).size() == 1);
+    CHECK(errorCode(json::parse(f.transport.sent(*command.connection)[0])) == "invalid_token");
+    CHECK(f.transport.closed(*command.connection));
+    auto realtime = f.transport.connectRealtime();
+    REQUIRE(realtime.connection.has_value());
+    f.transport.deliver(*realtime.connection, authFrame);
+    CHECK(f.transport.closed(*realtime.connection));
+    CHECK(f.transport.http(HttpRequest{"GET", "/v0/health", {{"authorization", "Bearer " + agent}}, {}}).status ==
+          401);
+
+    // So plan.approve stays out of the propose-scope agent's reach.
+    mcp.initialize();
+    const std::string hash =
+        at(mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{trackAdd("trk_a")})}})), "hash").asString();
+    CHECK(at(mcp.error("approve_plan", Value(Object{{"plan", Value(hash)}})), "code").asString() == "scope_denied");
+    CHECK(at(mcp.ok("plan_status", Value(Object{{"plan", Value(hash)}})), "state").asString() == "validated");
+}
+
+TEST_CASE("an MCP call queued behind session.open is session_mismatch, not cached, and its retry runs",
+          "[protocol][mcp][session]") {
+    // Spec, Protocol v0 item 5: session_mismatch is never cached and may be
+    // retried with the same requestId; an MCP retry keeps its requestId.
+    std::optional<session::Session> opened;
+    ServerOptions options = manualOptions();
+    options.openSession = [&](const std::filesystem::path& path) -> session::Session& {
+        opened.emplace(session::Session::open(path));
+        return *opened;
+    };
+    Fixture f(std::move(options));
+    const std::filesystem::path bundle = f.dir.bundle().parent_path() / "Other.siann";
+    {
+        session::Session other = session::Session::create(bundle, model::Document::create("Other", 44'100), "tester",
+                                                          "2026-11-04T00:00:00Z");
+        other.commit({command::Command::fromJson(trackAdd("trk_other"))}, "tester", "2026-11-04T00:00:01Z");
+    }
+    Mcp mcp(f);
+    mcp.initialize();
+    const ConnectionId ui = f.authed();
+
+    // One pump: the UI's session.open, then the agent's inspect_session,
+    // queued under the old sessionId.
+    const std::u8string text = bundle.u8string();
+    f.transport.deliver(ui, f.request("open_1", "session.open",
+                                      Value(Object{{"path", Value(std::string(text.begin(), text.end()))}})));
+    const std::string body = Mcp::rpc(
+        Value(5), "tools/call", Value(Object{{"name", Value("inspect_session")}, {"arguments", Value(Object{})}}));
+    std::optional<HttpResponse> late;
+    f.server.handleMcp(mcp.request(body), [&late](HttpResponse response) { late = std::move(response); });
+    REQUIRE_FALSE(late.has_value());
+    CHECK(f.server.pump() == 2);
+    REQUIRE(late.has_value());
+    const Value lateResult = at(json::parse(late->body), "result");
+    REQUIRE(at(lateResult, "isError").asBool());
+    CHECK(at(at(at(lateResult, "structuredContent"), "error"), "code").asString() == "session_mismatch");
+
+    // The retry with the same JSON-RPC id runs against the session now served.
+    const HttpResponse retried = mcp.post(body);
+    INFO(retried.body);
+    const Value retriedResult = at(json::parse(retried.body), "result");
+    REQUIRE_FALSE(at(retriedResult, "isError").asBool());
+    REQUIRE(opened.has_value());
+    CHECK(at(at(retriedResult, "structuredContent"), "documentHash").asString() ==
+          hash::formatHash(opened->history().head().envelope.documentHash));
+    CHECK(at(at(retriedResult, "structuredContent"), "revisions").asNumber() == 2);
 }
