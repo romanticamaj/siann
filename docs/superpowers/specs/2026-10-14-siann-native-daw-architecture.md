@@ -296,7 +296,7 @@ gesture boundaries (see "Gestures").
 | compiler | builds `PreparedGraph` from an immutable document and pinned instances | the main thread, for instantiation, with a timeout |
 | control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | nothing outside its own inbox |
 | butler | disk read-ahead, seek preparation, record write-through, peaks | disk I/O |
-| protocol | WebSocket/HTTP/MCP I/O | network I/O |
+| protocol | WebSocket/HTTP/MCP I/O | network I/O; the command thread's answer to an MCP HTTP request (bounded by `ServerOptions::mcpRequestTimeout`, see Protocol v0 item 15) |
 | offline render | drives a graph for bounce and export | disk I/O |
 | MIDI driver | the platform's MIDI input callbacks | nothing (platform owned) |
 
@@ -306,9 +306,11 @@ gesture boundaries (see "Gestures").
 - Requests between non-realtime threads are messages with completion messages,
   never synchronous calls. Device control runs on the main thread (JUCE and ASIO
   expect that); the command thread asks for it and continues on the completion.
-- The only blocking edges are compiler → main (instantiation) and main → audio
-  callback (inside `stop()`). The audio thread blocks on nothing, so the wait graph is
-  acyclic and the threads cannot deadlock. Adding a blocking call requires updating
+- The only blocking edges are compiler → main (instantiation), main → audio
+  callback (inside `stop()`) and protocol → command (an MCP HTTP request waits for
+  its answer, with a timeout; a full inbox is `queue_full` at once). The command
+  thread never waits on the protocol thread and the audio thread blocks on nothing,
+  so the wait graph is acyclic and the threads cannot deadlock. Adding a blocking call requires updating
   this table and showing the graph stays acyclic.
 - The compiler reads only immutable inputs: the document, the previous graph's
   descriptor (node identities, slots, latencies) and the instance table. It never
@@ -946,6 +948,26 @@ Rules:
   the command fails and nothing is published. The journal records the actual diff.
 - VCA and group effects on derived values (effective gain) are not "touched" entities.
 
+Jobs v0 (m3-mcp). The first job is the offline render behind the protocol's
+`render.start` and the MCP `render` tool:
+
+- `render.start {name, start?, frames?}` snapshots the head document (immutable)
+  and queues an offline render on the offline-render thread to
+  `<bundle>/renders/<name>.wav`. `name` must match `^[A-Za-z0-9._-]{1,64}$` (and is
+  not `.` or `..`); anything else is `invalid_params`, so an agent cannot name a
+  path. `start` and `frames` are sample counts as decimal strings (default: the
+  whole document, as `engine::renderOffline`). The file is written atomically
+  through siann-io. Result `{jobId: "job_<n>", kind: "render", state: "queued"}`.
+- `job.status {jobId}` returns `{jobId, kind, state: queued | running | done |
+  failed, result?: {path, frames, sampleRate, channels, contentHash}, error?:
+  {code, message}}` (`contentHash` is `sha256:<hex>` of the written file; `frames`
+  is a decimal string). An unknown id is `not_found`. A failing render ends
+  `failed` with the `EngineError` code (`media_missing`, ...).
+- Jobs are in-memory, run one at a time in creation order, and are not
+  journaled. A render emits no command (nothing in the document changes), unlike
+  `media.import`. A job event (`job.changed`) is deferred; clients poll
+  `job.status`.
+
 #### Revision DAG — single history
 
 ```text
@@ -993,7 +1015,10 @@ carries the initial document).
   automatic three-way merge in v1. Rollback changes only the document. Files the
   plan's jobs produced (media, blobs, renders) stay in the bundle,
   content-addressed and merely unreferenced; removing them is a separate explicit
-  purge, never a side effect of rollback.
+  purge, never a side effect of rollback. The plan's revision is the `plan`
+  revision on main or the `branch-merge` revision that landed a proposed plan
+  (m3-mcp); both carry their diff against the first parent, from which the
+  inverse is computed.
 
 Decisions of 2026-11-05 (m3-audition):
 
@@ -1290,12 +1315,28 @@ Shared by both targets:
 ProtocolServer   HTTP + WebSocket
 EventStream      JSON events with revision numbers; binary frames for meters,
                  playhead and peaks
-McpAdapter       MCP (JSON-RPC) tools mapped onto the command registry:
+McpAdapter       MCP (JSON-RPC) tools mapped onto the command registry and the
+                 protocol methods (Protocol v0 items 14 and 15):
                  list_commands, describe_capabilities, inspect_session,
-                 submit_plan, plan_status, approve_plan (if the client is trusted),
-                 execute (direct commands for trusted clients), job_status,
-                 render, open/save session
+                 submit_plan, plan_status, approve_plan, reject_plan,
+                 apply_plan, rollback_plan, propose_plan, audition,
+                 merge_proposal, discard_proposal, execute, job_status, render,
+                 open_session, save_session
+AuditionPort     the server's way to the auditioner (below)
 ```
+
+Audition through the protocol needs the playback engine, which siann-protocol does
+not link (protocol links session, realtime and engine; playback sits above the
+engine). The server reaches it through an `AuditionPort` interface in
+`ServerOptions` (`audition(branch)`, hear main, `heard()`, `merge`, `discard`,
+plus the commit notifications the auditioner follows), implemented by the engine
+host over `playback::Auditioner`. `proposal.merge` and `proposal.discard` go
+through the port when one is present, so the sound follows (the m3-audition
+decision: merges and discards go through the auditioner), and to the session
+directly otherwise. Without a port `audition.hear` is `audition_unavailable`.
+Branch commits and merges publish `proposal.changed {branch, revision, changedIds}`
+and `proposal.closed {branch, merged, revision?}` events; main's `session.changed`
+is unchanged (`docs/schemas/protocol-events-v1.md`).
 
 Consistency rules:
 
@@ -1329,6 +1370,24 @@ Security rules:
 - MCP clients default to the "propose" scope: they can submit plans but not approve
   them unless the user grants that scope.
 
+Scopes v0 (decided with m3-mcp). v0 has two MCP scopes: `propose` (the MCP
+default) and `trusted` (the "approve" scope above; read-only and operate stay with
+LAN mode). A tool that changes main's document or the served session needs
+`trusted`: `approve_plan`, `apply_plan`, `execute` (`command.execute`; undo and
+redo are not tools in v0 and would be `trusted`), `merge_proposal`,
+`rollback_plan`, `open_session`. Everything else is `propose`: `list_commands`,
+`describe_capabilities`, `inspect_session`, `submit_plan`, `plan_status`,
+`reject_plan`, `propose_plan` (a branch; main is unchanged), `audition`,
+`discard_proposal`, `render`, `job_status`, `save_session`. In M3 the scope is set
+by the launcher (`ServerOptions::mcpScope`, `siann-cli serve --mcp-trusted`); the
+per-client grant in the UI arrives with M5. A denied tool call answers
+`scope_denied` (a stable code), executes nothing and is not cached, so it can be
+retried with the same id once the scope is granted. Note for the maintainer:
+`propose_plan` and `audition` under `propose` let an agent change what the user
+hears without changing main; if that is unwanted, flip them to `trusted` (one row
+of the tool table in `docs/schemas/protocol-mcp-v0.md`). WebSocket clients hold the
+launcher's token and are not scoped in v0.
+
 Protocol v0 (decided 2026-11-04 with m3-protocol-server; refines the rules above,
 contradicts none of them):
 
@@ -1338,7 +1397,12 @@ contradicts none of them):
    another session gets `session_mismatch`.
 2. Envelope. Request `{requestId, sessionId, method, params, expectedRevision?}`. Response
    `{requestId, ok: true, result}` or
-   `{requestId, ok: false, error: {code, message, step?}}`. Authentication: the
+   `{requestId, ok: false, error: {code, message, step?, data?}}`. `data` (m3-mcp)
+   carries the structured details of `plan_stale` `{plan, changedEntities: [{ref,
+   change}]}`, `rollback_conflict` `{entities}`, `branch_conflict` `{entities}`
+   (`"<type>:<id>"` strings) and `audition_budget_exceeded` `{resource: "memory" |
+   "cpu", needed, budget}` (decimal strings); it is absent for every other code.
+   Authentication: the
    first text frame is `{type: "auth", token}`; the reply is
    `{type: "auth", ok: true, sessionId, revision, documentHash}`, or
    `{type: "auth", ok: false, error: {code: "invalid_token"}}` followed by a close.
@@ -1439,6 +1503,80 @@ Protocol events v1 (decided 2026-11-04 with m3-events-sync; the wire details are
     dirty}, license}` (ADR-0017, point 4), captured from git at build time with cache
     overrides `SIANN_SOURCE_URL` and `SIANN_SOURCE_COMMIT` for tarball builds.
 
+Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
+`docs/schemas/protocol-mcp-v0.md`):
+
+14. Every MCP tool is a one-to-one wrapper of a protocol method with the same
+    params, result and error codes, so the UI and agents share one surface. New
+    methods (all go through the command thread, honour `expectedRevision` and the
+    idempotency cache like every method):
+    - `command.list {}` -> `{commands}` (`command::commandNames()`; per-command
+      parameter schemas are a follow-up, the registry has none yet).
+    - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
+      commands, methods, features: {plans: true, proposals: true, audition: <a port
+      is present>, render: true, plugins: false}, limits: {syncChunkEntities,
+      inboxCapacity, idempotencyCapacity}}`. `scope` is the MCP scope the launcher
+      set. M4 adds the plugin capability flags the milestone table promises.
+    - `plan.submit {steps, readSet?: ["<type>:<id>"], baseRevision?}` (default
+      base: the head) -> the `siann.plan.v1` object with its lifecycle fields.
+    - `plan.status {plan}` -> the plan object plus `stale: [{ref, change}]`
+      (`PlanStore::validate`) and `proposalBranch` when it is proposed.
+    - `plan.approve {plan, steps?}` -> the approved plan, or with `steps` (step
+      indexes) the approved sub-plan (partial approval).
+    - `plan.reject {plan, note?}` -> the rejected plan.
+    - `plan.apply {plan}` -> `{revision}`, published like `command.execute`.
+    - `plan.rollback {plan}` -> `{revision}` (the inverse revision).
+    - `plan.propose {plan}` -> `{branch, revision}` (the branch's plan revision).
+    - `proposal.merge {branch}` -> `{revision}` (the branch-merge revision).
+    - `proposal.discard {branch}` -> `{}`.
+    - `audition.hear {side: "main" | "<branch>"}` -> `{heard}` (`"main"` or the
+      branch).
+    - `render.start` and `job.status` (Jobs v0), `session.save` and
+      `session.open` (item 16).
+    - `session.inspect` adds `branches` (the open proposal branches) and, when an
+      audition port is present, `heard`.
+    Errors pass the `CommandError`, `SessionError`, `EngineError` and audition codes
+    through unchanged, with `data` as in item 2. New stable codes: `scope_denied`,
+    `audition_unavailable`, `not_supported`, `request_timeout`.
+15. MCP transport: Streamable HTTP on the protocol server. `POST /v0/mcp` with
+    `Authorization: Bearer <token>` (401 otherwise; a request with an Origin header
+    not in the allow list is 403, as at upgrades); the body is one JSON-RPC 2.0
+    request or notification. The reply is `application/json` with exactly one
+    JSON-RPC response (no SSE in v0); a notification gets 202 with an empty body.
+    `initialize` (protocolVersion `2025-06-18`, capabilities `{tools: {}}`,
+    serverInfo `{name, version}` from BuildInfo) assigns `Mcp-Session-Id` (a
+    response header, `mcp_<random hex>`), required on every later request: 400
+    when missing, 404 when unknown, so the client initializes again.
+    `notifications/initialized`, `ping`, `tools/list` and `tools/call` are served;
+    an unknown method is JSON-RPC `-32601`, malformed JSON `-32700`, a bad envelope
+    `-32600`, bad tool arguments `-32602`. A tool call maps to the protocol request
+    with `requestId = "<Mcp-Session-Id>/<jsonrpc id as canonical JSON>"` and the
+    server's current `sessionId`, so a client's retry of the same id returns the
+    original answer (item 5) and ids of different clients never collide. Success:
+    `result.content[0].text` is the method result as canonical JSON and
+    `result.structuredContent` the same object. A protocol error: `result.isError:
+    true` with the error object `{code, message, step?, data?}` as the text and as
+    `structuredContent.error`. The protocol thread waits for the command thread's
+    answer at most `ServerOptions::mcpRequestTimeout` (default 30 s), then answers
+    JSON-RPC `-32000` with `data.code: "request_timeout"`; a full inbox is
+    `queue_full` at once. The command thread never waits on the protocol, so the
+    wait graph stays acyclic ("Threads and waiting rules"). A stdio shim is a later
+    item.
+16. Open and save. `session.save {}` writes the checkpoint (`Session::checkpoint`)
+    and returns `{revision, path}` (the `session.json` path). `session.open {path}`
+    goes through `ServerOptions::openSession`, a callback the launcher supplies (the
+    engine host rebinds its playback engine and auditioner inside it). On success the
+    server serves the new session: a new `sessionId` (item 1), the event stream's
+    head moved to the new session's head (its `seq` keeps counting, so subscribers
+    see no gap), sync pins forgotten, the idempotency cache dropped with the old
+    session, and the old session's plans gone with it (render jobs already queued
+    finish into the old bundle and stay queryable by id). The result is
+    `{sessionId, revision, documentHash}`; requests still naming the old id get
+    `session_mismatch`; subscribed connections receive `session.opened {sessionId,
+    revision, documentHash}` (the event carries the new `sessionId`). A path that
+    does not exist is `not_found`; without an `openSession` callback the method is
+    `not_supported`.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -1500,6 +1638,7 @@ MySong.siann/                    a directory
   media/originals.json           original file names and paths for relink
   blobs/<sha256>                 plugin states and other binary data
   peaks/<sha256>.peaks           peak pyramids (regenerable)
+  renders/<name>.wav             offline renders (regenerable; never touched by rollback)
   trash/                         unreferenced takes, purged only on request
 ```
 

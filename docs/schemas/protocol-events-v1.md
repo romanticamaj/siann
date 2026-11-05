@@ -112,6 +112,42 @@ a sync. Frames of an epoch whose legend the client does not hold are ignored
 (between a graph publication and the event, the publisher may already send
 frames of the new epoch).
 
+### `proposal.changed` (m3-mcp)
+
+Published after a commit onto a proposal branch through the protocol
+(`plan.propose`), once the revision is durable:
+
+```json
+{"type": "proposal.changed", "branch": "p1", "revision": "r7", "changedIds": [{"ref": "track:trk_2", "change": "added"}]}
+```
+
+Here the payload's `revision` is the branch revision; it replaces the envelope's
+head revision, because main's head did not move. `changedIds` is the branch
+revision's diff against its parent, as in `session.changed`.
+
+### `proposal.closed` (m3-mcp)
+
+Published when a branch is merged (`merged: true`, `revision` the branch-merge
+revision on main, preceded by its `session.changed`) or discarded (`merged: false`,
+no `revision`):
+
+```json
+{"type": "proposal.closed", "branch": "p1", "merged": true, "revision": "r8"}
+```
+
+### `session.opened` (m3-mcp)
+
+Published when `session.open` switched the server to another bundle:
+
+```json
+{"type": "session.opened", "sessionId": "ses_...", "revision": "r3", "documentHash": "sha256:..."}
+```
+
+The envelope already carries the new `sessionId`; `seq` keeps counting across the
+switch, so a subscriber sees no gap. Every later request names the new
+`sessionId` (the old one is `session_mismatch`), and the client replaces its read
+model with a `session.sync` of the new session.
+
 ## Methods
 
 ### `session.sync`
