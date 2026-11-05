@@ -257,6 +257,53 @@ TEST_CASE("A full ring is counted as an overflow and never blocks", "[record]") 
     CHECK(result.frames == 128);
 }
 
+// The writer falls behind (a stalled disk), then catches up: the block that
+// did not fit must not leave a hole in the take. The take ends at the last
+// frame before the overflow (spec, "Recording": an overflow stops the take,
+// keeps everything captured before it and is reported).
+TEST_CASE("An overflow ends the take at the last contiguous frame, even after the writer catches up",
+          "[record][overflow]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder::Options options;
+    options.ringFrames = 2 * kBlock;
+    options.writerThread = false;  // the test is the writer: it stalls, then drains
+    Recorder recorder(2, options);
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.play();
+    driver.start(device, config(2));
+    device.pump(3);
+
+    recorder.start(dir.path() / "take.wav", 48'000);
+    CHECK_FALSE(recorder.overflowed());
+    const auto before = rt::allocationViolations();
+    device.pump(2);  // fills the ring
+    device.pump(1);  // the writer is stalled: this block does not fit
+    CHECK(recorder.overflowed());
+    CHECK(recorder.captureEnded());
+    recorder.drain();  // the writer catches up
+    device.pump(4);    // later blocks would fit again, but the take has ended
+    CHECK(rt::allocationViolations() == before);
+    const auto result = recorder.stop();
+    driver.stop();
+
+    CHECK(result.overflows == 5);  // the block that did not fit and the four after it
+    CHECK(result.frames == 2 * kBlock);
+    CHECK(result.startPosition == 3 * kBlock);
+    const auto take = readWav(result.file);
+    REQUIRE(take.info.frames == 2 * kBlock);
+    for (std::int64_t i = 0; i < take.info.frames; ++i) {
+        const std::int64_t frame = 3 * kBlock + i;
+        if (take.samples[static_cast<std::size_t>(i * 2)] != inputValue(0, frame) ||
+            take.samples[static_cast<std::size_t>(i * 2 + 1)] != inputValue(1, frame)) {
+            FAIL("the take is not one contiguous run of the input at frame " << i);
+        }
+    }
+}
+
 TEST_CASE("Loopback null test: a recorded take lands where it was played", "[record][latency]") {
     TempDir dir;
     // An impulse at timeline sample 10,000.

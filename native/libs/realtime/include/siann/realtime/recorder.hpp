@@ -72,6 +72,12 @@ public:
         return options_.maxFrames >= 0 && captured_.load(std::memory_order_acquire) >= options_.maxFrames;
     }
 
+    // Any thread: a block did not fit in the ring, so the take has ended.
+    bool overflowed() const noexcept { return overflows_.load(std::memory_order_acquire) > 0; }
+
+    // Any thread: the audio thread captures nothing more for this take.
+    bool captureEnded() const noexcept { return captureComplete() || overflowed(); }
+
     // Writer side, for tests that run without the writer thread.
     void drain();
 
