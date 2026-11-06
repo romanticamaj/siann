@@ -196,7 +196,7 @@ TEST_CASE("a missing bundle directory is created as a new session", "[engine][la
     CHECK(stopEngine(again) == 0);
 }
 
-TEST_CASE("--mcp-trusted sets the MCP scope", "[engine][launch][mcp]") {
+TEST_CASE("the --mcp-trusted flag sets the MCP scope", "[engine][launch][mcp]") {
     ix::initNetSystem();
     TempDir dir;
     for (const bool trusted : {true, false}) {
