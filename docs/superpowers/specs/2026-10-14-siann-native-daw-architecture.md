@@ -233,7 +233,10 @@ years. Milestones are designed so that something useful exists at every stage.
   a bundle, which this satisfies.
 - Windows: plugin editor windows are owned by the Electron window via
   `GWLP_HWNDPARENT` across processes for z-order. macOS cannot parent windows across
-  processes; editors float and the engine activates itself.
+  processes; editors float and the engine activates itself. Float is what stands in
+  for ownership there: the window sits at `NSFloatingWindowLevel`, so clicking the
+  Electron window does not bury it, at the price of it staying above other
+  applications too. The `macos-hands-on` gate judges whether that is acceptable.
 - The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
   by the core-only configuration too (CI builds it without JUCE). It links
   `siann::session` and `siann::protocol`; a `SIANN_WITH_JUCE` build also links
@@ -489,8 +492,9 @@ records who that is:
 ### Realtime rules and enforcement
 
 - The audio thread never locks, allocates, frees, logs, throws, or performs I/O.
-  One recorded exception, hosted plugins: see "Locks inside a hosted plugin's
-  `processBlock`" below. It is not a licence for SIANN's own code.
+  One proposed exception, hosted plugins, not yet ratified by the maintainer: see
+  "Locks inside a hosted plugin's `processBlock`" below. It is not a licence for
+  SIANN's own code.
 - Debug builds mark the audio thread with a thread-local flag; global `operator
   new/delete` and malloc hooks abort if called on a marked thread.
 - Clang RealtimeSanitizer (`-fsanitize=realtime`) runs in CI on platforms where
@@ -537,11 +541,15 @@ records who that is:
     array read and contended only by `addListener` and `removeListener`, which SIANN
     calls at construction and destruction, outside any `process` call.
 
-  The exception is decided for M0 and covers only those locks. A restart is rare and
-  initiated by the plugin; the bound is that plugin's `setActive`. The hosting test
-  "a VST3 restart during playback keeps setActive and process apart" keeps the claim
-  honest: no overlap, no allocation, and blocks run on both sides of the restart.
-  Hosting in worker processes removes the wait from the engine's audio thread.
+  The exception is proposed for M0 and awaits the maintainer's decision; it came out
+  of agent review, and `docs/harness/agent-rules.md` keeps "no locks" without it until
+  then. It covers only those locks. A restart is rare and initiated by the plugin;
+  the bound is that plugin's `setActive`, which SIANN does not control. The hosting
+  test "a VST3 restart during playback keeps setActive and process apart" checks what
+  the lock is for: no overlap, no allocation, and blocks run on both sides of the
+  restart. Nothing measures the wait: the allocation guard counts allocations, and a
+  spin time is a wall-clock figure no deterministic test can bound. Hosting in worker
+  processes removes the wait from the engine's audio thread.
 - `juce::AudioBuffer` is constructed over preallocated channel pointers (non-owning)
   and `juce::MidiBuffer` is preallocated with `ensureSize`, inside the desktop host
   adapter only.
@@ -2030,7 +2038,11 @@ M0 interim (plugin hosting, m0-plugin-hosting): `JucePluginHost` in
 `siann-host-desktop` implements `PluginHost` for VST3, and AU on macOS; LV2 stays
 off until a milestone needs it. What the audio thread may call stays on
 `PluginInstance`: `process` and the any-thread reads of capabilities, latency and
-tail. Everything else lives on `PluginControl`, reached through
+tail. The tail is a value kept by the instance: the formats allow the call behind
+it on the UI thread only (VST3 `getTailSamples`), so the main thread reads it at
+load, after `setState` and when the plugin reports a change, and neither the reader
+nor the audio thread enters the plugin. Everything else lives on `PluginControl`,
+reached through
 `PluginInstance::control()`, as "siann-host-api" requires of control-only
 operations: `getState`, `setState`, and, all message-shaped, `parameters`,
 `getParameter`, `setParameter` (normalized values), `openEditor` (with an
@@ -2040,7 +2052,14 @@ changed, parameter edited, restart requested) are plain data for
 `pluginEventAny`; `PluginHost` gained `scanPath` for one bundle. `getState` wraps
 the plugin's blob in an envelope (magic, version, plugin uid, size), so `setState`
 refuses another plugin's blob with parameters unchanged; a plugin that refuses
-its own payload cannot be seen through VST3 or AU and keeps its parameters. A
+its own payload cannot be seen through VST3 or AU and keeps its parameters. `setState`
+during playback holds the plugin out of processing until it returns: JUCE's VST3
+wrapper reads pending parameter values into a block and hands them to the plugin
+inside `process`, so a value set just before a restore could otherwise land after
+it and silently win. `process` never waits for this. It skips the plugin and passes
+its input through, as it does between the halves of a `kIoChanged` restart; the main
+thread waits for the block in flight, and a restore during playback costs that dry
+stretch. A
 descriptor's `uid` leaves out the install path, so state follows a plugin to
 another machine; `instantiate` keeps the two apart, loading the bundle at the
 descriptor's `path` and nothing else, so two installs of one plugin never stand in
@@ -2058,7 +2077,11 @@ accessory to regular while one is open. The hosting tests load
 latency is checked against audio, and the plugins named by `SIANN_TEST_VST3` and
 `SIANN_TEST_AU` on the maintainer's machines. The same checks (state round trip,
 runtime latency change measured in audio, editor) run against the plugin's VST3 and,
-on macOS, its AU. The engine's `main()` runs `MainThreadLoop` in a `SIANN_WITH_JUCE`
+on macOS, its AU. The maintainer plugins prove state, an editor they must have, and
+reported latency against the delay of an impulse; the runtime latency change is
+proven on `siann_test_plugin` only, because TDR Nova has none to drive: every value
+tried on all 75 of its parameters left it at 184 frames at 48 kHz, its Quality
+modes included. The engine's `main()` runs `MainThreadLoop` in a `SIANN_WITH_JUCE`
 build, and `--owner-window` and `--open-editor` carry the Electron window handle
 and the plugin (see "Process model"); a launch test checks the owner across
 processes and an Electron test checks it is the real window. The macOS and Linux
