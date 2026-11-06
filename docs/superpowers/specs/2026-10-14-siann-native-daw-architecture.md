@@ -237,8 +237,9 @@ years. Milestones are designed so that something useful exists at every stage.
 - The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
   by the core-only configuration too (CI builds it without JUCE). It links
   `siann::session` and `siann::protocol`; a `SIANN_WITH_JUCE` build also links
-  `siann::host_desktop`, unused until m0-plugin-hosting, which is when it enters
-  the JUCE message loop. It is started as
+  `siann::host_desktop`, unused until its `main()` runs `MainThreadLoop`
+  (m0-plugin-hosting supplies the loop, see "M0 interim (plugin hosting)" under
+  "Status"). It is started as
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
   item 17).
@@ -1988,6 +1989,32 @@ after the device bench runs.
 
 M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
+
+M0 interim (plugin hosting, m0-plugin-hosting): `JucePluginHost` in
+`siann-host-desktop` implements `PluginHost` for VST3, and AU on macOS; LV2 stays
+off until a milestone needs it. `PluginInstance` gained, all message-shaped,
+`parameters`, `getParameter`, `setParameter` (normalized values), `openEditor`
+(with an `EditorOwner` holding the native window), `closeEditor`, `editorOpen`,
+`editorNativeHandle` and `setEventSink`, whose `PluginEvent` values (latency
+changed, parameter edited, restart requested) are plain data for
+`pluginEventAny`; `PluginHost` gained `scanPath` for one bundle. `getState` wraps
+the plugin's blob in an envelope (magic, version, plugin uid, size), so `setState`
+refuses another plugin's blob with parameters unchanged; a plugin that refuses
+its own payload cannot be seen through VST3 or AU and keeps its parameters. A
+descriptor's `uid` leaves out the install path, so state follows a plugin to
+another machine. `scan` loads every module in the process, which a crashing
+plugin would take down with it; out-of-process scanning is not built. `scan` opens
+no instance, so `hasEditor` is known only from `scanPath` or `capabilities`.
+`MainThreadLoop` makes the main thread JUCE's message thread and dispatches until
+a predicate holds, which needs `JUCE_MODAL_LOOPS_PERMITTED=1`. Windows owns editors
+through `GWLP_HWNDPARENT`; on macOS they float and the engine switches from
+accessory to regular while one is open. The hosting tests load
+`siann_test_plugin`, a delay of known length built by the desktop preset, so
+latency is checked against audio, and the plugins named by `SIANN_TEST_VST3` and
+`SIANN_TEST_AU` on the maintainer's machines. The engine's `main()` running
+`MainThreadLoop` and the handoff of the Electron window handle are not part of
+this feature; `EditorOwner` is what either a command-line flag or a protocol
+method will fill.
 
 M3 interim (proposal audition, m3-audition): proposal branches live in
 `siann-command`'s `History` (`branch`, `commitOn`, `merge`, `discard`,
