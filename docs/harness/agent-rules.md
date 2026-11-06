@@ -28,6 +28,7 @@ Fixture expectations come from outside the code under test (RFCs, published vect
 ```sh
 node scripts/check-all.js --gcc             # Node tests + native dev build/tests + g++ -Werror syntax check
 node scripts/check-all.js --gcc --desktop   # also the JUCE desktop preset (when touching host_desktop)
+node scripts/check-all.js --gcc --app       # also the Electron shell in app/ (when touching app/ or apps/engine)
 node scripts/check-all.js --only native     # one step
 ```
 

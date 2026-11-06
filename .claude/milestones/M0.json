@@ -49,7 +49,7 @@
       ],
       "acceptance": [
         "app/ holds an Electron app (TypeScript, contextIsolation on, nodeIntegration off) that starts the engine helper, restarts it with crash-loop backoff and passes port and token to the renderer through preload.",
-        "Playwright (Electron) tests start the app, see the renderer connect with the token handshake, kill the engine and see it restart."
+        "Playwright (Electron) tests start the app, see the renderer connect with the token handshake, kill the engine and see it restart, and quit the app and see the engine process gone (no orphan)."
       ]
     },
     {

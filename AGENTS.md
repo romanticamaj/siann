@@ -22,9 +22,11 @@ paths, generated artifacts, and local repository references.
 - `examples/bridge/` contains command fixtures that developers can run against a local engine checkout.
 - `examples/import-pack/` contains the first product workflow fixture: manifest-driven asset placement and preview rendering.
 - `scripts/create-demo-audio.js` writes small WAV fixtures for workflow smoke tests and examples.
-- `scripts/check-all.js` runs every local check (`--gcc` adds a g++ -Werror syntax check through WSL, `--desktop` the JUCE preset).
+- `scripts/check-all.js` runs every local check (`--gcc` adds a g++ -Werror syntax check through WSL, `--desktop` the JUCE preset, `--app` the Electron shell's unit and Playwright tests against the dev build's `siann-engine`).
 - `scripts/create-daw-manifest.js` converts extracted `_DAW/` plus `_SpliceSFX/` packs into multi-track manifests with placement trim metadata.
 - `test/` contains Node test-runner coverage for the bridge wrapper, CLI, and fixtures.
+- `native/` holds the C++ engine (libraries under `native/libs/`, the `siann-cli` and `siann-engine` executables under `native/apps/`).
+- `app/` holds the Electron shell (TypeScript; its own npm package with pinned dependencies) that spawns and supervises `siann-engine`; the root package stays dependency-free.
 
 Keep implementation modules separate by the documented architecture: audio engine, command bridge, agent runtime, and UI.
 

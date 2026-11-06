@@ -9,7 +9,7 @@ How to run one milestone of the native engine with the harness. One milestone pe
 | Manifests | `.claude/milestones/<M>.json` | Features, waves, acceptance, exit criteria, human gates |
 | Workflow | `.claude/workflows/siann-milestone.js` | Preflight → Plan (Fable spec check) → Build (Opus TDD + verifier + Fable spec review, fix loop) → Land → Exit |
 | Agent rules | `docs/harness/agent-rules.md` | What every subagent must follow |
-| Local checks | `scripts/check-all.js` | One command for Node, native, desktop and GCC checks |
+| Local checks | `scripts/check-all.js` | One command for Node, native, desktop, app (Electron shell) and GCC checks |
 | Manifest tests | `test/milestones.test.js` | Keeps manifests and the workflow consistent |
 
 ## Recommended order

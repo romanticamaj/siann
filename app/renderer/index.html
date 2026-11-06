@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; connect-src ws://127.0.0.1:*; style-src 'self' 'unsafe-inline'">
+    <title>SIANN</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 24px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+      dt { opacity: 0.7; }
+      dd { margin: 0; font-family: ui-monospace, monospace; }
+      footer { margin-top: 32px; font-size: 12px; opacity: 0.7; }
+    </style>
+  </head>
+  <body>
+    <h1>SIANN</h1>
+    <dl>
+      <dt>Engine</dt><dd data-testid="status">connecting</dd>
+      <dt>Session</dt><dd data-testid="session-id"></dd>
+      <dt>Revision</dt><dd data-testid="revision"></dd>
+    </dl>
+    <footer data-testid="about"></footer>
+    <script src="renderer.js"></script>
+  </body>
+</html>
