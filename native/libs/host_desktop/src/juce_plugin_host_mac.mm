@@ -1,0 +1,36 @@
+#include "editor_platform.hpp"
+
+#import <AppKit/AppKit.h>
+
+namespace siann::host::editor_platform {
+
+namespace {
+
+int openEditors = 0;  // main thread only
+
+}  // namespace
+
+void startInBackground() {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
+void editorOpened() {
+    if (openEditors++ == 0) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    }
+}
+
+void editorRaised() {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+}
+
+void editorClosed() {
+    if (--openEditors == 0) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    }
+}
+
+}  // namespace siann::host::editor_platform

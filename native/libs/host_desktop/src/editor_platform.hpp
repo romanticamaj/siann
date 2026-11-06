@@ -13,10 +13,22 @@
 
 namespace siann::host::editor_platform {
 
+#if defined(_WIN32)
+void applyOwner(std::uintptr_t window, std::uintptr_t owner);
+#else
 inline void applyOwner(std::uintptr_t, std::uintptr_t) {}
+#endif
+
+#if defined(__APPLE__)
+void startInBackground();
+void editorOpened();
+void editorRaised();
+void editorClosed();
+#else
 inline void startInBackground() {}
 inline void editorOpened() {}
 inline void editorRaised() {}
 inline void editorClosed() {}
+#endif
 
 }  // namespace siann::host::editor_platform

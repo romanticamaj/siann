@@ -5,6 +5,13 @@ add_library(siann_host_desktop STATIC
   src/juce_plugin_host.cpp
 )
 add_library(siann::host_desktop ALIAS siann_host_desktop)
+if(WIN32)
+  target_sources(siann_host_desktop PRIVATE src/juce_plugin_host_win.cpp)
+  siann_apply_source_options(src/juce_plugin_host_win.cpp)
+elseif(APPLE)
+  target_sources(siann_host_desktop PRIVATE src/juce_plugin_host_mac.mm)
+  siann_apply_source_options(src/juce_plugin_host_mac.mm)
+endif()
 target_include_directories(siann_host_desktop PUBLIC include)
 target_link_libraries(siann_host_desktop
   PUBLIC siann::host_api siann::rt
