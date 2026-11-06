@@ -331,7 +331,7 @@ gesture boundaries (see "Gestures").
 | `butlerRequest` | audio → butler | SPSC | refill hints (track, consumed position); slot releases after a locate | latest-wins per track for hints; releases are never coalesced; the butler also polls |
 | `butlerControl` | command → butler | MPSC, mutex | add stream (with start position and the locate generation it was read under), remove stream | bounded; never waited on; completions (stream ready, stream released) are atomics read by the command thread on its tick; if a new stream is not ready within 1 s the graph is published anyway, and the player outputs silence and counts underruns until the butler has taken it |
 | `seekRequest` | dispatcher → butler | MPSC, mutex | target position + generation | a newer generation replaces an older one |
-| `recordOutbox` | audio → butler | SPSC ring | input blocks of armed tracks | overflow is a reported error, never a block |
+| `recordOutbox` | audio → butler | SPSC ring | input blocks of armed tracks | overflow is a reported error, never a block: the take ends at the last frame before the block that did not fit, so a take never has a hole |
 | `meterOutbox` | audio → dispatcher | SPSC | meter blocks, playhead | latest-value-wins; drop when full |
 | `automationOutbox` | audio → command | SPSC, per write pass | `(param, sample, value)`, then an end marker | thin in place and count; the end marker always has a reserved slot |
 | `pluginEventRt` | audio → command | SPSC | events raised inside `process()` (parameter output, latency changed) | coalesced per instance |
@@ -727,6 +727,15 @@ The documented precision is shown to users and agents.
 - Punch in/out, pre-roll, loop record with one take per pass mapped to playlists.
 - Disk full or write failure stops recording, keeps everything written so far, and
   reports an error.
+- A `recordOutbox` overflow (the writer fell behind the audio thread) is treated
+  the same way: the audio thread captures nothing more for that take, so the take
+  ends at the last frame before the block that did not fit and stays one
+  contiguous run of the input. It is never resumed after the gap, and the gap is
+  never filled with silence. The dropped blocks are counted
+  (`Recorder::Result::overflows`, `Recorder::overflowed()`), and the owner stops
+  the take once `Recorder::captureEnded()` is true. The ring is sized for the
+  writer's worst stall in wall time, so a device paced faster than real time needs
+  a proportionally larger ring.
 - Before the first sample is written, the engine durably writes a take manifest
   (`media/recording/<takeId>.json`: session, track, start position, sample rate,
   channels, record offset, generation) and records into
@@ -787,7 +796,10 @@ Every command prints one JSON object; exit codes stay 0, 1 (error with a code) a
   capped at S seconds of session frames, so the take is exactly `S * rate` frames
   long (the device run is only bounded above, a second past that). Without
   `--seconds` it runs until SIGINT / Ctrl+C. Then it stops and commits the take as
-  one revision. Recorder overflows are reported; the take is still committed.
+  one revision. A recorder overflow ends the take early (see Recording): the run
+  stops, `overflows` is reported, and the take, shorter than `--seconds`, is still
+  committed. With `--fake-speed N` the recorder ring holds N times its default, so
+  the writer keeps the wall-time headroom it has at real time.
   `--ready-file P` is a readiness signal for tests and supervisors: P is replaced
   atomically with `{takeId, startPosition, durableFrames}` (decimal strings;
   `startPosition` null until known) when the take start is marked and after every

@@ -3,6 +3,7 @@
 // realtime engine (siann-playback) on one control thread, ticking it every
 // 10 ms; the audio thread runs only the device callback.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -401,6 +402,11 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
     // --seconds count from the start of the transport: the recorder captures
     // exactly S seconds of session frames, mid-block if needed.
     realtime::Recorder::Options recorderOptions;
+    // The ring covers the writer's stalls in wall time: a fake device paced N
+    // times faster than real time fills it N times sooner (capped, so a very
+    // fast run does not preallocate gigabytes; an overflow still ends the take).
+    constexpr std::int64_t kMaxRingScale = 16;
+    recorderOptions.ringFrames *= static_cast<std::size_t>(std::min(fakeDeviceChoice(args).speed, kMaxRingScale));
     if (seconds) {
         recorderOptions.maxFrames = *seconds * sessionRate;
     }
@@ -436,15 +442,16 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
         },
         [&ready](std::int64_t durableFrames) { ready.checkpointed(durableFrames); });
 
-    // 4. Play; 5. run until the recorder holds --seconds of session frames, or
-    //    until interrupted. The device run is only bounded above, a second
-    //    past the take, in case the device delivers fewer frames (SRC).
+    // 4. Play; 5. run until the recorder holds --seconds of session frames, an
+    //    overflow has ended the take, or until interrupted. The device run is
+    //    only bounded above, a second past the take, in case the device
+    //    delivers fewer frames (SRC).
     run.engine().transport().play();
     run.waitUntilPlaying(interrupt);
     if (seconds) {
         run.runFor((*seconds + 1) * run.deviceRate());
     }
-    run.wait(interrupt, [&recorder] { return recorder.captureComplete(); });
+    run.wait(interrupt, [&recorder] { return recorder.captureEnded(); });
 
     // 6. Stop, then commit the take as one revision.
     run.engine().transport().stop();

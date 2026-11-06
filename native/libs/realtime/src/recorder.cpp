@@ -129,8 +129,10 @@ void Recorder::capture(const host::AudioBufferView& input, std::int64_t timeline
             startPosition_.store(timelinePosition, std::memory_order_release);
         }
         const auto n = static_cast<std::size_t>(frames);
-        if (ring_.writable() < n) {
-            overflows_.fetch_add(1, std::memory_order_relaxed);  // reported, never a block
+        // Reported, never a block. After the first block that did not fit the
+        // take has ended: writing later blocks would leave a hole in it.
+        if (overflows_.load(std::memory_order_relaxed) > 0 || ring_.writable() < n) {
+            overflows_.fetch_add(1, std::memory_order_release);
         } else {
             ring_.write(input, n);
             captured_.fetch_add(frames, std::memory_order_release);
