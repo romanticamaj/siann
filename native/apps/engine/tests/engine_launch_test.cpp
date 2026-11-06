@@ -28,6 +28,10 @@
 #include "support/piped_process.hpp"
 #include "support/ws_clients.hpp"
 
+#ifndef SIANN_ENGINE_EXE
+#define SIANN_ENGINE_EXE "siann-engine"  // set by CMake; the fallback keeps a plain syntax check building
+#endif
+
 using namespace siann;
 using engine_app::test::PipedProcess;
 using json::Object;
