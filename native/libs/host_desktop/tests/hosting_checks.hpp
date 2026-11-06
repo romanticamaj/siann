@@ -163,12 +163,18 @@ inline void checkBuiltTestPlugin(host::MainThreadLoop& loop, host::JucePluginHos
     CHECK(measureDelay(*instance).frames == 512);
 
     instance->control().setParameter(gain, 0.25);
+    instance->control().setParameter(parameterIndex(*instance, "tail"), 1.0);  // state; no latency change
     const auto state = instance->control().getState();
     auto restored = host.instantiate(descriptor, sampleRate, blockFrames);
     CHECK(restored->control().getParameter(gain) == Catch::Approx(1.0));
     CHECK(restored->control().getParameter(latency) == Catch::Approx(0.0));
     CHECK(restored->latencyFrames() == 64);
+    CHECK(restored->tailFrames() == 0);
     restored->control().setState(state);
+    // On return: setState's own tail read. A hosted VST3's controller also reports
+    // a restart here, which reads it again; a hosted AU reports nothing
+    // synchronously, so on macOS this line stands on that read alone.
+    CHECK(restored->tailFrames() == longTailFrames);
     CHECK(restored->control().getParameter(gain) == Catch::Approx(0.25));
     CHECK(restored->control().getParameter(latency) == Catch::Approx(1.0));
     REQUIRE(loop.runUntil([&] { return restored->latencyFrames() == 512; }, eventTimeout));
