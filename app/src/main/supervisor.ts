@@ -186,6 +186,8 @@ export class EngineSupervisor extends EventEmitter {
 
   private forceKill(launch: Launch): void {
     launch.child.kill('SIGKILL');
+    // A kill that fails emits 'error' at once, and onExit has already run.
+    if (launch.exited) return;
     this.cancelKill = this.options.schedule(() => {
       this.cancelKill = null;
       launch.stderr.push('siann-shell: the engine did not exit after SIGKILL');
@@ -238,6 +240,9 @@ export class EngineSupervisor extends EventEmitter {
     launch.stderr.push(`siann-shell: ${reason}`);
     this.emit('protocol-error', reason);
     launch.child.kill();
+    // As in forceKill: a timer here would outlive this launch and make the next
+    // launch's stop() skip stdin and the kill.
+    if (launch.exited) return;
     this.cancel('kill');
     this.cancelKill = this.options.schedule(() => this.forceKill(launch), this.killGraceMs());
   }
