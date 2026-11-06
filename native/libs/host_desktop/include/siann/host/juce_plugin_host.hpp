@@ -61,8 +61,10 @@ public:
     // Throws plugin_not_found when the path does not exist and plugin_load_failed
     // when it holds no plugin this host can load.
     std::vector<PluginDescriptor> scanPath(const std::string& path) override;
-    // Throws plugin_not_found when neither this host nor the descriptor's path
-    // knows the plugin and plugin_load_failed when it does not load.
+    // Loads the bundle at the descriptor's path, never another install of the same
+    // uid. Without a path the uid must have exactly one known install. Throws
+    // plugin_not_found when neither names a plugin and plugin_load_failed when it
+    // does not load.
     std::unique_ptr<PluginInstance> instantiate(const PluginDescriptor& descriptor, std::int64_t sampleRate,
                                                 int maxBlockFrames) override;
 

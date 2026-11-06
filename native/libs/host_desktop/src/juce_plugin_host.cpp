@@ -360,20 +360,36 @@ bool MainThreadLoop::runUntil(const std::function<bool()>& predicate, std::chron
 struct JucePluginHost::Impl {
     juce::ScopedJuceInitialiser_GUI gui;
     juce::AudioPluginFormatManager formats;
-    std::map<std::string, juce::PluginDescription> known;  // by descriptor uid
+    // By descriptor uid, then path: a uid is the same at every install of a plugin,
+    // and each install is loaded from where it is.
+    std::map<std::string, std::map<std::string, juce::PluginDescription>> known;
 
     Impl() { juce::addDefaultFormatsToManager(formats); }
 
-    PluginDescriptor remember(const juce::PluginDescription& description) {
+    // path is what the caller named; an AU is opened by the system's identifier.
+    PluginDescriptor remember(const juce::PluginDescription& description, const std::string& path) {
         PluginDescriptor descriptor;
         descriptor.format = formatKey(description.pluginFormatName);
         descriptor.uid = stableUid(description);
         descriptor.name = description.name.toStdString();
         descriptor.vendor = description.manufacturerName.toStdString();
-        descriptor.path = description.fileOrIdentifier.toStdString();
+        descriptor.path = descriptor.format == "au" ? description.fileOrIdentifier.toStdString() : path;
         descriptor.version = description.version.toStdString();
-        known[descriptor.uid] = description;
+        known[descriptor.uid][descriptor.path] = description;
         return descriptor;
+    }
+
+    // The install a descriptor names. No path names the only install there is.
+    const juce::PluginDescription* find(const std::string& uid, const std::string& path) const {
+        const auto installs = known.find(uid);
+        if (installs == known.end()) {
+            return nullptr;
+        }
+        if (path.empty()) {
+            return installs->second.size() == 1 ? &installs->second.begin()->second : nullptr;
+        }
+        const auto install = installs->second.find(path);
+        return install == installs->second.end() ? nullptr : &install->second;
     }
 
     // Always the asynchronous call, pumped here: an AUv3 cannot be created any
@@ -449,10 +465,7 @@ std::vector<PluginDescriptor> JucePluginHost::scanPath(const std::string& path) 
     }
     std::vector<PluginDescriptor> result;
     for (const auto* description : found) {
-        auto descriptor = impl_->remember(*description);
-        if (descriptor.format != "au") {
-            descriptor.path = path;  // an AU is opened by the system's identifier instead
-        }
+        auto descriptor = impl_->remember(*description, path);
         try {
             descriptor.hasEditor = impl_->create(*description, 44'100.0, 512)->hasEditor();
         } catch (const PluginError&) {
@@ -467,17 +480,20 @@ std::unique_ptr<PluginInstance> JucePluginHost::instantiate(const PluginDescript
                                                             int maxBlockFrames) {
     // A descriptor from scan(), or one kept from an earlier run, is probed first.
     std::string uid = descriptor.uid;
-    if (impl_->known.find(uid) == impl_->known.end() && !descriptor.path.empty()) {
+    const juce::PluginDescription* description = impl_->find(uid, descriptor.path);
+    if (description == nullptr && !descriptor.path.empty()) {
         const auto probed = scanPath(descriptor.path);
-        if (uid.empty()) {
-            uid = probed.front().uid;
+        const auto match = std::find_if(probed.begin(), probed.end(),
+                                        [&](const PluginDescriptor& found) { return uid.empty() || found.uid == uid; });
+        if (match != probed.end()) {
+            uid = match->uid;
+            description = impl_->find(uid, match->path);
         }
     }
-    const auto entry = impl_->known.find(uid);
-    if (entry == impl_->known.end()) {
-        throw PluginError("plugin_not_found", "unknown plugin: " + descriptor.name);
+    if (description == nullptr) {
+        throw PluginError("plugin_not_found", "unknown plugin, or more than one install of it: " + descriptor.name);
     }
-    auto plugin = impl_->create(entry->second, static_cast<double>(sampleRate), maxBlockFrames);
+    auto plugin = impl_->create(*description, static_cast<double>(sampleRate), maxBlockFrames);
     return std::make_unique<JucePluginInstance>(std::move(plugin), uid, sampleRate, maxBlockFrames);
 }
 

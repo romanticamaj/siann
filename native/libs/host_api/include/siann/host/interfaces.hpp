@@ -161,6 +161,7 @@ public:
     virtual std::vector<PluginDescriptor> scanPath(const std::string& path) = 0;
     // Main thread; asynchronous formats complete before this returns. Takes a
     // descriptor from scanPath, or one from scan(), whose path it probes first.
+    // The path decides which install loads; the uid is the same at all of them.
     virtual std::unique_ptr<PluginInstance> instantiate(const PluginDescriptor& descriptor, std::int64_t sampleRate,
                                                         int maxBlockFrames) = 0;
 };
