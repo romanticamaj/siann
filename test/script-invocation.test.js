@@ -25,8 +25,9 @@ test('other runners are spawned directly', () => {
 });
 
 test('check-all parses its flags', () => {
-  assert.deepEqual(parseArgs([]), { desktop: false, gcc: false, json: false, only: null });
+  assert.deepEqual(parseArgs([]), { desktop: false, gcc: false, app: false, json: false, only: null });
   assert.deepEqual(parseArgs(['--gcc', '--desktop', '--json', '--only', 'native']),
-    { desktop: true, gcc: true, json: true, only: 'native' });
+    { desktop: true, gcc: true, app: false, json: true, only: 'native' });
+  assert.deepEqual(parseArgs(['--app', '--gcc']), { desktop: false, gcc: true, app: true, json: false, only: null });
   assert.throws(() => parseArgs(['--nope']), /unknown argument/);
 });
