@@ -19,8 +19,9 @@ namespace {
 std::atomic<bool> stopRequested{false};
 static_assert(std::atomic<bool>::is_always_lock_free, "the stop flag is set from a signal handler");
 
-// Writes straight to a file descriptor, unbuffered: the ready line is one write.
-// `writeFd` is the platform's write call, set below.
+// Writes straight to a file descriptor, unbuffered: each insertion is a write
+// (the ready line is two, its text and its newline; the launcher reads up to the
+// newline). `writeFd` is the platform's write call, set below.
 int writeFd(int fd, const char* data, std::size_t size);
 
 class FdStreamBuf final : public std::streambuf {
@@ -111,17 +112,46 @@ namespace {
 
 // The launcher's stdout, moved off fd 1 before any plugin loads: the ready line
 // goes to the duplicate, and fd 1 (and the Win32 standard output handle, which
-// the CRT's dup does not touch) becomes stderr, so whatever a plugin or JUCE
-// prints lands in the shell's stderr log, never in the handshake. -1 when the
-// duplicate could not be made; stdout then stays as it is.
+// the CRT's dup does not touch) becomes stderr. Code sharing this CRT (JUCE, a
+// plugin on the same runtime DLL) then prints to the shell's stderr log. A
+// plugin with its own CRT took fd 1's handle value from the launcher's
+// lpReserved2 block when it loaded; _dup2 closes that handle, so its writes fail
+// and its output is dropped. The freed value is re-occupied with NUL below, so a
+// handle the engine opens later cannot inherit that plugin's output. -1 when the
+// redirect could not be made; stdout then stays as it is.
 int detachHandshakeFd() {
     const int fd = _dup(_fileno(stdout));
     if (fd < 0) {
         return -1;
     }
     _setmode(fd, _O_BINARY);  // the ready line ends in "\n", not "\r\n"
-    _dup2(_fileno(stderr), _fileno(stdout));
+    const HANDLE freed = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stdout)));
+    if (_dup2(_fileno(stderr), _fileno(stdout)) != 0) {
+        _close(fd);
+        return -1;
+    }
     SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
+    // Windows hands out the lowest free handle value, so NUL usually lands on the
+    // freed one at once; a few tries cover a value taken meanwhile. The matching
+    // handle stays open for the life of the process; the others are closed.
+    HANDLE spare[8];
+    int spares = 0;
+    bool reoccupied = false;
+    while (!reoccupied && spares < static_cast<int>(sizeof(spare) / sizeof(spare[0]))) {
+        const HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                       OPEN_EXISTING, 0, nullptr);
+        if (nul == INVALID_HANDLE_VALUE) {
+            break;
+        }
+        if (nul == freed) {
+            reoccupied = true;
+        } else {
+            spare[spares++] = nul;
+        }
+    }
+    for (int i = 0; i < spares; ++i) {
+        CloseHandle(spare[i]);
+    }
     return fd;
 }
 
@@ -174,13 +204,18 @@ void watchStdin() {
 namespace {
 
 // As on Windows: the launcher's stdout moves off fd 1 before any plugin loads,
-// and fd 1 becomes stderr. -1 when dup fails; stdout then stays as it is.
+// and fd 1 becomes stderr. Here fd 1 is the kernel's, shared by every library in
+// the process, so any plugin's stdout output reaches the shell's stderr log. -1
+// when the redirect fails; stdout then stays as it is.
 int detachHandshakeFd() {
     const int fd = ::dup(STDOUT_FILENO);
     if (fd < 0) {
         return -1;
     }
-    ::dup2(STDERR_FILENO, STDOUT_FILENO);
+    if (::dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+        ::close(fd);
+        return -1;
+    }
     return fd;
 }
 

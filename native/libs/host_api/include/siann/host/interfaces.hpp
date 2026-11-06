@@ -160,7 +160,9 @@ public:
     virtual int latencyFrames() const = 0;
     // The value from load, the last setState or the last change the plugin reported.
     virtual int tailFrames() const = 0;
-    // Audio thread only.
+    // The audio thread, or the offline render thread during bounce and export;
+    // never both at once (the graph moves between the drivers, spec "Realtime
+    // data flow"). M0 discards `events`.
     virtual void process(const AudioBufferView& input, const AudioBufferView& output, EventList events) noexcept = 0;
     // Main thread. Lives as long as the instance.
     virtual PluginControl& control() = 0;

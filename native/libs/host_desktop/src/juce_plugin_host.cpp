@@ -273,10 +273,11 @@ private:
             plugin_->setStateInformation(state.data() + position, static_cast<int>(payloadSize));
         }
         readLatency();
-        // A tail the state changed without a latency report. A JUCE-built plugin's
-        // controller also ends setComponentState in a kParamValuesChanged restart,
-        // which reaches audioProcessorChanged and reads the tail anyway; this read
-        // is for a controller that reports nothing, and no CI-built plugin is one.
+        // A tail the state changed without a latency report. A hosted VST3 built
+        // with JUCE also ends setComponentState in a kParamValuesChanged restart,
+        // which reaches audioProcessorChanged and reads the tail anyway; a hosted
+        // AU reports nothing synchronously, so there this read is the only one
+        // (checkBuiltTestPlugin checks it on macOS).
         readTail();
     }
 

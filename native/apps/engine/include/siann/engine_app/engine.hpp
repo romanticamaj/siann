@@ -22,7 +22,12 @@
 // (and JUCE) print to stdout, and a line of theirs before or after the ready
 // line is a failed launch for the shell. main.cpp duplicates the launcher's
 // stdout into `out` and points fd 1 (and the Win32 standard output handle) at
-// stderr before calling this, so plugin output reaches the shell's stderr log.
+// stderr before calling this. On POSIX that sends any plugin's stdout output to
+// the shell's stderr log. On Windows it does so for code sharing the engine's
+// CRT; a plugin with its own CRT holds the handle value the launcher passed in
+// lpReserved2, which the redirect closes, so its stdout writes fail and that
+// output is dropped (main.cpp re-occupies the freed value with NUL so nothing
+// the engine opens later receives it).
 //
 // A SIANN_WITH_JUCE build serves from the JUCE message loop, so call this on the
 // process's main thread. There --open-editor opens the first plugin of a bundle

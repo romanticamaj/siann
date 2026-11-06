@@ -471,9 +471,10 @@ TEST_CASE("plugin host: a restored state brings its tail", "[juce][plugin]") {
 // latency. What brings it here is JUCE's own plugin-side controller, whose
 // setComponentState ends in restartComponent(kParamValuesChanged), which the host
 // turns into a programChanged report and the adapter into a tail read; so the
-// adapter's own read after setState is not what this test exercises (removing it
-// passes: the mutant survives), and it stays for a controller that reports
-// nothing after setComponentState, which no CI-built plugin can be.
+// adapter's own read after setState is not what this test exercises through VST3
+// (removing it passes here: the mutant survives on Windows and Linux). A hosted AU
+// reports nothing synchronously after setState, so checkBuiltTestPlugin's tail
+// check on macOS is the one that stands on that read.
 TEST_CASE("plugin host: a restored state brings a tail its latency does not announce", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;

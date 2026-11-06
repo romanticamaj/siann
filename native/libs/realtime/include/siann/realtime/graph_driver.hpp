@@ -299,8 +299,9 @@ public:
     // Every device callback since start(), timed around process(): callbacks,
     // deadline misses (the spec's xruns, reported as `xruns`) and the longest
     // callback. Written on the audio thread with atomics only; read anywhere.
-    // This is where a wait inside a hosted plugin's processBlock shows (spec,
-    // "Realtime rules and enforcement", ADR-0018).
+    // This is where a hosted plugin's wait will show once a graph node runs its
+    // processBlock inside this callback (spec, "Realtime rules and enforcement",
+    // ADR-0018; M4 plugin node).
     const rt::CallbackTimer& callbackTiming() const noexcept { return timing_; }
 
     DriverState state() const noexcept { return state_; }
