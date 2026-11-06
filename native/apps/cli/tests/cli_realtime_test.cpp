@@ -47,6 +47,12 @@ TEST_CASE("play runs a bundle on the fake device for a number of device frames",
     CHECK(played.json.find("framesPlayed")->asString() == std::to_string(framesFor(1, 48'000, 256)));
     CHECK(played.json.find("underruns")->asString() == "0");
     CHECK(isDecimalString(played.json.find("srcUnderruns")));
+    // The driver's deadline misses (spec: an xrun, separate from the underruns
+    // above) and its longest callback, so a wait inside a hosted plugin shows.
+    REQUIRE(isDecimalString(played.json.find("xruns")));
+    REQUIRE(played.json.find("maxCallbackMicros") != nullptr);
+    CHECK(played.json.find("maxCallbackMicros")->kind() == Value::Kind::number);
+    CHECK(played.json.find("maxCallbackMicros")->asNumber() >= 0.0);
     const Value* resampling = played.json.find("resampling");
     REQUIRE(resampling != nullptr);
     REQUIRE(resampling->kind() == Value::Kind::object);
@@ -82,6 +88,9 @@ TEST_CASE("record commits a take on a track", "[cli][realtime][record]") {
     REQUIRE(isDecimalString(recorded.json.find("frames")));
     CHECK(std::stoll(recorded.json.find("frames")->asString()) > 0);
     CHECK(recorded.json.find("overflows")->asString() == "0");
+    REQUIRE(isDecimalString(recorded.json.find("xruns")));
+    REQUIRE(recorded.json.find("maxCallbackMicros") != nullptr);
+    CHECK(recorded.json.find("maxCallbackMicros")->kind() == Value::Kind::number);
 
     const CliResult info = runJson({"info", bundle});
     REQUIRE(info.exitCode == 0);
