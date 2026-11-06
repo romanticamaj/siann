@@ -237,12 +237,21 @@ years. Milestones are designed so that something useful exists at every stage.
 - The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
   by the core-only configuration too (CI builds it without JUCE). It links
   `siann::session` and `siann::protocol`; a `SIANN_WITH_JUCE` build also links
-  `siann::host_desktop`, unused until its `main()` runs `MainThreadLoop`
-  (m0-plugin-hosting supplies the loop, see "M0 interim (plugin hosting)" under
-  "Status"). It is started as
-  `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]`
+  `siann::host_desktop` and serves from `MainThreadLoop` on the main thread, where
+  the core-only build sleeps between checks of the stop flag. It is started as
+  `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
+  [--owner-window <handle>] [--open-editor <bundle>]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
   item 17).
+- `--owner-window` carries the Electron window's native handle (decimal; the
+  HWND on Windows). The shell creates its window first, so it has the handle to
+  pass, and reads it again for every restart; only Windows uses it, and the core-only
+  build accepts and ignores it. `--open-editor` is M0's only way to reach an editor,
+  which the `macos-hands-on` gate and `m0-exit-signed` run through: the engine
+  probes the bundle, instantiates it and opens its editor, owned by that window,
+  before the ready line, so a failure is a failed launch. The shell passes it from
+  `SIANN_OPEN_EDITOR`. A core-only build refuses it with `no_plugin_host`. The
+  protocol method that opens editors for a plugin in the graph replaces it in M4.
 - Session at launch: `--session <bundle>` is required. When the directory does not
   exist the engine creates a new empty session there (`Session::create` with
   `Document::create(<bundle stem>, 48000, 120000)`), otherwise it calls
@@ -480,6 +489,8 @@ records who that is:
 ### Realtime rules and enforcement
 
 - The audio thread never locks, allocates, frees, logs, throws, or performs I/O.
+  One recorded exception, hosted plugins: see "Locks inside a hosted plugin's
+  `processBlock`" below. It is not a licence for SIANN's own code.
 - Debug builds mark the audio thread with a thread-local flag; global `operator
   new/delete` and malloc hooks abort if called on a marked thread.
 - Clang RealtimeSanitizer (`-fsanitize=realtime`) runs in CI on platforms where
@@ -506,6 +517,31 @@ records who that is:
 - Diagnostics from the audio thread go through a lock-free log ring drained by a
   non-realtime thread (for example rtlog-cpp); spdlog is used only off the audio
   thread.
+- Locks inside a hosted plugin's `processBlock`. SIANN takes no lock in
+  `PluginInstance::process`, but JUCE's hosting wrappers do, and third-party plugin
+  code is outside any guarantee:
+  - Hosted VST3 takes the per-instance `SpinLock processMutex` on every block. The
+    main thread holds it across `setActive` in JUCE's handling of a plugin-initiated
+    `restartComponent(kReloadComponent | kIoChanged)`, and in `prepareToPlay` and
+    `releaseResources`. VST3 forbids `process` during `setActive`, so something must
+    keep them apart, and JUCE offers neither a try-lock nor a hook before the
+    restart. While such a restart runs the audio thread spins for as long as the
+    plugin's `setActive` takes: an xrun on the affected block, and silence or dry
+    audio is not an alternative SIANN can choose. Between the two halves of a
+    `kIoChanged` restart the plugin is inactive, `processBlock` does nothing and
+    `process` passes its input through.
+  - Hosted AU takes `midiInLock` (a `CriticalSection`) per block when the plugin
+    produces MIDI, contended only by the plugin's own MIDI output callback.
+  - Any plugin that reports an edit or a latency change from the audio thread goes
+    through `AudioProcessor::getListenerLocked`, a `CriticalSection` held for one
+    array read and contended only by `addListener` and `removeListener`, which SIANN
+    calls at construction and destruction, outside any `process` call.
+
+  The exception is decided for M0 and covers only those locks. A restart is rare and
+  initiated by the plugin; the bound is that plugin's `setActive`. The hosting test
+  "a VST3 restart during playback keeps setActive and process apart" keeps the claim
+  honest: no overlap, no allocation, and blocks run on both sides of the restart.
+  Hosting in worker processes removes the wait from the engine's audio thread.
 - `juce::AudioBuffer` is constructed over preallocated channel pointers (non-owning)
   and `juce::MidiBuffer` is preallocated with `ensureSize`, inside the desktop host
   adapter only.
@@ -1992,9 +2028,13 @@ protocol.
 
 M0 interim (plugin hosting, m0-plugin-hosting): `JucePluginHost` in
 `siann-host-desktop` implements `PluginHost` for VST3, and AU on macOS; LV2 stays
-off until a milestone needs it. `PluginInstance` gained, all message-shaped,
-`parameters`, `getParameter`, `setParameter` (normalized values), `openEditor`
-(with an `EditorOwner` holding the native window), `closeEditor`, `editorOpen`,
+off until a milestone needs it. What the audio thread may call stays on
+`PluginInstance`: `process` and the any-thread reads of capabilities, latency and
+tail. Everything else lives on `PluginControl`, reached through
+`PluginInstance::control()`, as "siann-host-api" requires of control-only
+operations: `getState`, `setState`, and, all message-shaped, `parameters`,
+`getParameter`, `setParameter` (normalized values), `openEditor` (with an
+`EditorOwner` holding the native window), `closeEditor`, `editorOpen`,
 `editorNativeHandle` and `setEventSink`, whose `PluginEvent` values (latency
 changed, parameter edited, restart requested) are plain data for
 `pluginEventAny`; `PluginHost` gained `scanPath` for one bundle. `getState` wraps
@@ -2002,7 +2042,10 @@ the plugin's blob in an envelope (magic, version, plugin uid, size), so `setStat
 refuses another plugin's blob with parameters unchanged; a plugin that refuses
 its own payload cannot be seen through VST3 or AU and keeps its parameters. A
 descriptor's `uid` leaves out the install path, so state follows a plugin to
-another machine. `scan` lists format, path and name without running plugin code,
+another machine; `instantiate` keeps the two apart, loading the bundle at the
+descriptor's `path` and nothing else, so two installs of one plugin never stand in
+for each other. A stale path fails; a descriptor without a path needs exactly one
+known install. `scan` lists format, path and name without running plugin code,
 because a bundle that crashes on load would take the engine with it (one on the
 maintainer's machine does, now and then); `scanPath` loads and probes a single
 bundle in the process until plugin workers exist, and the rest of a descriptor
@@ -2013,10 +2056,14 @@ through `GWLP_HWNDPARENT`; on macOS they float and the engine switches from
 accessory to regular while one is open. The hosting tests load
 `siann_test_plugin`, a delay of known length built by the desktop preset, so
 latency is checked against audio, and the plugins named by `SIANN_TEST_VST3` and
-`SIANN_TEST_AU` on the maintainer's machines. The engine's `main()` running
-`MainThreadLoop` and the handoff of the Electron window handle are not part of
-this feature; `EditorOwner` is what either a command-line flag or a protocol
-method will fill.
+`SIANN_TEST_AU` on the maintainer's machines. The same checks (state round trip,
+runtime latency change measured in audio, editor) run against the plugin's VST3 and,
+on macOS, its AU. The engine's `main()` runs `MainThreadLoop` in a `SIANN_WITH_JUCE`
+build, and `--owner-window` and `--open-editor` carry the Electron window handle
+and the plugin (see "Process model"); a launch test checks the owner across
+processes and an Electron test checks it is the real window. The macOS and Linux
+halves count only once the desktop CI matrix is green on the pull request: they
+cannot be built on the Windows machine this was written on.
 
 M3 interim (proposal audition, m3-audition): proposal branches live in
 `siann-command`'s `History` (`branch`, `commitOn`, `merge`, `discard`,
