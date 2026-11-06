@@ -164,7 +164,7 @@ function createWindow(): void {
 let quitting = false;
 app.on('before-quit', (event) => {
   if (quitting) return;
-  // Stop the engine first; quit once it has exited.
+  // Stop the engine first; stop() is bounded even if the engine never exits.
   event.preventDefault();
   quitting = true;
   void supervisor.stop().finally(() => app.quit());

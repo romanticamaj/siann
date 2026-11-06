@@ -9,8 +9,11 @@
 // delay that doubles from initialMs up to maxMs; the count resets once an
 // engine has stayed up resetAfterMs after its ready line; after maxRestarts
 // consecutive restarts the next failure emits `gave-up`. stop() closes the
-// child's stdin (the engine exits on EOF), kills it when a grace timer
-// expires, and never restarts.
+// child's stdin (the engine exits on EOF), sends SIGKILL when a grace timer
+// expires, and never restarts. A failed launch gets SIGTERM, then SIGKILL.
+// SIGTERM alone cannot end a wedged engine on POSIX: the engine catches it
+// and only sets a flag its main thread polls. A child that outlives SIGKILL
+// by killGraceMs counts as exited, so stop() and restarts are always bounded.
 //
 // Process creation and timers are injected (spawn, schedule), so the unit
 // tests drive every path without real processes or wall-clock waits.
@@ -64,8 +67,11 @@ export interface SupervisorOptions {
   spawn: SpawnEngine;
   schedule: Schedule;
   backoff?: Partial<Backoff>;
-  // How long stop() waits after closing stdin before it kills the child.
+  // How long stop() waits after closing stdin before it sends SIGKILL.
   stopGraceMs?: number;
+  // How long a failed launch gets after SIGTERM before SIGKILL, and how long
+  // any child gets after SIGKILL before it counts as exited.
+  killGraceMs?: number;
   // stderr lines kept for `gave-up`.
   stderrLines?: number;
 }
@@ -127,7 +133,8 @@ export class EngineSupervisor extends EventEmitter {
   private started = false;
   private cancelRestart: (() => void) | null = null;
   private cancelReset: (() => void) | null = null;
-  private cancelGrace: (() => void) | null = null;
+  // The next step in ending the current child; non-null once that has begun.
+  private cancelKill: (() => void) | null = null;
   private stopWaiters: Array<() => void> = [];
 
   constructor(options: SupervisorOptions) {
@@ -152,8 +159,9 @@ export class EngineSupervisor extends EventEmitter {
     this.spawnEngine();
   }
 
-  // Ends the engine: closes its stdin, kills it after the grace period, and
-  // resolves once it has exited. Never restarts afterwards.
+  // Ends the engine: closes its stdin, sends SIGKILL after the grace period,
+  // and resolves once it has exited or outlived SIGKILL. Never restarts
+  // afterwards.
   stop(): Promise<void> {
     this.stopping = true;
     this.cancel('restart');
@@ -161,22 +169,32 @@ export class EngineSupervisor extends EventEmitter {
     const launch = this.launch;
     if (launch === null || launch.exited) return Promise.resolve();
     const done = new Promise<void>((resolve) => this.stopWaiters.push(resolve));
-    if (this.cancelGrace === null) {
+    if (this.cancelKill === null) {
       try {
         launch.child.stdin?.end();
       } catch {
         // A closed pipe: the child is on its way out anyway.
       }
-      this.cancelGrace = this.options.schedule(() => {
-        this.cancelGrace = null;
-        if (!launch.exited) launch.child.kill();
-      }, this.options.stopGraceMs ?? 5_000);
+      this.cancelKill = this.options.schedule(() => this.forceKill(launch), this.options.stopGraceMs ?? 5_000);
     }
     return done;
   }
 
-  private cancel(which: 'restart' | 'reset' | 'grace'): void {
-    const key = which === 'restart' ? 'cancelRestart' : which === 'reset' ? 'cancelReset' : 'cancelGrace';
+  private killGraceMs(): number {
+    return this.options.killGraceMs ?? 2_000;
+  }
+
+  private forceKill(launch: Launch): void {
+    launch.child.kill('SIGKILL');
+    this.cancelKill = this.options.schedule(() => {
+      this.cancelKill = null;
+      launch.stderr.push('siann-shell: the engine did not exit after SIGKILL');
+      this.onExit(launch, null, 'SIGKILL');
+    }, this.killGraceMs());
+  }
+
+  private cancel(which: 'restart' | 'reset' | 'kill'): void {
+    const key = which === 'restart' ? 'cancelRestart' : which === 'reset' ? 'cancelReset' : 'cancelKill';
     const fn = this[key];
     this[key] = null;
     if (fn) fn();
@@ -220,6 +238,8 @@ export class EngineSupervisor extends EventEmitter {
     launch.stderr.push(`siann-shell: ${reason}`);
     this.emit('protocol-error', reason);
     launch.child.kill();
+    this.cancel('kill');
+    this.cancelKill = this.options.schedule(() => this.forceKill(launch), this.killGraceMs());
   }
 
   private onStdout(launch: Launch, chunk: string): void {
@@ -273,8 +293,8 @@ export class EngineSupervisor extends EventEmitter {
     }
     if (this.launch !== launch) return;
     this.cancel('reset');
+    this.cancel('kill');
     if (this.stopping) {
-      this.cancel('grace');
       this.emit('exit', { code, signal, restartInMs: null } satisfies EngineExit);
       const waiters = this.stopWaiters;
       this.stopWaiters = [];
