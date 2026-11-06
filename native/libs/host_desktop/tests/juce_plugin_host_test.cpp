@@ -4,9 +4,6 @@
 // on the maintainer's machines and skip elsewhere. Test names start with
 // "plugin host:" so `ctest -R "plugin host"` selects them.
 
-#include <catch2/catch_approx.hpp>
-#include <catch2/catch_test_macros.hpp>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -22,103 +19,17 @@
 #include <thread>
 #include <vector>
 
-#include "siann/host/juce_plugin_host.hpp"
-#include "siann/rt/mpsc_queue.hpp"
-#include "siann/rt/realtime_thread.hpp"
+#include "hosting_checks.hpp"
 
 #if defined(_WIN32)
 #include <windows.h>
 #endif
 
 using namespace siann;
+using namespace siann::hosting_test;
 using Catch::Approx;
 
 namespace {
-
-constexpr std::int64_t sampleRate = 48'000;
-constexpr int blockFrames = 256;
-constexpr auto eventTimeout = std::chrono::seconds(5);
-
-// Owned planar audio and the view of it the core would pass.
-class Audio {
-public:
-    Audio(int channels, int frames) : samples_(static_cast<std::size_t>(channels)) {
-        for (auto& channel : samples_) {
-            channel.assign(static_cast<std::size_t>(frames), 0.0f);
-            pointers_.push_back(channel.data());
-        }
-        view_.channels = pointers_.data();
-        view_.channelCount = channels;
-        view_.frames = frames;
-    }
-
-    const host::AudioBufferView& view() const { return view_; }
-    std::vector<float>& channel(int index) { return samples_[static_cast<std::size_t>(index)]; }
-
-private:
-    std::vector<std::vector<float>> samples_;
-    std::vector<float*> pointers_;
-    host::AudioBufferView view_;
-};
-
-struct DelayMeasurement {
-    int frames = -1;  // of the impulse's first output sample, -1 when none came out
-    float peak = 0.0f;
-    std::uint64_t allocations = 0;
-};
-
-// Sends an impulse through on a realtime-marked thread, the one thread that may
-// call process(). Buffers exist before the thread starts: nothing allocates there.
-DelayMeasurement measureDelay(host::PluginInstance& instance, int channels = 2) {
-    Audio input(channels, blockFrames);
-    Audio output(channels, blockFrames);
-    DelayMeasurement result;
-    std::thread audio([&] {
-        const rt::ScopedRealtimeThread realtime;
-        const auto before = rt::allocationViolations();
-        for (int block = 0; block < 4; ++block) {
-            for (int c = 0; c < channels; ++c) {
-                input.channel(c)[0] = block == 0 ? 1.0f : 0.0f;
-            }
-            instance.process(input.view(), output.view(), {});
-            for (int i = 0; i < blockFrames; ++i) {
-                const float sample = std::abs(output.channel(channels - 1)[static_cast<std::size_t>(i)]);
-                if (sample > result.peak) {
-                    result.peak = sample;
-                    result.frames = block * blockFrames + i;
-                }
-            }
-        }
-        result.allocations = rt::allocationViolations() - before;
-    });
-    audio.join();
-    return result;
-}
-
-// Silence through the plugin, so a plugin whose processor learns parameters from
-// process() has seen them.
-void runBlocks(host::PluginInstance& instance) {
-    Audio input(2, blockFrames);
-    Audio output(2, blockFrames);
-    std::thread audio([&] {
-        const rt::ScopedRealtimeThread realtime;
-        for (int block = 0; block < 4; ++block) {
-            instance.process(input.view(), output.view(), {});
-        }
-    });
-    audio.join();
-}
-
-int parameterIndex(const host::PluginInstance& instance, const std::string& name) {
-    const auto parameters = instance.parameters();
-    for (std::size_t i = 0; i < parameters.size(); ++i) {
-        if (parameters[i].name == name) {
-            return static_cast<int>(i);
-        }
-    }
-    FAIL("the plugin has no parameter named " << name);
-    return -1;
-}
 
 host::PluginDescriptor testPlugin(host::JucePluginHost& host) {
     const auto descriptors = host.scanPath(SIANN_TEST_PLUGIN_VST3);
@@ -130,12 +41,28 @@ std::unique_ptr<host::PluginInstance> loadTestPlugin(host::JucePluginHost& host)
     return host.instantiate(testPlugin(host), sampleRate, blockFrames);
 }
 
-bool displayAvailable() {
-#if defined(__linux__)
-    return std::getenv("DISPLAY") != nullptr;
-#else
-    return true;
-#endif
+// A copy of the test plugin in a directory of its own, a second install.
+std::filesystem::path installCopy(const std::string& directoryName) {
+    const auto directory = std::filesystem::temp_directory_path() / directoryName;
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);  // an earlier run's copy
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path original(SIANN_TEST_PLUGIN_VST3);
+    const auto copy = directory / original.filename();
+    std::filesystem::copy(original, copy, std::filesystem::copy_options::recursive);
+    return copy;
+}
+
+// The directory of the bundle the loaded code really came from, which the plugin
+// reads from its own module and puts in a parameter's name.
+std::string loadedFrom(const host::PluginInstance& instance) {
+    for (const auto& parameter : instance.parameters()) {
+        if (parameter.name.rfind("home:", 0) == 0) {
+            return parameter.name.substr(5);
+        }
+    }
+    FAIL("the plugin has no home parameter");
+    return {};
 }
 
 std::optional<std::string> environment(const char* name) {
@@ -255,13 +182,7 @@ TEST_CASE("plugin host: the CI-built test plugin is found by path", "[juce][plug
 TEST_CASE("plugin host: a plugin keeps its uid and its state when it moves", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;
-    const auto directory = std::filesystem::temp_directory_path() / "siann-plugin-host-moved";
-    std::error_code ignored;
-    std::filesystem::remove_all(directory, ignored);  // an earlier run's copy
-    std::filesystem::create_directories(directory);
-    const std::filesystem::path original(SIANN_TEST_PLUGIN_VST3);
-    const auto moved = directory / original.filename();
-    std::filesystem::copy(original, moved, std::filesystem::copy_options::recursive);
+    const auto moved = installCopy("siann-plugin-host-moved");
 
     auto instance = loadTestPlugin(host);
     const int gain = parameterIndex(*instance, "gain");
@@ -270,10 +191,55 @@ TEST_CASE("plugin host: a plugin keeps its uid and its state when it moves", "[j
 
     const auto descriptors = host.scanPath(moved.string());
     REQUIRE(descriptors.size() == 1);
-    CHECK(descriptors.front().uid == testPlugin(host).uid);
+    CHECK(descriptors.front().uid == testPlugin(host).uid);  // the original is the last one scanned
     auto restored = host.instantiate(descriptors.front(), sampleRate, blockFrames);
+    CHECK(loadedFrom(*restored) == "siann-plugin-host-moved");
     restored->setState(state);
     CHECK(restored->getParameter(gain) == Approx(0.25));
+}
+
+TEST_CASE("plugin host: two installs of one plugin each load their own bundle", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    const auto copy = installCopy("siann-plugin-host-second");
+
+    const auto original = testPlugin(host);
+    const auto second = host.scanPath(copy.string()).front();
+    REQUIRE(original.uid == second.uid);
+    REQUIRE(original.path != second.path);
+    const auto first = host.instantiate(original, sampleRate, blockFrames);
+    CHECK(loadedFrom(*first) != "siann-plugin-host-second");
+    CHECK(loadedFrom(*host.instantiate(second, sampleRate, blockFrames)) == "siann-plugin-host-second");
+    CHECK(loadedFrom(*host.instantiate(original, sampleRate, blockFrames)) == loadedFrom(*first));
+}
+
+TEST_CASE("plugin host: a stale path fails instead of loading another install", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto gone = testPlugin(host);  // its uid is known from here on
+    gone.path += ".gone";
+    try {
+        host.instantiate(gone, sampleRate, blockFrames);
+        FAIL("a path that is gone must throw");
+    } catch (const host::PluginError& error) {
+        CHECK(error.code() == "plugin_not_found");
+    }
+}
+
+TEST_CASE("plugin host: a descriptor without a path needs exactly one known install", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto unplaced = testPlugin(host);
+    unplaced.path.clear();
+    CHECK(host.instantiate(unplaced, sampleRate, blockFrames) != nullptr);
+
+    host.scanPath(installCopy("siann-plugin-host-ambiguous").string());
+    try {
+        host.instantiate(unplaced, sampleRate, blockFrames);
+        FAIL("two known installs must not be picked from");
+    } catch (const host::PluginError& error) {
+        CHECK(error.code() == "plugin_not_found");
+    }
 }
 
 TEST_CASE("plugin host: a descriptor that only names a path instantiates", "[juce][plugin]") {
@@ -327,6 +293,104 @@ TEST_CASE("plugin host: instantiate on the main thread, process on the audio thr
     CHECK(measured.frames == 64);
     CHECK(measured.peak == Approx(1.0f));
     CHECK(measured.allocations == 0);
+}
+
+TEST_CASE("plugin host: the CI-built VST3 passes the whole hosting check", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    checkBuiltTestPlugin(loop, host, testPlugin(host));
+}
+
+namespace {
+
+// The audio thread at full speed beside the main thread, with what it may meet
+// there. The test ends the loop itself: process() is only ever called from here.
+class PlayingThread {
+public:
+    explicit PlayingThread(host::PluginInstance& instance)
+        : input_(2, blockFrames), output_(2, blockFrames), thread_([this, &instance] {
+              const rt::ScopedRealtimeThread realtime;
+              const auto before = rt::allocationViolations();
+              while (!stop_.load()) {
+                  instance.process(input_.view(), output_.view(), {});
+                  blocks_.fetch_add(1);
+              }
+              allocations_.store(rt::allocationViolations() - before);
+          }) {}
+    ~PlayingThread() { finish(); }
+
+    std::uint64_t blocks() const { return blocks_.load(); }
+    // Stops the thread, then says how often it allocated.
+    std::uint64_t finish() {
+        stop_.store(true);
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+        return allocations_.load();
+    }
+
+private:
+    Audio input_;
+    Audio output_;
+    std::atomic<bool> stop_{false};
+    std::atomic<std::uint64_t> blocks_{0};
+    std::atomic<std::uint64_t> allocations_{0};
+    std::thread thread_;
+};
+
+}  // namespace
+
+// VST3 forbids process during setActive, and that is what the one lock JUCE takes
+// per block is for (spec, "Locks inside a hosted plugin's processBlock"). The
+// plugin spends time in setActive and watches for processBlock meanwhile.
+TEST_CASE("plugin host: a VST3 restart during playback keeps setActive and process apart", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int restarted = parameterIndex(*instance, "restarted");
+    const int overlapped = parameterIndex(*instance, "overlapped");
+
+    PlayingThread playing(*instance);
+    const auto ranAtLeast = [&](std::uint64_t count) {
+        return loop.runUntil([&] { return playing.blocks() >= count; }, eventTimeout);
+    };
+    REQUIRE(ranAtLeast(16));
+
+    instance->setParameter(parameterIndex(*instance, "requestRestart"), 1.0);
+    REQUIRE(loop.runUntil([&] { return instance->getParameter(restarted) > 0.5; }, eventTimeout));
+    REQUIRE(ranAtLeast(playing.blocks() + 16));
+
+    CHECK(playing.finish() == 0);
+    CHECK(instance->getParameter(overlapped) < 0.5);
+    CHECK(measureDelay(*instance).frames == 64);
+}
+
+TEST_CASE("plugin host: process runs while the main thread does everything else", "[juce][plugin]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int latency = parameterIndex(*instance, "latency");
+    const int gain = parameterIndex(*instance, "gain");
+
+    PlayingThread playing(*instance);
+    for (int round = 0; round < 8; ++round) {
+        const int frames = round % 2 == 0 ? 512 : 64;
+        instance->setParameter(latency, frames == 512 ? 1.0 : 0.0);
+        REQUIRE(loop.runUntil([&] { return instance->latencyFrames() == frames; }, eventTimeout));
+        instance->setParameter(gain, 0.25);
+        const auto state = instance->getState();
+        instance->setParameter(gain, 0.75);
+        instance->setState(state);
+        CHECK(instance->getParameter(gain) == Approx(0.25));
+        instance->openEditor({});
+        instance->closeEditor();
+    }
+    const auto ran = playing.blocks();
+    REQUIRE(loop.runUntil([&] { return playing.blocks() > ran; }, eventTimeout));
+    CHECK(playing.finish() == 0);
 }
 
 TEST_CASE("plugin host: a block with fewer channels than the plugin still processes", "[juce][plugin]") {

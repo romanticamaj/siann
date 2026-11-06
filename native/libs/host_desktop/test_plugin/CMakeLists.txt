@@ -22,7 +22,9 @@ juce_add_plugin(siann_test_plugin
   COPY_PLUGIN_AFTER_BUILD FALSE
   VST3_AUTO_MANIFEST FALSE)
 
-target_sources(siann_test_plugin PRIVATE processor.cpp)
+# vst3_restarter.cpp includes the VST3 SDK's headers, which do not build under
+# SIANN's warnings, so it stays outside siann_apply_source_options.
+target_sources(siann_test_plugin PRIVATE processor.cpp vst3_restarter.cpp)
 target_compile_features(siann_test_plugin PRIVATE cxx_std_20)
 target_compile_definitions(siann_test_plugin PUBLIC
   JUCE_USE_CURL=0

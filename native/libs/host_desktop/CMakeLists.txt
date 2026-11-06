@@ -53,6 +53,7 @@ if(SIANN_BUILD_TESTS)
     target_sources(siann_host_desktop_tests PRIVATE tests/juce_plugin_host_mac_test.mm)
     target_link_libraries(siann_host_desktop_tests PRIVATE "-framework AppKit" "-framework AudioToolbox")
   endif()
+  target_include_directories(siann_host_desktop_tests PRIVATE tests)
   target_link_libraries(siann_host_desktop_tests PRIVATE siann::host_desktop siann::realtime siann_rt_alloc_guard
                         Catch2::Catch2WithMain)
   siann_apply_compile_options(siann_host_desktop_tests)

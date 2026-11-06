@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <string>
 
-#include "siann/host/juce_plugin_host.hpp"
+#include "hosting_checks.hpp"
 
 using namespace siann;
 
@@ -100,10 +100,5 @@ TEST_CASE("plugin host: the CI-built AU is hosted", "[juce][plugin]") {
     CHECK(descriptors.front().format == "au");
     CHECK(descriptors.front().hasEditor);
 
-    auto instance = host.instantiate(descriptors.front(), 48'000, 256);
-    CHECK(instance->latencyFrames() == 64);
-    const auto state = instance->getState();
-    auto restored = host.instantiate(descriptors.front(), 48'000, 256);
-    restored->setState(state);
-    CHECK(restored->latencyFrames() == 64);
+    hosting_test::checkBuiltTestPlugin(loop, host, descriptors.front());
 }
