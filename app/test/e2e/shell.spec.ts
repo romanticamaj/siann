@@ -73,9 +73,17 @@ test('the renderer connects with the token handshake', async () => {
   // The new session was created where the shell was told.
   expect(fs.existsSync(path.join(sessionDir, 'Untitled.siann'))).toBe(true);
 
-  // contextIsolation on, nodeIntegration off: no Node in the page.
-  expect(await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined');
-  expect(await page.evaluate(() => typeof (window as unknown as { process?: unknown }).process)).toBe('undefined');
+  // What the window really runs with. Probing the page cannot show this:
+  // contextIsolation hides Node from the main world even with nodeIntegration on.
+  const preferences = await app.evaluate(({ BrowserWindow }) => {
+    const last = BrowserWindow.getAllWindows()[0]!.webContents.getLastWebPreferences();
+    return {
+      contextIsolation: last?.contextIsolation,
+      nodeIntegration: last?.nodeIntegration,
+      sandbox: last?.sandbox,
+    };
+  });
+  expect(preferences).toEqual({ contextIsolation: true, nodeIntegration: false, sandbox: true });
   // The preload bridge exposes the engine endpoint and nothing else; the MCP
   // token stays in the main process.
   const bridge = await page.evaluate(async () => {

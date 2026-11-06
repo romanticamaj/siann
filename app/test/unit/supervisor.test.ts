@@ -7,7 +7,14 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-import { EngineSupervisor, type EngineExit, type EngineGaveUp, type EngineReady } from '../../src/main/supervisor';
+import {
+  DEFAULT_BACKOFF,
+  EngineSupervisor,
+  type Backoff,
+  type EngineExit,
+  type EngineGaveUp,
+  type EngineReady,
+} from '../../src/main/supervisor';
 
 class FakeChild extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -77,8 +84,9 @@ function flush(): Promise<void> {
 
 const BACKOFF = { initialMs: 250, maxMs: 1_000, resetAfterMs: 30_000, maxRestarts: 5 };
 const GRACE = 4_321;
+const KILL_GRACE = 1_234;
 
-function rig(backoff = BACKOFF) {
+function rig(backoff: Backoff = BACKOFF) {
   const scheduler = new FakeScheduler();
   const children: FakeChild[] = [];
   const launches: Array<{ exe: string; args: readonly string[] }> = [];
@@ -87,6 +95,7 @@ function rig(backoff = BACKOFF) {
     args: ['--session', '/tmp/Song.siann'],
     backoff,
     stopGraceMs: GRACE,
+    killGraceMs: KILL_GRACE,
     schedule: scheduler.schedule,
     spawn: (exe, args) => {
       launches.push({ exe, args });
@@ -180,6 +189,30 @@ test('an engine that stays up resetAfterMs after ready resets the delay to initi
   assert.deepEqual(last(r.exits), { code: null, signal: 'SIGKILL', restartInMs: 250 });
 });
 
+test('the shell constants allow 5 restarts: the sixth consecutive exit gives up', async () => {
+  const r = rig(DEFAULT_BACKOFF);
+  r.supervisor.start();
+  const delays: Array<number | null> = [];
+  for (let i = 0; i < 6; i += 1) {
+    assert.equal(r.gaveUp.length, 0);
+    last(r.children).exit(1);
+    const delay = last(r.exits).restartInMs;
+    delays.push(delay);
+    if (delay !== null) r.scheduler.fire(delay);
+  }
+  assert.deepEqual(delays, [250, 500, 1_000, 2_000, 4_000, null]);
+  assert.equal(r.gaveUp.length, 1);
+  assert.equal(r.launches.length, 6);
+});
+
+test('maxRestarts 0 never restarts', async () => {
+  const r = rig({ ...BACKOFF, maxRestarts: 0 });
+  r.supervisor.start();
+  r.children[0]!.exit(1);
+  assert.equal(r.gaveUp.length, 1);
+  assert.deepEqual(r.scheduler.pending(), []);
+});
+
 test('the failure after maxRestarts restarts emits gave-up with the exit code and the last stderr lines', async () => {
   const r = rig({ ...BACKOFF, maxRestarts: 2 });
   r.supervisor.start();
@@ -198,7 +231,7 @@ test('the failure after maxRestarts restarts emits gave-up with the exit code an
   assert.equal(r.launches.length, 3);
 });
 
-test('stop() ends stdin, kills when the grace period expires, and an exit after stop() does not restart', async () => {
+test('stop() ends stdin, sends SIGKILL when the grace period expires, and an exit after stop() does not restart', async () => {
   const r = rig();
   r.supervisor.start();
   r.children[0]!.stdout.write(readyLine(1000));
@@ -210,16 +243,53 @@ test('stop() ends stdin, kills when the grace period expires, and an exit after 
   // The reset timer is gone; only the grace timer is left.
   assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [GRACE]);
   r.scheduler.fire(GRACE);
-  assert.equal(r.children[0]!.kills.length, 1);
+  // The engine catches SIGTERM, and stdin EOF already asked what SIGTERM asks.
+  assert.deepEqual(r.children[0]!.kills, ['SIGKILL']);
   await flush();
   assert.equal(stopped, false, 'stop() waits for the exit');
-  r.children[0]!.exit(null, 'SIGTERM');
+  r.children[0]!.exit(null, 'SIGKILL');
   await done;
   assert.equal(stopped, true);
-  assert.deepEqual(last(r.exits), { code: null, signal: 'SIGTERM', restartInMs: null });
+  assert.deepEqual(last(r.exits), { code: null, signal: 'SIGKILL', restartInMs: null });
   assert.deepEqual(r.scheduler.pending(), []);
   assert.equal(r.launches.length, 1);
   assert.equal(r.supervisor.current(), null);
+});
+
+test('stop() resolves even if the child never exits after SIGKILL', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write(readyLine(1000));
+  await flush();
+  const done = r.supervisor.stop();
+  r.scheduler.fire(GRACE);
+  r.scheduler.fire(KILL_GRACE);
+  await done;
+  assert.deepEqual(r.children[0]!.kills, ['SIGKILL']);
+  assert.deepEqual(last(r.exits), { code: null, signal: 'SIGKILL', restartInMs: null });
+  assert.equal(r.supervisor.current(), null);
+  assert.deepEqual(r.scheduler.pending(), []);
+  assert.equal(r.launches.length, 1);
+  // A late real exit changes nothing.
+  const exits = r.exits.length;
+  r.children[0]!.exit(null, 'SIGKILL');
+  assert.equal(r.exits.length, exits);
+});
+
+test('a second stop() while the kill is under way starts no second grace period', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write(readyLine(1000));
+  await flush();
+  const first = r.supervisor.stop();
+  const second = r.supervisor.stop();
+  r.scheduler.fire(GRACE);
+  const third = r.supervisor.stop();
+  assert.equal(r.children[0]!.stdinEnded, 1);
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [KILL_GRACE]);
+  r.children[0]!.exit(null, 'SIGKILL');
+  await Promise.all([first, second, third]);
+  assert.deepEqual(r.scheduler.pending(), []);
 });
 
 test('an engine that exits on stdin EOF within the grace period is not killed', async () => {
@@ -267,6 +337,60 @@ test('a malformed first line is a failed launch: killed, restarted, never emitte
     r.scheduler.fire(250);
     assert.equal(r.launches.length, 2);
   }
+});
+
+test('a failed launch that ignores SIGTERM gets SIGKILL, then is restarted', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write('not json\n');
+  await flush();
+  assert.deepEqual(r.children[0]!.kills, [undefined]);
+  assert.equal(r.launches.length, 1);
+  r.scheduler.fire(KILL_GRACE);
+  assert.deepEqual(r.children[0]!.kills, [undefined, 'SIGKILL']);
+  r.children[0]!.exit(null, 'SIGKILL');
+  assert.deepEqual(last(r.exits), { code: null, signal: 'SIGKILL', restartInMs: 250 });
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [250]);
+  r.scheduler.fire(250);
+  assert.equal(r.launches.length, 2);
+});
+
+test('a failed launch that never exits, even after SIGKILL, is restarted', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write('not json\n');
+  await flush();
+  r.scheduler.fire(KILL_GRACE);
+  r.scheduler.fire(KILL_GRACE);
+  assert.deepEqual(last(r.exits), { code: null, signal: 'SIGKILL', restartInMs: 250 });
+  r.scheduler.fire(250);
+  assert.equal(r.launches.length, 2);
+  assert.deepEqual(r.children[1]!.kills, []);
+});
+
+test('a failed launch that exits on SIGTERM cancels the SIGKILL', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write('not json\n');
+  await flush();
+  r.children[0]!.exit(null, 'SIGTERM');
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [250]);
+  assert.deepEqual(r.children[0]!.kills, [undefined]);
+});
+
+test('stop() during a failed launch waits for the kill already under way', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write('not json\n');
+  await flush();
+  const done = r.supervisor.stop();
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [KILL_GRACE]);
+  r.scheduler.fire(KILL_GRACE);
+  r.scheduler.fire(KILL_GRACE);
+  await done;
+  assert.deepEqual(r.children[0]!.kills, [undefined, 'SIGKILL']);
+  assert.deepEqual(r.scheduler.pending(), []);
+  assert.equal(r.launches.length, 1);
 });
 
 test('a second stdout line is a failed launch, also in the same chunk as the ready line', async () => {
