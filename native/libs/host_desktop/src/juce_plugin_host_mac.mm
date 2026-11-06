@@ -20,6 +20,11 @@ void editorOpened() {
     }
 }
 
+void editorShown(std::uintptr_t view) {
+    NSWindow* window = [reinterpret_cast<NSView*>(view) window];
+    [window setCollectionBehavior:[window collectionBehavior] | NSWindowCollectionBehaviorFullScreenAuxiliary];
+}
+
 void editorRaised() {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"

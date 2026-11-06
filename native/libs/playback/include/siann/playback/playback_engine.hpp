@@ -77,6 +77,9 @@ struct PlaybackOptions {
     bool playOnStart = true;
     realtime::Transport::Options transport{};
     AuditionBudget auditionBudget{};
+    // The clock the driver times each device callback with (GraphDriver::Options::
+    // nowNanos); nullptr is the steady clock. Tests and `--fake-callback-nanos`.
+    std::int64_t (*callbackClock)() noexcept = nullptr;
 };
 
 struct CompiledPlayback {

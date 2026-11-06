@@ -24,12 +24,17 @@ inline void applyOwner(std::uintptr_t, std::uintptr_t) {}
 inline constexpr bool editorsFloat = true;
 void startInBackground();
 void editorOpened();
+// The editor's window (by its content NSView) may join another application's
+// fullscreen space: a floating window without this is hidden behind a
+// fullscreen Electron.
+void editorShown(std::uintptr_t view);
 void editorRaised();
 void editorClosed();
 #else
 inline constexpr bool editorsFloat = false;
 inline void startInBackground() {}
 inline void editorOpened() {}
+inline void editorShown(std::uintptr_t) {}
 inline void editorRaised() {}
 inline void editorClosed() {}
 #endif

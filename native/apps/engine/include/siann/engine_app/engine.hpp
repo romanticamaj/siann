@@ -18,6 +18,12 @@
 // writes one JSON error {ok:false, error:{code, message}} to `err`, nothing to
 // `out`, and returns 1.
 //
+// `out` must not be the process's fd 1 once a plugin can load: hosted plugins
+// (and JUCE) print to stdout, and a line of theirs before or after the ready
+// line is a failed launch for the shell. main.cpp duplicates the launcher's
+// stdout into `out` and points fd 1 (and the Win32 standard output handle) at
+// stderr before calling this, so plugin output reaches the shell's stderr log.
+//
 // A SIANN_WITH_JUCE build serves from the JUCE message loop, so call this on the
 // process's main thread. There --open-editor opens the first plugin of a bundle
 // before the ready line, owned on Windows by the window whose decimal handle

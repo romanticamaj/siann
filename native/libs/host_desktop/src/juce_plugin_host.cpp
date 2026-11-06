@@ -135,6 +135,7 @@ public:
         capabilities_.sidechain = plugin_->getBusCount(true) > 1;
         capabilities_.variableLatency = true;  // both formats can change it, and it is reported when they do
         capabilities_.editor = plugin_->hasEditor();
+        readLatency();
         readTail();
 
         plugin_->addListener(this);
@@ -148,7 +149,7 @@ public:
 
     PluginCapabilities capabilities() const override { return capabilities_; }
 
-    int latencyFrames() const override { return plugin_->getLatencySamples(); }
+    int latencyFrames() const override { return latencyFrames_.load(std::memory_order_relaxed); }
 
     int tailFrames() const override { return tailFrames_.load(std::memory_order_relaxed); }
 
@@ -173,14 +174,16 @@ public:
                 std::memcpy(channel, source, bytes);
             }
         }
-        midi_.clear();
+        midi_.clear();  // M0: the EventList is discarded; the plugin gets no MIDI input
         juce::AudioBuffer<float> buffer(pointers_.data(), channels_, frames);
         // setState's half of this is in ProcessingPause. Skipped, the block passes
         // its input through.
         processing_.store(true);
-        if (!paused_.load()) {
-            // The one place the audio thread can wait: the format wrapper's own locks,
-            // the exception the spec records under "Realtime rules and enforcement".
+        if (paused_.load() == 0) {
+            // SIANN takes no lock here; JUCE's wrapper does inside processBlock
+            // (processMutex, the MIDI lists' lock, a parameter's listenerLock around
+            // the sink): the audited exception under "Realtime rules and
+            // enforcement" (ADR-0018).
             plugin_->processBlock(buffer, midi_);
         }
         processing_.store(false);
@@ -193,17 +196,19 @@ public:
 
 private:
     // Holds the plugin out of processing: the block in flight finishes, and until
-    // this goes process() skips the plugin. Only this side ever waits. Both flags
-    // stay sequentially consistent, or each side could miss the other's store.
+    // this goes process() skips the plugin. Only this side ever waits. A count,
+    // not a flag, so a pause inside a pause ends when the outer one does. Both
+    // atomics stay sequentially consistent, or each side could miss the other's
+    // store.
     class ProcessingPause {
     public:
         explicit ProcessingPause(JucePluginInstance& instance) : instance_(instance) {
-            instance_.paused_.store(true);
+            instance_.paused_.fetch_add(1);
             while (instance_.processing_.load()) {
                 std::this_thread::yield();
             }
         }
-        ~ProcessingPause() { instance_.paused_.store(false); }
+        ~ProcessingPause() { instance_.paused_.fetch_sub(1); }
         ProcessingPause(const ProcessingPause&) = delete;
         ProcessingPause& operator=(const ProcessingPause&) = delete;
 
@@ -218,6 +223,9 @@ private:
         tailFrames_.store(beyondInt ? std::numeric_limits<int>::max() : static_cast<int>(std::ceil(frames)),
                           std::memory_order_relaxed);
     }
+
+    // Message thread, where JUCE writes the plugin's latency (a plain int).
+    void readLatency() { latencyFrames_.store(plugin_->getLatencySamples(), std::memory_order_relaxed); }
 
     void handleAsyncUpdate() override { readTail(); }
 
@@ -264,7 +272,8 @@ private:
             const ProcessingPause pause(*this);
             plugin_->setStateInformation(state.data() + position, static_cast<int>(payloadSize));
         }
-        readTail();
+        readLatency();
+        readTail();  // a tail the state changed without a latency report
     }
 
     std::vector<PluginParameterInfo> parameters() const override {
@@ -304,6 +313,7 @@ private:
                 });
             });
             editor_platform::editorOpened();
+            editor_platform::editorShown(editor_->nativeHandle());
         }
         editor_platform::applyOwner(editor_->nativeHandle(), owner.nativeWindow);
         editor_->toFront(true);
@@ -360,9 +370,12 @@ private:
             }
         }
         if (details.latencyChanged) {
+            // On the reporting thread, which for a hosted VST3 or AU is the message
+            // thread; a plugin reporting from elsewhere hands over its own int.
+            readLatency();
             PluginEvent event;
             event.kind = PluginEvent::Kind::latencyChanged;
-            event.latencyFrames = plugin_->getLatencySamples();
+            event.latencyFrames = latencyFrames_.load(std::memory_order_relaxed);
             emit(event);
         }
         if (details.parameterInfoChanged || details.programChanged) {
@@ -387,8 +400,9 @@ private:
     std::vector<std::unique_ptr<EventSink>> sinks_;
     std::atomic<const EventSink*> sink_{nullptr};
     std::atomic<int> tailFrames_{0};
+    std::atomic<int> latencyFrames_{0};  // JUCE's own int is written on the message thread; this is read anywhere
     std::atomic<bool> processing_{false};
-    std::atomic<bool> paused_{false};
+    std::atomic<int> paused_{0};
     std::unique_ptr<EditorWindow> editor_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
