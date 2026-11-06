@@ -237,6 +237,12 @@ years. Milestones are designed so that something useful exists at every stage.
   for ownership there: the window sits at `NSFloatingWindowLevel`, so clicking the
   Electron window does not bury it, at the price of it staying above other
   applications too. The `macos-hands-on` gate judges whether that is acceptable.
+  If it is not, the next step is conditional floating: the engine observes
+  `NSWorkspaceDidActivateApplicationNotification` and keeps editors at
+  `NSFloatingWindowLevel` only while Electron or the engine is the active
+  application, at `NSNormalWindowLevel` otherwise, so an editor never covers a
+  third application. The kill criterion in M0 applies only after both have been
+  judged.
 - The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
   by the core-only configuration too (CI builds it without JUCE). It links
   `siann::session` and `siann::protocol`; a `SIANN_WITH_JUCE` build also links
@@ -338,7 +344,7 @@ gesture boundaries (see "Gestures").
 | Thread | Does | May block on |
 |---|---|---|
 | audio | processes the live graph; pushes outboxes | nothing |
-| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()` |
+| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block) |
 | command | validates, applies and journals commands; publishes documents; asks for compiles; installs graphs through the driver | journal and checkpoint I/O |
 | compiler | builds `PreparedGraph` from an immutable document and pinned instances | the main thread, for instantiation, with a timeout |
 | control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | nothing outside its own inbox |
@@ -354,7 +360,8 @@ gesture boundaries (see "Gestures").
   never synchronous calls. Device control runs on the main thread (JUCE and ASIO
   expect that); the command thread asks for it and continues on the completion.
 - The only blocking edges are compiler → main (instantiation), main → audio
-  callback (inside `stop()`) and protocol → command (an MCP HTTP request waits for
+  callback (inside `stop()`), main → audio callback (one block, inside `setState`)
+  and protocol → command (an MCP HTTP request waits for
   its answer, with a timeout; a full inbox is `queue_full` at once). The command
   thread never waits on the protocol thread and the audio thread blocks on nothing,
   so the wait graph is acyclic and the threads cannot deadlock. Adding a blocking call requires updating
@@ -492,9 +499,12 @@ records who that is:
 ### Realtime rules and enforcement
 
 - The audio thread never locks, allocates, frees, logs, throws, or performs I/O.
-  One proposed exception, hosted plugins, not yet ratified by the maintainer: see
-  "Locks inside a hosted plugin's `processBlock`" below. It is not a licence for
-  SIANN's own code.
+  One exception, accepted for M0 on 2026-11-07 (Fable, delegated by the maintainer,
+  who may overrule it; [ADR-0018](../../adr/0018-accept-juce-wrapper-locks-inside-hosted-processblock.md)):
+  the locks JUCE's own hosting wrappers take inside a hosted plugin's
+  `processBlock`, listed under "Locks inside a hosted plugin's `processBlock`"
+  below. It is not a licence for SIANN's own code, and it ends when hosted plugins
+  run in worker processes (Open questions, item 1).
 - Debug builds mark the audio thread with a thread-local flag; global `operator
   new/delete` and malloc hooks abort if called on a marked thread.
 - Clang RealtimeSanitizer (`-fsanitize=realtime`) runs in CI on platforms where
@@ -529,11 +539,15 @@ records who that is:
     `restartComponent(kReloadComponent | kIoChanged)`, and in `prepareToPlay` and
     `releaseResources`. VST3 forbids `process` during `setActive`, so something must
     keep them apart, and JUCE offers neither a try-lock nor a hook before the
-    restart. While such a restart runs the audio thread spins for as long as the
-    plugin's `setActive` takes: an xrun on the affected block, and silence or dry
-    audio is not an alternative SIANN can choose. Between the two halves of a
-    `kIoChanged` restart the plugin is inactive, `processBlock` does nothing and
-    `process` passes its input through.
+    restart (`processMutex` is private; `processBlock` never calls
+    `SpinLock::tryEnter`; the restart reaches SIANN's listener only after the
+    work). While such a restart runs the audio thread waits for as long as the
+    plugin's `setActive` takes (`SpinLock::enter` tries 20 times, then yields in a
+    loop): an xrun on the affected block. Passing the block through instead would
+    need a patched JUCE, which SIANN does not carry (see below). A
+    `kLatencyChanged` restart takes no lock and calls no `setActive`. Between the
+    two halves of a `kIoChanged` restart the plugin is inactive, `processBlock`
+    does nothing and `process` passes its input through.
   - Hosted AU takes `midiInLock` (a `CriticalSection`) per block when the plugin
     produces MIDI, contended only by the plugin's own MIDI output callback.
   - Any plugin that reports an edit or a latency change from the audio thread goes
@@ -541,15 +555,39 @@ records who that is:
     array read and contended only by `addListener` and `removeListener`, which SIANN
     calls at construction and destruction, outside any `process` call.
 
-  The exception is proposed for M0 and awaits the maintainer's decision; it came out
-  of agent review, and `docs/harness/agent-rules.md` keeps "no locks" without it until
-  then. It covers only those locks. A restart is rare and initiated by the plugin;
-  the bound is that plugin's `setActive`, which SIANN does not control. The hosting
-  test "a VST3 restart during playback keeps setActive and process apart" checks what
-  the lock is for: no overlap, no allocation, and blocks run on both sides of the
-  restart. Nothing measures the wait: the allocation guard counts allocations, and a
-  spin time is a wall-clock figure no deterministic test can bound. Hosting in worker
-  processes removes the wait from the engine's audio thread.
+  The exception is accepted for M0 (2026-11-07, Fable, delegated by the maintainer;
+  ADR-0018). Its conditions:
+  - Scope: exactly the three locks above, taken by JUCE 9.0.3 code inside
+    `plugin_->processBlock`, called from `JucePluginInstance::process` in
+    `siann-host-desktop`. SIANN's own code, including the adapter around that call,
+    takes no lock. A new lock in that path, or a JUCE pin that adds one, reopens the
+    decision and updates this list.
+  - Bound: SIANN calls `prepareToPlay` and `releaseResources` only on an instance
+    outside any live graph (construction, destruction), so the one unbounded wait is
+    a plugin-initiated `kReloadComponent` or `kIoChanged` restart during playback,
+    and its length is that plugin's `setActive`. A restart is rare and SIANN does
+    not control it.
+  - Visibility: the engine counts, on the audio thread with atomics only, device
+    callbacks and callbacks that exceeded their period, and reports `xruns` and the
+    longest callback in its status to clients (`siann::rt::CallbackTimer`, which
+    `siann-cli bench` also uses). Every restart ends in a `restartRequested` event,
+    so an xrun in the same callbacks is attributable to it. Per-instance timing of
+    `process()` is a recommended follow-up, not an M0 condition.
+  - Not patched around: a JUCE patch using `tryEnter` in `processBlock` (pass the
+    block through while the lock is held) is licence-compatible under ADR-0017 but
+    is not carried: a maintained patch on a moving pin, for a wait that worker
+    processes remove properly.
+  - Not sanitized: the RTSan job builds the core without JUCE, the uncontended spin
+    lock is one compare-and-swap the sanitizer cannot see, and the contended path is
+    nondeterministic. If hosting ever runs under RTSan, these three locks go in the
+    suppressions file, one reason each. No watchdog: a wait inside a callback is a
+    deadline miss, counted, never a reason to stop the device.
+  - Test: "a VST3 restart during playback keeps setActive and process apart" stays
+    the regression guard for what the lock is for: no overlap, no allocation, blocks
+    on both sides of the restart. Nothing measures the wait; a spin time is a
+    wall-clock figure no deterministic test can bound.
+  - Sunset: the exception is removed, not extended, when hosted plugins run in
+    worker processes.
 - `juce::AudioBuffer` is constructed over preallocated channel pointers (non-owning)
   and `juce::MidiBuffer` is preallocated with `ensureSize`, inside the desktop host
   adapter only.
@@ -865,8 +903,10 @@ Every command prints one JSON object; exit codes stay 0, 1 (error with a code) a
   continuous across blocks), so a take's content can be checked sample by sample.
 - `play <bundle> [--seconds S] [--buffer F] [--device ID]` plays from the start
   (default: to the document end) and reports `framesPlayed` in device frames,
-  disk-stream `underruns`, SRC underfill as `srcUnderruns`, the resampling state
-  and the latency report.
+  disk-stream `underruns`, SRC underfill as `srcUnderruns`, the driver's deadline
+  misses as `xruns` with `maxCallbackMicros` (the graph driver times every device
+  callback with `siann::rt::CallbackTimer`, atomics only; `record` reports the
+  same), the resampling state and the latency report.
 - `record <bundle> --track ID [--seconds S] [--take-id ID] [--ready-file P]`
   attaches a recorder while the driver is stopped, starts the device with the
   transport stopped, begins the take with `recordOffset = recordOffsetFrames` of
@@ -2059,7 +2099,13 @@ inside `process`, so a value set just before a restore could otherwise land afte
 it and silently win. `process` never waits for this. It skips the plugin and passes
 its input through, as it does between the halves of a `kIoChanged` restart; the main
 thread waits for the block in flight, and a restore during playback costs that dry
-stretch. A
+stretch. Accepted for M0 (2026-11-07): a restore is a user or agent action (load,
+undo, an audition switch), its dry stretch is the plugin's `setStateInformation`
+plus at most one block, and no production path calls `setState` during playback
+yet. `setState` is never a parameter path: a value change goes through
+`setParameter`. Audition (A/B of proposals) is the case that will make restores
+during playback frequent; its design records that each switch of a plugin's state
+is one such stretch. A fade around the gap belongs with worker processes. A
 descriptor's `uid` leaves out the install path, so state follows a plugin to
 another machine; `instantiate` keeps the two apart, loading the bundle at the
 descriptor's `path` and nothing else, so two installs of one plugin never stand in
@@ -2165,7 +2211,12 @@ FIFO fill ("Latency model", "Device-side SRC").
 
 ## Open questions
 
-1. When to introduce plugin worker processes.
+1. When to introduce plugin worker processes. They end the hosted-plugin lock
+   exception under "Realtime rules and enforcement" (ADR-0018). Proposed trigger
+   (2026-11-07, open to the maintainer): the first of (a) a hosted-plugin crash or
+   a restart-attributed xrun reproduced on a maintainer machine, (b) hosting a
+   plugin set the maintainer did not choose, (c) the first build distributed
+   beyond the maintainer's machines.
 2. Default plan approval granularity in the UI (whole plan vs step list).
 3. Developer ID certificate and notarization key: the maintainer's Apple Developer
    account exists; the certificate and key are created at the end of M0 (ADR-0017).

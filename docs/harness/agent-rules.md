@@ -43,7 +43,7 @@ GCC catches what MSVC does not. Known traps:
 
 ## Realtime rules (audio thread)
 
-No allocation, no locks, no blocking I/O, no logging, no exceptions on the audio thread. Communication only through the bounded preallocated queues in `siann-realtime`. Prove it in tests by linking `siann_rt_alloc_guard`. Follow revision 3.1 of the spec: one graph transition in flight, duck-and-swap, retirement acknowledged by the butler, generations on locate.
+No allocation, no locks, no blocking I/O, no logging, no exceptions on the audio thread. One exception, accepted 2026-11-07 (ADR-0018): the locks JUCE's own VST3 and AU hosting wrappers take inside `processBlock`, listed in the architecture spec under "Locks inside a hosted plugin's `processBlock`". It covers nothing in SIANN's code (`JucePluginInstance::process` takes no lock) and the engine's xrun counter must report the wait it can cause. Do not add a lock anywhere else and cite this exception. Communication only through the bounded preallocated queues in `siann-realtime`. Prove it in tests by linking `siann_rt_alloc_guard`. Follow revision 3.1 of the spec: one graph transition in flight, duck-and-swap, retirement acknowledged by the butler, generations on locate. Change a plugin parameter with `setParameter`, never with `setState`; a `setState` during playback holds that plugin out of processing (input passes through dry) until it returns.
 
 ## Windows working tree
 
