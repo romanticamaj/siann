@@ -1,15 +1,16 @@
 # siann-engine: the engine process the Electron shell spawns (architecture
 # spec, "Process model"; Protocol v0 item 17). Built by the core-only
-# configuration too; the JUCE message loop and plugin hosting arrive with
-# m0-plugin-hosting.
+# configuration too, whose main thread only waits; with JUCE it runs the message
+# loop and can host a plugin editor.
 add_library(siann_engine_app src/engine.cpp)
 target_include_directories(siann_engine_app PUBLIC include)
 target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol)
 if(SIANN_WITH_JUCE)
-  # Unused until m0-plugin-hosting; linked so the desktop build ships the
-  # engine it will host plugins in.
+  target_sources(siann_engine_app PRIVATE src/main_thread_desktop.cpp)
   target_link_libraries(siann_engine_app PUBLIC siann::host_desktop)
   target_compile_definitions(siann_engine_app PUBLIC SIANN_ENGINE_WITH_JUCE=1)
+else()
+  target_sources(siann_engine_app PRIVATE src/main_thread_core.cpp)
 endif()
 siann_apply_compile_options(siann_engine_app)
 

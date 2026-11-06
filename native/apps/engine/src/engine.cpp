@@ -6,11 +6,11 @@
 #include <exception>
 #include <filesystem>
 #include <optional>
-#include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 
+#include "launch_error.hpp"
+#include "main_thread.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/model/document.hpp"
@@ -37,21 +37,13 @@ using json::Value;
 
 namespace {
 
-// A launch the engine refuses: exit 1 with {ok:false, error:{code, message}}.
-class LaunchError : public std::runtime_error {
-public:
-    LaunchError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
-    const std::string& code() const noexcept { return code_; }
-
-private:
-    std::string code_;
-};
-
 struct Options {
     fs::path session;
     std::string host = "127.0.0.1";
     std::uint16_t port = 0;
     bool mcpTrusted = false;
+    std::uintptr_t ownerWindow = 0;
+    std::optional<std::string> openEditor;
 };
 
 fs::path pathFromUtf8(const std::string& text) {
@@ -89,10 +81,25 @@ Options parseOptions(const std::vector<std::string>& args) {
             options.port = static_cast<std::uint16_t>(parsed);
         } else if (arg == "--mcp-trusted") {
             options.mcpTrusted = true;
+        } else if (arg == "--owner-window") {
+            const std::string& text = value();
+            std::size_t used = 0;
+            unsigned long long parsed = 0;
+            try {
+                parsed = std::stoull(text, &used);
+            } catch (const std::exception&) {
+                used = 0;
+            }
+            if (used == 0 || used != text.size()) {
+                throw LaunchError("usage", "--owner-window must be a native window handle, in decimal");
+            }
+            options.ownerWindow = static_cast<std::uintptr_t>(parsed);
+        } else if (arg == "--open-editor") {
+            options.openEditor = value();
         } else {
             throw LaunchError("usage", "unknown option " + arg +
                                            "; usage: siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] "
-                                           "[--mcp-trusted]");
+                                           "[--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>]");
         }
     }
     if (!haveSession || options.session.empty()) {
@@ -197,7 +204,11 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
               const std::atomic<bool>* stop) {
     try {
         const Options options = parseOptions(args);
+        MainThread mainThread;
         session::Session served = openOrCreate(options.session);
+        if (options.openEditor) {
+            mainThread.openEditor(*options.openEditor, options.ownerWindow);
+        }
 
         protocol::ServerOptions serverOptions;
         serverOptions.host = options.host;
@@ -220,11 +231,7 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
             << "\n";
         out.flush();
 
-        // The stop flag is set from a signal handler or the stdin watcher, so
-        // it is polled; the pump thread serves meanwhile.
-        while (stop == nullptr || !stop->load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
+        mainThread.serve(stop);
         server.stop();
         return 0;
     } catch (const LaunchError& error) {

@@ -146,6 +146,15 @@ function appStep() {
     return { ok: false, output: `run the native step first: ${exe} is missing` };
   }
   const env = { ...process.env, SIANN_ENGINE_EXE: exe };
+  // The editor-ownership test needs an engine that hosts plugins; it skips without one.
+  const desktopBuild = path.join(NATIVE, 'build', 'desktop');
+  const desktopExe = path.join(desktopBuild, 'apps', 'engine', isWindows ? 'siann-engine.exe' : 'siann-engine');
+  const plugin = path.join(desktopBuild, 'libs', 'host_desktop', 'test_plugin', 'siann_test_plugin_artefacts', 'Debug',
+    'VST3', 'siann_test_plugin.vst3');
+  if (fs.existsSync(desktopExe) && fs.existsSync(plugin)) {
+    env.SIANN_DESKTOP_ENGINE_EXE = desktopExe;
+    env.SIANN_TEST_PLUGIN = plugin;
+  }
   // npm is a .cmd shim on Windows, which spawnSync runs only through cmd.exe.
   const npm = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npm', ...args], APP, env) : run('npm', args, APP, env));
   const steps = [];

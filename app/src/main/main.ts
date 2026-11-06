@@ -11,6 +11,9 @@
 //                             Untitled.siann (default: <userData>/sessions)
 //   SIANN_SHELL_BACKOFF_MS    first restart delay (default 250; cap 40x)
 //   SIANN_SHELL_MAX_RESTARTS  consecutive restarts before giving up (default 5)
+//   SIANN_OPEN_EDITOR         a plugin bundle whose editor the engine opens at
+//                             launch, owned by the window on Windows (M0's way
+//                             to reach an editor; needs a SIANN_WITH_JUCE engine)
 //   SIANN_SHELL_TEST=1        exposes the supervisor as globalThis.__siannShell
 
 import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
@@ -18,6 +21,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { engineArgs } from './engine-args';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
 
 // native/libs/protocol/include/siann/protocol/protocol_server.hpp, kAppOrigin.
@@ -109,7 +113,13 @@ async function serveApp(request: Request): Promise<Response> {
 
 const supervisor = new EngineSupervisor({
   exe: engineExecutable(),
-  args: ['--session', sessionBundle()],
+  args: () =>
+    engineArgs({
+      session: sessionBundle(),
+      platform: process.platform,
+      windowHandle: mainWindow && !mainWindow.isDestroyed() ? mainWindow.getNativeWindowHandle() : null,
+      openEditor: process.env.SIANN_OPEN_EDITOR,
+    }),
   backoff: backoffFromEnv(),
   spawn: (exe, args) => spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
   schedule: (fn, ms) => {
@@ -174,6 +184,7 @@ app.on('window-all-closed', () => app.quit());
 
 void app.whenReady().then(() => {
   protocol.handle(APP_SCHEME, serveApp);
-  supervisor.start();
+  // The window first: the engine is told its handle at launch.
   createWindow();
+  supervisor.start();
 });

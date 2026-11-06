@@ -63,7 +63,8 @@ export const DEFAULT_BACKOFF: Backoff = Object.freeze({
 
 export interface SupervisorOptions {
   exe: string;
-  args: readonly string[];
+  // A function is asked again for every launch.
+  args: readonly string[] | (() => readonly string[]);
   spawn: SpawnEngine;
   schedule: Schedule;
   backoff?: Partial<Backoff>;
@@ -206,7 +207,8 @@ export class EngineSupervisor extends EventEmitter {
     this.cancelRestart = null;
     let child: EngineChild;
     try {
-      child = this.options.spawn(this.options.exe, this.options.args);
+      const { args } = this.options;
+      child = this.options.spawn(this.options.exe, typeof args === 'function' ? args() : args);
     } catch (error) {
       // Treated like a launch that exited at once.
       const launch: Launch = this.newLaunch(new EventEmitter() as unknown as EngineChild);
