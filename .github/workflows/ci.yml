@@ -72,14 +72,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install ALSA headers
+      - name: Install ALSA and JUCE GUI headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        run: >-
+          sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev
+          libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb
       - name: Configure
         run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON
       - name: Build
         run: cmake --build native/build/desktop --config Debug --parallel
+      # The hosting tests open plugin editors, so Linux needs a virtual display;
+      # the Windows and macOS runners have a desktop session.
+      - name: Test (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ctest --test-dir native/build/desktop -C Debug --output-on-failure
       - name: Test
+        if: runner.os != 'Linux'
         run: ctest --test-dir native/build/desktop -C Debug --output-on-failure
 
   # The Electron shell (m0-electron-shell): the core-only siann-engine target
