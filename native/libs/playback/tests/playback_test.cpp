@@ -610,7 +610,7 @@ TEST_CASE("A session asks the device for its own rate and resamples when the dev
         engine.butler().runOnce();
         engine.tick();
     }
-    CHECK(engine.driver().xruns() == 0);
+    CHECK(engine.driver().srcUnderruns() == 0);
     CHECK(engine.underruns() == 0);
     engine.stop();
 }
@@ -652,7 +652,7 @@ TEST_CASE("Playing through device-side SRC is sample-identical to renderOffline 
         engine.butler().runOnce();
         engine.tick();
     }
-    CHECK(engine.driver().xruns() == 0);
+    CHECK(engine.driver().srcUnderruns() == 0);
     CHECK(engine.underruns() == 0);
     engine.stop();
 

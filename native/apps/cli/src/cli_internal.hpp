@@ -14,8 +14,12 @@
 #include "siann/command/history.hpp"
 #include "siann/hash/json.hpp"
 
-namespace siann::cli {
+namespace siann::rt {
 class CallbackTimer;
+}
+
+namespace siann::cli {
+using CallbackTimer = rt::CallbackTimer;
 }
 
 namespace siann::cli::detail {

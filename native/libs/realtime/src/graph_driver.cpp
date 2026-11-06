@@ -183,14 +183,29 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
     }
     deviceStatus_ = device.open(config);
     setUpResampling(config);
-    xruns_.store(0, std::memory_order_relaxed);
+    srcUnderruns_.store(0, std::memory_order_relaxed);
+    timing_.reset();
     deviceLost_.store(false, std::memory_order_release);
     device.setOnStopped([this](bool) { deviceLost_.store(true, std::memory_order_release); });
     device_ = &device;
     state_ = DriverState::realtime;
     // The live graph is already in current_; starting the device thread
-    // publishes it to the callback.
-    device.start([this](const host::AudioBufferView& in, const host::AudioBufferView& out) { process(in, out); });
+    // publishes it to the callback. Every callback is timed into timing_
+    // (spec, "Realtime rules and enforcement": a deadline miss is counted,
+    // never acted on here).
+    device.start([this](const host::AudioBufferView& in, const host::AudioBufferView& out) {
+        const std::int64_t begin = nowNanos();
+        process(in, out);
+        timing_.record(out.frames, deviceStatus_.sampleRate, nowNanos() - begin);
+    });
+}
+
+std::int64_t GraphDriver::nowNanos() const noexcept {
+    if (options_.nowNanos != nullptr) {
+        return options_.nowNanos();
+    }
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 void GraphDriver::attachRecorder(Recorder* recorder) {
@@ -628,7 +643,7 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
             for (int c = 0; c < output.channelCount; ++c) {
                 std::fill_n(output.channel(c) + written, output.frames - written, 0.0f);
             }
-            xruns_.fetch_add(static_cast<std::uint64_t>(output.frames - written), std::memory_order_relaxed);
+            srcUnderruns_.fetch_add(static_cast<std::uint64_t>(output.frames - written), std::memory_order_relaxed);
             break;
         }
         srcStep(playing);

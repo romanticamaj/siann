@@ -181,14 +181,25 @@ public:
     playback::PlaybackEngine& engine() noexcept { return engine_; }
     const CallbackTimer& timer() const noexcept { return timer_; }
 
-    // Device frames played, underruns and the device's state.
-    void report(Object& out) {
+    // Device frames played, underruns, the driver's callback timing and the
+    // device's state. `withTiming` false leaves out `xruns` and
+    // `maxCallbackMicros`: bench reports them from its TimedDevice instead,
+    // measured around the whole device callback and checked by benchTiming().
+    void report(Object& out, bool withTiming = true) {
         const auto& status = engine_.driver().deviceStatus();
         const auto& resampling = engine_.resampling();
         const auto& latency = engine_.driver().latency();
         out.emplace_back("framesPlayed", decimal(timed_.frames()));
         out.emplace_back("underruns", decimal(engine_.underruns()));
-        out.emplace_back("srcUnderruns", decimal(engine_.driver().xruns()));
+        out.emplace_back("srcUnderruns", decimal(engine_.driver().srcUnderruns()));
+        if (withTiming) {
+            // The driver's own timing of every callback (spec, "Realtime rules
+            // and enforcement": deadline misses are counted and reported, so a
+            // wait inside a hosted plugin's processBlock is visible).
+            const auto& timing = engine_.driver().callbackTiming();
+            out.emplace_back("xruns", decimal(timing.misses()));
+            out.emplace_back("maxCallbackMicros", Value(static_cast<double>(timing.maxCallbackNanos()) / 1'000.0));
+        }
         out.emplace_back("deviceLost", Value(deviceLost_));
         out.emplace_back("resampling", Value(Object{{"active", Value(resampling.active)},
                                                     {"deviceRate", number(resampling.deviceRate)},
@@ -535,7 +546,7 @@ Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
     for (auto& field : timing) {
         out.push_back(std::move(field));
     }
-    run.report(out);
+    run.report(out, /*withTiming=*/false);  // bench's xruns and maxCallbackMicros are above
     return ok(std::move(out));
 }
 
