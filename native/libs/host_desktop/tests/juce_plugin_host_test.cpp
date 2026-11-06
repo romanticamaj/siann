@@ -468,7 +468,12 @@ TEST_CASE("plugin host: a restored state brings its tail", "[juce][plugin]") {
 }
 
 // A tail the latency report does not announce: "tail" is state and changes no
-// latency, so only setState's own read of the tail can bring it.
+// latency. What brings it here is JUCE's own plugin-side controller, whose
+// setComponentState ends in restartComponent(kParamValuesChanged), which the host
+// turns into a programChanged report and the adapter into a tail read; so the
+// adapter's own read after setState is not what this test exercises (removing it
+// passes: the mutant survives), and it stays for a controller that reports
+// nothing after setComponentState, which no CI-built plugin can be.
 TEST_CASE("plugin host: a restored state brings a tail its latency does not announce", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;

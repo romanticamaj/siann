@@ -98,3 +98,51 @@ any live graph (construction, destruction), so this is the one unbounded wait.
 - The M0 plugin-hosting feature gains an acceptance item for the counter.
 - When worker processes land, this ADR is superseded and the spec's exception
   text is removed.
+
+## Amendment, 2026-11-07 (after independent review; same decider)
+
+An independent verifier read the pinned JUCE against the Context above and found
+it incomplete. The decision stands, with its scope and its claims corrected:
+
+1. **The scope is an audit, not "exactly three locks".** A complete pass over
+   what JUCE 9.0.3 runs inside `processBlock` (the spec, "Realtime rules and
+   enforcement", holds the list) adds: `MidiEventList::events`, an
+   `Array<Vst::Event, CriticalSection>`, whose `clearQuick` takes a mutex twice
+   per block (uncontended) and whose `add` locks and may allocate for every MIDI
+   event a plugin produces; `AudioProcessorParameter::listenerLock`, held while a
+   parameter's listeners run on each output parameter change, under which SIANN's
+   event sink runs (via `ParameterChangeForwarder`), contended by the main
+   thread's edits of that parameter; `processMutex` also held, without
+   `setActive`, by `updateMidiMappings` (a `kMidiCCAssignmentChanged` restart)
+   and `isBusesLayoutSupported`; and `toMidiBuffer` growing SIANN's `MidiBuffer`
+   past its 4096 preallocated bytes. The exception now covers JUCE's wrapper code
+   inside `processBlock` as audited, locks and the MIDI-output allocation alike;
+   a JUCE pin bump repeats the audit before the pin moves.
+2. **Latent in M0.** No graph node wraps a `PluginInstance` and `siann-engine`
+   runs no audio device, so no shipped M0 path processes a hosted plugin; the
+   hosting tests are `process`'s only caller. The exception stands because it is
+   about `JucePluginInstance::process` as written and tested, not about a path
+   that ships in M0, and because the alternatives in this ADR are unchanged by
+   that fact. Its Visibility condition is in force for the driver (`siann-cli
+   play` and `record` report `xruns`, `maxCallbackMicros` and
+   `unmeasuredCallbacks`) and not yet for plugins. Before a hosted plugin
+   processes audio in a shipped path (the M4 plugin node): the node calls
+   `process` only from a `GraphDriver` callback; the event sink only pushes to
+   `pluginEventAny` (never `setState`, `setParameter`, device control or any wait
+   for the audio thread, which the spec's deadlock argument needs); MIDI output
+   gets a decision (preallocate for Steinberg's 2048-event limit and accept
+   JUCE's growth as plugin-caused, or worker processes first); the protocol
+   carries the three counters once the engine process runs a device.
+3. **Attribution withdrawn.** `xruns` is a cumulative end-of-run count of
+   callbacks the driver timed over their period (never a device-reported xrun),
+   nothing consumes `pluginEventAny` in M0, and `restartRequested` also follows a
+   latency-only restart, so an xrun cannot be attributed to a restart from these
+   counts. Attribution needs per-instance timing or a timestamped event log, both
+   M4 follow-ups.
+4. **The wait graph is written down.** The spec's "Threads and waiting rules" now
+   carries the two-way audio ↔ main edge and the argument that no cycle closes,
+   which rests on the sink rule above.
+5. **Found alongside, fixed:** the launcher handshake shared stdout with hosted
+   plugins (a plugin's line before the ready line failed the launch);
+   `siann-engine` now duplicates the launcher's stdout for the ready line and
+   points fd 1 at stderr before any plugin loads.

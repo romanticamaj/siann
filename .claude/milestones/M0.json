@@ -26,7 +26,7 @@
     {
       "id": "macos-hands-on",
       "text": "Judge editor-window focus and Cmd-Tab behaviour on a real Mac.",
-      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour. Check, with an editor open: clicking the Electron window leaves the editor visible; Cmd-Tab lists the engine as an app and returns to it; Cmd-Tab to a third application shows the editor floating above it (the behaviour under judgement); minimise and restore the editor; Electron in fullscreen. Record acceptable / acceptable only with conditional floating / unacceptable."
+      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour. Check, with an editor open: clicking the Electron window leaves the editor visible; Cmd-Tab lists the engine as an app and returns to it; Cmd-Tab to a third application shows the editor floating above it (the behaviour under judgement); minimise and restore the editor; Electron in fullscreen (the editor carries FullScreenAuxiliary, so it should join that space). Note while judging: the engine never calls [NSApp finishLaunching] (JUCE's loop runs without it), so record any activation, menu-bar or focus oddity that could stem from that. Record acceptable / acceptable only with conditional floating / unacceptable."
     },
     {
       "id": "plugin-set",
@@ -67,7 +67,7 @@
         "JucePluginHost implements PluginHost: scan, instantiate on the main thread, process on the audio thread with no SIANN lock (JUCE's wrapper locks inside processBlock are the accepted exception in the spec's \"Realtime rules and enforcement\", ADR-0018), state get/set as blobs, latency and capability reporting.",
         "Hosting tests load the maintainer VST3 (and AU on macOS) from SIANN_TEST_VST3 / SIANN_TEST_AU and the CI-built siann_test_plugin; all save and restore state, read latency and open and close the editor. The runtime latency change, and the restart during playback, are proven on siann_test_plugin, whose latency is switched by a parameter; no third-party runtime latency change is required.",
         "Windows editors are owned by the Electron window via GWLP_HWNDPARENT; macOS editors float and the engine activates itself.",
-        "The engine reports xruns (device callbacks over their period) and the longest callback in its status, counted on the audio thread with atomics only, so a wait inside a hosted plugin's processBlock is visible."
+        "The graph driver counts device callbacks over their period (xruns: slow callbacks, never device-reported xruns), the longest callback and callbacks it could not check, on the audio thread with atomics only; siann-cli play and record report them as xruns, maxCallbackMicros and unmeasuredCallbacks, and a known miss driven through --fake-callback-nanos reaches the JSON. In M0 no shipped path processes a hosted plugin (no graph node wraps a PluginInstance; siann-engine runs no device), so the counter does not yet show a plugin's wait: that holds once the M4 plugin node calls process() from a driver callback, and the protocol carries the three counters once the engine process runs a device (spec, \"Realtime rules and enforcement\"; ADR-0018 amendment)."
       ]
     },
     {

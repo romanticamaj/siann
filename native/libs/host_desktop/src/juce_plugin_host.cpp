@@ -273,7 +273,11 @@ private:
             plugin_->setStateInformation(state.data() + position, static_cast<int>(payloadSize));
         }
         readLatency();
-        readTail();  // a tail the state changed without a latency report
+        // A tail the state changed without a latency report. A JUCE-built plugin's
+        // controller also ends setComponentState in a kParamValuesChanged restart,
+        // which reaches audioProcessorChanged and reads the tail anyway; this read
+        // is for a controller that reports nothing, and no CI-built plugin is one.
+        readTail();
     }
 
     std::vector<PluginParameterInfo> parameters() const override {
