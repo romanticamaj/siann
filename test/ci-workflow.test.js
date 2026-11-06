@@ -114,3 +114,34 @@ test('m2-exit-rt-safety is Met with a cited RTSan run', () => {
   assert.doesNotMatch(evidence, PENDING);
   assert.ok(citesObservedRun(evidence), 'Met cites an Actions run or a local run with its Clang version and ctest count');
 });
+
+// The Electron shell job (m0-electron-shell; spec, "Build, test and CI"):
+// the core-only siann-engine target and the Playwright Electron tests in app/
+// on all three desktop OSes.
+function appJob() {
+  const all = jobs(fs.readFileSync(WORKFLOW, 'utf8'));
+  const job = all.find((j) => j.id === 'app');
+  assert.ok(job, `an app job exists (jobs: ${all.map((j) => j.id).join(', ')})`);
+  return job;
+}
+
+test('an app CI job runs the Electron shell tests on Windows, macOS and Linux', () => {
+  const { text } = appJob();
+  const matrix = /os:\s*\[([^\]]*)\]/.exec(text);
+  assert.ok(matrix, 'the app job has an os matrix');
+  const oses = matrix[1].split(',').map((s) => s.trim()).sort();
+  assert.deepEqual(oses, ['macos-latest', 'ubuntu-latest', 'windows-latest']);
+  assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
+  assert.match(text, /xvfb-run -a npm test/, 'Linux runs Electron under xvfb-run');
+});
+
+test('the app job builds only the core-only siann-engine target and points the tests at it', () => {
+  const { text } = appJob();
+  const configure = text.split('\n').find((line) => /cmake\s+-S\s+native/.test(line));
+  assert.ok(configure, 'the app job configures native/');
+  assert.doesNotMatch(configure, /SIANN_WITH_JUCE=ON/, 'core-only: no JUCE');
+  assert.match(text, /cmake\s+--build\s+\S+[^\n]*--target\s+siann-engine\b/);
+  assert.match(text, /SIANN_ENGINE_EXE=/);
+  assert.match(text, /npm ci/);
+  assert.match(text, /working-directory:\s*app/);
+});
