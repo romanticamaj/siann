@@ -234,6 +234,28 @@ years. Milestones are designed so that something useful exists at every stage.
 - Windows: plugin editor windows are owned by the Electron window via
   `GWLP_HWNDPARENT` across processes for z-order. macOS cannot parent windows across
   processes; editors float and the engine activates itself.
+- The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
+  by the core-only configuration too (CI builds it without JUCE). It links
+  `siann::session` and `siann::protocol`; it links `siann::host_desktop` and enters
+  the JUCE message loop only from m0-plugin-hosting on. It is started as
+  `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]`
+  and announces itself with the launcher handshake (siann-protocol, Protocol v0
+  item 17).
+- Session at launch: `--session <bundle>` is required. When the directory does not
+  exist the engine creates a new empty session there (`Session::create` with
+  `Document::create(<bundle stem>, 48000, 120000)`), otherwise it calls
+  `Session::open`. In M0 the Electron shell passes
+  `<app.getPath('userData')>/sessions/Untitled.siann` (overridable by
+  `SIANN_SESSION_DIR` for tests); opening and recent sessions arrive with M5.
+- Crash-loop backoff: the shell restarts the engine after a delay that doubles from
+  250 ms to a 10 s cap; the counter resets once the engine has stayed up 30 s;
+  after 5 consecutive exits the shell stops restarting and shows the exit code and
+  the last stderr lines. The delays are shell constants that
+  `SIANN_SHELL_BACKOFF_MS` and `SIANN_SHELL_MAX_RESTARTS` override, so tests run
+  fast. A restart yields a new port and token (item 7: per-launch); the renderer
+  receives the new pair through the preload API (`window.siann.engine.current()`
+  and `onChange`) and reconnects; resync is the client's `session.sync` as in
+  item 11.
 - Crash: Electron restarts the engine with backoff; the engine recovers from the
   last checkpoint plus journal replay; the UI reconnects and resyncs. Exclusive-mode
   and ASIO devices may need a retry delay before reopening.
@@ -1391,7 +1413,8 @@ redo are not tools in v0 and would be `trusted`), `merge_proposal`,
 `describe_capabilities`, `inspect_session`, `submit_plan`, `plan_status`,
 `reject_plan`, `propose_plan` (a branch; main is unchanged), `audition`,
 `discard_proposal`, `render`, `job_status`, `save_session`. In M3 the scope is set
-by the launcher (`ServerOptions::mcpScope`; a `siann-cli serve --mcp-trusted` launcher is a follow-up); the
+by the launcher (`ServerOptions::mcpScope`; the `siann-engine` executable
+(native/apps/engine, m0-electron-shell) takes `--mcp-trusted`); the
 per-client grant in the UI arrives with M5. A denied tool call answers
 `scope_denied` (a stable code), executes nothing and is not cached, so it can be
 retried with the same id once the scope is granted. Note for the maintainer:
@@ -1475,7 +1498,7 @@ contradicts none of them):
    else is 404. Further routes come with later features.
 7. The token is 32 random bytes from `std::random_device` as lowercase hex,
    generated when the server is constructed, and handed to the launcher (Electron
-   or the CLI). The protocol thread hands validated requests to the command thread
+   or the CLI) through the ready line of item 17. The protocol thread hands validated requests to the command thread
    through a bounded inbox; a full inbox answers `queue_full` at once and is never
    waited on. Protocol JSON uses the in-house strict parser and JCS serializer;
    nlohmann/json is not adopted while those suffice.
@@ -1610,6 +1633,22 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     does not exist is `not_found`; without an `openSession` callback the method is
     `not_supported`.
 
+Protocol v0, launcher (decided with m0-electron-shell):
+
+17. Launcher handshake. `siann-engine --session <bundle> [--host 127.0.0.1]
+    [--port 0] [--mcp-trusted]` writes exactly one line to stdout once it is
+    listening,
+    `{"schema":"siann.engine.ready.v0","port":<n>,"token":"<64 hex>","mcpToken":"<64 hex>","sessionId":"ses_<hex>","pid":<n>,"about":{...aboutJson()}}`,
+    and nothing else on stdout for the life of the process (diagnostics go to
+    stderr). Tokens never appear on the command line or in the environment. The
+    engine exits with code 0 when its stdin reaches EOF (the launcher holds the
+    pipe, so a dead launcher never leaves an orphan) and on SIGTERM / CTRL_BREAK.
+    A bad launch (a `--session` that is an existing file, a bad option) exits 1
+    with one JSON error `{ok: false, error: {code, message}}` on stderr and
+    nothing on stdout. Electron reads the ready line and exposes only
+    `{port, token}` to the renderer through the preload bridge; `mcpToken` stays
+    in the main process.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -1719,6 +1758,8 @@ before adoption, including transitive dependencies.
 | Build / packages | CMake + vcpkg or CPM | — |
 | Tests | Catch2 or GoogleTest; pluginval for hosting tests | BSL-1.0 / BSD; GPL tool, not linked |
 | Desktop shell | Electron + Electron Forge or electron-builder | MIT |
+| Electron shell tests | Playwright (`@playwright/test`, Electron driver), pinned | Apache-2.0 |
+| Frontend language | TypeScript, pinned | Apache-2.0 |
 
 Not used: Taskflow (allocates at runtime).
 
@@ -1746,6 +1787,12 @@ Not used: Taskflow (allocates at runtime).
   runtime, and the Linux job already runs the same platform-independent core.
   Windows has no RTSan; the allocation guard runs there.
 - A core-only build with no JUCE present runs on every CI job.
+- `app/` is its own npm package with pinned dependencies (Electron, TypeScript,
+  Playwright); the root bridge package stays dependency-free. An `app` CI job on
+  windows-latest, macos-latest and ubuntu-latest (under `xvfb-run`) builds the
+  core-only `siann-engine` target, runs `npm ci` and the Playwright Electron tests
+  in `app/` with `SIANN_ENGINE_EXE` pointing at the built engine; locally
+  `node scripts/check-all.js --app` runs the same after the native step.
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
   manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's

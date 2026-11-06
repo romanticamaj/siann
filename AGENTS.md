@@ -25,6 +25,8 @@ paths, generated artifacts, and local repository references.
 - `scripts/check-all.js` runs every local check (`--gcc` adds a g++ -Werror syntax check through WSL, `--desktop` the JUCE preset).
 - `scripts/create-daw-manifest.js` converts extracted `_DAW/` plus `_SpliceSFX/` packs into multi-track manifests with placement trim metadata.
 - `test/` contains Node test-runner coverage for the bridge wrapper, CLI, and fixtures.
+- `native/` holds the C++ engine (libraries under `native/libs/`, the `siann-cli` and `siann-engine` executables under `native/apps/`).
+- `app/` holds the Electron shell (TypeScript; its own npm package with pinned dependencies) that spawns and supervises `siann-engine`; the root package stays dependency-free.
 
 Keep implementation modules separate by the documented architecture: audio engine, command bridge, agent runtime, and UI.
 

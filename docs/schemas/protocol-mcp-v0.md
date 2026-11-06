@@ -81,8 +81,8 @@ The error object is the protocol's `{code, message, step?, data?}`.
 ## Scopes
 
 `ServerOptions::mcpScope` is `propose` (default) or `trusted`, set by the engine
-host that launches the server (a `siann-cli serve --mcp-trusted` launcher is a
-follow-up). A tool whose scope is `trusted` called under
+host that launches the server (the `siann-engine` executable,
+native/apps/engine, m0-electron-shell, takes `--mcp-trusted`). A tool whose scope is `trusted` called under
 `propose` answers `isError` with code `scope_denied`, executes nothing and is not
 cached (retry with the same id after the grant). The server checks the scope on
 the command thread against the credential the request came with, not in the
