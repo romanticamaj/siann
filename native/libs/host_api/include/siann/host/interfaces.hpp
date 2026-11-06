@@ -12,7 +12,8 @@
 // "Locks inside a hosted plugin's processBlock"). scan, instantiate and all of
 // PluginControl run on the main thread, getState with processing paused where the
 // format requires it (VST3 and AU do not). capabilities, latencyFrames and
-// tailFrames may be read from any thread. Plugin events arrive on any thread, see
+// tailFrames may be read from any thread and never enter the plugin. Plugin events
+// arrive on any thread, see
 // setEventSink. Control-only calls are a separate interface from process() (spec,
 // "siann-host-api"): PluginControl, which the audio thread has no use for.
 
@@ -126,9 +127,12 @@ public:
     // did not produce (wrong format version, wrong plugin, truncated). What a
     // plugin does with its own payload stays between it and the blob: a plugin
     // that refuses it keeps its parameters, and no format reports that refusal.
+    // During playback, a process() call in flight finishes first and later ones pass
+    // their input through until this returns, so no value set before it lands after
+    // it. process() does not wait for this; this waits for the block in flight.
     virtual void setState(const std::vector<std::uint8_t>& state) = 0;
     // Values are normalized, 0 to 1. The plugin's processor sees a new value by its
-    // next process() call at the latest.
+    // next process() call at the latest; getState may miss a value until then.
     virtual std::vector<PluginParameterInfo> parameters() const = 0;
     virtual double getParameter(int index) const = 0;
     virtual void setParameter(int index, double value) = 0;
@@ -154,6 +158,7 @@ public:
     // Any thread.
     virtual PluginCapabilities capabilities() const = 0;
     virtual int latencyFrames() const = 0;
+    // The value from load, the last setState or the last change the plugin reported.
     virtual int tailFrames() const = 0;
     // Audio thread only.
     virtual void process(const AudioBufferView& input, const AudioBufferView& output, EventList events) noexcept = 0;

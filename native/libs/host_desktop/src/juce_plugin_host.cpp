@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <thread>
 
 #include "editor_platform.hpp"
 
@@ -89,6 +90,7 @@ public:
         setUsingNativeTitleBar(true);
         setContentOwned(editor, true);
         setResizable(editor->isResizable(), false);
+        setAlwaysOnTop(editor_platform::editorsFloat);
         centreWithSize(getWidth(), getHeight());
         setVisible(true);
     }
@@ -104,7 +106,10 @@ private:
     std::function<void()> onCloseButton_;
 };
 
-class JucePluginInstance final : public PluginInstance, private PluginControl, private juce::AudioProcessorListener {
+class JucePluginInstance final : public PluginInstance,
+                                 private PluginControl,
+                                 private juce::AudioProcessorListener,
+                                 private juce::AsyncUpdater {
 public:
     using EventSink = std::function<void(const PluginEvent&)>;
 
@@ -130,6 +135,7 @@ public:
         capabilities_.sidechain = plugin_->getBusCount(true) > 1;
         capabilities_.variableLatency = true;  // both formats can change it, and it is reported when they do
         capabilities_.editor = plugin_->hasEditor();
+        readTail();
 
         plugin_->addListener(this);
     }
@@ -144,13 +150,7 @@ public:
 
     int latencyFrames() const override { return plugin_->getLatencySamples(); }
 
-    int tailFrames() const override {
-        const double frames = plugin_->getTailLengthSeconds() * sampleRate_;
-        if (!std::isfinite(frames) || frames >= static_cast<double>(std::numeric_limits<int>::max())) {
-            return std::numeric_limits<int>::max();
-        }
-        return static_cast<int>(std::ceil(frames));
-    }
+    int tailFrames() const override { return tailFrames_.load(std::memory_order_relaxed); }
 
     void process(const AudioBufferView& input, const AudioBufferView& output, EventList) noexcept override {
         const int frames = output.frames;
@@ -175,9 +175,15 @@ public:
         }
         midi_.clear();
         juce::AudioBuffer<float> buffer(pointers_.data(), channels_, frames);
-        // The one place the audio thread can wait: the format wrapper's own locks,
-        // the exception the spec records under "Realtime rules and enforcement".
-        plugin_->processBlock(buffer, midi_);
+        // setState's half of this is in ProcessingPause. Skipped, the block passes
+        // its input through.
+        processing_.store(true);
+        if (!paused_.load()) {
+            // The one place the audio thread can wait: the format wrapper's own locks,
+            // the exception the spec records under "Realtime rules and enforcement".
+            plugin_->processBlock(buffer, midi_);
+        }
+        processing_.store(false);
         for (int c = outputChannels_; c < output.channelCount; ++c) {
             std::memset(output.channels[c], 0, bytes);
         }
@@ -186,6 +192,35 @@ public:
     PluginControl& control() override { return *this; }
 
 private:
+    // Holds the plugin out of processing: the block in flight finishes, and until
+    // this goes process() skips the plugin. Only this side ever waits. Both flags
+    // stay sequentially consistent, or each side could miss the other's store.
+    class ProcessingPause {
+    public:
+        explicit ProcessingPause(JucePluginInstance& instance) : instance_(instance) {
+            instance_.paused_.store(true);
+            while (instance_.processing_.load()) {
+                std::this_thread::yield();
+            }
+        }
+        ~ProcessingPause() { instance_.paused_.store(false); }
+        ProcessingPause(const ProcessingPause&) = delete;
+        ProcessingPause& operator=(const ProcessingPause&) = delete;
+
+    private:
+        JucePluginInstance& instance_;
+    };
+
+    // Main thread: the formats allow this call nowhere else (VST3 getTailSamples).
+    void readTail() {
+        const double frames = plugin_->getTailLengthSeconds() * sampleRate_;
+        const bool beyondInt = !std::isfinite(frames) || frames >= static_cast<double>(std::numeric_limits<int>::max());
+        tailFrames_.store(beyondInt ? std::numeric_limits<int>::max() : static_cast<int>(std::ceil(frames)),
+                          std::memory_order_relaxed);
+    }
+
+    void handleAsyncUpdate() override { readTail(); }
+
     std::vector<std::uint8_t> getState() override {
         juce::MemoryBlock payload;
         plugin_->getStateInformation(payload);
@@ -225,7 +260,11 @@ private:
             payloadSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
             throw PluginError("bad_state", "truncated plugin state");
         }
-        plugin_->setStateInformation(state.data() + position, static_cast<int>(payloadSize));
+        {
+            const ProcessingPause pause(*this);
+            plugin_->setStateInformation(state.data() + position, static_cast<int>(payloadSize));
+        }
+        readTail();
     }
 
     std::vector<PluginParameterInfo> parameters() const override {
@@ -313,6 +352,13 @@ private:
     }
 
     void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& details) override {
+        if (details.latencyChanged || details.parameterInfoChanged || details.programChanged) {
+            if (juce::MessageManager::existsAndIsCurrentThread()) {
+                readTail();  // before the event goes out, so its reader sees the new tail
+            } else {
+                triggerAsyncUpdate();
+            }
+        }
         if (details.latencyChanged) {
             PluginEvent event;
             event.kind = PluginEvent::Kind::latencyChanged;
@@ -340,6 +386,9 @@ private:
     juce::MidiBuffer midi_;
     std::vector<std::unique_ptr<EventSink>> sinks_;
     std::atomic<const EventSink*> sink_{nullptr};
+    std::atomic<int> tailFrames_{0};
+    std::atomic<bool> processing_{false};
+    std::atomic<bool> paused_{false};
     std::unique_ptr<EditorWindow> editor_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };

@@ -5,9 +5,10 @@
 // Main thread only.
 //
 // Windows: an editor is owned by the given window across processes, through
-// GWLP_HWNDPARENT, for z-order. macOS cannot do that: editors float, and the
-// engine, an accessory application, becomes a regular one while any editor is
-// open so it can take focus.
+// GWLP_HWNDPARENT, for z-order. macOS cannot do that: editors float, at the
+// floating window level so the Electron window cannot bury them, and the engine,
+// an accessory application, becomes a regular one while any editor is open so it
+// can take focus.
 
 #include <cstdint>
 
@@ -20,11 +21,13 @@ inline void applyOwner(std::uintptr_t, std::uintptr_t) {}
 #endif
 
 #if defined(__APPLE__)
+inline constexpr bool editorsFloat = true;
 void startInBackground();
 void editorOpened();
 void editorRaised();
 void editorClosed();
 #else
+inline constexpr bool editorsFloat = false;
 inline void startInBackground() {}
 inline void editorOpened() {}
 inline void editorRaised() {}
