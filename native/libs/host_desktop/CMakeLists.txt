@@ -2,6 +2,7 @@
 # SIANN_WITH_JUCE is ON.
 add_library(siann_host_desktop STATIC
   src/juce_audio_device.cpp
+  src/juce_plugin_host.cpp
 )
 add_library(siann::host_desktop ALIAS siann_host_desktop)
 target_include_directories(siann_host_desktop PUBLIC include)
@@ -32,14 +33,19 @@ target_compile_definitions(siann_host_desktop PRIVATE
 if(MSVC)
   target_compile_options(siann_host_desktop PRIVATE /utf-8)  # JUCE sources are UTF-8
 endif()
-siann_apply_source_options(src/juce_audio_device.cpp)
+siann_apply_source_options(src/juce_audio_device.cpp src/juce_plugin_host.cpp)
 
 if(SIANN_BUILD_TESTS)
   add_subdirectory(test_plugin)
 
   add_executable(siann_host_desktop_tests
     tests/juce_device_test.cpp
+    tests/juce_plugin_host_test.cpp
   )
+  if(APPLE)
+    target_sources(siann_host_desktop_tests PRIVATE tests/juce_plugin_host_mac_test.mm)
+    target_link_libraries(siann_host_desktop_tests PRIVATE "-framework AppKit" "-framework AudioToolbox")
+  endif()
   target_link_libraries(siann_host_desktop_tests PRIVATE siann::host_desktop siann::realtime siann_rt_alloc_guard
                         Catch2::Catch2WithMain)
   siann_apply_compile_options(siann_host_desktop_tests)

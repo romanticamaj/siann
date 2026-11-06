@@ -3,12 +3,15 @@
 // Host interfaces (architecture spec, "siann-host: two targets, one
 // interface"). Pure interfaces with no implementation: siann-host-desktop
 // (JUCE) and siann-host-headless implement them and are linked only into
-// engine executables. This is the M1 draft; the M0 spike and M2 refine it.
+// engine executables. The M1 draft, refined by the M0 plugin-hosting spike; M2
+// and M4 extend it.
 //
-// Thread contract: process() runs on the audio thread only and must not
-// allocate, lock, log, throw or do I/O. instantiate, setState and editor calls
-// run on the main thread. getState runs on the main thread, with processing
-// paused where the format requires it.
+// Thread contract, as the spec states it: process() runs on the audio thread
+// only and must not allocate, lock, log, throw or do I/O. scan, instantiate,
+// setState, parameter and editor calls run on the main thread. getState runs on
+// the main thread, with processing paused where the format requires it (VST3
+// and AU do not). capabilities, latencyFrames and tailFrames may be read from
+// any thread. Plugin events arrive on any thread, see setEventSink.
 
 #include <cstdint>
 #include <functional>
@@ -69,6 +72,11 @@ struct PluginDescriptor {
     std::string uid;
     std::string name;
     std::string vendor;
+    std::string path;  // bundle path, or the system's identifier for an AU
+    std::string version;
+    // Probed by scanPath, which opens an instance. scan() opens none and leaves
+    // this false; capabilities().editor is the answer for a loaded plugin.
+    bool hasEditor = false;
 };
 
 struct PluginCapabilities {
@@ -80,10 +88,39 @@ struct PluginCapabilities {
     bool editor = false;
 };
 
-// A loaded plugin. Message-shaped so an out-of-process worker can implement it.
+struct PluginParameterInfo {
+    std::string id;
+    std::string name;
+    double defaultValue = 0.0;  // normalized, 0 to 1
+    bool automatable = true;
+};
+
+// Plain data, so it fits the bounded queue behind `pluginEventAny`.
+struct PluginEvent {
+    enum class Kind {
+        latencyChanged,    // latencyFrames holds the new latency
+        parameterEdited,   // parameterIndex and value (normalized) hold the edit
+        restartRequested,  // parameters or programs changed: read them again
+    };
+    Kind kind = Kind::latencyChanged;
+    int parameterIndex = -1;
+    double value = 0.0;
+    int latencyFrames = 0;
+};
+
+// The window an editor belongs to, as the platform's handle (an HWND on
+// Windows). 0 for none. macOS cannot own windows across processes and ignores it.
+struct EditorOwner {
+    std::uintptr_t nativeWindow = 0;
+};
+
+// A loaded plugin. Message-shaped so an out-of-process worker can implement it:
+// nothing here points into the plugin.
 class PluginInstance {
 public:
+    // Main thread, after the last process() call. Closes an open editor.
     virtual ~PluginInstance() = default;
+    // Any thread.
     virtual PluginCapabilities capabilities() const = 0;
     virtual int latencyFrames() const = 0;
     virtual int tailFrames() const = 0;
@@ -91,14 +128,38 @@ public:
     virtual void process(const AudioBufferView& input, const AudioBufferView& output, EventList events) noexcept = 0;
     // Main thread.
     virtual std::vector<std::uint8_t> getState() = 0;
+    // Throws, with parameters unchanged, on a blob that getState of this plugin
+    // did not produce (wrong format version, wrong plugin, truncated). What a
+    // plugin does with its own payload stays between it and the blob: a plugin
+    // that refuses it keeps its parameters, and no format reports that refusal.
     virtual void setState(const std::vector<std::uint8_t>& state) = 0;
+    // Main thread. Values are normalized, 0 to 1. The plugin's processor sees a
+    // new value by its next process() call at the latest.
+    virtual std::vector<PluginParameterInfo> parameters() const = 0;
+    virtual double getParameter(int index) const = 0;
+    virtual void setParameter(int index, double value) = 0;
+    // Main thread. Opening an open editor brings it forward and applies owner.
+    virtual void openEditor(EditorOwner owner) = 0;
+    virtual void closeEditor() = 0;
+    virtual bool editorOpen() const = 0;
+    // The editor's top-level native window (HWND, NSView, X11 window); 0 when
+    // closed.
+    virtual std::uintptr_t editorNativeHandle() const = 0;
+    // Main thread. The sink runs on whichever thread the plugin reports from,
+    // the audio thread included, so it must not block or allocate: it feeds
+    // `pluginEventAny`. The instance never blocks on the sink's behalf.
+    virtual void setEventSink(std::function<void(const PluginEvent&)> sink) = 0;
 };
 
 class PluginHost {
 public:
     virtual ~PluginHost() = default;
+    // Main thread. The format's default locations; loads each module but opens
+    // no instance.
     virtual std::vector<PluginDescriptor> scan() = 0;
-    // Main thread; asynchronous formats complete before this returns in M1.
+    // Main thread. One bundle, which may hold several plugins.
+    virtual std::vector<PluginDescriptor> scanPath(const std::string& path) = 0;
+    // Main thread; asynchronous formats complete before this returns.
     virtual std::unique_ptr<PluginInstance> instantiate(const PluginDescriptor& descriptor, std::int64_t sampleRate,
                                                         int maxBlockFrames) = 0;
 };
