@@ -75,18 +75,18 @@ TEST_CASE("plugin host: the engine activates itself while an editor is open", "[
     auto first = host.instantiate(descriptors.front(), 48'000, 256);
     auto second = host.instantiate(descriptors.front(), 48'000, 256);
 
-    first->openEditor({});
+    first->control().openEditor({});
     CHECK(isRegular());
-    auto* view = reinterpret_cast<NSView*>(first->editorNativeHandle());
+    auto* view = reinterpret_cast<NSView*>(first->control().editorNativeHandle());
     const bool hasWindow = view != nil && view.window != nil;
     REQUIRE(hasWindow);
     const bool floats = view.window.parentWindow == nil;
     CHECK(floats);
 
-    second->openEditor({});
-    first->closeEditor();
+    second->control().openEditor({});
+    first->control().closeEditor();
     CHECK(isRegular());  // one is still open
-    second->closeEditor();
+    second->control().closeEditor();
     CHECK(isAccessory());
 }
 

@@ -95,8 +95,8 @@ inline void runBlocks(host::PluginInstance& instance) {
     audio.join();
 }
 
-inline int parameterIndex(const host::PluginInstance& instance, const std::string& name) {
-    const auto parameters = instance.parameters();
+inline int parameterIndex(host::PluginInstance& instance, const std::string& name) {
+    const auto parameters = instance.control().parameters();
     for (std::size_t i = 0; i < parameters.size(); ++i) {
         if (parameters[i].name == name) {
             return static_cast<int>(i);
@@ -138,40 +138,40 @@ inline void checkBuiltTestPlugin(host::MainThreadLoop& loop, host::JucePluginHos
                                  const host::PluginDescriptor& descriptor) {
     rt::MpscQueue<host::PluginEvent> events(64);
     auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
-    instance->setEventSink([&](const host::PluginEvent& event) { events.push(event); });
+    instance->control().setEventSink([&](const host::PluginEvent& event) { events.push(event); });
     const int gain = parameterIndex(*instance, "gain");
     const int latency = parameterIndex(*instance, "latency");
     CHECK(instance->latencyFrames() == 64);
     CHECK(measureDelay(*instance).frames == 64);
 
-    instance->setParameter(latency, 1.0);
+    instance->control().setParameter(latency, 1.0);
     CHECK(nextReportedLatency(loop, events) == 512);
     CHECK(instance->latencyFrames() == 512);
     CHECK(measureDelay(*instance).frames == 512);
 
-    instance->setParameter(gain, 0.25);
-    const auto state = instance->getState();
+    instance->control().setParameter(gain, 0.25);
+    const auto state = instance->control().getState();
     auto restored = host.instantiate(descriptor, sampleRate, blockFrames);
-    CHECK(restored->getParameter(gain) == Catch::Approx(1.0));
-    CHECK(restored->getParameter(latency) == Catch::Approx(0.0));
+    CHECK(restored->control().getParameter(gain) == Catch::Approx(1.0));
+    CHECK(restored->control().getParameter(latency) == Catch::Approx(0.0));
     CHECK(restored->latencyFrames() == 64);
-    restored->setState(state);
-    CHECK(restored->getParameter(gain) == Catch::Approx(0.25));
-    CHECK(restored->getParameter(latency) == Catch::Approx(1.0));
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Catch::Approx(0.25));
+    CHECK(restored->control().getParameter(latency) == Catch::Approx(1.0));
     REQUIRE(loop.runUntil([&] { return restored->latencyFrames() == 512; }, eventTimeout));
     const auto delayed = measureDelay(*restored);
     CHECK(delayed.frames == 512);
     CHECK(delayed.peak == Catch::Approx(0.25f));
 
     if (displayAvailable()) {
-        restored->openEditor({});
-        CHECK(restored->editorOpen());
-        CHECK(restored->editorNativeHandle() != 0);
-        restored->closeEditor();
-        CHECK_FALSE(restored->editorOpen());
-        CHECK(restored->editorNativeHandle() == 0);
+        restored->control().openEditor({});
+        CHECK(restored->control().editorOpen());
+        CHECK(restored->control().editorNativeHandle() != 0);
+        restored->control().closeEditor();
+        CHECK_FALSE(restored->control().editorOpen());
+        CHECK(restored->control().editorNativeHandle() == 0);
     }
-    instance->setEventSink(nullptr);
+    instance->control().setEventSink(nullptr);
 }
 
 }  // namespace siann::hosting_test

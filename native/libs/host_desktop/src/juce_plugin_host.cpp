@@ -104,7 +104,7 @@ private:
     std::function<void()> onCloseButton_;
 };
 
-class JucePluginInstance final : public PluginInstance, private juce::AudioProcessorListener {
+class JucePluginInstance final : public PluginInstance, private PluginControl, private juce::AudioProcessorListener {
 public:
     using EventSink = std::function<void(const PluginEvent&)>;
 
@@ -181,6 +181,9 @@ public:
         }
     }
 
+    PluginControl& control() override { return *this; }
+
+private:
     std::vector<std::uint8_t> getState() override {
         juce::MemoryBlock payload;
         plugin_->getStateInformation(payload);
@@ -284,7 +287,6 @@ public:
         sink_.store(sinks_.back().get(), std::memory_order_release);
     }
 
-private:
     juce::AudioProcessorParameter& parameterAt(int index) const {
         const auto& all = plugin_->getParameters();
         if (index < 0 || index >= all.size()) {

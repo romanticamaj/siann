@@ -55,8 +55,8 @@ std::filesystem::path installCopy(const std::string& directoryName) {
 
 // The directory of the bundle the loaded code really came from, which the plugin
 // reads from its own module and puts in a parameter's name.
-std::string loadedFrom(const host::PluginInstance& instance) {
-    for (const auto& parameter : instance.parameters()) {
+std::string loadedFrom(host::PluginInstance& instance) {
+    for (const auto& parameter : instance.control().parameters()) {
         if (parameter.name.rfind("home:", 0) == 0) {
             return parameter.name.substr(5);
         }
@@ -91,7 +91,7 @@ std::optional<std::string> environment(const char* name) {
 // compared by parameter values: third-party blobs are opaque and need not repeat.
 void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& descriptor) {
     auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
-    const auto parameters = instance->parameters();
+    const auto parameters = instance->control().parameters();
     REQUIRE_FALSE(parameters.empty());
     CHECK(instance->latencyFrames() >= 0);
 
@@ -104,11 +104,11 @@ void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& d
             continue;
         }
         const int index = static_cast<int>(i);
-        const double before = instance->getParameter(index);
-        instance->setParameter(index, before < 0.5 ? 1.0 : 0.0);
-        if (std::abs(instance->getParameter(index) - before) > 1e-3) {
+        const double before = instance->control().getParameter(index);
+        instance->control().setParameter(index, before < 0.5 ? 1.0 : 0.0);
+        if (std::abs(instance->control().getParameter(index) - before) > 1e-3) {
             changed = index;
-            changedTo = instance->getParameter(index);
+            changedTo = instance->control().getParameter(index);
         }
     }
     REQUIRE(changed >= 0);
@@ -116,27 +116,27 @@ void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& d
 
     std::vector<double> expected;
     for (std::size_t i = 0; i < parameters.size(); ++i) {
-        expected.push_back(instance->getParameter(static_cast<int>(i)));
+        expected.push_back(instance->control().getParameter(static_cast<int>(i)));
     }
-    const auto state = instance->getState();
+    const auto state = instance->control().getState();
     CHECK_FALSE(state.empty());
 
     auto restored = host.instantiate(descriptor, sampleRate, blockFrames);
-    CHECK(std::abs(restored->getParameter(changed) - changedTo) > 1e-3);
-    restored->setState(state);
+    CHECK(std::abs(restored->control().getParameter(changed) - changedTo) > 1e-3);
+    restored->control().setState(state);
     for (std::size_t i = 0; i < parameters.size(); ++i) {
         if (parameters[i].automatable) {
             INFO("parameter " << parameters[i].name);
-            CHECK(restored->getParameter(static_cast<int>(i)) == Approx(expected[i]).margin(1e-3));
+            CHECK(restored->control().getParameter(static_cast<int>(i)) == Approx(expected[i]).margin(1e-3));
         }
     }
 
     if (descriptor.hasEditor && displayAvailable()) {
-        restored->openEditor({});
-        CHECK(restored->editorOpen());
-        CHECK(restored->editorNativeHandle() != 0);
-        restored->closeEditor();
-        CHECK_FALSE(restored->editorOpen());
+        restored->control().openEditor({});
+        CHECK(restored->control().editorOpen());
+        CHECK(restored->control().editorNativeHandle() != 0);
+        restored->control().closeEditor();
+        CHECK_FALSE(restored->control().editorOpen());
     }
 }
 
@@ -186,16 +186,16 @@ TEST_CASE("plugin host: a plugin keeps its uid and its state when it moves", "[j
 
     auto instance = loadTestPlugin(host);
     const int gain = parameterIndex(*instance, "gain");
-    instance->setParameter(gain, 0.25);
-    const auto state = instance->getState();
+    instance->control().setParameter(gain, 0.25);
+    const auto state = instance->control().getState();
 
     const auto descriptors = host.scanPath(moved.string());
     REQUIRE(descriptors.size() == 1);
     CHECK(descriptors.front().uid == testPlugin(host).uid);  // the original is the last one scanned
     auto restored = host.instantiate(descriptors.front(), sampleRate, blockFrames);
     CHECK(loadedFrom(*restored) == "siann-plugin-host-moved");
-    restored->setState(state);
-    CHECK(restored->getParameter(gain) == Approx(0.25));
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Approx(0.25));
 }
 
 TEST_CASE("plugin host: two installs of one plugin each load their own bundle", "[juce][plugin]") {
@@ -356,12 +356,12 @@ TEST_CASE("plugin host: a VST3 restart during playback keeps setActive and proce
     };
     REQUIRE(ranAtLeast(16));
 
-    instance->setParameter(parameterIndex(*instance, "requestRestart"), 1.0);
-    REQUIRE(loop.runUntil([&] { return instance->getParameter(restarted) > 0.5; }, eventTimeout));
+    instance->control().setParameter(parameterIndex(*instance, "requestRestart"), 1.0);
+    REQUIRE(loop.runUntil([&] { return instance->control().getParameter(restarted) > 0.5; }, eventTimeout));
     REQUIRE(ranAtLeast(playing.blocks() + 16));
 
     CHECK(playing.finish() == 0);
-    CHECK(instance->getParameter(overlapped) < 0.5);
+    CHECK(instance->control().getParameter(overlapped) < 0.5);
     CHECK(measureDelay(*instance).frames == 64);
 }
 
@@ -378,15 +378,15 @@ TEST_CASE("plugin host: process runs while the main thread does everything else"
     PlayingThread playing(*instance);
     for (int round = 0; round < 8; ++round) {
         const int frames = round % 2 == 0 ? 512 : 64;
-        instance->setParameter(latency, frames == 512 ? 1.0 : 0.0);
+        instance->control().setParameter(latency, frames == 512 ? 1.0 : 0.0);
         REQUIRE(loop.runUntil([&] { return instance->latencyFrames() == frames; }, eventTimeout));
-        instance->setParameter(gain, 0.25);
-        const auto state = instance->getState();
-        instance->setParameter(gain, 0.75);
-        instance->setState(state);
-        CHECK(instance->getParameter(gain) == Approx(0.25));
-        instance->openEditor({});
-        instance->closeEditor();
+        instance->control().setParameter(gain, 0.25);
+        const auto state = instance->control().getState();
+        instance->control().setParameter(gain, 0.75);
+        instance->control().setState(state);
+        CHECK(instance->control().getParameter(gain) == Approx(0.25));
+        instance->control().openEditor({});
+        instance->control().closeEditor();
     }
     const auto ran = playing.blocks();
     REQUIRE(loop.runUntil([&] { return playing.blocks() > ran; }, eventTimeout));
@@ -409,17 +409,17 @@ TEST_CASE("plugin host: state round-trips as a blob", "[juce][plugin]") {
     auto instance = loadTestPlugin(host);
     const int gain = parameterIndex(*instance, "gain");
     const int latency = parameterIndex(*instance, "latency");
-    instance->setParameter(gain, 0.25);
-    instance->setParameter(latency, 1.0);
-    const auto state = instance->getState();
+    instance->control().setParameter(gain, 0.25);
+    instance->control().setParameter(latency, 1.0);
+    const auto state = instance->control().getState();
     REQUIRE(state.size() > 8);
     CHECK(std::string(state.begin(), state.begin() + 8) == "SIANNPS1");
 
     auto restored = loadTestPlugin(host);
-    CHECK(restored->getParameter(gain) == Approx(1.0));
-    restored->setState(state);
-    CHECK(restored->getParameter(gain) == Approx(0.25));
-    CHECK(restored->getParameter(latency) == Approx(1.0));
+    CHECK(restored->control().getParameter(gain) == Approx(1.0));
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Approx(0.25));
+    CHECK(restored->control().getParameter(latency) == Approx(1.0));
     REQUIRE(loop.runUntil([&] { return restored->latencyFrames() == 512; }, eventTimeout));
     CHECK(measureDelay(*restored).frames == 512);
 }
@@ -429,8 +429,8 @@ TEST_CASE("plugin host: a blob of the wrong version, plugin or size changes noth
     host::JucePluginHost host;
     auto instance = loadTestPlugin(host);
     const int gain = parameterIndex(*instance, "gain");
-    instance->setParameter(gain, 0.25);
-    const auto state = instance->getState();
+    instance->control().setParameter(gain, 0.25);
+    const auto state = instance->control().getState();
 
     auto wrongVersion = state;
     wrongVersion[8] = static_cast<std::uint8_t>(wrongVersion[8] + 1);  // the u32 after the magic
@@ -442,15 +442,15 @@ TEST_CASE("plugin host: a blob of the wrong version, plugin or size changes noth
     wrongMagic[0] = 'X';
 
     auto target = loadTestPlugin(host);
-    target->setParameter(gain, 0.75);
+    target->control().setParameter(gain, 0.75);
     for (const auto* blob : {&wrongVersion, &wrongPlugin, &truncated, &wrongMagic}) {
         try {
-            target->setState(*blob);
+            target->control().setState(*blob);
             FAIL("a bad blob must throw");
         } catch (const host::PluginError& error) {
             CHECK(error.code() == "bad_state");
         }
-        CHECK(target->getParameter(gain) == Approx(0.75));
+        CHECK(target->control().getParameter(gain) == Approx(0.75));
     }
 }
 
@@ -459,14 +459,14 @@ TEST_CASE("plugin host: a plugin that refuses its payload keeps its parameters",
     host::JucePluginHost host;
     auto instance = loadTestPlugin(host);
     const int gain = parameterIndex(*instance, "gain");
-    instance->setParameter(gain, 0.25);
-    instance->setParameter(parameterIndex(*instance, "futureState"), 1.0);
-    const auto state = instance->getState();
+    instance->control().setParameter(gain, 0.25);
+    instance->control().setParameter(parameterIndex(*instance, "futureState"), 1.0);
+    const auto state = instance->control().getState();
 
     auto target = loadTestPlugin(host);
-    target->setParameter(gain, 0.75);
-    target->setState(state);
-    CHECK(target->getParameter(gain) == Approx(0.75));
+    target->control().setParameter(gain, 0.75);
+    target->control().setState(state);
+    CHECK(target->control().getParameter(gain) == Approx(0.75));
     CHECK(target->latencyFrames() == 64);
 }
 
@@ -476,10 +476,10 @@ TEST_CASE("plugin host: a runtime latency change is reported", "[juce][plugin]")
     auto instance = loadTestPlugin(host);
 
     rt::MpscQueue<host::PluginEvent> pluginEventAny(64);
-    instance->setEventSink([&](const host::PluginEvent& event) { pluginEventAny.push(event); });
+    instance->control().setEventSink([&](const host::PluginEvent& event) { pluginEventAny.push(event); });
     CHECK(measureDelay(*instance).frames == 64);
 
-    instance->setParameter(parameterIndex(*instance, "latency"), 1.0);
+    instance->control().setParameter(parameterIndex(*instance, "latency"), 1.0);
     int reported = -1;
     const bool seen = loop.runUntil(
         [&] {
@@ -505,8 +505,8 @@ TEST_CASE("plugin host: an edit made by the plugin reaches the event sink", "[ju
     const int gain = parameterIndex(*instance, "gain");
 
     rt::MpscQueue<host::PluginEvent> pluginEventAny(64);
-    instance->setEventSink([&](const host::PluginEvent& event) { pluginEventAny.push(event); });
-    instance->setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
+    instance->control().setEventSink([&](const host::PluginEvent& event) { pluginEventAny.push(event); });
+    instance->control().setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
 
     double edited = -1.0;
     const bool seen = loop.runUntil(
@@ -522,11 +522,11 @@ TEST_CASE("plugin host: an edit made by the plugin reaches the event sink", "[ju
         eventTimeout);
     REQUIRE(seen);
     CHECK(edited == Approx(0.5));
-    CHECK(instance->getParameter(gain) == Approx(0.5));
+    CHECK(instance->control().getParameter(gain) == Approx(0.5));
 
     // After the sink is gone nothing calls it.
-    instance->setEventSink(nullptr);
-    instance->setParameter(parameterIndex(*instance, "latency"), 1.0);
+    instance->control().setEventSink(nullptr);
+    instance->control().setParameter(parameterIndex(*instance, "latency"), 1.0);
     loop.runUntil([&] { return instance->latencyFrames() == 512; }, eventTimeout);
     host::PluginEvent event;
     while (pluginEventAny.pop(event)) {
@@ -542,23 +542,23 @@ TEST_CASE("plugin host: the editor opens and closes", "[juce][plugin]") {
     host::JucePluginHost host;
     auto instance = loadTestPlugin(host);
 
-    CHECK_FALSE(instance->editorOpen());
-    CHECK(instance->editorNativeHandle() == 0);
-    instance->openEditor({});
-    CHECK(instance->editorOpen());
-    const auto handle = instance->editorNativeHandle();
+    CHECK_FALSE(instance->control().editorOpen());
+    CHECK(instance->control().editorNativeHandle() == 0);
+    instance->control().openEditor({});
+    CHECK(instance->control().editorOpen());
+    const auto handle = instance->control().editorNativeHandle();
     CHECK(handle != 0);
 
-    instance->openEditor({});  // idempotent: the same window
-    CHECK(instance->editorNativeHandle() == handle);
+    instance->control().openEditor({});  // idempotent: the same window
+    CHECK(instance->control().editorNativeHandle() == handle);
 
-    instance->closeEditor();
-    CHECK_FALSE(instance->editorOpen());
-    CHECK(instance->editorNativeHandle() == 0);
-    instance->closeEditor();  // idempotent too
+    instance->control().closeEditor();
+    CHECK_FALSE(instance->control().editorOpen());
+    CHECK(instance->control().editorNativeHandle() == 0);
+    instance->control().closeEditor();  // idempotent too
 
-    instance->openEditor({});
-    CHECK(instance->editorOpen());
+    instance->control().openEditor({});
+    CHECK(instance->control().editorOpen());
     instance.reset();  // with the editor open
 }
 
@@ -571,15 +571,15 @@ TEST_CASE("plugin host: editors are owned by the given window", "[juce][plugin]"
     HWND owner = CreateWindowExW(0, L"STATIC", L"SIANN test owner", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr,
                                  nullptr, GetModuleHandleW(nullptr), nullptr);
     REQUIRE(owner != nullptr);
-    instance->openEditor({reinterpret_cast<std::uintptr_t>(owner)});
-    auto* editor = reinterpret_cast<HWND>(instance->editorNativeHandle());
+    instance->control().openEditor({reinterpret_cast<std::uintptr_t>(owner)});
+    auto* editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
     REQUIRE(editor != nullptr);
     CHECK(GetWindow(editor, GW_OWNER) == owner);  // GW_OWNER reads GWLP_HWNDPARENT
-    instance->closeEditor();
+    instance->control().closeEditor();
     CHECK_FALSE(IsWindow(editor));
 
-    instance->openEditor({reinterpret_cast<std::uintptr_t>(owner)});
-    editor = reinterpret_cast<HWND>(instance->editorNativeHandle());
+    instance->control().openEditor({reinterpret_cast<std::uintptr_t>(owner)});
+    editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
     instance.reset();  // an instance closes its editor as it goes
     CHECK_FALSE(IsWindow(editor));
     DestroyWindow(owner);
@@ -590,15 +590,15 @@ TEST_CASE("plugin host: the window's close button closes the editor", "[juce][pl
     host::JucePluginHost host;
     auto instance = loadTestPlugin(host);
 
-    instance->openEditor({});
-    auto* editor = reinterpret_cast<HWND>(instance->editorNativeHandle());
+    instance->control().openEditor({});
+    auto* editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
     PostMessageW(editor, WM_CLOSE, 0, 0);
-    REQUIRE(loop.runUntil([&] { return !instance->editorOpen(); }, eventTimeout));
+    REQUIRE(loop.runUntil([&] { return !instance->control().editorOpen(); }, eventTimeout));
     CHECK_FALSE(IsWindow(editor));
 
     // Pressed in the last moment of an instance's life.
-    instance->openEditor({});
-    editor = reinterpret_cast<HWND>(instance->editorNativeHandle());
+    instance->control().openEditor({});
+    editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
     SendMessageW(editor, WM_CLOSE, 0, 0);
     instance.reset();
     loop.runUntil([] { return false; }, std::chrono::milliseconds(50));
