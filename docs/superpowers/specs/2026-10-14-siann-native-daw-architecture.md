@@ -236,8 +236,9 @@ years. Milestones are designed so that something useful exists at every stage.
   processes; editors float and the engine activates itself.
 - The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
   by the core-only configuration too (CI builds it without JUCE). It links
-  `siann::session` and `siann::protocol`; it links `siann::host_desktop` and enters
-  the JUCE message loop only from m0-plugin-hosting on. It is started as
+  `siann::session` and `siann::protocol`; a `SIANN_WITH_JUCE` build also links
+  `siann::host_desktop`, unused until m0-plugin-hosting, which is when it enters
+  the JUCE message loop. It is started as
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
   item 17).
