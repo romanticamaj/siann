@@ -46,8 +46,13 @@ any live graph (construction, destruction), so this is the one unbounded wait.
 
 ## Decision
 
+Read with the Amendment at the end of this ADR, which corrects points 1 and 2:
+the scope is the spec's audit of `processBlock`, not three locks, and the
+attribution claim is withdrawn.
+
 1. The three locks above are an accepted exception to "no locks on the audio
-   thread" for M0. The exception covers exactly those locks, taken by JUCE code
+   thread" for M0. *(Scope corrected in the Amendment: the audit, not a count.)*
+   The exception covers exactly those locks, taken by JUCE code
    inside `plugin_->processBlock` called from `JucePluginInstance::process` in
    `siann-host-desktop`. SIANN's own code, including the adapter around that
    call, takes no lock. A new lock in that path, or a JUCE pin that adds one,
@@ -58,7 +63,9 @@ any live graph (construction, destruction), so this is the one unbounded wait.
    `maxCallbackMicros` in its status (`siann-cli play` and `record` today; the
    protocol when the engine process plays). Every restart ends in a
    `restartRequested` event, so an xrun in the same callbacks is attributable to
-   it. `xruns` means deadline misses only; disk-stream `underruns` and SRC
+   it. *(Withdrawn in the Amendment: nothing consumes the event in M0, the count
+   is cumulative, and the event also follows a latency-only restart.)* `xruns`
+   means deadline misses only; disk-stream `underruns` and SRC
    `srcUnderruns` stay separate counts.
 3. The hosting test "a VST3 restart during playback keeps setActive and process
    apart" stays the regression guard for what the lock is for: no overlap, no
@@ -84,8 +91,9 @@ any live graph (construction, destruction), so this is the one unbounded wait.
 - RealtimeSanitizer coverage. The RTSan CI job builds the core without JUCE on
   Linux; the uncontended spin lock is one compare-and-swap the sanitizer cannot
   see, and the contended path is nondeterministic. If hosting ever runs under
-  RTSan, these three locks go in the suppressions file, one reason each, as the
-  spec already provides for.
+  RTSan, the wrapper locks of the spec's audit (*"these three locks" before the
+  Amendment*) go in the suppressions file, one reason each, as the spec already
+  provides for.
 - A watchdog. A wait inside a callback is a deadline miss, counted, never a
   reason to stop the device.
 

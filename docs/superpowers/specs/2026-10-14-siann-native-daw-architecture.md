@@ -371,22 +371,32 @@ gesture boundaries (see "Gestures").
   audio thread takes JUCE's `processMutex`, which the main thread holds across a
   plugin-initiated restart, and a parameter's `listenerLock`, which the main thread
   holds while running the listeners of a parameter it edits. The command thread
-  never waits on the protocol thread. The audio ↔ main pair is the one two-way edge,
-  so the argument that no cycle closes is this: the main thread waits for the audio
-  thread only in `AudioDevice::stop()` and `ProcessingPause`, and it enters neither
-  while holding a JUCE lock, because it holds `processMutex` only inside JUCE's
-  `reset`, `prepareToPlay`, `releaseResources` and `updateMidiMappings`, which call
-  nothing of SIANN's, and `listenerLock` only while a parameter's listeners run,
-  which are the plugin's own and SIANN's event sink. So the one way to close the
-  cycle is a sink that waits for the audio thread: a sink that called `setState`
-  (its `ProcessingPause` waits for the block in flight, which may be inside
-  `processBlock` waiting for the very `listenerLock` the sink runs under) or
-  `stop()`. The rule that keeps the graph acyclic: the event sink pushes to
-  `pluginEventAny` and does nothing else, never `setState`, `setParameter`,
-  device control or any call that waits for the audio thread; and nothing else
-  of SIANN's runs under a JUCE lock. A plugin that calls `restartComponent` from
-  inside its own `setActive` deadlocks JUCE's non-recursive `SpinLock` by itself;
-  that is the plugin's defect, outside this argument. Adding a blocking call
+  never waits on the protocol thread. The audio ↔ main pair is the one two-way edge.
+  The argument that no cycle closes: the main thread waits for the audio thread
+  only in `AudioDevice::stop()` and `ProcessingPause`. It holds `processMutex`
+  inside JUCE's `reset`, `prepareToPlay`, `releaseResources` and
+  `updateMidiMappings`, and SIANN's code can run there: a plugin that changes its
+  latency in `prepareToPlay` makes JUCE's client wrapper ask for a `kLatencyChanged`
+  restart, which the host runs on the message thread at once (`setLatencySamples`,
+  SIANN's `audioProcessorChanged`, `readLatency`, `readTail` and the event sink),
+  all under `processMutex` (JUCE's client notes the same call stack for Wavelab);
+  and it holds `listenerLock` while a parameter's listeners run, the plugin's own
+  and the sink. So the adapter's listener code and the sink run under JUCE's locks,
+  under `processMutex` as well as `listenerLock`, and the rule that keeps the graph
+  acyclic is that nothing SIANN runs there waits: the adapter reads values into
+  atomics and calls the sink; the sink pushes to `pluginEventAny` and does nothing
+  else, never `setState` (its `ProcessingPause` would wait for a block that may be
+  inside `processBlock` waiting for the lock the sink holds), `setParameter`,
+  device control or any other wait for the audio thread. Measured by review: a
+  sink that spun 30 ms under `processMutex` on each of four events held the audio
+  thread at zero blocks throughout. The table's "at most one block" for
+  `ProcessingPause`, and `stop()`'s bound, hold for a plugin whose `processBlock`
+  returns; one that waits on the message thread inside `processBlock` hangs the
+  main thread in either, with no timeout (worker processes are the remedy). A
+  plugin that calls `restartComponent` with a flag that takes `processMutex`
+  (`kReloadComponent`, `kIoChanged`, `kMidiCCAssignmentChanged`) from inside its
+  own `setActive` deadlocks JUCE's non-recursive `SpinLock` by itself;
+  `kLatencyChanged` takes no lock and is fine there. Adding a blocking call
   requires updating this table and showing the graph stays acyclic.
 - The compiler reads only immutable inputs: the document, the previous graph's
   descriptor (node identities, slots, latencies) and the instance table. It never
@@ -598,21 +608,29 @@ records who that is:
     `removeListener`, and held for the listener bodies. A restore
     (`setStateInformation` → `resetParameters`) takes it once per parameter whose
     value changed, on the main thread, while `process` is paused by SIANN.
-  - Any plugin that reports a latency change or a restart from the audio thread goes
-    through `AudioProcessor::getListenerLocked`, a `CriticalSection` held for one
-    array read and contended only by `addListener` and `removeListener`, which SIANN
-    calls at construction and destruction, outside any `process` call; JUCE then
-    posts a message (`ComponentRestarter::triggerAsyncUpdate`), an allocation, on
-    that plugin's behalf.
+  - A VST3 plugin that asks for a restart from the audio thread reaches
+    `ComponentRestarter::restart`, which, off the message thread, calls
+    `triggerAsyncUpdate`: a message allocation and a post to the platform queue
+    (`InternalMessageQueue::lock`, a `CriticalSection`, on Linux; `PostMessage`
+    on Windows; the run loop on macOS), on that plugin's behalf. A plugin that
+    calls `AudioProcessor::updateHostDisplay` or `setLatencySamples` itself from
+    the audio thread (a non-wrapper path) goes through
+    `AudioProcessor::getListenerLocked`, a `CriticalSection` held for one array
+    read and contended only by `addListener` and `removeListener`, which SIANN
+    calls at construction and destruction, outside any `process` call; a hosted
+    VST3's latency change arrives on the message thread instead.
   - Lock-free and allocation-free in the same path, verified: the parameter
     queues (`ParameterChanges` reserves at `initialise`; `ParamValueQueue` is one
     cached value), `CachedParamValues` (atomics), `parameterDispatcher.push` off
     the message thread (atomics), `updateTimingInformation` (no play head set) and
     `updateBypass` (SIANN never calls `processBlockBypassed`).
   - AU, per block when the plugin produces MIDI: `midiInLock` (a `CriticalSection`),
-    contended only by the plugin's own MIDI output callback. `AudioUnitRender`
-    itself runs under no JUCE lock; the AU wrapper's `lock` guards parameter calls
-    on the main thread, not the render.
+    taken by `processBlock` to swap the buffers and by the plugin's MIDI output
+    callback (`handleIncomingMidiMessage`), which appends to `incomingMidi` under
+    it: a `juce::MidiBuffer` that grows, so a MIDI-producing AU can allocate on the
+    audio thread inside JUCE, as a VST3 can. `AudioUnitRender` itself runs under no
+    JUCE lock; the AU wrapper's `lock` guards parameter calls on the main thread,
+    not the render.
   No hosted plugin is in a driver graph in M0: no graph node wraps a
   `PluginInstance`, and `siann-engine` runs no audio device. The only callers of
   `JucePluginInstance::process` are the hosting tests, on a realtime-marked
@@ -642,11 +660,16 @@ records who that is:
     (see above), so the exception, the counter and the sink rule are not exercised
     by plugins in M0; the hosting tests are their only caller. Before a hosted
     plugin processes audio in a shipped path (the M4 plugin node), all of these
-    hold: (1) the node calls `process` only from a `GraphDriver` callback, so the
-    driver's `CallbackTimer` times it and `xruns` reports it; (2) the event sink
-    pushes to `pluginEventAny` and does nothing else: never `setState`,
-    `setParameter`, `stop()` or any call that waits for the audio thread (the
-    deadlock argument under "Threads and waiting rules" depends on it); (3) MIDI
+    hold: (1) the node calls `process` only from a `GraphDriver` callback, where
+    the driver's `CallbackTimer` times it and `xruns` reports it, or from the
+    offline driver during bounce and export, where no deadline exists and a wait
+    only lengthens the render, and never from both at once (the graph moves
+    between the drivers; "Realtime and offline rendering use the same graph
+    code"); (2) the event sink and the adapter's listener code push to
+    `pluginEventAny` and do nothing else: never `setState`, `setParameter`,
+    `stop()` or any call that waits for the audio thread, since they run under
+    JUCE's `processMutex` and `listenerLock` (the deadlock argument under
+    "Threads and waiting rules" depends on it); (3) MIDI
     output has a decision: the node preallocates its `juce::MidiBuffer` for the
     2048 events Steinberg's limit allows and accepts JUCE's `Array` growth as
     plugin-caused, or MIDI-producing plugins wait for worker processes; (4) the
@@ -1843,9 +1866,18 @@ Protocol v0, launcher (decided with m0-electron-shell):
     stderr). Hosted plugins and JUCE print to the process's stdout, so before
     any plugin can load `main()` duplicates the launcher's stdout for the ready
     line and points fd 1 (and, on Windows, the standard output handle) at
-    stderr: a plugin's output lands in the shell's stderr log, never in the
-    handshake (`siann_test_plugin` prints a line when it loads, and the launch
-    tests check the ready line is still the first and only stdout line). Tokens never appear on the command line or in the environment. The
+    stderr, so nothing of theirs reaches the handshake (`siann_test_plugin`
+    prints a line when it loads, and the launch tests check the ready line is
+    still the first and only stdout line). Where that output goes: on POSIX fd 1
+    is the kernel's, so any plugin's stdout output lands in the shell's stderr
+    log; on Windows it does for code sharing the engine's CRT, while a plugin
+    with its own CRT holds the handle value the launcher passed in
+    `lpReserved2`, which the redirect closes, so its writes fail and that output
+    is dropped (`main()` re-occupies the freed value with `NUL`, so a handle the
+    engine opens later cannot receive it). A dedicated handshake pipe from the
+    launcher would carry the plugins' stdout to the log on Windows too; it
+    needs the shell to spawn a fourth stdio pipe and the launch tests to hand an
+    `lpReserved2` block to the child, and is deferred. Tokens never appear on the command line or in the environment. The
     engine exits with code 0 when its stdin reaches EOF (the launcher holds the
     pipe, so a dead launcher never leaves an orphan) and on SIGTERM / CTRL_BREAK.
     A bad launch (a `--session` that is an existing file, a bad option) exits 1
