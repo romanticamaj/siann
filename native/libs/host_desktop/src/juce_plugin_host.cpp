@@ -175,6 +175,8 @@ public:
         }
         midi_.clear();
         juce::AudioBuffer<float> buffer(pointers_.data(), channels_, frames);
+        // The one place the audio thread can wait: the format wrapper's own locks,
+        // the exception the spec records under "Realtime rules and enforcement".
         plugin_->processBlock(buffer, midi_);
         for (int c = outputChannels_; c < output.channelCount; ++c) {
             std::memset(output.channels[c], 0, bytes);

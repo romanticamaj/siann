@@ -4,16 +4,24 @@
 // the ready line, talk to the server it names over loopback, close stdin and
 // wait on the process exit. No sleeps: waits are on the process, the pipes
 // and socket replies, each bounded.
+//
+// A SIANN_WITH_JUCE build also hosts plugins (m0-plugin-hosting): the same tests
+// run against an engine serving from the JUCE message loop, and the editor tests
+// below open siann_test_plugin in it.
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <cctype>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <optional>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <ixwebsocket/IXNetSystem.h>
@@ -27,6 +35,10 @@
 #include "siann/session/session.hpp"
 #include "support/piped_process.hpp"
 #include "support/ws_clients.hpp"
+
+#if defined(_WIN32) && defined(SIANN_ENGINE_WITH_JUCE)
+#include <windows.h>
+#endif
 
 #ifndef SIANN_ENGINE_EXE
 #define SIANN_ENGINE_EXE "siann-engine"  // set by CMake; the fallback keeps a plain syntax check building
@@ -111,6 +123,92 @@ int stopEngine(PipedProcess& child) {
     child.closeStdin();
     return child.wait();
 }
+
+std::vector<std::string> withArgs(std::vector<std::string> args, const std::vector<std::string>& more) {
+    args.insert(args.end(), more.begin(), more.end());
+    return args;
+}
+
+std::string errorCode(PipedProcess& child) {
+    const std::string err = child.stderrText();
+    INFO("stderr: " << err);
+    return at(at(json::parse(err.substr(0, err.find('\n'))), "error"), "code").asString();
+}
+
+#if defined(SIANN_ENGINE_WITH_JUCE)
+
+bool displayAvailable() {
+#if defined(__linux__)
+    return std::getenv("DISPLAY") != nullptr;
+#else
+    return true;
+#endif
+}
+
+#if defined(_WIN32)
+
+// The Electron window's part: a top-level window in another process, on a thread
+// that pumps, because an owner and its windows share an input queue.
+class OwnerWindow {
+public:
+    OwnerWindow() {
+        std::promise<HWND> created;
+        auto window = created.get_future();
+        thread_ = std::thread([this, &created] {
+            threadId_.store(GetCurrentThreadId());
+            HWND hwnd = CreateWindowExW(0, L"STATIC", L"SIANN test owner", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr,
+                                        nullptr, GetModuleHandleW(nullptr), nullptr);
+            created.set_value(hwnd);
+            MSG message;
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+                DispatchMessageW(&message);
+            }
+            DestroyWindow(hwnd);
+        });
+        hwnd_ = window.get();
+    }
+    ~OwnerWindow() {
+        PostThreadMessageW(threadId_.load(), WM_QUIT, 0, 0);
+        thread_.join();
+    }
+    OwnerWindow(const OwnerWindow&) = delete;
+    OwnerWindow& operator=(const OwnerWindow&) = delete;
+
+    HWND hwnd() const { return hwnd_; }
+    std::string handleArgument() const { return std::to_string(reinterpret_cast<std::uintptr_t>(hwnd_)); }
+
+private:
+    std::thread thread_;
+    std::atomic<DWORD> threadId_{0};
+    HWND hwnd_ = nullptr;
+};
+
+struct OwnedWindowSearch {
+    DWORD process = 0;
+    HWND owner = nullptr;
+    HWND found = nullptr;
+};
+
+BOOL CALLBACK findOwnedWindow(HWND window, LPARAM parameter) {
+    auto& search = *reinterpret_cast<OwnedWindowSearch*>(parameter);
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    if (process == search.process && GetWindow(window, GW_OWNER) == search.owner) {
+        search.found = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// The window of `process` that `owner` owns; nullptr when there is none.
+HWND ownedWindow(long process, HWND owner) {
+    OwnedWindowSearch search{static_cast<DWORD>(process), owner, nullptr};
+    EnumWindows(findOwnedWindow, reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+
+#endif  // _WIN32
+#endif  // SIANN_ENGINE_WITH_JUCE
 
 }  // namespace
 
@@ -226,6 +324,9 @@ TEST_CASE("a bad --session exits 1 with a JSON error on stderr and nothing on st
         {"--port", "0"},                            // no --session
         {"--session", utf8(dir.path() / "Other.siann"), "--port", "seventy"},
         {"--session", utf8(dir.path() / "Other.siann"), "--frobnicate"},
+        {"--session", utf8(dir.path() / "Other.siann"), "--owner-window", "the big one"},
+        {"--session", utf8(dir.path() / "Other.siann"), "--owner-window"},
+        {"--session", utf8(dir.path() / "Other.siann"), "--open-editor"},
     };
     for (const auto& args : launches) {
         INFO("args: " << args.back());
@@ -242,3 +343,66 @@ TEST_CASE("a bad --session exits 1 with a JSON error on stderr and nothing on st
     // Nothing was created for the rejected launches.
     CHECK_FALSE(fs::exists(dir.path() / "Other.siann"));
 }
+
+TEST_CASE("--owner-window is accepted by every build, used or not", "[engine][launch]") {
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"), {"--owner-window", "4242"}));
+    readyLine(child);
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("an editor that cannot open is a failed launch", "[engine][launch]") {
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"),
+                                                  {"--open-editor", utf8(dir.path() / "missing.vst3")}));
+    CHECK(child.wait() == 1);
+    CHECK(child.stdoutText().empty());
+#if defined(SIANN_ENGINE_WITH_JUCE)
+    CHECK(errorCode(child) == "plugin_not_found");
+#else
+    CHECK(errorCode(child) == "no_plugin_host");
+#endif
+}
+
+#if defined(SIANN_ENGINE_WITH_JUCE)
+
+TEST_CASE("the desktop engine opens an editor before it is ready and still serves", "[engine][launch][juce]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE,
+                       withArgs(launchArgs(dir.path() / "Song.siann"), {"--open-editor", SIANN_TEST_PLUGIN_VST3}));
+    const Value ready = readyLine(child);
+    WsClient ws(static_cast<std::uint16_t>(at(ready, "port").asNumber()));
+    REQUIRE(ws.start());
+    CHECK(at(ws.call(authFrame(at(ready, "token").asString())), "ok").asBool());
+    CHECK(stopEngine(child) == 0);
+}
+
+#if defined(_WIN32)
+
+TEST_CASE("the editor belongs to the window named by --owner-window, and the JUCE loop runs it",
+          "[engine][launch][juce]") {
+    TempDir dir;
+    const OwnerWindow owner;
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"),
+                                                  {"--owner-window", owner.handleArgument(), "--open-editor",
+                                                   SIANN_TEST_PLUGIN_VST3}));
+    readyLine(child);
+
+    HWND editor = ownedWindow(child.pid(), owner.hwnd());
+    REQUIRE(editor != nullptr);
+    CHECK(IsWindowVisible(editor));
+    // Only a thread dispatching messages answers: this fails when main() does not
+    // run the loop.
+    DWORD_PTR answer = 0;
+    CHECK(SendMessageTimeoutW(editor, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 20'000, &answer) != 0);
+
+    CHECK(stopEngine(child) == 0);
+    CHECK_FALSE(IsWindow(editor));
+}
+
+#endif  // _WIN32
+#endif  // SIANN_ENGINE_WITH_JUCE
