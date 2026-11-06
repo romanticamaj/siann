@@ -256,15 +256,18 @@ years. Milestones are designed so that something useful exists at every stage.
   `SIANN_SHELL_BACKOFF_MS` and `SIANN_SHELL_MAX_RESTARTS` override, so tests run
   fast. A restart yields a new port and token (item 7: per-launch); the renderer
   receives the new pair through the preload API (`window.siann.engine.current()`
-  and `onChange`) and reconnects; resync is the client's `session.sync` as in
-  item 11.
+  and `onChange`) and reconnects. The M0 renderer holds no read model: it shows
+  what the auth reply carries and does not call `session.sync`; a client that
+  keeps a read model resyncs as in item 11.
 - Ending the engine: the engine catches SIGTERM and only sets a flag its main
   thread polls, so neither stdin EOF nor SIGTERM ends a wedged engine. On quit the
   shell closes the engine's stdin and sends SIGKILL after 5 s. A failed launch (a
   bad ready line) gets SIGTERM, then SIGKILL after 2 s. In both cases, if no exit
   follows 2 s after SIGKILL the shell counts the engine as gone and carries on, so
-  quitting and restarting are always bounded. On Windows both signals are
-  `TerminateProcess`.
+  quitting and restarting are always bounded. The worst case for a quit is about
+  11 s: a launch that fails just before the 2 s after SIGKILL run out starts the
+  failed-launch sequence again, so 5 s, then 2 s, then 2 s, then 2 s. On Windows
+  both signals are `TerminateProcess`.
 - Crash: Electron restarts the engine with backoff; the engine recovers from the
   last checkpoint plus journal replay; the UI reconnects and resyncs. Exclusive-mode
   and ASIO devices may need a retry delay before reopening.
