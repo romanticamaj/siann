@@ -4,7 +4,10 @@
 //   node scripts/check-all.js                 Node tests + native dev build and tests
 //   node scripts/check-all.js --desktop       also the JUCE desktop preset
 //   node scripts/check-all.js --gcc           also a g++ -Werror syntax check (WSL on Windows)
-//   node scripts/check-all.js --only native   one step: node | native | desktop | gcc
+//   node scripts/check-all.js --app           also the Electron shell (app/): npm ci on first
+//                                             use, build, unit and Playwright tests against
+//                                             native/build/dev's siann-engine (after native)
+//   node scripts/check-all.js --only native   one step: node | native | desktop | app | gcc
 //   node scripts/check-all.js --json          machine-readable summary
 //
 // Exit code 0 when every selected step passes, 1 otherwise.
@@ -17,11 +20,12 @@ const NATIVE = path.join(ROOT, 'native');
 const isWindows = process.platform === 'win32';
 
 function parseArgs(argv) {
-  const options = { desktop: false, gcc: false, json: false, only: null };
+  const options = { desktop: false, gcc: false, app: false, json: false, only: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--desktop') options.desktop = true;
     else if (arg === '--gcc') options.gcc = true;
+    else if (arg === '--app') options.app = true;
     else if (arg === '--json') options.json = true;
     else if (arg === '--only') options.only = argv[++i];
     else throw new Error(`unknown argument ${arg}`);
@@ -29,10 +33,11 @@ function parseArgs(argv) {
   return options;
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, env = process.env) {
   const started = process.hrtime.bigint();
   const result = spawnSync(command, args, {
     cwd,
+    env,
     encoding: 'utf8',
     shell: false,
     maxBuffer: 256 * 1024 * 1024,
@@ -132,10 +137,40 @@ function nodeTests() {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort().map((f) => path.join('test', f));
 }
 
+// The Electron shell: its own npm package with pinned dependencies (the root
+// package stays dependency-free), tested against the dev build's siann-engine.
+function appStep() {
+  const APP = path.join(ROOT, 'app');
+  const exe = path.join(NATIVE, 'build', 'dev', 'apps', 'engine', isWindows ? 'siann-engine.exe' : 'siann-engine');
+  if (!fs.existsSync(exe)) {
+    return { ok: false, output: `run the native step first: ${exe} is missing` };
+  }
+  const env = { ...process.env, SIANN_ENGINE_EXE: exe };
+  // npm is a .cmd shim on Windows, which spawnSync runs only through cmd.exe.
+  const npm = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npm', ...args], APP, env) : run('npm', args, APP, env));
+  const steps = [];
+  if (!fs.existsSync(path.join(APP, 'node_modules'))) steps.push(['ci']);
+  for (const args of steps) {
+    const step = npm(args);
+    if (!step.ok) return { ...step, failedAt: `npm ${args.join(' ')}` };
+  }
+  // Some npm versions skip dependency install scripts; Electron's fetches its binary.
+  if (!fs.existsSync(path.join(APP, 'node_modules', 'electron', 'path.txt'))) {
+    const step = run(process.execPath, [path.join('node_modules', 'electron', 'install.js')], APP, env);
+    if (!step.ok) return { ...step, failedAt: 'electron install.js' };
+  }
+  for (const args of [['run', 'build'], ['test']]) {
+    const step = npm(args);
+    if (!step.ok) return { ...step, failedAt: `npm ${args.join(' ')}` };
+  }
+  return { ok: true, output: '' };
+}
+
 const STEPS = {
   node: () => run(process.execPath, ['--test', ...nodeTests()], ROOT),
   native: preset('dev'),
   desktop: preset('desktop'),
+  app: appStep,
   gcc,
 };
 
@@ -143,7 +178,8 @@ function main() {
   const options = parseArgs(process.argv.slice(2));
   const selected = options.only
     ? [options.only]
-    : ['node', 'native', ...(options.desktop ? ['desktop'] : []), ...(options.gcc ? ['gcc'] : [])];
+    : ['node', 'native', ...(options.desktop ? ['desktop'] : []), ...(options.app ? ['app'] : []),
+      ...(options.gcc ? ['gcc'] : [])];
   const results = [];
   for (const name of selected) {
     if (!STEPS[name]) throw new Error(`unknown step ${name}`);

@@ -80,6 +80,33 @@ siann-cli bench Bench.siann --tracks 32 --buffer 256 --seconds 60
 `xruns` (deadline misses: callbacks longer than their buffer period),
 `maxCallbackMicros`, and disk `underruns` and SRC `srcUnderruns` separately.
 
+## siann-engine
+
+`apps/engine` builds `siann-engine`, the engine process the Electron shell
+(`app/`) spawns and supervises (spec, "Process model" and Protocol v0 item 17).
+It is built by the core-only configuration too.
+
+```sh
+siann-engine --session Song.siann [--host 127.0.0.1] [--port 0] [--mcp-trusted]
+```
+
+`--session` opens the bundle, or creates a new empty session there (named after
+the bundle) when the directory does not exist. Once the protocol server is
+listening, the engine writes exactly one line to stdout and nothing else for the
+rest of its life (diagnostics go to stderr):
+
+```json
+{"about":{...},"mcpToken":"<64 hex>","pid":1234,"port":53817,"schema":"siann.engine.ready.v0","sessionId":"ses_<hex>","token":"<64 hex>"}
+```
+
+`token` authenticates the WebSocket (`{type: "auth", token}`) and plain HTTP;
+`mcpToken` authenticates `POST /v0/mcp` with the scope `--mcp-trusted` selects
+(`propose` otherwise). Tokens are never on the command line or in the
+environment. The engine exits 0 when its stdin reaches EOF (the launcher holds the
+pipe) and on SIGTERM / CTRL_BREAK; a bad launch exits 1 with one
+`{"ok":false,"error":{code, message}}` line on stderr. `siann_engine_launch_tests`
+runs the real executable as a child with piped stdio.
+
 ## Build and test
 
 Windows (Visual Studio 2022 or Build Tools with the C++ workload; the helper
