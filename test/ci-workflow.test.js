@@ -33,6 +33,14 @@ function rtsanJob() {
   return job;
 }
 
+test('the desktop job runs the editor-ownership test against its JUCE engine, not skipping it', () => {
+  const job = jobs(fs.readFileSync(WORKFLOW, 'utf8')).find((j) => /-DSIANN_WITH_JUCE=ON/.test(j.text));
+  assert.ok(job, 'a job builds with JUCE');
+  assert.match(job.text, /SIANN_DESKTOP_ENGINE_EXE=/);
+  assert.match(job.text, /SIANN_TEST_PLUGIN=/);
+  assert.match(job.text, /playwright test editor\.spec\.ts/);
+});
+
 test('a Linux CI job installs Clang 20 or later from apt.llvm.org', () => {
   const { text } = rtsanJob();
   assert.match(text, /runs-on:\s*ubuntu-/);

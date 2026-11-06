@@ -88,7 +88,14 @@ It is built by the core-only configuration too.
 
 ```sh
 siann-engine --session Song.siann [--host 127.0.0.1] [--port 0] [--mcp-trusted]
+            [--owner-window <handle>] [--open-editor <bundle>]
 ```
+
+A `SIANN_WITH_JUCE` build runs the JUCE message loop on the main thread, and
+`--open-editor` opens a plugin's editor before the ready line, owned on Windows
+by the window whose decimal handle `--owner-window` gives; the Electron shell
+passes its window and `SIANN_OPEN_EDITOR`. A core-only build ignores
+`--owner-window` and refuses `--open-editor` with `no_plugin_host`.
 
 `--session` opens the bundle, or creates a new empty session there (named after
 the bundle) when the directory does not exist. Once the protocol server is

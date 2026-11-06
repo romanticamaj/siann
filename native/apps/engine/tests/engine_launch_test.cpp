@@ -344,7 +344,7 @@ TEST_CASE("a bad --session exits 1 with a JSON error on stderr and nothing on st
     CHECK_FALSE(fs::exists(dir.path() / "Other.siann"));
 }
 
-TEST_CASE("--owner-window is accepted by every build, used or not", "[engine][launch]") {
+TEST_CASE("every build accepts --owner-window, used or not", "[engine][launch]") {
     TempDir dir;
     PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"), {"--owner-window", "4242"}));
     readyLine(child);

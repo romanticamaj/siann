@@ -3,7 +3,9 @@
 //
 //   node scripts/check-all.js                 Node tests + native dev build and tests
 //   node scripts/check-all.js --desktop       also the JUCE desktop preset
-//   node scripts/check-all.js --gcc           also a g++ -Werror syntax check (WSL on Windows)
+//   node scripts/check-all.js --gcc           also a g++ -Werror syntax check (WSL on Windows),
+//                                             of the JUCE sources too once the desktop preset
+//                                             has fetched JUCE (run --desktop first)
 //   node scripts/check-all.js --app           also the Electron shell (app/): npm ci on first
 //                                             use, build, unit and Playwright tests against
 //                                             native/build/dev's siann-engine (after native)
@@ -88,6 +90,17 @@ function listSources() {
   return files.filter((f) => !f.includes(`${path.sep}host_desktop${path.sep}`));
 }
 
+// What only compiles against JUCE, or differently with it. Each file's platform
+// half stays out: g++ here has neither windows.h nor AppKit, so CI alone covers those.
+function desktopSources() {
+  const lib = path.join(NATIVE, 'libs', 'host_desktop');
+  const cpp = (dir) => fs.readdirSync(dir).filter((f) => f.endsWith('.cpp') && !f.endsWith('_win.cpp'))
+    .map((f) => path.join(dir, f));
+  return [...cpp(path.join(lib, 'src')), ...cpp(path.join(lib, 'test_plugin')), ...cpp(path.join(lib, 'tests')),
+    path.join(NATIVE, 'apps', 'engine', 'src', 'main_thread_desktop.cpp'),
+    path.join(NATIVE, 'apps', 'engine', 'tests', 'engine_launch_test.cpp')];
+}
+
 function gcc() {
   const deps = path.join(NATIVE, 'build', 'dev', '_deps');
   if (!fs.existsSync(deps)) {
@@ -119,15 +132,32 @@ function gcc() {
     '-DSIANN_FIXTURES_DIR="x"', ...includes];
   const failures = [];
   let output = '';
-  for (const file of listSources()) {
-    const args = [...flags, toPosix(file)];
+  const check = (file, fileFlags) => {
+    const args = [...fileFlags, toPosix(file)];
     const step = isWindows ? run('wsl.exe', ['-e', 'g++', ...args], ROOT) : run('g++', args, ROOT);
     if (!step.ok) {
       failures.push(path.relative(ROOT, file));
       output += step.output;
     }
+  };
+  for (const file of listSources()) check(file, flags);
+  // JUCE comes from the desktop preset's own fetch, and its macros as in host_desktop/CMakeLists.txt.
+  const juce = path.join(NATIVE, 'build', 'desktop', '_deps', 'juce-src', 'modules');
+  const haveJuce = fs.existsSync(juce);
+  if (haveJuce) {
+    const desktopFlags = [...flags,
+      '-I', toPosix(path.join(NATIVE, 'libs', 'host_desktop', 'tests')),
+      '-isystem', toPosix(juce),
+      '-isystem', toPosix(path.join(juce, 'juce_audio_processors_headless', 'format_types', 'VST3_SDK')),
+      '-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1', '-DJUCE_STANDALONE_APPLICATION=0', '-DJUCE_PLUGINHOST_VST3=1',
+      '-DJUCE_MODAL_LOOPS_PERMITTED=1', '-DSIANN_ENGINE_WITH_JUCE=1', '-DSIANN_TEST_PLUGIN_VST3="x"'];
+    for (const file of desktopSources()) check(file, desktopFlags);
   }
-  return { ok: failures.length === 0, output: failures.length ? `failed: ${failures.join(', ')}\n${output}` : '' };
+  return {
+    ok: failures.length === 0,
+    output: failures.length ? `failed: ${failures.join(', ')}\n${output}` : '',
+    note: haveJuce ? undefined : 'the JUCE sources were not checked: run --desktop first',
+  };
 }
 
 // The bridge's tests only: a bare `node --test` would also pick up JavaScript
@@ -195,9 +225,10 @@ function main() {
     if (!options.json) process.stdout.write(`[check-all] ${name} ... `);
     const result = STEPS[name]();
     const tail = result.ok ? '' : result.output.split(/\r?\n/).slice(-60).join('\n');
-    results.push({ step: name, ok: result.ok, seconds: Math.round(result.seconds || 0), failedAt: result.failedAt, tail });
+    results.push({ step: name, ok: result.ok, seconds: Math.round(result.seconds || 0), failedAt: result.failedAt, note: result.note, tail });
     if (!options.json) {
-      process.stdout.write(result.ok ? 'ok\n' : `FAILED${result.failedAt ? ` at ${result.failedAt}` : ''}\n${tail}\n`);
+      const passed = `ok${result.note ? ` (${result.note})` : ''}\n`;
+      process.stdout.write(result.ok ? passed : `FAILED${result.failedAt ? ` at ${result.failedAt}` : ''}\n${tail}\n`);
     }
   }
   const ok = results.every((r) => r.ok);
@@ -209,4 +240,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { parseArgs };
+module.exports = { desktopSources, listSources, parseArgs };
