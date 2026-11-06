@@ -23,7 +23,8 @@ class PluginError : public std::runtime_error {
 public:
     PluginError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
 
-    // One of: plugin_not_found, plugin_load_failed, bad_state, editor_failed.
+    // One of: plugin_not_found, plugin_load_failed, bad_state, bad_parameter,
+    // editor_failed.
     const std::string& code() const noexcept { return code_; }
 
 private:
@@ -31,9 +32,9 @@ private:
 };
 
 // The process's main thread as JUCE's message thread (architecture spec,
-// "Process model"). Construct it on the main thread, before any plugin and after
-// nothing else that uses JUCE, and keep it for as long as plugins live. On macOS
-// the engine starts as an accessory application.
+// "Process model"). Construct it on the main thread before any plugin and keep
+// it for as long as plugins live. On macOS the engine starts as an accessory
+// application.
 class MainThreadLoop {
 public:
     MainThreadLoop();
@@ -60,8 +61,8 @@ public:
     // Throws plugin_not_found when the path does not exist and plugin_load_failed
     // when it holds no plugin this host can load.
     std::vector<PluginDescriptor> scanPath(const std::string& path) override;
-    // Throws plugin_not_found when the descriptor's format is unknown here and
-    // plugin_load_failed when the plugin does not load.
+    // Throws plugin_not_found when neither this host nor the descriptor's path
+    // knows the plugin and plugin_load_failed when it does not load.
     std::unique_ptr<PluginInstance> instantiate(const PluginDescriptor& descriptor, std::int64_t sampleRate,
                                                 int maxBlockFrames) override;
 

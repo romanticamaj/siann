@@ -18,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -167,8 +168,8 @@ void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& d
     REQUIRE_FALSE(parameters.empty());
     CHECK(instance->latencyFrames() >= 0);
 
-    // The first automatable parameter that accepts a new value; a stepped one may
-    // snap back to where it was.
+    // The first automatable parameter that accepts a new value. The far end of its
+    // range, because a stepped parameter snaps anything between steps.
     int changed = -1;
     double changedTo = 0.0;
     for (std::size_t i = 0; i < parameters.size() && changed < 0; ++i) {
@@ -177,7 +178,7 @@ void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& d
         }
         const int index = static_cast<int>(i);
         const double before = instance->getParameter(index);
-        instance->setParameter(index, before < 0.5 ? before + 0.3 : before - 0.3);
+        instance->setParameter(index, before < 0.5 ? 1.0 : 0.0);
         if (std::abs(instance->getParameter(index) - before) > 1e-3) {
             changed = index;
             changedTo = instance->getParameter(index);
@@ -249,6 +250,30 @@ TEST_CASE("plugin host: the CI-built test plugin is found by path", "[juce][plug
     } catch (const host::PluginError& error) {
         CHECK(error.code() == "plugin_not_found");
     }
+}
+
+TEST_CASE("plugin host: a plugin keeps its uid and its state when it moves", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    const auto directory = std::filesystem::temp_directory_path() / "siann-plugin-host-moved";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);  // an earlier run's copy
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path original(SIANN_TEST_PLUGIN_VST3);
+    const auto moved = directory / original.filename();
+    std::filesystem::copy(original, moved, std::filesystem::copy_options::recursive);
+
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    instance->setParameter(gain, 0.25);
+    const auto state = instance->getState();
+
+    const auto descriptors = host.scanPath(moved.string());
+    REQUIRE(descriptors.size() == 1);
+    CHECK(descriptors.front().uid == testPlugin(host).uid);
+    auto restored = host.instantiate(descriptors.front(), sampleRate, blockFrames);
+    restored->setState(state);
+    CHECK(restored->getParameter(gain) == Approx(0.25));
 }
 
 TEST_CASE("plugin host: a file that holds no plugin does not load", "[juce][plugin]") {
@@ -476,6 +501,25 @@ TEST_CASE("plugin host: editors are owned by the given window", "[juce][plugin]"
     instance.reset();  // an instance closes its editor as it goes
     CHECK_FALSE(IsWindow(editor));
     DestroyWindow(owner);
+}
+
+TEST_CASE("plugin host: the window's close button closes the editor", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+
+    instance->openEditor({});
+    auto* editor = reinterpret_cast<HWND>(instance->editorNativeHandle());
+    PostMessageW(editor, WM_CLOSE, 0, 0);
+    REQUIRE(loop.runUntil([&] { return !instance->editorOpen(); }, eventTimeout));
+    CHECK_FALSE(IsWindow(editor));
+
+    // Pressed in the last moment of an instance's life.
+    instance->openEditor({});
+    editor = reinterpret_cast<HWND>(instance->editorNativeHandle());
+    SendMessageW(editor, WM_CLOSE, 0, 0);
+    instance.reset();
+    loop.runUntil([] { return false; }, std::chrono::milliseconds(50));
 }
 #endif
 

@@ -16,6 +16,14 @@ using namespace siann;
 
 namespace {
 
+bool isAccessory() {
+    return [NSApp activationPolicy] == NSApplicationActivationPolicyAccessory;
+}
+
+bool isRegular() {
+    return [NSApp activationPolicy] == NSApplicationActivationPolicyRegular;
+}
+
 OSType fourCharCode(NSString* text) {
     const char* bytes = text.UTF8String;
     return (static_cast<OSType>(static_cast<unsigned char>(bytes[0])) << 24) |
@@ -59,7 +67,7 @@ bool registerAudioUnitBundle(const std::string& path) {
 
 TEST_CASE("plugin host: the engine activates itself while an editor is open", "[juce][plugin]") {
     host::MainThreadLoop loop;
-    CHECK([NSApp activationPolicy] == NSApplicationActivationPolicyAccessory);
+    CHECK(isAccessory());
 
     host::JucePluginHost host;
     const auto descriptors = host.scanPath(SIANN_TEST_PLUGIN_VST3);
@@ -68,16 +76,18 @@ TEST_CASE("plugin host: the engine activates itself while an editor is open", "[
     auto second = host.instantiate(descriptors.front(), 48'000, 256);
 
     first->openEditor({});
-    CHECK([NSApp activationPolicy] == NSApplicationActivationPolicyRegular);
+    CHECK(isRegular());
     auto* view = reinterpret_cast<NSView*>(first->editorNativeHandle());
-    REQUIRE(view != nil);
-    CHECK(view.window.parentWindow == nil);  // floats
+    const bool hasWindow = view != nil && view.window != nil;
+    REQUIRE(hasWindow);
+    const bool floats = view.window.parentWindow == nil;
+    CHECK(floats);
 
     second->openEditor({});
     first->closeEditor();
-    CHECK([NSApp activationPolicy] == NSApplicationActivationPolicyRegular);  // one is still open
+    CHECK(isRegular());  // one is still open
     second->closeEditor();
-    CHECK([NSApp activationPolicy] == NSApplicationActivationPolicyAccessory);
+    CHECK(isAccessory());
 }
 
 TEST_CASE("plugin host: the CI-built AU is hosted", "[juce][plugin]") {

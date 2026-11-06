@@ -52,11 +52,11 @@ if(SIANN_BUILD_TESTS)
   # The plugin is hosted from its build location, so these tests never skip.
   add_dependencies(siann_host_desktop_tests siann_test_plugin_VST3)
   target_compile_definitions(siann_host_desktop_tests PRIVATE
-    SIANN_TEST_PLUGIN_VST3="$<TARGET_PROPERTY:siann_test_plugin_VST3,JUCE_PLUGIN_ARTEFACT_FILE>")
+    SIANN_TEST_PLUGIN_VST3="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
   if(APPLE)
     add_dependencies(siann_host_desktop_tests siann_test_plugin_AU)
     target_compile_definitions(siann_host_desktop_tests PRIVATE
-      SIANN_TEST_PLUGIN_AU="$<TARGET_PROPERTY:siann_test_plugin_AU,JUCE_PLUGIN_ARTEFACT_FILE>")
+      SIANN_TEST_PLUGIN_AU="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_AU,JUCE_PLUGIN_ARTEFACT_FILE>>")
   endif()
   catch_discover_tests(siann_host_desktop_tests)
 endif()
