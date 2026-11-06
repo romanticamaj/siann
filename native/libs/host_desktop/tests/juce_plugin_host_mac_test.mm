@@ -1,11 +1,13 @@
 // macOS-only hosting tests (architecture spec, "Process model"): macOS cannot
-// parent windows across processes, so editors float and the engine activates
-// itself while one is open.
+// parent windows across processes, so editors float, at the floating window level
+// above other applications' windows, and the engine activates itself while one is
+// open.
 
 #include <catch2/catch_test_macros.hpp>
 
 #import <AppKit/AppKit.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <objc/runtime.h>
 
 #include <cstdint>
 #include <string>
@@ -14,7 +16,28 @@
 
 using namespace siann;
 
+// A CI runner's window server may or may not grant activation, so what the engine
+// asks for is counted instead. Nothing else asks here: JUCE does on mouse input only.
+static int activationRequests = 0;
+
+@interface NSApplication (SiannActivationCount)
+- (void)siannCountedActivateIgnoringOtherApps:(BOOL)flag;
+@end
+
+@implementation NSApplication (SiannActivationCount)
+- (void)siannCountedActivateIgnoringOtherApps:(BOOL)flag {
+    ++activationRequests;
+    [self siannCountedActivateIgnoringOtherApps:flag];  // the original, once exchanged
+}
+@end
+
 namespace {
+
+void countActivationRequests() {
+    method_exchangeImplementations(
+        class_getInstanceMethod([NSApplication class], @selector(activateIgnoringOtherApps:)),
+        class_getInstanceMethod([NSApplication class], @selector(siannCountedActivateIgnoringOtherApps:)));
+}
 
 bool isAccessory() {
     return [NSApp activationPolicy] == NSApplicationActivationPolicyAccessory;
@@ -74,20 +97,26 @@ TEST_CASE("plugin host: the engine activates itself while an editor is open", "[
     REQUIRE(descriptors.size() == 1);
     auto first = host.instantiate(descriptors.front(), 48'000, 256);
     auto second = host.instantiate(descriptors.front(), 48'000, 256);
+    countActivationRequests();
 
     first->control().openEditor({});
     CHECK(isRegular());
+    CHECK(activationRequests == 1);
     auto* view = reinterpret_cast<NSView*>(first->control().editorNativeHandle());
     const bool hasWindow = view != nil && view.window != nil;
     REQUIRE(hasWindow);
-    const bool floats = view.window.parentWindow == nil;
+    const bool floats = view.window.level == NSFloatingWindowLevel;
     CHECK(floats);
 
     second->control().openEditor({});
+    CHECK(activationRequests == 2);
+    first->control().openEditor({});  // brought forward: the engine asks again
+    CHECK(activationRequests == 3);
     first->control().closeEditor();
     CHECK(isRegular());  // one is still open
     second->control().closeEditor();
     CHECK(isAccessory());
+    countActivationRequests();  // exchanged back
 }
 
 TEST_CASE("plugin host: the CI-built AU is hosted", "[juce][plugin]") {

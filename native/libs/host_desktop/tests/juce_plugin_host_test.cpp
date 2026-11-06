@@ -87,13 +87,15 @@ std::optional<std::string> environment(const char* name) {
     return result;
 }
 
-// Everything the acceptance asks of a plugin SIANN did not build. State is
-// compared by parameter values: third-party blobs are opaque and need not repeat.
+// What every plugin SIANN did not build has to do: load, keep its state and open
+// its editor. State is compared by parameter values: third-party blobs are opaque
+// and need not repeat. A runtime latency change is siann_test_plugin's to prove:
+// no parameter of TDR Nova moves its latency.
 void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& descriptor) {
+    REQUIRE(descriptor.hasEditor);
     auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
     const auto parameters = instance->control().parameters();
     REQUIRE_FALSE(parameters.empty());
-    CHECK(instance->latencyFrames() >= 0);
 
     // The first automatable parameter that accepts a new value. The far end of its
     // range, because a stepped parameter snaps anything between steps.
@@ -131,13 +133,23 @@ void checkThirdParty(host::JucePluginHost& host, const host::PluginDescriptor& d
         }
     }
 
-    if (descriptor.hasEditor && displayAvailable()) {
+    if (displayAvailable()) {
         restored->control().openEditor({});
         CHECK(restored->control().editorOpen());
         CHECK(restored->control().editorNativeHandle() != 0);
         restored->control().closeEditor();
         CHECK_FALSE(restored->control().editorOpen());
     }
+}
+
+// A maintainer plugin also has its latency checked against audio, on a new instance
+// because its defaults pass an impulse through whole; a limiter need not.
+void checkMaintainerPlugin(host::JucePluginHost& host, const host::PluginDescriptor& descriptor) {
+    auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
+    const auto measured = measureDelay(*instance);
+    CHECK(measured.peak > 0.5f);
+    CHECK(measured.frames == instance->latencyFrames());
+    checkThirdParty(host, descriptor);
 }
 
 // The named bundle's plugin, or a skip when the variable is unset. A variable that
@@ -393,6 +405,65 @@ TEST_CASE("plugin host: process runs while the main thread does everything else"
     CHECK(playing.finish() == 0);
 }
 
+// A value on its way to the processor when setState starts could land after the
+// restore and silently win. JUCE reads pending values into a block and hands them
+// over inside process, which no test can stop between the two, so what is checked
+// is what rules that out: no process call meets a restore. The plugin spends time
+// in setStateInformation and watches for processBlock meanwhile.
+TEST_CASE("plugin host: a state restore during playback keeps setState and process apart", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    const int restored = parameterIndex(*instance, "restored");
+    instance->control().setParameter(gain, 0.25);
+    const auto state = instance->control().getState();
+    instance->control().setParameter(parameterIndex(*instance, "watchRestore"), 1.0);
+
+    PlayingThread playing(*instance);
+    const auto ranAtLeast = [&](std::uint64_t count) {
+        return loop.runUntil([&] { return playing.blocks() >= count; }, eventTimeout);
+    };
+    REQUIRE(ranAtLeast(16));
+
+    instance->control().setParameter(gain, 0.75);
+    instance->control().setState(state);
+    REQUIRE(loop.runUntil([&] { return instance->control().getParameter(restored) > 0.5; }, eventTimeout));
+    REQUIRE(ranAtLeast(playing.blocks() + 16));
+
+    CHECK(playing.finish() == 0);
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "overlapped")) < 0.5);
+    CHECK(instance->control().getParameter(gain) == Approx(0.25));
+    CHECK(measureDelay(*instance).peak == Approx(0.25f));  // what the processor holds
+}
+
+// tailFrames() is an any-thread read, and the format's own call is not: VST3 keeps
+// getTailSamples to the UI thread, which the test plugin answers wrongly elsewhere.
+TEST_CASE("plugin host: the audio thread reads the tail without calling the plugin", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    CHECK(tailFramesOnAudioThread(*instance) == 0);
+
+    instance->control().setParameter(parameterIndex(*instance, "latency"), 1.0);
+    REQUIRE(loop.runUntil([&] { return instance->tailFrames() == longTailFrames; }, eventTimeout));
+    CHECK(tailFramesOnAudioThread(*instance) == longTailFrames);
+}
+
+TEST_CASE("plugin host: a restored state brings its tail", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    instance->control().setParameter(parameterIndex(*instance, "latency"), 1.0);
+    REQUIRE(loop.runUntil([&] { return instance->latencyFrames() == 512; }, eventTimeout));
+    const auto state = instance->control().getState();
+
+    auto restored = loadTestPlugin(host);
+    CHECK(restored->tailFrames() == 0);
+    restored->control().setState(state);
+    CHECK(restored->tailFrames() == longTailFrames);  // on return, before any restart reaches the host
+}
+
 TEST_CASE("plugin host: a block with fewer channels than the plugin still processes", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;
@@ -575,6 +646,7 @@ TEST_CASE("plugin host: editors are owned by the given window", "[juce][plugin]"
     auto* editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
     REQUIRE(editor != nullptr);
     CHECK(GetWindow(editor, GW_OWNER) == owner);  // GW_OWNER reads GWLP_HWNDPARENT
+    CHECK((GetWindowLongPtrW(editor, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);  // owned, so it need not float
     instance->control().closeEditor();
     CHECK_FALSE(IsWindow(editor));
 
@@ -614,7 +686,7 @@ TEST_CASE("plugin host: the maintainer's VST3 loads, keeps its state, reports la
         SKIP("set SIANN_TEST_VST3 to a .vst3 bundle");
     }
     CHECK(plugin->format == "vst3");
-    checkThirdParty(host, *plugin);
+    checkMaintainerPlugin(host, *plugin);
 }
 
 #if defined(__APPLE__)
@@ -627,7 +699,7 @@ TEST_CASE("plugin host: the maintainer's AU loads, keeps its state, reports late
         SKIP("set SIANN_TEST_AU to a .component bundle");
     }
     CHECK(plugin->format == "au");
-    checkThirdParty(host, *plugin);
+    checkMaintainerPlugin(host, *plugin);
 }
 
 TEST_CASE("plugin host: Apple AUPeakLimiter loads in CI", "[juce][plugin]") {

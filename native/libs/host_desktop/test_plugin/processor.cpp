@@ -40,6 +40,8 @@ Processor::Processor()
     requestRestart_ = new juce::AudioParameterBool(juce::ParameterID{"requestRestart", 1}, "requestRestart", false);
     overlapped_ = new juce::AudioParameterBool(juce::ParameterID{"overlapped", 1}, "overlapped", false);
     restarted_ = new juce::AudioParameterBool(juce::ParameterID{"restarted", 1}, "restarted", false);
+    watchRestore_ = new juce::AudioParameterBool(juce::ParameterID{"watchRestore", 1}, "watchRestore", false);
+    restored_ = new juce::AudioParameterBool(juce::ParameterID{"restored", 1}, "restored", false);
     addParameter(latency_);
     addParameter(gain_);
     addParameter(futureState_);
@@ -47,6 +49,8 @@ Processor::Processor()
     addParameter(requestRestart_);
     addParameter(overlapped_);
     addParameter(restarted_);
+    addParameter(watchRestore_);
+    addParameter(restored_);
     addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
     latency_->addListener(this);
     nudgeGain_->addListener(this);
@@ -93,18 +97,32 @@ void Processor::handleAsyncUpdate() {
         overlapped_->setValueNotifyingHost(sawOverlap_.load() ? 1.0f : 0.0f);
         restarted_->setValueNotifyingHost(1.0f);
     }
+    if (restorePending_.exchange(false)) {
+        overlapped_->setValueNotifyingHost(sawOverlap_.load() ? 1.0f : 0.0f);
+        restored_->setValueNotifyingHost(1.0f);
+    }
 }
 
-// Runs on the host's thread inside setActive, where processBlock must not.
-void Processor::watchRestart() {
-    if (!restarting_.load()) {
-        return;
+double Processor::getTailLengthSeconds() const {
+    if (std::this_thread::get_id() != homeThread_) {
+        return wrongThreadTailSeconds;
     }
+    return latency_->get() ? longTailSeconds : 0.0;
+}
+
+void Processor::watchForProcessBlock() {
     const auto end = std::chrono::steady_clock::now() + restartWatch;
     while (std::chrono::steady_clock::now() < end) {
         if (inProcessBlock_.load()) {
             sawOverlap_.store(true);
         }
+    }
+}
+
+// Runs on the host's thread inside setActive, where processBlock must not.
+void Processor::watchRestart() {
+    if (restarting_.load()) {
+        watchForProcessBlock();
     }
 }
 
@@ -183,6 +201,11 @@ void Processor::setStateInformation(const void* data, int sizeInBytes) {
     }
     *gain_ = stream.readFloat();
     *latency_ = stream.readByte() != 0;
+    if (watchRestore_->get()) {
+        watchForProcessBlock();
+        restorePending_.store(true);
+        triggerAsyncUpdate();
+    }
 }
 
 }  // namespace siann::test_plugin

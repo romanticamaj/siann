@@ -8,7 +8,8 @@
 // "futureState" (getStateInformation then writes a state version this plugin
 // does not read, which is how a test gets a blob the plugin must reject) and
 // "nudgeGain" (turning it on moves "gain" to 0.5 later, on the message thread,
-// the way an editor edit reaches a host).
+// the way an editor edit reaches a host). Its tail is what the delay line holds:
+// none with "latency" off, longTailSeconds with it on.
 //
 // Probes for the host's side of things, none of them state:
 // - "requestRestart": turning it on asks a VST3 host for
@@ -16,6 +17,12 @@
 //   activation that restart causes takes restartWatch, as a heavy plugin's would,
 //   and watches for processBlock running meanwhile. The plugin then sets
 //   "overlapped" if it saw that and "restarted" to say the restart is over.
+// - "watchRestore": with it on, setStateInformation takes restartWatch and watches
+//   for processBlock in the same way, then sets "overlapped" if it saw that and
+//   "restored" to say the restore is over.
+// - getTailLengthSeconds answers wrongThreadTailSeconds on any thread but the one
+//   that built the plugin: VST3 allows that one call on the UI thread only, so a
+//   host that reads it from elsewhere gets a number it can be caught with.
 // - "home:<directory>": the name says which directory holds the bundle this code
 //   was loaded from, which tells two installs of the plugin apart.
 //
@@ -27,6 +34,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <thread>
 
 #include "vst3_restarter.hpp"
 
@@ -40,6 +48,8 @@ public:
     static constexpr int longLatency = 512;
     static constexpr float nudgedGain = 0.5f;
     static constexpr auto restartWatch = std::chrono::milliseconds(20);
+    static constexpr double longTailSeconds = 0.25;
+    static constexpr double wrongThreadTailSeconds = 1.0;
 
     Processor();
     ~Processor() override;
@@ -50,7 +60,7 @@ public:
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override;
     using juce::AudioProcessor::processBlock;
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
-    double getTailLengthSeconds() const override { return 0.0; }
+    double getTailLengthSeconds() const override;
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
 
@@ -75,6 +85,7 @@ private:
     void parameterGestureChanged(int, bool) override {}
     void handleAsyncUpdate() override;
     void applyLatency();
+    void watchForProcessBlock();
     void watchRestart();
 
     juce::AudioParameterBool* latency_;
@@ -84,10 +95,14 @@ private:
     juce::AudioParameterBool* requestRestart_;
     juce::AudioParameterBool* overlapped_;
     juce::AudioParameterBool* restarted_;
+    juce::AudioParameterBool* watchRestore_;
+    juce::AudioParameterBool* restored_;
     Vst3Restarter restarter_;
+    std::thread::id homeThread_ = std::this_thread::get_id();
     std::atomic<bool> nudgePending_{false};
     std::atomic<bool> restartRequested_{false};
     std::atomic<bool> restarting_{false};
+    std::atomic<bool> restorePending_{false};
     std::atomic<bool> inProcessBlock_{false};
     std::atomic<bool> sawOverlap_{false};
     std::atomic<int> restartActivations_{0};

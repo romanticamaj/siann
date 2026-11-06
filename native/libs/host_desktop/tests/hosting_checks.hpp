@@ -24,6 +24,7 @@ namespace siann::hosting_test {
 inline constexpr std::int64_t sampleRate = 48'000;
 inline constexpr int blockFrames = 256;
 inline constexpr auto eventTimeout = std::chrono::seconds(5);
+inline constexpr int longTailFrames = 12'000;  // the test plugin's quarter second, at sampleRate
 
 // Owned planar audio and the view of it the core would pass.
 class Audio {
@@ -95,6 +96,17 @@ inline void runBlocks(host::PluginInstance& instance) {
     audio.join();
 }
 
+// What the audio thread gets from tailFrames().
+inline int tailFramesOnAudioThread(host::PluginInstance& instance) {
+    int frames = -1;
+    std::thread audio([&] {
+        const rt::ScopedRealtimeThread realtime;
+        frames = instance.tailFrames();
+    });
+    audio.join();
+    return frames;
+}
+
 inline int parameterIndex(host::PluginInstance& instance, const std::string& name) {
     const auto parameters = instance.control().parameters();
     for (std::size_t i = 0; i < parameters.size(); ++i) {
@@ -147,6 +159,7 @@ inline void checkBuiltTestPlugin(host::MainThreadLoop& loop, host::JucePluginHos
     instance->control().setParameter(latency, 1.0);
     CHECK(nextReportedLatency(loop, events) == 512);
     CHECK(instance->latencyFrames() == 512);
+    CHECK(instance->tailFrames() == longTailFrames);
     CHECK(measureDelay(*instance).frames == 512);
 
     instance->control().setParameter(gain, 0.25);
