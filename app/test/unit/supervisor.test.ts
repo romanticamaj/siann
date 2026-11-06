@@ -14,12 +14,15 @@ import {
   type EngineExit,
   type EngineGaveUp,
   type EngineReady,
+  type SupervisorOptions,
 } from '../../src/main/supervisor';
 
 class FakeChild extends EventEmitter {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   stdinEnded = 0;
+  // A kill that fails: Node's ChildProcess emits 'error' inside kill().
+  killFails = false;
   kills: Array<NodeJS.Signals | number | undefined> = [];
   readonly stdin = { end: () => { this.stdinEnded += 1; } };
   constructor(readonly pid: number) {
@@ -27,6 +30,10 @@ class FakeChild extends EventEmitter {
   }
   kill(signal?: NodeJS.Signals | number): boolean {
     this.kills.push(signal);
+    if (this.killFails) {
+      this.emit('error', new Error('kill EPERM'));
+      return false;
+    }
     return true;
   }
   exit(code: number | null, signal: string | null = null): void {
@@ -86,7 +93,7 @@ const BACKOFF = { initialMs: 250, maxMs: 1_000, resetAfterMs: 30_000, maxRestart
 const GRACE = 4_321;
 const KILL_GRACE = 1_234;
 
-function rig(backoff: Backoff = BACKOFF) {
+function rig(backoff: Backoff = BACKOFF, overrides: Partial<SupervisorOptions> = {}) {
   const scheduler = new FakeScheduler();
   const children: FakeChild[] = [];
   const launches: Array<{ exe: string; args: readonly string[] }> = [];
@@ -103,6 +110,7 @@ function rig(backoff: Backoff = BACKOFF) {
       children.push(child);
       return child;
     },
+    ...overrides,
   });
   const ready: EngineReady[] = [];
   const exits: EngineExit[] = [];
@@ -391,6 +399,128 @@ test('stop() during a failed launch waits for the kill already under way', async
   assert.deepEqual(r.children[0]!.kills, [undefined, 'SIGKILL']);
   assert.deepEqual(r.scheduler.pending(), []);
   assert.equal(r.launches.length, 1);
+});
+
+test('a failed launch during stop() replaces the stop timer: one SIGKILL, and stop() stays bounded', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write(readyLine(1000));
+  await flush();
+  const done = r.supervisor.stop();
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [GRACE]);
+  r.children[0]!.stdout.write('late output\n');
+  await flush();
+  assert.deepEqual(r.children[0]!.kills, [undefined]);
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [KILL_GRACE]);
+  r.scheduler.fire(KILL_GRACE);
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [KILL_GRACE]);
+  r.scheduler.fire(KILL_GRACE);
+  await done;
+  assert.deepEqual(r.children[0]!.kills, [undefined, 'SIGKILL']);
+  assert.deepEqual(r.scheduler.pending(), []);
+  assert.equal(r.launches.length, 1);
+});
+
+// After a kill that failed, the next launch must still stop normally: a timer
+// left for the dead launch would make stop() skip stdin and the kill.
+async function assertNextLaunchStops(r: ReturnType<typeof rig>): Promise<void> {
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [250]);
+  r.scheduler.fire(250);
+  const next = last(r.children);
+  next.stdout.write(readyLine(next.pid));
+  await flush();
+  const done = r.supervisor.stop();
+  assert.equal(next.stdinEnded, 1);
+  r.scheduler.fire(GRACE);
+  assert.deepEqual(next.kills, ['SIGKILL']);
+  next.exit(null, 'SIGKILL');
+  await done;
+  assert.deepEqual(r.scheduler.pending(), []);
+}
+
+test('a SIGTERM that fails leaves no timer behind for the next launch', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.killFails = true;
+  r.children[0]!.stdout.write('not json\n');
+  await flush();
+  assert.deepEqual(r.children[0]!.kills, [undefined]);
+  assert.deepEqual(last(r.exits), { code: null, signal: null, restartInMs: 250 });
+  await assertNextLaunchStops(r);
+});
+
+test('a SIGKILL that fails leaves no timer behind for the next launch', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.stdout.write('not json\n');
+  await flush();
+  r.children[0]!.killFails = true;
+  r.scheduler.fire(KILL_GRACE);
+  assert.deepEqual(r.children[0]!.kills, [undefined, 'SIGKILL']);
+  assert.deepEqual(last(r.exits), { code: null, signal: null, restartInMs: 250 });
+  await assertNextLaunchStops(r);
+});
+
+test('a spawn error (ENOENT) is a failed launch: restarted, then gave-up with the error', async () => {
+  const r = rig({ ...BACKOFF, maxRestarts: 1 });
+  r.supervisor.start();
+  r.children[0]!.emit('error', new Error('spawn siann-engine ENOENT'));
+  assert.deepEqual(last(r.exits), { code: null, signal: null, restartInMs: 250 });
+  r.scheduler.fire(250);
+  assert.equal(r.launches.length, 2);
+  r.children[1]!.emit('error', new Error('spawn siann-engine ENOENT'));
+  assert.deepEqual(last(r.exits), { code: null, signal: null, restartInMs: null });
+  assert.equal(r.gaveUp.length, 1);
+  assert.match(r.gaveUp[0]!.stderr.join('\n'), /ENOENT/);
+  assert.deepEqual(r.scheduler.pending(), []);
+});
+
+test('an error followed by an exit counts as one failure', async () => {
+  const r = rig();
+  r.supervisor.start();
+  r.children[0]!.emit('error', new Error('spawn siann-engine ENOENT'));
+  r.children[0]!.exit(1);
+  assert.equal(r.exits.length, 1);
+  assert.deepEqual(r.scheduler.pending().map((t) => t.ms), [250]);
+});
+
+test('a spawn that throws is a launch that exited at once: restarted, then gave-up with the error', async () => {
+  const r = rig({ ...BACKOFF, maxRestarts: 1 }, {
+    spawn: () => {
+      throw new Error('spawn EACCES');
+    },
+  });
+  r.supervisor.start();
+  assert.deepEqual(last(r.exits), { code: null, signal: null, restartInMs: 250 });
+  r.scheduler.fire(250);
+  assert.deepEqual(last(r.exits), { code: null, signal: null, restartInMs: null });
+  assert.equal(r.gaveUp.length, 1);
+  assert.match(r.gaveUp[0]!.stderr.join('\n'), /spawn EACCES/);
+  await r.supervisor.stop();
+});
+
+test('the default kill graces are those in the spec: 5 s after stop(), 2 s after SIGTERM and after SIGKILL', async () => {
+  const defaults: Partial<SupervisorOptions> = { stopGraceMs: undefined, killGraceMs: undefined };
+
+  const stopped = rig(BACKOFF, defaults);
+  stopped.supervisor.start();
+  stopped.children[0]!.stdout.write(readyLine(1000));
+  await flush();
+  const done = stopped.supervisor.stop();
+  assert.deepEqual(stopped.scheduler.pending().map((t) => t.ms), [5_000]);
+  stopped.scheduler.fire(5_000);
+  assert.deepEqual(stopped.scheduler.pending().map((t) => t.ms), [2_000]);
+  stopped.scheduler.fire(2_000);
+  await done;
+
+  const failed = rig(BACKOFF, defaults);
+  failed.supervisor.start();
+  failed.children[0]!.stdout.write('not json\n');
+  await flush();
+  assert.deepEqual(failed.scheduler.pending().map((t) => t.ms), [2_000]);
+  failed.scheduler.fire(2_000);
+  assert.deepEqual(failed.children[0]!.kills, [undefined, 'SIGKILL']);
+  assert.deepEqual(failed.scheduler.pending().map((t) => t.ms), [2_000]);
 });
 
 test('a second stdout line is a failed launch, also in the same chunk as the ready line', async () => {

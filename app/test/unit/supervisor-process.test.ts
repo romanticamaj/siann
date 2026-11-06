@@ -2,7 +2,8 @@
 // the way a wedged siann-engine does. The fake children in supervisor.test.ts
 // pin the signals; this shows the process really ends. On Windows every kill
 // is TerminateProcess, so only POSIX exercises the SIGKILL. Waits are on the
-// child's own ready and exit events.
+// child's own ready and exit events, each bounded: a regression must fail, and
+// a child left running would keep the test process, and so the runner, open.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +18,21 @@ const READY = `process.stdout.write(JSON.stringify({
   sessionId: 'ses_0001', pid: process.pid, about: {},
 }) + '\\n');`;
 const MALFORMED = "process.stdout.write('not json\\n');";
+
+const DEADLINE_MS = 10_000;
+
+// Rejects at the deadline, so a test's finally block reaps its children.
+async function within<T>(what: string, waiting: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not finish in ${DEADLINE_MS} ms`)), DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([waiting, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function wedged(script: string) {
   const pids: number[] = [];
@@ -57,8 +73,8 @@ test('stop() ends a process that ignores stdin EOF and SIGTERM', { timeout: 30_0
   try {
     const ready = once(supervisor, 'ready');
     supervisor.start();
-    const [line] = (await ready) as [EngineReady];
-    await supervisor.stop();
+    const [line] = (await within('ready', ready)) as [EngineReady];
+    await within('stop()', supervisor.stop());
     assert.equal(isAlive(line.pid), false);
   } finally {
     reap(pids);
@@ -70,7 +86,7 @@ test('a failed launch that ignores SIGTERM is ended', { timeout: 30_000 }, async
   try {
     const exited = once(supervisor, 'exit');
     supervisor.start();
-    const [exit] = (await exited) as [EngineExit];
+    const [exit] = (await within('exit', exited)) as [EngineExit];
     assert.equal(exit.restartInMs, null);
     assert.equal(pids.length, 1);
     assert.equal(isAlive(pids[0]!), false);
