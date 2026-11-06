@@ -1,5 +1,6 @@
 #include "processor.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 namespace siann::test_plugin {
@@ -9,7 +10,7 @@ namespace {
 constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'T', 'P', '1'};
 constexpr std::uint32_t stateVersion = 1;
 constexpr std::uint32_t futureStateVersion = 2;
-constexpr std::size_t stateSize = sizeof(stateMagic) + sizeof(std::uint32_t) + sizeof(float) + 1;
+constexpr std::size_t stateSize = sizeof(stateMagic) + sizeof(std::uint32_t) + sizeof(float) + 1 + 1;
 
 // restartComponent(kReloadComponent | kIoChanged) activates the plugin twice.
 constexpr int activationsPerRestart = 2;
@@ -42,6 +43,8 @@ Processor::Processor()
     restarted_ = new juce::AudioParameterBool(juce::ParameterID{"restarted", 1}, "restarted", false);
     watchRestore_ = new juce::AudioParameterBool(juce::ParameterID{"watchRestore", 1}, "watchRestore", false);
     restored_ = new juce::AudioParameterBool(juce::ParameterID{"restored", 1}, "restored", false);
+    holdProcessBlock_ = new juce::AudioParameterBool(juce::ParameterID{"holdProcessBlock", 1}, "holdProcessBlock", false);
+    tail_ = new juce::AudioParameterBool(juce::ParameterID{"tail", 1}, "tail", false);
     addParameter(latency_);
     addParameter(gain_);
     addParameter(futureState_);
@@ -51,11 +54,16 @@ Processor::Processor()
     addParameter(restarted_);
     addParameter(watchRestore_);
     addParameter(restored_);
+    addParameter(holdProcessBlock_);
+    addParameter(tail_);
     addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
     latency_->addListener(this);
     nudgeGain_->addListener(this);
     requestRestart_->addListener(this);
     setLatencySamples(shortLatency);
+    // What a chatty plugin does: a host must keep its launcher handshake away from this.
+    std::fputs("siann_test_plugin: loaded\n", stdout);
+    std::fflush(stdout);
 }
 
 Processor::~Processor() {
@@ -107,7 +115,7 @@ double Processor::getTailLengthSeconds() const {
     if (std::this_thread::get_id() != homeThread_) {
         return wrongThreadTailSeconds;
     }
-    return latency_->get() ? longTailSeconds : 0.0;
+    return latency_->get() || tail_->get() ? longTailSeconds : 0.0;
 }
 
 void Processor::watchForProcessBlock() {
@@ -174,6 +182,13 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
         }
     }
     writeIndex_ = (writeIndex_ + frames) & mask;
+    if (holdProcessBlock_->get()) {
+        // A slow plugin: the block stays in flight for restartWatch, so a host
+        // that must wait for it has something to wait for.
+        const auto end = std::chrono::steady_clock::now() + restartWatch;
+        while (std::chrono::steady_clock::now() < end) {
+        }
+    }
     inProcessBlock_.store(false);
 }
 
@@ -187,6 +202,7 @@ void Processor::getStateInformation(juce::MemoryBlock& destination) {
     stream.writeInt(static_cast<int>(futureState_->get() ? futureStateVersion : stateVersion));
     stream.writeFloat(gain_->get());
     stream.writeByte(latency_->get() ? 1 : 0);
+    stream.writeByte(tail_->get() ? 1 : 0);
 }
 
 void Processor::setStateInformation(const void* data, int sizeInBytes) {
@@ -201,6 +217,7 @@ void Processor::setStateInformation(const void* data, int sizeInBytes) {
     }
     *gain_ = stream.readFloat();
     *latency_ = stream.readByte() != 0;
+    *tail_ = stream.readByte() != 0;
     if (watchRestore_->get()) {
         watchForProcessBlock();
         restorePending_.store(true);

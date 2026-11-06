@@ -9,9 +9,18 @@
 // does not read, which is how a test gets a blob the plugin must reject) and
 // "nudgeGain" (turning it on moves "gain" to 0.5 later, on the message thread,
 // the way an editor edit reaches a host). Its tail is what the delay line holds:
-// none with "latency" off, longTailSeconds with it on.
+// none with "latency" off, longTailSeconds with it on; "tail" (state, no latency
+// change) also makes it longTailSeconds, so a host's tail read after a restore
+// can be told from its latency report.
+//
+// Loading the plugin prints one line to stdout ("siann_test_plugin: loaded"), as a
+// chatty third-party plugin would: a host whose launcher handshake shares stdout
+// with plugins fails on it.
 //
 // Probes for the host's side of things, none of them state:
+// - "holdProcessBlock": with it on, every processBlock takes restartWatch before
+//   it returns, so a host that must wait for the block in flight has something to
+//   wait for.
 // - "requestRestart": turning it on asks a VST3 host for
 //   restartComponent(kReloadComponent | kIoChanged) on the message thread. Each
 //   activation that restart causes takes restartWatch, as a heavy plugin's would,
@@ -26,7 +35,8 @@
 // - "home:<directory>": the name says which directory holds the bundle this code
 //   was loaded from, which tells two installs of the plugin apart.
 //
-// State blob: magic "SIANNTP1", version u32, gain f32, latency u8, little endian.
+// State blob: magic "SIANNTP1", version u32, gain f32, latency u8, tail u8, little
+// endian.
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -97,6 +107,8 @@ private:
     juce::AudioParameterBool* restarted_;
     juce::AudioParameterBool* watchRestore_;
     juce::AudioParameterBool* restored_;
+    juce::AudioParameterBool* holdProcessBlock_;
+    juce::AudioParameterBool* tail_;
     Vst3Restarter restarter_;
     std::thread::id homeThread_ = std::this_thread::get_id();
     std::atomic<bool> nudgePending_{false};

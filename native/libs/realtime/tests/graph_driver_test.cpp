@@ -374,10 +374,12 @@ TEST_CASE("The driver times callbacks with the steady clock by default", "[drive
     driver.publish(constantGraph(1.0f));
     host::ManualAudioDevice device;
     driver.play();
-    driver.start(device, config(64));
-    device.pump(4);
-    CHECK(driver.callbackTiming().callbacks() == 4);
+    driver.start(device, config(512));  // eight graph blocks per callback: measurably long
+    device.pump(64);
+    CHECK(driver.callbackTiming().callbacks() == 64);
     CHECK(driver.callbackTiming().unmeasured() == 0);
-    CHECK(driver.callbackTiming().maxCallbackNanos() >= 0);
+    // A real clock: the longest of 64 callbacks took time. A clock that stood
+    // still (or returned a constant) would report 0 here.
+    CHECK(driver.callbackTiming().maxCallbackNanos() > 0);
     driver.stop();
 }

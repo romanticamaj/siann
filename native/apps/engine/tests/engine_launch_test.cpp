@@ -374,11 +374,19 @@ TEST_CASE("the desktop engine opens an editor before it is ready and still serve
     TempDir dir;
     PipedProcess child(SIANN_ENGINE_EXE,
                        withArgs(launchArgs(dir.path() / "Song.siann"), {"--open-editor", SIANN_TEST_PLUGIN_VST3}));
-    const Value ready = readyLine(child);
+    // The plugin prints a line to stdout when it loads, before the ready line
+    // would go out. The handshake must still be the first and only stdout line:
+    // the plugin's output belongs on stderr, where the shell keeps a log.
+    const std::optional<std::string> line = child.firstLine();
+    REQUIRE(line.has_value());
+    const Value ready = json::parse(*line);
+    CHECK(at(ready, "schema").asString() == engine_app::kReadySchema);
     WsClient ws(static_cast<std::uint16_t>(at(ready, "port").asNumber()));
     REQUIRE(ws.start());
     CHECK(at(ws.call(authFrame(at(ready, "token").asString())), "ok").asBool());
     CHECK(stopEngine(child) == 0);
+    CHECK(child.stdoutText() == *line + "\n");
+    CHECK(child.stderrText().find("siann_test_plugin: loaded") != std::string::npos);
 }
 
 #if defined(_WIN32)

@@ -461,7 +461,96 @@ TEST_CASE("plugin host: a restored state brings its tail", "[juce][plugin]") {
     auto restored = loadTestPlugin(host);
     CHECK(restored->tailFrames() == 0);
     restored->control().setState(state);
-    CHECK(restored->tailFrames() == longTailFrames);  // on return, before any restart reaches the host
+    // On return. Here the restore also changes the latency, and that report (a
+    // kLatencyChanged restart, run on this thread inside setState) refreshes the
+    // tail too; the test below is the one that needs setState's own read.
+    CHECK(restored->tailFrames() == longTailFrames);
+}
+
+// A tail the latency report does not announce: "tail" is state and changes no
+// latency, so only setState's own read of the tail can bring it.
+TEST_CASE("plugin host: a restored state brings a tail its latency does not announce", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    instance->control().setParameter(parameterIndex(*instance, "tail"), 1.0);
+    const auto state = instance->control().getState();
+
+    auto restored = loadTestPlugin(host);
+    rt::MpscQueue<host::PluginEvent> events(64);
+    restored->control().setEventSink([&](const host::PluginEvent& event) { events.push(event); });
+    CHECK(restored->tailFrames() == 0);
+    restored->control().setState(state);
+    CHECK(restored->tailFrames() == longTailFrames);
+    CHECK(restored->latencyFrames() == 64);
+    loop.runUntil([] { return false; }, std::chrono::milliseconds(50));  // anything the restore queued
+    host::PluginEvent event;
+    while (events.pop(event)) {
+        CHECK(event.kind != host::PluginEvent::Kind::latencyChanged);
+    }
+    CHECK(restored->tailFrames() == longTailFrames);
+    restored->control().setEventSink(nullptr);
+}
+
+// The plugin holds every block open for restartWatch, so a restore that did not
+// wait for the block in flight would run setStateInformation beside processBlock.
+TEST_CASE("plugin host: a restore waits for a block the plugin holds open", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    const int restored = parameterIndex(*instance, "restored");
+    instance->control().setParameter(gain, 0.25);
+    const auto state = instance->control().getState();
+    instance->control().setParameter(parameterIndex(*instance, "watchRestore"), 1.0);
+    instance->control().setParameter(parameterIndex(*instance, "holdProcessBlock"), 1.0);
+
+    PlayingThread playing(*instance);
+    REQUIRE(loop.runUntil([&] { return playing.blocks() >= 2; }, eventTimeout));
+    instance->control().setParameter(gain, 0.75);
+    instance->control().setState(state);
+    REQUIRE(loop.runUntil([&] { return instance->control().getParameter(restored) > 0.5; }, eventTimeout));
+    REQUIRE(loop.runUntil([&] { return playing.blocks() >= 6; }, eventTimeout));
+
+    CHECK(playing.finish() == 0);
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "overlapped")) < 0.5);
+    CHECK(instance->control().getParameter(gain) == Approx(0.25));
+}
+
+// JUCE reports every restart's end as programChanged + parameterInfoChanged, which
+// the adapter turns into restartRequested: a plugin-initiated reload, and a
+// latency-only change as well, so the event means "read the plugin again", not
+// "a setActive happened".
+TEST_CASE("plugin host: a restart the plugin asks for reaches the sink as restartRequested", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    rt::MpscQueue<host::PluginEvent> events(64);
+    instance->control().setEventSink([&](const host::PluginEvent& event) { events.push(event); });
+    const auto nextRestartRequested = [&] {
+        bool seen = false;
+        loop.runUntil(
+            [&] {
+                host::PluginEvent event;
+                while (events.pop(event)) {
+                    seen = seen || event.kind == host::PluginEvent::Kind::restartRequested;
+                }
+                return seen;
+            },
+            eventTimeout);
+        return seen;
+    };
+
+    instance->control().setParameter(parameterIndex(*instance, "requestRestart"), 1.0);
+    CHECK(nextRestartRequested());
+    REQUIRE(loop.runUntil(
+        [&] { return instance->control().getParameter(parameterIndex(*instance, "restarted")) > 0.5; }, eventTimeout));
+    CHECK(measureDelay(*instance).frames == 64);
+
+    instance->control().setParameter(parameterIndex(*instance, "latency"), 1.0);
+    REQUIRE(loop.runUntil([&] { return instance->latencyFrames() == 512; }, eventTimeout));
+    CHECK(nextRestartRequested());  // a latency-only restart reports it too
+    instance->control().setEventSink(nullptr);
 }
 
 TEST_CASE("plugin host: a block with fewer channels than the plugin still processes", "[juce][plugin]") {
@@ -472,6 +561,57 @@ TEST_CASE("plugin host: a block with fewer channels than the plugin still proces
     const auto measured = measureDelay(*instance, 1);
     CHECK(measured.frames == 64);
     CHECK(measured.allocations == 0);
+}
+
+// Channels of the output view the plugin does not fill are cleared, not left as
+// they were: the view may hold whatever the previous node wrote.
+TEST_CASE("plugin host: output channels beyond the plugin's are cleared", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    Audio input(2, blockFrames);
+    Audio output(4, blockFrames);
+    for (int c = 0; c < 4; ++c) {
+        output.channel(c).assign(static_cast<std::size_t>(blockFrames), 1.0f);
+    }
+    input.channel(0)[0] = 1.0f;
+    std::thread audio([&] {
+        const rt::ScopedRealtimeThread realtime;
+        instance->process(input.view(), output.view(), {});
+    });
+    audio.join();
+    CHECK(output.channel(0)[64] == Approx(1.0f));  // the delayed impulse: the plugin ran
+    CHECK(output.channel(0)[0] == 0.0f);
+    for (int c = 2; c < 4; ++c) {
+        CHECK(*std::max_element(output.channel(c).begin(), output.channel(c).end()) == 0.0f);
+    }
+}
+
+// A block longer than the instance was prepared for cannot be handed to the
+// plugin (its buffers are sized once): the output is cleared instead. So is an
+// empty block.
+TEST_CASE("plugin host: a block longer than the maximum is cleared, not processed", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    Audio input(2, 2 * blockFrames);
+    Audio output(2, 2 * blockFrames);
+    for (int c = 0; c < 2; ++c) {
+        input.channel(c).assign(static_cast<std::size_t>(2 * blockFrames), 1.0f);
+        output.channel(c).assign(static_cast<std::size_t>(2 * blockFrames), 1.0f);
+    }
+    std::thread audio([&] {
+        const rt::ScopedRealtimeThread realtime;
+        instance->process(input.view(), output.view(), {});
+        host::AudioBufferView empty = output.view();
+        empty.frames = 0;
+        instance->process(input.view(), empty, {});
+    });
+    audio.join();
+    for (int c = 0; c < 2; ++c) {
+        CHECK(*std::max_element(output.channel(c).begin(), output.channel(c).end()) == 0.0f);
+    }
+    CHECK(measureDelay(*instance).frames == 64);  // and the instance still works at its block size
 }
 
 TEST_CASE("plugin host: state round-trips as a blob", "[juce][plugin]") {
