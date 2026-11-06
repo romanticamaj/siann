@@ -276,6 +276,24 @@ TEST_CASE("plugin host: a plugin keeps its uid and its state when it moves", "[j
     CHECK(restored->getParameter(gain) == Approx(0.25));
 }
 
+TEST_CASE("plugin host: a descriptor that only names a path instantiates", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    host::PluginDescriptor listed;  // what scan() gives
+    listed.format = "vst3";
+    listed.path = SIANN_TEST_PLUGIN_VST3;
+    auto instance = host.instantiate(listed, sampleRate, blockFrames);
+    CHECK(instance->latencyFrames() == 64);
+
+    listed.path += ".missing";
+    try {
+        host.instantiate(listed, sampleRate, blockFrames);
+        FAIL("a missing path must throw");
+    } catch (const host::PluginError& error) {
+        CHECK(error.code() == "plugin_not_found");
+    }
+}
+
 TEST_CASE("plugin host: a file that holds no plugin does not load", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;
@@ -553,10 +571,13 @@ TEST_CASE("plugin host: Apple AUPeakLimiter loads in CI", "[juce][plugin]") {
     host::JucePluginHost host;
     const auto plugins = host.scan();
     const auto limiter = std::find_if(plugins.begin(), plugins.end(), [](const host::PluginDescriptor& p) {
-        return p.format == "au" && p.name == "AUPeakLimiter" && p.vendor == "Apple";
+        return p.format == "au" && p.name == "AUPeakLimiter";
     });
     REQUIRE(limiter != plugins.end());
-    checkThirdParty(host, *limiter);
+    const auto descriptors = host.scanPath(limiter->path);
+    REQUIRE(descriptors.size() == 1);
+    CHECK(descriptors.front().vendor == "Apple");
+    checkThirdParty(host, descriptors.front());
 }
 #endif
 
@@ -565,7 +586,9 @@ TEST_CASE("plugin host: scan() lists the default locations without throwing", "[
     host::JucePluginHost host;
     const auto plugins = host.scan();  // may be empty on a Linux runner
     for (const auto& plugin : plugins) {
-        CHECK_FALSE(plugin.uid.empty());
+        CHECK_FALSE(plugin.format.empty());
+        CHECK_FALSE(plugin.name.empty());
         CHECK_FALSE(plugin.path.empty());
+        CHECK(plugin.uid.empty());  // nothing was loaded to learn it from
     }
 }

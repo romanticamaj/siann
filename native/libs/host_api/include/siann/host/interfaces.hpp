@@ -69,14 +69,12 @@ public:
 
 struct PluginDescriptor {
     std::string format;  // "clap", "vst3", "au", "lv2"
-    std::string uid;
+    std::string uid;     // the same wherever the plugin is installed; empty until probed
     std::string name;
-    std::string vendor;
-    std::string path;  // bundle path, or the system's identifier for an AU
-    std::string version;
-    // Probed by scanPath, which opens an instance. scan() opens none and leaves
-    // this false; capabilities().editor is the answer for a loaded plugin.
-    bool hasEditor = false;
+    std::string vendor;  // empty until probed
+    std::string path;    // bundle path, or the system's identifier for an AU
+    std::string version;  // empty until probed
+    bool hasEditor = false;  // false until probed
 };
 
 struct PluginCapabilities {
@@ -154,12 +152,15 @@ public:
 class PluginHost {
 public:
     virtual ~PluginHost() = default;
-    // Main thread. The format's default locations; loads each module but opens
-    // no instance.
+    // Main thread. What the format's default locations hold, without running any
+    // plugin code: format, path and name only.
     virtual std::vector<PluginDescriptor> scan() = 0;
-    // Main thread. One bundle, which may hold several plugins.
+    // Main thread. Probes one bundle, which may hold several plugins. This loads
+    // it and opens an instance, so a plugin that crashes here crashes the process
+    // until plugins run in worker processes.
     virtual std::vector<PluginDescriptor> scanPath(const std::string& path) = 0;
-    // Main thread; asynchronous formats complete before this returns.
+    // Main thread; asynchronous formats complete before this returns. Takes a
+    // descriptor from scanPath, or one from scan(), whose path it probes first.
     virtual std::unique_ptr<PluginInstance> instantiate(const PluginDescriptor& descriptor, std::int64_t sampleRate,
                                                         int maxBlockFrames) = 0;
 };

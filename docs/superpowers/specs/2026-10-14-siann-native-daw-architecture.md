@@ -2002,9 +2002,11 @@ the plugin's blob in an envelope (magic, version, plugin uid, size), so `setStat
 refuses another plugin's blob with parameters unchanged; a plugin that refuses
 its own payload cannot be seen through VST3 or AU and keeps its parameters. A
 descriptor's `uid` leaves out the install path, so state follows a plugin to
-another machine. `scan` loads every module in the process, which a crashing
-plugin would take down with it; out-of-process scanning is not built. `scan` opens
-no instance, so `hasEditor` is known only from `scanPath` or `capabilities`.
+another machine. `scan` lists format, path and name without running plugin code,
+because a bundle that crashes on load would take the engine with it (one on the
+maintainer's machine does, now and then); `scanPath` loads and probes a single
+bundle in the process until plugin workers exist, and the rest of a descriptor
+comes from it.
 `MainThreadLoop` makes the main thread JUCE's message thread and dispatches until
 a predicate holds, which needs `JUCE_MODAL_LOOPS_PERMITTED=1`. Windows owns editors
 through `GWLP_HWNDPARENT`; on macOS they float and the engine switches from

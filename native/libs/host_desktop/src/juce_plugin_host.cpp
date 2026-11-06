@@ -46,15 +46,16 @@ juce::String fromUtf8(const std::string& text) {
     return juce::String::fromUTF8(text.c_str(), static_cast<int>(text.size()));
 }
 
-std::string formatKey(const juce::PluginDescription& description) {
-    return description.pluginFormatName == "AudioUnit" ? "au" : description.pluginFormatName.toLowerCase().toStdString();
+std::string formatKey(const juce::String& formatName) {
+    return formatName == "AudioUnit" ? "au" : formatName.toLowerCase().toStdString();
 }
 
 // Names one plugin wherever it is installed: state saved with it must load on
 // another machine. JUCE's createIdentifierString hashes the install path in.
 std::string stableUid(const juce::PluginDescription& description) {
     const int id = description.uniqueId != 0 ? description.uniqueId : description.deprecatedUid;
-    return formatKey(description) + "-" + description.name.toStdString() + "-" + juce::String::toHexString(id).toStdString();
+    return formatKey(description.pluginFormatName) + "-" + description.name.toStdString() + "-" +
+           juce::String::toHexString(id).toStdString();
 }
 
 template <typename T>
@@ -365,7 +366,7 @@ struct JucePluginHost::Impl {
 
     PluginDescriptor remember(const juce::PluginDescription& description) {
         PluginDescriptor descriptor;
-        descriptor.format = formatKey(description);
+        descriptor.format = formatKey(description.pluginFormatName);
         descriptor.uid = stableUid(description);
         descriptor.name = description.name.toStdString();
         descriptor.vendor = description.manufacturerName.toStdString();
@@ -407,15 +408,18 @@ JucePluginHost::JucePluginHost() : impl_(std::make_unique<Impl>()) {}
 JucePluginHost::~JucePluginHost() = default;
 
 std::vector<PluginDescriptor> JucePluginHost::scan() {
+    // Lists without loading: loading a bundle runs its code in this process, and
+    // one plugin that crashes on load would take the engine with it.
     std::vector<PluginDescriptor> result;
     for (auto* format : impl_->formats.getFormats()) {
-        juce::KnownPluginList list;
+        const auto key = formatKey(format->getName());
         for (const auto& candidate : format->searchPathsForPlugins(format->getDefaultLocationsToSearch(), true, false)) {
-            juce::OwnedArray<juce::PluginDescription> found;
-            list.scanAndAddFile(candidate, false, found, *format);
-            for (const auto* description : found) {
-                result.push_back(impl_->remember(*description));
-            }
+            PluginDescriptor descriptor;
+            descriptor.format = key;
+            descriptor.path = candidate.toStdString();
+            descriptor.name = key == "au" ? format->getNameOfPluginFromIdentifier(candidate).toStdString()
+                                          : juce::File(candidate).getFileNameWithoutExtension().toStdString();
+            result.push_back(std::move(descriptor));
         }
     }
     return result;
@@ -461,15 +465,20 @@ std::vector<PluginDescriptor> JucePluginHost::scanPath(const std::string& path) 
 
 std::unique_ptr<PluginInstance> JucePluginHost::instantiate(const PluginDescriptor& descriptor, std::int64_t sampleRate,
                                                             int maxBlockFrames) {
-    if (impl_->known.find(descriptor.uid) == impl_->known.end() && !descriptor.path.empty()) {
-        scanPath(descriptor.path);  // a descriptor kept from an earlier run
+    // A descriptor from scan(), or one kept from an earlier run, is probed first.
+    std::string uid = descriptor.uid;
+    if (impl_->known.find(uid) == impl_->known.end() && !descriptor.path.empty()) {
+        const auto probed = scanPath(descriptor.path);
+        if (uid.empty()) {
+            uid = probed.front().uid;
+        }
     }
-    const auto entry = impl_->known.find(descriptor.uid);
+    const auto entry = impl_->known.find(uid);
     if (entry == impl_->known.end()) {
         throw PluginError("plugin_not_found", "unknown plugin: " + descriptor.name);
     }
     auto plugin = impl_->create(entry->second, static_cast<double>(sampleRate), maxBlockFrames);
-    return std::make_unique<JucePluginInstance>(std::move(plugin), descriptor.uid, sampleRate, maxBlockFrames);
+    return std::make_unique<JucePluginInstance>(std::move(plugin), uid, sampleRate, maxBlockFrames);
 }
 
 }  // namespace siann::host
