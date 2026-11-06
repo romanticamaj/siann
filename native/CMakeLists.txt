@@ -71,3 +71,4 @@ if(SIANN_WITH_JUCE)
 endif()
 
 add_subdirectory(apps/cli)
+add_subdirectory(apps/engine)
