@@ -6,6 +6,7 @@
 
 #include <concepts>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "siann/host/interfaces.hpp"
