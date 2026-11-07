@@ -122,6 +122,19 @@ TEST_CASE("record --seconds records exactly that many session frames from the tr
     CHECK(clip->length == 48'000);
 }
 
+// The device run's upper bound is in device frames: a device that reports no
+// rate must not make that bound "now" and cut the take short.
+TEST_CASE("record --seconds records every frame from a device that reports no rate", "[cli][realtime][record]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+    const CliResult recorded =
+        runJson({"record", bundle, "--track", "t1", "--device", "fake", "--seconds", "1", "--fake-report-rate", "none"});
+    INFO(siann::jcs::canonicalize(recorded.json));
+    REQUIRE(recorded.exitCode == 0);
+    CHECK(recorded.json.find("frames")->asString() == "48000");
+}
+
 TEST_CASE("record --fake-input counter records one consecutive run of the counter, and --ready-file reports it",
           "[cli][realtime][record][counter]") {
     TempDir dir;
@@ -171,6 +184,8 @@ TEST_CASE("The fake device options need --device fake", "[cli][realtime][record]
     // bench measures real callbacks: a fake clock would make its report a lie.
     CHECK(usage(runJson({"bench", dir.str("Bench.siann"), "--tracks", "1", "--buffer", "256", "--seconds", "1", "--device",
                          "fake", "--fake-callback-nanos", "1000"})));
+    CHECK(usage(runJson({"bench", dir.str("Bench.siann"), "--tracks", "1", "--buffer", "256", "--seconds", "1", "--device",
+                         "fake", "--fake-report-rate", "none"})));
     CHECK(usage(runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-speed", "0", "--seconds", "1"})));
     CHECK(usage(runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-input", "noise", "--seconds",
                          "1"})));

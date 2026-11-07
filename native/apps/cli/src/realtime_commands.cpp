@@ -510,7 +510,9 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
     run.engine().transport().play();
     run.waitUntilPlaying(interrupt);
     if (seconds) {
-        run.runFor((*seconds + 1) * run.deviceRate());
+        // A device that reports no rate runs at the session rate (as the driver assumes).
+        const std::int64_t rate = run.deviceRate() > 0 ? run.deviceRate() : sessionRate;
+        run.runFor((*seconds + 1) * rate);
     }
     run.wait(interrupt, [&recorder] { return recorder.captureEnded(); });
 
