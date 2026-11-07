@@ -22,6 +22,21 @@
 // payload; openEditor throws editor_failed until the desktop target can supply a
 // window (docs/harness/follow-ups.md). State blobs are the envelope of
 // state_envelope.hpp.
+//
+// A plugin that throws (spec, "siann-host", Hostile test plugin) is caught at the
+// boundary of every plugin call. Out of instantiate it is plugin_load_failed; out of
+// getState, bad_state; out of setState, bad_state and the instance fails; out of
+// process(), the block's output is cleared and the instance fails; out of a restart
+// or on_main_thread inside runMainThreadCallbacks, the instance fails and the other
+// instances are serviced as usual. A failed instance passes its input through,
+// reports PluginEvent::Kind::failed once, answers getState and setState with
+// plugin_failed, stores a setParameter nothing delivers, keeps its last latency and
+// tail, and is replaced, never revived.
+//
+// What a plugin calls back (rescan, restart, flush, callback, latency and tail
+// changes) is atomics and a wake on any thread, honoured on the main thread after the
+// plugin call in flight returns: values a rescan marks stale are read there, never on
+// the caller's thread.
 
 #include <functional>
 #include <memory>
@@ -54,7 +69,8 @@ public:
 
     // Main thread. Services what every live instance of this host asked for. A
     // parameter flush is left to the next process() while blocks are coming, so a
-    // call then can leave one for a later call.
+    // call then can leave one for a later call. Never throws: a plugin that throws
+    // here fails its own instance only.
     void runMainThreadCallbacks();
 
     // Main thread. Called when a plugin wants runMainThreadCallbacks(), on whichever

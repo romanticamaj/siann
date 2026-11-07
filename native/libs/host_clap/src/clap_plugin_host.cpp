@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -117,9 +118,14 @@ public:
             }
             readLatency();
             readTail();
-        } catch (...) {
-            plugin_->destroy(plugin_);
+        } catch (const PluginError&) {
+            destroyPlugin();
             throw;
+        } catch (...) {
+            // The plugin threw. Its exception goes before its code does: this
+            // handler ends before the members below unload the library.
+            destroyPlugin();
+            throw PluginError("plugin_load_failed", uid_ + " threw while loading");
         }
         audioWindowNanos_ = std::max(
             minimumAudioWindowNanos, static_cast<std::int64_t>(4.0e9 * maxBlockFrames_ / std::max(sampleRate_, 1.0)));
@@ -129,8 +135,12 @@ public:
     ~ClapInstance() override {
         auto& instances = shared_->instances;
         instances.erase(std::remove(instances.begin(), instances.end(), this), instances.end());
-        deactivate();
-        plugin_->destroy(plugin_);
+        try {
+            deactivate();
+        } catch (...) {
+            // A plugin that throws on the way out is unloaded all the same.
+        }
+        destroyPlugin();
     }
 
     PluginCapabilities capabilities() const override { return capabilities_; }
@@ -146,21 +156,35 @@ public:
             return;
         }
         // ProcessingPause holds the other half of this. Skipped, the block passes its
-        // input through. SIANN takes no lock here.
+        // input through, as it does once the instance has failed. SIANN takes no lock
+        // here and throws nothing: the one handler is for what the plugin throws, and
+        // it ends the instance (spec, "siann-host", Hostile test plugin).
         processing_.store(true);
-        if (paused_.load() == 0 && active_) {
+        if (failed_.load()) {
+            passThrough(input, output, frames);
+        } else if (paused_.load() == 0 && active_) {
             const AudioScope scope;
-            if (!started_) {
-                started_ = plugin_->start_processing(plugin_);
-            }
-            if (started_) {
-                // Only blocks that reach the plugin count for the guess: they deliver.
-                lastBlockNanos_.store(nowNanos(), std::memory_order_relaxed);
-                blocksStarted_.fetch_add(1);  // before the block takes any value
-                runPlugin(input, output, events, frames);
-                blocksRun_.fetch_add(1);
-            } else {
-                passThrough(input, output, frames);
+            bool counted = false;
+            try {
+                if (!started_) {
+                    started_ = plugin_->start_processing(plugin_);
+                }
+                if (started_) {
+                    // Only blocks that reach the plugin count for the guess: they deliver.
+                    lastBlockNanos_.store(nowNanos(), std::memory_order_relaxed);
+                    blocksStarted_.fetch_add(1);  // before the block takes any value
+                    counted = true;
+                    runPlugin(input, output, events, frames);
+                    blocksRun_.fetch_add(1);
+                } else {
+                    passThrough(input, output, frames);
+                }
+            } catch (...) {
+                if (counted) {
+                    blocksRun_.fetch_add(1);  // what a getState waits for is over
+                }
+                output.clear();
+                fail();
             }
         } else {
             passThrough(input, output, frames);
@@ -178,21 +202,32 @@ public:
 
     PluginControl& control() override { return *this; }
 
-    // Main thread: what the plugin asked for since the last call.
-    void serviceMainThread() {
-        if (callbackRequested_.exchange(false)) {
-            plugin_->on_main_thread(plugin_);
+    // Main thread: what the plugin asked for since the last call. A plugin that
+    // throws here fails its instance; nothing escapes to the caller.
+    void serviceMainThread() noexcept {
+        if (failed_.load()) {
+            return;
         }
-        // While blocks are coming the next one delivers this; a pause would drop it dry.
-        if (flushRequested_.load() && !blocksComing()) {
-            const ProcessingPause pause(*this);
-            flush();
-        }
-        if (restartRequested_.exchange(false)) {
-            restart();
-        }
-        if (tailStale_.exchange(false)) {
-            readTail();
+        try {
+            if (callbackRequested_.exchange(false)) {
+                plugin_->on_main_thread(plugin_);
+            }
+            // While blocks are coming the next one delivers this; a pause would drop it dry.
+            if (flushRequested_.load() && !blocksComing()) {
+                const ProcessingPause pause(*this);
+                flush();
+            }
+            if (restartRequested_.exchange(false)) {
+                restart();
+            }
+            if (tailStale_.exchange(false)) {
+                readTail();
+            }
+            if (valuesStale_.exchange(false)) {
+                refreshValues();
+            }
+        } catch (...) {
+            fail();
         }
     }
 
@@ -223,20 +258,31 @@ private:
     // [audio-thread] calls and touch what process() owns. Only this side ever waits. A
     // count, not a flag, so a pause inside a pause ends when the outer one does. Both
     // atomics stay sequentially consistent, or each side could miss the other's store.
+    //
+    // A plugin call that throws under the pause leaves the plugin in no known state
+    // (deactivated, half loaded): the instance fails before the pause ends, so no
+    // block reaches the plugin again.
     class ProcessingPause {
     public:
-        explicit ProcessingPause(ClapInstance& instance) : instance_(instance) {
+        explicit ProcessingPause(ClapInstance& instance)
+            : instance_(instance), exceptions_(std::uncaught_exceptions()) {
             instance_.paused_.fetch_add(1);
             while (instance_.processing_.load()) {
                 std::this_thread::yield();
             }
         }
-        ~ProcessingPause() { instance_.paused_.fetch_sub(1); }
+        ~ProcessingPause() {
+            if (std::uncaught_exceptions() > exceptions_) {
+                instance_.fail();
+            }
+            instance_.paused_.fetch_sub(1);
+        }
         ProcessingPause(const ProcessingPause&) = delete;
         ProcessingPause& operator=(const ProcessingPause&) = delete;
 
     private:
         ClapInstance& instance_;
+        int exceptions_;
         AudioScope scope_;
     };
 
@@ -306,11 +352,16 @@ private:
     }
 
     // New infos need nothing here: parameters() always asks. RESCAN_ALL is legal only
-    // deactivated, and restart() rebuilds the table after every deactivation.
+    // deactivated, and restart() rebuilds the table after every deactivation. Values
+    // are read on the main thread once the plugin call in flight has returned (the
+    // next runMainThreadCallbacks, or the end of getState and setState): never on the
+    // caller's thread, which may be the audio thread, and never inside the get_info,
+    // get_value, activate or state.load that calls this.
     static void hostParamsRescan(const clap_host_t* host, clap_param_rescan_flags flags) {
         auto& self = from(host);
         if ((flags & (CLAP_PARAM_RESCAN_VALUES | CLAP_PARAM_RESCAN_ALL)) != 0) {
-            self.refreshValues();
+            self.valuesStale_.store(true);
+            self.shared_->wake();
         }
         PluginEvent event;
         event.kind = PluginEvent::Kind::restartRequested;
@@ -447,7 +498,12 @@ private:
     // Main thread, with nothing processing.
     bool activate() {
         activating_ = true;
-        active_ = plugin_->activate(plugin_, sampleRate_, 1, static_cast<std::uint32_t>(maxBlockFrames_));
+        try {
+            active_ = plugin_->activate(plugin_, sampleRate_, 1, static_cast<std::uint32_t>(maxBlockFrames_));
+        } catch (...) {
+            activating_ = false;
+            throw;
+        }
         activating_ = false;
         return active_;
     }
@@ -626,7 +682,8 @@ private:
         return std::find(outputPointers_.begin(), outputPointers_.end(), channel) != outputPointers_.end();
     }
 
-    void runPlugin(const AudioBufferView& input, const AudioBufferView& output, EventList events, int frames) noexcept {
+    // Throws what the plugin throws; process() catches it.
+    void runPlugin(const AudioBufferView& input, const AudioBufferView& output, EventList events, int frames) {
         const auto stride = static_cast<std::size_t>(maxBlockFrames_);
         const auto bytes = static_cast<std::size_t>(frames) * sizeof(float);
         // Channels of the plugin the view does not have run on scratch.
@@ -709,16 +766,37 @@ private:
             out.insert(out.end(), bytes, bytes + size);
             return static_cast<std::int64_t>(size);
         };
-        deliverPendingValues();
-        // A main-thread call CLAP lets run while the plugin processes: no pause.
-        const bool saved = state_ == nullptr || state_->save(plugin_, &stream);
+        throwIfFailed();
+        try {
+            deliverPendingValues();
+        } catch (...) {
+            fail();  // a flush threw
+            throwFailed();
+        }
+        // A main-thread call CLAP lets run while the plugin processes: no pause. A
+        // plugin that throws here saved nothing, and is otherwise as it was.
+        bool saved = true;
+        try {
+            saved = state_ == nullptr || state_->save(plugin_, &stream);
+        } catch (...) {
+            throw PluginError("bad_state", uid_ + " threw while saving its state");
+        }
         if (!saved) {
             throw PluginError("bad_state", uid_ + " did not save its state");
+        }
+        if (valuesStale_.exchange(false)) {  // a rescan from inside save
+            try {
+                refreshValues();
+            } catch (...) {
+                fail();
+                throwFailed();
+            }
         }
         return wrapPluginState(uid_, payload);
     }
 
     void setState(const std::vector<std::uint8_t>& state) override {
+        throwIfFailed();
         auto payload = unwrapPluginState(state, uid_);
         clap_istream_t stream{};
         stream.ctx = &payload;
@@ -732,18 +810,26 @@ private:
             return static_cast<std::int64_t>(count);
         };
         bool loaded = true;
-        {
-            const ProcessingPause pause(*this);
-            flush();  // no value set before this may land after it
-            if (state_ != nullptr) {
-                loaded = state_->load(plugin_, &stream);
+        try {
+            {
+                const ProcessingPause pause(*this);
+                flush();  // no value set before this may land after it
+                if (state_ != nullptr) {
+                    loaded = state_->load(plugin_, &stream);
+                }
             }
+            if (loaded) {
+                valuesStale_.store(false);  // a rescan from inside load: read here, after it
+                refreshValues();
+                readTail();
+            }
+        } catch (...) {
+            fail();  // half loaded at best: its parameters are unknown
+            throw PluginError("bad_state", uid_ + " threw while loading the state");
         }
         if (!loaded) {
             throw PluginError("bad_state", uid_ + " refused the state");
         }
-        refreshValues();
-        readTail();
     }
 
     std::vector<PluginParameterInfo> parameters() const override {
@@ -773,9 +859,13 @@ private:
     double getParameter(int index) const override { return slotAt(index).value.load(std::memory_order_relaxed); }
 
     // Never pauses: the next block takes it, or runMainThreadCallbacks when none is coming.
+    // A failed instance stores the value, which nothing delivers.
     void setParameter(int index, double value) override {
         auto& slot = slotAt(index);
         slot.value.store(std::clamp(value, 0.0, 1.0), std::memory_order_relaxed);
+        if (failed_.load()) {
+            return;
+        }
         slot.dirty.store(true);
         anyDirty_.store(true);
         flushRequested_.store(true);
@@ -803,6 +893,35 @@ private:
         const EventSink* sink = sink_.load(std::memory_order_acquire);
         if (sink != nullptr && *sink) {
             (*sink)(event);
+        }
+    }
+
+    // --- failure
+
+    // Any thread, the audio thread included: atomics and the sink. Reports once.
+    void fail() noexcept {
+        if (!failed_.exchange(true)) {
+            PluginEvent event;
+            event.kind = PluginEvent::Kind::failed;
+            emit(event);
+        }
+    }
+
+    [[noreturn]] void throwFailed() const {
+        throw PluginError("plugin_failed", uid_ + " threw: the instance must be replaced");
+    }
+
+    void throwIfFailed() const {
+        if (failed_.load()) {
+            throwFailed();
+        }
+    }
+
+    void destroyPlugin() noexcept {
+        try {
+            plugin_->destroy(plugin_);
+        } catch (...) {
+            // Nothing is left to fail.
         }
     }
 
@@ -849,6 +968,8 @@ private:
     std::atomic<bool> restartRequested_{false};
     std::atomic<bool> flushRequested_{false};
     std::atomic<bool> tailStale_{false};
+    std::atomic<bool> valuesStale_{false};  // a rescan asked for the values to be read again
+    std::atomic<bool> failed_{false};       // the plugin threw: passes through until replaced
     std::atomic<std::int64_t> lastBlockNanos_{0};
     std::atomic<int> blocksComingSaid_{-1};        // -1 until the driver says, then 0 or 1
     std::atomic<std::uint64_t> processCalls_{0};   // every process() call, counted after
