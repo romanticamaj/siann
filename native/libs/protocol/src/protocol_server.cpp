@@ -36,6 +36,7 @@ namespace siann::protocol {
 namespace {
 
 using json::Array;
+using json::decimal;
 using json::Object;
 using json::Value;
 
@@ -317,12 +318,8 @@ std::vector<command::Command> commandList(const Value& params, std::string_view 
     return commands;
 }
 
-Value decimal(std::uint64_t count) {
-    return Value(std::to_string(count));
-}
-
 Value transportStateJson(const TransportState& state) {
-    return Value(Object{{"playing", Value(state.playing)}, {"position", Value(std::to_string(state.position))}});
+    return Value(Object{{"playing", Value(state.playing)}, {"position", decimal(state.position)}});
 }
 
 Value deviceJson(const std::optional<DeviceInfo>& device) {

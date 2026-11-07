@@ -5,6 +5,7 @@
 // General-purpose, non-hashed JSON I/O uses nlohmann/json instead.
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -71,5 +72,13 @@ struct ParseOptions {
 };
 
 Value parse(std::string_view text, const ParseOptions& options = {});
+
+// A position or a counter as a decimal string: a JSON number holds 2^53.
+inline Value decimal(std::int64_t value) {
+    return Value(std::to_string(value));
+}
+inline Value decimal(std::uint64_t value) {
+    return Value(std::to_string(value));
+}
 
 }  // namespace siann::json

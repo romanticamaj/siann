@@ -42,6 +42,7 @@ namespace siann::cli::detail {
 
 namespace fs = std::filesystem;
 using json::Array;
+using json::decimal;
 using json::Object;
 using json::Value;
 
@@ -54,14 +55,6 @@ constexpr const char* kFakeDevice = "fake";
 
 Value number(std::int64_t value) {
     return Value(static_cast<double>(value));
-}
-
-Value decimal(std::int64_t value) {
-    return Value(std::to_string(value));
-}
-
-Value decimal(std::uint64_t value) {
-    return Value(std::to_string(value));
 }
 
 #if !defined(SIANN_CLI_WITH_JUCE)
