@@ -19,6 +19,16 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include "hosting_checks.hpp"
 
 #if defined(_WIN32)
@@ -273,6 +283,13 @@ TEST_CASE("plugin host: a descriptor that only names a path instantiates", "[juc
 }
 
 TEST_CASE("plugin host: a file that holds no plugin does not load", "[juce][plugin]") {
+#if defined(_WIN32)
+    // Windows answers a bad image with a modal error box nobody can click in a
+    // headless engine. Git Bash and MSYS hand their children a mode that hides the
+    // box, so a shell run proves nothing: start from the default, as the shell's
+    // spawn of the engine does.
+    SetErrorMode(0);
+#endif
     host::MainThreadLoop loop;
     host::JucePluginHost host;
     const auto path = std::filesystem::temp_directory_path() / "siann-not-a-plugin.vst3";

@@ -492,7 +492,7 @@ struct JucePluginHost::Impl {
     }
 };
 
-JucePluginHost::JucePluginHost() : impl_(std::make_unique<Impl>()) {}
+JucePluginHost::JucePluginHost() : impl_(std::make_unique<Impl>()) { editor_platform::failLoadsWithoutDialogs(); }
 JucePluginHost::~JucePluginHost() = default;
 
 std::vector<PluginDescriptor> JucePluginHost::scan() {

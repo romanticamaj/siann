@@ -21,4 +21,8 @@ void applyOwner(std::uintptr_t window, std::uintptr_t owner) {
     }
 }
 
+void failLoadsWithoutDialogs() {
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+}
+
 }  // namespace siann::host::editor_platform

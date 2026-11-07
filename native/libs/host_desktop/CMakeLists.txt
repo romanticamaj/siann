@@ -21,6 +21,10 @@ target_link_libraries(siann_host_desktop
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_recommended_config_flags)
+if(APPLE)
+  # JUCE's AU host uses AUGenericView; a static library's consumers must link it.
+  target_link_libraries(siann_host_desktop PUBLIC "-framework CoreAudioKit")
+endif()
 target_compile_features(siann_host_desktop PUBLIC cxx_std_20)
 # JUCE_MODAL_LOOPS_PERMITTED=1: MessageManager::runDispatchLoopUntil, which
 # MainThreadLoop pumps, exists only with it on.
@@ -66,5 +70,6 @@ if(SIANN_BUILD_TESTS)
     target_compile_definitions(siann_host_desktop_tests PRIVATE
       SIANN_TEST_PLUGIN_AU="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_AU,JUCE_PLUGIN_ARTEFACT_FILE>>")
   endif()
-  catch_discover_tests(siann_host_desktop_tests)
+  # A hang fails the test instead of holding the job until the runner gives up.
+  catch_discover_tests(siann_host_desktop_tests PROPERTIES TIMEOUT 120)
 endif()
