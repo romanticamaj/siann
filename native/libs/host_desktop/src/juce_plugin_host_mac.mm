@@ -11,7 +11,8 @@ int openEditors = 0;  // main thread only
 }  // namespace
 
 void startInBackground() {
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    // NSApp is nil until something creates it: only JUCEApplication's own start does.
+    [[NSApplication sharedApplication] setActivationPolicy:NSApplicationActivationPolicyAccessory];
 }
 
 void editorOpened() {
