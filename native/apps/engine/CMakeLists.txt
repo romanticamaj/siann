@@ -4,7 +4,8 @@
 # devices, runs the message loop and can host a plugin editor.
 add_library(siann_engine_app src/engine.cpp src/engine_host.cpp)
 target_include_directories(siann_engine_app PUBLIC include)
-target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol siann::playback siann::host_fake)
+target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol siann::playback siann::host_fake
+  siann_host_clap)
 if(SIANN_WITH_JUCE)
   target_sources(siann_engine_app PRIVATE src/main_thread_desktop.cpp src/device_desktop.cpp)
   target_link_libraries(siann_engine_app PUBLIC siann::host_desktop)

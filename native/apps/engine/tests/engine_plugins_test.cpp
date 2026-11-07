@@ -153,7 +153,8 @@ TEST_CASE("a plugin that is not there fails the job and a missing slot shows as 
         "stateBlob":"sha256:)" + std::string(64, 'c') + R"("})");
     rig.host->auditionPort()->mainCommitted();
     rig.pump(4);
-    const Value* entry = rig.plugin(rig.ok("engine.status"), "slt_gone");
+    const Value status = rig.ok("engine.status");
+    const Value* entry = rig.plugin(status, "slt_gone");
     REQUIRE(entry != nullptr);
     CHECK(at(*entry, "state").asString() == "missing");
     CHECK(at(at(*entry, "error"), "code").asString() == "plugin_not_found");

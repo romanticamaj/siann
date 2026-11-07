@@ -5,17 +5,61 @@
 #include <utility>
 
 #include "siann/engine/offline.hpp"
+#include "siann/host/clap_plugin_host.hpp"
+#include "siann/host/plugin_error.hpp"
+#include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
+#include "siann/playback/plugin_instances.hpp"
+#if defined(SIANN_ENGINE_WITH_JUCE)
+#include "siann/host/juce_plugin_host.hpp"
+#endif
 
 namespace siann::engine_app {
+
+// The engine's plugin hosts: CLAP in every build, JUCE's formats with JUCE.
+struct PluginHostSet {
+    host::ClapPluginHost clap;
+#if defined(SIANN_ENGINE_WITH_JUCE)
+    host::JucePluginHost juce;
+#endif
+
+    playback::PluginHosts byFormat() {
+        playback::PluginHosts hosts{{"clap", &clap}};
+#if defined(SIANN_ENGINE_WITH_JUCE)
+        hosts.emplace("vst3", &juce);
+#if defined(__APPLE__)
+        hosts.emplace("au", &juce);
+#endif
+#endif
+        return hosts;
+    }
+};
 
 namespace {
 
 constexpr int kOutputChannels = 2;
+// render.start renders in blocks of 512 (Jobs v0).
+constexpr int kRenderBlockFrames = 512;
 
-playback::PlaybackOptions withoutAutoPlay(playback::PlaybackOptions options) {
+playback::PlaybackOptions withoutAutoPlay(playback::PlaybackOptions options, PluginHostSet& hosts) {
     options.playOnStart = false;
+    options.pluginHosts = hosts.byFormat();
     return options;
+}
+
+protocol::PluginCapabilityFlags flagsOf(const host::PluginCapabilities& capabilities) {
+    protocol::PluginCapabilityFlags flags;
+    flags.sampleAccurateParameters = capabilities.sampleAccurateParameters;
+    flags.midiInput = capabilities.midiInput;
+    flags.midiOutput = capabilities.midiOutput;
+    flags.sidechain = capabilities.sidechain;
+    flags.variableLatency = capabilities.variableLatency;
+    flags.editor = capabilities.editor;
+    return flags;
+}
+
+protocol::PluginEditorState editorState(const std::string& slotId, host::PluginInstance& instance) {
+    return {slotId, instance.control().editorOpen(), static_cast<std::uint64_t>(instance.control().editorNativeHandle())};
 }
 
 // Why a graph could not be built, or nothing when `build` went through. Whatever one
@@ -37,13 +81,16 @@ std::optional<protocol::DeviceProblem> graphProblem(Build build) {
 }  // namespace
 
 EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
-    : device_(std::move(options.device)),
+    : pluginHosts_(std::make_unique<PluginHostSet>()),
+      ownerWindow_(options.ownerWindow),
+      session_(session),
+      device_(std::move(options.device)),
       deviceId_(std::move(options.deviceId)),
       diagnostic_(std::move(options.diagnostic)),
       bufferFrames_(options.bufferFrames),
       backoff_(options.backoff),
       clock_(std::move(options.clock)),
-      engine_(session, withoutAutoPlay(std::move(options.playback))) {
+      engine_(session, withoutAutoPlay(std::move(options.playback), *pluginHosts_)) {
     if (auto problem = graphProblem([this] { engine_.load(); })) {
         say("cannot load the session (" + problem->code + "): " + problem->message);
         problem_ = std::move(problem);
@@ -149,6 +196,9 @@ void EngineHost::attachPublisher(protocol::RealtimeChannel& channel, protocol::E
 }
 
 void EngineHost::tick() {
+    // CLAP's main-thread callbacks (restarts, flushes) first, so the engine's tick
+    // drains what they reported.
+    pluginHosts_->clap.runMainThreadCallbacks();
     if (!loaded_) {
         return;
     }
@@ -180,6 +230,150 @@ void EngineHost::shutdown() {
     if (device_) {
         device_->close();
     }
+}
+
+// ---- PluginPort ----------------------------------------------------------------
+
+protocol::PluginInstantiateResult EngineHost::instantiate(const protocol::PluginInstantiateRequest& request) {
+    const playback::PluginHosts hosts = pluginHosts_->byFormat();
+    const auto found = hosts.find(request.descriptor.format);
+    if (found == hosts.end()) {
+        throw protocol::PluginPortError("no_plugin_host",
+                                        "this engine hosts no " + request.descriptor.format + " plugins");
+    }
+    host::PluginHost& pluginHost = *found->second;
+    const std::int64_t sampleRate = session_.history().head().document.root().sampleRate;
+    const int maxBlock = std::max(engine_.options().maxBlockFrames, kRenderBlockFrames);
+    protocol::PluginInstantiateResult result;
+    std::unique_ptr<host::PluginInstance> instance;
+    try {
+        host::PluginDescriptor descriptor;
+        descriptor.format = request.descriptor.format;
+        descriptor.uid = request.descriptor.uid;
+        descriptor.name = request.descriptor.name;
+        descriptor.path = request.descriptor.path;
+        if (!descriptor.path.empty()) {
+            // The probe names the plugin: its uid goes into the document.
+            const auto probed = pluginHost.scanPath(descriptor.path);
+            const auto match = std::find_if(probed.begin(), probed.end(), [&](const host::PluginDescriptor& one) {
+                return descriptor.uid.empty() || one.uid == descriptor.uid;
+            });
+            if (match == probed.end()) {
+                throw host::PluginError("plugin_not_found", "no plugin " + descriptor.uid + " in " + descriptor.path);
+            }
+            descriptor = *match;
+        }
+        instance = pluginHost.instantiate(descriptor, sampleRate, maxBlock);
+        result.descriptor = {descriptor.format, descriptor.uid, descriptor.name, descriptor.path};
+        if (request.stateBlob) {
+            const auto file = playback::blobPath(session_.bundlePath(), *request.stateBlob);
+            std::error_code ec;
+            if (std::filesystem::exists(file, ec)) {  // otherwise the default state, as a compile does
+                const std::string bytes = io::readFile(file);
+                instance->control().setState(std::vector<std::uint8_t>(bytes.begin(), bytes.end()));
+            }
+        } else {
+            result.state = instance->control().getState();
+        }
+    } catch (const host::PluginError& error) {
+        throw protocol::PluginPortError(error.code(), error.what());
+    }
+    result.latencyFrames = instance->latencyFrames();
+    result.tailFrames = instance->tailFrames();
+    result.capabilities = flagsOf(instance->capabilities());
+    pendingInstances_[request.slotId] = std::move(instance);
+    return result;
+}
+
+void EngineHost::settle(const model::PluginSlot& slot, bool inserted) {
+    auto found = pendingInstances_.find(slot.id);
+    if (found == pendingInstances_.end()) {
+        return;
+    }
+    std::unique_ptr<host::PluginInstance> instance = std::move(found->second);
+    pendingInstances_.erase(found);
+    if (inserted) {
+        engine_.plugins().adopt(slot, std::move(instance));  // the next compile reuses it
+    }
+}
+
+host::PluginInstance& EngineHost::requireInstance(const std::string& slotId) const {
+    const model::Document* heard = engine_.heardDocument();
+    const bool known = session_.history().head().document.pluginSlot(slotId) != nullptr ||
+                       (heard != nullptr && heard->pluginSlot(slotId) != nullptr);
+    if (!known) {
+        throw protocol::PluginPortError("not_found", "no plugin slot " + slotId);
+    }
+    host::PluginInstance* instance = engine_.plugins().instance(slotId);
+    if (instance == nullptr) {
+        throw protocol::PluginPortError("plugin_missing", "the plugin of slot " + slotId + " did not load");
+    }
+    return *instance;
+}
+
+protocol::PluginEditorState EngineHost::openEditor(const std::string& slotId) {
+    host::PluginInstance& instance = requireInstance(slotId);
+    try {
+        instance.control().openEditor(host::EditorOwner{ownerWindow_});
+    } catch (const host::PluginError& error) {
+        throw protocol::PluginPortError(error.code(), error.what());
+    }
+    return editorState(slotId, instance);
+}
+
+protocol::PluginEditorState EngineHost::closeEditor(const std::string& slotId) {
+    host::PluginInstance& instance = requireInstance(slotId);
+    instance.control().closeEditor();
+    return editorState(slotId, instance);
+}
+
+std::vector<protocol::PluginStatus> EngineHost::plugins() const {
+    std::vector<protocol::PluginStatus> out;
+    const model::Document* heard = engine_.heardDocument();
+    if (heard == nullptr) {
+        return out;
+    }
+    for (const playback::PluginInstanceStatus& one : engine_.plugins().status(*heard)) {
+        protocol::PluginStatus status;
+        status.slotId = one.slotId;
+        status.trackId = one.trackId;
+        status.format = one.format;
+        status.uid = one.uid;
+        status.running = one.running;
+        if (one.error) {
+            status.error = std::make_pair(one.error->code, one.error->message);
+        }
+        if (one.running) {
+            status.capabilities = flagsOf(*one.capabilities);
+            status.latencyFrames = one.latencyFrames;
+            status.tailFrames = one.tailFrames;
+            status.callbacks = one.callbacks;
+            status.xruns = one.xruns;
+            status.maxCallbackMicros = static_cast<double>(one.maxCallbackNanos) / 1'000.0;
+            status.unmeasuredCallbacks = one.unmeasuredCallbacks;
+            status.midiOutputOverflows = one.midiOutputOverflows;
+        }
+        out.push_back(std::move(status));
+    }
+    return out;
+}
+
+std::vector<std::string> EngineHost::formats() const {
+    std::vector<std::string> out;
+    for (const auto& [format, pluginHost] : pluginHosts_->byFormat()) {
+        (void)pluginHost;
+        out.push_back(format);
+    }
+    return out;
+}
+
+std::shared_ptr<engine::PluginNodeSource> EngineHost::instantiateForRender(const model::Document& document) {
+    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(), session_.bundlePath(),
+                                                         kRenderBlockFrames);
+}
+
+void EngineHost::destroyRenderInstances(std::shared_ptr<engine::PluginNodeSource> instances) {
+    instances.reset();  // here, on the command thread
 }
 
 void EngineHost::requireDevice() const {

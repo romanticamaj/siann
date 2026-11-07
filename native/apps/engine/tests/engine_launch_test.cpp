@@ -756,7 +756,7 @@ TEST_CASE("every build accepts --owner-window, used or not", "[engine][launch]")
 
 // m4-plugin-node: editors open through the protocol (Protocol v0 item 19).
 Value trackAddCommand(const std::string& trackId) {
-    return Value(Object{{"commands", Value(Array{Value(Object{{"op", Value("track.add")},
+    return Value(Object{{"commands", Value(json::Array{Value(Object{{"op", Value("track.add")},
                                                               {"trackId", Value(trackId)},
                                                               {"name", Value(trackId)},
                                                               {"channels", Value(2)}})})}});
@@ -768,7 +768,7 @@ Value instantiateParams(const std::string& format, const std::string& path) {
                         {"descriptor", Value(Object{{"format", Value(format)}, {"path", Value(path)}})}});
 }
 
-TEST_CASE("--open-editor is a usage error now", "[engine][launch]") {
+TEST_CASE("the --open-editor flag is a usage error now", "[engine][launch]") {
     TempDir dir;
     PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"),
                                                   {"--open-editor", utf8(dir.path() / "missing.vst3")}));
