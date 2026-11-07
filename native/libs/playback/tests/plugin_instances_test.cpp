@@ -212,6 +212,72 @@ TEST_CASE("plugin table: a removed slot's instance goes once its graph retired",
     CHECK(live.engine.plugins().size() == 0);
 }
 
+TEST_CASE("plugin table: a reused slot id with another state loads it while the old graph pins the id",
+          "[playback][plugin]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    const std::string quiet = writeBlob(host, f.bundle(), 0.25);
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    Live live(f.session, pluginOptions(host));
+    PluginInstanceTable& table = live.engine.plugins();
+    pump(live, host, 4);
+    host::PluginInstance* old = table.instance("slt_1");
+    REQUIRE(old != nullptr);
+    CHECK(old->control().getParameter(parameterIndex(*old, "gain")) == Approx(1.0));
+
+    // The same id comes back with another state in one update: the playing
+    // graph still pins slt_1 when the next one is compiled.
+    f.exec(R"({"op":"plugin.remove","slotId":"slt_1"})");
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP, "\"" + quiet + "\""));
+    live.engine.update(f.doc());
+    live.engine.tick();
+    host::PluginInstance* reloaded = table.instance("slt_1");
+    REQUIRE(reloaded != nullptr);
+    CHECK(reloaded != old);
+    CHECK(reloaded->control().getParameter(parameterIndex(*reloaded, "gain")) == Approx(0.25));
+    CHECK(table.status("slt_1")->callbacks == 0);  // a new entry, its own counters
+    pump(live, host, 8);
+    CHECK(table.instance("slt_1") == reloaded);
+    CHECK(table.status("slt_1")->callbacks > 0);
+    CHECK(table.pins("slt_1") == 1);
+    CHECK(table.size() == 1);
+    // What plays is the new state.
+    CHECK(matches(live, offline(f.doc(), f.bundle(), framesOf(live)), live.blockCount() - 4, live.blockCount()));
+}
+
+TEST_CASE("plugin table: an instance adopted under a pinned slot id replaces the old one", "[playback][plugin]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    Live live(f.session, pluginOptions(host));
+    PluginInstanceTable& table = live.engine.plugins();
+    pump(live, host, 4);
+    host::PluginInstance* old = table.instance("slt_1");
+    REQUIRE(old != nullptr);
+    f.exec(R"({"op":"plugin.remove","slotId":"slt_1"})");
+    live.engine.update(f.doc());
+    live.engine.tick();  // the graph without slt_1 is out; the old one still pins it
+
+    // plugin.instantiate loaded another plugin for the same id.
+    host::PluginDescriptor descriptor;
+    descriptor.format = "clap";
+    descriptor.uid = "org.siann.test-plugin";
+    descriptor.path = SIANN_TEST_PLUGIN_CLAP;
+    auto fresh = host.instantiate(descriptor, 48'000, kBlock);
+    fresh->control().setParameter(parameterIndex(*fresh, "gain"), 0.5);
+    host.runMainThreadCallbacks();
+    host::PluginInstance* adopted = fresh.get();
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    table.adopt(*f.doc().pluginSlot("slt_1"), std::move(fresh));
+    REQUIRE(table.instance("slt_1") == adopted);
+    live.engine.update(f.doc());
+    pump(live, host, 8);
+    REQUIRE(table.instance("slt_1") == adopted);
+    CHECK(adopted->control().getParameter(parameterIndex(*adopted, "gain")) == Approx(0.5));
+    CHECK(table.status("slt_1")->callbacks > 0);
+    CHECK(table.size() == 1);
+}
+
 TEST_CASE("plugin table: a restart to a new latency recompiles and PDC still lines up", "[playback][plugin][pdc]") {
     Fixture f;
     host::ClapPluginHost host;

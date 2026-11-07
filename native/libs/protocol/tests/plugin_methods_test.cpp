@@ -188,6 +188,26 @@ TEST_CASE("plugin.instantiate writes the blob, commits plugin.insert and answers
     CHECK(f.head().document.track("trk_1")->inserts == std::vector<std::string>{"slt_2", slotId});
 }
 
+TEST_CASE("plugin.instantiate never hands out a slot id the history has used", "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_1")});
+
+    const Value first = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(first, "result"), "slotId").asString() == "slt_1");
+    // Removed: slt_1 is free in the head document but not new.
+    f.commit(c, Array{Value(Object{{"op", Value("plugin.remove")}, {"slotId", Value("slt_1")}})});
+    REQUIRE(f.head().document.pluginSlot("slt_1") == nullptr);
+    const Value second = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(second, "result"), "slotId").asString() == "slt_2");
+    // Undone: slt_2 leaves the head document and stays used.
+    f.ok(c, "session.undo");
+    REQUIRE(f.head().document.pluginSlot("slt_2") == nullptr);
+    const Value third = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(third, "result"), "slotId").asString() == "slt_3");
+}
+
 TEST_CASE("plugin.instantiate uses a blob it was given and honours idempotency and expectedRevision",
           "[protocol][plugin]") {
     FakePluginPort port;
