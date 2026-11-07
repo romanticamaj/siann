@@ -11,8 +11,9 @@
 //
 // A device that cannot run never ends the engine (Process model, device policy):
 // the host says why once through `diagnostic`, serves, reports the reason in
-// status(), and the transport methods answer no_device. A session whose media
-// cannot be loaded is served the same way, with no graph at all.
+// status(), and the transport methods answer no_device, and tick() opens the device
+// again under `backoff`. A session whose media cannot be loaded, for whatever reason,
+// is served the same way, with no graph at all and no retry.
 
 #include <chrono>
 #include <cstdint>
@@ -75,7 +76,7 @@ public:
     // outlive every later tick().
     void attachPublisher(protocol::RealtimeChannel& channel, protocol::EventStream& events);
 
-    // The engine's tick, device loss, then the publisher.
+    // The engine's tick, device loss and a reopen that is due, then the publisher.
     void tick();
 
     // Stops the device and the butler. Once the protocol server has stopped;
@@ -91,7 +92,10 @@ public:
     playback::PlaybackEngine& playback() noexcept { return engine_; }
 
 private:
-    void startDevice(int bufferFrames);
+    std::chrono::steady_clock::time_point now() const;
+    void startDevice();
+    void scheduleReopen();
+    void reopenDevice();
     void say(const std::string& line) const;
     void report(protocol::DeviceProblem problem);
     void requireDevice() const;
@@ -101,6 +105,12 @@ private:
     std::string deviceId_;
     std::function<void(const std::string&)> diagnostic_;
     std::optional<protocol::DeviceProblem> problem_;
+    int bufferFrames_ = 0;
+    DeviceBackoff backoff_;
+    std::function<std::chrono::steady_clock::time_point()> clock_;
+    int reopenFailures_ = 0;
+    std::optional<std::chrono::steady_clock::time_point> reopenAt_;
+    std::optional<std::chrono::steady_clock::time_point> startedAt_;
     bool running_ = false;
     bool loaded_ = false;
     playback::PlaybackEngine engine_;

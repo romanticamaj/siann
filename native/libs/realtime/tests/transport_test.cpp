@@ -434,9 +434,10 @@ TEST_CASE("underruns can be read while the butler thread adds and removes stream
     Butler butler(Butler::Options{1'024, 512, std::chrono::microseconds(1)});
     butler.start();
     std::atomic<bool> done{false};
-    std::thread reader([&butler, &done] {
+    std::atomic<std::uint64_t> seen{0};
+    std::thread reader([&butler, &done, &seen] {
         while (!done.load(std::memory_order_acquire)) {
-            CHECK(butler.underruns() == 0);
+            seen.fetch_add(butler.underruns(), std::memory_order_relaxed);
         }
     });
     for (int round = 0; round < 40; ++round) {
@@ -462,4 +463,5 @@ TEST_CASE("underruns can be read while the butler thread adds and removes stream
     done.store(true, std::memory_order_release);
     reader.join();
     butler.stop();
+    CHECK(seen.load() == 0);  // nothing plays these streams
 }

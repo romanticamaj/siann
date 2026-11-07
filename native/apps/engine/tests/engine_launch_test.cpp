@@ -739,24 +739,9 @@ TEST_CASE("a corrupt media file does not fail the launch", "[engine][transport]"
         io::writeFileAtomic(file, whole.substr(0, 20));
         served("decode_failed");
     }
-    SECTION("cut off inside the audio: what is there plays") {
+    SECTION("cut off inside the audio") {
         io::writeFileAtomic(file, whole.substr(0, whole.size() / 2));
-        PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
-        const Value ready = readyLine(child);
-        {
-            EngineClient client(ready);
-            const Value status = client.ok("engine.status");
-            if (at(status, "device").kind() == Value::Kind::object) {
-                client.ok("transport.play");
-                client.waitAdvancing();
-                // Past the end of what the file holds.
-                client.ok("transport.locate", Value(Object{{"frames", Value("400000")}}));
-                client.waitAdvancing();
-            } else {
-                CHECK(at(at(status, "deviceError"), "code").asString() == "media_mismatch");
-            }
-        }
-        CHECK(stopEngine(child) == 0);
+        served("media_mismatch");  // the reader sees fewer frames than the entity says
     }
 }
 

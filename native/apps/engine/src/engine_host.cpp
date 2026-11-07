@@ -1,9 +1,11 @@
 #include "siann/engine_app/engine_host.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <utility>
 
 #include "siann/engine/offline.hpp"
+#include "siann/media/audio.hpp"
 
 namespace siann::engine_app {
 
@@ -16,25 +18,42 @@ playback::PlaybackOptions withoutAutoPlay(playback::PlaybackOptions options) {
     return options;
 }
 
+// Why a graph could not be built, or nothing when `build` went through. Whatever one
+// media file can do to a compile, the engine serves on (Process model, device policy).
+template <class Build>
+std::optional<protocol::DeviceProblem> graphProblem(Build build) {
+    try {
+        build();
+    } catch (const engine::EngineError& error) {
+        return protocol::DeviceProblem{error.code(), error.what()};
+    } catch (const media::MediaError& error) {
+        return protocol::DeviceProblem{error.code(), error.what()};
+    } catch (const std::exception& error) {
+        return protocol::DeviceProblem{"load_failed", error.what()};
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
     : device_(std::move(options.device)),
       deviceId_(std::move(options.deviceId)),
       diagnostic_(std::move(options.diagnostic)),
+      bufferFrames_(options.bufferFrames),
+      backoff_(options.backoff),
+      clock_(std::move(options.clock)),
       engine_(session, withoutAutoPlay(std::move(options.playback))) {
-    try {
-        engine_.load();
-    } catch (const engine::EngineError& error) {
-        say("cannot load the session (" + error.code() + "): " + error.what());
-        problem_ = protocol::DeviceProblem{error.code(), error.what()};
+    if (auto problem = graphProblem([this] { engine_.load(); })) {
+        say("cannot load the session (" + problem->code + "): " + problem->message);
+        problem_ = std::move(problem);
         return;
     }
     loaded_ = true;
     auditioner_.emplace(engine_, session);
     audition_.emplace(*auditioner_);
     if (device_) {
-        startDevice(options.bufferFrames);
+        startDevice();
     } else {
         report(options.deviceError.value_or(protocol::DeviceProblem{"no_device", "no audio device was given"}));
     }
@@ -49,20 +68,54 @@ EngineHost::~EngineHost() {
     shutdown();
 }
 
-void EngineHost::startDevice(int bufferFrames) {
+std::chrono::steady_clock::time_point EngineHost::now() const {
+    return clock_ ? clock_() : std::chrono::steady_clock::now();
+}
+
+void EngineHost::startDevice() {
     host::AudioDeviceConfig config;
     config.deviceId = deviceId_;
-    config.bufferFrames = bufferFrames;
+    config.bufferFrames = bufferFrames_;
     config.outputChannels = kOutputChannels;
     try {
+        device_->close();                 // a no-op unless a run or a failed start left it open
         engine_.start(*device_, config);  // asks the device for the session rate
         running_ = true;
+        startedAt_ = now();
+        reopenAt_.reset();
     } catch (const host::DeviceError& error) {
         engine_.driver().stop();
         report({error.code(), error.what()});
+        scheduleReopen();
     } catch (const std::exception& error) {
         engine_.driver().stop();
         report({"device_open_failed", error.what()});
+        scheduleReopen();
+    }
+}
+
+// As the shell schedules a restart: double up to the maximum, and start over after a
+// run of resetAfter. The shift stops growing long before the maximum can overflow it.
+void EngineHost::scheduleReopen() {
+    constexpr int kMaxDoublings = 20;
+    const auto at = now();
+    if (startedAt_ && at - *startedAt_ >= backoff_.resetAfter) {
+        reopenFailures_ = 0;
+    }
+    startedAt_.reset();
+    using Rep = std::chrono::milliseconds::rep;
+    const std::chrono::milliseconds doubled = backoff_.initial * (Rep{1} << reopenFailures_);
+    const std::chrono::milliseconds delay = std::min(doubled, backoff_.max);
+    reopenFailures_ = std::min(reopenFailures_ + 1, kMaxDoublings);
+    reopenAt_ = at + delay;
+}
+
+void EngineHost::reopenDevice() {
+    reopenAt_.reset();
+    startDevice();
+    if (running_) {
+        problem_.reset();
+        say("audio device running again");
     }
 }
 
@@ -73,7 +126,9 @@ void EngineHost::say(const std::string& line) const {
 }
 
 void EngineHost::report(protocol::DeviceProblem problem) {
-    say("no audio device (" + problem.code + "): " + problem.message);
+    if (!problem_ || problem_->code != problem.code || problem_->message != problem.message) {
+        say("no audio device (" + problem.code + "): " + problem.message);
+    }
     problem_ = std::move(problem);
 }
 
@@ -97,16 +152,18 @@ void EngineHost::tick() {
     if (!loaded_) {
         return;
     }
-    try {
-        engine_.tick();
-    } catch (const engine::EngineError& error) {
-        // A document whose media is not there: the graph that plays stays live.
-        say("cannot compile the session (" + error.code() + "): " + error.what());
+    if (const auto problem = graphProblem([this] { engine_.tick(); })) {
+        // A document whose media cannot be read: the graph that plays stays live.
+        say("cannot compile the session (" + problem->code + "): " + problem->message);
     }
     if (running_ && engine_.driver().state() != realtime::DriverState::realtime) {
         running_ = false;
         engine_.transport().stop();
         report({"device_lost", "the audio device stopped"});
+        scheduleReopen();
+    }
+    if (reopenAt_ && now() >= *reopenAt_) {
+        reopenDevice();
     }
     if (publisher_) {
         if (publisher_->epoch() != engine_.driver().liveEpoch()) {
@@ -118,6 +175,7 @@ void EngineHost::tick() {
 
 void EngineHost::shutdown() {
     running_ = false;
+    reopenAt_.reset();
     engine_.stop();
     if (device_) {
         device_->close();
@@ -150,8 +208,8 @@ protocol::TransportState EngineHost::locate(std::int64_t frames) {
 }
 
 protocol::TransportState EngineHost::transportState() const {
-    const realtime::Transport::Status status = engine_.transport().status();
-    return {status.playing, status.position};
+    const realtime::Transport& transport = engine_.transport();
+    return {transport.playing(), transport.position()};
 }
 
 protocol::EngineStatus EngineHost::status() const {
