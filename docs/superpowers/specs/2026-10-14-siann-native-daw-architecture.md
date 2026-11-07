@@ -760,9 +760,12 @@ records who that is:
     output has a decision (taken 2026-11-08 by Fable, delegated by the maintainer,
     under the gate that proves MIDI output on `siann_test_plugin`): the first
     option. `JucePluginInstance` preallocates its `juce::MidiBuffer` for the 2048
-    events Steinberg's limit allows (`ensureSize` for 2048 events of 7 bytes) and
-    counts, per instance, the blocks whose output exceeded that
-    (`midiOutputOverflows`, an atomic, in `engine.status`), accepting JUCE's
+    events Steinberg's limit allows (`ensureSize` for 2048 events of 9 bytes: a
+    32-bit position, a 16-bit size and a three-byte message) and counts, per
+    instance, the blocks whose output exceeded that (`midiOutputOverflows`, an
+    atomic, in `engine.status`; JUCE's VST3 wrapper stops a JUCE-built plugin's
+    output at 2048, so the adapter counts a block that reached 2048, where the
+    events past it were lost, m4-plugin-node), accepting JUCE's
     `Array` growth as plugin-caused; `ClapPluginHost`'s output event list is
     host-owned and bounded, its `try_push` refuses past capacity and the refusal
     is counted the same way. Until MIDI tracks exist (M6b) the node drops the
