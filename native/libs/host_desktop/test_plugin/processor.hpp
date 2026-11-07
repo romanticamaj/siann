@@ -34,6 +34,9 @@
 //   host that reads it from elsewhere gets a number it can be caught with.
 // - "home:<directory>": the name says which directory holds the bundle this code
 //   was loaded from, which tells two installs of the plugin apart.
+// - "midiFlood": with it on, every processBlock adds 3000 note-ons to its MIDI
+//   output, more than Steinberg's 2048 a block (JUCE's VST3 wrapper passes 2048 on).
+//   The plugin produces MIDI for this probe only.
 //
 // State blob: magic "SIANNTP1", version u32, gain f32, latency u8, tail u8, little
 // endian.
@@ -72,7 +75,7 @@ public:
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     double getTailLengthSeconds() const override;
     bool acceptsMidi() const override { return false; }
-    bool producesMidi() const override { return false; }
+    bool producesMidi() const override { return true; }
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -109,6 +112,7 @@ private:
     juce::AudioParameterBool* restored_;
     juce::AudioParameterBool* holdProcessBlock_;
     juce::AudioParameterBool* tail_;
+    juce::AudioParameterBool* midiFlood_;
     Vst3Restarter restarter_;
     std::thread::id homeThread_ = std::this_thread::get_id();
     std::atomic<bool> nudgePending_{false};

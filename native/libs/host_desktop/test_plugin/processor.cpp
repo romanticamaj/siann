@@ -57,6 +57,8 @@ Processor::Processor()
     addParameter(holdProcessBlock_);
     addParameter(tail_);
     addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
+    midiFlood_ = new juce::AudioParameterBool(juce::ParameterID{"midiFlood", 1}, "midiFlood", false);
+    addParameter(midiFlood_);
     latency_->addListener(this);
     nudgeGain_->addListener(this);
     requestRestart_->addListener(this);
@@ -157,7 +159,7 @@ bool Processor::isBusesLayoutSupported(const BusesLayout& layouts) const {
            layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 }
 
-void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
+void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     inProcessBlock_.store(true);
     const int delay = delayFrames_.load(std::memory_order_acquire);
     if (delay != activeDelay_) {
@@ -182,6 +184,13 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
         }
     }
     writeIndex_ = (writeIndex_ + frames) & mask;
+    midi.clear();
+    if (midiFlood_->get()) {
+        // More than the host takes: the plugin's own allocation, on purpose.
+        for (int i = 0; i < 3000; ++i) {
+            midi.addEvent(juce::MidiMessage::noteOn(1, i % 128, static_cast<juce::uint8>(100)), frames > 0 ? i % frames : 0);
+        }
+    }
     if (holdProcessBlock_->get()) {
         // A slow plugin: the block stays in flight for restartWatch, so a host
         // that must wait for it has something to wait for.

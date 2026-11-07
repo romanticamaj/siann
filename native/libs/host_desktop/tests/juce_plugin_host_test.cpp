@@ -319,7 +319,7 @@ TEST_CASE("plugin host: instantiate on the main thread, process on the audio thr
     CHECK(capabilities.editor);
     CHECK(capabilities.variableLatency);
     CHECK_FALSE(capabilities.midiInput);
-    CHECK_FALSE(capabilities.midiOutput);
+    CHECK(capabilities.midiOutput);  // midiFlood (m4-plugin-node)
     CHECK_FALSE(capabilities.sidechain);
     CHECK(instance->tailFrames() == 0);
     CHECK(instance->latencyFrames() == 64);
@@ -882,4 +882,72 @@ TEST_CASE("plugin host: scan() lists the default locations without throwing", "[
         CHECK_FALSE(plugin.path.empty());
         CHECK(plugin.uid.empty());  // nothing was loaded to learn it from
     }
+}
+
+// m4-plugin-node: a change reported off the message thread only marks the tail
+// stale; the main thread reads it in pollStale. The adapter posts no message for
+// it (juce::AsyncUpdater allocated one on the reporting thread).
+TEST_CASE("plugin host: a change reported off the message thread leaves the tail to pollStale", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    rt::MpscQueue<host::PluginEvent> events(64);
+    instance->control().setEventSink([&](const host::PluginEvent& event) { events.push(event); });
+    instance->control().setParameter(parameterIndex(*instance, "tail"), 1.0);  // state; reports nothing
+    runBlocks(*instance);
+    loop.runUntil([] { return false; }, std::chrono::milliseconds(50));
+    REQUIRE(instance->tailFrames() == 0);
+
+    std::uint64_t allocations = 0;
+    std::thread reporter([&] {
+        const rt::ScopedRealtimeThread realtime;  // as from the audio thread
+        const auto before = rt::allocationViolations();
+        host::testing::reportProcessorChange(*instance, false, false, true);
+        allocations = rt::allocationViolations() - before;
+    });
+    reporter.join();
+    CHECK(allocations == 0);
+    bool restartRequested = false;
+    host::PluginEvent event;
+    while (events.pop(event)) {
+        restartRequested = restartRequested || event.kind == host::PluginEvent::Kind::restartRequested;
+    }
+    CHECK(restartRequested);
+
+    loop.runUntil([] { return false; }, std::chrono::milliseconds(100));  // nothing was posted to read it
+    CHECK(instance->tailFrames() == 0);
+    instance->control().pollStale();
+    CHECK(instance->tailFrames() == longTailFrames);
+    instance->control().pollStale();  // once is enough; a second poll reads nothing new
+    CHECK(instance->tailFrames() == longTailFrames);
+    instance->control().setEventSink(nullptr);
+}
+
+// m4-plugin-node, MIDI output (ADR-0018, condition 3): the adapter's MidiBuffer is
+// preallocated for Steinberg's 2048 events a block. JUCE's VST3 wrapper stops a
+// plugin's output there, so a block that reached the limit is counted: that is
+// where events are lost. JUCE's own lists may grow on the audio thread for such a
+// plugin (accepted as plugin-caused), so this test does not count allocations.
+TEST_CASE("plugin host: blocks whose MIDI output reaches 2048 events are counted", "[juce][plugin][midi]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    CHECK(instance->capabilities().midiOutput);
+    runBlocks(*instance);
+    CHECK(instance->midiOutputOverflows() == 0);
+
+    instance->control().setParameter(parameterIndex(*instance, "midiFlood"), 1.0);
+    runBlocks(*instance);
+    const std::uint64_t flooded = instance->midiOutputOverflows();
+    CHECK(flooded >= 3);
+    CHECK(flooded <= 4);
+    runBlocks(*instance);
+    CHECK(instance->midiOutputOverflows() == flooded + 4);
+
+    instance->control().setParameter(parameterIndex(*instance, "midiFlood"), 0.0);
+    runBlocks(*instance);
+    const std::uint64_t after = instance->midiOutputOverflows();
+    runBlocks(*instance);
+    CHECK(instance->midiOutputOverflows() == after);
+    CHECK(measureDelay(*instance).frames == 64);
 }
