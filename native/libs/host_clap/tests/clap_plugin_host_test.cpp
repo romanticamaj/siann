@@ -115,14 +115,16 @@ void requireError(const std::string& code, Call call) {
     }
 }
 
-// The next event of a kind from the sink, while the host is pumped.
+// The next event of a kind from the sink, while the host is pumped. With a
+// parameter, only an edit of that one: the plugin also reports "concurrentProcess"
+// as an edit of its own.
 std::optional<host::PluginEvent> nextEvent(const Pump& pump, rt::MpscQueue<host::PluginEvent>& events,
-                                           host::PluginEvent::Kind kind) {
+                                           host::PluginEvent::Kind kind, int parameter = -1) {
     std::optional<host::PluginEvent> found;
     pump([&] {
         host::PluginEvent event;
         while (!found && events.pop(event)) {
-            if (event.kind == kind) {
+            if (event.kind == kind && (parameter < 0 || event.parameterIndex == parameter)) {
                 found = event;
             }
         }
@@ -423,7 +425,7 @@ TEST_CASE("clap host: a plugin's own edit reaches the sink", "[clap][plugin]") {
     const int gain = parameterIndex(*instance, "gain");
 
     instance->control().setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
-    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited);
+    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited, gain);
     REQUIRE(edit.has_value());
     CHECK(edit->parameterIndex == gain);
     CHECK(edit->value == Approx(0.5));
@@ -443,7 +445,7 @@ TEST_CASE("clap host: a plugin's edit during playback reaches the sink from the 
     PlayingThread playing(*instance);
     REQUIRE(pump([&] { return playing.blocks() >= 16; }));
     instance->control().setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
-    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited);
+    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited, gain);
     REQUIRE(edit.has_value());
     CHECK(edit->parameterIndex == gain);
     CHECK(edit->value == Approx(0.5));
@@ -886,7 +888,7 @@ TEST_CASE("clap host: note output past 2048 a block is refused and counted per b
     std::optional<host::PluginEvent> edit;
     {
         PlayingThread playing(*instance);
-        edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited);
+        edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited, parameterIndex(*instance, "gain"));
         CHECK(playing.finish() == 0);  // counting allocates nothing
     }
     REQUIRE(edit.has_value());

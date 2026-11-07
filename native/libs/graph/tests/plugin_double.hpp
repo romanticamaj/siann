@@ -35,6 +35,7 @@ public:
     bool editorOpen() const override { return false; }
     std::uintptr_t editorNativeHandle() const override { return 0; }
     void setEventSink(std::function<void(const host::PluginEvent&)>) override {}
+    void pollStale() override {}
 };
 
 class DoublePlugin final : public host::PluginInstance {
@@ -71,6 +72,7 @@ public:
         position_ = (position_ + static_cast<std::size_t>(output.frames)) % kMaxDelay;
     }
     host::PluginControl& control() override { return control_; }
+    std::uint64_t midiOutputOverflows() const noexcept override { return 0; }
 
     void setLatency(int frames) noexcept { latency_.store(frames); }
 

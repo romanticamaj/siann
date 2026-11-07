@@ -6,6 +6,8 @@
 // engine executables. The M1 draft, refined by the M0 plugin-hosting spike; M2
 // and M4 extend it. The one body is setBlocksComing's.
 //
+// kMaxBlockOutputEvents is the per-block output limit midiOutputOverflows counts against.
+//
 // Thread contract, as the spec states it: process() runs on the audio thread
 // only and must not allocate, lock, log, throw or do I/O, with one exception the
 // spec records: the locks a format's hosting wrapper takes around the plugin (see
@@ -88,6 +90,9 @@ public:
     virtual void close() = 0;
 };
 
+// Steinberg's limit on events in one block, which SIANN applies to every format.
+inline constexpr int kMaxBlockOutputEvents = 2048;
+
 struct PluginDescriptor {
     std::string format;  // "clap", "vst3", "au", "lv2"
     std::string uid;     // the same wherever the plugin is installed; empty until probed
@@ -165,6 +170,11 @@ public:
     // instance adds no wait of its own around the sink; a report from the audio
     // thread still passes the hosting wrapper's listener lock, see the spec.
     virtual void setEventSink(std::function<void(const PluginEvent&)> sink) = 0;
+    // Main thread, from the owner's tick: reads again what a report from another
+    // thread only marked stale (the tail, for JUCE's formats), so no listener path
+    // allocates or posts a message. Formats that read on the reporting thread do
+    // nothing.
+    virtual void pollStale() = 0;
 };
 
 // A loaded plugin as the audio thread sees it. Message-shaped, like PluginControl.
@@ -187,6 +197,11 @@ public:
     // told nothing, it guesses from the last block. The one method with a body:
     // formats that never wait for a block ignore it.
     virtual void setBlocksComing(bool /*coming*/) {}
+    // Any thread. Blocks whose MIDI or note output exceeded what the instance takes
+    // in one block (2048 events, Steinberg's limit, for every format); the events
+    // past it are lost. Counted once per block. Until MIDI tracks exist (M6b) the
+    // graph drops the rest of the output too.
+    virtual std::uint64_t midiOutputOverflows() const noexcept = 0;
     // Main thread. Lives as long as the instance.
     virtual PluginControl& control() = 0;
 };
