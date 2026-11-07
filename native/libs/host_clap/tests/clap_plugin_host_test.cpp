@@ -592,19 +592,21 @@ TEST_CASE("clap host: a setParameter during playback never holds the plugin out"
 
 // CLAP's state.save may run while the plugin processes, so a save during playback
 // (session save, checkpoint, autosave) passes no block dry. The plugin's save waits
-// for a process() call to begin, which a host that pauses never lets happen.
+// for a process() call to begin, which a host that pauses never lets happen. A value
+// set just before still lands in the blob: a block delivers it.
 TEST_CASE("clap host: getState during playback never holds the plugin out", "[clap][plugin]") {
     host::ClapPluginHost host;
     const auto pump = pumpOf(host);
     auto instance = loadTestPlugin(host);
     const int gain = parameterIndex(*instance, "gain");
     const int savedWhileProcessing = parameterIndex(*instance, "savedWhileProcessing");
-    instance->control().setParameter(gain, 0.25);
+    instance->control().setParameter(gain, 0.5);
     instance->control().setParameter(parameterIndex(*instance, "watchSave"), 1.0);
     host.runMainThreadCallbacks();
 
     PlayingThread playing(*instance);
     REQUIRE(pump([&] { return playing.blocks() >= 4; }));
+    instance->control().setParameter(gain, 0.25);
     const auto state = instance->control().getState();
     CHECK(instance->control().getParameter(savedWhileProcessing) > 0.5);
     CHECK(playing.finish() == 0);

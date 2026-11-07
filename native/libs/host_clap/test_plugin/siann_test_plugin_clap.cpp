@@ -18,7 +18,8 @@
 //   "overlapped" and "restarted".
 // - "watchRestore": state load does the same, reporting "overlapped" and "restored".
 // - "watchSave": state save waits, up to saveWatch, for a process() call to begin,
-//   and reports through "savedWhileProcessing" whether one did.
+//   and reports through "savedWhileProcessing" whether one did (with a values rescan,
+//   so the host reads it).
 // - "rescan": on the main thread, moves "gain" to rescannedGain behind the host's
 //   back and calls params.rescan.
 // - "wrongThread": turns on when clap.thread-check disagrees with what CLAP says of
@@ -399,6 +400,9 @@ bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) {
         while (test.processCalls.load() == before && std::chrono::steady_clock::now() < end) {
         }
         test.values[paramSavedWhileProcessing].store(test.processCalls.load() != before ? 1.0 : 0.0);
+        if (test.hostParams != nullptr) {
+            test.hostParams->rescan(test.host, CLAP_PARAM_RESCAN_VALUES);  // the host reads it now
+        }
     }
     std::size_t written = 0;
     while (written < blob.size()) {

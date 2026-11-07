@@ -11,7 +11,8 @@
 // spec records: the locks a format's hosting wrapper takes around the plugin (see
 // "Locks inside a hosted plugin's processBlock"). scan, instantiate and all of
 // PluginControl run on the main thread, getState with processing paused where the
-// format requires it (VST3 and AU do not; ClapPluginHost pauses by itself). capabilities, latencyFrames and
+// format requires it (VST3, AU and CLAP do not; ClapPluginHost pauses only to
+// flush a value when no block is coming). capabilities, latencyFrames and
 // tailFrames may be read from any thread and never enter the plugin. Plugin events
 // arrive on any thread, see
 // setEventSink. Control-only calls are a separate interface from process() (spec,

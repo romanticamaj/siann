@@ -149,12 +149,14 @@ public:
         processing_.store(true);
         if (paused_.load() == 0 && active_) {
             const AudioScope scope;
-            lastBlockNanos_.store(nowNanos(), std::memory_order_relaxed);
             if (!started_) {
                 started_ = plugin_->start_processing(plugin_);
             }
             if (started_) {
+                // Only blocks that reach the plugin count as running: they deliver.
+                lastBlockNanos_.store(nowNanos(), std::memory_order_relaxed);
                 runPlugin(input, output, events, frames);
+                blocksRun_.fetch_add(1);
             } else {
                 passThrough(input, output, frames);
             }
@@ -527,7 +529,7 @@ private:
         if (anyDirty_.exchange(false)) {
             for (std::uint32_t i = 0; i < slotCount_; ++i) {
                 auto& slot = slots_[i];
-                if (slot.dirty.exchange(false)) {
+                if (slot.dirty.exchange(false) && slot.id != CLAP_INVALID_ID) {
                     pushEvent(0, slot, slot.value.load(std::memory_order_relaxed));
                 }
             }
@@ -538,6 +540,9 @@ private:
                 continue;
             }
             auto& slot = slots_[event.data0];
+            if (slot.id == CLAP_INVALID_ID) {
+                continue;  // the plugin did not describe it: no event can name it
+            }
             const double value = std::clamp(event.value, 0.0, 1.0);
             if (eventCount_ == events_.size()) {
                 slot.value.store(value, std::memory_order_relaxed);
@@ -645,6 +650,26 @@ private:
         }
     }
 
+    // Main thread: what setParameter set before this reaches the plugin, without
+    // passing a block dry. While blocks arrive, waits for one that began after this
+    // call to finish, which delivered the values: about two block periods. When none
+    // is coming, at once or once none has come for the audio window, flushes under a
+    // pause.
+    void deliverPendingValues() {
+        if (!flushRequested_.load() && !anyDirty_.load()) {
+            return;
+        }
+        const std::uint64_t seen = blocksRun_.load();
+        while (audioRunning()) {
+            if (blocksRun_.load() >= seen + 2) {  // seen + 1 may have begun before the values
+                return;
+            }
+            std::this_thread::yield();
+        }
+        const ProcessingPause pause(*this);
+        flush();
+    }
+
     // --- PluginControl
 
     std::vector<std::uint8_t> getState() override {
@@ -657,14 +682,9 @@ private:
             out.insert(out.end(), bytes, bytes + size);
             return static_cast<std::int64_t>(size);
         };
-        bool saved = true;
-        {
-            const ProcessingPause pause(*this);
-            flush();  // what setParameter set just before this belongs in the blob
-            if (state_ != nullptr) {
-                saved = state_->save(plugin_, &stream);
-            }
-        }
+        deliverPendingValues();
+        // A main-thread call CLAP lets run while the plugin processes: no pause.
+        const bool saved = state_ == nullptr || state_->save(plugin_, &stream);
         if (!saved) {
             throw PluginError("bad_state", uid_ + " did not save its state");
         }
@@ -803,6 +823,7 @@ private:
     std::atomic<bool> flushRequested_{false};
     std::atomic<bool> tailStale_{false};
     std::atomic<std::int64_t> lastBlockNanos_{0};
+    std::atomic<std::uint64_t> blocksRun_{0};  // blocks that reached the plugin, counted after
     std::int64_t audioWindowNanos_ = minimumAudioWindowNanos;
 };
 
