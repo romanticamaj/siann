@@ -25,9 +25,9 @@
 // stderr before calling this. On POSIX that sends any plugin's stdout output to
 // the shell's stderr log. On Windows it does so for code sharing the engine's
 // CRT; a plugin with its own CRT holds the handle value the launcher passed in
-// lpReserved2, which the redirect closes, so its stdout writes fail and that
-// output is dropped (main.cpp re-occupies the freed value with NUL so nothing
-// the engine opens later receives it).
+// lpReserved2, which the redirect closes. main.cpp re-occupies the freed value
+// with NUL so nothing the engine opens later receives that output: its writes
+// normally succeed into NUL, and the output is dropped.
 //
 // A SIANN_WITH_JUCE build serves from the JUCE message loop, so call this on the
 // process's main thread. There --open-editor opens the first plugin of a bundle

@@ -54,8 +54,8 @@ struct DelayMeasurement {
     std::uint64_t allocations = 0;
 };
 
-// Sends an impulse through on a realtime-marked thread, the one thread that may
-// call process(). Buffers exist before the thread starts: nothing allocates there.
+// Sends an impulse through on a realtime-marked thread, as the audio thread
+// calls process(). Buffers exist before the thread starts: nothing allocates there.
 inline DelayMeasurement measureDelay(host::PluginInstance& instance, int channels = 2) {
     Audio input(channels, blockFrames);
     Audio output(channels, blockFrames);

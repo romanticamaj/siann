@@ -115,10 +115,10 @@ namespace {
 // the CRT's dup does not touch) becomes stderr. Code sharing this CRT (JUCE, a
 // plugin on the same runtime DLL) then prints to the shell's stderr log. A
 // plugin with its own CRT took fd 1's handle value from the launcher's
-// lpReserved2 block when it loaded; _dup2 closes that handle, so its writes fail
-// and its output is dropped. The freed value is re-occupied with NUL below, so a
-// handle the engine opens later cannot inherit that plugin's output. -1 when the
-// redirect could not be made; stdout then stays as it is.
+// lpReserved2 block when it loaded; _dup2 closes that handle. The freed value is
+// re-occupied with NUL below, so that plugin's writes normally succeed into NUL
+// and its output is dropped, and a handle the engine opens later cannot inherit
+// it. -1 when the redirect could not be made; stdout then stays as it is.
 int detachHandshakeFd() {
     const int fd = _dup(_fileno(stdout));
     if (fd < 0) {
@@ -131,8 +131,9 @@ int detachHandshakeFd() {
         return -1;
     }
     SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
-    // Windows hands out the lowest free handle value, so NUL usually lands on the
-    // freed one at once; a few tries cover a value taken meanwhile. The matching
+    // Handle values are usually reused lowest first (observed, not documented), so
+    // NUL usually lands on the freed one at once; a few tries cover a value taken
+    // meanwhile, and missing it leaves the stale handle as before. The matching
     // handle stays open for the life of the process; the others are closed.
     HANDLE spare[8];
     int spares = 0;

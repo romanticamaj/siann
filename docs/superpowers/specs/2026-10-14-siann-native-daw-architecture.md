@@ -374,8 +374,8 @@ gesture boundaries (see "Gestures").
   never waits on the protocol thread. The audio ↔ main pair is the one two-way edge.
   The argument that no cycle closes: the main thread waits for the audio thread
   only in `AudioDevice::stop()` and `ProcessingPause`. It holds `processMutex`
-  inside JUCE's `reset`, `prepareToPlay`, `releaseResources` and
-  `updateMidiMappings`, and SIANN's code can run there: a plugin that changes its
+  inside JUCE's `reset`, `prepareToPlay`, `releaseResources`,
+  `updateMidiMappings` and `isBusesLayoutSupported`, and SIANN's code can run there: a plugin that changes its
   latency in `prepareToPlay` makes JUCE's client wrapper ask for a `kLatencyChanged`
   restart, which the host runs on the message thread at once (`setLatencySamples`,
   SIANN's `audioProcessorChanged`, `readLatency`, `readTail` and the event sink),
@@ -1547,7 +1547,8 @@ Shared by both targets:
 
 - The core passes SIANN-owned buffer views (`float* const* channels, int frames`)
   and SIANN event lists; adapters wrap them without copying.
-- Each method states its thread: `process` on the audio thread only; `instantiate`,
+- Each method states its thread: `process` on the audio thread or the offline render
+  thread, never both at once; `instantiate`,
   `setState`, `openEditor` on the main thread; `getState` on the main thread with
   processing paused where the format requires it.
 - Plugin-originated events (parameter edits from editors, latency changes, restart
@@ -1872,9 +1873,10 @@ Protocol v0, launcher (decided with m0-electron-shell):
     is the kernel's, so any plugin's stdout output lands in the shell's stderr
     log; on Windows it does for code sharing the engine's CRT, while a plugin
     with its own CRT holds the handle value the launcher passed in
-    `lpReserved2`, which the redirect closes, so its writes fail and that output
-    is dropped (`main()` re-occupies the freed value with `NUL`, so a handle the
-    engine opens later cannot receive it). A dedicated handshake pipe from the
+    `lpReserved2`, which the redirect closes. `main()` re-occupies the freed value
+    with `NUL`, so that plugin's writes normally succeed into `NUL`, or fail if
+    re-occupying did not land on the value; either way the output is dropped and
+    a handle the engine opens later cannot receive it. A dedicated handshake pipe from the
     launcher would carry the plugins' stdout to the log on Windows too; it
     needs the shell to spawn a fourth stdio pipe and the launch tests to hand an
     `lpReserved2` block to the child, and is deferred. Tokens never appear on the command line or in the environment. The
