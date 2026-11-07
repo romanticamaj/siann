@@ -101,7 +101,7 @@ function buildFixture() {
       'invalid_entity_set'],
     ['duplicate_write_set_entry', text({ ...minimal, writeSet: [entry('track', 'trk_1'), entry('track', 'trk_1')] }),
       'invalid_entity_set'],
-    ['unknown_entity_type', text({ ...minimal, readSet: [entry('plugin_slot', 'slot_1')] }), 'invalid_entity_set'],
+    ['unknown_entity_type', text({ ...minimal, readSet: [entry('send', 'snd_1')] }), 'invalid_entity_set'],
     ['invalid_entity_id', text({ ...minimal, readSet: [entry('track', 'trk 1')] }), 'invalid_entity_set'],
     ['unknown_field', text({ ...minimal, comment: 'not part of v1' }), 'invalid_plan'],
     ['wrong_schema', text({ ...minimal, schema: 'siann.plan.v0' }), 'invalid_plan'],

@@ -70,8 +70,26 @@ struct Track {
     std::int32_t pan = 0;
     bool mute = false;
     bool solo = false;
+    // Plugin slot ids in signal order (M4). Omitted from the JSON when empty, so a
+    // track without inserts keeps its M1 hash.
+    std::vector<std::string> inserts;
 
     friend bool operator==(const Track&, const Track&) = default;
+};
+
+// A plugin insert on a track (M4, spec "siann-model", M4 plugin_slot). The
+// document holds the state blob's hash only; the blob lives in <bundle>/blobs.
+struct PluginSlot {
+    std::string id;
+    std::string trackId;
+    std::string format;  // clap, vst3, au or lv2
+    std::string uid;
+    std::string name;
+    std::string path;  // an install hint, not part of uid
+    std::optional<std::string> stateBlob;  // "sha256:<64 lowercase hex>" or none
+    bool bypass = false;
+
+    friend bool operator==(const PluginSlot&, const PluginSlot&) = default;
 };
 
 struct Clip {

@@ -35,7 +35,8 @@ bool setLess(const EntityRef& a, const EntityRef& b) noexcept {
 }
 
 std::optional<EntityType> entityTypeFromName(std::string_view name) noexcept {
-    for (const EntityType type : {EntityType::root, EntityType::media, EntityType::track, EntityType::clip}) {
+    for (const EntityType type :
+         {EntityType::root, EntityType::media, EntityType::track, EntityType::clip, EntityType::plugin_slot}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
