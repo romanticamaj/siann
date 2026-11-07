@@ -30,6 +30,16 @@ and hand its native handle to the host, which then runs the gui extension's
 create, set_parent and show on the main thread. Editors in the headless target stay
 out, as the spec says.
 
+## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
+
+`PluginInstance::setBlocksComing` exists so a CLAP `getState` or params flush waits
+for the next block instead of pausing while the driver runs. Nothing calls it yet:
+`m4-plugin-node` (PluginNode in a GraphDriver callback) calls it with true when the
+driver's callback source starts and false after it stops, for each instance it
+holds, and for an instance inserted while it runs. Until then `ClapPluginHost` falls
+back to its guess from the last block (spec, "siann-host: two targets, one
+interface").
+
 ## Before M4: plugin hosting (from PR #48)
 
 Decided by Fable, delegated by the maintainer, 2026-11-07. Taken into M4's features:
