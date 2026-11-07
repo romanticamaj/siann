@@ -17,6 +17,8 @@
 //   restartWatch, watching for process() meanwhile, and activate reports through
 //   "overlapped" and "restarted".
 // - "watchRestore": state load does the same, reporting "overlapped" and "restored".
+// - "watchSave": state save waits, up to saveWatch, for a process() call to begin,
+//   and reports through "savedWhileProcessing" whether one did.
 // - "rescan": on the main thread, moves "gain" to rescannedGain behind the host's
 //   back and calls params.rescan.
 // - "wrongThread": turns on when clap.thread-check disagrees with what CLAP says of
@@ -28,6 +30,8 @@
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
 // ports of instances created after it is set: "wide" has 32 channels on the main
 // ports, "sidechain" a second input port and note ports in both directions.
+// SIANN_TEST_PLUGIN_BADINFO set makes params.get_info fail for "tail", a plugin
+// that counts a parameter it cannot describe.
 //
 // Creating an instance prints one line to stdout ("siann_test_plugin: loaded"), as
 // a chatty third-party plugin would.
@@ -55,6 +59,7 @@ constexpr std::uint32_t longLatency = 512;
 constexpr double nudgedGain = 0.5;
 constexpr double rescannedGain = 0.125;
 constexpr auto restartWatch = std::chrono::milliseconds(20);
+constexpr auto saveWatch = std::chrono::seconds(2);
 constexpr double longTailSeconds = 0.25;
 constexpr std::uint32_t ringFrames = 1024;  // a power of two above longLatency
 constexpr std::uint32_t wideChannels = 32;
@@ -79,12 +84,15 @@ enum Parameter : std::uint32_t {
     paramRescan,
     paramWrongThread,
     paramHome,
+    paramWatchSave,
+    paramSavedWhileProcessing,
     parameterCount,
 };
 
 constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
+    "watchSave", "savedWhileProcessing",
 };
 
 constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
@@ -125,6 +133,7 @@ struct TestPlugin {
     const clap_host_tail_t* hostTail = nullptr;
     const clap_host_thread_check_t* hostThreads = nullptr;
     Layout layout = Layout::stereo;
+    bool badInfo = false;
     double sampleRate = 48'000.0;
 
     std::array<std::atomic<double>, parameterCount> values{};
@@ -135,6 +144,7 @@ struct TestPlugin {
     std::atomic<bool> nudgeRequested{false};
     std::atomic<bool> rescanRequested{false};
     std::atomic<bool> nudgeOutPending{false};
+    std::atomic<std::uint64_t> processCalls{0};
 
     std::array<std::array<float, ringFrames>, 2> ring{};
     std::uint32_t writeIndex = 0;
@@ -301,8 +311,8 @@ const clap_plugin_note_ports_t notePorts = {notePortCount, notePortGet};
 
 std::uint32_t paramsCount(const clap_plugin_t*) { return parameterCount; }
 
-bool paramsGetInfo(const clap_plugin_t*, std::uint32_t index, clap_param_info_t* info) {
-    if (index >= parameterCount) {
+bool paramsGetInfo(const clap_plugin_t* plugin, std::uint32_t index, clap_param_info_t* info) {
+    if (index >= parameterCount || (index == paramTail && self(plugin).badInfo)) {
         return false;
     }
     *info = {};
@@ -383,6 +393,13 @@ bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) {
     putLittleEndian<std::uint32_t>(at, gainBits);
     *at++ = test.on(paramLatency) ? 1 : 0;
     *at++ = test.on(paramTail) ? 1 : 0;
+    if (test.on(paramWatchSave)) {
+        const std::uint64_t before = test.processCalls.load();
+        const auto end = std::chrono::steady_clock::now() + saveWatch;
+        while (test.processCalls.load() == before && std::chrono::steady_clock::now() < end) {
+        }
+        test.values[paramSavedWhileProcessing].store(test.processCalls.load() != before ? 1.0 : 0.0);
+    }
     std::size_t written = 0;
     while (written < blob.size()) {
         const auto count = stream->write(stream, blob.data() + written, blob.size() - written);
@@ -507,6 +524,7 @@ void pluginReset(const clap_plugin_t* plugin) {
 clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_process_t* process) {
     auto& test = self(plugin);
     test.inProcess.store(true);
+    test.processCalls.fetch_add(1);
     test.mustBeAudioThread();
     const std::uint32_t frames = process->frames_count;
     const clap_input_events_t* in = process->in_events;
@@ -596,6 +614,7 @@ const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host
     test->host = host;
     const std::string layout = environmentValue("SIANN_TEST_PLUGIN_LAYOUT");
     test->layout = layout == "wide" ? Layout::wide : layout == "sidechain" ? Layout::sidechain : Layout::stereo;
+    test->badInfo = !environmentValue("SIANN_TEST_PLUGIN_BADINFO").empty();
     test->values[paramGain].store(1.0);
     test->clap.desc = &descriptor;
     test->clap.plugin_data = test;

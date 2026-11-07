@@ -590,6 +590,78 @@ TEST_CASE("clap host: a setParameter during playback never holds the plugin out"
     CHECK(dryBlocks.load() == 0);
 }
 
+// CLAP's state.save may run while the plugin processes, so a save during playback
+// (session save, checkpoint, autosave) passes no block dry. The plugin's save waits
+// for a process() call to begin, which a host that pauses never lets happen.
+TEST_CASE("clap host: getState during playback never holds the plugin out", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    const auto pump = pumpOf(host);
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    const int savedWhileProcessing = parameterIndex(*instance, "savedWhileProcessing");
+    instance->control().setParameter(gain, 0.25);
+    instance->control().setParameter(parameterIndex(*instance, "watchSave"), 1.0);
+    host.runMainThreadCallbacks();
+
+    PlayingThread playing(*instance);
+    REQUIRE(pump([&] { return playing.blocks() >= 4; }));
+    const auto state = instance->control().getState();
+    CHECK(instance->control().getParameter(savedWhileProcessing) > 0.5);
+    CHECK(playing.finish() == 0);
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
+
+    // The blob is the plugin's: a default instance that loads it has the gain.
+    auto restored = loadTestPlugin(host);
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Approx(0.25));
+}
+
+// Stopped, nothing else delivers a value set just before the save: getState flushes.
+TEST_CASE("clap host: getState with no playback has the value just set", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    instance->control().setParameter(gain, 0.375);
+    const auto state = instance->control().getState();
+    auto restored = loadTestPlugin(host);
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Approx(0.375));
+}
+
+// A parameter the plugin counts but cannot describe has no id. Neither a block event
+// nor setParameter for it may reach the plugin, and neither may crash the audio thread.
+TEST_CASE("clap host: a parameter without an info takes no events", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    const ScopedEnvironment badInfo("SIANN_TEST_PLUGIN_BADINFO", "1");
+    auto instance = loadTestPlugin(host);
+    const auto parameters = instance->control().parameters();
+    std::uint32_t undescribed = 0;
+    while (undescribed < parameters.size() && !parameters[undescribed].id.empty()) {
+        ++undescribed;
+    }
+    REQUIRE(undescribed < parameters.size());
+    instance->control().setParameter(static_cast<int>(undescribed), 1.0);
+    const std::array<host::BlockEvent, 1> events{
+        {{10, host::BlockEventKind::parameterValue, undescribed, 0, 1.0}}};
+    Audio input(2, blockFrames);
+    Audio output(2, blockFrames);
+    std::uint64_t allocations = 1;
+    std::thread audio([&] {
+        const rt::ScopedRealtimeThread realtime;
+        const auto before = rt::allocationViolations();
+        instance->process(input.view(), output.view(), events);
+        instance->process(input.view(), output.view(), events);
+        allocations = rt::allocationViolations() - before;
+    });
+    audio.join();
+    CHECK(allocations == 0);
+    host.runMainThreadCallbacks();
+    CHECK(instance->tailFrames() == 0);  // "tail" never reached the plugin
+    const auto measured = measureDelay(*instance);
+    CHECK(measured.frames == 64);
+    CHECK(measured.peak == Approx(1.0f));
+}
+
 TEST_CASE("clap host: a block with fewer channels than the plugin still processes", "[clap][plugin]") {
     host::ClapPluginHost host;
     auto instance = loadTestPlugin(host);
