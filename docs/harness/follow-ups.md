@@ -20,7 +20,13 @@ point here; its first run takes the listed section into its features.
   regression still hangs the runner.
 - The bounded quit wait on a wedged engine has unit and process tests but no e2e.
 
-## Before M4 wave 2: CLAP editor windows on the desktop target (gui extension embedding into a window siann-host-desktop supplies)
+## Before M5: CLAP editor windows on the desktop target (gui extension embedding into a window siann-host-desktop supplies)
+
+Moved from "Before M4 wave 2". Decided by Fable, delegated by the maintainer,
+2026-11-08: `plugin.open_editor` lands in `m4-plugin-node` and answers
+`editor_failed` for a CLAP plugin on the desktop target until this window exists
+(Protocol v0 item 19). M4's exit names no editor, and the M5 UI is the first to
+open one by a click, so the window is M5's.
 
 `ClapPluginHost` reports the gui extension in `capabilities().editor` and
 `hasEditor`, and `openEditor` throws `editor_failed`: siann-host-clap has no window
@@ -31,6 +37,10 @@ create, set_parent and show on the main thread. Editors in the headless target s
 out, as the spec says.
 
 ## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
+
+Taken into `m4-plugin-node` (decided by Fable, delegated by the maintainer,
+2026-11-08): its acceptance names the three calls below, and the spec's "Threads
+and waiting rules" M4 interim note records them.
 
 `PluginInstance::setBlocksComing` exists so a CLAP `getState` or params flush waits
 for the next block instead of pausing while the driver runs. Nothing calls it yet:
