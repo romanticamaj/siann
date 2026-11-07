@@ -13,6 +13,7 @@
 #include <string>
 
 #include "hosting_checks.hpp"
+#include "siann/host/juce_plugin_host.hpp"
 
 using namespace siann;
 
@@ -129,5 +130,7 @@ TEST_CASE("plugin host: the CI-built AU is hosted", "[juce][plugin]") {
     CHECK(descriptors.front().format == "au");
     CHECK(descriptors.front().hasEditor);
 
-    hosting_test::checkBuiltTestPlugin(loop, host, descriptors.front());
+    hosting_test::checkBuiltTestPlugin(
+        [&loop](const std::function<bool()>& predicate) { return loop.runUntil(predicate, hosting_test::eventTimeout); },
+        host, descriptors.front());
 }

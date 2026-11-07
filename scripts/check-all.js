@@ -121,6 +121,8 @@ function gcc() {
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'media', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'graph', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'hash', 'tests'))}`);
+  // What the hosting tests share, whichever format carries the plugin.
+  includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'host_common', 'tests'))}`);
   // The protocol tests reuse the playback tests' live rig (as in their CMake target).
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'playback', 'tests', 'support'))}`);
   // The siann-engine launch tests reuse the protocol tests' loopback clients.

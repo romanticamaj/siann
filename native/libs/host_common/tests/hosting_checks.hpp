@@ -6,16 +6,19 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "siann/host/juce_plugin_host.hpp"
+#include "siann/host/interfaces.hpp"
+#include "siann/host/plugin_error.hpp"
 #include "siann/rt/mpsc_queue.hpp"
 #include "siann/rt/realtime_thread.hpp"
 
@@ -25,6 +28,10 @@ inline constexpr std::int64_t sampleRate = 48'000;
 inline constexpr int blockFrames = 256;
 inline constexpr auto eventTimeout = std::chrono::seconds(5);
 inline constexpr int longTailFrames = 12'000;  // the test plugin's quarter second, at sampleRate
+
+// Runs the main thread's work, whatever that is for the format, until the predicate
+// holds; false when eventTimeout came first.
+using Pump = std::function<bool(const std::function<bool()>&)>;
 
 // Owned planar audio and the view of it the core would pass.
 class Audio {
@@ -127,27 +134,59 @@ inline bool displayAvailable() {
 }
 
 // The latency the plugin reports through the event sink next, or -1 on timeout.
-inline int nextReportedLatency(host::MainThreadLoop& loop, rt::MpscQueue<host::PluginEvent>& events) {
+inline int nextReportedLatency(const Pump& pump, rt::MpscQueue<host::PluginEvent>& events) {
     int reported = -1;
-    loop.runUntil(
-        [&] {
-            host::PluginEvent event;
-            while (events.pop(event)) {
-                if (event.kind == host::PluginEvent::Kind::latencyChanged) {
-                    reported = event.latencyFrames;
-                }
+    pump([&] {
+        host::PluginEvent event;
+        while (events.pop(event)) {
+            if (event.kind == host::PluginEvent::Kind::latencyChanged) {
+                reported = event.latencyFrames;
             }
-            return reported >= 0;
-        },
-        eventTimeout);
+        }
+        return reported >= 0;
+    });
     return reported;
 }
 
+// The audio thread at full speed beside the main thread, with what it may meet
+// there. The test ends the loop itself: process() is only ever called from here.
+class PlayingThread {
+public:
+    explicit PlayingThread(host::PluginInstance& instance)
+        : input_(2, blockFrames), output_(2, blockFrames), thread_([this, &instance] {
+              const rt::ScopedRealtimeThread realtime;
+              const auto before = rt::allocationViolations();
+              while (!stop_.load()) {
+                  instance.process(input_.view(), output_.view(), {});
+                  blocks_.fetch_add(1);
+              }
+              allocations_.store(rt::allocationViolations() - before);
+          }) {}
+    ~PlayingThread() { finish(); }
+
+    std::uint64_t blocks() const { return blocks_.load(); }
+    // Stops the thread, then says how often it allocated.
+    std::uint64_t finish() {
+        stop_.store(true);
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+        return allocations_.load();
+    }
+
+private:
+    Audio input_;
+    Audio output_;
+    std::atomic<bool> stop_{false};
+    std::atomic<std::uint64_t> blocks_{0};
+    std::atomic<std::uint64_t> allocations_{0};
+    std::thread thread_;
+};
+
 // Acceptance item 2 against siann_test_plugin, in whichever format the descriptor
 // names: a runtime latency change, reported and heard; state that really moves a
-// default instance; and the editor.
-inline void checkBuiltTestPlugin(host::MainThreadLoop& loop, host::JucePluginHost& host,
-                                 const host::PluginDescriptor& descriptor) {
+// default instance; and the editor, where the descriptor says there is one.
+inline void checkBuiltTestPlugin(const Pump& pump, host::PluginHost& host, const host::PluginDescriptor& descriptor) {
     rt::MpscQueue<host::PluginEvent> events(64);
     auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
     instance->control().setEventSink([&](const host::PluginEvent& event) { events.push(event); });
@@ -157,7 +196,7 @@ inline void checkBuiltTestPlugin(host::MainThreadLoop& loop, host::JucePluginHos
     CHECK(measureDelay(*instance).frames == 64);
 
     instance->control().setParameter(latency, 1.0);
-    CHECK(nextReportedLatency(loop, events) == 512);
+    CHECK(nextReportedLatency(pump, events) == 512);
     CHECK(instance->latencyFrames() == 512);
     CHECK(instance->tailFrames() == longTailFrames);
     CHECK(measureDelay(*instance).frames == 512);
@@ -177,12 +216,12 @@ inline void checkBuiltTestPlugin(host::MainThreadLoop& loop, host::JucePluginHos
     CHECK(restored->tailFrames() == longTailFrames);
     CHECK(restored->control().getParameter(gain) == Catch::Approx(0.25));
     CHECK(restored->control().getParameter(latency) == Catch::Approx(1.0));
-    REQUIRE(loop.runUntil([&] { return restored->latencyFrames() == 512; }, eventTimeout));
+    REQUIRE(pump([&] { return restored->latencyFrames() == 512; }));
     const auto delayed = measureDelay(*restored);
     CHECK(delayed.frames == 512);
     CHECK(delayed.peak == Catch::Approx(0.25f));
 
-    if (displayAvailable()) {
+    if (descriptor.hasEditor && displayAvailable()) {
         restored->control().openEditor({});
         CHECK(restored->control().editorOpen());
         CHECK(restored->control().editorNativeHandle() != 0);

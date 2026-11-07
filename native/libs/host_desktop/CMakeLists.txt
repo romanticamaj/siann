@@ -14,7 +14,7 @@ elseif(APPLE)
 endif()
 target_include_directories(siann_host_desktop PUBLIC include)
 target_link_libraries(siann_host_desktop
-  PUBLIC siann::host_api siann::rt
+  PUBLIC siann::host_api siann::host_common siann::rt
   PRIVATE
     juce::juce_audio_devices
     juce::juce_audio_processors
@@ -57,7 +57,7 @@ if(SIANN_BUILD_TESTS)
     target_sources(siann_host_desktop_tests PRIVATE tests/juce_plugin_host_mac_test.mm)
     target_link_libraries(siann_host_desktop_tests PRIVATE "-framework AppKit" "-framework AudioToolbox")
   endif()
-  target_include_directories(siann_host_desktop_tests PRIVATE tests)
+  target_include_directories(siann_host_desktop_tests PRIVATE tests ../host_common/tests)
   target_link_libraries(siann_host_desktop_tests PRIVATE siann::host_desktop siann::realtime siann_rt_alloc_guard
                         Catch2::Catch2WithMain)
   siann_apply_compile_options(siann_host_desktop_tests)

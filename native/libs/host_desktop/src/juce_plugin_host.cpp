@@ -12,13 +12,12 @@
 #include <thread>
 
 #include "editor_platform.hpp"
+#include "siann/host/state_envelope.hpp"
 
 namespace siann::host {
 
 namespace {
 
-constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'P', 'S', '1'};
-constexpr std::uint32_t stateVersion = 1;
 constexpr auto instantiateTimeout = std::chrono::seconds(60);
 
 // One dispatch slice: long enough not to spin, short enough for a predicate to
@@ -57,26 +56,6 @@ std::string stableUid(const juce::PluginDescription& description) {
     const int id = description.uniqueId != 0 ? description.uniqueId : description.deprecatedUid;
     return formatKey(description.pluginFormatName) + "-" + description.name.toStdString() + "-" +
            juce::String::toHexString(id).toStdString();
-}
-
-template <typename T>
-void appendLittleEndian(std::vector<std::uint8_t>& out, T value) {
-    for (std::size_t i = 0; i < sizeof(T); ++i) {
-        out.push_back(static_cast<std::uint8_t>((value >> (8 * i)) & 0xff));
-    }
-}
-
-template <typename T>
-bool readLittleEndian(const std::vector<std::uint8_t>& in, std::size_t& position, T& value) {
-    if (in.size() - position < sizeof(T)) {
-        return false;
-    }
-    value = 0;
-    for (std::size_t i = 0; i < sizeof(T); ++i) {
-        value = static_cast<T>(value | (static_cast<T>(in[position + i]) << (8 * i)));
-    }
-    position += sizeof(T);
-    return true;
 }
 
 // The window an editor lives in. JUCE parents a plugin's view in it; the window
@@ -233,44 +212,14 @@ private:
         juce::MemoryBlock payload;
         plugin_->getStateInformation(payload);
 
-        std::vector<std::uint8_t> state(std::begin(stateMagic), std::end(stateMagic));
-        state.reserve(state.size() + uid_.size() + payload.getSize() + 16);
-        appendLittleEndian<std::uint32_t>(state, stateVersion);
-        appendLittleEndian<std::uint32_t>(state, static_cast<std::uint32_t>(uid_.size()));
-        state.insert(state.end(), uid_.begin(), uid_.end());
-        appendLittleEndian<std::uint64_t>(state, payload.getSize());
-        const auto* bytes = static_cast<const std::uint8_t*>(payload.getData());
-        state.insert(state.end(), bytes, bytes + payload.getSize());
-        return state;
+        return wrapPluginState(uid_, {static_cast<const std::uint8_t*>(payload.getData()), payload.getSize()});
     }
 
     void setState(const std::vector<std::uint8_t>& state) override {
-        std::size_t position = sizeof(stateMagic);
-        if (state.size() < position || std::memcmp(state.data(), stateMagic, sizeof(stateMagic)) != 0) {
-            throw PluginError("bad_state", "not a SIANN plugin state blob");
-        }
-        std::uint32_t version = 0;
-        if (!readLittleEndian(state, position, version) || version != stateVersion) {
-            throw PluginError("bad_state", "unknown plugin state version");
-        }
-        std::uint32_t uidSize = 0;
-        if (!readLittleEndian(state, position, uidSize) || state.size() - position < uidSize) {
-            throw PluginError("bad_state", "truncated plugin state");
-        }
-        const std::string uid(state.begin() + static_cast<std::ptrdiff_t>(position),
-                              state.begin() + static_cast<std::ptrdiff_t>(position + uidSize));
-        if (uid != uid_) {
-            throw PluginError("bad_state", "the state belongs to another plugin: " + uid);
-        }
-        position += uidSize;
-        std::uint64_t payloadSize = 0;
-        if (!readLittleEndian(state, position, payloadSize) || state.size() - position != payloadSize ||
-            payloadSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
-            throw PluginError("bad_state", "truncated plugin state");
-        }
+        const auto payload = unwrapPluginState(state, uid_);
         {
             const ProcessingPause pause(*this);
-            plugin_->setStateInformation(state.data() + position, static_cast<int>(payloadSize));
+            plugin_->setStateInformation(payload.data(), static_cast<int>(payload.size()));
         }
         readLatency();
         // A tail the state changed without a latency report. A hosted VST3 built

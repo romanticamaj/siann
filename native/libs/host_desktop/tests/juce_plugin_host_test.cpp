@@ -30,6 +30,7 @@
 #endif
 
 #include "hosting_checks.hpp"
+#include "siann/host/juce_plugin_host.hpp"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -40,6 +41,10 @@ using namespace siann::hosting_test;
 using Catch::Approx;
 
 namespace {
+
+Pump pumpOf(host::MainThreadLoop& loop) {
+    return [&loop](const std::function<bool()>& predicate) { return loop.runUntil(predicate, eventTimeout); };
+}
 
 host::PluginDescriptor testPlugin(host::JucePluginHost& host) {
     const auto descriptors = host.scanPath(SIANN_TEST_PLUGIN_VST3);
@@ -327,47 +332,8 @@ TEST_CASE("plugin host: instantiate on the main thread, process on the audio thr
 TEST_CASE("plugin host: the CI-built VST3 passes the whole hosting check", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;
-    checkBuiltTestPlugin(loop, host, testPlugin(host));
+    checkBuiltTestPlugin(pumpOf(loop), host, testPlugin(host));
 }
-
-namespace {
-
-// The audio thread at full speed beside the main thread, with what it may meet
-// there. The test ends the loop itself: process() is only ever called from here.
-class PlayingThread {
-public:
-    explicit PlayingThread(host::PluginInstance& instance)
-        : input_(2, blockFrames), output_(2, blockFrames), thread_([this, &instance] {
-              const rt::ScopedRealtimeThread realtime;
-              const auto before = rt::allocationViolations();
-              while (!stop_.load()) {
-                  instance.process(input_.view(), output_.view(), {});
-                  blocks_.fetch_add(1);
-              }
-              allocations_.store(rt::allocationViolations() - before);
-          }) {}
-    ~PlayingThread() { finish(); }
-
-    std::uint64_t blocks() const { return blocks_.load(); }
-    // Stops the thread, then says how often it allocated.
-    std::uint64_t finish() {
-        stop_.store(true);
-        if (thread_.joinable()) {
-            thread_.join();
-        }
-        return allocations_.load();
-    }
-
-private:
-    Audio input_;
-    Audio output_;
-    std::atomic<bool> stop_{false};
-    std::atomic<std::uint64_t> blocks_{0};
-    std::atomic<std::uint64_t> allocations_{0};
-    std::thread thread_;
-};
-
-}  // namespace
 
 // VST3 forbids process during setActive, and that is what the one lock JUCE takes
 // per block is for (spec, "Locks inside a hosted plugin's processBlock"). The
