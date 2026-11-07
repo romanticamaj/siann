@@ -6,7 +6,7 @@
   "specSections": ["Frontend", "siann-protocol", "Plans", "Proposal audition (A/B)", "Milestones"],
   "status": "not_started",
   "done": [],
-  "prerequisites": ["M3 protocol and plans; M0 Electron shell."],
+  "prerequisites": ["M3 protocol and plans; M0 Electron shell.", "docs/harness/follow-ups.md, section Before M5."],
   "humanGates": [
     {"id": "framework-choice", "text": "Choose the frontend framework (React or Svelte) at the start of M5, as the spec requires.", "how": "The plan phase presents a short comparison; the maintainer decides."},
     {"id": "ux-review", "text": "Review timeline, mixer and plan review usability.", "how": "The maintainer uses the app and lists required changes before the exit check."}
