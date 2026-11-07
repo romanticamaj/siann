@@ -11,7 +11,8 @@ add_library(siann_protocol
 add_library(siann::protocol ALIAS siann_protocol)
 target_include_directories(siann_protocol PUBLIC include)
 # siann::engine (offline render for render.start) is pure: no device, no playback.
-target_link_libraries(siann_protocol PUBLIC siann::session siann::realtime PRIVATE siann::engine siann::io
+# PluginPort's header names engine::PluginNodeSource, the render's own instances.
+target_link_libraries(siann_protocol PUBLIC siann::session siann::realtime siann::engine PRIVATE siann::io
   siann_third_party_ixwebsocket)
 target_compile_features(siann_protocol PUBLIC cxx_std_20)
 siann_apply_compile_options(siann_protocol)

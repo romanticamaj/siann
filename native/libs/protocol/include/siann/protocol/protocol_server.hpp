@@ -30,6 +30,11 @@
 //
 // m4-engine-device (spec, Protocol v0 item 18): transport.play, transport.stop,
 // transport.locate and engine.status, through ServerOptions::transportPort.
+//
+// m4-plugin-node (spec, Protocol v0 item 19): plugin.instantiate (a job that runs
+// inside its request), plugin.open_editor and plugin.close_editor, engine.status
+// plugins[], and render.start's own plugin instances, through
+// ServerOptions::pluginPort.
 
 #include <chrono>
 #include <cstddef>
@@ -43,6 +48,7 @@
 
 #include "siann/protocol/audition_port.hpp"
 #include "siann/protocol/event_stream.hpp"
+#include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport.hpp"
 #include "siann/protocol/transport_port.hpp"
@@ -97,6 +103,9 @@ struct ServerOptions {
     // The engine host's transport and device; nullptr: transport.* and
     // engine.status are not_supported. Must outlive the server.
     TransportPort* transportPort = nullptr;
+    // The engine host's plugin hosts; nullptr: plugin.* is not_supported and
+    // render.start renders every plugin slot dry. Must outlive the server.
+    PluginPort* pluginPort = nullptr;
     // session.open: opens the bundle and returns the session to serve from now
     // on (owned by the launcher, which rebinds its engine inside). Runs on the
     // command thread. Empty: session.open is not_supported.

@@ -29,6 +29,7 @@
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/io/durable_file.hpp"
 #include "siann/session/journal.hpp"
 
 namespace siann::protocol {
@@ -224,7 +225,12 @@ const std::vector<std::string_view> kMethods = {
     "engine.capabilities", "plan.submit", "plan.status",     "plan.approve",      "plan.reject",
     "plan.apply",      "plan.rollback",   "plan.propose",    "proposal.merge",    "proposal.discard",
     "audition.hear",   "render.start",    "job.status",      "transport.play",    "transport.stop",
-    "transport.locate", "engine.status",
+    "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
+};
+
+// PluginHost's capability flags, in the order engine.capabilities lists them.
+const std::vector<std::string_view> kPluginFlags = {
+    "sampleAccurateParameters", "midiInput", "midiOutput", "sidechain", "variableLatency", "editor",
 };
 
 std::string_view changeName(model::DiffEntry::Change change) noexcept {
@@ -345,6 +351,63 @@ Value engineStatusJson(const EngineStatus& status) {
         out.emplace_back("deviceError", errorValue(status.deviceError->code, status.deviceError->message));
     }
     return Value(std::move(out));
+}
+
+Value capabilityJson(const PluginCapabilityFlags& flags) {
+    return Value(Object{{"sampleAccurateParameters", Value(flags.sampleAccurateParameters)},
+                        {"midiInput", Value(flags.midiInput)},
+                        {"midiOutput", Value(flags.midiOutput)},
+                        {"sidechain", Value(flags.sidechain)},
+                        {"variableLatency", Value(flags.variableLatency)},
+                        {"editor", Value(flags.editor)}});
+}
+
+template <typename T>
+Value decimalOrNull(const std::optional<T>& value) {
+    return value ? decimal(static_cast<std::uint64_t>(*value)) : Value(nullptr);
+}
+
+Value pluginStatusJson(const PluginStatus& plugin) {
+    Object out{{"slotId", Value(plugin.slotId)},
+               {"trackId", Value(plugin.trackId)},
+               {"format", Value(plugin.format)},
+               {"uid", Value(plugin.uid)},
+               {"state", Value(plugin.running ? "running" : "missing")},
+               {"capabilities", plugin.capabilities ? capabilityJson(*plugin.capabilities) : Value(nullptr)},
+               {"latencyFrames", plugin.latencyFrames ? Value(*plugin.latencyFrames) : Value(nullptr)},
+               {"tailFrames", plugin.tailFrames ? Value(*plugin.tailFrames) : Value(nullptr)},
+               {"callbacks", decimalOrNull(plugin.callbacks)},
+               {"xruns", decimalOrNull(plugin.xruns)},
+               {"maxCallbackMicros", plugin.maxCallbackMicros ? Value(*plugin.maxCallbackMicros) : Value(nullptr)},
+               {"unmeasuredCallbacks", decimalOrNull(plugin.unmeasuredCallbacks)},
+               {"midiOutputOverflows", decimalOrNull(plugin.midiOutputOverflows)}};
+    if (plugin.error) {
+        out.emplace_back("error", errorValue(plugin.error->first, plugin.error->second));
+    }
+    return Value(std::move(out));
+}
+
+Value editorJson(const PluginEditorState& editor) {
+    return Value(Object{{"slotId", Value(editor.slotId)},
+                        {"editorOpen", Value(editor.editorOpen)},
+                        {"nativeHandle", Value(std::to_string(editor.nativeHandle))}});
+}
+
+Value descriptorJson(const PluginDescriptorInfo& descriptor) {
+    return Value(Object{{"format", Value(descriptor.format)},
+                        {"uid", Value(descriptor.uid)},
+                        {"name", Value(descriptor.name)},
+                        {"path", Value(descriptor.path)}});
+}
+
+// The first slt_<n> the document does not use.
+std::string nextSlotId(const model::Document& document) {
+    for (std::uint64_t n = 1;; ++n) {
+        std::string id = "slt_" + std::to_string(n);
+        if (document.pluginSlot(id) == nullptr) {
+            return id;
+        }
+    }
 }
 
 // ^[A-Za-z0-9._-]{1,64}$ and not "." or "..": a file name, never a path.
@@ -736,6 +799,158 @@ struct ProtocolServer::Impl {
         return Value(std::move(out));
     }
 
+    Value pluginsFeatureJson() const {
+        if (options.pluginPort == nullptr) {
+            return Value(false);
+        }
+        Array flags;
+        for (const std::string_view flag : kPluginFlags) {
+            flags.push_back(Value(std::string(flag)));
+        }
+        return Value(Object{{"formats", stringArray(options.pluginPort->formats())}, {"flags", Value(std::move(flags))}});
+    }
+
+    PluginPort& requirePluginPort() const {
+        if (options.pluginPort == nullptr) {
+            throw ProtocolError("not_supported", "this engine host has no plugin hosts");
+        }
+        return *options.pluginPort;
+    }
+
+    // engine.status, with plugins[] when there is a plugin port.
+    Value engineStatus() const {
+        Value status = engineStatusJson(requireTransport().status());
+        if (options.pluginPort != nullptr) {
+            Array plugins;
+            for (const PluginStatus& plugin : options.pluginPort->plugins()) {
+                plugins.push_back(pluginStatusJson(plugin));
+            }
+            Object out = status.asObject();
+            out.emplace_back("plugins", Value(std::move(plugins)));
+            status = Value(std::move(out));
+        }
+        return status;
+    }
+
+    // plugin.instantiate (Jobs v0, plugins): a job that runs inside the request
+    // on the command thread. Its completion command, plugin.insert, enters the
+    // history after the state blob is durable.
+    std::string pluginInstantiate(const Pending& request) {
+        const std::string_view method = "plugin.instantiate";
+        const std::string kind(method);
+        PluginPort& plugins = requirePluginPort();
+        PluginInstantiateRequest wanted;
+        wanted.trackId = requireString(request.params, "trackId", method);
+        const Value* index = request.params.find("index");
+        if (index == nullptr || index->kind() != Value::Kind::number || index->asNumber() < 0 ||
+            index->asNumber() > 1e9 || index->asNumber() != static_cast<double>(static_cast<std::int64_t>(index->asNumber()))) {
+            throw ProtocolError("invalid_params", "plugin.instantiate: index must be a non-negative integer");
+        }
+        wanted.index = static_cast<std::int64_t>(index->asNumber());
+        const Value* descriptor = request.params.find("descriptor");
+        if (descriptor == nullptr || descriptor->kind() != Value::Kind::object) {
+            throw ProtocolError("invalid_params", "plugin.instantiate needs a descriptor object");
+        }
+        for (const auto& [key, value] : descriptor->asObject()) {
+            (void)value;
+            if (key != "format" && key != "path" && key != "uid" && key != "name") {
+                throw ProtocolError("invalid_params", "plugin.instantiate: unknown descriptor field " + key);
+            }
+        }
+        wanted.descriptor.format = requireString(*descriptor, "format", method);
+        const std::string& format = wanted.descriptor.format;
+        if (format != "clap" && format != "vst3" && format != "au" && format != "lv2") {
+            throw ProtocolError("invalid_params", "plugin.instantiate: format must be clap, vst3, au or lv2");
+        }
+        wanted.descriptor.path = optionalString(*descriptor, "path", method).value_or("");
+        wanted.descriptor.uid = optionalString(*descriptor, "uid", method).value_or("");
+        wanted.descriptor.name = optionalString(*descriptor, "name", method).value_or("");
+        if (wanted.descriptor.path.empty() && wanted.descriptor.uid.empty()) {
+            throw ProtocolError("invalid_params", "plugin.instantiate: the descriptor needs a path or a uid");
+        }
+        wanted.stateBlob = optionalString(request.params, "stateBlob", method);
+        if (wanted.stateBlob && !model::isStateBlobHash(*wanted.stateBlob)) {
+            throw ProtocolError("invalid_params", "plugin.instantiate: stateBlob must be sha256:<64 lowercase hex>");
+        }
+        const model::Document& head = session->history().head().document;
+        if (head.track(wanted.trackId) == nullptr) {
+            throw command::CommandError("not_found", "no track with id " + wanted.trackId);
+        }
+        wanted.slotId = nextSlotId(head);
+
+        PluginInstantiateResult loaded;
+        try {
+            loaded = plugins.instantiate(wanted);
+        } catch (const PluginPortError& error) {
+            std::string jobId = jobs.recordFailed(kind, error.code(), error.what());
+            return success(request.requestId,
+                           Value(Object{{"jobId", Value(std::move(jobId))},
+                                        {"kind", Value(kind)},
+                                        {"state", Value("failed")},
+                                        {"error", errorValue(error.code(), error.what())}}));
+        }
+
+        // The blob first, durably; then the command that names it.
+        std::optional<std::string> blob = wanted.stateBlob;
+        if (!blob && loaded.state) {
+            const std::string bytes(loaded.state->begin(), loaded.state->end());
+            blob = hash::formatHash(hash::sha256(bytes));
+            const std::filesystem::path directory = session->bundlePath() / "blobs";
+            io::createDirectoriesDurable(directory);
+            io::writeFileAtomic(directory / blob->substr(7), bytes);
+        }
+        const PluginDescriptorInfo& probed = loaded.descriptor;
+        const Value insert(Object{{"op", Value("plugin.insert")},
+                                  {"trackId", Value(wanted.trackId)},
+                                  {"index", Value(static_cast<double>(wanted.index))},
+                                  {"slotId", Value(wanted.slotId)},
+                                  {"descriptor", descriptorJson(probed)},
+                                  {"stateBlob", blob ? Value(*blob) : Value(nullptr)}});
+        model::PluginSlot slot;
+        slot.id = wanted.slotId;
+        slot.trackId = wanted.trackId;
+        slot.format = probed.format;
+        slot.uid = probed.uid;
+        slot.name = probed.name;
+        slot.path = probed.path;
+        slot.stateBlob = blob;
+        const command::Revision* revision = nullptr;
+        try {
+            revision = &session->commit({command::Command::fromJson(insert)}, options.actor, options.clock());
+        } catch (...) {
+            plugins.settle(slot, false);
+            throw;
+        }
+        plugins.settle(*revision->document.pluginSlot(wanted.slotId), true);
+
+        Value result(Object{{"revision", Value(revision->envelope.id)},
+                            {"slotId", Value(wanted.slotId)},
+                            {"descriptor", descriptorJson(probed)},
+                            {"stateBlob", blob ? Value(*blob) : Value(nullptr)},
+                            {"latencyFrames", Value(loaded.latencyFrames)},
+                            {"tailFrames", Value(loaded.tailFrames)},
+                            {"capabilities", capabilityJson(loaded.capabilities)}});
+        std::string jobId = jobs.recordDone(kind, result);
+        std::string response = success(request.requestId, Value(Object{{"jobId", Value(std::move(jobId))},
+                                                                         {"kind", Value(kind)},
+                                                                         {"state", Value("done")},
+                                                                         {"result", std::move(result)}}));
+        events.publishRevision(*revision);
+        if (options.auditionPort != nullptr) {
+            options.auditionPort->mainCommitted();
+        }
+        return response;
+    }
+
+    // The render jobs' plugin sets, back on the command thread to be destroyed.
+    void returnRenderInstances() {
+        for (auto& instances : jobs.takeFinishedPlugins()) {
+            if (options.pluginPort != nullptr) {
+                options.pluginPort->destroyRenderInstances(std::move(instances));
+            }
+        }
+    }
+
     Value capabilitiesJson() const {
         Array methods;
         for (const std::string_view name : kMethods) {
@@ -752,7 +967,7 @@ struct ProtocolServer::Impl {
                                       {"audition", Value(options.auditionPort != nullptr)},
                                       {"transport", Value(options.transportPort != nullptr)},
                                       {"render", Value(true)},
-                                      {"plugins", Value(false)}})},
+                                      {"plugins", pluginsFeatureJson()}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
@@ -882,8 +1097,15 @@ struct ProtocolServer::Impl {
         const std::int64_t start = optionalCount(request.params, "start", method).value_or(0);
         const std::int64_t frames = optionalCount(request.params, "frames", method).value_or(-1);
         // The head document is immutable: later commits do not change the job.
-        std::string jobId = jobs.startRender(detail::RenderRequest{name, start, frames, session->history().head().document,
-                                                                   session->bundlePath()});
+        const model::Document& document = session->history().head().document;
+        // Its own plugin instances, loaded here before the job is queued; the live
+        // graph's are never driven by the render (Jobs v0, plugins).
+        std::shared_ptr<engine::PluginNodeSource> plugins;
+        if (options.pluginPort != nullptr && !document.allPluginSlots().empty()) {
+            plugins = options.pluginPort->instantiateForRender(document);
+        }
+        std::string jobId = jobs.startRender(
+            detail::RenderRequest{name, start, frames, document, session->bundlePath(), std::move(plugins)});
         return success(request.requestId, Value(Object{{"jobId", Value(std::move(jobId))},
                                                          {"kind", Value("render")},
                                                          {"state", Value("queued")}}));
@@ -1025,7 +1247,19 @@ struct ProtocolServer::Impl {
             return success(request.requestId, transportStateJson(transportPort.locate(frames)));
         }
         if (method == "engine.status") {
-            return success(request.requestId, engineStatusJson(requireTransport().status()));
+            return success(request.requestId, engineStatus());
+        }
+        if (method == "plugin.instantiate") {
+            return pluginInstantiate(request);
+        }
+        if (method == "plugin.open_editor") {
+            PluginPort& plugins = requirePluginPort();
+            return success(request.requestId, editorJson(plugins.openEditor(requireString(request.params, "slotId", method))));
+        }
+        if (method == "plugin.close_editor") {
+            PluginPort& plugins = requirePluginPort();
+            return success(request.requestId,
+                           editorJson(plugins.closeEditor(requireString(request.params, "slotId", method))));
         }
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }
@@ -1070,6 +1304,8 @@ struct ProtocolServer::Impl {
             }
             return failure(id, e.code(), e.what(), std::nullopt, std::move(data));
         } catch (const TransportPortError& e) {
+            return failure(id, e.code(), e.what());
+        } catch (const PluginPortError& e) {
             return failure(id, e.code(), e.what());
         } catch (const std::exception& e) {
             return failure(id, "internal_error", e.what());
@@ -1212,6 +1448,7 @@ std::size_t ProtocolServer::pump() {
     auto requests = impl_->inbox.drain();
     const std::size_t count = requests.size();
     impl_->handle(std::move(requests));
+    impl_->returnRenderInstances();
     return count;
 }
 

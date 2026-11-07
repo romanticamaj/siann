@@ -142,14 +142,14 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
 }
 
 media::AudioBuffer renderOffline(const model::Document& document, const MediaLibrary& library,
-                                 const RenderOptions& options) {
+                                 const RenderOptions& options, const PluginNodeSource* plugins) {
     if (options.start < 0 || options.blockFrames <= 0 || options.frames < -1) {
         throw EngineError("invalid_render_range", "the render range or block size is invalid");
     }
     const std::int64_t frames =
         options.frames >= 0 ? options.frames : std::max<std::int64_t>(0, documentEnd(document) - options.start);
 
-    auto graph = compileDocument(document, library, options.blockFrames);
+    auto graph = compileDocument(document, library, options.blockFrames, plugins);
     return renderGraph(*graph, options.start, frames, document.root().sampleRate);
 }
 
