@@ -1278,7 +1278,14 @@ Rules:
   cascades. Validation checks the hash's form only: a blob absent from `blobs/` at
   instantiation loads the plugin with its default state and reports it `running`
   with `error {code: "state_missing"}`; rebuilding the document never needs the
-  blob or the plugin.
+  blob or the plugin. `inserts` is omitted from the track's JSON when it is
+  empty, and the document's `pluginSlots` table when it has no slot, so every
+  M1 to M3 document, checkpoint and fixture keeps its entity and document hashes
+  (`Session::open` checks the checkpoint document's hash against the revision
+  envelope and would otherwise reject every existing session). The xrun and
+  per-instance timer tests of m4-plugin-node use `siann_test_plugin`'s
+  `holdProcessBlock` (each block stays in flight 20 ms, longer than a 256-frame
+  period at 48 kHz) until `siann_hostile_plugin` lands (m4-hostile-plugin).
 
 ### siann-command (pure C++) — the core of SIANN
 
@@ -1303,7 +1310,7 @@ Rules:
 - A job first makes its outputs durable (media and blob files written and flushed),
   then submits a pure command carrying their hashes and descriptors. Example:
   `plugin.instantiate` (job, main thread) produces a state blob, then
-  `plugin.insert {trackId, index, descriptor, stateBlob}` (pure command) enters the
+  `plugin.insert {trackId, index, slotId, descriptor, stateBlob}` (pure command) enters the
   history. `media.import` produces files, then `media.add` enters the history.
 - Rebuilding a document never requires a plugin to be installed or instantiable.
   Instantiation happens when audio starts; a plugin that cannot be loaded is shown as
