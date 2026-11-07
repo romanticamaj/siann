@@ -13,9 +13,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# `cmake --build --parallel` with no number means unbounded `make -j` on Linux
+# `cmake --build` with no number means unbounded `make -j` on Linux
 # and macOS. With the JUCE build, macOS took an hour over tiny libraries and Linux
-# lost its runner three minutes into every build. This bounds it to the runners' cores.
+# lost its runner three minutes into every build. The variable applies only when
+# the build command carries no --parallel flag, so none of the commands below do.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
 
@@ -44,7 +45,7 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/ci -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
       - name: Build
-        run: cmake --build native/build/ci --config Debug --parallel
+        run: cmake --build native/build/ci --config Debug
       - name: Test
         run: ctest --test-dir native/build/ci -C Debug --output-on-failure --timeout 300
 
@@ -71,7 +72,7 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/rtsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_RTSAN=ON
       - name: Build
-        run: cmake --build native/build/rtsan --parallel
+        run: cmake --build native/build/rtsan
       - name: Test
         run: ctest --test-dir native/build/rtsan --output-on-failure --no-tests=error
       - name: SRC tests through r8brain under RTSan
@@ -95,7 +96,7 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON
       - name: Build
-        run: cmake --build native/build/desktop --config Debug --parallel
+        run: cmake --build native/build/desktop --config Debug
       # The hosting tests open plugin editors, so Linux needs a virtual display;
       # the Windows and macOS runners have a desktop session.
       - name: Test (Linux, virtual display)
@@ -150,7 +151,7 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/app -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
       - name: Build siann-engine
-        run: cmake --build native/build/app --config Debug --parallel --target siann-engine
+        run: cmake --build native/build/app --config Debug --target siann-engine
       - name: Locate siann-engine
         run: |
           exe=$(find native/build/app -type f \( -name siann-engine -o -name siann-engine.exe \) | head -n 1)
