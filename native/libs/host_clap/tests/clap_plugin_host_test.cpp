@@ -569,6 +569,7 @@ TEST_CASE("clap host: a setParameter during playback never holds the plugin out"
     for (int c = 0; c < 2; ++c) {
         input.channel(c).assign(static_cast<std::size_t>(blockFrames), 1.0f);
     }
+    instance->setBlocksComing(true);
     std::thread audio([&] {
         const rt::ScopedRealtimeThread realtime;
         while (!stop.load()) {
@@ -587,6 +588,7 @@ TEST_CASE("clap host: a setParameter during playback never holds the plugin out"
     REQUIRE(pump([&] { return blocks.load() >= ran + 16; }));
     stop.store(true);
     audio.join();
+    instance->setBlocksComing(false);
     CHECK(dryBlocks.load() == 0);
 }
 
@@ -616,6 +618,108 @@ TEST_CASE("clap host: getState during playback never holds the plugin out", "[cl
     auto restored = loadTestPlugin(host);
     restored->control().setState(state);
     CHECK(restored->control().getParameter(gain) == Approx(0.25));
+}
+
+// A block takes a value from the host before the plugin applies it, so a getState in
+// between must wait for that block, or the blob has the value before. Each block of
+// the plugin here stays in flight, its events not yet applied, for restartWatch.
+TEST_CASE("clap host: getState waits for the block that took the value", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    const auto pump = pumpOf(host);
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    instance->control().setParameter(gain, 0.5);
+    instance->control().setParameter(parameterIndex(*instance, "holdProcessBlock"), 1.0);
+    host.runMainThreadCallbacks();
+
+    PlayingThread playing(*instance);
+    REQUIRE(pump([&] { return playing.blocks() >= 2; }));
+    instance->control().setParameter(gain, 0.25);
+    // The block in flight took its events already; the next one takes the value.
+    const auto set = playing.blocks();
+    REQUIRE(pump([&] { return playing.blocks() > set; }));
+    const auto state = instance->control().getState();
+    CHECK(playing.finish() == 0);
+
+    auto restored = loadTestPlugin(host);
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Approx(0.25));
+}
+
+// The driver says blocks are coming, so a stall longer than any guess from the last
+// block (an xrun, a debugger) pauses nothing: the next block delivers the value,
+// and getState waits for it. Told they have stopped, the host flushes at once, even
+// right after a block. The sleeps are the stall, not synchronization: what is
+// checked holds however long they take.
+TEST_CASE("clap host: while the driver says blocks are coming, a stall pauses nothing", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int gain = parameterIndex(*instance, "gain");
+    const int flushed = parameterIndex(*instance, "flushed");
+    instance->control().setParameter(parameterIndex(*instance, "watchFlush"), 1.0);
+    host.runMainThreadCallbacks();  // told nothing, nothing played: a flush
+    REQUIRE(instance->control().getParameter(flushed) < 0.5);
+
+    Audio input(2, blockFrames);
+    Audio output(2, blockFrames);
+    const auto play = [&](std::chrono::milliseconds stall, const std::atomic<bool>& stop) {
+        std::this_thread::sleep_for(stall);
+        const rt::ScopedRealtimeThread realtime;
+        do {
+            instance->process(input.view(), output.view(), {});
+        } while (!stop.load());
+    };
+    const std::atomic<bool> oneBlock{true};
+    instance->setBlocksComing(true);
+    std::thread(play, std::chrono::milliseconds(0), std::cref(oneBlock)).join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    instance->control().setParameter(gain, 0.25);
+    host.runMainThreadCallbacks();
+    CHECK(instance->control().getParameter(flushed) < 0.5);
+
+    std::atomic<bool> stop{false};
+    std::thread audio(play, std::chrono::milliseconds(200), std::cref(stop));
+    const auto state = instance->control().getState();  // in the stall
+    stop.store(true);
+    audio.join();
+    CHECK(instance->control().getParameter(flushed) < 0.5);
+    auto restored = loadTestPlugin(host);
+    restored->control().setState(state);
+    CHECK(restored->control().getParameter(gain) == Approx(0.25));
+
+    std::thread(play, std::chrono::milliseconds(0), std::cref(oneBlock)).join();
+    instance->setBlocksComing(false);
+    instance->control().setParameter(gain, 0.5);
+    host.runMainThreadCallbacks();
+    CHECK(instance->control().getParameter(flushed) > 0.5);
+}
+
+// Past the events a block carries, a parameter's last value is the one delivered
+// next, and the one the control side reads meanwhile.
+TEST_CASE("clap host: past the events a block carries, the newest value goes next", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    auto instance = loadTestPlugin(host);
+    const auto gain = static_cast<std::uint32_t>(parameterIndex(*instance, "gain"));
+    constexpr int count = 4096;  // well past what one block carries
+    std::vector<host::BlockEvent> events;
+    for (int i = 0; i < count; ++i) {
+        events.push_back({i * blockFrames / count, host::BlockEventKind::parameterValue, gain, 0,
+                          i + 1 == count ? 0.75 : 0.25});
+    }
+    Audio input(2, blockFrames);
+    Audio output(2, blockFrames);
+    std::uint64_t allocations = 1;
+    std::thread audio([&] {
+        const rt::ScopedRealtimeThread realtime;
+        const auto before = rt::allocationViolations();
+        instance->process(input.view(), output.view(), events);
+        allocations = rt::allocationViolations() - before;
+    });
+    audio.join();
+    CHECK(allocations == 0);
+    CHECK(instance->control().getParameter(static_cast<int>(gain)) == Approx(0.75));
+    CHECK(measureDelay(*instance).peak == Approx(0.75f));
 }
 
 // Stopped, nothing else delivers a value set just before the save: getState flushes.

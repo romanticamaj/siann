@@ -150,10 +150,11 @@ inline int nextReportedLatency(const Pump& pump, rt::MpscQueue<host::PluginEvent
 
 // The audio thread at full speed beside the main thread, with what it may meet
 // there. The test ends the loop itself: process() is only ever called from here.
+// Like a driver, it tells the instance blocks are coming, and when they stop.
 class PlayingThread {
 public:
     explicit PlayingThread(host::PluginInstance& instance)
-        : input_(2, blockFrames), output_(2, blockFrames), thread_([this, &instance] {
+        : instance_(instance), input_(2, blockFrames), output_(2, blockFrames), thread_([this, &instance] {
               const rt::ScopedRealtimeThread realtime;
               const auto before = rt::allocationViolations();
               while (!stop_.load()) {
@@ -161,7 +162,9 @@ public:
                   blocks_.fetch_add(1);
               }
               allocations_.store(rt::allocationViolations() - before);
-          }) {}
+          }) {
+        instance.setBlocksComing(true);
+    }
     ~PlayingThread() { finish(); }
 
     std::uint64_t blocks() const { return blocks_.load(); }
@@ -170,11 +173,13 @@ public:
         stop_.store(true);
         if (thread_.joinable()) {
             thread_.join();
+            instance_.setBlocksComing(false);
         }
         return allocations_.load();
     }
 
 private:
+    host::PluginInstance& instance_;
     Audio input_;
     Audio output_;
     std::atomic<bool> stop_{false};

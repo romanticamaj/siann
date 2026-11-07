@@ -12,7 +12,8 @@
 // quarter second with "latency" or "tail" on, none otherwise.
 //
 // Probes for the host's side of things, none of them state:
-// - "holdProcessBlock": every process() stays in flight for restartWatch.
+// - "holdProcessBlock": every process() stays in flight for restartWatch before it
+//   applies its events.
 // - "requestRestart": asks for a restart. Deactivate and activate then each take
 //   restartWatch, watching for process() meanwhile, and activate reports through
 //   "overlapped" and "restarted".
@@ -20,6 +21,8 @@
 // - "watchSave": state save waits, up to saveWatch, for a process() call to begin,
 //   and reports through "savedWhileProcessing" whether one did (with a values rescan,
 //   so the host reads it).
+// - "watchFlush": each params.flush after the one that turns it on reports itself
+//   through "flushed", as an out-event (a block never does).
 // - "rescan": on the main thread, moves "gain" to rescannedGain behind the host's
 //   back and calls params.rescan.
 // - "wrongThread": turns on when clap.thread-check disagrees with what CLAP says of
@@ -87,13 +90,15 @@ enum Parameter : std::uint32_t {
     paramHome,
     paramWatchSave,
     paramSavedWhileProcessing,
+    paramWatchFlush,
+    paramFlushed,
     parameterCount,
 };
 
 constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
-    "watchSave", "savedWhileProcessing",
+    "watchSave", "savedWhileProcessing", "watchFlush", "flushed",
 };
 
 constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
@@ -226,21 +231,25 @@ struct TestPlugin {
     }
 
     void pushPendingOutEvents(const clap_output_events_t* out) {
-        if (!nudgeOutPending.exchange(false)) {
-            return;
+        if (nudgeOutPending.exchange(false)) {
+            pushValue(out, paramGain, nudgedGain);
         }
-        values[paramGain].store(nudgedGain);
+    }
+
+    // An edit of the plugin's own, which the host must take.
+    void pushValue(const clap_output_events_t* out, Parameter parameter, double value) {
+        values[parameter].store(value);
         clap_event_param_value_t event{};
         event.header.size = sizeof(event);
         event.header.time = 0;
         event.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
         event.header.type = CLAP_EVENT_PARAM_VALUE;
-        event.param_id = idOf(paramGain);
+        event.param_id = idOf(parameter);
         event.note_id = -1;
         event.port_index = -1;
         event.channel = -1;
         event.key = -1;
-        event.value = nudgedGain;
+        event.value = value;
         out->try_push(out, &event.header);
     }
 
@@ -349,11 +358,15 @@ bool paramsTextToValue(const clap_plugin_t*, clap_id, const char* text, double* 
 void paramsFlush(const clap_plugin_t* plugin, const clap_input_events_t* in, const clap_output_events_t* out) {
     auto& test = self(plugin);
     test.mustBeAudioThread();
+    const bool watching = test.on(paramWatchFlush);
     const std::uint32_t count = in->size(in);
     for (std::uint32_t i = 0; i < count; ++i) {
         test.apply(*in->get(in, i));
     }
     test.pushPendingOutEvents(out);
+    if (watching) {
+        test.pushValue(out, paramFlushed, 1.0);
+    }
 }
 
 const clap_plugin_params_t params = {paramsCount,       paramsGetInfo,     paramsGetValue,
@@ -530,6 +543,13 @@ clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_proces
     test.inProcess.store(true);
     test.processCalls.fetch_add(1);
     test.mustBeAudioThread();
+    if (test.on(paramHoldProcessBlock)) {
+        // A slow plugin: the block stays in flight for restartWatch, its events not
+        // applied yet, so a host that must wait for it has something to wait for.
+        const auto end = std::chrono::steady_clock::now() + restartWatch;
+        while (std::chrono::steady_clock::now() < end) {
+        }
+    }
     const std::uint32_t frames = process->frames_count;
     const clap_input_events_t* in = process->in_events;
     const std::uint32_t count = in->size(in);
@@ -549,13 +569,6 @@ clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_proces
     }
     test.writeIndex = (test.writeIndex + frames) & (ringFrames - 1);
     test.pushPendingOutEvents(process->out_events);
-    if (test.on(paramHoldProcessBlock)) {
-        // A slow plugin: the block stays in flight for restartWatch, so a host that
-        // must wait for it has something to wait for.
-        const auto end = std::chrono::steady_clock::now() + restartWatch;
-        while (std::chrono::steady_clock::now() < end) {
-        }
-    }
     test.inProcess.store(false);
     return CLAP_PROCESS_CONTINUE;
 }
