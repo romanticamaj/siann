@@ -348,7 +348,7 @@ gesture boundaries (see "Gestures").
 | Thread | Does | May block on |
 |---|---|---|
 | audio | processes the live graph; pushes outboxes | nothing of SIANN's; inside a hosted plugin's `processBlock`, JUCE's wrapper locks, held by the main thread (the exception under "Realtime rules and enforcement") |
-| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block) |
+| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block); the same, inside `ClapPluginHost::runMainThreadCallbacks`, for a CLAP plugin's restart (deactivate and activate) and for a params flush when no block has come for a while |
 | command | validates, applies and journals commands; publishes documents; asks for compiles; installs graphs through the driver | journal and checkpoint I/O |
 | compiler | builds `PreparedGraph` from an immutable document and pinned instances | the main thread, for instantiation, with a timeout |
 | control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | nothing outside its own inbox |
@@ -364,7 +364,8 @@ gesture boundaries (see "Gestures").
   never synchronous calls. Device control runs on the main thread (JUCE and ASIO
   expect that); the command thread asks for it and continues on the completion.
 - The blocking edges are compiler → main (instantiation), main → audio
-  callback (inside `stop()`), main → audio callback (one block, inside `setState`),
+  callback (inside `stop()`), main → audio callback (one block, inside `setState`,
+  and inside a CLAP plugin's restart or idle params flush; never inside `getState`),
   protocol → command (an MCP HTTP request waits for
   its answer, with a timeout; a full inbox is `queue_full` at once) and, with a
   hosted plugin in the graph, audio callback → main: inside `processBlock` the
@@ -1541,7 +1542,11 @@ The interfaces below are defined in `siann-host-api`.
 Shared by both targets:
 
 - `ClapPluginHost` via the CLAP SDK. CLAP is the only format available in both
-  builds, so it is implemented first in M4.
+  builds, so it is implemented first in M4. CLAP does not require a pause for
+  `getState`: `state.save` is a main-thread call that may run while the plugin
+  processes, and a value set just before reaches the plugin by its next `process`.
+  `ClapPluginHost::getState` pauses only to run `params.flush` when no block is
+  coming, so a save during playback passes no block dry.
 - `MediaReader` via dr_libs / libFLAC etc. (not JUCE), so media reading is identical
   everywhere.
 
