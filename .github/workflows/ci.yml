@@ -8,9 +8,21 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its run; main keeps every run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# `cmake --build --parallel` with no number means unbounded `make -j` on Linux
+# and macOS. With the JUCE build, macOS took an hour over tiny libraries and Linux
+# lost its runner three minutes into every build. This bounds it to the runners' cores.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   node:
     name: Node bridge (ubuntu)
+    timeout-minutes: 90
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +33,7 @@ jobs:
 
   native:
     name: Native core (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -33,7 +46,7 @@ jobs:
       - name: Build
         run: cmake --build native/build/ci --config Debug --parallel
       - name: Test
-        run: ctest --test-dir native/build/ci -C Debug --output-on-failure
+        run: ctest --test-dir native/build/ci -C Debug --output-on-failure --timeout 300
 
   # Clang RealtimeSanitizer over the whole native suite (realtime, playback,
   # host_fake, cli and the sanitizer canaries). Every audio callback runs in
@@ -43,6 +56,7 @@ jobs:
   # apt.llvm.org provides it. Apple Clang has no RTSan, so macOS is not covered.
   rtsan:
     name: Native core RTSan (ubuntu, Clang 20)
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     env:
       RTSAN_OPTIONS: halt_on_error=1
@@ -65,6 +79,7 @@ jobs:
 
   desktop:
     name: Desktop host with JUCE (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -85,10 +100,10 @@ jobs:
       # the Windows and macOS runners have a desktop session.
       - name: Test (Linux, virtual display)
         if: runner.os == 'Linux'
-        run: xvfb-run -a ctest --test-dir native/build/desktop -C Debug --output-on-failure
+        run: xvfb-run -a ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300
       - name: Test
         if: runner.os != 'Linux'
-        run: ctest --test-dir native/build/desktop -C Debug --output-on-failure
+        run: ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300
       # m0-plugin-hosting: the editor owned by the real Electron window. Windows
       # alone, as macOS editors float; the app job's engine has no JUCE.
       - uses: actions/setup-node@v4
@@ -116,6 +131,7 @@ jobs:
   # under a virtual display; the Chromium sandbox helper needs its setuid bit.
   app:
     name: Electron shell (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
