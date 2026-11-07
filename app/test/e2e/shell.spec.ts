@@ -150,6 +150,8 @@ test('a restart slower than the renderer retry reconnects through onChange', asy
   await killEngineAndExpectReconnect();
 });
 
+let statusCalls = 0;
+
 // What engine.status says about the device of the engine the renderer is on.
 async function deviceId(): Promise<string | null> {
   const endpoint = await page.evaluate(() =>
@@ -175,10 +177,12 @@ async function deviceId(): Promise<string | null> {
     });
     socket.send(JSON.stringify({ type: 'auth', token: endpoint.token }));
     await reply();
-    socket.send(JSON.stringify({ requestId: 'req_status', sessionId, method: 'engine.status', params: {} }));
+    // A new id each time: the server answers a repeated one from its idempotency cache.
+    const requestId = `req_status_${++statusCalls}`;
+    socket.send(JSON.stringify({ requestId, sessionId, method: 'engine.status', params: {} }));
     for (;;) {
       const message = await reply();
-      if (message.requestId !== 'req_status') continue;
+      if (message.requestId !== requestId) continue;
       const result = message.result as { device: { id: string } | null };
       return result.device?.id ?? null;
     }
