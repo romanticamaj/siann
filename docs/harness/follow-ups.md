@@ -20,6 +20,16 @@ point here; its first run takes the listed section into its features.
   regression still hangs the runner.
 - The bounded quit wait on a wedged engine has unit and process tests but no e2e.
 
+## Before M4 wave 2: CLAP editor windows on the desktop target (gui extension embedding into a window siann-host-desktop supplies)
+
+`ClapPluginHost` reports the gui extension in `capabilities().editor` and
+`hasEditor`, and `openEditor` throws `editor_failed`: siann-host-clap has no window
+to embed into, and the core must not gain one. The editor protocol method
+(`m4-plugin-node`, last item) needs siann-host-desktop to supply a top-level window
+and hand its native handle to the host, which then runs the gui extension's
+create, set_parent and show on the main thread. Editors in the headless target stay
+out, as the spec says.
+
 ## Before M4: plugin hosting (from PR #48)
 
 Decided by Fable, delegated by the maintainer, 2026-11-07. Taken into M4's features:

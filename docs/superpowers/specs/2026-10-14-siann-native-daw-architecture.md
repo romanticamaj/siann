@@ -752,7 +752,9 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
   to the command thread through `pluginEventRt` or `pluginEventAny`, and triggers a recompile with
-  state migration.
+  state migration. CLAP's `latency.changed` is a main-thread call and takes effect only
+  after the host deactivates and reactivates the plugin, during which process passes
+  input through.
 - A global compensation limit (configurable) bounds delay line memory. Paths above
   the limit are flagged to the user and agents; they are not silently misaligned.
 - Tests: a built-in `FakeLatency` node with settable and changeable latency; null
@@ -1980,7 +1982,7 @@ before adoption, including transitive dependencies.
 | Desktop audio devices, VST3/AU hosting, editors | JUCE 9.0.3 (verified current major on 2026-10-22) | AGPLv3 (ADR-0017) |
 | ASIO | Steinberg ASIO SDK, bundled with JUCE 9 | GPLv3 option since October 2025; shipped (ADR-0017) |
 | VST3 | Steinberg VST3 SDK (via JUCE) | MIT since VST 3.8 |
-| CLAP hosting | CLAP SDK | MIT |
+| CLAP hosting | CLAP SDK 1.2.10, first adopted in M4 by m4-clap-host | MIT |
 | LV2 hosting (headless) | lilv, serd, sord | ISC |
 | Media decoding | dr_libs, libFLAC, libvorbis/libogg | public domain/MIT-0, BSD |
 | Resampling (offline and device-side realtime) | r8brain-free-src; libsamplerate as realtime fallback | MIT; BSD-2 |
