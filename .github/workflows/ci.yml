@@ -13,7 +13,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# `cmake --build` with no number means unbounded `make -j` on Linux
+# `cmake --build --parallel` with no number means unbounded `make -j` on Linux
 # and macOS. With the JUCE build, macOS took an hour over tiny libraries and Linux
 # lost its runner three minutes into every build. The variable applies only when
 # the build command carries no --parallel flag, so none of the commands below do.
@@ -92,16 +92,17 @@ jobs:
         if: runner.os == 'Linux'
         run: >-
           sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libxext-dev libxi-dev libxrandr-dev libxinerama-dev
-          libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb
+          libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb openbox
       - name: Configure
         run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON
       - name: Build
         run: cmake --build native/build/desktop --config Debug
-      # The hosting tests open plugin editors, so Linux needs a virtual display;
-      # the Windows and macOS runners have a desktop session.
+      # The hosting tests open plugin editors, so Linux needs a virtual display, and
+      # a window manager: without one JUCE's window setup dies on an X BadAtom. The
+      # Windows and macOS runners have a desktop session.
       - name: Test (Linux, virtual display)
         if: runner.os == 'Linux'
-        run: xvfb-run -a ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300
+        run: xvfb-run -a sh -c 'openbox & sleep 1; ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300'
       - name: Test
         if: runner.os != 'Linux'
         run: ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300

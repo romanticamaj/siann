@@ -1883,8 +1883,8 @@ Protocol v0, launcher (decided with m0-electron-shell):
     engine exits with code 0 when its stdin reaches EOF (the launcher holds the
     pipe, so a dead launcher never leaves an orphan) and on SIGTERM / CTRL_BREAK.
     A bad launch (a `--session` that is an existing file, a bad option) exits 1
-    with one JSON error `{ok: false, error: {code, message}}` on stderr and
-    nothing on stdout. Electron reads the ready line and exposes only
+    with one JSON error `{ok: false, error: {code, message}}` as the last line of
+    stderr (JUCE and plugins may print before it) and nothing on stdout. Electron reads the ready line and exposes only
     `{port, token}` to the renderer through the preload bridge; `mcpToken` stays
     in the main process.
 

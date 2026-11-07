@@ -129,10 +129,16 @@ std::vector<std::string> withArgs(std::vector<std::string> args, const std::vect
     return args;
 }
 
-std::string errorCode(PipedProcess& child) {
+// The last line of stderr: JUCE and hosted plugins may print before it.
+Value errorLine(PipedProcess& child) {
     const std::string err = child.stderrText();
     INFO("stderr: " << err);
-    return at(at(json::parse(err.substr(0, err.find('\n'))), "error"), "code").asString();
+    const std::string trimmed = err.substr(0, err.find_last_not_of("\r\n") + 1);
+    return json::parse(trimmed.substr(trimmed.rfind('\n') + 1));
+}
+
+std::string errorCode(PipedProcess& child) {
+    return at(at(errorLine(child), "error"), "code").asString();
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)
@@ -333,9 +339,7 @@ TEST_CASE("a bad --session exits 1 with a JSON error on stderr and nothing on st
         PipedProcess child(SIANN_ENGINE_EXE, args);
         CHECK(child.wait() == 1);
         CHECK(child.stdoutText().empty());
-        const std::string err = child.stderrText();
-        INFO("stderr: " << err);
-        const Value error = json::parse(err.substr(0, err.find('\n')));
+        const Value error = errorLine(child);
         CHECK_FALSE(at(error, "ok").asBool());
         CHECK_FALSE(at(at(error, "error"), "code").asString().empty());
         CHECK(at(at(error, "error"), "message").kind() == json::Value::Kind::string);
