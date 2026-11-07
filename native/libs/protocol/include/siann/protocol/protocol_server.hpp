@@ -27,6 +27,9 @@
 // job.status (Jobs v0), session.save and session.open, command.list and
 // engine.capabilities; the MCP adapter serves them as tools on POST
 // /v0/mcp (docs/schemas/protocol-mcp-v0.md).
+//
+// m4-engine-device (spec, Protocol v0 item 18): transport.play, transport.stop,
+// transport.locate and engine.status, through ServerOptions::transportPort.
 
 #include <chrono>
 #include <cstddef>
@@ -42,6 +45,7 @@
 #include "siann/protocol/event_stream.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport.hpp"
+#include "siann/protocol/transport_port.hpp"
 #include "siann/session/session.hpp"
 
 namespace siann::protocol {
@@ -90,6 +94,9 @@ struct ServerOptions {
     // The engine host's auditioner; nullptr: audition.hear is audition_unavailable.
     // Must outlive the server.
     AuditionPort* auditionPort = nullptr;
+    // The engine host's transport and device; nullptr: transport.* and
+    // engine.status are not_supported. Must outlive the server.
+    TransportPort* transportPort = nullptr;
     // session.open: opens the bundle and returns the session to serve from now
     // on (owned by the launcher, which rebinds its engine inside). Runs on the
     // command thread. Empty: session.open is not_supported.

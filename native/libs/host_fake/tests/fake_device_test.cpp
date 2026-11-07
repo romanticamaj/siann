@@ -332,3 +332,18 @@ TEST_CASE("A counter input together with loopback is rejected", "[fake_device][c
     FakeAudioDevice device(options);
     CHECK_THROWS_AS(device.open(config(64, 1)), std::invalid_argument);
 }
+
+TEST_CASE("the fake device refuses its first opens when told to", "[host][fake]") {
+    FakeAudioDevice::Options options;
+    options.refuseOpens = 2;
+    FakeAudioDevice device(options);
+    for (int i = 0; i < 2; ++i) {
+        try {
+            device.open(config());
+            FAIL("the open went through");
+        } catch (const siann::host::DeviceError& error) {
+            CHECK(error.code() == "device_open_failed");
+        }
+    }
+    CHECK(device.open(config()).sampleRate == 48'000);
+}

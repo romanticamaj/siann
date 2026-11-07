@@ -102,6 +102,11 @@ public:
     struct Options {
         // Whether the transport is playing; defaults to false.
         std::function<bool()> playing;
+        // The transport's position in session frames. Set, a frame goes out on
+        // every tick once there is a legend, with no entries before the first
+        // meter reading, so a locate shows while stopped. Unset, the playhead
+        // is the newest meter block's start and a frame needs a reading.
+        std::function<std::int64_t()> playhead;
         // Engine steady-clock time in microseconds; defaults to steady_clock.
         std::function<std::int64_t()> clockMicros;
     };
@@ -116,7 +121,8 @@ public:
     void graphPublished(std::uint64_t epoch, const std::map<std::string, graph::NodeId>& meterSlots);
 
     // Builds one frame from the newest samples of the legend's epoch and sends
-    // it on the channel. False (nothing sent) before a legend or a sample.
+    // it on the channel. False (nothing sent) before a legend, or before a
+    // sample without Options::playhead.
     bool tick();
 
     const std::vector<std::string>& legend() const noexcept { return legend_; }

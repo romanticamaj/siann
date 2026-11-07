@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -22,6 +23,7 @@
 #include "siann/hash/json.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/protocol_server.hpp"
+#include "siann/protocol/realtime_channel.hpp"
 
 namespace siann::protocol::testing {
 
@@ -162,6 +164,67 @@ private:
     std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<std::string> received_;
+    bool open_ = false;
+    bool closed_ = false;
+};
+
+// A client of the realtime channel (kRealtimePath): one auth frame, then the
+// binary frames in arrival order.
+class RealtimeClient {
+public:
+    explicit RealtimeClient(std::uint16_t port) {
+        socket_.setUrl("ws://127.0.0.1:" + std::to_string(port) + std::string(kRealtimePath));
+        ix::WebSocketHttpHeaders headers;
+        headers["Origin"] = std::string(kAppOrigin);
+        socket_.setExtraHeaders(headers);
+        socket_.disableAutomaticReconnection();
+        socket_.setOnMessageCallback([this](const ix::WebSocketMessagePtr& message) {
+            std::lock_guard lock(mutex_);
+            if (message->type == ix::WebSocketMessageType::Open) {
+                open_ = true;
+            } else if (message->type == ix::WebSocketMessageType::Close ||
+                       message->type == ix::WebSocketMessageType::Error) {
+                closed_ = true;
+            } else if (message->type == ix::WebSocketMessageType::Message && message->binary) {
+                frames_.push_back(message->str);
+            }
+            changed_.notify_all();
+        });
+    }
+    ~RealtimeClient() { socket_.stop(); }
+    RealtimeClient(const RealtimeClient&) = delete;
+    RealtimeClient& operator=(const RealtimeClient&) = delete;
+
+    bool start(const std::string& token) {
+        socket_.start();
+        {
+            std::unique_lock lock(mutex_);
+            if (!changed_.wait_for(lock, kClientTimeout, [this] { return open_; })) {
+                return false;
+            }
+        }
+        socket_.sendText(jcs::canonicalize(json::Value(json::Object{{"type", json::Value("auth")},
+                                                                    {"token", json::Value(token)}})));
+        return true;
+    }
+
+    // The next frame, or nullopt when none comes in time or the socket closed.
+    std::optional<MeterFrame> next() {
+        std::unique_lock lock(mutex_);
+        changed_.wait_for(lock, kClientTimeout, [this] { return !frames_.empty() || closed_; });
+        if (frames_.empty()) {
+            return std::nullopt;
+        }
+        const std::string bytes = std::move(frames_.front());
+        frames_.pop_front();
+        return decodeMeterFrame(bytes);
+    }
+
+private:
+    ix::WebSocket socket_;
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::deque<std::string> frames_;
     bool open_ = false;
     bool closed_ = false;
 };

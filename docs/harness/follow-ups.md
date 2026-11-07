@@ -40,6 +40,15 @@ holds, and for an instance inserted while it runs. Until then `ClapPluginHost` f
 back to its guess from the last block (spec, "siann-host: two targets, one
 interface").
 
+## Before M5: the engine's device (from m4-engine-device)
+
+- A protocol method to list and select devices, so a UI choice needs no restart.
+- MCP tools for `transport.*` and `engine.status`: they are protocol methods only.
+- `session.open` is `not_supported` in `siann-engine`: rebind the `EngineHost` (its
+  playback engine and auditioner) inside `ServerOptions::openSession`.
+- A session whose media cannot be loaded stays silent until a relaunch, even after a
+  commit repairs it: let `EngineHost` load again then.
+
 ## Before M4: plugin hosting (from PR #48)
 
 Decided by Fable, delegated by the maintainer, 2026-11-07. Taken into M4's features:

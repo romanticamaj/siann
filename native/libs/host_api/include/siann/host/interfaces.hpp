@@ -22,7 +22,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "siann/host/buffer.hpp"
@@ -42,6 +44,19 @@ struct AudioDeviceStatus {
     int bufferFrames = 0;
     int inputLatencyFrames = 0;
     int outputLatencyFrames = 0;
+};
+
+// A device that cannot be had.
+class DeviceError : public std::runtime_error {
+public:
+    DeviceError(std::string code, const std::string& message)
+        : std::runtime_error(message), code_(std::move(code)) {}
+
+    // One of: no_device, device_open_failed, no_audio_backend.
+    const std::string& code() const noexcept { return code_; }
+
+private:
+    std::string code_;
 };
 
 // Called on the audio thread for each device block.

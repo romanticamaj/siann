@@ -25,6 +25,7 @@
 #include "siann/engine/offline.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/host/fake_audio_device.hpp"
+#include "siann/host/fake_callback_clock.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
 #include "siann/playback/playback_engine.hpp"
@@ -41,6 +42,7 @@ namespace siann::cli::detail {
 
 namespace fs = std::filesystem;
 using json::Array;
+using json::decimal;
 using json::Object;
 using json::Value;
 
@@ -53,14 +55,6 @@ constexpr const char* kFakeDevice = "fake";
 
 Value number(std::int64_t value) {
     return Value(static_cast<double>(value));
-}
-
-Value decimal(std::int64_t value) {
-    return Value(std::to_string(value));
-}
-
-Value decimal(std::uint64_t value) {
-    return Value(std::to_string(value));
 }
 
 #if !defined(SIANN_CLI_WITH_JUCE)
@@ -84,10 +78,6 @@ struct FakeDeviceChoice {
     bool reportNoRate = false;
 };
 
-// The deadline check multiplies the step by the device rate: 1000 s per
-// callback is already absurd and stays far from overflow.
-constexpr std::int64_t kMaxFakeCallbackNanos = 1'000'000'000'000;
-
 FakeDeviceChoice fakeDeviceChoice(const Args& args) {
     const auto id = args.option("device");
     const bool fake = id && *id == kFakeDevice;
@@ -99,8 +89,8 @@ FakeDeviceChoice fakeDeviceChoice(const Args& args) {
     choice.speed = positiveOption(args, "fake-speed", 1);
     if (args.option("fake-callback-nanos")) {
         choice.callbackNanos = positiveOption(args, "fake-callback-nanos", 1);
-        if (choice.callbackNanos > kMaxFakeCallbackNanos) {
-            throw UsageError("--fake-callback-nanos must be at most " + std::to_string(kMaxFakeCallbackNanos));
+        if (choice.callbackNanos > host::kMaxFakeCallbackNanos) {
+            throw UsageError("--fake-callback-nanos must be at most " + std::to_string(host::kMaxFakeCallbackNanos));
         }
     }
     if (const auto report = args.option("fake-report-rate")) {
@@ -149,19 +139,9 @@ std::string deviceIdOf(const Args& args) {
     return id && *id != kFakeDevice ? *id : std::string();
 }
 
-// --fake-callback-nanos: a clock for the driver's callback timing that advances a
-// fixed step per reading, so a callback timed between two readings lasts exactly
-// one step. Audio thread only, atomics only; one run at a time per process.
-std::atomic<std::int64_t> fakeClockStep{0};
-std::atomic<std::int64_t> fakeClockNow{0};
-std::int64_t fakeCallbackClock() noexcept {
-    const std::int64_t step = fakeClockStep.load(std::memory_order_relaxed);
-    return fakeClockNow.fetch_add(step, std::memory_order_relaxed) + step;
-}
-
 // One run of the realtime engine on a timed device. Members are declared so
 // that the engine (which stops the device when destroyed) goes first.
-// `fakeCallbackNanos` > 0 times the driver's callbacks with fakeCallbackClock.
+// `fakeCallbackNanos` > 0 times the driver's callbacks with host::fakeCallbackClock.
 class RealtimeRun {
 public:
     RealtimeRun(session::Session& s, std::unique_ptr<host::AudioDevice> device, bool playOnStart,
@@ -268,9 +248,8 @@ private:
         options.butlerThread = true;
         options.playOnStart = playOnStart;
         if (fakeCallbackNanos > 0) {
-            fakeClockStep.store(fakeCallbackNanos, std::memory_order_relaxed);
-            fakeClockNow.store(0, std::memory_order_relaxed);
-            options.callbackClock = &fakeCallbackClock;
+            host::setFakeCallbackNanos(fakeCallbackNanos);
+            options.callbackClock = &host::fakeCallbackClock;
         }
         return options;
     }

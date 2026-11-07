@@ -78,6 +78,15 @@ TEST_CASE("Reading a missing file throws IoError", "[io]") {
     CHECK_THROWS_AS(readFile(dir.path() / "missing"), IoError);
 }
 
+// POSIX opens a directory as an ifstream and reads it as empty; Windows refuses to open
+// it. Both must be an IoError, not an empty file.
+TEST_CASE("Reading a directory throws IoError", "[io]") {
+    TempDir dir;
+    const fs::path folder = dir.path() / "folder";
+    fs::create_directory(folder);
+    CHECK_THROWS_AS(readFile(folder), IoError);
+}
+
 TEST_CASE("createDirectoriesDurable creates nested directories", "[io]") {
     TempDir dir;
     const fs::path nested = dir.path() / "a" / "b" / "c";

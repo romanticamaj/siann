@@ -217,7 +217,10 @@ void Butler::takeStream(DiskStream& stream, std::int64_t startPosition, std::uin
             readPointers_.push_back(c.data());
         }
     }
-    streams_.push_back(&stream);
+    {
+        std::lock_guard lock(streamsMutex_);
+        streams_.push_back(&stream);
+    }
 
     // The first slot starts live at the start position. No graph plays the
     // stream before ready() is published, so the audio-side fields are free.
@@ -276,6 +279,7 @@ void Butler::seek(std::uint64_t generation, std::int64_t target) {
 }
 
 std::uint64_t Butler::underruns() const noexcept {
+    std::lock_guard lock(streamsMutex_);
     std::uint64_t total = 0;
     for (const DiskStream* stream : streams_) {
         total += stream->underruns();
@@ -355,7 +359,10 @@ void Butler::runOnce() {
         if (request.add) {
             takeStream(*request.stream, request.start, request.generation);
         } else {
-            streams_.erase(std::remove(streams_.begin(), streams_.end(), request.stream), streams_.end());
+            {
+                std::lock_guard lock(streamsMutex_);
+                streams_.erase(std::remove(streams_.begin(), streams_.end(), request.stream), streams_.end());
+            }
             request.stream->butler_ = nullptr;
             removed.push_back(request.stream);
         }

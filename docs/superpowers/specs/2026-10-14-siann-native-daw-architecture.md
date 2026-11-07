@@ -249,13 +249,61 @@ years. Milestones are designed so that something useful exists at every stage.
   without it); the hands-on check watches for what that costs.
 - The `siann-engine` executable (`native/apps/engine`, m0-electron-shell) is built
   by the core-only configuration too (CI builds it without JUCE). It links
-  `siann::session` and `siann::protocol`; a `SIANN_WITH_JUCE` build also links
-  `siann::host_desktop` and serves from `MainThreadLoop` on the main thread, where
-  the core-only build sleeps between checks of the stop flag. It is started as
+  `siann::session`, `siann::protocol`, `siann::playback` and `siann::host_fake`; a
+  `SIANN_WITH_JUCE` build also links `siann::host_desktop` and serves from
+  `MainThreadLoop` on the main thread, where the core-only build sleeps between
+  ticks. It is started as
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
-  [--owner-window <handle>] [--open-editor <bundle>]`
+  [--owner-window <handle>] [--open-editor <bundle>] [--device <id>]
+  [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] [--fake-callback-nanos N]
+  [--fake-open-failures N]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
   item 17).
+- The engine runs the graph driver on a device (m4-engine-device). M4 interim note:
+  the process's main thread is both the command thread and the control thread. The
+  protocol server runs without a pump thread, and the main thread calls one tick at
+  most every 10 ms between passes of its message loop: the server's pump (requests
+  and events), the playback engine's tick (transport, dispatcher, driver poll,
+  compiles), then the meter publisher. That keeps `GraphDriver`'s one non-realtime
+  control thread, keeps device open, start and stop on the main thread ("Threads and
+  waiting rules"), and is how `siann-cli` already drives the engine. A slow command
+  delays a tick, never the audio thread; separate command and dispatcher threads
+  arrive when the graph compiler moves off this thread.
+- Device policy: `--device <id>` means what it means for `siann-cli play`. `fake` is
+  the paced `FakeAudioDevice` with loopback and one buffer of input and output
+  latency, on every build. `<type>/<name>` is a JUCE device of a `SIANN_WITH_JUCE`
+  build; without the option that build opens the default output device of the first
+  type, and a core-only build has no device. `--fake-callback-nanos N` times the
+  driver's callbacks with a clock that advances N ns per reading, as in `siann-cli`
+  (a usage error without `--device fake`), and `--fake-open-failures N` makes the fake
+  device refuse its first N opens with `device_open_failed`, as a device another
+  application holds does (the same usage error). A device failure at launch
+  (`no_device`, `device_open_failed`, a core-only build's `no_audio_backend`) never
+  fails the launch: the engine writes one diagnostic line to stderr and serves;
+  `engine.status` shows `device: null` with `deviceError {code, message}`, and
+  `transport.play`, `transport.stop` and `transport.locate` answer `no_device`. A
+  session whose media cannot be loaded is served the same way, with the code in
+  `deviceError`, and nothing is heard until a relaunch after its media is back. That
+  is any failure to build the first graph: the engine's `media_missing`,
+  `media_hash_mismatch` and `media_mismatch`, the readers' `unsupported_media`,
+  `decode_failed` and `too_large`, and `load_failed` for anything else (an I/O error,
+  say). One bad file must not end the process: the shell would restart it until it
+  gave up, and the session could not be opened at all. A commit that needs such a file
+  keeps the graph that plays, with one diagnostic line. A device that stops while the
+  engine runs (`device_lost`) is served the same way too.
+- Reopening the device: the shell restarts only an engine that exits, and an engine
+  without a device serves on, so the engine does the retrying, under the shell's
+  backoff. The shell passes its own constants with `--device-backoff` (without it the
+  engine uses the same defaults: 250 ms, 10 s, 30 s). After a failed open or a
+  `device_lost` the main thread opens the device again from its tick, the delay
+  doubling from `initialMs` to `maxMs`; the count resets once a device has run for
+  `resetAfterMs`. A relaunch after a crash that finds the device still held is this
+  same path. Unlike the shell's restarts the retries never give up, because the engine
+  is serving and a device can come back at any time; `no_audio_backend` and a session
+  that did not load are not retried. Each new reason goes to stderr once, and
+  `engine.status` shows the latest in `deviceError`. A reopened device starts stopped
+  at the playhead, its counters from zero. An open runs on the main thread, so a slow
+  one delays a tick, never audio.
 - `--owner-window` carries the Electron window's native handle (decimal; the
   HWND on Windows). The shell creates its window first, so it has the handle to
   pass, and reads it again for every restart; only Windows uses it, and the core-only
@@ -635,7 +683,8 @@ records who that is:
     JUCE lock; the AU wrapper's `lock` guards parameter calls on the main thread,
     not the render.
   No hosted plugin is in a driver graph in M0: no graph node wraps a
-  `PluginInstance`, and `siann-engine` runs no audio device. The only callers of
+  `PluginInstance` (`siann-engine` runs a device since m4-engine-device, with no
+  plugin in its graph until the M4 plugin node). The only callers of
   `JucePluginInstance::process` are the hosting tests, on a realtime-marked
   thread; `--open-editor` instantiates a plugin and never processes it. The
   exception is therefore latent in M0 and binds the M4 plugin node.
@@ -683,9 +732,11 @@ records who that is:
     longest (`siann::rt::CallbackTimer`, which `siann-cli bench` also uses).
     `siann-cli play` and `record` report them as `xruns`, `maxCallbackMicros` and
     `unmeasuredCallbacks` (callbacks without a device rate, which no deadline could
-    be checked against); `siann-engine` runs no device in M0, so the protocol
-    carries nothing yet. `xruns` is a cumulative end-of-run count of callbacks the
-    driver timed over their period, never an xrun the device reported. Nothing
+    be checked against). `siann-engine` runs a device since m4-engine-device, and
+    `engine.status` carries the same three fields from the driver's timer to any
+    client (Protocol v0 item 18), so ADR-0018's condition 4 is met. `xruns` is a
+    cumulative count, since the device started, of callbacks the driver timed over
+    their period, never an xrun the device reported. Nothing
     consumes `pluginEventAny` in M0, and `restartRequested` also follows a
     latency-only restart (JUCE reports every restart's end as `programChanged` and
     `parameterInfoChanged`), so an xrun cannot be attributed to a restart from
@@ -1801,7 +1852,11 @@ Protocol events v1 (decided 2026-11-04 with m3-events-sync; the wire details are
     connects later) or lost the event in a gap can decode frames without waiting
     for the next structural edit. The publisher sends the newest values once per tick and drops
     the frame for a connection whose socket is congested; the audio thread still
-    only writes the meterOutbox.
+    only writes the meterOutbox. In `siann-engine` the playing flag and the playhead
+    come from the transport (`Transport::playing` and `position`), so a client sees
+    a locate at once, also while stopped: a frame then goes out even with no meter
+    reading yet (entry count 0). Without a transport the playhead is the newest
+    meter block's position.
 13. The auth reply and `engine.about` carry `{name, version, source: {url, commit,
     dirty}, license}` (ADR-0017, point 4), captured from git at build time with cache
     overrides `SIANN_SOURCE_URL` and `SIANN_SOURCE_COMMIT` for tarball builds.
@@ -1817,7 +1872,8 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       parameter schemas are a follow-up, the registry has none yet).
     - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
       commands, methods, features: {plans: true, proposals: true, audition: <a port
-      is present>, render: true, plugins: false}, limits: {syncChunkEntities,
+      is present>, transport: <a port is present>, render: true, plugins: false},
+      limits: {syncChunkEntities,
       inboxCapacity, idempotencyCapacity}}`. `scope` is the MCP scope the launcher
       set. M4 adds the plugin capability flags the milestone table promises.
     - `plan.submit {steps, readSet?: ["<type>:<id>"], baseRevision?}` (default
@@ -1884,7 +1940,9 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
 Protocol v0, launcher (decided with m0-electron-shell):
 
 17. Launcher handshake. `siann-engine --session <bundle> [--host 127.0.0.1]
-    [--port 0] [--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>]`
+    [--port 0] [--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>]
+    [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
+    [--fake-callback-nanos N] [--fake-open-failures N]`
     writes exactly one line to stdout once it is
     listening,
     `{"schema":"siann.engine.ready.v0","port":<n>,"token":"<64 hex>","mcpToken":"<64 hex>","sessionId":"ses_<hex>","pid":<n>,"about":{...aboutJson()}}`,
@@ -1912,6 +1970,30 @@ Protocol v0, launcher (decided with m0-electron-shell):
     stderr (JUCE and plugins may print before it) and nothing on stdout. Electron reads the ready line and exposes only
     `{port, token}` to the renderer through the preload bridge; `mcpToken` stays
     in the main process.
+
+Protocol v0, transport and engine status (decided with m4-engine-device):
+
+18. `transport.play {}`, `transport.stop {}` and `transport.locate {frames}`
+    (`frames` a non-negative decimal string, item 9; anything else `invalid_params`)
+    return `{playing, position}`, `position` a decimal string, from
+    `Transport::playing` and `position`: a locate reports its target at once, and the playhead
+    reaches it when the butler is ready ("Locate"). `engine.status {}` returns
+    `{device, deviceError?, playing, xruns, maxCallbackMicros, unmeasuredCallbacks,
+    underruns, srcUnderruns}`. `device` is null or `{id, sampleRate, bufferFrames,
+    inputLatencyFrames, outputLatencyFrames}` as the device reported them, `id` being
+    `fake`, `<type>/<name>`, or `default` for the default device. `deviceError
+    {code, message}` is there when `device` is null and says why ("Process model").
+    `xruns`, `unmeasuredCallbacks`, `underruns` and `srcUnderruns` are decimal strings
+    and `maxCallbackMicros` is a number, as in `siann-cli play`, all since the device
+    started: the driver's `CallbackTimer` for the first three fields (a known miss
+    can be driven with `--fake-callback-nanos`). All four methods go through the
+    command thread, honour `expectedRevision` and the idempotency cache, and are in
+    `engine.capabilities`' `methods`. They reach the engine through
+    `ServerOptions::transportPort` (`protocol::TransportPort`; siann-protocol does not
+    link the playback engine); without one they are `not_supported`, and without a
+    running device `no_device` is the transport methods' answer, a new stable code.
+    They are not MCP tools yet: item 14 wraps tools onto methods, not every method
+    onto a tool.
 
 ## Plugin editor windows
 
@@ -2157,6 +2239,16 @@ and two need the device bench on the maintainer's machine (see "M2 exit check
 (2026-11-04)"). M3 is done: every feature is merged (PRs #38 to #43) and both
 exit criteria are met with tests that pass in CI (see "M3 exit check
 (2026-11-06)").
+
+M4 interim note (m4-engine-device): `siann-engine` loads its session into a
+`PlaybackEngine` and runs the graph driver on a device. `EngineHost`
+(`native/apps/engine`) owns the device, the playback engine, an `Auditioner` and the
+meter publisher, and serves `protocol::TransportPort` and `protocol::AuditionPort`,
+so `command.execute`, `plan.apply`, undo and redo reach the live graph and
+`audition.hear` works in the engine process. The main thread is the command and
+control thread for now ("Process model"). `session.open` stays `not_supported` in
+`siann-engine` until the host can rebind inside it; that, a device selection method,
+and MCP tools for the transport and `engine.status` are follow-ups before M5.
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:

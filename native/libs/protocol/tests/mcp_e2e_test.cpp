@@ -25,14 +25,14 @@
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/ix_transport.hpp"
 #include "siann/protocol/protocol_server.hpp"
-#include "support/auditioner_port.hpp"
+#include "siann/engine_app/auditioner_port.hpp"
 #include "support/ws_clients.hpp"
 
 using namespace siann;
 using json::Array;
 using json::Object;
 using json::Value;
-using protocol::testing::AuditionerPort;
+using engine_app::AuditionerPort;
 using protocol::testing::McpClient;
 using protocol::testing::WsClient;
 

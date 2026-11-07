@@ -36,6 +36,7 @@ namespace siann::protocol {
 namespace {
 
 using json::Array;
+using json::decimal;
 using json::Object;
 using json::Value;
 
@@ -222,7 +223,8 @@ const std::vector<std::string_view> kMethods = {
     "session.save",    "session.open",    "command.execute", "command.list",      "engine.about",
     "engine.capabilities", "plan.submit", "plan.status",     "plan.approve",      "plan.reject",
     "plan.apply",      "plan.rollback",   "plan.propose",    "proposal.merge",    "proposal.discard",
-    "audition.hear",   "render.start",    "job.status",
+    "audition.hear",   "render.start",    "job.status",      "transport.play",    "transport.stop",
+    "transport.locate", "engine.status",
 };
 
 std::string_view changeName(model::DiffEntry::Change change) noexcept {
@@ -290,6 +292,15 @@ std::optional<std::int64_t> optionalCount(const Value& params, std::string_view 
     return std::stoll(*text);
 }
 
+std::int64_t requireCount(const Value& params, std::string_view key, std::string_view method) {
+    const std::optional<std::int64_t> count = optionalCount(params, key, method);
+    if (!count) {
+        throw ProtocolError("invalid_params",
+                            std::string(method) + " needs a decimal integer string " + std::string(key));
+    }
+    return *count;
+}
+
 std::vector<command::Command> commandList(const Value& params, std::string_view key, std::string_view method) {
     const Value* list = params.find(key);
     if (list == nullptr || list->kind() != Value::Kind::array || list->asArray().empty()) {
@@ -305,6 +316,35 @@ std::vector<command::Command> commandList(const Value& params, std::string_view 
         }
     }
     return commands;
+}
+
+Value transportStateJson(const TransportState& state) {
+    return Value(Object{{"playing", Value(state.playing)}, {"position", decimal(state.position)}});
+}
+
+Value deviceJson(const std::optional<DeviceInfo>& device) {
+    if (!device) {
+        return Value(nullptr);
+    }
+    return Value(Object{{"id", Value(device->id)},
+                        {"sampleRate", Value(static_cast<double>(device->sampleRate))},
+                        {"bufferFrames", Value(device->bufferFrames)},
+                        {"inputLatencyFrames", Value(device->inputLatencyFrames)},
+                        {"outputLatencyFrames", Value(device->outputLatencyFrames)}});
+}
+
+Value engineStatusJson(const EngineStatus& status) {
+    Object out{{"device", deviceJson(status.device)},
+               {"playing", Value(status.playing)},
+               {"xruns", decimal(status.xruns)},
+               {"maxCallbackMicros", Value(status.maxCallbackMicros)},
+               {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
+               {"underruns", decimal(status.underruns)},
+               {"srcUnderruns", decimal(status.srcUnderruns)}};
+    if (status.deviceError) {
+        out.emplace_back("deviceError", errorValue(status.deviceError->code, status.deviceError->message));
+    }
+    return Value(std::move(out));
 }
 
 // ^[A-Za-z0-9._-]{1,64}$ and not "." or "..": a file name, never a path.
@@ -677,6 +717,13 @@ struct ProtocolServer::Impl {
         return *options.auditionPort;
     }
 
+    TransportPort& requireTransport() const {
+        if (options.transportPort == nullptr) {
+            throw ProtocolError("not_supported", "this engine host has no transport");
+        }
+        return *options.transportPort;
+    }
+
     Value inspectJson() const {
         const auto& history = session->history();
         Object out{{"revision", Value(history.head().envelope.id)},
@@ -703,6 +750,7 @@ struct ProtocolServer::Impl {
             {"features", Value(Object{{"plans", Value(true)},
                                       {"proposals", Value(true)},
                                       {"audition", Value(options.auditionPort != nullptr)},
+                                      {"transport", Value(options.transportPort != nullptr)},
                                       {"render", Value(true)},
                                       {"plugins", Value(false)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
@@ -965,6 +1013,20 @@ struct ProtocolServer::Impl {
         if (method == "session.open") {
             return sessionOpen(request);
         }
+        if (method == "transport.play") {
+            return success(request.requestId, transportStateJson(requireTransport().play()));
+        }
+        if (method == "transport.stop") {
+            return success(request.requestId, transportStateJson(requireTransport().stop()));
+        }
+        if (method == "transport.locate") {
+            TransportPort& transportPort = requireTransport();
+            const std::int64_t frames = requireCount(request.params, "frames", method);
+            return success(request.requestId, transportStateJson(transportPort.locate(frames)));
+        }
+        if (method == "engine.status") {
+            return success(request.requestId, engineStatusJson(requireTransport().status()));
+        }
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }
 
@@ -1007,6 +1069,8 @@ struct ProtocolServer::Impl {
                                     {"budget", Value(std::to_string(budget->budget))}});
             }
             return failure(id, e.code(), e.what(), std::nullopt, std::move(data));
+        } catch (const TransportPortError& e) {
+            return failure(id, e.code(), e.what());
         } catch (const std::exception& e) {
             return failure(id, "internal_error", e.what());
         } catch (...) {

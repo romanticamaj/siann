@@ -127,6 +127,11 @@ void syncFd(int fd, const fs::path& path) {
 }  // namespace
 
 std::string readFile(const fs::path& path) {
+    // POSIX opens a directory as an ifstream and reads it as empty.
+    std::error_code ec;
+    if (fs::is_directory(path, ec)) {
+        throw IoError(path, "is a directory, not a file");
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         throw IoError(path, "cannot open for reading");

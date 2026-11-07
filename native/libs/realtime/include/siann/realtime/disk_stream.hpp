@@ -190,7 +190,7 @@ public:
     // One pass of the butler loop; tests call it instead of start().
     void runOnce();
 
-    // Non-realtime: underruns summed over every registered stream.
+    // Any non-realtime thread: underruns summed over every registered stream.
     std::uint64_t underruns() const noexcept;
 
 private:
@@ -215,7 +215,11 @@ private:
     bool releaseSlot(const Release& release) noexcept;  // audio thread
 
     Options options_;
+    // Changed and walked on the butler thread; streamsMutex_ guards the changes
+    // against underruns(), the only reader on another thread. The audio thread
+    // never touches either.
     std::vector<DiskStream*> streams_;
+    mutable std::mutex streamsMutex_;
     rt::SpscQueue<Release> releases_{256};
     std::mutex seekMutex_;
     std::optional<std::pair<std::uint64_t, std::int64_t>> seekRequest_;

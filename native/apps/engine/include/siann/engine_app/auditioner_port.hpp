@@ -1,9 +1,9 @@
 #pragma once
 
-// The engine host's AuditionPort, as the CLI builds it: a real
-// playback::Auditioner behind the protocol's interface, its AuditionError
-// translated into AuditionPortError with the budget as data. rebind() points
-// it at another auditioner (session.open).
+// The engine host's AuditionPort: a real playback::Auditioner behind the
+// protocol's interface, its AuditionError translated into AuditionPortError
+// with the budget as data. rebind() points it at another auditioner
+// (session.open). Header-only: the protocol tests put it over their own engine.
 
 #include <optional>
 #include <string>
@@ -12,9 +12,9 @@
 #include "siann/playback/audition.hpp"
 #include "siann/protocol/audition_port.hpp"
 
-namespace siann::protocol::testing {
+namespace siann::engine_app {
 
-class AuditionerPort final : public AuditionPort {
+class AuditionerPort final : public protocol::AuditionPort {
 public:
     explicit AuditionerPort(playback::Auditioner& auditioner) : auditioner_(&auditioner) {}
 
@@ -42,15 +42,15 @@ private:
         try {
             fn();
         } catch (const playback::AuditionError& error) {
-            std::optional<AuditionBudgetData> budget;
+            std::optional<protocol::AuditionBudgetData> budget;
             if (const auto& detail = error.detail()) {
-                budget = AuditionBudgetData{detail->resource, detail->needed, detail->budget};
+                budget = protocol::AuditionBudgetData{detail->resource, detail->needed, detail->budget};
             }
-            throw AuditionPortError(error.code(), error.what(), std::move(budget));
+            throw protocol::AuditionPortError(error.code(), error.what(), std::move(budget));
         }
     }
 
     playback::Auditioner* auditioner_;
 };
 
-}  // namespace siann::protocol::testing
+}  // namespace siann::engine_app

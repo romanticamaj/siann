@@ -1,6 +1,8 @@
 // The siann-engine command line (architecture spec, "Process model"). Built for
 // every launch, because a restart must name the window as it is then.
 
+import type { Backoff } from './supervisor';
+
 export interface EngineLaunch {
   session: string;
   platform: NodeJS.Platform;
@@ -8,6 +10,11 @@ export interface EngineLaunch {
   windowHandle: Buffer | null;
   // SIANN_OPEN_EDITOR: a plugin bundle whose editor the engine opens at launch.
   openEditor?: string;
+  // The shell's restart backoff: an engine retries its device under it, because
+  // the shell restarts only an engine that exits.
+  backoff?: Pick<Backoff, 'initialMs' | 'maxMs' | 'resetAfterMs'>;
+  // SIANN_ENGINE_TEST_ARGS, only under SIANN_SHELL_TEST: the e2e tests' fake device.
+  testArgs?: readonly string[];
 }
 
 // macOS cannot own windows across processes, and Linux has no use for it yet: only
@@ -22,5 +29,10 @@ export function engineArgs(launch: EngineLaunch): string[] {
   const owner = ownerWindow(launch.platform, launch.windowHandle);
   if (owner !== null) args.push('--owner-window', owner);
   if (launch.openEditor) args.push('--open-editor', launch.openEditor);
+  if (launch.backoff) {
+    const { initialMs, maxMs, resetAfterMs } = launch.backoff;
+    args.push('--device-backoff', `${initialMs}:${maxMs}:${resetAfterMs}`);
+  }
+  if (launch.testArgs) args.push(...launch.testArgs);
   return args;
 }

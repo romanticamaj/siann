@@ -1,18 +1,24 @@
 #include "siann/engine_app/engine.hpp"
 
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
+#include "device.hpp"
 #include "launch_error.hpp"
 #include "main_thread.hpp"
+#include "siann/engine_app/engine_host.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
+#include "siann/host/fake_audio_device.hpp"
+#include "siann/host/fake_callback_clock.hpp"
 #include "siann/model/document.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/ix_transport.hpp"
@@ -37,6 +43,8 @@ using json::Value;
 
 namespace {
 
+constexpr const char* kFakeDevice = "fake";
+
 struct Options {
     fs::path session;
     std::string host = "127.0.0.1";
@@ -44,10 +52,57 @@ struct Options {
     bool mcpTrusted = false;
     std::uintptr_t ownerWindow = 0;
     std::optional<std::string> openEditor;
+    std::optional<std::string> device;
+    std::optional<std::int64_t> fakeCallbackNanos;
+    std::optional<int> fakeOpenFailures;
+    std::optional<DeviceBackoff> deviceBackoff;
 };
 
 fs::path pathFromUtf8(const std::string& text) {
     return fs::path(std::u8string(text.begin(), text.end()));
+}
+
+// As siann-cli: positive, and at most host::kMaxFakeCallbackNanos.
+std::int64_t parseCallbackNanos(const std::string& text) {
+    std::int64_t parsed = 0;
+    const char* end = text.data() + text.size();
+    const auto [next, error] = std::from_chars(text.data(), end, parsed);
+    if (error != std::errc() || next != end || parsed <= 0 || parsed > host::kMaxFakeCallbackNanos) {
+        throw LaunchError("usage", "--fake-callback-nanos must be an integer from 1 to " +
+                                       std::to_string(host::kMaxFakeCallbackNanos));
+    }
+    return parsed;
+}
+
+int parseOpenFailures(const std::string& text) {
+    int parsed = 0;
+    const char* end = text.data() + text.size();
+    const auto [next, error] = std::from_chars(text.data(), end, parsed);
+    if (error != std::errc() || next != end || parsed < 0) {
+        throw LaunchError("usage", "--fake-open-failures must be a non-negative integer");
+    }
+    return parsed;
+}
+
+// <initialMs>:<maxMs>:<resetAfterMs>, each at most a day, the maximum not below the
+// initial delay. Zero is allowed, as the shell's SIANN_SHELL_BACKOFF_MS allows it.
+DeviceBackoff parseBackoff(const std::string& text) {
+    constexpr std::int64_t kMaxMs = 86'400'000;
+    std::int64_t parts[3] = {};
+    const char* cursor = text.data();
+    const char* end = text.data() + text.size();
+    bool valid = true;
+    for (int i = 0; valid && i < 3; ++i) {
+        const auto [next, error] = std::from_chars(cursor, end, parts[i]);
+        valid = error == std::errc() && parts[i] >= 0 && parts[i] <= kMaxMs &&
+                (i < 2 ? next != end && *next == ':' : next == end);
+        cursor = next + 1;
+    }
+    if (!valid || parts[1] < parts[0]) {
+        throw LaunchError("usage", "--device-backoff must be <initialMs>:<maxMs>:<resetAfterMs>, in milliseconds");
+    }
+    return {std::chrono::milliseconds(parts[0]), std::chrono::milliseconds(parts[1]),
+            std::chrono::milliseconds(parts[2])};
 }
 
 Options parseOptions(const std::vector<std::string>& args) {
@@ -96,16 +151,65 @@ Options parseOptions(const std::vector<std::string>& args) {
             options.ownerWindow = static_cast<std::uintptr_t>(parsed);
         } else if (arg == "--open-editor") {
             options.openEditor = value();
+        } else if (arg == "--device") {
+            options.device = value();
+        } else if (arg == "--fake-callback-nanos") {
+            options.fakeCallbackNanos = parseCallbackNanos(value());
+        } else if (arg == "--fake-open-failures") {
+            options.fakeOpenFailures = parseOpenFailures(value());
+        } else if (arg == "--device-backoff") {
+            options.deviceBackoff = parseBackoff(value());
         } else {
             throw LaunchError("usage", "unknown option " + arg +
                                            "; usage: siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] "
-                                           "[--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>]");
+                                           "[--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>] "
+                                           "[--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] "
+                                           "[--fake-callback-nanos N] [--fake-open-failures N]");
         }
     }
     if (!haveSession || options.session.empty()) {
         throw LaunchError("usage", "--session <bundle> is required");
     }
+    if (options.fakeCallbackNanos && options.device != kFakeDevice) {
+        throw LaunchError("usage", "--fake-callback-nanos needs --device fake");
+    }
+    if (options.fakeOpenFailures && options.device != kFakeDevice) {
+        throw LaunchError("usage", "--fake-open-failures needs --device fake");
+    }
     return options;
+}
+
+// --device fake: a paced software device with loopback, reporting one buffer of
+// input and output latency, as siann-cli's. Anything else is the build's real
+// device; a build or machine without one leaves deviceError for the host to report.
+EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
+    EngineHostOptions chosen;
+    chosen.deviceId = options.device.value_or("");
+    chosen.backoff = options.deviceBackoff.value_or(DeviceBackoff{});
+    chosen.diagnostic = [&err](const std::string& line) {
+        err << "siann-engine: " << line << "\n";
+        err.flush();
+    };
+    if (options.device == kFakeDevice) {
+        host::FakeAudioDevice::Options fake;
+        fake.paced = true;
+        fake.loopback = true;
+        fake.inputLatencyFrames = chosen.bufferFrames;
+        fake.outputLatencyFrames = chosen.bufferFrames;
+        fake.refuseOpens = options.fakeOpenFailures.value_or(0);
+        chosen.device = std::make_unique<host::FakeAudioDevice>(fake);
+        if (options.fakeCallbackNanos) {
+            host::setFakeCallbackNanos(*options.fakeCallbackNanos);
+            chosen.playback.callbackClock = &host::fakeCallbackClock;
+        }
+        return chosen;
+    }
+    try {
+        chosen.device = hardwareDevice();
+    } catch (const host::DeviceError& error) {
+        chosen.deviceError = protocol::DeviceProblem{error.code(), error.what()};
+    }
+    return chosen;
 }
 
 std::string nowUtc() {
@@ -210,14 +314,20 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
             mainThread.openEditor(*options.openEditor, options.ownerWindow);
         }
 
+        EngineHost host(served, hostOptions(options, err));
+
+        // No pump thread: this thread is the command and control thread.
         protocol::ServerOptions serverOptions;
         serverOptions.host = options.host;
         serverOptions.port = options.port;
-        serverOptions.pumpThread = true;
+        serverOptions.pumpThread = false;
         serverOptions.actor = "siann-engine";
         serverOptions.mcpScope = options.mcpTrusted ? protocol::McpScope::trusted : protocol::McpScope::propose;
+        serverOptions.transportPort = &host;
+        serverOptions.auditionPort = host.auditionPort();
         protocol::IxTransport transport;
         protocol::ProtocolServer server(transport, served, serverOptions);
+        host.attachPublisher(server.realtime(), server.events());
         server.start();
 
         // The launcher handshake: exactly one line, and nothing else on out.
@@ -231,8 +341,20 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
             << "\n";
         out.flush();
 
-        mainThread.serve(stop);
+        mainThread.serve(stop, [&server, &host, &err] {
+            try {
+                server.pump();
+                host.tick();
+            } catch (const std::exception& error) {
+                // Methods answer their own exceptions; this keeps the engine up
+                // if sending or caching throws (bad_alloc, say).
+                err << "siann-engine: tick failed: " << validUtf8(error.what()) << "\n";
+                err.flush();
+            }
+        });
+        // No client after this, then the device, on the thread that opened it.
         server.stop();
+        host.shutdown();
         return 0;
     } catch (const LaunchError& error) {
         writeError(err, error.code(), error.what());

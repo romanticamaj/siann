@@ -255,11 +255,11 @@ bool MeterPublisher::tick() {
         }
         frame.entries.push_back(std::move(entry));
     }
-    if (frame.entries.empty()) {
+    if (frame.entries.empty() && !options_.playhead) {
         return false;
     }
     frame.engineTimestampMicros = options_.clockMicros();
-    frame.playheadSamples = dispatcher_.meterPlayhead();
+    frame.playheadSamples = options_.playhead ? options_.playhead() : dispatcher_.meterPlayhead();
     frame.playing = options_.playing ? options_.playing() : false;
     channel_.send(encodeMeterFrame(frame));
     return true;

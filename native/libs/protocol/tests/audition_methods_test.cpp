@@ -12,14 +12,14 @@
 #include "live_rig.hpp"
 #include "siann/playback/audition.hpp"
 #include "siann/rt/realtime_thread.hpp"
-#include "support/auditioner_port.hpp"
+#include "siann/engine_app/auditioner_port.hpp"
 #include "support/protocol_fixture.hpp"
 
 using namespace siann;
 using protocol::ConnectionId;
 using protocol::ServerOptions;
 using protocol::testing::at;
-using protocol::testing::AuditionerPort;
+using engine_app::AuditionerPort;
 using protocol::testing::canonical;
 using protocol::testing::errorCode;
 using protocol::testing::Harness;

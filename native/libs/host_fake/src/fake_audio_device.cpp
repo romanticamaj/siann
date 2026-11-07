@@ -16,6 +16,10 @@ FakeAudioDevice::~FakeAudioDevice() {
 
 AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
     std::lock_guard lock(controlMutex_);
+    if (refusedOpens_ < options_.refuseOpens) {
+        ++refusedOpens_;
+        throw DeviceError("device_open_failed", "the fake device is held by another application");
+    }
     if (config.bufferFrames <= 0 || config.sampleRate <= 0 || config.outputChannels <= 0 ||
         config.inputChannels < 0) {
         throw std::invalid_argument("invalid fake device configuration");
