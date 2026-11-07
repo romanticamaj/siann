@@ -3,7 +3,8 @@
 // A child process that a test can hard-kill: TerminateProcess on Windows,
 // SIGKILL on POSIX. Nothing in the child runs after the kill, as after a
 // crash or a power cut of the engine process. A test can also wait for it to
-// exit and read what it printed (stdout redirected to a file).
+// exit, read its exit code or the signal that ended it, and read what it printed
+// (stdout redirected to a file).
 
 #include <filesystem>
 #include <stdexcept>
@@ -116,7 +117,7 @@ public:
         const pid_t done = waitpid(pid_, &status, WNOHANG);
         if (done == pid_) {
             reaped_ = true;
-            exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+            record(status);
             return false;
         }
         return true;
@@ -144,10 +145,14 @@ public:
         while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {
         }
         reaped_ = true;
-        exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        record(status);
         return exitCode_;
 #endif
     }
+
+    // The signal that ended the child, once wait() or running() saw it exit; 0 when
+    // it exited normally, and always 0 on Windows (an abort there is exit code 3).
+    int terminatingSignal() const { return terminatingSignal_; }
 
     // Hard-kills the child and waits until it is gone (its files closed).
     void kill() {
@@ -208,10 +213,16 @@ private:
 
     HANDLE process_ = nullptr;
 #else
+    void record(int status) {
+        exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        terminatingSignal_ = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+    }
+
     pid_t pid_ = -1;
     bool reaped_ = false;
 #endif
     int exitCode_ = -1;
+    int terminatingSignal_ = 0;
 };
 
 }  // namespace siann::cli::test

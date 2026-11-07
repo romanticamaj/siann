@@ -13,7 +13,8 @@ public:
     PluginError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
 
     // One of: plugin_not_found, plugin_load_failed, bad_state, bad_parameter,
-    // editor_failed.
+    // editor_failed, plugin_failed (the instance failed when its plugin threw, and
+    // is replaced, never revived).
     const std::string& code() const noexcept { return code_; }
 
 private:
