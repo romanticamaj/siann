@@ -4,7 +4,7 @@
 # loop and can host a plugin editor.
 add_library(siann_engine_app src/engine.cpp)
 target_include_directories(siann_engine_app PUBLIC include)
-target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol)
+target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol siann::playback siann::host_fake)
 if(SIANN_WITH_JUCE)
   target_sources(siann_engine_app PRIVATE src/main_thread_desktop.cpp)
   target_link_libraries(siann_engine_app PUBLIC siann::host_desktop)
@@ -22,12 +22,25 @@ endif()
 siann_apply_compile_options(siann-engine)
 
 if(SIANN_BUILD_TESTS)
+  # In process: EngineHost on ManualAudioDevice and FakeAudioDevice. The callback
+  # runs under the device's realtime mark, so the guard sees the audio path.
+  add_executable(siann_engine_host_tests tests/engine_host_test.cpp)
+  target_link_libraries(siann_engine_host_tests PRIVATE siann_engine_app siann::host_fake siann_rt_alloc_guard
+    Catch2::Catch2WithMain)
+  target_include_directories(siann_engine_host_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/protocol/tests"
+    "${PROJECT_SOURCE_DIR}/libs/playback/tests/support")
+  siann_apply_compile_options(siann_engine_host_tests)
+  catch_discover_tests(siann_engine_host_tests)
+
   add_executable(siann_engine_launch_tests tests/engine_launch_test.cpp)
   # The protocol tests' loopback clients (support/ws_clients.hpp) talk to the
-  # real executable, which runs as a child process.
-  target_link_libraries(siann_engine_launch_tests PRIVATE siann_engine_app siann_third_party_ixwebsocket
-    Catch2::Catch2WithMain)
-  target_include_directories(siann_engine_launch_tests PRIVATE tests "${PROJECT_SOURCE_DIR}/libs/protocol/tests")
+  # real executable, which runs as a child process. The bundles come from the
+  # playback tests' live rig. siann_rt_alloc_guard guards only this test process
+  # (the child's audio path is guarded in siann_engine_host_tests).
+  target_link_libraries(siann_engine_launch_tests PRIVATE siann_engine_app siann_rt_alloc_guard
+    siann_third_party_ixwebsocket Catch2::Catch2WithMain)
+  target_include_directories(siann_engine_launch_tests PRIVATE tests "${PROJECT_SOURCE_DIR}/libs/protocol/tests"
+    "${PROJECT_SOURCE_DIR}/libs/playback/tests/support")
   target_compile_definitions(siann_engine_launch_tests PRIVATE "SIANN_ENGINE_EXE=\"$<TARGET_FILE:siann-engine>\"")
   add_dependencies(siann_engine_launch_tests siann-engine)
   if(SIANN_WITH_JUCE)

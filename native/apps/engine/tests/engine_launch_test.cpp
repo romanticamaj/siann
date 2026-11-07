@@ -8,6 +8,11 @@
 // A SIANN_WITH_JUCE build also hosts plugins (m0-plugin-hosting): the same tests
 // run against an engine serving from the JUCE message loop, and the editor tests
 // below open siann_test_plugin in it.
+//
+// The engine runs the graph driver on a device (m4-engine-device). These tests pass
+// --device fake unless the device is what they test, so nothing here depends on a
+// runner's audio hardware. Waits on the transport read frames or status replies, each
+// bounded by a count.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -26,12 +31,15 @@
 
 #include <ixwebsocket/IXNetSystem.h>
 
+#include "live_rig.hpp"
 #include "siann/command/history.hpp"
 #include "siann/engine_app/engine.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/protocol/about.hpp"
+#include "siann/protocol/realtime_channel.hpp"
+#include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
 #include "support/piped_process.hpp"
 #include "support/ws_clients.hpp"
@@ -48,7 +56,9 @@ using namespace siann;
 using engine_app::test::PipedProcess;
 using json::Object;
 using json::Value;
+using protocol::MeterFrame;
 using protocol::testing::McpClient;
+using protocol::testing::RealtimeClient;
 using protocol::testing::WsClient;
 
 namespace {
@@ -98,8 +108,13 @@ bool lowerHex64(const std::string& text) {
     return true;
 }
 
+// Without --device: the build's default device, or none.
+std::vector<std::string> bareArgs(const fs::path& bundle) {
+    return {"--session", utf8(bundle), "--port", "0"};
+}
+
 std::vector<std::string> launchArgs(const fs::path& bundle, bool trusted = false) {
-    std::vector<std::string> args{"--session", utf8(bundle), "--port", "0"};
+    std::vector<std::string> args{"--session", utf8(bundle), "--port", "0", "--device", "fake"};
     if (trusted) {
         args.push_back("--mcp-trusted");
     }
@@ -139,6 +154,99 @@ Value errorLine(PipedProcess& child) {
 
 std::string errorCode(PipedProcess& child) {
     return at(at(errorLine(child), "error"), "code").asString();
+}
+
+// A closed bundle with two tracks of WAV media.
+void writeBundle(const fs::path& bundle, const fs::path& scratch) {
+    session::Session s =
+        session::Session::create(bundle, model::Document::create("Song", 48'000), "test", "2026-11-07T00:00:00Z");
+    const fs::path wav = scratch / "tone.wav";
+    io::writeFileAtomic(wav, media::encodeWavFloat32(live_rig::distinct(2, 480'000)));
+    session::importMedia(s, wav, "med_st", "test", "2026-11-07T00:00:00Z");
+    for (const std::string& json : {live_rig::addTrack("trk_a"), live_rig::addTrack("trk_b"),
+                                    live_rig::place("clp_a", "trk_a", "med_st", 0, 0, 480'000),
+                                    live_rig::place("clp_b", "trk_b", "med_st", 1'000, 0, 400'000)}) {
+        s.commit({live_rig::cmd(json)}, "test", "2026-11-07T00:00:00Z");
+    }
+}
+
+// A client of a running engine: the command socket and the realtime socket.
+class EngineClient {
+public:
+    explicit EngineClient(const Value& ready)
+        : port_(static_cast<std::uint16_t>(at(ready, "port").asNumber())), ws_(port_), realtime_(port_) {
+        REQUIRE(ws_.start());
+        const std::string token = at(ready, "token").asString();
+        REQUIRE(at(ws_.call(authFrame(token)), "ok").asBool());
+        sessionId_ = at(ready, "sessionId").asString();
+        REQUIRE(realtime_.start(token));
+    }
+
+    Value call(const std::string& method, Value params = Value(Object{})) {
+        return ws_.call(jcs::canonicalize(Value(Object{{"requestId", Value("req_" + std::to_string(++next_))},
+                                                       {"sessionId", Value(sessionId_)},
+                                                       {"method", Value(method)},
+                                                       {"params", std::move(params)}})));
+    }
+
+    Value ok(const std::string& method, Value params = Value(Object{})) {
+        const Value response = call(method, std::move(params));
+        INFO(method << ": " << jcs::canonicalize(response));
+        REQUIRE(at(response, "ok").asBool());
+        return at(response, "result");
+    }
+
+    std::string errorOf(const std::string& method, Value params = Value(Object{})) {
+        const Value response = call(method, std::move(params));
+        INFO(method << ": " << jcs::canonicalize(response));
+        REQUIRE_FALSE(at(response, "ok").asBool());
+        return at(at(response, "error"), "code").asString();
+    }
+
+    MeterFrame frame() {
+        const std::optional<MeterFrame> next = realtime_.next();
+        REQUIRE(next.has_value());
+        return *next;
+    }
+
+    // The first of the next frames that `wanted` accepts; at most kFrameBound read.
+    template <class Predicate>
+    MeterFrame frameWhere(Predicate wanted) {
+        for (int i = 0; i < kFrameBound; ++i) {
+            MeterFrame candidate = frame();
+            if (wanted(candidate)) {
+                return candidate;
+            }
+        }
+        FAIL("no such frame in " << kFrameBound << " frames");
+        return {};
+    }
+
+    // Two consecutive frames, playing, the second further on.
+    void waitAdvancing() {
+        MeterFrame last = frameWhere([](const MeterFrame& f) { return f.playing; });
+        for (int i = 0; i < kFrameBound; ++i) {
+            const MeterFrame current = frame();
+            if (current.playing && last.playing && current.playheadSamples > last.playheadSamples) {
+                return;
+            }
+            last = current;
+        }
+        FAIL("the playhead did not advance in " << kFrameBound << " frames");
+    }
+
+private:
+    static constexpr int kFrameBound = 3'000;
+
+    std::uint16_t port_;
+    WsClient ws_;
+    RealtimeClient realtime_;
+    std::string sessionId_;
+    int next_ = 0;
+};
+
+std::uint64_t decimalOf(const Value& status, const char* key) {
+    return std::stoull(at(status, key).asString());
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)
@@ -348,6 +456,192 @@ TEST_CASE("a bad --session exits 1 with a JSON error on stderr and nothing on st
     CHECK_FALSE(fs::exists(dir.path() / "Other.siann"));
 }
 
+TEST_CASE("a client on the fake device plays, sees an advancing playhead in binary frames, locates and stops",
+          "[engine][transport]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const std::optional<std::string> line = child.firstLine();
+    REQUIRE(line.has_value());
+    const Value ready = json::parse(*line);
+    {
+        EngineClient client(ready);
+
+        // The session's graph is live on the device; nothing plays yet.
+        const Value idle = client.ok("engine.status");
+        CHECK(at(at(idle, "device"), "id").asString() == "fake");
+        CHECK(at(at(idle, "device"), "sampleRate").asNumber() == 48'000);
+        CHECK(at(at(idle, "device"), "bufferFrames").asNumber() == 256);
+        CHECK_FALSE(at(idle, "playing").asBool());
+        CHECK(client.frameWhere([](const MeterFrame&) { return true; }).playheadSamples == 0);
+
+        const Value played = client.ok("transport.play");
+        CHECK(at(played, "playing").asBool());
+        client.waitAdvancing();
+        // The graph has the session's tracks: both meter, and they carry sound.
+        const MeterFrame metered = client.frameWhere([](const MeterFrame& f) {
+            return f.playing && f.entries.size() == 3 && f.entries[0].peak[0] > 0.0f;
+        });
+        CHECK(metered.epoch != 0);
+
+        const Value located = client.ok("transport.locate", Value(Object{{"frames", Value("96000")}}));
+        CHECK(at(located, "position").asString() == "96000");
+        client.frameWhere([](const MeterFrame& f) { return f.playheadSamples >= 96'000; });
+        client.waitAdvancing();
+
+        const Value stopped = client.ok("transport.stop");
+        CHECK_FALSE(at(stopped, "playing").asBool());
+        MeterFrame last = client.frameWhere([](const MeterFrame& f) { return !f.playing; });
+        const MeterFrame frozen = client.frameWhere([&last](const MeterFrame& f) {
+            const bool same = f.playheadSamples == last.playheadSamples;
+            last = f;
+            return same;
+        });
+        CHECK_FALSE(frozen.playing);
+        CHECK(frozen.playheadSamples >= 96'000);
+
+        const Value status = client.ok("engine.status");
+        CHECK(at(status, "device").kind() == Value::Kind::object);
+        CHECK_FALSE(at(status, "playing").asBool());
+        CHECK(at(status, "xruns").kind() == Value::Kind::string);
+        CHECK(at(status, "maxCallbackMicros").kind() == Value::Kind::number);
+        CHECK(at(status, "unmeasuredCallbacks").asString() == "0");
+    }
+    CHECK(stopEngine(child) == 0);
+    CHECK(child.stdoutText() == *line + "\n");
+}
+
+TEST_CASE("a known deadline miss reaches a client", "[engine][transport]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const auto statusAfterCallbacks = [&dir](const std::string& nanos, const std::string& name) {
+        PipedProcess child(SIANN_ENGINE_EXE,
+                           withArgs(launchArgs(dir.path() / name), {"--fake-callback-nanos", nanos}));
+        const Value ready = readyLine(child);
+        EngineClient client(ready);
+        client.ok("transport.play");
+        client.waitAdvancing();  // callbacks have run
+        Value status = client.ok("engine.status");
+        CHECK(stopEngine(child) == 0);
+        return status;
+    };
+
+    SECTION("every callback over its 5.3 ms period") {
+        PipedProcess child(SIANN_ENGINE_EXE,
+                           withArgs(launchArgs(dir.path() / "Miss.siann"), {"--fake-callback-nanos", "20000000"}));
+        const Value ready = readyLine(child);
+        EngineClient client(ready);
+        client.ok("transport.play");
+        client.waitAdvancing();
+        const Value first = client.ok("engine.status");
+        CHECK(decimalOf(first, "xruns") > 0);
+        CHECK(at(first, "maxCallbackMicros").asNumber() == 20'000.0);
+        CHECK(at(first, "unmeasuredCallbacks").asString() == "0");
+        // A count that keeps growing, not a flag.
+        bool grew = false;
+        for (int i = 0; i < 3'000 && !grew; ++i) {
+            grew = decimalOf(client.ok("engine.status"), "xruns") > decimalOf(first, "xruns");
+        }
+        CHECK(grew);
+        CHECK(stopEngine(child) == 0);
+    }
+    SECTION("every callback within its period") {
+        const Value status = statusAfterCallbacks("1000000", "Fine.siann");
+        CHECK(at(status, "xruns").asString() == "0");
+        CHECK(at(status, "maxCallbackMicros").asNumber() == 1'000.0);
+    }
+}
+
+TEST_CASE("--fake-callback-nanos needs --device fake and sane bounds", "[engine][transport]") {
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    const std::vector<std::vector<std::string>> launches{
+        {"--session", utf8(bundle), "--fake-callback-nanos", "20000000"},
+        {"--session", utf8(bundle), "--device", "ASIO/Any", "--fake-callback-nanos", "20000000"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos", "0"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos", "-1"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos", "soon"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos", "1000000000001"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos"},
+        {"--session", utf8(bundle), "--device"},
+    };
+    for (const auto& args : launches) {
+        INFO("args: " << args.back());
+        PipedProcess child(SIANN_ENGINE_EXE, args);
+        CHECK(child.wait() == 1);
+        CHECK(child.stdoutText().empty());
+        CHECK(errorCode(child) == "usage");
+    }
+    CHECK_FALSE(fs::exists(bundle));
+}
+
+TEST_CASE("without a device the engine still starts and serves", "[engine][transport]") {
+    ix::initNetSystem();
+    TempDir dir;
+#if defined(SIANN_ENGINE_WITH_JUCE)
+    const std::vector<std::string> args =
+        withArgs(bareArgs(dir.path() / "Song.siann"), {"--device", "No Such Type/No Such Device"});
+#else
+    const std::vector<std::string> args = bareArgs(dir.path() / "Song.siann");
+#endif
+    PipedProcess child(SIANN_ENGINE_EXE, args);
+    const std::optional<std::string> line = child.firstLine();
+    REQUIRE(line.has_value());
+    const Value ready = json::parse(*line);
+    {
+        EngineClient client(ready);
+        CHECK(at(client.ok("session.inspect"), "revisions").asNumber() == 1);
+
+        const Value status = client.ok("engine.status");
+        CHECK(at(status, "device").kind() == Value::Kind::null);
+        const std::string code = at(at(status, "deviceError"), "code").asString();
+#if defined(SIANN_ENGINE_WITH_JUCE)
+        CHECK((code == "no_device" || code == "device_open_failed"));
+#else
+        CHECK(code == "no_audio_backend");
+#endif
+        CHECK_FALSE(at(at(status, "deviceError"), "message").asString().empty());
+        CHECK_FALSE(at(status, "playing").asBool());
+
+        CHECK(client.errorOf("transport.play") == "no_device");
+        CHECK(client.errorOf("transport.stop") == "no_device");
+        CHECK(client.errorOf("transport.locate", Value(Object{{"frames", Value("0")}})) == "no_device");
+    }
+    CHECK(stopEngine(child) == 0);
+    CHECK(child.stdoutText() == *line + "\n");  // the diagnostic went to stderr
+    CHECK(child.stderrText().find("no audio device") != std::string::npos);
+}
+
+TEST_CASE("a restarted engine reopens the device", "[engine][transport]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    {
+        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(crashed);
+        EngineClient client(ready);
+        client.ok("transport.play");
+        client.waitAdvancing();
+        crashed.kill();  // the shell then relaunches it, under its backoff
+    }
+
+    PipedProcess restarted(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(restarted);
+    {
+        EngineClient client(ready);
+        const Value status = client.ok("engine.status");
+        CHECK(at(at(status, "device"), "id").asString() == "fake");
+        CHECK_FALSE(at(status, "playing").asBool());  // a restart never starts playing
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+    }
+    CHECK(stopEngine(restarted) == 0);
+}
+
 TEST_CASE("every build accepts --owner-window, used or not", "[engine][launch]") {
     TempDir dir;
     PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"), {"--owner-window", "4242"}));
@@ -369,6 +663,25 @@ TEST_CASE("an editor that cannot open is a failed launch", "[engine][launch]") {
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)
+
+TEST_CASE("the desktop engine opens the default output device, or says why not", "[engine][transport][juce]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, bareArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value status = client.ok("engine.status");
+        if (at(status, "device").kind() == Value::Kind::object) {
+            CHECK(at(at(status, "device"), "id").asString() == "default");
+            CHECK(at(at(status, "device"), "sampleRate").asNumber() > 0);
+        } else {
+            const std::string code = at(at(status, "deviceError"), "code").asString();
+            CHECK((code == "no_device" || code == "device_open_failed"));
+        }
+    }
+    CHECK(stopEngine(child) == 0);
+}
 
 TEST_CASE("the desktop engine opens an editor before it is ready and still serves", "[engine][launch][juce]") {
     if (!displayAvailable()) {

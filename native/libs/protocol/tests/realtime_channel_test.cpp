@@ -204,6 +204,40 @@ std::string fromHex(const std::string& hex) {
 
 }  // namespace
 
+TEST_CASE("the frame's playing flag and playhead come from the transport", "[protocol][realtime]") {
+    Rig rig;
+    Fixture f;
+    const ConnectionId rt = f.realtimeAuthed();
+    std::int64_t transportPosition = 96'000;
+    bool transportPlaying = false;
+    MeterPublisher::Options options = publisherOptions(rig);
+    options.playing = [&transportPlaying] { return transportPlaying; };
+    options.playhead = [&transportPosition] { return transportPosition; };
+    MeterPublisher publisher(rig.dispatcher, f.server.realtime(), f.server.events(), options);
+    publisher.graphPublished(rig.epoch, rig.meterSlots);
+
+    // No meter reading yet: a stopped transport still shows where it is.
+    REQUIRE(publisher.tick());
+    auto frames = f.transport.binary(rt);
+    REQUIRE(frames.size() == 1);
+    Decoded d = decodeByLayout(frames[0]);
+    CHECK(d.playhead == 96'000);
+    CHECK(d.playing == 0);
+    CHECK(d.entries.empty());
+
+    rig.pump(2);
+    REQUIRE(rig.dispatcher.meterPlayhead() == kBlock);
+    transportPosition = 96'064;
+    transportPlaying = true;
+    REQUIRE(publisher.tick());
+    frames = f.transport.binary(rt);
+    REQUIRE(frames.size() == 2);
+    d = decodeByLayout(frames[1]);
+    CHECK(d.playhead == 96'064);  // not the meter block's start
+    CHECK(d.playing == 1);
+    CHECK(d.entries.size() == 2);
+}
+
 TEST_CASE("meters and playhead are one binary frame on the realtime channel", "[protocol][realtime]") {
     Rig rig;
     Fixture f;
