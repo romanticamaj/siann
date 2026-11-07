@@ -254,7 +254,7 @@ years. Milestones are designed so that something useful exists at every stage.
   `MainThreadLoop` on the main thread, where the core-only build sleeps between
   ticks. It is started as
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
-  [--owner-window <handle>] [--open-editor <bundle>] [--device <id>]
+  [--owner-window <handle>] [--device <id>]
   [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] [--fake-callback-nanos N]
   [--fake-open-failures N]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
@@ -268,7 +268,11 @@ years. Milestones are designed so that something useful exists at every stage.
   control thread, keeps device open, start and stop on the main thread ("Threads and
   waiting rules"), and is how `siann-cli` already drives the engine. A slow command
   delays a tick, never the audio thread; separate command and dispatcher threads
-  arrive when the graph compiler moves off this thread.
+  arrive when the graph compiler moves off this thread. The graph compile runs on
+  this thread too (m4-plugin-node, decided 2026-11-08): a plugin's instantiation is
+  a synchronous call with no timeout, and the compiler -> main edge with a timeout
+  in "Threads and waiting rules" describes the compiler thread to come; a slow
+  plugin delays a tick, never audio.
 - Device policy: `--device <id>` means what it means for `siann-cli play`. `fake` is
   the paced `FakeAudioDevice` with loopback and one buffer of input and output
   latency, on every build. `<type>/<name>` is a JUCE device of a `SIANN_WITH_JUCE`
@@ -307,12 +311,15 @@ years. Milestones are designed so that something useful exists at every stage.
 - `--owner-window` carries the Electron window's native handle (decimal; the
   HWND on Windows). The shell creates its window first, so it has the handle to
   pass, and reads it again for every restart; only Windows uses it, and the core-only
-  build accepts and ignores it. `--open-editor` is M0's only way to reach an editor,
-  which the `macos-hands-on` gate and `m0-exit-signed` run through: the engine
-  probes the bundle, instantiates it and opens its editor, owned by that window,
-  before the ready line, so a failure is a failed launch. The shell passes it from
-  `SIANN_OPEN_EDITOR`. A core-only build refuses it with `no_plugin_host`. The
-  protocol method that opens editors for a plugin in the graph replaces it in M4.
+  build accepts and ignores it. `--open-editor` was M0's only way to reach an
+  editor, which the `macos-hands-on` gate and `m0-exit-signed` ran through: the
+  engine probed the bundle, instantiated it and opened its editor, owned by that
+  window, before the ready line. M4 (m4-plugin-node) removes the flag and the
+  shell's `SIANN_OPEN_EDITOR`: `plugin.open_editor {slotId}` and
+  `plugin.close_editor {slotId}` (Protocol v0 item 19) open and close the editor
+  of a plugin in the graph on the engine's main thread, owned by `--owner-window`
+  on Windows, and the two gates open an editor through the method. A core-only
+  build answers `no_plugin_host`. Decided by Fable, delegated by the maintainer, 2026-11-08.
 - Session at launch: `--session <bundle>` is required. When the directory does not
   exist the engine creates a new empty session there (`Session::create` with
   `Document::create(<bundle stem>, 48000, 120000)`), otherwise it calls
@@ -341,7 +348,15 @@ years. Milestones are designed so that something useful exists at every stage.
   both signals are `TerminateProcess`.
 - Crash: Electron restarts the engine with backoff; the engine recovers from the
   last checkpoint plus journal replay; the UI reconnects and resyncs. Exclusive-mode
-  and ASIO devices may need a retry delay before reopening.
+  and ASIO devices may need a retry delay before reopening. The engine raises no
+  dialog when it crashes: on Windows `main()` sets
+  `SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)` and
+  `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` before any plugin
+  loads, so a plugin crash ends the process at once instead of waiting on a WER or
+  CRT dialog until the shell's kill path (m4-crash-recovery). A crash before a live
+  parameter change is captured leaves the last durable revision, so the relaunched
+  engine never re-runs the change that crashed the plugin ("Gestures", Protocol v0
+  item 20). Decided by Fable, delegated by the maintainer, 2026-11-08.
 - Plugin sandboxing (one or more plugin worker processes) is a later milestone. The
   `PluginHost` interface is shaped for it from day one (see `siann-host`).
 
@@ -452,6 +467,20 @@ gesture boundaries (see "Gestures").
 - The compiler reads only immutable inputs: the document, the previous graph's
   descriptor (node identities, slots, latencies) and the instance table. It never
   reads live DSP state.
+- M4 interim (m4-plugin-node; decided by Fable, delegated by the maintainer, 2026-11-08):
+  `pluginEventAny`'s consumer is the `EngineHost` tick on the main (command)
+  thread. `latencyChanged` re-reads the instance's latency, and the `PluginNode`'s
+  next block reports it through the graph's latency outbox, which
+  `GraphDriver::poll` answers with a recompile; `restartRequested` re-reads tail
+  and parameters and polls the JUCE adapter's tail-stale flag; `parameterEdited`
+  is counted and dropped until editor edits become gestures (M6a, "Gestures");
+  `failed` marks the slot's instance for replacement ("siann-host", Hostile test
+  plugin); an overflow sets the instance's resync flag and the tick re-reads
+  latency and parameters. The host's instance table calls
+  `PluginInstance::setBlocksComing(true)` on every pinned instance when the
+  driver's device starts, `false` after it stops, and `true` on an instance
+  pinned while it runs (the follow-up "the graph driver says when blocks are
+  coming", taken into m4-plugin-node).
 
 ### Queues (all bounded, preallocated)
 
@@ -587,9 +616,13 @@ records who that is:
   the locks JUCE's own hosting wrappers take inside a hosted plugin's
   `processBlock`, listed under "Locks inside a hosted plugin's `processBlock`"
   below. It is not a licence for SIANN's own code, and it ends when hosted plugins
-  run in worker processes (Open questions, item 1).
+  run in worker processes (Open questions, item 1). Catching what a hosted plugin
+  threw out of `process()` ("siann-host", Hostile test plugin) is not SIANN
+  throwing: the handler's cost falls only on the plugin that threw.
 - Debug builds mark the audio thread with a thread-local flag; global `operator
-  new/delete` and malloc hooks abort if called on a marked thread.
+  new/delete` and malloc hooks count a violation when called on a marked thread
+  (`siann::rt::allocationViolations()`), which the tests that link
+  `siann_rt_alloc_guard` assert is zero across the audio path.
 - Clang RealtimeSanitizer (`-fsanitize=realtime`) runs in CI on platforms where
   Clang 20 or later is available (the Linux RTSan job; see "Build, test and CI").
   The sanitizer's realtime context is tied to `siann::rt::ScopedRealtimeThread`:
@@ -715,16 +748,25 @@ records who that is:
     hold: (1) the node calls `process` only from a `GraphDriver` callback, where
     the driver's `CallbackTimer` times it and `xruns` reports it, or from the
     offline driver during bounce and export, where no deadline exists and a wait
-    only lengthens the render, and never from both at once (the graph moves
-    between the drivers; "Realtime and offline rendering use the same graph
+    only lengthens the render, and never both at once on one instance: the live
+    graph pins its instances, and a `render.start` instantiates its own from the
+    slots' state blobs ("Commands and jobs", Jobs v0, plugins), so no instance is
+    ever driven by two threads ("Realtime and offline rendering use the same graph
     code"); (2) the event sink and the adapter's listener code push to
     `pluginEventAny` and do nothing else: never `setState`, `setParameter`,
     `stop()` or any call that waits for the audio thread, since they run under
     JUCE's `processMutex` and `listenerLock` (the deadlock argument under
     "Threads and waiting rules" depends on it); (3) MIDI
-    output has a decision: the node preallocates its `juce::MidiBuffer` for the
-    2048 events Steinberg's limit allows and accepts JUCE's `Array` growth as
-    plugin-caused, or MIDI-producing plugins wait for worker processes; (4) the
+    output has a decision (taken 2026-11-08 by Fable, delegated by the maintainer,
+    under the gate that proves MIDI output on `siann_test_plugin`): the first
+    option. `JucePluginInstance` preallocates its `juce::MidiBuffer` for the 2048
+    events Steinberg's limit allows (`ensureSize` for 2048 events of 7 bytes) and
+    counts, per instance, the blocks whose output exceeded that
+    (`midiOutputOverflows`, an atomic, in `engine.status`), accepting JUCE's
+    `Array` growth as plugin-caused; `ClapPluginHost`'s output event list is
+    host-owned and bounded, its `try_push` refuses past capacity and the refusal
+    is counted the same way. Until MIDI tracks exist (M6b) the node drops the
+    events after counting. Worker processes remain the remedy; (4) the
     protocol carries `xruns`, `maxCallbackMicros` and `unmeasuredCallbacks` in the
     engine's status once the engine process runs a device.
   - Visibility: the graph driver counts, on the audio thread with atomics only,
@@ -1225,6 +1267,18 @@ Rules:
 - Loop range, punch range and solo-safe are document data. Playhead and transport
   state are engine state.
 - Plugin state lives in the blob store; the document holds only the blob hash.
+- M4 `plugin_slot` (m4-plugin-node; decided by Fable, delegated by the maintainer, 2026-11-08):
+  `{id, trackId, format, uid, name, path, stateBlob, bypass}`. `path` is an
+  install hint and is not part of `uid`; `stateBlob` is `"sha256:<hex>"` or
+  null; `busLayout` arrives with sidechain routing (M6c). `Track` gains
+  `inserts`, the ordered slot ids (part of the track's hash). Commands:
+  `plugin.insert {trackId, index, slotId, descriptor, stateBlob}` (`index` clamps
+  to the end; `already_exists` on a used id), `plugin.remove {slotId}`,
+  `plugin.set_bypass {slotId, bypass}`; `track.remove` declares its slots as
+  cascades. Validation checks the hash's form only: a blob absent from `blobs/` at
+  instantiation loads the plugin with its default state and reports it `running`
+  with `error {code: "state_missing"}`; rebuilding the document never needs the
+  blob or the plugin.
 
 ### siann-command (pure C++) — the core of SIANN
 
@@ -1279,6 +1333,32 @@ Jobs v0 (m3-mcp). The first job is the offline render behind the protocol's
   journaled. A render emits no command (nothing in the document changes), unlike
   `media.import`. A job event (`job.changed`) is deferred; clients poll
   `job.status`.
+
+Jobs v0, plugins (m4-plugin-node; decided by Fable, delegated by the maintainer, 2026-11-08):
+
+- `plugin.instantiate {trackId, index, descriptor: {format, path?, uid?},
+  stateBlob?}` runs on the command thread (the main thread in M4) inside the
+  request, not on the worker: it probes and instantiates the plugin, writes the
+  state blob to `<bundle>/blobs/<sha256 hex>` durably (or uses the blob it was
+  given), commits `plugin.insert {trackId, index, slotId, descriptor, stateBlob}`
+  as its completion command, and answers `{jobId, kind: "plugin.instantiate",
+  state: "done", result: {revision, slotId, descriptor, stateBlob, latencyFrames,
+  tailFrames, capabilities}}` at once (`capabilities` are the six `PluginHost`
+  flags as booleans). A failure is `state: "failed"` with the `PluginError` code
+  (`plugin_load_failed`, `not_found`, `no_plugin_host` for vst3 and au in a
+  core-only build). The worker's one-at-a-time order covers render jobs only. The
+  instance enters the instance table under the new slot id, so the next compile
+  reuses it instead of loading the plugin again.
+- `render.start` keeps its snapshot semantics when the document holds plugin
+  slots: the request, on the command thread, instantiates one instance per slot
+  from its state blob before the job is queued; the offline-render thread drives
+  those instances and nothing the live graph pins; a slot whose plugin cannot be
+  loaded renders as pass-through, like a missing plugin in playback; the instances
+  return to the command thread for destruction on the tick after the job ends. The
+  live graph never moves to the offline driver for `render.start`. Moving the live
+  graph (playback stopped, ducked) is bounce and export of the heard graph, M6c
+  ("Graph ownership"). An agent's render therefore never interrupts playback, at
+  the cost of a second instance set for the render's duration.
 
 #### Revision DAG — single history
 
@@ -1627,13 +1707,98 @@ Shared by both targets:
   processing paused where the format requires it; `setBlocksComing` on the main
   thread, from the driver that calls `process` (when its callback source starts and
   after it stops; a format that never waits for a block ignores it).
+- An instance has at most 31 channels in or out (`maxPluginChannels`:
+  `juce::AudioBuffer` keeps up to 31 channel pointers without allocating, and
+  `ClapPluginHost` applies the same limit so both hosts behave alike);
+  `instantiate` fails with `plugin_load_failed` above it, after
+  `releaseResources` (m4-juce-formats, decided 2026-11-08).
 - Plugin-originated events (parameter edits from editors, latency changes, restart
   requests) arrive on arbitrary threads and go into `pluginEventAny`.
 - The interface is message-shaped and never exposes raw pointers into plugin
   internals, so a later out-of-process worker (shared-memory audio ring, messages for
   params and state) can implement it without changing callers.
 - Capability flags per instance (sample-accurate params, MIDI in/out, sidechain,
-  variable latency, editor) are reported to the command layer and to agents.
+  variable latency, editor) are reported to the command layer and to agents. Where
+  (m4-juce-formats, decided 2026-11-08): `engine.capabilities` carries the host's
+  formats and the flag names, and the `plugin.instantiate` result and
+  `engine.status`'s `plugins[]` carry each loaded instance's six booleans
+  (Protocol v0 items 14, 18 and 19). They are facts about the loaded instance,
+  not user intent, so the document never stores them and no state migration
+  follows.
+
+#### Hostile test plugin
+
+Decided by Fable, delegated by the maintainer, 2026-11-08 (m4-hostile-plugin).
+`siann_hostile_plugin` (`native/libs/host_clap/hostile_plugin/`) is a second CLAP
+built beside `siann_test_plugin` in every preset, never installed, loaded by the
+hosting tests from its build path (`SIANN_HOSTILE_PLUGIN_CLAP`). It is a stereo
+pass-through whose behaviours are off-by-default stepped parameters, so a default
+instance is harmless and `siann_test_plugin` stays the clean reference. The
+behaviours, and the host's outcome for each, checked by `siann_host_clap_tests`
+with `process()` on a realtime-marked thread:
+
+1. `allocate`: `process()` allocates and frees every block. The block completes
+   with the plugin's output; a shipped engine neither aborts nor notices. The
+   allocation is the plugin's, outside SIANN's guarantee ("Realtime rules and
+   enforcement"). The allocation guard counts it only where the plugin's `operator
+   new` resolves to the test executable's (Linux), so the tests assert nothing
+   about that count for this behaviour; RTSan does see it, so the hostile blocks
+   run under `ScopedRealtimeSanitizerDisabler` with the reason in a comment.
+2. `throwProcess`, `throwActivate`, `throwLoad`, `throwSave`, `throwMainThread`: a
+   C++ exception out of `process()` on the audio thread, or out of `activate`,
+   `state.load`, `state.save` or `on_main_thread` on the main thread. The host
+   catches it at the boundary of every plugin call (`catch (...)`): SIANN throws
+   nothing, the plugin did, and the table-based unwind costs nothing on the path
+   with no throw. Out of `process()` the block's output is cleared and the
+   instance is *failed*; out of `instantiate` the error is `plugin_load_failed`;
+   out of `setState`, `bad_state` and the instance is failed (its parameters are
+   unknown); out of `getState`, `bad_state`; out of a restart or `on_main_thread`
+   inside `runMainThreadCallbacks`, the instance is failed. A failed instance
+   passes its input through from its next block, like a paused one; reports
+   `PluginEvent::Kind::failed` once through the sink (a new kind, plain data for
+   `pluginEventAny`); answers `getState` and `setState` with `plugin_failed`;
+   stores a `setParameter` that nothing delivers; keeps `latencyFrames()` and
+   `tailFrames()` at their last values; and is replaced, never revived (the
+   command layer instantiates again). This catch is the one handler on the audio
+   thread, and it ends with worker processes like the ADR-0018 exception.
+3. `latencyFlap`: from inside `process()` the plugin calls `latency.changed` (a
+   main-thread call made from the audio thread) and every `activate` reports a
+   different latency. `latency.changed` on any thread only sets the restart flag
+   and wakes (atomics); the restart runs on the main thread under the pause; each
+   restart whose latency differs reports `latencyChanged`; input passes through
+   between deactivate and activate; a `latency.changed` inside `activate` is read
+   after it, never recursed into. Nothing of SIANN's limits a plugin that asks on
+   every block: each restart costs one pause, the engine survives it, and the
+   restarts stop when the plugin stops asking.
+4. `sleep`: `process()` sleeps 50 ms. A late block. The host's waits for the block
+   in flight (`ProcessingPause` in `setState` and a restart, `getState`'s wait for
+   a block) wait that long and return; nothing of SIANN's times out or stops the
+   device; in a `GraphDriver` callback the driver's `CallbackTimer` counts the xrun
+   (m4-plugin-node's test).
+5. `callbacksAudio` and `callbacksMain`: from `process()` the plugin calls
+   `params.rescan(VALUES)`, `tail.changed`, `latency.changed`,
+   `params.request_flush`, `request_restart`, `request_callback` and
+   `state.mark_dirty`; from inside `params.get_info`, `params.get_value`, `activate`
+   and `state.load` it calls `params.rescan(ALL)` and `request_restart`. Every host
+   callback is atomics plus a wake on any thread and takes effect at the next
+   `runMainThreadCallbacks`: a `rescan` from a thread other than the main thread
+   marks the values stale and the main thread reads them (the host never calls
+   `params.get_value` on the caller's thread); a callback made from inside a
+   host -> plugin call is honoured after that call returns, never inside it (a
+   rescan inside `get_info` does not re-enter the parameter table's rebuild; a
+   `request_restart` inside `activate` schedules one more restart). The audio
+   thread never waits.
+6. `crash`: when the parameter turns on, in `process()` at its event or in
+   `params.flush` when no block is coming, the plugin ends the process with
+   `std::abort()`, after `_set_abort_behavior(0, _WRITE_ABORT_MSG |
+   _CALL_REPORTFAULT)` on MSVC so no dialog appears: exit code 3 on Windows,
+   SIGABRT elsewhere. The parameter is reached through the live path only
+   (`plugin.set_parameter`, Protocol v0 item 20); the plugin leaves it out of
+   `state.save` and ignores it in `state.load`, so a restored blob never crashes
+   again and the relaunched engine plays the recovered session. Nothing in the
+   process catches it; a crash leaves the host with no instance to fail, and the
+   shell's restart and the session's recovery are m4-crash-recovery's
+   ("Production-level criteria": plugin crash during playback).
 
 ### siann-io
 
@@ -1872,10 +2037,15 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       parameter schemas are a follow-up, the registry has none yet).
     - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
       commands, methods, features: {plans: true, proposals: true, audition: <a port
-      is present>, transport: <a port is present>, render: true, plugins: false},
+      is present>, transport: <a port is present>, render: true, plugins},
       limits: {syncChunkEntities,
       inboxCapacity, idempotencyCapacity}}`. `scope` is the MCP scope the launcher
-      set. M4 adds the plugin capability flags the milestone table promises.
+      set. `plugins` is `false` until a plugin port is present (item 19), then
+      `{formats: ["clap", "vst3", "au"] as this build hosts them, flags:
+      ["sampleAccurateParameters", "midiInput", "midiOutput", "sidechain",
+      "variableLatency", "editor"]}`, host-level and from `ServerOptions`
+      (siann-protocol links no JUCE); the per-instance values are in items 18 and
+      19 (m4-juce-formats, decided 2026-11-08).
     - `plan.submit {steps, readSet?: ["<type>:<id>"], baseRevision?}` (default
       base: the head) -> the `siann.plan.v1` object with its lifecycle fields.
     - `plan.status {plan}` -> the plan object plus `stale: [{ref, change}]`
@@ -1940,7 +2110,7 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
 Protocol v0, launcher (decided with m0-electron-shell):
 
 17. Launcher handshake. `siann-engine --session <bundle> [--host 127.0.0.1]
-    [--port 0] [--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>]
+    [--port 0] [--mcp-trusted] [--owner-window <handle>]
     [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
     [--fake-callback-nanos N] [--fake-open-failures N]`
     writes exactly one line to stdout once it is
@@ -1986,7 +2156,18 @@ Protocol v0, transport and engine status (decided with m4-engine-device):
     `xruns`, `unmeasuredCallbacks`, `underruns` and `srcUnderruns` are decimal strings
     and `maxCallbackMicros` is a number, as in `siann-cli play`, all since the device
     started: the driver's `CallbackTimer` for the first three fields (a known miss
-    can be driven with `--fake-callback-nanos`). All four methods go through the
+    can be driven with `--fake-callback-nanos`). With a plugin port (item 19)
+    `engine.status` also returns `plugins: [{slotId, trackId, format, uid, state:
+    "running" | "missing", error?: {code, message}, capabilities, latencyFrames,
+    tailFrames, callbacks, xruns, maxCallbackMicros, unmeasuredCallbacks,
+    midiOutputOverflows}]`, one per plugin slot of the heard document: the
+    counters since the instance was created, from the `PluginNode`'s per-instance
+    `rt::CallbackTimer`, decimal strings and a number as the driver's fields are;
+    `capabilities` the six booleans of the loaded instance. A missing plugin has
+    no instance: its `capabilities`, `latencyFrames`, `tailFrames` and counters
+    are null, its slot keeps its `stateBlob` in the document and passes audio
+    through (m4-plugin-node and m4-juce-formats, decided 2026-11-08). All four
+    methods go through the
     command thread, honour `expectedRevision` and the idempotency cache, and are in
     `engine.capabilities`' `methods`. They reach the engine through
     `ServerOptions::transportPort` (`protocol::TransportPort`; siann-protocol does not
@@ -1994,6 +2175,45 @@ Protocol v0, transport and engine status (decided with m4-engine-device):
     running device `no_device` is the transport methods' answer, a new stable code.
     They are not MCP tools yet: item 14 wraps tools onto methods, not every method
     onto a tool.
+
+Protocol v0, plugins (decided 2026-11-08 by Fable, delegated by the maintainer,
+with the M4 wave 2 and 3 plans):
+
+19. Plugin methods, through `ServerOptions::pluginPort` (`protocol::PluginPort`,
+    implemented by the engine host as `TransportPort` is; siann-protocol links no
+    plugin host). Without a port they are `not_supported`; a core-only build
+    answers `no_plugin_host` for `vst3` and `au`. `plugin.instantiate` and its
+    `job.status` are in "Commands and jobs", Jobs v0, plugins.
+    `plugin.open_editor {slotId}` and `plugin.close_editor {slotId}` run on the
+    command thread; the engine's main thread opens the window, owned by
+    `--owner-window` on Windows; both return `{slotId, editorOpen, nativeHandle}`.
+    Errors: `not_found` (no such slot), `plugin_missing` (the slot's plugin did
+    not load), `editor_failed` (the plugin has no editor, or a CLAP plugin on the
+    desktop target until siann-host-desktop supplies a window: follow-ups, "Before
+    M5: CLAP editor windows"), `no_plugin_host`. `--open-editor` and
+    `SIANN_OPEN_EDITOR` are removed ("Process model"). All of them go through the
+    command thread, honour `expectedRevision` and the idempotency cache, and are
+    in `engine.capabilities`' `methods`; none is an MCP tool yet.
+20. `plugin.set_parameter {slotId, paramId, value}` (m4-crash-recovery): the live
+    parameter path for a hosted plugin. `paramId` is the id the instance's
+    parameter list reports and `value` a normalized number as `setParameter`
+    takes. The method runs through the command thread like every method but
+    mutates no document and is not journaled: it hands one `ParamChange` to the
+    control dispatcher through `controlInbox` ("Two channels into the audio
+    thread"), which sends it on `paramInbox` to the slot's `PluginNode`; a CLAP
+    instance gets it as a parameter event at the start of its next block, a VST3
+    or AU instance through `PluginControl::setParameter` on the main thread (the
+    "Precision contract": block-accurate), never from the audio thread. The value
+    lives in the instance until its state is next captured, so a crash before
+    that leaves the last durable revision and the relaunched engine never re-runs
+    the change ("Gestures"). Errors: `not_found` (slot or parameter),
+    `plugin_missing`, `queue_full`, `not_supported` without a port. It stands in
+    for `gesture.begin` / `param.set` / `gesture.end` on plugin parameters, which
+    arrive when a gesture's end has a command to commit for one (plugin state
+    capture, automation: M6a); the method stays as the one-shot form. Rejected:
+    carrying a test plugin's crash trigger in its state blob, because a durable
+    trigger re-crashes the relaunched engine at its first block (the fake device
+    runs callbacks while stopped) and the shell gives up after five restarts.
 
 ## Plugin editor windows
 
@@ -2156,7 +2376,7 @@ Test layers:
 | PDC | null tests across direct, send, aux, sidechain; latency change during playback |
 | Parity | offline vs realtime null test (through the same SRC when SRC is active); single vs multi-thread bit-identical (when threading exists) |
 | Fuzz | command JSON and protocol messages |
-| Plugin (L3) | a built-in "hostile test plugin" (allocates, throws, changes latency, sleeps, calls back into the host) plus pluginval-checked real plugins |
+| Plugin (L3) | a built-in hostile test plugin (`siann_hostile_plugin`: allocates, throws, changes latency, sleeps, calls back into the host, crashes on a parameter; outcomes under "siann-host: two targets, one interface", Hostile test plugin) plus pluginval-checked real plugins (VST3 and AU at strictness 5; pluginval is JUCE-based and checks no CLAP; `siann_test_plugin` in CI, the compatibility set on maintainer runs) |
 | Recovery | kill the engine at random points during recording and editing; verify recovery criteria |
 | L4 manual | DAWproject into Cubase / Studio One / Bitwig; recorded per release |
 
@@ -2249,6 +2469,24 @@ so `command.execute`, `plan.apply`, undo and redo reach the live graph and
 control thread for now ("Process model"). `session.open` stays `not_supported` in
 `siann-engine` until the host can rebind inside it; that, a device selection method,
 and MCP tools for the transport and `engine.status` are follow-ups before M5.
+
+M4 decisions (2026-11-08, Fable, delegated by the maintainer; the wave 2 and 3
+plans stopped on them): `render.start` keeps its snapshot and instantiates its
+own instances, and `plugin.instantiate` runs inside the request on the command
+thread ("Commands and jobs", Jobs v0, plugins); `plugin_slot` and its commands
+are fixed ("siann-model"); MIDI output takes the preallocate-and-count option
+("Realtime rules and enforcement", condition 3); `pluginEventAny` is drained by
+the host's tick and the instance table calls `setBlocksComing` ("Threads and
+waiting rules"); the editor flag gives way to `plugin.open_editor` and
+`plugin.close_editor`, the capability flags and per-instance status have their
+protocol places, and `plugin.set_parameter` is the live, non-journaled path the
+plugin crash test needs (Protocol v0 items 14, 18, 19 and 20); the hostile test
+plugin's outcomes are written down ("siann-host", Hostile test plugin). Rejected:
+the crash trigger in the state blob (item 20) and `render.start` stopping the
+transport to move the live graph (an agent's render would interrupt playback and
+render the heard side, not head). CLAP editor windows on the desktop target move
+to "Before M5" in the follow-ups: M4's exit names no editor, and the UI is their
+first consumer.
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
