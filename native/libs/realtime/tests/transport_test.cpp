@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -422,4 +424,42 @@ TEST_CASE("On a paced device with a stalled butler, a locate proceeds after the 
     CHECK(transport.lateLocates() == 1);
     CHECK(rt::allocationViolations() == before);
     CHECK_FALSE(device.contractViolated());
+}
+
+// The engine's control thread reads this while the butler thread takes and drops
+// streams for a structural edit. Each add can reallocate the butler's list.
+TEST_CASE("underruns can be read while the butler thread adds and removes streams", "[transport]") {
+    TempDir dir;
+    Clips clips = makeClips(writeMedia(dir.path() / "media.wav", 50'000));
+    Butler butler(Butler::Options{1'024, 512, std::chrono::microseconds(1)});
+    butler.start();
+    std::atomic<bool> done{false};
+    std::thread reader([&butler, &done] {
+        while (!done.load(std::memory_order_acquire)) {
+            CHECK(butler.underruns() == 0);
+        }
+    });
+    for (int round = 0; round < 40; ++round) {
+        std::vector<std::unique_ptr<DiskStream>> streams;
+        for (int i = 0; i < 48; ++i) {
+            streams.push_back(std::make_unique<DiskStream>(2, clips.streamed, 1'024));
+            butler.addStream(*streams.back(), 0, 0);
+        }
+        for (const auto& stream : streams) {
+            while (!stream->ready()) {
+                std::this_thread::yield();
+            }
+        }
+        for (const auto& stream : streams) {
+            butler.removeStream(*stream);
+        }
+        for (const auto& stream : streams) {
+            while (!stream->released()) {
+                std::this_thread::yield();
+            }
+        }
+    }
+    done.store(true, std::memory_order_release);
+    reader.join();
+    butler.stop();
 }

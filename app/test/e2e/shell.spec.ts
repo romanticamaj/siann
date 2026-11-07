@@ -40,7 +40,7 @@ async function enginePid(): Promise<number | null> {
   });
 }
 
-async function launch(backoffMs: number): Promise<void> {
+async function launch(backoffMs: number, env: Record<string, string> = {}): Promise<void> {
   app = await electron.launch({
     args: [MAIN],
     cwd: APP_DIR,
@@ -50,6 +50,7 @@ async function launch(backoffMs: number): Promise<void> {
       SIANN_SESSION_DIR: sessionDir,
       SIANN_SHELL_BACKOFF_MS: String(backoffMs),
       SIANN_SHELL_TEST: '1',
+      ...env,
     },
   });
   page = await app.firstWindow();
@@ -147,6 +148,52 @@ test('a restart slower than the renderer retry reconnects through onChange', asy
   await app.close();
   await launch(1_000);
   await killEngineAndExpectReconnect();
+});
+
+// What engine.status says about the device of the engine the renderer is on.
+async function deviceId(): Promise<string | null> {
+  const endpoint = await page.evaluate(() =>
+    (window as unknown as { siann: { engine: { current(): Promise<{ port: number; token: string } | null> } } }).siann.engine.current(),
+  );
+  if (endpoint === null) return null;
+  const sessionId = await page.getByTestId('session-id').textContent();
+  const socket = new WebSocket(`ws://127.0.0.1:${endpoint.port}/`);
+  try {
+    const replies: string[] = [];
+    let wake = () => {};
+    socket.addEventListener('message', (event) => {
+      replies.push(String(event.data));
+      wake();
+    });
+    const reply = async (): Promise<Record<string, unknown>> => {
+      while (replies.length === 0) await new Promise<void>((resolve) => (wake = resolve));
+      return JSON.parse(replies.shift()!) as Record<string, unknown>;
+    };
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve);
+      socket.addEventListener('error', reject);
+    });
+    socket.send(JSON.stringify({ type: 'auth', token: endpoint.token }));
+    await reply();
+    socket.send(JSON.stringify({ requestId: 'req_status', sessionId, method: 'engine.status', params: {} }));
+    for (;;) {
+      const message = await reply();
+      if (message.requestId !== 'req_status') continue;
+      const result = message.result as { device: { id: string } | null };
+      return result.device?.id ?? null;
+    }
+  } finally {
+    socket.close();
+  }
+}
+
+// The shell restarts an engine that exits; an engine that serves without its device
+// retries under the backoff the shell handed it (spec, "Process model").
+test('an engine relaunched after a crash reopens a device that was still held', async () => {
+  await app.close();
+  await launch(50, { SIANN_ENGINE_TEST_ARGS: '--device fake --fake-open-failures 3' });
+  await killEngineAndExpectReconnect();
+  await expect.poll(deviceId, { timeout: 15_000 }).toBe('fake');
 });
 
 test('quitting the app ends the engine', async () => {

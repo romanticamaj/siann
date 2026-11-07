@@ -14,6 +14,7 @@
 // status(), and the transport methods answer no_device. A session whose media
 // cannot be loaded is served the same way, with no graph at all.
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -31,6 +32,17 @@
 
 namespace siann::engine_app {
 
+// How a device that cannot run is tried again: the delay doubles from `initial` up
+// to `max`, and the count resets once a device has run for `resetAfter`. The shell's
+// restart constants (app/src/main/supervisor.ts), which it passes with
+// --device-backoff. At namespace scope so GCC sees the default member initializers
+// when traits are checked inside EngineHostOptions.
+struct DeviceBackoff {
+    std::chrono::milliseconds initial{250};
+    std::chrono::milliseconds max{10'000};
+    std::chrono::milliseconds resetAfter{30'000};
+};
+
 struct EngineHostOptions {
     // Opened and started by the constructor; nullptr: no device.
     std::unique_ptr<host::AudioDevice> device;
@@ -39,6 +51,9 @@ struct EngineHostOptions {
     // Why there is no device, when `device` is nullptr.
     std::optional<protocol::DeviceProblem> deviceError;
     int bufferFrames = 256;
+    DeviceBackoff backoff{};
+    // What the backoff reads; empty is the steady clock. Tests.
+    std::function<std::chrono::steady_clock::time_point()> clock;
     // playOnStart is ignored: only a client starts the transport.
     playback::PlaybackOptions playback{};
     // One line per problem, for the log.

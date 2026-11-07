@@ -111,6 +111,10 @@ async function serveApp(request: Request): Promise<Response> {
   return new Response('not found', { status: 404 });
 }
 
+const backoff = backoffFromEnv();
+const engineTestArgs =
+  process.env.SIANN_SHELL_TEST === '1' ? process.env.SIANN_ENGINE_TEST_ARGS?.split(' ').filter(Boolean) : undefined;
+
 const supervisor = new EngineSupervisor({
   exe: engineExecutable(),
   args: () =>
@@ -119,8 +123,10 @@ const supervisor = new EngineSupervisor({
       platform: process.platform,
       windowHandle: mainWindow && !mainWindow.isDestroyed() ? mainWindow.getNativeWindowHandle() : null,
       openEditor: process.env.SIANN_OPEN_EDITOR,
+      backoff,
+      testArgs: engineTestArgs,
     }),
-  backoff: backoffFromEnv(),
+  backoff,
   spawn: (exe, args) => spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
   schedule: (fn, ms) => {
     const timer = setTimeout(fn, ms);

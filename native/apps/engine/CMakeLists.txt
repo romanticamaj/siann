@@ -28,7 +28,7 @@ if(SIANN_BUILD_TESTS)
   target_link_libraries(siann_engine_host_tests PRIVATE siann_engine_app siann::host_fake siann_rt_alloc_guard
     Catch2::Catch2WithMain)
   target_include_directories(siann_engine_host_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/protocol/tests"
-    "${PROJECT_SOURCE_DIR}/libs/playback/tests/support")
+    "${PROJECT_SOURCE_DIR}/libs/playback/tests/support" "${PROJECT_SOURCE_DIR}/libs/media/tests")
   siann_apply_compile_options(siann_engine_host_tests)
   catch_discover_tests(siann_engine_host_tests)
 

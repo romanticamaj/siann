@@ -37,6 +37,7 @@
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/io/durable_file.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/session/media_import.hpp"
@@ -220,6 +221,19 @@ public:
         }
         FAIL("no such frame in " << kFrameBound << " frames");
         return {};
+    }
+
+    // engine.status once it shows a device; at most kFrameBound replies read, each a
+    // tick apart.
+    Value waitForDevice() {
+        for (int i = 0; i < kFrameBound; ++i) {
+            Value status = ok("engine.status");
+            if (at(status, "device").kind() == Value::Kind::object) {
+                return status;
+            }
+        }
+        FAIL("no device after " << kFrameBound << " status replies");
+        return Value();
     }
 
     // Two consecutive frames, playing, the second further on.
@@ -564,6 +578,18 @@ TEST_CASE("a fake callback time needs the fake device and sane bounds", "[engine
         {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos", "1000000000001"},
         {"--session", utf8(bundle), "--device", "fake", "--fake-callback-nanos"},
         {"--session", utf8(bundle), "--device"},
+        {"--session", utf8(bundle), "--fake-open-failures", "2"},
+        {"--session", utf8(bundle), "--device", "ASIO/Any", "--fake-open-failures", "2"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-open-failures", "-1"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-open-failures", "many"},
+        {"--session", utf8(bundle), "--device", "fake", "--fake-open-failures"},
+        {"--session", utf8(bundle), "--device-backoff", "250:10000"},
+        {"--session", utf8(bundle), "--device-backoff", "250:10000:30000:1"},
+        {"--session", utf8(bundle), "--device-backoff", "soon:10000:30000"},
+        {"--session", utf8(bundle), "--device-backoff", "250:-1:30000"},
+        {"--session", utf8(bundle), "--device-backoff", "500:250:30000"},
+        {"--session", utf8(bundle), "--device-backoff", "1:2:99999999999"},
+        {"--session", utf8(bundle), "--device-backoff"},
     };
     for (const auto& args : launches) {
         INFO("args: " << args.back());
@@ -637,6 +663,101 @@ TEST_CASE("a restarted engine reopens the device", "[engine][transport]") {
         client.waitAdvancing();
     }
     CHECK(stopEngine(restarted) == 0);
+}
+
+// The case the retry exists for: the crash left the device held for a moment.
+TEST_CASE("a relaunched engine that finds the device held keeps trying until it opens", "[engine][transport]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    {
+        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(crashed);
+        EngineClient client(ready);
+        client.ok("transport.play");
+        client.waitAdvancing();
+        crashed.kill();
+    }
+
+    PipedProcess restarted(SIANN_ENGINE_EXE,
+                           withArgs(launchArgs(bundle), {"--fake-open-failures", "3", "--device-backoff", "1:4:1000"}));
+    const Value ready = readyLine(restarted);
+    {
+        EngineClient client(ready);
+        const Value status = client.waitForDevice();
+        CHECK(at(at(status, "device"), "id").asString() == "fake");
+        CHECK_FALSE(at(status, "playing").asBool());
+        CHECK(status.find("deviceError") == nullptr);
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+    }
+    CHECK(stopEngine(restarted) == 0);
+    const std::string log = restarted.stderrText();
+    INFO("stderr: " << log);
+    CHECK(log.find("device_open_failed") != std::string::npos);
+    CHECK(log.find("running") != std::string::npos);
+}
+
+// One bad file must not fail the launch: the shell would restart the engine until it
+// gave up, and the session could not be opened (spec, "Process model").
+TEST_CASE("a corrupt media file does not fail the launch", "[engine][transport]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    fs::path file;
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(bundle / "media")) {
+        if (entry.is_regular_file()) {
+            file = entry.path();
+        }
+    }
+    REQUIRE_FALSE(file.empty());
+    const std::string whole = io::readFile(file);
+
+    const auto served = [&](const std::string& code) {
+        PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(child);
+        {
+            EngineClient client(ready);
+            CHECK(at(client.ok("session.inspect"), "revisions").asNumber() > 1);
+            const Value status = client.ok("engine.status");
+            CHECK(at(status, "device").kind() == Value::Kind::null);
+            CHECK(at(at(status, "deviceError"), "code").asString() == code);
+            CHECK(client.errorOf("transport.play") == "no_device");
+        }
+        CHECK(stopEngine(child) == 0);
+    };
+
+    SECTION("a header that is not one") {
+        std::string bytes = whole;
+        bytes.replace(0, 4, "JUNK");
+        io::writeFileAtomic(file, bytes);
+        served("unsupported_media");
+    }
+    SECTION("cut off inside the header") {
+        io::writeFileAtomic(file, whole.substr(0, 20));
+        served("decode_failed");
+    }
+    SECTION("cut off inside the audio: what is there plays") {
+        io::writeFileAtomic(file, whole.substr(0, whole.size() / 2));
+        PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(child);
+        {
+            EngineClient client(ready);
+            const Value status = client.ok("engine.status");
+            if (at(status, "device").kind() == Value::Kind::object) {
+                client.ok("transport.play");
+                client.waitAdvancing();
+                // Past the end of what the file holds.
+                client.ok("transport.locate", Value(Object{{"frames", Value("400000")}}));
+                client.waitAdvancing();
+            } else {
+                CHECK(at(at(status, "deviceError"), "code").asString() == "media_mismatch");
+            }
+        }
+        CHECK(stopEngine(child) == 0);
+    }
 }
 
 TEST_CASE("every build accepts --owner-window, used or not", "[engine][launch]") {

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -24,17 +25,48 @@
 #include "siann/host/manual_audio_device.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "siann/rt/realtime_thread.hpp"
+#include "support/flac_test_encoder.hpp"
 #include "support/protocol_fixture.hpp"
 
 using namespace siann;
+using namespace std::chrono_literals;
+using engine_app::DeviceBackoff;
 using engine_app::EngineHost;
 using engine_app::EngineHostOptions;
 using host::ManualAudioDevice;
 using live_rig::Fixture;
 using live_rig::kBlock;
 using protocol::TransportPortError;
+using Clock = std::chrono::steady_clock;
 
 namespace {
+
+namespace fs = std::filesystem;
+
+constexpr DeviceBackoff kBackoff{100ms, 300ms, 1'000ms};
+
+// A ManualAudioDevice that another application holds for the first `refusals` opens.
+class HeldDevice final : public host::AudioDevice {
+public:
+    explicit HeldDevice(int refuse = 0) : refusals(refuse) {}
+
+    host::AudioDeviceStatus open(const host::AudioDeviceConfig& config) override {
+        ++opens;
+        if (refusals > 0) {
+            --refusals;
+            throw host::DeviceError("device_open_failed", "the device is held by another application");
+        }
+        return inner.open(config);
+    }
+    void start(host::AudioCallback callback) override { inner.start(std::move(callback)); }
+    void setOnStopped(std::function<void(bool)> handler) override { inner.setOnStopped(std::move(handler)); }
+    void stop() override { inner.stop(); }
+    void close() override { inner.close(); }
+
+    ManualAudioDevice inner;
+    int refusals = 0;
+    int opens = 0;
+};
 
 EngineHostOptions manualOptions(std::unique_ptr<host::AudioDevice> device) {
     EngineHostOptions options;
@@ -48,27 +80,37 @@ EngineHostOptions manualOptions(std::unique_ptr<host::AudioDevice> device) {
 // A host over the two-track fixture on a device the test pumps by hand.
 struct Rig {
     Fixture fixture;
+    HeldDevice* held = nullptr;
     ManualAudioDevice* device = nullptr;
     std::vector<std::string> diagnostics;
+    Clock::time_point now{};  // what the host's backoff sees: only advance() moves it
     std::unique_ptr<EngineHost> host;
 
-    Rig() { build({}); }
+    explicit Rig(int refusals = 0) { build({}, refusals); }
     explicit Rig(playback::PlaybackOptions options) {
-        build(std::optional<playback::PlaybackOptions>(std::move(options)));
+        build(std::optional<playback::PlaybackOptions>(std::move(options)), 0);
     }
 
-    void build(std::optional<playback::PlaybackOptions> playbackOptions) {
-        auto manual = std::make_unique<ManualAudioDevice>();
-        device = manual.get();
-        EngineHostOptions options = manualOptions(std::move(manual));
+    void build(std::optional<playback::PlaybackOptions> playbackOptions, int refusals) {
+        auto device_ = std::make_unique<HeldDevice>(refusals);
+        held = device_.get();
+        device = &held->inner;
+        EngineHostOptions options = manualOptions(std::move(device_));
         if (playbackOptions) {
             options.playback = std::move(*playbackOptions);
         }
         options.diagnostic = [this](const std::string& line) { diagnostics.push_back(line); };
+        options.backoff = kBackoff;
+        options.clock = [this] { return now; };
         host = std::make_unique<EngineHost>(fixture.session, std::move(options));
     }
 
     playback::PlaybackEngine& engine() { return host->playback(); }
+
+    void advance(Clock::duration by) {
+        now += by;
+        host->tick();
+    }
 
     // What the control thread and the butler do between blocks.
     void service() {
@@ -105,6 +147,21 @@ public:
     void stop() override {}
     void close() override {}
 };
+
+std::set<fs::path> mediaFiles(const fs::path& bundle) {
+    std::set<fs::path> files;
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(bundle / "media")) {
+        if (entry.is_regular_file()) {
+            files.insert(entry.path());
+        }
+    }
+    return files;
+}
+
+// As long as a header, and not one.
+std::string junkWave() {
+    return "JUNK" + std::string(60, '\0');
+}
 
 std::string codeOf(const std::function<void()>& call) {
     try {
@@ -258,6 +315,154 @@ TEST_CASE("a device lost while running leaves the host serving", "[engine][host]
     CHECK(rig.diagnostics[0].find("device_lost") != std::string::npos);
 }
 
+TEST_CASE("a device that refuses to open is tried again under the backoff", "[engine][host][backoff]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    Rig rig(2);
+    CHECK(rig.held->opens == 1);
+    REQUIRE(rig.host->status().deviceError.has_value());
+    CHECK(rig.host->status().deviceError->code == "device_open_failed");
+    checkNoTransport(*rig.host);
+
+    rig.advance(99ms);
+    CHECK(rig.held->opens == 1);
+    rig.advance(1ms);
+    CHECK(rig.held->opens == 2);  // refused again
+    CHECK_FALSE(rig.host->status().device.has_value());
+
+    rig.advance(199ms);
+    CHECK(rig.held->opens == 2);
+    rig.advance(1ms);
+    CHECK(rig.held->opens == 3);
+
+    const protocol::EngineStatus status = rig.host->status();
+    REQUIRE(status.device.has_value());
+    CHECK(status.device->sampleRate == 48'000);
+    CHECK_FALSE(status.deviceError.has_value());
+    rig.advance(10s);
+    CHECK(rig.held->opens == 3);  // a running device is left alone
+
+    CHECK_FALSE(rig.host->status().playing);  // reopening never starts the transport
+    rig.host->play();
+    rig.settle();
+    rig.pump(4);
+    CHECK(rig.position() == 4 * kBlock);
+
+    // The refusal said once, not per attempt, then that it is back.
+    REQUIRE(rig.diagnostics.size() == 2);
+    CHECK(rig.diagnostics[0].find("device_open_failed") != std::string::npos);
+    CHECK(rig.diagnostics[1].find("running") != std::string::npos);
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("the reopen delay stops doubling at the maximum and never gives up", "[engine][host][backoff]") {
+    Rig rig(20);
+    rig.advance(100ms);
+    rig.advance(200ms);
+    CHECK(rig.held->opens == 3);
+    for (int attempt = 4; attempt <= 21; ++attempt) {
+        rig.advance(299ms);
+        CHECK(rig.held->opens == attempt - 1);
+        rig.advance(1ms);
+        CHECK(rig.held->opens == attempt);
+    }
+    CHECK(rig.host->status().device.has_value());
+}
+
+TEST_CASE("a lost device is reopened, stopped at the playhead", "[engine][host][backoff]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    playback::PlaybackOptions options = live_rig::testOptions();
+    options.callbackClock = &host::fakeCallbackClock;
+    host::setFakeCallbackNanos(20'000'000);
+    Rig rig(options);
+    rig.host->play();
+    rig.settle();
+    rig.pump(4);
+    REQUIRE(rig.host->status().xruns > 0);
+    rig.device->reportLost();
+    rig.host->tick();
+    const std::int64_t frozen = rig.position();
+    CHECK(frozen > 0);
+    REQUIRE(rig.host->status().deviceError.has_value());
+
+    rig.held->refusals = 1;  // still gone at the first try
+    rig.advance(100ms);
+    CHECK(rig.held->opens == 2);
+    REQUIRE(rig.host->status().deviceError.has_value());
+    CHECK(rig.host->status().deviceError->code == "device_open_failed");
+    rig.advance(200ms);
+    CHECK(rig.held->opens == 3);
+
+    const protocol::EngineStatus status = rig.host->status();
+    REQUIRE(status.device.has_value());
+    CHECK_FALSE(status.playing);
+    CHECK(status.xruns == 0);  // counted from this device's start
+    CHECK(rig.position() == frozen);
+
+    rig.host->play();
+    rig.settle();
+    rig.pump(3);
+    CHECK(rig.position() == frozen + 3 * kBlock);
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("the reopen delay resets once a device has stayed up", "[engine][host][backoff]") {
+    Rig rig;
+    const auto loseDevice = [&rig] {
+        rig.device->reportLost();
+        rig.host->tick();
+        REQUIRE_FALSE(rig.host->status().device.has_value());
+    };
+
+    // A device that drops at once is backed off like one that refuses.
+    loseDevice();
+    rig.advance(100ms);
+    REQUIRE(rig.host->status().device.has_value());
+    loseDevice();
+    rig.advance(199ms);
+    CHECK_FALSE(rig.host->status().device.has_value());
+    rig.advance(1ms);
+    REQUIRE(rig.host->status().device.has_value());
+
+    rig.advance(1'000ms);
+    loseDevice();
+    rig.advance(100ms);
+    CHECK(rig.host->status().device.has_value());
+}
+
+TEST_CASE("only a device that could open is tried again", "[engine][host][backoff]") {
+    SECTION("no backend") {
+        Fixture fixture;
+        Clock::time_point now{};
+        EngineHostOptions options;
+        options.deviceError = protocol::DeviceProblem{"no_audio_backend", "built without an audio backend"};
+        options.clock = [&now] { return now; };
+        EngineHost host(fixture.session, std::move(options));
+        now += 1h;
+        REQUIRE_NOTHROW(host.tick());
+        REQUIRE(host.status().deviceError.has_value());
+        CHECK(host.status().deviceError->code == "no_audio_backend");
+    }
+    SECTION("a session that did not load") {
+        Fixture fixture;
+        fs::remove_all(fixture.bundle() / "media");
+        Clock::time_point now{};
+        auto device = std::make_unique<HeldDevice>();
+        HeldDevice* held = device.get();
+        EngineHostOptions options = manualOptions(std::move(device));
+        options.clock = [&now] { return now; };
+        EngineHost host(fixture.session, std::move(options));
+        now += 1h;
+        host.tick();
+        CHECK(held->opens == 0);
+    }
+    SECTION("after shutdown") {
+        Rig rig(1);
+        rig.host->shutdown();
+        rig.advance(1h);
+        CHECK(rig.held->opens == 1);
+    }
+}
+
 TEST_CASE("a commit on main reaches the live graph", "[engine][host]") {
     Rig rig;
     rig.host->play();
@@ -339,6 +544,79 @@ TEST_CASE("a document the graph cannot load keeps the host serving", "[engine][h
         checkNoTransport(host);
         REQUIRE_NOTHROW(host.tick());
         CHECK(diagnostics.size() == 1);
+    }
+    SECTION("a commit whose media does not decode") {
+        Rig rig;
+        const fs::path source = rig.fixture.dir.path() / "more.wav";
+        io::writeFileAtomic(source, media::encodeWavFloat32(live_rig::distinct(2, 4'800)));
+        const std::set<fs::path> before = mediaFiles(rig.fixture.bundle());
+        session::importMedia(rig.fixture.session, source, "med_bad", "test", "t");
+        for (const fs::path& file : mediaFiles(rig.fixture.bundle())) {
+            if (before.count(file) == 0) {
+                io::writeFileAtomic(file, junkWave());
+            }
+        }
+        rig.fixture.exec(live_rig::place("clp_bad", "trk_a", "med_bad", 60'000, 0, 1'000));
+        rig.host->auditionPort()->mainCommitted();
+        const std::uint64_t epoch = rig.engine().driver().liveEpoch();
+        REQUIRE_NOTHROW(rig.service());
+        CHECK(rig.engine().driver().liveEpoch() == epoch);
+        REQUIRE(rig.diagnostics.size() == 1);
+        CHECK(rig.diagnostics[0].find("unsupported_media") != std::string::npos);
+        CHECK(rig.host->status().device.has_value());
+    }
+}
+
+TEST_CASE("a session whose media is damaged is served with no graph", "[engine][host]") {
+    struct Damage {
+        const char* name;
+        std::string bytes;
+        const char* code;
+    };
+    const std::vector<Damage> damages{{"not a WAV header", junkWave(), "unsupported_media"},
+                                      {"cut off inside the header", std::string("RIFF\x24\0\0\0WAVEfmt ", 16) + "abcd",
+                                       "decode_failed"}};
+    for (const Damage& damage : damages) {
+        DYNAMIC_SECTION(damage.name) {
+            Fixture fixture;
+            for (const fs::path& file : mediaFiles(fixture.bundle())) {
+                io::writeFileAtomic(file, damage.bytes);
+            }
+            std::vector<std::string> diagnostics;
+            EngineHostOptions options = manualOptions(std::make_unique<ManualAudioDevice>());
+            options.diagnostic = [&diagnostics](const std::string& line) { diagnostics.push_back(line); };
+            std::unique_ptr<EngineHost> host;
+            REQUIRE_NOTHROW(host = std::make_unique<EngineHost>(fixture.session, std::move(options)));
+
+            const protocol::EngineStatus status = host->status();
+            CHECK_FALSE(status.device.has_value());
+            REQUIRE(status.deviceError.has_value());
+            CHECK(status.deviceError->code == damage.code);
+            CHECK(host->auditionPort() == nullptr);
+            checkNoTransport(*host);
+            REQUIRE_NOTHROW(host->tick());
+            CHECK(diagnostics.size() == 1);
+        }
+    }
+    SECTION("a read that fails outright") {
+        Fixture fixture;
+        std::vector<std::int16_t> samples(2 * 1'000, 100);
+        const fs::path source = fixture.dir.path() / "hit.flac";
+        io::writeFileAtomic(source, siann::test::encodeFlac16(2, 48'000, samples, 256));
+        const std::set<fs::path> before = mediaFiles(fixture.bundle());
+        session::importMedia(fixture.session, source, "med_flac", "test", "t");
+        fixture.exec(live_rig::place("clp_flac", "trk_a", "med_flac", 60'000, 0, 1'000));
+        for (const fs::path& file : mediaFiles(fixture.bundle())) {
+            if (before.count(file) == 0) {
+                fs::remove(file);
+                fs::create_directory(file);  // exists, and cannot be read as a file
+            }
+        }
+        EngineHostOptions options = manualOptions(std::make_unique<ManualAudioDevice>());
+        std::unique_ptr<EngineHost> host;
+        REQUIRE_NOTHROW(host = std::make_unique<EngineHost>(fixture.session, std::move(options)));
+        REQUIRE(host->status().deviceError.has_value());
+        CHECK(host->status().deviceError->code == "load_failed");
     }
 }
 

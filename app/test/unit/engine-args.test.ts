@@ -53,3 +53,24 @@ test('the plugin to open is passed on every platform', () => {
   ]);
   assert.deepEqual(engineArgs({ session, platform: 'darwin', windowHandle: null, openEditor: '' }), ['--session', session]);
 });
+
+test('the shell hands the engine its backoff, for the device retry', () => {
+  assert.deepEqual(
+    engineArgs({
+      session,
+      platform: 'linux',
+      windowHandle: null,
+      backoff: { initialMs: 250, maxMs: 10_000, resetAfterMs: 30_000 },
+    }),
+    ['--session', session, '--device-backoff', '250:10000:30000'],
+  );
+});
+
+test('the e2e tests can add engine arguments, last', () => {
+  assert.deepEqual(engineArgs({ session, platform: 'linux', windowHandle: null, testArgs: ['--device', 'fake'] }), [
+    '--session',
+    session,
+    '--device',
+    'fake',
+  ]);
+});

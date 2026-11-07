@@ -48,6 +48,9 @@ public:
         bool reportNoSampleRate = false;
         // counter excludes loopback; the latencies are still reported.
         InputSignal inputSignal = InputSignal::none;
+        // The first this many open() calls throw DeviceError device_open_failed, as a
+        // device another application holds does.
+        int refuseOpens = 0;
     };
 
     explicit FakeAudioDevice(Options options);
@@ -96,6 +99,7 @@ private:
     std::size_t loopPosition_ = 0;
     std::chrono::nanoseconds pacePeriod_{0};
     std::int64_t counterFrame_ = 0;  // device thread, reset by start()
+    int refusedOpens_ = 0;
 
     std::atomic<bool> running_{false};
     std::atomic<bool> stopRequested_{false};
