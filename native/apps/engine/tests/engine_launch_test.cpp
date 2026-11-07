@@ -455,6 +455,8 @@ TEST_CASE("a bad --session exits 1 with a JSON error on stderr and nothing on st
         {"--session", utf8(dir.path() / "Other.siann"), "--owner-window", "the big one"},
         {"--session", utf8(dir.path() / "Other.siann"), "--owner-window"},
         {"--session", utf8(dir.path() / "Other.siann"), "--open-editor"},
+        // M4 removed the flag: plugin.open_editor opens editors now.
+        {"--session", utf8(dir.path() / "Other.siann"), "--open-editor", "x.vst3"},
     };
     for (const auto& args : launches) {
         INFO("args: " << args.back());
@@ -752,17 +754,48 @@ TEST_CASE("every build accepts --owner-window, used or not", "[engine][launch]")
     CHECK(stopEngine(child) == 0);
 }
 
-TEST_CASE("an editor that cannot open is a failed launch", "[engine][launch]") {
+// m4-plugin-node: editors open through the protocol (Protocol v0 item 19).
+Value trackAddCommand(const std::string& trackId) {
+    return Value(Object{{"commands", Value(Array{Value(Object{{"op", Value("track.add")},
+                                                              {"trackId", Value(trackId)},
+                                                              {"name", Value(trackId)},
+                                                              {"channels", Value(2)}})})}});
+}
+
+Value instantiateParams(const std::string& format, const std::string& path) {
+    return Value(Object{{"trackId", Value("trk_1")},
+                        {"index", Value(0)},
+                        {"descriptor", Value(Object{{"format", Value(format)}, {"path", Value(path)}})}});
+}
+
+TEST_CASE("--open-editor is a usage error now", "[engine][launch]") {
     TempDir dir;
     PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"),
                                                   {"--open-editor", utf8(dir.path() / "missing.vst3")}));
     CHECK(child.wait() == 1);
     CHECK(child.stdoutText().empty());
+    CHECK(errorCode(child) == "usage");
+}
+
+TEST_CASE("an editor that cannot open is an error of the method, the engine serves on", "[engine][launch]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("command.execute", trackAddCommand("trk_1"));
+        const Value missing = client.ok("plugin.instantiate", instantiateParams("vst3", utf8(dir.path() / "missing.vst3")));
+        CHECK(at(missing, "state").asString() == "failed");
 #if defined(SIANN_ENGINE_WITH_JUCE)
-    CHECK(errorCode(child) == "plugin_not_found");
+        CHECK(at(at(missing, "error"), "code").asString() == "plugin_not_found");
 #else
-    CHECK(errorCode(child) == "no_plugin_host");
+        CHECK(at(at(missing, "error"), "code").asString() == "no_plugin_host");
 #endif
+        CHECK(client.errorOf("plugin.open_editor", Value(Object{{"slotId", Value("slt_9")}})) == "not_found");
+        CHECK(client.ok("engine.status").kind() == Value::Kind::object);
+    }
+    CHECK(stopEngine(child) == 0);
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)
@@ -786,27 +819,51 @@ TEST_CASE("the desktop engine opens the default output device, or says why not",
     CHECK(stopEngine(child) == 0);
 }
 
-TEST_CASE("the desktop engine opens an editor before it is ready and still serves", "[engine][launch][juce]") {
+TEST_CASE("the desktop engine opens an editor through plugin.open_editor and still serves", "[engine][launch][juce]") {
     if (!displayAvailable()) {
         SKIP("no display: set DISPLAY or run under xvfb-run");
     }
     ix::initNetSystem();
     TempDir dir;
-    PipedProcess child(SIANN_ENGINE_EXE,
-                       withArgs(launchArgs(dir.path() / "Song.siann"), {"--open-editor", SIANN_TEST_PLUGIN_VST3}));
-    // The plugin prints a line to stdout when it loads, before the ready line
-    // would go out. The handshake must still be the first and only stdout line:
-    // the plugin's output belongs on stderr, where the shell keeps a log.
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
     const std::optional<std::string> line = child.firstLine();
     REQUIRE(line.has_value());
     const Value ready = json::parse(*line);
     CHECK(at(ready, "schema").asString() == engine_app::kReadySchema);
-    WsClient ws(static_cast<std::uint16_t>(at(ready, "port").asNumber()));
-    REQUIRE(ws.start());
-    CHECK(at(ws.call(authFrame(at(ready, "token").asString())), "ok").asBool());
+    {
+        EngineClient client(ready);
+        client.ok("command.execute", trackAddCommand("trk_1"));
+        const Value loaded = client.ok("plugin.instantiate", instantiateParams("vst3", SIANN_TEST_PLUGIN_VST3));
+        REQUIRE(at(loaded, "state").asString() == "done");
+        const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+        CHECK(at(at(at(loaded, "result"), "capabilities"), "editor").asBool());
+        const Value opened = client.ok("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK(at(opened, "editorOpen").asBool());
+        CHECK(at(opened, "nativeHandle").asString() != "0");
+        const Value closed = client.ok("plugin.close_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK_FALSE(at(closed, "editorOpen").asBool());
+    }
     CHECK(stopEngine(child) == 0);
+    // The plugin prints a line to stdout when it loads: the handshake stays the
+    // first and only stdout line, the plugin's output goes to stderr.
     CHECK(child.stdoutText() == *line + "\n");
     CHECK(child.stderrText().find("siann_test_plugin: loaded") != std::string::npos);
+}
+
+TEST_CASE("a CLAP plugin on the desktop target has no editor window yet", "[engine][launch][juce]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("command.execute", trackAddCommand("trk_1"));
+        const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        REQUIRE(at(loaded, "state").asString() == "done");
+        const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+        CHECK(client.errorOf("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}})) == "editor_failed");
+    }
+    CHECK(stopEngine(child) == 0);
 }
 
 #if defined(_WIN32)
@@ -815,12 +872,17 @@ TEST_CASE("the editor belongs to the window named by --owner-window, and the JUC
           "[engine][launch][juce]") {
     TempDir dir;
     const OwnerWindow owner;
-    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"),
-                                                  {"--owner-window", owner.handleArgument(), "--open-editor",
-                                                   SIANN_TEST_PLUGIN_VST3}));
-    readyLine(child);
+    PipedProcess child(SIANN_ENGINE_EXE,
+                       withArgs(launchArgs(dir.path() / "Song.siann"), {"--owner-window", owner.handleArgument()}));
+    const Value ready = readyLine(child);
+    EngineClient client(ready);
+    client.ok("command.execute", trackAddCommand("trk_1"));
+    const Value loaded = client.ok("plugin.instantiate", instantiateParams("vst3", SIANN_TEST_PLUGIN_VST3));
+    const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+    const Value opened = client.ok("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}}));
 
     HWND editor = ownedWindow(child.pid(), owner.hwnd());
+    CHECK(at(opened, "nativeHandle").asString() == std::to_string(reinterpret_cast<std::uintptr_t>(editor)));
     REQUIRE(editor != nullptr);
     CHECK(IsWindowVisible(editor));
     // Only a thread dispatching messages answers: this fails when main() does not
