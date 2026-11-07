@@ -30,12 +30,13 @@ namespace {
 // As JucePluginHost, so that a plugin loads or fails alike in both.
 constexpr std::uint32_t maxPluginChannels = 31;
 
-// Events one block carries beside the parameter table. Past it, the last value of a
-// parameter goes in the next block instead.
+// Events one block carries beside one per parameter. Past it, the newest value of a
+// parameter left over goes at offset 0 of the next block instead (spec, "Precision
+// contract").
 constexpr std::size_t maxBlockEvents = 1024;
 
-// The audio thread counts as running while its last block is this recent, or four
-// block periods if those are longer. Past that nothing is coming to serve a flush.
+// Told nothing by the driver, blocks count as coming while the last one is this
+// recent, or four block periods if those are longer.
 constexpr std::int64_t minimumAudioWindowNanos = 50'000'000;
 
 constexpr const char* hostName = "SIANN";
@@ -153,8 +154,9 @@ public:
                 started_ = plugin_->start_processing(plugin_);
             }
             if (started_) {
-                // Only blocks that reach the plugin count as running: they deliver.
+                // Only blocks that reach the plugin count for the guess: they deliver.
                 lastBlockNanos_.store(nowNanos(), std::memory_order_relaxed);
+                blocksStarted_.fetch_add(1);  // before the block takes any value
                 runPlugin(input, output, events, frames);
                 blocksRun_.fetch_add(1);
             } else {
@@ -163,7 +165,15 @@ public:
         } else {
             passThrough(input, output, frames);
         }
+        processCalls_.fetch_add(1);
         processing_.store(false);
+    }
+
+    void setBlocksComing(bool coming) override {
+        blocksComingSaid_.store(coming ? 1 : 0);
+        if (!coming && flushRequested_.load()) {
+            shared_->wake();  // nothing else will deliver it now
+        }
     }
 
     PluginControl& control() override { return *this; }
@@ -173,8 +183,8 @@ public:
         if (callbackRequested_.exchange(false)) {
             plugin_->on_main_thread(plugin_);
         }
-        // While blocks arrive the next one delivers this; a pause would drop it dry.
-        if (flushRequested_.load() && !audioRunning()) {
+        // While blocks are coming the next one delivers this; a pause would drop it dry.
+        if (flushRequested_.load() && !blocksComing()) {
             const ProcessingPause pause(*this);
             flush();
         }
@@ -494,10 +504,18 @@ private:
                           std::memory_order_relaxed);
     }
 
-    bool audioRunning() const noexcept {
+    // The driver's word, or, told nothing, a guess from the last block that reached
+    // the plugin: a stall past the window looks like a stop.
+    bool blocksComing() const noexcept {
+        const int said = blocksComingSaid_.load();
+        if (said >= 0) {
+            return said == 1;
+        }
         const std::int64_t last = lastBlockNanos_.load(std::memory_order_relaxed);
         return last != 0 && nowNanos() - last < audioWindowNanos_;
     }
+
+    bool valuesPending() const noexcept { return flushRequested_.load() || anyDirty_.load(); }
 
     // --- events
 
@@ -552,10 +570,13 @@ private:
             }
             pushEvent(static_cast<std::uint32_t>(std::clamp(event.sampleOffset, 0, frames - 1)), slot, value);
         }
-        // In time order: the control side reads what the block ended on.
+        // In time order: the control side reads what the block ended on, unless a
+        // newer value waits for the next block (one left over above).
         for (std::uint32_t i = firstBlockEvent; i < eventCount_; ++i) {
             ParameterSlot* slot = slotOf(events_[i].param_id);
-            slot->value.store(slot->normalized(events_[i].value), std::memory_order_relaxed);
+            if (!slot->dirty.load()) {
+                slot->value.store(slot->normalized(events_[i].value), std::memory_order_relaxed);
+            }
         }
     }
 
@@ -650,24 +671,30 @@ private:
         }
     }
 
-    // Main thread: what setParameter set before this reaches the plugin, without
-    // passing a block dry. While blocks arrive, waits for one that began after this
-    // call to finish, which delivered the values: about two block periods. When none
-    // is coming, at once or once none has come for the audio window, flushes under a
-    // pause.
+    // Main thread: what setParameter set before this has reached the plugin when it
+    // returns, without passing a block dry. While blocks are coming, waits for one to
+    // take the values. Values still pending when none is coming, or after a block that
+    // began after this call passed by without reaching the plugin, are flushed under a
+    // pause. Then waits for a block that took values to finish applying them: the
+    // flags clear when a block takes the values, before the plugin sees them.
     void deliverPendingValues() {
-        if (!flushRequested_.load() && !anyDirty_.load()) {
-            return;
-        }
-        const std::uint64_t seen = blocksRun_.load();
-        while (audioRunning()) {
-            if (blocksRun_.load() >= seen + 2) {  // seen + 1 may have begun before the values
+        if (valuesPending()) {
+            const std::uint64_t calls = processCalls_.load();
+            while (valuesPending() && blocksComing() && processCalls_.load() < calls + 2) {
+                std::this_thread::yield();
+            }
+            if (valuesPending()) {
+                const ProcessingPause pause(*this);
+                flush();
                 return;
             }
+        }
+        // Blocks run one at a time: once blocksRun_ reaches this, the block that took
+        // the values, begun before the flags were seen clear, has finished.
+        const std::uint64_t started = blocksStarted_.load();
+        while (blocksRun_.load() < started) {
             std::this_thread::yield();
         }
-        const ProcessingPause pause(*this);
-        flush();
     }
 
     // --- PluginControl
@@ -745,7 +772,7 @@ private:
 
     double getParameter(int index) const override { return slotAt(index).value.load(std::memory_order_relaxed); }
 
-    // Never pauses: the next block takes it, or runMainThreadCallbacks when none comes.
+    // Never pauses: the next block takes it, or runMainThreadCallbacks when none is coming.
     void setParameter(int index, double value) override {
         auto& slot = slotAt(index);
         slot.value.store(std::clamp(value, 0.0, 1.0), std::memory_order_relaxed);
@@ -823,7 +850,10 @@ private:
     std::atomic<bool> flushRequested_{false};
     std::atomic<bool> tailStale_{false};
     std::atomic<std::int64_t> lastBlockNanos_{0};
-    std::atomic<std::uint64_t> blocksRun_{0};  // blocks that reached the plugin, counted after
+    std::atomic<int> blocksComingSaid_{-1};        // -1 until the driver says, then 0 or 1
+    std::atomic<std::uint64_t> processCalls_{0};   // every process() call, counted after
+    std::atomic<std::uint64_t> blocksStarted_{0};  // blocks that reached the plugin, counted before
+    std::atomic<std::uint64_t> blocksRun_{0};      // the same, counted after
     std::int64_t audioWindowNanos_ = minimumAudioWindowNanos;
 };
 

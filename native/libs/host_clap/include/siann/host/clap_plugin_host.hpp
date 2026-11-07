@@ -14,7 +14,9 @@
 // CLAP's [audio-thread] is a symbolic thread: the host may make those calls on the
 // main thread when no process() can overlap them, so they run under a pause that
 // holds the plugin out of processing (input passes through dry). No lock in process().
-// A setParameter during playback never pauses: the next block delivers it.
+// A setParameter during playback never pauses: the next block delivers it. Whether
+// blocks are coming is what the driver says through PluginInstance::setBlocksComing;
+// told nothing, the host guesses from the last block (50 ms or four block periods).
 //
 // PluginControl for CLAP: setState throws bad_state when the plugin refuses the
 // payload; openEditor throws editor_failed until the desktop target can supply a
@@ -51,8 +53,8 @@ public:
                                                 int maxBlockFrames) override;
 
     // Main thread. Services what every live instance of this host asked for. A
-    // parameter flush waits for the next process() while blocks are arriving, so a
-    // call shortly after the last block can leave one for a later call.
+    // parameter flush is left to the next process() while blocks are coming, so a
+    // call then can leave one for a later call.
     void runMainThreadCallbacks();
 
     // Main thread. Called when a plugin wants runMainThreadCallbacks(), on whichever
