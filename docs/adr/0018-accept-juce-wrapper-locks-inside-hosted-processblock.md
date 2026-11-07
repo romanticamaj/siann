@@ -154,3 +154,26 @@ it incomplete. The decision stands, with its scope and its claims corrected:
    plugins (a plugin's line before the ready line failed the launch);
    `siann-engine` now duplicates the launcher's stdout for the ready line and
    points fd 1 at stderr before any plugin loads.
+
+## Amendment 2, 2026-11-07 (M4 plan; same decider)
+
+The audit was repeated for JUCE's LV2 wrapper (JUCE 9.0.3,
+`juce_LV2PluginFormatImpl.h` and `juce_LV2PluginFormat.cpp`). Inside
+`processBlockImpl` it finds:
+
+- `HandleRegistry::ifContains` takes a blocking `SpinLock` when a plugin schedules
+  worker work. The registry is shared by every LV2 instance in the process, and
+  instantiate, destroy and the worker thread contend for it.
+- `processPortsAfterRun` calls `setLatencySamples` on the audio thread, which takes
+  `getListenerLocked` and runs SIANN's `audioProcessorChanged` there.
+- Every output atom goes into a UI message vector of 8192 reserved bytes, whether or
+  not an editor is open, and the vector can grow on the audio thread.
+- `updateHostDisplay` takes `getListenerLocked` from the audio thread too.
+
+This is not accepted. The first finding is a new class of lock, shared across
+instances, for a format we could only test on our own plugin. LV2 stays off in the
+JUCE host (`JUCE_PLUGINHOST_LV2=0`) and arrives through lilv (M7) or worker
+processes. The spec's goals and M4's exit criterion do not name LV2.
+
+One addition to the VST3 audit: `setDirty` reaches `getListenerLocked` from any
+thread. It is on the wrapper's path and takes the lock only.

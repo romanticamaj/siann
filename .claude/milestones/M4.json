@@ -2,14 +2,14 @@
   "schemaVersion": "siann.milestone.v1",
   "id": "M4",
   "title": "Plugins",
-  "goal": "Host CLAP on both targets and VST3, AU and LV2 through JUCE inside the graph, with latency compensation, state, capabilities and crash survival.",
+  "goal": "Host CLAP on both targets and VST3 and AU through JUCE inside the graph, with latency compensation, state, capabilities and crash survival.",
   "specSections": ["siann-host: two targets, one interface", "Latency model", "Publishing and retiring graphs", "Automation", "Milestones"],
   "status": "not_started",
   "done": [],
   "prerequisites": ["M0 plugin hosting spike.", "docs/harness/follow-ups.md, section Before M4: taken into the features below."],
   "humanGates": [
     {"id": "real-plugins", "text": "Choose the third-party plugins used for compatibility runs.", "how": "The maintainer lists installed plugins; pluginval-checked runs use them.",
-     "resolution": "Decided by Fable, delegated by the maintainer, 2026-11-07. Windows compatibility set: TDR Nova, TDR VOS SlickEQ and Surge XT (VST3 and CLAP, the maintainer installs it) run on every maintainer run; Superior Drummer 3 (fallback EZdrummer 3), UAD 1176 and HALion Sonic run when authorised and SKIP otherwise, never prompting a login. Each takes one environment variable: SKIP when unset, FAIL when the path is missing. CI hosts only siann_test_plugin (VST3, CLAP, LV2, AU) and Apple AUPeakLimiter. macOS AU uses TDR Nova and Surge XT. Third-party LV2 waits for a Linux machine. MIDI output is proven on siann_test_plugin. SlickEQ's variable latency is unverified: if it is fixed, variable latency stays on siann_test_plugin."}
+     "resolution": "Decided by Fable, delegated by the maintainer, 2026-11-07. Windows compatibility set: TDR Nova, TDR VOS SlickEQ and Surge XT (VST3 and CLAP, the maintainer installs it) run on every maintainer run; Superior Drummer 3 (fallback EZdrummer 3), UAD 1176 and HALion Sonic run when authorised and SKIP otherwise, never prompting a login. Each takes one environment variable: SKIP when unset, FAIL when the path is missing. CI hosts only siann_test_plugin (VST3, CLAP, AU) and Apple AUPeakLimiter. macOS AU uses TDR Nova and Surge XT. Third-party LV2 waits for a Linux machine. MIDI output is proven on siann_test_plugin. SlickEQ's variable latency is unverified: if it is fixed, variable latency stays on siann_test_plugin."}
   ],
   "features": [
     {"id": "m4-clap-host", "title": "CLAP host for both targets", "wave": 1, "dependsOn": [], "specRefs": ["siann-host: two targets, one interface"],
@@ -22,6 +22,7 @@
      "acceptance": ["plugin.instantiate (job) then plugin.insert (pure command) with a state blob; missing plugins show as missing with state preserved; instances survive unrelated edits through the pinned instance table.",
                     "PluginNode calls PluginInstance::process only from a GraphDriver callback or from the offline driver during bounce and export, never both at once; the driver's CallbackTimer covers the realtime path. Test: a hosted test plugin whose block exceeds its period counts as an xrun in the driver's timing (ADR-0018, condition 1).",
                     "The plugin event sink and the adapter's listener code only push to pluginEventAny (never setState, setParameter, device control or any wait for the audio thread: they run under JUCE's processMutex and listenerLock); the consumer of pluginEventAny runs on the command thread. Test: a plugin that reports from inside a restart and from the audio thread leaves the audio thread running (spec, \"Threads and waiting rules\"; ADR-0018, condition 2).",
+                    "The adapter's triggerAsyncUpdate in audioProcessorChanged is replaced by an atomic tail-stale flag polled on the main thread, so no listener path can allocate.",
                     "MIDI output has a recorded decision before a MIDI-producing plugin processes audio: the node preallocates its MIDI buffer for Steinberg's 2048-event limit and accepts JUCE's Array growth as plugin-caused, or MIDI-producing plugins wait for worker processes (ADR-0018, condition 3). Test for the first option: a plugin emitting more events than the preallocated size is measured and reported; for the second: loading a MIDI-producing plugin is refused.",
                     "Test: a test plugin counting concurrent process entries reports at most 1 while transport.play on the fake device overlaps render.start on the same document (ADR-0018, condition 1).",
                     "PluginNode times each PluginInstance::process into a per-instance CallbackTimer (atomics only), reported per instance in engine.status; a slow test plugin shows on its instance only.",
@@ -30,9 +31,9 @@
     {"id": "m4-hostile-plugin", "title": "Hostile test plugin", "wave": 2, "dependsOn": ["m4-clap-host"], "specRefs": ["Build, test and CI"],
      "acceptance": ["A built-in CLAP test plugin that allocates, throws, changes latency, sleeps and calls back into the host; the engine survives each behaviour with the documented outcome.",
                     "The same plugin crashes the process on a parameter, for m4-crash-recovery."]},
-    {"id": "m4-juce-formats", "title": "VST3, AU and LV2 through JUCE", "wave": 3, "dependsOn": ["m4-plugin-node"], "specRefs": ["siann-host: two targets, one interface", "Realtime rules and enforcement"],
+    {"id": "m4-juce-formats", "title": "VST3 and AU through JUCE", "wave": 3, "dependsOn": ["m4-plugin-node"], "specRefs": ["siann-host: two targets, one interface", "Realtime rules and enforcement"],
      "acceptance": ["JucePluginHost formats behind the same PluginHost interface; capability flags exposed to agents; pluginval runs on the chosen plugins.",
-                    "The spec's audit of what JUCE runs inside processBlock (locks, and the allocation MIDI output can cause) is repeated for the JUCE pin in use and for LV2 before the pin moves or the format ships; a lock or allocation the audit does not list reopens ADR-0018.",
+                    "The spec's audit of what JUCE runs inside processBlock (locks, and the allocation MIDI output can cause) is repeated for the JUCE pin in use before the pin moves; a lock or allocation the audit does not list reopens ADR-0018. LV2 through JUCE stays off (JUCE_PLUGINHOST_LV2=0): its wrapper takes a process-wide blocking SpinLock on the audio thread and grows a UI message buffer; LV2 arrives through lilv (M7) or worker processes.",
                     "A plugin exceeding maxPluginChannels (31) fails with plugin_load_failed; test on a 32-channel siann_test_plugin layout."]},
     {"id": "m4-crash-recovery", "title": "Plugin crash recovery", "wave": 3, "dependsOn": ["m4-plugin-node", "m4-hostile-plugin", "m4-engine-device"], "specRefs": ["Process model", "Production-level criteria"],
      "acceptance": ["A plugin crash during playback leaves the UI alive; the engine restarts and recovers the session from checkpoint plus journal.",
