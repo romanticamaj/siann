@@ -175,6 +175,28 @@ TEST_CASE("Reopening replays every revision, including undo state", "[session]")
     expectSameHistory(reopened, again);
 }
 
+TEST_CASE("Plugin slot commands replay on reopen with identical hashes", "[session][plugin]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        session.commit({addTrack("trk_1")}, "a", "t1");
+        session.commit({cmd(R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_1",
+            "descriptor":{"format":"clap","uid":"com.siann.test-plugin","name":"T","path":"/x.clap"},
+            "stateBlob":"sha256:)" + std::string(64, 'd') + R"("})")},
+                       "a", "t2");
+        session.commit({cmd(R"({"op":"plugin.set_bypass","slotId":"slt_1","bypass":true})")}, "a", "t3");
+        session.checkpoint();
+        session.commit({cmd(R"({"op":"plugin.remove","slotId":"slt_1"})")}, "a", "t4");
+        session.undo("a", "t5");
+    }
+    OpenReport report;
+    Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.checkpointVerified);
+    CHECK(reopened.history().head().document.pluginSlot("slt_1")->bypass);
+    Session again = Session::open(dir.bundle());
+    expectSameHistory(reopened, again);
+}
+
 TEST_CASE("A failed command writes nothing to the journal", "[session]") {
     TempDir dir;
     Session session = newSession(dir.bundle());
