@@ -123,15 +123,16 @@ function gcc() {
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'hash', 'tests'))}`);
   // What the hosting tests share, whichever format carries the plugin.
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'host_common', 'tests'))}`);
+  includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'host_clap', 'src'))}`);
   // The protocol tests reuse the playback tests' live rig (as in their CMake target).
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'playback', 'tests', 'support'))}`);
   // The siann-engine launch tests reuse the protocol tests' loopback clients.
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'protocol', 'tests'))}`);
-  for (const d of ['dr_libs-src', 'r8brain-src', 'ixwebsocket-src', path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
+  for (const d of ['dr_libs-src', 'r8brain-src', 'ixwebsocket-src', path.join('clap-src', 'include'), path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
     includes.push('-isystem', toPosix(path.join(deps, d)));
   }
   const flags = ['-std=c++20', '-Wall', '-Wextra', '-Wpedantic', '-Wshadow', '-Werror', '-fsyntax-only',
-    '-DSIANN_FIXTURES_DIR="x"', ...includes];
+    '-DSIANN_FIXTURES_DIR="x"', '-DSIANN_TEST_PLUGIN_CLAP="x"', ...includes];
   const failures = [];
   let output = '';
   const check = (file, fileFlags) => {

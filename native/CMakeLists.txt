@@ -64,6 +64,7 @@ add_subdirectory(libs/engine)
 add_subdirectory(libs/realtime)
 add_subdirectory(libs/playback)
 add_subdirectory(libs/protocol)
+add_subdirectory(libs/host_clap)
 
 # Before the CLI, which links the desktop host when it is built.
 if(SIANN_WITH_JUCE)
