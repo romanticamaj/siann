@@ -6,9 +6,10 @@
   "specSections": ["siann-host: two targets, one interface", "Latency model", "Publishing and retiring graphs", "Automation", "Milestones"],
   "status": "not_started",
   "done": [],
-  "prerequisites": ["M0 plugin hosting spike."],
+  "prerequisites": ["M0 plugin hosting spike.", "docs/harness/follow-ups.md, section Before M4."],
   "humanGates": [
-    {"id": "real-plugins", "text": "Choose the third-party plugins used for compatibility runs.", "how": "The maintainer lists installed plugins; pluginval-checked runs use them."}
+    {"id": "real-plugins", "text": "Choose the third-party plugins used for compatibility runs.", "how": "The maintainer lists installed plugins; pluginval-checked runs use them.",
+     "resolution": "Decided by Fable, delegated by the maintainer, 2026-11-07. Windows compatibility set: TDR Nova, TDR VOS SlickEQ and Surge XT (VST3 and CLAP, the maintainer installs it) run on every maintainer run; Superior Drummer 3 (fallback EZdrummer 3), UAD 1176 and HALion Sonic run when authorised and SKIP otherwise, never prompting a login. Each takes one environment variable: SKIP when unset, FAIL when the path is missing. CI hosts only siann_test_plugin (VST3, CLAP, LV2, AU) and Apple AUPeakLimiter. macOS AU uses TDR Nova and Surge XT. Third-party LV2 waits for a Linux machine. MIDI output is proven on siann_test_plugin. SlickEQ's variable latency is unverified: if it is fixed, variable latency stays on siann_test_plugin."}
   ],
   "features": [
     {"id": "m4-clap-host", "title": "CLAP host for both targets", "wave": 1, "dependsOn": [], "specRefs": ["siann-host: two targets, one interface"],

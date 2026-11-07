@@ -6,7 +6,7 @@
   "specSections": ["Recording", "MIDI", "Latency model", "Production-level criteria", "Milestones"],
   "status": "not_started",
   "done": ["Write-through recording and crash-safe takes (#21)."],
-  "prerequisites": ["M2."],
+  "prerequisites": ["M2.", "docs/harness/follow-ups.md, section Before M6b."],
   "humanGates": [
     {"id": "long-run", "text": "Allow a one-hour 16-track recording run with a random kill on the maintainer's machine and device.", "how": "The maintainer starts the run and leaves the machine idle; results are recorded."}
   ],

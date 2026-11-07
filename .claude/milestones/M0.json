@@ -12,7 +12,9 @@
   ],
   "status": "not_started",
   "done": [
-    "JUCE desktop audio device (#20) covers the device half of JUCE hosting."
+    "JUCE desktop audio device (#20) covers the device half of JUCE hosting.",
+    "Electron shell and engine helper process (#47).",
+    "JUCE plugin hosting in the engine, on all three platforms in CI (#48)."
   ],
   "prerequisites": [
     "M3 protocol server (the renderer connects through it)."
