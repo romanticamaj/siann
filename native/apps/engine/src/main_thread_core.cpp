@@ -15,11 +15,12 @@ void MainThread::openEditor(const std::string&, std::uintptr_t) {
     throw LaunchError("no_plugin_host", "--open-editor needs an engine built with SIANN_WITH_JUCE");
 }
 
-void MainThread::serve(const std::atomic<bool>* stop) {
+void MainThread::serve(const std::atomic<bool>* stop, const std::function<void()>& tick) {
     // The stop flag is set from a signal handler or the stdin watcher, so it is
-    // polled; the pump thread serves meanwhile.
+    // polled.
     while (stop == nullptr || !stop->load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(kTickInterval);
+        tick();
     }
 }
 

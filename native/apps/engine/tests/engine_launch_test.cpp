@@ -517,18 +517,6 @@ TEST_CASE("a client on the fake device plays, sees an advancing playhead in bina
 TEST_CASE("a known deadline miss reaches a client", "[engine][transport]") {
     ix::initNetSystem();
     TempDir dir;
-    const auto statusAfterCallbacks = [&dir](const std::string& nanos, const std::string& name) {
-        PipedProcess child(SIANN_ENGINE_EXE,
-                           withArgs(launchArgs(dir.path() / name), {"--fake-callback-nanos", nanos}));
-        const Value ready = readyLine(child);
-        EngineClient client(ready);
-        client.ok("transport.play");
-        client.waitAdvancing();  // callbacks have run
-        Value status = client.ok("engine.status");
-        CHECK(stopEngine(child) == 0);
-        return status;
-    };
-
     SECTION("every callback over its 5.3 ms period") {
         PipedProcess child(SIANN_ENGINE_EXE,
                            withArgs(launchArgs(dir.path() / "Miss.siann"), {"--fake-callback-nanos", "20000000"}));
@@ -549,13 +537,22 @@ TEST_CASE("a known deadline miss reaches a client", "[engine][transport]") {
         CHECK(stopEngine(child) == 0);
     }
     SECTION("every callback within its period") {
-        const Value status = statusAfterCallbacks("1000000", "Fine.siann");
+        PipedProcess child(SIANN_ENGINE_EXE,
+                           withArgs(launchArgs(dir.path() / "Fine.siann"), {"--fake-callback-nanos", "1000000"}));
+        const Value ready = readyLine(child);
+        EngineClient client(ready);
+        client.ok("transport.play");
+        client.waitAdvancing();  // callbacks have run
+        const Value status = client.ok("engine.status");
         CHECK(at(status, "xruns").asString() == "0");
         CHECK(at(status, "maxCallbackMicros").asNumber() == 1'000.0);
+        CHECK(stopEngine(child) == 0);
     }
 }
 
-TEST_CASE("--fake-callback-nanos needs --device fake and sane bounds", "[engine][transport]") {
+// Not named after the flag: a test name starting with -- reads as an option to
+// the test runner under ctest.
+TEST_CASE("a fake callback time needs the fake device and sane bounds", "[engine][transport]") {
     TempDir dir;
     const fs::path bundle = dir.path() / "Song.siann";
     const std::vector<std::vector<std::string>> launches{

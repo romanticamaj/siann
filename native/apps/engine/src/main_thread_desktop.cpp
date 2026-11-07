@@ -34,10 +34,11 @@ void MainThread::openEditor(const std::string& bundle, std::uintptr_t ownerWindo
     }
 }
 
-void MainThread::serve(const std::atomic<bool>* stop) {
+void MainThread::serve(const std::atomic<bool>* stop, const std::function<void()>& tick) {
     const auto stopped = [stop] { return stop != nullptr && stop->load(); };
     while (!stopped()) {
-        impl_->loop.runUntil(stopped, std::chrono::hours(1));
+        impl_->loop.runUntil(stopped, kTickInterval);
+        tick();
     }
 }
 

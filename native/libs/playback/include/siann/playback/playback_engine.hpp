@@ -222,9 +222,11 @@ public:
     const realtime::ResamplingState& resampling() const noexcept { return driver_.resampling(); }
 
     realtime::GraphDriver& driver() noexcept { return driver_; }
+    const realtime::GraphDriver& driver() const noexcept { return driver_; }
     realtime::Butler& butler() noexcept { return butler_; }
     realtime::ControlDispatcher& dispatcher() noexcept { return dispatcher_; }
     realtime::Transport& transport() noexcept { return transport_; }
+    const realtime::Transport& transport() const noexcept { return transport_; }
     const std::map<std::string, graph::NodeId>& slots() const noexcept { return slots_; }
     const std::map<std::string, graph::NodeId>& meterSlots() const noexcept { return meterSlots_; }
     // Streams alive: used by a graph, or waiting to be released and destroyed.

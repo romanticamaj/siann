@@ -5,10 +5,12 @@
 //
 //   siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
 //                [--owner-window <handle>] [--open-editor <bundle>]
+//                [--device <id>] [--fake-callback-nanos N]
 //
 // Opens the bundle, or creates a new empty session there when the directory
-// does not exist, starts the protocol server and writes exactly one line to
-// `out` once it is listening:
+// does not exist, loads it into the playback graph on a device (EngineHost; a
+// device that cannot open is one line on `err`, never a failed launch), starts
+// the protocol server and writes exactly one line to `out` once it is listening:
 //
 //   {"schema":"siann.engine.ready.v0","port":<n>,"token":"<64 hex>",
 //    "mcpToken":"<64 hex>","sessionId":"ses_<hex>","pid":<n>,"about":{...}}
@@ -29,8 +31,9 @@
 // with NUL so nothing the engine opens later receives that output: its writes
 // normally succeed into NUL, and the output is dropped.
 //
-// A SIANN_WITH_JUCE build serves from the JUCE message loop, so call this on the
-// process's main thread. There --open-editor opens the first plugin of a bundle
+// Call this on the process's main thread: it is the command and control thread,
+// which ticks the server and the host at most every 10 ms, and a SIANN_WITH_JUCE
+// build serves from the JUCE message loop. There --open-editor opens the first plugin of a bundle
 // before the ready line, owned on Windows by the window whose decimal handle
 // --owner-window gives; a core-only build accepts --owner-window and refuses
 // --open-editor with no_plugin_host.

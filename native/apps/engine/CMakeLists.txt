@@ -1,16 +1,16 @@
 # siann-engine: the engine process the Electron shell spawns (architecture
-# spec, "Process model"; Protocol v0 item 17). Built by the core-only
-# configuration too, whose main thread only waits; with JUCE it runs the message
-# loop and can host a plugin editor.
-add_library(siann_engine_app src/engine.cpp)
+# spec, "Process model"; Protocol v0 items 17 and 18). Built by the core-only
+# configuration too, whose only device is the fake one; with JUCE it opens real
+# devices, runs the message loop and can host a plugin editor.
+add_library(siann_engine_app src/engine.cpp src/engine_host.cpp)
 target_include_directories(siann_engine_app PUBLIC include)
 target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol siann::playback siann::host_fake)
 if(SIANN_WITH_JUCE)
-  target_sources(siann_engine_app PRIVATE src/main_thread_desktop.cpp)
+  target_sources(siann_engine_app PRIVATE src/main_thread_desktop.cpp src/device_desktop.cpp)
   target_link_libraries(siann_engine_app PUBLIC siann::host_desktop)
   target_compile_definitions(siann_engine_app PUBLIC SIANN_ENGINE_WITH_JUCE=1)
 else()
-  target_sources(siann_engine_app PRIVATE src/main_thread_core.cpp)
+  target_sources(siann_engine_app PRIVATE src/main_thread_core.cpp src/device_core.cpp)
 endif()
 siann_apply_compile_options(siann_engine_app)
 

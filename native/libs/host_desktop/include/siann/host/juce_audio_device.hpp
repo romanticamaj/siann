@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -19,18 +18,6 @@ struct DeviceDescription {
     std::string type;  // JUCE device type, for example "Windows Audio" or "ASIO"
     std::string name;
     bool isDefault = false;
-};
-
-class DeviceError : public std::runtime_error {
-public:
-    DeviceError(std::string code, const std::string& message)
-        : std::runtime_error(message), code_(std::move(code)) {}
-
-    // One of: no_device, device_open_failed.
-    const std::string& code() const noexcept { return code_; }
-
-private:
-    std::string code_;
 };
 
 class JuceAudioDevice final : public AudioDevice {
