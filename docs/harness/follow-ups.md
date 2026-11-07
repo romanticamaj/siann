@@ -20,6 +20,26 @@ point here; its first run takes the listed section into its features.
   regression still hangs the runner.
 - The bounded quit wait on a wedged engine has unit and process tests but no e2e.
 
+## Before M4 wave 2: CLAP editor windows on the desktop target (gui extension embedding into a window siann-host-desktop supplies)
+
+`ClapPluginHost` reports the gui extension in `capabilities().editor` and
+`hasEditor`, and `openEditor` throws `editor_failed`: siann-host-clap has no window
+to embed into, and the core must not gain one. The editor protocol method
+(`m4-plugin-node`, last item) needs siann-host-desktop to supply a top-level window
+and hand its native handle to the host, which then runs the gui extension's
+create, set_parent and show on the main thread. Editors in the headless target stay
+out, as the spec says.
+
+## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
+
+`PluginInstance::setBlocksComing` exists so a CLAP `getState` or params flush waits
+for the next block instead of pausing while the driver runs. Nothing calls it yet:
+`m4-plugin-node` (PluginNode in a GraphDriver callback) calls it with true when the
+driver's callback source starts and false after it stops, for each instance it
+holds, and for an instance inserted while it runs. Until then `ClapPluginHost` falls
+back to its guess from the last block (spec, "siann-host: two targets, one
+interface").
+
 ## Before M5: the engine's device (from m4-engine-device)
 
 - A protocol method to list and select devices, so a UI choice needs no restart.

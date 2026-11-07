@@ -9,8 +9,9 @@ in `cmake/SiannThirdParty.cmake`: dr_libs (WAV and FLAC decoding, public domain 
 and r8brain-free-src (offline resampling, MIT), and IXWebSocket v11.4.6
 (commit `2efe037c9cc96fd536774f17bdb5215161ee5087`, BSD-3-Clause per its
 `LICENSE.txt`; HTTP and WebSocket for `siann-protocol`, built without zlib and
-TLS because the server binds `127.0.0.1` only; TLS arrives with LAN mode). Tests
-use Catch2, also pinned.
+TLS because the server binds `127.0.0.1` only; TLS arrives with LAN mode), and the
+CLAP SDK 1.2.10 (commit `195b42a004144fab0b3cf95e9c067187d15365b7`, MIT per its
+`LICENSE`; headers only, for `siann-host-clap`). Tests use Catch2, also pinned.
 
 ## Modules
 
@@ -25,6 +26,8 @@ use Catch2, also pinned.
 | `libs/media` (`siann-media`) | `siann::media` | WAV and FLAC decoding (dr_wav, dr_flac), streaming WAV reader, write-through WAV recorder with crash repair, 32-bit float WAV encoding, offline sample-rate conversion (r8brain) |
 | `libs/session` (`siann-session`) | `siann::session` | Session bundle, journal records with checksums (write-ahead log), checkpoints, crash recovery, the `media.import` job, recorded takes (manifest, commit, recovery, discard), the session's in-memory plan store (an applied plan is journaled as one plan revision) |
 | `libs/host_api` (`siann-host-api`) | `siann::host_api` | Buffer views, block events, and the draft `AudioDevice`, `MidiDevice`, `PluginHost` and `MediaReader` interfaces (no implementation) |
+| `libs/host_common` (`siann-host-common`) | `siann::host_common` | What every plugin host shares with no format in it: `PluginError`, the `SIANNPS1` state envelope, and the hosting tests' common checks |
+| `libs/host_clap` (`siann-host-clap`) | `siann::host_clap` | CLAP plugins behind `PluginHost`, in every preset and with no JUCE: loading and scanning (`.clap` modules, macOS bundles, `CLAP_PATH`), sample-accurate parameter events, latency through restarts, state in the common envelope, `runMainThreadCallbacks` for what plugins ask of the main thread; `siann_test_plugin` as a hand-written CLAP. Editors wait for a window from the desktop target |
 | `libs/graph` (`siann-graph`) | `siann::graph` | Graph builder and compiler with per-edge plugin delay compensation, allocation-free processing, a realtime outbox for node latency changes, recompile with state migration (shared node instances and unchanged delay lines, affected edges marked), clip player, track fader, bus and `FakeLatency` (runtime latency changes) nodes |
 | `libs/engine` (`siann-engine`) | `siann::engine` | Media loading with hash checks, document-to-graph compilation, latency-aligned offline render of a document or of any compiled graph (`renderGraph`) |
 | `libs/rt` (`siann-rt`) | `siann::rt` | Lock-free SPSC and MPSC queues, realtime thread marker, allocation guard for tests |

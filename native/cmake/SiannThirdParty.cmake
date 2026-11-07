@@ -29,10 +29,22 @@ FetchContent_Declare(
   SOURCE_SUBDIR siann-no-cmake
 )
 
-FetchContent_MakeAvailable(dr_libs r8brain ixwebsocket)
+# CLAP SDK 1.2.10 (MIT, header-only): plugin hosting on both host targets, and the
+# test plugin. The commit's LICENSE was read when it was pinned.
+FetchContent_Declare(
+  clap
+  GIT_REPOSITORY https://github.com/free-audio/clap.git
+  GIT_TAG 195b42a004144fab0b3cf95e9c067187d15365b7
+  SOURCE_SUBDIR siann-no-cmake
+)
+
+FetchContent_MakeAvailable(dr_libs r8brain ixwebsocket clap)
 
 add_library(siann_third_party_dr_libs INTERFACE)
 target_include_directories(siann_third_party_dr_libs SYSTEM INTERFACE "${dr_libs_SOURCE_DIR}")
+
+add_library(siann_third_party_clap INTERFACE)
+target_include_directories(siann_third_party_clap SYSTEM INTERFACE "${clap_SOURCE_DIR}/include")
 
 add_library(siann_third_party_r8brain STATIC "${r8brain_SOURCE_DIR}/r8bbase.cpp")
 target_include_directories(siann_third_party_r8brain SYSTEM PUBLIC "${r8brain_SOURCE_DIR}")
