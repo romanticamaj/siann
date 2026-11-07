@@ -62,7 +62,7 @@ revision 3".
 |---|---|
 | Product | A production-level DAW (multitrack audio and MIDI, automation, plugins, routing, groups, VCAs, recording, bounce) that AI agents operate through reviewed, reversible plans |
 | Engine | Written from scratch in standard C++ (C++20), headless, its own process |
-| Engine base | No Ardour fork. JUCE only in the desktop host target (audio devices, VST3/AU/LV2 hosting, plugin editor windows). A JUCE-free host target exists for embedded |
+| Engine base | No Ardour fork. JUCE only in the desktop host target (audio devices, VST3/AU hosting, plugin editor windows). A JUCE-free host target exists for embedded |
 | Core purity | `time`, `model`, `command`, `midi`, the graph and built-in DSP depend on no framework; CI builds the core without JUCE |
 | Threading v1 | One realtime audio thread processes the whole graph. Parallel graph processing is added later behind a deadline test |
 | UI | Web technology (TypeScript), talking to the engine only through the SIANN protocol |
@@ -190,7 +190,7 @@ years. Milestones are designed so that something useful exists at every stage.
                                           |
    siann-host-desktop (JUCE)       |   siann-host-headless (no JUCE)
    AudioDevice, MidiDevice,        |   ALSA/JACK device, ALSA MIDI,
-   VST3/AU/LV2 host, editors       |   LV2 via lilv
+   VST3/AU host, editors           |   LV2 via lilv
    ClapPluginHost (shared by both targets)
                                           |
    siann-io           session bundle, media pool, blob store, DAWproject import/export
@@ -1527,7 +1527,7 @@ The interfaces below are defined in `siann-host-api`.
 `siann-host-desktop` (JUCE):
 
 - `JuceAudioDevice` (ASIO*, WASAPI, CoreAudio, ALSA, JACK), `JuceMidiDevice`.
-- `JucePluginHost` for VST3, AU, LV2.
+- `JucePluginHost` for VST3 and AU. LV2 through JUCE stays off (ADR-0018, Amendment 2).
 - Plugin editor windows (needs `juce_gui_basics`).
 - Owns process startup: the main thread runs the JUCE message loop.
 
@@ -1977,7 +1977,7 @@ before adoption, including transitive dependencies.
 
 | Area | Library | License note |
 |---|---|---|
-| Desktop audio devices, VST3/AU/LV2 hosting, editors | JUCE 9.0.3 (verified current major on 2026-10-22) | AGPLv3 (ADR-0017) |
+| Desktop audio devices, VST3/AU hosting, editors | JUCE 9.0.3 (verified current major on 2026-10-22) | AGPLv3 (ADR-0017) |
 | ASIO | Steinberg ASIO SDK, bundled with JUCE 9 | GPLv3 option since October 2025; shipped (ADR-0017) |
 | VST3 | Steinberg VST3 SDK (via JUCE) | MIT since VST 3.8 |
 | CLAP hosting | CLAP SDK | MIT |
@@ -2116,7 +2116,7 @@ review instead of pushing on.
 | M1 Headless core | time, midi, model, command, revision DAG, journal WAL, checkpoints, session bundle, JCS and Merkle hashing, `siann-host-api`, minimal graph (GraphCompiler, PreparedGraph, ClipPlayerNode, TrackNode with gain, BusNode, SendNode, SidechainNode, MeterNode, FakeLatency), WAV/FLAC decode via dr_libs, offline import conversion, synchronous offline render, CLI | CLI creates a session, imports audio, places clips, sets gain, renders WAV; replay gives identical document hashes; offline PDC null tests pass across direct, send, aux and sidechain paths with static `FakeLatency`; a kill at each commit step (after blob write, after journal append, during checkpoint replace) recovers correctly; Node and C++ pass the same JCS, hash and time fixtures | Structural sharing too slow for 500-track documents: revisit data structure |
 | M2 Realtime engine | graph driver, control dispatcher and queues from revision 3 (tested first against a fake audio device), JUCE device, transport, single-threaded graph, structural and parameter channels, outboxes, retire queue, state migration, runtime latency changes, disk streaming, input node, simple recording to disk, device-side SRC | 32 tracks playback without xruns (deadline misses, measured by `siann-cli bench`; disk underruns and SRC underfill also zero) at 256 samples, also with SRC active (44.1 kHz session on a 48 kHz WASAPI shared device); SRC quality and record-offset tests pass; realtime PDC null tests pass, including a latency change during playback; gesture via parameter channel; record 10 minutes and recover after kill; realtime-safety checks clean | Persistent xruns not fixable within the design: Tracktion decision gate |
 | M3 Agent access | Protocol server, consistency and security rules, MCP adapter, plans with approval, rollback, audition | An MCP client builds a session through approved plans, rolls back, auditions a branch; reconnect and gap sync tested | — |
-| M4 Plugins | CLAP host first (both targets), then JUCE VST3/AU/LV2; capabilities; hostile test plugin | Third-party plugins load, save state, compensate latency, survive restart; capability flags exposed to agents | — |
+| M4 Plugins | CLAP host first (both targets), then JUCE VST3/AU; capabilities; hostile test plugin | Third-party plugins load, save state, compensate latency, survive restart; capability flags exposed to agents | — |
 | M5 Desktop UI v1 | Timeline, mixer, plan review UI in Electron | Arrange and mix by hand; review and approve an agent plan visually | — |
 | M6a Automation | Write/Touch/Latch/Trim, lanes, precision contract | Automation passes recorded as single revisions; precision documented per format | — |
 | M6b Recording production | Punch, loop record, takes/playlists, monitoring modes, MIDI recording | One hour 16-track recording criterion passes | — |
@@ -2217,7 +2217,7 @@ M3 can start in parallel with M2 because M2's meter test page already needs the
 protocol.
 
 M0 interim (plugin hosting, m0-plugin-hosting): `JucePluginHost` in
-`siann-host-desktop` implements `PluginHost` for VST3, and AU on macOS; LV2 stays
+`siann-host-desktop` implements `PluginHost` for VST3, and AU on macOS (ADR-0018, Amendment 2); LV2 stays
 off until a milestone needs it. What the audio thread may call stays on
 `PluginInstance`: `process` and the any-thread reads of capabilities, latency and
 tail. In M0 `process` discards its `EventList`: the plugin gets an empty MIDI
