@@ -22,9 +22,7 @@ point here; its first run takes the listed section into its features.
 
 ## Before M5: the engine's device (from m4-engine-device)
 
-- The engine opens its device at launch only; the shell's restart is the retry. Add
-  an in-engine reopen, and a protocol method to list and select devices, so a device
-  that returns or a UI choice needs no restart.
+- A protocol method to list and select devices, so a UI choice needs no restart.
 - MCP tools for `transport.*` and `engine.status`: they are protocol methods only.
 - `session.open` is `not_supported` in `siann-engine`: rebind the `EngineHost` (its
   playback engine and auditioner) inside `ServerOptions::openSession`.

@@ -255,7 +255,8 @@ years. Milestones are designed so that something useful exists at every stage.
   ticks. It is started as
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
   [--owner-window <handle>] [--open-editor <bundle>] [--device <id>]
-  [--fake-callback-nanos N]`
+  [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] [--fake-callback-nanos N]
+  [--fake-open-failures N]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
   item 17).
 - The engine runs the graph driver on a device (m4-engine-device). M4 interim note:
@@ -274,18 +275,35 @@ years. Milestones are designed so that something useful exists at every stage.
   build; without the option that build opens the default output device of the first
   type, and a core-only build has no device. `--fake-callback-nanos N` times the
   driver's callbacks with a clock that advances N ns per reading, as in `siann-cli`
-  (a usage error without `--device fake`). A device failure at launch (`no_device`,
-  `device_open_failed`, a core-only build's `no_audio_backend`) never fails the
-  launch: the engine writes one diagnostic line to stderr and serves;
+  (a usage error without `--device fake`), and `--fake-open-failures N` makes the fake
+  device refuse its first N opens with `device_open_failed`, as a device another
+  application holds does (the same usage error). A device failure at launch
+  (`no_device`, `device_open_failed`, a core-only build's `no_audio_backend`) never
+  fails the launch: the engine writes one diagnostic line to stderr and serves;
   `engine.status` shows `device: null` with `deviceError {code, message}`, and
   `transport.play`, `transport.stop` and `transport.locate` answer `no_device`. A
-  session whose media cannot be loaded (`media_missing`, `media_hash_mismatch`,
-  `media_mismatch`) is served the same way, with the code in `deviceError`, and
-  nothing is heard until a relaunch after its media is back. So is a device that
-  stops while the engine runs (`device_lost`).
-- Reopening the device: the shell's restart, already under its backoff, is the
-  retry. A relaunched engine opens its device again at launch; it does not retry an
-  open on its own (follow-up in `docs/harness/follow-ups.md`).
+  session whose media cannot be loaded is served the same way, with the code in
+  `deviceError`, and nothing is heard until a relaunch after its media is back. That
+  is any failure to build the first graph: the engine's `media_missing`,
+  `media_hash_mismatch` and `media_mismatch`, the readers' `unsupported_media`,
+  `decode_failed` and `too_large`, and `load_failed` for anything else (an I/O error,
+  say). One bad file must not end the process: the shell would restart it until it
+  gave up, and the session could not be opened at all. A commit that needs such a file
+  keeps the graph that plays, with one diagnostic line. A device that stops while the
+  engine runs (`device_lost`) is served the same way too.
+- Reopening the device: the shell restarts only an engine that exits, and an engine
+  without a device serves on, so the engine does the retrying, under the shell's
+  backoff. The shell passes its own constants with `--device-backoff` (without it the
+  engine uses the same defaults: 250 ms, 10 s, 30 s). After a failed open or a
+  `device_lost` the main thread opens the device again from its tick, the delay
+  doubling from `initialMs` to `maxMs`; the count resets once a device has run for
+  `resetAfterMs`. A relaunch after a crash that finds the device still held is this
+  same path. Unlike the shell's restarts the retries never give up, because the engine
+  is serving and a device can come back at any time; `no_audio_backend` and a session
+  that did not load are not retried. Each new reason goes to stderr once, and
+  `engine.status` shows the latest in `deviceError`. A reopened device starts stopped
+  at the playhead, its counters from zero. An open runs on the main thread, so a slow
+  one delays a tick, never audio.
 - `--owner-window` carries the Electron window's native handle (decimal; the
   HWND on Windows). The shell creates its window first, so it has the handle to
   pass, and reads it again for every restart; only Windows uses it, and the core-only
@@ -1898,7 +1916,8 @@ Protocol v0, launcher (decided with m0-electron-shell):
 
 17. Launcher handshake. `siann-engine --session <bundle> [--host 127.0.0.1]
     [--port 0] [--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>]
-    [--device <id>] [--fake-callback-nanos N]`
+    [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
+    [--fake-callback-nanos N] [--fake-open-failures N]`
     writes exactly one line to stdout once it is
     listening,
     `{"schema":"siann.engine.ready.v0","port":<n>,"token":"<64 hex>","mcpToken":"<64 hex>","sessionId":"ses_<hex>","pid":<n>,"about":{...aboutJson()}}`,
@@ -1932,7 +1951,7 @@ Protocol v0, transport and engine status (decided with m4-engine-device):
 18. `transport.play {}`, `transport.stop {}` and `transport.locate {frames}`
     (`frames` a non-negative decimal string, item 9; anything else `invalid_params`)
     return `{playing, position}`, `position` a decimal string, from
-    `Transport::status()`: a locate reports its target at once, and the playhead
+    `Transport::playing` and `position`: a locate reports its target at once, and the playhead
     reaches it when the butler is ready ("Locate"). `engine.status {}` returns
     `{device, deviceError?, playing, xruns, maxCallbackMicros, unmeasuredCallbacks,
     underruns, srcUnderruns}`. `device` is null or `{id, sampleRate, bufferFrames,
@@ -2203,9 +2222,8 @@ meter publisher, and serves `protocol::TransportPort` and `protocol::AuditionPor
 so `command.execute`, `plan.apply`, undo and redo reach the live graph and
 `audition.hear` works in the engine process. The main thread is the command and
 control thread for now ("Process model"). `session.open` stays `not_supported` in
-`siann-engine` until the host can rebind inside it; that, an in-engine device reopen
-and selection method, and MCP tools for the transport and `engine.status` are
-follow-ups before M5.
+`siann-engine` until the host can rebind inside it; that, a device selection method,
+and MCP tools for the transport and `engine.status` are follow-ups before M5.
 
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
