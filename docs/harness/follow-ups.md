@@ -20,6 +20,17 @@ point here; its first run takes the listed section into its features.
   regression still hangs the runner.
 - The bounded quit wait on a wedged engine has unit and process tests but no e2e.
 
+## Before M5: the engine's device (from m4-engine-device)
+
+- The engine opens its device at launch only; the shell's restart is the retry. Add
+  an in-engine reopen, and a protocol method to list and select devices, so a device
+  that returns or a UI choice needs no restart.
+- MCP tools for `transport.*` and `engine.status`: they are protocol methods only.
+- `session.open` is `not_supported` in `siann-engine`: rebind the `EngineHost` (its
+  playback engine and auditioner) inside `ServerOptions::openSession`.
+- A session whose media cannot be loaded stays silent until a relaunch, even after a
+  commit repairs it: let `EngineHost` load again then.
+
 ## Before M4: plugin hosting (from PR #48)
 
 Decided by Fable, delegated by the maintainer, 2026-11-07. Taken into M4's features:

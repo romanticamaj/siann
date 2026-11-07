@@ -238,10 +238,13 @@ they have their own send buffer and never queue behind commands or events.
 | 4 | 1 | u8 version, `1` |
 | 5 | 8 | u64 epoch (the graph's, see `meters.legend`) |
 | 13 | 8 | i64 engineTimestampMicros (engine steady clock; the UI interpolates) |
-| 21 | 8 | i64 playheadSamples (timeline position of the newest meter block) |
-| 29 | 1 | u8 playing (0 or 1) |
+| 21 | 8 | i64 playheadSamples (the transport's position; without a transport, the newest meter block's) |
+| 29 | 1 | u8 playing (0 or 1; the transport's) |
 | 30 | 2 | u16 entryCount |
 | 32 | ... | entries |
+
+With a transport the engine sends a frame on every tick once the legend exists, with
+entryCount 0 until the first meter reading, so a locate shows while stopped.
 
 Each entry: u16 entityIndex, u8 channels (the engine meters at most 2 today), then `channels` f32 peak
 values, then `channels` f32 RMS values (linear gain). An entry is

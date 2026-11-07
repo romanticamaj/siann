@@ -89,7 +89,24 @@ It is built by the core-only configuration too.
 ```sh
 siann-engine --session Song.siann [--host 127.0.0.1] [--port 0] [--mcp-trusted]
             [--owner-window <handle>] [--open-editor <bundle>]
+            [--device <id>] [--fake-callback-nanos N]
 ```
+
+The engine loads the session into a playback graph and runs the graph driver on a
+device. `--device` takes what `siann-cli play` takes: `fake` (paced, every build),
+`<type>/<name>` of a `SIANN_WITH_JUCE` build, or nothing for that build's default
+output device. A core-only build without `--device fake` has no device.
+`--fake-callback-nanos N` needs `--device fake` and makes every callback last N ns
+on the driver's clock, a known deadline miss (or none). A device that cannot open
+never fails the launch: the engine writes one line to stderr and serves,
+`engine.status` shows why, and the transport methods answer `no_device`. A restart
+by the shell, under its backoff, is what retries the device.
+
+The main thread is the command and control thread: it ticks at most every 10 ms
+between passes of its message loop (requests, the playback engine, the meter
+publisher). Clients drive it with `transport.play`, `transport.stop` and
+`transport.locate {frames}`, read `engine.status`, and see the playhead in the
+binary frames of `/v1/realtime`.
 
 A `SIANN_WITH_JUCE` build runs the JUCE message loop on the main thread, and
 `--open-editor` opens a plugin's editor before the ready line, owned on Windows
