@@ -348,7 +348,7 @@ gesture boundaries (see "Gestures").
 | Thread | Does | May block on |
 |---|---|---|
 | audio | processes the live graph; pushes outboxes | nothing of SIANN's; inside a hosted plugin's `processBlock`, JUCE's wrapper locks, held by the main thread (the exception under "Realtime rules and enforcement") |
-| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block); the same, inside `ClapPluginHost::runMainThreadCallbacks`, for a CLAP plugin's restart (deactivate and activate) and for a params flush when no block has come for a while |
+| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block); the same, inside `ClapPluginHost::runMainThreadCallbacks`, for a CLAP plugin's restart (deactivate and activate) and for a params flush when no block has come for a while; the next block, inside a CLAP `getState` with a value still on its way (no pause) |
 | command | validates, applies and journals commands; publishes documents; asks for compiles; installs graphs through the driver | journal and checkpoint I/O |
 | compiler | builds `PreparedGraph` from an immutable document and pinned instances | the main thread, for instantiation, with a timeout |
 | control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | nothing outside its own inbox |
@@ -365,7 +365,8 @@ gesture boundaries (see "Gestures").
   expect that); the command thread asks for it and continues on the completion.
 - The blocking edges are compiler → main (instantiation), main → audio
   callback (inside `stop()`), main → audio callback (one block, inside `setState`,
-  and inside a CLAP plugin's restart or idle params flush; never inside `getState`),
+  and inside a CLAP plugin's restart or idle params flush), main → audio callback
+  (the next block, inside a CLAP `getState` with a value still on its way; no pause),
   protocol → command (an MCP HTTP request waits for
   its answer, with a timeout; a full inbox is `queue_full` at once) and, with a
   hosted plugin in the graph, audio callback → main: inside `processBlock` the
@@ -374,7 +375,8 @@ gesture boundaries (see "Gestures").
   holds while running the listeners of a parameter it edits. The command thread
   never waits on the protocol thread. The audio ↔ main pair is the one two-way edge.
   The argument that no cycle closes: the main thread waits for the audio thread
-  only in `AudioDevice::stop()` and `ProcessingPause`. It holds `processMutex`
+  only in `AudioDevice::stop()`, `ProcessingPause` and a CLAP `getState`'s wait for
+  a block (`ClapPluginHost` takes no lock the audio thread could wait on). It holds `processMutex`
   inside JUCE's `reset`, `prepareToPlay`, `releaseResources`,
   `updateMidiMappings` and `isBusesLayoutSupported`, and SIANN's code can run there: a plugin that changes its
   latency in `prepareToPlay` makes JUCE's client wrapper ask for a `kLatencyChanged`
@@ -1545,8 +1547,11 @@ Shared by both targets:
   builds, so it is implemented first in M4. CLAP does not require a pause for
   `getState`: `state.save` is a main-thread call that may run while the plugin
   processes, and a value set just before reaches the plugin by its next `process`.
-  `ClapPluginHost::getState` pauses only to run `params.flush` when no block is
-  coming, so a save during playback passes no block dry.
+  `ClapPluginHost::getState` never pauses while blocks arrive, so a save during
+  playback passes no block dry. A value set just before it still lands in the blob:
+  while blocks arrive, `getState` waits for one that began after the call to finish
+  (about two block periods); when none is coming, it runs `params.flush` under a
+  pause, which then holds out no block.
 - `MediaReader` via dr_libs / libFLAC etc. (not JUCE), so media reading is identical
   everywhere.
 
