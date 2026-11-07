@@ -1,21 +1,626 @@
-// The entry point alone: a factory with no plugins in it.
+// siann_test_plugin as a CLAP, hand-written against the SDK's C headers so the host
+// is tested without JUCE, in every build. The same known delay as the VST3 and AU
+// builds in libs/host_desktop/test_plugin: stereo audio comes out delayed by exactly
+// the latency the plugin declares, so a latency report is checked against audio.
+//
+// Parameters: "latency" (off: 64 frames, on: 512 frames, which takes a restart),
+// "gain" (0 to 1, applied per sample at each event's offset), "futureState" (save
+// then writes a state version this plugin does not read, which is how a test gets a
+// blob the plugin must refuse), "nudgeGain" (moves "gain" to 0.5 from the main
+// thread, the way an editor edit reaches a host: request_callback, then an out-event
+// through request_flush) and "tail" (state, no latency change). The tail is a
+// quarter second with "latency" or "tail" on, none otherwise.
+//
+// Probes for the host's side of things, none of them state:
+// - "holdProcessBlock": every process() stays in flight for restartWatch.
+// - "requestRestart": asks for a restart. Deactivate and activate then each take
+//   restartWatch, watching for process() meanwhile, and activate reports through
+//   "overlapped" and "restarted".
+// - "watchRestore": state load does the same, reporting "overlapped" and "restored".
+// - "rescan": on the main thread, moves "gain" to rescannedGain behind the host's
+//   back and calls params.rescan.
+// - "wrongThread": turns on when clap.thread-check disagrees with what CLAP says of
+//   a call, and when the host offers no thread check.
+// - "home:<directory>": the name says which directory holds this file, which tells
+//   two installs of the plugin apart.
+//
+// Parameter ids are neither indices nor sorted, so a host that takes one for the
+// other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
+// ports of instances created after it is set: "wide" has 32 channels on the main
+// ports, "sidechain" a second input port and note ports in both directions.
+//
+// Creating an instance prints one line to stdout ("siann_test_plugin: loaded"), as
+// a chatty third-party plugin would.
+//
+// State blob: magic "SIANNTP1", version u32, gain f32, latency u8, tail u8, little
+// endian. process() does not allocate, lock or do I/O.
 
 #include <clap/clap.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 namespace {
 
-std::uint32_t factoryCount(const clap_plugin_factory_t*) { return 0; }
+constexpr std::uint32_t shortLatency = 64;
+constexpr std::uint32_t longLatency = 512;
+constexpr double nudgedGain = 0.5;
+constexpr double rescannedGain = 0.125;
+constexpr auto restartWatch = std::chrono::milliseconds(20);
+constexpr double longTailSeconds = 0.25;
+constexpr std::uint32_t ringFrames = 1024;  // a power of two above longLatency
+constexpr std::uint32_t wideChannels = 32;
 
-const clap_plugin_descriptor_t* factoryDescriptor(const clap_plugin_factory_t*, std::uint32_t) { return nullptr; }
+constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'T', 'P', '1'};
+constexpr std::uint32_t stateVersion = 1;
+constexpr std::uint32_t futureStateVersion = 2;
+constexpr std::size_t stateSize = sizeof(stateMagic) + sizeof(std::uint32_t) + sizeof(float) + 1 + 1;
 
-const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host_t*, const char*) { return nullptr; }
+enum Parameter : std::uint32_t {
+    paramLatency,
+    paramGain,
+    paramFutureState,
+    paramNudgeGain,
+    paramRequestRestart,
+    paramOverlapped,
+    paramRestarted,
+    paramWatchRestore,
+    paramRestored,
+    paramHoldProcessBlock,
+    paramTail,
+    paramRescan,
+    paramWrongThread,
+    paramHome,
+    parameterCount,
+};
+
+constexpr const char* parameterNames[parameterCount] = {
+    "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
+    "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
+};
+
+constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
+
+constexpr bool indexOf(clap_id id, std::uint32_t& index) {
+    if (id > idOf(0) || (idOf(0) - id) % 7 != 0 || (idOf(0) - id) / 7 >= parameterCount) {
+        return false;
+    }
+    index = (idOf(0) - id) / 7;
+    return true;
+}
+
+enum class Layout { stereo, wide, sidechain };
+
+std::string homeDirectoryName;
+
+std::string environmentValue(const char* name) {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string result(value);
+    std::free(value);
+    return result;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string() : std::string(value);
+#endif
+}
+
+struct TestPlugin {
+    clap_plugin_t clap{};
+    const clap_host_t* host = nullptr;
+    const clap_host_latency_t* hostLatency = nullptr;
+    const clap_host_params_t* hostParams = nullptr;
+    const clap_host_tail_t* hostTail = nullptr;
+    const clap_host_thread_check_t* hostThreads = nullptr;
+    Layout layout = Layout::stereo;
+    double sampleRate = 48'000.0;
+
+    std::array<std::atomic<double>, parameterCount> values{};
+    std::atomic<std::uint32_t> delay{shortLatency};
+    std::atomic<bool> inProcess{false};
+    std::atomic<bool> restarting{false};
+    std::atomic<bool> sawOverlap{false};
+    std::atomic<bool> nudgeRequested{false};
+    std::atomic<bool> rescanRequested{false};
+    std::atomic<bool> nudgeOutPending{false};
+
+    std::array<std::array<float, ringFrames>, 2> ring{};
+    std::uint32_t writeIndex = 0;
+
+    bool on(Parameter parameter) const { return values[parameter].load() >= 0.5; }
+
+    std::uint32_t wantedDelay() const { return on(paramLatency) ? longLatency : shortLatency; }
+
+    void mustBeMainThread() {
+        if (hostThreads == nullptr || !hostThreads->is_main_thread(host)) {
+            values[paramWrongThread].store(1.0);
+        }
+    }
+
+    void mustBeAudioThread() {
+        if (hostThreads == nullptr || !hostThreads->is_audio_thread(host)) {
+            values[paramWrongThread].store(1.0);
+        }
+    }
+
+    void watchForProcess() {
+        const auto end = std::chrono::steady_clock::now() + restartWatch;
+        while (std::chrono::steady_clock::now() < end) {
+            if (inProcess.load()) {
+                sawOverlap.store(true);
+            }
+        }
+    }
+
+    void askForRestart() {
+        restarting.store(true);
+        host->request_restart(host);
+    }
+
+    // In process() at the event's offset, or in flush.
+    void apply(const clap_event_header_t& header) {
+        if (header.space_id != CLAP_CORE_EVENT_SPACE_ID || header.type != CLAP_EVENT_PARAM_VALUE) {
+            return;
+        }
+        const auto& event = reinterpret_cast<const clap_event_param_value_t&>(header);
+        std::uint32_t index = 0;
+        if (!indexOf(event.param_id, index)) {
+            return;
+        }
+        values[index].store(event.value);
+        const bool turnedOn = event.value >= 0.5;
+        switch (index) {
+            case paramLatency:
+                if (wantedDelay() != delay.load()) {
+                    askForRestart();
+                }
+                break;
+            case paramRequestRestart:
+                if (turnedOn) {
+                    askForRestart();
+                }
+                break;
+            case paramNudgeGain:
+                if (turnedOn) {
+                    nudgeRequested.store(true);
+                    host->request_callback(host);
+                }
+                break;
+            case paramRescan:
+                if (turnedOn) {
+                    rescanRequested.store(true);
+                    host->request_callback(host);
+                }
+                break;
+            case paramTail:
+                if (hostTail != nullptr) {
+                    hostTail->changed(host);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    void pushPendingOutEvents(const clap_output_events_t* out) {
+        if (!nudgeOutPending.exchange(false)) {
+            return;
+        }
+        values[paramGain].store(nudgedGain);
+        clap_event_param_value_t event{};
+        event.header.size = sizeof(event);
+        event.header.time = 0;
+        event.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        event.header.type = CLAP_EVENT_PARAM_VALUE;
+        event.param_id = idOf(paramGain);
+        event.note_id = -1;
+        event.port_index = -1;
+        event.channel = -1;
+        event.key = -1;
+        event.value = nudgedGain;
+        out->try_push(out, &event.header);
+    }
+
+    void render(const clap_process_t& process, std::uint32_t begin, std::uint32_t end) {
+        const auto gain = static_cast<float>(values[paramGain].load(std::memory_order_relaxed));
+        const std::uint32_t active = delay.load(std::memory_order_relaxed);
+        const clap_audio_buffer_t& input = process.audio_inputs[0];
+        const clap_audio_buffer_t& output = process.audio_outputs[0];
+        const std::uint32_t channels = std::min({input.channel_count, output.channel_count, std::uint32_t{2}});
+        constexpr std::uint32_t mask = ringFrames - 1;
+        for (std::uint32_t c = 0; c < channels; ++c) {
+            auto& line = ring[c];
+            for (std::uint32_t i = begin; i < end; ++i) {
+                const std::uint32_t write = (writeIndex + i) & mask;
+                line[write] = input.data32[c][i];
+                output.data32[c][i] = line[(write - active) & mask] * gain;
+            }
+        }
+        for (std::uint32_t c = channels; c < output.channel_count; ++c) {
+            std::fill(output.data32[c] + begin, output.data32[c] + end, 0.0f);
+        }
+    }
+};
+
+TestPlugin& self(const clap_plugin_t* plugin) { return *static_cast<TestPlugin*>(plugin->plugin_data); }
+
+// --- clap.audio-ports
+
+std::uint32_t audioPortCount(const clap_plugin_t* plugin, bool isInput) {
+    return isInput && self(plugin).layout == Layout::sidechain ? 2 : 1;
+}
+
+bool audioPortGet(const clap_plugin_t* plugin, std::uint32_t index, bool isInput, clap_audio_port_info_t* info) {
+    if (index >= audioPortCount(plugin, isInput)) {
+        return false;
+    }
+    const bool wide = self(plugin).layout == Layout::wide;
+    *info = {};
+    info->id = index;
+    std::snprintf(info->name, sizeof(info->name), "%s %u", isInput ? "In" : "Out", static_cast<unsigned>(index));
+    info->flags = index == 0 ? CLAP_AUDIO_PORT_IS_MAIN : 0;
+    info->channel_count = wide ? wideChannels : 2;
+    info->port_type = wide ? nullptr : CLAP_PORT_STEREO;
+    info->in_place_pair = CLAP_INVALID_ID;
+    return true;
+}
+
+const clap_plugin_audio_ports_t audioPorts = {audioPortCount, audioPortGet};
+
+// --- clap.note-ports
+
+std::uint32_t notePortCount(const clap_plugin_t*, bool) { return 1; }
+
+bool notePortGet(const clap_plugin_t*, std::uint32_t index, bool, clap_note_port_info_t* info) {
+    if (index != 0) {
+        return false;
+    }
+    *info = {};
+    info->id = 0;
+    info->supported_dialects = CLAP_NOTE_DIALECT_MIDI;
+    info->preferred_dialect = CLAP_NOTE_DIALECT_MIDI;
+    std::snprintf(info->name, sizeof(info->name), "Notes");
+    return true;
+}
+
+const clap_plugin_note_ports_t notePorts = {notePortCount, notePortGet};
+
+// --- clap.params
+
+std::uint32_t paramsCount(const clap_plugin_t*) { return parameterCount; }
+
+bool paramsGetInfo(const clap_plugin_t*, std::uint32_t index, clap_param_info_t* info) {
+    if (index >= parameterCount) {
+        return false;
+    }
+    *info = {};
+    info->id = idOf(index);
+    info->flags = CLAP_PARAM_IS_AUTOMATABLE | (index == paramGain ? 0u : static_cast<std::uint32_t>(CLAP_PARAM_IS_STEPPED));
+    std::snprintf(info->name, sizeof(info->name), "%s%s", parameterNames[index],
+                  index == paramHome ? homeDirectoryName.c_str() : "");
+    info->min_value = 0.0;
+    info->max_value = 1.0;
+    info->default_value = index == paramGain ? 1.0 : 0.0;
+    return true;
+}
+
+bool paramsGetValue(const clap_plugin_t* plugin, clap_id id, double* value) {
+    std::uint32_t index = 0;
+    if (!indexOf(id, index)) {
+        return false;
+    }
+    *value = self(plugin).values[index].load();
+    return true;
+}
+
+bool paramsValueToText(const clap_plugin_t*, clap_id, double value, char* text, std::uint32_t capacity) {
+    std::snprintf(text, capacity, "%g", value);
+    return true;
+}
+
+bool paramsTextToValue(const clap_plugin_t*, clap_id, const char* text, double* value) {
+    *value = std::atof(text);
+    return true;
+}
+
+void paramsFlush(const clap_plugin_t* plugin, const clap_input_events_t* in, const clap_output_events_t* out) {
+    auto& test = self(plugin);
+    test.mustBeAudioThread();
+    const std::uint32_t count = in->size(in);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        test.apply(*in->get(in, i));
+    }
+    test.pushPendingOutEvents(out);
+}
+
+const clap_plugin_params_t params = {paramsCount,       paramsGetInfo,     paramsGetValue,
+                                     paramsValueToText, paramsTextToValue, paramsFlush};
+
+// --- clap.latency, clap.tail
+
+std::uint32_t latencyGet(const clap_plugin_t* plugin) { return self(plugin).delay.load(); }
+
+const clap_plugin_latency_t latency = {latencyGet};
+
+std::uint32_t tailGet(const clap_plugin_t* plugin) {
+    const auto& test = self(plugin);
+    return test.on(paramLatency) || test.on(paramTail) ? static_cast<std::uint32_t>(longTailSeconds * test.sampleRate) : 0;
+}
+
+const clap_plugin_tail_t tail = {tailGet};
+
+// --- clap.state
+
+template <typename T>
+void putLittleEndian(std::uint8_t*& at, T value) {
+    for (std::size_t i = 0; i < sizeof(T); ++i) {
+        *at++ = static_cast<std::uint8_t>((value >> (8 * i)) & 0xff);
+    }
+}
+
+bool stateSave(const clap_plugin_t* plugin, const clap_ostream_t* stream) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    std::array<std::uint8_t, stateSize> blob{};
+    std::memcpy(blob.data(), stateMagic, sizeof(stateMagic));
+    std::uint8_t* at = blob.data() + sizeof(stateMagic);
+    putLittleEndian<std::uint32_t>(at, test.on(paramFutureState) ? futureStateVersion : stateVersion);
+    const auto gain = static_cast<float>(test.values[paramGain].load());
+    std::uint32_t gainBits = 0;
+    std::memcpy(&gainBits, &gain, sizeof(gainBits));
+    putLittleEndian<std::uint32_t>(at, gainBits);
+    *at++ = test.on(paramLatency) ? 1 : 0;
+    *at++ = test.on(paramTail) ? 1 : 0;
+    std::size_t written = 0;
+    while (written < blob.size()) {
+        const auto count = stream->write(stream, blob.data() + written, blob.size() - written);
+        if (count <= 0) {
+            return false;
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    return true;
+}
+
+bool stateLoad(const clap_plugin_t* plugin, const clap_istream_t* stream) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    std::array<std::uint8_t, stateSize + 1> blob{};  // one over, to notice a longer blob
+    std::size_t size = 0;
+    while (size < blob.size()) {
+        const auto count = stream->read(stream, blob.data() + size, blob.size() - size);
+        if (count < 0) {
+            return false;
+        }
+        if (count == 0) {
+            break;
+        }
+        size += static_cast<std::size_t>(count);
+    }
+    if (size != stateSize || std::memcmp(blob.data(), stateMagic, sizeof(stateMagic)) != 0) {
+        return false;
+    }
+    const std::uint8_t* at = blob.data() + sizeof(stateMagic);
+    std::uint32_t version = 0;
+    std::uint32_t gainBits = 0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        version |= static_cast<std::uint32_t>(at[i]) << (8 * i);
+        gainBits |= static_cast<std::uint32_t>(at[4 + i]) << (8 * i);
+    }
+    if (version != stateVersion) {
+        return false;
+    }
+    float gain = 0.0f;
+    std::memcpy(&gain, &gainBits, sizeof(gain));
+    test.values[paramGain].store(gain);
+    test.values[paramLatency].store(at[8] != 0 ? 1.0 : 0.0);
+    test.values[paramTail].store(at[9] != 0 ? 1.0 : 0.0);
+    if (test.on(paramWatchRestore)) {
+        test.watchForProcess();
+        test.values[paramOverlapped].store(test.sawOverlap.load() ? 1.0 : 0.0);
+        test.values[paramRestored].store(1.0);
+    }
+    if (test.wantedDelay() != test.delay.load() && test.hostLatency != nullptr) {
+        // Told on the main thread with the plugin active, as plugins do: the host
+        // has to restart it for this to take effect.
+        test.restarting.store(true);
+        test.hostLatency->changed(test.host);
+    }
+    return true;
+}
+
+const clap_plugin_state_t state = {stateSave, stateLoad};
+
+// --- clap_plugin
+
+bool pluginInit(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    const auto extension = [&](const char* id) { return test.host->get_extension(test.host, id); };
+    test.hostLatency = static_cast<const clap_host_latency_t*>(extension(CLAP_EXT_LATENCY));
+    test.hostParams = static_cast<const clap_host_params_t*>(extension(CLAP_EXT_PARAMS));
+    test.hostTail = static_cast<const clap_host_tail_t*>(extension(CLAP_EXT_TAIL));
+    test.hostThreads = static_cast<const clap_host_thread_check_t*>(extension(CLAP_EXT_THREAD_CHECK));
+    return true;
+}
+
+void pluginDestroy(const clap_plugin_t* plugin) { delete &self(plugin); }
+
+bool pluginActivate(const clap_plugin_t* plugin, double sampleRate, std::uint32_t, std::uint32_t) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    const bool wasRestarting = test.restarting.load();
+    if (wasRestarting) {
+        test.watchForProcess();
+    }
+    test.sampleRate = sampleRate;
+    for (auto& channel : test.ring) {
+        channel.fill(0.0f);
+    }
+    test.writeIndex = 0;
+    const std::uint32_t wanted = test.wantedDelay();
+    if (wanted != test.delay.exchange(wanted) && test.hostLatency != nullptr) {
+        test.hostLatency->changed(test.host);
+    }
+    if (wasRestarting) {
+        test.restarting.store(false);
+        test.values[paramOverlapped].store(test.sawOverlap.load() ? 1.0 : 0.0);
+        test.values[paramRestarted].store(1.0);
+    }
+    return true;
+}
+
+void pluginDeactivate(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (test.restarting.load()) {
+        test.watchForProcess();
+    }
+}
+
+bool pluginStartProcessing(const clap_plugin_t* plugin) {
+    self(plugin).mustBeAudioThread();
+    return true;
+}
+
+void pluginStopProcessing(const clap_plugin_t* plugin) { self(plugin).mustBeAudioThread(); }
+
+void pluginReset(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    test.mustBeAudioThread();
+    for (auto& channel : test.ring) {
+        channel.fill(0.0f);
+    }
+}
+
+clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_process_t* process) {
+    auto& test = self(plugin);
+    test.inProcess.store(true);
+    test.mustBeAudioThread();
+    const std::uint32_t frames = process->frames_count;
+    const clap_input_events_t* in = process->in_events;
+    const std::uint32_t count = in->size(in);
+    std::uint32_t next = 0;
+    std::uint32_t cursor = 0;
+    while (cursor < frames) {
+        while (next < count && in->get(in, next)->time <= cursor) {
+            test.apply(*in->get(in, next));
+            ++next;
+        }
+        const std::uint32_t end = next < count ? std::min(frames, in->get(in, next)->time) : frames;
+        test.render(*process, cursor, end);
+        cursor = end;
+    }
+    for (; next < count; ++next) {
+        test.apply(*in->get(in, next));
+    }
+    test.writeIndex = (test.writeIndex + frames) & (ringFrames - 1);
+    test.pushPendingOutEvents(process->out_events);
+    if (test.on(paramHoldProcessBlock)) {
+        // A slow plugin: the block stays in flight for restartWatch, so a host that
+        // must wait for it has something to wait for.
+        const auto end = std::chrono::steady_clock::now() + restartWatch;
+        while (std::chrono::steady_clock::now() < end) {
+        }
+    }
+    test.inProcess.store(false);
+    return CLAP_PROCESS_CONTINUE;
+}
+
+const void* pluginGetExtension(const clap_plugin_t* plugin, const char* id) {
+    if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) {
+        return &audioPorts;
+    }
+    if (std::strcmp(id, CLAP_EXT_NOTE_PORTS) == 0) {
+        return self(plugin).layout == Layout::sidechain ? &notePorts : nullptr;
+    }
+    if (std::strcmp(id, CLAP_EXT_PARAMS) == 0) {
+        return &params;
+    }
+    if (std::strcmp(id, CLAP_EXT_LATENCY) == 0) {
+        return &latency;
+    }
+    if (std::strcmp(id, CLAP_EXT_TAIL) == 0) {
+        return &tail;
+    }
+    if (std::strcmp(id, CLAP_EXT_STATE) == 0) {
+        return &state;
+    }
+    return nullptr;
+}
+
+void pluginOnMainThread(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (test.nudgeRequested.exchange(false)) {
+        test.nudgeOutPending.store(true);
+        test.hostParams->request_flush(test.host);
+    }
+    if (test.rescanRequested.exchange(false)) {
+        test.values[paramGain].store(rescannedGain);
+        test.hostParams->rescan(test.host, CLAP_PARAM_RESCAN_VALUES);
+    }
+}
+
+// --- the factory and the entry
+
+const char* const features[] = {CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, nullptr};
+
+const clap_plugin_descriptor_t descriptor = {
+    CLAP_VERSION_INIT, "org.siann.test-plugin", "SIANN Test Plugin", "SIANN", "", "", "", "1.0.0", "A known delay",
+    features,
+};
+
+std::uint32_t factoryCount(const clap_plugin_factory_t*) { return 1; }
+
+const clap_plugin_descriptor_t* factoryDescriptor(const clap_plugin_factory_t*, std::uint32_t index) {
+    return index == 0 ? &descriptor : nullptr;
+}
+
+const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
+    if (std::strcmp(id, descriptor.id) != 0) {
+        return nullptr;
+    }
+    auto* test = new TestPlugin;
+    test->host = host;
+    const std::string layout = environmentValue("SIANN_TEST_PLUGIN_LAYOUT");
+    test->layout = layout == "wide" ? Layout::wide : layout == "sidechain" ? Layout::sidechain : Layout::stereo;
+    test->values[paramGain].store(1.0);
+    test->clap.desc = &descriptor;
+    test->clap.plugin_data = test;
+    test->clap.init = pluginInit;
+    test->clap.destroy = pluginDestroy;
+    test->clap.activate = pluginActivate;
+    test->clap.deactivate = pluginDeactivate;
+    test->clap.start_processing = pluginStartProcessing;
+    test->clap.stop_processing = pluginStopProcessing;
+    test->clap.reset = pluginReset;
+    test->clap.process = pluginProcess;
+    test->clap.get_extension = pluginGetExtension;
+    test->clap.on_main_thread = pluginOnMainThread;
+    // What a chatty plugin does: a host must keep its launcher handshake away from this.
+    std::fputs("siann_test_plugin: loaded\n", stdout);
+    std::fflush(stdout);
+    return &test->clap;
+}
 
 const clap_plugin_factory_t factory = {factoryCount, factoryDescriptor, factoryCreate};
 
-bool entryInit(const char*) { return true; }
+bool entryInit(const char* path) {
+    homeDirectoryName = std::filesystem::path(path).parent_path().filename().string();
+    return true;
+}
 
 void entryDeinit() {}
 

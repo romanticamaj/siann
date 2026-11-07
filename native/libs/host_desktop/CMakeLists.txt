@@ -58,13 +58,14 @@ if(SIANN_BUILD_TESTS)
     target_link_libraries(siann_host_desktop_tests PRIVATE "-framework AppKit" "-framework AudioToolbox")
   endif()
   target_include_directories(siann_host_desktop_tests PRIVATE tests ../host_common/tests)
-  target_link_libraries(siann_host_desktop_tests PRIVATE siann::host_desktop siann::realtime siann_rt_alloc_guard
-                        Catch2::Catch2WithMain)
+  target_link_libraries(siann_host_desktop_tests PRIVATE siann::host_desktop siann::host_clap siann::realtime
+                        siann_rt_alloc_guard Catch2::Catch2WithMain)
   siann_apply_compile_options(siann_host_desktop_tests)
   # The plugin is hosted from its build location, so these tests never skip.
-  add_dependencies(siann_host_desktop_tests siann_test_plugin_VST3)
+  add_dependencies(siann_host_desktop_tests siann_test_plugin_VST3 siann_test_plugin_CLAP)
   target_compile_definitions(siann_host_desktop_tests PRIVATE
-    SIANN_TEST_PLUGIN_VST3="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>")
+    SIANN_TEST_PLUGIN_VST3="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_VST3,JUCE_PLUGIN_ARTEFACT_FILE>>"
+    SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>")
   if(APPLE)
     add_dependencies(siann_host_desktop_tests siann_test_plugin_AU)
     target_compile_definitions(siann_host_desktop_tests PRIVATE

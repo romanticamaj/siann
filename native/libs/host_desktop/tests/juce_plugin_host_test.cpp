@@ -30,6 +30,7 @@
 #endif
 
 #include "hosting_checks.hpp"
+#include "siann/host/clap_plugin_host.hpp"
 #include "siann/host/juce_plugin_host.hpp"
 
 #if defined(_WIN32)
@@ -333,6 +334,31 @@ TEST_CASE("plugin host: the CI-built VST3 passes the whole hosting check", "[juc
     host::MainThreadLoop loop;
     host::JucePluginHost host;
     checkBuiltTestPlugin(pumpOf(loop), host, testPlugin(host));
+}
+
+// The desktop half of ClapPluginHost's acceptance: one process holds both hosts, and
+// their plugins run on the audio thread together.
+TEST_CASE("plugin host: a CLAP and a VST3 instance process side by side", "[juce][clap][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost vst3Host;
+    host::ClapPluginHost clapHost;
+    auto vst3 = loadTestPlugin(vst3Host);
+    const auto clapDescriptors = clapHost.scanPath(SIANN_TEST_PLUGIN_CLAP);
+    REQUIRE(clapDescriptors.size() == 1);
+    auto clap = clapHost.instantiate(clapDescriptors.front(), sampleRate, blockFrames);
+
+    for (auto* instance : {vst3.get(), clap.get()}) {
+        const auto measured = measureDelay(*instance);
+        CHECK(measured.frames == 64);
+        CHECK(measured.peak == Approx(1.0f));
+        CHECK(measured.allocations == 0);
+    }
+
+    PlayingThread playingVst3(*vst3);
+    PlayingThread playingClap(*clap);
+    REQUIRE(loop.runUntil([&] { return playingVst3.blocks() >= 16 && playingClap.blocks() >= 16; }, eventTimeout));
+    CHECK(playingVst3.finish() == 0);
+    CHECK(playingClap.finish() == 0);
 }
 
 // VST3 forbids process during setActive, and that is what the one lock JUCE takes
