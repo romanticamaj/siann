@@ -58,6 +58,7 @@
 
 #include "siann/graph/graph.hpp"
 #include "siann/host/interfaces.hpp"
+#include "siann/rt/callback_timer.hpp"
 #include "siann/rt/latest_mailbox.hpp"
 #include "siann/rt/spsc_queue.hpp"
 
@@ -189,6 +190,9 @@ public:
         // from, so the callback fires once per family: with the epoch
         // publish() returned, when the last graph of that family is retired.
         std::function<void(std::uint64_t epoch)> onRetired;
+        // The clock each device callback is timed with, in nanoseconds; nullptr
+        // is the steady clock. Tests pass one they advance themselves.
+        std::int64_t (*nowNanos)() noexcept = nullptr;
     };
 
     explicit GraphDriver(Options options);
@@ -290,7 +294,15 @@ public:
 
     // Device frames the SRC path could not fill (output as silence). This is SRC
     // underfill, reported as `srcUnderruns`; it is not an xrun (deadline miss).
-    std::uint64_t xruns() const noexcept { return xruns_.load(std::memory_order_acquire); }
+    std::uint64_t srcUnderruns() const noexcept { return srcUnderruns_.load(std::memory_order_acquire); }
+
+    // Every device callback since start(), timed around process(): callbacks,
+    // deadline misses (the spec's xruns, reported as `xruns`) and the longest
+    // callback. Written on the audio thread with atomics only; read anywhere.
+    // This is where a hosted plugin's wait will show once a graph node runs its
+    // processBlock inside this callback (spec, "Realtime rules and enforcement",
+    // ADR-0018; M4 plugin node).
+    const rt::CallbackTimer& callbackTiming() const noexcept { return timing_; }
 
     DriverState state() const noexcept { return state_; }
     std::uint64_t liveEpoch() const noexcept { return liveEpoch_; }
@@ -303,6 +315,7 @@ private:
     struct SrcPath;
 
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
+    std::int64_t nowNanos() const noexcept;  // audio thread: options_.nowNanos or the steady clock
     void renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept;
     void processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
                           bool playing) noexcept;
@@ -328,7 +341,8 @@ private:
     ResamplingState resampling_{};
     LatencyReport latency_{};
     std::unique_ptr<SrcPath> src_;  // built by start() when the rates differ
-    std::atomic<std::uint64_t> xruns_{0};
+    std::atomic<std::uint64_t> srcUnderruns_{0};
+    rt::CallbackTimer timing_;
 
     // Control side: every graph this driver owns, by epoch.
     std::map<std::uint64_t, std::unique_ptr<graph::PreparedGraph>> owned_;

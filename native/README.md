@@ -32,7 +32,7 @@ use Catch2, also pinned.
 | `libs/realtime` (`siann-realtime`) | `siann::realtime` | Graph driver (ownership states, duck-and-swap, retirement on acknowledgement, watchdog, latency changes answered by a recompile that ramps only the affected paths), realtime PDC null and offline/realtime parity tests, parameter channel and control dispatcher, transport (`transport.hpp`: play, stop and locate through the butler handshake with a ready timeout, on the driver's `transportInbox`), disk streaming (butler, two-slot rings, streaming player), recorder (input capture, write-through), device-side SRC (r8brain streaming resampler, one-block FIFO, resampling state and latency report) |
 | `libs/playback` (`siann-playback`) | `siann::playback` | Playback assembly above `siann-engine` and `siann-realtime`: session document to streaming graph (streaming player and track fader per track, master bus) with the entity-to-slot map, playback engine owning the driver, dispatcher and butler, fader gestures committed as one revision; in-memory `MediaReader` for FLAC |
 | `libs/protocol` (`siann-protocol`) | `siann::protocol` | Protocol server v0 (spec "siann-protocol"): per-launch token handshake in the first message, Origin allow list with the app scheme `siann://app`, request envelope with `sessionId` and idempotency `requestId`, one response per request with stable error codes, bounded inbox to the command thread, idempotency cache; the transport is a thin adapter interface with one IXWebSocket implementation (`127.0.0.1`, `GET /v0/health` with a bearer token); events v1 (`docs/schemas/protocol-events-v1.md`): one event sequence per session with bounded per-connection outboxes (drops show as seq gaps), `session.changed` with changed IDs, chunked `session.sync` pinned at one revision, `session.fetch`, `session.undo`/`redo`, binary latest-wins meter frames on `/v1/realtime` (`MeterPublisher` reads the `ControlDispatcher`), and the build's source URL and commit in the auth reply and `engine.about` (`cmake/SiannBuildInfo.cmake`, ADR-0017) |
-| `libs/host_desktop` (`siann-host-desktop`) | `siann::host_desktop` | JUCE 9 audio devices (WASAPI, ASIO, CoreAudio, ALSA) behind `AudioDevice`, opening at the device's own rate when it cannot run at the session's; built with `SIANN_WITH_JUCE=ON` (preset `desktop`), AGPLv3 per ADR-0017 |
+| `libs/host_desktop` (`siann-host-desktop`) | `siann::host_desktop` | JUCE 9 audio devices (WASAPI, ASIO, CoreAudio, ALSA) behind `AudioDevice`, opening at the device's own rate when it cannot run at the session's; VST3 and AU plugins and their editors behind `PluginHost`, and the main thread's message loop; built with `SIANN_WITH_JUCE=ON` (preset `desktop`), AGPLv3 per ADR-0017 |
 
 `siann-hash` sits below `siann-model` and `siann-command`. It must pass the same
 fixtures as the Node bridge (`src/hash/`): `fixtures/jcs/cases.json`,
@@ -88,7 +88,14 @@ It is built by the core-only configuration too.
 
 ```sh
 siann-engine --session Song.siann [--host 127.0.0.1] [--port 0] [--mcp-trusted]
+            [--owner-window <handle>] [--open-editor <bundle>]
 ```
+
+A `SIANN_WITH_JUCE` build runs the JUCE message loop on the main thread, and
+`--open-editor` opens a plugin's editor before the ready line, owned on Windows
+by the window whose decimal handle `--owner-window` gives; the Electron shell
+passes its window and `SIANN_OPEN_EDITOR`. A core-only build ignores
+`--owner-window` and refuses `--open-editor` with `no_plugin_host`.
 
 `--session` opens the bundle, or creates a new empty session there (named after
 the bundle) when the directory does not exist. Once the protocol server is
@@ -132,6 +139,18 @@ The `dev` preset treats warnings as errors. The `desktop` preset adds the JUCE
 host target (`SIANN_WITH_JUCE=ON`); its device tests run against the machine's
 real audio hardware, output silence only, and skip when there is no device. CI builds and tests on Windows,
 macOS and Linux (`.github/workflows/ci.yml`).
+
+The desktop preset also builds `siann_test_plugin` and hosts it from its build
+location. Two variables add a third-party plugin to the hosting tests; unset they
+skip, and pointing at a missing file fails:
+
+| Variable | Value |
+|---|---|
+| `SIANN_TEST_VST3` | A `.vst3` bundle, for example `C:\Program Files\Common Files\VST3\TDR Nova.vst3` |
+| `SIANN_TEST_AU` | A `.component` bundle (macOS), for example `/Library/Audio/Plug-Ins/Components/TDR Nova.component` |
+
+The hosting tests open editor windows, so on Linux run them with a display
+(`xvfb-run -a ctest ...`). `ctest -R "plugin host"` selects them.
 
 ### RealtimeSanitizer (Linux or WSL, Clang 20+)
 

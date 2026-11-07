@@ -12,6 +12,7 @@ siann_apply_compile_options(siann_host_fake)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_host_fake_tests
     tests/fake_device_test.cpp
+    tests/plugin_interfaces_test.cpp
   )
   target_link_libraries(siann_host_fake_tests PRIVATE siann::host_fake siann_rt_alloc_guard Catch2::Catch2WithMain)
   siann_apply_compile_options(siann_host_fake_tests)

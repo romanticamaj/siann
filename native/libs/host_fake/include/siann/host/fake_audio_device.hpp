@@ -42,6 +42,10 @@ public:
         // Paced runs: this many times faster than real time (the reported rate
         // is unchanged). Must be positive.
         double speed = 1.0;
+        // open() reports a sample rate of 0 (a device that does not say), while
+        // the blocks still run and are paced at the configured rate: the driver
+        // then has no period to check callbacks against.
+        bool reportNoSampleRate = false;
         // counter excludes loopback; the latencies are still reported.
         InputSignal inputSignal = InputSignal::none;
     };

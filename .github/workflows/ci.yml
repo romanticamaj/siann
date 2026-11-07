@@ -8,9 +8,22 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its run; main keeps every run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# `cmake --build --parallel` with no number means unbounded `make -j` on Linux
+# and macOS. With the JUCE build, macOS took an hour over tiny libraries and Linux
+# lost its runner three minutes into every build. The variable applies only when
+# the build command carries no --parallel flag, so none of the commands below do.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   node:
     name: Node bridge (ubuntu)
+    timeout-minutes: 90
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +34,7 @@ jobs:
 
   native:
     name: Native core (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -31,9 +45,9 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/ci -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
       - name: Build
-        run: cmake --build native/build/ci --config Debug --parallel
+        run: cmake --build native/build/ci --config Debug
       - name: Test
-        run: ctest --test-dir native/build/ci -C Debug --output-on-failure
+        run: ctest --test-dir native/build/ci -C Debug --output-on-failure --timeout 300
 
   # Clang RealtimeSanitizer over the whole native suite (realtime, playback,
   # host_fake, cli and the sanitizer canaries). Every audio callback runs in
@@ -43,6 +57,7 @@ jobs:
   # apt.llvm.org provides it. Apple Clang has no RTSan, so macOS is not covered.
   rtsan:
     name: Native core RTSan (ubuntu, Clang 20)
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     env:
       RTSAN_OPTIONS: halt_on_error=1
@@ -57,7 +72,7 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/rtsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_RTSAN=ON
       - name: Build
-        run: cmake --build native/build/rtsan --parallel
+        run: cmake --build native/build/rtsan
       - name: Test
         run: ctest --test-dir native/build/rtsan --output-on-failure --no-tests=error
       - name: SRC tests through r8brain under RTSan
@@ -65,6 +80,7 @@ jobs:
 
   desktop:
     name: Desktop host with JUCE (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -72,21 +88,52 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install ALSA headers
+      - name: Install ALSA and JUCE GUI headers
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        run: >-
+          sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libxext-dev libxi-dev libxrandr-dev libxinerama-dev
+          libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb openbox
       - name: Configure
         run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON
       - name: Build
-        run: cmake --build native/build/desktop --config Debug --parallel
+        run: cmake --build native/build/desktop --config Debug
+      # The hosting tests open plugin editors, so Linux needs a virtual display, and
+      # a window manager: without one JUCE's window setup dies on an X BadAtom. The
+      # Windows and macOS runners have a desktop session.
+      - name: Test (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a sh -c 'openbox & sleep 1; ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300'
       - name: Test
-        run: ctest --test-dir native/build/desktop -C Debug --output-on-failure
+        if: runner.os != 'Linux'
+        run: ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300
+      # m0-plugin-hosting: the editor owned by the real Electron window. Windows
+      # alone, as macOS editors float; the app job's engine has no JUCE.
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Editor owned by the Electron window
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          exe=$(find native/build/desktop -type f -name siann-engine.exe | head -n 1)
+          plugin=$(find native/build/desktop -type d -name siann_test_plugin.vst3 | head -n 1)
+          test -n "$exe" && test -n "$plugin"
+          export SIANN_DESKTOP_ENGINE_EXE="$GITHUB_WORKSPACE/$exe" SIANN_TEST_PLUGIN="$GITHUB_WORKSPACE/$plugin"
+          cd app
+          npm ci
+          node node_modules/electron/install.js
+          npm run build
+          npx playwright test editor.spec.ts
 
   # The Electron shell (m0-electron-shell): the core-only siann-engine target
   # and the Playwright Electron tests in app/ against it. Linux runs Electron
   # under a virtual display; the Chromium sandbox helper needs its setuid bit.
   app:
     name: Electron shell (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -105,7 +152,7 @@ jobs:
       - name: Configure
         run: cmake -S native -B native/build/app -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
       - name: Build siann-engine
-        run: cmake --build native/build/app --config Debug --parallel --target siann-engine
+        run: cmake --build native/build/app --config Debug --target siann-engine
       - name: Locate siann-engine
         run: |
           exe=$(find native/build/app -type f \( -name siann-engine -o -name siann-engine.exe \) | head -n 1)

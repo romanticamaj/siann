@@ -118,7 +118,7 @@ host::ManualAudioDevice::Options fixedRate(std::int64_t rate) {
 struct Played {
     std::vector<float> output;  // channel 0 at the device rate
     realtime::LatencyReport latency;
-    std::uint64_t xruns = 0;
+    std::uint64_t srcUnderruns = 0;
     std::uint64_t allocations = 0;  // allocation-guard violations while pumping
 };
 
@@ -135,7 +135,7 @@ Played play(std::unique_ptr<graph::PreparedGraph> graph, RatePair rates, int dev
     const auto before = rt::allocationViolations();
     device.pump(static_cast<int>((deviceFrames + deviceBlock - 1) / deviceBlock), &played.output);
     played.allocations = rt::allocationViolations() - before;
-    played.xruns = driver.xruns();
+    played.srcUnderruns = driver.srcUnderruns();
     driver.stop();
     return played;
 }
@@ -227,7 +227,7 @@ TEST_CASE("Sine through output SRC keeps amplitude and is clean", "[src]") {
             const auto played = play(sineGraph(frequency, rates.session, 3 * rates.session), rates, 128,
                                      2 * rates.device);
             CHECK(played.allocations == 0);
-            CHECK(played.xruns == 0);
+            CHECK(played.srcUnderruns == 0);
             REQUIRE(static_cast<std::int64_t>(played.output.size()) >= 2 * rates.device);
             const std::span<const float> second(played.output.data() + rates.device,
                                                 static_cast<std::size_t>(rates.device));
@@ -251,7 +251,7 @@ TEST_CASE("Tones above the device Nyquist do not alias when downsampling", "[src
         const auto played = play(sineGraph(frequency, kDown.session, 3 * kDown.session), kDown, 128,
                                  2 * kDown.device);
         CHECK(played.allocations == 0);
-        CHECK(played.xruns == 0);
+        CHECK(played.srcUnderruns == 0);
         REQUIRE(static_cast<std::int64_t>(played.output.size()) >= 2 * kDown.device);
         const std::span<const float> second(played.output.data() + kDown.device,
                                             static_cast<std::size_t>(kDown.device));
@@ -425,11 +425,11 @@ TEST_CASE("Device blocks larger and smaller than the graph block give the same o
         INFO("session " << rates.session << " Hz, device " << rates.device << " Hz");
         const std::int64_t frames = rates.device / 2;
         const auto reference = play(sineGraph(1'000.0, rates.session, rates.session), rates, kBlock, frames);
-        CHECK(reference.xruns == 0);
+        CHECK(reference.srcUnderruns == 0);
         for (const int deviceBlock : {32, 256, 100}) {
             INFO("device block " << deviceBlock);
             const auto played = play(sineGraph(1'000.0, rates.session, rates.session), rates, deviceBlock, frames);
-            CHECK(played.xruns == 0);
+            CHECK(played.srcUnderruns == 0);
             CHECK(played.allocations == 0);
             CHECK(played.latency.srcOutputLatencyFrames == reference.latency.srcOutputLatencyFrames);
             REQUIRE(played.output.size() >= static_cast<std::size_t>(frames));

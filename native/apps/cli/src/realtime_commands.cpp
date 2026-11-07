@@ -71,21 +71,44 @@ CliError noAudioBackend() {
 }
 #endif
 
-// --fake-speed and --fake-input shape the fake device; without --device fake
-// they are a usage error.
+// --fake-speed, --fake-input and --fake-callback-nanos shape a run on the fake
+// device; without --device fake they are a usage error. --fake-callback-nanos N
+// times the driver's callbacks with a clock that advances N ns per reading, so
+// every callback "takes" N ns: a known deadline miss (or none) for tests.
+// --fake-report-rate none makes the device report no sample rate, so the driver
+// has no period to check callbacks against (they are counted as unmeasured).
 struct FakeDeviceChoice {
     std::int64_t speed = 1;
     host::FakeAudioDevice::InputSignal input = host::FakeAudioDevice::InputSignal::none;
+    std::int64_t callbackNanos = 0;  // 0: the steady clock
+    bool reportNoRate = false;
 };
+
+// The deadline check multiplies the step by the device rate: 1000 s per
+// callback is already absurd and stays far from overflow.
+constexpr std::int64_t kMaxFakeCallbackNanos = 1'000'000'000'000;
 
 FakeDeviceChoice fakeDeviceChoice(const Args& args) {
     const auto id = args.option("device");
     const bool fake = id && *id == kFakeDevice;
-    if (!fake && (args.option("fake-speed") || args.option("fake-input"))) {
-        throw UsageError("--fake-speed and --fake-input need --device fake");
+    if (!fake && (args.option("fake-speed") || args.option("fake-input") || args.option("fake-callback-nanos") ||
+                  args.option("fake-report-rate"))) {
+        throw UsageError("--fake-speed, --fake-input, --fake-callback-nanos and --fake-report-rate need --device fake");
     }
     FakeDeviceChoice choice;
     choice.speed = positiveOption(args, "fake-speed", 1);
+    if (args.option("fake-callback-nanos")) {
+        choice.callbackNanos = positiveOption(args, "fake-callback-nanos", 1);
+        if (choice.callbackNanos > kMaxFakeCallbackNanos) {
+            throw UsageError("--fake-callback-nanos must be at most " + std::to_string(kMaxFakeCallbackNanos));
+        }
+    }
+    if (const auto report = args.option("fake-report-rate")) {
+        if (*report != "none") {
+            throw UsageError("--fake-report-rate takes only none");
+        }
+        choice.reportNoRate = true;
+    }
     if (const auto input = args.option("fake-input")) {
         if (*input == "counter") {
             choice.input = host::FakeAudioDevice::InputSignal::counter;
@@ -108,6 +131,7 @@ std::unique_ptr<host::AudioDevice> openDevice(const Args& args, int bufferFrames
         options.paced = true;
         options.speed = static_cast<double>(choice.speed);
         options.inputSignal = choice.input;
+        options.reportNoSampleRate = choice.reportNoRate;
         options.loopback = choice.input == host::FakeAudioDevice::InputSignal::none;
         options.inputLatencyFrames = bufferFrames;
         options.outputLatencyFrames = bufferFrames;
@@ -125,12 +149,26 @@ std::string deviceIdOf(const Args& args) {
     return id && *id != kFakeDevice ? *id : std::string();
 }
 
+// --fake-callback-nanos: a clock for the driver's callback timing that advances a
+// fixed step per reading, so a callback timed between two readings lasts exactly
+// one step. Audio thread only, atomics only; one run at a time per process.
+std::atomic<std::int64_t> fakeClockStep{0};
+std::atomic<std::int64_t> fakeClockNow{0};
+std::int64_t fakeCallbackClock() noexcept {
+    const std::int64_t step = fakeClockStep.load(std::memory_order_relaxed);
+    return fakeClockNow.fetch_add(step, std::memory_order_relaxed) + step;
+}
+
 // One run of the realtime engine on a timed device. Members are declared so
 // that the engine (which stops the device when destroyed) goes first.
+// `fakeCallbackNanos` > 0 times the driver's callbacks with fakeCallbackClock.
 class RealtimeRun {
 public:
-    RealtimeRun(session::Session& s, std::unique_ptr<host::AudioDevice> device, bool playOnStart)
-        : device_(std::move(device)), timed_(*device_, timer_), engine_(s, engineOptions(playOnStart)) {
+    RealtimeRun(session::Session& s, std::unique_ptr<host::AudioDevice> device, bool playOnStart,
+                std::int64_t fakeCallbackNanos)
+        : device_(std::move(device)),
+          timed_(*device_, timer_),
+          engine_(s, engineOptions(playOnStart, fakeCallbackNanos)) {
         engine_.load();
     }
 
@@ -181,14 +219,30 @@ public:
     playback::PlaybackEngine& engine() noexcept { return engine_; }
     const CallbackTimer& timer() const noexcept { return timer_; }
 
-    // Device frames played, underruns and the device's state.
-    void report(Object& out) {
+    // Device frames played, underruns, the driver's callback timing and the
+    // device's state. `withTiming` false leaves out `xruns` and
+    // `maxCallbackMicros`: bench reports them from its TimedDevice instead,
+    // measured around the whole device callback and checked by benchTiming().
+    void report(Object& out, bool withTiming = true) {
         const auto& status = engine_.driver().deviceStatus();
         const auto& resampling = engine_.resampling();
         const auto& latency = engine_.driver().latency();
         out.emplace_back("framesPlayed", decimal(timed_.frames()));
         out.emplace_back("underruns", decimal(engine_.underruns()));
-        out.emplace_back("srcUnderruns", decimal(engine_.driver().xruns()));
+        out.emplace_back("srcUnderruns", decimal(engine_.driver().srcUnderruns()));
+        if (withTiming) {
+            // The driver's own timing of every callback (spec, "Realtime rules
+            // and enforcement": deadline misses are counted and reported; this is
+            // where a hosted plugin's wait will show once the M4 plugin node runs
+            // inside a driver callback).
+            // An xrun here is a callback the driver timed over its period, never
+            // one the device reported. Callbacks without a device rate could not
+            // be checked and are counted apart, so "0" xruns never hides them.
+            const auto& timing = engine_.driver().callbackTiming();
+            out.emplace_back("xruns", decimal(timing.misses()));
+            out.emplace_back("maxCallbackMicros", Value(static_cast<double>(timing.maxCallbackNanos()) / 1'000.0));
+            out.emplace_back("unmeasuredCallbacks", decimal(timing.unmeasured()));
+        }
         out.emplace_back("deviceLost", Value(deviceLost_));
         out.emplace_back("resampling", Value(Object{{"active", Value(resampling.active)},
                                                     {"deviceRate", number(resampling.deviceRate)},
@@ -209,10 +263,15 @@ public:
     }
 
 private:
-    static playback::PlaybackOptions engineOptions(bool playOnStart) {
+    static playback::PlaybackOptions engineOptions(bool playOnStart, std::int64_t fakeCallbackNanos) {
         playback::PlaybackOptions options;
         options.butlerThread = true;
         options.playOnStart = playOnStart;
+        if (fakeCallbackNanos > 0) {
+            fakeClockStep.store(fakeCallbackNanos, std::memory_order_relaxed);
+            fakeClockNow.store(0, std::memory_order_relaxed);
+            options.callbackClock = &fakeCallbackClock;
+        }
         return options;
     }
 
@@ -364,9 +423,11 @@ Value cmdPlay(const Args& args, const std::atomic<bool>* interrupt) {
     const std::int64_t sessionRate = document.root().sampleRate;
     const std::int64_t end = engine::documentEnd(document);
 
-    RealtimeRun run(s, std::move(device), true);
+    RealtimeRun run(s, std::move(device), true, fakeDeviceChoice(args).callbackNanos);
     run.start(deviceIdOf(args), buffer, 0, [seconds, end, sessionRate](std::int64_t deviceRate) {
-        return seconds ? *seconds * deviceRate : toDeviceFrames(end, sessionRate, deviceRate);
+        // A device that reports no rate runs at the session rate (as the driver assumes).
+        const std::int64_t rate = deviceRate > 0 ? deviceRate : sessionRate;
+        return seconds ? *seconds * rate : toDeviceFrames(end, sessionRate, rate);
     });
     run.wait(interrupt);
     run.stop();
@@ -414,7 +475,7 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
 
     // 1. Recorder attached while the driver is stopped; the device starts
     //    with the transport stopped, so the record offset is known first.
-    RealtimeRun run(s, std::move(device), false);
+    RealtimeRun run(s, std::move(device), false, fakeDeviceChoice(args).callbackNanos);
     run.engine().driver().attachRecorder(&recorder);
     run.start(deviceIdOf(args), buffer, channels);
 
@@ -449,7 +510,9 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
     run.engine().transport().play();
     run.waitUntilPlaying(interrupt);
     if (seconds) {
-        run.runFor((*seconds + 1) * run.deviceRate());
+        // A device that reports no rate runs at the session rate (as the driver assumes).
+        const std::int64_t rate = run.deviceRate() > 0 ? run.deviceRate() : sessionRate;
+        run.runFor((*seconds + 1) * rate);
     }
     run.wait(interrupt, [&recorder] { return recorder.captureEnded(); });
 
@@ -501,6 +564,10 @@ Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
     const auto buffer = static_cast<int>(requiredPositive(args, "buffer"));
     const std::int64_t seconds = requiredPositive(args, "seconds");
     const std::int64_t rate = positiveOption(args, "rate", 48'000);
+    if (args.option("fake-callback-nanos") || args.option("fake-report-rate")) {
+        // bench measures real callbacks against a real device rate.
+        throw UsageError("bench does not take --fake-callback-nanos or --fake-report-rate");
+    }
     std::unique_ptr<host::AudioDevice> device = openDevice(args, buffer);  // no_audio_backend before anything is written
 
     const bool generate = !fs::exists(bundle);
@@ -515,7 +582,7 @@ Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
                                                    std::to_string(tracks));
     }
 
-    RealtimeRun run(s, std::move(device), true);
+    RealtimeRun run(s, std::move(device), true, fakeDeviceChoice(args).callbackNanos);
     // Without a device rate the run length is 0 frames and bench fails below.
     run.start(deviceIdOf(args), buffer, 0, [seconds](std::int64_t deviceRate) { return seconds * deviceRate; });
     if (run.deviceRate() <= 0) {
@@ -535,7 +602,7 @@ Value cmdBench(const Args& args, const std::atomic<bool>* interrupt) {
     for (auto& field : timing) {
         out.push_back(std::move(field));
     }
-    run.report(out);
+    run.report(out, /*withTiming=*/false);  // bench's xruns and maxCallbackMicros are above
     return ok(std::move(out));
 }
 

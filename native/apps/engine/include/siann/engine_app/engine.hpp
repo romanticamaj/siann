@@ -4,6 +4,7 @@
 // siann-protocol, Protocol v0 item 17: the launcher handshake).
 //
 //   siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
+//                [--owner-window <handle>] [--open-editor <bundle>]
 //
 // Opens the bundle, or creates a new empty session there when the directory
 // does not exist, starts the protocol server and writes exactly one line to
@@ -16,6 +17,23 @@
 // (stdin EOF, SIGTERM or CTRL_BREAK in main.cpp) and returns 0. A bad launch
 // writes one JSON error {ok:false, error:{code, message}} to `err`, nothing to
 // `out`, and returns 1.
+//
+// `out` must not be the process's fd 1 once a plugin can load: hosted plugins
+// (and JUCE) print to stdout, and a line of theirs before or after the ready
+// line is a failed launch for the shell. main.cpp duplicates the launcher's
+// stdout into `out` and points fd 1 (and the Win32 standard output handle) at
+// stderr before calling this. On POSIX that sends any plugin's stdout output to
+// the shell's stderr log. On Windows it does so for code sharing the engine's
+// CRT; a plugin with its own CRT holds the handle value the launcher passed in
+// lpReserved2, which the redirect closes. main.cpp re-occupies the freed value
+// with NUL so nothing the engine opens later receives that output: its writes
+// normally succeed into NUL, and the output is dropped.
+//
+// A SIANN_WITH_JUCE build serves from the JUCE message loop, so call this on the
+// process's main thread. There --open-editor opens the first plugin of a bundle
+// before the ready line, owned on Windows by the window whose decimal handle
+// --owner-window gives; a core-only build accepts --owner-window and refuses
+// --open-editor with no_plugin_host.
 
 #include <atomic>
 #include <ostream>

@@ -222,7 +222,7 @@ PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions option
       butler_(options_.butler),
       driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500),
                                              realtime::GraphDriver::kDefaultMeterCapacity,
-                                             [this](std::uint64_t epoch) { retired(epoch); }}),
+                                             [this](std::uint64_t epoch) { retired(epoch); }, options_.callbackClock}),
       dispatcher_(driver_),
       transport_(driver_, butler_, options_.transport) {}
 

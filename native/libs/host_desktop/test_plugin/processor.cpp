@@ -1,0 +1,233 @@
+#include "processor.hpp"
+
+#include <cstdio>
+#include <cstring>
+
+namespace siann::test_plugin {
+
+namespace {
+
+constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'T', 'P', '1'};
+constexpr std::uint32_t stateVersion = 1;
+constexpr std::uint32_t futureStateVersion = 2;
+constexpr std::size_t stateSize = sizeof(stateMagic) + sizeof(std::uint32_t) + sizeof(float) + 1 + 1;
+
+// restartComponent(kReloadComponent | kIoChanged) activates the plugin twice.
+constexpr int activationsPerRestart = 2;
+
+// The directory holding the outermost bundle this code was loaded from.
+juce::String homeDirectoryName() {
+    juce::String home;
+    auto file = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    for (auto parent = file.getParentDirectory(); parent != file; file = parent, parent = file.getParentDirectory()) {
+        if (file.hasFileExtension("vst3;component")) {
+            home = parent.getFileName();
+        }
+    }
+    return home;
+}
+
+}  // namespace
+
+Processor::Processor()
+    : juce::AudioProcessor(BusesProperties()
+                               .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                               .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+    latency_ = new juce::AudioParameterBool(juce::ParameterID{"latency", 1}, "latency", false);
+    gain_ = new juce::AudioParameterFloat(juce::ParameterID{"gain", 1}, "gain",
+                                          juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f);
+    futureState_ = new juce::AudioParameterBool(juce::ParameterID{"futureState", 1}, "futureState", false);
+    nudgeGain_ = new juce::AudioParameterBool(juce::ParameterID{"nudgeGain", 1}, "nudgeGain", false);
+    requestRestart_ = new juce::AudioParameterBool(juce::ParameterID{"requestRestart", 1}, "requestRestart", false);
+    overlapped_ = new juce::AudioParameterBool(juce::ParameterID{"overlapped", 1}, "overlapped", false);
+    restarted_ = new juce::AudioParameterBool(juce::ParameterID{"restarted", 1}, "restarted", false);
+    watchRestore_ = new juce::AudioParameterBool(juce::ParameterID{"watchRestore", 1}, "watchRestore", false);
+    restored_ = new juce::AudioParameterBool(juce::ParameterID{"restored", 1}, "restored", false);
+    holdProcessBlock_ = new juce::AudioParameterBool(juce::ParameterID{"holdProcessBlock", 1}, "holdProcessBlock", false);
+    tail_ = new juce::AudioParameterBool(juce::ParameterID{"tail", 1}, "tail", false);
+    addParameter(latency_);
+    addParameter(gain_);
+    addParameter(futureState_);
+    addParameter(nudgeGain_);
+    addParameter(requestRestart_);
+    addParameter(overlapped_);
+    addParameter(restarted_);
+    addParameter(watchRestore_);
+    addParameter(restored_);
+    addParameter(holdProcessBlock_);
+    addParameter(tail_);
+    addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
+    latency_->addListener(this);
+    nudgeGain_->addListener(this);
+    requestRestart_->addListener(this);
+    setLatencySamples(shortLatency);
+    // What a chatty plugin does: a host must keep its launcher handshake away from this.
+    std::fputs("siann_test_plugin: loaded\n", stdout);
+    std::fflush(stdout);
+}
+
+Processor::~Processor() {
+    cancelPendingUpdate();
+    requestRestart_->removeListener(this);
+    nudgeGain_->removeListener(this);
+    latency_->removeListener(this);
+}
+
+void Processor::applyLatency() {
+    const int frames = latency_->get() ? longLatency : shortLatency;
+    delayFrames_.store(frames, std::memory_order_release);
+    setLatencySamples(frames);
+}
+
+void Processor::parameterValueChanged(int parameterIndex, float newValue) {
+    if (parameterIndex == latency_->getParameterIndex()) {
+        applyLatency();
+    } else if (newValue >= 0.5f) {
+        auto& pending = parameterIndex == nudgeGain_->getParameterIndex() ? nudgePending_ : restartRequested_;
+        pending.store(true);
+        triggerAsyncUpdate();
+    }
+}
+
+void Processor::handleAsyncUpdate() {
+    if (nudgePending_.exchange(false)) {
+        // What an editor does when the user moves a control.
+        gain_->beginChangeGesture();
+        gain_->setValueNotifyingHost(nudgedGain);
+        gain_->endChangeGesture();
+    }
+    if (restartRequested_.exchange(false)) {
+        restarting_.store(true);
+        restarter_.restart();
+    }
+    if (restarting_.load() && restartActivations_.load() >= activationsPerRestart) {
+        restarting_.store(false);
+        overlapped_->setValueNotifyingHost(sawOverlap_.load() ? 1.0f : 0.0f);
+        restarted_->setValueNotifyingHost(1.0f);
+    }
+    if (restorePending_.exchange(false)) {
+        overlapped_->setValueNotifyingHost(sawOverlap_.load() ? 1.0f : 0.0f);
+        restored_->setValueNotifyingHost(1.0f);
+    }
+}
+
+double Processor::getTailLengthSeconds() const {
+    if (std::this_thread::get_id() != homeThread_) {
+        return wrongThreadTailSeconds;
+    }
+    return latency_->get() || tail_->get() ? longTailSeconds : 0.0;
+}
+
+void Processor::watchForProcessBlock() {
+    const auto end = std::chrono::steady_clock::now() + restartWatch;
+    while (std::chrono::steady_clock::now() < end) {
+        if (inProcessBlock_.load()) {
+            sawOverlap_.store(true);
+        }
+    }
+}
+
+// Runs on the host's thread inside setActive, where processBlock must not.
+void Processor::watchRestart() {
+    if (restarting_.load()) {
+        watchForProcessBlock();
+    }
+}
+
+void Processor::releaseResources() {
+    watchRestart();
+}
+
+void Processor::prepareToPlay(double, int) {
+    watchRestart();
+    if (restarting_.load()) {
+        restartActivations_.fetch_add(1);
+        triggerAsyncUpdate();
+    }
+    for (auto& channel : ring_) {
+        channel.fill(0.0f);
+    }
+    writeIndex_ = 0;
+    activeDelay_ = delayFrames_.load(std::memory_order_acquire);
+    applyLatency();
+}
+
+bool Processor::isBusesLayoutSupported(const BusesLayout& layouts) const {
+    return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
+           layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+}
+
+void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
+    inProcessBlock_.store(true);
+    const int delay = delayFrames_.load(std::memory_order_acquire);
+    if (delay != activeDelay_) {
+        // What is in the ring was delayed by the old amount; drop it so the new
+        // latency is exact from here on.
+        for (auto& channel : ring_) {
+            channel.fill(0.0f);
+        }
+        activeDelay_ = delay;
+    }
+    const float gain = gain_->get();
+    const int frames = buffer.getNumSamples();
+    const int channels = juce::jmin(buffer.getNumChannels(), static_cast<int>(ring_.size()));
+    constexpr int mask = ringFrames - 1;
+    for (int c = 0; c < channels; ++c) {
+        float* samples = buffer.getWritePointer(c);
+        auto& ring = ring_[static_cast<std::size_t>(c)];
+        for (int i = 0; i < frames; ++i) {
+            const int write = (writeIndex_ + i) & mask;
+            ring[static_cast<std::size_t>(write)] = samples[i];
+            samples[i] = ring[static_cast<std::size_t>((write - delay) & mask)] * gain;
+        }
+    }
+    writeIndex_ = (writeIndex_ + frames) & mask;
+    if (holdProcessBlock_->get()) {
+        // A slow plugin: the block stays in flight for restartWatch, so a host
+        // that must wait for it has something to wait for.
+        const auto end = std::chrono::steady_clock::now() + restartWatch;
+        while (std::chrono::steady_clock::now() < end) {
+        }
+    }
+    inProcessBlock_.store(false);
+}
+
+juce::AudioProcessorEditor* Processor::createEditor() {
+    return new juce::GenericAudioProcessorEditor(*this);
+}
+
+void Processor::getStateInformation(juce::MemoryBlock& destination) {
+    juce::MemoryOutputStream stream(destination, false);
+    stream.write(stateMagic, sizeof(stateMagic));
+    stream.writeInt(static_cast<int>(futureState_->get() ? futureStateVersion : stateVersion));
+    stream.writeFloat(gain_->get());
+    stream.writeByte(latency_->get() ? 1 : 0);
+    stream.writeByte(tail_->get() ? 1 : 0);
+}
+
+void Processor::setStateInformation(const void* data, int sizeInBytes) {
+    if (sizeInBytes < 0 || static_cast<std::size_t>(sizeInBytes) != stateSize ||
+        std::memcmp(data, stateMagic, sizeof(stateMagic)) != 0) {
+        return;
+    }
+    juce::MemoryInputStream stream(data, static_cast<std::size_t>(sizeInBytes), false);
+    stream.skipNextBytes(sizeof(stateMagic));
+    if (static_cast<std::uint32_t>(stream.readInt()) != stateVersion) {
+        return;  // a version this plugin does not know changes nothing
+    }
+    *gain_ = stream.readFloat();
+    *latency_ = stream.readByte() != 0;
+    *tail_ = stream.readByte() != 0;
+    if (watchRestore_->get()) {
+        watchForProcessBlock();
+        restorePending_.store(true);
+        triggerAsyncUpdate();
+    }
+}
+
+}  // namespace siann::test_plugin
+
+// The entry point every JUCE plugin wrapper links against.
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
+    return new siann::test_plugin::Processor();
+}

@@ -1,11 +1,12 @@
 #pragma once
 
 // Callback timing for siann-cli bench (architecture spec, "Production-level
-// criteria": an xrun is a deadline miss). CallbackTimer counts device
-// callbacks and those that took longer than their buffer period; TimedDevice
-// wraps any AudioDevice and times each callback around the inner one, so the
-// graph driver needs no change. Both are realtime-safe: the audio thread only
-// writes atomics, the control side only reads them.
+// criteria": an xrun is a deadline miss). The counter itself is
+// siann::rt::CallbackTimer, shared with the graph driver, which times every
+// callback into its own; TimedDevice wraps any AudioDevice, times each
+// callback around the inner one into the bench's timer and bounds the run in
+// device frames. Realtime-safe: the audio thread only writes atomics, the
+// control side only reads them.
 
 #include <atomic>
 #include <chrono>
@@ -15,52 +16,11 @@
 #include <utility>
 
 #include "siann/host/interfaces.hpp"
+#include "siann/rt/callback_timer.hpp"
 
 namespace siann::cli {
 
-class CallbackTimer {
-public:
-    // Audio thread. A callback of `frames` device frames at `deviceRate` that
-    // took longer than frames * 1e9 / deviceRate nanoseconds missed its
-    // deadline; exactly the period is not a miss. Without a device rate
-    // (deviceRate <= 0) there is no period: the callback is counted as
-    // unmeasured, never as on time.
-    void record(int frames, std::int64_t deviceRate, std::int64_t durationNanos) noexcept {
-        callbacks_.fetch_add(1, std::memory_order_relaxed);
-        if (deviceRate <= 0) {
-            unmeasured_.fetch_add(1, std::memory_order_relaxed);
-        } else if (durationNanos * deviceRate > static_cast<std::int64_t>(frames) * kNanosPerSecond) {
-            // Integer comparison: durationNanos / 1e9 > frames / deviceRate.
-            misses_.fetch_add(1, std::memory_order_relaxed);
-        }
-        std::int64_t longest = maxNanos_.load(std::memory_order_relaxed);
-        while (durationNanos > longest &&
-               !maxNanos_.compare_exchange_weak(longest, durationNanos, std::memory_order_relaxed)) {
-        }
-    }
-
-    std::uint64_t callbacks() const noexcept { return callbacks_.load(std::memory_order_relaxed); }
-    std::uint64_t misses() const noexcept { return misses_.load(std::memory_order_relaxed); }
-    // Callbacks recorded without a device rate, so not checked against a deadline.
-    std::uint64_t unmeasured() const noexcept { return unmeasured_.load(std::memory_order_relaxed); }
-    std::int64_t maxCallbackNanos() const noexcept { return maxNanos_.load(std::memory_order_relaxed); }
-
-    // Control side, while no callback runs.
-    void reset() noexcept {
-        callbacks_.store(0, std::memory_order_relaxed);
-        misses_.store(0, std::memory_order_relaxed);
-        unmeasured_.store(0, std::memory_order_relaxed);
-        maxNanos_.store(0, std::memory_order_relaxed);
-    }
-
-private:
-    static constexpr std::int64_t kNanosPerSecond = 1'000'000'000;
-
-    std::atomic<std::uint64_t> callbacks_{0};
-    std::atomic<std::uint64_t> misses_{0};
-    std::atomic<std::uint64_t> unmeasured_{0};
-    std::atomic<std::int64_t> maxNanos_{0};
-};
+using CallbackTimer = rt::CallbackTimer;
 
 // An AudioDevice decorator: times every callback into a CallbackTimer and
 // counts the device frames passed to the inner callback. Once the frame limit

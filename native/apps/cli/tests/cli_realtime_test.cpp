@@ -47,6 +47,17 @@ TEST_CASE("play runs a bundle on the fake device for a number of device frames",
     CHECK(played.json.find("framesPlayed")->asString() == std::to_string(framesFor(1, 48'000, 256)));
     CHECK(played.json.find("underruns")->asString() == "0");
     CHECK(isDecimalString(played.json.find("srcUnderruns")));
+    // The driver's deadline misses (spec: an xrun, separate from the underruns
+    // above) and its longest callback: where a hosted plugin's wait will show
+    // once the M4 plugin node runs inside a driver callback.
+    REQUIRE(isDecimalString(played.json.find("xruns")));
+    REQUIRE(played.json.find("maxCallbackMicros") != nullptr);
+    CHECK(played.json.find("maxCallbackMicros")->kind() == Value::Kind::number);
+    // The callbacks were timed by a running clock: the longest took time.
+    CHECK(played.json.find("maxCallbackMicros")->asNumber() > 0.0);
+    // Every callback had the device rate to be checked against.
+    REQUIRE(isDecimalString(played.json.find("unmeasuredCallbacks")));
+    CHECK(played.json.find("unmeasuredCallbacks")->asString() == "0");
     const Value* resampling = played.json.find("resampling");
     REQUIRE(resampling != nullptr);
     REQUIRE(resampling->kind() == Value::Kind::object);
@@ -82,6 +93,9 @@ TEST_CASE("record commits a take on a track", "[cli][realtime][record]") {
     REQUIRE(isDecimalString(recorded.json.find("frames")));
     CHECK(std::stoll(recorded.json.find("frames")->asString()) > 0);
     CHECK(recorded.json.find("overflows")->asString() == "0");
+    REQUIRE(isDecimalString(recorded.json.find("xruns")));
+    REQUIRE(recorded.json.find("maxCallbackMicros") != nullptr);
+    CHECK(recorded.json.find("maxCallbackMicros")->kind() == Value::Kind::number);
 
     const CliResult info = runJson({"info", bundle});
     REQUIRE(info.exitCode == 0);
@@ -106,6 +120,19 @@ TEST_CASE("record --seconds records exactly that many session frames from the tr
     const siann::model::Clip* clip = session.history().head().document.clip("clp_" + takeId);
     REQUIRE(clip != nullptr);
     CHECK(clip->length == 48'000);
+}
+
+// The device run's upper bound is in device frames: a device that reports no
+// rate must not make that bound "now" and cut the take short.
+TEST_CASE("record --seconds records every frame from a device that reports no rate", "[cli][realtime][record]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+    const CliResult recorded =
+        runJson({"record", bundle, "--track", "t1", "--device", "fake", "--seconds", "1", "--fake-report-rate", "none"});
+    INFO(siann::jcs::canonicalize(recorded.json));
+    REQUIRE(recorded.exitCode == 0);
+    CHECK(recorded.json.find("frames")->asString() == "48000");
 }
 
 TEST_CASE("record --fake-input counter records one consecutive run of the counter, and --ready-file reports it",
@@ -147,10 +174,71 @@ TEST_CASE("The fake device options need --device fake", "[cli][realtime][record]
     CHECK(usage(runJson({"record", bundle, "--track", "t1", "--fake-speed", "4", "--seconds", "1"})));
     CHECK(usage(runJson({"record", bundle, "--track", "t1", "--fake-input", "counter", "--seconds", "1"})));
     CHECK(usage(runJson({"play", bundle, "--fake-speed", "4", "--seconds", "1"})));
+    CHECK(usage(runJson({"play", bundle, "--fake-callback-nanos", "1000", "--seconds", "1"})));
+    CHECK(usage(runJson({"play", bundle, "--device", "fake", "--fake-callback-nanos", "0", "--seconds", "1"})));
+    // Capped: a step near INT64_MAX would overflow the deadline comparison.
+    CHECK(usage(runJson({"play", bundle, "--device", "fake", "--fake-callback-nanos", "9223372036854775807", "--seconds",
+                         "1"})));
+    CHECK(usage(runJson({"play", bundle, "--fake-report-rate", "none", "--seconds", "1"})));
+    CHECK(usage(runJson({"play", bundle, "--device", "fake", "--fake-report-rate", "half", "--seconds", "1"})));
+    // bench measures real callbacks: a fake clock would make its report a lie.
+    CHECK(usage(runJson({"bench", dir.str("Bench.siann"), "--tracks", "1", "--buffer", "256", "--seconds", "1", "--device",
+                         "fake", "--fake-callback-nanos", "1000"})));
+    CHECK(usage(runJson({"bench", dir.str("Bench.siann"), "--tracks", "1", "--buffer", "256", "--seconds", "1", "--device",
+                         "fake", "--fake-report-rate", "none"})));
     CHECK(usage(runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-speed", "0", "--seconds", "1"})));
     CHECK(usage(runJson({"record", bundle, "--track", "t1", "--device", "fake", "--fake-input", "noise", "--seconds",
                          "1"})));
     CHECK(runJson({"info", bundle}).json.find("pendingTakes")->asArray().empty());
+}
+
+// A known deadline miss driven through to the JSON: with --fake-callback-nanos
+// the driver times every callback with a clock that advances by that much per
+// reading, so each callback "takes" exactly that long. 20 ms against a 256-frame
+// period at 48 kHz (5.33 ms) is a miss every time; the misses are the callbacks,
+// 48128 frames played / 256, and the longest callback is the step.
+TEST_CASE("play reports a deadline miss on every callback the driver timed over its period",
+          "[cli][realtime][play]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+
+    const CliResult played = runJson(
+        {"play", bundle, "--device", "fake", "--seconds", "1", "--fake-callback-nanos", "20000000"});
+    INFO(siann::jcs::canonicalize(played.json));
+    REQUIRE(played.exitCode == 0);
+    const std::int64_t callbacks = framesFor(1, 48'000, 256) / 256;
+    CHECK(played.json.find("xruns")->asString() == std::to_string(callbacks));
+    CHECK(played.json.find("maxCallbackMicros")->asNumber() == 20'000.0);
+    CHECK(played.json.find("unmeasuredCallbacks")->asString() == "0");
+    CHECK(played.json.find("srcUnderruns")->asString() == "0");  // a deadline miss is not SRC underfill
+
+    // On time: a step under the period is never a miss.
+    const CliResult onTime =
+        runJson({"play", bundle, "--device", "fake", "--seconds", "1", "--fake-callback-nanos", "1000000"});
+    REQUIRE(onTime.exitCode == 0);
+    CHECK(onTime.json.find("xruns")->asString() == "0");
+    CHECK(onTime.json.find("maxCallbackMicros")->asNumber() == 1'000.0);
+}
+
+// A device that reports no sample rate gives the driver no period to check
+// against: every callback is counted as unmeasured, none as on time, so "0"
+// xruns never stands for "not checked". The run still plays for a second of
+// session frames (the driver, and the run length, fall back to the session rate).
+TEST_CASE("play reports callbacks it could not check against a deadline", "[cli][realtime][play]") {
+    TempDir dir;
+    const std::string bundle = dir.str("Song.siann");
+    createDemoBundle(dir, bundle);
+
+    const CliResult played =
+        runJson({"play", bundle, "--device", "fake", "--seconds", "1", "--fake-report-rate", "none"});
+    INFO(siann::jcs::canonicalize(played.json));
+    REQUIRE(played.exitCode == 0);
+    const std::int64_t callbacks = framesFor(1, 48'000, 256) / 256;
+    CHECK(played.json.find("framesPlayed")->asString() == std::to_string(framesFor(1, 48'000, 256)));
+    CHECK(played.json.find("unmeasuredCallbacks")->asString() == std::to_string(callbacks));
+    CHECK(played.json.find("xruns")->asString() == "0");
+    CHECK(played.json.find("deviceStatus")->find("sampleRate")->asNumber() == 0);
 }
 
 TEST_CASE("record and recover reject unknown tracks and takes", "[cli][realtime][record]") {

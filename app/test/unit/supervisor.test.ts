@@ -126,6 +126,16 @@ function last<T>(items: T[]): T {
   return items[items.length - 1]!;
 }
 
+test('arguments given as a function are read again for every launch', () => {
+  let window = 1;
+  const r = rig(BACKOFF, { args: () => ['--owner-window', String(window)] });
+  r.supervisor.start();
+  window = 2;
+  last(r.children).exit(1);
+  r.scheduler.fire(250);
+  assert.deepEqual(r.launches.map((launch) => launch.args), [['--owner-window', '1'], ['--owner-window', '2']]);
+});
+
 test('the ready line is parsed and emitted with port, token, mcpToken, sessionId and pid', async () => {
   const r = rig();
   r.supervisor.start();

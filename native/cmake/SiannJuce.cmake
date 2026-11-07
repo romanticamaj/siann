@@ -3,7 +3,9 @@
 include(FetchContent)
 enable_language(C)  # JUCE compiles some C sources
 
-set(JUCE_MODULES_ONLY ON CACHE BOOL "Only configure the JUCE modules" FORCE)
+# OFF: juce_add_plugin (the CI test plugin) lives in JUCEUtils.cmake, which the
+# modules-only configuration never includes. Costs one juceaide build per configure.
+set(JUCE_MODULES_ONLY OFF CACHE BOOL "Also load the JUCE CMake helpers" FORCE)
 FetchContent_Declare(
   juce
   URL https://github.com/juce-framework/JUCE/archive/be29c81492b6151c8ea8d14c840e1311963b3a83.tar.gz

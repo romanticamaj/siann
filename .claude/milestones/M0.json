@@ -26,7 +26,7 @@
     {
       "id": "macos-hands-on",
       "text": "Judge editor-window focus and Cmd-Tab behaviour on a real Mac.",
-      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour."
+      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour. Check, with an editor open: clicking the Electron window leaves the editor visible; Cmd-Tab lists the engine as an app and returns to it; Cmd-Tab to a third application shows the editor floating above it (the behaviour under judgement); minimise and restore the editor; Electron in fullscreen (the editor carries FullScreenAuxiliary, so it should join that space). Note while judging: the engine never calls [NSApp finishLaunching] (JUCE's loop runs without it), so record any activation, menu-bar or focus oddity that could stem from that. Record acceptable / acceptable only with conditional floating / unacceptable."
     },
     {
       "id": "plugin-set",
@@ -35,7 +35,7 @@
       "status": "resolved",
       "resolvedOn": "2026-11-06",
       "resolvedBy": "Fable consultation, delegated by the maintainer",
-      "resolution": "Windows VST3: TDR Nova (Tokyo Dawn Records; free, no account or licence server, has an editor, Precise/Insane quality modes report nonzero latency) at C:Program FilesCommon FilesVST3TDR Nova.vst3. macOS AU: TDR Nova AU from the same free installer at /Library/Audio/Plug-Ins/Components/TDR Nova.component (the maintainer installs it on the Mac). Fallback for either: TDR VOS SlickEQ. CI downloads no third-party plugins: the desktop job builds siann_test_plugin (JUCE; VST3 on all runners, AU on macOS) with a fixed declared latency switchable by a parameter and a versioned state blob, hosted through a compile-time path (SIANN_TEST_PLUGIN_VST3 / SIANN_TEST_PLUGIN_AU) so that test never skips; macOS CI also hosts Apple AUPeakLimiter as a foreign-vendor AU. Third-party state round-trips compare parameter values, not raw blobs. The third-party tests run only on the maintainer machines and gate m0-exit-plugins."
+      "resolution": "Windows VST3: TDR Nova (Tokyo Dawn Records; free, no account or licence server, has an editor, reports 184 frames of latency at 48 kHz) at C:\\Program Files\\Common Files\\VST3\\TDR Nova.vst3. macOS AU: TDR Nova AU from the same free installer at /Library/Audio/Plug-Ins/Components/TDR Nova.component (the maintainer installs it on the Mac). Fallback for either: TDR VOS SlickEQ. CI downloads no third-party plugins: the desktop job builds siann_test_plugin (JUCE; VST3 on all runners, AU on macOS) with a fixed declared latency switchable by a parameter and a versioned state blob, hosted through a compile-time path (SIANN_TEST_PLUGIN_VST3 / SIANN_TEST_PLUGIN_AU) so that test never skips; macOS CI also hosts Apple AUPeakLimiter as a foreign-vendor AU. Third-party state round-trips compare parameter values, not raw blobs. The third-party tests run only on the maintainer machines and gate m0-exit-plugins. Corrected 2026-11-07: Nova's latency does not change at runtime (184 frames in every mode, 4 values on each of its 75 parameters, no latency-change event), so the runtime latency change is proven on siann_test_plugin only; the third-party plugins prove load, state, reported latency against an impulse, and the editor."
     }
   ],
   "features": [
@@ -64,9 +64,10 @@
         "Plugin editor windows"
       ],
       "acceptance": [
-        "JucePluginHost implements PluginHost: scan, instantiate on the main thread, process on the audio thread, state get/set as blobs, latency and capability reporting.",
-        "Hosting tests load the maintainer VST3 (and AU on macOS) from SIANN_TEST_VST3 / SIANN_TEST_AU, and the CI-built siann_test_plugin, save and restore state, read latency (including a runtime latency change) and open and close the editor.",
-        "Windows editors are owned by the Electron window via GWLP_HWNDPARENT; macOS editors float and the engine activates itself."
+        "JucePluginHost implements PluginHost: scan, instantiate on the main thread, process on the audio thread with no SIANN lock (JUCE's wrapper locks inside processBlock are the accepted exception in the spec's \"Realtime rules and enforcement\", ADR-0018), state get/set as blobs, latency and capability reporting.",
+        "Hosting tests load the maintainer VST3 (and AU on macOS) from SIANN_TEST_VST3 / SIANN_TEST_AU and the CI-built siann_test_plugin; all save and restore state, read latency and open and close the editor. The runtime latency change, and the restart during playback, are proven on siann_test_plugin, whose latency is switched by a parameter; no third-party runtime latency change is required.",
+        "Windows editors are owned by the Electron window via GWLP_HWNDPARENT; macOS editors float and the engine activates itself.",
+        "The graph driver counts device callbacks over their period (xruns: slow callbacks, never device-reported xruns), the longest callback and callbacks it could not check, on the audio thread with atomics only; siann-cli play and record report them as xruns, maxCallbackMicros and unmeasuredCallbacks, and a known miss driven through --fake-callback-nanos reaches the JSON. In M0 no shipped path processes a hosted plugin (no graph node wraps a PluginInstance; siann-engine runs no device), so the counter does not yet show a plugin's wait: that holds once the M4 plugin node calls process() from a driver callback, and the protocol carries the three counters once the engine process runs a device (spec, \"Realtime rules and enforcement\"; ADR-0018 amendment)."
       ]
     },
     {
@@ -102,5 +103,5 @@
       "how": "CI notarization plus the maintainer's hands-on check (human gate)."
     }
   ],
-  "killCriterion": "No acceptable editor-window behaviour on macOS after two weeks: evaluate engine-in-main-process or Tracktion with the maintainer."
+  "killCriterion": "No acceptable editor-window behaviour on macOS after two weeks, with unconditional floating (NSFloatingWindowLevel) and conditional floating (float only while Electron or the engine is frontmost) both tried: evaluate engine-in-main-process or Tracktion with the maintainer."
 }

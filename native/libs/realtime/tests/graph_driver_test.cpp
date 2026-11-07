@@ -12,7 +12,9 @@
 #include "siann/graph/graph.hpp"
 #include "siann/graph/nodes.hpp"
 #include "siann/host/fake_audio_device.hpp"
+#include "siann/host/manual_audio_device.hpp"
 #include "siann/realtime/graph_driver.hpp"
+#include "siann/rt/callback_timer.hpp"
 #include "siann/rt/realtime_thread.hpp"
 
 using namespace siann;
@@ -305,4 +307,79 @@ TEST_CASE("Device blocks larger than the graph block size are processed in chunk
     REQUIRE(waitFor([&] { return driver.playhead() >= 256 * 10; }, &driver));
     driver.stop();
     CHECK(driver.playhead() % 256 == 0);
+}
+
+namespace {
+
+// A clock the test advances itself: every reading is `fakeStepNanos` later than
+// the previous one, so a callback timed between two readings lasts exactly one
+// step. No wall clock, no sleep.
+std::int64_t fakeNanos = 0;
+std::int64_t fakeStepNanos = 0;
+std::int64_t fakeClock() noexcept {
+    fakeNanos += fakeStepNanos;
+    return fakeNanos;
+}
+
+}  // namespace
+
+TEST_CASE("The driver counts deadline misses and the longest callback without allocating", "[driver][alloc][xrun]") {
+    // 64 frames at 48 kHz: a period of 1,333,333.3 ns. The spec's vocabulary:
+    // an xrun is a deadline miss, separate from disk underruns and srcUnderruns.
+    GraphDriver::Options options;
+    options.nowNanos = &fakeClock;
+    GraphDriver driver(options);
+    driver.publish(constantGraph(1.0f));
+    host::ManualAudioDevice device;
+    driver.play();
+    driver.start(device, config(64));
+    const rt::CallbackTimer& timing = driver.callbackTiming();
+    CHECK(timing.callbacks() == 0);
+    CHECK(timing.misses() == 0);
+
+    const auto before = rt::allocationViolations();
+    fakeStepNanos = 1'000'000;  // on time
+    device.pump(3);
+    CHECK(timing.callbacks() == 3);
+    CHECK(timing.misses() == 0);
+    CHECK(timing.maxCallbackNanos() == 1'000'000);
+
+    fakeStepNanos = 1'333'333;  // the last nanosecond that is not a miss
+    device.pump(1);
+    CHECK(timing.misses() == 0);
+    fakeStepNanos = 1'333'334;  // one past the period
+    device.pump(1);
+    CHECK(timing.misses() == 1);
+
+    fakeStepNanos = 5'000'000;  // a hosted plugin's restart, say
+    device.pump(2);
+    CHECK(timing.callbacks() == 7);
+    CHECK(timing.misses() == 3);
+    CHECK(timing.maxCallbackNanos() == 5'000'000);
+    CHECK(timing.unmeasured() == 0);
+    CHECK(rt::allocationViolations() == before);
+    CHECK(driver.srcUnderruns() == 0);  // a deadline miss is not SRC underfill
+    driver.stop();
+
+    // start() begins a new count.
+    driver.start(device, config(64));
+    CHECK(timing.callbacks() == 0);
+    CHECK(timing.misses() == 0);
+    CHECK(timing.maxCallbackNanos() == 0);
+    driver.stop();
+}
+
+TEST_CASE("The driver times callbacks with the steady clock by default", "[driver][xrun]") {
+    GraphDriver driver({});
+    driver.publish(constantGraph(1.0f));
+    host::ManualAudioDevice device;
+    driver.play();
+    driver.start(device, config(512));  // eight graph blocks per callback: measurably long
+    device.pump(64);
+    CHECK(driver.callbackTiming().callbacks() == 64);
+    CHECK(driver.callbackTiming().unmeasured() == 0);
+    // A real clock: the longest of 64 callbacks took time. A clock that stood
+    // still (or returned a constant) would report 0 here.
+    CHECK(driver.callbackTiming().maxCallbackNanos() > 0);
+    driver.stop();
 }
