@@ -501,8 +501,17 @@ TEST_CASE("clap host: a restart during playback keeps deactivate and process apa
     CHECK(instance->control().getParameter(parameterIndex(*instance, "overlapped")) < 0.5);
     CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
     CHECK(measureDelay(*instance).frames == 512);
-    CHECK(nextReportedLatency(pump, events) == 512);
-    CHECK(nextEvent(pump, events, host::PluginEvent::Kind::restartRequested).has_value());
+    int reportedLatency = -1;
+    bool restartReported = false;
+    host::PluginEvent event;
+    while (events.pop(event)) {
+        if (event.kind == host::PluginEvent::Kind::latencyChanged) {
+            reportedLatency = event.latencyFrames;
+        }
+        restartReported = restartReported || event.kind == host::PluginEvent::Kind::restartRequested;
+    }
+    CHECK(reportedLatency == 512);
+    CHECK(restartReported);
     instance->control().setEventSink(nullptr);
 }
 

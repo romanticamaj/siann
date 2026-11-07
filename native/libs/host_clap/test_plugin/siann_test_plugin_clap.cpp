@@ -630,4 +630,7 @@ const void* entryGetFactory(const char* id) {
 
 }  // namespace
 
-extern "C" CLAP_EXPORT const clap_plugin_entry_t clap_entry = {CLAP_VERSION_INIT, entryInit, entryDeinit, entryGetFactory};
+// clap/entry.h declares it extern, which is what gives this const its linkage.
+extern "C" {
+CLAP_EXPORT const clap_plugin_entry_t clap_entry = {CLAP_VERSION_INIT, entryInit, entryDeinit, entryGetFactory};
+}
