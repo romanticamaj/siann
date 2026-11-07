@@ -22,21 +22,25 @@ point here; its first run takes the listed section into its features.
 
 ## Before M4: plugin hosting (from PR #48)
 
-- The >31-channel guard is untested.
-- Nothing checks mechanically that no SIANN lock is taken on the plugin paths.
-- Per-instance process timing is not measured.
-- Consolidate bench's `TimedDevice` with the shared callback timer.
-- ADR-0018 condition 1 ("never both at once") has no test yet.
-- ADR-0018 condition 4 depends on the engine running a device, which no feature
-  owns. `m4-crash-recovery` implies it; give it an owner.
-- `startInBackground` now registers every engine launch with LaunchServices about
-  110 ms after spawn. Its startup cost is unmeasured. The shipping `LSUIElement`
-  bundle stays UIElement until an editor opens.
-- Under an X server with no window manager, opening an editor kills the engine with
-  a BadAtom error. CI runs openbox. Decide whether the engine should survive this.
-- Local builds: MSVC's localized `/showIncludes` is not parsed, so a changed commit
-  header does not rebuild `about.cpp`. Set `CMAKE_CL_SHOWINCLUDES_PREFIX` or configure
-  under an English code page.
+Decided by Fable, delegated by the maintainer, 2026-11-07. Taken into M4's features:
+the engine running a device (new `m4-engine-device`, with ADR-0018 condition 4),
+condition 1's test, per-instance timing, the no-lock check and the >31-channel guard.
+
+Closed:
+
+- Bench's `TimedDevice`: it already wraps `rt::CallbackTimer`, and the engine reports
+  from the driver's own timer, so there is no second consumer.
+- An X server with no window manager kills an opened editor with BadAtom. That is a
+  CI artifact, not a product target, and CI runs openbox.
+Deferred:
+
+- MSVC's localized `/showIncludes` is not parsed, so a changed commit header does not
+  rebuild `about.cpp` locally. `VSLANG=1033` had no effect on this machine's compiler.
+  Workaround: delete `about.cpp.obj`. CI is not affected.
+
+- `startInBackground` registers every engine launch with LaunchServices about 110 ms
+  after spawn. Measure engine ready time with and without it on `siann-macos`; it
+  becomes a feature only if the cost is over 100 ms.
 
 ## Before M6b: recording (from PR #46)
 

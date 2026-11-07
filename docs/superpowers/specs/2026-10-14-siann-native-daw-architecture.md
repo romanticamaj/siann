@@ -2028,7 +2028,7 @@ Not used: Taskflow (allocates at runtime).
 - A core-only build with no JUCE present runs on every CI job.
 - `app/` is its own npm package with pinned dependencies (Electron, TypeScript,
   Playwright); the root bridge package stays dependency-free. An `app` CI job on
-  windows-latest, macos-latest and ubuntu-latest (under `xvfb-run`) builds the
+  windows-latest, macos-latest and ubuntu-latest (under `xvfb-run` with openbox) builds the
   core-only `siann-engine` target, runs `npm ci` and the Playwright Electron tests
   in `app/` with `SIANN_ENGINE_EXE` pointing at the built engine; locally
   `node scripts/check-all.js --app` runs the same after the native step.
