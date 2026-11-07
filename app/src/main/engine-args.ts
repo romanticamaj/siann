@@ -8,8 +8,6 @@ export interface EngineLaunch {
   platform: NodeJS.Platform;
   // BrowserWindow.getNativeWindowHandle(); null with no window.
   windowHandle: Buffer | null;
-  // SIANN_OPEN_EDITOR: a plugin bundle whose editor the engine opens at launch.
-  openEditor?: string;
   // The shell's restart backoff: an engine retries its device under it, because
   // the shell restarts only an engine that exits.
   backoff?: Pick<Backoff, 'initialMs' | 'maxMs' | 'resetAfterMs'>;
@@ -28,7 +26,6 @@ export function engineArgs(launch: EngineLaunch): string[] {
   const args = ['--session', launch.session];
   const owner = ownerWindow(launch.platform, launch.windowHandle);
   if (owner !== null) args.push('--owner-window', owner);
-  if (launch.openEditor) args.push('--open-editor', launch.openEditor);
   if (launch.backoff) {
     const { initialMs, maxMs, resetAfterMs } = launch.backoff;
     args.push('--device-backoff', `${initialMs}:${maxMs}:${resetAfterMs}`);

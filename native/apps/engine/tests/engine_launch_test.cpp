@@ -870,6 +870,7 @@ TEST_CASE("a CLAP plugin on the desktop target has no editor window yet", "[engi
 
 TEST_CASE("the editor belongs to the window named by --owner-window, and the JUCE loop runs it",
           "[engine][launch][juce]") {
+    ix::initNetSystem();
     TempDir dir;
     const OwnerWindow owner;
     PipedProcess child(SIANN_ENGINE_EXE,
