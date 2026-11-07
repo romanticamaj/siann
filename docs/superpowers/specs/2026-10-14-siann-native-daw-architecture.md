@@ -720,7 +720,12 @@ records who that is:
   plugin in its graph until the M4 plugin node). The only callers of
   `JucePluginInstance::process` are the hosting tests, on a realtime-marked
   thread; `--open-editor` instantiates a plugin and never processes it. The
-  exception is therefore latent in M0 and binds the M4 plugin node.
+  exception is therefore latent in M0 and binds the M4 plugin node. Since
+  m4-plugin-node the `PluginNode` processes hosted plugins in the driver's
+  callback, timed into a per-instance `rt::CallbackTimer`, `--open-editor` is gone
+  (editors open through `plugin.open_editor`), and a ctest check
+  (`SiannNoLocks.cmake`) fails when `plugin_node.cpp`, `juce_plugin_host.cpp` or
+  `clap_plugin_host.cpp` names a lock.
 
   The exception is accepted for M0 (2026-11-07, Fable, delegated by the maintainer;
   ADR-0018, amended the same day after review). Its conditions:
@@ -2639,8 +2644,9 @@ reported latency against the delay of an impulse; the runtime latency change is
 proven on `siann_test_plugin` only, because TDR Nova has none to drive: every value
 tried on all 75 of its parameters left it at 184 frames at 48 kHz, its Quality
 modes included. The engine's `main()` runs `MainThreadLoop` in a `SIANN_WITH_JUCE`
-build, and `--owner-window` and `--open-editor` carry the Electron window handle
-and the plugin (see "Process model"); a launch test checks the owner across
+build, and `--owner-window` carries the Electron window handle; since M4 the
+plugin comes through `plugin.instantiate` and `plugin.open_editor` (see "Process
+model"); a launch test checks the owner across
 processes and an Electron test checks it is the real window. The macOS and Linux
 halves count only once the desktop CI matrix is green on the pull request: they
 cannot be built on the Windows machine this was written on.
