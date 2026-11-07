@@ -1,6 +1,7 @@
 add_library(siann_graph
   src/graph.cpp
   src/nodes.cpp
+  src/plugin_node.cpp
 )
 add_library(siann::graph ALIAS siann_graph)
 target_include_directories(siann_graph PUBLIC include)
