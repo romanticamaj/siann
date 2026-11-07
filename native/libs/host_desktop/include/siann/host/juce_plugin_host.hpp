@@ -5,31 +5,18 @@
 // JUCE. Everything here runs on the main thread except what interfaces.hpp says
 // otherwise.
 //
-// State blobs are an envelope around the plugin's own state, little endian:
-// magic "SIANNPS1", version u32, uid length u32, uid, payload length u64, payload.
+// State blobs are the envelope of state_envelope.hpp.
 
 #include <chrono>
 #include <functional>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "siann/host/interfaces.hpp"
+#include "siann/host/plugin_error.hpp"
 
 namespace siann::host {
-
-class PluginError : public std::runtime_error {
-public:
-    PluginError(std::string code, const std::string& message) : std::runtime_error(message), code_(std::move(code)) {}
-
-    // One of: plugin_not_found, plugin_load_failed, bad_state, bad_parameter,
-    // editor_failed.
-    const std::string& code() const noexcept { return code_; }
-
-private:
-    std::string code_;
-};
 
 // The process's main thread as JUCE's message thread (architecture spec,
 // "Process model"). Construct it on the main thread before any plugin and keep

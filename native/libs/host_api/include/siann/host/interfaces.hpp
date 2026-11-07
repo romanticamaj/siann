@@ -4,16 +4,18 @@
 // interface"). Pure interfaces with no implementation: siann-host-desktop
 // (JUCE) and siann-host-headless implement them and are linked only into
 // engine executables. The M1 draft, refined by the M0 plugin-hosting spike; M2
-// and M4 extend it.
+// and M4 extend it. The one body is setBlocksComing's.
 //
 // Thread contract, as the spec states it: process() runs on the audio thread
 // only and must not allocate, lock, log, throw or do I/O, with one exception the
 // spec records: the locks a format's hosting wrapper takes around the plugin (see
 // "Locks inside a hosted plugin's processBlock"). scan, instantiate and all of
 // PluginControl run on the main thread, getState with processing paused where the
-// format requires it (VST3 and AU do not). capabilities, latencyFrames and
-// tailFrames may be read from any thread and never enter the plugin. Plugin events
-// arrive on any thread, see
+// format requires it (VST3, AU and CLAP do not: a CLAP getState with a value still
+// on its way waits for a block to deliver it while blocks are coming, see
+// setBlocksComing, and pauses to flush it only when none is). capabilities,
+// latencyFrames and tailFrames may be read from any thread and never enter the
+// plugin. Plugin events arrive on any thread, see
 // setEventSink. Control-only calls are a separate interface from process() (spec,
 // "siann-host-api"): PluginControl, which the audio thread has no use for.
 
@@ -124,9 +126,9 @@ public:
     virtual ~PluginControl() = default;
     virtual std::vector<std::uint8_t> getState() = 0;
     // Throws, with parameters unchanged, on a blob that getState of this plugin
-    // did not produce (wrong format version, wrong plugin, truncated). What a
-    // plugin does with its own payload stays between it and the blob: a plugin
-    // that refuses it keeps its parameters, and no format reports that refusal.
+    // did not produce (wrong format version, wrong plugin, truncated). A plugin
+    // that refuses its own payload keeps its parameters: VST3 and AU report nothing
+    // of it, CLAP does and the host throws bad_state.
     // During playback, a process() call in flight finishes first and later ones pass
     // their input through until this returns, so no value set before it lands after
     // it. process() does not wait for this; this waits for the block in flight.
@@ -162,8 +164,14 @@ public:
     virtual int tailFrames() const = 0;
     // The audio thread, or the offline render thread during bounce and export;
     // never both at once (the graph moves between the drivers, spec "Realtime
-    // data flow"). M0 discards `events`.
+    // data flow"). CLAP delivers `events` at their offsets; JUCE's formats discard them.
     virtual void process(const AudioBufferView& input, const AudioBufferView& output, EventList events) noexcept = 0;
+    // Main thread, from the driver that calls process(): true when its callback
+    // source starts, false once it has stopped. A format that waits for a block to
+    // deliver a value (CLAP) waits while this is true and pauses once it is false;
+    // told nothing, it guesses from the last block. The one method with a body:
+    // formats that never wait for a block ignore it.
+    virtual void setBlocksComing(bool /*coming*/) {}
     // Main thread. Lives as long as the instance.
     virtual PluginControl& control() = 0;
 };

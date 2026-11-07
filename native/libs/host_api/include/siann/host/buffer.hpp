@@ -26,11 +26,16 @@ struct AudioBufferView {
     }
 };
 
-// Timestamped events inside one block (MIDI, parameter changes). M1 carries no
-// events yet; the shape is fixed now so node and host signatures stay stable.
+enum class BlockEventKind : std::uint32_t {
+    none = 0,
+    parameterValue = 1,  // data0 is the parameter's index, value its normalized value
+};
+
+// Timestamped events inside one block (MIDI, parameter changes). The shape is fixed
+// so node and host signatures stay stable; a kind adds what its fields mean.
 struct BlockEvent {
     int sampleOffset = 0;
-    std::uint32_t kind = 0;
+    BlockEventKind kind = BlockEventKind::none;
     std::uint32_t data0 = 0;
     std::uint32_t data1 = 0;
     double value = 0.0;

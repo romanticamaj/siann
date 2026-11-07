@@ -348,7 +348,7 @@ gesture boundaries (see "Gestures").
 | Thread | Does | May block on |
 |---|---|---|
 | audio | processes the live graph; pushes outboxes | nothing of SIANN's; inside a hosted plugin's `processBlock`, JUCE's wrapper locks, held by the main thread (the exception under "Realtime rules and enforcement") |
-| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block) |
+| main | JUCE message loop; plugin instantiate, destroy, state, editors; audio and MIDI device open, start and stop | the audio callback exiting, inside `AudioDevice::stop()`; the block in flight, inside `PluginControl::setState` (`ProcessingPause`, at most one block); the same, inside `ClapPluginHost::runMainThreadCallbacks`, for a CLAP plugin's restart (deactivate and activate) and for a params flush when no block is coming (the driver has said so with `PluginInstance::setBlocksComing(false)`, or, told nothing, none has come for 50 ms or four block periods, whichever is longer); the next block, inside a CLAP `getState` with a value still on its way (no pause) |
 | command | validates, applies and journals commands; publishes documents; asks for compiles; installs graphs through the driver | journal and checkpoint I/O |
 | compiler | builds `PreparedGraph` from an immutable document and pinned instances | the main thread, for instantiation, with a timeout |
 | control dispatcher | gestures, overlays, `paramInbox`, meters to the protocol | nothing outside its own inbox |
@@ -364,7 +364,9 @@ gesture boundaries (see "Gestures").
   never synchronous calls. Device control runs on the main thread (JUCE and ASIO
   expect that); the command thread asks for it and continues on the completion.
 - The blocking edges are compiler → main (instantiation), main → audio
-  callback (inside `stop()`), main → audio callback (one block, inside `setState`),
+  callback (inside `stop()`), main → audio callback (one block, inside `setState`,
+  and inside a CLAP plugin's restart or idle params flush), main → audio callback
+  (the next block, inside a CLAP `getState` with a value still on its way; no pause),
   protocol → command (an MCP HTTP request waits for
   its answer, with a timeout; a full inbox is `queue_full` at once) and, with a
   hosted plugin in the graph, audio callback → main: inside `processBlock` the
@@ -373,7 +375,8 @@ gesture boundaries (see "Gestures").
   holds while running the listeners of a parameter it edits. The command thread
   never waits on the protocol thread. The audio ↔ main pair is the one two-way edge.
   The argument that no cycle closes: the main thread waits for the audio thread
-  only in `AudioDevice::stop()` and `ProcessingPause`. It holds `processMutex`
+  only in `AudioDevice::stop()`, `ProcessingPause` and a CLAP `getState`'s wait for
+  a block (`ClapPluginHost` takes no lock the audio thread could wait on). It holds `processMutex`
   inside JUCE's `reset`, `prepareToPlay`, `releaseResources`,
   `updateMidiMappings` and `isBusesLayoutSupported`, and SIANN's code can run there: a plugin that changes its
   latency in `prepareToPlay` makes JUCE's client wrapper ask for a `kLatencyChanged`
@@ -752,7 +755,9 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
   to the command thread through `pluginEventRt` or `pluginEventAny`, and triggers a recompile with
-  state migration.
+  state migration. CLAP's `latency.changed` is a main-thread call and takes effect only
+  after the host deactivates and reactivates the plugin, during which process passes
+  input through.
 - A global compensation limit (configurable) bounds delay line memory. Paths above
   the limit are flagged to the user and agents; they are not silently misaligned.
 - Tests: a built-in `FakeLatency` node with settable and changeable latency; null
@@ -765,7 +770,7 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
 | Target | Precision |
 |---|---|
 | Built-in DSP | Sample-accurate (per-sample ramps) |
-| CLAP plugins | Sample-accurate (events carry sample offsets) |
+| CLAP plugins | Sample-accurate (events carry sample offsets), up to 1024 events a block beyond one per parameter; past that, a parameter's newest value lands at the start of the next block |
 | VST3 plugins | v1 through JUCE: block-accurate. Later option: a direct VST3 host path passing `IParameterChanges` with sample offsets |
 | AU plugins | Block-accurate (with sub-block splitting as a later option) |
 
@@ -1539,7 +1544,25 @@ The interfaces below are defined in `siann-host-api`.
 Shared by both targets:
 
 - `ClapPluginHost` via the CLAP SDK. CLAP is the only format available in both
-  builds, so it is implemented first in M4.
+  builds, so it is implemented first in M4. CLAP does not require a pause for
+  `getState`: `state.save` is a main-thread call that may run while the plugin
+  processes, and a value set just before reaches the plugin by its next `process`.
+  `ClapPluginHost::getState` never pauses while blocks are coming, so a save during
+  playback passes no block dry. A value set just before it still lands in the blob:
+  while blocks are coming, `getState` waits for a block to take the value and for
+  that block to finish (about one block period); when none is coming, it runs
+  `params.flush` under a pause, which then holds out no block. Whether blocks are
+  coming is the driver's word: the one that calls `process` says
+  `PluginInstance::setBlocksComing(true)` when its callback source starts and
+  `false` once it has stopped, so a stalled callback (an xrun, a debugger) waits
+  rather than pauses. Told nothing, the host guesses from the last block that
+  reached the plugin: blocks count as coming while it is within 50 ms or four block
+  periods, whichever is longer, and a stall past that can see one block pass dry
+  while a flush runs. A block that comes but does not reach the plugin (it has not
+  started processing) leaves the value to the flush.
+  A block carries the caller's parameter events, up to 1024 beyond one per
+  parameter; past that, the newest value of each parameter left over is delivered
+  at offset 0 of the next block, and is what `getParameter` reads meanwhile.
 - `MediaReader` via dr_libs / libFLAC etc. (not JUCE), so media reading is identical
   everywhere.
 
@@ -1550,7 +1573,9 @@ Shared by both targets:
 - Each method states its thread: `process` on the audio thread or the offline render
   thread, never both at once; `instantiate`,
   `setState`, `openEditor` on the main thread; `getState` on the main thread with
-  processing paused where the format requires it.
+  processing paused where the format requires it; `setBlocksComing` on the main
+  thread, from the driver that calls `process` (when its callback source starts and
+  after it stops; a format that never waits for a block ignores it).
 - Plugin-originated events (parameter edits from editors, latency changes, restart
   requests) arrive on arbitrary threads and go into `pluginEventAny`.
 - The interface is message-shaped and never exposes raw pointers into plugin
@@ -1980,7 +2005,7 @@ before adoption, including transitive dependencies.
 | Desktop audio devices, VST3/AU hosting, editors | JUCE 9.0.3 (verified current major on 2026-10-22) | AGPLv3 (ADR-0017) |
 | ASIO | Steinberg ASIO SDK, bundled with JUCE 9 | GPLv3 option since October 2025; shipped (ADR-0017) |
 | VST3 | Steinberg VST3 SDK (via JUCE) | MIT since VST 3.8 |
-| CLAP hosting | CLAP SDK | MIT |
+| CLAP hosting | CLAP SDK 1.2.10, first adopted in M4 by m4-clap-host | MIT |
 | LV2 hosting (headless) | lilv, serd, sord | ISC |
 | Media decoding | dr_libs, libFLAC, libvorbis/libogg | public domain/MIT-0, BSD |
 | Resampling (offline and device-side realtime) | r8brain-free-src; libsamplerate as realtime fallback | MIT; BSD-2 |
