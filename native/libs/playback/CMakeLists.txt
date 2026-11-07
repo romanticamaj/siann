@@ -1,10 +1,12 @@
 add_library(siann_playback
   src/audition.cpp
   src/playback_engine.cpp
+  src/plugin_instances.cpp
 )
 add_library(siann::playback ALIAS siann_playback)
 target_include_directories(siann_playback PUBLIC include)
-target_link_libraries(siann_playback PUBLIC siann::engine siann::realtime siann::session siann::media siann::host_api)
+target_link_libraries(siann_playback PUBLIC siann::engine siann::realtime siann::session siann::media siann::host_api
+                      siann::host_common siann::io)
 target_compile_features(siann_playback PUBLIC cxx_std_20)
 siann_apply_compile_options(siann_playback)
 

@@ -5,7 +5,7 @@
 #include <chrono>
 #include <thread>
 
-#include "live_rig.hpp"
+#include "support/live_rig.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/host/clap_plugin_host.hpp"
@@ -143,7 +143,7 @@ TEST_CASE("plugin table: a plugin that cannot load passes audio through and repo
     CHECK(live.engine.plugins().instance("slt_gone") == nullptr);
     // The slot keeps its state blob in the document and the track sounds dry.
     CHECK(f.doc().pluginSlot("slt_gone")->stateBlob.has_value());
-    CHECK(matches(live, offline(f.doc(), f.bundle(), framesOf(live)), 0, live.blockCount()));
+    CHECK(matches(live, offline(f.doc(), f.bundle(), framesOf(live)), 1, live.blockCount()));  // after the rise
 }
 
 TEST_CASE("plugin table: a format without a host is missing with no_plugin_host", "[playback][plugin]") {
@@ -247,17 +247,28 @@ TEST_CASE("plugin table: a full event queue resyncs the entry on the next tick",
     host::ClapPluginHost host;
     f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
     PlaybackOptions options = pluginOptions(host);
-    options.pluginEventCapacity = 1;
+    options.pluginEventCapacity = 2;  // the smallest queue
     Live live(f.session, options);
     pump(live, host, 2);
     host::PluginInstance* instance = live.engine.plugins().instance("slt_1");
-    // A restart to a new latency reports restartRequested and latencyChanged: two events.
-    instance->control().setParameter(parameterIndex(*instance, "latency"), 1.0);
-    REQUIRE(eventually([&] {
-        pump(live, host, 1);
-        return live.engine.plugins().resyncs() >= 1;
-    }));
-    CHECK(live.engine.plugins().status("slt_1")->latencyFrames == 512);
+    // Each restart to a new latency reports restartRequested and latencyChanged.
+    // Two restarts before the engine's next tick overflow the queue.
+    const int latency = parameterIndex(*instance, "latency");
+    for (const double value : {1.0, 0.0}) {
+        instance->control().setParameter(latency, value);
+        const int wanted = value > 0.5 ? 512 : 64;
+        REQUIRE(eventually([&] {
+            live.device.pumpAll(1, live.out);
+            host.runMainThreadCallbacks();
+            return instance->latencyFrames() == wanted;
+        }));
+    }
+    CHECK(live.engine.plugins().resyncs() == 0);
+    live.engine.tick();
+    CHECK(live.engine.plugins().resyncs() == 1);
+    CHECK(live.engine.plugins().status("slt_1")->latencyFrames == 64);
+    live.engine.tick();
+    CHECK(live.engine.plugins().resyncs() == 1);  // the flag is cleared
 }
 
 TEST_CASE("plugin table: holdProcessBlock is an xrun of the driver and of that instance only", "[playback][plugin][timing]") {
