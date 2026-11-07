@@ -29,6 +29,7 @@ test('model fixture hashes are reproduced by the Node hash code', () => {
     ...document.media.map((entity) => ({ type: 'media', entity })),
     ...document.tracks.map((entity) => ({ type: 'track', entity })),
     ...document.clips.map((entity) => ({ type: 'clip', entity })),
+    ...document.pluginSlots.map((entity) => ({ type: 'plugin_slot', entity })),
   ];
   for (const { type, entity } of entities) {
     const expected = fixture.entityHashes.find((leaf) => leaf.type === type && leaf.id === entity.id);
@@ -36,6 +37,24 @@ test('model fixture hashes are reproduced by the Node hash code', () => {
     assert.equal(sha256Jcs(entity), expected.entityHash, `${type}:${entity.id}`);
   }
   assert.equal(documentHash(fixture.entityHashes), fixture.documentHash);
+});
+
+// Hashes from the M1 fixture, before plugin slots: a track without inserts omits
+// the field, so every M1 to M3 document keeps its hashes.
+test('tracks without inserts keep their M1 entity hashes', () => {
+  const fixture = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE, 'utf8'));
+  const m1 = {
+    'trk-vox': 'sha256:9ce55936e8015ecb36ee95f7fd2ac4e615e609185b4f085ff279c227b14dbec1',
+    trk_drums: 'sha256:6dd8852b81ea711a6e90c8ab1528024d52c6543eef3357e4bc36947b758ef426',
+  };
+  for (const [id, hash] of Object.entries(m1)) {
+    const track = fixture.document.tracks.find((entity) => entity.id === id);
+    assert.equal(track.inserts, undefined, id);
+    assert.equal(fixture.entityHashes.find((leaf) => leaf.type === 'track' && leaf.id === id).entityHash, hash, id);
+  }
+  const bass = fixture.document.tracks.find((entity) => entity.id === 'trk_bass');
+  assert.deepEqual(bass.inserts, ['slt_eq']);
+  assert.equal(fixture.document.pluginSlots[0].schema, 'siann.entity.plugin_slot.v1');
 });
 
 test('time conversions agree with hand-checked values', () => {

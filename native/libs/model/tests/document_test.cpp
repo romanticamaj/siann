@@ -19,6 +19,7 @@ using siann::model::EntityType;
 using siann::model::Gain;
 using siann::model::Media;
 using siann::model::ModelError;
+using siann::model::PluginSlot;
 using siann::model::Track;
 using siann::time::Position;
 
@@ -66,6 +67,23 @@ Document addTrack(const Document& doc, Track t) {
     return doc.withTrack(std::move(t)).withRoot(std::move(root));
 }
 
+PluginSlot slot(std::string id, std::string trackId) {
+    PluginSlot p;
+    p.id = std::move(id);
+    p.trackId = std::move(trackId);
+    p.format = "clap";
+    p.uid = "com.siann.test-plugin";
+    p.name = "Test";
+    return p;
+}
+
+// A slot must also be listed in its track's inserts.
+Document addSlot(const Document& doc, PluginSlot p) {
+    Track t = *doc.track(p.trackId);
+    t.inserts.push_back(p.id);
+    return doc.withPluginSlot(std::move(p)).withTrack(std::move(t));
+}
+
 std::vector<std::string> codes(const Document& doc) {
     std::vector<std::string> out;
     for (const auto& issue : doc.validate()) {
@@ -94,10 +112,11 @@ TEST_CASE("The shared fixture document gives the Node bridge's hashes", "[model]
     for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
         const std::string& type = leaf.find("type")->asString();
         const std::string& id = leaf.find("id")->asString();
-        const EntityType entityType = type == "root"    ? EntityType::root
-                                      : type == "media" ? EntityType::media
-                                      : type == "track" ? EntityType::track
-                                                        : EntityType::clip;
+        const EntityType entityType = type == "root"          ? EntityType::root
+                                      : type == "media"       ? EntityType::media
+                                      : type == "track"       ? EntityType::track
+                                      : type == "plugin_slot" ? EntityType::plugin_slot
+                                                              : EntityType::clip;
         INFO(type << ":" << id);
         CHECK(formatHash(doc.entityHash(EntityRef{entityType, id})) == leaf.find("entityHash")->asString());
     }
