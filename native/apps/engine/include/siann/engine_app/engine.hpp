@@ -54,4 +54,12 @@ inline constexpr std::string_view kReadySchema = "siann.engine.ready.v0";
 int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostream& err,
               const std::atomic<bool>* stop);
 
+// The engine raises no dialog when it crashes (spec, "Process model", Crash;
+// m4-crash-recovery): on Windows it adds SEM_FAILCRITICALERRORS and
+// SEM_NOGPFAULTERRORBOX to the process's error mode (keeping the flags already
+// set) and clears _WRITE_ABORT_MSG and _CALL_REPORTFAULT from the CRT's abort
+// behaviour, so a plugin's crash ends the process at once and the shell restarts
+// it. main() calls it first, before any plugin loads. Elsewhere it does nothing.
+void disableCrashDialogs();
+
 }  // namespace siann::engine_app
