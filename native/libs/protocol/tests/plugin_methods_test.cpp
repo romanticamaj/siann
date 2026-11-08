@@ -490,6 +490,7 @@ TEST_CASE("engine.status carries plugins[] with nulls for a missing plugin", "[p
     running.maxCallbackMicros = 20'123.5;
     running.unmeasuredCallbacks = 0;
     running.midiOutputOverflows = 2;
+    running.midiOutputSysex = 3;
     PluginStatus missing;
     missing.slotId = "slt_2";
     missing.trackId = "trk_1";
@@ -509,6 +510,7 @@ TEST_CASE("engine.status carries plugins[] with nulls for a missing plugin", "[p
     CHECK(at(a, "maxCallbackMicros").asNumber() == 20'123.5);
     CHECK(at(a, "unmeasuredCallbacks").asString() == "0");
     CHECK(at(a, "midiOutputOverflows").asString() == "2");
+    CHECK(at(a, "midiOutputSysex").asString() == "3");
     CHECK(at(a, "latencyFrames").asNumber() == 64);
     CHECK(at(at(a, "capabilities"), "editor").asBool());
     CHECK(a.find("error") == nullptr);
@@ -516,7 +518,7 @@ TEST_CASE("engine.status carries plugins[] with nulls for a missing plugin", "[p
     CHECK(at(b, "state").asString() == "missing");
     CHECK(at(at(b, "error"), "code").asString() == "plugin_not_found");
     for (const char* key : {"capabilities", "latencyFrames", "tailFrames", "callbacks", "xruns", "maxCallbackMicros",
-                            "unmeasuredCallbacks", "midiOutputOverflows"}) {
+                            "unmeasuredCallbacks", "midiOutputOverflows", "midiOutputSysex"}) {
         INFO(key);
         CHECK(at(b, key).kind() == Value::Kind::null);
     }

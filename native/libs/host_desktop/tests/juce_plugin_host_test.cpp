@@ -103,26 +103,6 @@ std::optional<std::string> environment(const char* name) {
     return result;
 }
 
-// Sets an environment variable for the length of a scope.
-class ScopedEnvironment {
-public:
-    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
-    ~ScopedEnvironment() { set(""); }
-    ScopedEnvironment(const ScopedEnvironment&) = delete;
-    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
-
-private:
-    void set(const char* value) {
-#if defined(_WIN32)
-        _putenv_s(name_, value);
-#else
-        setenv(name_, value, 1);
-#endif
-    }
-
-    const char* name_;
-};
-
 // What every plugin SIANN did not build has to do: load, keep its state and open
 // its editor. State is compared by parameter values: third-party blobs are opaque
 // and need not repeat. A runtime latency change is siann_test_plugin's to prove:
@@ -990,5 +970,17 @@ TEST_CASE("plugin host: blocks whose MIDI output reaches 2048 events are counted
     const std::uint64_t after = instance->midiOutputOverflows();
     runBlocks(*instance);
     CHECK(instance->midiOutputOverflows() == after);
+    CHECK(measureDelay(*instance).frames == 64);
+}
+
+// m4-juce-formats (ADR-0018, Amendment 3): JucePluginInstance walks the MidiBuffer
+// after processBlock and counts the sysex in it. JUCE's VST3 wrapper builds each one
+// with MidiMessage::createSysExMessage, which mallocs for more than 8 bytes: the
+// accepted, plugin-caused allocation. SIANN's walk allocates nothing.
+TEST_CASE("plugin host: sysex output is counted per event, never as an overflow", "[juce][plugin][midi]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    checkSysexCounting(*instance);
     CHECK(measureDelay(*instance).frames == 64);
 }
