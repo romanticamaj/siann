@@ -411,7 +411,13 @@ struct JucePluginHost::Impl {
     // and each install is loaded from where it is.
     std::map<std::string, std::map<std::string, juce::PluginDescription>> known;
 
-    Impl() { juce::addDefaultFormatsToManager(formats); }
+    Impl() {
+        // JUCE's LV2 wrapper takes a process-wide blocking SpinLock on the audio
+        // thread and grows a UI message buffer there; LV2 arrives through lilv (M7)
+        // or worker processes. In a function body, where GCC takes it (agent rules).
+        static_assert(JUCE_PLUGINHOST_LV2 == 0, "LV2 through JUCE stays off (ADR-0018, Amendment 2)");
+        juce::addDefaultFormatsToManager(formats);
+    }
 
     // path is what the caller named; an AU is opened by the system's identifier.
     PluginDescriptor remember(const juce::PluginDescription& description, const std::string& path) {
