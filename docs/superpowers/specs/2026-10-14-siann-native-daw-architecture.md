@@ -724,8 +724,9 @@ records who that is:
   m4-plugin-node the `PluginNode` processes hosted plugins in the driver's
   callback, timed into a per-instance `rt::CallbackTimer`, `--open-editor` is gone
   (editors open through `plugin.open_editor`), and a ctest check
-  (`SiannNoLocks.cmake`) fails when `plugin_node.cpp`, `juce_plugin_host.cpp` or
-  `clap_plugin_host.cpp` names a lock.
+  (`SiannNoLocks.cmake`) fails when `plugin_node.cpp`, `juce_plugin_host.cpp`,
+  `clap_plugin_host.cpp` or `plugin_instances.cpp` (the plugin event sink, which
+  runs under the hosting wrapper's locks) names a lock.
 
   The exception is accepted for M0 (2026-11-07, Fable, delegated by the maintainer;
   ADR-0018, amended the same day after review). Its conditions:
@@ -1364,6 +1365,15 @@ Jobs v0, plugins (m4-plugin-node; decided by Fable, delegated by the maintainer,
   core-only build). The worker's one-at-a-time order covers render jobs only. The
   instance enters the instance table under the new slot id, so the next compile
   reuses it instead of loading the plugin again.
+- Slot ids (fix round 1 of m4-plugin-node): the server picks
+  `slt_<n>` with `n` one above the highest `slt_<n>` any revision of the history
+  holds, so an id freed by `plugin.remove`, `track.remove` or an undo is never
+  handed out again, like every other entity id. A client's `plugin.insert` may
+  still name a free id that an earlier revision used; the instance table pins
+  instances by entry, not by slot id, so a slot whose plugin, path or state blob
+  differs from its entry gets a new instance at once (the old one keeps
+  processing in the graphs that pin it and goes when they retired), and an
+  unchanged slot keeps its instance.
 - `render.start` keeps its snapshot semantics when the document holds plugin
   slots: the request, on the command thread, instantiates one instance per slot
   from its state blob before the job is queued; the offline-render thread drives
