@@ -18,7 +18,13 @@
 // - "callbacksMain": from params.get_info, params.get_value, activate and state.load,
 //   params.rescan(ALL) and request_restart.
 // - "crash": std::abort() when it turns on, at its event in process() or in
-//   params.flush, after _set_abort_behavior on MSVC so no dialog appears.
+//   params.flush. It leaves the crash dialogs to the host: a host that has not
+//   turned them off gets the "abort() has been called" box or a Windows Error
+//   Reporting fast-fail (exit code 0xC0000409, not 3). On Windows it first writes
+//   one line to stderr, what the process had when the plugin's entry was
+//   initialized: "siann_hostile_plugin: crash; at load errorMode 0x<hex>
+//   abortBehavior 0x<hex>" (GetErrorMode() and _set_abort_behavior's flags), so a
+//   test of the host can see that they were off before the plugin loaded.
 // "level" is a continuous parameter the plugin stores and never uses.
 //
 // Read-only probes, for the host's side of things:
@@ -47,6 +53,16 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -113,11 +129,27 @@ std::string environmentValue(const char* name) {
 #endif
 }
 
+#if defined(_WIN32)
+// The process's crash-dialog settings when the entry was initialized, before any
+// instance exists: what the host set before it loaded the plugin.
+unsigned long loadErrorMode = 0;
+unsigned int loadAbortBehavior = 0;
+#endif
+
+void recordLoadErrorMode() {
+#if defined(_WIN32)
+    loadErrorMode = GetErrorMode();
+    loadAbortBehavior = _set_abort_behavior(0, 0);  // a read: no flag changes
+#endif
+}
+
 [[noreturn]] void crashNow() {
-#if defined(_MSC_VER)
-    // No "abort() has been called" box and no Windows Error Reporting: a headless
-    // engine has nobody to click it. The exit code stays 3.
-    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#if defined(_WIN32)
+    // The dialogs are the host's to turn off, not the plugin's: no
+    // _set_abort_behavior here.
+    std::fprintf(stderr, "siann_hostile_plugin: crash; at load errorMode 0x%08lx abortBehavior 0x%08x\n",
+                 loadErrorMode, loadAbortBehavior);
+    std::fflush(stderr);
 #endif
     std::abort();
 }
@@ -507,7 +539,10 @@ const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host
 
 const clap_plugin_factory_t factory = {factoryCount, factoryDescriptor, factoryCreate};
 
-bool entryInit(const char*) { return true; }
+bool entryInit(const char*) {
+    recordLoadErrorMode();
+    return true;
+}
 
 void entryDeinit() {}
 

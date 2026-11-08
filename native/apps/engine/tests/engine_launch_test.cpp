@@ -868,6 +868,24 @@ void checkCrashed(PipedProcess& child) {
     INFO("stderr: " << err);
     CHECK(err.find("abort() has been called") == std::string::npos);
     CHECK(err.find("Debug Error") == std::string::npos);
+#if defined(_WIN32)
+    // The hostile plugin turns off no dialog itself; it reports what the process had
+    // when its entry was initialized. PipedProcess starts the engine with the default
+    // error mode, so these are the flags the engine's main() set before the plugin
+    // loaded (acceptance item 3).
+    const std::string marker = "siann_hostile_plugin: crash; at load errorMode 0x";
+    const std::size_t found = err.find(marker);
+    REQUIRE(found != std::string::npos);
+    const std::size_t modeAt = found + marker.size();
+    const unsigned long errorMode = std::stoul(err.substr(modeAt, 8), nullptr, 16);
+    const std::string abortMarker = " abortBehavior 0x";
+    REQUIRE(err.compare(modeAt + 8, abortMarker.size(), abortMarker) == 0);
+    const unsigned long abortBehavior = std::stoul(err.substr(modeAt + 8 + abortMarker.size(), 8), nullptr, 16);
+    CHECK((errorMode & SEM_FAILCRITICALERRORS) != 0);
+    CHECK((errorMode & SEM_NOGPFAULTERRORBOX) != 0);
+    CHECK((abortBehavior & _WRITE_ABORT_MSG) == 0);
+    CHECK((abortBehavior & _CALL_REPORTFAULT) == 0);
+#endif
 }
 
 // The relaunch: the last durable revision, stopped, the slot running, and playing

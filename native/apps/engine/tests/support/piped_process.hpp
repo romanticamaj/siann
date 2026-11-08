@@ -71,8 +71,11 @@ public:
         startup.hStdError = childErr;
         PROCESS_INFORMATION info{};
         const std::wstring exe = widen(executable);
-        const BOOL created = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, TRUE, 0, nullptr,
-                                            nullptr, &startup, &info);
+        // CREATE_DEFAULT_ERROR_MODE: the child does not inherit this process's error
+        // mode, so the crash-dialog flags a test sees in the engine are the ones the
+        // engine set itself.
+        const BOOL created = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, TRUE,
+                                            CREATE_DEFAULT_ERROR_MODE, nullptr, nullptr, &startup, &info);
         const DWORD error = GetLastError();
         CloseHandle(childIn);  // the child holds its own copies
         CloseHandle(childOut);

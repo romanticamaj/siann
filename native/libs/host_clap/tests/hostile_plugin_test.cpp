@@ -551,8 +551,14 @@ TEST_CASE("clap host: hostile callbacksMain inside host calls are honoured after
     CHECK(events.count(host::PluginEvent::Kind::failed) == 0);
 }
 
-// Run by the crash test as a child: never returns.
+// Run by the crash test as a child: never returns. The crash dialogs are the
+// host's to turn off (the plugin leaves them), so this host does, as the engine's
+// main() does.
 TEST_CASE("clap host: hostile crash child", "[.][hostile-crash-child]") {
+#if defined(_WIN32)
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     std::fputs("crashing\n", stdout);
     std::fflush(stdout);
     host::ClapPluginHost host;

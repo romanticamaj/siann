@@ -178,7 +178,8 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
   }
 
   // The engine aborted: the supervisor saw exit code 3 (Windows) or SIGABRT, and
-  // restarts it.
+  // restarts it. The hostile plugin turns off no crash dialog itself, so exit code
+  // 3 (not a dialog, not a WER fast-fail) is the engine's main() having done it.
   const exits = () => app!.evaluate(() => (globalThis as unknown as { __siannExits: unknown[] }).__siannExits);
   await expect.poll(async () => (await exits()).length).toBeGreaterThan(0);
   const exit = (await exits())[0] as { code: number | null; signal: string | null; restartInMs: number | null };
