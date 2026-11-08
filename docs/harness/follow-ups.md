@@ -3,6 +3,22 @@
 Findings from reviews that did not block a merge. A milestone's `prerequisites`
 point here; its first run takes the listed section into its features.
 
+## Before M5: a session must not choose what code loads (from PR #55)
+
+Found by the automated security review of `m4-plugin-node`. Neither is reachable
+while the engine opens only the maintainer's own sessions; both must be fixed before
+a session from anyone else can be opened (import, a shared bundle, the M5 UI's open).
+
+- `PluginInstanceTable` loads `slot.path` from the document as given
+  (`native/libs/playback/src/plugin_instances.cpp`, `descriptorOf`), so a session
+  names a library and opening it runs that library. The spec calls the path an
+  install hint. Resolve the plugin by `format` and `uid` through a registry of
+  scanned, user-approved installs, use the path only to choose between known
+  installs, and refuse a path outside it, a UNC path and a path inside the bundle.
+- `blobPath` joins the `stateBlob` text to `<bundle>/blobs` without checking it is
+  64 hex digits, so `sha256:../../x` reads a file outside the bundle as plugin
+  state. Validate the id where the document is parsed and in `blobPath`.
+
 ## Before M5: the shell (from PR #47)
 
 - Two app instances can share one session: there is no `requestSingleInstanceLock`
