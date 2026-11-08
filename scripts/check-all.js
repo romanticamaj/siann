@@ -182,6 +182,10 @@ function appStep() {
     return { ok: false, output: `run the native step first: ${exe} is missing` };
   }
   const env = { ...process.env, SIANN_ENGINE_EXE: exe };
+  // The crash-recovery e2e crashes the engine with the hostile plugin; it skips without one.
+  // (a file, or the bundle directory on macOS)
+  const hostile = path.join(NATIVE, 'build', 'dev', 'libs', 'host_clap', 'hostile_plugin', 'siann_hostile_plugin.clap');
+  if (fs.existsSync(hostile)) env.SIANN_HOSTILE_PLUGIN_CLAP = hostile;
   // The editor-ownership test needs an engine that hosts plugins; it skips without one.
   const desktopBuild = path.join(NATIVE, 'build', 'desktop');
   const desktopExe = path.join(desktopBuild, 'apps', 'engine', isWindows ? 'siann-engine.exe' : 'siann-engine');

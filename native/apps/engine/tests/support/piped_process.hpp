@@ -71,8 +71,11 @@ public:
         startup.hStdError = childErr;
         PROCESS_INFORMATION info{};
         const std::wstring exe = widen(executable);
-        const BOOL created = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, TRUE, 0, nullptr,
-                                            nullptr, &startup, &info);
+        // CREATE_DEFAULT_ERROR_MODE: the child does not inherit this process's error
+        // mode, so the crash-dialog flags a test sees in the engine are the ones the
+        // engine set itself.
+        const BOOL created = CreateProcessW(exe.c_str(), commandLine.data(), nullptr, nullptr, TRUE,
+                                            CREATE_DEFAULT_ERROR_MODE, nullptr, nullptr, &startup, &info);
         const DWORD error = GetLastError();
         CloseHandle(childIn);  // the child holds its own copies
         CloseHandle(childOut);
@@ -196,6 +199,41 @@ public:
         exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 #endif
         return exitCode_;
+    }
+
+    // wait() bounded by `timeout`: nullopt while the child still runs then (it is
+    // left running; kill() ends it).
+    std::optional<int> waitFor(std::chrono::milliseconds timeout) {
+#if defined(_WIN32)
+        if (process_ == nullptr) {
+            return exitCode_;
+        }
+        if (WaitForSingleObject(process_, static_cast<DWORD>(timeout.count())) != WAIT_OBJECT_0) {
+            return std::nullopt;
+        }
+        return wait();
+#else
+        if (reaped_ || pid_ <= 0) {
+            return exitCode_;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;) {
+            int status = 0;
+            const pid_t done = waitpid(static_cast<pid_t>(pid_), &status, WNOHANG);
+            if (done == static_cast<pid_t>(pid_)) {
+                reaped_ = true;
+                exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                return exitCode_;
+            }
+            if (done < 0 && errno != EINTR) {
+                return std::nullopt;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return std::nullopt;
+            }
+            std::this_thread::yield();
+        }
+#endif
     }
 
     // Everything the child wrote to stdout / stderr, once the stream has ended

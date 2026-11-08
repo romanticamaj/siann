@@ -163,6 +163,8 @@ int writeFd(int fd, const char* data, std::size_t size) {
 }  // namespace
 
 int main() {
+    // First, before any plugin loads: a crash ends the process without a dialog.
+    siann::engine_app::disableCrashDialogs();
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCtrlHandler(onConsoleControl, TRUE);
     _setmode(_fileno(stdout), _O_BINARY);
@@ -233,6 +235,7 @@ int writeFd(int fd, const char* data, std::size_t size) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    siann::engine_app::disableCrashDialogs();  // nothing to do here; as on Windows
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
     std::signal(SIGPIPE, SIG_IGN);

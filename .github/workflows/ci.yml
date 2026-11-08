@@ -167,13 +167,17 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - name: Configure
         run: cmake -S native -B native/build/app -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
-      - name: Build siann-engine
-        run: cmake --build native/build/app --config Debug --target siann-engine
-      - name: Locate siann-engine
+      - name: Build siann-engine and the hostile plugin
+        run: cmake --build native/build/app --config Debug --target siann-engine siann_hostile_plugin_CLAP
+      - name: Locate siann-engine and the hostile plugin
         run: |
           exe=$(find native/build/app -type f \( -name siann-engine -o -name siann-engine.exe \) | head -n 1)
           test -n "$exe"
           echo "SIANN_ENGINE_EXE=$GITHUB_WORKSPACE/$exe" >> "$GITHUB_ENV"
+          # The crash-recovery e2e (app/test/e2e/crash.spec.ts); a bundle directory on macOS.
+          plugin=$(find native/build/app \( -type f -o -type d \) -name siann_hostile_plugin.clap | head -n 1)
+          test -n "$plugin"
+          echo "SIANN_HOSTILE_PLUGIN_CLAP=$GITHUB_WORKSPACE/$plugin" >> "$GITHUB_ENV"
       - name: Install app dependencies
         working-directory: app
         run: |

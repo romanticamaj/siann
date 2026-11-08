@@ -111,6 +111,14 @@ public:
     virtual PluginEditorState openEditor(const std::string& slotId) = 0;
     virtual PluginEditorState closeEditor(const std::string& slotId) = 0;
 
+    // plugin.set_parameter (Protocol v0 item 20): the live, non-journaled path.
+    // `paramId` is an id the instance's parameter list reports, `value` normalized
+    // (0 to 1). A CLAP slot gets it through the control dispatcher as an event of
+    // its next block; a VST3 or AU slot through PluginControl::setParameter on the
+    // calling (main) thread. Throws PluginPortError not_found (no such slot or
+    // parameter) or plugin_missing.
+    virtual void setParameter(const std::string& slotId, const std::string& paramId, double value) = 0;
+
     // One per plugin slot of the heard document.
     virtual std::vector<PluginStatus> plugins() const = 0;
     // The formats this engine hosts ("clap", and "vst3" and "au" with JUCE).

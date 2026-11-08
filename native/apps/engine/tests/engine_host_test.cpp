@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "live_rig.hpp"
+#include "siann/engine_app/engine.hpp"
 #include "siann/engine_app/engine_host.hpp"
 #include "siann/host/fake_audio_device.hpp"
 #include "siann/host/fake_callback_clock.hpp"
@@ -27,6 +28,14 @@
 #include "siann/rt/realtime_thread.hpp"
 #include "support/flac_test_encoder.hpp"
 #include "support/protocol_fixture.hpp"
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <stdlib.h>
+#include <windows.h>
+#endif
 
 using namespace siann;
 using namespace std::chrono_literals;
@@ -688,4 +697,28 @@ TEST_CASE("the host publishes the meter legend after each graph, and frames carr
         rig.pump(1);
     }
     CHECK(legends() == 2);
+}
+
+// m4-crash-recovery (spec, "Process model", Crash): a plugin crash raises no WER or
+// CRT dialog, so the process ends at once and the shell restarts it.
+TEST_CASE("disableCrashDialogs turns off the crash dialogs and keeps the other error-mode flags",
+          "[engine][crash]") {
+#if defined(_WIN32)
+    const UINT savedMode = GetErrorMode();
+    const unsigned int savedAbort = _set_abort_behavior(0, 0);
+    SetErrorMode(SEM_NOOPENFILEERRORBOX);  // what JUCE's VST3 host sets
+    _set_abort_behavior(_WRITE_ABORT_MSG | _CALL_REPORTFAULT, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    engine_app::disableCrashDialogs();
+    const UINT mode = GetErrorMode();
+    CHECK((mode & SEM_FAILCRITICALERRORS) != 0);
+    CHECK((mode & SEM_NOGPFAULTERRORBOX) != 0);
+    CHECK((mode & SEM_NOOPENFILEERRORBOX) != 0);
+    const unsigned int abortFlags = _set_abort_behavior(0, 0);  // a read
+    CHECK((abortFlags & (_WRITE_ABORT_MSG | _CALL_REPORTFAULT)) == 0);
+    SetErrorMode(savedMode);
+    _set_abort_behavior(savedAbort, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#else
+    engine_app::disableCrashDialogs();  // nothing to turn off
+    SUCCEED();
+#endif
 }

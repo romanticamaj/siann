@@ -74,6 +74,13 @@ public:
         open = false;
         return {slotId, false, 0};
     }
+    void setParameter(const std::string& slotId, const std::string& paramId, double value) override {
+        ++parameterCalls;
+        if (parameterRefusal) {
+            throw PluginPortError(*parameterRefusal, "the port refused the parameter");
+        }
+        parameterSets.push_back({slotId, paramId, value});
+    }
     std::vector<PluginStatus> plugins() const override { return reported; }
     std::vector<std::string> formats() const override { return {"clap"}; }
     std::shared_ptr<engine::PluginNodeSource> instantiateForRender(const model::Document& document) override {
@@ -94,6 +101,14 @@ public:
     std::optional<std::string> refusal;
     std::optional<std::string> editorRefusal;
     bool open = false;
+    struct ParameterSet {
+        std::string slotId;
+        std::string paramId;
+        double value = 0.0;
+    };
+    int parameterCalls = 0;
+    std::vector<ParameterSet> parameterSets;
+    std::optional<std::string> parameterRefusal;
     std::vector<PluginStatus> reported;
     int renderSets = 0;
     std::size_t renderSlots = 0;
@@ -290,6 +305,9 @@ TEST_CASE("plugin methods without a port are not_supported", "[protocol][plugin]
     CHECK(errorCode(f.call(c, "plugin.instantiate", instantiateParams("trk_1"))) == "not_supported");
     CHECK(errorCode(f.call(c, "plugin.open_editor", Value(Object{{"slotId", Value("slt_1")}}))) == "not_supported");
     CHECK(errorCode(f.call(c, "plugin.close_editor", Value(Object{{"slotId", Value("slt_1")}}))) == "not_supported");
+    CHECK(errorCode(f.call(c, "plugin.set_parameter",
+                           Value(Object{{"slotId", Value("slt_1")}, {"paramId", Value("8890")}, {"value", Value(1)}}))) ==
+          "not_supported");
     const Value capabilities = f.ok(c, "engine.capabilities");
     CHECK_FALSE(at(at(capabilities, "features"), "plugins").asBool());
 }
@@ -313,6 +331,123 @@ TEST_CASE("plugin.open_editor and plugin.close_editor answer the editor's state"
     }
 }
 
+// m4-crash-recovery (Protocol v0 item 20): the live, non-journaled parameter path.
+Value setParameterParams(const std::string& slotId, const std::string& paramId, double value) {
+    return Value(Object{{"slotId", Value(slotId)}, {"paramId", Value(paramId)}, {"value", Value(value)}});
+}
+
+TEST_CASE("plugin.set_parameter hands the value to the port and commits nothing", "[protocol][plugin][param]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_1")});
+    const Value before = f.ok(c, "session.inspect");
+    const std::size_t eventsBefore = f.events(c).size();
+
+    const Value result = f.ok(c, "plugin.set_parameter", setParameterParams("slt_1", "8890", 0.75));
+    CHECK(at(result, "slotId").asString() == "slt_1");
+    CHECK(at(result, "paramId").asString() == "8890");
+    CHECK(at(result, "value").asNumber() == 0.75);
+    CHECK(result.asObject().size() == 3);
+    REQUIRE(port.parameterSets.size() == 1);
+    CHECK(port.parameterSets[0].slotId == "slt_1");
+    CHECK(port.parameterSets[0].paramId == "8890");
+    CHECK(port.parameterSets[0].value == 0.75);
+
+    // Not journaled: no revision, no session.changed.
+    const Value after = f.ok(c, "session.inspect");
+    CHECK(canonical(after) == canonical(before));
+    CHECK(f.events(c).size() == eventsBefore);
+}
+
+TEST_CASE("plugin.set_parameter checks its params", "[protocol][plugin][param]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::vector<Value> bad = {
+        Value(Object{{"paramId", Value("1")}, {"value", Value(0.5)}}),
+        Value(Object{{"slotId", Value(7)}, {"paramId", Value("1")}, {"value", Value(0.5)}}),
+        Value(Object{{"slotId", Value("slt_1")}, {"value", Value(0.5)}}),
+        Value(Object{{"slotId", Value("slt_1")}, {"paramId", Value(1)}, {"value", Value(0.5)}}),
+        Value(Object{{"slotId", Value("slt_1")}, {"paramId", Value("1")}}),
+        Value(Object{{"slotId", Value("slt_1")}, {"paramId", Value("1")}, {"value", Value("0.5")}}),
+        setParameterParams("slt_1", "1", -0.1),
+        setParameterParams("slt_1", "1", 1.5),
+    };
+    for (const Value& params : bad) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "plugin.set_parameter", params)) == "invalid_params");
+    }
+    CHECK(port.parameterCalls == 0);
+    // The ends of the range are values.
+    f.ok(c, "plugin.set_parameter", setParameterParams("slt_1", "1", 0.0));
+    f.ok(c, "plugin.set_parameter", setParameterParams("slt_1", "1", 1.0));
+    CHECK(port.parameterCalls == 2);
+}
+
+TEST_CASE("plugin.set_parameter passes the port's errors through", "[protocol][plugin][param]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    for (const char* code : {"not_found", "plugin_missing"}) {
+        port.parameterRefusal = code;
+        CHECK(errorCode(f.call(c, "plugin.set_parameter", setParameterParams("slt_1", "1", 0.5))) == code);
+    }
+}
+
+TEST_CASE("plugin.set_parameter honours expectedRevision and the idempotency cache", "[protocol][plugin][param]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    const std::string request = f.request("req_param", "plugin.set_parameter", setParameterParams("slt_1", "1", 0.5));
+    f.transport.deliver(c, request);
+    f.server.pump();
+    f.transport.deliver(c, request);
+    f.server.pump();
+    CHECK(port.parameterCalls == 1);
+    const auto frames = f.transport.sent(c);
+    CHECK(frames[frames.size() - 1] == frames[frames.size() - 2]);
+
+    const std::string stale = jcs::canonicalize(Value(Object{{"requestId", Value("req_stale")},
+                                                              {"sessionId", Value(f.server.sessionId())},
+                                                              {"method", Value("plugin.set_parameter")},
+                                                              {"params", setParameterParams("slt_1", "1", 0.5)},
+                                                              {"expectedRevision", Value("r1")}}));
+    f.transport.deliver(c, stale);
+    f.server.pump();
+    CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+    CHECK(port.parameterCalls == 1);
+
+    const std::string current = jcs::canonicalize(Value(Object{{"requestId", Value("req_current")},
+                                                                {"sessionId", Value(f.server.sessionId())},
+                                                                {"method", Value("plugin.set_parameter")},
+                                                                {"params", setParameterParams("slt_1", "1", 0.25)},
+                                                                {"expectedRevision", Value(f.head().envelope.id)}}));
+    f.transport.deliver(c, current);
+    f.server.pump();
+    CHECK(at(json::parse(f.transport.sent(c).back()), "ok").asBool());
+    CHECK(port.parameterCalls == 2);
+}
+
+TEST_CASE("plugin.set_parameter on a full inbox answers queue_full", "[protocol][plugin][param]") {
+    FakePluginPort port;
+    ServerOptions options = withPort(port);
+    options.inboxCapacity = 1;
+    Fixture f(std::move(options));
+    const ConnectionId c = f.authed();
+    f.transport.deliver(c, f.request("q1", "plugin.set_parameter", setParameterParams("slt_1", "1", 0.5)));
+    f.transport.deliver(c, f.request("q2", "plugin.set_parameter", setParameterParams("slt_1", "1", 0.6)));
+    auto sent = f.transport.sent(c);
+    REQUIRE(sent.size() == 2);
+    const Value full = json::parse(sent[1]);
+    CHECK(at(full, "requestId").asString() == "q2");
+    CHECK(errorCode(full) == "queue_full");
+    CHECK(f.server.pump() == 1);
+    CHECK(port.parameterCalls == 1);
+    CHECK(port.parameterSets.back().value == 0.5);
+}
+
 TEST_CASE("engine.capabilities lists the plugin methods, formats and flags", "[protocol][plugin]") {
     FakePluginPort port;
     Fixture f(withPort(port));
@@ -322,7 +457,7 @@ TEST_CASE("engine.capabilities lists the plugin methods, formats and flags", "[p
     for (const Value& method : at(capabilities, "methods").asArray()) {
         methods.push_back(method.asString());
     }
-    for (const char* name : {"plugin.instantiate", "plugin.open_editor", "plugin.close_editor"}) {
+    for (const char* name : {"plugin.instantiate", "plugin.open_editor", "plugin.close_editor", "plugin.set_parameter"}) {
         CHECK(std::find(methods.begin(), methods.end(), name) != methods.end());
     }
     const Value& plugins = at(at(capabilities, "features"), "plugins");

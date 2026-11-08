@@ -30,6 +30,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <stdlib.h>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -301,6 +302,13 @@ void writeError(std::ostream& err, const std::string& code, const std::string& m
 }
 
 }  // namespace
+
+void disableCrashDialogs() {
+#if defined(_WIN32)
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+}
 
 int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostream& err,
               const std::atomic<bool>* stop) {

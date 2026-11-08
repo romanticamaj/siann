@@ -139,6 +139,9 @@ public:
     void tick();
 
     host::PluginInstance* instance(std::string_view slotId) const noexcept;
+    // Parameter indices below this reach the slot's node as block events: the
+    // instance's parameter count when it was installed (0 for an unknown slot).
+    std::size_t pendingParameterCapacity(std::string_view slotId) const noexcept;
     std::optional<PluginInstanceStatus> status(std::string_view slotId) const;
     // One per slot of the document, in track then insert order.
     std::vector<PluginInstanceStatus> status(const model::Document& document) const;
@@ -162,6 +165,10 @@ private:
         std::optional<bool> blocksComing;
         std::atomic<bool> resync{false};
         rt::CallbackTimer timer;
+        // Parameter values on their way to the instance: shared by every node made for
+        // it, so a recompile does not lose one before its block. Sized at install to
+        // the instance's parameter count, so none set while stopped is dropped.
+        graph::PendingParameters parameters;
         // Last: destroyed first, so no sink runs into a destroyed entry.
         std::unique_ptr<host::PluginInstance> instance;
     };

@@ -226,6 +226,7 @@ const std::vector<std::string_view> kMethods = {
     "plan.apply",      "plan.rollback",   "plan.propose",    "proposal.merge",    "proposal.discard",
     "audition.hear",   "render.start",    "job.status",      "transport.play",    "transport.stop",
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
+    "plugin.set_parameter",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -952,6 +953,24 @@ struct ProtocolServer::Impl {
         return response;
     }
 
+    // plugin.set_parameter (Protocol v0 item 20): no document change, no revision,
+    // no event; the value lives in the instance until its state is next captured.
+    std::string pluginSetParameter(const Pending& request) {
+        const std::string_view method = "plugin.set_parameter";
+        PluginPort& plugins = requirePluginPort();
+        const std::string& slotId = requireString(request.params, "slotId", method);
+        const std::string& paramId = requireString(request.params, "paramId", method);
+        const Value* value = request.params.find("value");
+        if (value == nullptr || value->kind() != Value::Kind::number || !(value->asNumber() >= 0.0) ||
+            value->asNumber() > 1.0) {
+            throw ProtocolError("invalid_params", "plugin.set_parameter needs a normalized number value, 0 to 1");
+        }
+        plugins.setParameter(slotId, paramId, value->asNumber());
+        return success(request.requestId, Value(Object{{"slotId", Value(slotId)},
+                                                       {"paramId", Value(paramId)},
+                                                       {"value", Value(value->asNumber())}}));
+    }
+
     // The render jobs' plugin sets, back on the command thread to be destroyed.
     void returnRenderInstances() {
         for (auto& instances : jobs.takeFinishedPlugins()) {
@@ -1270,6 +1289,9 @@ struct ProtocolServer::Impl {
             PluginPort& plugins = requirePluginPort();
             return success(request.requestId,
                            editorJson(plugins.closeEditor(requireString(request.params, "slotId", method))));
+        }
+        if (method == "plugin.set_parameter") {
+            return pluginSetParameter(request);
         }
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }

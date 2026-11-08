@@ -99,6 +99,10 @@ struct CompiledPlayback {
 
 // Slot key of a track's fader in the dispatcher's map.
 std::string trackSlotKey(const std::string& trackId);
+// Slot key of a plugin slot's PluginNode in the dispatcher's map: its parameter ids
+// are the instance's parameter indices (m4-crash-recovery, plugin.set_parameter).
+// A slot whose plugin did not load has no node and no key.
+std::string pluginSlotKey(const std::string& slotId);
 // Meter key of the master bus in the dispatcher's meter map.
 std::string masterMeterKey();
 
