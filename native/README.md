@@ -116,8 +116,9 @@ publisher). Clients drive it with `transport.play`, `transport.stop` and
 `transport.locate {frames}`, read `engine.status`, and see the playhead in the
 binary frames of `/v1/realtime`.
 
-Plugins are inserted with `plugin.instantiate` and their editors opened with
-`plugin.open_editor` (docs/schemas/protocol-plugins-v0.md). Every build hosts
+Plugins are inserted with `plugin.instantiate`, their editors opened with
+`plugin.open_editor` and their parameters set live with `plugin.set_parameter`
+(docs/schemas/protocol-plugins-v0.md). Every build hosts
 CLAP; a `SIANN_WITH_JUCE` build also hosts VST3 (and AU on macOS) and runs the
 JUCE message loop on the main thread, where an editor opens owned on Windows by
 the window whose decimal handle `--owner-window` gives (the Electron shell passes

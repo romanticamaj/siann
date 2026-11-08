@@ -1,6 +1,6 @@
 # Protocol plugins v0
 
-The plugin methods of the native protocol server (architecture spec, "siann-protocol", Protocol v0 items 18 and 19; "Commands and jobs", Jobs v0, plugins; m4-plugin-node). They reach the engine through `ServerOptions::pluginPort` (`protocol::PluginPort`, implemented by the engine host). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. None is an MCP tool yet ([Protocol MCP v0](protocol-mcp-v0.md) is unchanged).
+The plugin methods of the native protocol server (architecture spec, "siann-protocol", Protocol v0 items 18, 19 and 20; "Commands and jobs", Jobs v0, plugins; m4-plugin-node). They reach the engine through `ServerOptions::pluginPort` (`protocol::PluginPort`, implemented by the engine host). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. None is an MCP tool yet ([Protocol MCP v0](protocol-mcp-v0.md) is unchanged).
 
 ## Session document
 
@@ -34,6 +34,18 @@ A plugin that does not load answers `{jobId, kind, state: "failed", error: {code
 ## plugin.open_editor, plugin.close_editor
 
 Params `{slotId}`. Result `{slotId, editorOpen, nativeHandle}`, `nativeHandle` the editor's top-level window as a decimal string (`"0"` when closed). On Windows the window is owned by the engine's `--owner-window`. Errors: `not_found` (no such slot), `plugin_missing` (the slot's plugin did not load), `editor_failed` (no editor, or a CLAP plugin on the desktop target until it gets a window), `no_plugin_host`.
+
+## plugin.set_parameter
+
+The live parameter path for a hosted plugin (Protocol v0 item 20; m4-crash-recovery). Params `{slotId, paramId, value}`: `paramId` is a string, the `id` the instance's parameter list reports (for a CLAP plugin its decimal `clap_id`, not its index or name); `value` is a normalized number from 0 to 1. Result `{slotId, paramId, value}`.
+
+```json
+{"slotId": "slt_1", "paramId": "8890", "value": 1}
+```
+
+It mutates no document, commits no revision, is not journaled and sends no `session.changed`: the value lives in the instance until its state is next captured, so after a crash the relaunched engine has the last durable revision and never re-runs the change. A CLAP slot gets it through the control dispatcher (`controlInbox`, then `paramInbox`) as a parameter event at the start of its `PluginNode`'s next processed block, block-accurately; while the transport is stopped no block runs the plugin, and the value lands at the first one played. A VST3 or AU slot gets it through `PluginControl::setParameter` on the engine's main thread (JUCE's formats discard block events), never from the audio thread.
+
+Errors: `invalid_params` (a missing or non-string `slotId` or `paramId`, a `value` that is not a number from 0 to 1), `not_found` (no such slot, or a `paramId` the instance does not list), `plugin_missing` (the slot's plugin did not load), `queue_full` (the command inbox is full), `not_supported` without a port.
 
 ## engine.status plugins[]
 

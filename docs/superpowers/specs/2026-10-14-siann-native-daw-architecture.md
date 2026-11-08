@@ -2220,15 +2220,20 @@ with the M4 wave 2 and 3 plans):
     command thread, honour `expectedRevision` and the idempotency cache, and are
     in `engine.capabilities`' `methods`; none is an MCP tool yet.
 20. `plugin.set_parameter {slotId, paramId, value}` (m4-crash-recovery): the live
-    parameter path for a hosted plugin. `paramId` is the id the instance's
-    parameter list reports and `value` a normalized number as `setParameter`
-    takes. The method runs through the command thread like every method but
-    mutates no document and is not journaled: it hands one `ParamChange` to the
-    control dispatcher through `controlInbox` ("Two channels into the audio
-    thread"), which sends it on `paramInbox` to the slot's `PluginNode`; a CLAP
-    instance gets it as a parameter event at the start of its next block, a VST3
-    or AU instance through `PluginControl::setParameter` on the main thread (the
-    "Precision contract": block-accurate), never from the audio thread. The value
+    parameter path for a hosted plugin. `paramId` is a string, the id the
+    instance's parameter list reports (`PluginParameterInfo::id`; a CLAP plugin's
+    decimal `clap_id`), and `value` a normalized number from 0 to 1 as
+    `setParameter` takes. The method runs through the command thread like every
+    method but mutates no document and is not journaled. For a CLAP slot it hands
+    one `ParamChange` (the parameter's index) to the control dispatcher through
+    `controlInbox` ("Two channels into the audio thread"), which sends it on
+    `paramInbox` to the slot's `PluginNode` (the dispatcher's key
+    `plugin:<slotId>`); the instance gets it as a parameter event at the start of
+    the node's next processed block (the "Precision contract": block-accurate).
+    JUCE's formats discard block events, so a VST3 or AU slot never goes through
+    `paramInbox`: the engine host calls `PluginControl::setParameter` on the main
+    thread. Neither path calls the plugin from the audio thread outside its
+    block. The value
     lives in the instance until its state is next captured, so a crash before
     that leaves the last durable revision and the relaunched engine never re-runs
     the change ("Gestures"). Errors: `not_found` (slot or parameter),
