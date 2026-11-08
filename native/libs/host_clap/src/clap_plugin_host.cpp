@@ -451,6 +451,10 @@ private:
             }
             perPort.push_back(info.channel_count);
             channels += info.channel_count;
+            // The direction's channels in all, as JucePluginHost counts them.
+            if (channels > maxPluginChannels) {
+                throw PluginError("plugin_load_failed", "the plugin has more channels than the host processes");
+            }
         }
         pointers.assign(channels, nullptr);
         buffers.assign(count, clap_audio_buffer_t{});
