@@ -46,6 +46,8 @@ public:
     std::uintptr_t editorNativeHandle() const override { return 0; }
     void setEventSink(std::function<void(const host::PluginEvent&)>) override {}
     void pollStale() override {}
+
+    std::size_t parameterCount = 64;
 };
 
 class DoublePlugin final : public host::PluginInstance {

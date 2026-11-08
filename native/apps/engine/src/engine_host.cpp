@@ -337,8 +337,11 @@ void EngineHost::setParameter(const std::string& slotId, const std::string& para
     }
     const auto index = static_cast<std::uint32_t>(found - parameters.begin());
     const std::optional<playback::PluginInstanceStatus> status = engine_.plugins().status(slotId);
-    if (status && status->format == "clap") {
-        // Block-accurate: the driver hands it to the node on the audio thread.
+    if (status && status->format == "clap" && index < engine_.plugins().pendingParameterCapacity(slotId)) {
+        // Block-accurate: the driver hands it to the node on the audio thread. The
+        // node holds a value for each parameter the instance had at install; one the
+        // plugin added since goes through PluginControl, which CLAP also delivers by
+        // the next block.
         engine_.dispatcher().setParameter(realtime::ParamKey{playback::pluginSlotKey(slotId), index}, value, 0);
         return;
     }

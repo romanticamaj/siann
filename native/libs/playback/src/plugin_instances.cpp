@@ -104,6 +104,8 @@ PluginInstanceTable::Entry& PluginInstanceTable::install(const model::PluginSlot
     entry->instance = std::move(loaded.instance);
     Entry* raw = entry.get();
     if (raw->instance) {
+        // Before any node holds the set: room for a value of every parameter.
+        raw->parameters.resize(raw->instance->control().parameters().size());
         // pluginEventAny: the sink pushes and does nothing else (any thread).
         rt::MpscQueue<detail::IndexedPluginEvent>* queue = &events_;
         std::atomic<bool>* resyncFlag = &raw->resync;
@@ -325,6 +327,11 @@ void PluginInstanceTable::tick() {
 host::PluginInstance* PluginInstanceTable::instance(std::string_view slotId) const noexcept {
     const auto found = entries_.find(slotId);
     return found == entries_.end() ? nullptr : found->second->instance.get();
+}
+
+std::size_t PluginInstanceTable::pendingParameterCapacity(std::string_view slotId) const noexcept {
+    const auto found = entries_.find(slotId);
+    return found == entries_.end() ? 0 : found->second->parameters.capacity();
 }
 
 std::optional<bool> PluginInstanceTable::blocksComingTold(std::string_view slotId) const {

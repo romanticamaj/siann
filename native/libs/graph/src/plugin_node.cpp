@@ -10,18 +10,33 @@ std::int64_t steadyNowNanos() noexcept {
         .count();
 }
 
+void PendingParameters::resize(std::size_t parameterCount) {
+    events_.assign(parameterCount, host::BlockEvent{});
+    positionOf_.assign(parameterCount, kNotPending);
+    count_ = 0;
+    capacity_.store(parameterCount, std::memory_order_relaxed);
+}
+
 void PendingParameters::set(std::uint32_t index, double value) noexcept {
-    for (std::size_t i = 0; i < count_; ++i) {
-        if (events_[i].data0 == index) {
-            events_[i].value = value;
-            return;
-        }
-    }
-    if (count_ == events_.size()) {
+    if (index >= positionOf_.size()) {
         dropped_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    std::uint32_t& position = positionOf_[index];
+    if (position != kNotPending) {
+        events_[position].value = value;
+        return;
+    }
+    // At most one event per index below capacity, so there is always room.
+    position = static_cast<std::uint32_t>(count_);
     events_[count_++] = host::BlockEvent{0, host::BlockEventKind::parameterValue, index, 0, value};
+}
+
+void PendingParameters::clear() noexcept {
+    for (std::size_t i = 0; i < count_; ++i) {
+        positionOf_[events_[i].data0] = kNotPending;
+    }
+    count_ = 0;
 }
 
 PluginNode::PluginNode(host::PluginInstance& instance, int channels, std::int64_t sampleRate, bool timed,
@@ -32,7 +47,11 @@ PluginNode::PluginNode(host::PluginInstance& instance, int channels, std::int64_
       timed_(timed),
       now_(now != nullptr ? now : &steadyNowNanos),
       timer_(sharedTimer != nullptr ? sharedTimer : &ownTimer_),
-      parameters_(sharedParameters != nullptr ? sharedParameters : &ownParameters_) {}
+      parameters_(sharedParameters != nullptr ? sharedParameters : &ownParameters_) {
+    if (sharedParameters == nullptr) {
+        ownParameters_.resize(instance.control().parameters().size());
+    }
+}
 
 void PluginNode::setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept {
     (void)rampFrames;
