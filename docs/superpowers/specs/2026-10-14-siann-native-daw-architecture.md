@@ -1815,9 +1815,14 @@ with `process()` on a realtime-marked thread:
    thread never waits.
 6. `crash`: when the parameter turns on, in `process()` at its event or in
    `params.flush` when no block is coming, the plugin ends the process with
-   `std::abort()`, after `_set_abort_behavior(0, _WRITE_ABORT_MSG |
-   _CALL_REPORTFAULT)` on MSVC so no dialog appears: exit code 3 on Windows,
-   SIGABRT elsewhere. The parameter is reached through the live path only
+   `std::abort()`: exit code 3 on Windows, SIGABRT elsewhere. It turns off no
+   crash dialog itself; that is the host's job (the engine's `main()`, "Process
+   model", Crash), and a host that leaves them on gets the CRT's "abort() has
+   been called" box or a WER fast-fail instead of exit code 3. On Windows it first
+   writes one line to stderr with `GetErrorMode()` and the CRT's abort flags as
+   they were when its entry was initialized (`siann_hostile_plugin: crash; at load
+   errorMode 0x<hex> abortBehavior 0x<hex>`), so the engine launch tests check
+   that `main()` turned the dialogs off before the plugin loaded. The parameter is reached through the live path only
    (`plugin.set_parameter`, Protocol v0 item 20); the plugin leaves it out of
    `state.save` and ignores it in `state.load`, so a restored blob never crashes
    again and the relaunched engine plays the recovered session. Nothing in the
