@@ -169,6 +169,7 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
             for (const model::PluginSlot* slot : document.slotsOnTrack(track.id)) {
                 if (auto node = plugins->pluginNode(*slot, track.channels)) {
                     const graph::NodeId insert = builder.add(std::move(node), track.id + ".insert." + slot->id);
+                    compiled.slots.emplace(pluginSlotKey(slot->id), insert);
                     builder.connect(previous, insert);
                     previous = insert;
                 }
@@ -222,6 +223,10 @@ constexpr std::chrono::seconds kPrefillTimeout{1};
 
 std::string trackSlotKey(const std::string& trackId) {
     return "track:" + trackId;
+}
+
+std::string pluginSlotKey(const std::string& slotId) {
+    return "plugin:" + slotId;
 }
 
 std::string masterMeterKey() {
