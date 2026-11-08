@@ -5,7 +5,9 @@
 // calls and advances a fake clock by `processNanos` in each, so a PluginNode's
 // timer sees a slow block without a real wait.
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -57,6 +59,13 @@ public:
             firstCall = sequence->fetch_add(1);
         }
         lastEventCount.store(static_cast<int>(events.size()));
+        // A copy of the block's events, into preallocated storage (no allocation here).
+        receivedCount = 0;
+        for (const host::BlockEvent& event : events) {
+            if (receivedCount < received.size()) {
+                received[receivedCount++] = event;
+            }
+        }
         fakeClock().fetch_add(processNanos.load());
         const int delay = latency_.load();
         for (int c = 0; c < output.channelCount; ++c) {
@@ -78,6 +87,9 @@ public:
 
     std::atomic<int> calls{0};
     std::atomic<int> lastEventCount{-1};
+    // The events of the last process() call, up to the array's size.
+    std::array<host::BlockEvent, 256> received{};
+    std::size_t receivedCount = 0;
     std::atomic<std::int64_t> processNanos{0};
     float gain = 1.0f;
     // When set, the first process() call takes the next number from it.

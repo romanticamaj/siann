@@ -181,3 +181,79 @@ TEST_CASE("A mono PluginNode feeds the instance one channel", "[graph][plugin]")
     CHECK(rig.graph->outputChannels() == 1);
     CHECK(rig.graph->output().channel(0)[0] == 0.25f);
 }
+
+// m4-crash-recovery: plugin.set_parameter reaches a CLAP instance as a parameter
+// event at the start of the node's next block (spec, Protocol v0 item 20). The
+// driver calls setParameter on the audio thread between blocks.
+
+TEST_CASE("A parameter change reaches the instance as one event of the next block", "[graph][plugin][param]") {
+    DoublePlugin plugin;
+    Rig rig = build(plugin);
+    rig.graph->setParameter(rig.slot, 7, 0.75, 0);
+    rig.graph->process(ProcessContext{0, 256});
+    REQUIRE(plugin.receivedCount == 1);
+    const siann::host::BlockEvent& event = plugin.received[0];
+    CHECK(event.kind == siann::host::BlockEventKind::parameterValue);
+    CHECK(event.data0 == 7u);
+    CHECK(event.value == 0.75);
+    CHECK(event.sampleOffset == 0);
+    rig.graph->process(ProcessContext{256, 256});
+    CHECK(plugin.receivedCount == 0);
+    CHECK(rig.node->droppedParameters() == 0);
+}
+
+TEST_CASE("The latest of two values for one parameter wins", "[graph][plugin][param]") {
+    DoublePlugin plugin;
+    Rig rig = build(plugin);
+    rig.graph->setParameter(rig.slot, 3, 0.2, 0);
+    rig.graph->setParameter(rig.slot, 5, 0.4, 0);
+    rig.graph->setParameter(rig.slot, 3, 0.9, 0);
+    rig.graph->process(ProcessContext{0, 256});
+    REQUIRE(plugin.receivedCount == 2);
+    CHECK(plugin.received[0].data0 == 3u);
+    CHECK(plugin.received[0].value == 0.9);
+    CHECK(plugin.received[1].data0 == 5u);
+    CHECK(plugin.received[1].value == 0.4);
+}
+
+TEST_CASE("More parameters than the node holds: the latest per parameter, the rest counted, no allocation",
+          "[graph][plugin][param][rt]") {
+    DoublePlugin plugin;
+    Rig rig = build(plugin);
+    constexpr auto capacity = static_cast<std::uint32_t>(PluginNode::kMaxPendingParameters);
+    const auto before = siann::rt::allocationViolations();
+    {
+        siann::rt::ScopedRealtimeThread realtime;
+        for (std::uint32_t index = 0; index < capacity + 2; ++index) {
+            rig.graph->setParameter(rig.slot, index, 0.1, 0);
+        }
+        // Full: a parameter already pending still takes its newer value.
+        rig.graph->setParameter(rig.slot, 0, 0.6, 0);
+        rig.graph->process(ProcessContext{0, 256});
+    }
+    CHECK(siann::rt::allocationViolations() == before);
+    REQUIRE(plugin.receivedCount == capacity);
+    CHECK(plugin.received[0].data0 == 0u);
+    CHECK(plugin.received[0].value == 0.6);
+    CHECK(plugin.received[capacity - 1].data0 == capacity - 1);
+    CHECK(rig.node->droppedParameters() == 2);
+    // The space is free again after the block.
+    rig.graph->setParameter(rig.slot, capacity + 1, 0.3, 0);
+    rig.graph->process(ProcessContext{256, 256});
+    REQUIRE(plugin.receivedCount == 1);
+    CHECK(plugin.received[0].data0 == capacity + 1);
+}
+
+TEST_CASE("A bypassed node keeps a parameter change for the next processed block", "[graph][plugin][param]") {
+    DoublePlugin plugin;
+    Rig rig = build(plugin);
+    rig.node->setBypass(true);
+    rig.graph->setParameter(rig.slot, 2, 0.5, 0);
+    rig.graph->process(ProcessContext{0, 256});
+    CHECK(plugin.calls.load() == 0);
+    rig.node->setBypass(false);
+    rig.graph->process(ProcessContext{256, 256});
+    REQUIRE(plugin.receivedCount == 1);
+    CHECK(plugin.received[0].data0 == 2u);
+    CHECK(plugin.received[0].value == 0.5);
+}
