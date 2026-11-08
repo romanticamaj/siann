@@ -50,17 +50,24 @@ juce::AudioProcessor::BusesProperties Processor::busesFromEnvironment() {
 }
 
 Processor::Processor() : juce::AudioProcessor(busesFromEnvironment()) {
+    // The probes are not automatable: they are the tests' switches, not sound, and
+    // not state, so pluginval's automation and state tests (strictness 5) leave
+    // them alone. SIANN's host sets them through setParameter all the same.
+    const auto probe = [](const juce::String& id, const juce::String& name = {}) {
+        return new juce::AudioParameterBool(juce::ParameterID{id, 1}, name.isEmpty() ? id : name, false,
+                                            juce::AudioParameterBoolAttributes().withAutomatable(false));
+    };
     latency_ = new juce::AudioParameterBool(juce::ParameterID{"latency", 1}, "latency", false);
     gain_ = new juce::AudioParameterFloat(juce::ParameterID{"gain", 1}, "gain",
                                           juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f);
-    futureState_ = new juce::AudioParameterBool(juce::ParameterID{"futureState", 1}, "futureState", false);
-    nudgeGain_ = new juce::AudioParameterBool(juce::ParameterID{"nudgeGain", 1}, "nudgeGain", false);
-    requestRestart_ = new juce::AudioParameterBool(juce::ParameterID{"requestRestart", 1}, "requestRestart", false);
-    overlapped_ = new juce::AudioParameterBool(juce::ParameterID{"overlapped", 1}, "overlapped", false);
-    restarted_ = new juce::AudioParameterBool(juce::ParameterID{"restarted", 1}, "restarted", false);
-    watchRestore_ = new juce::AudioParameterBool(juce::ParameterID{"watchRestore", 1}, "watchRestore", false);
-    restored_ = new juce::AudioParameterBool(juce::ParameterID{"restored", 1}, "restored", false);
-    holdProcessBlock_ = new juce::AudioParameterBool(juce::ParameterID{"holdProcessBlock", 1}, "holdProcessBlock", false);
+    futureState_ = probe("futureState");
+    nudgeGain_ = probe("nudgeGain");
+    requestRestart_ = probe("requestRestart");
+    overlapped_ = probe("overlapped");
+    restarted_ = probe("restarted");
+    watchRestore_ = probe("watchRestore");
+    restored_ = probe("restored");
+    holdProcessBlock_ = probe("holdProcessBlock");
     tail_ = new juce::AudioParameterBool(juce::ParameterID{"tail", 1}, "tail", false);
     addParameter(latency_);
     addParameter(gain_);
@@ -73,10 +80,10 @@ Processor::Processor() : juce::AudioProcessor(busesFromEnvironment()) {
     addParameter(restored_);
     addParameter(holdProcessBlock_);
     addParameter(tail_);
-    addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
-    midiFlood_ = new juce::AudioParameterBool(juce::ParameterID{"midiFlood", 1}, "midiFlood", false);
+    addParameter(probe("home", "home:" + homeDirectoryName()));
+    midiFlood_ = probe("midiFlood");
     addParameter(midiFlood_);
-    midiSysex_ = new juce::AudioParameterBool(juce::ParameterID{"midiSysex", 1}, "midiSysex", false);
+    midiSysex_ = probe("midiSysex");
     addParameter(midiSysex_);
     latency_->addListener(this);
     nudgeGain_->addListener(this);

@@ -17,7 +17,8 @@
 // chatty third-party plugin would: a host whose launcher handshake shares stdout
 // with plugins fails on it.
 //
-// Probes for the host's side of things, none of them state:
+// Probes for the host's side of things, none of them state, and none automatable
+// (so pluginval's automation and state tests leave them alone; m4-juce-formats):
 // - "holdProcessBlock": with it on, every processBlock takes restartWatch before
 //   it returns, so a host that must wait for the block in flight has something to
 //   wait for.
