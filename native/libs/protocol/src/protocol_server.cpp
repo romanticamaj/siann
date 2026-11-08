@@ -400,14 +400,24 @@ Value descriptorJson(const PluginDescriptorInfo& descriptor) {
                         {"path", Value(descriptor.path)}});
 }
 
-// The first slt_<n> the document does not use.
-std::string nextSlotId(const model::Document& document) {
-    for (std::uint64_t n = 1;; ++n) {
-        std::string id = "slt_" + std::to_string(n);
-        if (document.pluginSlot(id) == nullptr) {
-            return id;
+// The slt_<n> above every slt_<n> any revision of the history holds, so an id
+// a plugin.remove or an undo freed is never handed out again (Jobs v0,
+// plugins): the live instance table may still pin it for a retiring graph.
+std::string nextSlotId(const command::History& history) {
+    std::uint64_t highest = 0;
+    for (const command::Revision& revision : history.revisions()) {
+        for (const model::PluginSlot* slot : revision.document.allPluginSlots()) {
+            const std::string& id = slot->id;
+            if (id.size() <= 4 || id.compare(0, 4, "slt_") != 0 || id.size() > 4 + 19) {
+                continue;
+            }
+            const bool digits = std::all_of(id.begin() + 4, id.end(), [](char c) { return c >= '0' && c <= '9'; });
+            if (digits) {
+                highest = std::max<std::uint64_t>(highest, std::stoull(id.substr(4)));
+            }
         }
     }
+    return "slt_" + std::to_string(highest + 1);
 }
 
 // ^[A-Za-z0-9._-]{1,64}$ and not "." or "..": a file name, never a path.
@@ -876,7 +886,7 @@ struct ProtocolServer::Impl {
         if (head.track(wanted.trackId) == nullptr) {
             throw command::CommandError("not_found", "no track with id " + wanted.trackId);
         }
-        wanted.slotId = nextSlotId(head);
+        wanted.slotId = nextSlotId(session->history());
 
         PluginInstantiateResult loaded;
         try {

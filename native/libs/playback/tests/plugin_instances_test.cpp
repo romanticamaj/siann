@@ -241,8 +241,20 @@ TEST_CASE("plugin table: a reused slot id with another state loads it while the 
     CHECK(table.status("slt_1")->callbacks > 0);
     CHECK(table.pins("slt_1") == 1);
     CHECK(table.size() == 1);
-    // What plays is the new state.
-    CHECK(matches(live, offline(f.doc(), f.bundle(), framesOf(live)), live.blockCount() - 4, live.blockCount()));
+    // What plays is the new state: the document rendered with its own instances
+    // (gain 0.25), the plugin's 64 frames late as in playback.
+    RenderInstanceSet set(f.doc(), PluginHosts{{"clap", &host}}, f.bundle(), kBlock);
+    auto graph = engine::compileDocument(f.doc(), engine::loadMedia(f.doc(), f.bundle()), kBlock, &set);
+    const media::AudioBuffer reference = engine::renderGraph(*graph, 0, framesOf(live), 48'000);
+    const int latency = reloaded->latencyFrames();
+    bool same = true;
+    for (int c = 0; c < 2; ++c) {
+        for (int i = (live.blockCount() - 4) * kBlock; i < live.blockCount() * kBlock; ++i) {
+            const float expected = reference.samples[static_cast<std::size_t>((i - latency) * 2 + c)];
+            same = same && live.out[static_cast<std::size_t>(c)][static_cast<std::size_t>(i)] == expected;
+        }
+    }
+    CHECK(same);
 }
 
 TEST_CASE("plugin table: an instance adopted under a pinned slot id replaces the old one", "[playback][plugin]") {

@@ -80,6 +80,20 @@ PluginInstanceTable::~PluginInstanceTable() {
             entry->instance->control().setEventSink(nullptr);
         }
     }
+    for (auto& entry : superseded_) {
+        if (entry->instance) {
+            entry->instance->control().setEventSink(nullptr);
+        }
+    }
+}
+
+// Detaches the entry's sink and forgets its index; the caller destroys it. On
+// the control thread, at zero pins.
+void PluginInstanceTable::release(Entry& entry) {
+    if (entry.instance) {
+        entry.instance->control().setEventSink(nullptr);
+    }
+    byIndex_.erase(entry.index);
 }
 
 PluginInstanceTable::Entry& PluginInstanceTable::install(const model::PluginSlot& slot, LoadedPlugin loaded) {
@@ -103,9 +117,11 @@ PluginInstanceTable::Entry& PluginInstanceTable::install(const model::PluginSlot
     byIndex_[raw->index] = raw;
     const auto previous = entries_.find(slot.id);
     if (previous != entries_.end()) {
-        byIndex_.erase(previous->second->index);
-        if (previous->second->instance) {
-            previous->second->instance->control().setEventSink(nullptr);
+        if (pinned(previous->second->index)) {
+            // A graph still processes it: it goes once that graph retired.
+            superseded_.push_back(std::move(previous->second));
+        } else {
+            release(*previous->second);
         }
     }
     entries_.insert_or_assign(slot.id, std::move(entry));
@@ -121,7 +137,7 @@ void PluginInstanceTable::sync(const model::Document& document) {
             Entry& entry = *found->second;
             const bool samePlugin = entry.slot.format == slot->format && entry.slot.uid == slot->uid &&
                                     entry.slot.path == slot->path && entry.slot.stateBlob == slot->stateBlob;
-            if (samePlugin || pinned(slot->id)) {
+            if (samePlugin) {
                 entry.slot = *slot;  // bypass and name follow the document
                 entry.inDocument = true;
                 entry.adopted = false;
@@ -141,9 +157,8 @@ void PluginInstanceTable::adopt(const model::PluginSlot& slot, std::unique_ptr<h
     LoadedPlugin loaded;
     loaded.instance = std::move(instance);
     loaded.error = std::move(error);
-    if (pinned(slot.id)) {
-        return;  // a slot id in use keeps its instance
-    }
+    // A pinned entry under the same id is superseded, not kept: the slot is
+    // this plugin from now on.
     Entry& entry = install(slot, std::move(loaded));
     entry.inDocument = false;
     entry.adopted = true;  // kept until a synced document holds it
@@ -158,7 +173,7 @@ std::unique_ptr<graph::Node> PluginInstanceTable::pluginNode(const model::Plugin
     auto node = std::make_unique<graph::PluginNode>(*entry.instance, channels, sampleRate_, true, &graph::steadyNowNanos,
                                                     &entry.timer);
     node->setBypass(slot.bypass);
-    compiling_.insert(slot.id);
+    compiling_.insert(entry.index);
     return node;
 }
 
@@ -166,8 +181,8 @@ void PluginInstanceTable::pinCompiled() {
     pending_.push_back(std::move(compiling_));
     compiling_.clear();
     if (blocksComing_) {
-        for (const std::string& id : pending_.back()) {
-            tell(*entries_.at(id), true);
+        for (const std::uint64_t index : pending_.back()) {
+            tell(*byIndex_.at(index), true);
         }
     }
 }
@@ -185,28 +200,32 @@ void PluginInstanceTable::retired(std::uint64_t epoch) {
     collect();
 }
 
-bool PluginInstanceTable::pinned(const std::string& slotId) const {
-    for (const auto& [epoch, ids] : epochPins_) {
-        if (ids.count(slotId) != 0) {
+bool PluginInstanceTable::pinned(std::uint64_t index) const {
+    for (const auto& [epoch, indices] : epochPins_) {
+        if (indices.count(index) != 0) {
             return true;
         }
     }
-    for (const auto& ids : pending_) {
-        if (ids.count(slotId) != 0) {
+    for (const auto& indices : pending_) {
+        if (indices.count(index) != 0) {
             return true;
         }
     }
-    return compiling_.count(slotId) != 0;
+    return compiling_.count(index) != 0;
 }
 
 std::size_t PluginInstanceTable::pins(std::string_view slotId) const {
-    const std::string id(slotId);
-    std::size_t count = 0;
-    for (const auto& [epoch, ids] : epochPins_) {
-        count += ids.count(id);
+    const auto found = entries_.find(slotId);
+    if (found == entries_.end()) {
+        return 0;
     }
-    for (const auto& ids : pending_) {
-        count += ids.count(id);
+    const std::uint64_t index = found->second->index;
+    std::size_t count = 0;
+    for (const auto& [epoch, indices] : epochPins_) {
+        count += indices.count(index);
+    }
+    for (const auto& indices : pending_) {
+        count += indices.count(index);
     }
     return count;
 }
@@ -215,12 +234,17 @@ std::size_t PluginInstanceTable::pins(std::string_view slotId) const {
 void PluginInstanceTable::collect() {
     for (auto it = entries_.begin(); it != entries_.end();) {
         Entry& entry = *it->second;
-        if (!entry.inDocument && !entry.adopted && !pinned(it->first)) {
-            if (entry.instance) {
-                entry.instance->control().setEventSink(nullptr);
-            }
-            byIndex_.erase(entry.index);
+        if (!entry.inDocument && !entry.adopted && !pinned(entry.index)) {
+            release(entry);
             it = entries_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = superseded_.begin(); it != superseded_.end();) {
+        if (!pinned((*it)->index)) {
+            release(**it);
+            it = superseded_.erase(it);
         } else {
             ++it;
         }
@@ -236,10 +260,16 @@ void PluginInstanceTable::tell(Entry& entry, bool coming) {
 
 void PluginInstanceTable::setBlocksComing(bool coming) {
     blocksComing_ = coming;
-    for (auto& [id, entry] : entries_) {
-        if (coming ? pinned(id) : entry->blocksComing == std::optional<bool>{true}) {
-            tell(*entry, coming);
+    const auto update = [this, coming](Entry& entry) {
+        if (coming ? pinned(entry.index) : entry.blocksComing == std::optional<bool>{true}) {
+            tell(entry, coming);
         }
+    };
+    for (auto& [id, entry] : entries_) {
+        update(*entry);
+    }
+    for (auto& entry : superseded_) {
+        update(*entry);
     }
 }
 
@@ -272,13 +302,19 @@ void PluginInstanceTable::tick() {
                 break;
         }
     }
-    for (auto& [id, entry] : entries_) {
-        if (entry->resync.exchange(false, std::memory_order_acq_rel)) {
+    const auto service = [this](Entry& entry) {
+        if (entry.resync.exchange(false, std::memory_order_acq_rel)) {
             ++resyncs_;
-            resync(*entry);
-        } else if (entry->instance) {
-            entry->instance->control().pollStale();
+            resync(entry);
+        } else if (entry.instance) {
+            entry.instance->control().pollStale();
         }
+    };
+    for (auto& [id, entry] : entries_) {
+        service(*entry);
+    }
+    for (auto& entry : superseded_) {
+        service(*entry);
     }
 }
 

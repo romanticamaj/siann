@@ -12,7 +12,11 @@
 // GraphDriver::publish returned; retired(epoch) releases the pins, and an entry
 // whose slot left the document is destroyed on the control thread once nothing
 // pins it. So an instance survives every edit that keeps its slot: the next
-// compile builds a new node around the same instance.
+// compile builds a new node around the same instance. Pins name the entry,
+// not the slot id: a slot id that comes back with another plugin or state (a
+// client's plugin.insert may reuse a removed id) gets a new entry at once, and
+// the old one, out of the table's lookups, keeps processing in the graphs that
+// pin it until they retired.
 //
 // Plugin events: each entry's sink pushes {entry, event} into one bounded
 // rt::MpscQueue (pluginEventAny) and does nothing else; it runs on whatever
@@ -140,7 +144,7 @@ public:
     std::vector<PluginInstanceStatus> status(const model::Document& document) const;
     // What the instance was last told by setBlocksComing; empty when never.
     std::optional<bool> blocksComingTold(std::string_view slotId) const;
-    // Graphs (published or about to be) holding the slot's node.
+    // Graphs (published or about to be) holding the node of the slot's entry.
     std::size_t pins(std::string_view slotId) const;
     std::size_t size() const noexcept { return entries_.size(); }
 
@@ -164,7 +168,8 @@ private:
     Entry& install(const model::PluginSlot& slot, LoadedPlugin loaded);
     void tell(Entry& entry, bool coming);
     void resync(Entry& entry);
-    bool pinned(const std::string& slotId) const;
+    bool pinned(std::uint64_t index) const;
+    void release(Entry& entry);
     void collect();
 
     PluginHosts hosts_;
@@ -173,11 +178,15 @@ private:
     int maxBlockFrames_;
     rt::MpscQueue<detail::IndexedPluginEvent> events_;
     std::map<std::string, std::unique_ptr<Entry>, std::less<>> entries_;
+    // Entries a newer one replaced under their slot id while a graph pinned
+    // them: they keep processing in that graph until it retired.
+    std::vector<std::unique_ptr<Entry>> superseded_;
     std::map<std::uint64_t, Entry*> byIndex_;
     std::uint64_t nextIndex_ = 1;
-    mutable std::set<std::string> compiling_;
-    std::vector<std::set<std::string>> pending_;  // compiled, not yet published
-    std::map<std::uint64_t, std::set<std::string>> epochPins_;
+    // Pins by entry index.
+    mutable std::set<std::uint64_t> compiling_;
+    std::vector<std::set<std::uint64_t>> pending_;  // compiled, not yet published
+    std::map<std::uint64_t, std::set<std::uint64_t>> epochPins_;
     bool blocksComing_ = false;
     std::uint64_t resyncs_ = 0;
     std::uint64_t restarts_ = 0;
