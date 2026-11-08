@@ -162,6 +162,9 @@ private:
         std::optional<bool> blocksComing;
         std::atomic<bool> resync{false};
         rt::CallbackTimer timer;
+        // Parameter values on their way to the instance: shared by every node made for
+        // it, so a recompile does not lose one before its block.
+        graph::PendingParameters parameters;
         // Last: destroyed first, so no sink runs into a destroyed entry.
         std::unique_ptr<host::PluginInstance> instance;
     };

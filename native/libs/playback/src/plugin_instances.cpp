@@ -171,7 +171,7 @@ std::unique_ptr<graph::Node> PluginInstanceTable::pluginNode(const model::Plugin
     }
     Entry& entry = *found->second;
     auto node = std::make_unique<graph::PluginNode>(*entry.instance, channels, sampleRate_, true, &graph::steadyNowNanos,
-                                                    &entry.timer);
+                                                    &entry.timer, &entry.parameters);
     node->setBypass(slot.bypass);
     compiling_.insert(entry.index);
     return node;
