@@ -19,7 +19,6 @@ using siann::model::EntityType;
 using siann::model::Gain;
 using siann::model::Media;
 using siann::model::ModelError;
-using siann::model::PluginSlot;
 using siann::model::Track;
 using siann::time::Position;
 
@@ -65,23 +64,6 @@ Document addTrack(const Document& doc, Track t) {
     auto root = doc.root();
     root.trackOrder.push_back(t.id);
     return doc.withTrack(std::move(t)).withRoot(std::move(root));
-}
-
-PluginSlot slot(std::string id, std::string trackId) {
-    PluginSlot p;
-    p.id = std::move(id);
-    p.trackId = std::move(trackId);
-    p.format = "clap";
-    p.uid = "com.siann.test-plugin";
-    p.name = "Test";
-    return p;
-}
-
-// A slot must also be listed in its track's inserts.
-Document addSlot(const Document& doc, PluginSlot p) {
-    Track t = *doc.track(p.trackId);
-    t.inserts.push_back(p.id);
-    return doc.withPluginSlot(std::move(p)).withTrack(std::move(t));
 }
 
 std::vector<std::string> codes(const Document& doc) {
