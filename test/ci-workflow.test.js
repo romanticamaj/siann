@@ -153,3 +153,65 @@ test('the app job builds only the core-only siann-engine target and points the t
   assert.match(text, /npm ci/);
   assert.match(text, /working-directory:\s*app/);
 });
+
+// ---- pluginval (m4-juce-formats, acceptance 1; spec, Libraries, "Build, test and CI") ----
+
+function desktopJob() {
+  const job = jobs(fs.readFileSync(WORKFLOW, 'utf8')).find((j) => /-DSIANN_WITH_JUCE=ON/.test(j.text));
+  assert.ok(job, 'a job builds with JUCE');
+  return job;
+}
+
+// The job's steps as text, one per six-space-indented `- ` item.
+function steps(job) {
+  return job.text.split(/\n(?= {6}- )/).filter((step) => /^ {6}- /.test(step));
+}
+
+const PLUGINVAL_RELEASE = 'https://github.com/Tracktion/pluginval/releases/download/v1.0.4/';
+
+test('the desktop job downloads a pinned pluginval release for its OS and checks its hash', () => {
+  const { text } = desktopJob();
+  assert.doesNotMatch(text, /pluginval\/releases\/(latest|download\/latest)/);
+  assert.ok(text.includes(PLUGINVAL_RELEASE), 'pluginval v1.0.4 from its GitHub release');
+  for (const os of ['Windows', 'macOS', 'Linux']) {
+    assert.match(text, new RegExp(`pluginval_${os}\\.zip`), os);
+  }
+  const hashes = text.match(/\b[0-9a-f]{64}\b/g) || [];
+  assert.ok(new Set(hashes).size >= 3, 'a sha256 for each of the three archives');
+  assert.match(text, /sha256sum -c|shasum -a 256 -c/);
+  assert.match(text, /curl -fL --retry/);
+  assert.match(text, /SIANN_PLUGINVAL=/);
+});
+
+test('the desktop job validates siann_test_plugin.vst3 at strictness 5 through scripts/pluginval.js', () => {
+  const runs = steps(desktopJob()).filter((step) => /node scripts\/pluginval\.js/.test(step));
+  assert.ok(runs.length > 0, 'a step runs scripts/pluginval.js');
+  const vst3 = runs.filter((step) => /siann_test_plugin\.vst3/.test(step));
+  assert.ok(vst3.length > 0, 'against the VST3');
+  for (const step of runs) assert.match(step, /--strictness-level 5\b/);
+  // Linux runs it under the virtual display and window manager the editor tests need.
+  const linux = vst3.find((step) => /runner\.os == 'Linux'/.test(step));
+  assert.ok(linux, 'a Linux pluginval step');
+  assert.match(linux, /xvfb-run -a sh -c '?"?openbox &/);
+  assert.ok(
+    vst3.some((step) => /runner\.os != 'Linux'/.test(step)),
+    'Windows and macOS validate the VST3 without the virtual display',
+  );
+});
+
+test('on macOS the desktop job installs the AU for the runner alone and validates it', () => {
+  const au = steps(desktopJob()).find(
+    (step) => /siann_test_plugin\.component/.test(step) && /node scripts\/pluginval\.js/.test(step),
+  );
+  assert.ok(au, 'a step validates the AU');
+  assert.match(au, /runner\.os == 'macOS'/);
+  assert.match(au, /~\/Library\/Audio\/Plug-Ins\/Components/);
+  assert.match(au, /--strictness-level 5\b/);
+});
+
+test("the desktop job keeps pluginval's logs when it fails", () => {
+  const upload = steps(desktopJob()).find((step) => /actions\/upload-artifact@v4/.test(step));
+  assert.ok(upload, 'an upload-artifact step');
+  assert.match(upload, /if: failure\(\)/);
+  assert.match(upload, /pluginval-logs/);
+});
