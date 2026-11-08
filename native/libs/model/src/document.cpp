@@ -24,6 +24,7 @@ std::string_view entityTypeName(EntityType type) noexcept {
         case EntityType::media: return "media";
         case EntityType::track: return "track";
         case EntityType::clip: return "clip";
+        case EntityType::plugin_slot: return "plugin_slot";
     }
     return "unknown";
 }
@@ -35,6 +36,7 @@ constexpr std::string_view kRootSchema = "siann.entity.root.v1";
 constexpr std::string_view kMediaSchema = "siann.entity.media.v1";
 constexpr std::string_view kTrackSchema = "siann.entity.track.v1";
 constexpr std::string_view kClipSchema = "siann.entity.clip.v1";
+constexpr std::string_view kPluginSlotSchema = "siann.entity.plugin_slot.v1";
 constexpr std::string_view kRootId = "root";
 
 Value str(std::string_view s) {
@@ -125,8 +127,40 @@ Track trackFromJson(const Value& value) {
     t.pan = static_cast<std::int32_t>(r.integer("pan", INT32_MIN, INT32_MAX));
     t.mute = r.boolean("mute");
     t.solo = r.boolean("solo");
+    if (const Value* inserts = r.optional("inserts")) {
+        if (inserts->kind() != Value::Kind::array) {
+            r.fail("inserts", "must be an array");
+        }
+        for (const Value& id : inserts->asArray()) {
+            if (id.kind() != Value::Kind::string) {
+                r.fail("inserts", "must contain strings");
+            }
+            t.inserts.push_back(id.asString());
+        }
+    }
     r.finish();
     return t;
+}
+
+PluginSlot pluginSlotFromJson(const Value& value) {
+    detail::FieldReader r(value, "plugin_slot");
+    r.expectSchema(kPluginSlotSchema);
+    PluginSlot p;
+    p.id = r.string("id");
+    p.trackId = r.string("trackId");
+    p.format = r.string("format");
+    p.uid = r.string("uid");
+    p.name = r.string("name");
+    p.path = r.string("path");
+    const Value& blob = r.require("stateBlob");
+    if (blob.kind() == Value::Kind::string) {
+        p.stateBlob = blob.asString();
+    } else if (blob.kind() != Value::Kind::null) {
+        r.fail("stateBlob", "must be a string or null");
+    }
+    p.bypass = r.boolean("bypass");
+    r.finish();
+    return p;
 }
 
 Clip clipFromJson(const Value& value) {
@@ -234,8 +268,12 @@ void collectLeaves(EntityType type, const TableVec<T>& table, std::vector<hash::
 }
 
 template <typename T>
-std::shared_ptr<const TableVec<T>> tableFromJson(const Value& doc, std::string_view key, T (*parse)(const Value&)) {
+std::shared_ptr<const TableVec<T>> tableFromJson(const Value& doc, std::string_view key, T (*parse)(const Value&),
+                                                 bool optional = false) {
     const Value* array = doc.find(key);
+    if (array == nullptr && optional) {
+        return std::make_shared<const TableVec<T>>();
+    }
     if (array == nullptr || array->kind() != Value::Kind::array) {
         throw ModelError("missing_field", "document." + std::string(key) + " must be an array");
     }
@@ -315,7 +353,7 @@ Value toJson(const Media& media) {
 }
 
 Value toJson(const Track& track) {
-    return Value(Object{
+    Object out{
         {"schema", str(kTrackSchema)},
         {"id", Value(track.id)},
         {"name", Value(track.name)},
@@ -325,7 +363,39 @@ Value toJson(const Track& track) {
         {"pan", number(track.pan)},
         {"mute", Value(track.mute)},
         {"solo", Value(track.solo)},
+    };
+    // Omitted when empty: a track without inserts keeps its M1 hash.
+    if (!track.inserts.empty()) {
+        Array inserts;
+        for (const auto& id : track.inserts) {
+            inserts.push_back(Value(id));
+        }
+        out.emplace_back("inserts", Value(std::move(inserts)));
+    }
+    return Value(std::move(out));
+}
+
+Value toJson(const PluginSlot& slot) {
+    return Value(Object{
+        {"schema", str(kPluginSlotSchema)},
+        {"id", Value(slot.id)},
+        {"trackId", Value(slot.trackId)},
+        {"format", Value(slot.format)},
+        {"uid", Value(slot.uid)},
+        {"name", Value(slot.name)},
+        {"path", Value(slot.path)},
+        {"stateBlob", slot.stateBlob ? Value(*slot.stateBlob) : Value()},
+        {"bypass", Value(slot.bypass)},
     });
+}
+
+bool isStateBlobHash(std::string_view text) noexcept {
+    constexpr std::string_view prefix = "sha256:";
+    if (text.size() != prefix.size() + 64 || text.substr(0, prefix.size()) != prefix) {
+        return false;
+    }
+    return std::all_of(text.begin() + static_cast<std::ptrdiff_t>(prefix.size()), text.end(),
+                       [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
 Value toJson(const Clip& clip) {
@@ -354,6 +424,7 @@ Document Document::create(std::string name, std::int64_t sampleRate, std::int32_
     doc.media_ = std::make_shared<const TableVec<Media>>();
     doc.tracks_ = std::make_shared<const TableVec<Track>>();
     doc.clips_ = std::make_shared<const TableVec<Clip>>();
+    doc.slots_ = std::make_shared<const TableVec<PluginSlot>>();
     const auto issues = doc.validate();
     if (!issues.empty()) {
         throw ModelError("invalid_document", issues.front().message);
@@ -371,6 +442,7 @@ Document Document::fromJson(const Value& value) {
     r.require("media");
     r.require("tracks");
     r.require("clips");
+    (void)r.optional("pluginSlots");
     r.finish();
 
     Document doc;
@@ -378,6 +450,7 @@ Document Document::fromJson(const Value& value) {
     doc.media_ = tableFromJson<Media>(value, "media", &mediaFromJson);
     doc.tracks_ = tableFromJson<Track>(value, "tracks", &trackFromJson);
     doc.clips_ = tableFromJson<Clip>(value, "clips", &clipFromJson);
+    doc.slots_ = tableFromJson<PluginSlot>(value, "pluginSlots", &pluginSlotFromJson, true);
     const auto issues = doc.validate();
     if (!issues.empty()) {
         throw ModelError("invalid_document", issues.front().code + ": " + issues.front().message);
@@ -386,13 +459,55 @@ Document Document::fromJson(const Value& value) {
 }
 
 Value Document::toJson() const {
-    return Value(Object{
+    Object out{
         {"schemaVersion", str(kDocumentSchema)},
         {"root", model::toJson(root_->value)},
         {"media", tableToJson(*media_)},
         {"tracks", tableToJson(*tracks_)},
         {"clips", tableToJson(*clips_)},
-    });
+    };
+    // Omitted when empty, like Track.inserts, so M1 to M3 documents read the same.
+    if (!slots_->empty()) {
+        out.emplace_back("pluginSlots", tableToJson(*slots_));
+    }
+    return Value(std::move(out));
+}
+
+const PluginSlot* Document::pluginSlot(std::string_view id) const noexcept {
+    const auto* s = findStored(*slots_, id);
+    return s ? &s->value : nullptr;
+}
+
+std::vector<const PluginSlot*> Document::slotsOnTrack(std::string_view trackId) const {
+    std::vector<const PluginSlot*> out;
+    if (const Track* t = track(trackId)) {
+        for (const auto& id : t->inserts) {
+            if (const PluginSlot* p = pluginSlot(id)) {
+                out.push_back(p);
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<const PluginSlot*> Document::allPluginSlots() const {
+    std::vector<const PluginSlot*> out;
+    for (const auto& item : *slots_) {
+        out.push_back(&item->value);
+    }
+    return out;
+}
+
+Document Document::withPluginSlot(PluginSlot slot) const {
+    Document doc = *this;
+    doc.slots_ = upsert(*slots_, std::move(slot));
+    return doc;
+}
+
+Document Document::withoutPluginSlot(std::string_view id) const {
+    Document doc = *this;
+    doc.slots_ = remove(*slots_, id);
+    return doc;
 }
 
 const Media* Document::media(std::string_view id) const noexcept {
@@ -569,6 +684,39 @@ std::vector<ValidationIssue> Document::validate() const {
             issue(out, "invalid_gain", EntityType::clip, c.id, "clip gain is out of range");
         }
     }
+
+    // Every id in a track's inserts names a slot of that track, once.
+    for (const auto& item : *tracks_) {
+        const Track& t = item->value;
+        std::set<std::string_view> seen;
+        for (const auto& id : t.inserts) {
+            const PluginSlot* p = pluginSlot(id);
+            if (p == nullptr || p->trackId != t.id || !seen.insert(id).second) {
+                issue(out, "insert_mismatch", EntityType::track, t.id,
+                      "track inserts must list each of its plugin slots exactly once");
+                break;
+            }
+        }
+    }
+    for (const auto& item : *slots_) {
+        const PluginSlot& p = item->value;
+        if (!hash::isValidEntityId(p.id)) {
+            issue(out, "invalid_id", EntityType::plugin_slot, p.id, "invalid plugin slot id");
+        }
+        const Track* owner = track(p.trackId);
+        if (owner == nullptr) {
+            issue(out, "unknown_track", EntityType::plugin_slot, p.id, "plugin slot references a missing track");
+        } else if (std::find(owner->inserts.begin(), owner->inserts.end(), p.id) == owner->inserts.end()) {
+            issue(out, "insert_mismatch", EntityType::plugin_slot, p.id, "the slot's track does not list it in inserts");
+        }
+        if (p.format != "clap" && p.format != "vst3" && p.format != "au" && p.format != "lv2") {
+            issue(out, "invalid_format", EntityType::plugin_slot, p.id, "plugin format must be clap, vst3, au or lv2");
+        }
+        if (p.stateBlob && !isStateBlobHash(*p.stateBlob)) {
+            issue(out, "invalid_state_blob", EntityType::plugin_slot, p.id,
+                  "stateBlob must be null or sha256:<64 lowercase hex>");
+        }
+    }
     return out;
 }
 
@@ -598,6 +746,9 @@ std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const
         case EntityType::clip:
             if (const auto* s = findStored(*clips_, ref.id)) found = &s->hash;
             break;
+        case EntityType::plugin_slot:
+            if (const auto* s = findStored(*slots_, ref.id)) found = &s->hash;
+            break;
     }
     if (found == nullptr) {
         return std::nullopt;
@@ -607,11 +758,12 @@ std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const
 
 hash::Digest Document::documentHash() const {
     std::vector<hash::EntityLeaf> leaves;
-    leaves.reserve(1 + media_->size() + tracks_->size() + clips_->size());
+    leaves.reserve(1 + media_->size() + tracks_->size() + clips_->size() + slots_->size());
     leaves.push_back({"root", std::string(kRootId), root_->hash});
     collectLeaves(EntityType::media, *media_, leaves);
     collectLeaves(EntityType::track, *tracks_, leaves);
     collectLeaves(EntityType::clip, *clips_, leaves);
+    collectLeaves(EntityType::plugin_slot, *slots_, leaves);
     try {
         return hash::documentHash(std::move(leaves));
     } catch (const hash::DocumentHashError& error) {
@@ -635,6 +787,10 @@ bool Document::sharesEntity(const Document& other, const EntityRef& ref) const n
             const auto* a = findStored(*clips_, ref.id);
             return a != nullptr && a == findStored(*other.clips_, ref.id);
         }
+        case EntityType::plugin_slot: {
+            const auto* a = findStored(*slots_, ref.id);
+            return a != nullptr && a == findStored(*other.slots_, ref.id);
+        }
     }
     return false;
 }
@@ -647,6 +803,7 @@ std::vector<DiffEntry> diff(const Document& before, const Document& after) {
     diffTables(EntityType::media, *before.media_, *after.media_, out);
     diffTables(EntityType::track, *before.tracks_, *after.tracks_, out);
     diffTables(EntityType::clip, *before.clips_, *after.clips_, out);
+    diffTables(EntityType::plugin_slot, *before.slots_, *after.slots_, out);
     return out;
 }
 

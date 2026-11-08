@@ -18,7 +18,7 @@ constexpr std::string_view kSyncPrefix = "sync_";
 
 std::optional<model::EntityType> typeFromName(std::string_view name) {
     for (const auto type : {model::EntityType::root, model::EntityType::media, model::EntityType::track,
-                            model::EntityType::clip}) {
+                            model::EntityType::clip, model::EntityType::plugin_slot}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -76,6 +76,9 @@ std::vector<model::EntityRef> syncOrder(const model::Document& document) {
     for (auto& id : clips) {
         out.push_back({model::EntityType::clip, std::move(id)});
     }
+    for (const model::PluginSlot* slot : document.allPluginSlots()) {
+        out.push_back({model::EntityType::plugin_slot, slot->id});
+    }
     return out;
 }
 
@@ -99,6 +102,11 @@ std::optional<json::Value> entityJson(const model::Document& document, const mod
         case model::EntityType::clip:
             if (const auto* clip = document.clip(ref.id)) {
                 return model::toJson(*clip);
+            }
+            return std::nullopt;
+        case model::EntityType::plugin_slot:
+            if (const auto* slot = document.pluginSlot(ref.id)) {
+                return model::toJson(*slot);
             }
             return std::nullopt;
     }
@@ -143,6 +151,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     Array media;
     Array tracks;
     Array clips;
+    Array slots;
     for (std::size_t i = offset; i < end; ++i) {
         const auto& ref = pin.order[i];
         Value entity = *entityJson(pin.document, ref);
@@ -151,6 +160,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
             case model::EntityType::media: media.push_back(std::move(entity)); break;
             case model::EntityType::track: tracks.push_back(std::move(entity)); break;
             case model::EntityType::clip: clips.push_back(std::move(entity)); break;
+            case model::EntityType::plugin_slot: slots.push_back(std::move(entity)); break;
         }
     }
     Object chunk;
@@ -160,6 +170,10 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     chunk.emplace_back("media", Value(std::move(media)));
     chunk.emplace_back("tracks", Value(std::move(tracks)));
     chunk.emplace_back("clips", Value(std::move(clips)));
+    // Only when the chunk holds slots, so a document without plugins syncs as in M3.
+    if (!slots.empty()) {
+        chunk.emplace_back("pluginSlots", Value(std::move(slots)));
+    }
     const Value next = end < pin.order.size() ? Value(pin.syncId + ":" + std::to_string(end)) : Value(nullptr);
     return Value(Object{{"revision", Value(pin.envelope.id)},
                         {"seq", Value(std::to_string(pin.seq))},

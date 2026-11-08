@@ -51,7 +51,6 @@ struct Options {
     std::uint16_t port = 0;
     bool mcpTrusted = false;
     std::uintptr_t ownerWindow = 0;
-    std::optional<std::string> openEditor;
     std::optional<std::string> device;
     std::optional<std::int64_t> fakeCallbackNanos;
     std::optional<int> fakeOpenFailures;
@@ -149,8 +148,6 @@ Options parseOptions(const std::vector<std::string>& args) {
                 throw LaunchError("usage", "--owner-window must be a native window handle, in decimal");
             }
             options.ownerWindow = static_cast<std::uintptr_t>(parsed);
-        } else if (arg == "--open-editor") {
-            options.openEditor = value();
         } else if (arg == "--device") {
             options.device = value();
         } else if (arg == "--fake-callback-nanos") {
@@ -162,7 +159,7 @@ Options parseOptions(const std::vector<std::string>& args) {
         } else {
             throw LaunchError("usage", "unknown option " + arg +
                                            "; usage: siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] "
-                                           "[--mcp-trusted] [--owner-window <handle>] [--open-editor <bundle>] "
+                                           "[--mcp-trusted] [--owner-window <handle>] "
                                            "[--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] "
                                            "[--fake-callback-nanos N] [--fake-open-failures N]");
         }
@@ -186,6 +183,7 @@ EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
     EngineHostOptions chosen;
     chosen.deviceId = options.device.value_or("");
     chosen.backoff = options.deviceBackoff.value_or(DeviceBackoff{});
+    chosen.ownerWindow = options.ownerWindow;
     chosen.diagnostic = [&err](const std::string& line) {
         err << "siann-engine: " << line << "\n";
         err.flush();
@@ -310,9 +308,6 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
         const Options options = parseOptions(args);
         MainThread mainThread;
         session::Session served = openOrCreate(options.session);
-        if (options.openEditor) {
-            mainThread.openEditor(*options.openEditor, options.ownerWindow);
-        }
 
         EngineHost host(served, hostOptions(options, err));
 
@@ -324,6 +319,7 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
         serverOptions.actor = "siann-engine";
         serverOptions.mcpScope = options.mcpTrusted ? protocol::McpScope::trusted : protocol::McpScope::propose;
         serverOptions.transportPort = &host;
+        serverOptions.pluginPort = &host;
         serverOptions.auditionPort = host.auditionPort();
         protocol::IxTransport transport;
         protocol::ProtocolServer server(transport, served, serverOptions);

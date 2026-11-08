@@ -125,7 +125,10 @@ using StreamReuse = std::function<realtime::DiskStream*(const std::string& track
 // stream (reused or new); compiled.streams holds only the new ones.
 CompiledPlayback compileWith(const model::Document& document, const std::filesystem::path& bundle,
                              const PlaybackOptions& options, const StreamReuse& reuse,
-                             std::map<std::string, detail::TrackStream>* tracks) {
+                             std::map<std::string, detail::TrackStream>* tracks, PluginInstanceTable* plugins) {
+    if (plugins != nullptr) {
+        plugins->sync(document);
+    }
     std::map<hash::Digest, std::shared_ptr<host::MediaReader>> readers;
     CompiledPlayback compiled;
     graph::GraphBuilder builder;
@@ -160,7 +163,18 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
                                                     flat.soloSilenced),
                                                 track.id + ".fader");
         const graph::NodeId meter = builder.add(std::make_unique<graph::MeterNode>(2), track.id + ".meter");
-        builder.connect(player, fader);
+        // The inserts, in order; a missing plugin has no node and passes through.
+        graph::NodeId previous = player;
+        if (plugins != nullptr) {
+            for (const model::PluginSlot* slot : document.slotsOnTrack(track.id)) {
+                if (auto node = plugins->pluginNode(*slot, track.channels)) {
+                    const graph::NodeId insert = builder.add(std::move(node), track.id + ".insert." + slot->id);
+                    builder.connect(previous, insert);
+                    previous = insert;
+                }
+            }
+        }
+        builder.connect(previous, fader);
         builder.connect(fader, meter);
         builder.connect(meter, master);
         compiled.slots.emplace(trackSlotKey(track.id), fader);
@@ -172,6 +186,9 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
     compiled.meterSlots.emplace(masterMeterKey(), masterMeter);
     builder.setOutput(masterMeter);
     compiled.graph = std::move(builder).compile(options.maxBlockFrames);
+    if (plugins != nullptr) {
+        plugins->pinCompiled();
+    }
     return compiled;
 }
 
@@ -212,13 +229,15 @@ std::string masterMeterKey() {
 }
 
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
-                                    const PlaybackOptions& options) {
-    return compileWith(document, bundle, options, nullptr, nullptr);
+                                    const PlaybackOptions& options, PluginInstanceTable* plugins) {
+    return compileWith(document, bundle, options, nullptr, nullptr, plugins);
 }
 
 PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions options)
     : session_(session),
       options_(std::move(options)),
+      plugins_(options_.pluginHosts, session.bundlePath(), session.history().head().document.root().sampleRate,
+               options_.maxBlockFrames, options_.pluginEventCapacity),
       butler_(options_.butler),
       driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500),
                                              realtime::GraphDriver::kDefaultMeterCapacity,
@@ -252,7 +271,7 @@ void PlaybackEngine::compile(const model::Document& document) {
             const auto live = liveTracks_.find(trackId);
             return live != liveTracks_.end() && live->second.key == key ? live->second.stream : nullptr;
         },
-        &prepared.tracks);
+        &prepared.tracks, &plugins_);
     ++compileCount_;
     prepared.graph = std::move(compiled.graph);
     prepared.slots = std::move(compiled.slots);
@@ -276,6 +295,7 @@ void PlaybackEngine::publishPrepared() {
     // prepared_ stays set across publish(): retiring the old graph while
     // stopped happens inside it, and the new graph's streams must count as used.
     const std::uint64_t epoch = driver_.publish(std::move(prepared_->graph));
+    plugins_.published(epoch);
     std::vector<realtime::DiskStream*>& used = epochStreams_[epoch];
     for (const auto& [trackId, track] : prepared_->tracks) {
         used.push_back(track.stream);
@@ -304,6 +324,7 @@ bool PlaybackEngine::inUse(const realtime::DiskStream* stream) const {
 }
 
 void PlaybackEngine::retired(std::uint64_t epoch) {
+    plugins_.retired(epoch);  // destroys, on this thread, the instances nothing pins
     const auto found = epochStreams_.find(epoch);
     if (found == epochStreams_.end()) {
         return;
@@ -366,10 +387,12 @@ void PlaybackEngine::start(host::AudioDevice& device, const host::AudioDeviceCon
         driver_.play();
     }
     driver_.start(device, sessionConfig);
+    plugins_.setBlocksComing(true);
 }
 
 void PlaybackEngine::stop() {
     driver_.stop();
+    plugins_.setBlocksComing(false);
     butler_.stop();
 }
 
@@ -419,9 +442,13 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
 }
 
 void PlaybackEngine::tick() {
+    plugins_.tick();  // pluginEventAny, on this thread
     transport_.tick();
     dispatcher_.tick();
     driver_.poll();
+    if (driver_.state() != realtime::DriverState::realtime) {
+        plugins_.setBlocksComing(false);  // the device stopped on its own (device_lost)
+    }
     destroyReleased();
     if (prepared_ && preparedReady()) {
         publishPrepared();
@@ -461,7 +488,7 @@ AuditionCost PlaybackEngine::estimateCost(const model::Document& document) const
     }
     // As compileWith(): the master bus and its meter, and per track a player,
     // a fader and a meter.
-    cost.nodes = 2 + 3 * flat.size();
+    cost.nodes = 2 + 3 * flat.size() + document.allPluginSlots().size();
     return cost;
 }
 

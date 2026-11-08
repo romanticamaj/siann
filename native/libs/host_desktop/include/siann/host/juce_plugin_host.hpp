@@ -60,4 +60,13 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+namespace testing {
+
+// Tests only: reports a processor change through the instance's listener on the
+// calling thread, as a plugin that reports from that thread does. Throws
+// bad_parameter for an instance of another host.
+void reportProcessorChange(PluginInstance& instance, bool latency, bool parameterInfo, bool program);
+
+}  // namespace testing
+
 }  // namespace siann::host

@@ -4,7 +4,8 @@
 # devices, runs the message loop and can host a plugin editor.
 add_library(siann_engine_app src/engine.cpp src/engine_host.cpp)
 target_include_directories(siann_engine_app PUBLIC include)
-target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol siann::playback siann::host_fake)
+target_link_libraries(siann_engine_app PUBLIC siann::session siann::protocol siann::playback siann::host_fake
+  siann_host_clap)
 if(SIANN_WITH_JUCE)
   target_sources(siann_engine_app PRIVATE src/main_thread_desktop.cpp src/device_desktop.cpp)
   target_link_libraries(siann_engine_app PUBLIC siann::host_desktop)
@@ -24,11 +25,15 @@ siann_apply_compile_options(siann-engine)
 if(SIANN_BUILD_TESTS)
   # In process: EngineHost on ManualAudioDevice and FakeAudioDevice. The callback
   # runs under the device's realtime mark, so the guard sees the audio path.
-  add_executable(siann_engine_host_tests tests/engine_host_test.cpp)
+  add_executable(siann_engine_host_tests tests/engine_host_test.cpp tests/engine_plugins_test.cpp)
   target_link_libraries(siann_engine_host_tests PRIVATE siann_engine_app siann::host_fake siann_rt_alloc_guard
     Catch2::Catch2WithMain)
   target_include_directories(siann_engine_host_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/protocol/tests"
     "${PROJECT_SOURCE_DIR}/libs/playback/tests/support" "${PROJECT_SOURCE_DIR}/libs/media/tests")
+  # The plugin tests host siann_test_plugin as a CLAP, from its build location.
+  add_dependencies(siann_engine_host_tests siann_test_plugin_CLAP)
+  target_compile_definitions(siann_engine_host_tests PRIVATE
+    SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>")
   siann_apply_compile_options(siann_engine_host_tests)
   catch_discover_tests(siann_engine_host_tests)
 
@@ -42,7 +47,9 @@ if(SIANN_BUILD_TESTS)
   target_include_directories(siann_engine_launch_tests PRIVATE tests "${PROJECT_SOURCE_DIR}/libs/protocol/tests"
     "${PROJECT_SOURCE_DIR}/libs/playback/tests/support")
   target_compile_definitions(siann_engine_launch_tests PRIVATE "SIANN_ENGINE_EXE=\"$<TARGET_FILE:siann-engine>\"")
-  add_dependencies(siann_engine_launch_tests siann-engine)
+  add_dependencies(siann_engine_launch_tests siann-engine siann_test_plugin_CLAP)
+  target_compile_definitions(siann_engine_launch_tests PRIVATE
+    SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>")
   if(SIANN_WITH_JUCE)
     add_dependencies(siann_engine_launch_tests siann_test_plugin_VST3)
     target_compile_definitions(siann_engine_launch_tests PRIVATE

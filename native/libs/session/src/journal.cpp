@@ -54,6 +54,7 @@ EntityType typeFromName(const std::string& name) {
     if (name == "media") return EntityType::media;
     if (name == "track") return EntityType::track;
     if (name == "clip") return EntityType::clip;
+    if (name == "plugin_slot") return EntityType::plugin_slot;
     throw SessionError("corrupt_record", "unknown entity type " + name);
 }
 

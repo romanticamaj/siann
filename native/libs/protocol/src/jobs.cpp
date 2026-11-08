@@ -34,8 +34,8 @@ std::string_view stateName(JobState state) noexcept {
 // Renders and writes the file; returns the job result.
 Value render(const RenderRequest& request) {
     const engine::MediaLibrary library = engine::loadMedia(request.document, request.bundle);
-    const media::AudioBuffer rendered =
-        engine::renderOffline(request.document, library, engine::RenderOptions{request.start, request.frames, 512});
+    const media::AudioBuffer rendered = engine::renderOffline(
+        request.document, library, engine::RenderOptions{request.start, request.frames, 512}, request.plugins.get());
     const std::string bytes = media::encodeWavFloat32(rendered);
     const std::filesystem::path directory = request.bundle / "renders";
     io::createDirectoriesDurable(directory);
@@ -89,6 +89,36 @@ std::string JobRunner::startRender(RenderRequest request) {
     return id;
 }
 
+std::string JobRunner::recordDone(std::string kind, json::Value result) {
+    std::lock_guard lock(mutex_);
+    const std::string id = "job_" + std::to_string(next_++);
+    Job job;
+    job.id = id;
+    job.kind = std::move(kind);
+    job.state = JobState::done;
+    job.result = std::move(result);
+    jobs_.emplace(id, std::move(job));
+    return id;
+}
+
+std::string JobRunner::recordFailed(std::string kind, std::string code, std::string message) {
+    std::lock_guard lock(mutex_);
+    const std::string id = "job_" + std::to_string(next_++);
+    Job job;
+    job.id = id;
+    job.kind = std::move(kind);
+    job.state = JobState::failed;
+    job.errorCode = std::move(code);
+    job.errorMessage = std::move(message);
+    jobs_.emplace(id, std::move(job));
+    return id;
+}
+
+std::vector<std::shared_ptr<engine::PluginNodeSource>> JobRunner::takeFinishedPlugins() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(finishedPlugins_, {});
+}
+
 std::optional<json::Value> JobRunner::status(const std::string& jobId) const {
     std::lock_guard lock(mutex_);
     auto it = jobs_.find(jobId);
@@ -97,7 +127,7 @@ std::optional<json::Value> JobRunner::status(const std::string& jobId) const {
     }
     const Job& job = it->second;
     Object out{{"jobId", Value(job.id)},
-               {"kind", Value("render")},
+               {"kind", Value(job.kind)},
                {"state", Value(std::string(stateName(job.state)))}};
     if (job.state == JobState::done) {
         out.emplace_back("result", job.result);
@@ -114,7 +144,7 @@ bool JobRunner::runOne(std::unique_lock<std::mutex>& lock) {
     Job& job = jobs_.at(queue_.front());
     queue_.pop_front();
     job.state = JobState::running;
-    const RenderRequest request = std::move(*job.request);
+    RenderRequest request = std::move(*job.request);
     job.request.reset();
     lock.unlock();
 
@@ -135,6 +165,10 @@ bool JobRunner::runOne(std::unique_lock<std::mutex>& lock) {
     }
 
     lock.lock();
+    if (request.plugins) {
+        // Destroyed on the command thread, never here (Jobs v0, plugins).
+        finishedPlugins_.push_back(std::move(request.plugins));
+    }
     if (code.empty()) {
         job.state = JobState::done;
         job.result = std::move(result);

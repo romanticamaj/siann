@@ -17,7 +17,7 @@
 
 namespace siann::model {
 
-enum class EntityType { root, media, track, clip };
+enum class EntityType { root, media, track, clip, plugin_slot };
 
 std::string_view entityTypeName(EntityType type) noexcept;
 
@@ -72,10 +72,14 @@ public:
     const Media* media(std::string_view id) const noexcept;
     const Track* track(std::string_view id) const noexcept;
     const Clip* clip(std::string_view id) const noexcept;
+    const PluginSlot* pluginSlot(std::string_view id) const noexcept;
 
     std::vector<const Media*> allMedia() const;
     std::vector<const Track*> tracksInOrder() const;
     std::vector<const Clip*> clipsOnTrack(std::string_view trackId) const;
+    // In the track's inserts order; ids that name no slot are skipped.
+    std::vector<const PluginSlot*> slotsOnTrack(std::string_view trackId) const;
+    std::vector<const PluginSlot*> allPluginSlots() const;
     std::size_t clipCount() const noexcept { return clips_->size(); }
 
     // Each returns a new document. with* inserts or replaces by id.
@@ -83,9 +87,11 @@ public:
     Document withMedia(Media media) const;
     Document withTrack(Track track) const;
     Document withClip(Clip clip) const;
+    Document withPluginSlot(PluginSlot slot) const;
     Document withoutMedia(std::string_view id) const;
     Document withoutTrack(std::string_view id) const;
     Document withoutClip(std::string_view id) const;
+    Document withoutPluginSlot(std::string_view id) const;
 
     // Structural and referential checks; empty means valid.
     std::vector<ValidationIssue> validate() const;
@@ -112,6 +118,7 @@ private:
     Table<Media> media_;
     Table<Track> tracks_;
     Table<Clip> clips_;
+    Table<PluginSlot> slots_;
 };
 
 std::vector<DiffEntry> diff(const Document& before, const Document& after);
@@ -121,5 +128,9 @@ json::Value toJson(const Root& root);
 json::Value toJson(const Media& media);
 json::Value toJson(const Track& track);
 json::Value toJson(const Clip& clip);
+json::Value toJson(const PluginSlot& slot);
+
+// True for "sha256:" followed by 64 lowercase hex digits.
+bool isStateBlobHash(std::string_view text) noexcept;
 
 }  // namespace siann::model

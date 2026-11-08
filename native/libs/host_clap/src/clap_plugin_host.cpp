@@ -202,6 +202,10 @@ public:
 
     PluginControl& control() override { return *this; }
 
+    std::uint64_t midiOutputOverflows() const noexcept override {
+        return midiOutputOverflows_.load(std::memory_order_relaxed);
+    }
+
     // Main thread: what the plugin asked for since the last call. A plugin that
     // throws here fails its instance; nothing escapes to the caller.
     void serviceMainThread() noexcept {
@@ -389,9 +393,25 @@ private:
         return index < self.eventCount_ ? &self.events_[index].header : nullptr;
     }
 
+    // Parameter values take their own path (pluginEvent). Every other output event
+    // (notes, MIDI) counts against the block's bounded list: past
+    // kMaxBlockOutputEvents it is refused, and the block counts once in
+    // midiOutputOverflows. The events themselves are dropped: no MIDI tracks before M6b.
     static bool outputEventsTryPush(const clap_output_events_t* list, const clap_event_header_t* event) {
-        static_cast<ClapInstance*>(list->ctx)->pluginEvent(*event);
-        return true;
+        auto& self = *static_cast<ClapInstance*>(list->ctx);
+        if (event->space_id == CLAP_CORE_EVENT_SPACE_ID && event->type == CLAP_EVENT_PARAM_VALUE) {
+            self.pluginEvent(*event);
+            return true;
+        }
+        if (self.blockOutputEvents_ < kMaxBlockOutputEvents) {
+            ++self.blockOutputEvents_;
+            return true;
+        }
+        if (!self.blockOverflowed_) {
+            self.blockOverflowed_ = true;
+            self.midiOutputOverflows_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return false;
     }
 
     // --- the plugin's extensions
@@ -660,6 +680,8 @@ private:
         flushRequested_.store(false);
         if (params_ != nullptr && active_) {
             collectEvents({}, 1);
+            blockOutputEvents_ = 0;  // under a pause: no block runs meanwhile
+            blockOverflowed_ = false;
             params_->flush(plugin_, &inputEvents_, &outputEvents_);
         }
     }
@@ -707,6 +729,8 @@ private:
 
         flushRequested_.store(false);  // this block is the flush; after the store, so a later request stays
         collectEvents(events, frames);
+        blockOutputEvents_ = 0;
+        blockOverflowed_ = false;
 
         clap_process_t block{};
         block.steady_time = steadyTime_;
@@ -889,6 +913,9 @@ private:
         sink_.store(sinks_.back().get(), std::memory_order_release);
     }
 
+    // CLAP reads everything on the main thread already (serviceMainThread).
+    void pollStale() override {}
+
     void emit(const PluginEvent& event) const noexcept {
         const EventSink* sink = sink_.load(std::memory_order_acquire);
         if (sink != nullptr && *sink) {
@@ -972,6 +999,9 @@ private:
     std::atomic<bool> failed_{false};       // the plugin threw: passes through until replaced
     std::atomic<std::int64_t> lastBlockNanos_{0};
     std::atomic<int> blocksComingSaid_{-1};        // -1 until the driver says, then 0 or 1
+    int blockOutputEvents_ = 0;  // the block's (or flush's) non-parameter output events so far
+    bool blockOverflowed_ = false;
+    std::atomic<std::uint64_t> midiOutputOverflows_{0};
     std::atomic<std::uint64_t> processCalls_{0};   // every process() call, counted after
     std::atomic<std::uint64_t> blocksStarted_{0};  // blocks that reached the plugin, counted before
     std::atomic<std::uint64_t> blocksRun_{0};      // the same, counted after

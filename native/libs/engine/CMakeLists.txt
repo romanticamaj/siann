@@ -10,9 +10,11 @@ siann_apply_compile_options(siann_engine)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_engine_tests
     tests/offline_test.cpp
+    tests/plugin_graph_test.cpp
   )
   target_link_libraries(siann_engine_tests PRIVATE siann::engine Catch2::Catch2WithMain)
-  target_include_directories(siann_engine_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/media/tests")
+  target_include_directories(siann_engine_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/media/tests"
+                             "${PROJECT_SOURCE_DIR}/libs/graph/tests")
   siann_apply_compile_options(siann_engine_tests)
   catch_discover_tests(siann_engine_tests)
 endif()

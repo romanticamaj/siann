@@ -167,6 +167,11 @@ model::Document restoreEntity(const model::Document& document, const model::Docu
                 return document.withClip(*clip);
             }
             return document.withoutClip(ref.id);
+        case EntityType::plugin_slot:
+            if (const model::PluginSlot* slot = source.pluginSlot(ref.id)) {
+                return document.withPluginSlot(*slot);
+            }
+            return document.withoutPluginSlot(ref.id);
     }
     return document;
 }

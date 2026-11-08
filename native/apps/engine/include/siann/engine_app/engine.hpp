@@ -4,7 +4,7 @@
 // siann-protocol, Protocol v0 item 17: the launcher handshake).
 //
 //   siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
-//                [--owner-window <handle>] [--open-editor <bundle>]
+//                [--owner-window <handle>]
 //                [--device <id>] [--fake-callback-nanos N]
 //
 // Opens the bundle, or creates a new empty session there when the directory
@@ -33,10 +33,10 @@
 //
 // Call this on the process's main thread: it is the command and control thread,
 // which ticks the server and the host at most every 10 ms, and a SIANN_WITH_JUCE
-// build serves from the JUCE message loop. There --open-editor opens the first plugin of a bundle
-// before the ready line, owned on Windows by the window whose decimal handle
-// --owner-window gives; a core-only build accepts --owner-window and refuses
-// --open-editor with no_plugin_host.
+// build serves from the JUCE message loop. plugin.open_editor (Protocol v0 item
+// 19) opens a plugin's editor, owned on Windows by the window whose decimal
+// handle --owner-window gives; a core-only build accepts --owner-window and hosts
+// CLAP only. M4 removed --open-editor: it is an unknown option.
 
 #include <atomic>
 #include <ostream>

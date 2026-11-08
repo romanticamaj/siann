@@ -1,0 +1,407 @@
+// plugin.instantiate, plugin.open_editor, plugin.close_editor, engine.status
+// plugins[] and render.start's own instances (spec, Protocol v0 item 19;
+// "Commands and jobs", Jobs v0, plugins; m4-plugin-node), on a fake PluginPort.
+// The engine's real port is tested in apps/engine/tests.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "siann/hash/sha256.hpp"
+#include "siann/io/durable_file.hpp"
+#include "siann/protocol/plugin_port.hpp"
+#include "siann/protocol/transport_port.hpp"
+#include "support/protocol_fixture.hpp"
+
+using namespace siann;
+using namespace siann::protocol::testing;
+using protocol::ConnectionId;
+using protocol::PluginEditorState;
+using protocol::PluginInstantiateRequest;
+using protocol::PluginInstantiateResult;
+using protocol::PluginPort;
+using protocol::PluginPortError;
+using protocol::PluginStatus;
+using protocol::ServerOptions;
+
+namespace {
+
+class NullSource final : public engine::PluginNodeSource {
+public:
+    std::unique_ptr<graph::Node> pluginNode(const model::PluginSlot&, int) const override { return nullptr; }
+};
+
+class FakePluginPort final : public PluginPort {
+public:
+    PluginInstantiateResult instantiate(const PluginInstantiateRequest& request) override {
+        ++instantiated;
+        requests.push_back(request);
+        if (refusal) {
+            throw PluginPortError(*refusal, "the port refused");
+        }
+        PluginInstantiateResult result;
+        result.descriptor = request.descriptor;
+        result.descriptor.uid = "org.siann.test-plugin";
+        result.descriptor.name = "SIANN Test Plugin";
+        if (!request.stateBlob) {
+            result.state = std::vector<std::uint8_t>{'S', 'T', 'A', 'T', 'E'};
+        }
+        result.latencyFrames = 64;
+        result.tailFrames = 12'000;
+        result.capabilities.variableLatency = true;
+        result.capabilities.sampleAccurateParameters = true;
+        return result;
+    }
+    void settle(const model::PluginSlot& slot, bool inserted) override {
+        settled.emplace_back(slot.id, inserted);
+        settledSlots.push_back(slot);
+    }
+    PluginEditorState openEditor(const std::string& slotId) override {
+        if (editorRefusal) {
+            throw PluginPortError(*editorRefusal, "no editor");
+        }
+        open = true;
+        return {slotId, true, 4242};
+    }
+    PluginEditorState closeEditor(const std::string& slotId) override {
+        if (editorRefusal) {
+            throw PluginPortError(*editorRefusal, "no editor");
+        }
+        open = false;
+        return {slotId, false, 0};
+    }
+    std::vector<PluginStatus> plugins() const override { return reported; }
+    std::vector<std::string> formats() const override { return {"clap"}; }
+    std::shared_ptr<engine::PluginNodeSource> instantiateForRender(const model::Document& document) override {
+        ++renderSets;
+        renderSlots = document.allPluginSlots().size();
+        return std::make_shared<NullSource>();
+    }
+    void destroyRenderInstances(std::shared_ptr<engine::PluginNodeSource> instances) override {
+        if (instances) {
+            ++destroyed;
+        }
+    }
+
+    int instantiated = 0;
+    std::vector<PluginInstantiateRequest> requests;
+    std::vector<std::pair<std::string, bool>> settled;
+    std::vector<model::PluginSlot> settledSlots;
+    std::optional<std::string> refusal;
+    std::optional<std::string> editorRefusal;
+    bool open = false;
+    std::vector<PluginStatus> reported;
+    int renderSets = 0;
+    std::size_t renderSlots = 0;
+    int destroyed = 0;
+};
+
+class StatusPort final : public protocol::TransportPort {
+public:
+    protocol::TransportState play() override { return {}; }
+    protocol::TransportState stop() override { return {}; }
+    protocol::TransportState locate(std::int64_t) override { return {}; }
+    protocol::EngineStatus status() const override { return {}; }
+};
+
+ServerOptions withPort(PluginPort& port) {
+    ServerOptions options = manualOptions();
+    options.pluginPort = &port;
+    options.jobs.workerThread = false;
+    return options;
+}
+
+Value instantiateParams(const std::string& trackId, std::optional<std::string> stateBlob = std::nullopt) {
+    Object params{{"trackId", Value(trackId)},
+                  {"index", Value(0)},
+                  {"descriptor", Value(Object{{"format", Value("clap")}, {"path", Value("/plugins/test.clap")}})}};
+    if (stateBlob) {
+        params.emplace_back("stateBlob", Value(*stateBlob));
+    }
+    return Value(std::move(params));
+}
+
+}  // namespace
+
+TEST_CASE("plugin.instantiate writes the blob, commits plugin.insert and answers done", "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_1")});
+
+    const Value started = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(started, "kind").asString() == "plugin.instantiate");
+    CHECK(at(started, "state").asString() == "done");
+    const std::string jobId = at(started, "jobId").asString();
+    const Value& result = at(started, "result");
+    const std::string slotId = at(result, "slotId").asString();
+    CHECK(slotId == "slt_1");
+    CHECK(at(result, "revision").asString() == f.head().envelope.id);
+    CHECK(at(at(result, "descriptor"), "uid").asString() == "org.siann.test-plugin");
+    CHECK(at(at(result, "descriptor"), "format").asString() == "clap");
+    CHECK(at(at(result, "descriptor"), "path").asString() == "/plugins/test.clap");
+    CHECK(at(result, "latencyFrames").asNumber() == 64);
+    CHECK(at(result, "tailFrames").asNumber() == 12'000);
+    const Value& capabilities = at(result, "capabilities");
+    CHECK(at(capabilities, "variableLatency").asBool());
+    CHECK(at(capabilities, "sampleAccurateParameters").asBool());
+    CHECK_FALSE(at(capabilities, "editor").asBool());
+    CHECK(capabilities.asObject().size() == 6);
+
+    // The blob is durable before the command that names it.
+    const std::string blob = at(result, "stateBlob").asString();
+    CHECK(blob == hash::formatHash(hash::sha256(std::string("STATE"))));
+    const auto file = f.session.bundlePath() / "blobs" / blob.substr(7);
+    REQUIRE(std::filesystem::exists(file));
+    CHECK(io::readFile(file) == "STATE");
+
+    const model::PluginSlot* slot = f.head().document.pluginSlot(slotId);
+    REQUIRE(slot != nullptr);
+    CHECK(slot->stateBlob == std::optional<std::string>{blob});
+    CHECK(slot->uid == "org.siann.test-plugin");
+    CHECK(f.head().document.track("trk_1")->inserts == std::vector<std::string>{slotId});
+    REQUIRE(port.settled.size() == 1);
+    CHECK(port.settled[0] == std::make_pair(slotId, true));
+    CHECK(port.settledSlots[0] == *slot);
+    CHECK(port.requests[0].slotId == slotId);
+    CHECK(port.requests[0].trackId == "trk_1");
+    CHECK_FALSE(port.requests[0].stateBlob.has_value());
+
+    // job.status answers the same.
+    const Value status = f.ok(c, "job.status", Value(Object{{"jobId", Value(jobId)}}));
+    CHECK(canonical(status) == canonical(started));
+
+    // session.changed went out for the plugin.insert revision.
+    bool changed = false;
+    for (const Value& event : f.events(c)) {
+        changed = changed || at(event, "type").asString() == "session.changed";
+    }
+    CHECK(changed);
+
+    // A second plugin gets the next free slot id.
+    const Value second = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(second, "result"), "slotId").asString() == "slt_2");
+    CHECK(f.head().document.track("trk_1")->inserts == std::vector<std::string>{"slt_2", slotId});
+}
+
+TEST_CASE("plugin.instantiate never hands out a slot id the history has used", "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_1")});
+
+    const Value first = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(first, "result"), "slotId").asString() == "slt_1");
+    // Removed: slt_1 is free in the head document but not new.
+    f.commit(c, Array{Value(Object{{"op", Value("plugin.remove")}, {"slotId", Value("slt_1")}})});
+    REQUIRE(f.head().document.pluginSlot("slt_1") == nullptr);
+    const Value second = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(second, "result"), "slotId").asString() == "slt_2");
+    // Undone: slt_2 leaves the head document and stays used.
+    f.ok(c, "session.undo");
+    REQUIRE(f.head().document.pluginSlot("slt_2") == nullptr);
+    const Value third = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(at(third, "result"), "slotId").asString() == "slt_3");
+}
+
+TEST_CASE("plugin.instantiate uses a blob it was given and honours idempotency and expectedRevision",
+          "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    const std::string given = "sha256:" + std::string(64, 'b');
+    const std::string request = f.request("req_same", "plugin.instantiate", instantiateParams("trk_1", given));
+    f.transport.deliver(c, request);
+    f.server.pump();
+    f.transport.deliver(c, request);
+    f.server.pump();
+    CHECK(port.instantiated == 1);
+    const auto frames = f.transport.sent(c);
+    CHECK(frames[frames.size() - 1] == frames[frames.size() - 2]);
+    REQUIRE(port.requests[0].stateBlob.has_value());
+    CHECK(*port.requests[0].stateBlob == given);
+    CHECK(f.head().document.pluginSlot("slt_1")->stateBlob == std::optional<std::string>{given});
+    CHECK_FALSE(std::filesystem::exists(f.session.bundlePath() / "blobs" / std::string(64, 'b')));
+
+    const std::string stale = jcs::canonicalize(Value(Object{{"requestId", Value("req_stale")},
+                                                              {"sessionId", Value(f.server.sessionId())},
+                                                              {"method", Value("plugin.instantiate")},
+                                                              {"params", instantiateParams("trk_1")},
+                                                              {"expectedRevision", Value("r1")}}));
+    f.transport.deliver(c, stale);
+    f.server.pump();
+    CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+    CHECK(port.instantiated == 1);
+}
+
+TEST_CASE("plugin.instantiate failures", "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    const std::string before = f.head().envelope.id;
+
+    port.refusal = "plugin_load_failed";
+    const Value failed = f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    CHECK(at(failed, "state").asString() == "failed");
+    CHECK(at(failed, "kind").asString() == "plugin.instantiate");
+    CHECK(at(at(failed, "error"), "code").asString() == "plugin_load_failed");
+    CHECK(f.head().envelope.id == before);
+    const Value status = f.ok(c, "job.status", Value(Object{{"jobId", at(failed, "jobId")}}));
+    CHECK(at(status, "state").asString() == "failed");
+    port.refusal.reset();
+
+    CHECK(errorCode(f.call(c, "plugin.instantiate", instantiateParams("trk_9"))) == "not_found");
+    const std::vector<Value> bad = {
+        Value(Object{{"trackId", Value("trk_1")}, {"index", Value(0)}}),
+        Value(Object{{"trackId", Value("trk_1")}, {"index", Value(0)}, {"descriptor", Value(Object{})}}),
+        Value(Object{{"trackId", Value("trk_1")},
+                     {"index", Value(0)},
+                     {"descriptor", Value(Object{{"format", Value("dx")}, {"path", Value("/x")}})}}),
+        Value(Object{{"trackId", Value("trk_1")},
+                     {"index", Value(0)},
+                     {"descriptor", Value(Object{{"format", Value("clap")}, {"path", Value(7)}})}}),
+        Value(Object{{"trackId", Value("trk_1")},
+                     {"index", Value(-1)},
+                     {"descriptor", Value(Object{{"format", Value("clap")}, {"path", Value("/x")}})}}),
+        Value(Object{{"trackId", Value("trk_1")},
+                     {"index", Value(0)},
+                     {"descriptor", Value(Object{{"format", Value("clap")}})}}),
+        instantiateParams("trk_1", std::string("sha256:abc")),
+    };
+    for (const Value& params : bad) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "plugin.instantiate", params)) == "invalid_params");
+    }
+    CHECK(f.head().envelope.id == before);
+    CHECK(port.instantiated == 1);
+}
+
+TEST_CASE("plugin methods without a port are not_supported", "[protocol][plugin]") {
+    ServerOptions options = manualOptions();
+    Fixture f(options);
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    CHECK(errorCode(f.call(c, "plugin.instantiate", instantiateParams("trk_1"))) == "not_supported");
+    CHECK(errorCode(f.call(c, "plugin.open_editor", Value(Object{{"slotId", Value("slt_1")}}))) == "not_supported");
+    CHECK(errorCode(f.call(c, "plugin.close_editor", Value(Object{{"slotId", Value("slt_1")}}))) == "not_supported");
+    const Value capabilities = f.ok(c, "engine.capabilities");
+    CHECK_FALSE(at(at(capabilities, "features"), "plugins").asBool());
+}
+
+TEST_CASE("plugin.open_editor and plugin.close_editor answer the editor's state", "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const Value opened = f.ok(c, "plugin.open_editor", Value(Object{{"slotId", Value("slt_1")}}));
+    CHECK(at(opened, "slotId").asString() == "slt_1");
+    CHECK(at(opened, "editorOpen").asBool());
+    CHECK(at(opened, "nativeHandle").asString() == "4242");
+    CHECK(port.open);
+    const Value closed = f.ok(c, "plugin.close_editor", Value(Object{{"slotId", Value("slt_1")}}));
+    CHECK_FALSE(at(closed, "editorOpen").asBool());
+    CHECK(at(closed, "nativeHandle").asString() == "0");
+    CHECK(errorCode(f.call(c, "plugin.open_editor", Value(Object{}))) == "invalid_params");
+    for (const char* code : {"not_found", "plugin_missing", "editor_failed", "no_plugin_host"}) {
+        port.editorRefusal = code;
+        CHECK(errorCode(f.call(c, "plugin.open_editor", Value(Object{{"slotId", Value("slt_1")}}))) == code);
+    }
+}
+
+TEST_CASE("engine.capabilities lists the plugin methods, formats and flags", "[protocol][plugin]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const Value capabilities = f.ok(c, "engine.capabilities");
+    std::vector<std::string> methods;
+    for (const Value& method : at(capabilities, "methods").asArray()) {
+        methods.push_back(method.asString());
+    }
+    for (const char* name : {"plugin.instantiate", "plugin.open_editor", "plugin.close_editor"}) {
+        CHECK(std::find(methods.begin(), methods.end(), name) != methods.end());
+    }
+    const Value& plugins = at(at(capabilities, "features"), "plugins");
+    REQUIRE(plugins.kind() == Value::Kind::object);
+    CHECK(canonical(at(plugins, "formats")) == R"(["clap"])");
+    CHECK(canonical(at(plugins, "flags")) ==
+          R"(["sampleAccurateParameters","midiInput","midiOutput","sidechain","variableLatency","editor"])");
+}
+
+TEST_CASE("engine.status carries plugins[] with nulls for a missing plugin", "[protocol][plugin]") {
+    FakePluginPort port;
+    StatusPort transport;
+    ServerOptions options = withPort(port);
+    options.transportPort = &transport;
+    Fixture f(options);
+    const ConnectionId c = f.authed();
+
+    PluginStatus running;
+    running.slotId = "slt_1";
+    running.trackId = "trk_1";
+    running.format = "clap";
+    running.uid = "org.siann.test-plugin";
+    running.running = true;
+    running.capabilities = protocol::PluginCapabilityFlags{};
+    running.capabilities->editor = true;
+    running.latencyFrames = 64;
+    running.tailFrames = 0;
+    running.callbacks = 12'345'678'901ULL;
+    running.xruns = 3;
+    running.maxCallbackMicros = 20'123.5;
+    running.unmeasuredCallbacks = 0;
+    running.midiOutputOverflows = 2;
+    PluginStatus missing;
+    missing.slotId = "slt_2";
+    missing.trackId = "trk_1";
+    missing.format = "vst3";
+    missing.uid = "x";
+    missing.error = std::make_pair(std::string("plugin_not_found"), std::string("gone"));
+    port.reported = {running, missing};
+
+    const Value status = f.ok(c, "engine.status");
+    const auto& plugins = at(status, "plugins").asArray();
+    REQUIRE(plugins.size() == 2);
+    const Value& a = plugins[0];
+    CHECK(at(a, "slotId").asString() == "slt_1");
+    CHECK(at(a, "state").asString() == "running");
+    CHECK(at(a, "callbacks").asString() == "12345678901");
+    CHECK(at(a, "xruns").asString() == "3");
+    CHECK(at(a, "maxCallbackMicros").asNumber() == 20'123.5);
+    CHECK(at(a, "unmeasuredCallbacks").asString() == "0");
+    CHECK(at(a, "midiOutputOverflows").asString() == "2");
+    CHECK(at(a, "latencyFrames").asNumber() == 64);
+    CHECK(at(at(a, "capabilities"), "editor").asBool());
+    CHECK(a.find("error") == nullptr);
+    const Value& b = plugins[1];
+    CHECK(at(b, "state").asString() == "missing");
+    CHECK(at(at(b, "error"), "code").asString() == "plugin_not_found");
+    for (const char* key : {"capabilities", "latencyFrames", "tailFrames", "callbacks", "xruns", "maxCallbackMicros",
+                            "unmeasuredCallbacks", "midiOutputOverflows"}) {
+        INFO(key);
+        CHECK(at(b, key).kind() == Value::Kind::null);
+    }
+}
+
+TEST_CASE("render.start takes its own instances from the port and hands them back", "[protocol][plugin][jobs]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    f.ok(c, "plugin.instantiate", instantiateParams("trk_1"));
+    const Value started = f.ok(c, "render.start", Value(Object{{"name", Value("mix")}, {"frames", Value("4800")}}));
+    CHECK(port.renderSets == 1);
+    CHECK(port.renderSlots == 1);
+    CHECK(port.destroyed == 0);
+    CHECK(f.server.runJobs() == 1);
+    f.server.pump();  // the command thread hands the set back
+    CHECK(port.destroyed == 1);
+    const Value status = f.ok(c, "job.status", Value(Object{{"jobId", at(started, "jobId")}}));
+    CHECK(at(status, "state").asString() == "done");
+    f.server.pump();
+    CHECK(port.destroyed == 1);
+}

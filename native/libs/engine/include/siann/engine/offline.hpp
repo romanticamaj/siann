@@ -68,8 +68,20 @@ struct FlatTrack {
 
 std::vector<FlatTrack> flattenClips(const model::Document& document);
 
+// The nodes for a document's plugin slots (m4-plugin-node): the live instance
+// table (siann-playback) and a render's own instance set implement it. A slot
+// it returns nullptr for compiles as pass-through, like a missing plugin.
+class PluginNodeSource {
+public:
+    virtual ~PluginNodeSource() = default;
+    // A node with `channels` inputs and outputs (the track's channels).
+    virtual std::unique_ptr<graph::Node> pluginNode(const model::PluginSlot& slot, int channels) const = 0;
+};
+
+// Per track: clip player, the track's inserts in order (with a source), fader,
+// into the master bus. Without a source every slot passes audio through.
 std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& document, const MediaLibrary& library,
-                                                      int maxBlockFrames);
+                                                      int maxBlockFrames, const PluginNodeSource* plugins = nullptr);
 
 // End of the last clip, in samples; 0 for an empty session.
 std::int64_t documentEnd(const model::Document& document);
@@ -89,8 +101,9 @@ struct RenderOptions {
 media::AudioBuffer renderGraph(graph::PreparedGraph& prepared, std::int64_t start, std::int64_t frames,
                                std::int64_t sampleRate = 0);
 
-// Stereo, 32-bit float, at the session rate.
+// Stereo, 32-bit float, at the session rate. With plugins, the slots' nodes come
+// from them (a render's own instances); without, every slot passes through.
 media::AudioBuffer renderOffline(const model::Document& document, const MediaLibrary& library,
-                                 const RenderOptions& options = {});
+                                 const RenderOptions& options = {}, const PluginNodeSource* plugins = nullptr);
 
 }  // namespace siann::engine

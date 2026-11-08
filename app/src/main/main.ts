@@ -11,9 +11,6 @@
 //                             Untitled.siann (default: <userData>/sessions)
 //   SIANN_SHELL_BACKOFF_MS    first restart delay (default 250; cap 40x)
 //   SIANN_SHELL_MAX_RESTARTS  consecutive restarts before giving up (default 5)
-//   SIANN_OPEN_EDITOR         a plugin bundle whose editor the engine opens at
-//                             launch, owned by the window on Windows (M0's way
-//                             to reach an editor; needs a SIANN_WITH_JUCE engine)
 //   SIANN_SHELL_TEST=1        exposes the supervisor as globalThis.__siannShell
 
 import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
@@ -122,7 +119,6 @@ const supervisor = new EngineSupervisor({
       session: sessionBundle(),
       platform: process.platform,
       windowHandle: mainWindow && !mainWindow.isDestroyed() ? mainWindow.getNativeWindowHandle() : null,
-      openEditor: process.env.SIANN_OPEN_EDITOR,
       backoff,
       testArgs: engineTestArgs,
     }),

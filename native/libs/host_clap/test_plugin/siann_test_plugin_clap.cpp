@@ -29,6 +29,10 @@
 //   a call, and when the host offers no thread check.
 // - "home:<directory>": the name says which directory holds this file, which tells
 //   two installs of the plugin apart.
+// - "midiFlood": every process() then pushes 3000 CLAP_EVENT_NOTE_ON output events,
+//   more than a host's bounded output list takes, before its parameter out-events.
+// - "concurrentProcess": the most process() calls this instance was ever inside at
+//   once (plain 0 to 4), pushed as an out-event when it grows, so the host reads it.
 //
 // Parameter ids are neither indices nor sorted, so a host that takes one for the
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
@@ -67,6 +71,8 @@ constexpr auto saveWatch = std::chrono::seconds(2);
 constexpr double longTailSeconds = 0.25;
 constexpr std::uint32_t ringFrames = 1024;  // a power of two above longLatency
 constexpr std::uint32_t wideChannels = 32;
+constexpr std::uint32_t floodNotes = 3000;
+constexpr double maxConcurrent = 4.0;
 
 constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'T', 'P', '1'};
 constexpr std::uint32_t stateVersion = 1;
@@ -92,13 +98,15 @@ enum Parameter : std::uint32_t {
     paramSavedWhileProcessing,
     paramWatchFlush,
     paramFlushed,
+    paramMidiFlood,
+    paramConcurrentProcess,
     parameterCount,
 };
 
 constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
-    "watchSave", "savedWhileProcessing", "watchFlush", "flushed",
+    "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess",
 };
 
 constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
@@ -151,6 +159,8 @@ struct TestPlugin {
     std::atomic<bool> rescanRequested{false};
     std::atomic<bool> nudgeOutPending{false};
     std::atomic<std::uint64_t> processCalls{0};
+    std::atomic<int> entered{0};
+    std::atomic<int> mostEntered{0};
 
     std::array<std::array<float, ringFrames>, 2> ring{};
     std::uint32_t writeIndex = 0;
@@ -331,7 +341,7 @@ bool paramsGetInfo(const clap_plugin_t* plugin, std::uint32_t index, clap_param_
     std::snprintf(info->name, sizeof(info->name), "%s%s", parameterNames[index],
                   index == paramHome ? homeDirectoryName.c_str() : "");
     info->min_value = 0.0;
-    info->max_value = 1.0;
+    info->max_value = index == paramConcurrentProcess ? maxConcurrent : 1.0;
     info->default_value = index == paramGain ? 1.0 : 0.0;
     return true;
 }
@@ -540,6 +550,15 @@ void pluginReset(const clap_plugin_t* plugin) {
 
 clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_process_t* process) {
     auto& test = self(plugin);
+    const int inside = test.entered.fetch_add(1) + 1;
+    int most = test.mostEntered.load();
+    bool grew = false;
+    while (inside > most) {
+        if (test.mostEntered.compare_exchange_weak(most, inside)) {
+            grew = true;
+            break;
+        }
+    }
     test.inProcess.store(true);
     test.processCalls.fetch_add(1);
     test.mustBeAudioThread();
@@ -568,8 +587,27 @@ clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_proces
         test.apply(*in->get(in, next));
     }
     test.writeIndex = (test.writeIndex + frames) & (ringFrames - 1);
+    if (test.on(paramMidiFlood)) {
+        for (std::uint32_t i = 0; i < floodNotes; ++i) {
+            clap_event_note_t note{};
+            note.header.size = sizeof(note);
+            note.header.time = frames == 0 ? 0 : i % frames;
+            note.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            note.header.type = CLAP_EVENT_NOTE_ON;
+            note.note_id = -1;
+            note.port_index = 0;
+            note.channel = 0;
+            note.key = static_cast<std::int16_t>(i % 128);
+            note.velocity = 1.0;
+            process->out_events->try_push(process->out_events, &note.header);
+        }
+    }
     test.pushPendingOutEvents(process->out_events);
+    if (grew) {
+        test.pushValue(process->out_events, paramConcurrentProcess, static_cast<double>(inside));
+    }
     test.inProcess.store(false);
+    test.entered.fetch_sub(1);
     return CLAP_PROCESS_CONTINUE;
 }
 
