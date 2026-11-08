@@ -649,10 +649,13 @@ records who that is:
   thread.
 - Locks inside a hosted plugin's `processBlock`. SIANN takes no lock in
   `PluginInstance::process`, but JUCE's hosting wrappers do, and third-party plugin
-  code is outside any guarantee. What JUCE 9.0.3 runs inside `processBlock`, read
-  in full (`juce_VST3PluginFormatImpl.h`, `juce_VST3Common.h`,
-  `juce_AudioProcessorParameter.cpp`, `juce_AudioUnitPluginFormatImpl.h`); this
-  list is the audit, and a JUCE pin bump repeats it:
+  code is outside any guarantee. What JUCE 9.0.3 (pin `be29c81`) runs inside
+  `processBlock`, read in full (`juce_VST3PluginFormatImpl.h`, `juce_VST3Common.h`,
+  `juce_AudioProcessorParameter.cpp`, `juce_AudioUnitPluginFormatImpl.h`, and for
+  the MIDI output they build, `juce_MidiMessage.cpp` and
+  `juce_MidiDataConcatenator.h`); this list is the audit, repeated by
+  m4-juce-formats on 2026-11-09 at the same pin (ADR-0018, Amendment 3), and a JUCE
+  pin bump repeats it:
   - VST3, every block: the per-instance `SpinLock processMutex`. The main thread
     holds it across the plugin's `setActive` in `reset()` (a `kReloadComponent`
     restart), `prepareToPlay` (with `setupProcessing` and the bus arrangement) and
@@ -675,8 +678,16 @@ records who that is:
     block, since only the audio thread touches them. A plugin that produces MIDI
     adds each event under the same lock (`events.add`), and the array grows, so a
     MIDI-producing plugin can allocate on the audio thread inside JUCE;
-    `toMidiBuffer` then appends to SIANN's `juce::MidiBuffer`, preallocated to
-    4096 bytes, which also grows past that. SIANN hands the plugin an empty MIDI
+    `toMidiBuffer` then appends to SIANN's `juce::MidiBuffer`, preallocated since
+    m4-plugin-node for `kMaxBlockOutputEvents` events of `midiEventBytes` (2048 × 9
+    bytes), which grows past that. Each sysex event the plugin outputs allocates
+    on its own, whatever the count (found by the m4-juce-formats re-audit,
+    2026-11-09; ADR-0018, Amendment 3): `toMidiMessage (DataEvent)` calls
+    `MidiMessage::createSysExMessage` (`juce_VST3Common.h:1506`), which mallocs and
+    frees a `HeapBlock` of the event's size (`juce_MidiMessage.cpp:694`) and, for a
+    message over 8 bytes, mallocs again in `MidiMessage::allocateSpace` (`:349`),
+    freed once `addEvent` has copied the bytes. Notes and controllers fit the
+    8-byte inline store and allocate nothing. SIANN hands the plugin an empty MIDI
     input, so the input side never adds.
   - VST3, per output parameter change: `outputParameterChanges->forEach` calls
     `VST3Parameter::setValueWithoutUpdatingProcessor`, which for a changed value
@@ -712,9 +723,16 @@ records who that is:
     taken by `processBlock` to swap the buffers and by the plugin's MIDI output
     callback (`handleIncomingMidiMessage`), which appends to `incomingMidi` under
     it: a `juce::MidiBuffer` that grows, so a MIDI-producing AU can allocate on the
-    audio thread inside JUCE, as a VST3 can. `AudioUnitRender` itself runs under no
-    JUCE lock; the AU wrapper's `lock` guards parameter calls on the main thread,
-    not the render.
+    audio thread inside JUCE, as a VST3 can. Before that lock, inside
+    `AudioUnitRender`, `renderMidiOutput` feeds each packet to
+    `MidiDataConcatenator::pushMidiData` (`juce_AudioUnitPluginFormatImpl.h:2288`;
+    found by the m4-juce-formats re-audit, 2026-11-09; ADR-0018, Amendment 3): its
+    `pendingSysexData`, a `std::vector` reserved at 2048 bytes, grows for a sysex
+    longer than that (`juce_MidiDataConcatenator.h:242`, `:248`), and the
+    `MidiMessage` built from the sysex mallocs for one over 8 bytes (`:259`,
+    `juce_MidiMessage.cpp:349`). The byte-stream extractor in front of it holds
+    fixed-size state. `AudioUnitRender` itself runs under no JUCE lock; the AU
+    wrapper's `lock` guards parameter calls on the main thread, not the render.
   No hosted plugin is in a driver graph in M0: no graph node wraps a
   `PluginInstance` (`siann-engine` runs a device since m4-engine-device, with no
   plugin in its graph until the M4 plugin node). The only callers of
@@ -772,10 +790,17 @@ records who that is:
     atomic, in `engine.status`; JUCE's VST3 wrapper stops a JUCE-built plugin's
     output at 2048, so the adapter counts a block that reached 2048, where the
     events past it were lost, m4-plugin-node), accepting JUCE's
-    `Array` growth as plugin-caused; `ClapPluginHost`'s output event list is
+    `Array` growth as plugin-caused, and (ADR-0018, Amendment 3, 2026-11-09, after
+    the m4-juce-formats re-audit) the allocations JUCE makes for every sysex event
+    the plugin outputs (the VST3 and AU bullets above), which no preallocation
+    reaches and SIANN cannot step in front of; the instance counts those events
+    too (`midiOutputSysex`, an atomic, beside `midiOutputOverflows` in
+    `engine.status`), by walking its `MidiBuffer` after `processBlock`, which
+    allocates nothing; `ClapPluginHost`'s output event list is
     host-owned and bounded, its `try_push` refuses past capacity and the refusal
-    is counted the same way. Until MIDI tracks exist (M6b) the node drops the
-    events after counting. Worker processes remain the remedy; (4) the
+    is counted the same way, as are its `CLAP_EVENT_MIDI_SYSEX` pushes, so the
+    field means the same for every format. Until MIDI tracks exist (M6b) the node
+    drops the events after counting. Worker processes remain the remedy; (4) the
     protocol carries `xruns`, `maxCallbackMicros` and `unmeasuredCallbacks` in the
     engine's status once the engine process runs a device.
   - Visibility: the graph driver counts, on the audio thread with atomics only,
@@ -2190,7 +2215,7 @@ Protocol v0, transport and engine status (decided with m4-engine-device):
     `engine.status` also returns `plugins: [{slotId, trackId, format, uid, state:
     "running" | "missing", error?: {code, message}, capabilities, latencyFrames,
     tailFrames, callbacks, xruns, maxCallbackMicros, unmeasuredCallbacks,
-    midiOutputOverflows}]`, one per plugin slot of the heard document: the
+    midiOutputOverflows, midiOutputSysex}]`, one per plugin slot of the heard document: the
     counters since the instance was created, from the `PluginNode`'s per-instance
     `rt::CallbackTimer`, decimal strings and a number as the driver's fields are;
     `capabilities` the six booleans of the loaded instance. A missing plugin has
