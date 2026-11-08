@@ -253,3 +253,98 @@ TEST_CASE("on the fake device: getState waits for a block, a render overlaps pla
     host.shutdown();
     CHECK(host.playback().plugins().blocksComingTold(slotId) == std::optional<bool>{false});
 }
+
+// ---- plugin.set_parameter (m4-crash-recovery; spec, Protocol v0 item 20) ----
+
+namespace {
+
+// The id plugin.set_parameter takes: what the instance's parameter list reports.
+std::string parameterId(host::PluginInstance& instance, const std::string& name) {
+    return instance.control().parameters()[static_cast<std::size_t>(parameterIndex(instance, name))].id;
+}
+
+Value setParameterParams(const std::string& slotId, const std::string& paramId, double value) {
+    return Value(Object{{"slotId", Value(slotId)}, {"paramId", Value(paramId)}, {"value", Value(value)}});
+}
+
+}  // namespace
+
+TEST_CASE("plugin.set_parameter reaches a CLAP slot as an event of the next block", "[engine][plugin][param]") {
+    ManualRig rig;
+    rig.host->play();
+    const std::string slotId =
+        at(at(rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP)), "result"),
+           "slotId")
+            .asString();
+    rig.pump(4);
+    host::PluginInstance* instance = rig.host->playback().plugins().instance(slotId);
+    REQUIRE(instance != nullptr);
+    const int gain = parameterIndex(*instance, "gain");
+    const double before = instance->control().getParameter(gain);
+    REQUIRE(before != Approx(0.25));
+    const std::size_t revisions = rig.fixture.session.history().revisions().size();
+
+    const Value result = rig.ok("plugin.set_parameter", setParameterParams(slotId, parameterId(*instance, "gain"), 0.25));
+    CHECK(at(result, "slotId").asString() == slotId);
+    // Through the dispatcher and the audio thread, not a main-thread call.
+    CHECK(instance->control().getParameter(gain) == Approx(before));
+    rig.host->tick();  // the dispatcher hands it to paramInbox
+    CHECK(instance->control().getParameter(gain) == Approx(before));
+    rig.device->pump(1);  // the block that carries the event
+    CHECK(instance->control().getParameter(gain) == Approx(0.25));
+    CHECK(rig.fixture.session.history().revisions().size() == revisions);  // not journaled
+
+    // The instance is pinned: an unrelated structural edit keeps the value.
+    rig.ok("command.execute", Value(Object{{"commands", Value(json::Array{Value(Object{{"op", Value("track.add")},
+                                                                                       {"trackId", Value("trk_c")},
+                                                                                       {"name", Value("C")},
+                                                                                       {"channels", Value(2)}})})}}));
+    rig.pump(8);
+    CHECK(rig.host->playback().plugins().instance(slotId) == instance);
+    CHECK(instance->control().getParameter(gain) == Approx(0.25));
+}
+
+TEST_CASE("plugin.set_parameter answers not_found and plugin_missing", "[engine][plugin][param]") {
+    ManualRig rig;
+    const std::string slotId =
+        at(at(rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP)), "result"),
+           "slotId")
+            .asString();
+    rig.pump(2);
+    host::PluginInstance* instance = rig.host->playback().plugins().instance(slotId);
+    REQUIRE(instance != nullptr);
+    const std::string gain = parameterId(*instance, "gain");
+    const auto codeOf = [&](const Value& params) {
+        return errorCode(rig.harness->call(rig.connection, "plugin.set_parameter", params));
+    };
+    CHECK(codeOf(setParameterParams("slt_9", gain, 0.5)) == "not_found");
+    CHECK(codeOf(setParameterParams(slotId, "4242424", 0.5)) == "not_found");
+    CHECK(codeOf(setParameterParams(slotId, "gain", 0.5)) == "not_found");  // a name is not an id
+
+    rig.fixture.exec(R"({"op":"plugin.insert","trackId":"trk_b","index":0,"slotId":"slt_gone",
+        "descriptor":{"format":"clap","uid":"org.siann.test-plugin","path":"/nowhere/gone.clap"},
+        "stateBlob":"sha256:)" + std::string(64, 'c') + R"("})");
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(4);
+    CHECK(codeOf(setParameterParams("slt_gone", gain, 0.5)) == "plugin_missing");
+    CHECK(rig.host->playback().dispatcher().pendingCount() == 0);
+}
+
+#if defined(SIANN_ENGINE_WITH_JUCE) && defined(SIANN_TEST_PLUGIN_VST3)
+TEST_CASE("plugin.set_parameter sets a VST3 slot on the main thread", "[engine][plugin][param][juce]") {
+    ManualRig rig;
+    rig.host->play();
+    const Value loaded = rig.ok("plugin.instantiate", instantiateParams("trk_a", "vst3", SIANN_TEST_PLUGIN_VST3));
+    REQUIRE(at(loaded, "state").asString() == "done");
+    const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+    rig.pump(4);
+    host::PluginInstance* instance = rig.host->playback().plugins().instance(slotId);
+    REQUIRE(instance != nullptr);
+    const int gain = parameterIndex(*instance, "gain");
+    REQUIRE(instance->control().getParameter(gain) != Approx(0.25));
+    rig.ok("plugin.set_parameter", setParameterParams(slotId, parameterId(*instance, "gain"), 0.25));
+    // No block pumped and nothing for the dispatcher: setParameter on this thread.
+    CHECK(instance->control().getParameter(gain) == Approx(0.25).margin(1e-6));
+    CHECK(rig.host->playback().dispatcher().pendingCount() == 0);
+}
+#endif
