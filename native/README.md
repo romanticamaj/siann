@@ -91,7 +91,7 @@ It is built by the core-only configuration too.
 
 ```sh
 siann-engine --session Song.siann [--host 127.0.0.1] [--port 0] [--mcp-trusted]
-            [--owner-window <handle>] [--open-editor <bundle>]
+            [--owner-window <handle>]
             [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
             [--fake-callback-nanos N] [--fake-open-failures N]
 ```
@@ -116,11 +116,14 @@ publisher). Clients drive it with `transport.play`, `transport.stop` and
 `transport.locate {frames}`, read `engine.status`, and see the playhead in the
 binary frames of `/v1/realtime`.
 
-A `SIANN_WITH_JUCE` build runs the JUCE message loop on the main thread, and
-`--open-editor` opens a plugin's editor before the ready line, owned on Windows
-by the window whose decimal handle `--owner-window` gives; the Electron shell
-passes its window and `SIANN_OPEN_EDITOR`. A core-only build ignores
-`--owner-window` and refuses `--open-editor` with `no_plugin_host`.
+Plugins are inserted with `plugin.instantiate` and their editors opened with
+`plugin.open_editor` (docs/schemas/protocol-plugins-v0.md). Every build hosts
+CLAP; a `SIANN_WITH_JUCE` build also hosts VST3 (and AU on macOS) and runs the
+JUCE message loop on the main thread, where an editor opens owned on Windows by
+the window whose decimal handle `--owner-window` gives (the Electron shell passes
+its window). A core-only build ignores `--owner-window` and answers
+`no_plugin_host` for VST3 and AU. A CLAP editor answers `editor_failed` until
+the desktop target supplies it a window.
 
 `--session` opens the bundle, or creates a new empty session there (named after
 the bundle) when the directory does not exist. Once the protocol server is

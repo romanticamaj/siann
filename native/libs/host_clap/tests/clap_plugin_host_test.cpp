@@ -115,14 +115,16 @@ void requireError(const std::string& code, Call call) {
     }
 }
 
-// The next event of a kind from the sink, while the host is pumped.
+// The next event of a kind from the sink, while the host is pumped. With a
+// parameter, only an edit of that one: the plugin also reports "concurrentProcess"
+// as an edit of its own.
 std::optional<host::PluginEvent> nextEvent(const Pump& pump, rt::MpscQueue<host::PluginEvent>& events,
-                                           host::PluginEvent::Kind kind) {
+                                           host::PluginEvent::Kind kind, int parameter = -1) {
     std::optional<host::PluginEvent> found;
     pump([&] {
         host::PluginEvent event;
         while (!found && events.pop(event)) {
-            if (event.kind == kind) {
+            if (event.kind == kind && (parameter < 0 || event.parameterIndex == parameter)) {
                 found = event;
             }
         }
@@ -423,7 +425,7 @@ TEST_CASE("clap host: a plugin's own edit reaches the sink", "[clap][plugin]") {
     const int gain = parameterIndex(*instance, "gain");
 
     instance->control().setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
-    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited);
+    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited, gain);
     REQUIRE(edit.has_value());
     CHECK(edit->parameterIndex == gain);
     CHECK(edit->value == Approx(0.5));
@@ -443,7 +445,7 @@ TEST_CASE("clap host: a plugin's edit during playback reaches the sink from the 
     PlayingThread playing(*instance);
     REQUIRE(pump([&] { return playing.blocks() >= 16; }));
     instance->control().setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
-    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited);
+    const auto edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited, gain);
     REQUIRE(edit.has_value());
     CHECK(edit->parameterIndex == gain);
     CHECK(edit->value == Approx(0.5));
@@ -856,4 +858,56 @@ TEST_CASE("clap host: an instance outlives its host", "[clap][plugin]") {
         instance = loadTestPlugin(host);
     }
     CHECK(measureDelay(*instance).frames == 64);
+}
+
+// m4-plugin-node: MIDI output is bounded. A block's note and MIDI output events past
+// 2048 (Steinberg's limit, the same for every format) are refused, and each block
+// that overflowed counts once; parameter events take their own path.
+TEST_CASE("clap host: note output past 2048 a block is refused and counted per block", "[clap][plugin][midi]") {
+    host::ClapPluginHost host;
+    const auto pump = pumpOf(host);
+    auto instance = loadTestPlugin(host);
+    rt::MpscQueue<host::PluginEvent> events(64);
+    instance->control().setEventSink([&](const host::PluginEvent& event) { events.push(event); });
+    runBlocks(*instance);
+    CHECK(instance->midiOutputOverflows() == 0);
+
+    instance->control().setParameter(parameterIndex(*instance, "midiFlood"), 1.0);
+    runBlocks(*instance);  // four blocks, each 3000 notes; the first takes the value
+    const std::uint64_t flooded = instance->midiOutputOverflows();
+    CHECK(flooded >= 3);
+    CHECK(flooded <= 4);
+    runBlocks(*instance);
+    CHECK(instance->midiOutputOverflows() == flooded + 4);
+
+    // A parameter edit of the plugin's own still reaches the sink while it floods.
+    host::PluginEvent stale;
+    while (events.pop(stale)) {
+    }
+    instance->control().setParameter(parameterIndex(*instance, "nudgeGain"), 1.0);
+    std::optional<host::PluginEvent> edit;
+    {
+        PlayingThread playing(*instance);
+        edit = nextEvent(pump, events, host::PluginEvent::Kind::parameterEdited, parameterIndex(*instance, "gain"));
+        CHECK(playing.finish() == 0);  // counting allocates nothing
+    }
+    REQUIRE(edit.has_value());
+    CHECK(edit->parameterIndex == parameterIndex(*instance, "gain"));
+
+    instance->control().setParameter(parameterIndex(*instance, "midiFlood"), 0.0);
+    runBlocks(*instance);
+    const std::uint64_t after = instance->midiOutputOverflows();
+    runBlocks(*instance);
+    CHECK(instance->midiOutputOverflows() == after);
+    instance->control().setEventSink(nullptr);
+}
+
+TEST_CASE("clap host: concurrentProcess reads 1 when one thread processes", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    auto instance = loadTestPlugin(host);
+    const int concurrent = parameterIndex(*instance, "concurrentProcess");
+    CHECK(instance->control().getParameter(concurrent) == Approx(0.0));
+    runBlocks(*instance);
+    // Normalized over 0 to 4 entries.
+    CHECK(instance->control().getParameter(concurrent) * 4.0 == Approx(1.0));
 }

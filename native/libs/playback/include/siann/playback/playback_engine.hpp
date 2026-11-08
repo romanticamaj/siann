@@ -40,6 +40,7 @@
 #include "siann/graph/graph.hpp"
 #include "siann/host/interfaces.hpp"
 #include "siann/model/document.hpp"
+#include "siann/playback/plugin_instances.hpp"
 #include "siann/realtime/control_dispatcher.hpp"
 #include "siann/realtime/disk_stream.hpp"
 #include "siann/realtime/graph_driver.hpp"
@@ -80,6 +81,11 @@ struct PlaybackOptions {
     // The clock the driver times each device callback with (GraphDriver::Options::
     // nowNanos); nullptr is the steady clock. Tests and `--fake-callback-nanos`.
     std::int64_t (*callbackClock)() noexcept = nullptr;
+    // The plugin hosts by format (m4-plugin-node). A slot of a format without one
+    // is missing (no_plugin_host) and passes audio through.
+    PluginHosts pluginHosts;
+    // Capacity of pluginEventAny, the queue every plugin's event sink feeds.
+    std::size_t pluginEventCapacity = 1024;
 };
 
 struct CompiledPlayback {
@@ -139,9 +145,12 @@ struct OwnedStream {
 }  // namespace detail
 
 // Throws engine::EngineError (media_missing, media_hash_mismatch,
-// media_mismatch) like engine::loadMedia().
+// media_mismatch) like engine::loadMedia(). With a plugin table, the table is
+// synced with the document and each track's inserts go between its player and
+// its fader (a missing plugin passes through); the nodes' slots are pinned for
+// this graph (PluginInstanceTable::pinCompiled).
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
-                                    const PlaybackOptions& options);
+                                    const PlaybackOptions& options, PluginInstanceTable* plugins = nullptr);
 
 class PlaybackEngine {
 public:
@@ -232,6 +241,11 @@ public:
     // Streams alive: used by a graph, or waiting to be released and destroyed.
     std::size_t streamCount() const noexcept { return streams_.size(); }
     session::Session& session() noexcept { return session_; }
+    // The hosted plugins of the live graph (m4-plugin-node).
+    PluginInstanceTable& plugins() noexcept { return plugins_; }
+    const PluginInstanceTable& plugins() const noexcept { return plugins_; }
+    // The document the newest update() (or load()) handed the engine: what is heard.
+    const model::Document* heardDocument() const noexcept { return latest_ ? &*latest_ : nullptr; }
 
 private:
     void compile(const model::Document& document);
@@ -243,6 +257,8 @@ private:
 
     session::Session& session_;
     PlaybackOptions options_;
+    // Before the driver, whose retire callback releases its pins.
+    PluginInstanceTable plugins_;
     // Declared before the butler and the driver: both refer to the streams,
     // and the driver's retire callback uses everything up to the butler.
     std::map<const realtime::DiskStream*, detail::OwnedStream> streams_;

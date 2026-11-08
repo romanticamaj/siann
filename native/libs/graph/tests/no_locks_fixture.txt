@@ -1,0 +1,5 @@
+// The self-test fixture for SiannNoLocks.cmake: it names a lock, so the check
+// must fail on it (the ctest test is WILL_FAIL).
+void process() noexcept {
+    static std::mutex guard;
+}

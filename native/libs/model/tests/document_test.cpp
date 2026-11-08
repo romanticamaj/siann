@@ -94,10 +94,11 @@ TEST_CASE("The shared fixture document gives the Node bridge's hashes", "[model]
     for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
         const std::string& type = leaf.find("type")->asString();
         const std::string& id = leaf.find("id")->asString();
-        const EntityType entityType = type == "root"    ? EntityType::root
-                                      : type == "media" ? EntityType::media
-                                      : type == "track" ? EntityType::track
-                                                        : EntityType::clip;
+        const EntityType entityType = type == "root"          ? EntityType::root
+                                      : type == "media"       ? EntityType::media
+                                      : type == "track"       ? EntityType::track
+                                      : type == "plugin_slot" ? EntityType::plugin_slot
+                                                              : EntityType::clip;
         INFO(type << ":" << id);
         CHECK(formatHash(doc.entityHash(EntityRef{entityType, id})) == leaf.find("entityHash")->asString());
     }

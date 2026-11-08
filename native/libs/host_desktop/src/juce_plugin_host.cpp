@@ -28,6 +28,9 @@ constexpr int dispatchSliceMilliseconds = 5;
 // which process() depends on.
 constexpr int maxPluginChannels = 31;
 
+// A MidiBuffer event: its sample position, its size and a three-byte message.
+constexpr int midiEventBytes = static_cast<int>(sizeof(std::int32_t) + sizeof(std::uint16_t) + 3);
+
 bool dispatchUntil(const std::function<bool()>& predicate, std::chrono::steady_clock::duration timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     auto* messageManager = juce::MessageManager::getInstance();
@@ -87,8 +90,7 @@ private:
 
 class JucePluginInstance final : public PluginInstance,
                                  private PluginControl,
-                                 private juce::AudioProcessorListener,
-                                 private juce::AsyncUpdater {
+                                 private juce::AudioProcessorListener {
 public:
     using EventSink = std::function<void(const PluginEvent&)>;
 
@@ -106,7 +108,8 @@ public:
         }
         pointers_.assign(static_cast<std::size_t>(channels_), nullptr);
         scratch_.assign(static_cast<std::size_t>(channels_) * static_cast<std::size_t>(maxBlockFrames_), 0.0f);
-        midi_.ensureSize(4096);
+        // Steinberg's limit, so a plugin within it never grows the buffer.
+        midi_.ensureSize(static_cast<std::size_t>(kMaxBlockOutputEvents * midiEventBytes));
 
         capabilities_.sampleAccurateParameters = false;  // JUCE hands parameters over per block
         capabilities_.midiInput = plugin_->acceptsMidi();
@@ -164,6 +167,12 @@ public:
             // the sink): the audited exception under "Realtime rules and
             // enforcement" (ADR-0018).
             plugin_->processBlock(buffer, midi_);
+            // The plugin's MIDI output, dropped until MIDI tracks exist (M6b). JUCE's
+            // VST3 wrapper passes at most kMaxBlockOutputEvents on, so a block that
+            // reached it is where events were lost.
+            if (midi_.getNumEvents() >= kMaxBlockOutputEvents) {
+                midiOutputOverflows_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         processing_.store(false);
         for (int c = outputChannels_; c < output.channelCount; ++c) {
@@ -172,6 +181,13 @@ public:
     }
 
     PluginControl& control() override { return *this; }
+
+    std::uint64_t midiOutputOverflows() const noexcept override {
+        return midiOutputOverflows_.load(std::memory_order_relaxed);
+    }
+
+    // For testing::reportProcessorChange: what a plugin reporting on this thread does.
+    void reportChange(const ChangeDetails& details) { plugin_->updateHostDisplay(details); }
 
 private:
     // Holds the plugin out of processing: the block in flight finishes, and until
@@ -206,7 +222,13 @@ private:
     // Message thread, where JUCE writes the plugin's latency (a plain int).
     void readLatency() { latencyFrames_.store(plugin_->getLatencySamples(), std::memory_order_relaxed); }
 
-    void handleAsyncUpdate() override { readTail(); }
+    // Main thread, from the owner's tick: a tail a report off the message thread
+    // marked stale.
+    void pollStale() override {
+        if (tailStale_.exchange(false)) {
+            readTail();
+        }
+    }
 
     std::vector<std::uint8_t> getState() override {
         juce::MemoryBlock payload;
@@ -320,7 +342,9 @@ private:
             if (juce::MessageManager::existsAndIsCurrentThread()) {
                 readTail();  // before the event goes out, so its reader sees the new tail
             } else {
-                triggerAsyncUpdate();
+                // The formats read the tail on the UI thread only, and a message
+                // posted from here would allocate: pollStale reads it.
+                tailStale_.store(true);
             }
         }
         if (details.latencyChanged) {
@@ -357,6 +381,8 @@ private:
     std::atomic<int> latencyFrames_{0};  // JUCE's own int is written on the message thread; this is read anywhere
     std::atomic<bool> processing_{false};
     std::atomic<int> paused_{0};
+    std::atomic<bool> tailStale_{false};
+    std::atomic<std::uint64_t> midiOutputOverflows_{0};
     std::unique_ptr<EditorWindow> editor_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
@@ -442,6 +468,21 @@ struct JucePluginHost::Impl {
 };
 
 JucePluginHost::JucePluginHost() : impl_(std::make_unique<Impl>()) { editor_platform::failLoadsWithoutDialogs(); }
+
+namespace testing {
+
+void reportProcessorChange(PluginInstance& instance, bool latency, bool parameterInfo, bool program) {
+    auto* juceInstance = dynamic_cast<JucePluginInstance*>(&instance);
+    if (juceInstance == nullptr) {
+        throw PluginError("bad_parameter", "not an instance of this host");
+    }
+    juceInstance->reportChange(juce::AudioProcessorListener::ChangeDetails{}
+                                   .withLatencyChanged(latency)
+                                   .withParameterInfoChanged(parameterInfo)
+                                   .withProgramChanged(program));
+}
+
+}  // namespace testing
 JucePluginHost::~JucePluginHost() = default;
 
 std::vector<PluginDescriptor> JucePluginHost::scan() {

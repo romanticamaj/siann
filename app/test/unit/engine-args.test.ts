@@ -44,14 +44,14 @@ test('macOS and Linux pass no owner: their handles are not windows the engine ca
   }
 });
 
-test('the plugin to open is passed on every platform', () => {
-  assert.deepEqual(engineArgs({ session, platform: 'darwin', windowHandle: null, openEditor: '/x/Nova.component' }), [
-    '--session',
-    session,
-    '--open-editor',
-    '/x/Nova.component',
-  ]);
-  assert.deepEqual(engineArgs({ session, platform: 'darwin', windowHandle: null, openEditor: '' }), ['--session', session]);
+test('no plugin is opened at launch: editors open through plugin.open_editor (M4)', () => {
+  for (const platform of ['darwin', 'linux', 'win32'] as const) {
+    const args = engineArgs({ session, platform, windowHandle: null });
+    assert.ok(!args.includes('--open-editor'), platform);
+  }
+  const launch: Record<string, unknown> = { session, platform: 'darwin', windowHandle: null };
+  launch.openEditor = '/x/Nova.component';  // a field the launch no longer has
+  assert.deepEqual(engineArgs(launch as unknown as Parameters<typeof engineArgs>[0]), ['--session', session]);
 });
 
 test('the shell hands the engine its backoff, for the device retry', () => {

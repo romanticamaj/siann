@@ -19,6 +19,10 @@
 #include <string>
 #include <thread>
 
+#include <memory>
+#include <vector>
+
+#include "siann/engine/offline.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/model/document.hpp"
 
@@ -32,6 +36,9 @@ struct RenderRequest {
     std::int64_t frames = -1;  // -1: to the end of the document
     model::Document document;
     std::filesystem::path bundle;
+    // The render's own plugin instances (Jobs v0, plugins); nullptr: every slot
+    // passes through. Handed back to the command thread when the job ends.
+    std::shared_ptr<engine::PluginNodeSource> plugins;
 };
 
 class JobRunner {
@@ -43,6 +50,13 @@ public:
 
     // Queues a render and returns its id ("job_<n>").
     std::string startRender(RenderRequest request);
+    // A job that ran inside its request on the command thread (plugin.instantiate):
+    // recorded done or failed, so job.status answers it. Returns its id.
+    std::string recordDone(std::string kind, json::Value result);
+    std::string recordFailed(std::string kind, std::string code, std::string message);
+    // The plugin instance sets of the render jobs that ended since the last call,
+    // for the command thread to destroy.
+    std::vector<std::shared_ptr<engine::PluginNodeSource>> takeFinishedPlugins();
     // {jobId, kind, state, result?, error?}, or nullopt for an unknown id.
     std::optional<json::Value> status(const std::string& jobId) const;
     // Runs every queued job on the calling thread; returns how many ran.
@@ -55,6 +69,7 @@ public:
 private:
     struct Job {
         std::string id;
+        std::string kind = "render";
         JobState state = JobState::queued;
         std::optional<RenderRequest> request;  // until it runs
         json::Value result;
@@ -70,6 +85,7 @@ private:
     std::condition_variable changed_;
     std::map<std::string, Job> jobs_;
     std::deque<std::string> queue_;
+    std::vector<std::shared_ptr<engine::PluginNodeSource>> finishedPlugins_;
     std::uint64_t next_ = 1;
     bool stopping_ = false;
     std::thread worker_;

@@ -234,6 +234,43 @@ TEST_CASE("Replaying the same operations reproduces revisions exactly", "[histor
     CHECK(a.head().document.track("trk_2") == nullptr);
 }
 
+TEST_CASE("Replaying plugin commands reproduces identical document hashes", "[history][plugin]") {
+    const std::string blob = "sha256:" + std::string(64, 'c');
+    auto insert = [&](const std::string& slotId, int index) {
+        return cmd(R"({"op":"plugin.insert","trackId":"trk_1","index":)" + std::to_string(index) + R"(,"slotId":")" +
+                   slotId + R"(","descriptor":{"format":"clap","uid":"com.siann.test-plugin"},"stateBlob":")" +
+                   blob + R"("})");
+    };
+    auto run = [&] {
+        History history = fresh();
+        history.commit({addTrack("trk_1"), addTrack("trk_2")}, "a", "t1");
+        history.commit({insert("slt_1", 0)}, "a", "t2");
+        history.commit({insert("slt_2", 0)}, "a", "t3");
+        history.commit({cmd(R"({"op":"plugin.set_bypass","slotId":"slt_1","bypass":true})")}, "a", "t4");
+        history.commit({cmd(R"({"op":"plugin.remove","slotId":"slt_2"})")}, "a", "t5");
+        history.undo("a", "t6");
+        history.commit({removeTrack("trk_1")}, "a", "t7");
+        history.undo("a", "t8");
+        return history;
+    };
+    const History a = run();
+    const History b = run();
+    REQUIRE(a.revisions().size() == b.revisions().size());
+    for (std::size_t i = 0; i < a.revisions().size(); ++i) {
+        INFO("revision " << i);
+        CHECK(a.revisions()[i].envelope.documentHash == b.revisions()[i].envelope.documentHash);
+        CHECK(a.revisions()[i].envelope.documentHash == a.revisions()[i].document.documentHash());
+    }
+    const Document& head = a.head().document;
+    CHECK(head.validate().empty());
+    CHECK(head.track("trk_1")->inserts == std::vector<std::string>{"slt_2", "slt_1"});
+    CHECK(head.pluginSlot("slt_1")->bypass);
+    CHECK(head.pluginSlot("slt_2") != nullptr);
+    // The document after undoing track.remove is the one before it.
+    CHECK(a.revisions()[a.revisions().size() - 1].envelope.documentHash ==
+          a.revisions()[a.revisions().size() - 3].envelope.documentHash);
+}
+
 TEST_CASE("Revisions can be found by id", "[history]") {
     History history = fresh();
     history.commit({addTrack("trk_1")}, "a", "t");

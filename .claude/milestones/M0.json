@@ -28,7 +28,7 @@
     {
       "id": "macos-hands-on",
       "text": "Judge editor-window focus and Cmd-Tab behaviour on a real Mac.",
-      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour. Check, with an editor open: clicking the Electron window leaves the editor visible; Cmd-Tab lists the engine as an app and returns to it; Cmd-Tab to a third application shows the editor floating above it (the behaviour under judgement); minimise and restore the editor; Electron in fullscreen (the editor carries FullScreenAuxiliary, so it should join that space). Note while judging: the engine never calls [NSApp finishLaunching] (JUCE's loop runs without it), so record any activation, menu-bar or focus oddity that could stem from that. Record acceptable / acceptable only with conditional floating / unacceptable."
+      "how": "The maintainer runs the signed build on a Mac and records the result; CI cannot judge window behaviour. Open the editor through the protocol (since M4: plugin.instantiate, then plugin.open_editor {slotId}; the engine's --open-editor flag and the shell's SIANN_OPEN_EDITOR are gone). Check, with an editor open: clicking the Electron window leaves the editor visible; Cmd-Tab lists the engine as an app and returns to it; Cmd-Tab to a third application shows the editor floating above it (the behaviour under judgement); minimise and restore the editor; Electron in fullscreen (the editor carries FullScreenAuxiliary, so it should join that space). Note while judging: the engine never calls [NSApp finishLaunching] (JUCE's loop runs without it), so record any activation, menu-bar or focus oddity that could stem from that. Record acceptable / acceptable only with conditional floating / unacceptable."
     },
     {
       "id": "plugin-set",
@@ -102,7 +102,7 @@
     {
       "id": "m0-exit-signed",
       "text": "A signed and notarized macOS build runs; focus and Cmd-Tab behaviour is acceptable.",
-      "how": "CI notarization plus the maintainer's hands-on check (human gate)."
+      "how": "CI notarization plus the maintainer's hands-on check (human gate), with the editor opened through plugin.instantiate and plugin.open_editor."
     }
   ],
   "killCriterion": "No acceptable editor-window behaviour on macOS after two weeks, with unconditional floating (NSFloatingWindowLevel) and conditional floating (float only while Electron or the engine is frontmost) both tried: evaluate engine-in-main-process or Tracktion with the maintainer."

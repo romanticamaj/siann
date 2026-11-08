@@ -49,6 +49,9 @@ EntityRef clipRef(std::string id) {
 EntityRef mediaRef(std::string id) {
     return {EntityType::media, std::move(id)};
 }
+EntityRef slotRef(std::string id) {
+    return {EntityType::plugin_slot, std::move(id)};
+}
 
 // Reads a command's parameters; "op" is consumed up front.
 class Params {
@@ -148,6 +151,10 @@ Prepared trackRemove(const Document& doc, const Command& command) {
         effects.insert(clipRef(c->id));
         result = result.withoutClip(c->id);
     }
+    for (const model::PluginSlot* s : doc.slotsOnTrack(id)) {
+        effects.insert(slotRef(s->id));
+        result = result.withoutPluginSlot(s->id);
+    }
     auto root = doc.root();
     root.trackOrder.erase(std::remove(root.trackOrder.begin(), root.trackOrder.end(), id), root.trackOrder.end());
     return {std::move(effects), result.withoutTrack(id).withRoot(std::move(root))};
@@ -239,6 +246,71 @@ Prepared clipRemove(const Document& doc, const Command& command) {
     return {{clipRef(id)}, doc.withoutClip(id)};
 }
 
+const model::PluginSlot& requireSlot(const Document& doc, const std::string& id) {
+    const model::PluginSlot* s = doc.pluginSlot(id);
+    if (s == nullptr) {
+        throw CommandError("not_found", "no plugin slot with id " + id);
+    }
+    return *s;
+}
+
+// plugin.insert {trackId, index, slotId, descriptor{format, uid, name?, path?},
+// stateBlob}: the completion command of plugin.instantiate. index clamps to the end.
+Prepared pluginInsert(const Document& doc, const Command& command) {
+    Params p(command);
+    model::PluginSlot s;
+    s.trackId = p->string("trackId");
+    const std::int64_t index = p->integer("index", 0, INT32_MAX);
+    s.id = p->string("slotId");
+    {
+        FieldReader d(p->require("descriptor"), "descriptor");
+        s.format = d.string("format");
+        s.uid = d.string("uid");
+        if (d.optional("name") != nullptr) {
+            s.name = d.string("name");
+        }
+        if (d.optional("path") != nullptr) {
+            s.path = d.string("path");
+        }
+        d.finish();
+    }
+    const json::Value& blob = p->require("stateBlob");
+    if (blob.kind() == json::Value::Kind::string) {
+        s.stateBlob = blob.asString();
+    } else if (blob.kind() != json::Value::Kind::null) {
+        p->fail("stateBlob", "must be a string or null");
+    }
+    p.finish();
+    if (doc.pluginSlot(s.id) != nullptr) {
+        throw CommandError("already_exists", "a plugin slot with id " + s.id + " already exists");
+    }
+    Track t = requireTrack(doc, s.trackId);
+    const auto at = std::min<std::size_t>(static_cast<std::size_t>(index), t.inserts.size());
+    t.inserts.insert(t.inserts.begin() + static_cast<std::ptrdiff_t>(at), s.id);
+    const std::string slotId = s.id;
+    const std::string trackId = t.id;
+    return {{trackRef(trackId), slotRef(slotId)}, doc.withPluginSlot(std::move(s)).withTrack(std::move(t))};
+}
+
+Prepared pluginRemove(const Document& doc, const Command& command) {
+    Params p(command);
+    const std::string id = p->string("slotId");
+    p.finish();
+    Track t = requireTrack(doc, requireSlot(doc, id).trackId);
+    t.inserts.erase(std::remove(t.inserts.begin(), t.inserts.end(), id), t.inserts.end());
+    const std::string trackId = t.id;
+    return {{trackRef(trackId), slotRef(id)}, doc.withoutPluginSlot(id).withTrack(std::move(t))};
+}
+
+Prepared pluginSetBypass(const Document& doc, const Command& command) {
+    Params p(command);
+    model::PluginSlot s = requireSlot(doc, p->string("slotId"));
+    s.bypass = p->boolean("bypass");
+    p.finish();
+    const std::string id = s.id;
+    return {{slotRef(id)}, doc.withPluginSlot(std::move(s))};
+}
+
 Prepared sessionRename(const Document& doc, const Command& command) {
     Params p(command);
     auto root = doc.root();
@@ -287,6 +359,9 @@ const std::map<std::string, Handler, std::less<>>& registry() {
          }},
         {"media.add", &mediaAdd},
         {"media.remove", &mediaRemove},
+        {"plugin.insert", &pluginInsert},
+        {"plugin.remove", &pluginRemove},
+        {"plugin.set_bypass", &pluginSetBypass},
         {"session.rename", &sessionRename},
         {"session.set_tempo", &sessionSetTempo},
         {"track.add", &trackAdd},

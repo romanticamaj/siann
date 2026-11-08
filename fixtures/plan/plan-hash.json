@@ -285,7 +285,7 @@
     },
     {
       "name": "unknown_entity_type",
-      "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"readSet\":[{\"type\":\"plugin_slot\",\"id\":\"slot_1\",\"hash\":\"sha256:41d19c34f445f9aea1ce882484f3722391665a5984060c573b933576cfea8eec\"}],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}]}",
+      "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"readSet\":[{\"type\":\"send\",\"id\":\"snd_1\",\"hash\":\"sha256:626390a78749a294c11d8accac9441a2b1eb1bf52aa73cc16f28de934846a769\"}],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}]}",
       "error": "invalid_entity_set"
     },
     {

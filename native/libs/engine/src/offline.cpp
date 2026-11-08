@@ -103,7 +103,7 @@ std::int64_t documentEnd(const model::Document& document) {
 }
 
 std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& document, const MediaLibrary& library,
-                                                      int maxBlockFrames) {
+                                                      int maxBlockFrames, const PluginNodeSource* plugins) {
     GraphBuilder builder;
     const NodeId master = builder.add(std::make_unique<BusNode>(2), "master");
     for (const FlatTrack& flat : flattenClips(document)) {
@@ -123,7 +123,18 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
             std::make_unique<TrackFaderNode>(track.channels, track.gain.milliDb, track.pan, track.mute,
                                              flat.soloSilenced),
             track.id + ".fader");
-        builder.connect(player, fader);
+        // The inserts between player and fader; a slot without a node passes through.
+        NodeId previous = player;
+        if (plugins != nullptr) {
+            for (const model::PluginSlot* slot : document.slotsOnTrack(track.id)) {
+                if (auto node = plugins->pluginNode(*slot, track.channels)) {
+                    const NodeId insert = builder.add(std::move(node), track.id + ".insert." + slot->id);
+                    builder.connect(previous, insert);
+                    previous = insert;
+                }
+            }
+        }
+        builder.connect(previous, fader);
         builder.connect(fader, master);
     }
     builder.setOutput(master);
@@ -131,14 +142,14 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
 }
 
 media::AudioBuffer renderOffline(const model::Document& document, const MediaLibrary& library,
-                                 const RenderOptions& options) {
+                                 const RenderOptions& options, const PluginNodeSource* plugins) {
     if (options.start < 0 || options.blockFrames <= 0 || options.frames < -1) {
         throw EngineError("invalid_render_range", "the render range or block size is invalid");
     }
     const std::int64_t frames =
         options.frames >= 0 ? options.frames : std::max<std::int64_t>(0, documentEnd(document) - options.start);
 
-    auto graph = compileDocument(document, library, options.blockFrames);
+    auto graph = compileDocument(document, library, options.blockFrames, plugins);
     return renderGraph(*graph, options.start, frames, document.root().sampleRate);
 }
 

@@ -128,6 +128,100 @@ TEST_CASE("track.remove cascades to its clips and declares them", "[command]") {
     CHECK(removed.result.root().trackOrder.empty());
 }
 
+namespace {
+
+std::string insertJson(const std::string& slotId, const std::string& trackId, int index,
+                       const std::string& stateBlob = "null") {
+    return R"({"op":"plugin.insert","trackId":")" + trackId + R"(","index":)" + std::to_string(index) +
+           R"(,"slotId":")" + slotId +
+           R"(","descriptor":{"format":"clap","uid":"com.siann.test-plugin","name":"Test","path":"/p/t.clap"},"stateBlob":)" +
+           stateBlob + "}";
+}
+
+}  // namespace
+
+TEST_CASE("plugin.insert adds a slot at an index that clamps to the end", "[command][plugin]") {
+    const Document doc = base();
+    const auto first = prepare(doc, cmd(insertJson("slt_1", "trk_1", 0, "\"" + kHash + "\"")));
+    CHECK(first.effects == DeclaredEffects{ref(EntityType::track, "trk_1"), ref(EntityType::plugin_slot, "slt_1")});
+    const auto* slot = first.result.pluginSlot("slt_1");
+    REQUIRE(slot != nullptr);
+    CHECK(slot->trackId == "trk_1");
+    CHECK(slot->format == "clap");
+    CHECK(slot->uid == "com.siann.test-plugin");
+    CHECK(slot->name == "Test");
+    CHECK(slot->path == "/p/t.clap");
+    CHECK(slot->stateBlob == std::optional<std::string>{kHash});
+    CHECK_FALSE(slot->bypass);
+    CHECK(first.result.track("trk_1")->inserts == std::vector<std::string>{"slt_1"});
+
+    Document doc2 = prepare(first.result, cmd(insertJson("slt_2", "trk_1", 99))).result;
+    CHECK(doc2.track("trk_1")->inserts == std::vector<std::string>{"slt_1", "slt_2"});
+    doc2 = prepare(doc2, cmd(insertJson("slt_0", "trk_1", 0))).result;
+    CHECK(doc2.track("trk_1")->inserts == std::vector<std::string>{"slt_0", "slt_1", "slt_2"});
+    CHECK_FALSE(doc2.pluginSlot("slt_2")->stateBlob.has_value());
+
+    // name and path are optional in the descriptor.
+    const auto bare = prepare(doc, cmd(R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_9",
+        "descriptor":{"format":"vst3","uid":"ABCD"},"stateBlob":null})"));
+    CHECK(bare.result.pluginSlot("slt_9")->name.empty());
+    CHECK(bare.result.pluginSlot("slt_9")->path.empty());
+}
+
+TEST_CASE("plugin.insert rejects used ids, missing tracks and bad parameters", "[command][plugin]") {
+    const Document doc = prepare(base(), cmd(insertJson("slt_1", "trk_1", 0))).result;
+    CHECK(errorCode(doc, insertJson("slt_1", "trk_1", 0)) == "already_exists");
+    CHECK(errorCode(doc, insertJson("slt_2", "trk_9", 0)) == "not_found");
+    CHECK(errorCode(doc, insertJson("slt_2", "trk_1", -1)) == "invalid_params");
+    CHECK(errorCode(doc, insertJson("slt_2", "trk_1", 0, "\"sha256:abc\"")) == "invalid_state_blob");
+    CHECK(errorCode(doc, insertJson("slt_2", "trk_1", 0, "7")) == "invalid_params");
+    CHECK(errorCode(doc, insertJson("bad id", "trk_1", 0)) == "invalid_id");
+    CHECK(errorCode(doc, R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_2",
+        "descriptor":{"format":"dx","uid":"u"},"stateBlob":null})") == "invalid_format");
+    CHECK(errorCode(doc, R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_2",
+        "descriptor":{"format":"clap","uid":"u","extra":1},"stateBlob":null})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_2",
+        "descriptor":{"format":"clap"},"stateBlob":null})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_2",
+        "descriptor":{"format":"clap","uid":"u"}})") == "invalid_params");
+}
+
+TEST_CASE("plugin.remove and plugin.set_bypass declare exactly what they change", "[command][plugin]") {
+    Document doc = prepare(base(), cmd(insertJson("slt_1", "trk_1", 0))).result;
+    doc = prepare(doc, cmd(insertJson("slt_2", "trk_1", 1))).result;
+
+    const auto bypassed = prepare(doc, cmd(R"({"op":"plugin.set_bypass","slotId":"slt_2","bypass":true})"));
+    CHECK(bypassed.effects == DeclaredEffects{ref(EntityType::plugin_slot, "slt_2")});
+    CHECK(bypassed.result.pluginSlot("slt_2")->bypass);
+    CHECK(bypassed.result.sharesEntity(doc, ref(EntityType::track, "trk_1")));
+    CHECK(errorCode(doc, R"({"op":"plugin.set_bypass","slotId":"slt_9","bypass":true})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"plugin.set_bypass","slotId":"slt_2","bypass":1})") == "invalid_params");
+
+    const auto removed = prepare(doc, cmd(R"({"op":"plugin.remove","slotId":"slt_1"})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::track, "trk_1"), ref(EntityType::plugin_slot, "slt_1")});
+    CHECK(removed.result.pluginSlot("slt_1") == nullptr);
+    CHECK(removed.result.track("trk_1")->inserts == std::vector<std::string>{"slt_2"});
+    CHECK(errorCode(removed.result, R"({"op":"plugin.remove","slotId":"slt_1"})") == "not_found");
+}
+
+TEST_CASE("track.remove declares and removes the track's plugin slots as cascades", "[command][plugin]") {
+    Document doc = base();
+    doc = prepare(doc, cmd(R"({"op":"track.add","trackId":"trk_2","name":"Bass","channels":2})")).result;
+    doc = prepare(doc, cmd(insertJson("slt_1", "trk_1", 0))).result;
+    doc = prepare(doc, cmd(insertJson("slt_2", "trk_1", 1))).result;
+    doc = prepare(doc, cmd(insertJson("slt_3", "trk_2", 0))).result;
+    doc = prepare(doc, cmd(R"({"op":"clip.place","clipId":"clp_1","trackId":"trk_1","mediaId":"med_1",
+        "position":{"domain":"audio","value":"0"},"sourceStart":"0","length":"100"})")).result;
+    const auto removed = prepare(doc, cmd(R"({"op":"track.remove","trackId":"trk_1"})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::root, "root"), ref(EntityType::track, "trk_1"),
+                                             ref(EntityType::clip, "clp_1"), ref(EntityType::plugin_slot, "slt_1"),
+                                             ref(EntityType::plugin_slot, "slt_2")});
+    CHECK(removed.result.pluginSlot("slt_1") == nullptr);
+    CHECK(removed.result.pluginSlot("slt_2") == nullptr);
+    CHECK(removed.result.pluginSlot("slt_3") != nullptr);
+    CHECK(removed.result.validate().empty());
+}
+
 TEST_CASE("Media in use cannot be removed", "[command]") {
     Document doc = base();
     doc = prepare(doc, cmd(R"({"op":"clip.place","clipId":"clp_1","trackId":"trk_1","mediaId":"med_1",
@@ -199,6 +293,7 @@ TEST_CASE("The command catalog is listed", "[command]") {
     const auto names = commandNames();
     CHECK(names == std::vector<std::string>{
                        "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add",
-                       "media.remove", "session.rename", "session.set_tempo", "track.add", "track.remove",
+                       "media.remove", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
+                       "session.set_tempo", "track.add", "track.remove",
                        "track.rename", "track.set_gain", "track.set_mute", "track.set_pan", "track.set_solo"});
 }

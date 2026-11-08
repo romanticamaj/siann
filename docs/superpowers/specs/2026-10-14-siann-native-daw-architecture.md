@@ -720,7 +720,13 @@ records who that is:
   plugin in its graph until the M4 plugin node). The only callers of
   `JucePluginInstance::process` are the hosting tests, on a realtime-marked
   thread; `--open-editor` instantiates a plugin and never processes it. The
-  exception is therefore latent in M0 and binds the M4 plugin node.
+  exception is therefore latent in M0 and binds the M4 plugin node. Since
+  m4-plugin-node the `PluginNode` processes hosted plugins in the driver's
+  callback, timed into a per-instance `rt::CallbackTimer`, `--open-editor` is gone
+  (editors open through `plugin.open_editor`), and a ctest check
+  (`SiannNoLocks.cmake`) fails when `plugin_node.cpp`, `juce_plugin_host.cpp`,
+  `clap_plugin_host.cpp` or `plugin_instances.cpp` (the plugin event sink, which
+  runs under the hosting wrapper's locks) names a lock.
 
   The exception is accepted for M0 (2026-11-07, Fable, delegated by the maintainer;
   ADR-0018, amended the same day after review). Its conditions:
@@ -760,9 +766,12 @@ records who that is:
     output has a decision (taken 2026-11-08 by Fable, delegated by the maintainer,
     under the gate that proves MIDI output on `siann_test_plugin`): the first
     option. `JucePluginInstance` preallocates its `juce::MidiBuffer` for the 2048
-    events Steinberg's limit allows (`ensureSize` for 2048 events of 7 bytes) and
-    counts, per instance, the blocks whose output exceeded that
-    (`midiOutputOverflows`, an atomic, in `engine.status`), accepting JUCE's
+    events Steinberg's limit allows (`ensureSize` for 2048 events of 9 bytes: a
+    32-bit position, a 16-bit size and a three-byte message) and counts, per
+    instance, the blocks whose output exceeded that (`midiOutputOverflows`, an
+    atomic, in `engine.status`; JUCE's VST3 wrapper stops a JUCE-built plugin's
+    output at 2048, so the adapter counts a block that reached 2048, where the
+    events past it were lost, m4-plugin-node), accepting JUCE's
     `Array` growth as plugin-caused; `ClapPluginHost`'s output event list is
     host-owned and bounded, its `try_push` refuses past capacity and the refusal
     is counted the same way. Until MIDI tracks exist (M6b) the node drops the
@@ -1278,7 +1287,14 @@ Rules:
   cascades. Validation checks the hash's form only: a blob absent from `blobs/` at
   instantiation loads the plugin with its default state and reports it `running`
   with `error {code: "state_missing"}`; rebuilding the document never needs the
-  blob or the plugin.
+  blob or the plugin. `inserts` is omitted from the track's JSON when it is
+  empty, and the document's `pluginSlots` table when it has no slot, so every
+  M1 to M3 document, checkpoint and fixture keeps its entity and document hashes
+  (`Session::open` checks the checkpoint document's hash against the revision
+  envelope and would otherwise reject every existing session). The xrun and
+  per-instance timer tests of m4-plugin-node use `siann_test_plugin`'s
+  `holdProcessBlock` (each block stays in flight 20 ms, longer than a 256-frame
+  period at 48 kHz) until `siann_hostile_plugin` lands (m4-hostile-plugin).
 
 ### siann-command (pure C++) — the core of SIANN
 
@@ -1303,7 +1319,7 @@ Rules:
 - A job first makes its outputs durable (media and blob files written and flushed),
   then submits a pure command carrying their hashes and descriptors. Example:
   `plugin.instantiate` (job, main thread) produces a state blob, then
-  `plugin.insert {trackId, index, descriptor, stateBlob}` (pure command) enters the
+  `plugin.insert {trackId, index, slotId, descriptor, stateBlob}` (pure command) enters the
   history. `media.import` produces files, then `media.add` enters the history.
 - Rebuilding a document never requires a plugin to be installed or instantiable.
   Instantiation happens when audio starts; a plugin that cannot be loaded is shown as
@@ -1349,6 +1365,15 @@ Jobs v0, plugins (m4-plugin-node; decided by Fable, delegated by the maintainer,
   core-only build). The worker's one-at-a-time order covers render jobs only. The
   instance enters the instance table under the new slot id, so the next compile
   reuses it instead of loading the plugin again.
+- Slot ids (fix round 1 of m4-plugin-node): the server picks
+  `slt_<n>` with `n` one above the highest `slt_<n>` any revision of the history
+  holds, so an id freed by `plugin.remove`, `track.remove` or an undo is never
+  handed out again, like every other entity id. A client's `plugin.insert` may
+  still name a free id that an earlier revision used; the instance table pins
+  instances by entry, not by slot id, so a slot whose plugin, path or state blob
+  differs from its entry gets a new instance at once (the old one keeps
+  processing in the graphs that pin it and goes when they retired), and an
+  unchanged slot keeps its instance.
 - `render.start` keeps its snapshot semantics when the document holds plugin
   slots: the request, on the command thread, instantiates one instance per slot
   from its state blob before the job is queued; the offline-render thread drives
@@ -2629,8 +2654,9 @@ reported latency against the delay of an impulse; the runtime latency change is
 proven on `siann_test_plugin` only, because TDR Nova has none to drive: every value
 tried on all 75 of its parameters left it at 184 frames at 48 kHz, its Quality
 modes included. The engine's `main()` runs `MainThreadLoop` in a `SIANN_WITH_JUCE`
-build, and `--owner-window` and `--open-editor` carry the Electron window handle
-and the plugin (see "Process model"); a launch test checks the owner across
+build, and `--owner-window` carries the Electron window handle; since M4 the
+plugin comes through `plugin.instantiate` and `plugin.open_editor` (see "Process
+model"); a launch test checks the owner across
 processes and an Electron test checks it is the real window. The macOS and Linux
 halves count only once the desktop CI matrix is green on the pull request: they
 cannot be built on the Windows machine this was written on.

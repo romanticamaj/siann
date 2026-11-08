@@ -1,9 +1,16 @@
 #pragma once
 
 // What siann-engine plays with (architecture spec, "Process model"; Protocol v0
-// item 18): the session's graph in a PlaybackEngine on a device, the Auditioner
-// that keeps it on the heard side, and the meter publisher. The protocol server
-// reaches it through TransportPort and auditionPort().
+// items 18 and 19): the session's graph in a PlaybackEngine on a device, the
+// Auditioner that keeps it on the heard side, the meter publisher and the plugin
+// hosts (ClapPluginHost always, JucePluginHost for vst3 and au in a
+// SIANN_WITH_JUCE build). The protocol server reaches it through TransportPort,
+// PluginPort and auditionPort().
+//
+// The tick services the CLAP host (runMainThreadCallbacks), then the engine,
+// whose tick drains pluginEventAny and polls each instance (pollStale). The
+// instance table hears setBlocksComing from the engine's start and stop and
+// from a device that stopped on its own.
 //
 // Everything here runs on one thread, the process's main thread, which is the
 // command thread and the graph driver's control thread: device open, start and
@@ -18,15 +25,18 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "siann/engine_app/auditioner_port.hpp"
 #include "siann/host/interfaces.hpp"
 #include "siann/playback/audition.hpp"
 #include "siann/playback/playback_engine.hpp"
 #include "siann/protocol/event_stream.hpp"
+#include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "siann/session/session.hpp"
@@ -59,9 +69,13 @@ struct EngineHostOptions {
     playback::PlaybackOptions playback{};
     // One line per problem, for the log.
     std::function<void(const std::string& line)> diagnostic;
+    // The window plugin editors belong to (--owner-window; 0 for none).
+    std::uintptr_t ownerWindow = 0;
 };
 
-class EngineHost final : public protocol::TransportPort {
+struct PluginHostSet;
+
+class EngineHost final : public protocol::TransportPort, public protocol::PluginPort {
 public:
     // The session must outlive the host.
     EngineHost(session::Session& session, EngineHostOptions options);
@@ -88,6 +102,16 @@ public:
     protocol::TransportState locate(std::int64_t frames) override;
     protocol::EngineStatus status() const override;
 
+    // protocol::PluginPort, on the command thread.
+    protocol::PluginInstantiateResult instantiate(const protocol::PluginInstantiateRequest& request) override;
+    void settle(const model::PluginSlot& slot, bool inserted) override;
+    protocol::PluginEditorState openEditor(const std::string& slotId) override;
+    protocol::PluginEditorState closeEditor(const std::string& slotId) override;
+    std::vector<protocol::PluginStatus> plugins() const override;
+    std::vector<std::string> formats() const override;
+    std::shared_ptr<engine::PluginNodeSource> instantiateForRender(const model::Document& document) override;
+    void destroyRenderInstances(std::shared_ptr<engine::PluginNodeSource> instances) override;
+
     protocol::TransportState transportState() const;
     playback::PlaybackEngine& playback() noexcept { return engine_; }
 
@@ -99,7 +123,14 @@ private:
     void say(const std::string& line) const;
     void report(protocol::DeviceProblem problem);
     void requireDevice() const;
+    host::PluginInstance& requireInstance(const std::string& slotId) const;
 
+    // The plugin hosts, before the engine whose instances they made.
+    std::unique_ptr<PluginHostSet> pluginHosts_;
+    std::uintptr_t ownerWindow_ = 0;
+    session::Session& session_;
+    // plugin.instantiate's instance until its plugin.insert committed.
+    std::map<std::string, std::unique_ptr<host::PluginInstance>> pendingInstances_;
     // Declared before the engine, which stops the device when destroyed.
     std::unique_ptr<host::AudioDevice> device_;
     std::string deviceId_;

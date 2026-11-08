@@ -10,6 +10,7 @@ siann_apply_compile_options(siann_model)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_model_tests
     tests/document_test.cpp
+    tests/plugin_slot_test.cpp
   )
   target_link_libraries(siann_model_tests PRIVATE siann::model Catch2::Catch2WithMain)
   target_compile_definitions(siann_model_tests PRIVATE SIANN_FIXTURES_DIR="${SIANN_FIXTURES_DIR}")
