@@ -27,12 +27,29 @@ juce::String homeDirectoryName() {
     return home;
 }
 
+// SIANN_TEST_PLUGIN_LAYOUT=buses: the stereo main output and wideExtraBuses more
+// stereo output buses, all enabled, so the plugin has more channels than a host
+// processes (maxPluginChannels, 31). Stereo buses, not one discrete 32-channel set:
+// VST3 has a speaker arrangement for each stereo bus and none for 32 discrete
+// channels, so this layout survives JUCE's VST3 wrapper and host. Read through
+// juce::SystemStats, the process environment, which a host's test changes.
+constexpr int wideExtraBuses = 15;
+
 }  // namespace
 
-Processor::Processor()
-    : juce::AudioProcessor(BusesProperties()
-                               .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                               .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+juce::AudioProcessor::BusesProperties Processor::busesFromEnvironment() {
+    auto buses = BusesProperties()
+                     .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                     .withOutput("Output", juce::AudioChannelSet::stereo(), true);
+    if (juce::SystemStats::getEnvironmentVariable("SIANN_TEST_PLUGIN_LAYOUT", {}) == "buses") {
+        for (int bus = 0; bus < wideExtraBuses; ++bus) {
+            buses = buses.withOutput("Output " + juce::String(bus + 2), juce::AudioChannelSet::stereo(), true);
+        }
+    }
+    return buses;
+}
+
+Processor::Processor() : juce::AudioProcessor(busesFromEnvironment()) {
     latency_ = new juce::AudioParameterBool(juce::ParameterID{"latency", 1}, "latency", false);
     gain_ = new juce::AudioParameterFloat(juce::ParameterID{"gain", 1}, "gain",
                                           juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f);
@@ -155,8 +172,16 @@ void Processor::prepareToPlay(double, int) {
 }
 
 bool Processor::isBusesLayoutSupported(const BusesLayout& layouts) const {
-    return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
-           layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto allStereo = [](const juce::Array<juce::AudioChannelSet>& buses) {
+        for (const auto& bus : buses) {
+            if (bus != juce::AudioChannelSet::stereo()) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return layouts.inputBuses.size() == 1 && allStereo(layouts.inputBuses) && !layouts.outputBuses.isEmpty() &&
+           allStereo(layouts.outputBuses);
 }
 
 void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {

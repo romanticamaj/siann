@@ -38,6 +38,10 @@
 //   output, more than Steinberg's 2048 a block (JUCE's VST3 wrapper passes 2048 on).
 //   The plugin produces MIDI for this probe only.
 //
+// The environment variable SIANN_TEST_PLUGIN_LAYOUT=buses, as the CLAP test plugin
+// reads it, gives instances created after it is set 16 stereo output buses (32
+// channels), one more than a host processes.
+//
 // State blob: magic "SIANNTP1", version u32, gain f32, latency u8, tail u8, little
 // endian.
 
@@ -93,6 +97,8 @@ public:
 
 private:
     static constexpr int ringFrames = 1024;  // a power of two above longLatency
+
+    static BusesProperties busesFromEnvironment();
 
     void parameterValueChanged(int parameterIndex, float newValue) override;
     void parameterGestureChanged(int, bool) override {}

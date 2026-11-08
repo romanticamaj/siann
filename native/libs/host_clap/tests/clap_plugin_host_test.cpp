@@ -289,6 +289,26 @@ TEST_CASE("clap host: a port beyond the channel limit fails the load", "[clap][p
     requireError("plugin_load_failed", [&] { host.instantiate(descriptor, sampleRate, blockFrames); });
 }
 
+// maxPluginChannels (31; spec, PluginHost contract) bounds a direction's channels
+// in all, as JucePluginHost bounds them: 16 stereo output ports are 32 channels,
+// though each port is within the limit. The host is unharmed afterwards.
+TEST_CASE("clap host: a plugin with more than 31 channels fails to load", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    const auto descriptor = testPlugin(host);
+    {
+        const ScopedEnvironment layout("SIANN_TEST_PLUGIN_LAYOUT", "buses");
+        try {
+            host.instantiate(descriptor, sampleRate, blockFrames);
+            FAIL("a 32-channel plugin must not load");
+        } catch (const host::PluginError& error) {
+            CHECK(error.code() == "plugin_load_failed");
+            CHECK(std::string(error.what()).find("more channels") != std::string::npos);
+        }
+    }
+    auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
+    CHECK(measureDelay(*instance).frames == 64);
+}
+
 TEST_CASE("clap host: parameters are listed and normalized", "[clap][plugin]") {
     host::ClapPluginHost host;
     auto instance = loadTestPlugin(host);

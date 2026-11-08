@@ -103,6 +103,26 @@ std::optional<std::string> environment(const char* name) {
     return result;
 }
 
+// Sets an environment variable for the length of a scope.
+class ScopedEnvironment {
+public:
+    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
+    ~ScopedEnvironment() { set(""); }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(name_, value);
+#else
+        setenv(name_, value, 1);
+#endif
+    }
+
+    const char* name_;
+};
+
 // What every plugin SIANN did not build has to do: load, keep its state and open
 // its editor. State is compared by parameter values: third-party blobs are opaque
 // and need not repeat. A runtime latency change is siann_test_plugin's to prove:
@@ -576,6 +596,27 @@ TEST_CASE("plugin host: a block with fewer channels than the plugin still proces
     const auto measured = measureDelay(*instance, 1);
     CHECK(measured.frames == 64);
     CHECK(measured.allocations == 0);
+}
+
+// maxPluginChannels (31; spec, PluginHost contract): juce::AudioBuffer holds that
+// many channel pointers without allocating. siann_test_plugin's "buses" layout has
+// 16 stereo output buses, 32 channels; the host is unharmed afterwards.
+TEST_CASE("plugin host: a plugin with more than 31 channels fails to load", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    const auto descriptor = testPlugin(host);
+    {
+        const ScopedEnvironment layout("SIANN_TEST_PLUGIN_LAYOUT", "buses");
+        try {
+            host.instantiate(descriptor, sampleRate, blockFrames);
+            FAIL("a 32-channel plugin must not load");
+        } catch (const host::PluginError& error) {
+            CHECK(error.code() == "plugin_load_failed");
+            CHECK(std::string(error.what()).find("more channels") != std::string::npos);
+        }
+    }
+    auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
+    CHECK(measureDelay(*instance).frames == 64);
 }
 
 // Channels of the output view the plugin does not fill are cleared, not left as

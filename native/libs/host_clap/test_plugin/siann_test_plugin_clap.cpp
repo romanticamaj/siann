@@ -37,7 +37,8 @@
 // Parameter ids are neither indices nor sorted, so a host that takes one for the
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
 // ports of instances created after it is set: "wide" has 32 channels on the main
-// ports, "sidechain" a second input port and note ports in both directions.
+// ports, "buses" 16 stereo output ports (32 channels in all, each port within the
+// host's limit), "sidechain" a second input port and note ports in both directions.
 // SIANN_TEST_PLUGIN_BADINFO set makes params.get_info fail for "tail", a plugin
 // that counts a parameter it cannot describe.
 //
@@ -119,7 +120,9 @@ constexpr bool indexOf(clap_id id, std::uint32_t& index) {
     return true;
 }
 
-enum class Layout { stereo, wide, sidechain };
+enum class Layout { stereo, wide, buses, sidechain };
+
+constexpr std::uint32_t busesOutputPorts = 16;
 
 std::string homeDirectoryName;
 
@@ -281,6 +284,12 @@ struct TestPlugin {
         for (std::uint32_t c = channels; c < output.channel_count; ++c) {
             std::fill(output.data32[c] + begin, output.data32[c] + end, 0.0f);
         }
+        for (std::uint32_t port = 1; port < process.audio_outputs_count; ++port) {
+            const clap_audio_buffer_t& extra = process.audio_outputs[port];
+            for (std::uint32_t c = 0; c < extra.channel_count; ++c) {
+                std::fill(extra.data32[c] + begin, extra.data32[c] + end, 0.0f);
+            }
+        }
     }
 };
 
@@ -289,7 +298,11 @@ TestPlugin& self(const clap_plugin_t* plugin) { return *static_cast<TestPlugin*>
 // --- clap.audio-ports
 
 std::uint32_t audioPortCount(const clap_plugin_t* plugin, bool isInput) {
-    return isInput && self(plugin).layout == Layout::sidechain ? 2 : 1;
+    const Layout layout = self(plugin).layout;
+    if (isInput) {
+        return layout == Layout::sidechain ? 2 : 1;
+    }
+    return layout == Layout::buses ? busesOutputPorts : 1;
 }
 
 bool audioPortGet(const clap_plugin_t* plugin, std::uint32_t index, bool isInput, clap_audio_port_info_t* info) {
@@ -668,7 +681,10 @@ const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host
     auto* test = new TestPlugin;
     test->host = host;
     const std::string layout = environmentValue("SIANN_TEST_PLUGIN_LAYOUT");
-    test->layout = layout == "wide" ? Layout::wide : layout == "sidechain" ? Layout::sidechain : Layout::stereo;
+    test->layout = layout == "wide"        ? Layout::wide
+                   : layout == "buses"     ? Layout::buses
+                   : layout == "sidechain" ? Layout::sidechain
+                                           : Layout::stereo;
     test->badInfo = !environmentValue("SIANN_TEST_PLUGIN_BADINFO").empty();
     test->values[paramGain].store(1.0);
     test->clap.desc = &descriptor;
