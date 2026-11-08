@@ -6,9 +6,12 @@ enable_language(C)  # JUCE compiles some C sources
 # OFF: juce_add_plugin (the CI test plugin) lives in JUCEUtils.cmake, which the
 # modules-only configuration never includes. Costs one juceaide build per configure.
 set(JUCE_MODULES_ONLY OFF CACHE BOOL "Also load the JUCE CMake helpers" FORCE)
+# A local copy of the same archive (CI caches one); the hash below still checks it.
+set(SIANN_JUCE_ARCHIVE "https://github.com/juce-framework/JUCE/archive/be29c81492b6151c8ea8d14c840e1311963b3a83.tar.gz"
+    CACHE STRING "JUCE source archive: the pinned URL or a local file of it")
 FetchContent_Declare(
   juce
-  URL https://github.com/juce-framework/JUCE/archive/be29c81492b6151c8ea8d14c840e1311963b3a83.tar.gz
+  URL "${SIANN_JUCE_ARCHIVE}"
   URL_HASH SHA256=f846e74503e5b959b1de514c772b05ab1cb05478b7513b19d6294cb2b3d2906a
 )
 FetchContent_MakeAvailable(juce)

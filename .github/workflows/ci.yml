@@ -93,8 +93,24 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libxext-dev libxi-dev libxrandr-dev libxinerama-dev
           libxcursor-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb openbox
+      # GitHub's archive endpoint answers 504 at times; a cached copy keeps a
+      # configure from depending on it. native/cmake/SiannJuce.cmake checks the hash.
+      - name: Cache the JUCE archive
+        uses: actions/cache@v4
+        with:
+          path: .juce-archive
+          key: juce-be29c81492b6151c8ea8d14c840e1311963b3a83
+      - name: Download the JUCE archive
+        shell: bash
+        run: |
+          mkdir -p .juce-archive
+          if [ ! -s .juce-archive/juce.tar.gz ]; then
+            curl -fL --retry 6 --retry-all-errors --retry-delay 20 -o .juce-archive/juce.tar.gz https://github.com/juce-framework/JUCE/archive/be29c81492b6151c8ea8d14c840e1311963b3a83.tar.gz
+          fi
+          # Forward slashes on Windows too: CMake reads the path as a URL.
+          echo "JUCE_ARCHIVE=$(pwd -W 2>/dev/null || pwd)/.juce-archive/juce.tar.gz" >> "$GITHUB_ENV"
       - name: Configure
-        run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON
+        run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON -DSIANN_JUCE_ARCHIVE="${{ env.JUCE_ARCHIVE }}"
       - name: Build
         run: cmake --build native/build/desktop --config Debug
       # The hosting tests open plugin editors, so Linux needs a virtual display, and
