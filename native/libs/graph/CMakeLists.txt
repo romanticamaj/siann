@@ -19,12 +19,15 @@ if(SIANN_BUILD_TESTS)
   siann_apply_compile_options(siann_graph_tests)
   catch_discover_tests(siann_graph_tests)
 
-  # No SIANN code on a hosted plugin's process path names a lock (m4-plugin-node),
+  # No SIANN code on a hosted plugin's process path or its event sink names a lock (m4-plugin-node),
   # in every preset: the JUCE adapter's source is checked even where it is not built.
   set(siann_plugin_path_sources
     "${CMAKE_CURRENT_SOURCE_DIR}/src/plugin_node.cpp"
     "${PROJECT_SOURCE_DIR}/libs/host_desktop/src/juce_plugin_host.cpp"
     "${PROJECT_SOURCE_DIR}/libs/host_clap/src/clap_plugin_host.cpp"
+    # The plugin event sink (PluginInstanceTable::install) runs under the hosting
+    # wrapper's locks, on any thread.
+    "${PROJECT_SOURCE_DIR}/libs/playback/src/plugin_instances.cpp"
   )
   string(JOIN "|" siann_plugin_path_files ${siann_plugin_path_sources})
   add_test(NAME siann_no_locks_on_plugin_path
