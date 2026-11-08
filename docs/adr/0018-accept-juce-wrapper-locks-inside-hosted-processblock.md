@@ -177,3 +177,60 @@ processes. The spec's goals and M4's exit criterion do not name LV2.
 
 One addition to the VST3 audit: `setDirty` reaches `getListenerLocked` from any
 thread. It is on the wrapper's path and takes the lock only.
+
+## Amendment 3, 2026-11-09 (m4-juce-formats re-audit; decided by Fable, delegated by the maintainer)
+
+m4-juce-formats repeated the audit at the pin in use (JUCE 9.0.3, `be29c81`), as
+its acceptance requires. Every lock the spec lists checks out. Two allocations the
+list did not name, both on MIDI a plugin outputs inside `processBlock`, read in the
+pinned sources:
+
+- VST3: `processAudio` → `MidiEventList::toMidiBuffer` → `toMidiMessage (DataEvent)`
+  → `MidiMessage::createSysExMessage` (`juce_VST3Common.h:1506`): a `HeapBlock` of
+  the event's size, malloc'd and freed, for every sysex event the plugin outputs,
+  and a second malloc in `MidiMessage::allocateSpace` for a message over 8 bytes
+  (`juce_MidiMessage.cpp:694`, `:349`), freed when the temporary dies after
+  `MidiBuffer::addEvent` has copied the bytes. Every sysex, not only on overflow;
+  a note or controller message fits the 8-byte inline store and allocates nothing.
+- AU: `AudioUnitRender` → `renderMidiOutput` → `MidiDataConcatenator::pushMidiData`
+  (`juce_AudioUnitPluginFormatImpl.h:2288`): `pendingSysexData`, a `std::vector`
+  reserved at 2048 bytes (`:885`, `juce_MidiDataConcatenator.h:207`), grows for a
+  sysex longer than that (`:242`, `:248`), and the `MidiMessage` built from it
+  mallocs for one over 8 bytes (`:259`). Both before `midiInLock` (`:1862`) and the
+  `incomingMidi` growth the audit already lists. The byte-stream extractor in front
+  of it holds fixed-size state and allocates nothing.
+
+Accepted into the audit, as further plugin-caused MIDI-output allocation:
+
+1. It is the class condition 3 already accepts (allocation inside JUCE's wrapper,
+   on the audio thread, caused and sized only by the plugin's own MIDI output),
+   with one difference: preallocation does not reach it. The `Array` and
+   `MidiBuffer` growth of condition 3 stops once the buffers are large enough; the
+   sysex allocations happen per event, every time, because `MidiMessage` keeps
+   more than 8 bytes on the heap.
+2. SIANN cannot step in front of it. The path runs inside `processBlock` before
+   SIANN sees the output (`toMidiBuffer` is what fills SIANN's `MidiBuffer`; the
+   AU render callback runs inside `AudioUnitRender`). JUCE's VST3 wrapper hands
+   every plugin an output event list whether or not it `producesMidi`
+   (`associateWith`), and the AU wrapper installs the MIDI output callback
+   whenever the unit reports MIDI output; neither is under a host switch. Dropping
+   sysex until MIDI tracks exist (M6b), which the node already does with all MIDI
+   output, saves SIANN's downstream cost only. The one host-side lever, refusing
+   plugins that produce MIDI, would refuse the instruments in M4's compatibility
+   set for an output most of them never emit.
+3. The alternatives are the ones this ADR rejected, unchanged: a patched JUCE
+   (here `MidiMessage`'s storage, not one `tryEnter`) on a moving pin, and worker
+   processes, which remain the remedy and the sunset.
+4. Visibility, as for the overflow. `JucePluginInstance` counts, per instance and
+   with an atomic, the sysex events in the plugin's output (`midiOutputSysex`),
+   found after `processBlock` by walking the `MidiBuffer` SIANN already owns (the
+   iterator and a first-byte test allocate nothing), and reports it beside
+   `midiOutputOverflows` in `engine.status` `plugins[]`. `ClapPluginHost` counts
+   `CLAP_EVENT_MIDI_SYSEX` pushes the same way, so the field means the same for
+   every format, though only the JUCE formats allocate for it. The count says
+   which instance's MIDI output allocated and how often; the per-instance timer
+   says what it cost. The work is an acceptance item of m4-juce-formats.
+
+The spec's audit bullets name both paths, and its VST3 MIDI bullet now gives the
+preallocation as it is since m4-plugin-node (`kMaxBlockOutputEvents` events of
+`midiEventBytes`, 2048 × 9 bytes), not the 4096 bytes Amendment 1 recorded.
