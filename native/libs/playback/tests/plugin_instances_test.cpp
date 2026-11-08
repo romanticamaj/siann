@@ -508,3 +508,49 @@ TEST_CASE("plugin table: a render drives its own instances beside the live graph
     set.reset();  // back on the control thread
     engine.stop();
 }
+
+// m4-crash-recovery: plugin.set_parameter's path into a CLAP slot (spec, Protocol v0
+// item 20): the dispatcher addresses the slot's PluginNode by pluginSlotKey(slotId).
+TEST_CASE("plugin table: compileForPlayback makes every loaded slot addressable", "[playback][plugin][param]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    f.exec(insertSlot("slt_gone", "trk_b", (f.dir.path() / "missing.clap").string()));
+    CHECK(playback::pluginSlotKey("slt_1") != playback::trackSlotKey("slt_1"));
+    PlaybackOptions options = pluginOptions(host);
+    PluginInstanceTable table(options.pluginHosts, f.bundle(), 48'000, kBlock);
+    playback::CompiledPlayback compiled = playback::compileForPlayback(f.doc(), f.bundle(), options, &table);
+    const auto found = compiled.slots.find(playback::pluginSlotKey("slt_1"));
+    REQUIRE(found != compiled.slots.end());
+    const auto* node = dynamic_cast<const graph::PluginNode*>(compiled.graph->nodeAt(found->second));
+    REQUIRE(node != nullptr);
+    CHECK(&node->instance() == table.instance("slt_1"));
+    // A missing plugin has no node, so no key.
+    CHECK(compiled.slots.count(playback::pluginSlotKey("slt_gone")) == 0);
+    compiled.graph.reset();
+}
+
+TEST_CASE("plugin table: a parameter set through the dispatcher reaches a CLAP slot in the next block",
+          "[playback][plugin][param]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    Live live(f.session, pluginOptions(host));
+    pump(live, host, 2);
+    REQUIRE(live.engine.slots().count(playback::pluginSlotKey("slt_1")) == 1);
+    host::PluginInstance* instance = live.engine.plugins().instance("slt_1");
+    REQUIRE(instance != nullptr);
+    const int gain = parameterIndex(*instance, "gain");
+    const double before = instance->control().getParameter(gain);
+    REQUIRE(before != Approx(0.25));
+
+    live.engine.dispatcher().setParameter(
+        realtime::ParamKey{playback::pluginSlotKey("slt_1"), static_cast<std::uint32_t>(gain)}, 0.25, 0);
+    live.engine.dispatcher().tick();  // on paramInbox: nothing reached the plugin yet
+    host.runMainThreadCallbacks();
+    CHECK(instance->control().getParameter(gain) == Approx(before));
+    live.device.pumpAll(1, live.out);  // the block that carries the event
+    CHECK(instance->control().getParameter(gain) == Approx(0.25));
+    pump(live, host, 2);
+    CHECK(instance->control().getParameter(gain) == Approx(0.25));
+}
