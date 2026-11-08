@@ -2230,7 +2230,14 @@ with the M4 wave 2 and 3 plans):
     `paramInbox` to the slot's `PluginNode` (the dispatcher's key
     `plugin:<slotId>`); the instance gets it as a parameter event at the start of
     the node's next processed block (the "Precision contract": block-accurate).
-    JUCE's formats discard block events, so a VST3 or AU slot never goes through
+    Between the driver and that block the node keeps the latest value per
+    parameter in a set with room for every parameter the instance listed when the
+    plugin table installed it (allocated then, on the control thread), so however
+    many are set while the transport is stopped, each lands at the first block
+    played and none is dropped; a parameter the plugin added after install goes
+    through `PluginControl::setParameter`, which a CLAP instance also delivers by
+    its next block. The waiting rules' full-queue rule stays the only bound: the
+    dispatcher coalesces a full `paramInbox`. JUCE's formats discard block events, so a VST3 or AU slot never goes through
     `paramInbox`: the engine host calls `PluginControl::setParameter` on the main
     thread. Neither path calls the plugin from the audio thread outside its
     block. The value
