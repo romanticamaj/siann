@@ -37,6 +37,7 @@
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/host/clap_plugin_host.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/realtime_channel.hpp"
@@ -51,6 +52,9 @@
 
 #ifndef SIANN_ENGINE_EXE
 #define SIANN_ENGINE_EXE "siann-engine"  // set by CMake; the fallback keeps a plain syntax check building
+#endif
+#ifndef SIANN_HOSTILE_PLUGIN_CLAP
+#define SIANN_HOSTILE_PLUGIN_CLAP "siann_hostile_plugin.clap"  // set by CMake, as SIANN_ENGINE_EXE
 #endif
 
 using namespace siann;
@@ -189,6 +193,17 @@ public:
                                                        {"method", Value(method)},
                                                        {"params", std::move(params)}})));
     }
+
+    // A request whose reply may never come (the engine can end first).
+    void send(const std::string& method, Value params = Value(Object{})) {
+        ws_.send(jcs::canonicalize(Value(Object{{"requestId", Value("req_" + std::to_string(++next_))},
+                                                {"sessionId", Value(sessionId_)},
+                                                {"method", Value(method)},
+                                                {"params", std::move(params)}})));
+    }
+
+    // True once the engine closed the command socket (within the client's timeout).
+    bool waitClosed() { return ws_.waitClosed(); }
 
     Value ok(const std::string& method, Value params = Value(Object{})) {
         const Value response = call(method, std::move(params));
@@ -796,6 +811,158 @@ TEST_CASE("an editor that cannot open is an error of the method, the engine serv
         CHECK(client.ok("engine.status").kind() == Value::Kind::object);
     }
     CHECK(stopEngine(child) == 0);
+}
+
+// m4-crash-recovery ("Production-level criteria": plugin crash during playback). The
+// hostile plugin aborts at its "crash" event; the shell's restart is a relaunch here,
+// and the Playwright e2e (app/test/e2e/crash.spec.ts) proves the shell's side.
+
+// The crash parameter's id as the hostile plugin's parameter list reports it, read
+// in this process. The e2e hard-codes it; this checks the plugin's documented
+// 9000 - 11 * index.
+std::string hostileCrashParameterId() {
+    host::ClapPluginHost clap;
+    const auto probed = clap.scanPath(SIANN_HOSTILE_PLUGIN_CLAP);
+    REQUIRE(probed.size() == 1);
+    auto instance = clap.instantiate(probed[0], 48'000, 256);
+    const auto parameters = instance->control().parameters();
+    for (std::size_t i = 0; i < parameters.size(); ++i) {
+        if (parameters[i].name == "crash") {
+            CHECK(parameters[i].id == std::to_string(9000 - 11 * static_cast<int>(i)));
+            CHECK(parameters[i].id == "8890");  // app/test/e2e/crash.spec.ts
+            return parameters[i].id;
+        }
+    }
+    FAIL("the hostile plugin has no crash parameter");
+    return {};
+}
+
+Value hostileInstantiateParams() {
+    return Value(Object{{"trackId", Value("trk_a")},
+                        {"index", Value(0)},
+                        {"descriptor", Value(Object{{"format", Value("clap")}, {"path", Value(SIANN_HOSTILE_PLUGIN_CLAP)}})}});
+}
+
+const Value* pluginEntry(const Value& status, const std::string& slotId) {
+    for (const Value& entry : at(status, "plugins").asArray()) {
+        if (at(entry, "slotId").asString() == slotId) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+// What a crashed engine leaves: an exit code of the abort, no dialog text.
+void checkCrashed(PipedProcess& child) {
+    const std::optional<int> code = child.waitFor(std::chrono::seconds(30));
+    if (!code) {
+        child.kill();
+        FAIL("the engine did not end after the crash: a dialog may hold it");
+    }
+#if defined(_WIN32)
+    CHECK(*code == 3);  // abort()
+#else
+    CHECK(*code != 0);  // SIGABRT
+#endif
+    const std::string err = child.stderrText();
+    INFO("stderr: " << err);
+    CHECK(err.find("abort() has been called") == std::string::npos);
+    CHECK(err.find("Debug Error") == std::string::npos);
+}
+
+// The relaunch: the last durable revision, stopped, the slot running, and playing
+// does not crash again (the trigger was never durable).
+void checkRecovered(const fs::path& bundle, const std::string& slotId, const std::string& revision,
+                    const std::string& documentHash) {
+    PipedProcess restarted(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(restarted);
+    {
+        EngineClient client(ready);
+        const Value sync = client.ok("session.sync");
+        CHECK(at(sync, "revision").asString() == revision);
+        CHECK(at(sync, "documentHash").asString() == documentHash);
+        const Value status = client.ok("engine.status");
+        CHECK_FALSE(at(status, "playing").asBool());
+        const Value* slot = pluginEntry(status, slotId);
+        REQUIRE(slot != nullptr);
+        CHECK(at(*slot, "state").asString() == "running");
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+        CHECK(at(*pluginEntry(client.ok("engine.status"), slotId), "state").asString() == "running");
+    }
+    CHECK(stopEngine(restarted) == 0);
+}
+
+TEST_CASE("a plugin crash during playback ends the engine, and the relaunch recovers the session",
+          "[engine][launch][crash]") {
+    ix::initNetSystem();
+    const std::string crashId = hostileCrashParameterId();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    std::string slotId;
+    std::string revision;
+    std::string documentHash;
+    {
+        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(crashed);
+        {
+            EngineClient client(ready);
+            const Value loaded = client.ok("plugin.instantiate", hostileInstantiateParams());
+            REQUIRE(at(loaded, "state").asString() == "done");
+            slotId = at(at(loaded, "result"), "slotId").asString();
+            const Value inspect = client.ok("session.inspect");
+            revision = at(inspect, "revision").asString();
+            documentHash = at(inspect, "documentHash").asString();
+            client.ok("transport.play");
+            client.waitAdvancing();
+            client.send("plugin.set_parameter", Value(Object{{"slotId", Value(slotId)},
+                                                             {"paramId", Value(crashId)},
+                                                             {"value", Value(1)}}));
+            CHECK(client.waitClosed());
+        }
+        checkCrashed(crashed);
+    }
+    checkRecovered(bundle, slotId, revision, documentHash);
+}
+
+TEST_CASE("a crash asked for while stopped lands at the first block played, and the relaunch recovers",
+          "[engine][launch][crash]") {
+    ix::initNetSystem();
+    const std::string crashId = hostileCrashParameterId();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    std::string slotId;
+    std::string revision;
+    std::string documentHash;
+    {
+        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(crashed);
+        {
+            EngineClient client(ready);
+            const Value loaded = client.ok("plugin.instantiate", hostileInstantiateParams());
+            REQUIRE(at(loaded, "state").asString() == "done");
+            slotId = at(at(loaded, "result"), "slotId").asString();
+            const Value inspect = client.ok("session.inspect");
+            revision = at(inspect, "revision").asString();
+            documentHash = at(inspect, "documentHash").asString();
+            const Value set = client.ok("plugin.set_parameter", Value(Object{{"slotId", Value(slotId)},
+                                                                             {"paramId", Value(crashId)},
+                                                                             {"value", Value(1)}}));
+            CHECK(at(set, "value").asNumber() == 1);
+            // Stopped, no block runs the plugin: the engine serves on. The fake device's
+            // callbacks run meanwhile (the change reaches the node), so the status
+            // replies, each a tick apart, give them time to.
+            for (int i = 0; i < 20; ++i) {
+                CHECK_FALSE(at(client.ok("engine.status"), "playing").asBool());
+            }
+            client.send("transport.play");
+            CHECK(client.waitClosed());
+        }
+        checkCrashed(crashed);
+    }
+    checkRecovered(bundle, slotId, revision, documentHash);
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)

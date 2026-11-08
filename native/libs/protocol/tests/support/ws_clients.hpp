@@ -153,6 +153,9 @@ public:
         return out;
     }
 
+    // Sends without waiting for a reply (one may never come: the engine can end first).
+    void send(const std::string& text) { socket_.sendText(text); }
+
     // True once the server has closed the socket (within the timeout).
     bool waitClosed() {
         std::unique_lock lock(mutex_);

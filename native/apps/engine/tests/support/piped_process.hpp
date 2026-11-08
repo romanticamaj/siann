@@ -198,6 +198,41 @@ public:
         return exitCode_;
     }
 
+    // wait() bounded by `timeout`: nullopt while the child still runs then (it is
+    // left running; kill() ends it).
+    std::optional<int> waitFor(std::chrono::milliseconds timeout) {
+#if defined(_WIN32)
+        if (process_ == nullptr) {
+            return exitCode_;
+        }
+        if (WaitForSingleObject(process_, static_cast<DWORD>(timeout.count())) != WAIT_OBJECT_0) {
+            return std::nullopt;
+        }
+        return wait();
+#else
+        if (reaped_ || pid_ <= 0) {
+            return exitCode_;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;) {
+            int status = 0;
+            const pid_t done = waitpid(static_cast<pid_t>(pid_), &status, WNOHANG);
+            if (done == static_cast<pid_t>(pid_)) {
+                reaped_ = true;
+                exitCode_ = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+                return exitCode_;
+            }
+            if (done < 0 && errno != EINTR) {
+                return std::nullopt;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return std::nullopt;
+            }
+            std::this_thread::yield();
+        }
+#endif
+    }
+
     // Everything the child wrote to stdout / stderr, once the stream has ended
     // (call after wait()).
     std::string stdoutText() { return whole(stdout_, stdoutEof_); }
