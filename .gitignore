@@ -5,3 +5,6 @@ native/out/
 app/dist/
 app/test-results/
 app/playwright-report/
+
+# CI cache of the JUCE source archive
+.juce-archive/
