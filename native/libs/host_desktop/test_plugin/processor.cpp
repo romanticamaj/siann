@@ -76,6 +76,8 @@ Processor::Processor() : juce::AudioProcessor(busesFromEnvironment()) {
     addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
     midiFlood_ = new juce::AudioParameterBool(juce::ParameterID{"midiFlood", 1}, "midiFlood", false);
     addParameter(midiFlood_);
+    midiSysex_ = new juce::AudioParameterBool(juce::ParameterID{"midiSysex", 1}, "midiSysex", false);
+    addParameter(midiSysex_);
     latency_->addListener(this);
     nudgeGain_->addListener(this);
     requestRestart_->addListener(this);
@@ -215,6 +217,12 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
         for (int i = 0; i < 3000; ++i) {
             midi.addEvent(juce::MidiMessage::noteOn(1, i % 128, static_cast<juce::uint8>(100)), frames > 0 ? i % frames : 0);
         }
+    }
+    if (midiSysex_->get()) {
+        // One sysex of more than 8 data bytes (a non-commercial id, 0x7D); JUCE adds
+        // the F0 and F7. The plugin's own allocation, on purpose.
+        static constexpr juce::uint8 sysex[] = {0x7D, 0x53, 0x49, 0x41, 0x4E, 0x4E, 0x01, 0x02, 0x03, 0x04};
+        midi.addEvent(juce::MidiMessage::createSysExMessage(sysex, static_cast<int>(sizeof(sysex))), 0);
     }
     if (holdProcessBlock_->get()) {
         // A slow plugin: the block stays in flight for restartWatch, so a host

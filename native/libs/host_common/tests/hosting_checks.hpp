@@ -150,7 +150,6 @@ inline int parameterIndex(host::PluginInstance& instance, const std::string& nam
 // wrappers allocate for it goes through malloc, the accepted class, which the guard
 // does not count.
 inline void checkSysexCounting(host::PluginInstance& instance) {
-    CHECK(instance.capabilities().midiOutput);
     runBlocks(instance);
     CHECK(instance.midiOutputSysex() == 0);
     const std::uint64_t overflows = instance.midiOutputOverflows();

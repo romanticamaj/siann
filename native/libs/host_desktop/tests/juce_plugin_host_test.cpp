@@ -981,6 +981,7 @@ TEST_CASE("plugin host: sysex output is counted per event, never as an overflow"
     host::MainThreadLoop loop;
     host::JucePluginHost host;
     auto instance = loadTestPlugin(host);
+    CHECK(instance->capabilities().midiOutput);
     checkSysexCounting(*instance);
     CHECK(measureDelay(*instance).frames == 64);
 }

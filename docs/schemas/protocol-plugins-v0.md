@@ -54,10 +54,10 @@ With a plugin port, `engine.status` adds one entry per slot of the heard documen
 ```json
 {"slotId": "slt_1", "trackId": "trk_1", "format": "clap", "uid": "...", "state": "running",
  "capabilities": {...}, "latencyFrames": 64, "tailFrames": 0, "callbacks": "4096", "xruns": "0",
- "maxCallbackMicros": 85.2, "unmeasuredCallbacks": "0", "midiOutputOverflows": "0"}
+ "maxCallbackMicros": 85.2, "unmeasuredCallbacks": "0", "midiOutputOverflows": "0", "midiOutputSysex": "0"}
 ```
 
-Counters run since the instance was created, from its `PluginNode`'s own callback timer; counters are decimal strings and `maxCallbackMicros` a number. `error {code, message}` is there when something went wrong: a `missing` plugin's reason, or `state_missing` for a `running` plugin whose blob was not in the bundle (it loaded with its default state). A missing plugin's `capabilities`, `latencyFrames`, `tailFrames` and counters are `null`; it passes audio through and its slot keeps its `stateBlob`.
+Counters run since the instance was created, from its `PluginNode`'s own callback timer; counters are decimal strings and `maxCallbackMicros` a number. `midiOutputOverflows` counts the blocks whose MIDI or note output went past the 2048 events an instance takes in one block (Steinberg's limit, for every format); the events past it are lost. `midiOutputSysex` counts the sysex events in the plugin's output one by one, whether or not the block's list took them (ADR-0018, Amendment 3): for a VST3 or AU, the sysex messages in the `juce::MidiBuffer` after `processBlock`, each of which JUCE's wrapper allocated for on the audio thread (`MidiMessage::createSysExMessage` for a VST3, `MidiDataConcatenator` for an AU), the accepted plugin-caused allocation; for a CLAP plugin, its `CLAP_EVENT_MIDI_SYSEX` pushes, which allocate nothing. A climbing `midiOutputSysex` on a VST3 or AU says that plugin allocates inside its block. Until MIDI tracks exist (M6b) the output is dropped after counting. `error {code, message}` is there when something went wrong: a `missing` plugin's reason, or `state_missing` for a `running` plugin whose blob was not in the bundle (it loaded with its default state). A missing plugin's `capabilities`, `latencyFrames`, `tailFrames` and counters are `null`; it passes audio through and its slot keeps its `stateBlob`.
 
 ## engine.capabilities
 

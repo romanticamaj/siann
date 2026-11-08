@@ -361,6 +361,7 @@ std::optional<PluginInstanceStatus> PluginInstanceTable::status(std::string_view
         out.unmeasuredCallbacks = entry.timer.unmeasured();
         out.maxCallbackNanos = entry.timer.maxCallbackNanos();
         out.midiOutputOverflows = entry.instance->midiOutputOverflows();
+        out.midiOutputSysex = entry.instance->midiOutputSysex();
     }
     return out;
 }

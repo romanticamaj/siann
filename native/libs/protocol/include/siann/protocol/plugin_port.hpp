@@ -80,6 +80,7 @@ struct PluginStatus {
     std::optional<double> maxCallbackMicros;
     std::optional<std::uint64_t> unmeasuredCallbacks;
     std::optional<std::uint64_t> midiOutputOverflows;
+    std::optional<std::uint64_t> midiOutputSysex;
 };
 
 // Thrown by a port. Codes: not_found (no such slot), plugin_missing (the slot's

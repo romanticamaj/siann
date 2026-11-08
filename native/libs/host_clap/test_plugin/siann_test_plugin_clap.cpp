@@ -33,6 +33,9 @@
 //   more than a host's bounded output list takes, before its parameter out-events.
 // - "concurrentProcess": the most process() calls this instance was ever inside at
 //   once (plain 0 to 4), pushed as an out-event when it grows, so the host reads it.
+// - "midiSysex": every process() then pushes one CLAP_EVENT_MIDI_SYSEX output event,
+//   sysexMessage (F0 ... F7, more than 8 data bytes, a size JUCE's MidiMessage keeps
+//   on the heap), before its parameter out-events.
 //
 // Parameter ids are neither indices nor sorted, so a host that takes one for the
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
@@ -73,6 +76,9 @@ constexpr double longTailSeconds = 0.25;
 constexpr std::uint32_t ringFrames = 1024;  // a power of two above longLatency
 constexpr std::uint32_t wideChannels = 32;
 constexpr std::uint32_t floodNotes = 3000;
+// One sysex message, 10 data bytes between F0 and F7 (a non-commercial id, 0x7D).
+constexpr std::array<std::uint8_t, 12> sysexMessage{0xF0, 0x7D, 0x53, 0x49, 0x41, 0x4E,
+                                                    0x4E, 0x01, 0x02, 0x03, 0x04, 0xF7};
 constexpr double maxConcurrent = 4.0;
 
 constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'T', 'P', '1'};
@@ -101,13 +107,14 @@ enum Parameter : std::uint32_t {
     paramFlushed,
     paramMidiFlood,
     paramConcurrentProcess,
+    paramMidiSysex,
     parameterCount,
 };
 
 constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
-    "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess",
+    "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess", "midiSysex",
 };
 
 constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
@@ -614,6 +621,17 @@ clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_proces
             note.velocity = 1.0;
             process->out_events->try_push(process->out_events, &note.header);
         }
+    }
+    if (test.on(paramMidiSysex)) {
+        clap_event_midi_sysex_t sysex{};
+        sysex.header.size = sizeof(sysex);
+        sysex.header.time = 0;
+        sysex.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        sysex.header.type = CLAP_EVENT_MIDI_SYSEX;
+        sysex.port_index = 0;
+        sysex.buffer = sysexMessage.data();
+        sysex.size = static_cast<std::uint32_t>(sysexMessage.size());
+        process->out_events->try_push(process->out_events, &sysex.header);
     }
     test.pushPendingOutEvents(process->out_events);
     if (grew) {
