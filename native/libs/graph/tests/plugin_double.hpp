@@ -42,7 +42,7 @@ class DoublePlugin final : public host::PluginInstance {
 public:
     static constexpr int kMaxDelay = 4096;
 
-    explicit DoublePlugin(int latency = 0, float gainValue = 1.0f) : latency_(latency), gain(gainValue) {
+    explicit DoublePlugin(int latency = 0, float gainValue = 1.0f) : gain(gainValue), latency_(latency) {
         for (auto& line : ring_) {
             line.assign(kMaxDelay, 0.0f);
         }
