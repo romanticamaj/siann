@@ -107,6 +107,10 @@ public:
     void settle(const model::PluginSlot& slot, bool inserted) override;
     protocol::PluginEditorState openEditor(const std::string& slotId) override;
     protocol::PluginEditorState closeEditor(const std::string& slotId) override;
+    // A CLAP slot through the control dispatcher (pluginSlotKey, the parameter's
+    // index), as an event of its node's next block; a VST3 or AU slot through
+    // PluginControl::setParameter here, on the main thread.
+    void setParameter(const std::string& slotId, const std::string& paramId, double value) override;
     std::vector<protocol::PluginStatus> plugins() const override;
     std::vector<std::string> formats() const override;
     std::shared_ptr<engine::PluginNodeSource> instantiateForRender(const model::Document& document) override;
