@@ -125,6 +125,7 @@ struct PluginEvent {
         latencyChanged,    // latencyFrames holds the new latency
         parameterEdited,   // parameterIndex and value (normalized) hold the edit
         restartRequested,  // parameters or programs changed: read them again
+        failed,            // the plugin threw: the instance passes input through until replaced
     };
     Kind kind = Kind::latencyChanged;
     int parameterIndex = -1;
@@ -152,6 +153,7 @@ public:
     // During playback, a process() call in flight finishes first and later ones pass
     // their input through until this returns, so no value set before it lands after
     // it. process() does not wait for this; this waits for the block in flight.
+    // A load that throws leaves the instance failed, parameters unknown.
     virtual void setState(const std::vector<std::uint8_t>& state) = 0;
     // Values are normalized, 0 to 1. The plugin's processor sees a new value by its
     // next process() call at the latest; getState may miss a value until then.

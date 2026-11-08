@@ -24,9 +24,9 @@ using playback::RenderInstanceSet;
 namespace {
 
 std::string insertSlot(const std::string& slotId, const std::string& trackId, const std::string& path,
-                       const std::string& stateBlob = "null") {
+                       const std::string& stateBlob = "null", const std::string& uid = "org.siann.test-plugin") {
     return R"({"op":"plugin.insert","trackId":")" + trackId + R"(","index":0,"slotId":")" + slotId +
-           R"(","descriptor":{"format":"clap","uid":"org.siann.test-plugin","path":)" + jcs::canonicalize(json::Value(path)) +
+           R"(","descriptor":{"format":"clap","uid":")" + uid + R"(","path":)" + jcs::canonicalize(json::Value(path)) +
            R"(},"stateBlob":)" + stateBlob + "}";
 }
 
@@ -125,6 +125,28 @@ TEST_CASE("plugin table: an instance survives unrelated edits through its pins",
     CHECK(table.instance("slt_1") == first);
     CHECK(table.pins("slt_1") == 1);  // the retired graphs let go of it
     CHECK(table.size() == 1);
+}
+
+TEST_CASE("plugin table: a plugin that fails while running reports plugin_failed", "[playback][plugin][hostile]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    f.exec(insertSlot("slt_h", "trk_a", SIANN_HOSTILE_PLUGIN_CLAP, "null", "org.siann.hostile-plugin"));
+    Live live(f.session, pluginOptions(host));
+    PluginInstanceTable& table = live.engine.plugins();
+    host::PluginInstance* instance = table.instance("slt_h");
+    REQUIRE(instance != nullptr);
+    pump(live, host, 2);
+    CHECK_FALSE(table.status("slt_h")->error.has_value());
+    // Its next main-thread callback throws, which fails the instance.
+    instance->control().setParameter(parameterIndex(*instance, "throwMainThread"), 1.0);
+    for (int i = 0; i < 50 && !table.status("slt_h")->error; ++i) {
+        pump(live, host, 1);
+    }
+    const auto status = table.status("slt_h");
+    REQUIRE(status->error.has_value());
+    CHECK(status->error->code == "plugin_failed");
+    CHECK(status->running);  // passes its input through until the command layer replaces it
+    CHECK(table.instance("slt_h") == instance);
 }
 
 TEST_CASE("plugin table: a plugin that cannot load passes audio through and reports missing", "[playback][plugin]") {

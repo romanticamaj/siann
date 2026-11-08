@@ -21,9 +21,10 @@ if(SIANN_BUILD_TESTS)
   # instance table tests host siann_test_plugin as a CLAP.
   target_link_libraries(siann_playback_tests PRIVATE siann::playback siann::host_fake siann_host_clap
                         siann_rt_alloc_guard Catch2::Catch2WithMain)
-  add_dependencies(siann_playback_tests siann_test_plugin_CLAP)
+  add_dependencies(siann_playback_tests siann_test_plugin_CLAP siann_hostile_plugin_CLAP)
   target_compile_definitions(siann_playback_tests PRIVATE
-    SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>")
+    SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>"
+    SIANN_HOSTILE_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_hostile_plugin_CLAP,SIANN_PLUGIN_FILE>>")
   target_include_directories(siann_playback_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/media/tests")
   siann_apply_compile_options(siann_playback_tests)
   catch_discover_tests(siann_playback_tests)
