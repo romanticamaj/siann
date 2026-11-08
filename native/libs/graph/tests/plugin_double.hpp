@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "siann/host/interfaces.hpp"
@@ -29,7 +30,14 @@ class NullControl final : public host::PluginControl {
 public:
     std::vector<std::uint8_t> getState() override { return {}; }
     void setState(const std::vector<std::uint8_t>&) override {}
-    std::vector<host::PluginParameterInfo> parameters() const override { return {}; }
+    // parameterCount parameters, ids "p0", "p1", ...
+    std::vector<host::PluginParameterInfo> parameters() const override {
+        std::vector<host::PluginParameterInfo> out(parameterCount);
+        for (std::size_t i = 0; i < out.size(); ++i) {
+            out[i].id = "p" + std::to_string(i);
+        }
+        return out;
+    }
     double getParameter(int) const override { return 0.0; }
     void setParameter(int, double) override {}
     void openEditor(host::EditorOwner) override { throw std::runtime_error("no editor"); }
@@ -84,11 +92,13 @@ public:
     std::uint64_t midiOutputOverflows() const noexcept override { return 0; }
 
     void setLatency(int frames) noexcept { latency_.store(frames); }
+    // Before a node is built around the instance.
+    void setParameterCount(std::size_t count) noexcept { control_.parameterCount = count; }
 
     std::atomic<int> calls{0};
     std::atomic<int> lastEventCount{-1};
     // The events of the last process() call, up to the array's size.
-    std::array<host::BlockEvent, 256> received{};
+    std::array<host::BlockEvent, 1024> received{};
     std::size_t receivedCount = 0;
     std::atomic<std::int64_t> processNanos{0};
     float gain = 1.0f;

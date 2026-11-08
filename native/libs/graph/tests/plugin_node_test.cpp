@@ -216,32 +216,52 @@ TEST_CASE("The latest of two values for one parameter wins", "[graph][plugin][pa
     CHECK(plugin.received[1].value == 0.4);
 }
 
-TEST_CASE("More parameters than the node holds: the latest per parameter, the rest counted, no allocation",
+TEST_CASE("Every parameter set while no block runs waits for the next one: the latest per parameter, no allocation",
           "[graph][plugin][param][rt]") {
+    // More parameters than a fixed queue would hold (Surge XT has hundreds), all set
+    // while the transport is stopped: none is lost (spec, Protocol v0 item 20).
+    constexpr std::uint32_t count = 300;
     DoublePlugin plugin;
+    plugin.setParameterCount(count);
     Rig rig = build(plugin);
-    constexpr auto capacity = static_cast<std::uint32_t>(PluginNode::kMaxPendingParameters);
+    CHECK(rig.node->pendingParameterCapacity() == count);
     const auto before = siann::rt::allocationViolations();
     {
         siann::rt::ScopedRealtimeThread realtime;
-        for (std::uint32_t index = 0; index < capacity + 2; ++index) {
+        for (std::uint32_t index = 0; index < count; ++index) {
             rig.graph->setParameter(rig.slot, index, 0.1, 0);
         }
-        // Full: a parameter already pending still takes its newer value.
         rig.graph->setParameter(rig.slot, 0, 0.6, 0);
+        rig.graph->setParameter(rig.slot, count - 1, 0.7, 0);
         rig.graph->process(ProcessContext{0, 256});
     }
     CHECK(siann::rt::allocationViolations() == before);
-    REQUIRE(plugin.receivedCount == capacity);
+    REQUIRE(plugin.receivedCount == count);
     CHECK(plugin.received[0].data0 == 0u);
     CHECK(plugin.received[0].value == 0.6);
-    CHECK(plugin.received[capacity - 1].data0 == capacity - 1);
-    CHECK(rig.node->droppedParameters() == 2);
-    // The space is free again after the block.
-    rig.graph->setParameter(rig.slot, capacity + 1, 0.3, 0);
+    CHECK(plugin.received[count - 1].data0 == count - 1);
+    CHECK(plugin.received[count - 1].value == 0.7);
+    CHECK(rig.node->droppedParameters() == 0);
+    // Delivered: the next block carries only what was set since.
+    rig.graph->setParameter(rig.slot, 5, 0.3, 0);
     rig.graph->process(ProcessContext{256, 256});
     REQUIRE(plugin.receivedCount == 1);
-    CHECK(plugin.received[0].data0 == capacity + 1);
+    CHECK(plugin.received[0].data0 == 5u);
+    CHECK(plugin.received[0].value == 0.3);
+}
+
+TEST_CASE("An index past the instance's parameter list at construction is counted, never stored",
+          "[graph][plugin][param]") {
+    DoublePlugin plugin;
+    plugin.setParameterCount(4);
+    Rig rig = build(plugin);
+    CHECK(rig.node->pendingParameterCapacity() == 4);
+    rig.graph->setParameter(rig.slot, 4, 0.5, 0);
+    rig.graph->setParameter(rig.slot, 3, 0.5, 0);
+    rig.graph->process(ProcessContext{0, 256});
+    REQUIRE(plugin.receivedCount == 1);
+    CHECK(plugin.received[0].data0 == 3u);
+    CHECK(rig.node->droppedParameters() == 1);
 }
 
 TEST_CASE("A bypassed node keeps a parameter change for the next processed block", "[graph][plugin][param]") {

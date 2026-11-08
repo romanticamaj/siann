@@ -525,6 +525,12 @@ TEST_CASE("plugin table: compileForPlayback makes every loaded slot addressable"
     const auto* node = dynamic_cast<const graph::PluginNode*>(compiled.graph->nodeAt(found->second));
     REQUIRE(node != nullptr);
     CHECK(&node->instance() == table.instance("slt_1"));
+    // Room for a pending value of every parameter, so none set while stopped is lost.
+    const std::size_t parameterCount = table.instance("slt_1")->control().parameters().size();
+    CHECK(parameterCount > 0);
+    CHECK(node->pendingParameterCapacity() == parameterCount);
+    CHECK(table.pendingParameterCapacity("slt_1") == parameterCount);
+    CHECK(table.pendingParameterCapacity("slt_none") == 0);
     // A missing plugin has no node, so no key.
     CHECK(compiled.slots.count(playback::pluginSlotKey("slt_gone")) == 0);
     compiled.graph.reset();
