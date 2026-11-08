@@ -300,6 +300,10 @@ void PluginInstanceTable::tick() {
             case host::PluginEvent::Kind::parameterEdited:
                 ++parameterEdits_;  // counted and dropped until automation reads them
                 break;
+            case host::PluginEvent::Kind::failed:
+                // The instance passes its input through; the command layer replaces it.
+                entry.error = PluginProblem{"plugin_failed", "the plugin failed and passes its input through"};
+                break;
         }
     }
     const auto service = [this](Entry& entry) {
