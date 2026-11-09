@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { FetchedEntity, SessionChanged, SyncChunk, TrackEntity } from '../../src/renderer/model/document';
+import type { ClipEntity, FetchedEntity, SessionChanged, SyncChunk, TrackEntity } from '../../src/renderer/model/document';
 import { parseRef } from '../../src/renderer/model/document';
 import { ReadModel, ReadModelError, type Snapshot } from '../../src/renderer/model/read-model';
 import { sequence } from './support/sequence';
@@ -79,7 +79,7 @@ test('(a) a sync whose chunks do not hash to its documentHash is rejected and re
   assert.equal(model.getSnapshot(), null);
   // Chunks of different revisions are not one sync.
   const mixed = structuredClone(chunks);
-  mixed[2]!.revision = 'r99';
+  (mixed[2] as { revision: string }).revision = 'r99';
   await assert.rejects(model.fromSync(mixed), (e: unknown) => e instanceof ReadModelError && e.code === 'sync_inconsistent');
 });
 
@@ -99,7 +99,7 @@ test('(b) applyChanged adds, modifies and removes, and takes revision, seq and d
   }
   const last = model.getSnapshot()!;
   assert.equal(last.entities['track:trk_3'], undefined, 'the removed track is dropped');
-  assert.equal(last.entities['clip:clp_1']!.gainMilliDb, -6000);
+  assert.equal((last.entities['clip:clp_1'] as ClipEntity).gainMilliDb, -6000);
 });
 
 test('(b) an entity fetched missing: true is dropped; a delta that does not match the event hash is refused', async () => {
