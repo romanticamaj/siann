@@ -56,6 +56,8 @@ export interface SessionClientOptions {
   schedule: (fn: () => void, ms: number) => () => void;
   model?: ReadModel;
   reconnectMs?: number;
+  // The status before the first connect (the renderer shows connecting).
+  initialStatus?: ConnectionStatus;
 }
 
 export class ProtocolError extends Error {
@@ -137,6 +139,7 @@ export class SessionClient {
   constructor(options: SessionClientOptions) {
     this.#options = options;
     this.model = options.model ?? new ReadModel();
+    if (options.initialStatus) this.#state = Object.freeze({ ...this.#state, status: options.initialStatus });
   }
 
   getState(): ClientState {
