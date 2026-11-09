@@ -11,6 +11,11 @@
 //                             Untitled.siann (default: <userData>/sessions)
 //   SIANN_SHELL_BACKOFF_MS    first restart delay (default 250; cap 40x)
 //   SIANN_SHELL_MAX_RESTARTS  consecutive restarts before giving up (default 5)
+//   SIANN_SHELL_READY_MS      how long a launch may take to write its ready line
+//                             (default 30000)
+//   SIANN_SHELL_STOP_GRACE_MS stdin EOF to SIGKILL on quit (default 5000)
+//   SIANN_SHELL_KILL_GRACE_MS SIGTERM to SIGKILL on a failed launch, and SIGKILL
+//                             to counting the engine gone (default 2000)
 //   SIANN_SHELL_TEST=1        exposes the supervisor as globalThis.__siannShell
 
 import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron';
@@ -123,6 +128,9 @@ const supervisor = new EngineSupervisor({
       testArgs: engineTestArgs,
     }),
   backoff,
+  readyTimeoutMs: positiveInt('SIANN_SHELL_READY_MS'),
+  stopGraceMs: positiveInt('SIANN_SHELL_STOP_GRACE_MS'),
+  killGraceMs: positiveInt('SIANN_SHELL_KILL_GRACE_MS'),
   spawn: (exe, args) => spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }),
   schedule: (fn, ms) => {
     const timer = setTimeout(fn, ms);
