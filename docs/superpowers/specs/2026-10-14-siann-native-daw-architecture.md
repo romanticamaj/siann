@@ -289,7 +289,10 @@ years. Milestones are designed so that something useful exists at every stage.
   session whose media cannot be loaded is served the same way, with the code in
   `deviceError`, the host builds the graph again at every new head while the first
   graph could not be built, and plays once a commit no longer needs the missing file
-  (m5-engine-sessions-devices: no relaunch). That
+  (m5-engine-sessions-devices: no relaunch). Meanwhile commands still run:
+  `proposal.merge` and `proposal.discard` reach the session directly (nothing is
+  heard, so no sound has to follow), and only `audition.hear` answers
+  `audition_unavailable`. That
   is any failure to build the first graph: the engine's `media_missing`,
   `media_hash_mismatch` and `media_mismatch`, the readers' `unsupported_media`,
   `decode_failed` and `too_large`, and `load_failed` for anything else (an I/O error,
