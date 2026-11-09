@@ -2356,7 +2356,11 @@ MySong.siann/                    a directory
 ## Frontend
 
 - TypeScript, one codebase for the Electron renderer and remote browsers.
-- Framework choice (React or Svelte) is made at the start of M5.
+- Framework: React, decided at the start of M5 (ADR-0019, 2026-11-09). The read
+  model is framework-free TypeScript that React reads through
+  `useSyncExternalStore`; the Canvas/WebGL surfaces are imperative classes
+  outside React state; the renderer is bundled by esbuild and type-checked by
+  `tsc`.
 - Timeline, waveforms, automation and meters are drawn with Canvas/WebGL.
 - The frontend holds a read model keyed by revision; it never owns session truth.
 - Plan review is a first-class UI: diff of the plan against the current revision,
@@ -2393,6 +2397,7 @@ before adoption, including transitive dependencies.
 | Desktop shell | Electron + Electron Forge or electron-builder | MIT |
 | Electron shell tests | Playwright (`@playwright/test`, Electron driver), pinned | Apache-2.0 |
 | Frontend language | TypeScript, pinned | Apache-2.0 |
+| Frontend framework and bundler | React 19 with react-dom, esbuild, pinned by `m5-read-model` (ADR-0019) | MIT |
 
 Not used: Taskflow (allocates at runtime).
 
