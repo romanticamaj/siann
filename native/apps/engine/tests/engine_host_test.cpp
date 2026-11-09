@@ -541,6 +541,37 @@ TEST_CASE("a commit on main reaches the live graph", "[engine][host]") {
     CHECK(rig.engine().driver().liveEpoch() > 1);
 }
 
+TEST_CASE("a session whose graph could not be built still merges and discards proposals through the port",
+          "[engine][host]") {
+    // Process model: a session whose media cannot be loaded is served the same
+    // way, so proposal.merge and proposal.discard work while nothing is heard.
+    Fixture fixture;
+    std::filesystem::remove_all(fixture.bundle() / "media");
+    EngineHost host(fixture.session, manualOptions(std::make_unique<ManualAudioDevice>()));
+    REQUIRE(host.status().deviceError.has_value());
+    REQUIRE(host.status().deviceError->code == "media_missing");
+    protocol::AuditionPort* const port = host.auditionPort();
+    REQUIRE(port != nullptr);
+
+    session::Session& session = fixture.session;
+    const command::BranchId kept = session.branch(session.history().head().envelope.id);
+    session.commitOn(kept, {live_rig::cmd(live_rig::addTrack("trk_c"))}, "test", "t");
+    const command::BranchId dropped = session.branch(session.history().head().envelope.id);
+    session.commitOn(dropped, {live_rig::cmd(live_rig::addTrack("trk_d"))}, "test", "t");
+
+    const command::Revision* merged = nullptr;
+    REQUIRE_NOTHROW(merged = &port->merge(kept, "test", "t"));
+    CHECK(merged->envelope.id == session.history().head().envelope.id);
+    CHECK_FALSE(session.history().isOpen(kept));
+    REQUIRE_NOTHROW(port->discard(dropped));
+    CHECK_FALSE(session.history().isOpen(dropped));
+    CHECK_FALSE(port->heard().has_value());
+
+    CHECK_THROWS_AS(port->merge("no_such_branch", "test", "t"), command::CommandError);
+    REQUIRE_NOTHROW(host.tick());  // retries at the new head; the media is still gone
+    CHECK(host.status().deviceError->code == "media_missing");
+}
+
 TEST_CASE("audition.hear reaches the live graph through the port", "[engine][host]") {
     Rig rig;
     REQUIRE(rig.host->auditionPort() != nullptr);
