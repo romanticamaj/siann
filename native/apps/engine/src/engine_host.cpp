@@ -101,7 +101,7 @@ void EngineHost::bind(session::Session& session) {
     // What refers to the old engine goes first, then the engine, whose driver stops
     // the device. The device object stays: the new driver opens it again.
     publisher_.reset();
-    audition_.unbind();
+    audition_.unbind(session);  // until a graph is built, merge and discard reach the session
     auditioner_.reset();
     pendingInstances_.clear();
     if (engine_) {

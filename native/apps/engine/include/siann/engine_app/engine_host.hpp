@@ -97,7 +97,8 @@ public:
     EngineHost& operator=(const EngineHost&) = delete;
 
     // Lives as long as the host, across rebinds; while the session's graph could
-    // not be built it is unbound (audition_unavailable).
+    // not be built it is unbound: audition is audition_unavailable, merge and
+    // discard reach the session directly.
     protocol::AuditionPort* auditionPort() noexcept;
 
     // From here on tick() publishes the meter legend and the frames. Both must

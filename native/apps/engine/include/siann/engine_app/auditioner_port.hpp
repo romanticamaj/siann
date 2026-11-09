@@ -4,7 +4,9 @@
 // protocol's interface, its AuditionError translated into AuditionPortError
 // with the budget as data. rebind() points it at another auditioner
 // (session.open), or at none while the engine host has no graph: then
-// heard() is main, the commit notices do nothing and the rest throws
+// heard() is main, the commit notices do nothing, merge() and discard() go
+// straight to the session given to unbind() (nothing is heard, so no sound has
+// to follow; without a session they throw too) and the rest throws
 // AuditionPortError audition_unavailable. Header-only: the protocol tests put it
 // over their own engine.
 
@@ -14,6 +16,7 @@
 
 #include "siann/playback/audition.hpp"
 #include "siann/protocol/audition_port.hpp"
+#include "siann/session/session.hpp"
 
 namespace siann::engine_app {
 
@@ -23,7 +26,11 @@ public:
     explicit AuditionerPort(playback::Auditioner& auditioner) : auditioner_(&auditioner) {}
 
     void rebind(playback::Auditioner& auditioner) { auditioner_ = &auditioner; }
-    void unbind() { auditioner_ = nullptr; }
+    // No graph: merge and discard reach `session` directly.
+    void unbind(session::Session& session) {
+        auditioner_ = nullptr;
+        session_ = &session;
+    }
 
     void audition(const command::BranchId& branchId) override {
         translated([&] { bound().audition(branchId); });
@@ -33,11 +40,18 @@ public:
         return auditioner_ != nullptr ? auditioner_->heard() : std::nullopt;
     }
     const command::Revision& merge(const command::BranchId& branchId, std::string actor, std::string time) override {
+        if (auditioner_ == nullptr && session_ != nullptr) {
+            return session_->merge(branchId, std::move(actor), std::move(time));
+        }
         const command::Revision* merged = nullptr;
         translated([&] { merged = &bound().merge(branchId, std::move(actor), std::move(time)); });
         return *merged;
     }
     void discard(const command::BranchId& branchId) override {
+        if (auditioner_ == nullptr && session_ != nullptr) {
+            session_->discard(branchId);
+            return;
+        }
         translated([&] { bound().discard(branchId); });
     }
     void mainCommitted() override {
@@ -74,6 +88,7 @@ private:
     }
 
     playback::Auditioner* auditioner_ = nullptr;
+    session::Session* session_ = nullptr;
 };
 
 }  // namespace siann::engine_app
