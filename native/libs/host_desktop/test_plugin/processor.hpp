@@ -17,7 +17,8 @@
 // chatty third-party plugin would: a host whose launcher handshake shares stdout
 // with plugins fails on it.
 //
-// Probes for the host's side of things, none of them state:
+// Probes for the host's side of things, none of them state, and none automatable
+// (so pluginval's automation and state tests leave them alone; m4-juce-formats):
 // - "holdProcessBlock": with it on, every processBlock takes restartWatch before
 //   it returns, so a host that must wait for the block in flight has something to
 //   wait for.
@@ -36,7 +37,14 @@
 //   was loaded from, which tells two installs of the plugin apart.
 // - "midiFlood": with it on, every processBlock adds 3000 note-ons to its MIDI
 //   output, more than Steinberg's 2048 a block (JUCE's VST3 wrapper passes 2048 on).
-//   The plugin produces MIDI for this probe only.
+// - "midiSysex": with it on, every processBlock adds one sysex message of 10 data
+//   bytes (12 with F0 and F7, more than the 8 JUCE's MidiMessage keeps inline) to
+//   its MIDI output, so the host's midiOutputSysex rises by one a block.
+//   The plugin produces MIDI for these two probes only.
+//
+// The environment variable SIANN_TEST_PLUGIN_LAYOUT=buses, as the CLAP test plugin
+// reads it, gives instances created after it is set 16 stereo output buses (32
+// channels), one more than a host processes.
 //
 // State blob: magic "SIANNTP1", version u32, gain f32, latency u8, tail u8, little
 // endian.
@@ -94,6 +102,8 @@ public:
 private:
     static constexpr int ringFrames = 1024;  // a power of two above longLatency
 
+    static BusesProperties busesFromEnvironment();
+
     void parameterValueChanged(int parameterIndex, float newValue) override;
     void parameterGestureChanged(int, bool) override {}
     void handleAsyncUpdate() override;
@@ -113,6 +123,7 @@ private:
     juce::AudioParameterBool* holdProcessBlock_;
     juce::AudioParameterBool* tail_;
     juce::AudioParameterBool* midiFlood_;
+    juce::AudioParameterBool* midiSysex_;
     Vst3Restarter restarter_;
     std::thread::id homeThread_ = std::this_thread::get_id();
     std::atomic<bool> nudgePending_{false};

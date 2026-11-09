@@ -578,6 +578,27 @@ TEST_CASE("plugin host: a block with fewer channels than the plugin still proces
     CHECK(measured.allocations == 0);
 }
 
+// maxPluginChannels (31; spec, PluginHost contract): juce::AudioBuffer holds that
+// many channel pointers without allocating. siann_test_plugin's "buses" layout has
+// 16 stereo output buses, 32 channels; the host is unharmed afterwards.
+TEST_CASE("plugin host: a plugin with more than 31 channels fails to load", "[juce][plugin]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    const auto descriptor = testPlugin(host);
+    {
+        const ScopedEnvironment layout("SIANN_TEST_PLUGIN_LAYOUT", "buses");
+        try {
+            host.instantiate(descriptor, sampleRate, blockFrames);
+            FAIL("a 32-channel plugin must not load");
+        } catch (const host::PluginError& error) {
+            CHECK(error.code() == "plugin_load_failed");
+            CHECK(std::string(error.what()).find("more channels") != std::string::npos);
+        }
+    }
+    auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
+    CHECK(measureDelay(*instance).frames == 64);
+}
+
 // Channels of the output view the plugin does not fill are cleared, not left as
 // they were: the view may hold whatever the previous node wrote.
 TEST_CASE("plugin host: output channels beyond the plugin's are cleared", "[juce][plugin]") {
@@ -949,5 +970,18 @@ TEST_CASE("plugin host: blocks whose MIDI output reaches 2048 events are counted
     const std::uint64_t after = instance->midiOutputOverflows();
     runBlocks(*instance);
     CHECK(instance->midiOutputOverflows() == after);
+    CHECK(measureDelay(*instance).frames == 64);
+}
+
+// m4-juce-formats (ADR-0018, Amendment 3): JucePluginInstance walks the MidiBuffer
+// after processBlock and counts the sysex in it. JUCE's VST3 wrapper builds each one
+// with MidiMessage::createSysExMessage, which mallocs for more than 8 bytes: the
+// accepted, plugin-caused allocation. SIANN's walk allocates nothing.
+TEST_CASE("plugin host: sysex output is counted per event, never as an overflow", "[juce][plugin][midi]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    auto instance = loadTestPlugin(host);
+    CHECK(instance->capabilities().midiOutput);
+    checkSysexCounting(*instance);
     CHECK(measureDelay(*instance).frames == 64);
 }

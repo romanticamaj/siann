@@ -33,11 +33,15 @@
 //   more than a host's bounded output list takes, before its parameter out-events.
 // - "concurrentProcess": the most process() calls this instance was ever inside at
 //   once (plain 0 to 4), pushed as an out-event when it grows, so the host reads it.
+// - "midiSysex": every process() then pushes one CLAP_EVENT_MIDI_SYSEX output event,
+//   sysexMessage (F0 ... F7, more than 8 data bytes, a size JUCE's MidiMessage keeps
+//   on the heap), before its parameter out-events.
 //
 // Parameter ids are neither indices nor sorted, so a host that takes one for the
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
 // ports of instances created after it is set: "wide" has 32 channels on the main
-// ports, "sidechain" a second input port and note ports in both directions.
+// ports, "buses" 16 stereo output ports (32 channels in all, each port within the
+// host's limit), "sidechain" a second input port and note ports in both directions.
 // SIANN_TEST_PLUGIN_BADINFO set makes params.get_info fail for "tail", a plugin
 // that counts a parameter it cannot describe.
 //
@@ -72,6 +76,9 @@ constexpr double longTailSeconds = 0.25;
 constexpr std::uint32_t ringFrames = 1024;  // a power of two above longLatency
 constexpr std::uint32_t wideChannels = 32;
 constexpr std::uint32_t floodNotes = 3000;
+// One sysex message, 10 data bytes between F0 and F7 (a non-commercial id, 0x7D).
+constexpr std::array<std::uint8_t, 12> sysexMessage{0xF0, 0x7D, 0x53, 0x49, 0x41, 0x4E,
+                                                    0x4E, 0x01, 0x02, 0x03, 0x04, 0xF7};
 constexpr double maxConcurrent = 4.0;
 
 constexpr char stateMagic[8] = {'S', 'I', 'A', 'N', 'N', 'T', 'P', '1'};
@@ -100,13 +107,14 @@ enum Parameter : std::uint32_t {
     paramFlushed,
     paramMidiFlood,
     paramConcurrentProcess,
+    paramMidiSysex,
     parameterCount,
 };
 
 constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
-    "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess",
+    "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess", "midiSysex",
 };
 
 constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
@@ -119,7 +127,9 @@ constexpr bool indexOf(clap_id id, std::uint32_t& index) {
     return true;
 }
 
-enum class Layout { stereo, wide, sidechain };
+enum class Layout { stereo, wide, buses, sidechain };
+
+constexpr std::uint32_t busesOutputPorts = 16;
 
 std::string homeDirectoryName;
 
@@ -281,6 +291,12 @@ struct TestPlugin {
         for (std::uint32_t c = channels; c < output.channel_count; ++c) {
             std::fill(output.data32[c] + begin, output.data32[c] + end, 0.0f);
         }
+        for (std::uint32_t port = 1; port < process.audio_outputs_count; ++port) {
+            const clap_audio_buffer_t& extra = process.audio_outputs[port];
+            for (std::uint32_t c = 0; c < extra.channel_count; ++c) {
+                std::fill(extra.data32[c] + begin, extra.data32[c] + end, 0.0f);
+            }
+        }
     }
 };
 
@@ -289,7 +305,11 @@ TestPlugin& self(const clap_plugin_t* plugin) { return *static_cast<TestPlugin*>
 // --- clap.audio-ports
 
 std::uint32_t audioPortCount(const clap_plugin_t* plugin, bool isInput) {
-    return isInput && self(plugin).layout == Layout::sidechain ? 2 : 1;
+    const Layout layout = self(plugin).layout;
+    if (isInput) {
+        return layout == Layout::sidechain ? 2 : 1;
+    }
+    return layout == Layout::buses ? busesOutputPorts : 1;
 }
 
 bool audioPortGet(const clap_plugin_t* plugin, std::uint32_t index, bool isInput, clap_audio_port_info_t* info) {
@@ -602,6 +622,17 @@ clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_proces
             process->out_events->try_push(process->out_events, &note.header);
         }
     }
+    if (test.on(paramMidiSysex)) {
+        clap_event_midi_sysex_t sysex{};
+        sysex.header.size = sizeof(sysex);
+        sysex.header.time = 0;
+        sysex.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        sysex.header.type = CLAP_EVENT_MIDI_SYSEX;
+        sysex.port_index = 0;
+        sysex.buffer = sysexMessage.data();
+        sysex.size = static_cast<std::uint32_t>(sysexMessage.size());
+        process->out_events->try_push(process->out_events, &sysex.header);
+    }
     test.pushPendingOutEvents(process->out_events);
     if (grew) {
         test.pushValue(process->out_events, paramConcurrentProcess, static_cast<double>(inside));
@@ -668,7 +699,10 @@ const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host
     auto* test = new TestPlugin;
     test->host = host;
     const std::string layout = environmentValue("SIANN_TEST_PLUGIN_LAYOUT");
-    test->layout = layout == "wide" ? Layout::wide : layout == "sidechain" ? Layout::sidechain : Layout::stereo;
+    test->layout = layout == "wide"        ? Layout::wide
+                   : layout == "buses"     ? Layout::buses
+                   : layout == "sidechain" ? Layout::sidechain
+                                           : Layout::stereo;
     test->badInfo = !environmentValue("SIANN_TEST_PLUGIN_BADINFO").empty();
     test->values[paramGain].store(1.0);
     test->clap.desc = &descriptor;

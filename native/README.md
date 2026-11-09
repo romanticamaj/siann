@@ -181,6 +181,40 @@ skip, and pointing at a missing file fails:
 The hosting tests open editor windows, so on Linux run them with a display
 (`xvfb-run -a ctest ...`). `ctest -R "plugin host"` selects them.
 
+### pluginval (strictness 5)
+
+`scripts/pluginval.js` runs [pluginval](https://github.com/Tracktion/pluginval)
+v1.0.4 at strictness level 5 (`--strictness-level` changes it). pluginval is GPL
+and runs as its own process, never linked. CI's desktop job downloads the pinned
+release, checks its hash and validates `siann_test_plugin.vst3`, and on macOS the
+AU, copied to the runner's `~/Library/Audio/Plug-Ins/Components`. On a maintainer
+machine, with pluginval from its release page:
+
+```sh
+SIANN_PLUGINVAL=/path/to/pluginval node scripts/pluginval.js build/desktop/.../siann_test_plugin.vst3
+SIANN_PLUGINVAL=/path/to/pluginval node scripts/pluginval.js --compat
+```
+
+`--compat` validates the third-party set chosen at M4's human gate
+(`scripts/compat-plugins.json`), each through one variable holding its path:
+
+| Variable | Plugin | Runs |
+|---|---|---|
+| `SIANN_PLUGIN_TDR_NOVA` | TDR Nova (VST3) | every run |
+| `SIANN_PLUGIN_SLICKEQ` | TDR VOS SlickEQ (VST3) | every run |
+| `SIANN_PLUGIN_SURGE_XT_VST3` | Surge XT (VST3) | every run |
+| `SIANN_PLUGIN_SD3` | Superior Drummer 3, or EZdrummer 3 (VST3) | when authorised |
+| `SIANN_PLUGIN_UAD_1176` | UAD 1176 (VST3) | when authorised |
+| `SIANN_PLUGIN_HALION_SONIC` | HALion Sonic (VST3) | when authorised |
+| `SIANN_PLUGIN_TDR_NOVA_AU` | TDR Nova (AU, macOS) | every run |
+| `SIANN_PLUGIN_SURGE_XT_AU` | Surge XT (AU, macOS) | every run |
+
+An unset variable prints `SKIP` (nothing asks for a login); a path that does not
+exist, or a pluginval failure, prints `FAIL` and the script exits 1. Without
+pluginval (`--pluginval` or `SIANN_PLUGINVAL`) it exits 2. `--json` prints
+`{ok, plugins: [{id, path, result}]}`, `--output-dir` keeps pluginval's logs.
+pluginval checks no CLAP: Surge XT's CLAP stays with the hosting tests.
+
 ### RealtimeSanitizer (Linux or WSL, Clang 20+)
 
 The `rtsan` preset builds everything with `-fsanitize=realtime`

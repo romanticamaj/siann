@@ -381,7 +381,8 @@ Value pluginStatusJson(const PluginStatus& plugin) {
                {"xruns", decimalOrNull(plugin.xruns)},
                {"maxCallbackMicros", plugin.maxCallbackMicros ? Value(*plugin.maxCallbackMicros) : Value(nullptr)},
                {"unmeasuredCallbacks", decimalOrNull(plugin.unmeasuredCallbacks)},
-               {"midiOutputOverflows", decimalOrNull(plugin.midiOutputOverflows)}};
+               {"midiOutputOverflows", decimalOrNull(plugin.midiOutputOverflows)},
+               {"midiOutputSysex", decimalOrNull(plugin.midiOutputSysex)}};
     if (plugin.error) {
         out.emplace_back("error", errorValue(plugin.error->first, plugin.error->second));
     }

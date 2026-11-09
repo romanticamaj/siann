@@ -124,6 +124,7 @@ Useful repository checks are:
 - `find docs -type f | sort` lists tracked documentation areas.
 - `npm test` runs the bridge wrapper, CLI, and fixture tests with Node's built-in test runner.
 - `npm run smoke:dawproject -- --json` runs the cross-platform DAWproject smoke test without the engine checkout.
+- `node scripts/pluginval.js [--pluginval <exe>] <plugin>...` runs pluginval v1.0.4 at strictness 5 on plugins by path; `--compat` runs it on the third-party set in `scripts/compat-plugins.json` (one `SIANN_PLUGIN_*` variable each: unset is SKIP, a missing path or a failure is FAIL); see `native/README.md`, "pluginval".
 - `node scripts/create-demo-import-pack.js --out /tmp/siann-import-pack-demo --json` creates portable demo audio plus a manifest under the chosen output directory.
 - `node bin/siann.js run examples/bridge/create-session.command.json --json` runs a command fixture against the local engine checkout.
 - `node scripts/create-demo-audio.js /tmp/siann-import-pack-demo/audio` creates the WAV files required by `examples/import-pack/manifest.json`.

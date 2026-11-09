@@ -25,6 +25,7 @@
 #include <future>
 #include <optional>
 #include <random>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1047,6 +1048,63 @@ TEST_CASE("a CLAP plugin on the desktop target has no editor window yet", "[engi
         REQUIRE(at(loaded, "state").asString() == "done");
         const std::string slotId = at(at(loaded, "result"), "slotId").asString();
         CHECK(client.errorOf("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}})) == "editor_failed");
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+// m4-juce-formats: what an agent learns about the JUCE formats (Protocol v0 items
+// 14, 18 and 19). The flags are the six PluginHost names; siann_test_plugin's
+// values come from its CMake declaration (NEEDS_MIDI_OUTPUT, an editor, one input
+// bus) and from what JUCE's hosting passes on (parameters per block, latency
+// reported when it changes).
+TEST_CASE("the desktop engine lists its JUCE formats and a VST3's capability flags", "[engine][launch][juce]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value capabilities = client.ok("engine.capabilities");
+        const Value& plugins = at(at(capabilities, "features"), "plugins");
+        std::set<std::string> formats;
+        for (const Value& format : at(plugins, "formats").asArray()) {
+            formats.insert(format.asString());
+        }
+#if defined(__APPLE__)
+        CHECK(formats == std::set<std::string>{"au", "clap", "vst3"});
+#else
+        CHECK(formats == std::set<std::string>{"clap", "vst3"});
+#endif
+        CHECK(jcs::canonicalize(at(plugins, "flags")) ==
+              R"(["sampleAccurateParameters","midiInput","midiOutput","sidechain","variableLatency","editor"])");
+
+        client.ok("command.execute", trackAddCommand("trk_1"));
+        const Value loaded = client.ok("plugin.instantiate", instantiateParams("vst3", SIANN_TEST_PLUGIN_VST3));
+        REQUIRE(at(loaded, "state").asString() == "done");
+        const Value& result = at(loaded, "result");
+        const std::string slotId = at(result, "slotId").asString();
+        const std::string expected =
+            R"({"editor":true,"midiInput":false,"midiOutput":true,"sampleAccurateParameters":false,)"
+            R"("sidechain":false,"variableLatency":true})";
+        CHECK(jcs::canonicalize(at(result, "capabilities")) == expected);
+        CHECK(at(result, "latencyFrames").asNumber() == 64);
+
+        const Value status = client.ok("engine.status");
+        const Value* entry = nullptr;
+        for (const Value& plugin : at(status, "plugins").asArray()) {
+            if (at(plugin, "slotId").asString() == slotId) {
+                entry = &plugin;
+            }
+        }
+        REQUIRE(entry != nullptr);
+        CHECK(at(*entry, "format").asString() == "vst3");
+        CHECK(jcs::canonicalize(at(*entry, "capabilities")) == expected);
+        CHECK(at(*entry, "latencyFrames").asNumber() == 64);
+
+        // LV2 through JUCE stays off (ADR-0018, Amendment 2): no host takes it.
+        const Value lv2 = client.ok("plugin.instantiate", instantiateParams("lv2", utf8(dir.path() / "any.lv2")));
+        CHECK(at(lv2, "state").asString() == "failed");
+        CHECK(at(at(lv2, "error"), "code").asString() == "no_plugin_host");
     }
     CHECK(stopEngine(child) == 0);
 }

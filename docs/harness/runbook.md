@@ -56,7 +56,15 @@ Progress: `/workflows`. Each feature lands as its own PR, merged only after CI i
 ## After each run
 
 1. Read the summary: merged PRs, failed features, exit criteria.
-2. Do the human gates (devices, long runs, macOS hands-on, accounts).
+2. Do the human gates (devices, long runs, macOS hands-on, accounts). Since M4,
+   validate the installed third-party plugins with pluginval at strictness 5:
+   `SIANN_PLUGINVAL=<pluginval v1.0.4> node scripts/pluginval.js --compat`, with
+   one variable per plugin (`SIANN_PLUGIN_TDR_NOVA`, `SIANN_PLUGIN_SLICKEQ`,
+   `SIANN_PLUGIN_SURGE_XT_VST3`, and when authorised `SIANN_PLUGIN_SD3`,
+   `SIANN_PLUGIN_UAD_1176`, `SIANN_PLUGIN_HALION_SONIC`; on macOS
+   `SIANN_PLUGIN_TDR_NOVA_AU`, `SIANN_PLUGIN_SURGE_XT_AU`). An unset variable is a
+   `SKIP`; a missing path or a pluginval failure is a `FAIL` (exit 1). See
+   `native/README.md`, "pluginval".
 3. Ask Claude to record the results; the manifest status becomes `done` when every exit criterion is met.
 4. Start the next milestone.
 

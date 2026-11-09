@@ -173,6 +173,17 @@ public:
             if (midi_.getNumEvents() >= kMaxBlockOutputEvents) {
                 midiOutputOverflows_.fetch_add(1, std::memory_order_relaxed);
             }
+            // The sysex in it, one by one (ADR-0018, Amendment 3): JUCE's wrappers
+            // allocated for each. The walk reads the buffer in place.
+            std::uint64_t sysex = 0;
+            for (const auto metadata : midi_) {
+                if (metadata.numBytes > 0 && metadata.data[0] == 0xF0) {
+                    ++sysex;
+                }
+            }
+            if (sysex > 0) {
+                midiOutputSysex_.fetch_add(sysex, std::memory_order_relaxed);
+            }
         }
         processing_.store(false);
         for (int c = outputChannels_; c < output.channelCount; ++c) {
@@ -185,6 +196,8 @@ public:
     std::uint64_t midiOutputOverflows() const noexcept override {
         return midiOutputOverflows_.load(std::memory_order_relaxed);
     }
+
+    std::uint64_t midiOutputSysex() const noexcept override { return midiOutputSysex_.load(std::memory_order_relaxed); }
 
     // For testing::reportProcessorChange: what a plugin reporting on this thread does.
     void reportChange(const ChangeDetails& details) { plugin_->updateHostDisplay(details); }
@@ -383,6 +396,7 @@ private:
     std::atomic<int> paused_{0};
     std::atomic<bool> tailStale_{false};
     std::atomic<std::uint64_t> midiOutputOverflows_{0};
+    std::atomic<std::uint64_t> midiOutputSysex_{0};
     std::unique_ptr<EditorWindow> editor_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
@@ -411,7 +425,13 @@ struct JucePluginHost::Impl {
     // and each install is loaded from where it is.
     std::map<std::string, std::map<std::string, juce::PluginDescription>> known;
 
-    Impl() { juce::addDefaultFormatsToManager(formats); }
+    Impl() {
+        // JUCE's LV2 wrapper takes a process-wide blocking spin lock on the audio
+        // thread and grows a UI message buffer there; LV2 arrives through lilv (M7)
+        // or worker processes. In a function body, where GCC takes it (agent rules).
+        static_assert(JUCE_PLUGINHOST_LV2 == 0, "LV2 through JUCE stays off (ADR-0018, Amendment 2)");
+        juce::addDefaultFormatsToManager(formats);
+    }
 
     // path is what the caller named; an AU is opened by the system's identifier.
     PluginDescriptor remember(const juce::PluginDescription& description, const std::string& path) {

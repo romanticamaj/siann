@@ -80,6 +80,7 @@ struct PluginInstanceStatus {
     std::uint64_t unmeasuredCallbacks = 0;
     std::int64_t maxCallbackNanos = 0;
     std::uint64_t midiOutputOverflows = 0;
+    std::uint64_t midiOutputSysex = 0;
 };
 
 namespace detail {

@@ -348,3 +348,46 @@ TEST_CASE("plugin.set_parameter sets a VST3 slot on the main thread", "[engine][
     CHECK(rig.host->playback().dispatcher().pendingCount() == 0);
 }
 #endif
+
+// ---- midiOutputSysex (m4-juce-formats; ADR-0018, Amendment 3; Protocol v0 item 18) ----
+
+namespace {
+
+// siann_test_plugin's "midiSysex", set through plugin.set_parameter while it plays:
+// engine.status reports one sysex a block beside an unmoved midiOutputOverflows.
+void checkSysexReported(const std::string& format, const std::string& path) {
+    ManualRig rig;
+    rig.host->play();
+    const Value loaded = rig.ok("plugin.instantiate", instantiateParams("trk_a", format, path));
+    REQUIRE(at(loaded, "state").asString() == "done");
+    const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+    rig.pump(4);
+    host::PluginInstance* instance = rig.host->playback().plugins().instance(slotId);
+    REQUIRE(instance != nullptr);
+    const Value quiet = rig.ok("engine.status");
+    CHECK(at(*rig.plugin(quiet, slotId), "midiOutputSysex").asString() == "0");
+
+    rig.ok("plugin.set_parameter", setParameterParams(slotId, parameterId(*instance, "midiSysex"), 1.0));
+    rig.pump(8);
+    const Value status = rig.ok("engine.status");
+    const Value* entry = rig.plugin(status, slotId);
+    REQUIRE(entry != nullptr);
+    const std::uint64_t sysex = std::stoull(at(*entry, "midiOutputSysex").asString());
+    CHECK(sysex >= 7);
+    CHECK(sysex <= 8);
+    CHECK(at(*entry, "midiOutputOverflows").asString() == "0");
+    rig.pump(4);
+    CHECK(std::stoull(at(*rig.plugin(rig.ok("engine.status"), slotId), "midiOutputSysex").asString()) == sysex + 4);
+}
+
+}  // namespace
+
+TEST_CASE("engine.status counts a CLAP plugin's sysex output beside its overflows", "[engine][plugin][midi]") {
+    checkSysexReported("clap", SIANN_TEST_PLUGIN_CLAP);
+}
+
+#if defined(SIANN_ENGINE_WITH_JUCE) && defined(SIANN_TEST_PLUGIN_VST3)
+TEST_CASE("engine.status counts a VST3's sysex output beside its overflows", "[engine][plugin][midi][juce]") {
+    checkSysexReported("vst3", SIANN_TEST_PLUGIN_VST3);
+}
+#endif

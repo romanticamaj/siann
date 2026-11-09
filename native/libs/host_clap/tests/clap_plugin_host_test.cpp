@@ -85,26 +85,6 @@ std::string loadedFrom(host::PluginInstance& instance) {
     return {};
 }
 
-// Sets an environment variable for the length of a scope.
-class ScopedEnvironment {
-public:
-    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
-    ~ScopedEnvironment() { set(""); }
-    ScopedEnvironment(const ScopedEnvironment&) = delete;
-    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
-
-private:
-    void set(const char* value) {
-#if defined(_WIN32)
-        _putenv_s(name_, value);
-#else
-        setenv(name_, value, 1);
-#endif
-    }
-
-    const char* name_;
-};
-
 template <typename Call>
 void requireError(const std::string& code, Call call) {
     try {
@@ -287,6 +267,26 @@ TEST_CASE("clap host: a port beyond the channel limit fails the load", "[clap][p
     const auto descriptor = testPlugin(host);
     const ScopedEnvironment layout("SIANN_TEST_PLUGIN_LAYOUT", "wide");
     requireError("plugin_load_failed", [&] { host.instantiate(descriptor, sampleRate, blockFrames); });
+}
+
+// maxPluginChannels (31; spec, PluginHost contract) bounds a direction's channels
+// in all, as JucePluginHost bounds them: 16 stereo output ports are 32 channels,
+// though each port is within the limit. The host is unharmed afterwards.
+TEST_CASE("clap host: a plugin with more than 31 channels fails to load", "[clap][plugin]") {
+    host::ClapPluginHost host;
+    const auto descriptor = testPlugin(host);
+    {
+        const ScopedEnvironment layout("SIANN_TEST_PLUGIN_LAYOUT", "buses");
+        try {
+            host.instantiate(descriptor, sampleRate, blockFrames);
+            FAIL("a 32-channel plugin must not load");
+        } catch (const host::PluginError& error) {
+            CHECK(error.code() == "plugin_load_failed");
+            CHECK(std::string(error.what()).find("more channels") != std::string::npos);
+        }
+    }
+    auto instance = host.instantiate(descriptor, sampleRate, blockFrames);
+    CHECK(measureDelay(*instance).frames == 64);
 }
 
 TEST_CASE("clap host: parameters are listed and normalized", "[clap][plugin]") {
@@ -900,6 +900,16 @@ TEST_CASE("clap host: note output past 2048 a block is refused and counted per b
     runBlocks(*instance);
     CHECK(instance->midiOutputOverflows() == after);
     instance->control().setEventSink(nullptr);
+}
+
+// m4-juce-formats (ADR-0018, Amendment 3): CLAP_EVENT_MIDI_SYSEX pushes are counted
+// one by one, as the JUCE formats count the sysex in their output; one a block is
+// far inside the bounded list.
+TEST_CASE("clap host: sysex output is counted per event, never as an overflow", "[clap][plugin][midi]") {
+    host::ClapPluginHost host;
+    auto instance = loadTestPlugin(host);
+    checkSysexCounting(*instance);
+    CHECK(measureDelay(*instance).frames == 64);
 }
 
 TEST_CASE("clap host: concurrentProcess reads 1 when one thread processes", "[clap][plugin]") {

@@ -122,6 +122,59 @@ jobs:
       - name: Test
         if: runner.os != 'Linux'
         run: ctest --test-dir native/build/desktop -C Debug --output-on-failure --timeout 300
+      # m4-juce-formats: pluginval at strictness 5 on siann_test_plugin. pluginval is
+      # GPL and runs as its own process, never linked (spec, Libraries). A pinned
+      # release, checked against its hash; scripts/pluginval.js fixes the level.
+      - name: Download pluginval
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) zip=pluginval_Windows.zip sum=c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab exe=pluginval.exe ;;
+            macOS) zip=pluginval_macOS.zip sum=3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f exe=pluginval.app/Contents/MacOS/pluginval ;;
+            Linux) zip=pluginval_Linux.zip sum=c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352 exe=pluginval ;;
+          esac
+          mkdir -p .pluginval/bin
+          curl -fL --retry 6 --retry-all-errors --retry-delay 20 -o ".pluginval/$zip" "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/$zip"
+          if command -v sha256sum >/dev/null; then
+            echo "$sum  .pluginval/$zip" | sha256sum -c -
+          else
+            echo "$sum  .pluginval/$zip" | shasum -a 256 -c -
+          fi
+          unzip -q ".pluginval/$zip" -d .pluginval/bin
+          chmod +x ".pluginval/bin/$exe"
+          echo "SIANN_PLUGINVAL=$(pwd -W 2>/dev/null || pwd)/.pluginval/bin/$exe" >> "$GITHUB_ENV"
+      # The level 5 editor tests need the display the ctest step has.
+      - name: pluginval on siann_test_plugin.vst3 (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: |
+          plugin=$(find native/build/desktop -type d -name siann_test_plugin.vst3 | head -n 1)
+          test -n "$plugin"
+          xvfb-run -a sh -c 'openbox & sleep 1; node scripts/pluginval.js --strictness-level 5 --output-dir pluginval-logs "$0"' "$plugin"
+      - name: pluginval on siann_test_plugin.vst3
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          plugin=$(find native/build/desktop -type d -name siann_test_plugin.vst3 | head -n 1)
+          test -n "$plugin"
+          node scripts/pluginval.js --strictness-level 5 --output-dir pluginval-logs "$plugin"
+      # The system lists AUs from its install locations only. The copy is the
+      # runner's: the build installs nothing.
+      - name: pluginval on siann_test_plugin.component (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          component=$(find native/build/desktop -type d -name siann_test_plugin.component | head -n 1)
+          test -n "$component"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          node scripts/pluginval.js --strictness-level 5 --output-dir pluginval-logs ~/Library/Audio/Plug-Ins/Components/siann_test_plugin.component
+      - name: Keep the pluginval logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginval-logs-${{ matrix.os }}
+          path: pluginval-logs
+          if-no-files-found: ignore
       # m0-plugin-hosting: the editor owned by the real Electron window. Windows
       # alone, as macOS editors float; the app job's engine has no JUCE.
       - uses: actions/setup-node@v4

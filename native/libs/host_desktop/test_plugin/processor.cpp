@@ -27,23 +27,47 @@ juce::String homeDirectoryName() {
     return home;
 }
 
+// SIANN_TEST_PLUGIN_LAYOUT=buses: the stereo main output and wideExtraBuses more
+// stereo output buses, all enabled, so the plugin has more channels than a host
+// processes (maxPluginChannels, 31). Stereo buses, not one discrete 32-channel set:
+// VST3 has a speaker arrangement for each stereo bus and none for 32 discrete
+// channels, so this layout survives JUCE's VST3 wrapper and host. Read through
+// juce::SystemStats, the process environment, which a host's test changes.
+constexpr int wideExtraBuses = 15;
+
 }  // namespace
 
-Processor::Processor()
-    : juce::AudioProcessor(BusesProperties()
-                               .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                               .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+juce::AudioProcessor::BusesProperties Processor::busesFromEnvironment() {
+    auto buses = BusesProperties()
+                     .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                     .withOutput("Output", juce::AudioChannelSet::stereo(), true);
+    if (juce::SystemStats::getEnvironmentVariable("SIANN_TEST_PLUGIN_LAYOUT", {}) == "buses") {
+        for (int bus = 0; bus < wideExtraBuses; ++bus) {
+            buses = buses.withOutput("Output " + juce::String(bus + 2), juce::AudioChannelSet::stereo(), true);
+        }
+    }
+    return buses;
+}
+
+Processor::Processor() : juce::AudioProcessor(busesFromEnvironment()) {
+    // The probes are not automatable: they are the tests' switches, not sound, and
+    // not state, so pluginval's automation and state tests (strictness 5) leave
+    // them alone. SIANN's host sets them through setParameter all the same.
+    const auto probe = [](const juce::String& id, const juce::String& name = {}) {
+        return new juce::AudioParameterBool(juce::ParameterID{id, 1}, name.isEmpty() ? id : name, false,
+                                            juce::AudioParameterBoolAttributes().withAutomatable(false));
+    };
     latency_ = new juce::AudioParameterBool(juce::ParameterID{"latency", 1}, "latency", false);
     gain_ = new juce::AudioParameterFloat(juce::ParameterID{"gain", 1}, "gain",
                                           juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f);
-    futureState_ = new juce::AudioParameterBool(juce::ParameterID{"futureState", 1}, "futureState", false);
-    nudgeGain_ = new juce::AudioParameterBool(juce::ParameterID{"nudgeGain", 1}, "nudgeGain", false);
-    requestRestart_ = new juce::AudioParameterBool(juce::ParameterID{"requestRestart", 1}, "requestRestart", false);
-    overlapped_ = new juce::AudioParameterBool(juce::ParameterID{"overlapped", 1}, "overlapped", false);
-    restarted_ = new juce::AudioParameterBool(juce::ParameterID{"restarted", 1}, "restarted", false);
-    watchRestore_ = new juce::AudioParameterBool(juce::ParameterID{"watchRestore", 1}, "watchRestore", false);
-    restored_ = new juce::AudioParameterBool(juce::ParameterID{"restored", 1}, "restored", false);
-    holdProcessBlock_ = new juce::AudioParameterBool(juce::ParameterID{"holdProcessBlock", 1}, "holdProcessBlock", false);
+    futureState_ = probe("futureState");
+    nudgeGain_ = probe("nudgeGain");
+    requestRestart_ = probe("requestRestart");
+    overlapped_ = probe("overlapped");
+    restarted_ = probe("restarted");
+    watchRestore_ = probe("watchRestore");
+    restored_ = probe("restored");
+    holdProcessBlock_ = probe("holdProcessBlock");
     tail_ = new juce::AudioParameterBool(juce::ParameterID{"tail", 1}, "tail", false);
     addParameter(latency_);
     addParameter(gain_);
@@ -56,9 +80,11 @@ Processor::Processor()
     addParameter(restored_);
     addParameter(holdProcessBlock_);
     addParameter(tail_);
-    addParameter(new juce::AudioParameterBool(juce::ParameterID{"home", 1}, "home:" + homeDirectoryName(), false));
-    midiFlood_ = new juce::AudioParameterBool(juce::ParameterID{"midiFlood", 1}, "midiFlood", false);
+    addParameter(probe("home", "home:" + homeDirectoryName()));
+    midiFlood_ = probe("midiFlood");
     addParameter(midiFlood_);
+    midiSysex_ = probe("midiSysex");
+    addParameter(midiSysex_);
     latency_->addListener(this);
     nudgeGain_->addListener(this);
     requestRestart_->addListener(this);
@@ -155,8 +181,16 @@ void Processor::prepareToPlay(double, int) {
 }
 
 bool Processor::isBusesLayoutSupported(const BusesLayout& layouts) const {
-    return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo() &&
-           layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+    const auto allStereo = [](const juce::Array<juce::AudioChannelSet>& buses) {
+        for (const auto& bus : buses) {
+            if (bus != juce::AudioChannelSet::stereo()) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return layouts.inputBuses.size() == 1 && allStereo(layouts.inputBuses) && !layouts.outputBuses.isEmpty() &&
+           allStereo(layouts.outputBuses);
 }
 
 void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
@@ -190,6 +224,12 @@ void Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&
         for (int i = 0; i < 3000; ++i) {
             midi.addEvent(juce::MidiMessage::noteOn(1, i % 128, static_cast<juce::uint8>(100)), frames > 0 ? i % frames : 0);
         }
+    }
+    if (midiSysex_->get()) {
+        // One sysex of more than 8 data bytes (a non-commercial id, 0x7D); JUCE adds
+        // the F0 and F7. The plugin's own allocation, on purpose.
+        static constexpr juce::uint8 sysex[] = {0x7D, 0x53, 0x49, 0x41, 0x4E, 0x4E, 0x01, 0x02, 0x03, 0x04};
+        midi.addEvent(juce::MidiMessage::createSysExMessage(sysex, static_cast<int>(sizeof(sysex))), 0);
     }
     if (holdProcessBlock_->get()) {
         // A slow plugin: the block stays in flight for restartWatch, so a host

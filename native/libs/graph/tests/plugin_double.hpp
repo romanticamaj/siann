@@ -92,6 +92,7 @@ public:
     }
     host::PluginControl& control() override { return control_; }
     std::uint64_t midiOutputOverflows() const noexcept override { return 0; }
+    std::uint64_t midiOutputSysex() const noexcept override { return 0; }
 
     void setLatency(int frames) noexcept { latency_.store(frames); }
     // Before a node is built around the instance.

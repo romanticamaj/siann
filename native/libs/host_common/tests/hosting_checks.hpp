@@ -33,6 +33,27 @@ inline constexpr int longTailFrames = 12'000;  // the test plugin's quarter seco
 // holds; false when eventTimeout came first.
 using Pump = std::function<bool(const std::function<bool()>&)>;
 
+// Sets an environment variable for the length of a scope. The test plugins read
+// theirs when an instance is created.
+class ScopedEnvironment {
+public:
+    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
+    ~ScopedEnvironment() { set(""); }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(name_, value);
+#else
+        setenv(name_, value, 1);
+#endif
+    }
+
+    const char* name_;
+};
+
 // Owned planar audio and the view of it the core would pass.
 class Audio {
 public:
@@ -101,6 +122,54 @@ inline void runBlocks(host::PluginInstance& instance) {
         }
     });
     audio.join();
+}
+
+// runBlocks, and what was allocated through operator new on that realtime thread.
+inline std::uint64_t runBlocksCountingAllocations(host::PluginInstance& instance) {
+    Audio input(2, blockFrames);
+    Audio output(2, blockFrames);
+    std::uint64_t allocations = 1;
+    std::thread audio([&] {
+        const rt::ScopedRealtimeThread realtime;
+        const auto before = rt::allocationViolations();
+        for (int block = 0; block < 4; ++block) {
+            instance.process(input.view(), output.view(), {});
+        }
+        allocations = rt::allocationViolations() - before;
+    });
+    audio.join();
+    return allocations;
+}
+
+inline int parameterIndex(host::PluginInstance& instance, const std::string& name);
+
+// midiOutputSysex (ADR-0018, Amendment 3) against siann_test_plugin, in whichever
+// format the instance is: "midiSysex" adds one sysex of more than 8 data bytes (one
+// JUCE's MidiMessage stores on the heap) to every block's output. The counter rises
+// by one a block, it is no overflow, and SIANN's side allocates nothing; what JUCE's
+// wrappers allocate for it goes through malloc, the accepted class, which the guard
+// does not count.
+inline void checkSysexCounting(host::PluginInstance& instance) {
+    runBlocks(instance);
+    CHECK(instance.midiOutputSysex() == 0);
+    const std::uint64_t overflows = instance.midiOutputOverflows();
+
+    const int sysex = parameterIndex(instance, "midiSysex");
+    instance.control().setParameter(sysex, 1.0);
+    CHECK(runBlocksCountingAllocations(instance) == 0);  // four blocks; the first takes the value
+    const std::uint64_t counted = instance.midiOutputSysex();
+    CHECK(counted >= 3);
+    CHECK(counted <= 4);
+    CHECK(runBlocksCountingAllocations(instance) == 0);
+    CHECK(instance.midiOutputSysex() == counted + 4);
+    CHECK(instance.midiOutputOverflows() == overflows);
+
+    instance.control().setParameter(sysex, 0.0);
+    runBlocks(instance);
+    const std::uint64_t after = instance.midiOutputSysex();
+    runBlocks(instance);
+    CHECK(instance.midiOutputSysex() == after);
+    CHECK(instance.midiOutputOverflows() == overflows);
 }
 
 // What the audio thread gets from tailFrames().

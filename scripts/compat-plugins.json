@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "siann.compat_plugins.v1",
+  "decidedIn": ".claude/milestones/M4.json, human gate real-plugins (decided by Fable, delegated by the maintainer, 2026-11-07)",
+  "plugins": [
+    {"id": "tdr-nova", "name": "TDR Nova", "format": "vst3", "env": "SIANN_PLUGIN_TDR_NOVA", "run": "always"},
+    {"id": "tdr-slickeq", "name": "TDR VOS SlickEQ", "format": "vst3", "env": "SIANN_PLUGIN_SLICKEQ", "run": "always"},
+    {"id": "surge-xt-vst3", "name": "Surge XT", "format": "vst3", "env": "SIANN_PLUGIN_SURGE_XT_VST3", "run": "always"},
+    {"id": "superior-drummer-3", "name": "Superior Drummer 3 (or EZdrummer 3)", "format": "vst3", "env": "SIANN_PLUGIN_SD3", "run": "authorised"},
+    {"id": "uad-1176", "name": "UAD 1176", "format": "vst3", "env": "SIANN_PLUGIN_UAD_1176", "run": "authorised"},
+    {"id": "halion-sonic", "name": "HALion Sonic", "format": "vst3", "env": "SIANN_PLUGIN_HALION_SONIC", "run": "authorised"},
+    {"id": "tdr-nova-au", "name": "TDR Nova", "format": "au", "env": "SIANN_PLUGIN_TDR_NOVA_AU", "run": "always", "platforms": ["darwin"]},
+    {"id": "surge-xt-au", "name": "Surge XT", "format": "au", "env": "SIANN_PLUGIN_SURGE_XT_AU", "run": "always", "platforms": ["darwin"]}
+  ]
+}

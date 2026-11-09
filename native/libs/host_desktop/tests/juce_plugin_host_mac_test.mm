@@ -134,3 +134,17 @@ TEST_CASE("plugin host: the CI-built AU is hosted", "[juce][plugin]") {
         [&loop](const std::function<bool()>& predicate) { return loop.runUntil(predicate, hosting_test::eventTimeout); },
         host, descriptors.front());
 }
+
+// m4-juce-formats (ADR-0018, Amendment 3): the AU's sysex output reaches the host
+// through JUCE's MidiDataConcatenator, which builds a MidiMessage for each one; the
+// count and what SIANN allocates are the VST3's.
+TEST_CASE("plugin host: an AU's sysex output is counted per event, never as an overflow", "[juce][plugin][midi]") {
+    host::MainThreadLoop loop;
+    REQUIRE(registerAudioUnitBundle(SIANN_TEST_PLUGIN_AU));
+
+    host::JucePluginHost host;
+    const auto descriptors = host.scanPath(SIANN_TEST_PLUGIN_AU);
+    REQUIRE(descriptors.size() == 1);
+    auto instance = host.instantiate(descriptors.front(), hosting_test::sampleRate, hosting_test::blockFrames);
+    hosting_test::checkSysexCounting(*instance);
+}

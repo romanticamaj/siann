@@ -377,6 +377,7 @@ std::vector<protocol::PluginStatus> EngineHost::plugins() const {
             status.maxCallbackMicros = static_cast<double>(one.maxCallbackNanos) / 1'000.0;
             status.unmeasuredCallbacks = one.unmeasuredCallbacks;
             status.midiOutputOverflows = one.midiOutputOverflows;
+            status.midiOutputSysex = one.midiOutputSysex;
         }
         out.push_back(std::move(status));
     }

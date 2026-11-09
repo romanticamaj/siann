@@ -206,6 +206,8 @@ public:
         return midiOutputOverflows_.load(std::memory_order_relaxed);
     }
 
+    std::uint64_t midiOutputSysex() const noexcept override { return midiOutputSysex_.load(std::memory_order_relaxed); }
+
     // Main thread: what the plugin asked for since the last call. A plugin that
     // throws here fails its instance; nothing escapes to the caller.
     void serviceMainThread() noexcept {
@@ -397,11 +399,16 @@ private:
     // (notes, MIDI) counts against the block's bounded list: past
     // kMaxBlockOutputEvents it is refused, and the block counts once in
     // midiOutputOverflows. The events themselves are dropped: no MIDI tracks before M6b.
+    // A CLAP_EVENT_MIDI_SYSEX counts in midiOutputSysex before the list's bound, so
+    // a refused one counts too: what the plugin emitted, as the JUCE formats count it.
     static bool outputEventsTryPush(const clap_output_events_t* list, const clap_event_header_t* event) {
         auto& self = *static_cast<ClapInstance*>(list->ctx);
         if (event->space_id == CLAP_CORE_EVENT_SPACE_ID && event->type == CLAP_EVENT_PARAM_VALUE) {
             self.pluginEvent(*event);
             return true;
+        }
+        if (event->space_id == CLAP_CORE_EVENT_SPACE_ID && event->type == CLAP_EVENT_MIDI_SYSEX) {
+            self.midiOutputSysex_.fetch_add(1, std::memory_order_relaxed);
         }
         if (self.blockOutputEvents_ < kMaxBlockOutputEvents) {
             ++self.blockOutputEvents_;
@@ -451,6 +458,10 @@ private:
             }
             perPort.push_back(info.channel_count);
             channels += info.channel_count;
+            // The direction's channels in all, as JucePluginHost counts them.
+            if (channels > maxPluginChannels) {
+                throw PluginError("plugin_load_failed", "the plugin has more channels than the host processes");
+            }
         }
         pointers.assign(channels, nullptr);
         buffers.assign(count, clap_audio_buffer_t{});
@@ -1002,6 +1013,7 @@ private:
     int blockOutputEvents_ = 0;  // the block's (or flush's) non-parameter output events so far
     bool blockOverflowed_ = false;
     std::atomic<std::uint64_t> midiOutputOverflows_{0};
+    std::atomic<std::uint64_t> midiOutputSysex_{0};
     std::atomic<std::uint64_t> processCalls_{0};   // every process() call, counted after
     std::atomic<std::uint64_t> blocksStarted_{0};  // blocks that reached the plugin, counted before
     std::atomic<std::uint64_t> blocksRun_{0};      // the same, counted after

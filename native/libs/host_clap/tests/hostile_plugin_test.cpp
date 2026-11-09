@@ -76,25 +76,6 @@ std::unique_ptr<host::PluginInstance> loadHostile(host::ClapPluginHost& host) {
 // A default instance's blob: what a session saved before anything went wrong.
 std::vector<std::uint8_t> defaultState(host::ClapPluginHost& host) { return loadHostile(host)->control().getState(); }
 
-class ScopedEnvironment {
-public:
-    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
-    ~ScopedEnvironment() { set(""); }
-    ScopedEnvironment(const ScopedEnvironment&) = delete;
-    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
-
-private:
-    void set(const char* value) {
-#if defined(_WIN32)
-        _putenv_s(name_, value);
-#else
-        setenv(name_, value, 1);
-#endif
-    }
-
-    const char* name_;
-};
-
 template <typename Call>
 void requireError(const std::string& code, Call call) {
     try {

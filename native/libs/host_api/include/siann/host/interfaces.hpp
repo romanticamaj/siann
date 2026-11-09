@@ -204,6 +204,11 @@ public:
     // past it are lost. Counted once per block. Until MIDI tracks exist (M6b) the
     // graph drops the rest of the output too.
     virtual std::uint64_t midiOutputOverflows() const noexcept = 0;
+    // Any thread. The sysex events in the plugin's output since the instance was
+    // created, one by one: what the plugin emitted, whether or not the block's list
+    // took it. JUCE's VST3 and AU wrappers allocate for each one inside processBlock
+    // (ADR-0018, Amendment 3), so this says how often a plugin made them.
+    virtual std::uint64_t midiOutputSysex() const noexcept = 0;
     // Main thread. Lives as long as the instance.
     virtual PluginControl& control() = 0;
 };
