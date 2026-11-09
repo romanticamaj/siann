@@ -522,6 +522,39 @@ TEST_CASE("plugin.instantiate on an unregistered path never opens it", "[engine]
           "plugin_not_registered");
 }
 
+TEST_CASE("a scanned directory that holds the bundle registers nothing inside it", "[engine][plugin][registry]") {
+    // --plugin-dir names the bundle's parent (D:\music beside D:\music\Song.siann),
+    // and a downloaded bundle ships a plugin library.
+    Fixture fixture;
+    const std::filesystem::path original(SIANN_TEST_PLUGIN_CLAP);
+    const std::filesystem::path inside = fixture.bundle() / "plugins" / original.filename();
+    const std::filesystem::path beside = fixture.dir.path() / "beside" / original.filename();
+    for (const std::filesystem::path& copy : {inside, beside}) {
+        std::filesystem::create_directories(copy.parent_path());
+        std::filesystem::copy(original, copy, std::filesystem::copy_options::recursive);
+    }
+    std::vector<std::string> diagnostics;
+    EngineHostOptions options;
+    options.playback = live_rig::testOptions();
+    options.pluginDirs = {fixture.dir.path().string()};
+    options.diagnostic = [&](const std::string& line) { diagnostics.push_back(line); };
+    auto host = std::make_unique<EngineHost>(fixture.session, std::move(options));
+    Harness harness(fixture.session, serverOptions(*host));
+    const protocol::ConnectionId c = harness.authed();
+
+    const Value listed = harness.ok(c, "plugin.registry");
+    CHECK(registryEntry(listed, beside.string()) != nullptr);  // the scan did reach the directory
+    CHECK(registryEntry(listed, inside.string()) == nullptr);
+    bool said = false;
+    for (const std::string& line : diagnostics) {
+        said = said || line.find("inside_bundle") != std::string::npos;
+    }
+    CHECK(said);
+    CHECK(errorCode(harness.call(c, "plugin.approve", approveParams("clap", inside.string()))) ==
+          "plugin_not_registered");
+    host->shutdown();
+}
+
 TEST_CASE("a registered file that is not a plugin stays unapproved when its probe fails", "[engine][plugin][registry]") {
     live_rig::TempDir plugins;
     std::ofstream(plugins.path() / "broken.clap") << "not a library";

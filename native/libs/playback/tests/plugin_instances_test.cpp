@@ -777,3 +777,41 @@ TEST_CASE("plugin table: a refused hint is never opened and its reason is in the
     CHECK_FALSE(known.error.has_value());
     CHECK(markerText(marker).find("siann-unscanned-copy") == std::string::npos);
 }
+
+TEST_CASE("plugin table: an approved install inside the bundle or on a share is never opened",
+          "[playback][plugin][registry]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    const fs::path marker = f.dir.path() / "marker.txt";
+    const ScopedEnvironment watch("SIANN_TEST_PLUGIN_MARKER", marker.string());
+    const PluginHosts hosts{{"clap", &host}};
+
+    // However it got into the registry, an install inside the bundle is not
+    // opened: neither by its uid alone nor with the slot's path naming it.
+    const fs::path inside = unscannedCopy(f.bundle() / "plugins");
+    host::PluginRegistry registry;
+    registry.addScanned("clap", inside.string(), "copy");
+    registry.setProbed("clap", inside.string(), "org.siann.test-plugin", "SIANN Test Plugin");
+    REQUIRE(registry.approve("clap", inside.string(), true) == host::ApproveOutcome::done);
+    for (const std::string& hint : {std::string(), inside.string()}) {
+        INFO(hint);
+        const auto loaded = playback::loadPlugin(testSlot(hint), hosts, &registry, f.bundle(), 48'000, kBlock);
+        CHECK(loaded.instance == nullptr);
+        REQUIRE(loaded.error.has_value());
+        CHECK(loaded.error->code == "plugin_not_registered");
+        CHECK(loaded.error->message.find("inside_bundle") != std::string::npos);
+    }
+    CHECK(markerText(marker).find("siann-unscanned-copy") == std::string::npos);
+
+    // An approved install on a share.
+    host::PluginRegistry shared;
+    const std::string unc = R"(\\server\share\siann_test_plugin.clap)";
+    shared.addScanned("clap", unc, "share");
+    shared.setProbed("clap", unc, "org.siann.test-plugin", "SIANN Test Plugin");
+    REQUIRE(shared.approve("clap", unc, true) == host::ApproveOutcome::done);
+    const auto fromShare = playback::loadPlugin(testSlot(""), hosts, &shared, f.bundle(), 48'000, kBlock);
+    CHECK(fromShare.instance == nullptr);
+    REQUIRE(fromShare.error.has_value());
+    CHECK(fromShare.error->code == "plugin_not_registered");
+    CHECK(fromShare.error->message.find("unc_path") != std::string::npos);
+}
