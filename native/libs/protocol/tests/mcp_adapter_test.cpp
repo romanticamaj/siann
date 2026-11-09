@@ -208,6 +208,37 @@ TEST_CASE("JSON-RPC errors: parse error, bad envelope, unknown method, unknown t
                         Value(Object{{"name", Value("list_commands")}, {"arguments", Value(3)}}))) == -32602);
 }
 
+// m5-plugin-registry (Protocol v0 item 21): an agent must not choose what code
+// loads, so the registry methods are no tool and an MCP request naming them is refused.
+TEST_CASE("plugin.registry and plugin.approve are not MCP tools", "[protocol][mcp][plugin]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    for (const Value& tool : tools.asArray()) {
+        const std::string name = at(tool, "name").asString();
+        INFO(name);
+        CHECK(name.find("registry") == std::string::npos);
+        CHECK(name.find("approve_plugin") == std::string::npos);
+        CHECK(name.find("plugin_approve") == std::string::npos);
+    }
+    const auto error = [&](const std::string& body) {
+        const HttpResponse response = mcp.post(body);
+        INFO(response.body);
+        REQUIRE(response.status == 200);
+        return at(at(json::parse(response.body), "error"), "code").asNumber();
+    };
+    for (const char* name : {"plugin.registry", "plugin.approve", "plugin_registry", "plugin_approve", "approve_plugin"}) {
+        INFO(name);
+        CHECK(error(Mcp::rpc(Value(2), "tools/call",
+                             Value(Object{{"name", Value(name)},
+                                          {"arguments", Value(Object{{"format", Value("clap")},
+                                                                     {"path", Value("/x.clap")},
+                                                                     {"approved", Value(true)}})}}))) == -32602);
+        CHECK(error(Mcp::rpc(Value(3), name, Value(Object{}))) == -32601);
+    }
+}
+
 TEST_CASE("tools/list returns the 18 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);

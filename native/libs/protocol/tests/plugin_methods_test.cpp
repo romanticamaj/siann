@@ -25,6 +25,7 @@ using protocol::PluginInstantiateRequest;
 using protocol::PluginInstantiateResult;
 using protocol::PluginPort;
 using protocol::PluginPortError;
+using protocol::PluginRegistryEntry;
 using protocol::PluginStatus;
 using protocol::ServerOptions;
 
@@ -93,7 +94,30 @@ public:
             ++destroyed;
         }
     }
+    std::vector<PluginRegistryEntry> registry() const override { return installs; }
+    PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) override {
+        ++approveCalls;
+        if (approveRefusal) {
+            throw PluginPortError(*approveRefusal, "the port refused the approval");
+        }
+        for (PluginRegistryEntry& entry : installs) {
+            if (entry.format == format && entry.path == path) {
+                entry.approved = approved;
+                if (approved && !entry.uid) {
+                    entry.uid = "org.siann.test-plugin";  // probed
+                }
+                return entry;
+            }
+        }
+        throw PluginPortError("plugin_not_registered", "no install at " + path);
+    }
 
+    std::vector<PluginRegistryEntry> installs{
+        {"clap", "/plugins/test.clap", std::nullopt, "test", false},
+        {"clap", "/plugins/known.clap", std::string("org.example.known"), "Known", true},
+    };
+    int approveCalls = 0;
+    std::optional<std::string> approveRefusal;
     int instantiated = 0;
     std::vector<PluginInstantiateRequest> requests;
     std::vector<std::pair<std::string, bool>> settled;
@@ -308,6 +332,10 @@ TEST_CASE("plugin methods without a port are not_supported", "[protocol][plugin]
     CHECK(errorCode(f.call(c, "plugin.set_parameter",
                            Value(Object{{"slotId", Value("slt_1")}, {"paramId", Value("8890")}, {"value", Value(1)}}))) ==
           "not_supported");
+    CHECK(errorCode(f.call(c, "plugin.registry")) == "not_supported");
+    CHECK(errorCode(f.call(c, "plugin.approve",
+                           Value(Object{{"format", Value("clap")}, {"path", Value("/x.clap")}, {"approved", Value(true)}}))) ==
+          "not_supported");
     const Value capabilities = f.ok(c, "engine.capabilities");
     CHECK_FALSE(at(at(capabilities, "features"), "plugins").asBool());
 }
@@ -457,7 +485,8 @@ TEST_CASE("engine.capabilities lists the plugin methods, formats and flags", "[p
     for (const Value& method : at(capabilities, "methods").asArray()) {
         methods.push_back(method.asString());
     }
-    for (const char* name : {"plugin.instantiate", "plugin.open_editor", "plugin.close_editor", "plugin.set_parameter"}) {
+    for (const char* name : {"plugin.instantiate", "plugin.open_editor", "plugin.close_editor", "plugin.set_parameter",
+                             "plugin.registry", "plugin.approve"}) {
         CHECK(std::find(methods.begin(), methods.end(), name) != methods.end());
     }
     const Value& plugins = at(at(capabilities, "features"), "plugins");
@@ -541,4 +570,118 @@ TEST_CASE("render.start takes its own instances from the port and hands them bac
     CHECK(at(status, "state").asString() == "done");
     f.server.pump();
     CHECK(port.destroyed == 1);
+}
+
+// ---- plugin.registry, plugin.approve (m5-plugin-registry, Protocol v0 item 21) ----
+
+namespace {
+
+Value approveParams(const std::string& path, bool approved, const std::string& format = "clap") {
+    return Value(Object{{"format", Value(format)}, {"path", Value(path)}, {"approved", Value(approved)}});
+}
+
+}  // namespace
+
+TEST_CASE("plugin.registry lists every install with its five fields", "[protocol][plugin][registry]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const Value listed = f.ok(c, "plugin.registry");
+    CHECK(listed.asObject().size() == 1);
+    const auto& plugins = at(listed, "plugins").asArray();
+    REQUIRE(plugins.size() == 2);
+    CHECK(canonical(plugins[0]) ==
+          R"({"approved":false,"format":"clap","name":"test","path":"/plugins/test.clap","uid":null})");
+    CHECK(canonical(plugins[1]) ==
+          R"({"approved":true,"format":"clap","name":"Known","path":"/plugins/known.clap","uid":"org.example.known"})");
+}
+
+TEST_CASE("plugin.approve sets the flag through the port and returns the entry", "[protocol][plugin][registry]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::string before = f.head().envelope.id;
+    const Value approved = f.ok(c, "plugin.approve", approveParams("/plugins/test.clap", true));
+    CHECK(canonical(approved) ==
+          R"({"approved":true,"format":"clap","name":"test","path":"/plugins/test.clap","uid":"org.siann.test-plugin"})");
+    CHECK(port.installs[0].approved);
+    const Value withdrawn = f.ok(c, "plugin.approve", approveParams("/plugins/test.clap", false));
+    CHECK_FALSE(at(withdrawn, "approved").asBool());
+    CHECK(f.head().envelope.id == before);  // no document change
+    CHECK(port.approveCalls == 2);
+
+    // The port's codes pass through.
+    CHECK(errorCode(f.call(c, "plugin.approve", approveParams("/plugins/other.clap", true))) == "plugin_not_registered");
+    port.approveRefusal = "plugin_load_failed";
+    CHECK(errorCode(f.call(c, "plugin.approve", approveParams("/plugins/test.clap", true))) == "plugin_load_failed");
+    port.approveRefusal.reset();
+    CHECK(port.approveCalls == 4);
+
+    const std::vector<Value> bad = {
+        Value(Object{}),
+        Value(Object{{"path", Value("/plugins/test.clap")}, {"approved", Value(true)}}),
+        approveParams("/plugins/test.clap", true, "dx"),
+        Value(Object{{"format", Value("clap")}, {"path", Value(7)}, {"approved", Value(true)}}),
+        Value(Object{{"format", Value("clap")}, {"approved", Value(true)}}),
+        Value(Object{{"format", Value("clap")}, {"path", Value("/plugins/test.clap")}, {"approved", Value("yes")}}),
+        Value(Object{{"format", Value("clap")}, {"path", Value("/plugins/test.clap")}}),
+    };
+    for (const Value& params : bad) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "plugin.approve", params)) == "invalid_params");
+    }
+    CHECK(port.approveCalls == 4);
+}
+
+TEST_CASE("plugin.approve honours expectedRevision and the idempotency cache", "[protocol][plugin][registry]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    const std::string request = f.request("req_approve", "plugin.approve", approveParams("/plugins/test.clap", true));
+    f.transport.deliver(c, request);
+    f.server.pump();
+    f.transport.deliver(c, request);
+    f.server.pump();
+    CHECK(port.approveCalls == 1);
+    const auto frames = f.transport.sent(c);
+    CHECK(frames[frames.size() - 1] == frames[frames.size() - 2]);
+
+    const std::string stale = jcs::canonicalize(Value(Object{{"requestId", Value("req_stale")},
+                                                              {"sessionId", Value(f.server.sessionId())},
+                                                              {"method", Value("plugin.approve")},
+                                                              {"params", approveParams("/plugins/test.clap", false)},
+                                                              {"expectedRevision", Value("r1")}}));
+    f.transport.deliver(c, stale);
+    f.server.pump();
+    CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+    CHECK(port.approveCalls == 1);
+    CHECK(port.installs[0].approved);
+
+    const std::string listing = jcs::canonicalize(Value(Object{{"requestId", Value("req_list")},
+                                                                {"sessionId", Value(f.server.sessionId())},
+                                                                {"method", Value("plugin.registry")},
+                                                                {"params", Value(Object{})},
+                                                                {"expectedRevision", Value("r1")}}));
+    f.transport.deliver(c, listing);
+    f.server.pump();
+    CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+}
+
+TEST_CASE("plugin.instantiate refuses a UNC path and a path inside the bundle before the port",
+          "[protocol][plugin][registry]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    const std::string inside = (f.session.bundlePath() / "blobs" / "x.clap").string();
+    for (const std::string& path : {std::string(R"(\\server\share\x.clap)"), std::string("//server/share/x.clap"),
+                                    std::string(R"(\\?\UNC\server\share\x.clap)"), inside}) {
+        INFO(path);
+        const Value params(Object{{"trackId", Value("trk_1")},
+                                  {"index", Value(0)},
+                                  {"descriptor", Value(Object{{"format", Value("clap")}, {"path", Value(path)}})}});
+        CHECK(errorCode(f.call(c, "plugin.instantiate", params)) == "invalid_params");
+    }
+    CHECK(port.instantiated == 0);
 }
