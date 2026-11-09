@@ -21,6 +21,11 @@
 // status(), and the transport methods answer no_device, and tick() opens the device
 // again under `backoff`. A session whose media cannot be loaded, for whatever reason,
 // is served the same way, with no graph at all and no retry.
+//
+// selectDevice (engine.select_device, Protocol v0 item 22) stops the driver and the
+// transport, closes the running device and opens the one deviceFactory makes, on
+// this thread, as a reopen does: stopped at the playhead, counters from zero, and
+// on a failure retried under the backoff with its count from zero.
 
 #include <chrono>
 #include <cstdint>
@@ -147,6 +152,8 @@ private:
     // Declared before the engine, which stops the device when destroyed.
     std::unique_ptr<host::AudioDevice> device_;
     std::string deviceId_;
+    std::function<std::vector<protocol::DeviceDescription>()> listDevices_;
+    std::function<std::unique_ptr<host::AudioDevice>(const std::string&)> deviceFactory_;
     std::function<void(const std::string&)> diagnostic_;
     std::optional<protocol::DeviceProblem> problem_;
     int bufferFrames_ = 0;

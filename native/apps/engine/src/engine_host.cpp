@@ -86,6 +86,8 @@ EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
       session_(session),
       device_(std::move(options.device)),
       deviceId_(std::move(options.deviceId)),
+      listDevices_(std::move(options.listDevices)),
+      deviceFactory_(std::move(options.deviceFactory)),
       diagnostic_(std::move(options.diagnostic)),
       bufferFrames_(options.bufferFrames),
       backoff_(options.backoff),
@@ -454,11 +456,62 @@ protocol::EngineStatus EngineHost::status() const {
 }
 
 std::vector<protocol::DeviceDescription> EngineHost::devices() const {
-    throw protocol::TransportPortError("not_supported", "engine.devices is not implemented yet");
+    std::vector<protocol::DeviceDescription> listed = listDevices_ ? listDevices_() : std::vector<protocol::DeviceDescription>{};
+    // Without an id the engine runs the default device: the first one so marked.
+    bool marked = false;
+    for (protocol::DeviceDescription& one : listed) {
+        one.current = !marked && (deviceId_.empty() ? one.isDefault : one.id == deviceId_);
+        marked = marked || one.current;
+    }
+    return listed;
 }
 
-protocol::DeviceInfo EngineHost::selectDevice(const std::string&) {
-    throw protocol::TransportPortError("not_supported", "engine.select_device is not implemented yet");
+protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
+    const std::vector<protocol::DeviceDescription> listed = devices();
+    const bool known = std::any_of(listed.begin(), listed.end(),
+                                   [&](const protocol::DeviceDescription& one) { return one.id == id; });
+    if (!known) {
+        throw protocol::TransportPortError("not_found", "no audio device " + id + "; engine.devices lists them");
+    }
+    if (!deviceFactory_) {
+        throw protocol::TransportPortError("not_supported", "this engine host cannot select a device");
+    }
+    std::unique_ptr<host::AudioDevice> chosen;
+    try {
+        chosen = deviceFactory_(id);
+    } catch (const host::DeviceError& error) {
+        throw protocol::TransportPortError(error.code(), error.what());
+    }
+    // The old device first: stop its callbacks and the transport, then close it.
+    if (loaded_) {
+        engine_.driver().stop();
+        engine_.plugins().setBlocksComing(false);
+        engine_.transport().stop();
+    }
+    running_ = false;
+    reopenAt_.reset();
+    startedAt_.reset();
+    if (device_) {
+        device_->close();
+    }
+    device_ = std::move(chosen);
+    deviceId_ = id;
+    reopenFailures_ = 0;
+    if (!loaded_) {
+        // Opened once the session's graph can be built.
+        throw protocol::TransportPortError(problem_ ? problem_->code : std::string("load_failed"),
+                                           problem_ ? problem_->message : std::string("the session did not load"));
+    }
+    startDevice();
+    if (!running_) {
+        throw protocol::TransportPortError(problem_ ? problem_->code : std::string("device_open_failed"),
+                                           problem_ ? problem_->message : std::string("the device did not open"));
+    }
+    if (problem_) {
+        problem_.reset();
+        say("audio device " + id + " running");
+    }
+    return *status().device;
 }
 
 }  // namespace siann::engine_app

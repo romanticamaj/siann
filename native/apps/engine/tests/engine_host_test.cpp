@@ -78,6 +78,9 @@ public:
     }
     void close() override {
         ++closes;
+        if (closeLog != nullptr) {
+            ++*closeLog;  // outlives the device, which the host may destroy
+        }
         inner.close();
     }
 
@@ -87,6 +90,7 @@ public:
     int starts = 0;
     int stops = 0;
     int closes = 0;
+    int* closeLog = nullptr;
 };
 
 // What the rig's host lists (engine.devices): the device it starts on, two more
@@ -794,7 +798,8 @@ TEST_CASE("selecting a device closes the old one and opens the new one stopped a
     rig.settle();
     rig.pump(4);
     REQUIRE(rig.host->status().xruns > 0);
-    HeldDevice* old = rig.held;
+    int oldCloses = 0;
+    rig.held->closeLog = &oldCloses;
     const std::int64_t frozen = rig.position();
     CHECK(frozen > 0);
 
@@ -802,7 +807,7 @@ TEST_CASE("selecting a device closes the old one and opens the new one stopped a
     CHECK(selected.id == "b");
     CHECK(selected.sampleRate == 48'000);
     CHECK(selected.bufferFrames == kBlock);
-    CHECK(old->closes >= 1);
+    CHECK(oldCloses >= 1);
     REQUIRE(rig.made.size() == 1);
     rig.useMade();
     CHECK(rig.held->opens == 1);
@@ -831,10 +836,11 @@ TEST_CASE("a selected device that fails to open is device_open_failed and is ret
     Rig rig(1);
     rig.advance(100ms);  // the first device opens at its second try
     REQUIRE(rig.host->status().device.has_value());
-    HeldDevice* old = rig.held;
+    int oldCloses = 0;
+    rig.held->closeLog = &oldCloses;
 
     CHECK(codeOf([&] { rig.host->selectDevice("refusing"); }) == "device_open_failed");
-    CHECK(old->closes >= 1);
+    CHECK(oldCloses >= 1);
     REQUIRE(rig.made.size() == 1);
     rig.useMade();
     CHECK(rig.held->opens == 1);
@@ -854,7 +860,6 @@ TEST_CASE("a selected device that fails to open is device_open_failed and is ret
     CHECK(rig.held->opens == 2);
     REQUIRE(rig.host->status().device.has_value());
     CHECK(rig.host->status().device->id == "refusing");
-    CHECK(old->opens == 2);  // never opened again
 }
 
 TEST_CASE("a selection while the session did not load is kept and answers its deviceError",

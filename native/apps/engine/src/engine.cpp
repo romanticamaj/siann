@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "device.hpp"
 #include "launch_error.hpp"
@@ -180,6 +181,8 @@ Options parseOptions(const std::vector<std::string>& args) {
 // --device fake: a paced software device with loopback, reporting one buffer of
 // input and output latency, as siann-cli's. Anything else is the build's real
 // device; a build or machine without one leaves deviceError for the host to report.
+// engine.devices lists fake and the build's hardware devices; engine.select_device
+// makes either kind the same way (Protocol v0 item 22).
 EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
     EngineHostOptions chosen;
     chosen.deviceId = options.device.value_or("");
@@ -189,13 +192,26 @@ EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
         err << "siann-engine: " << line << "\n";
         err.flush();
     };
+    host::FakeAudioDevice::Options fake;
+    fake.paced = true;
+    fake.loopback = true;
+    fake.inputLatencyFrames = chosen.bufferFrames;
+    fake.outputLatencyFrames = chosen.bufferFrames;
+    fake.refuseOpens = options.fakeOpenFailures.value_or(0);
+    chosen.listDevices = [] {
+        std::vector<protocol::DeviceDescription> listed{{kFakeDevice, kFakeDevice, kFakeDevice, false, false}};
+        for (protocol::DeviceDescription& one : listHardwareDevices()) {
+            listed.push_back(std::move(one));
+        }
+        return listed;
+    };
+    chosen.deviceFactory = [fake](const std::string& id) -> std::unique_ptr<host::AudioDevice> {
+        if (id == kFakeDevice) {
+            return std::make_unique<host::FakeAudioDevice>(fake);
+        }
+        return hardwareDevice();
+    };
     if (options.device == kFakeDevice) {
-        host::FakeAudioDevice::Options fake;
-        fake.paced = true;
-        fake.loopback = true;
-        fake.inputLatencyFrames = chosen.bufferFrames;
-        fake.outputLatencyFrames = chosen.bufferFrames;
-        fake.refuseOpens = options.fakeOpenFailures.value_or(0);
         chosen.device = std::make_unique<host::FakeAudioDevice>(fake);
         if (options.fakeCallbackNanos) {
             host::setFakeCallbackNanos(*options.fakeCallbackNanos);
