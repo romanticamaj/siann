@@ -105,6 +105,12 @@ public:
     // The engine's tick, device loss and a reopen that is due, then the publisher.
     void tick();
 
+    // session.open (Protocol v0 item 22): plays `session` from here on, with a new
+    // PlaybackEngine, Auditioner and meter publisher on the same device object,
+    // which the new driver opens again at the session's rate. The new session
+    // must outlive the host or the next rebind; the old one can go afterwards.
+    void rebind(session::Session& session);
+
     // Stops the device and the butler. Once the protocol server has stopped;
     // the destructor does it otherwise.
     void shutdown();

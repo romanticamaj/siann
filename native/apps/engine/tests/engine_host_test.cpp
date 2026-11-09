@@ -589,7 +589,9 @@ TEST_CASE("a document the graph cannot load keeps the host serving", "[engine][h
         CHECK_FALSE(status.device.has_value());
         REQUIRE(status.deviceError.has_value());
         CHECK(status.deviceError->code == "media_missing");
-        CHECK(host.auditionPort() == nullptr);
+        REQUIRE(host.auditionPort() != nullptr);  // one port for the host's life
+        CHECK_FALSE(host.auditionPort()->heard().has_value());
+        CHECK_THROWS_AS(host.auditionPort()->hearMain(), protocol::AuditionPortError);
         checkNoTransport(host);
         REQUIRE_NOTHROW(host.tick());
         CHECK(diagnostics.size() == 1);
@@ -641,7 +643,8 @@ TEST_CASE("a session whose media is damaged is served with no graph", "[engine][
             CHECK_FALSE(status.device.has_value());
             REQUIRE(status.deviceError.has_value());
             CHECK(status.deviceError->code == damage.code);
-            CHECK(host->auditionPort() == nullptr);
+            REQUIRE(host->auditionPort() != nullptr);
+            CHECK_FALSE(host->auditionPort()->heard().has_value());
             checkNoTransport(*host);
             REQUIRE_NOTHROW(host->tick());
             CHECK(diagnostics.size() == 1);
@@ -885,6 +888,171 @@ TEST_CASE("a selection while the session did not load is kept and answers its de
         CHECK(one.current == (one.id == "b"));
     }
     CHECK(codeOf([&] { host.selectDevice("nope"); }) == "not_found");
+}
+
+// ---- session.open's rebind and the media retry (Protocol v0 item 22) -----------------
+
+namespace {
+
+// The media file a clip's media names in the bundle.
+fs::path mediaFileOf(const Fixture& fixture, const std::string& mediaId) {
+    const model::Media* media = fixture.doc().media(mediaId);
+    REQUIRE(media != nullptr);
+    return session::mediaPath(fixture.bundle(), media->contentHash, media->format);
+}
+
+int legendsOn(protocol::testing::Harness& harness, protocol::ConnectionId listener, const std::string& entity) {
+    harness.server.pump();
+    int count = 0;
+    for (const json::Value& event : harness.events(listener)) {
+        if (event.find("type")->asString() == "meters.legend" &&
+            jcs::canonicalize(event).find(entity) != std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+}  // namespace
+
+TEST_CASE("rebind plays the new session on the same device object", "[engine][host][rebind]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    Rig rig;
+    protocol::ServerOptions serverOptions = protocol::testing::manualOptions();
+    serverOptions.transportPort = rig.host.get();
+    serverOptions.auditionPort = rig.host->auditionPort();
+    protocol::testing::Harness harness(rig.fixture.session, serverOptions);
+    const protocol::ConnectionId listener = harness.authed(true);
+    rig.host->attachPublisher(harness.server.realtime(), harness.server.events());
+    protocol::AuditionPort* const port = rig.host->auditionPort();
+    rig.host->play();
+    rig.settle();
+    rig.pump(4);
+    const int opens = rig.held->opens;
+
+    // Bundle B: the fixture's two tracks and a third, trk_c, only it has.
+    Fixture other;
+    other.exec(live_rig::addTrack("trk_c"));
+    other.exec(live_rig::place("clp_c", "trk_c", "med_st", 0, 0, 40'000));
+    CHECK(legendsOn(harness, listener, "track:trk_c") == 0);
+
+    rig.host->rebind(other.session);
+    CHECK(rig.made.empty());              // no new device
+    CHECK(rig.held->opens == opens + 1);  // the new driver opened the same object again
+    const protocol::EngineStatus status = rig.host->status();
+    REQUIRE(status.device.has_value());
+    CHECK(status.device->id == "manual");
+    CHECK_FALSE(status.deviceError.has_value());
+    CHECK_FALSE(status.playing);  // a new transport, stopped
+    CHECK(rig.engine().streamFor("trk_c") != nullptr);
+    CHECK(rig.host->auditionPort() == port);
+    CHECK_FALSE(port->heard().has_value());
+
+    rig.host->play();
+    rig.settle();
+    const std::int64_t start = rig.position();
+    rig.pump(4);
+    CHECK(rig.position() == start + 4 * kBlock);
+    const auto meter = rig.engine().dispatcher().meter("track:trk_c");
+    REQUIRE(meter.has_value());
+    CHECK(meter->reading.peak[0] > 0.01f);
+    CHECK(legendsOn(harness, listener, "track:trk_c") == 1);
+
+    // B's commits reach the live graph through the same port.
+    other.exec(live_rig::addTrack("trk_d"));
+    port->mainCommitted();
+    rig.pump(8);
+    CHECK(rig.engine().streamFor("trk_d") != nullptr);
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("rebind without a device keeps the device problem", "[engine][host][rebind]") {
+    Fixture first;
+    EngineHostOptions options;
+    options.deviceError = protocol::DeviceProblem{"no_audio_backend", "built without an audio backend"};
+    EngineHost host(first.session, std::move(options));
+    Fixture other;
+    other.exec(live_rig::addTrack("trk_c"));
+    host.rebind(other.session);
+    REQUIRE(host.status().deviceError.has_value());
+    CHECK(host.status().deviceError->code == "no_audio_backend");
+    CHECK(host.playback().streamFor("trk_c") == nullptr);  // trk_c has no clip
+    CHECK(host.playback().compileCount() == 1);
+}
+
+TEST_CASE("a session whose media file is gone plays once a commit no longer needs it", "[engine][host][retry]") {
+    Fixture fixture;
+    fs::remove(mediaFileOf(fixture, "med_mono"));  // clp_b's
+    std::vector<std::string> diagnostics;
+    auto device = std::make_unique<HeldDevice>();
+    HeldDevice* held = device.get();
+    EngineHostOptions options = manualOptions(std::move(device));
+    options.diagnostic = [&diagnostics](const std::string& line) { diagnostics.push_back(line); };
+    EngineHost host(fixture.session, std::move(options));
+    REQUIRE(host.status().deviceError.has_value());
+    CHECK(host.status().deviceError->code == "media_missing");
+    CHECK_FALSE(host.status().device.has_value());
+    CHECK(held->opens == 0);
+    REQUIRE(diagnostics.size() == 1);
+
+    // Ticks at the same head try nothing again.
+    for (int i = 0; i < 5; ++i) {
+        REQUIRE_NOTHROW(host.tick());
+    }
+    CHECK(diagnostics.size() == 1);
+
+    // A commit that still needs the file: one line, the same error, no throw.
+    fixture.exec(live_rig::addTrack("trk_c"));
+    host.auditionPort()->mainCommitted();
+    REQUIRE_NOTHROW(host.tick());
+    REQUIRE_NOTHROW(host.tick());
+    CHECK(diagnostics.size() == 2);
+    REQUIRE(host.status().deviceError.has_value());
+    CHECK(host.status().deviceError->code == "media_missing");
+    CHECK(held->opens == 0);
+    checkNoTransport(host);
+
+    // Removing the clip that names it: the graph builds and the device opens.
+    fixture.exec(R"({"op":"clip.remove","clipId":"clp_b"})");
+    host.auditionPort()->mainCommitted();
+    host.tick();
+    const protocol::EngineStatus status = host.status();
+    REQUIRE(status.device.has_value());
+    CHECK_FALSE(status.deviceError.has_value());
+    CHECK(held->opens == 1);
+    CHECK_FALSE(host.auditionPort()->heard().has_value());
+    CHECK(host.playback().streamFor("trk_a") != nullptr);
+
+    host.play();
+    for (int i = 0; i < 1'000 && host.playback().transport().pendingLocate(); ++i) {
+        host.tick();
+        host.playback().butler().runOnce();
+        host.tick();
+    }
+    REQUIRE_FALSE(host.playback().transport().pendingLocate());
+    for (int b = 0; b < 3; ++b) {
+        held->inner.pump(1);
+        host.tick();
+        host.playback().butler().runOnce();
+        host.tick();
+    }
+    CHECK(host.transportState().position == 3 * kBlock);
+}
+
+TEST_CASE("a loaded session without a device is never built again", "[engine][host][retry]") {
+    Fixture fixture;
+    EngineHostOptions options;
+    options.deviceError = protocol::DeviceProblem{"no_device", "no output device"};
+    EngineHost host(fixture.session, std::move(options));
+    CHECK(host.playback().compileCount() == 1);
+    for (int i = 0; i < 5; ++i) {
+        host.tick();
+    }
+    CHECK(host.playback().compileCount() == 1);
+    fixture.exec(live_rig::addTrack("trk_c"));
+    host.auditionPort()->mainCommitted();
+    host.tick();
+    CHECK(host.playback().compileCount() == 2);  // the same engine compiled, not a new one
 }
 
 // m4-crash-recovery (spec, "Process model", Crash): a plugin crash raises no WER or

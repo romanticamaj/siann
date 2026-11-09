@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <stdexcept>
 #include <utility>
 
 #include "siann/engine/offline.hpp"
@@ -453,6 +454,10 @@ protocol::EngineStatus EngineHost::status() const {
         out.srcUnderruns = engine_.driver().srcUnderruns();
     }
     return out;
+}
+
+void EngineHost::rebind(session::Session&) {
+    throw std::logic_error("EngineHost::rebind is not implemented yet");
 }
 
 std::vector<protocol::DeviceDescription> EngineHost::devices() const {
