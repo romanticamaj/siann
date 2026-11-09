@@ -26,7 +26,7 @@ paths, generated artifacts, and local repository references.
 - `scripts/create-daw-manifest.js` converts extracted `_DAW/` plus `_SpliceSFX/` packs into multi-track manifests with placement trim metadata.
 - `test/` contains Node test-runner coverage for the bridge wrapper, CLI, and fixtures.
 - `native/` holds the C++ engine (libraries under `native/libs/`, the `siann-cli` and `siann-engine` executables under `native/apps/`).
-- `app/` holds the Electron shell (TypeScript; its own npm package with pinned dependencies) that spawns and supervises `siann-engine`; the root package stays dependency-free.
+- `app/` holds the Electron shell (TypeScript; its own npm package with pinned dependencies) that spawns and supervises `siann-engine`; the root package stays dependency-free. In `app/`, `npm run build` type-checks with `tsc -p .` and bundles the React renderer (`src/renderer/index.tsx`) with esbuild (`scripts/bundle-renderer.js`) into `dist/src/renderer/renderer.js`; `npm run test:unit` runs the `node --test` unit tests (supervisor, read model, hashes, session client) and `npm run test:e2e` the Playwright Electron tests.
 
 Keep implementation modules separate by the documented architecture: audio engine, command bridge, agent runtime, and UI.
 
