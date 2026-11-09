@@ -126,6 +126,8 @@ interface ServerScript {
   fetch: (params: Record<string, unknown>) => Message;
   holdSync: boolean;
   held: Array<() => void>;
+  // The next this-many session.sync starts answer internal_error.
+  failSyncs: number;
   other: (message: Message) => Message | null;
 }
 
@@ -155,6 +157,11 @@ function serve(socket: FakeSocket, script: ServerScript): void {
     }
     if (message.method === 'session.sync') {
       const cursor = message.params?.cursor as string | undefined;
+      if (!cursor && script.failSyncs > 0) {
+        script.failSyncs -= 1;
+        reply({ ok: false, error: { code: 'internal_error', message: 'transient' } });
+        return;
+      }
       if (!cursor) pinned = script.sync;
       const index = cursor ? pinned.findIndex((_, i) => i > 0 && pinned[i - 1]!.next === cursor) : 0;
       const answer = () => reply({ ok: true, result: pinned[index] as unknown as Message });
@@ -190,6 +197,7 @@ function rig(overrides: Partial<ServerScript> = {}) {
     fetch: fixtureFetch,
     holdSync: false,
     held: [],
+    failSyncs: 0,
     other: () => null,
     ...overrides,
   };
@@ -469,4 +477,72 @@ test('(10) execute sends the commands with expectedRevision and leaves the snaps
   r.script.other = () => ({ ok: false, error: { code: 'revision_mismatch', message: 'head moved' } });
   await assert.rejects(r.client.execute(commands), (e: unknown) => e instanceof ProtocolError && e.code === 'revision_mismatch');
   assert.equal(socket.requests('command.execute')[1]!.expectedRevision, undefined);
+});
+
+test('(11) a failed sync after an engine restart never leaves the seq of the old engine filtering the new engine', async () => {
+  const r = rig();
+  const first = await synced(r);
+  first.deliver(event(0));
+  first.deliver(event(1));
+  await until(() => r.client.getState().lastSeq === '9', 'the old engine at seq 9');
+  const NEW = 'ses_00000000000000aa';
+  const newSync = () => r.last().requests('session.sync').filter((m) => !m.params?.cursor).length;
+
+  // The restart: a new session whose seq starts again, and whose first sync fails.
+  first.serverClose();
+  r.script.sessionId = NEW;
+  r.script.authSeq = '0';
+  r.script.sync = chunksOf(seq.steps[1]!.document, 'r5', '0', seq.steps[1]!.documentHash);
+  r.script.failSyncs = 1;
+  await connected(r, { port: 2, token: 'tok' });
+  await until(() => r.client.getState().error !== null, 'the failed sync');
+  await settle();
+  assert.equal(r.client.getState().sessionId, NEW);
+  assert.equal(r.client.getState().lastSeq, null, 'the model is not in step with the new session');
+  assert.equal(r.client.getState().syncCount, 1);
+
+  // An event of the new engine (seq 1, below the old lastSeq 9) is not dropped:
+  // the model is behind, so it syncs and then applies the event.
+  r.last().deliver({ ...event(0), seq: '1', sessionId: NEW, revision: 'r6', documentHash: seq.steps[1]!.documentHash, changedIds: [] });
+  await until(() => r.client.getState().lastSeq === '1', 'an event of the new engine');
+  assert.equal(r.client.getState().syncCount, 2);
+  assert.equal(r.client.getState().error, null);
+  assert.equal(r.client.model.getSnapshot()!.documentHash, seq.steps[1]!.documentHash);
+  assert.equal(newSync(), 2, 'the failed sync and the one the event started');
+  // The event's sync succeeded: the scheduled retry was cancelled.
+  assert.equal(r.scheduler.pending().length, 0);
+});
+
+test('(12) a failed sync retries under a backoff without waiting for an event', async () => {
+  const r = rig({ failSyncs: 2 });
+  await connected(r);
+  await until(() => r.client.getState().error !== null, 'the failed first sync');
+  await settle();
+  assert.equal(r.client.model.getSnapshot(), null);
+  assert.equal(r.client.getState().lastSeq, null);
+  // The first retry: 250 ms; it fails again, so the next waits twice as long.
+  r.scheduler.fire(250);
+  await until(() => r.last().requests('session.sync').length === 2, 'the first retry');
+  await settle();
+  assert.equal(r.client.model.getSnapshot(), null);
+  r.scheduler.fire(500);
+  await until(() => r.client.model.getSnapshot() !== null, 'the second retry');
+  assert.equal(r.client.getState().syncCount, 1);
+  assert.equal(r.client.getState().lastSeq, seq.base.seq);
+  assert.equal(r.client.getState().error, null);
+  assert.equal(r.scheduler.pending().length, 0, 'no retry after a sync that succeeded');
+
+  // A retry pending when the socket closes is cancelled with the connection.
+  const s = rig({ failSyncs: 1 });
+  const socket = await connected(s);
+  await until(() => s.scheduler.pending().length === 1, 'the scheduled retry');
+  socket.serverClose();
+  const pending = s.scheduler.pending();
+  assert.equal(pending.length, 1, 'only the reconnect remains');
+  assert.equal(pending[0]!.ms, 250);
+  s.scheduler.fire(250);
+  await until(() => s.sockets.length === 2, 'the reconnect');
+  s.last().onopen?.();
+  await until(() => s.client.model.getSnapshot() !== null, 'the sync on the new connection');
+  assert.equal(s.sockets[0]!.requests('session.sync').length, 1, 'the closed connection never retried');
 });

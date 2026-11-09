@@ -228,7 +228,13 @@ test('(d) structural changes are never optimistic: only protocol events change e
   }
   assert.throws(() => model.beginGesture('track:trk_nope', 'gainMilliDb'), (e: unknown) => e instanceof ReadModelError && e.code === 'not_found');
   assert.throws(() => model.beginGesture('root:root', 'gainMilliDb'), (e: unknown) => e instanceof ReadModelError && e.code === 'not_continuous');
-  model.beginGesture('clip:clp_1', 'gainMilliDb');
+  // Clip gain is structural (it changes the track's flattened clip list; the
+  // engine's parameter channel holds only track gain, pan and mute).
+  for (const field of ['gainMilliDb', 'pan']) {
+    assert.throws(() => model.beginGesture('clip:clp_1', field as 'pan'), (e: unknown) => e instanceof ReadModelError && e.code === 'not_continuous');
+  }
+  assert.equal(model.getView().gesture, null);
+  model.beginGesture('track:trk_2', 'gainMilliDb');
   assert.throws(() => model.beginGesture('track:trk_1', 'pan'), (e: unknown) => e instanceof ReadModelError && e.code === 'gesture_open');
   assert.throws(() => model.setGesture(Number.NaN), (e: unknown) => e instanceof ReadModelError && e.code === 'invalid_value');
   model.cancelGesture();
