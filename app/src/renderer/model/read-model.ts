@@ -56,13 +56,14 @@ export interface Snapshot {
 }
 
 // Parameters a continuous gesture may hold (spec, "Two channels into the
-// audio thread": the parameter channel). Mute, solo and every structural
-// field change only through a commit.
+// audio thread": the parameter channel, which carries the track fader).
+// Mute, solo and every structural field change only through a commit; clip
+// gain is structural (it changes the track's flattened clip list, a
+// recompile), so no clip field takes an overlay.
 export type GestureField = 'gainMilliDb' | 'pan';
 
 const CONTINUOUS: Readonly<Record<string, readonly GestureField[]>> = {
   track: ['gainMilliDb', 'pan'],
-  clip: ['gainMilliDb'],
 };
 
 export interface Gesture {

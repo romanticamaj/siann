@@ -56,6 +56,9 @@ export interface SessionClientOptions {
   schedule: (fn: () => void, ms: number) => () => void;
   model?: ReadModel;
   reconnectMs?: number;
+  // The first delay before a failed session.sync is tried again; each further
+  // failure doubles it, up to SYNC_RETRY_MAX_MS.
+  syncRetryMs?: number;
   // The status before the first connect (the renderer shows connecting).
   initialStatus?: ConnectionStatus;
 }
@@ -73,6 +76,8 @@ export class ProtocolError extends Error {
 }
 
 export const RECONNECT_MS = 250;
+export const SYNC_RETRY_MS = 250;
+export const SYNC_RETRY_MAX_MS = 8000;
 
 interface Pending {
   resolve: (result: unknown) => void;
@@ -99,6 +104,10 @@ interface Connection {
   authenticated: boolean;
   draining: boolean;
   closed: boolean;
+  // A scheduled retry of a failed session.sync (its cancel), and the failures
+  // since the last sync that succeeded.
+  syncRetry: (() => void) | null;
+  syncFailures: number;
 }
 
 function randomPrefix(): string {
@@ -183,6 +192,8 @@ export class SessionClient {
       authenticated: false,
       draining: false,
       closed: false,
+      syncRetry: null,
+      syncFailures: 0,
     };
     this.#connection = connection;
     this.#update({ status: 'connecting' });
@@ -280,6 +291,10 @@ export class SessionClient {
     }
     connection.authenticated = true;
     connection.sessionId = reply.sessionId;
+    // Another session (an engine restart starts its seq again): the old seq
+    // means nothing here and must not filter this engine's events, so until a
+    // sync of this session lands the model is behind and every event syncs.
+    if (this.#modelSessionId !== reply.sessionId) this.#behind();
     this.#update({
       status: 'connected',
       sessionId: reply.sessionId,
@@ -379,11 +394,38 @@ export class SessionClient {
       if (connection.closed) return;
       this.#modelSessionId = sessionId;
       this.#lastSeq = seqOf(snapshot.seq);
+      connection.syncFailures = 0;
+      if (connection.syncRetry) {
+        connection.syncRetry();
+        connection.syncRetry = null;
+      }
       this.#update({ lastSeq: snapshot.seq, syncCount: this.#state.syncCount + 1, error: null });
     } catch (error) {
       if (connection.closed) return;
+      // The model is not known to be in step: the next event syncs instead of
+      // being filtered by a stale seq, and a retry runs without waiting for one.
+      this.#behind();
       this.#update({ error: error instanceof Error ? `${(error as { code?: string }).code ?? 'error'}: ${error.message}` : String(error) });
+      this.#scheduleSyncRetry(connection);
     }
+  }
+
+  #behind(): void {
+    this.#lastSeq = null;
+    this.#update({ lastSeq: null });
+  }
+
+  #scheduleSyncRetry(connection: Connection): void {
+    if (connection.syncRetry || connection.closed) return;
+    const first = this.#options.syncRetryMs ?? SYNC_RETRY_MS;
+    const delay = Math.min(first * 2 ** connection.syncFailures, SYNC_RETRY_MAX_MS);
+    connection.syncFailures += 1;
+    connection.syncRetry = this.#options.schedule(() => {
+      connection.syncRetry = null;
+      if (connection.closed || this.#connection !== connection || this.#lastSeq !== null) return;
+      connection.queue.push({ kind: 'sync' });
+      void this.#drain(connection);
+    }, delay);
   }
 
   #advance(at: bigint): void {
@@ -394,6 +436,10 @@ export class SessionClient {
   #drop(connection: Connection): void {
     connection.closed = true;
     connection.queue.length = 0;
+    if (connection.syncRetry) {
+      connection.syncRetry();
+      connection.syncRetry = null;
+    }
     const pending = [...connection.pending.values()];
     connection.pending.clear();
     for (const p of pending) p.reject(new ProtocolError('disconnected', 'the connection closed'));
