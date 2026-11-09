@@ -557,6 +557,7 @@ TEST_CASE("Rollback never deletes media files or renders", "[session][rollback]"
     CHECK(siann::io::readFile(media) == "RIFF not really a wav");
     CHECK(fs::exists(render));
 
+    closeSession(session);
     Session reopened = Session::open(dir.bundle());
     CHECK(reopened.history().head().document.media("m1") == nullptr);
     CHECK(fs::exists(media));
@@ -677,6 +678,7 @@ TEST_CASE("A checkpoint written while a branch is open verifies on reopen", "[se
     Session reopened = Session::open(dir.bundle(), &report);
     CHECK(report.checkpointVerified);
     CHECK(reopened.history().head().envelope.id == mainHead);
+    closeSession(reopened);
 
     SECTION("a checkpoint naming a revision whose document differs is still checkpoint_mismatch") {
         std::string text = siann::io::readFile(dir.bundle() / "session.json");

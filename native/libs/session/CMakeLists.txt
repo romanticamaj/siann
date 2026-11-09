@@ -1,6 +1,7 @@
 add_library(siann_session
   src/journal.cpp
   src/session.cpp
+  src/session_lock.cpp
   src/media_import.cpp
   src/takes.cpp
 )

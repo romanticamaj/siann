@@ -55,6 +55,12 @@ TEST_CASE("session.save writes the checkpoint of the head", "[protocol][session]
     CHECK(std::filesystem::exists(path));
 
     const std::string expected = hash::formatHash(f.head().envelope.documentHash);
+    // The fixture's session holds the bundle's lock while it is served.
+    CHECK_THROWS_AS(session::Session::open(f.dir.bundle()), session::SessionError);
+    f.server.stop();
+    {
+        const session::Session closing = std::move(f.session);
+    }
     session::OpenReport report;
     const session::Session reopened = session::Session::open(f.dir.bundle(), &report);
     CHECK(report.checkpointVerified);

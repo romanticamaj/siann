@@ -75,7 +75,7 @@ TEST_CASE("A 10-minute take records every frame of the counter and commits", "[.
 
     // Sample-exact content, read in chunks: one consecutive run of the counter,
     // so no block was dropped or repeated.
-    const CounterCheck content = checkCounterWav(takeMediaFile(bundlePath, takeId));
+    const CounterCheck content = checkCounterWav(takeMediaFile(s, takeId));
     INFO(content.problem);
     REQUIRE(content.readable);
     CHECK(content.frames == kTakeFrames);
@@ -153,7 +153,7 @@ TEST_CASE("A 10-minute take killed at 9 minutes recovers every flushed block", "
     CHECK(clip->position == siann::time::Position::audio(*manifest.startPosition - manifest.recordOffset));
     CHECK(clip->length >= durableFrames);  // every flushed block survived
 
-    const CounterCheck content = checkCounterWav(takeMediaFile(bundlePath, takeId));
+    const CounterCheck content = checkCounterWav(takeMediaFile(s, takeId));
     INFO(content.problem);
     REQUIRE(content.readable);
     CHECK(content.frames == clip->length);
