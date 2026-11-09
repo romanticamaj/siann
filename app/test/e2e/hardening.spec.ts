@@ -47,7 +47,9 @@ test.beforeEach(async () => {
     SIANN_ENGINE_TEST_ARGS: '--device fake',
   };
   delete env.SIANN_SHELL_DEVTOOLS;
-  app = await electron.launch({ args: [MAIN], cwd: APP_DIR, env });
+  // Chromium's fake capture devices: without a microphone getUserMedia fails with
+  // NotFoundError before any permission is asked (CI runners have none).
+  app = await electron.launch({ args: ['--use-fake-device-for-media-stream', MAIN], cwd: APP_DIR, env });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveText('connected');
 });
@@ -130,6 +132,20 @@ test('every permission is denied', async () => {
   );
 });
 
+// A key as the window receives one: sendInputEvent goes through before-input-event
+// and, unhandled, the menu's accelerators, which Playwright's keyboard (CDP input)
+// bypasses.
+async function press(keyCode: string, modifiers: Array<'control' | 'shift'> = []): Promise<void> {
+  await app.evaluate(
+    ({ BrowserWindow }, key) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+      contents.sendInputEvent({ type: 'keyDown', keyCode: key.keyCode, modifiers: key.modifiers });
+      contents.sendInputEvent({ type: 'keyUp', keyCode: key.keyCode, modifiers: key.modifiers });
+    },
+    { keyCode, modifiers },
+  );
+}
+
 test('no devtools and no reload: the menu, the preference and the keys', async () => {
   const roles = await app.evaluate(({ Menu }) => {
     const found: string[] = [];
@@ -145,16 +161,43 @@ test('no devtools and no reload: the menu, the preference and the keys', async (
   expect(roles.length).toBeGreaterThan(0);
   for (const role of ['toggledevtools', 'reload', 'forcereload']) expect(roles).not.toContain(role);
 
-  const devTools = await app.evaluate(
-    ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getLastWebPreferences()?.devTools,
-  );
-  expect(devTools).toBe(false);
+  // Every key goes through before-input-event: the main process records each one
+  // (and any devtools window opening), so the test knows when a key has arrived.
+  await app.evaluate(({ BrowserWindow }) => {
+    const g = globalThis as unknown as { __keys: string[]; __devtoolsOpened: number };
+    const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+    g.__keys = [];
+    g.__devtoolsOpened = 0;
+    contents.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown') g.__keys.push(input.key);
+    });
+    contents.on('devtools-opened', () => {
+      g.__devtoolsOpened += 1;
+    });
+  });
+  const keys = () => app.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys);
 
-  await page.keyboard.press('F12');
-  await page.keyboard.press('Control+Shift+I');
-  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.isDevToolsOpened())).toBe(
-    false,
+  // getLastWebPreferences() does not report devTools, so ask for devtools: a window
+  // with devTools false ignores openDevTools(). Opening is asynchronous; the
+  // bounded wait is on an event that must not come.
+  const opened = await app.evaluate(
+    ({ BrowserWindow }) =>
+      new Promise<boolean>((resolve) => {
+        const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+        const timer = setTimeout(() => resolve(contents.isDevToolsOpened()), 2_000);
+        contents.once('devtools-opened', () => {
+          clearTimeout(timer);
+          contents.closeDevTools();
+          resolve(true);
+        });
+        contents.openDevTools({ mode: 'detach' });
+      }),
   );
+  expect(opened).toBe(false);
+
+  await press('F12');
+  await press('I', ['control', 'shift']);
+  await expect.poll(keys).toEqual(expect.arrayContaining(['F12', 'I']));
 
   // A reload would drop the marker and start the connection count again.
   const connections = await page.getByTestId('connections').textContent();
@@ -162,24 +205,20 @@ test('no devtools and no reload: the menu, the preference and the keys', async (
   await page.evaluate(() => {
     (window as unknown as { __marker: number }).__marker = 1;
   });
-  // Every key goes through before-input-event, which records it here: once the
-  // last key is seen, a reload it caused would already have started.
-  await app.evaluate(({ BrowserWindow }) => {
-    const g = globalThis as unknown as { __keys: string[] };
-    g.__keys = [];
-    BrowserWindow.getAllWindows()[0]!.webContents.on('before-input-event', (_event, input) => {
-      if (input.type === 'keyUp') g.__keys.push(input.key);
-    });
-  });
-  await page.keyboard.press('Control+R');
-  await page.keyboard.press('F5');
-  await page.keyboard.press('Control+Shift+R');
-  await expect
-    .poll(() => app.evaluate(() => (globalThis as unknown as { __keys: string[] }).__keys))
-    .toEqual(expect.arrayContaining(['F5']));
+  await press('R', ['control']);
+  await press('F5');
+  await press('R', ['control', 'shift']);
+  await expect.poll(keys).toEqual(expect.arrayContaining(['F12', 'I', 'F5']));
+  await expect.poll(async () => (await keys()).filter((key) => key.toLowerCase() === 'r').length).toBe(2);
   await expect(page.getByTestId('status')).toHaveText('connected');
   expect(await page.evaluate(() => (window as unknown as { __marker?: number }).__marker)).toBe(1);
   await expect(page.getByTestId('connections')).toHaveText(connections ?? '');
+  expect(
+    await app.evaluate(({ BrowserWindow }) => ({
+      opened: BrowserWindow.getAllWindows()[0]!.webContents.isDevToolsOpened(),
+      events: (globalThis as unknown as { __devtoolsOpened: number }).__devtoolsOpened,
+    })),
+  ).toEqual({ opened: false, events: 0 });
 });
 
 test('window.open is denied, and navigation stays under siann://app/', async () => {
