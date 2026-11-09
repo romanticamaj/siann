@@ -1,5 +1,6 @@
 #include "siann/engine_app/engine.hpp"
 
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -197,7 +198,9 @@ EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
     fake.loopback = true;
     fake.inputLatencyFrames = chosen.bufferFrames;
     fake.outputLatencyFrames = chosen.bufferFrames;
-    fake.refuseOpens = options.fakeOpenFailures.value_or(0);
+    // One budget for every fake handle: a selection makes a new one, and the device
+    // stays held for N opens in all, whichever handle tries.
+    fake.sharedRefusals = std::make_shared<std::atomic<int>>(options.fakeOpenFailures.value_or(0));
     chosen.listDevices = [] {
         std::vector<protocol::DeviceDescription> listed{{kFakeDevice, kFakeDevice, kFakeDevice, false, false}};
         for (protocol::DeviceDescription& one : listHardwareDevices()) {

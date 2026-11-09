@@ -281,7 +281,8 @@ years. Milestones are designed so that something useful exists at every stage.
   driver's callbacks with a clock that advances N ns per reading, as in `siann-cli`
   (a usage error without `--device fake`), and `--fake-open-failures N` makes the fake
   device refuse its first N opens with `device_open_failed`, as a device another
-  application holds does (the same usage error). A device failure at launch
+  application holds does, counted in all across a selection's new handles (the same
+  usage error). A device failure at launch
   (`no_device`, `device_open_failed`, a core-only build's `no_audio_backend`) never
   fails the launch: the engine writes one diagnostic line to stderr and serves;
   `engine.status` shows `device: null` with `deviceError {code, message}`, and

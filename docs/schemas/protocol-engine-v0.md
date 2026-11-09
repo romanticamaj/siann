@@ -47,7 +47,7 @@ Params `{id}`. Result: `engine.status`'s `device` object.
 | the open fails | `device_open_failed` (or the device's own code) | the old device is closed; `engine.status` shows `deviceError`; the main thread retries the named device under the device backoff, its count from zero |
 | the session's first graph could not be built | the `deviceError` code (`media_missing`, ...) | the choice is kept and opened once a commit lets the graph build |
 
-The host stops the transport and the graph driver, closes the running device and opens the new one on the main thread, the path a reopen after `device_lost` takes. A device another application holds is `device_open_failed`; `--fake-open-failures N` makes the fake device refuse its first N opens, so the tests drive this case.
+The host stops the transport and the graph driver, closes the running device and opens the new one on the main thread, the path a reopen after `device_lost` takes. A device another application holds is `device_open_failed`; `--fake-open-failures N` makes the fake device refuse its first N opens, counted across the launch's open, the reopens and every `engine.select_device` of `fake` (each selection makes a new handle to the same held device), so the tests drive this case.
 
 ## session.open in siann-engine
 
