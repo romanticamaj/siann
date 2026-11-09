@@ -398,6 +398,66 @@ bool isStateBlobHash(std::string_view text) noexcept {
                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
+namespace {
+
+bool isSeparator(char c) noexcept {
+    return c == '/' || c == '\\';
+}
+
+std::filesystem::path pathFromUtf8(std::string_view text) {
+    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+}
+
+// The path's components, made absolute and weakly canonical, compared as Windows
+// compares names (ASCII case-insensitively) there.
+std::vector<std::filesystem::path::string_type> components(const std::filesystem::path& path) {
+    std::error_code ignored;
+    std::filesystem::path made = std::filesystem::weakly_canonical(path, ignored);
+    if (made.empty()) {
+        made = std::filesystem::absolute(path, ignored).lexically_normal();
+    }
+    std::vector<std::filesystem::path::string_type> out;
+    for (const auto& part : made.lexically_normal()) {
+        auto name = part.native();
+        if (name.empty()) {
+            continue;  // the trailing separator's empty name
+        }
+#if defined(_WIN32)
+        for (auto& c : name) {
+            if (c >= L'A' && c <= L'Z') {
+                c = static_cast<wchar_t>(c - L'A' + L'a');
+            }
+            if (c == L'/') {
+                c = L'\\';
+            }
+        }
+#endif
+        out.push_back(std::move(name));
+    }
+    return out;
+}
+
+}  // namespace
+
+std::optional<std::string> pluginPathRefusal(std::string_view path,
+                                             const std::optional<std::filesystem::path>& bundle) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    if (path.size() >= 2 && isSeparator(path[0]) && isSeparator(path[1])) {
+        return std::string("unc_path");
+    }
+    if (bundle && !bundle->empty()) {
+        const auto inside = components(*bundle);
+        const auto candidate = components(pathFromUtf8(path));
+        if (!inside.empty() && candidate.size() >= inside.size() &&
+            std::equal(inside.begin(), inside.end(), candidate.begin())) {
+            return std::string("inside_bundle");
+        }
+    }
+    return std::nullopt;
+}
+
 Value toJson(const Clip& clip) {
     return Value(Object{
         {"schema", str(kClipSchema)},

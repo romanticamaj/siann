@@ -4,6 +4,7 @@
 // returns a new document that shares every unchanged entity with the old one.
 // Entity hashes are computed once, when an entity enters a document.
 
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -132,5 +133,14 @@ json::Value toJson(const PluginSlot& slot);
 
 // True for "sha256:" followed by 64 lowercase hex digits.
 bool isStateBlobHash(std::string_view text) noexcept;
+
+// Why a plugin path (UTF-8) must not be opened, or nothing (m5-plugin-registry,
+// Protocol v0 item 21): "unc_path" for one that starts with two separators
+// (\\server\share, //server/share, \\?\UNC\..., and every other \\?\ or \\.\
+// device path), "inside_bundle" for one at or under `bundle` (both made
+// weakly_canonical; case-insensitive on Windows). An empty path is no hint and
+// is never refused.
+std::optional<std::string> pluginPathRefusal(std::string_view path,
+                                             const std::optional<std::filesystem::path>& bundle = std::nullopt);
 
 }  // namespace siann::model

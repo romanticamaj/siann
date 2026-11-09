@@ -271,6 +271,10 @@ Prepared pluginInsert(const Document& doc, const Command& command) {
         }
         if (d.optional("path") != nullptr) {
             s.path = d.string("path");
+            // No bundle in reach here: the UNC forms only (Protocol v0 item 21).
+            if (const auto refused = model::pluginPathRefusal(s.path)) {
+                d.fail("path", "is refused (" + *refused + "): plugins load from registered installs only");
+            }
         }
         d.finish();
     }
