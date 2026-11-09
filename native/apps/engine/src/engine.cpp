@@ -331,9 +331,10 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
     try {
         const Options options = parseOptions(args);
         MainThread mainThread;
-        session::Session served = openOrCreate(options.session);
+        // Stable while served; session.open replaces it (Protocol v0 item 22).
+        auto served = std::make_unique<session::Session>(openOrCreate(options.session));
 
-        EngineHost host(served, hostOptions(options, err));
+        EngineHost host(*served, hostOptions(options, err));
 
         // No pump thread: this thread is the command and control thread.
         protocol::ServerOptions serverOptions;
@@ -345,8 +346,16 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
         serverOptions.transportPort = &host;
         serverOptions.pluginPort = &host;
         serverOptions.auditionPort = host.auditionPort();
+        // The new bundle is opened (and locked) first, so a refusal changes nothing;
+        // the old one is released once the host plays the new one.
+        serverOptions.openSession = [&served, &host](const fs::path& path) -> session::Session& {
+            auto next = std::make_unique<session::Session>(session::Session::open(path));
+            host.rebind(*next);
+            served = std::move(next);
+            return *served;
+        };
         protocol::IxTransport transport;
-        protocol::ProtocolServer server(transport, served, serverOptions);
+        protocol::ProtocolServer server(transport, *served, serverOptions);
         host.attachPublisher(server.realtime(), server.events());
         server.start();
 
