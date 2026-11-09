@@ -83,9 +83,20 @@ struct PluginStatus {
     std::optional<std::uint64_t> midiOutputSysex;
 };
 
+// One install of the engine's plugin registry (plugin.registry, plugin.approve;
+// Protocol v0 item 21, m5-plugin-registry).
+struct PluginRegistryEntry {
+    std::string format;
+    std::string path;
+    std::optional<std::string> uid;  // null until probed
+    std::string name;
+    bool approved = false;
+};
+
 // Thrown by a port. Codes: not_found (no such slot), plugin_missing (the slot's
 // plugin did not load), editor_failed, no_plugin_host, plugin_load_failed,
-// plugin_not_found, bad_state.
+// plugin_not_found, bad_state, and from the registry plugin_not_registered and
+// plugin_not_approved.
 class PluginPortError : public std::runtime_error {
 public:
     PluginPortError(std::string code, const std::string& message)
@@ -131,6 +142,15 @@ public:
     virtual std::shared_ptr<engine::PluginNodeSource> instantiateForRender(const model::Document& document) = 0;
     // The set back on the command thread after its job ended, for destruction.
     virtual void destroyRenderInstances(std::shared_ptr<engine::PluginNodeSource> instances) = 0;
+
+    // plugin.registry: every install the engine knows of, approved or not.
+    virtual std::vector<PluginRegistryEntry> registry() const = 0;
+    // plugin.approve: sets the install's flag and keeps it, probing an unprobed
+    // install first when `approved` (which runs its code). Returns the entry.
+    // Throws PluginPortError plugin_not_registered (no install at {format, path})
+    // or the probe's code (plugin_not_found, plugin_load_failed), leaving it
+    // unapproved. Never an MCP tool: an agent must not choose what code loads.
+    virtual PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) = 0;
 };
 
 }  // namespace siann::protocol

@@ -24,6 +24,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -33,6 +34,7 @@
 
 #include "siann/engine_app/auditioner_port.hpp"
 #include "siann/host/interfaces.hpp"
+#include "siann/host/plugin_registry.hpp"
 #include "siann/playback/audition.hpp"
 #include "siann/playback/playback_engine.hpp"
 #include "siann/protocol/event_stream.hpp"
@@ -71,7 +73,20 @@ struct EngineHostOptions {
     std::function<void(const std::string& line)> diagnostic;
     // The window plugin editors belong to (--owner-window; 0 for none).
     std::uintptr_t ownerWindow = 0;
+    // Directories (UTF-8) scanned for plugins beside the standard ones
+    // (--plugin-dir; m5-plugin-registry, Protocol v0 item 21).
+    std::vector<std::string> pluginDirs;
+    // The JSON file the approvals are kept in (--plugin-registry); empty: kept for
+    // the life of the host only.
+    std::filesystem::path pluginRegistryFile;
 };
+
+// The --plugin-registry file ({"schema": "siann.plugin_registry.v0", "plugins":
+// [{format, path, uid, name, approved}]}). Reads nothing from a file that is not
+// there; a file that does not parse or has another shape throws
+// std::runtime_error saying why.
+std::vector<host::PluginInstall> readPluginRegistry(const std::filesystem::path& file);
+void writePluginRegistry(const std::filesystem::path& file, const std::vector<host::PluginInstall>& installs);
 
 struct PluginHostSet;
 
@@ -115,6 +130,10 @@ public:
     std::vector<std::string> formats() const override;
     std::shared_ptr<engine::PluginNodeSource> instantiateForRender(const model::Document& document) override;
     void destroyRenderInstances(std::shared_ptr<engine::PluginNodeSource> instances) override;
+    // plugin.registry and plugin.approve (Protocol v0 item 21). An approval probes
+    // an unprobed install with scanPath and is written to the registry file.
+    std::vector<protocol::PluginRegistryEntry> registry() const override;
+    protocol::PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) override;
 
     protocol::TransportState transportState() const;
     playback::PlaybackEngine& playback() noexcept { return engine_; }
@@ -128,9 +147,16 @@ private:
     void report(protocol::DeviceProblem problem);
     void requireDevice() const;
     host::PluginInstance& requireInstance(const std::string& slotId) const;
+    void fillRegistry(const std::vector<std::string>& pluginDirs);
+    void keepRegistry() const;
 
     // The plugin hosts, before the engine whose instances they made.
     std::unique_ptr<PluginHostSet> pluginHosts_;
+    // The installs every load resolves through; before the engine that points at it.
+    host::PluginRegistry registry_;
+    std::filesystem::path registryFile_;
+    // Entries of the file for paths no scan listed this time: written back as they were.
+    std::vector<host::PluginInstall> unscannedKept_;
     std::uintptr_t ownerWindow_ = 0;
     session::Session& session_;
     // plugin.instantiate's instance until its plugin.insert committed.
