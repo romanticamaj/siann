@@ -159,7 +159,7 @@ TEST_CASE("without an openSession callback session.open is not_supported", "[pro
 
 TEST_CASE("session.open answers the callback's SessionError and keeps the old session served",
           "[protocol][session]") {
-    for (const std::string code : {std::string("session_locked"), std::string("not_a_bundle")}) {
+    for (const std::string& code : {std::string("session_locked"), std::string("not_a_bundle")}) {
         INFO(code);
         ServerOptions options = manualOptions();
         options.openSession = [&code](const std::filesystem::path&) -> session::Session& {

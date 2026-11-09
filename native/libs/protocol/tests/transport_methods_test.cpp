@@ -325,7 +325,7 @@ TEST_CASE("engine.select_device needs a string id", "[protocol][transport][devic
 
 TEST_CASE("the port's not_found and device_open_failed are engine.select_device's codes",
           "[protocol][transport][devices]") {
-    for (const std::string code : {std::string("not_found"), std::string("device_open_failed")}) {
+    for (const std::string& code : {std::string("not_found"), std::string("device_open_failed")}) {
         INFO(code);
         FakePort port;
         port.refusal = code;

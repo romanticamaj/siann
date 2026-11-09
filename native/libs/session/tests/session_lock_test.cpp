@@ -67,9 +67,9 @@ std::int64_t deadPid() {
 #else
     std::int64_t pidMax = std::int64_t{1} << 22;
     std::ifstream file("/proc/sys/kernel/pid_max");
-    std::int64_t read = 0;
-    if (file >> read && read > 0) {
-        pidMax = read;
+    std::int64_t fromProc = 0;
+    if (file >> fromProc && fromProc > 0) {
+        pidMax = fromProc;
     }
     return pidMax + 1;
 #endif
@@ -158,7 +158,7 @@ TEST_CASE("An empty or unparseable lock is taken over", "[session][lock]") {
     {
         const Session first = newSession(dir.bundle());
     }
-    for (const std::string text : {std::string(), std::string("{\"pid\":"), std::string("[]"),
+    for (const std::string& text : {std::string(), std::string("{\"pid\":"), std::string("[]"),
                                    std::string(R"({"pid":"12"})"), std::string(R"({"pid":0})"),
                                    std::string(R"({"pid":-4})")}) {
         INFO("lock text: " << text);

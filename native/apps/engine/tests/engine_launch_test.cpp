@@ -858,7 +858,8 @@ TEST_CASE("an engine launched without a device plays once fake is selected", "[e
         const Value status = client.ok("engine.status");
         CHECK(at(at(status, "device"), "id").asString() == "fake");
         CHECK(status.find("deviceError") == nullptr);
-        for (const Value& device : at(client.ok("engine.devices"), "devices").asArray()) {
+        const Value listed = client.ok("engine.devices");
+        for (const Value& device : at(listed, "devices").asArray()) {
             CHECK(at(device, "current").asBool() == (at(device, "id").asString() == "fake"));
         }
 
