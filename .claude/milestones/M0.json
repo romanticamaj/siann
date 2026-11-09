@@ -10,11 +10,12 @@
     "Licensing decisions (decided 2026-10-22, ADR-0017)",
     "Milestones"
   ],
-  "status": "not_started",
+  "status": "in_progress",
   "done": [
     "JUCE desktop audio device (#20) covers the device half of JUCE hosting.",
     "Electron shell and engine helper process (#47).",
-    "JUCE plugin hosting in the engine, on all three platforms in CI (#48)."
+    "JUCE plugin hosting in the engine, on all three platforms in CI (#48).",
+    "Status corrected to in_progress 2026-11-09 (Fable, delegated by the maintainer): m0-electron-shell and m0-plugin-hosting are merged and green in CI; m0-macos-bundle is not built (no helper bundle, no signing job) and waits on the apple-signing gate, so M0 is neither not_started nor exit_pending."
   ],
   "prerequisites": [
     "M3 protocol server (the renderer connects through it)."

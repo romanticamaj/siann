@@ -2558,6 +2558,20 @@ render the heard side, not head). CLAP editor windows on the desktop target move
 to "Before M5" in the follow-ups: M4's exit names no editor, and the UI is their
 first consumer.
 
+M5 start (2026-11-09, Fable, delegated by the maintainer): the "Before M5"
+follow-ups are M5 features, built first and by the same loop as every feature:
+`m5-plugin-registry` (a plugin resolves by `format` and `uid` through a registry of
+scanned, approved installs; the document's `path` is a hint among them; `blobPath`
+validates its hash), `m5-shell-hardening` (single-instance lock, permission denial,
+ready timeout, no devtools or reload, the wedged-quit e2e),
+`m5-engine-sessions-devices` (`engine.devices` and `engine.select_device`,
+`session.open` and a session lock in `siann-engine`, a graph rebuilt when a commit
+repairs missing media, transport and status as MCP tools) and
+`m5-clap-editor-window`. The UI features depend on them. M0 is in progress, not
+"not started" as its manifest said: `m0-electron-shell` (#47) and
+`m0-plugin-hosting` (#48) are merged, and `m0-macos-bundle` waits on the
+`apple-signing` gate.
+
 M1 is implemented in `native/` (PRs #3 to #12) and every exit criterion has an
 automated test that runs in CI on Windows, macOS and Linux:
 
