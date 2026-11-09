@@ -5,6 +5,11 @@ point here; its first run takes the listed section into its features.
 
 ## Before M5: a session must not choose what code loads (from PR #55)
 
+Taken into `m5-plugin-registry` (decided by Fable, delegated by the maintainer,
+2026-11-09): the "Before M5" sections are M5's wave 1 and 2 features, built by the
+workflow's TDD, verify and land loop before the UI features that depend on them,
+rather than fixed by hand before the run. Each section below names its feature.
+
 Found by the automated security review of `m4-plugin-node`. Neither is reachable
 while the engine opens only the maintainer's own sessions; both must be fixed before
 a session from anyone else can be opened (import, a shared bundle, the M5 UI's open).
@@ -20,6 +25,10 @@ a session from anyone else can be opened (import, a shared bundle, the M5 UI's o
   state. Validate the id where the document is parsed and in `blobPath`.
 
 ## Before M5: the shell (from PR #47)
+
+Taken into `m5-shell-hardening` (decided by Fable, delegated by the maintainer,
+2026-11-09), except the session lock, which lives in the engine (the trust boundary,
+where `session.open` is made to work) and is `m5-engine-sessions-devices`'.
 
 - Two app instances can share one session: there is no `requestSingleInstanceLock`
   and no session lock. Fix before any UI can write to a session.
@@ -37,6 +46,10 @@ a session from anyone else can be opened (import, a shared bundle, the M5 UI's o
 - The bounded quit wait on a wedged engine has unit and process tests but no e2e.
 
 ## Before M5: CLAP editor windows on the desktop target (gui extension embedding into a window siann-host-desktop supplies)
+
+Taken into `m5-clap-editor-window`, wave 2 after `m5-plugin-registry` so its tests
+name the plugin the registry's way (decided by Fable, delegated by the maintainer,
+2026-11-09).
 
 Moved from "Before M4 wave 2". Decided by Fable, delegated by the maintainer,
 2026-11-08: `plugin.open_editor` lands in `m4-plugin-node` and answers
@@ -57,7 +70,8 @@ out, as the spec says.
 The M4 exit check (2026-11-09) proved the restart only with the built-in plugins.
 Decided by Fable, delegated by the maintainer, 2026-11-09: M4 stays
 `exit_pending` with the maintainer's pluginval runs owed (runbook, "Human gates by
-milestone"), and M5 starts. An agent closes the restart gap in one small PR beside
+milestone"), and M5 starts. Not an M5 feature and not an M5 prerequisite (2026-11-09):
+it is a test of M4's exit, not of the UI. An agent closes the restart gap in one small PR beside
 M5's first feature: a `[engine][launch][crash][thirdparty]` case in
 `engine_launch_test.cpp` puts the `SIANN_TEST_VST3` plugin in slot A with one
 parameter set and the hostile plugin in slot B, crashes the engine through
@@ -80,6 +94,9 @@ back to its guess from the last block (spec, "siann-host: two targets, one
 interface").
 
 ## Before M5: the engine's device (from m4-engine-device)
+
+Taken into `m5-engine-sessions-devices`, with the session lock from "the shell"
+above (decided by Fable, delegated by the maintainer, 2026-11-09).
 
 - A protocol method to list and select devices, so a UI choice needs no restart.
 - MCP tools for `transport.*` and `engine.status`: they are protocol methods only.

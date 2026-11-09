@@ -76,7 +76,7 @@ Progress: `/workflows`. Each feature lands as its own PR, merged only after CI i
 | M3 | — |
 | M0 | Apple Developer ID and notarization key (asked before storing secrets), macOS hands-on (since M4 the editor opens through the protocol: `command.execute` `track.add`, `plugin.instantiate`, then `plugin.open_editor`; the engine's `--open-editor` flag and the shell's `SIANN_OPEN_EDITOR` are gone), choice of test plugins |
 | M4 | Choice of third-party plugins; exit: `node scripts/pluginval.js --compat` on Windows (install pluginval and Surge XT first; SD3, UAD 1176 and HALion Sonic when authorised), and on the Mac the `SIANN_TEST_AU` run plus the AU half of `--compat` |
-| M5 | React or Svelte, UX review |
+| M5 | React or Svelte (before `m5-read-model`; the wave 1 hardening features `m5-plugin-registry`, `m5-shell-hardening` and `m5-engine-sessions-devices` run first as a subset without it), UX review |
 | M6b | One-hour 16-track recording run |
 | M6c | Reference machines for the 64-track criterion |
 | M7 | Raspberry Pi class board |
