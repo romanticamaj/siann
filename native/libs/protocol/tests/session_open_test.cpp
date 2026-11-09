@@ -156,3 +156,23 @@ TEST_CASE("without an openSession callback session.open is not_supported", "[pro
     CHECK(errorCode(f.call(c, "session.open", Value(Object{{"path", Value(utf8(f.dir.bundle()))}}))) ==
           "not_supported");
 }
+
+TEST_CASE("session.open answers the callback's SessionError and keeps the old session served",
+          "[protocol][session]") {
+    for (const std::string code : {std::string("session_locked"), std::string("not_a_bundle")}) {
+        INFO(code);
+        ServerOptions options = manualOptions();
+        options.openSession = [&code](const std::filesystem::path&) -> session::Session& {
+            throw session::SessionError(code, "refused by the test");
+        };
+        Fixture f(std::move(options));
+        const std::filesystem::path bundle = otherBundle(f);
+        const ConnectionId c = f.authed();
+        const std::string oldId = f.server.sessionId();
+        const Value refused = f.call(c, "session.open", Value(Object{{"path", Value(utf8(bundle))}}));
+        CHECK(errorCode(refused) == code);
+        CHECK(f.server.sessionId() == oldId);
+        CHECK(&f.server.session() == &f.session);
+        CHECK(at(f.ok(c, "session.inspect"), "revision").asString() == "r1");
+    }
+}
