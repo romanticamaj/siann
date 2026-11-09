@@ -1388,15 +1388,23 @@ Jobs v0, plugins (m4-plugin-node; decided by Fable, delegated by the maintainer,
 
 - `plugin.instantiate {trackId, index, descriptor: {format, path?, uid?},
   stateBlob?}` runs on the command thread (the main thread in M4) inside the
-  request, not on the worker: it probes and instantiates the plugin, writes the
+  request, not on the worker: it resolves the descriptor through the plugin
+  registry (Protocol v0 item 21; m5-plugin-registry) and instantiates the
+  approved install's path, never one the request names and never with a probe of
+  its own (the probe is `plugin.approve`'s), writes the
   state blob to `<bundle>/blobs/<sha256 hex>` durably (or uses the blob it was
   given), commits `plugin.insert {trackId, index, slotId, descriptor, stateBlob}`
   as its completion command, and answers `{jobId, kind: "plugin.instantiate",
   state: "done", result: {revision, slotId, descriptor, stateBlob, latencyFrames,
   tailFrames, capabilities}}` at once (`capabilities` are the six `PluginHost`
-  flags as booleans). A failure is `state: "failed"` with the `PluginError` code
-  (`plugin_load_failed`, `not_found`, `no_plugin_host` for vst3 and au in a
-  core-only build). The worker's one-at-a-time order covers render jobs only. The
+  flags as booleans). A failure is `state: "failed"` with its code: before any
+  plugin host is reached, `plugin_not_registered` (no registered install at the
+  path, message `unregistered_path`; no approved install of the uid, or several
+  and no path; an install whose own path is refused) or `plugin_not_approved` (a
+  registered install that is not approved); then the `PluginError` code
+  (`plugin_load_failed`, `plugin_not_found`), or `no_plugin_host` for vst3 and au
+  in a core-only build. A UNC path or a path inside the bundle in the descriptor
+  is `invalid_params` and no job. The worker's one-at-a-time order covers render jobs only. The
   instance enters the instance table under the new slot id, so the next compile
   reuses it instead of loading the plugin again.
 - Slot ids (fix round 1 of m4-plugin-node): the server picks
@@ -2332,7 +2340,13 @@ spec check):
     hint (`unc_path`: a `\\server\share` or `//server/share` path, `inside_bundle`:
     a path inside the session bundle) or an unknown one (`unregistered_path`) is
     ignored and never opened, and the `plugin_not_registered` message names its
-    reason. `plugin.instantiate` answers `invalid_params` for a UNC path or a path
+    reason. The same refusal applies to the installs themselves (fix round 1 of
+    m5-plugin-registry): a path `scan` lists inside the session bundle or on a share
+    is not registered, wherever it was found (a `--plugin-dir` that holds the bundle,
+    a `CLAP_PATH` entry), and is one diagnostic; and `plugin.approve`,
+    `EngineHost::instantiate` and every slot load check the resolved install's own
+    path before any library opens (`plugin_not_registered`, the message naming
+    `unc_path` or `inside_bundle`). `plugin.instantiate` answers `invalid_params` for a UNC path or a path
     inside the bundle before any plugin host is reached; with a `path` it needs a
     registered install there (job failed, `plugin_not_registered`, message
     `unregistered_path`) that is approved (`plugin_not_approved`), with a `uid` and no
