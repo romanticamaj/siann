@@ -2,9 +2,11 @@
 // handle reaches the engine as a decimal number, and nothing else does.
 
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 
-import { engineArgs } from '../../src/main/engine-args';
+import { engineArgs, pluginRegistryFile } from '../../src/main/engine-args';
 
 const session = '/tmp/Untitled.siann';
 
@@ -63,6 +65,25 @@ test('the shell hands the engine its backoff, for the device retry', () => {
       backoff: { initialMs: 250, maxMs: 10_000, resetAfterMs: 30_000 },
     }),
     ['--session', session, '--device-backoff', '250:10000:30000'],
+  );
+});
+
+// m5-plugin-registry (Protocol v0 items 17 and 21): the engine keeps plugin
+// approvals in the user's data directory, never in a session.
+test('the plugin approvals live in <userData>/plugin-registry.json', () => {
+  const userData = path.join(os.tmpdir(), 'SIANN user data');
+  const file = pluginRegistryFile(userData);
+  assert.equal(file, path.join(userData, 'plugin-registry.json'));
+  assert.deepEqual(engineArgs({ session, platform: 'linux', windowHandle: null, pluginRegistry: file }), [
+    '--session',
+    session,
+    '--plugin-registry',
+    file,
+  ]);
+  // Before the e2e tests' own arguments.
+  assert.deepEqual(
+    engineArgs({ session, platform: 'linux', windowHandle: null, pluginRegistry: file, testArgs: ['--device', 'fake'] }),
+    ['--session', session, '--plugin-registry', file, '--device', 'fake'],
   );
 });
 
