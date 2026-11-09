@@ -178,6 +178,33 @@ TEST_CASE("clap host: scan lists CLAP_PATH without loading anything", "[clap][pl
     CHECK(loadedFrom(*instance) == "siann-clap-host-scan");
 }
 
+// m5-plugin-registry: the engine's --plugin-dir directories, listed beside the
+// standard ones without running the plugin's entry point.
+TEST_CASE("clap host: scan lists extra directories without loading anything", "[clap][plugin][registry]") {
+    const auto copy = installCopy("siann-clap-host-plugin-dir");
+    const auto marker = copy.parent_path().parent_path() / "siann-clap-host-plugin-dir.marker";
+    std::error_code ignored;
+    std::filesystem::remove(marker, ignored);
+    const ScopedEnvironment watch("SIANN_TEST_PLUGIN_MARKER", marker.string());
+    host::ClapPluginHost host;
+    const auto listed = host.scan({copy.parent_path().string()});
+    const auto found = std::find_if(listed.begin(), listed.end(), [&](const host::PluginDescriptor& descriptor) {
+        return std::filesystem::path(descriptor.path) == copy;
+    });
+    REQUIRE(found != listed.end());
+    CHECK(found->format == "clap");
+    CHECK(found->uid.empty());
+    CHECK_FALSE(std::filesystem::exists(marker));
+    // Listed once, though named twice.
+    const auto twice = host.scan({copy.parent_path().string(), copy.parent_path().string()});
+    CHECK(std::count_if(twice.begin(), twice.end(), [&](const host::PluginDescriptor& descriptor) {
+              return std::filesystem::path(descriptor.path) == copy;
+          }) == 1);
+    // The marker works: a probe runs the entry point.
+    (void)host.scanPath(copy.string());
+    CHECK(std::filesystem::exists(marker));
+}
+
 TEST_CASE("clap host: two installs of one plugin each load their own file", "[clap][plugin]") {
     host::ClapPluginHost host;
     const auto copy = installCopy("siann-clap-host-second");

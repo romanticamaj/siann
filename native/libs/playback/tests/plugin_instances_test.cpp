@@ -10,6 +10,8 @@
 #include "siann/hash/sha256.hpp"
 #include "siann/host/clap_plugin_host.hpp"
 #include "siann/host/fake_audio_device.hpp"
+#include "siann/host/plugin_error.hpp"
+#include "siann/host/plugin_registry.hpp"
 #include "siann/playback/plugin_instances.hpp"
 
 // The instance table of the live graph and the render's own instance set
@@ -59,10 +61,69 @@ std::string writeBlob(host::ClapPluginHost& host, const fs::path& bundle, double
     return hash;
 }
 
-PlaybackOptions pluginOptions(host::ClapPluginHost& host) {
+// The registry the tests load through (m5-plugin-registry): siann_test_plugin and
+// siann_hostile_plugin at their build paths, probed and approved.
+const host::PluginRegistry& approvedTestPlugins() {
+    static const host::PluginRegistry registry = [] {
+        host::PluginRegistry r;
+        const std::pair<const char*, const char*> plugins[] = {
+            {SIANN_TEST_PLUGIN_CLAP, "org.siann.test-plugin"},
+            {SIANN_HOSTILE_PLUGIN_CLAP, "org.siann.hostile-plugin"},
+        };
+        for (const auto& [path, uid] : plugins) {
+            r.addScanned("clap", path, uid);
+            r.setProbed("clap", path, uid, uid);
+            r.approve("clap", path, true);
+        }
+        return r;
+    }();
+    return registry;
+}
+
+PlaybackOptions pluginOptions(host::ClapPluginHost& host,
+                              const host::PluginRegistry* registry = &approvedTestPlugins()) {
     PlaybackOptions o = testOptions();
     o.pluginHosts = PluginHosts{{"clap", &host}};
+    o.pluginRegistry = registry;
     return o;
+}
+
+// Sets an environment variable for the length of a scope; empty is unset for the
+// test plugin.
+class ScopedEnvironment {
+public:
+    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
+    ~ScopedEnvironment() { set(""); }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(name_, value);
+#else
+        setenv(name_, value, 1);
+#endif
+    }
+
+    const char* name_;
+};
+
+// A copy of siann_test_plugin no scan lists, in <directory>/siann-unscanned-copy.
+fs::path unscannedCopy(const fs::path& directory) {
+    const fs::path original(SIANN_TEST_PLUGIN_CLAP);
+    const fs::path home = directory / "siann-unscanned-copy";
+    fs::create_directories(home);
+    const fs::path copy = home / original.filename();
+    fs::copy(original, copy, fs::copy_options::recursive);
+    return copy;
+}
+
+// What siann_test_plugin's entry point wrote to SIANN_TEST_PLUGIN_MARKER: one line
+// per library it ran in.
+std::string markerText(const fs::path& marker) {
+    std::error_code ec;
+    return fs::exists(marker, ec) ? io::readFile(marker) : std::string();
 }
 
 // Pumps like Live::pump, and services the CLAP host on the main thread as the
@@ -152,9 +213,15 @@ TEST_CASE("plugin table: a plugin that fails while running reports plugin_failed
 TEST_CASE("plugin table: a plugin that cannot load passes audio through and reports missing", "[playback][plugin]") {
     Fixture f;
     host::ClapPluginHost host;
+    // An approved install that has gone since it was registered.
+    const fs::path gone = f.dir.path() / "missing.clap";
+    host::PluginRegistry registry;
+    registry.addScanned("clap", gone.string(), "missing");
+    registry.setProbed("clap", gone.string(), "org.siann.gone", "Gone");
+    registry.approve("clap", gone.string(), true);
     const std::string blob = "\"sha256:" + std::string(64, 'e') + "\"";
-    f.exec(insertSlot("slt_gone", "trk_a", (f.dir.path() / "missing.clap").string(), blob));
-    Live live(f.session, pluginOptions(host));
+    f.exec(insertSlot("slt_gone", "trk_a", gone.string(), blob, "org.siann.gone"));
+    Live live(f.session, pluginOptions(host, &registry));
     pump(live, host, 8);
     const auto status = live.engine.plugins().status("slt_gone");
     REQUIRE(status.has_value());
@@ -265,7 +332,7 @@ TEST_CASE("plugin table: a reused slot id with another state loads it while the 
     CHECK(table.size() == 1);
     // What plays is the new state: the document rendered with its own instances
     // (gain 0.25), the plugin's 64 frames late as in playback.
-    RenderInstanceSet set(f.doc(), PluginHosts{{"clap", &host}}, f.bundle(), kBlock);
+    RenderInstanceSet set(f.doc(), PluginHosts{{"clap", &host}}, &approvedTestPlugins(), f.bundle(), kBlock);
     auto graph = engine::compileDocument(f.doc(), engine::loadMedia(f.doc(), f.bundle()), kBlock, &set);
     const media::AudioBuffer reference = engine::renderGraph(*graph, 0, framesOf(live), 48'000);
     const int latency = reloaded->latencyFrames();
@@ -480,7 +547,7 @@ TEST_CASE("plugin table: a render drives its own instances beside the live graph
     REQUIRE(eventually([&] { return device.callbacks() > 4; }));
 
     // Instantiated on this thread from the slots' blobs, driven on another.
-    auto set = std::make_unique<RenderInstanceSet>(f.doc(), options.pluginHosts, f.bundle(), kBlock);
+    auto set = std::make_unique<RenderInstanceSet>(f.doc(), options.pluginHosts, options.pluginRegistry, f.bundle(), kBlock);
     host::PluginInstance* rendering = set->instance("slt_1");
     REQUIRE(rendering != nullptr);
     CHECK(rendering != engine.plugins().instance("slt_1"));
@@ -515,10 +582,10 @@ TEST_CASE("plugin table: compileForPlayback makes every loaded slot addressable"
     Fixture f;
     host::ClapPluginHost host;
     f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
-    f.exec(insertSlot("slt_gone", "trk_b", (f.dir.path() / "missing.clap").string()));
+    f.exec(insertSlot("slt_gone", "trk_b", (f.dir.path() / "missing.clap").string(), "null", "org.siann.gone"));
     CHECK(playback::pluginSlotKey("slt_1") != playback::trackSlotKey("slt_1"));
     PlaybackOptions options = pluginOptions(host);
-    PluginInstanceTable table(options.pluginHosts, f.bundle(), 48'000, kBlock);
+    PluginInstanceTable table(options.pluginHosts, options.pluginRegistry, f.bundle(), 48'000, kBlock);
     playback::CompiledPlayback compiled = playback::compileForPlayback(f.doc(), f.bundle(), options, &table);
     const auto found = compiled.slots.find(playback::pluginSlotKey("slt_1"));
     REQUIRE(found != compiled.slots.end());
@@ -559,4 +626,154 @@ TEST_CASE("plugin table: a parameter set through the dispatcher reaches a CLAP s
     CHECK(instance->control().getParameter(gain) == Approx(0.25));
     pump(live, host, 2);
     CHECK(instance->control().getParameter(gain) == Approx(0.25));
+}
+
+// ---- m5-plugin-registry (Protocol v0 item 21) ---------------------------------
+
+namespace {
+
+std::string blobPathError(const std::string& stateBlob) {
+    try {
+        (void)playback::blobPath("bundle", stateBlob);
+    } catch (const host::PluginError& error) {
+        return error.code();
+    }
+    return "no error";
+}
+
+model::PluginSlot testSlot(const std::string& path, const std::string& uid = "org.siann.test-plugin") {
+    model::PluginSlot slot;
+    slot.id = "slt_1";
+    slot.trackId = "trk_a";
+    slot.format = "clap";
+    slot.uid = uid;
+    slot.path = path;
+    return slot;
+}
+
+}  // namespace
+
+TEST_CASE("plugin table: blobPath names a file only for sha256 and 64 lowercase hex digits", "[playback][plugin]") {
+    const std::string hex(64, 'a');
+    CHECK(playback::blobPath("bundle", "sha256:" + hex) == fs::path("bundle") / "blobs" / hex);
+    CHECK(blobPathError("sha256:../../x") == "bad_state");
+    CHECK(blobPathError("sha256:" + std::string(63, 'a')) == "bad_state");
+    CHECK(blobPathError("sha256:" + std::string(64, 'A')) == "bad_state");
+    CHECK(blobPathError(hex) == "bad_state");
+}
+
+TEST_CASE("plugin table: a state blob that is not a hash reads nothing outside the bundle's blobs",
+          "[playback][plugin]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    // A real state with gain 0.25, planted where sha256:../../x would lead.
+    const std::string hash = writeBlob(host, f.bundle(), 0.25);
+    const fs::path planted = f.bundle() / "blobs" / ".." / ".." / "x";
+    fs::copy_file(playback::blobPath(f.bundle(), hash), planted, fs::copy_options::overwrite_existing);
+    model::PluginSlot slot = testSlot(SIANN_TEST_PLUGIN_CLAP);
+    slot.stateBlob = "sha256:../../x";
+    const playback::LoadedPlugin loaded = playback::loadPlugin(slot, PluginHosts{{"clap", &host}}, &approvedTestPlugins(),
+                                                               f.bundle(), 48'000, kBlock);
+    REQUIRE(loaded.instance != nullptr);
+    REQUIRE(loaded.error.has_value());
+    CHECK(loaded.error->code == "bad_state");
+    CHECK(loaded.instance->control().getParameter(parameterIndex(*loaded.instance, "gain")) == Approx(1.0));
+}
+
+TEST_CASE("plugin table: a slot loads its uid's registered install, never the path it names",
+          "[playback][plugin][registry]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    const fs::path marker = f.dir.path() / "marker.txt";
+    const ScopedEnvironment watch("SIANN_TEST_PLUGIN_MARKER", marker.string());
+    const fs::path copy = unscannedCopy(f.dir.path());
+    f.exec(insertSlot("slt_1", "trk_a", copy.string()));
+    Live live(f.session, pluginOptions(host));
+    PluginInstanceTable& table = live.engine.plugins();
+    REQUIRE(table.instance("slt_1") != nullptr);
+    CHECK_FALSE(table.status("slt_1")->error.has_value());
+    pump(live, host, 2);
+    CHECK(markerText(marker).find("siann-unscanned-copy") == std::string::npos);
+    // The marker does see the copy once something opens it.
+    (void)host.scanPath(copy.string());
+    CHECK(markerText(marker).find("siann-unscanned-copy") != std::string::npos);
+}
+
+TEST_CASE("plugin table: an unknown uid never opens the library its path names", "[playback][plugin][registry]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    const fs::path marker = f.dir.path() / "marker.txt";
+    const ScopedEnvironment watch("SIANN_TEST_PLUGIN_MARKER", marker.string());
+    const fs::path copy = unscannedCopy(f.dir.path());
+    const std::string blob = "\"sha256:" + std::string(64, 'e') + "\"";
+    f.exec(insertSlot("slt_1", "trk_a", copy.string(), blob, "org.example.unknown"));
+    Live live(f.session, pluginOptions(host));
+    pump(live, host, 4);
+    const auto status = live.engine.plugins().status("slt_1");
+    REQUIRE(status.has_value());
+    CHECK_FALSE(status->running);
+    REQUIRE(status->error.has_value());
+    CHECK(status->error->code == "plugin_not_registered");
+    CHECK(status->error->message.find("unregistered_path") != std::string::npos);
+    CHECK(f.doc().pluginSlot("slt_1")->stateBlob.has_value());
+    CHECK(markerText(marker).find("siann-unscanned-copy") == std::string::npos);
+    CHECK(matches(live, offline(f.doc(), f.bundle(), framesOf(live)), 1, live.blockCount()));  // dry
+}
+
+TEST_CASE("plugin table: a registered install that is not approved does not load", "[playback][plugin][registry]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    host::PluginRegistry registry;
+    registry.addScanned("clap", SIANN_TEST_PLUGIN_CLAP, "siann_test_plugin");
+    registry.setProbed("clap", SIANN_TEST_PLUGIN_CLAP, "org.siann.test-plugin", "SIANN Test Plugin");
+    f.exec(insertSlot("slt_1", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    Live live(f.session, pluginOptions(host, &registry));
+    const auto status = live.engine.plugins().status("slt_1");
+    REQUIRE(status.has_value());
+    CHECK_FALSE(status->running);
+    REQUIRE(status->error.has_value());
+    CHECK(status->error->code == "plugin_not_approved");
+
+    // A render loads through the same registry: the slot renders dry.
+    RenderInstanceSet set(f.doc(), PluginHosts{{"clap", &host}}, &registry, f.bundle(), kBlock);
+    CHECK(set.instance("slt_1") == nullptr);
+    REQUIRE(set.failures().count("slt_1") == 1);
+    CHECK(set.failures().at("slt_1").code == "plugin_not_approved");
+
+    // Without any registry nothing loads.
+    RenderInstanceSet none(f.doc(), PluginHosts{{"clap", &host}}, nullptr, f.bundle(), kBlock);
+    CHECK(none.instance("slt_1") == nullptr);
+    CHECK(none.failures().at("slt_1").code == "plugin_not_registered");
+}
+
+TEST_CASE("plugin table: a refused hint is never opened and its reason is in the message",
+          "[playback][plugin][registry]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    const fs::path marker = f.dir.path() / "marker.txt";
+    const ScopedEnvironment watch("SIANN_TEST_PLUGIN_MARKER", marker.string());
+    const PluginHosts hosts{{"clap", &host}};
+
+    // A real library inside the bundle.
+    const fs::path inside = unscannedCopy(f.bundle() / "plugins");
+    const auto fromBundle = playback::loadPlugin(testSlot(inside.string(), "org.example.unknown"), hosts,
+                                                 &approvedTestPlugins(), f.bundle(), 48'000, kBlock);
+    CHECK(fromBundle.instance == nullptr);
+    REQUIRE(fromBundle.error.has_value());
+    CHECK(fromBundle.error->code == "plugin_not_registered");
+    CHECK(fromBundle.error->message.find("inside_bundle") != std::string::npos);
+
+    const auto unc = playback::loadPlugin(testSlot(R"(\\server\share\siann_test_plugin.clap)", "org.example.unknown"),
+                                          hosts, &approvedTestPlugins(), f.bundle(), 48'000, kBlock);
+    CHECK(unc.instance == nullptr);
+    REQUIRE(unc.error.has_value());
+    CHECK(unc.error->code == "plugin_not_registered");
+    CHECK(unc.error->message.find("unc_path") != std::string::npos);
+
+    // A refused hint on a known uid: ignored, and the registered install loads.
+    const auto known = playback::loadPlugin(testSlot(inside.string()), hosts, &approvedTestPlugins(), f.bundle(),
+                                            48'000, kBlock);
+    CHECK(known.instance != nullptr);
+    CHECK_FALSE(known.error.has_value());
+    CHECK(markerText(marker).find("siann-unscanned-copy") == std::string::npos);
 }
