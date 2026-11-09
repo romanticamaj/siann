@@ -576,7 +576,7 @@ TEST_CASE("the registry file keeps approvals for the next engine host", "[engine
 }
 
 TEST_CASE("a malformed registry file is one diagnostic and an empty registry", "[engine][plugin][registry]") {
-    for (const std::string text : {std::string("{not json"), std::string(R"({"schema":"other","plugins":[]})"),
+    for (const std::string& text : {std::string("{not json"), std::string(R"({"schema":"other","plugins":[]})"),
                                    std::string(R"({"schema":"siann.plugin_registry.v0","plugins":[{"format":7}]})")}) {
         INFO(text);
         Fixture fixture;

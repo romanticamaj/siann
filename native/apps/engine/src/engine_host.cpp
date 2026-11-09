@@ -70,10 +70,10 @@ protocol::PluginRegistryEntry entryOf(const host::PluginInstall& install) {
 }
 
 const json::Value& member(const json::Value& object, std::string_view key, json::Value::Kind kind,
-                          const std::string& where) {
+                          const char* where) {
     const json::Value* found = object.find(key);
     if (found == nullptr || found->kind() != kind) {
-        badRegistry(where + " needs " + std::string(key) + " of the right type");
+        badRegistry(std::string(where) + " needs " + std::string(key) + " of the right type");
     }
     return *found;
 }
