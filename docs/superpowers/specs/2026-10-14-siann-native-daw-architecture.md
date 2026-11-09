@@ -2517,7 +2517,7 @@ review instead of pushing on.
 | M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems | Production-level criteria list passes | — |
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
 
-### Status (2026-11-06)
+### Status (2026-11-09)
 
 M1 is done (status as of 2026-10-21 below). M2 is exit pending: every feature
 is merged (PRs #14, #16 to #18, #20, #21, #24 to #30, #35 and #36), four exit
@@ -2525,7 +2525,10 @@ criteria are met with passing tests in CI (the long recording test included),
 and two need the device bench on the maintainer's machine (see "M2 exit check
 (2026-11-04)"). M3 is done: every feature is merged (PRs #38 to #43) and both
 exit criteria are met with tests that pass in CI (see "M3 exit check
-(2026-11-06)").
+(2026-11-06)"). M4 is exit pending: every feature is merged (PRs #52, #53, #55,
+#56, #58 and #60), the plugin tests pass in CI and on the maintainer's machine
+with TDR Nova and SlickEQ, and the pluginval runs on the compatibility set (and
+its macOS AU half) need the maintainer (see "M4 exit check (2026-11-09)").
 
 M4 interim note (m4-engine-device): `siann-engine` loads its session into a
 `PlaybackEngine` and runs the graph driver on a device. `EngineHost`
@@ -2738,6 +2741,28 @@ Seen during the check, outside M3: the scheduled "Long tests" run on `main`
 killed at 9 minutes recovers every flushed block" (`content.mismatchAt` was
 22,782,208, a sample off the counter, after recovery); ubuntu-latest passed.
 It belongs to `m2-exit-record` and is a follow-up for M2.
+
+M4 exit check (2026-11-09), on `main` at bd7daf2. CI on that commit is green
+(run 42574475057, every job: Node bridge, native core on Windows, macOS and
+Linux with 640 ctest tests each, the JUCE desktop host on all three with 693,
+695 and 690, the Electron shell on all three, and RTSan with 644), and its
+desktop jobs pass pluginval v1.0.4 at strictness 5 on `siann_test_plugin.vst3`
+(Linux and macOS) and its AU (macOS). `node scripts/check-all.js --gcc
+--desktop` on the exit branch passes on the maintainer's Windows machine with
+`SIANN_TEST_VST3` set to TDR Nova (Node tests, dev and desktop presets built and
+tested, g++ -Werror syntax check).
+
+| M4 exit criterion | Status | Evidence |
+|---|---|---|
+| Third-party plugins load, save state, compensate latency and survive restart; capability flags are exposed to agents (`m4-exit-plugins`) | Plugin tests met; pluginval on the chosen plugins needs the maintainer | Load, state and latency: "plugin host: the maintainer's VST3 loads, keeps its state, reports latency and opens its editor" (`[juce][plugin][thirdparty]`) passes on Windows with TDR Nova (87 assertions: state round trip of every parameter, reported latency equal to the measured delay of an impulse, editor) and with TDR VOS SlickEQ (34 assertions); in CI "plugin host: Apple AUPeakLimiter loads in CI" runs the same third-party check on macOS. The hosting contract is covered on `siann_test_plugin` (VST3, AU, CLAP) by the `[juce][plugin]` and `[clap][plugin]` tests (state blobs, runtime latency changes, restarts during playback). Compensation in the graph: "PDC null test: a latency-reporting plugin on one track still lines up with the other" (`[engine][plugin][pdc]`), "plugin table: a restart to a new latency recompiles and PDC still lines up" and "PluginNode reports the instance's latency and its changes". Restart: "a plugin crash during playback ends the engine, and the relaunch recovers the session" and "a crash asked for while stopped lands at the first block played, and the relaunch recovers" (`[engine][launch][crash]`, the hostile plugin's crash parameter; `session.sync` returns the pre-crash revision and document hash, and playback advances), the Playwright e2e "a plugin crash during playback restarts the engine and the renderer reconnects to the recovered session" (`app/test/e2e/crash.spec.ts`, Electron shell job in CI), and "plugin table: a state blob loads, and a missing one loads the default state". Capability flags: "engine.capabilities lists the plugin methods, formats and flags", "engine.status carries plugins[] with nulls for a missing plugin" (`[protocol][plugin]`) and "the desktop engine lists its JUCE formats and a VST3's capability flags" (`[engine][launch][juce]`). Owed by the maintainer: `SIANN_PLUGINVAL=<pluginval v1.0.4> node scripts/pluginval.js --compat` (no pluginval on this machine; Surge XT, VST3 and CLAP, is not installed yet), with Superior Drummer 3, UAD 1176 and HALion Sonic when authorised, and on the macOS machine `SIANN_TEST_AU` and the AU half of `--compat` with TDR Nova and Surge XT. The third-party restart is proven on the built-in plugins only: a crash relaunch with a third-party plugin in the session is part of the same maintainer run if wanted. |
+
+Seen during the check, outside the exit criterion: two `main` runs went red
+after a merge and green on the next commit, neither in M4 code paths. Run
+42472787360 (PR #56) failed fetching JUCE (HTTP 504 from GitHub); run
+42532033151 (PR #58) failed on macos-latest in "On a paced device with a butler
+thread, play, locate and stop run clean" (one of 637, M2's paced-device test),
+which passed on every later run. The latter is a flake to watch as an M2
+follow-up.
 
 ## Risks
 
