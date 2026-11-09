@@ -52,6 +52,19 @@ and hand its native handle to the host, which then runs the gui extension's
 create, set_parent and show on the main thread. Editors in the headless target stay
 out, as the spec says.
 
+## Before M5: the M4 exit's third-party restart (from PR #62)
+
+The M4 exit check (2026-11-09) proved the restart only with the built-in plugins.
+Decided by Fable, delegated by the maintainer, 2026-11-09: M4 stays
+`exit_pending` with the maintainer's pluginval runs owed (runbook, "Human gates by
+milestone"), and M5 starts. An agent closes the restart gap in one small PR beside
+M5's first feature: a `[engine][launch][crash][thirdparty]` case in
+`engine_launch_test.cpp` puts the `SIANN_TEST_VST3` plugin in slot A with one
+parameter set and the hostile plugin in slot B, crashes the engine through
+`plugin.set_parameter`, relaunches, and checks slot A is `running` with its
+parameter and latency restored. It SKIPs naming the variable when unset. Run it here
+with TDR Nova, and on the Mac through `siann-macos`.
+
 ## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
 
 Taken into `m4-plugin-node` (decided by Fable, delegated by the maintainer,

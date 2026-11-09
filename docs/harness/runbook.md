@@ -75,7 +75,7 @@ Progress: `/workflows`. Each feature lands as its own PR, merged only after CI i
 | M2 | Exit runs on your audio interface (xrun bench at 256 samples). The 10-minute record + kill runs on the fake device in the `long-tests` workflow (`siann_cli_tests "[long]"`, scheduled or `workflow_dispatch`); trigger it once after merge and check it is green |
 | M3 | — |
 | M0 | Apple Developer ID and notarization key (asked before storing secrets), macOS hands-on (since M4 the editor opens through the protocol: `command.execute` `track.add`, `plugin.instantiate`, then `plugin.open_editor`; the engine's `--open-editor` flag and the shell's `SIANN_OPEN_EDITOR` are gone), choice of test plugins |
-| M4 | Choice of third-party plugins |
+| M4 | Choice of third-party plugins; exit: `node scripts/pluginval.js --compat` on Windows (install pluginval and Surge XT first; SD3, UAD 1176 and HALion Sonic when authorised), and on the Mac the `SIANN_TEST_AU` run plus the AU half of `--compat` |
 | M5 | React or Svelte, UX review |
 | M6b | One-hour 16-track recording run |
 | M6c | Reference machines for the 64-track criterion |
