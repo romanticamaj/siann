@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { engineArgs } from './engine-args';
+import { engineArgs, pluginRegistryFile } from './engine-args';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
 
 // native/libs/protocol/include/siann/protocol/protocol_server.hpp, kAppOrigin.
@@ -120,6 +120,7 @@ const supervisor = new EngineSupervisor({
       platform: process.platform,
       windowHandle: mainWindow && !mainWindow.isDestroyed() ? mainWindow.getNativeWindowHandle() : null,
       backoff,
+      pluginRegistry: pluginRegistryFile(app.getPath('userData')),
       testArgs: engineTestArgs,
     }),
   backoff,
