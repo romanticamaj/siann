@@ -101,6 +101,8 @@ public:
     protocol::TransportState stop() override;
     protocol::TransportState locate(std::int64_t frames) override;
     protocol::EngineStatus status() const override;
+    std::vector<protocol::DeviceDescription> devices() const override;
+    protocol::DeviceInfo selectDevice(const std::string& id) override;
 
     // protocol::PluginPort, on the command thread.
     protocol::PluginInstantiateResult instantiate(const protocol::PluginInstantiateRequest& request) override;

@@ -453,4 +453,12 @@ protocol::EngineStatus EngineHost::status() const {
     return out;
 }
 
+std::vector<protocol::DeviceDescription> EngineHost::devices() const {
+    throw protocol::TransportPortError("not_supported", "engine.devices is not implemented yet");
+}
+
+protocol::DeviceInfo EngineHost::selectDevice(const std::string&) {
+    throw protocol::TransportPortError("not_supported", "engine.select_device is not implemented yet");
+}
+
 }  // namespace siann::engine_app
