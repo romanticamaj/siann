@@ -5,7 +5,12 @@
 //
 //   siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
 //                [--owner-window <handle>]
-//                [--device <id>] [--fake-callback-nanos N]
+//                [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
+//                [--fake-callback-nanos N] [--fake-open-failures N] [--test-wedge]
+//
+// --test-wedge is test-only: the engine serves with no stop flag, so it ignores
+// stdin EOF and SIGTERM as a wedged engine does (the shell's bounded-quit e2e). It
+// is a usage error unless the environment has SIANN_SHELL_TEST=1.
 //
 // Opens the bundle, or creates a new empty session there when the directory
 // does not exist, loads it into the playback graph on a device (EngineHost; a
