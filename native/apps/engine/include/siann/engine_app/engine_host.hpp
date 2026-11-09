@@ -149,6 +149,7 @@ private:
     host::PluginInstance& requireInstance(const std::string& slotId) const;
     void fillRegistry(const std::vector<std::string>& pluginDirs);
     void keepRegistry() const;
+    std::optional<std::string> installRefusal(const std::string& path) const;
 
     // The plugin hosts, before the engine whose instances they made.
     std::unique_ptr<PluginHostSet> pluginHosts_;

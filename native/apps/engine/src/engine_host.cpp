@@ -14,6 +14,7 @@
 #include "siann/host/plugin_error.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
+#include "siann/model/document.hpp"
 #include "siann/playback/plugin_instances.hpp"
 #if defined(SIANN_ENGINE_WITH_JUCE)
 #include "siann/host/juce_plugin_host.hpp"
@@ -328,6 +329,9 @@ void EngineHost::shutdown() {
 
 // What scan lists over the standard directories and `pluginDirs`, which runs no
 // plugin code, then what the registry file says of those paths. Nothing is probed.
+// A listed path inside the session's bundle or on a share is not registered,
+// wherever it was found (a --plugin-dir holding the bundle, a CLAP_PATH entry):
+// the code a downloaded bundle ships never loads (Protocol v0 item 21).
 void EngineHost::fillRegistry(const std::vector<std::string>& pluginDirs) {
     std::set<host::PluginHost*> scanned;  // vst3 and au share the JUCE host
     for (const auto& [format, pluginHost] : pluginHosts_->byFormat()) {
@@ -336,6 +340,10 @@ void EngineHost::fillRegistry(const std::vector<std::string>& pluginDirs) {
         }
         try {
             for (const host::PluginDescriptor& found : pluginHost->scan(pluginDirs)) {
+                if (const auto refused = installRefusal(found.path)) {
+                    say("the " + found.format + " plugin " + found.path + " is not registered (" + *refused + ")");
+                    continue;
+                }
                 registry_.addScanned(found.format, found.path, found.name);
             }
         } catch (const std::exception& error) {
@@ -390,6 +398,9 @@ protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, con
         throw protocol::PluginPortError("plugin_not_registered", "unregistered_path: no " + format +
                                                                      " plugin is registered at " + path);
     }
+    if (const auto refused = installRefusal(install->path)) {
+        throw protocol::PluginPortError("plugin_not_registered", install->path + " is refused (" + *refused + ")");
+    }
     const host::PluginInstall before = *install;
     if (approved && !install->uid) {
         // The user's choice to run this code: probe it now.
@@ -423,6 +434,11 @@ protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, con
         throw;
     }
     return entryOf(*registry_.find(format, installPath));
+}
+
+// Why an install's path may not load: on a share, or inside the session's bundle.
+std::optional<std::string> EngineHost::installRefusal(const std::string& path) const {
+    return model::pluginPathRefusal(path, session_.bundlePath());
 }
 
 // ---- PluginPort ----------------------------------------------------------------
@@ -466,6 +482,10 @@ protocol::PluginInstantiateResult EngineHost::instantiate(const protocol::Plugin
             throw protocol::PluginPortError(resolved.code, resolved.message);
         }
         chosen = std::move(*resolved.install);
+    }
+    if (const auto refused = installRefusal(chosen.path)) {
+        throw protocol::PluginPortError("plugin_not_registered", "the registered install at " + chosen.path +
+                                                                     " is refused (" + *refused + ")");
     }
     try {
         host::PluginDescriptor descriptor;

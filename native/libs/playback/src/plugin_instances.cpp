@@ -46,6 +46,15 @@ LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts,
         loaded.error = PluginProblem{resolved.code, resolved.message};
         return loaded;
     }
+    // The install's own path too: a library inside the bundle or on a share is
+    // never opened, however it came to be registered (Protocol v0 item 21).
+    if (const auto installRefusal = model::pluginPathRefusal(resolved.install->path, bundle)) {
+        loaded.error = PluginProblem{"plugin_not_registered", "the registered install of " + slot.format +
+                                                                  " plugin " + slot.uid + " at " +
+                                                                  resolved.install->path + " is refused (" +
+                                                                  *installRefusal + ")"};
+        return loaded;
+    }
     try {
         loaded.instance = host->second->instantiate(descriptorOf(slot, *resolved.install), sampleRate, maxBlockFrames);
     } catch (const host::PluginError& error) {
