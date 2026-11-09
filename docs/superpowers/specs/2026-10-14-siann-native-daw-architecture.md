@@ -287,7 +287,9 @@ years. Milestones are designed so that something useful exists at every stage.
   `engine.status` shows `device: null` with `deviceError {code, message}`, and
   `transport.play`, `transport.stop` and `transport.locate` answer `no_device`. A
   session whose media cannot be loaded is served the same way, with the code in
-  `deviceError`, and nothing is heard until a relaunch after its media is back. That
+  `deviceError`, the host builds the graph again at every new head while the first
+  graph could not be built, and plays once a commit no longer needs the missing file
+  (m5-engine-sessions-devices: no relaunch). That
   is any failure to build the first graph: the engine's `media_missing`,
   `media_hash_mismatch` and `media_mismatch`, the readers' `unsupported_media`,
   `decode_failed` and `too_large`, and `load_failed` for anything else (an I/O error,
@@ -303,8 +305,11 @@ years. Milestones are designed so that something useful exists at every stage.
   doubling from `initialMs` to `maxMs`; the count resets once a device has run for
   `resetAfterMs`. A relaunch after a crash that finds the device still held is this
   same path. Unlike the shell's restarts the retries never give up, because the engine
-  is serving and a device can come back at any time; `no_audio_backend` and a session
-  that did not load are not retried. Each new reason goes to stderr once, and
+  is serving and a device can come back at any time; `no_audio_backend` is not
+  retried, and a session that did not load is built again at its next head, not on
+  a timer. `engine.select_device {id}` (Protocol v0 item 22) closes the running
+  device and opens the named one through this same path, its retry count from zero.
+  Each new reason goes to stderr once, and
   `engine.status` shows the latest in `deviceError`. A reopened device starts stopped
   at the playhead, its counters from zero. An open runs on the main thread, so a slow
   one delays a tick, never audio.
@@ -2162,7 +2167,10 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     `session_mismatch`; subscribed connections receive `session.opened {sessionId,
     revision, documentHash}` (the event carries the new `sessionId`). A path that
     does not exist is `not_found`; without an `openSession` callback the method is
-    `not_supported`.
+    `not_supported`. A bundle whose lock another live process holds ("Session
+    bundle") answers `session_locked`, and the old session stays served; so does any
+    other `SessionError` the open throws, with its code (`siann-engine` since
+    m5-engine-sessions-devices, item 22).
 
 Protocol v0, launcher (decided with m0-electron-shell):
 
@@ -2194,7 +2202,10 @@ Protocol v0, launcher (decided with m0-electron-shell):
     pipe, so a dead launcher never leaves an orphan) and on SIGTERM / CTRL_BREAK.
     A bad launch (a `--session` that is an existing file, a bad option) exits 1
     with one JSON error `{ok: false, error: {code, message}}` as the last line of
-    stderr (JUCE and plugins may print before it) and nothing on stdout. Electron reads the ready line and exposes only
+    stderr (JUCE and plugins may print before it) and nothing on stdout. A bundle
+    another live engine (or any process holding a `Session` on it) serves is such a
+    launch: exit 1 with `session_locked` (m5-engine-sessions-devices; "Session
+    bundle", `lock`). Electron reads the ready line and exposes only
     `{port, token}` to the renderer through the preload bridge; `mcpToken` stays
     in the main process.
 
@@ -2230,8 +2241,11 @@ Protocol v0, transport and engine status (decided with m4-engine-device):
     `ServerOptions::transportPort` (`protocol::TransportPort`; siann-protocol does not
     link the playback engine); without one they are `not_supported`, and without a
     running device `no_device` is the transport methods' answer, a new stable code.
-    They are not MCP tools yet: item 14 wraps tools onto methods, not every method
-    onto a tool.
+    MCP tools wrap them one to one (item 14, m5-engine-sessions-devices): `play`,
+    `stop`, `locate {frames}`, `engine_status` and `list_devices` (item 22) in the
+    propose scope, and `select_device {id}` in the trusted scope, because it changes
+    the device the served session plays on for every client (an agent may listen and
+    move the playhead, not take the user's output away).
 
 Protocol v0, plugins (decided 2026-11-08 by Fable, delegated by the maintainer,
 with the M4 wave 2 and 3 plans):
@@ -2283,6 +2297,44 @@ with the M4 wave 2 and 3 plans):
     carrying a test plugin's crash trigger in its state blob, because a durable
     trigger re-crashes the relaunched engine at its first block (the fake device
     runs callbacks while stopped) and the shell gives up after five restarts.
+
+Protocol v0, devices and sessions (decided with m5-engine-sessions-devices; item 21
+is m5-plugin-registry's):
+
+22. `engine.devices {}` returns `{devices: [{id, type, name, isDefault, current}]}`.
+    `id` is what `--device` takes: `fake` on every build (`type` `"fake"`, `name`
+    `"fake"`, `isDefault` false), and on a `SIANN_WITH_JUCE` build `<type>/<name>`
+    for every output device `JuceAudioDevice::listOutputDevices()` reports, the same
+    enumeration `siann-cli devices` prints, `isDefault` as JUCE reports it for each
+    device type. `current` marks the device the engine runs or is trying to open:
+    the entry whose `id` is the selected one, or the first `isDefault` entry (the
+    default output device of the first type, which the engine opens) when it was
+    launched without `--device` and nothing was selected since. `engine.select_device {id}` returns `engine.status`'s `device` object (or
+    null, see below). An `id` not in the list is `not_found` and leaves the current
+    device running. Otherwise the host stops the transport and the driver, closes the
+    running device and opens the named one on the main thread exactly as a reopen
+    does ("Process model": stopped at the playhead, counters from zero), its backoff
+    count from zero. When that open fails the method answers `device_open_failed`
+    (or the device's own code), the old device stays closed, `engine.status` shows
+    `deviceError`, and the main thread's tick keeps retrying the named device under
+    the backoff. While the session's first graph could not be built, the host
+    remembers the choice for when it can and answers the current `deviceError`'s
+    code. A missing or non-string `id` is `invalid_params`. Both go through the
+    command thread, honour `expectedRevision` and the idempotency cache, are in
+    `engine.capabilities`' `methods`, and reach the engine through `TransportPort`
+    (`devices`, `selectDevice`); without a port both are `not_supported`.
+    `session.open {path}` (item 16) works in `siann-engine`: `ServerOptions::
+    openSession` opens the new `Session` (taking its lock, so a locked bundle is
+    `session_locked` and nothing changes) and rebinds the `EngineHost` to it, a new
+    `PlaybackEngine`, `Auditioner` and meter publisher (a new `meters.legend`),
+    pending `plugin.instantiate` instances dropped. The device object is kept, never
+    closed or recreated: the new engine's driver opens it again at the new session's
+    rate exactly as at launch, so a rate change renegotiates and no `deviceError` or
+    backoff cycle results. The old session is destroyed after the rebind, which
+    releases its bundle's lock; render jobs already queued keep their own snapshot
+    and bundle path. `AuditionPort` is one object for the host's life, so an engine
+    whose session recovers or is replaced keeps `audition.hear`. Documented in
+    docs/schemas/protocol-engine-v0.md.
 
 ## Plugin editor windows
 
@@ -2339,6 +2391,8 @@ Decisions of 2026-11-05 (m3-audition):
 MySong.siann/                    a directory
   session.json                   latest checkpoint, JCS canonical JSON
   journal.ndjson                 append-only WAL, all revisions (no rotation in M1)
+  lock                           {pid, startedAt}, held exclusively while a process serves
+                                 the bundle; a lock whose pid is dead is taken over
   media/recording/               in-progress takes and their manifests
   checkpoints/                   older checkpoints (bounded)
   media/<sha256>.<ext>           content-addressed audio and MIDI files
@@ -2349,6 +2403,17 @@ MySong.siann/                    a directory
   trash/                         unreferenced takes, purged only on request
 ```
 
+- The lock (m5-engine-sessions-devices): `Session::create` and `Session::open` create
+  `lock` exclusively (`O_CREAT | O_EXCL` on POSIX, `CREATE_NEW` on Windows) with
+  `{pid, startedAt}` as JSON and remove it when the `Session` is destroyed, so a
+  second `Session` on the bundle, in this process or another, throws `SessionError`
+  `session_locked`. A lock that exists is read: an unparseable one, or one whose pid
+  is not a live process (POSIX `kill(pid, 0)` failing with `ESRCH`; Windows
+  `OpenProcess` failing or `GetExitCodeProcess` not `STILL_ACTIVE`), is removed and
+  the exclusive create tried once more. A crash leaves the file; the next open takes
+  it over. `siann-cli info` and `verify` on a bundle an engine serves answer
+  `session_locked` too. A reused pid keeps a stale lock alive until that process
+  ends; the user removes the file by hand then.
 - Atomic writes everywhere (temp + rename). Version field and migration functions
   for every format change.
 - Missing media is reported on open with relink by hash.
@@ -2543,9 +2608,11 @@ M4 interim note (m4-engine-device): `siann-engine` loads its session into a
 meter publisher, and serves `protocol::TransportPort` and `protocol::AuditionPort`,
 so `command.execute`, `plan.apply`, undo and redo reach the live graph and
 `audition.hear` works in the engine process. The main thread is the command and
-control thread for now ("Process model"). `session.open` stays `not_supported` in
-`siann-engine` until the host can rebind inside it; that, a device selection method,
-and MCP tools for the transport and `engine.status` are follow-ups before M5.
+control thread for now ("Process model"). `session.open` rebinds the host inside
+`siann-engine`, `engine.devices` and `engine.select_device` list and choose the
+device, the transport and `engine.status` are MCP tools, the bundle is locked while
+served, and a session whose media could not load plays once a commit repairs it:
+done with m5-engine-sessions-devices (Protocol v0 item 22).
 
 M4 decisions (2026-11-08, Fable, delegated by the maintainer; the wave 2 and 3
 plans stopped on them): `render.start` keeps its snapshot and instantiates its
