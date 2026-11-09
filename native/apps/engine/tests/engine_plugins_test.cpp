@@ -383,7 +383,7 @@ TEST_CASE("plugin.set_parameter answers not_found and plugin_missing", "[engine]
     CHECK(codeOf(setParameterParams(slotId, "gain", 0.5)) == "not_found");  // a name is not an id
 
     rig.fixture.exec(R"({"op":"plugin.insert","trackId":"trk_b","index":0,"slotId":"slt_gone",
-        "descriptor":{"format":"clap","uid":"org.siann.test-plugin","path":"/nowhere/gone.clap"},
+        "descriptor":{"format":"clap","uid":"org.siann.gone","path":"/nowhere/gone.clap"},
         "stateBlob":"sha256:)" + std::string(64, 'c') + R"("})");
     rig.host->auditionPort()->mainCommitted();
     rig.pump(4);
@@ -530,7 +530,8 @@ TEST_CASE("a registered file that is not a plugin stays unapproved when its prob
     REQUIRE(registryEntry(rig.ok("plugin.registry"), broken) != nullptr);
     CHECK(errorCode(rig.harness->call(rig.connection, "plugin.approve", approveParams("clap", broken))) ==
           "plugin_load_failed");
-    const Value* entry = registryEntry(rig.ok("plugin.registry"), broken);
+    const Value after = rig.ok("plugin.registry");
+    const Value* entry = registryEntry(after, broken);
     REQUIRE(entry != nullptr);
     CHECK_FALSE(at(*entry, "approved").asBool());
     CHECK(at(*entry, "uid").kind() == Value::Kind::null);
@@ -564,7 +565,8 @@ TEST_CASE("the registry file keeps approvals for the next engine host", "[engine
     auto host = makeHost();
     Harness harness(fixture.session, serverOptions(*host));
     const protocol::ConnectionId c = harness.authed();
-    const Value* entry = registryEntry(harness.ok(c, "plugin.registry"), SIANN_TEST_PLUGIN_CLAP);
+    const Value listed = harness.ok(c, "plugin.registry");
+    const Value* entry = registryEntry(listed, SIANN_TEST_PLUGIN_CLAP);
     REQUIRE(entry != nullptr);
     CHECK(at(*entry, "approved").asBool());
     CHECK(at(*entry, "uid").asString() == "org.siann.test-plugin");
@@ -594,7 +596,8 @@ TEST_CASE("a malformed registry file is one diagnostic and an empty registry", "
             registryLines += line.find("plugin registry") != std::string::npos ? 1 : 0;
         }
         CHECK(registryLines == 1);
-        const Value* entry = registryEntry(harness.ok(c, "plugin.registry"), SIANN_TEST_PLUGIN_CLAP);
+        const Value listed = harness.ok(c, "plugin.registry");
+        const Value* entry = registryEntry(listed, SIANN_TEST_PLUGIN_CLAP);
         REQUIRE(entry != nullptr);  // scanned all the same
         CHECK_FALSE(at(*entry, "approved").asBool());
         host->shutdown();
