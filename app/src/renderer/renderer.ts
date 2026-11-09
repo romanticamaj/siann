@@ -31,6 +31,8 @@ const RECONNECT_MS = 250;
 let socket: WebSocket | null = null;
 let active: EngineEndpoint | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
+// WebSocket opens since this page loaded: a reload starts it again at 0.
+let connections = 0;
 
 function field(id: string): HTMLElement {
   const element = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -79,7 +81,11 @@ function connect(next: EngineEndpoint | null, force = false): void {
   setStatus('connecting');
   const ws = new WebSocket(`ws://127.0.0.1:${next.port}/`);
   socket = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: next.token }));
+  ws.onopen = () => {
+    connections += 1;
+    field('connections').textContent = String(connections);
+    ws.send(JSON.stringify({ type: 'auth', token: next.token }));
+  };
   ws.onmessage = (event: MessageEvent) => {
     if (socket !== ws || typeof event.data !== 'string') return;
     let message: { type?: string; ok?: boolean; sessionId?: string; revision?: string; about?: AboutInfo };
