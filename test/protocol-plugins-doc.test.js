@@ -60,3 +60,22 @@ test('the engine.status plugins[] prose says what midiOutputSysex counts in each
   assert.match(prose, /CLAP_EVENT_MIDI_SYSEX/);
   assert.match(prose, /Amendment 3/);
 });
+
+// Fix round 1 of m5-plugin-registry: the spec's Jobs v0 paragraph for
+// plugin.instantiate says what the engine host does since the registry: no probe
+// of its own, and the registry's codes before any plugin host is reached.
+const SPEC = path.join(__dirname, '..', 'docs', 'superpowers', 'specs', '2026-10-14-siann-native-daw-architecture.md');
+
+test('the spec\'s Jobs v0, plugins paragraph names the registry codes of plugin.instantiate', () => {
+  const text = fs.readFileSync(SPEC, 'utf8');
+  const start = text.indexOf('Jobs v0, plugins (m4-plugin-node');
+  assert.ok(start >= 0, 'the spec has the Jobs v0, plugins paragraph');
+  const end = text.indexOf('\n- Slot ids', start);
+  const item = text.slice(start, end < 0 ? text.length : end);
+  for (const word of ['plugin_not_registered', 'plugin_not_approved', 'plugin_not_found', 'registry',
+    'unregistered_path']) {
+    assert.ok(item.includes(word), `the paragraph mentions ${word}`);
+  }
+  assert.ok(!item.includes('probes and instantiates'), 'plugin.instantiate no longer probes');
+  assert.ok(!item.includes('`not_found`'), 'the PluginError code is plugin_not_found');
+});
