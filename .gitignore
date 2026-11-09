@@ -8,3 +8,4 @@ app/playwright-report/
 
 # CI cache of the JUCE source archive
 .juce-archive/
+.electron-cache/
