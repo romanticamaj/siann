@@ -61,6 +61,13 @@ struct EngineHostOptions {
     std::string deviceId;
     // Why there is no device, when `device` is nullptr.
     std::optional<protocol::DeviceProblem> deviceError;
+    // engine.devices: every device a client can select; current is set by the
+    // host. Empty: none.
+    std::function<std::vector<protocol::DeviceDescription>()> listDevices;
+    // engine.select_device: makes the device an id from listDevices names. May
+    // throw host::DeviceError (no_audio_backend). Empty: selection is
+    // not_supported.
+    std::function<std::unique_ptr<host::AudioDevice>(const std::string& id)> deviceFactory;
     int bufferFrames = 256;
     DeviceBackoff backoff{};
     // What the backoff reads; empty is the steady clock. Tests.

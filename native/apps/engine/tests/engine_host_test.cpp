@@ -67,15 +67,36 @@ public:
         }
         return inner.open(config);
     }
-    void start(host::AudioCallback callback) override { inner.start(std::move(callback)); }
+    void start(host::AudioCallback callback) override {
+        ++starts;
+        inner.start(std::move(callback));
+    }
     void setOnStopped(std::function<void(bool)> handler) override { inner.setOnStopped(std::move(handler)); }
-    void stop() override { inner.stop(); }
-    void close() override { inner.close(); }
+    void stop() override {
+        ++stops;
+        inner.stop();
+    }
+    void close() override {
+        ++closes;
+        inner.close();
+    }
 
     ManualAudioDevice inner;
     int refusals = 0;
     int opens = 0;
+    int starts = 0;
+    int stops = 0;
+    int closes = 0;
 };
+
+// What the rig's host lists (engine.devices): the device it starts on, two more
+// a client can select (one refuses its first open), and a default.
+std::vector<protocol::DeviceDescription> rigDevices() {
+    return {{"manual", "test", "manual", false, false},
+            {"b", "test", "b", false, false},
+            {"refusing", "test", "refusing", false, false},
+            {"test/default", "test", "default", true, false}};
+}
 
 EngineHostOptions manualOptions(std::unique_ptr<host::AudioDevice> device) {
     EngineHostOptions options;
@@ -91,6 +112,8 @@ struct Rig {
     Fixture fixture;
     HeldDevice* held = nullptr;
     ManualAudioDevice* device = nullptr;
+    // What the device factory made, in order (engine.select_device).
+    std::vector<HeldDevice*> made;
     std::vector<std::string> diagnostics;
     Clock::time_point now{};  // what the host's backoff sees: only advance() moves it
     std::unique_ptr<EngineHost> host;
@@ -111,7 +134,20 @@ struct Rig {
         options.diagnostic = [this](const std::string& line) { diagnostics.push_back(line); };
         options.backoff = kBackoff;
         options.clock = [this] { return now; };
+        options.listDevices = rigDevices;
+        options.deviceFactory = [this](const std::string& id) -> std::unique_ptr<host::AudioDevice> {
+            auto one = std::make_unique<HeldDevice>(id == "refusing" ? 1 : 0);
+            made.push_back(one.get());
+            return one;
+        };
         host = std::make_unique<EngineHost>(fixture.session, std::move(options));
+    }
+
+    // Pump the device the factory made last from here on.
+    void useMade() {
+        REQUIRE_FALSE(made.empty());
+        held = made.back();
+        device = &held->inner;
     }
 
     playback::PlaybackEngine& engine() { return host->playback(); }
@@ -697,6 +733,153 @@ TEST_CASE("the host publishes the meter legend after each graph, and frames carr
         rig.pump(1);
     }
     CHECK(legends() == 2);
+}
+
+// ---- engine.devices and engine.select_device (Protocol v0 item 22) ----------------
+
+TEST_CASE("devices lists what listDevices returns and marks the current one", "[engine][host][devices]") {
+    SECTION("by the id the host runs") {
+        Rig rig;
+        const std::vector<protocol::DeviceDescription> listed = rig.host->devices();
+        REQUIRE(listed.size() == 4);
+        for (std::size_t i = 0; i < listed.size(); ++i) {
+            INFO(listed[i].id);
+            CHECK(listed[i].id == rigDevices()[i].id);
+            CHECK(listed[i].type == rigDevices()[i].type);
+            CHECK(listed[i].name == rigDevices()[i].name);
+            CHECK(listed[i].isDefault == rigDevices()[i].isDefault);
+            CHECK(listed[i].current == (listed[i].id == "manual"));
+        }
+    }
+    SECTION("the default one when the host was given no id") {
+        Fixture fixture;
+        EngineHostOptions options = manualOptions(std::make_unique<ManualAudioDevice>());
+        options.deviceId.clear();
+        options.listDevices = rigDevices;
+        EngineHost host(fixture.session, std::move(options));
+        for (const protocol::DeviceDescription& one : host.devices()) {
+            INFO(one.id);
+            CHECK(one.current == (one.id == "test/default"));
+        }
+    }
+}
+
+TEST_CASE("selecting an unknown device is not_found and the device plays on", "[engine][host][devices]") {
+    Rig rig;
+    rig.host->play();
+    rig.settle();
+    rig.pump(4);
+    const int stops = rig.held->stops;
+    const int closes = rig.held->closes;
+    CHECK(codeOf([&] { rig.host->selectDevice("nope"); }) == "not_found");
+    CHECK(rig.made.empty());  // the factory never ran
+    CHECK(rig.held->stops == stops);
+    CHECK(rig.held->closes == closes);
+    REQUIRE(rig.host->status().device.has_value());
+    CHECK(rig.host->status().device->id == "manual");
+    CHECK(rig.host->status().playing);
+    const std::int64_t before = rig.position();
+    rig.pump(3);
+    CHECK(rig.position() == before + 3 * kBlock);
+}
+
+TEST_CASE("selecting a device closes the old one and opens the new one stopped at the playhead",
+          "[engine][host][devices]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    playback::PlaybackOptions options = live_rig::testOptions();
+    options.callbackClock = &host::fakeCallbackClock;
+    host::setFakeCallbackNanos(20'000'000);
+    Rig rig(options);
+    rig.host->play();
+    rig.settle();
+    rig.pump(4);
+    REQUIRE(rig.host->status().xruns > 0);
+    HeldDevice* old = rig.held;
+    const std::int64_t frozen = rig.position();
+    CHECK(frozen > 0);
+
+    const protocol::DeviceInfo selected = rig.host->selectDevice("b");
+    CHECK(selected.id == "b");
+    CHECK(selected.sampleRate == 48'000);
+    CHECK(selected.bufferFrames == kBlock);
+    CHECK(old->closes >= 1);
+    REQUIRE(rig.made.size() == 1);
+    rig.useMade();
+    CHECK(rig.held->opens == 1);
+    CHECK(rig.held->starts == 1);
+
+    const protocol::EngineStatus status = rig.host->status();
+    REQUIRE(status.device.has_value());
+    CHECK(status.device->id == "b");
+    CHECK_FALSE(status.deviceError.has_value());
+    CHECK_FALSE(status.playing);
+    CHECK(status.xruns == 0);  // counted from this device's start
+    CHECK(rig.position() == frozen);
+    for (const protocol::DeviceDescription& one : rig.host->devices()) {
+        CHECK(one.current == (one.id == "b"));
+    }
+
+    rig.host->play();
+    rig.settle();
+    rig.pump(3);
+    CHECK(rig.position() == frozen + 3 * kBlock);
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("a selected device that fails to open is device_open_failed and is retried under the backoff",
+          "[engine][host][devices][backoff]") {
+    Rig rig(1);
+    rig.advance(100ms);  // the first device opens at its second try
+    REQUIRE(rig.host->status().device.has_value());
+    HeldDevice* old = rig.held;
+
+    CHECK(codeOf([&] { rig.host->selectDevice("refusing"); }) == "device_open_failed");
+    CHECK(old->closes >= 1);
+    REQUIRE(rig.made.size() == 1);
+    rig.useMade();
+    CHECK(rig.held->opens == 1);
+    const protocol::EngineStatus status = rig.host->status();
+    CHECK_FALSE(status.device.has_value());
+    REQUIRE(status.deviceError.has_value());
+    CHECK(status.deviceError->code == "device_open_failed");
+    checkNoTransport(*rig.host);
+    for (const protocol::DeviceDescription& one : rig.host->devices()) {
+        CHECK(one.current == (one.id == "refusing"));
+    }
+
+    // The count starts over at a selection: the first retry waits `initial`.
+    rig.advance(99ms);
+    CHECK(rig.held->opens == 1);
+    rig.advance(1ms);
+    CHECK(rig.held->opens == 2);
+    REQUIRE(rig.host->status().device.has_value());
+    CHECK(rig.host->status().device->id == "refusing");
+    CHECK(old->opens == 2);  // never opened again
+}
+
+TEST_CASE("a selection while the session did not load is kept and answers its deviceError",
+          "[engine][host][devices]") {
+    Fixture fixture;
+    fs::remove_all(fixture.bundle() / "media");
+    std::vector<HeldDevice*> made;
+    EngineHostOptions options = manualOptions(std::make_unique<HeldDevice>());
+    options.listDevices = rigDevices;
+    options.deviceFactory = [&made](const std::string&) -> std::unique_ptr<host::AudioDevice> {
+        auto one = std::make_unique<HeldDevice>();
+        made.push_back(one.get());
+        return one;
+    };
+    EngineHost host(fixture.session, std::move(options));
+    REQUIRE(host.status().deviceError.has_value());
+    CHECK(codeOf([&] { host.selectDevice("b"); }) == "media_missing");
+    REQUIRE(made.size() == 1);
+    CHECK(made[0]->opens == 0);
+    REQUIRE(host.status().deviceError.has_value());
+    CHECK(host.status().deviceError->code == "media_missing");
+    for (const protocol::DeviceDescription& one : host.devices()) {
+        CHECK(one.current == (one.id == "b"));
+    }
+    CHECK(codeOf([&] { host.selectDevice("nope"); }) == "not_found");
 }
 
 // m4-crash-recovery (spec, "Process model", Crash): a plugin crash raises no WER or
