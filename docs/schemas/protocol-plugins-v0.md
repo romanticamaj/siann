@@ -47,7 +47,7 @@ A session never chooses what code loads (Protocol v0 item 21; m5-plugin-registry
 
 Every load goes through the registry: the live instance table, `render.start`'s instances and `plugin.instantiate`. A slot resolves by `{format, uid}` to the approved installs with that uid. One is the one that loads; between several, the slot's `path` chooses, and without a match the slot is missing with `plugin_not_registered` naming the ambiguity. With none, the slot is missing with `plugin_not_approved` when an unapproved install of the uid (or at the slot's path) is registered, and `plugin_not_registered` otherwise. The slot's `path` is a hint and never opened by itself: a UNC hint (`unc_path`), a hint inside the session bundle (`inside_bundle`) or a path that is no registered install's (`unregistered_path`) is ignored, and the `plugin_not_registered` message names that reason. A missing slot passes audio through and keeps its `stateBlob`.
 
-Both methods run on the command thread, honour `expectedRevision` and the idempotency cache, are listed in `engine.capabilities`' `methods`, and answer `not_supported` without a port. Neither is an MCP tool: an agent must not choose what code loads, so `tools/list` has no tool for them and an MCP request naming them is refused.
+Both methods run on the command thread, honour `expectedRevision` and the idempotency cache, are listed in `engine.capabilities`' `methods`, and answer `not_supported` without a port. `plugin.approve` is not an MCP tool, and neither is `plugin.registry`: an agent must not choose what code loads, so `tools/list` has no tool for them and an MCP request naming them is refused.
 
 The `--plugin-registry` file:
 
