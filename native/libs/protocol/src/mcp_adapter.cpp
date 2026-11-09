@@ -66,6 +66,17 @@ const std::vector<McpTool> kTools = {
     {"open_session", "session.open", McpScope::trusted, "Opens another session bundle and serves it.",
      R"({"type":"object","properties":{"path":{"type":"string","description":"the bundle directory"}},"required":["path"],"additionalProperties":false})"},
     {"save_session", "session.save", McpScope::propose, "Writes the session checkpoint for main's head.", kEmpty},
+    {"play", "transport.play", McpScope::propose, "Starts the transport; returns {playing, position}.", kEmpty},
+    {"stop", "transport.stop", McpScope::propose, "Stops the transport; returns {playing, position}.", kEmpty},
+    {"locate", "transport.locate", McpScope::propose, "Moves the playhead; returns {playing, position}.",
+     R"({"type":"object","properties":{"frames":{"type":"string","description":"session frames, decimal"}},"required":["frames"],"additionalProperties":false})"},
+    {"engine_status", "engine.status", McpScope::propose,
+     "Returns the device (or deviceError), playing, the driver's timing counters and the plugin instances.", kEmpty},
+    {"list_devices", "engine.devices", McpScope::propose,
+     "Lists the audio devices the engine can open: {id, type, name, isDefault, current}.", kEmpty},
+    {"select_device", "engine.select_device", McpScope::trusted,
+     "Closes the running audio device and opens another one; returns the device engine_status reports.",
+     R"({"type":"object","properties":{"id":{"type":"string","description":"a device id from list_devices"}},"required":["id"],"additionalProperties":false})"},
 };
 
 std::string randomHex(std::size_t bytes) {

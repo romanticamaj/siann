@@ -519,7 +519,8 @@ TEST_CASE("the transport and device tools reach their methods with the same para
     CHECK(port.position == 48'000);
     CHECK_FALSE(at(mcp.ok("stop"), "playing").asBool());
     CHECK(at(at(mcp.ok("engine_status"), "device"), "id").asString() == "fake");
-    const auto& devices = at(mcp.ok("list_devices"), "devices").asArray();
+    const Value listed = mcp.ok("list_devices");
+    const auto& devices = at(listed, "devices").asArray();
     REQUIRE(devices.size() == 1);
     CHECK(at(devices[0], "id").asString() == "fake");
     CHECK(at(devices[0], "current").asBool());
