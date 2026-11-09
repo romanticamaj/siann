@@ -546,3 +546,40 @@ test('(12) a failed sync retries under a backoff without waiting for an event', 
   await until(() => s.client.model.getSnapshot() !== null, 'the sync on the new connection');
   assert.equal(s.sockets[0]!.requests('session.sync').length, 1, 'the closed connection never retried');
 });
+
+test('(13) a resync drops an ended gesture whose commit it never saw; a held one stays only in the same session', async () => {
+  const r = rig();
+  const socket = await synced(r);
+  const model = r.client.model;
+  const step1 = seq.steps[1]!;
+  const gainIn = (document: SequenceStep['document']) =>
+    (document.tracks.find((t) => t.id === 'trk_1') as unknown as { gainMilliDb: number }).gainMilliDb;
+  const shownGain = () => (model.select('track:trk_1') as unknown as { gainMilliDb: number }).gainMilliDb;
+
+  // The fader is released; its gesture.end commit is lost in a gap.
+  model.beginGesture('track:trk_1', 'gainMilliDb');
+  model.setGesture(-9000);
+  model.endGesture();
+  r.script.sync = chunksOf(step1.document, step1.event.revision, step1.event.seq, step1.documentHash);
+  socket.deliver(event(1)); // seq 9 after lastSeq 7: a gap
+  await until(() => r.client.getState().syncCount === 2, 'the gap sync');
+  assert.equal(model.getView().gesture, null, 'the sync is the engine truth: no ended overlay on top of it');
+  assert.equal(shownGain(), gainIn(step1.document));
+
+  // A held fader survives a gap sync of the same session.
+  model.beginGesture('track:trk_1', 'gainMilliDb');
+  model.setGesture(-7000);
+  r.script.sync = chunksOf(step1.document, 'r9', '12', step1.documentHash);
+  socket.deliver({ ...event(1), seq: '12', revision: 'r9', changedIds: [] });
+  await until(() => r.client.getState().syncCount === 3, 'the second gap sync');
+  assert.equal(shownGain(), -7000);
+
+  // session.opened: another session, so the held gesture goes too.
+  const NEW = 'ses_0000000000000bee';
+  r.script.sessionId = NEW;
+  r.script.sync = chunksOf(step1.document, 'r3', '13', step1.documentHash);
+  socket.deliver({ schema: 'siann.event.v1', seq: '13', sessionId: NEW, revision: 'r3', type: 'session.opened', documentHash: step1.documentHash });
+  await until(() => r.client.getState().syncCount === 4, 'the sync of the opened session');
+  assert.equal(model.getView().gesture, null);
+  assert.equal(shownGain(), gainIn(step1.document));
+});

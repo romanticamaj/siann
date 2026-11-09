@@ -196,6 +196,39 @@ test('(c) a held fader survives a recompile; an ended gesture stays until its en
   assert.equal(track(model.getSnapshot()!, 'trk_1').gainMilliDb, -9000);
 });
 
+test('(c) a session.sync drops an ended gesture; a held one stays only within the same session', async () => {
+  const model = new ReadModel();
+  await model.fromSync(chunks, 'ses_a');
+  // An ended gesture whose commit was lost in a gap (or rejected): the sync's
+  // snapshot is the engine's truth and already holds any commit, so the
+  // overlay goes and the synced value shows.
+  model.beginGesture('track:trk_1', 'gainMilliDb');
+  model.setGesture(-9000);
+  assert.equal(model.endGesture(), -9000);
+  await model.fromSync(chunks, 'ses_a');
+  assert.equal(model.getView().gesture, null);
+  assert.equal(model.getView().overlaid, null);
+  assert.equal((model.select('track:trk_1') as TrackEntity).gainMilliDb, 0);
+
+  // A held fader survives a resync of the same session (the user still has it).
+  model.beginGesture('track:trk_1', 'gainMilliDb');
+  model.setGesture(-7000);
+  await model.fromSync(chunks, 'ses_a');
+  assert.equal((model.select('track:trk_1') as TrackEntity).gainMilliDb, -7000);
+  assert.equal(model.getView().gesture?.ended, false);
+  // Another session (session.opened, an engine restart): the held gesture
+  // belongs to an engine that is gone, so it goes too.
+  await model.fromSync(chunks, 'ses_b');
+  assert.equal(model.getView().gesture, null);
+  assert.equal((model.select('track:trk_1') as TrackEntity).gainMilliDb, 0);
+  // A sync of an unnamed session is not known to be the same one.
+  model.beginGesture('track:trk_2', 'pan');
+  model.setGesture(4000);
+  await model.fromSync(chunks);
+  assert.equal(model.getView().gesture, null);
+  assert.equal((model.select('track:trk_2') as TrackEntity).pan, 0);
+});
+
 test('(c) cancelGesture drops the overlay at once', async () => {
   const model = new ReadModel();
   await model.fromSync(chunks);
