@@ -37,7 +37,7 @@ Params `{}`. Result:
 
 ## engine.select_device
 
-Params `{id}`. Result: `engine.status`'s `device` object, or null while the session's first graph could not be built.
+Params `{id}`. Result: `engine.status`'s `device` object.
 
 | Case | Answer | Afterwards |
 |---|---|---|

@@ -2309,8 +2309,9 @@ is m5-plugin-registry's):
     device type. `current` marks the device the engine runs or is trying to open:
     the entry whose `id` is the selected one, or the first `isDefault` entry (the
     default output device of the first type, which the engine opens) when it was
-    launched without `--device` and nothing was selected since. `engine.select_device {id}` returns `engine.status`'s `device` object (or
-    null, see below). An `id` not in the list is `not_found` and leaves the current
+    launched without `--device` and nothing was selected since.
+    `engine.select_device {id}` returns `engine.status`'s `device` object. An `id`
+    not in the list is `not_found` and leaves the current
     device running. Otherwise the host stops the transport and the driver, closes the
     running device and opens the named one on the main thread exactly as a reopen
     does ("Process model": stopped at the playhead, counters from zero), its backoff
