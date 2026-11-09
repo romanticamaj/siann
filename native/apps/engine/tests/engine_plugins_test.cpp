@@ -6,14 +6,19 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "live_rig.hpp"
 #include "siann/engine_app/engine_host.hpp"
 #include "siann/host/fake_audio_device.hpp"
 #include "siann/host/manual_audio_device.hpp"
+#include "siann/io/durable_file.hpp"
 #include "support/protocol_fixture.hpp"
 
 using namespace siann;
@@ -47,6 +52,50 @@ int parameterIndex(host::PluginInstance& instance, const std::string& name) {
     return -1;
 }
 
+// The test plugins' build directories, as the launch tests pass them with
+// --plugin-dir (m5-plugin-registry).
+std::vector<std::string> testPluginDirs() {
+    std::vector<std::string> dirs{std::filesystem::path(SIANN_TEST_PLUGIN_CLAP).parent_path().string(),
+                                  std::filesystem::path(SIANN_HOSTILE_PLUGIN_CLAP).parent_path().string()};
+#if defined(SIANN_ENGINE_WITH_JUCE) && defined(SIANN_TEST_PLUGIN_VST3)
+    dirs.push_back(std::filesystem::path(SIANN_TEST_PLUGIN_VST3).parent_path().string());
+#endif
+    return dirs;
+}
+
+// The test plugins that may load: approved through the method, as a user would.
+std::vector<std::pair<std::string, std::string>> testPlugins() {
+    std::vector<std::pair<std::string, std::string>> plugins{{"clap", SIANN_TEST_PLUGIN_CLAP},
+                                                             {"clap", SIANN_HOSTILE_PLUGIN_CLAP}};
+#if defined(SIANN_ENGINE_WITH_JUCE) && defined(SIANN_TEST_PLUGIN_VST3)
+    plugins.emplace_back("vst3", SIANN_TEST_PLUGIN_VST3);
+#endif
+    return plugins;
+}
+
+Value approveParams(const std::string& format, const std::string& path, bool approved = true) {
+    return Value(Object{{"format", Value(format)}, {"path", Value(path)}, {"approved", Value(approved)}});
+}
+
+void approveTestPlugins(Harness& harness, protocol::ConnectionId connection) {
+    for (const auto& [format, path] : testPlugins()) {
+        INFO(path);
+        const Value entry = harness.ok(connection, "plugin.approve", approveParams(format, path));
+        REQUIRE(at(entry, "approved").asBool());
+    }
+}
+
+// The entry plugin.registry lists for `path`, or nullptr.
+const Value* registryEntry(const Value& listed, const std::string& path) {
+    for (const Value& entry : at(listed, "plugins").asArray()) {
+        if (std::filesystem::path(at(entry, "path").asString()).lexically_normal() ==
+            std::filesystem::path(path).lexically_normal()) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
 protocol::ServerOptions serverOptions(EngineHost& host) {
     protocol::ServerOptions options = protocol::testing::manualOptions();
     options.transportPort = &host;
@@ -59,12 +108,13 @@ protocol::ServerOptions serverOptions(EngineHost& host) {
 // An engine host on a manual device, served by a protocol server.
 struct ManualRig {
     Fixture fixture;
+    std::vector<std::string> diagnostics;  // before the host that reports into it
     host::ManualAudioDevice* device = nullptr;
     std::unique_ptr<EngineHost> host;
     std::unique_ptr<Harness> harness;
     protocol::ConnectionId connection = 0;
 
-    ManualRig() {
+    explicit ManualRig(bool approve = true, std::vector<std::string> extraDirs = {}) {
         auto owned = std::make_unique<host::ManualAudioDevice>();
         device = owned.get();
         EngineHostOptions options;
@@ -72,10 +122,19 @@ struct ManualRig {
         options.deviceId = "manual";
         options.bufferFrames = kBlock;
         options.playback = live_rig::testOptions();
+        options.pluginDirs = testPluginDirs();
+        options.pluginDirs.insert(options.pluginDirs.end(), extraDirs.begin(), extraDirs.end());
+        options.pluginRegistryFile = registryFile();
+        options.diagnostic = [this](const std::string& line) { diagnostics.push_back(line); };
         host = std::make_unique<EngineHost>(fixture.session, std::move(options));
         harness = std::make_unique<Harness>(fixture.session, serverOptions(*host));
         connection = harness->authed();
+        if (approve) {
+            approveTestPlugins(*harness, connection);
+        }
     }
+
+    std::filesystem::path registryFile() const { return fixture.dir.path() / "plugin-registry.json"; }
     ~ManualRig() {
         harness.reset();
         host->shutdown();
@@ -145,11 +204,11 @@ TEST_CASE("a plugin that is not there fails the job and a missing slot shows as 
     ManualRig rig;
     const Value failed = rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", "/nowhere/gone.clap"));
     CHECK(at(failed, "state").asString() == "failed");
-    CHECK(at(at(failed, "error"), "code").asString() == "plugin_not_found");
+    CHECK(at(at(failed, "error"), "code").asString() == "plugin_not_registered");
 
     // A slot whose plugin is gone (inserted by a command, as a reopened session has it).
     rig.fixture.exec(R"({"op":"plugin.insert","trackId":"trk_b","index":0,"slotId":"slt_gone",
-        "descriptor":{"format":"clap","uid":"org.siann.test-plugin","path":"/nowhere/gone.clap"},
+        "descriptor":{"format":"clap","uid":"org.siann.gone","path":"/nowhere/gone.clap"},
         "stateBlob":"sha256:)" + std::string(64, 'c') + R"("})");
     rig.host->auditionPort()->mainCommitted();
     rig.pump(4);
@@ -157,7 +216,7 @@ TEST_CASE("a plugin that is not there fails the job and a missing slot shows as 
     const Value* entry = rig.plugin(status, "slt_gone");
     REQUIRE(entry != nullptr);
     CHECK(at(*entry, "state").asString() == "missing");
-    CHECK(at(at(*entry, "error"), "code").asString() == "plugin_not_found");
+    CHECK(at(at(*entry, "error"), "code").asString() == "plugin_not_registered");
     CHECK(at(*entry, "callbacks").kind() == Value::Kind::null);
     CHECK(rig.fixture.doc().pluginSlot("slt_gone")->stateBlob.has_value());
     CHECK(errorCode(rig.harness->call(rig.connection, "plugin.open_editor", Value(Object{{"slotId", Value("slt_gone")}}))) ==
@@ -213,11 +272,13 @@ TEST_CASE("on the fake device: getState waits for a block, a render overlaps pla
     auto* device = static_cast<host::FakeAudioDevice*>(options.device.get());
     options.deviceId = "fake";
     options.playback.ringFrames = 8'192;
+    options.pluginDirs = testPluginDirs();
     EngineHost host(fixture.session, std::move(options));
     protocol::ServerOptions server = serverOptions(host);
     server.jobs.workerThread = true;  // the offline-render thread
     Harness harness(fixture.session, server);
     const protocol::ConnectionId c = harness.authed();
+    approveTestPlugins(harness, c);
     host.play();
     const Value loaded = harness.ok(c, "plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP));
     const std::string slotId = at(at(loaded, "result"), "slotId").asString();
@@ -391,3 +452,151 @@ TEST_CASE("engine.status counts a VST3's sysex output beside its overflows", "[e
     checkSysexReported("vst3", SIANN_TEST_PLUGIN_VST3);
 }
 #endif
+
+// ---- the plugin registry (m5-plugin-registry; Protocol v0 item 21) ----------------
+
+TEST_CASE("plugin.registry lists the scanned build plugins unapproved and unprobed", "[engine][plugin][registry]") {
+    ManualRig rig(false);
+    const Value listed = rig.ok("plugin.registry");
+    for (const auto& [format, path] : testPlugins()) {
+        INFO(path);
+        const Value* entry = registryEntry(listed, path);
+        REQUIRE(entry != nullptr);
+        CHECK(at(*entry, "format").asString() == format);
+        CHECK(at(*entry, "uid").kind() == Value::Kind::null);
+        CHECK_FALSE(at(*entry, "approved").asBool());
+        CHECK_FALSE(at(*entry, "name").asString().empty());
+    }
+    // Nothing is written before an approval.
+    CHECK_FALSE(std::filesystem::exists(rig.registryFile()));
+}
+
+TEST_CASE("plugin.approve probes the install and plugin.instantiate needs it approved", "[engine][plugin][registry]") {
+    ManualRig rig(false);
+    const Value before = rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP));
+    CHECK(at(before, "state").asString() == "failed");
+    CHECK(at(at(before, "error"), "code").asString() == "plugin_not_approved");
+    CHECK(rig.fixture.doc().pluginSlot("slt_1") == nullptr);
+
+    const Value approved = rig.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
+    CHECK(at(approved, "uid").asString() == "org.siann.test-plugin");
+    CHECK(at(approved, "name").asString() == "SIANN Test Plugin");
+    CHECK(at(approved, "approved").asBool());
+    const Value after = rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP));
+    REQUIRE(at(after, "state").asString() == "done");
+    CHECK(at(at(at(after, "result"), "descriptor"), "uid").asString() == "org.siann.test-plugin");
+
+    // By uid alone: its one approved install.
+    const Value byUid = rig.ok("plugin.instantiate",
+                               Value(Object{{"trackId", Value("trk_b")},
+                                            {"index", Value(0)},
+                                            {"descriptor", Value(Object{{"format", Value("clap")},
+                                                                        {"uid", Value("org.siann.test-plugin")}})}}));
+    CHECK(at(byUid, "state").asString() == "done");
+    const Value unknown = rig.ok("plugin.instantiate",
+                                 Value(Object{{"trackId", Value("trk_b")},
+                                              {"index", Value(0)},
+                                              {"descriptor", Value(Object{{"format", Value("clap")},
+                                                                          {"uid", Value("org.example.unknown")}})}}));
+    CHECK(at(at(unknown, "error"), "code").asString() == "plugin_not_registered");
+
+    // Withdrawn: takes effect at the next instantiate, no probe needed.
+    const Value withdrawn = rig.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP, false));
+    CHECK_FALSE(at(withdrawn, "approved").asBool());
+    CHECK(at(withdrawn, "uid").asString() == "org.siann.test-plugin");
+    const Value again = rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP));
+    CHECK(at(at(again, "error"), "code").asString() == "plugin_not_approved");
+}
+
+TEST_CASE("plugin.instantiate on an unregistered path never opens it", "[engine][plugin][registry]") {
+    ManualRig rig;
+    live_rig::TempDir elsewhere;
+    const std::filesystem::path original(SIANN_TEST_PLUGIN_CLAP);
+    const std::filesystem::path copy = elsewhere.path() / original.filename();
+    std::filesystem::copy(original, copy, std::filesystem::copy_options::recursive);
+    const Value failed = rig.ok("plugin.instantiate", instantiateParams("trk_a", "clap", copy.string()));
+    CHECK(at(failed, "state").asString() == "failed");
+    CHECK(at(at(failed, "error"), "code").asString() == "plugin_not_registered");
+    CHECK(at(at(failed, "error"), "message").asString().find("unregistered_path") != std::string::npos);
+    CHECK(errorCode(rig.harness->call(rig.connection, "plugin.approve", approveParams("clap", copy.string()))) ==
+          "plugin_not_registered");
+}
+
+TEST_CASE("a registered file that is not a plugin stays unapproved when its probe fails", "[engine][plugin][registry]") {
+    live_rig::TempDir plugins;
+    std::ofstream(plugins.path() / "broken.clap") << "not a library";
+    ManualRig rig(false, {plugins.path().string()});
+    const std::string broken = (plugins.path() / "broken.clap").string();
+    REQUIRE(registryEntry(rig.ok("plugin.registry"), broken) != nullptr);
+    CHECK(errorCode(rig.harness->call(rig.connection, "plugin.approve", approveParams("clap", broken))) ==
+          "plugin_load_failed");
+    const Value* entry = registryEntry(rig.ok("plugin.registry"), broken);
+    REQUIRE(entry != nullptr);
+    CHECK_FALSE(at(*entry, "approved").asBool());
+    CHECK(at(*entry, "uid").kind() == Value::Kind::null);
+}
+
+TEST_CASE("the registry file keeps approvals for the next engine host", "[engine][plugin][registry]") {
+    Fixture fixture;
+    const std::filesystem::path file = fixture.dir.path() / "plugin-registry.json";
+    const auto makeHost = [&] {
+        EngineHostOptions options;
+        options.playback = live_rig::testOptions();
+        options.pluginDirs = testPluginDirs();
+        options.pluginRegistryFile = file;
+        return std::make_unique<EngineHost>(fixture.session, std::move(options));
+    };
+    {
+        auto host = makeHost();
+        Harness harness(fixture.session, serverOptions(*host));
+        const protocol::ConnectionId c = harness.authed();
+        harness.ok(c, "plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        host->shutdown();
+    }
+    REQUIRE(std::filesystem::exists(file));
+    const Value saved = json::parse(io::readFile(file));
+    CHECK(at(saved, "schema").asString() == "siann.plugin_registry.v0");
+    const Value* kept = registryEntry(saved, SIANN_TEST_PLUGIN_CLAP);
+    REQUIRE(kept != nullptr);
+    CHECK(at(*kept, "approved").asBool());
+    CHECK(at(*kept, "uid").asString() == "org.siann.test-plugin");
+
+    auto host = makeHost();
+    Harness harness(fixture.session, serverOptions(*host));
+    const protocol::ConnectionId c = harness.authed();
+    const Value* entry = registryEntry(harness.ok(c, "plugin.registry"), SIANN_TEST_PLUGIN_CLAP);
+    REQUIRE(entry != nullptr);
+    CHECK(at(*entry, "approved").asBool());
+    CHECK(at(*entry, "uid").asString() == "org.siann.test-plugin");
+    const Value loaded = harness.ok(c, "plugin.instantiate", instantiateParams("trk_a", "clap", SIANN_TEST_PLUGIN_CLAP));
+    CHECK(at(loaded, "state").asString() == "done");
+    host->shutdown();
+}
+
+TEST_CASE("a malformed registry file is one diagnostic and an empty registry", "[engine][plugin][registry]") {
+    for (const std::string text : {std::string("{not json"), std::string(R"({"schema":"other","plugins":[]})"),
+                                   std::string(R"({"schema":"siann.plugin_registry.v0","plugins":[{"format":7}]})")}) {
+        INFO(text);
+        Fixture fixture;
+        const std::filesystem::path file = fixture.dir.path() / "plugin-registry.json";
+        io::writeFileAtomic(file, text);
+        std::vector<std::string> diagnostics;
+        EngineHostOptions options;
+        options.playback = live_rig::testOptions();
+        options.pluginDirs = testPluginDirs();
+        options.pluginRegistryFile = file;
+        options.diagnostic = [&](const std::string& line) { diagnostics.push_back(line); };
+        auto host = std::make_unique<EngineHost>(fixture.session, std::move(options));
+        Harness harness(fixture.session, serverOptions(*host));
+        const protocol::ConnectionId c = harness.authed();
+        std::size_t registryLines = 0;
+        for (const std::string& line : diagnostics) {
+            registryLines += line.find("plugin registry") != std::string::npos ? 1 : 0;
+        }
+        CHECK(registryLines == 1);
+        const Value* entry = registryEntry(harness.ok(c, "plugin.registry"), SIANN_TEST_PLUGIN_CLAP);
+        REQUIRE(entry != nullptr);  // scanned all the same
+        CHECK_FALSE(at(*entry, "approved").asBool());
+        host->shutdown();
+    }
+}
