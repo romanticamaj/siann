@@ -4,8 +4,15 @@
   "title": "Plugins",
   "goal": "Host CLAP on both targets and VST3 and AU through JUCE inside the graph, with latency compensation, state, capabilities and crash survival.",
   "specSections": ["siann-host: two targets, one interface", "Latency model", "Publishing and retiring graphs", "Automation", "Milestones"],
-  "status": "not_started",
-  "done": [],
+  "status": "exit_pending",
+  "done": [
+    "CLAP host for both targets (#52)",
+    "The engine process runs the graph driver on a device (#53)",
+    "Plugin slots in the document and PluginNode in the graph (#55)",
+    "Hostile test plugin (#56)",
+    "Plugin crash recovery (#58)",
+    "VST3 and AU through JUCE (#60)"
+  ],
   "prerequisites": ["M0 plugin hosting spike.", "docs/harness/follow-ups.md, section Before M4: taken into the features below.", "docs/harness/follow-ups.md, sections Before M4 wave 2: the graph driver's setBlocksComing is taken into m4-plugin-node; CLAP editor windows moved to Before M5 (decided by Fable, delegated by the maintainer, 2026-11-08)."],
   "humanGates": [
     {"id": "real-plugins", "text": "Choose the third-party plugins used for compatibility runs.", "how": "The maintainer lists installed plugins; pluginval-checked runs use them.",
