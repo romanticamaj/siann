@@ -10,14 +10,18 @@ interface EngineEndpoint {
   token: string;
 }
 
-interface Window {
-  siann: {
-    engine: {
-      current(): Promise<EngineEndpoint | null>;
-      onChange(callback: (next: EngineEndpoint | null) => void): void;
+declare global {
+  interface Window {
+    siann: {
+      engine: {
+        current(): Promise<EngineEndpoint | null>;
+        onChange(callback: (next: EngineEndpoint | null) => void): void;
+      };
     };
-  };
+  }
 }
+
+export {};
 
 interface AboutInfo {
   name?: string;
