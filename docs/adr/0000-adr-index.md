@@ -24,6 +24,7 @@ Status values:
 - [ADR-0016: Build A Native C++ DAW Engine From Scratch](0016-build-native-cpp-daw-engine.md)
 - [ADR-0017: License The Desktop Engine Under AGPLv3, With ASIO](0017-license-desktop-engine-under-agplv3.md)
 - [ADR-0018: Accept JUCE's Wrapper Locks Inside A Hosted Plugin's processBlock](0018-accept-juce-wrapper-locks-inside-hosted-processblock.md)
+- [ADR-0019: Use React For The Frontend](0019-use-react-for-the-frontend.md)
 
 ## Superseded
 
