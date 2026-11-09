@@ -412,11 +412,16 @@ TEST_CASE("A fader gesture moves the sound through the parameter channel and end
     }
 
     if (f.session.history().revisions().size() == before + 1) {
+        const auto headHash = f.session.history().head().envelope.documentHash;
+        {
+            // Released, so the bundle can be opened again (its lock).
+            const Session closing = std::move(f.session);
+        }
         session::OpenReport report;
         const Session reopened = Session::open(bundle, &report);
         CHECK(report.recordsReplayed == static_cast<std::int64_t>(before + 1));
         CHECK(reopened.history().head().document.track("trk_a")->gain.milliDb == -3'000);
-        CHECK(reopened.history().head().envelope.documentHash == f.session.history().head().envelope.documentHash);
+        CHECK(reopened.history().head().envelope.documentHash == headHash);
     }
 }
 
