@@ -2329,7 +2329,7 @@ is m5-plugin-registry's):
     `session_locked` and nothing changes) and rebinds the `EngineHost` to it, a new
     `PlaybackEngine`, `Auditioner` and meter publisher (a new `meters.legend`),
     pending `plugin.instantiate` instances dropped. The device object is kept, never
-    closed or recreated: the new engine's driver opens it again at the new session's
+    recreated (only closed so it can open again): the new engine's driver opens it at the new session's
     rate exactly as at launch, so a rate change renegotiates and no `deviceError` or
     backoff cycle results. The old session is destroyed after the rebind, which
     releases its bundle's lock; render jobs already queued keep their own snapshot
