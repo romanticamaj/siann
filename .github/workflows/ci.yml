@@ -81,6 +81,8 @@ jobs:
   desktop:
     name: Desktop host with JUCE (${{ matrix.os }})
     timeout-minutes: 90
+    env:
+      electron_config_cache: ${{ github.workspace }}/.electron-cache
     strategy:
       fail-fast: false
       matrix:
@@ -183,6 +185,13 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
+      # GitHub's release downloads answer 504 at times: keep Electron's zip in the cache.
+      - name: Cache the Electron download
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
       - name: Editor owned by the Electron window
         if: runner.os == 'Windows'
         shell: bash
@@ -192,8 +201,9 @@ jobs:
           test -n "$exe" && test -n "$plugin"
           export SIANN_DESKTOP_ENGINE_EXE="$GITHUB_WORKSPACE/$exe" SIANN_TEST_PLUGIN="$GITHUB_WORKSPACE/$plugin"
           cd app
-          npm ci
-          node node_modules/electron/install.js
+          # install.js below downloads Electron with retries; npm ci would try once.
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+          for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
           npm run build
           npx playwright test editor.spec.ts
 
@@ -203,6 +213,8 @@ jobs:
   app:
     name: Electron shell (${{ matrix.os }})
     timeout-minutes: 90
+    env:
+      electron_config_cache: ${{ github.workspace }}/.electron-cache
     strategy:
       fail-fast: false
       matrix:
@@ -231,11 +243,18 @@ jobs:
           plugin=$(find native/build/app \( -type f -o -type d \) -name siann_hostile_plugin.clap | head -n 1)
           test -n "$plugin"
           echo "SIANN_HOSTILE_PLUGIN_CLAP=$GITHUB_WORKSPACE/$plugin" >> "$GITHUB_ENV"
+      # GitHub's release downloads answer 504 at times: keep Electron's zip in the cache.
+      - name: Cache the Electron download
+        uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
       - name: Install app dependencies
         working-directory: app
         run: |
-          npm ci
-          node node_modules/electron/install.js
+          # install.js below downloads Electron with retries; npm ci would try once.
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+          for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
       - name: Allow the Chromium sandbox helper
         if: runner.os == 'Linux'
         working-directory: app
