@@ -186,6 +186,19 @@ TEST_CASE("plugin.insert rejects used ids, missing tracks and bad parameters", "
         "descriptor":{"format":"clap","uid":"u"}})") == "invalid_params");
 }
 
+// m5-plugin-registry: a pure command has no bundle in reach, so it refuses the UNC
+// forms only (Protocol v0 item 21).
+TEST_CASE("plugin.insert rejects a UNC path", "[command][plugin]") {
+    const Document doc = base();
+    for (const std::string path : {R"(\\\\server\\share\\x.clap)", "//server/share/x.clap",
+                                   R"(\\\\?\\UNC\\server\\share\\x.clap)"}) {
+        CHECK(errorCode(doc, R"({"op":"plugin.insert","trackId":"trk_1","index":0,"slotId":"slt_2",
+            "descriptor":{"format":"clap","uid":"u","path":")" + path + R"("},"stateBlob":null})") ==
+              "invalid_params");
+    }
+    CHECK(errorCode(doc, insertJson("slt_2", "trk_1", 0)) == "no error");
+}
+
 TEST_CASE("plugin.remove and plugin.set_bypass declare exactly what they change", "[command][plugin]") {
     Document doc = prepare(base(), cmd(insertJson("slt_1", "trk_1", 0))).result;
     doc = prepare(doc, cmd(insertJson("slt_2", "trk_1", 1))).result;
