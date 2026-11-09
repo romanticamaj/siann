@@ -6,6 +6,12 @@
 //   siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
 //                [--owner-window <handle>]
 //                [--device <id>] [--fake-callback-nanos N]
+//                [--plugin-dir <dir>]... [--plugin-registry <file>]
+//
+// --plugin-dir adds a directory the plugin registry is filled from, beside the
+// standard ones (one on a UNC path or inside the bundle is a usage error);
+// --plugin-registry names the JSON file the approvals are kept in (Protocol v0
+// item 21, m5-plugin-registry).
 //
 // Opens the bundle, or creates a new empty session there when the directory
 // does not exist, loads it into the playback graph on a device (EngineHost; a
