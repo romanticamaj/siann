@@ -890,27 +890,35 @@ TEST_CASE("selecting an unknown device is not_found and the fake device plays on
     CHECK(stopEngine(child) == 0);
 }
 
-TEST_CASE("a selected fake device that refuses to open shows device_open_failed, then recovers",
+// No wall-clock race: the backoff is a minute, so the engine never retries on its own
+// while the test looks, and the refusals are the fake device's, whichever handle the
+// engine makes for it (the backoff's own timing is engine_host_test's, on a manual clock).
+TEST_CASE("a selected fake device that refuses to open shows device_open_failed, then opens when selected again",
           "[engine][launch][devices]") {
     ix::initNetSystem();
     TempDir dir;
     const fs::path bundle = dir.path() / "Song.siann";
     writeBundle(bundle, dir.path());
-    PipedProcess child(SIANN_ENGINE_EXE,
-                       withArgs(launchArgs(bundle), {"--fake-open-failures", "1", "--device-backoff", "20:20:1000"}));
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--fake-open-failures", "2", "--device-backoff",
+                                                                       "60000:60000:60000"}));
     const Value ready = readyLine(child);
     {
         EngineClient client(ready);
-        client.waitForDevice();  // its first open was refused, the retry opened it
+        const auto checkDown = [&] {
+            const Value down = client.ok("engine.status");
+            CHECK(at(down, "device").kind() == Value::Kind::null);
+            CHECK(at(at(down, "deviceError"), "code").asString() == "device_open_failed");
+            CHECK(client.errorOf("transport.play") == "no_device");
+        };
+        checkDown();  // the launch's open was refused
 
-        // A newly made fake device refuses its first open too.
+        // A newly made handle finds the device still held.
         CHECK(client.errorOf("engine.select_device", idParams("fake")) == "device_open_failed");
-        const Value failed = client.ok("engine.status");
-        CHECK(at(failed, "device").kind() == Value::Kind::null);
-        CHECK(at(at(failed, "deviceError"), "code").asString() == "device_open_failed");
-        CHECK(client.errorOf("transport.play") == "no_device");
+        checkDown();
 
-        const Value recovered = client.waitForDevice();
+        const Value selected = client.ok("engine.select_device", idParams("fake"));
+        CHECK(at(selected, "id").asString() == "fake");
+        const Value recovered = client.ok("engine.status");
         CHECK(at(at(recovered, "device"), "id").asString() == "fake");
         CHECK(recovered.find("deviceError") == nullptr);
         CHECK(at(client.ok("transport.play"), "playing").asBool());
