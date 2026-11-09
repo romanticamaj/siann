@@ -7,7 +7,9 @@
 // The one optimistic value is a continuous gesture's overlay (a fader or pan
 // knob held under a gesture, spec "Gestures"): it changes the derived view,
 // never a snapshot, and stays after gesture.end until the session.changed that
-// commits the entity arrives, so a recompile never snaps a held fader back.
+// commits the entity arrives, so a recompile never snaps a held fader back. A
+// session.sync drops an ended overlay (the sync already holds any commit) and
+// a held one of another session.
 //
 // React reads it through useSyncExternalStore(subscribe, getSnapshot) or
 // (subscribe, getView): each identity is stable until the next change.
@@ -144,6 +146,8 @@ function buildSnapshot(
 export class ReadModel {
   #snapshot: Snapshot | null = null;
   #gesture: Gesture | null = null;
+  // The session of the last sync (null: unnamed).
+  #sessionId: string | null = null;
   #view: View | null = null;
   readonly #listeners = new Set<() => void>();
 
@@ -181,9 +185,14 @@ export class ReadModel {
   }
 
   // Replaces the model with a full session.sync (every chunk of one pinned
-  // revision). Refused, replacing nothing, when the chunks do not belong to one
-  // sync or do not hash to its documentHash.
-  async fromSync(chunks: readonly SyncChunk[]): Promise<Snapshot> {
+  // revision) of the session sessionId. Refused, replacing nothing, when the
+  // chunks do not belong to one sync or do not hash to its documentHash.
+  //
+  // The sync is the engine's truth and already holds any commit, so an ended
+  // gesture's overlay goes (its commit was applied, lost in a gap, or
+  // rejected). A held gesture stays only when the sync is of the session it
+  // began in; another (or an unnamed) session drops it.
+  async fromSync(chunks: readonly SyncChunk[], sessionId: string | null = null): Promise<Snapshot> {
     const first = chunks[0];
     if (!first) throw new ReadModelError('sync_inconsistent', 'a sync has at least one chunk');
     const entities: Record<string, Entity> = {};
@@ -213,7 +222,10 @@ export class ReadModel {
       throw new ReadModelError('hash_mismatch', `the sync hashes to ${computed}, not ${first.documentHash}`);
     }
     const snapshot = buildSnapshot(first.revision, first.seq, first.documentHash, entities, hashes);
-    if (this.#gesture && !snapshot.entities[this.#gesture.ref]) this.#gesture = null;
+    const gesture = this.#gesture;
+    const sameSession = sessionId !== null && sessionId === this.#sessionId;
+    if (gesture && (gesture.ended || !sameSession || !snapshot.entities[gesture.ref])) this.#gesture = null;
+    this.#sessionId = sessionId;
     this.#commit(snapshot);
     return snapshot;
   }

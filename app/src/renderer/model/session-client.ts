@@ -390,7 +390,7 @@ export class SessionClient {
         cursor = chunk.next;
       }
       if (connection.closed) return;
-      const snapshot = await this.model.fromSync(chunks);
+      const snapshot = await this.model.fromSync(chunks, sessionId);
       if (connection.closed) return;
       this.#modelSessionId = sessionId;
       this.#lastSeq = seqOf(snapshot.seq);
