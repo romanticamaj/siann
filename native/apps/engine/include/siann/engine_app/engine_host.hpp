@@ -20,7 +20,8 @@
 // the host says why once through `diagnostic`, serves, reports the reason in
 // status(), and the transport methods answer no_device, and tick() opens the device
 // again under `backoff`. A session whose media cannot be loaded, for whatever reason,
-// is served the same way, with no graph at all and no retry.
+// is served the same way, with no graph at all; tick() builds it again at every new
+// head of main, and plays once a commit no longer needs what was missing.
 //
 // selectDevice (engine.select_device, Protocol v0 item 22) stops the driver and the
 // transport, closes the running device and opens the one deviceFactory makes, on
@@ -89,13 +90,14 @@ struct PluginHostSet;
 
 class EngineHost final : public protocol::TransportPort, public protocol::PluginPort {
 public:
-    // The session must outlive the host.
+    // The session must outlive the host (or its next rebind).
     EngineHost(session::Session& session, EngineHostOptions options);
     ~EngineHost() override;
     EngineHost(const EngineHost&) = delete;
     EngineHost& operator=(const EngineHost&) = delete;
 
-    // nullptr when the session could not be loaded. Lives as long as the host.
+    // Lives as long as the host, across rebinds; while the session's graph could
+    // not be built it is unbound (audition_unavailable).
     protocol::AuditionPort* auditionPort() noexcept;
 
     // From here on tick() publishes the meter legend and the frames. Both must
@@ -137,9 +139,13 @@ public:
     void destroyRenderInstances(std::shared_ptr<engine::PluginNodeSource> instances) override;
 
     protocol::TransportState transportState() const;
-    playback::PlaybackEngine& playback() noexcept { return engine_; }
+    playback::PlaybackEngine& playback() noexcept { return *engine_; }
 
 private:
+    // A new engine, auditioner and publisher on `session`: the constructor, rebind()
+    // and the retry after a graph that could not be built.
+    void bind(session::Session& session);
+    void makePublisher();
     std::chrono::steady_clock::time_point now() const;
     void startDevice();
     void scheduleReopen();
@@ -152,7 +158,7 @@ private:
     // The plugin hosts, before the engine whose instances they made.
     std::unique_ptr<PluginHostSet> pluginHosts_;
     std::uintptr_t ownerWindow_ = 0;
-    session::Session& session_;
+    session::Session* session_;
     // plugin.instantiate's instance until its plugin.insert committed.
     std::map<std::string, std::unique_ptr<host::PluginInstance>> pendingInstances_;
     // Declared before the engine, which stops the device when destroyed.
@@ -160,6 +166,9 @@ private:
     std::string deviceId_;
     std::function<std::vector<protocol::DeviceDescription>()> listDevices_;
     std::function<std::unique_ptr<host::AudioDevice>(const std::string&)> deviceFactory_;
+    // What status() reports while no device was given.
+    protocol::DeviceProblem missingDevice_;
+    playback::PlaybackOptions playbackOptions_;
     std::function<void(const std::string&)> diagnostic_;
     std::optional<protocol::DeviceProblem> problem_;
     int bufferFrames_ = 0;
@@ -170,9 +179,13 @@ private:
     std::optional<std::chrono::steady_clock::time_point> startedAt_;
     bool running_ = false;
     bool loaded_ = false;
-    playback::PlaybackEngine engine_;
+    // The head the last bind() tried, so a failed graph is retried once per head.
+    std::string loadAttemptHead_;
+    std::unique_ptr<playback::PlaybackEngine> engine_;
     std::optional<playback::Auditioner> auditioner_;
-    std::optional<AuditionerPort> audition_;
+    AuditionerPort audition_;
+    protocol::RealtimeChannel* channel_ = nullptr;
+    protocol::EventStream* events_ = nullptr;
     std::optional<protocol::MeterPublisher> publisher_;
 };
 

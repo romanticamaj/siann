@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <exception>
-#include <stdexcept>
 #include <utility>
 
 #include "siann/engine/offline.hpp"
@@ -84,34 +83,65 @@ std::optional<protocol::DeviceProblem> graphProblem(Build build) {
 EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
     : pluginHosts_(std::make_unique<PluginHostSet>()),
       ownerWindow_(options.ownerWindow),
-      session_(session),
+      session_(&session),
       device_(std::move(options.device)),
       deviceId_(std::move(options.deviceId)),
       listDevices_(std::move(options.listDevices)),
       deviceFactory_(std::move(options.deviceFactory)),
+      missingDevice_(options.deviceError.value_or(protocol::DeviceProblem{"no_device", "no audio device was given"})),
+      playbackOptions_(withoutAutoPlay(std::move(options.playback), *pluginHosts_)),
       diagnostic_(std::move(options.diagnostic)),
       bufferFrames_(options.bufferFrames),
       backoff_(options.backoff),
-      clock_(std::move(options.clock)),
-      engine_(session, withoutAutoPlay(std::move(options.playback), *pluginHosts_)) {
-    if (auto problem = graphProblem([this] { engine_.load(); })) {
+      clock_(std::move(options.clock)) {
+    bind(session);
+}
+
+void EngineHost::bind(session::Session& session) {
+    // What refers to the old engine goes first, then the engine, whose driver stops
+    // the device. The device object stays: the new driver opens it again.
+    publisher_.reset();
+    audition_.unbind();
+    auditioner_.reset();
+    pendingInstances_.clear();
+    if (engine_) {
+        engine_->stop();
+        if (device_) {
+            device_->setOnStopped([](bool) {});  // not the old driver's any more
+        }
+        engine_.reset();
+    }
+    running_ = false;
+    loaded_ = false;
+    session_ = &session;
+    engine_ = std::make_unique<playback::PlaybackEngine>(session, playbackOptions_);
+    loadAttemptHead_ = session.history().head().envelope.id;
+    if (auto problem = graphProblem([this] { engine_->load(); })) {
         say("cannot load the session (" + problem->code + "): " + problem->message);
         problem_ = std::move(problem);
         return;
     }
     loaded_ = true;
-    auditioner_.emplace(engine_, session);
-    audition_.emplace(*auditioner_);
+    auditioner_.emplace(*engine_, session);
+    audition_.rebind(*auditioner_);
+    problem_.reset();
     if (device_) {
         startDevice();
     } else {
-        report(options.deviceError.value_or(protocol::DeviceProblem{"no_device", "no audio device was given"}));
+        report(missingDevice_);
     }
-    if (!running_ && engine_.options().butlerThread) {
+    if (!running_ && engine_->options().butlerThread) {
         // Without a device the graph still follows the session, and its old
         // streams are only released through the butler.
-        engine_.butler().start();
+        engine_->butler().start();
     }
+    if (channel_ != nullptr) {
+        makePublisher();
+    }
+}
+
+void EngineHost::rebind(session::Session& session) {
+    bind(session);
 }
 
 EngineHost::~EngineHost() {
@@ -129,16 +159,16 @@ void EngineHost::startDevice() {
     config.outputChannels = kOutputChannels;
     try {
         device_->close();                 // a no-op unless a run or a failed start left it open
-        engine_.start(*device_, config);  // asks the device for the session rate
+        engine_->start(*device_, config);  // asks the device for the session rate
         running_ = true;
         startedAt_ = now();
         reopenAt_.reset();
     } catch (const host::DeviceError& error) {
-        engine_.driver().stop();
+        engine_->driver().stop();
         report({error.code(), error.what()});
         scheduleReopen();
     } catch (const std::exception& error) {
-        engine_.driver().stop();
+        engine_->driver().stop();
         report({"device_open_failed", error.what()});
         scheduleReopen();
     }
@@ -183,19 +213,24 @@ void EngineHost::report(protocol::DeviceProblem problem) {
 }
 
 protocol::AuditionPort* EngineHost::auditionPort() noexcept {
-    return audition_ ? &*audition_ : nullptr;
+    return &audition_;
 }
 
 void EngineHost::attachPublisher(protocol::RealtimeChannel& channel, protocol::EventStream& events) {
-    if (!loaded_) {
-        return;
+    channel_ = &channel;
+    events_ = &events;
+    if (loaded_) {
+        makePublisher();
     }
+}
+
+void EngineHost::makePublisher() {
     protocol::MeterPublisher::Options options;
-    realtime::Transport& transport = engine_.transport();
+    realtime::Transport& transport = engine_->transport();
     options.playing = [&transport] { return transport.playing(); };
     options.playhead = [&transport] { return transport.position(); };
-    publisher_.emplace(engine_.dispatcher(), channel, events, std::move(options));
-    publisher_->graphPublished(engine_.driver().liveEpoch(), engine_.meterSlots());
+    publisher_.emplace(engine_->dispatcher(), *channel_, *events_, std::move(options));
+    publisher_->graphPublished(engine_->driver().liveEpoch(), engine_->meterSlots());
 }
 
 void EngineHost::tick() {
@@ -203,15 +238,19 @@ void EngineHost::tick() {
     // drains what they reported.
     pluginHosts_->clap.runMainThreadCallbacks();
     if (!loaded_) {
+        // The first graph could not be built: again once main has a new head.
+        if (session_->history().head().envelope.id != loadAttemptHead_) {
+            bind(*session_);
+        }
         return;
     }
-    if (const auto problem = graphProblem([this] { engine_.tick(); })) {
+    if (const auto problem = graphProblem([this] { engine_->tick(); })) {
         // A document whose media cannot be read: the graph that plays stays live.
         say("cannot compile the session (" + problem->code + "): " + problem->message);
     }
-    if (running_ && engine_.driver().state() != realtime::DriverState::realtime) {
+    if (running_ && engine_->driver().state() != realtime::DriverState::realtime) {
         running_ = false;
-        engine_.transport().stop();
+        engine_->transport().stop();
         report({"device_lost", "the audio device stopped"});
         scheduleReopen();
     }
@@ -219,8 +258,8 @@ void EngineHost::tick() {
         reopenDevice();
     }
     if (publisher_) {
-        if (publisher_->epoch() != engine_.driver().liveEpoch()) {
-            publisher_->graphPublished(engine_.driver().liveEpoch(), engine_.meterSlots());
+        if (publisher_->epoch() != engine_->driver().liveEpoch()) {
+            publisher_->graphPublished(engine_->driver().liveEpoch(), engine_->meterSlots());
         }
         publisher_->tick();
     }
@@ -229,7 +268,9 @@ void EngineHost::tick() {
 void EngineHost::shutdown() {
     running_ = false;
     reopenAt_.reset();
-    engine_.stop();
+    if (engine_) {
+        engine_->stop();
+    }
     if (device_) {
         device_->close();
     }
@@ -245,8 +286,8 @@ protocol::PluginInstantiateResult EngineHost::instantiate(const protocol::Plugin
                                         "this engine hosts no " + request.descriptor.format + " plugins");
     }
     host::PluginHost& pluginHost = *found->second;
-    const std::int64_t sampleRate = session_.history().head().document.root().sampleRate;
-    const int maxBlock = std::max(engine_.options().maxBlockFrames, kRenderBlockFrames);
+    const std::int64_t sampleRate = session_->history().head().document.root().sampleRate;
+    const int maxBlock = std::max(engine_->options().maxBlockFrames, kRenderBlockFrames);
     protocol::PluginInstantiateResult result;
     std::unique_ptr<host::PluginInstance> instance;
     try {
@@ -269,7 +310,7 @@ protocol::PluginInstantiateResult EngineHost::instantiate(const protocol::Plugin
         instance = pluginHost.instantiate(descriptor, sampleRate, maxBlock);
         result.descriptor = {descriptor.format, descriptor.uid, descriptor.name, descriptor.path};
         if (request.stateBlob) {
-            const auto file = playback::blobPath(session_.bundlePath(), *request.stateBlob);
+            const auto file = playback::blobPath(session_->bundlePath(), *request.stateBlob);
             std::error_code ec;
             if (std::filesystem::exists(file, ec)) {  // otherwise the default state, as a compile does
                 const std::string bytes = io::readFile(file);
@@ -296,18 +337,18 @@ void EngineHost::settle(const model::PluginSlot& slot, bool inserted) {
     std::unique_ptr<host::PluginInstance> instance = std::move(found->second);
     pendingInstances_.erase(found);
     if (inserted) {
-        engine_.plugins().adopt(slot, std::move(instance));  // the next compile reuses it
+        engine_->plugins().adopt(slot, std::move(instance));  // the next compile reuses it
     }
 }
 
 host::PluginInstance& EngineHost::requireInstance(const std::string& slotId) const {
-    const model::Document* heard = engine_.heardDocument();
-    const bool known = session_.history().head().document.pluginSlot(slotId) != nullptr ||
+    const model::Document* heard = engine_->heardDocument();
+    const bool known = session_->history().head().document.pluginSlot(slotId) != nullptr ||
                        (heard != nullptr && heard->pluginSlot(slotId) != nullptr);
     if (!known) {
         throw protocol::PluginPortError("not_found", "no plugin slot " + slotId);
     }
-    host::PluginInstance* instance = engine_.plugins().instance(slotId);
+    host::PluginInstance* instance = engine_->plugins().instance(slotId);
     if (instance == nullptr) {
         throw protocol::PluginPortError("plugin_missing", "the plugin of slot " + slotId + " did not load");
     }
@@ -339,13 +380,13 @@ void EngineHost::setParameter(const std::string& slotId, const std::string& para
         throw protocol::PluginPortError("not_found", "the plugin of slot " + slotId + " has no parameter " + paramId);
     }
     const auto index = static_cast<std::uint32_t>(found - parameters.begin());
-    const std::optional<playback::PluginInstanceStatus> status = engine_.plugins().status(slotId);
-    if (status && status->format == "clap" && index < engine_.plugins().pendingParameterCapacity(slotId)) {
+    const std::optional<playback::PluginInstanceStatus> status = engine_->plugins().status(slotId);
+    if (status && status->format == "clap" && index < engine_->plugins().pendingParameterCapacity(slotId)) {
         // Block-accurate: the driver hands it to the node on the audio thread. The
         // node holds a value for each parameter the instance had at install; one the
         // plugin added since goes through PluginControl, which CLAP also delivers by
         // the next block.
-        engine_.dispatcher().setParameter(realtime::ParamKey{playback::pluginSlotKey(slotId), index}, value, 0);
+        engine_->dispatcher().setParameter(realtime::ParamKey{playback::pluginSlotKey(slotId), index}, value, 0);
         return;
     }
     try {
@@ -357,11 +398,11 @@ void EngineHost::setParameter(const std::string& slotId, const std::string& para
 
 std::vector<protocol::PluginStatus> EngineHost::plugins() const {
     std::vector<protocol::PluginStatus> out;
-    const model::Document* heard = engine_.heardDocument();
+    const model::Document* heard = engine_->heardDocument();
     if (heard == nullptr) {
         return out;
     }
-    for (const playback::PluginInstanceStatus& one : engine_.plugins().status(*heard)) {
+    for (const playback::PluginInstanceStatus& one : engine_->plugins().status(*heard)) {
         protocol::PluginStatus status;
         status.slotId = one.slotId;
         status.trackId = one.trackId;
@@ -397,7 +438,7 @@ std::vector<std::string> EngineHost::formats() const {
 }
 
 std::shared_ptr<engine::PluginNodeSource> EngineHost::instantiateForRender(const model::Document& document) {
-    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(), session_.bundlePath(),
+    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(), session_->bundlePath(),
                                                          kRenderBlockFrames);
 }
 
@@ -414,50 +455,46 @@ void EngineHost::requireDevice() const {
 
 protocol::TransportState EngineHost::play() {
     requireDevice();
-    engine_.transport().play();
+    engine_->transport().play();
     return transportState();
 }
 
 protocol::TransportState EngineHost::stop() {
     requireDevice();
-    engine_.transport().stop();
+    engine_->transport().stop();
     return transportState();
 }
 
 protocol::TransportState EngineHost::locate(std::int64_t frames) {
     requireDevice();
-    engine_.transport().locate(frames);
+    engine_->transport().locate(frames);
     return transportState();
 }
 
 protocol::TransportState EngineHost::transportState() const {
-    const realtime::Transport& transport = engine_.transport();
+    const realtime::Transport& transport = engine_->transport();
     return {transport.playing(), transport.position()};
 }
 
 protocol::EngineStatus EngineHost::status() const {
     protocol::EngineStatus out;
     if (running_) {
-        const host::AudioDeviceStatus& device = engine_.driver().deviceStatus();
+        const host::AudioDeviceStatus& device = engine_->driver().deviceStatus();
         out.device = protocol::DeviceInfo{deviceId_.empty() ? "default" : deviceId_, device.sampleRate,
                                           device.bufferFrames, device.inputLatencyFrames, device.outputLatencyFrames};
     } else {
         out.deviceError = problem_;
     }
     if (loaded_) {
-        const rt::CallbackTimer& timing = engine_.driver().callbackTiming();
-        out.playing = engine_.transport().playing();
+        const rt::CallbackTimer& timing = engine_->driver().callbackTiming();
+        out.playing = engine_->transport().playing();
         out.xruns = timing.misses();
         out.maxCallbackMicros = static_cast<double>(timing.maxCallbackNanos()) / 1'000.0;
         out.unmeasuredCallbacks = timing.unmeasured();
-        out.underruns = engine_.underruns();
-        out.srcUnderruns = engine_.driver().srcUnderruns();
+        out.underruns = engine_->underruns();
+        out.srcUnderruns = engine_->driver().srcUnderruns();
     }
     return out;
-}
-
-void EngineHost::rebind(session::Session&) {
-    throw std::logic_error("EngineHost::rebind is not implemented yet");
 }
 
 std::vector<protocol::DeviceDescription> EngineHost::devices() const {
@@ -489,9 +526,9 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
     }
     // The old device first: stop its callbacks and the transport, then close it.
     if (loaded_) {
-        engine_.driver().stop();
-        engine_.plugins().setBlocksComing(false);
-        engine_.transport().stop();
+        engine_->driver().stop();
+        engine_->plugins().setBlocksComing(false);
+        engine_->transport().stop();
     }
     running_ = false;
     reopenAt_.reset();

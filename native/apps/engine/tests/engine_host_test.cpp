@@ -976,7 +976,7 @@ TEST_CASE("rebind without a device keeps the device problem", "[engine][host][re
     host.rebind(other.session);
     REQUIRE(host.status().deviceError.has_value());
     CHECK(host.status().deviceError->code == "no_audio_backend");
-    CHECK(host.playback().streamFor("trk_c") == nullptr);  // trk_c has no clip
+    CHECK(host.playback().streamFor("trk_c") != nullptr);  // B is what plays
     CHECK(host.playback().compileCount() == 1);
 }
 
