@@ -1,6 +1,6 @@
 # Protocol plugins v0
 
-The plugin methods of the native protocol server (architecture spec, "siann-protocol", Protocol v0 items 18, 19 and 20; "Commands and jobs", Jobs v0, plugins; m4-plugin-node). They reach the engine through `ServerOptions::pluginPort` (`protocol::PluginPort`, implemented by the engine host). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. None is an MCP tool yet ([Protocol MCP v0](protocol-mcp-v0.md) is unchanged).
+The plugin methods of the native protocol server (architecture spec, "siann-protocol", Protocol v0 items 18, 19, 20 and 21; "Commands and jobs", Jobs v0, plugins; m4-plugin-node). They reach the engine through `ServerOptions::pluginPort` (`protocol::PluginPort`, implemented by the engine host). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. None is an MCP tool yet ([Protocol MCP v0](protocol-mcp-v0.md) is unchanged).
 
 ## Session document
 
@@ -16,7 +16,7 @@ A plugin insert is a `plugin_slot` entity (`siann.entity.plugin_slot.v1`):
 
 ## plugin.instantiate
 
-Params `{trackId, index, descriptor: {format, path?, uid?, name?}, stateBlob?}`. `index` is a non-negative integer, `format` one of `clap`, `vst3`, `au`, `lv2`, and the descriptor needs a `path` or a `uid`; anything else is `invalid_params`. An unknown track is `not_found`.
+Params `{trackId, index, descriptor: {format, path?, uid?, name?}, stateBlob?}`. `index` is a non-negative integer, `format` one of `clap`, `vst3`, `au`, `lv2`, and the descriptor needs a `path` or a `uid`; anything else is `invalid_params`, and so is a UNC `path` (`\\server\share`, `//server/share`) or one inside the session bundle, refused before any plugin host is reached. An unknown track is `not_found`. The plugin comes from the registry (below): with a `path`, the registered install at that path, which must be approved; with a `uid` and no path, its one approved install.
 
 A job that runs inside the request: the engine instantiates the plugin, the server writes its default state durably to `<bundle>/blobs/<sha256 hex>` (or keeps the `stateBlob` it was given, which must already be in the bundle), and commits `plugin.insert` with the next free slot id `slt_<n>`; `session.changed` follows the response. The instance enters the engine's instance table, so the next compile reuses it.
 
@@ -29,7 +29,36 @@ A job that runs inside the request: the engine instantiates the plugin, the serv
                              "sidechain": false, "variableLatency": true, "editor": false}}}
 ```
 
-A plugin that does not load answers `{jobId, kind, state: "failed", error: {code, message}}` with the PluginError code (`plugin_not_found`, `plugin_load_failed`, `no_plugin_host` for `vst3` and `au` in a core-only build) and commits nothing. `job.status {jobId}` returns the same object.
+A plugin that does not load answers `{jobId, kind, state: "failed", error: {code, message}}` with the PluginError code (`plugin_not_registered`, `plugin_not_approved`, `plugin_not_found`, `plugin_load_failed`, `no_plugin_host` for `vst3` and `au` in a core-only build) and commits nothing. `job.status {jobId}` returns the same object.
+
+## plugin.registry, plugin.approve
+
+A session never chooses what code loads (Protocol v0 item 21; m5-plugin-registry). The engine keeps a registry of plugin installs keyed by `{format, path}`, filled at launch from the platform's standard plugin directories and every `--plugin-dir <dir>` without running any plugin code, each install carrying the uid, name and approval the `--plugin-registry <file>` JSON file holds for its path. `uid` is `null` until the install has been probed.
+
+`plugin.registry {}` returns every install:
+
+```json
+{"plugins": [{"format": "clap", "path": "C:/Program Files/Common Files/CLAP/x.clap", "uid": "org.siann.test-plugin",
+              "name": "SIANN Test Plugin", "approved": true},
+             {"format": "clap", "path": "C:/Program Files/Common Files/CLAP/y.clap", "uid": null, "name": "y", "approved": false}]}
+```
+
+`plugin.approve {format, path, approved}` sets the flag and returns the install's entry. `format` is one of `clap`, `vst3`, `au`, `lv2`, `path` a string and `approved` a boolean; anything else is `invalid_params`. A path the registry does not hold is `plugin_not_registered`. Approving an install whose uid is not known probes it first (`scanPath`, which runs its code: the user chose that by approving); a probe that fails answers its PluginError code (`plugin_not_found`, `plugin_load_failed`) and leaves the install unapproved. `approved: false` needs no probe. The file is written atomically on every change, and the flag takes effect at the next instantiate or relaunch. A library holding several plugins is one install, approved as the first plugin its probe lists.
+
+Every load goes through the registry: the live instance table, `render.start`'s instances and `plugin.instantiate`. A slot resolves by `{format, uid}` to the approved installs with that uid. One is the one that loads; between several, the slot's `path` chooses, and without a match the slot is missing with `plugin_not_registered` naming the ambiguity. With none, the slot is missing with `plugin_not_approved` when an unapproved install of the uid (or at the slot's path) is registered, and `plugin_not_registered` otherwise. The slot's `path` is a hint and never opened by itself: a UNC hint (`unc_path`), a hint inside the session bundle (`inside_bundle`) or a path that is no registered install's (`unregistered_path`) is ignored, and the `plugin_not_registered` message names that reason. A missing slot passes audio through and keeps its `stateBlob`.
+
+Both methods run on the command thread, honour `expectedRevision` and the idempotency cache, are listed in `engine.capabilities`' `methods`, and answer `not_supported` without a port. Neither is an MCP tool: an agent must not choose what code loads, so `tools/list` has no tool for them and an MCP request naming them is refused.
+
+The `--plugin-registry` file:
+
+```json
+{"schema": "siann.plugin_registry.v0",
+ "plugins": [{"format": "clap", "path": "...", "uid": "org.siann.test-plugin", "name": "SIANN Test Plugin", "approved": true}]}
+```
+
+A file that does not parse, or does not have this shape, is one diagnostic line and an empty registry; the next approval rewrites it.
+
+A state blob names a file only as `sha256:` followed by 64 lowercase hex digits; any other value (`sha256:../../x`, uppercase hex, a bare hash) is `bad_state` for the slot and reads nothing outside `<bundle>/blobs`.
 
 ## plugin.open_editor, plugin.close_editor
 
