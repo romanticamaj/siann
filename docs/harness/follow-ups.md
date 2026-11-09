@@ -65,6 +65,19 @@ parameter set and the hostile plugin in slot B, crashes the engine through
 parameter and latency restored. It SKIPs naming the variable when unset. Run it here
 with TDR Nova, and on the Mac through `siann-macos`.
 
+Windows half done (2026-11-09): the case is in `engine_launch_test.cpp` ("a
+third-party plugin beside a crashing one comes back running with its parameter and
+latency"). The moved parameter goes into slot A's state blob, written before the
+instantiate, because a live `plugin.set_parameter` is not durable (Protocol v0 item
+20) and a crash drops it; no method reads a parameter back yet, so the test checks
+the value through the blob (a fresh instance in the test process reads it back) and
+the relaunch's unchanged document hash. On this machine with `SIANN_TEST_VST3` set to
+`C:\Program Files\Common Files\VST3\TDR Nova.vst3` it passes, 139 assertions: Nova's
+"Band 1 selected" moved to 0, latency 184 frames before the crash and after the
+relaunch, slot A `running` before and after playing again. Owed: the Mac half, the
+same case with `SIANN_TEST_VST3` set to the Mac's Nova VST3, run through
+`siann-macos`.
+
 ## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
 
 Taken into `m4-plugin-node` (decided by Fable, delegated by the maintainer,

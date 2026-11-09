@@ -47,6 +47,15 @@
 #include "support/piped_process.hpp"
 #include "support/ws_clients.hpp"
 
+#if defined(SIANN_ENGINE_WITH_JUCE)
+#include <catch2/catch_approx.hpp>
+
+#include <cmath>
+
+#include "hosting_checks.hpp"
+#include "siann/host/juce_plugin_host.hpp"
+#endif
+
 #if defined(_WIN32) && defined(SIANN_ENGINE_WITH_JUCE)
 #include <windows.h>
 #endif
@@ -838,8 +847,8 @@ std::string hostileCrashParameterId() {
     return {};
 }
 
-Value hostileInstantiateParams() {
-    return Value(Object{{"trackId", Value("trk_a")},
+Value hostileInstantiateParams(const std::string& trackId = "trk_a") {
+    return Value(Object{{"trackId", Value(trackId)},
                         {"index", Value(0)},
                         {"descriptor", Value(Object{{"format", Value("clap")}, {"path", Value(SIANN_HOSTILE_PLUGIN_CLAP)}})}});
 }
@@ -985,6 +994,179 @@ TEST_CASE("a crash asked for while stopped lands at the first block played, and 
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)
+
+// The maintainer's VST3 restarts with the session (follow-ups, "Before M5: the M4
+// exit's third-party restart"). The plugin named by SIANN_TEST_VST3 is in slot A
+// with one parameter moved, the hostile plugin in slot B; the hostile plugin's crash
+// ends the engine, and the relaunch brings slot A back from its state blob. The
+// moved parameter is in that blob: a live plugin.set_parameter is not durable
+// (Protocol v0 item 20), so a crash would drop it. Unset, the case skips, as the
+// hosting tests' third-party cases do.
+
+std::optional<std::string> environmentValue(const char* name) {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return std::nullopt;
+    }
+    std::string result(value);
+    std::free(value);
+#else
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    std::string result(value);
+#endif
+    if (result.empty()) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+// The state slot A starts from, made in this process: the plugin's own, with its
+// first automatable parameter that takes a new value moved to the far end of its
+// range (a stepped parameter snaps anything between steps). A fresh instance
+// loading the state reads the moved value back, so the blob carries it.
+struct MovedState {
+    std::string bytes;
+    std::string parameterName;
+    double movedTo = 0.0;
+};
+
+MovedState thirdPartyStateWithOneParameterMoved(const std::string& path) {
+    host::MainThreadLoop loop;
+    host::JucePluginHost juce;
+    const auto descriptors = juce.scanPath(path);
+    REQUIRE_FALSE(descriptors.empty());
+    auto instance = juce.instantiate(descriptors.front(), 48'000, hosting_test::blockFrames);
+    const auto parameters = instance->control().parameters();
+    int moved = -1;
+    MovedState out;
+    for (std::size_t i = 0; i < parameters.size() && moved < 0; ++i) {
+        if (!parameters[i].automatable) {
+            continue;
+        }
+        const int index = static_cast<int>(i);
+        const double before = instance->control().getParameter(index);
+        instance->control().setParameter(index, before < 0.5 ? 1.0 : 0.0);
+        if (std::abs(instance->control().getParameter(index) - before) > 1e-3) {
+            moved = index;
+            out.parameterName = parameters[i].name;
+            out.movedTo = instance->control().getParameter(index);
+        }
+    }
+    REQUIRE(moved >= 0);
+    hosting_test::runBlocks(*instance);  // a processor that learns values in process() has them
+    const std::vector<std::uint8_t> state = instance->control().getState();
+    REQUIRE_FALSE(state.empty());
+    out.bytes.assign(state.begin(), state.end());
+
+    auto restored = juce.instantiate(descriptors.front(), 48'000, hosting_test::blockFrames);
+    INFO("parameter " << out.parameterName);
+    REQUIRE(std::abs(restored->control().getParameter(moved) - out.movedTo) > 1e-3);  // not the default
+    restored->control().setState(state);
+    REQUIRE(restored->control().getParameter(moved) == Catch::Approx(out.movedTo).margin(1e-3));
+    return out;
+}
+
+TEST_CASE("a third-party plugin beside a crashing one comes back running with its parameter and latency",
+          "[engine][launch][crash][thirdparty]") {
+    const std::optional<std::string> path = environmentValue("SIANN_TEST_VST3");
+    if (!path) {
+        SKIP("set SIANN_TEST_VST3 to a .vst3 bundle");
+    }
+    if (!fs::exists(fs::path(*path))) {
+        FAIL("SIANN_TEST_VST3 points at a missing file: " << *path);
+    }
+    ix::initNetSystem();
+    const std::string crashId = hostileCrashParameterId();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+
+    const MovedState moved = thirdPartyStateWithOneParameterMoved(*path);
+    INFO("SIANN_TEST_VST3 " << *path << ", parameter " << moved.parameterName << " at " << moved.movedTo);
+    const std::string blob = hash::formatHash(hash::sha256(moved.bytes));
+    const fs::path blobFile = bundle / "blobs" / blob.substr(7);
+    io::createDirectoriesDurable(blobFile.parent_path());
+    io::writeFileAtomic(blobFile, moved.bytes);
+
+    std::string slotA;
+    std::string slotB;
+    std::string revision;
+    std::string documentHash;
+    double latencyFrames = -1;
+    {
+        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        const Value ready = readyLine(crashed);
+        {
+            EngineClient client(ready);
+            const Value thirdParty = client.ok(
+                "plugin.instantiate",
+                Value(Object{{"trackId", Value("trk_a")},
+                             {"index", Value(0)},
+                             {"descriptor", Value(Object{{"format", Value("vst3")}, {"path", Value(*path)}})},
+                             {"stateBlob", Value(blob)}}));
+            REQUIRE(at(thirdParty, "state").asString() == "done");
+            slotA = at(at(thirdParty, "result"), "slotId").asString();
+            CHECK(at(at(thirdParty, "result"), "stateBlob").asString() == blob);
+            latencyFrames = at(at(thirdParty, "result"), "latencyFrames").asNumber();
+
+            const Value hostile = client.ok("plugin.instantiate", hostileInstantiateParams("trk_b"));
+            REQUIRE(at(hostile, "state").asString() == "done");
+            slotB = at(at(hostile, "result"), "slotId").asString();
+
+            const Value inspect = client.ok("session.inspect");
+            revision = at(inspect, "revision").asString();
+            documentHash = at(inspect, "documentHash").asString();
+            const Value status = client.ok("engine.status");
+            const Value* entry = pluginEntry(status, slotA);
+            REQUIRE(entry != nullptr);
+            CHECK(at(*entry, "state").asString() == "running");
+            CHECK(at(*entry, "latencyFrames").asNumber() == latencyFrames);
+
+            client.ok("transport.play");
+            client.waitAdvancing();
+            client.send("plugin.set_parameter", Value(Object{{"slotId", Value(slotB)},
+                                                             {"paramId", Value(crashId)},
+                                                             {"value", Value(1)}}));
+            CHECK(client.waitClosed());
+        }
+        checkCrashed(crashed);
+    }
+
+    // The relaunch: the last durable revision, so slot A names the moved state's blob
+    // (the document hash covers it), and the blob is unchanged on disk. No method
+    // reads a parameter back yet, so the value is checked through the blob: this
+    // process read the moved value back from the bytes the engine loads.
+    PipedProcess restarted(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(restarted);
+    {
+        EngineClient client(ready);
+        const Value sync = client.ok("session.sync");
+        CHECK(at(sync, "revision").asString() == revision);
+        CHECK(at(sync, "documentHash").asString() == documentHash);
+        const Value status = client.ok("engine.status");
+        CHECK_FALSE(at(status, "playing").asBool());
+        const Value* entry = pluginEntry(status, slotA);
+        REQUIRE(entry != nullptr);
+        CHECK(at(*entry, "state").asString() == "running");
+        CHECK(at(*entry, "format").asString() == "vst3");
+        CHECK(at(*entry, "latencyFrames").asNumber() == latencyFrames);
+        const Value* hostileEntry = pluginEntry(status, slotB);
+        REQUIRE(hostileEntry != nullptr);
+        CHECK(at(*hostileEntry, "state").asString() == "running");
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+        const Value playing = client.ok("engine.status");
+        CHECK(at(*pluginEntry(playing, slotA), "state").asString() == "running");
+        CHECK(at(*pluginEntry(playing, slotA), "latencyFrames").asNumber() == latencyFrames);
+    }
+    CHECK(stopEngine(restarted) == 0);
+    CHECK(io::readFile(blobFile) == moved.bytes);
+}
 
 TEST_CASE("the desktop engine opens the default output device, or says why not", "[engine][transport][juce]") {
     ix::initNetSystem();
