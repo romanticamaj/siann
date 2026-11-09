@@ -56,7 +56,7 @@ public:
     ClapPluginHost& operator=(const ClapPluginHost&) = delete;
 
     // The `.clap` entries of the format's default directories and of CLAP_PATH.
-    std::vector<PluginDescriptor> scan() override;
+    std::vector<PluginDescriptor> scan(const std::vector<std::string>& extraDirectories = {}) override;
     // Throws plugin_not_found when the path does not exist and plugin_load_failed
     // when it holds no plugin this host can load.
     std::vector<PluginDescriptor> scanPath(const std::string& path) override;

@@ -49,6 +49,7 @@
 #include "siann/engine/offline.hpp"
 #include "siann/graph/plugin_node.hpp"
 #include "siann/host/interfaces.hpp"
+#include "siann/host/plugin_registry.hpp"
 #include "siann/model/document.hpp"
 #include "siann/rt/callback_timer.hpp"
 #include "siann/rt/mpsc_queue.hpp"
@@ -94,7 +95,9 @@ struct IndexedPluginEvent {
 
 }  // namespace detail
 
-// <bundle>/blobs/<hex> for "sha256:<hex>".
+// <bundle>/blobs/<hex> for "sha256:<hex>". Anything but "sha256:" and 64 lowercase
+// hex digits (model::isStateBlobHash) throws host::PluginError("bad_state"), so a
+// blob never names a file outside <bundle>/blobs.
 std::filesystem::path blobPath(const std::filesystem::path& bundle, const std::string& stateBlob);
 
 struct LoadedPlugin {
@@ -103,14 +106,20 @@ struct LoadedPlugin {
 };
 
 // Instantiates a slot's plugin and restores its state blob from <bundle>/blobs.
-// Main thread. A blob that is not there loads the default state (state_missing).
-LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts, const std::filesystem::path& bundle,
-                        std::int64_t sampleRate, int maxBlockFrames);
+// Main thread. The plugin is the install `registry` resolves the slot's {format,
+// uid} to (m5-plugin-registry, Protocol v0 item 21): the slot's path is only a
+// hint between approved installs, never opened itself; a hint on a UNC path or
+// inside the bundle is refused. No approved install: missing, plugin_not_registered
+// or plugin_not_approved; a null registry registers nothing. A blob that is not
+// there loads the default state (state_missing).
+LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts, const host::PluginRegistry* registry,
+                        const std::filesystem::path& bundle, std::int64_t sampleRate, int maxBlockFrames);
 
 class PluginInstanceTable final : public engine::PluginNodeSource {
 public:
-    PluginInstanceTable(PluginHosts hosts, std::filesystem::path bundle, std::int64_t sampleRate, int maxBlockFrames,
-                        std::size_t eventCapacity = 1024);
+    // `registry` (may be null: nothing loads) must outlive the table.
+    PluginInstanceTable(PluginHosts hosts, const host::PluginRegistry* registry, std::filesystem::path bundle,
+                        std::int64_t sampleRate, int maxBlockFrames, std::size_t eventCapacity = 1024);
     ~PluginInstanceTable() override;
     PluginInstanceTable(const PluginInstanceTable&) = delete;
     PluginInstanceTable& operator=(const PluginInstanceTable&) = delete;
@@ -181,6 +190,7 @@ private:
     void collect();
 
     PluginHosts hosts_;
+    const host::PluginRegistry* registry_;
     std::filesystem::path bundle_;
     std::int64_t sampleRate_;
     int maxBlockFrames_;
@@ -207,8 +217,9 @@ private:
 // pass-through. Destroyed on the control thread, after the render.
 class RenderInstanceSet final : public engine::PluginNodeSource {
 public:
-    RenderInstanceSet(const model::Document& document, const PluginHosts& hosts, const std::filesystem::path& bundle,
-                      int maxBlockFrames);
+    // Loads through `registry` as the live table does (loadPlugin).
+    RenderInstanceSet(const model::Document& document, const PluginHosts& hosts, const host::PluginRegistry* registry,
+                      const std::filesystem::path& bundle, int maxBlockFrames);
     ~RenderInstanceSet() override;
 
     // An untimed node, or nullptr for a slot that did not load.

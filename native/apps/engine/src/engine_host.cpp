@@ -394,7 +394,8 @@ std::vector<std::string> EngineHost::formats() const {
 }
 
 std::shared_ptr<engine::PluginNodeSource> EngineHost::instantiateForRender(const model::Document& document) {
-    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(), session_.bundlePath(),
+    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(),
+                                                         engine_.options().pluginRegistry, session_.bundlePath(),
                                                          kRenderBlockFrames);
 }
 

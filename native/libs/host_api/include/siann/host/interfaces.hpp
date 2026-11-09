@@ -216,9 +216,10 @@ public:
 class PluginHost {
 public:
     virtual ~PluginHost() = default;
-    // Main thread. What the format's default locations hold, without running any
-    // plugin code: format, path and name only.
-    virtual std::vector<PluginDescriptor> scan() = 0;
+    // Main thread. What the format's default locations and `extraDirectories`
+    // (UTF-8; the engine's --plugin-dir) hold, without running any plugin code:
+    // format, path and name only, each path once.
+    virtual std::vector<PluginDescriptor> scan(const std::vector<std::string>& extraDirectories = {}) = 0;
     // Main thread. Probes one bundle, which may hold several plugins. This loads
     // it and opens an instance, so a plugin that crashes here crashes the process
     // until plugins run in worker processes.

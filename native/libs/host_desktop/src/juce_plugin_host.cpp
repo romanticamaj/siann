@@ -505,13 +505,19 @@ void reportProcessorChange(PluginInstance& instance, bool latency, bool paramete
 }  // namespace testing
 JucePluginHost::~JucePluginHost() = default;
 
-std::vector<PluginDescriptor> JucePluginHost::scan() {
+std::vector<PluginDescriptor> JucePluginHost::scan(const std::vector<std::string>& extraDirectories) {
     // Lists without loading: loading a bundle runs its code in this process, and
     // one plugin that crashes on load would take the engine with it.
     std::vector<PluginDescriptor> result;
     for (auto* format : impl_->formats.getFormats()) {
         const auto key = formatKey(format->getName());
-        for (const auto& candidate : format->searchPathsForPlugins(format->getDefaultLocationsToSearch(), true, false)) {
+        juce::FileSearchPath locations = format->getDefaultLocationsToSearch();
+        if (key != "au") {  // an AU is named by the system's identifier, not found in a directory
+            for (const auto& extra : extraDirectories) {
+                locations.addIfNotAlreadyThere(juce::File(fromUtf8(extra)));
+            }
+        }
+        for (const auto& candidate : format->searchPathsForPlugins(locations, true, false)) {
             PluginDescriptor descriptor;
             descriptor.format = key;
             descriptor.path = candidate.toStdString();
