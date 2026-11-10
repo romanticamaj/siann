@@ -555,6 +555,49 @@ TEST_CASE("a scanned directory that holds the bundle registers nothing inside it
     host->shutdown();
 }
 
+TEST_CASE("an approved install inside the bundle session.open rebinds to is never opened", "[engine][plugin][registry]") {
+    // Approved while another session is served, then the user opens the bundle
+    // that holds it: the refusal reads the bound session's bundle, not the first.
+    Fixture first;
+    Fixture other;
+    const std::filesystem::path original(SIANN_TEST_PLUGIN_CLAP);
+    const std::filesystem::path inside = other.bundle() / "plugins" / original.filename();
+    std::filesystem::create_directories(inside.parent_path());
+    std::filesystem::copy(original, inside, std::filesystem::copy_options::recursive);
+    EngineHostOptions options;
+    options.playback = live_rig::testOptions();
+    options.pluginDirs = {inside.parent_path().string()};
+    auto host = std::make_unique<EngineHost>(first.session, std::move(options));
+    const protocol::PluginRegistryEntry approved = host->approve("clap", inside.string(), true);
+    REQUIRE(approved.approved);
+    REQUIRE(approved.uid == std::optional<std::string>{"org.siann.test-plugin"});
+
+    protocol::PluginInstantiateRequest byPath;
+    byPath.slotId = "slt_1";
+    byPath.trackId = "trk_a";
+    byPath.descriptor.format = "clap";
+    byPath.descriptor.path = inside.string();
+    protocol::PluginInstantiateRequest byUid = byPath;
+    byUid.descriptor.path.clear();
+    byUid.descriptor.uid = "org.siann.test-plugin";
+    CHECK(host->instantiate(byUid).descriptor.uid == "org.siann.test-plugin");  // outside the first bundle
+
+    host->rebind(other.session);
+    const auto refusedCode = [](auto call) {
+        try {
+            call();
+        } catch (const protocol::PluginPortError& error) {
+            CHECK(std::string(error.what()).find("inside_bundle") != std::string::npos);
+            return error.code();
+        }
+        return std::string("opened");
+    };
+    CHECK(refusedCode([&] { host->instantiate(byUid); }) == "plugin_not_registered");
+    CHECK(refusedCode([&] { host->instantiate(byPath); }) == "plugin_not_registered");
+    CHECK(refusedCode([&] { host->approve("clap", inside.string(), true); }) == "plugin_not_registered");
+    host->shutdown();
+}
+
 TEST_CASE("a registered file that is not a plugin stays unapproved when its probe fails", "[engine][plugin][registry]") {
     live_rig::TempDir plugins;
     std::ofstream(plugins.path() / "broken.clap") << "not a library";
