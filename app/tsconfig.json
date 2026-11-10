@@ -15,7 +15,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "sourceMap": false
+    "sourceMap": false,
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "test/unit/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/unit/**/*.ts"]
 }

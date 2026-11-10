@@ -55,6 +55,12 @@ TEST_CASE("session.save writes the checkpoint of the head", "[protocol][session]
     CHECK(std::filesystem::exists(path));
 
     const std::string expected = hash::formatHash(f.head().envelope.documentHash);
+    // The fixture's session holds the bundle's lock while it is served.
+    CHECK_THROWS_AS(session::Session::open(f.dir.bundle()), session::SessionError);
+    f.server.stop();
+    {
+        const session::Session closing = std::move(f.session);
+    }
     session::OpenReport report;
     const session::Session reopened = session::Session::open(f.dir.bundle(), &report);
     CHECK(report.checkpointVerified);
@@ -149,4 +155,24 @@ TEST_CASE("without an openSession callback session.open is not_supported", "[pro
     const ConnectionId c = f.authed();
     CHECK(errorCode(f.call(c, "session.open", Value(Object{{"path", Value(utf8(f.dir.bundle()))}}))) ==
           "not_supported");
+}
+
+TEST_CASE("session.open answers the callback's SessionError and keeps the old session served",
+          "[protocol][session]") {
+    for (const std::string& code : {std::string("session_locked"), std::string("not_a_bundle")}) {
+        INFO(code);
+        ServerOptions options = manualOptions();
+        options.openSession = [&code](const std::filesystem::path&) -> session::Session& {
+            throw session::SessionError(code, "refused by the test");
+        };
+        Fixture f(std::move(options));
+        const std::filesystem::path bundle = otherBundle(f);
+        const ConnectionId c = f.authed();
+        const std::string oldId = f.server.sessionId();
+        const Value refused = f.call(c, "session.open", Value(Object{{"path", Value(utf8(bundle))}}));
+        CHECK(errorCode(refused) == code);
+        CHECK(f.server.sessionId() == oldId);
+        CHECK(&f.server.session() == &f.session);
+        CHECK(at(f.ok(c, "session.inspect"), "revision").asString() == "r1");
+    }
 }

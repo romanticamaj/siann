@@ -8,4 +8,8 @@ std::unique_ptr<host::AudioDevice> hardwareDevice() {
                             "desktop preset); use --device fake");
 }
 
+std::vector<protocol::DeviceDescription> listHardwareDevices() {
+    return {};
+}
+
 }  // namespace siann::engine_app

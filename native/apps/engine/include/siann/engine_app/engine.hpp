@@ -23,7 +23,15 @@
 // Nothing else is ever written to `out`. It then serves until `stop` is set
 // (stdin EOF, SIGTERM or CTRL_BREAK in main.cpp) and returns 0. A bad launch
 // writes one JSON error {ok:false, error:{code, message}} to `err`, nothing to
-// `out`, and returns 1.
+// `out`, and returns 1; a bundle another live process holds (its `lock` file,
+// Session bundle) is such a launch, with code session_locked.
+//
+// Besides the session, plan and plugin methods the server serves the transport
+// and device methods through the host (Protocol v0 items 18 and 22):
+// transport.play, transport.stop, transport.locate, engine.status, engine.devices
+// and engine.select_device, and session.open, which opens the new bundle (taking
+// its lock), rebinds the host to it with the device kept open, and then releases
+// the old bundle's lock.
 //
 // `out` must not be the process's fd 1 once a plugin can load: hosted plugins
 // (and JUCE) print to stdout, and a line of theirs before or after the ready

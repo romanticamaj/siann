@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -51,6 +52,9 @@ public:
         // The first this many open() calls throw DeviceError device_open_failed, as a
         // device another application holds does.
         int refuseOpens = 0;
+        // Set: refusals come from this budget instead, shared by every device made
+        // with it, as one held device refuses whichever handle opens it.
+        std::shared_ptr<std::atomic<int>> sharedRefusals = nullptr;
     };
 
     explicit FakeAudioDevice(Options options);

@@ -95,6 +95,35 @@ modified entities with `session.fetch` at the event's `revision` (so later commi
 do not leak into the step) and drops the removed ones. When that revision is no
 longer kept (`revision_unavailable`), the client syncs instead.
 
+### Client read model (m5-read-model)
+
+The renderer's read model (`app/src/renderer/model/`) follows these rules, and
+any other client that keeps a live model should too. On `session.changed` with
+`seq = lastSeq + 1` the client fetches the added and modified entities with
+`session.fetch` at the event's `revision`, drops the removed ones and the ones
+fetched `missing: true`, recomputes the document hash from its entity hashes
+and compares it with the event's `documentHash`. It replaces its model with a
+full `session.sync` instead of applying the step when:
+
+- the recomputed `documentHash` differs from the event's (a divergent model is
+  never trusted);
+- an event leaves a gap (`seq > lastSeq + 1`);
+- the fetch answers `revision_unavailable`;
+- a `session.opened` event arrives (the sync names the new `sessionId`);
+- it reconnects and the auth reply's `seq` is newer than `lastSeq`, or names
+  another `sessionId` (an engine restart).
+
+Events that arrive while a sync runs are buffered; those with `seq` at most the
+sync's `seq` are dropped and the rest applied in order.
+
+Every envelope names the current `sessionId`. An event newer than `lastSeq`
+whose `sessionId` differs from the one the client names (its `session.opened`
+was dropped in a gap) makes the client adopt that id first, so the sync it
+starts names the new session. A request answered `session_mismatch` is never
+resent with the same id: unless the client has adopted another id since, or a
+buffered event names one, it re-authenticates, since the auth reply names the
+current session, and syncs on the new connection.
+
 ### `meters.legend`
 
 Published when the engine publishes a graph with meters:
@@ -162,17 +191,20 @@ happen in between.
 {
   "revision": "r13", "seq": "42", "documentHash": "sha256:...", "entities": 32,
   "meters": {"epoch": "3", "entities": ["master", "track:trk_1"]},
-  "chunk": {"root": {...}, "media": [...], "tracks": [...], "clips": [...]},
+  "chunk": {"root": {...}, "media": [...], "tracks": [...], "clips": [...], "pluginSlots": [...]},
   "next": "sync_1:4"
 }
 ```
 
-- Entities are listed root, media, tracks, clips, each table in id order, which is
-  the order of `Document::toJson()`. A chunk holds at most `syncChunkEntities`
-  entities (server option, default 500); `entities` is the total.
+- Entities are listed root, media, tracks, clips, plugin slots, each table in id
+  order, which is the order of `Document::toJson()`. A chunk holds at most
+  `syncChunkEntities` entities (server option, default 500); `entities` is the
+  total. `pluginSlots` is present only in a chunk that holds slots (M4, see
+  `protocol-plugins-v0.md`), so a document without plugins syncs as in M3.
 - Entity JSON is the hashed form, so a client recomputes entity and document
   hashes from the chunks. Concatenating the chunks gives
-  `{schemaVersion: "siann.session_document.v1", root, media, tracks, clips}`.
+  `{schemaVersion: "siann.session_document.v1", root, media, tracks, clips,
+  pluginSlots?}`.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.
@@ -183,7 +215,8 @@ happen in between.
 ### `session.fetch`
 
 Params `{refs: ["<type>:<id>", ...], revision?: "rN"}` (`refs` non-empty; `type`
-is `root`, `media`, `track` or `clip`; the root is `root:root`). Result at
+is `root`, `media`, `track`, `clip` or `plugin_slot`, the last as
+`plugin_slot:<id>`; the root is `root:root`). Result at
 `revision`, or at the head without it:
 
 ```json

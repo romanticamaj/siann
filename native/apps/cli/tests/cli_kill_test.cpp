@@ -75,6 +75,9 @@ TEST_CASE("A recording siann-cli killed mid-take leaves a pending take that reco
     const auto& diff = recovered.json.find("revision")->find("diff")->asArray();
     CHECK(diff.size() == 2);
     CHECK(recovered.json.find("revision")->find("id")->asString() == "r4");
+    // Before this process opens the bundle, whose lock would refuse the children.
+    CHECK(runJson({"verify", bundle}).exitCode == 0);
+    CHECK(runJson({"info", bundle}).json.find("pendingTakes")->asArray().empty());
 
     siann::session::OpenReport report;
     const siann::session::Session s = siann::session::Session::open(bundlePath, &report);
@@ -91,12 +94,9 @@ TEST_CASE("A recording siann-cli killed mid-take leaves a pending take that reco
     CHECK(media->frames == clip->length);
 
     // And it is the counter input, with no gap or repeat.
-    const CounterCheck content = checkCounterWav(takeMediaFile(bundlePath, takeId));
+    const CounterCheck content = checkCounterWav(takeMediaFile(s, takeId));
     INFO(content.problem);
     REQUIRE(content.readable);
     CHECK(content.frames == clip->length);
     CHECK(content.mismatchAt == -1);
-
-    CHECK(runJson({"verify", bundle}).exitCode == 0);
-    CHECK(runJson({"info", bundle}).json.find("pendingTakes")->asArray().empty());
 }

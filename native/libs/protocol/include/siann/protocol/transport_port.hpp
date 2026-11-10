@@ -1,7 +1,7 @@
 #pragma once
 
 // The protocol server's way to the transport and the device (architecture spec,
-// "siann-protocol", Protocol v0 item 18). siann-protocol does not link the
+// "siann-protocol", Protocol v0 items 18 and 22). siann-protocol does not link the
 // playback engine; the engine host implements this interface and hands it to
 // the server in ServerOptions. Every call runs on the command thread.
 
@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace siann::protocol {
 
@@ -25,6 +26,15 @@ struct DeviceInfo {
     int bufferFrames = 0;
     int inputLatencyFrames = 0;
     int outputLatencyFrames = 0;
+};
+
+// One entry of engine.devices (Protocol v0 item 22).
+struct DeviceDescription {
+    std::string id;  // what --device takes: "fake" or "<type>/<name>"
+    std::string type;
+    std::string name;
+    bool isDefault = false;
+    bool current = false;  // the device the engine runs or is trying to open
 };
 
 // Why there is no running device.
@@ -47,7 +57,9 @@ struct EngineStatus {
     std::uint64_t srcUnderruns = 0;
 };
 
-// Thrown by a port. Code: no_device.
+// Thrown by a port. Codes: no_device; selectDevice's not_found and
+// device_open_failed (or the device's own code, or a media code while the
+// session's first graph could not be built).
 class TransportPortError : public std::runtime_error {
 public:
     TransportPortError(std::string code, const std::string& message)
@@ -70,6 +82,14 @@ public:
     virtual TransportState stop() = 0;
     virtual TransportState locate(std::int64_t frames) = 0;
     virtual EngineStatus status() const = 0;
+
+    // engine.devices: every device --device could name, `current` marking one.
+    virtual std::vector<DeviceDescription> devices() const = 0;
+    // engine.select_device: closes the running device and opens `id`, returning
+    // what status().device then reports. Throws not_found for an id devices()
+    // does not list (the current device keeps running) and device_open_failed
+    // when the open fails (the host keeps retrying it under its backoff).
+    virtual DeviceInfo selectDevice(const std::string& id) = 0;
 };
 
 }  // namespace siann::protocol
