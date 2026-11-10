@@ -281,3 +281,25 @@ TEST_CASE("pluginPathRefusal names UNC paths and paths inside the bundle", "[mod
     CHECK(pluginPathRefusal(upper, bundle) == std::optional<std::string>{"inside_bundle"});
 #endif
 }
+
+// The security review of m5-plugin-registry: every Windows device or extended
+// form reaches a share or a device namespace, so each is refused, whichever
+// separators it mixes; on Windows a rooted path must name a drive letter.
+TEST_CASE("pluginPathRefusal refuses Windows device and extended path forms", "[model][plugin]") {
+    using siann::model::pluginPathRefusal;
+    const std::optional<std::string> unc{"unc_path"};
+    for (const char* path : {R"(\\?\UNC\server\share\x.clap)", R"(//?/UNC/server/share/x.clap)",
+                             R"(\\?\C:\Plugins\x.clap)", R"(\\.\C:\Plugins\x.clap)", R"(\\.\pipe\x)",
+                             R"(//./pipe/x)", R"(\??\C:\Plugins\x.clap)", R"(/??/C:/Plugins/x.clap)",
+                             R"(\??/UNC/server/share/x.clap)", R"(/\server\share\x.clap)",
+                             R"(\/?\UNC\server\x.clap)", R"(\\server/share/x.clap)"}) {
+        INFO(path);
+        CHECK(pluginPathRefusal(path) == unc);
+    }
+#if defined(_WIN32)
+    CHECK_FALSE(pluginPathRefusal(R"(C:\Program Files\Common Files\CLAP\x.clap)").has_value());
+    CHECK_FALSE(pluginPathRefusal("c:/Plugins/x.clap").has_value());
+#else
+    CHECK_FALSE(pluginPathRefusal("/usr/lib/clap/x.clap").has_value());
+#endif
+}
