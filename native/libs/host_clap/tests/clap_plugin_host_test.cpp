@@ -894,6 +894,9 @@ TEST_CASE("clap host: without a window factory there is no editor", "[clap][plug
     CHECK_FALSE(instance->control().editorOpen());
 }
 
+// Only where the test plugin has a platform view: a Linux build without X11 never
+// calls these, and g++ -Werror rejects an unused function.
+#if defined(_WIN32) || defined(__APPLE__) || defined(SIANN_TEST_PLUGIN_X11)
 namespace {
 
 const clap_host_t* bareHost() {
@@ -937,6 +940,7 @@ void checkGuiExtension(const char* api) {
 }
 
 }  // namespace
+#endif
 
 TEST_CASE("clap host: the test plugin offers the gui extension for the platform API", "[clap][plugin][editor]") {
 #if defined(_WIN32)
