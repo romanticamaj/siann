@@ -135,9 +135,11 @@ json::Value toJson(const PluginSlot& slot);
 bool isStateBlobHash(std::string_view text) noexcept;
 
 // Why a plugin path (UTF-8) must not be opened, or nothing (m5-plugin-registry,
-// Protocol v0 item 21): "unc_path" for one that starts with two separators
-// (\\server\share, //server/share, \\?\UNC\..., and every other device path
-// that starts so), "inside_bundle" for one at or under `bundle` (both made
+// Protocol v0 item 21): "unc_path" for a share or a device path, whichever
+// separators it mixes: one that starts with two separators (\\server\share,
+// //server/share, \\?\UNC\..., \\?\C:\..., \\.\pipe\...), one in the NT object
+// namespace (\??\...), and on Windows one whose root name is not a drive letter;
+// "inside_bundle" for one at or under `bundle` (both made
 // weakly_canonical; case-insensitive on Windows). An empty path is no hint and
 // is never refused.
 std::optional<std::string> pluginPathRefusal(std::string_view path,

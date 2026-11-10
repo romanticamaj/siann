@@ -437,6 +437,28 @@ std::vector<std::filesystem::path::string_type> components(const std::filesystem
     return out;
 }
 
+// A share or a Windows device namespace, whichever separators it mixes: two
+// leading separators (\\server\share, \\?\UNC\..., \\?\C:\..., \\.\pipe\...),
+// the NT object namespace (\??\...), and on Windows any root name that is not
+// a drive letter.
+bool isShareOrDevicePath(std::string_view path) {
+    if (path.size() >= 2 && isSeparator(path[0]) && isSeparator(path[1])) {
+        return true;
+    }
+    if (path.size() >= 4 && isSeparator(path[0]) && path[1] == '?' && path[2] == '?' && isSeparator(path[3])) {
+        return true;
+    }
+#if defined(_WIN32)
+    const std::wstring root = pathFromUtf8(path).root_name().native();
+    const bool drive = root.size() == 2 && root[1] == L':' &&
+                       ((root[0] >= L'A' && root[0] <= L'Z') || (root[0] >= L'a' && root[0] <= L'z'));
+    if (!root.empty() && !drive) {
+        return true;
+    }
+#endif
+    return false;
+}
+
 }  // namespace
 
 std::optional<std::string> pluginPathRefusal(std::string_view path,
@@ -444,7 +466,7 @@ std::optional<std::string> pluginPathRefusal(std::string_view path,
     if (path.empty()) {
         return std::nullopt;
     }
-    if (path.size() >= 2 && isSeparator(path[0]) && isSeparator(path[1])) {
+    if (isShareOrDevicePath(path)) {
         return std::string("unc_path");
     }
     if (bundle && !bundle->empty()) {
