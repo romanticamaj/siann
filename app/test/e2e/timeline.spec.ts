@@ -257,6 +257,8 @@ test('placing a clip from the media pool issues clip.place', async () => {
   await page.mouse.click(box.x + 150, box.y + y);
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  // The canvas redraws on the next animation frame after the model changed.
+  await expect.poll(async () => (await hooks.clips()).length).toBe(1);
   const [placed] = await hooks.clips();
   expect(placed!.clipId).toMatch(/^clp_[0-9a-f]{16}$/);
   const clip = await fetchClip(placed!.clipId);

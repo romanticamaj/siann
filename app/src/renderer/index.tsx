@@ -4,7 +4,7 @@
 // when the socket closes or the shell announces a new engine, keeps the read
 // model in step with the engine (protocol-events-v1.md, "Client read model"),
 // fetches peak pyramids from the same engine (Protocol v0 item 23), and mounts
-// the React chrome. Under SIANN_SHELL_TEST=1 (the preload's testHooks) the
+// the React chrome. Under SIANN_SHELL_TEST=1 (the preload's window.siannTest) the
 // timeline's test hooks are window.__siannTimeline.
 
 import { createRoot } from 'react-dom/client';
@@ -21,9 +21,9 @@ declare global {
         current(): Promise<EngineEndpoint | null>;
         onChange(callback: (next: EngineEndpoint | null) => void): void;
       };
-      // True only when the shell runs under SIANN_SHELL_TEST=1.
-      testHooks?: boolean;
     };
+    // Present only when the shell runs under SIANN_SHELL_TEST=1.
+    siannTest?: { timelineHooks?: boolean };
     __siannTimeline?: TimelineTestHooks;
   }
 }
@@ -54,7 +54,7 @@ function connect(next: EngineEndpoint | null): void {
   if (changed) peaks.endpointChanged();
 }
 
-const onTimelineHooks = window.siann.testHooks
+const onTimelineHooks = window.siannTest?.timelineHooks
   ? (hooks: TimelineTestHooks | null) => {
       if (hooks) window.__siannTimeline = hooks;
       else delete window.__siannTimeline;

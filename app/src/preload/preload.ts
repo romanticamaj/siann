@@ -18,10 +18,13 @@ function endpoint(value: unknown): EngineEndpoint | null {
   return typeof port === 'number' && typeof token === 'string' ? { port, token } : null;
 }
 
+// Under SIANN_SHELL_TEST=1 the main process adds the argument, and the renderer
+// exposes its test hooks (window.__siannTimeline); window.siann stays as it is.
+if (process.argv.includes(TEST_HOOKS_ARG)) {
+  contextBridge.exposeInMainWorld('siannTest', { timelineHooks: true });
+}
+
 contextBridge.exposeInMainWorld('siann', {
-  // Under SIANN_SHELL_TEST=1 the main process adds this argument, and the
-  // renderer exposes its test hooks (window.__siannTimeline).
-  testHooks: process.argv.includes(TEST_HOOKS_ARG),
   engine: {
     current: async (): Promise<EngineEndpoint | null> => endpoint(await ipcRenderer.invoke('siann:engine:current')),
     onChange: (callback: (next: EngineEndpoint | null) => void): void => {
