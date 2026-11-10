@@ -1,6 +1,7 @@
 add_library(siann_session
   src/journal.cpp
   src/session.cpp
+  src/session_lock.cpp
   src/media_import.cpp
   src/takes.cpp
 )
@@ -13,6 +14,7 @@ siann_apply_compile_options(siann_session)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_session_tests
     tests/session_test.cpp
+    tests/session_lock_test.cpp
     tests/media_import_test.cpp
     tests/takes_test.cpp
   )

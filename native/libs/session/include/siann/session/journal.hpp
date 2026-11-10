@@ -28,7 +28,8 @@ public:
 
     // Stable codes: corrupt_record, checksum_mismatch, unsupported_version,
     // missing_create_record, replay_mismatch, checkpoint_mismatch,
-    // journal_behind_checkpoint, bundle_exists, not_a_bundle.
+    // journal_behind_checkpoint, bundle_exists, not_a_bundle, session_locked
+    // (another live Session holds the bundle's lock), lock_failed.
     const std::string& code() const noexcept { return code_; }
 
 private:

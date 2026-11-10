@@ -44,6 +44,9 @@
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
+#if defined(SIANN_ENGINE_WITH_JUCE)
+#include "siann/host/juce_audio_device.hpp"
+#endif
 #include "support/piped_process.hpp"
 #include "support/ws_clients.hpp"
 
@@ -121,6 +124,16 @@ bool lowerHex64(const std::string& text) {
         }
     }
     return true;
+}
+
+// A launch with no device: a core-only build has none without --device; a JUCE
+// build gets one it cannot open, so no test depends on the runner's hardware.
+std::vector<std::string> noDeviceArgs(const fs::path& bundle) {
+#if defined(SIANN_ENGINE_WITH_JUCE)
+    return {"--session", utf8(bundle), "--port", "0", "--device", "No Such Type/No Such Device"};
+#else
+    return {"--session", utf8(bundle), "--port", "0"};
+#endif
 }
 
 // Without --device: the build's default device, or none.
@@ -211,6 +224,9 @@ public:
                                                 {"method", Value(method)},
                                                 {"params", std::move(params)}})));
     }
+
+    // Requests name this session from here on (after session.open).
+    void useSession(std::string sessionId) { sessionId_ = std::move(sessionId); }
 
     // True once the engine closed the command socket (within the client's timeout).
     bool waitClosed() { return ws_.waitClosed(); }
@@ -770,6 +786,268 @@ TEST_CASE("a corrupt media file does not fail the launch", "[engine][transport]"
         io::writeFileAtomic(file, whole.substr(0, whole.size() / 2));
         served("media_mismatch");  // the reader sees fewer frames than the entity says
     }
+}
+
+// ---- devices, session.open, the bundle lock and the media retry (Protocol v0 item 22) --
+
+namespace {
+
+Value idParams(const std::string& id) {
+    return Value(Object{{"id", Value(id)}});
+}
+
+std::string documentHashOf(const fs::path& bundle) {
+    const session::Session s = session::Session::open(bundle);  // closed again at once
+    return hash::formatHash(s.history().head().envelope.documentHash);
+}
+
+}  // namespace
+
+TEST_CASE("engine.devices lists fake on every build, and what siann-cli devices prints with JUCE",
+          "[engine][launch][devices]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value listed = client.ok("engine.devices");
+        const auto& devices = at(listed, "devices").asArray();
+        REQUIRE_FALSE(devices.empty());
+        const Value& fake = devices[0];
+        CHECK(at(fake, "id").asString() == "fake");
+        CHECK(at(fake, "type").asString() == "fake");
+        CHECK(at(fake, "name").asString() == "fake");
+        CHECK_FALSE(at(fake, "isDefault").asBool());
+        CHECK(at(fake, "current").asBool());  // launched with --device fake
+        int current = 0;
+        std::set<std::string> ids;
+        for (const Value& device : devices) {
+            current += at(device, "current").asBool() ? 1 : 0;
+            ids.insert(at(device, "id").asString());
+        }
+        CHECK(current == 1);
+#if defined(SIANN_ENGINE_WITH_JUCE)
+        for (const host::DeviceDescription& one : host::JuceAudioDevice::listOutputDevices()) {
+            INFO(one.type << "/" << one.name);
+            CHECK(ids.count(one.type + "/" + one.name) == 1);
+        }
+        CHECK(ids.size() == devices.size());
+#else
+        CHECK(devices.size() == 1);
+#endif
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("an engine launched without a device plays once fake is selected", "[engine][launch][devices]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, noDeviceArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        REQUIRE(at(client.ok("engine.status"), "device").kind() == Value::Kind::null);
+        CHECK(client.errorOf("transport.play") == "no_device");
+
+        const Value selected = client.ok("engine.select_device", idParams("fake"));
+        CHECK(at(selected, "id").asString() == "fake");
+        CHECK(at(selected, "sampleRate").asNumber() == 48'000);
+        const Value status = client.ok("engine.status");
+        CHECK(at(at(status, "device"), "id").asString() == "fake");
+        CHECK(status.find("deviceError") == nullptr);
+        const Value listed = client.ok("engine.devices");
+        for (const Value& device : at(listed, "devices").asArray()) {
+            CHECK(at(device, "current").asBool() == (at(device, "id").asString() == "fake"));
+        }
+
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("selecting an unknown device is not_found and the fake device plays on", "[engine][launch][devices]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("transport.play");
+        client.waitAdvancing();
+        CHECK(client.errorOf("engine.select_device", idParams("nope")) == "not_found");
+        CHECK(client.errorOf("engine.select_device", Value(Object{})) == "invalid_params");
+        const Value status = client.ok("engine.status");
+        CHECK(at(at(status, "device"), "id").asString() == "fake");
+        CHECK(at(status, "playing").asBool());
+        client.waitAdvancing();
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+// No wall-clock race: the backoff is a minute, so the engine never retries on its own
+// while the test looks, and the refusals are the fake device's, whichever handle the
+// engine makes for it (the backoff's own timing is engine_host_test's, on a manual clock).
+TEST_CASE("a selected fake device that refuses to open shows device_open_failed, then opens when selected again",
+          "[engine][launch][devices]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--fake-open-failures", "2", "--device-backoff",
+                                                                       "60000:60000:60000"}));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const auto checkDown = [&] {
+            const Value down = client.ok("engine.status");
+            CHECK(at(down, "device").kind() == Value::Kind::null);
+            CHECK(at(at(down, "deviceError"), "code").asString() == "device_open_failed");
+            CHECK(client.errorOf("transport.play") == "no_device");
+        };
+        checkDown();  // the launch's open was refused
+
+        // A newly made handle finds the device still held.
+        CHECK(client.errorOf("engine.select_device", idParams("fake")) == "device_open_failed");
+        checkDown();
+
+        const Value selected = client.ok("engine.select_device", idParams("fake"));
+        CHECK(at(selected, "id").asString() == "fake");
+        const Value recovered = client.ok("engine.status");
+        CHECK(at(at(recovered, "device"), "id").asString() == "fake");
+        CHECK(recovered.find("deviceError") == nullptr);
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("session.open serves another bundle, plays it and releases the first bundle's lock",
+          "[engine][launch][session]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path first = dir.path() / "A.siann";
+    const fs::path second = dir.path() / "B.siann";
+    writeBundle(first, dir.path());
+    writeBundle(second, dir.path());
+    {
+        session::Session b = session::Session::open(second);  // B differs from A by one track
+        b.commit({live_rig::cmd(live_rig::addTrack("trk_c"))}, "test", "2026-11-09T00:00:00Z");
+    }
+    const std::string hashOfA = documentHashOf(first);
+    const std::string hashOfB = documentHashOf(second);
+    REQUIRE(hashOfA != hashOfB);
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(first));
+    const Value ready = readyLine(child);
+    const auto pid = static_cast<std::int64_t>(at(ready, "pid").asNumber());
+    {
+        EngineClient client(ready);
+        CHECK(at(client.ok("session.sync"), "documentHash").asString() == hashOfA);
+        CHECK_THROWS_AS(session::Session::open(first), session::SessionError);  // the engine holds A
+
+        const Value opened = client.ok("session.open", Value(Object{{"path", Value(utf8(second))}}));
+        const std::string sessionId = at(opened, "sessionId").asString();
+        CHECK(sessionId != at(ready, "sessionId").asString());
+        CHECK(at(opened, "documentHash").asString() == hashOfB);
+        CHECK(client.errorOf("session.inspect") == "session_mismatch");  // the old id
+        client.useSession(sessionId);
+        const Value synced = client.ok("session.sync");
+        CHECK(at(synced, "documentHash").asString() == hashOfB);
+
+        // B's lock names the engine; A's is gone, so this process can open A.
+        const Value lock = json::parse(io::readFile(second / "lock"));
+        CHECK(static_cast<std::int64_t>(at(lock, "pid").asNumber()) == pid);
+        CHECK_FALSE(fs::exists(first / "lock"));
+        {
+            const session::Session reopened = session::Session::open(first);
+            CHECK(hash::formatHash(reopened.history().head().envelope.documentHash) == hashOfA);
+        }
+
+        // The device stayed: B plays on it.
+        const Value status = client.ok("engine.status");
+        CHECK(at(at(status, "device"), "id").asString() == "fake");
+        CHECK(status.find("deviceError") == nullptr);
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+        const MeterFrame metered = client.frameWhere([](const MeterFrame& f) {
+            return f.playing && f.entries.size() == 4;  // master and B's three tracks
+        });
+        CHECK(metered.epoch != 0);
+    }
+    CHECK(stopEngine(child) == 0);
+    CHECK_FALSE(fs::exists(second / "lock"));
+}
+
+TEST_CASE("a second engine on a served bundle exits with session_locked; a third launches once the first ends",
+          "[engine][launch][session]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess first(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(first);
+    {
+        PipedProcess second(SIANN_ENGINE_EXE, launchArgs(bundle));
+        CHECK(second.wait() == 1);
+        CHECK(second.stdoutText().empty());
+        CHECK(errorCode(second) == "session_locked");
+    }
+    {
+        // session.open on a bundle another process holds answers session_locked.
+        const fs::path other = dir.path() / "Other.siann";
+        writeBundle(other, dir.path());
+        const session::Session held = session::Session::open(other);
+        EngineClient client(ready);
+        const std::string hashBefore = at(client.ok("session.sync"), "documentHash").asString();
+        CHECK(client.errorOf("session.open", Value(Object{{"path", Value(utf8(other))}})) == "session_locked");
+        CHECK(client.errorOf("session.open", Value(Object{{"path", Value(utf8(bundle))}})) == "session_locked");
+        CHECK(at(client.ok("session.sync"), "documentHash").asString() == hashBefore);  // the old session's id serves
+    }
+    CHECK(stopEngine(first) == 0);
+
+    PipedProcess third(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value thirdReady = readyLine(third);
+    CHECK(at(thirdReady, "schema").asString() == "siann.engine.ready.v0");
+    CHECK(stopEngine(third) == 0);
+}
+
+TEST_CASE("a bundle whose media file was removed plays once a commit removes the clips naming it",
+          "[engine][launch][retry]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    for (const fs::directory_entry& entry : fs::recursive_directory_iterator(bundle / "media")) {
+        if (entry.is_regular_file()) {
+            fs::remove(entry.path());
+            break;  // the bundle has one media file, med_st's
+        }
+    }
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value broken = client.ok("engine.status");
+        CHECK(at(broken, "device").kind() == Value::Kind::null);
+        CHECK(at(at(broken, "deviceError"), "code").asString() == "media_missing");
+        CHECK(client.errorOf("transport.play") == "no_device");
+
+        client.ok("command.execute",
+                  Value(Object{{"commands", Value(json::Array{json::parse(R"({"op":"clip.remove","clipId":"clp_a"})"),
+                                                              json::parse(R"({"op":"clip.remove","clipId":"clp_b"})")})}}));
+        const Value repaired = client.waitForDevice();
+        CHECK(at(at(repaired, "device"), "id").asString() == "fake");
+        CHECK(repaired.find("deviceError") == nullptr);
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+    }
+    CHECK(stopEngine(child) == 0);
 }
 
 TEST_CASE("every build accepts --owner-window, used or not", "[engine][launch]") {

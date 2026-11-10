@@ -109,7 +109,10 @@ interface").
 ## Before M5: the engine's device (from m4-engine-device)
 
 Taken into `m5-engine-sessions-devices`, with the session lock from "the shell"
-above (decided by Fable, delegated by the maintainer, 2026-11-09).
+above (decided by Fable, delegated by the maintainer, 2026-11-09). Closed by that
+feature: `engine.devices` and `engine.select_device`, the six MCP tools,
+`session.open` rebinding the host, the media retry and the bundle lock (Protocol v0
+item 22, docs/schemas/protocol-engine-v0.md).
 
 - A protocol method to list and select devices, so a UI choice needs no restart.
 - MCP tools for `transport.*` and `engine.status`: they are protocol methods only.

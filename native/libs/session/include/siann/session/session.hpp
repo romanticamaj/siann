@@ -5,6 +5,7 @@
 //   MySong.siann/
 //     session.json      latest checkpoint (siann.checkpoint.v1)
 //     journal.ndjson    every revision, append-only (never truncated in M1)
+//     lock              {pid, startedAt} while a Session is open on the bundle
 //     media/  blobs/    content-addressed files (written before their records)
 //
 // Every revision is made durable in the journal before it is published. On
@@ -12,6 +13,11 @@
 // revision is checked against its recorded envelope, and the checkpoint is
 // checked against the replayed revision its head names. A damaged journal tail is
 // moved aside, never discarded.
+//
+// A Session holds the bundle's lock from create or open until it is destroyed
+// (session_lock.hpp): a second Session on the bundle, in this process or
+// another, throws SessionError session_locked; a lock left by a dead process is
+// taken over. A moved-from Session holds nothing.
 
 #include <cstdint>
 #include <filesystem>

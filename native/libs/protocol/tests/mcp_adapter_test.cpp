@@ -14,6 +14,7 @@
 #include "siann/command/command.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/protocol/about.hpp"
+#include "siann/protocol/transport_port.hpp"
 
 using namespace siann;
 using namespace siann::protocol::testing;
@@ -29,8 +30,57 @@ const std::vector<std::string> kTools = {
     "list_commands",  "describe_capabilities", "inspect_session", "submit_plan",   "plan_status",
     "approve_plan",   "reject_plan",           "apply_plan",      "rollback_plan", "propose_plan",
     "audition",       "merge_proposal",        "discard_proposal", "execute",      "job_status",
-    "render",         "open_session",          "save_session",
+    "render",         "open_session",          "save_session",    "play",          "stop",
+    "locate",         "engine_status",         "list_devices",    "select_device",
 };
+
+// A transport port that records what each tool reached.
+class RecordingPort final : public protocol::TransportPort {
+public:
+    protocol::TransportState play() override { return reached("play", {true, position}); }
+    protocol::TransportState stop() override { return reached("stop", {false, position}); }
+    protocol::TransportState locate(std::int64_t frames) override {
+        position = frames;
+        return reached("locate", {false, frames});
+    }
+    protocol::EngineStatus status() const override {
+        protocol::EngineStatus out;
+        out.device = protocol::DeviceInfo{"fake", 48'000, 256, 256, 256};
+        return out;
+    }
+    std::vector<protocol::DeviceDescription> devices() const override {
+        return {{"fake", "fake", "fake", false, true}};
+    }
+    protocol::DeviceInfo selectDevice(const std::string& id) override {
+        selected.push_back(id);
+        calls.push_back("select");
+        if (refusal) {
+            throw protocol::TransportPortError(*refusal, "refused");
+        }
+        return protocol::DeviceInfo{id, 48'000, 256, 256, 256};
+    }
+
+    std::vector<std::string> calls;
+    std::vector<std::string> selected;
+    std::optional<std::string> refusal;
+    std::int64_t position = 0;
+
+private:
+    protocol::TransportState reached(const std::string& name, protocol::TransportState state) {
+        calls.push_back(name);
+        if (refusal) {
+            throw protocol::TransportPortError(*refusal, "refused");
+        }
+        return state;
+    }
+};
+
+ServerOptions withTransport(protocol::TransportPort& port, McpScope scope) {
+    ServerOptions options = manualOptions();
+    options.mcpScope = scope;
+    options.transportPort = &port;
+    return options;
+}
 
 // An MCP client over handleMcp.
 struct Mcp {
@@ -208,7 +258,7 @@ TEST_CASE("JSON-RPC errors: parse error, bad envelope, unknown method, unknown t
                         Value(Object{{"name", Value("list_commands")}, {"arguments", Value(3)}}))) == -32602);
 }
 
-TEST_CASE("tools/list returns the 18 tools with input schemas", "[protocol][mcp]") {
+TEST_CASE("tools/list returns the 24 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
@@ -452,4 +502,77 @@ TEST_CASE("an MCP call queued behind session.open is session_mismatch, not cache
     CHECK(at(at(retriedResult, "structuredContent"), "documentHash").asString() ==
           hash::formatHash(opened->history().head().envelope.documentHash));
     CHECK(at(at(retriedResult, "structuredContent"), "revisions").asNumber() == 2);
+}
+
+TEST_CASE("the transport and device tools reach their methods with the same params and results",
+          "[protocol][mcp][transport]") {
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::trusted));
+    Mcp mcp(f);
+    mcp.initialize();
+
+    const Value played = mcp.ok("play");
+    CHECK(at(played, "playing").asBool());
+    CHECK(at(played, "position").asString() == "0");
+    const Value located = mcp.ok("locate", Value(Object{{"frames", Value("48000")}}));
+    CHECK(at(located, "position").asString() == "48000");
+    CHECK(port.position == 48'000);
+    CHECK_FALSE(at(mcp.ok("stop"), "playing").asBool());
+    CHECK(at(at(mcp.ok("engine_status"), "device"), "id").asString() == "fake");
+    const Value listed = mcp.ok("list_devices");
+    const auto& devices = at(listed, "devices").asArray();
+    REQUIRE(devices.size() == 1);
+    CHECK(at(devices[0], "id").asString() == "fake");
+    CHECK(at(devices[0], "current").asBool());
+    CHECK(at(mcp.ok("select_device", Value(Object{{"id", Value("fake")}})), "id").asString() == "fake");
+    CHECK(port.calls == std::vector<std::string>{"play", "locate", "stop", "select"});
+    CHECK(port.selected == std::vector<std::string>{"fake"});
+
+    // The method's own errors.
+    CHECK(at(mcp.error("locate", Value(Object{{"frames", Value("-1")}})), "code").asString() == "invalid_params");
+    port.refusal = "not_found";
+    CHECK(at(mcp.error("select_device", Value(Object{{"id", Value("nope")}})), "code").asString() == "not_found");
+    CHECK(port.selected.back() == "nope");
+}
+
+TEST_CASE("without a transport port the transport tools answer not_supported", "[protocol][mcp][transport]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    for (const char* name : {"play", "stop", "engine_status", "list_devices"}) {
+        INFO(name);
+        CHECK(at(mcp.error(name), "code").asString() == "not_supported");
+    }
+    CHECK(at(mcp.error("locate", Value(Object{{"frames", Value("0")}})), "code").asString() == "not_supported");
+    CHECK(at(mcp.error("select_device", Value(Object{{"id", Value("fake")}})), "code").asString() == "not_supported");
+}
+
+TEST_CASE("play under propose is allowed and a port's no_device is the tool's error", "[protocol][mcp][transport]") {
+    RecordingPort port;
+    port.refusal = "no_device";
+    Fixture f(withTransport(port, McpScope::propose));
+    Mcp mcp(f);
+    mcp.initialize();
+    for (const char* name : {"play", "stop"}) {
+        INFO(name);
+        const Value error = mcp.error(name);
+        CHECK(at(error, "code").asString() == "no_device");
+        CHECK(at(error, "message").asString() == "refused");
+    }
+    CHECK(at(mcp.error("locate", Value(Object{{"frames", Value("0")}})), "code").asString() == "no_device");
+    CHECK(port.calls == std::vector<std::string>{"play", "stop", "locate"});
+}
+
+TEST_CASE("a propose client's select_device is scope_denied and runs nothing", "[protocol][mcp][transport]") {
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::propose));
+    Mcp mcp(f);
+    mcp.initialize();
+    CHECK(at(mcp.error("select_device", Value(Object{{"id", Value("fake")}})), "code").asString() == "scope_denied");
+    CHECK(port.selected.empty());
+    CHECK(port.calls.empty());
+    // The propose tools around it run.
+    CHECK(at(mcp.ok("list_devices"), "devices").asArray().size() == 1);
+    CHECK(at(at(mcp.ok("engine_status"), "device"), "id").asString() == "fake");
+    CHECK(at(mcp.ok("play"), "playing").asBool());
 }

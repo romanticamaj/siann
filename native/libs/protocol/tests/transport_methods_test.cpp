@@ -1,6 +1,7 @@
 // transport.play, transport.stop, transport.locate and engine.status (spec,
-// Protocol v0 item 18, m4-engine-device) through the TransportPort: the server
-// side only, on a fake port. The engine's real port is tested in
+// Protocol v0 item 18, m4-engine-device), engine.devices and
+// engine.select_device (item 22, m5-engine-sessions-devices) through the
+// TransportPort: the server side only, on a fake port. The engine's real port is tested in
 // apps/engine/tests.
 
 #include <catch2/catch_test_macros.hpp>
@@ -47,8 +48,21 @@ public:
         return state();
     }
     EngineStatus status() const override { return reported; }
+    std::vector<protocol::DeviceDescription> devices() const override {
+        ++deviceListings;
+        return listed;
+    }
+    protocol::DeviceInfo selectDevice(const std::string& id) override {
+        ++calls;
+        selected.push_back(id);
+        refuseIfAsked();
+        return protocol::DeviceInfo{id, 44'100, 128, 128, 64};
+    }
 
     int calls = 0;
+    mutable int deviceListings = 0;
+    std::vector<std::string> selected;
+    std::vector<protocol::DeviceDescription> listed;
     bool playing = false;
     std::int64_t position = 1'024;
     std::optional<std::string> refusal;
@@ -249,4 +263,128 @@ TEST_CASE("a stale expectedRevision runs nothing", "[protocol][transport]") {
         CHECK(errorCode(json::parse(sent.back())) == "revision_mismatch");
     }
     CHECK(port.calls == 0);
+}
+
+TEST_CASE("engine.devices lists the port's devices with the five fields", "[protocol][transport][devices]") {
+    FakePort port;
+    port.listed = {{"fake", "fake", "fake", false, true},
+                   {"Windows Audio/Speakers", "Windows Audio", "Speakers", true, false}};
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    const Value result = f.ok(c, "engine.devices");
+    CHECK(keysOf(result) == std::set<std::string>{"devices"});
+    const auto& devices = at(result, "devices").asArray();
+    REQUIRE(devices.size() == 2);
+    for (const Value& device : devices) {
+        CHECK(keysOf(device) == std::set<std::string>{"id", "type", "name", "isDefault", "current"});
+        CHECK(at(device, "isDefault").kind() == Value::Kind::boolean);
+        CHECK(at(device, "current").kind() == Value::Kind::boolean);
+    }
+    CHECK(at(devices[0], "id").asString() == "fake");
+    CHECK(at(devices[0], "type").asString() == "fake");
+    CHECK(at(devices[0], "name").asString() == "fake");
+    CHECK_FALSE(at(devices[0], "isDefault").asBool());
+    CHECK(at(devices[0], "current").asBool());
+    CHECK(at(devices[1], "id").asString() == "Windows Audio/Speakers");
+    CHECK(at(devices[1], "type").asString() == "Windows Audio");
+    CHECK(at(devices[1], "name").asString() == "Speakers");
+    CHECK(at(devices[1], "isDefault").asBool());
+    CHECK_FALSE(at(devices[1], "current").asBool());
+    CHECK(port.deviceListings == 1);
+}
+
+TEST_CASE("engine.select_device returns the device object engine.status carries", "[protocol][transport][devices]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    const Value device = f.ok(c, "engine.select_device", Value(Object{{"id", Value("fake")}}));
+    CHECK(keysOf(device) ==
+          std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames", "outputLatencyFrames"});
+    CHECK(at(device, "id").asString() == "fake");
+    CHECK(at(device, "sampleRate").asNumber() == 44'100);
+    CHECK(at(device, "bufferFrames").asNumber() == 128);
+    CHECK(at(device, "inputLatencyFrames").asNumber() == 128);
+    CHECK(at(device, "outputLatencyFrames").asNumber() == 64);
+    CHECK(port.selected == std::vector<std::string>{"fake"});
+}
+
+TEST_CASE("engine.select_device needs a string id", "[protocol][transport][devices]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::vector<Value> bad = {Value(Object{}), Value(Object{{"id", Value(3)}}),
+                                    Value(Object{{"id", Value(nullptr)}}), Value(Object{{"id", Value(Array{})}})};
+    for (const Value& params : bad) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "engine.select_device", params)) == "invalid_params");
+    }
+    CHECK(port.selected.empty());
+}
+
+TEST_CASE("the port's not_found and device_open_failed are engine.select_device's codes",
+          "[protocol][transport][devices]") {
+    for (const std::string& code : {std::string("not_found"), std::string("device_open_failed")}) {
+        INFO(code);
+        FakePort port;
+        port.refusal = code;
+        Fixture f(withPort(port));
+        const ConnectionId c = f.authed();
+        const Value refused = f.call(c, "engine.select_device", Value(Object{{"id", Value("nope")}}));
+        CHECK(errorCode(refused) == code);
+        CHECK(at(at(refused, "error"), "message").asString() == "the port refused");
+    }
+}
+
+TEST_CASE("without a port engine.devices and engine.select_device are not_supported",
+          "[protocol][transport][devices]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    CHECK(errorCode(f.call(c, "engine.devices")) == "not_supported");
+    CHECK(errorCode(f.call(c, "engine.select_device", Value(Object{{"id", Value("fake")}}))) == "not_supported");
+}
+
+TEST_CASE("engine.capabilities lists engine.devices and engine.select_device", "[protocol][transport][devices]") {
+    Fixture f;
+    const Value capabilities = f.ok(f.authed(), "engine.capabilities");
+    const auto& methods = at(capabilities, "methods").asArray();
+    for (const char* name : {"engine.devices", "engine.select_device"}) {
+        INFO(name);
+        CHECK(std::any_of(methods.begin(), methods.end(), [&](const Value& m) { return m.asString() == name; }));
+    }
+}
+
+TEST_CASE("device methods: a duplicate requestId is cached and a stale expectedRevision runs nothing",
+          "[protocol][transport][devices]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    const std::string request = f.request("req_select", "engine.select_device", Value(Object{{"id", Value("fake")}}));
+    f.transport.deliver(c, request);
+    f.server.pump();
+    f.transport.deliver(c, request);
+    f.server.pump();
+    CHECK(port.selected.size() == 1);
+    const auto sent = f.transport.sent(c);
+    REQUIRE(sent.size() >= 2);
+    CHECK(sent[sent.size() - 1] == sent[sent.size() - 2]);
+
+    int id = 0;
+    for (const auto& [method, params] : std::vector<std::pair<std::string, Value>>{
+             {"engine.devices", Value(Object{})}, {"engine.select_device", Value(Object{{"id", Value("fake")}})}}) {
+        INFO(method);
+        f.transport.deliver(c, jcs::canonicalize(Value(Object{{"requestId", Value("stale_dev_" + std::to_string(++id))},
+                                                              {"sessionId", Value(f.server.sessionId())},
+                                                              {"method", Value(method)},
+                                                              {"params", params},
+                                                              {"expectedRevision", Value("rev_not_the_head")}})));
+        f.server.pump();
+        const auto after = f.transport.sent(c);
+        REQUIRE_FALSE(after.empty());
+        CHECK(errorCode(json::parse(after.back())) == "revision_mismatch");
+    }
+    CHECK(port.selected.size() == 1);
+    CHECK(port.deviceListings == 0);
 }

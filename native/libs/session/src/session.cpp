@@ -6,6 +6,7 @@
 #include "siann/hash/jcs.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/model/field_reader.hpp"
+#include "session_lock.hpp"
 
 namespace siann::session {
 
@@ -44,12 +45,15 @@ fs::path quarantinePath(const fs::path& bundle, std::int64_t lastValidSeq) {
 }  // namespace
 
 struct Session::State {
+    // First, so it is released last.
+    detail::BundleLock lock;
     fs::path bundle;
     History history;
     std::int64_t lastSeq = 0;
     command::PlanStore plans;  // in memory only (M3)
 
-    State(fs::path path, History h, std::int64_t seq) : bundle(std::move(path)), history(std::move(h)), lastSeq(seq) {}
+    State(detail::BundleLock held, fs::path path, History h, std::int64_t seq)
+        : lock(std::move(held)), bundle(std::move(path)), history(std::move(h)), lastSeq(seq) {}
 
     void installJournalHook() {
         history.setBeforePublish([this](const Revision& revision) {
@@ -88,10 +92,11 @@ Session Session::create(const fs::path& bundle, model::Document initial, std::st
     }
     io::createDirectoriesDurable(bundle / "media");
     io::createDirectoriesDurable(bundle / "blobs");
+    detail::BundleLock held(bundle);
 
     History history(std::move(initial), std::move(actor), std::move(time));
     io::appendDurable(bundle / kJournalFile, encodeRecord(recordFromRevision(1, history.head())) + "\n");
-    auto state = std::make_unique<State>(bundle, std::move(history), 1);
+    auto state = std::make_unique<State>(std::move(held), bundle, std::move(history), 1);
     state->writeCheckpoint();
     state->installJournalHook();
     return Session(std::move(state));
@@ -107,6 +112,8 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
     if (!fs::exists(journalPath) && !fs::exists(checkpointPath)) {
         throw SessionError("not_a_bundle", "no journal or checkpoint in " + bundle.string());
     }
+    // Before anything below changes the bundle.
+    detail::BundleLock held(bundle);
 
     for (const char* name : {kCheckpointFile, kJournalFile}) {
         fs::path temp = bundle / name;
@@ -245,7 +252,7 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
         std::sort(out.pendingTakes.begin(), out.pendingTakes.end());
     }
 
-    auto state = std::make_unique<State>(bundle, std::move(history), recordCount);
+    auto state = std::make_unique<State>(std::move(held), bundle, std::move(history), recordCount);
     state->installJournalHook();
     return Session(std::move(state));
 }

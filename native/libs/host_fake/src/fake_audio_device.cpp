@@ -16,8 +16,17 @@ FakeAudioDevice::~FakeAudioDevice() {
 
 AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
     std::lock_guard lock(controlMutex_);
-    if (refusedOpens_ < options_.refuseOpens) {
+    bool refused = false;
+    if (options_.sharedRefusals) {
+        int left = options_.sharedRefusals->load(std::memory_order_acquire);
+        while (left > 0 && !options_.sharedRefusals->compare_exchange_weak(left, left - 1, std::memory_order_acq_rel)) {
+        }
+        refused = left > 0;
+    } else if (refusedOpens_ < options_.refuseOpens) {
         ++refusedOpens_;
+        refused = true;
+    }
+    if (refused) {
         throw DeviceError("device_open_failed", "the fake device is held by another application");
     }
     if (config.bufferFrames <= 0 || config.sampleRate <= 0 || config.outputChannels <= 0 ||

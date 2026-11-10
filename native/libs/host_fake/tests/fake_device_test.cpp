@@ -347,3 +347,17 @@ TEST_CASE("the fake device refuses its first opens when told to", "[host][fake]"
     }
     CHECK(device.open(config()).sampleRate == 48'000);
 }
+
+TEST_CASE("fake devices sharing a refusal budget refuse that many opens between them", "[host][fake]") {
+    FakeAudioDevice::Options options;
+    options.refuseOpens = 99;  // ignored once the budget is set
+    options.sharedRefusals = std::make_shared<std::atomic<int>>(2);
+    FakeAudioDevice first(options);
+    FakeAudioDevice second(options);
+    CHECK_THROWS_AS(first.open(config()), siann::host::DeviceError);
+    CHECK_THROWS_AS(second.open(config()), siann::host::DeviceError);
+    CHECK(options.sharedRefusals->load() == 0);
+    CHECK(second.open(config()).sampleRate == 48'000);
+    FakeAudioDevice third(options);
+    CHECK(third.open(config()).sampleRate == 48'000);
+}

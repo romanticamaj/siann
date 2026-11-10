@@ -5,6 +5,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "siann/hash/jcs.hpp"
@@ -69,8 +70,14 @@ void writeJournal(const fs::path& bundle, const std::string& content) {
     siann::io::writeFileAtomic(bundle / "journal.ndjson", content);
 }
 
-void expectSameHistory(const Session& a, const Session& b) {
-    const auto& ra = a.history().revisions();
+// Destroys a session, which releases its bundle's lock, so the bundle can be
+// opened again (a second Session on a locked bundle is session_locked).
+void closeSession(Session& session) {
+    const Session closing = std::move(session);
+}
+
+// `ra` is copied from the first session before it was closed.
+void expectSameHistory(const std::vector<siann::command::Revision>& ra, const Session& b) {
     const auto& rb = b.history().revisions();
     REQUIRE(ra.size() == rb.size());
     for (std::size_t i = 0; i < ra.size(); ++i) {
@@ -171,8 +178,10 @@ TEST_CASE("Reopening replays every revision, including undo state", "[session]")
     CHECK(redone.document.track("trk_1")->gain.milliDb == -900);
     CHECK(reopened.lastSeq() == 7);
 
+    const std::vector<siann::command::Revision> before = reopened.history().revisions();
+    closeSession(reopened);
     Session again = Session::open(dir.bundle());
-    expectSameHistory(reopened, again);
+    expectSameHistory(before, again);
 }
 
 TEST_CASE("Plugin slot commands replay on reopen with identical hashes", "[session][plugin]") {
@@ -193,8 +202,10 @@ TEST_CASE("Plugin slot commands replay on reopen with identical hashes", "[sessi
     Session reopened = Session::open(dir.bundle(), &report);
     CHECK(report.checkpointVerified);
     CHECK(reopened.history().head().document.pluginSlot("slt_1")->bypass);
+    const std::vector<siann::command::Revision> before = reopened.history().revisions();
+    closeSession(reopened);
     Session again = Session::open(dir.bundle());
-    expectSameHistory(reopened, again);
+    expectSameHistory(before, again);
 }
 
 TEST_CASE("A failed command writes nothing to the journal", "[session]") {
@@ -233,6 +244,7 @@ TEST_CASE("A torn last record is moved aside and earlier revisions survive", "[s
     // New work continues the sequence cleanly and survives another reopen.
     session.commit({addTrack("trk_3")}, "a", "t3");
     CHECK(session.lastSeq() == 3);
+    closeSession(session);
     OpenReport second;
     const Session again = Session::open(dir.bundle(), &second);
     CHECK_FALSE(second.quarantinedTail.has_value());
@@ -545,6 +557,7 @@ TEST_CASE("Rollback never deletes media files or renders", "[session][rollback]"
     CHECK(siann::io::readFile(media) == "RIFF not really a wav");
     CHECK(fs::exists(render));
 
+    closeSession(session);
     Session reopened = Session::open(dir.bundle());
     CHECK(reopened.history().head().document.media("m1") == nullptr);
     CHECK(fs::exists(media));
@@ -605,8 +618,10 @@ TEST_CASE("Branch revisions and the merge are journaled with their parents and r
     }
     // The merge stays undoable in one step after the reopen.
     CHECK(reopened.undo("user", "t5").envelope.documentHash == reopened.history().find("r2")->envelope.documentHash);
+    const std::vector<siann::command::Revision> before = reopened.history().revisions();
+    closeSession(reopened);
     Session again = Session::open(dir.bundle());
-    expectSameHistory(reopened, again);
+    expectSameHistory(before, again);
 }
 
 TEST_CASE("A discarded branch's revisions survive in the journal and are unreachable after reopen",
@@ -663,6 +678,7 @@ TEST_CASE("A checkpoint written while a branch is open verifies on reopen", "[se
     Session reopened = Session::open(dir.bundle(), &report);
     CHECK(report.checkpointVerified);
     CHECK(reopened.history().head().envelope.id == mainHead);
+    closeSession(reopened);
 
     SECTION("a checkpoint naming a revision whose document differs is still checkpoint_mismatch") {
         std::string text = siann::io::readFile(dir.bundle() / "session.json");
