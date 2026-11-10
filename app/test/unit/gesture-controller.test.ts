@@ -253,3 +253,111 @@ test('cancel sends gesture.cancel and drops the overlay', async () => {
   assert.equal(client.model.getView().gesture, null);
   assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.cancel', { target: TARGET }]]);
 });
+
+// The engine holds one gesture per connection and target: a begin sent while an
+// earlier gesture's lease is open there is refused with gesture_open. So a new
+// gesture waits until the earlier one's end or cancel is on the wire.
+test('a keyboard step before the previous step is answered waits behind its end', async () => {
+  const { client, controller } = await rig();
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-100);
+  controller.end();
+  // An auto-repeat step before gesture.begin #1 is answered.
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-200);
+  controller.end();
+  assert.deepEqual(client.methods(), ['gesture.begin']); // one begin open on the engine at a time
+  assert.equal(overlayValue(client.model), -200);
+
+  client.answer('gesture.begin', { target: TARGET, startValue: 0, leaseMs: 1000 });
+  await settle();
+  // Step 1's end, then step 2's begin, in that order on the socket.
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [
+    ['gesture.end', { target: TARGET, value: -100 }],
+    ['gesture.begin', { target: TARGET }],
+  ]);
+  client.answer('gesture.end', { target: TARGET, startValue: 0, value: -100, revision: { id: 'r5', diff: [REF] } });
+  await settle();
+  assert.equal(overlayValue(client.model), -200); // step 1's answer leaves step 2's overlay
+  client.answer('gesture.begin', { target: TARGET, startValue: -100, leaseMs: 1000 });
+  await settle();
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.end', { target: TARGET, value: -200 }]]);
+  client.answer('gesture.end', { target: TARGET, startValue: -100, value: -200, revision: { id: 'r6', diff: [REF] } });
+  await settle();
+  assert.deepEqual(client.calls, []);
+  assert.equal(controller.active, false);
+});
+
+test('a re-press while the previous gesture still has an update in flight ends that gesture first', async () => {
+  const { client, controller, began } = await rig();
+  await began();
+  controller.move(-1000);
+  controller.end(); // waits for the update in flight
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-3000);
+  assert.deepEqual(client.methods(), ['gesture.update']);
+  client.answer('gesture.update');
+  await settle();
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [
+    ['gesture.end', { target: TARGET, value: -1000 }],
+    ['gesture.begin', { target: TARGET }],
+  ]);
+});
+
+test('a gesture superseded while its begin is in flight is cancelled once the begin is answered', async () => {
+  const { client, controller } = await rig();
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-1000);
+  controller.begin(REF, 'pan'); // no end: the first gesture is abandoned
+  assert.deepEqual(client.methods(), ['gesture.begin']);
+  assert.equal(client.model.getView().gesture?.field, 'pan');
+  client.answer('gesture.begin', { target: TARGET, startValue: 0, leaseMs: 1000 });
+  await settle();
+  // The late answer opened a lease: it is cancelled, then the next begin goes out.
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [
+    ['gesture.cancel', { target: TARGET }],
+    ['gesture.begin', { target: { ref: REF, param: 'pan' } }],
+  ]);
+  assert.equal(client.model.getView().gesture?.field, 'pan');
+});
+
+test('cancel while the begin is in flight sends gesture.cancel once the begin is answered', async () => {
+  const { client, controller } = await rig();
+  controller.begin(REF, 'gainMilliDb');
+  controller.cancel();
+  assert.equal(client.model.getView().gesture, null);
+  assert.deepEqual(client.methods(), ['gesture.begin']);
+  client.answer('gesture.begin', { target: TARGET, startValue: 0, leaseMs: 1000 });
+  await settle();
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.cancel', { target: TARGET }]]);
+});
+
+test('a refused begin lets the gesture waiting behind it begin', async () => {
+  const { client, controller } = await rig();
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-100);
+  controller.end();
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-200);
+  controller.end();
+  client.fail('gesture.begin', 'gesture_held');
+  await settle();
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.begin', { target: TARGET }]]);
+  assert.equal(overlayValue(client.model), -200);
+  client.answer('gesture.begin', { target: TARGET, startValue: 0, leaseMs: 1000 });
+  await settle();
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.end', { target: TARGET, value: -200 }]]);
+});
+
+test('a disconnect while a gesture waits drops it without sending its begin', async () => {
+  const { client, controller } = await rig();
+  controller.begin(REF, 'gainMilliDb');
+  controller.end();
+  controller.begin(REF, 'gainMilliDb');
+  controller.move(-200);
+  client.disconnect();
+  await settle();
+  assert.equal(controller.active, false);
+  assert.equal(client.model.getView().gesture, null);
+  assert.deepEqual(client.calls, []);
+});
