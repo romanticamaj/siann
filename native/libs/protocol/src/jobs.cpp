@@ -8,6 +8,10 @@
 #include "siann/hash/sha256.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
+#include "siann/media/memory_reader.hpp"
+#include "siann/media/peaks.hpp"
+#include "siann/media/wav_file_reader.hpp"
+#include "siann/session/media_import.hpp"
 
 namespace siann::protocol::detail {
 
@@ -51,6 +55,27 @@ Value render(const RenderRequest& request) {
                         {"contentHash", Value(hash::formatHash(hash::sha256(bytes)))}});
 }
 
+// Reads the media file (streaming for WAV; FLAC decoded into memory until a
+// streaming reader exists, as the playback engine does) and writes its pyramid.
+Value computePeaksFile(const PeaksRequest& request) {
+    const std::filesystem::path file = session::mediaPath(request.bundle, request.contentHash, request.format);
+    if (!std::filesystem::exists(file)) {
+        throw engine::EngineError("media_missing", "no media file at " + utf8(file));
+    }
+    media::PeakPyramid pyramid;
+    if (request.format == model::MediaFormat::flac) {
+        media::MemoryMediaReader reader(media::decode(io::readFile(file)));
+        pyramid = media::computePeaks(reader);
+    } else {
+        media::WavFileReader reader(file);
+        pyramid = media::computePeaks(reader);
+    }
+    const std::filesystem::path written = media::writePeaks(request.bundle, hash::toHex(request.contentHash), pyramid);
+    return Value(Object{{"path", Value(utf8(written))},
+                        {"contentHash", Value(hash::formatHash(request.contentHash))},
+                        {"levels", Value(static_cast<double>(pyramid.levels.size()))}});
+}
+
 }  // namespace
 
 JobRunner::JobRunner(bool workerThread) {
@@ -87,6 +112,40 @@ std::string JobRunner::startRender(RenderRequest request) {
     }
     changed_.notify_all();
     return id;
+}
+
+std::string JobRunner::startPeaks(PeaksRequest request) {
+    std::string id;
+    {
+        std::lock_guard lock(mutex_);
+        id = "job_" + std::to_string(next_++);
+        Job job;
+        job.id = id;
+        job.kind = "peaks";
+        job.peaks = std::move(request);
+        jobs_.emplace(id, std::move(job));
+        queue_.push_back(id);
+    }
+    changed_.notify_all();
+    return id;
+}
+
+std::optional<JobState> JobRunner::state(const std::string& jobId) const {
+    std::lock_guard lock(mutex_);
+    auto it = jobs_.find(jobId);
+    if (it == jobs_.end()) {
+        return std::nullopt;
+    }
+    return it->second.state;
+}
+
+std::optional<std::pair<std::string, std::string>> JobRunner::failure(const std::string& jobId) const {
+    std::lock_guard lock(mutex_);
+    auto it = jobs_.find(jobId);
+    if (it == jobs_.end() || it->second.state != JobState::failed) {
+        return std::nullopt;
+    }
+    return std::pair{it->second.errorCode, it->second.errorMessage};
 }
 
 std::string JobRunner::recordDone(std::string kind, json::Value result) {
@@ -144,16 +203,21 @@ bool JobRunner::runOne(std::unique_lock<std::mutex>& lock) {
     Job& job = jobs_.at(queue_.front());
     queue_.pop_front();
     job.state = JobState::running;
-    RenderRequest request = std::move(*job.request);
+    std::optional<RenderRequest> renderRequest = std::move(job.request);
+    std::optional<PeaksRequest> peaksRequest = std::move(job.peaks);
     job.request.reset();
+    job.peaks.reset();
     lock.unlock();
 
     Value result;
     std::string code;
     std::string message;
     try {
-        result = render(request);
+        result = peaksRequest ? computePeaksFile(*peaksRequest) : render(*renderRequest);
     } catch (const engine::EngineError& e) {
+        code = e.code();
+        message = e.what();
+    } catch (const media::MediaError& e) {
         code = e.code();
         message = e.what();
     } catch (const std::exception& e) {
@@ -161,13 +225,13 @@ bool JobRunner::runOne(std::unique_lock<std::mutex>& lock) {
         message = e.what();
     } catch (...) {
         code = "internal_error";
-        message = "the render threw a non-standard exception";
+        message = "the job threw a non-standard exception";
     }
 
     lock.lock();
-    if (request.plugins) {
+    if (renderRequest && renderRequest->plugins) {
         // Destroyed on the command thread, never here (Jobs v0, plugins).
-        finishedPlugins_.push_back(std::move(request.plugins));
+        finishedPlugins_.push_back(std::move(renderRequest->plugins));
     }
     if (code.empty()) {
         job.state = JobState::done;

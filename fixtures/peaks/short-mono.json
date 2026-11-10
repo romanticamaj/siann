@@ -1,0 +1,38 @@
+{
+  "schema": "siann.peaks_fixture.v0",
+  "name": "short-mono",
+  "signal": {
+    "kind": "ramp",
+    "channels": 1,
+    "frames": 100,
+    "sampleRate": 48000
+  },
+  "file": "short-mono.peaks",
+  "size": 32,
+  "sha256": "e2c4d3165c13af315895b463ac2ccf7e239ad45400f6e9831e55bf8a0130f45f",
+  "header": {
+    "version": 1,
+    "channels": 1,
+    "levels": 1,
+    "frames": "100",
+    "sampleRate": 48000
+  },
+  "levels": [
+    {
+      "binFrames": 256,
+      "binCount": 1,
+      "first": [
+        {
+          "min": -32767,
+          "max": 32767
+        }
+      ],
+      "last": [
+        {
+          "min": -32767,
+          "max": 32767
+        }
+      ]
+    }
+  ]
+}

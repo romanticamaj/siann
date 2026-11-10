@@ -7,7 +7,7 @@ Status: Implemented in `native/libs/protocol` and `native/apps/engine` (m5-mixer
 ## Purpose
 
 A fader drag, a pan knob turn or a held mute button is a continuous gesture
-(architecture spec, "Gestures", and Protocol v0 item 23). The sound follows every
+(architecture spec, "Gestures", and Protocol v0 item 24). The sound follows every
 movement at once through the parameter channel, and only the end of the gesture
 creates a revision. This document defines the five protocol methods that hold such
 a gesture, the client lease that bounds it, and the `gesture.ended` event.

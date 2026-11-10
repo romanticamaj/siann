@@ -1,5 +1,5 @@
 // gesture.begin, gesture.update, gesture.hold, gesture.end and gesture.cancel
-// (spec, Protocol v0 item 23, m5-mixer; docs/schemas/protocol-gestures-v0.md)
+// (spec, Protocol v0 item 24, m5-mixer; docs/schemas/protocol-gestures-v0.md)
 // through the GesturePort: the server side only, on a fake port that commits
 // on the fixture's session the way the engine host's PlaybackEngine does. The
 // engine's real port is tested in apps/engine/tests.

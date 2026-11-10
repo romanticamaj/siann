@@ -1,0 +1,94 @@
+{
+  "schema": "siann.peaks_fixture.v0",
+  "name": "ramp-stereo",
+  "signal": {
+    "kind": "ramp",
+    "channels": 2,
+    "frames": 3000,
+    "sampleRate": 44100
+  },
+  "file": "ramp-stereo.peaks",
+  "size": 172,
+  "sha256": "56cddfe8fb11573d6856ba1374a7dd53f20394c17e2c65077614bfe88ea18230",
+  "header": {
+    "version": 1,
+    "channels": 2,
+    "levels": 3,
+    "frames": "3000",
+    "sampleRate": 44100
+  },
+  "levels": [
+    {
+      "binFrames": 256,
+      "binCount": 12,
+      "first": [
+        {
+          "min": -32767,
+          "max": -27195
+        },
+        {
+          "min": 27195,
+          "max": 32767
+        }
+      ],
+      "last": [
+        {
+          "min": 28768,
+          "max": 32767
+        },
+        {
+          "min": -32767,
+          "max": -28768
+        }
+      ]
+    },
+    {
+      "binFrames": 1024,
+      "binCount": 3,
+      "first": [
+        {
+          "min": -32767,
+          "max": -10412
+        },
+        {
+          "min": 10412,
+          "max": 32767
+        }
+      ],
+      "last": [
+        {
+          "min": 11986,
+          "max": 32767
+        },
+        {
+          "min": -32767,
+          "max": -11986
+        }
+      ]
+    },
+    {
+      "binFrames": 4096,
+      "binCount": 1,
+      "first": [
+        {
+          "min": -32767,
+          "max": 32767
+        },
+        {
+          "min": -32767,
+          "max": 32767
+        }
+      ],
+      "last": [
+        {
+          "min": -32767,
+          "max": 32767
+        },
+        {
+          "min": -32767,
+          "max": 32767
+        }
+      ]
+    }
+  ]
+}

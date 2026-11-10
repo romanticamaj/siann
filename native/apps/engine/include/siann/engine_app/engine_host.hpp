@@ -159,7 +159,7 @@ public:
     std::vector<protocol::PluginRegistryEntry> registry() const override;
     protocol::PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) override;
 
-    // protocol::GesturePort (Protocol v0 item 23), on the command thread, over the
+    // protocol::GesturePort (Protocol v0 item 24), on the command thread, over the
     // engine's fader gestures: the start value from the heard side's document, a
     // short ramp per update, and endGesture's one revision. cancel ends the
     // dispatcher's gesture and sends the document's value back.

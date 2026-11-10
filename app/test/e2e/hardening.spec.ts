@@ -254,3 +254,47 @@ test('window.open is denied, and navigation stays under siann://app/', async () 
   expect(await navigations()).toContain('siann://app/index.html?nav=1');
   await expect(page.getByTestId('status')).toHaveText('connected');
 });
+
+test("the CSP lets the renderer reach only 127.0.0.1: another origin's fetch is blocked", async () => {
+  await page.evaluate(() => {
+    const g = window as unknown as { __violations: string[] };
+    g.__violations = [];
+    document.addEventListener('securitypolicyviolation', (event) => {
+      g.__violations.push(`${event.effectiveDirective} ${event.blockedURI}`);
+    });
+  });
+  const outcome = (url: string) =>
+    page.evaluate(async (target) => {
+      try {
+        await fetch(target);
+        return 'fetched';
+      } catch (error) {
+        return (error as Error).name;
+      }
+    }, url);
+  // Another origin: refused before any request leaves (a TypeError, and a connect-src violation).
+  expect(await outcome('https://example.com/')).toBe('TypeError');
+  expect(await outcome('http://localhost:9/')).toBe('TypeError');
+  const violations = () => page.evaluate(() => (window as unknown as { __violations: string[] }).__violations);
+  await expect
+    .poll(violations)
+    .toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^connect-src https:\/\/example\.com/),
+        expect.stringMatching(/^connect-src http:\/\/localhost:9/),
+      ]),
+    );
+  // The engine's own HTTP route on 127.0.0.1 is allowed (the peaks route, Protocol v0 item 23).
+  const endpoint = await page.evaluate(() =>
+    (window as unknown as { siann: { engine: { current(): Promise<{ port: number; token: string } | null> } } }).siann.engine.current(),
+  );
+  expect(endpoint).not.toBeNull();
+  const before = (await violations()).length;
+  const status = await page.evaluate(
+    async ({ port, token }) =>
+      (await fetch(`http://127.0.0.1:${port}/v0/peaks/${'0'.repeat(64)}`, { headers: { Authorization: `Bearer ${token}` } })).status,
+    endpoint!,
+  );
+  expect(status).toBe(404);
+  expect((await violations()).length).toBe(before);
+});

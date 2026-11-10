@@ -11,5 +11,6 @@ This directory defines internal SIANN command and observation contracts before i
 - [Protocol gestures v0](protocol-gestures-v0.md) defines the fader gesture methods (gesture.begin, update, hold, end, cancel), their client lease and the gesture.ended event.
 - [Protocol engine v0](protocol-engine-v0.md) defines the transport, engine.status, the device list and selection, session.open's rebind in siann-engine and the session bundle lock.
 - [Protocol plugins v0](protocol-plugins-v0.md) defines the plugin slot entity, plugin.instantiate, the plugin registry (plugin.registry, plugin.approve), the editor methods, engine.status plugins[] and render.start's own plugin instances.
+- [Protocol peaks v0](protocol-peaks-v0.md) defines the peak pyramid file the engine caches per media file and the `GET /v0/peaks/<hash>` route the renderer draws waveforms from.
 - [Protocol MCP v0](protocol-mcp-v0.md) defines the MCP adapter on the native protocol server: Streamable HTTP framing, the tool table with scopes, and examples.
 - [Session observation v0](session-observation-v0.md) defines the canonical read model consumed by the Studio UI and agent runtime.

@@ -181,7 +181,7 @@ Deferred:
 ## Before M6a: fader gestures (from m5-mixer)
 
 1. `gesture.update` reaches the control dispatcher through the command inbox and
-   the command thread (Protocol v0 item 23). If fader latency through that path is
+   the command thread (Protocol v0 item 24). If fader latency through that path is
    noticed, hand `param.set` from the protocol thread straight to `controlInbox`,
    keeping the lease checks on the command thread.
 2. Multi-touch gestures: the renderer's `ReadModel` holds one gesture overlay and

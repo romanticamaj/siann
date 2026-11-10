@@ -1,7 +1,7 @@
 #pragma once
 
 // The protocol server's way to the fader gestures of the playback engine
-// (architecture spec, "Gestures", Protocol v0 item 23;
+// (architecture spec, "Gestures", Protocol v0 item 24;
 // docs/schemas/protocol-gestures-v0.md). siann-protocol does not link the
 // playback engine; the engine host implements this interface over
 // playback::PlaybackEngine and hands it to the server in ServerOptions, as it

@@ -12,12 +12,16 @@
 #include <vector>
 
 #include "fake_transport.hpp"
+#include "support/peaks_fixtures.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/io/durable_file.hpp"
+#include "siann/media/audio.hpp"
 #include "siann/model/document.hpp"
 #include "siann/protocol/protocol_server.hpp"
 #include "siann/session/journal.hpp"
+#include "siann/session/media_import.hpp"
 #include "siann/session/session.hpp"
 
 namespace fs = std::filesystem;
@@ -614,4 +618,234 @@ TEST_CASE("plain HTTP needs the bearer token", "[protocol]") {
     CHECK(health.body == R"({"ok":true})");
     CHECK(f.transport.http(HttpRequest{"GET", "/v0/nope", {{"authorization", "Bearer " + f.server.token()}}, {}})
               .status == 404);
+}
+
+// ---- GET /v0/peaks/<hash> (spec, Protocol v0 item 23; docs/schemas/protocol-peaks-v0.md) ----
+
+namespace {
+
+// A bundle with two media entities made by importMedia from the fixture
+// signals of fixtures/peaks (square-mono and silence-mono, both at 48 kHz, so
+// stored byte for byte), served with jobs run by runJobs() on the test thread.
+struct PeaksFixture {
+    PeaksFixture()
+        : session(Session::create(dir.bundle(), siann::model::Document::create("Song", 48'000), "tester",
+                                  "2026-11-04T00:00:00Z")),
+          square(importFixture("square-mono", "med_sq")),
+          silence(importFixture("silence-mono", "med_si")),
+          server(transport, session, options()) {
+        server.start();
+    }
+
+    static ServerOptions options() {
+        ServerOptions o = manualOptions();
+        o.jobs.workerThread = false;
+        return o;
+    }
+
+    // Imports the fixture's signal; returns the stored file's content hash, as hex.
+    std::string importFixture(const std::string& name, const std::string& mediaId) {
+        const fs::path wav = dir.bundle().parent_path() / (name + ".wav");
+        siann::io::writeFileAtomic(wav, siann::media::encodeWavFloat32(siann::media::testing::fixtureSignal(
+                                            siann::media::testing::peaksFixture(name))));
+        const auto imported = siann::session::importMedia(session, wav, mediaId, "tester", "2026-11-04T00:00:00Z");
+        return imported.storedFile.stem().string();
+    }
+
+    siann::protocol::HttpResponse get(const std::string& hex, siann::protocol::Headers headers = {}) {
+        if (headers.find("authorization") == headers.end()) {
+            headers["authorization"] = "Bearer " + server.token();
+        }
+        return transport.http(HttpRequest{"GET", "/v0/peaks/" + hex, std::move(headers), {}});
+    }
+
+    // Opens a connection and authenticates it.
+    ConnectionId authed() {
+        auto upgrade = transport.connect({});
+        REQUIRE(upgrade.connection.has_value());
+        transport.deliver(*upgrade.connection, siann::jcs::canonicalize(Value(Object{
+                                                   {"type", Value("auth")}, {"token", Value(server.token())}})));
+        return *upgrade.connection;
+    }
+
+    std::string request(const std::string& requestId, const std::string& method, Value params = Value(Object{})) {
+        return siann::jcs::canonicalize(Value(Object{{"requestId", Value(requestId)},
+                                                     {"sessionId", Value(server.sessionId())},
+                                                     {"method", Value(method)},
+                                                     {"params", std::move(params)}}));
+    }
+
+    fs::path peaksFile(const std::string& hex) const { return dir.bundle() / "peaks" / (hex + ".peaks"); }
+
+    TempDir dir;
+    Session session;
+    std::string square;
+    std::string silence;
+    FakeTransport transport;
+    ProtocolServer server;
+};
+
+std::string httpErrorCode(const siann::protocol::HttpResponse& response) {
+    return at(at(parse(response.body), "error"), "code").asString();
+}
+
+}  // namespace
+
+TEST_CASE("GET /v0/peaks/<hash> without a bearer is 401", "[protocol][peaks]") {
+    PeaksFixture f;
+    for (const std::string& bearer : {std::string(), std::string("Bearer nope"), "Bearer " + f.server.mcpToken()}) {
+        INFO("bearer: [" << bearer << "]");
+        siann::protocol::Headers headers;
+        if (!bearer.empty()) {
+            headers["authorization"] = bearer;
+        }
+        const auto response = f.transport.http(HttpRequest{"GET", "/v0/peaks/" + f.square, headers, {}});
+        CHECK(response.status == 401);
+        CHECK(httpErrorCode(response) == "unauthenticated");
+    }
+    CHECK(f.server.runJobs() == 0);
+}
+
+TEST_CASE("a hash not in the head document is 404 not_found before any file is opened", "[protocol][peaks]") {
+    PeaksFixture f;
+    // A valid pyramid planted under peaks/ for a hash no media entity has.
+    const std::string foreign(64, 'b');
+    siann::io::createDirectoriesDurable(f.dir.bundle() / "peaks");
+    siann::io::writeFileAtomic(f.peaksFile(foreign), siann::media::testing::peaksFixtureBytes("square-mono"));
+    const auto response = f.get(foreign);
+    CHECK(response.status == 404);
+    CHECK(httpErrorCode(response) == "not_found");
+    std::string upper = f.square;
+    for (char& c : upper) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    for (const std::string& bad : {upper, f.square.substr(1), f.square + "0", std::string("..%2Fsession.json"),
+                                   std::string("../session.json"), std::string(), "sha256:" + f.square}) {
+        INFO("hash: [" << bad << "]");
+        const auto refused = f.get(bad);
+        CHECK(refused.status == 404);
+        CHECK(httpErrorCode(refused) == "not_found");
+    }
+    // Nothing was queued for any of them.
+    CHECK(f.server.runJobs() == 0);
+}
+
+TEST_CASE("a media entity whose pyramid is absent answers 202 peaks_pending once and 200 after the job ran",
+          "[protocol][peaks]") {
+    PeaksFixture f;
+    REQUIRE_FALSE(fs::exists(f.peaksFile(f.square)));
+    const auto pending = f.get(f.square);
+    CHECK(pending.status == 202);
+    CHECK(httpErrorCode(pending) == "peaks_pending");
+    // Asked again while queued: still pending, and no second job.
+    CHECK(f.get(f.square).status == 202);
+    CHECK(f.server.runJobs() == 1);
+    CHECK(fs::exists(f.peaksFile(f.square)));
+
+    const auto served = f.get(f.square);
+    CHECK(served.status == 200);
+    CHECK(served.contentType == "application/octet-stream");
+    CHECK(served.body == siann::media::testing::peaksFixtureBytes("square-mono"));
+    // Served from the cache: no job.
+    CHECK(f.get(f.square).status == 200);
+    CHECK(f.server.runJobs() == 0);
+
+    // The silent media's pyramid is the silence fixture.
+    CHECK(f.get(f.silence).status == 202);
+    CHECK(f.server.runJobs() == 1);
+    CHECK(f.get(f.silence).body == siann::media::testing::peaksFixtureBytes("silence-mono"));
+}
+
+TEST_CASE("a media file removed from media/ is 404 media_missing", "[protocol][peaks]") {
+    PeaksFixture f;
+    REQUIRE(fs::remove(f.dir.bundle() / "media" / (f.square + ".wav")));
+    const auto response = f.get(f.square);
+    CHECK(response.status == 404);
+    CHECK(httpErrorCode(response) == "media_missing");
+    CHECK(f.server.runJobs() == 0);
+}
+
+TEST_CASE("a corrupt peaks cache file is rebuilt", "[protocol][peaks]") {
+    PeaksFixture f;
+    siann::io::createDirectoriesDurable(f.dir.bundle() / "peaks");
+    siann::io::writeFileAtomic(f.peaksFile(f.square), "SPKS but not a pyramid");
+    CHECK(f.get(f.square).status == 202);
+    CHECK(f.server.runJobs() == 1);
+    const auto served = f.get(f.square);
+    CHECK(served.status == 200);
+    CHECK(served.body == siann::media::testing::peaksFixtureBytes("square-mono"));
+}
+
+TEST_CASE("a failed peaks computation answers its code once, then queues again", "[protocol][peaks]") {
+    PeaksFixture f;
+    siann::io::writeFileAtomic(f.dir.bundle() / "media" / (f.square + ".wav"), "JUNK, not a WAV file at all");
+    CHECK(f.get(f.square).status == 202);
+    CHECK(f.server.runJobs() == 1);
+    const auto failed = f.get(f.square);
+    CHECK(failed.status == 500);
+    CHECK(httpErrorCode(failed) == "unsupported_media");
+    CHECK(f.get(f.square).status == 202);
+    CHECK(f.server.runJobs() == 1);
+}
+
+TEST_CASE("media committed after the server started is served once the revision is published",
+          "[protocol][peaks]") {
+    PeaksFixture f;
+    const fs::path wav = f.dir.bundle().parent_path() / "ramp.wav";
+    siann::io::writeFileAtomic(wav, siann::media::encodeWavFloat32(siann::media::testing::fixtureSignal(
+                                        siann::media::testing::peaksFixture("short-mono"))));
+    const auto imported = siann::session::importMedia(f.session, wav, "med_rp", "tester", "2026-11-04T00:00:00Z");
+    const std::string hex = imported.storedFile.stem().string();
+    CHECK(f.get(hex).status == 404);  // not in the served head yet
+    f.server.publishRevision(*imported.revision);
+    CHECK(f.get(hex).status == 202);
+    CHECK(f.server.runJobs() == 1);
+    CHECK(f.get(hex).body == siann::media::testing::peaksFixtureBytes("short-mono"));
+
+    // A commit through the protocol that removes the media: its hash is no longer served.
+    const ConnectionId connection = f.authed();
+    const Value remove(Object{{"op", Value("media.remove")}, {"mediaId", Value("med_rp")}});
+    f.transport.deliver(connection, f.request("rm", "command.execute", commandsParams({remove})));
+    f.server.pump();
+    REQUIRE(at(parse(f.transport.sent(connection).back()), "ok").asBool());
+    CHECK(f.get(hex).status == 404);
+}
+
+TEST_CASE("the peaks route answers the CORS preflight and names an allowed Origin", "[protocol][peaks]") {
+    PeaksFixture f;
+    const std::string origin(kAppOrigin);
+    const auto preflight = f.transport.http(HttpRequest{"OPTIONS",
+                                                        "/v0/peaks/" + f.square,
+                                                        {{"origin", origin},
+                                                         {"access-control-request-method", "GET"},
+                                                         {"access-control-request-headers", "authorization"}},
+                                                        {}});
+    CHECK(preflight.status == 204);
+    REQUIRE(preflight.headers.count("Access-Control-Allow-Origin") == 1);
+    CHECK(preflight.headers.at("Access-Control-Allow-Origin") == origin);
+    CHECK(preflight.headers.at("Access-Control-Allow-Methods") == "GET");
+    CHECK(preflight.headers.at("Access-Control-Allow-Headers") == "authorization");
+    CHECK(f.transport.http(HttpRequest{"OPTIONS", "/v0/peaks/" + f.square, {{"origin", "http://evil.example"}}, {}})
+              .status == 403);
+
+    const auto pending = f.get(f.square, {{"origin", origin}});
+    CHECK(pending.status == 202);
+    REQUIRE(pending.headers.count("Access-Control-Allow-Origin") == 1);
+    CHECK(pending.headers.at("Access-Control-Allow-Origin") == origin);
+    // A token does not let another Origin in.
+    const auto foreign = f.get(f.square, {{"origin", "http://evil.example"}});
+    CHECK(foreign.status == 403);
+    CHECK(httpErrorCode(foreign) == "origin_not_allowed");
+    CHECK(foreign.headers.count("Access-Control-Allow-Origin") == 0);
+}
+
+TEST_CASE("engine.capabilities lists the peaks feature", "[protocol][peaks]") {
+    PeaksFixture f;
+    const ConnectionId connection = f.authed();
+    f.transport.deliver(connection, f.request("caps", "engine.capabilities"));
+    f.server.pump();
+    const Value response = parse(f.transport.sent(connection).back());
+    const Value* peaks = at(at(response, "result"), "features").find("peaks");
+    REQUIRE(peaks != nullptr);
+    CHECK(peaks->asBool());
 }

@@ -794,7 +794,7 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
     return *status().device;
 }
 
-// ---- fader gestures (Protocol v0 item 23) ---------------------------------------
+// ---- fader gestures (Protocol v0 item 24) ---------------------------------------
 
 namespace {
 

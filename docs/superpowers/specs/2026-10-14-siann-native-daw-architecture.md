@@ -382,6 +382,8 @@ years. Milestones are designed so that something useful exists at every stage.
 - Permissions: `session.defaultSession`'s permission request, permission check and
   device permission handlers deny everything for every origin. The renderer needs no
   microphone, camera, notifications or devices: audio I/O is the engine's.
+  The renderer's CSP `connect-src` is `ws://` and `http://` to `127.0.0.1` only
+  (the engine's socket and its peaks route, Protocol v0 item 23).
 - No devtools or reload: the shell installs an application menu built from role
   items without `toggleDevTools`, `reload` and `forceReload` (quit and the edit
   roles stay, and the app menu on macOS), the window has `webPreferences.devTools`
@@ -983,7 +985,7 @@ The documented precision is shown to users and agents.
   sends `gesture.end`, cancels, or stops renewing it; the gesture then commits the
   last accepted value and emits an event.
 
-M5 amendments (m5-mixer, Protocol v0 item 23):
+M5 amendments (m5-mixer, Protocol v0 item 24):
 
 - The `param.set` above is `gesture.update {target, value}`. It runs on the command
   thread like every protocol method and reaches the control dispatcher through
@@ -1150,8 +1152,9 @@ M5 amendments (m5-mixer, Protocol v0 item 23):
   for short files below a threshold.
 - Underrun: the audio thread outputs silence for the missing samples, increments an
   underrun counter (not an xrun) and emits an event; it never waits.
-- Peak data is a multi-resolution pyramid computed on the butler thread and cached
-  beside the media.
+- Peak data is a multi-resolution pyramid computed off the command and audio
+  threads: on the jobs worker when a client first asks (Protocol v0 item 23), and by
+  the butler for a take as it is recorded (M6b). It is cached beside the media.
 
 ## Recording
 
@@ -1967,8 +1970,8 @@ with `process()` on a realtime-marked thread:
 
 ```text
 ProtocolServer   HTTP + WebSocket
-EventStream      JSON events with revision numbers; binary frames for meters,
-                 playhead and peaks
+EventStream      JSON events with revision numbers; binary frames for meters
+                 and playhead; peak pyramids over HTTP (Protocol v0 item 23)
 McpAdapter       MCP (JSON-RPC) tools mapped onto the command registry and the
                  protocol methods (Protocol v0 items 14 and 15):
                  list_commands, describe_capabilities, inspect_session,
@@ -2097,7 +2100,8 @@ contradicts none of them):
    `CommandError` and `SessionError` codes passed through unchanged (with `step` for
    commands) and the `PluginError` codes of the plugin methods (`plugin_not_found`,
    `plugin_load_failed`, `bad_state`, and, new stable codes with m5-plugin-registry,
-   `plugin_not_registered` and `plugin_not_approved`; item 21). HTTP error bodies are `{ok: false, error: {code, message}}` with
+   `plugin_not_registered` and `plugin_not_approved`; item 21), and, new with
+   m5-timeline, `peaks_pending` and `media_missing` on `GET /v0/peaks` (item 23). HTTP error bodies are `{ok: false, error: {code, message}}` with
    `unauthenticated` (401), `origin_not_allowed` (403) and `not_found` (404).
    `message` is for people and not stable. It is always valid UTF-8: the server never
    echoes request bytes it has not parsed as JSON (Origin, HTTP method and path), and
@@ -2122,8 +2126,9 @@ contradicts none of them):
    and never answered from the cache. The MCP `scope_denied` is checked there too
    and is not cached either.
 6. Plain HTTP requests need `Authorization: Bearer <token>` (401 otherwise). The
-   only route so far is `GET /v0/health` returning `200 {"ok":true}`; everything
-   else is 404. Further routes come with later features.
+   routes so far are `GET /v0/health` returning `200 {"ok":true}` and, with
+   m5-timeline, `GET /v0/peaks/<sha256 hex>` (item 23); everything else is 404.
+   Further routes come with later features.
 7. The token is 32 random bytes from `std::random_device` as lowercase hex,
    generated when the server is constructed, and handed to the launcher (Electron
    or the CLI) through the ready line of item 17. The protocol thread hands validated requests to the command thread
@@ -2202,7 +2207,7 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
       commands, methods, features: {plans: true, proposals: true, audition: <a port
       is present>, transport: <a port is present>, render: true, plugins,
-      gestures: <a port is present> (item 23)},
+      peaks: true (item 23), gestures: <a port is present> (item 24)},
       limits: {syncChunkEntities,
       inboxCapacity, idempotencyCapacity}}`. `scope` is the MCP scope the launcher
       set. `plugins` is `false` until a plugin port is present (item 19), then
@@ -2496,10 +2501,47 @@ is m5-plugin-registry's):
     whose session recovers or is replaced keeps `audition.hear`. Documented in
     docs/schemas/protocol-engine-v0.md.
 
+Protocol v0, peak pyramids (decided with m5-timeline; docs/schemas/protocol-peaks-v0.md):
+
+23. Peak pyramids (m5-timeline). The engine computes one pyramid per media file
+    from `<bundle>/media/<hash>.<ext>` and caches it at
+    `<bundle>/peaks/<sha256 hex>.peaks`, written atomically through siann-io
+    (regenerable: a missing or unparseable file is rebuilt, never an error). File:
+    little-endian; header magic `"SPKS"`, version u8 = 1, channels u8, levels u8,
+    reserved u8 (0), frames u64, sampleRate u32; then per level: binFrames u32
+    (256 * 4^k for k = 0.., the last level the first whose bin count is at most 1),
+    binCount u32 = ceil(frames / binFrames), then binCount * channels pairs of int16
+    `{min, max}` of the samples in the bin, channel-interleaved, saturating. A sample
+    `x` becomes `floor(x * 32767 + 0.5)` clamped to [-32768, 32767] (NaN is 0), so
+    full scale is +-32767 and anything beyond saturates; a partial last bin holds
+    only the frames the media has. Media longer than 256 * 4^11 frames (about 6 h at
+    48 kHz) or with more than 255 channels is `too_large`. The renderer fetches it
+    with `GET /v0/peaks/<sha256 hex>` and `Authorization: Bearer <UI token>` (item
+    6): 200 `application/octet-stream` with the whole file; 202 `{ok: false, error:
+    {code: "peaks_pending"}}` when the pyramid is not cached yet, which queues its
+    computation on the jobs worker (Jobs v0: one at a time, off the command and
+    audio threads; one job per hash while it is queued or running) and is retried by
+    the client under the sync retry backoff; 404 `not_found` when the hash is not
+    the `contentHash` of a media entity in the served head document (the hash is
+    checked for form, 64 lowercase hex, and against the document before any file is
+    named, so no other bundle file is readable); 404 `media_missing` when the media
+    file is absent; 500 with the job's code (`decode_failed`, `too_large`, ...)
+    once when the computation failed, the next request queueing it again; 401 and
+    403 as every route (the Origin, when sent, must be in the allow list of item 4).
+    A pyramid is served from the cache file without the command thread: the
+    protocol thread reads a copy of the head's media table, which the command
+    thread refreshes after every request it handles and every revision it
+    publishes. The renderer's origin is not the engine's, so the route answers the
+    CORS preflight (`OPTIONS` with an allowed Origin, no token: 204 with
+    `Access-Control-Allow-Origin` echoing it, `-Methods: GET`, `-Headers:
+    authorization`) and every answer to an allowed Origin carries
+    `Access-Control-Allow-Origin`. `peaks_pending` is a new stable code;
+    `engine.capabilities.features.peaks` is true.
+
 Protocol v0, fader gestures (decided with m5-mixer; the wire details are in
 `docs/schemas/protocol-gestures-v0.md`):
 
-23. Five methods hold a continuous gesture on a track fader ("Gestures"):
+24. Five methods hold a continuous gesture on a track fader ("Gestures"):
     `gesture.begin {target}` returns `{target, startValue, leaseMs}`;
     `gesture.update {target, value}` and `gesture.hold {target}` return `{}`;
     `gesture.end {target, value?}` returns `{target, startValue, value, revision}`,
@@ -2629,6 +2671,24 @@ MySong.siann/                    a directory
   outside React state; the renderer is bundled by esbuild and type-checked by
   `tsc`.
 - Timeline, waveforms, automation and meters are drawn with Canvas/WebGL.
+  Waveforms come from the engine's peak pyramids (Protocol v0 item 23), fetched
+  once per `contentHash`; the timeline draws the level whose bins are the widest
+  that still fit a pixel at the current zoom.
+- The timeline issues exactly one `command.execute` per finished gesture, with
+  `expectedRevision` = the snapshot's revision (item 2): a drop ends in `clip.move`
+  (with `trackId` when the clip changed track), a trim handle in `clip.trim` (the
+  left handle adds a `clip.move` by the same frames in that one `command.execute`,
+  so the audio stays where it was on the timeline), a placement in `clip.place`
+  with a clip id the renderer picks as `clp_<random hex>` (ids are client-chosen
+  for pure commands; `already_exists` is retried with a new id), delete in
+  `clip.remove`; a `revision_mismatch` answer is shown and the gesture discarded,
+  the model follows `session.changed` (structural edits are never optimistic,
+  siann-protocol consistency rules). Positions are audio-domain sample frames as
+  decimal strings; a drag snaps to a non-negative position and a trim to
+  `[0, media.frames]` with a length of at least one frame.
+- Placing a clip chooses a media entity of the document (the media pool);
+  importing a file from the UI is not part of m5-timeline (no `media.import`
+  protocol method exists yet; follow-ups).
 - The frontend holds a read model keyed by revision; it never owns session truth.
 - Plan review is a first-class UI: diff of the plan against the current revision,
   audition of the branch, approve / reject / partial approve.
@@ -2874,7 +2934,7 @@ only the end value. The start value is not recorded in the command: the
 overlay never changes the document mid-gesture, so the start value is the
 value in the parent revision. Recording both values in the
 journal entry, as "Gestures" requires, arrives with automation write passes
-(M6a); the protocol's `gesture.end` (Protocol v0 item 23, M5) reports the start
+(M6a); the protocol's `gesture.end` (Protocol v0 item 24, M5) reports the start
 value in its result and keeps this plain commit; other parameters are rejected
 before a gesture opens, so every open gesture can be ended.
 Duck-and-swap for a structural edit ducks the whole master output in M2, not

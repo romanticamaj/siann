@@ -1,4 +1,4 @@
-// The mixer end to end (m5-mixer; spec "Gestures", Protocol v0 item 23): a
+// The mixer end to end (m5-mixer; spec "Gestures", Protocol v0 item 24): a
 // strip per track, a fader drag that is one gesture (no revision while it is
 // held, exactly one at release), mute and solo committed through
 // command.execute, meters from the realtime channel's binary frames, and a

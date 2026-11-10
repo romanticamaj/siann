@@ -1,0 +1,72 @@
+{
+  "schema": "siann.peaks_fixture.v0",
+  "name": "square-stereo-exact",
+  "signal": {
+    "kind": "square",
+    "channels": 2,
+    "frames": 1024,
+    "sampleRate": 48000,
+    "amplitude": 0.5,
+    "period": 100
+  },
+  "file": "square-stereo-exact.peaks",
+  "size": 76,
+  "sha256": "7356ce04643f69d92515559e46129afe85ce7bdc9b473666cf9ff360c1e974b1",
+  "header": {
+    "version": 1,
+    "channels": 2,
+    "levels": 2,
+    "frames": "1024",
+    "sampleRate": 48000
+  },
+  "levels": [
+    {
+      "binFrames": 256,
+      "binCount": 4,
+      "first": [
+        {
+          "min": -16383,
+          "max": 16384
+        },
+        {
+          "min": -16383,
+          "max": 16384
+        }
+      ],
+      "last": [
+        {
+          "min": -16383,
+          "max": 16384
+        },
+        {
+          "min": -16383,
+          "max": 16384
+        }
+      ]
+    },
+    {
+      "binFrames": 1024,
+      "binCount": 1,
+      "first": [
+        {
+          "min": -16383,
+          "max": 16384
+        },
+        {
+          "min": -16383,
+          "max": 16384
+        }
+      ],
+      "last": [
+        {
+          "min": -16383,
+          "max": 16384
+        },
+        {
+          "min": -16383,
+          "max": 16384
+        }
+      ]
+    }
+  ]
+}

@@ -36,7 +36,7 @@
 // plugins[], and render.start's own plugin instances, through
 // ServerOptions::pluginPort.
 //
-// m5-mixer (spec, Protocol v0 item 23): gesture.begin, gesture.update,
+// m5-mixer (spec, Protocol v0 item 24): gesture.begin, gesture.update,
 // gesture.hold, gesture.end and gesture.cancel through ServerOptions::
 // gesturePort, each gesture under a lease of the connection that began it
 // (docs/schemas/protocol-gestures-v0.md).
@@ -112,7 +112,7 @@ struct ServerOptions {
     // The engine host's plugin hosts; nullptr: plugin.* is not_supported and
     // render.start renders every plugin slot dry. Must outlive the server.
     PluginPort* pluginPort = nullptr;
-    // The engine host's fader gestures (Protocol v0 item 23); nullptr: gesture.*
+    // The engine host's fader gestures (Protocol v0 item 24); nullptr: gesture.*
     // is not_supported. Must outlive the server.
     GesturePort* gesturePort = nullptr;
     // How long a gesture's lease lasts without a renewal, and the clock it is
