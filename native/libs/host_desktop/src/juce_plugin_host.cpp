@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "editor_platform.hpp"
+#include "juce_editor_window_impl.hpp"
 #include "siann/host/state_envelope.hpp"
 
 namespace siann::host {
@@ -60,33 +61,6 @@ std::string stableUid(const juce::PluginDescription& description) {
     return formatKey(description.pluginFormatName) + "-" + description.name.toStdString() + "-" +
            juce::String::toHexString(id).toStdString();
 }
-
-// The window an editor lives in. JUCE parents a plugin's view in it; the window
-// is a top-level one so the platform can own it (Windows) or float it (macOS).
-class EditorWindow final : public juce::DocumentWindow {
-public:
-    EditorWindow(const juce::String& windowTitle, juce::AudioProcessorEditor* editor,
-                 std::function<void()> onCloseButton)
-        : juce::DocumentWindow(windowTitle, juce::Colours::black, juce::DocumentWindow::closeButton, true),
-          onCloseButton_(std::move(onCloseButton)) {
-        setUsingNativeTitleBar(true);
-        setContentOwned(editor, true);
-        setResizable(editor->isResizable(), false);
-        setAlwaysOnTop(editor_platform::editorsFloat);
-        centreWithSize(getWidth(), getHeight());
-        setVisible(true);
-    }
-
-    std::uintptr_t nativeHandle() const {
-        auto* peer = getPeer();
-        return peer == nullptr ? 0 : reinterpret_cast<std::uintptr_t>(peer->getNativeHandle());
-    }
-
-    void closeButtonPressed() override { onCloseButton_(); }
-
-private:
-    std::function<void()> onCloseButton_;
-};
 
 class JucePluginInstance final : public PluginInstance,
                                  private PluginControl,
@@ -287,34 +261,31 @@ private:
         parameterAt(index).setValue(static_cast<float>(std::clamp(value, 0.0, 1.0)));
     }
 
+    // The plugin's AudioProcessorEditor in the desktop editor window, the one a CLAP
+    // editor embeds into too (juce_editor_window_impl.hpp).
     void openEditor(EditorOwner owner) override {
         if (editor_ == nullptr) {
-            auto* editor = plugin_->createEditorAndMakeActive();
+            std::unique_ptr<juce::AudioProcessorEditor> editor(plugin_->createEditorAndMakeActive());
             if (editor == nullptr) {
                 throw PluginError("editor_failed", "the plugin has no editor");
             }
-            editor_ = std::make_unique<EditorWindow>(plugin_->getName(), editor, [this, alive = std::weak_ptr<int>(alive_)] {
-                // Not from inside the window's own event.
-                juce::MessageManager::callAsync([this, alive] {
-                    if (!alive.expired()) {
-                        closeEditor();
-                    }
-                });
-            });
-            editor_platform::editorOpened();
-            editor_platform::editorShown(editor_->nativeHandle());
+            const bool canResize = editor->isResizable();
+            // The window defers its close button to a later message; the instance
+            // may be gone by then.
+            editor_ = desktop::makeEditorWindow(plugin_->getName(), owner, std::move(editor), canResize,
+                                                [this, alive = std::weak_ptr<int>(alive_)] {
+                                                    if (!alive.expired()) {
+                                                        closeEditor();
+                                                    }
+                                                });
+            editor_->show();
+        } else {
+            editor_->applyOwner(owner);
         }
-        editor_platform::applyOwner(editor_->nativeHandle(), owner.nativeWindow);
-        editor_->toFront(true);
-        editor_platform::editorRaised();
+        editor_->toFront();
     }
 
-    void closeEditor() override {
-        if (editor_ != nullptr) {
-            editor_.reset();
-            editor_platform::editorClosed();
-        }
-    }
+    void closeEditor() override { editor_.reset(); }
 
     bool editorOpen() const override { return editor_ != nullptr; }
 
@@ -397,7 +368,7 @@ private:
     std::atomic<bool> tailStale_{false};
     std::atomic<std::uint64_t> midiOutputOverflows_{0};
     std::atomic<std::uint64_t> midiOutputSysex_{0};
-    std::unique_ptr<EditorWindow> editor_;
+    std::unique_ptr<EditorWindow> editor_;  // siann::host's: the desktop editor window
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };
 

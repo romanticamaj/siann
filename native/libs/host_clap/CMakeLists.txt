@@ -21,8 +21,9 @@ if(SIANN_BUILD_TESTS)
   add_executable(siann_host_clap_tests tests/clap_plugin_host_test.cpp tests/hostile_plugin_test.cpp)
   # child_process.hpp is header-only: the crash test runs this executable as a child.
   target_include_directories(siann_host_clap_tests PRIVATE src ../host_common/tests ../../apps/cli/tests/support)
+  # The CLAP SDK too: the gui test asks the test plugin's extension directly.
   target_link_libraries(siann_host_clap_tests PRIVATE siann::host_clap siann::rt siann_rt_alloc_guard
-                        Catch2::Catch2WithMain Threads::Threads)
+                        siann_third_party_clap Catch2::Catch2WithMain Threads::Threads)
   siann_apply_compile_options(siann_host_clap_tests)
   # The plugins are hosted from their build locations, so these tests never skip.
   add_dependencies(siann_host_clap_tests siann_test_plugin_CLAP siann_hostile_plugin_CLAP)
@@ -30,6 +31,9 @@ if(SIANN_BUILD_TESTS)
     SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>"
     SIANN_HOSTILE_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_hostile_plugin_CLAP,SIANN_PLUGIN_FILE>>"
     SIANN_HOST_CLAP_TESTS_EXE="$<TARGET_FILE:siann_host_clap_tests>")
+  if(SIANN_TEST_PLUGIN_X11)
+    target_compile_definitions(siann_host_clap_tests PRIVATE SIANN_TEST_PLUGIN_X11=1)
+  endif()
   # A hang fails the test instead of holding the job until the runner gives up.
   catch_discover_tests(siann_host_clap_tests PROPERTIES TIMEOUT 120)
 endif()

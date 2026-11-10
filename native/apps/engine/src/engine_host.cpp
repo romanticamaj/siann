@@ -17,16 +17,22 @@
 #include "siann/model/document.hpp"
 #include "siann/playback/plugin_instances.hpp"
 #if defined(SIANN_ENGINE_WITH_JUCE)
+#include "siann/host/juce_editor_window.hpp"
 #include "siann/host/juce_plugin_host.hpp"
 #endif
 
 namespace siann::engine_app {
 
-// The engine's plugin hosts: CLAP in every build, JUCE's formats with JUCE.
+// The engine's plugin hosts: CLAP in every build, JUCE's formats with JUCE. With
+// JUCE, CLAP editors embed into the desktop target's windows (m5-clap-editor-window);
+// the factory is declared first so it outlives the CLAP host and its instances.
 struct PluginHostSet {
-    host::ClapPluginHost clap;
 #if defined(SIANN_ENGINE_WITH_JUCE)
+    host::JuceEditorWindowFactory editorWindows;
+    host::ClapPluginHost clap{&editorWindows};
     host::JucePluginHost juce;
+#else
+    host::ClapPluginHost clap{nullptr};  // the headless target: no window to embed into
 #endif
 
     playback::PluginHosts byFormat() {

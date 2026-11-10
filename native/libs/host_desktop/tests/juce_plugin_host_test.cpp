@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,6 +32,8 @@
 
 #include "hosting_checks.hpp"
 #include "siann/host/clap_plugin_host.hpp"
+#include "siann/host/editor_window.hpp"
+#include "siann/host/juce_editor_window.hpp"
 #include "siann/host/juce_plugin_host.hpp"
 
 #if defined(_WIN32)
@@ -1002,3 +1005,247 @@ TEST_CASE("plugin host: sysex output is counted per event, never as an overflow"
     checkSysexCounting(*instance);
     CHECK(measureDelay(*instance).frames == 64);
 }
+
+// ---- CLAP editors in the desktop target's window (m5-clap-editor-window) ----
+//
+// ClapPluginHost embeds siann_test_plugin's gui extension into the window
+// JuceEditorWindowFactory makes. The factory is wrapped so a test sees what the
+// host asked of the window: its sizes, the order of size and show, and that it went.
+
+namespace {
+
+struct EditorRecord {
+    int created = 0;
+    int destroyed = 0;
+    int width = 0;
+    int height = 0;
+    bool sized = false;
+    bool shownAfterSized = false;
+    int shows = 0;
+};
+
+class RecordingWindow final : public host::EditorWindow {
+public:
+    RecordingWindow(std::unique_ptr<host::EditorWindow> inner, EditorRecord& record)
+        : inner_(std::move(inner)), record_(record) {}
+    ~RecordingWindow() override { ++record_.destroyed; }
+    RecordingWindow(const RecordingWindow&) = delete;
+    RecordingWindow& operator=(const RecordingWindow&) = delete;
+
+    std::uintptr_t nativeHandle() const override { return inner_->nativeHandle(); }
+    void setContentSize(int width, int height) override {
+        record_.width = width;
+        record_.height = height;
+        record_.sized = true;
+        inner_->setContentSize(width, height);
+    }
+    void show() override {
+        ++record_.shows;
+        record_.shownAfterSized = record_.sized;
+        inner_->show();
+    }
+    void hide() override { inner_->hide(); }
+    void toFront() override { inner_->toFront(); }
+    void applyOwner(host::EditorOwner owner) override { inner_->applyOwner(owner); }
+
+private:
+    std::unique_ptr<host::EditorWindow> inner_;
+    EditorRecord& record_;
+};
+
+class RecordingFactory final : public host::EditorWindowFactory {
+public:
+    std::unique_ptr<host::EditorWindow> create(const std::string& title, host::EditorOwner owner,
+                                               std::function<void()> onCloseButton) override {
+        ++record.created;
+        record.sized = false;
+        return std::make_unique<RecordingWindow>(juce.create(title, owner, std::move(onCloseButton)), record);
+    }
+
+    host::JuceEditorWindowFactory juce;
+    EditorRecord record;
+};
+
+// A desktop host for siann_test_plugin's CLAP, its window factory first in and last out.
+struct ClapEditorRig {
+    host::MainThreadLoop loop;
+    RecordingFactory factory;
+    host::ClapPluginHost clapHost{&factory};
+
+    host::PluginDescriptor descriptor() {
+        const auto descriptors = clapHost.scanPath(SIANN_TEST_PLUGIN_CLAP);
+        REQUIRE(descriptors.size() == 1);
+        return descriptors.front();
+    }
+
+    std::unique_ptr<host::PluginInstance> load() { return clapHost.instantiate(descriptor(), sampleRate, blockFrames); }
+
+    // Services the plugin's main-thread requests while JUCE dispatches.
+    bool runUntil(const std::function<bool()>& predicate) {
+        return loop.runUntil(
+            [&] {
+                clapHost.runMainThreadCallbacks();
+                return predicate();
+            },
+            eventTimeout);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("clap editor: opens and closes in the JUCE window", "[juce][clap][editor]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ClapEditorRig rig;
+    CHECK(rig.descriptor().hasEditor);
+    auto instance = rig.load();
+    CHECK(instance->capabilities().editor);
+
+    CHECK_FALSE(instance->control().editorOpen());
+    CHECK(instance->control().editorNativeHandle() == 0);
+    instance->control().openEditor({});
+    CHECK(instance->control().editorOpen());
+    const auto handle = instance->control().editorNativeHandle();
+    CHECK(handle != 0);
+    CHECK(rig.factory.record.created == 1);
+    CHECK(rig.factory.record.width == 320);  // the plugin's get_size
+    CHECK(rig.factory.record.height == 200);
+    CHECK(rig.factory.record.shownAfterSized);
+
+    instance->control().openEditor({});  // idempotent: the same window
+    CHECK(instance->control().editorNativeHandle() == handle);
+    CHECK(rig.factory.record.created == 1);
+
+    instance->control().closeEditor();
+    CHECK_FALSE(instance->control().editorOpen());
+    CHECK(instance->control().editorNativeHandle() == 0);
+    CHECK(rig.factory.record.destroyed == 1);
+    instance->control().closeEditor();  // idempotent too
+    CHECK(rig.factory.record.destroyed == 1);
+
+    instance->control().openEditor({});
+    CHECK(instance->control().editorOpen());
+    CHECK(rig.factory.record.created == 2);
+    instance.reset();  // with the editor open
+    CHECK(rig.factory.record.destroyed == 2);
+}
+
+TEST_CASE("clap editor: request_resize resizes the window", "[juce][clap][editor]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ClapEditorRig rig;
+    auto instance = rig.load();
+    instance->control().openEditor({});
+    REQUIRE(rig.factory.record.width == 320);
+    // Serviced on the main thread: the plugin asks request_resize from on_main_thread.
+    instance->control().setParameter(parameterIndex(*instance, "editorSize"), 1.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 480 && rig.factory.record.height == 300; }));
+    CHECK(instance->control().editorOpen());
+    instance->control().setParameter(parameterIndex(*instance, "editorSize"), 0.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 320 && rig.factory.record.height == 200; }));
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
+}
+
+TEST_CASE("clap editor: request_resize from another thread resizes the window", "[juce][clap][editor]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ClapEditorRig rig;
+    auto instance = rig.load();
+    instance->control().openEditor({});
+    REQUIRE(rig.factory.record.width == 320);
+    // The plugin asks from a thread of its own: the host keeps the size for the main thread.
+    const int worker = parameterIndex(*instance, "editorSizeWorker");
+    instance->control().setParameter(worker, 1.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 480 && rig.factory.record.height == 300; }));
+    instance->control().setParameter(worker, 0.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 320 && rig.factory.record.height == 200; }));
+    CHECK(instance->control().editorOpen());
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
+}
+
+TEST_CASE("clap editor: resize_hints_changed resizes the window to the plugin's size", "[juce][clap][editor]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ClapEditorRig rig;
+    auto instance = rig.load();
+    instance->control().openEditor({});
+    REQUIRE(rig.factory.record.width == 320);
+    // The plugin never asks request_resize here: the host reads get_size again.
+    const int hints = parameterIndex(*instance, "editorSizeHints");
+    instance->control().setParameter(hints, 1.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 480 && rig.factory.record.height == 300; }));
+    instance->control().setParameter(hints, 0.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 320 && rig.factory.record.height == 200; }));
+    CHECK(instance->control().editorOpen());
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
+}
+
+#if defined(_WIN32)
+TEST_CASE("clap editor: the window's close button closes it", "[juce][clap][editor]") {
+    ClapEditorRig rig;
+    auto instance = rig.load();
+
+    instance->control().openEditor({});
+    auto* editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
+    REQUIRE(editor != nullptr);
+    PostMessageW(editor, WM_CLOSE, 0, 0);
+    REQUIRE(rig.runUntil([&] { return !instance->control().editorOpen(); }));
+    CHECK_FALSE(IsWindow(editor));
+    CHECK(instance->control().editorNativeHandle() == 0);
+    CHECK(rig.factory.record.destroyed == 1);
+
+    // Pressed in the last moment of an instance's life.
+    instance->control().openEditor({});
+    editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
+    SendMessageW(editor, WM_CLOSE, 0, 0);
+    instance.reset();
+    rig.loop.runUntil([] { return false; }, std::chrono::milliseconds(50));
+    CHECK(rig.factory.record.destroyed == 2);
+}
+
+TEST_CASE("clap editor: owned by the given window", "[juce][clap][editor]") {
+    ClapEditorRig rig;
+    auto instance = rig.load();
+
+    HWND owner = CreateWindowExW(0, L"STATIC", L"SIANN test owner", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr,
+                                 nullptr, GetModuleHandleW(nullptr), nullptr);
+    REQUIRE(owner != nullptr);
+    instance->control().openEditor({reinterpret_cast<std::uintptr_t>(owner)});
+    auto* editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
+    REQUIRE(editor != nullptr);
+    CHECK(GetWindow(editor, GW_OWNER) == owner);  // GW_OWNER reads GWLP_HWNDPARENT
+    CHECK((GetWindowLongPtrW(editor, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);  // owned, so it need not float
+    CHECK(IsWindowVisible(editor));
+    instance->control().closeEditor();
+    CHECK_FALSE(IsWindow(editor));
+
+    instance->control().openEditor({reinterpret_cast<std::uintptr_t>(owner)});
+    editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
+    instance.reset();  // an instance closes its editor as it goes
+    CHECK_FALSE(IsWindow(editor));
+    DestroyWindow(owner);
+}
+
+TEST_CASE("clap editor: the child view is inside the window", "[juce][clap][editor]") {
+    ClapEditorRig rig;
+    auto instance = rig.load();
+    instance->control().openEditor({});
+    auto* editor = reinterpret_cast<HWND>(instance->control().editorNativeHandle());
+    REQUIRE(editor != nullptr);
+    // The plugin's set_parent made it: a child of the editor's own window, shown.
+    HWND view = FindWindowExW(editor, nullptr, L"SiannTestPluginView", nullptr);
+    REQUIRE(view != nullptr);
+    CHECK(GetParent(view) == editor);
+    CHECK(IsWindowVisible(view));
+    RECT client{};
+    REQUIRE(GetClientRect(view, &client));
+    CHECK(client.right - client.left == 320);
+    CHECK(client.bottom - client.top == 200);
+    instance->control().closeEditor();
+    CHECK_FALSE(IsWindow(view));
+}
+#endif

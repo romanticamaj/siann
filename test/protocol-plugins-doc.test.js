@@ -79,3 +79,33 @@ test('the spec\'s Jobs v0, plugins paragraph names the registry codes of plugin.
   assert.ok(!item.includes('probes and instantiates'), 'plugin.instantiate no longer probes');
   assert.ok(!item.includes('`not_found`'), 'the PluginError code is plugin_not_found');
 });
+
+// m5-clap-editor-window, acceptance 2 and 3: CLAP editors open on the desktop
+// target, so the editor section and the spec's Protocol v0 item 19 drop the
+// "until it gets a window" clause; the macOS hands-on gate opens a CLAP editor too.
+// The native tests prove the behaviour.
+test('the editor section says CLAP editors open on the desktop target and the title bar closes them', () => {
+  const prose = section('plugin.open_editor, plugin.close_editor');
+  assert.ok(!prose.includes('until siann-host-desktop supplies a window'), 'no clause waiting for a window');
+  assert.ok(!prose.includes('until it gets a window'), 'no clause waiting for a window');
+  for (const word of ['title bar', 'headless', 'CLAP']) {
+    assert.ok(prose.includes(word), `the section mentions ${word}`);
+  }
+});
+
+test('the spec\'s Protocol v0 item 19 no longer waits for a CLAP window', () => {
+  const text = fs.readFileSync(SPEC, 'utf8');
+  const start = text.indexOf('`plugin.open_editor {slotId}` and `plugin.close_editor {slotId}`');
+  assert.ok(start >= 0, 'the spec has the editor methods in item 19');
+  const end = text.indexOf('\n20. ', start);
+  const item = text.slice(start, end < 0 ? text.length : end);
+  assert.ok(!item.replace(/\s+/g, ' ').includes('until siann-host-desktop supplies a window'));
+  assert.ok(item.includes('headless'), 'item 19 names the headless target');
+});
+
+test('the macOS hands-on gate opens a CLAP editor too', () => {
+  const m0 = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '.claude', 'milestones', 'M0.json'), 'utf8'));
+  const gate = m0.humanGates.find((candidate) => candidate.id === 'macos-hands-on');
+  assert.ok(gate, 'M0 has the macos-hands-on gate');
+  assert.ok(gate.how.includes('CLAP'), 'the gate opens a CLAP editor');
+});

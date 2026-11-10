@@ -195,6 +195,15 @@ function appStep() {
     env.SIANN_DESKTOP_ENGINE_EXE = desktopExe;
     env.SIANN_TEST_PLUGIN = plugin;
   }
+  // The CLAP editor case (m5-clap-editor-window): siann_test_plugin's CLAP from the
+  // same build (Ninja puts it beside its CMakeLists, a multi-config generator in Debug).
+  const clapDir = path.join(desktopBuild, 'libs', 'host_clap', 'test_plugin');
+  const clap = [path.join(clapDir, 'siann_test_plugin.clap'), path.join(clapDir, 'Debug', 'siann_test_plugin.clap')]
+    .find((candidate) => fs.existsSync(candidate));
+  if (fs.existsSync(desktopExe) && clap) {
+    env.SIANN_DESKTOP_ENGINE_EXE = desktopExe;
+    env.SIANN_TEST_PLUGIN_CLAP = clap;
+  }
   // npm is a .cmd shim on Windows, which spawnSync runs only through cmd.exe.
   const npm = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npm', ...args], APP, env) : run('npm', args, APP, env));
   const steps = [];
