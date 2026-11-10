@@ -121,9 +121,11 @@ test('moves set the overlay at once and coalesce into one update in flight', asy
   client.answer('gesture.update');
   await settle();
   assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.update', { target: TARGET, value: -5000 }]]);
+  assert.equal(controller.settled, false);
   client.answer('gesture.update');
   await settle();
   assert.deepEqual(client.calls, []);
+  assert.equal(controller.settled, true); // the engine holds the newest value
 });
 
 test('gesture.hold goes out at leaseMs / 2 while the fader is held still', async () => {
