@@ -63,6 +63,12 @@ where `session.open` is made to work) and is `m5-engine-sessions-devices`'.
 
 ## Before M5: CLAP editor windows on the desktop target (gui extension embedding into a window siann-host-desktop supplies)
 
+Done (2026-11-10) in `m5-clap-editor-window`: `host::EditorWindowFactory` in
+siann-host-api, `JuceEditorWindowFactory` in siann-host-desktop, and the engine's
+desktop build hands it to `ClapPluginHost` (spec, "siann-host: two targets, one
+interface"; Protocol v0 item 19). The headless target supplies no factory and keeps
+`editor_failed`.
+
 Taken into `m5-clap-editor-window`, wave 2 after `m5-plugin-registry` so its tests
 name the plugin the registry's way (decided by Fable, delegated by the maintainer,
 2026-11-09).

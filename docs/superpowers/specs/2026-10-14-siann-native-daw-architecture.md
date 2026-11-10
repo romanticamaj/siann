@@ -1800,6 +1800,20 @@ Shared by both targets:
   A block carries the caller's parameter events, up to 1024 beyond one per
   parameter; past that, the newest value of each parameter left over is delivered
   at offset 0 of the next block, and is what `getParameter` reads meanwhile.
+- CLAP editors (m5-clap-editor-window, decided 2026-11-10 with the feature): the
+  gui extension embeds into a top-level window that a
+  `host::EditorWindowFactory` (`siann-host-api`, header-only, main thread only)
+  creates. `ClapPluginHost` takes the factory at construction:
+  `siann-host-desktop` supplies `JuceEditorWindowFactory`, a
+  `juce::DocumentWindow` with a native title bar (owned by `--owner-window`
+  through `GWLP_HWNDPARENT` on Windows, floating with FullScreenAuxiliary on
+  macOS, a plain X11 window on Linux, as the JUCE editors are), and
+  `siann-host-headless` supplies none. `capabilities().editor` and `hasEditor` are
+  true only with a factory and a gui extension that supports the platform API
+  (`win32`, `cocoa`, `x11`), embedded, not floating. `openEditor` runs `create`,
+  `set_parent`, `get_size` (which sizes the window) and `show`; `closeEditor` runs
+  `hide` and `destroy`; `request_resize` and `resize_hints_changed` resize the
+  window. Without a factory `openEditor` throws `editor_failed`.
 - `MediaReader` via dr_libs / libFLAC etc. (not JUCE), so media reading is identical
   everywhere.
 
@@ -2320,9 +2334,10 @@ with the M4 wave 2 and 3 plans):
     command thread; the engine's main thread opens the window, owned by
     `--owner-window` on Windows; both return `{slotId, editorOpen, nativeHandle}`.
     Errors: `not_found` (no such slot), `plugin_missing` (the slot's plugin did
-    not load), `editor_failed` (the plugin has no editor, or a CLAP plugin on the
-    desktop target until siann-host-desktop supplies a window: follow-ups, "Before
-    M5: CLAP editor windows"), `no_plugin_host`. `--open-editor` and
+    not load), `editor_failed` (the plugin has no editor, or a CLAP plugin in the
+    headless target, which has no window to embed into), `no_plugin_host`. A
+    window closed from its title bar leaves `editorOpen` false in the next result
+    (m5-clap-editor-window). `--open-editor` and
     `SIANN_OPEN_EDITOR` are removed ("Process model"). All of them go through the
     command thread, honour `expectedRevision` and the idempotency cache, and are
     in `engine.capabilities`' `methods`; none is an MCP tool yet.

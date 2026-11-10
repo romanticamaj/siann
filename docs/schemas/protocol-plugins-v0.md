@@ -62,7 +62,9 @@ A state blob names a file only as `sha256:` followed by 64 lowercase hex digits;
 
 ## plugin.open_editor, plugin.close_editor
 
-Params `{slotId}`. Result `{slotId, editorOpen, nativeHandle}`, `nativeHandle` the editor's top-level window as a decimal string (`"0"` when closed). On Windows the window is owned by the engine's `--owner-window`. Errors: `not_found` (no such slot), `plugin_missing` (the slot's plugin did not load), `editor_failed` (no editor, or a CLAP plugin on the desktop target until it gets a window), `no_plugin_host`.
+Params `{slotId}`. Result `{slotId, editorOpen, nativeHandle}`, `nativeHandle` the editor's top-level window as a decimal string (`"0"` when closed). On Windows the window is owned by the engine's `--owner-window`. Errors: `not_found` (no such slot), `plugin_missing` (the slot's plugin did not load), `editor_failed` (no editor, or a CLAP plugin in the headless engine, which has no window to embed into), `no_plugin_host`.
+
+CLAP editors open on the desktop target (m5-clap-editor-window): the plugin's gui extension embeds into a top-level window the engine supplies, sized to the plugin and resized when the plugin asks. A window closed from its title bar leaves `editorOpen` false (and `nativeHandle` `"0"`) in the next result.
 
 ## plugin.set_parameter
 
