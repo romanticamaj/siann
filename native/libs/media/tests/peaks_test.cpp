@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +17,7 @@
 #include "siann/media/audio.hpp"
 #include "siann/media/memory_reader.hpp"
 #include "siann/media/peaks.hpp"
+#include "support/allocation_fuse.hpp"
 #include "support/peaks_fixtures.hpp"
 
 namespace fs = std::filesystem;
@@ -66,6 +68,54 @@ public:
 private:
     fs::path path_;
 };
+
+constexpr std::int64_t kMaxPeakFrames = std::int64_t{siann::media::kPeakBaseBinFrames}
+                                        << (2 * siann::media::kPeakMaxLevel);
+
+// A reader whose header claims `claimed` frames but which yields only `real`
+// frames of 0.5, then reads as empty, as a lying or truncated file does.
+class ShortReader final : public siann::host::MediaReader {
+public:
+    ShortReader(int channels, std::int64_t claimed, std::int64_t real)
+        : channels_(channels), claimed_(claimed), real_(real) {}
+
+    siann::host::MediaInfo info() const override { return {channels_, 48'000, claimed_}; }
+
+    std::int64_t read(std::int64_t position, const siann::host::AudioBufferView& destination) override {
+        ++reads;
+        if (endSeen) {
+            ++readsAfterEnd;
+        }
+        destination.clear();
+        const std::int64_t got = std::clamp<std::int64_t>(real_ - position, 0, destination.frames);
+        for (int c = 0; c < destination.channelCount; ++c) {
+            std::fill_n(destination.channel(c), got, 0.5f);
+        }
+        if (got < destination.frames) {
+            endSeen = true;
+        }
+        return got;
+    }
+
+    int reads = 0;
+    int readsAfterEnd = 0;
+    bool endSeen = false;
+
+private:
+    int channels_;
+    std::int64_t claimed_;
+    std::int64_t real_;
+};
+
+// The MediaError code computePeaks throws, or "" when it returns.
+std::string peaksRefusal(siann::host::MediaReader& reader) {
+    try {
+        siann::media::computePeaks(reader);
+    } catch (const MediaError& e) {
+        return e.code();
+    }
+    return "";
+}
 
 }  // namespace
 
@@ -172,4 +222,66 @@ TEST_CASE("writePeaks writes <bundle>/peaks/<hex>.peaks atomically, and it reads
     CHECK(siann::io::readFile(written) == siann::media::testing::peaksFixtureBytes("square-mono"));
     CHECK_FALSE(fs::exists(dir.path() / "peaks" / (hex + ".peaks.tmp")));
     CHECK(siann::media::decodePeaks(siann::io::readFile(written)) == pyramid);
+}
+
+TEST_CASE("a header claiming the most frames and channels is refused without allocating for the claim",
+          "[media][peaks]") {
+    // Taken at its word, this header would size level 0 at about 4 GB before a
+    // single sample was read. The pyramid must grow only with the samples the
+    // reader yields, and refuse once it yields fewer than the header claims.
+    ShortReader reader(siann::media::kPeakMaxChannels, kMaxPeakFrames, 3);
+    const siann::media::testing::AllocationFuse fuse(16u << 20);
+    CHECK(peaksRefusal(reader) == "decode_failed");
+    CHECK_FALSE(fuse.blown());
+    CHECK(fuse.largest() <= (16u << 20));
+    // It stops at the first short read rather than walking the claimed length.
+    CHECK(reader.readsAfterEnd == 0);
+    CHECK(reader.reads == 1);
+}
+
+TEST_CASE("media that yields fewer frames than its header claims is refused", "[media][peaks]") {
+    // Short by less than a chunk, and short by several chunks.
+    for (const auto& [claimed, real] : {std::pair<std::int64_t, std::int64_t>{1'000, 300},
+                                        std::pair<std::int64_t, std::int64_t>{100'000, 5'000}}) {
+        INFO(claimed << " claimed, " << real << " real");
+        ShortReader reader(2, claimed, real);
+        CHECK(peaksRefusal(reader) == "decode_failed");
+        CHECK(reader.readsAfterEnd == 0);
+    }
+    // An honest reader of the same shape still makes its pyramid.
+    ShortReader honest(2, 5'000, 5'000);
+    const PeakPyramid pyramid = siann::media::computePeaks(honest);
+    CHECK(pyramid.frames == 5'000);
+    CHECK(pyramid.levels[0].binCount == 20);
+    CHECK(pyramid.levels[0].values.size() == 20u * 2u * 2u);
+    CHECK(bin(pyramid, 0, 19, 1) == std::pair{16384, 16384});
+}
+
+TEST_CASE("a peaks file claiming the most frames and channels is refused by its size, not allocated",
+          "[media][peaks]") {
+    // A 28-byte file whose header and first level header claim 2^22 bins of 255
+    // channels: the parser checks the bytes it has before sizing the level.
+    std::string bytes = "SPKS";
+    const auto put = [&](std::uint64_t value, int count) {
+        for (int i = 0; i < count; ++i) {
+            bytes.push_back(static_cast<char>((value >> (8 * i)) & 0xffu));
+        }
+    };
+    put(1, 1);
+    put(static_cast<std::uint64_t>(siann::media::kPeakMaxChannels), 1);
+    put(static_cast<std::uint64_t>(siann::media::kPeakMaxLevel) + 1, 1);
+    put(0, 1);
+    put(static_cast<std::uint64_t>(kMaxPeakFrames), 8);
+    put(48'000, 4);
+    put(siann::media::kPeakBaseBinFrames, 4);
+    put(static_cast<std::uint64_t>(kMaxPeakFrames) / siann::media::kPeakBaseBinFrames, 4);
+    const siann::media::testing::AllocationFuse fuse(1u << 20);
+    std::string code;
+    try {
+        siann::media::decodePeaks(bytes);
+    } catch (const MediaError& e) {
+        code = e.code();
+    }
+    CHECK(code == "decode_failed");
+    CHECK_FALSE(fuse.blown());
 }

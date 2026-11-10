@@ -18,6 +18,7 @@ if(SIANN_BUILD_TESTS)
     tests/wav_writer_test.cpp
     tests/memory_reader_test.cpp
     tests/peaks_test.cpp
+    tests/support/allocation_fuse.cpp
   )
   target_link_libraries(siann_media_tests PRIVATE siann::media siann::hash siann::io Catch2::Catch2WithMain)
   target_compile_definitions(siann_media_tests PRIVATE SIANN_FIXTURES_DIR="${SIANN_FIXTURES_DIR}")

@@ -98,11 +98,15 @@ PeakPyramid computePeaks(host::MediaReader& reader) {
     const std::vector<std::uint32_t> counts = binCounts(pyramid.frames);
     const auto channels = static_cast<std::size_t>(info.channels);
 
-    // Level 0 from the samples, one chunk at a time.
+    // Level 0 from the samples, one chunk at a time. The frame count is the
+    // media header's word, so level 0 grows only with the chunks the reader
+    // actually yields: a header claiming a billion frames costs a chunk, not
+    // gigabytes, before the first short read refuses it. A pyramid is all of
+    // the media or nothing: one shorter than its header claims would disagree
+    // with the clip it draws, so a short (or long) read is decode_failed.
     PeakLevel base;
     base.binFrames = kPeakBaseBinFrames;
     base.binCount = counts.front();
-    base.values.resize(static_cast<std::size_t>(base.binCount) * channels * 2);
     std::vector<std::vector<float>> planar(channels, std::vector<float>(static_cast<std::size_t>(kChunkFrames)));
     std::vector<float*> pointers;
     for (auto& channel : planar) {
@@ -110,7 +114,14 @@ PeakPyramid computePeaks(host::MediaReader& reader) {
     }
     for (std::int64_t start = 0; start < info.frames; start += kChunkFrames) {
         const int frames = static_cast<int>(std::min<std::int64_t>(kChunkFrames, info.frames - start));
-        reader.read(start, host::AudioBufferView{pointers.data(), info.channels, frames});
+        const std::int64_t got = reader.read(start, host::AudioBufferView{pointers.data(), info.channels, frames});
+        if (got != frames) {
+            throw MediaError("decode_failed", "the media yielded " + std::to_string(start + std::max<std::int64_t>(got, 0)) +
+                                                  " of the " + std::to_string(info.frames) +
+                                                  " frames its header claims");
+        }
+        const auto chunkBins = static_cast<std::size_t>(ceilDiv(static_cast<std::uint64_t>(frames), kPeakBaseBinFrames));
+        base.values.resize(base.values.size() + chunkBins * channels * 2);
         for (int offset = 0; offset < frames; offset += static_cast<int>(kPeakBaseBinFrames)) {
             const int end = std::min(frames, offset + static_cast<int>(kPeakBaseBinFrames));
             const auto bin = static_cast<std::size_t>((start + offset) / kPeakBaseBinFrames);

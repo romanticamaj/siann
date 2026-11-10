@@ -31,6 +31,7 @@ Then, for each level k = 0 .. levels - 1:
 - A sample `x` (float, nominal range [-1, 1]) becomes `floor(x * 32767 + 0.5)` in double precision, clamped to [-32768, 32767] (saturating); NaN is 0. Full scale is therefore +-32767, and anything beyond saturates.
 - Level k + 1 is level k with every four bins merged (min of the mins, max of the maxes), which equals computing it from the samples.
 - Media longer than 256 * 4^11 frames (1,073,741,824, about 6 h at 48 kHz) or with more than 255 channels is `too_large`.
+- `frames` is what the media's header claims, so the producer sizes the pyramid by the samples it actually reads, never by that claim, and media that yields fewer (or more) frames than its header claims is `decode_failed`: a pyramid covers all of the media or there is none.
 - A file whose magic, version, reserved byte, level layout or size does not match is unparseable (`decode_failed` in `media::decodePeaks`).
 
 `fixtures/peaks/` holds pyramids of small synthetic signals written by `scripts/generate-peaks-fixtures.js` from a plain Node implementation of this section; the C++ producer (`native/libs/media`, `computePeaks` and `encodePeaks`) and the renderer's decoder (`app/src/renderer/model/peaks.ts`) are tested against the same bytes.
