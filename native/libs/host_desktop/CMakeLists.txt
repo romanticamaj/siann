@@ -2,6 +2,7 @@
 # SIANN_WITH_JUCE is ON.
 add_library(siann_host_desktop STATIC
   src/juce_audio_device.cpp
+  src/juce_editor_window.cpp
   src/juce_plugin_host.cpp
 )
 add_library(siann::host_desktop ALIAS siann_host_desktop)
@@ -44,7 +45,7 @@ target_compile_definitions(siann_host_desktop PRIVATE
 if(MSVC)
   target_compile_options(siann_host_desktop PRIVATE /utf-8)  # JUCE sources are UTF-8
 endif()
-siann_apply_source_options(src/juce_audio_device.cpp src/juce_plugin_host.cpp)
+siann_apply_source_options(src/juce_audio_device.cpp src/juce_editor_window.cpp src/juce_plugin_host.cpp)
 
 if(SIANN_BUILD_TESTS)
   add_subdirectory(test_plugin)
