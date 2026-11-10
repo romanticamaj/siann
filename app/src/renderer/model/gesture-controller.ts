@@ -9,6 +9,12 @@
 // applyChanged drops an ended overlay when its entity changes). An error
 // answer or a disconnect cancels the overlay.
 //
+// The engine holds one gesture per connection and target and refuses a second
+// begin with gesture_open, so a gesture begun before the previous one's end (or
+// cancel) is on the wire waits: its overlay shows at once, its begin goes out
+// right behind that end. A gesture abandoned while its begin is in flight is
+// cancelled once the begin is answered.
+//
 // Framework-free: the client and the scheduler are injected, as SessionClient's.
 
 import type { GestureField, ReadModel } from './read-model';
@@ -40,6 +46,10 @@ const DEFAULT_LEASE_MS = 5000;
 
 interface Active {
   readonly target: GestureTarget;
+  // The begin is not sent yet: an earlier gesture's end or cancel is not on the wire.
+  waiting: boolean;
+  // The begin is sent and not answered.
+  opening: boolean;
   begun: boolean;
   leaseMs: number;
   inFlight: boolean;
@@ -47,7 +57,16 @@ interface Active {
   pending: number | null;
   // end() was called: the last value, or null when the gesture never moved.
   ending: { value: number | null } | null;
+  // Nothing more is sent: the end or cancel went out, or the gesture was dropped.
   ended: boolean;
+  // Abandoned: no end goes out (a cancel may, once a late begin is answered).
+  dropped: boolean;
+  // A late begin answer of a dropped gesture is cancelled.
+  cancelOnBegin: boolean;
+  // Its end or cancel is on the wire, or the engine holds nothing for it.
+  released: boolean;
+  // The gesture whose begin waits for this one's release.
+  next: Active | null;
   hold: (() => void) | null;
 }
 
@@ -55,6 +74,8 @@ export class GestureController {
   readonly #client: GestureClient;
   readonly #schedule: GestureControllerOptions['schedule'];
   #active: Active | null = null;
+  // The newest gesture not yet released: a new begin waits behind it.
+  #tail: Active | null = null;
 
   constructor(options: GestureControllerOptions) {
     this.#client = options.client;
@@ -77,26 +98,32 @@ export class GestureController {
   }
 
   begin(ref: string, field: GestureField): void {
-    // A gesture still waiting for its end's answer keeps going; the new
-    // overlay replaces its ended one.
-    if (this.#active && !this.#active.ended) this.#abandon(this.#active, true);
+    // An ending gesture keeps going (its end still goes out and is answered);
+    // the new overlay replaces its ended one. Any other is abandoned.
+    const previous = this.#active;
+    if (previous && !previous.ending) this.#abandon(previous, true);
     this.#client.model.beginGesture(ref, field);
     const active: Active = {
       target: { ref, param: PARAMS[field] },
+      waiting: true,
+      opening: false,
       begun: false,
       leaseMs: DEFAULT_LEASE_MS,
-      inFlight: true,
+      inFlight: false,
       pending: null,
       ending: null,
       ended: false,
+      dropped: false,
+      cancelOnBegin: false,
+      released: false,
+      next: null,
       hold: null,
     };
     this.#active = active;
-    this.#send(active, 'gesture.begin', { target: active.target }, (result) => {
-      active.begun = true;
-      const leaseMs = (result as { leaseMs?: unknown } | null)?.leaseMs;
-      if (typeof leaseMs === 'number' && leaseMs > 0) active.leaseMs = leaseMs;
-    });
+    const tail = this.#tail;
+    this.#tail = active;
+    if (tail) tail.next = active;
+    else this.#start(active);
   }
 
   move(value: number): void {
@@ -120,9 +147,41 @@ export class GestureController {
     if (active) this.#abandon(active, true);
   }
 
-  // Sends what is due, when nothing is in flight.
+  // Sends the begin of a gesture whose predecessor is released.
+  #start(active: Active): void {
+    active.waiting = false;
+    if (active.dropped) {
+      this.#release(active); // dropped before anything was sent
+      return;
+    }
+    active.opening = true;
+    this.#send(active, 'gesture.begin', { target: active.target }, (result) => {
+      active.begun = true;
+      const leaseMs = (result as { leaseMs?: unknown } | null)?.leaseMs;
+      if (typeof leaseMs === 'number' && leaseMs > 0) active.leaseMs = leaseMs;
+      if (active.dropped) {
+        // Abandoned while its begin was in flight: the engine opened a lease.
+        if (active.cancelOnBegin) this.#sendCancel(active);
+        this.#release(active);
+      }
+    });
+  }
+
+  // The engine holds nothing more for this gesture that a begin could collide
+  // with: the gesture waiting behind it begins.
+  #release(active: Active): void {
+    if (active.released) return;
+    active.released = true;
+    if (this.#tail === active) this.#tail = null;
+    const next = active.next;
+    active.next = null;
+    if (next) this.#start(next);
+  }
+
+  // Sends what is due, when nothing is in flight. An ending gesture goes on
+  // after a newer one has replaced it.
   #pump(active: Active): void {
-    if (this.#active !== active || active.inFlight || active.ended) return;
+    if (active.waiting || active.inFlight || active.ended) return;
     if (active.ending) {
       const params: Record<string, unknown> = { target: active.target };
       if (active.ending.value !== null) params.value = active.ending.value;
@@ -136,6 +195,7 @@ export class GestureController {
         // Nothing committed on this entity: no session.changed will drop the overlay.
         if (!diff.includes(active.target.ref)) this.#dropOverlay(active);
       });
+      this.#release(active); // the end is on the wire, ahead of the next begin
       return;
     }
     if (active.pending !== null) {
@@ -151,16 +211,19 @@ export class GestureController {
     this.#client.request(method, params).then(
       (result) => {
         active.inFlight = false;
+        active.opening = false;
         done?.(result);
-        if (this.#active !== active) return;
+        if (active.ended) return;
         this.#scheduleHold(active);
         this.#pump(active);
       },
       () => {
         active.inFlight = false;
+        active.opening = false;
         // A refused begin or end left nothing open on the engine; a refused
         // update or hold may have.
-        if (this.#active === active) this.#abandon(active, method !== 'gesture.end' && method !== 'gesture.begin');
+        this.#abandon(active, method !== 'gesture.end' && method !== 'gesture.begin');
+        if (method === 'gesture.begin') this.#release(active);
       },
     );
   }
@@ -181,18 +244,30 @@ export class GestureController {
     }
   }
 
-  // Drops the current gesture and its overlay; tells the engine when it may
-  // still hold it.
+  #sendCancel(active: Active): void {
+    if (this.#client.getState().status !== 'connected') return;
+    this.#client.request('gesture.cancel', { target: active.target }).catch(() => undefined);
+  }
+
+  // Drops a gesture (and its overlay, when it is the current one); tells the
+  // engine when it may still hold it.
   #abandon(active: Active, tellEngine: boolean): void {
     this.#cancelHold(active);
-    if (this.#active !== active) return;
-    this.#active = null;
-    this.#dropOverlay(active);
-    if (tellEngine && active.begun && !active.ended && this.#client.getState().status === 'connected') {
-      active.ended = true;
-      this.#client.request('gesture.cancel', { target: active.target }).catch(() => undefined);
+    if (this.#active === active) {
+      this.#active = null;
+      this.#dropOverlay(active);
     }
+    if (active.ended) return;
     active.ended = true;
+    active.dropped = true;
+    // Nothing sent yet, or the begin's answer still to come: #start or that
+    // answer releases it.
+    if (active.waiting || active.opening) {
+      active.cancelOnBegin = tellEngine;
+      return;
+    }
+    if (tellEngine && active.begun) this.#sendCancel(active);
+    this.#release(active);
   }
 
   #dropOverlay(active: Active): void {
