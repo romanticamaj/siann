@@ -2190,7 +2190,8 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       parameter schemas are a follow-up, the registry has none yet).
     - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
       commands, methods, features: {plans: true, proposals: true, audition: <a port
-      is present>, transport: <a port is present>, render: true, plugins},
+      is present>, transport: <a port is present>, render: true, plugins,
+      gestures: <a port is present> (item 23)},
       limits: {syncChunkEntities,
       inboxCapacity, idempotencyCapacity}}`. `scope` is the MCP scope the launcher
       set. `plugins` is `false` until a plugin port is present (item 19), then
