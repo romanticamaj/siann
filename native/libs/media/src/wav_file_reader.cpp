@@ -71,6 +71,23 @@ drwav_bool32 onTell(void* user, drwav_int64* cursor) {
     return DRWAV_TRUE;
 }
 
+// The most frames the data chunk can hold. dr_wav already clamps the data
+// chunk to the file, but takes the frame count of an RF64 (ds64), W64 or
+// MS-ADPCM (fact) file from a header field it never checks against the data,
+// so a lying header could claim far more frames than the file has.
+std::uint64_t framesTheDataHolds(const drwav& wav) {
+    const std::uint64_t bytes = wav.dataChunkDataSize;
+    if (wav.translatedFormatTag == DR_WAVE_FORMAT_ADPCM || wav.translatedFormatTag == DR_WAVE_FORMAT_DVI_ADPCM) {
+        // 4-bit ADPCM: under two samples a byte, block headers included.
+        return bytes * 2 / wav.channels;
+    }
+    // As dr_wav counts bytes per frame: from the bits per sample when whole bytes, else the block align.
+    const std::uint64_t bytesPerFrame = wav.bitsPerSample % 8 == 0
+                                            ? static_cast<std::uint64_t>(wav.bitsPerSample / 8) * wav.channels
+                                            : static_cast<std::uint64_t>(wav.fmt.blockAlign);
+    return bytesPerFrame == 0 ? 0 : bytes / bytesPerFrame;
+}
+
 }  // namespace
 
 struct WavFileReader::Impl {
@@ -110,11 +127,12 @@ WavFileReader::WavFileReader(const std::filesystem::path& path, int chunkFrames)
         throw MediaError("decode_failed", "the WAV header could not be read: " + path.string());
     }
     impl_->open = true;
-    impl_->info = host::MediaInfo{static_cast<int>(impl_->wav.channels), static_cast<std::int64_t>(impl_->wav.sampleRate),
-                                  static_cast<std::int64_t>(impl_->wav.totalPCMFrameCount)};
-    if (impl_->info.channels <= 0 || impl_->info.sampleRate <= 0) {
+    if (impl_->wav.channels == 0 || impl_->wav.sampleRate == 0) {
         throw MediaError("decode_failed", "the WAV header has no channels or sample rate");
     }
+    const std::uint64_t frames = std::min<std::uint64_t>(impl_->wav.totalPCMFrameCount, framesTheDataHolds(impl_->wav));
+    impl_->info = host::MediaInfo{static_cast<int>(impl_->wav.channels), static_cast<std::int64_t>(impl_->wav.sampleRate),
+                                  static_cast<std::int64_t>(frames)};
     impl_->chunkFrames = chunkFrames;
     impl_->interleaved.resize(static_cast<std::size_t>(chunkFrames) * static_cast<std::size_t>(impl_->info.channels));
 }
