@@ -117,8 +117,11 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
 
   sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-crash-'));
+  // The plugin's build directory is a --plugin-dir, and the approval below lands in
+  // this test's own <userData>/plugin-registry.json, which the restarted engine
+  // reads (m5-plugin-registry).
   app = await electron.launch({
-    args: [MAIN],
+    args: [MAIN, `--user-data-dir=${path.join(sessionDir, 'user-data')}`],
     cwd: APP_DIR,
     env: {
       ...process.env,
@@ -126,7 +129,7 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
       SIANN_SESSION_DIR: sessionDir,
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: '--device fake',
+      SIANN_ENGINE_TEST_ARGS: `--device fake --plugin-dir ${path.dirname(hostilePlugin!)}`,
     },
   });
   const page = await app.firstWindow();
@@ -158,6 +161,8 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
   let slotId = '';
   try {
     await client.call('command.execute', { commands: [{ op: 'track.add', trackId: 'trk_1', name: 'trk_1', channels: 2 }] });
+    const approved = await client.call('plugin.approve', { format: 'clap', path: hostilePlugin!, approved: true });
+    expect(approved.approved).toBe(true);
     const loaded = await client.call('plugin.instantiate', {
       trackId: 'trk_1',
       index: 0,

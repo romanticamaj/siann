@@ -270,6 +270,23 @@ TEST_CASE("plugin host: a descriptor without a path needs exactly one known inst
     }
 }
 
+// m5-plugin-registry: the engine's --plugin-dir directories, listed beside the
+// default locations without loading anything.
+TEST_CASE("plugin host: scan lists extra directories without probing them", "[juce][plugin][registry]") {
+    host::MainThreadLoop loop;
+    host::JucePluginHost host;
+    const auto copy = installCopy("siann-plugin-host-plugin-dir");
+    const auto listed = host.scan({copy.parent_path().string()});
+    const auto found = std::find_if(listed.begin(), listed.end(), [&](const host::PluginDescriptor& descriptor) {
+        return descriptor.format == "vst3" &&
+               std::filesystem::weakly_canonical(std::filesystem::path(descriptor.path)) ==
+                   std::filesystem::weakly_canonical(copy);
+    });
+    REQUIRE(found != listed.end());
+    CHECK(found->uid.empty());  // nothing was probed
+    CHECK(found->vendor.empty());
+}
+
 TEST_CASE("plugin host: a descriptor that only names a path instantiates", "[juce][plugin]") {
     host::MainThreadLoop loop;
     host::JucePluginHost host;

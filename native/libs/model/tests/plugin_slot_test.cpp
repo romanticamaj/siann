@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -244,4 +247,59 @@ TEST_CASE("Diff and sharing cover plugin slots", "[model]") {
     reordered.inserts = {"slt_2", "slt_1"};
     CHECK(a.withTrack(reordered).entityHash(EntityRef{EntityType::track, "trk_1"}) !=
           a.entityHash(EntityRef{EntityType::track, "trk_1"}));
+}
+
+// m5-plugin-registry: a slot's path is a hint, refused where it enters before any
+// library opens (Protocol v0 item 21).
+TEST_CASE("pluginPathRefusal names UNC paths and paths inside the bundle", "[model][plugin]") {
+    using siann::model::pluginPathRefusal;
+    namespace fs = std::filesystem;
+    CHECK(pluginPathRefusal(R"(\\server\share\x.clap)") == std::optional<std::string>{"unc_path"});
+    CHECK(pluginPathRefusal("//server/share/x.clap") == std::optional<std::string>{"unc_path"});
+    CHECK(pluginPathRefusal(R"(\\?\UNC\server\share\x.clap)") == std::optional<std::string>{"unc_path"});
+    CHECK(pluginPathRefusal(R"(\/server\share\x.clap)") == std::optional<std::string>{"unc_path"});
+    CHECK_FALSE(pluginPathRefusal("").has_value());
+
+    const fs::path bundle = fs::temp_directory_path() / "siann-refusal-test.siann";
+    const fs::path normal = fs::temp_directory_path() / "siann-plugins" / "x.clap";
+    CHECK_FALSE(pluginPathRefusal(normal.string()).has_value());
+    CHECK_FALSE(pluginPathRefusal(normal.string(), bundle).has_value());
+    CHECK_FALSE(pluginPathRefusal("", bundle).has_value());
+    CHECK(pluginPathRefusal((bundle / "blobs" / "x.clap").string(), bundle) ==
+          std::optional<std::string>{"inside_bundle"});
+    CHECK(pluginPathRefusal((bundle / "a" / ".." / "x.clap").string(), bundle) ==
+          std::optional<std::string>{"inside_bundle"});
+    CHECK(pluginPathRefusal(bundle.string(), bundle) == std::optional<std::string>{"inside_bundle"});
+    // A sibling whose name starts with the bundle's is not inside it.
+    CHECK_FALSE(pluginPathRefusal(bundle.string() + "x/x.clap", bundle).has_value());
+    // Out of the bundle and back through `..` is not inside it either.
+    CHECK_FALSE(pluginPathRefusal((bundle / ".." / "x.clap").string(), bundle).has_value());
+#if defined(_WIN32)
+    std::string upper = (bundle / "blobs" / "x.clap").string();
+    std::transform(upper.begin(), upper.end(), upper.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    CHECK(pluginPathRefusal(upper, bundle) == std::optional<std::string>{"inside_bundle"});
+#endif
+}
+
+// The security review of m5-plugin-registry: every Windows device or extended
+// form reaches a share or a device namespace, so each is refused, whichever
+// separators it mixes; on Windows a rooted path must name a drive letter.
+TEST_CASE("pluginPathRefusal refuses Windows device and extended path forms", "[model][plugin]") {
+    using siann::model::pluginPathRefusal;
+    const std::optional<std::string> unc{"unc_path"};
+    for (const char* path : {R"(\\?\UNC\server\share\x.clap)", R"(//?/UNC/server/share/x.clap)",
+                             R"(\\?\C:\Plugins\x.clap)", R"(\\.\C:\Plugins\x.clap)", R"(\\.\pipe\x)",
+                             R"(//./pipe/x)", R"(\??\C:\Plugins\x.clap)", R"(/??/C:/Plugins/x.clap)",
+                             R"(\??/UNC/server/share/x.clap)", R"(/\server\share\x.clap)",
+                             R"(\/?\UNC\server\x.clap)", R"(\\server/share/x.clap)"}) {
+        INFO(path);
+        CHECK(pluginPathRefusal(path) == unc);
+    }
+#if defined(_WIN32)
+    CHECK_FALSE(pluginPathRefusal(R"(C:\Program Files\Common Files\CLAP\x.clap)").has_value());
+    CHECK_FALSE(pluginPathRefusal("c:/Plugins/x.clap").has_value());
+#else
+    CHECK_FALSE(pluginPathRefusal("/usr/lib/clap/x.clap").has_value());
+#endif
 }

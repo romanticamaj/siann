@@ -84,6 +84,9 @@ struct PlaybackOptions {
     // The plugin hosts by format (m4-plugin-node). A slot of a format without one
     // is missing (no_plugin_host) and passes audio through.
     PluginHosts pluginHosts;
+    // The approved installs every slot resolves through (m5-plugin-registry); it
+    // must outlive the engine. nullptr: nothing is registered and no plugin loads.
+    const host::PluginRegistry* pluginRegistry = nullptr;
     // Capacity of pluginEventAny, the queue every plugin's event sink feeds.
     std::size_t pluginEventCapacity = 1024;
 };

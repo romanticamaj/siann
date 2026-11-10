@@ -398,6 +398,88 @@ bool isStateBlobHash(std::string_view text) noexcept {
                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
+namespace {
+
+bool isSeparator(char c) noexcept {
+    return c == '/' || c == '\\';
+}
+
+std::filesystem::path pathFromUtf8(std::string_view text) {
+    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+}
+
+// The path's components, made absolute and weakly canonical, compared as Windows
+// compares names (ASCII case-insensitively) there.
+std::vector<std::filesystem::path::string_type> components(const std::filesystem::path& path) {
+    std::error_code ignored;
+    std::filesystem::path made = std::filesystem::weakly_canonical(path, ignored);
+    if (made.empty()) {
+        made = std::filesystem::absolute(path, ignored).lexically_normal();
+    }
+    std::vector<std::filesystem::path::string_type> out;
+    for (const auto& part : made.lexically_normal()) {
+        auto name = part.native();
+        if (name.empty()) {
+            continue;  // the trailing separator's empty name
+        }
+#if defined(_WIN32)
+        for (auto& c : name) {
+            if (c >= L'A' && c <= L'Z') {
+                c = static_cast<wchar_t>(c - L'A' + L'a');
+            }
+            if (c == L'/') {
+                c = L'\\';
+            }
+        }
+#endif
+        out.push_back(std::move(name));
+    }
+    return out;
+}
+
+// A share or a Windows device namespace, whichever separators it mixes: two
+// leading separators (\\server\share, \\?\UNC\..., \\?\C:\..., \\.\pipe\...),
+// the NT object namespace (\??\...), and on Windows any root name that is not
+// a drive letter.
+bool isShareOrDevicePath(std::string_view path) {
+    if (path.size() >= 2 && isSeparator(path[0]) && isSeparator(path[1])) {
+        return true;
+    }
+    if (path.size() >= 4 && isSeparator(path[0]) && path[1] == '?' && path[2] == '?' && isSeparator(path[3])) {
+        return true;
+    }
+#if defined(_WIN32)
+    const std::wstring root = pathFromUtf8(path).root_name().native();
+    const bool drive = root.size() == 2 && root[1] == L':' &&
+                       ((root[0] >= L'A' && root[0] <= L'Z') || (root[0] >= L'a' && root[0] <= L'z'));
+    if (!root.empty() && !drive) {
+        return true;
+    }
+#endif
+    return false;
+}
+
+}  // namespace
+
+std::optional<std::string> pluginPathRefusal(std::string_view path,
+                                             const std::optional<std::filesystem::path>& bundle) {
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    if (isShareOrDevicePath(path)) {
+        return std::string("unc_path");
+    }
+    if (bundle && !bundle->empty()) {
+        const auto inside = components(*bundle);
+        const auto candidate = components(pathFromUtf8(path));
+        if (!inside.empty() && candidate.size() >= inside.size() &&
+            std::equal(inside.begin(), inside.end(), candidate.begin())) {
+            return std::string("inside_bundle");
+        }
+    }
+    return std::nullopt;
+}
+
 Value toJson(const Clip& clip) {
     return Value(Object{
         {"schema", str(kClipSchema)},

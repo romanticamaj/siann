@@ -162,13 +162,61 @@ std::vector<std::string> bareArgs(const fs::path& bundle) {
     return {"--session", utf8(bundle), "--port", "0"};
 }
 
+// The test plugins and their build directories, which every launch passes as
+// --plugin-dir (m5-plugin-registry): they are registered, and load once approved.
+std::vector<std::pair<std::string, std::string>> testPlugins() {
+    std::vector<std::pair<std::string, std::string>> plugins{{"clap", SIANN_TEST_PLUGIN_CLAP},
+                                                             {"clap", SIANN_HOSTILE_PLUGIN_CLAP}};
+#if defined(SIANN_ENGINE_WITH_JUCE) && defined(SIANN_TEST_PLUGIN_VST3)
+    plugins.emplace_back("vst3", SIANN_TEST_PLUGIN_VST3);
+#endif
+    return plugins;
+}
+
+std::vector<std::string> pluginDirArgs() {
+    std::vector<std::string> args;
+    for (const auto& [format, path] : testPlugins()) {
+        (void)format;
+        args.push_back("--plugin-dir");
+        args.push_back(utf8(fs::path(path).parent_path()));
+    }
+    return args;
+}
+
 std::vector<std::string> launchArgs(const fs::path& bundle, bool trusted = false) {
     std::vector<std::string> args{"--session", utf8(bundle), "--port", "0", "--device", "fake"};
     if (trusted) {
         args.push_back("--mcp-trusted");
     }
+    const std::vector<std::string> dirs = pluginDirArgs();
+    args.insert(args.end(), dirs.begin(), dirs.end());
     return args;
 }
+
+Value approveParams(const std::string& format, const std::string& path, bool approved = true) {
+    return Value(Object{{"format", Value(format)}, {"path", Value(path)}, {"approved", Value(approved)}});
+}
+
+// Sets an environment variable for the length of a scope (the child engine
+// inherits it); empty is unset for the test plugin.
+class ScopedEnvironment {
+public:
+    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
+    ~ScopedEnvironment() { set(""); }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(name_, value);
+#else
+        setenv(name_, value, 1);
+#endif
+    }
+
+    const char* name_;
+};
 
 // The ready line, parsed with the strict parser.
 Value readyLine(PipedProcess& child) {
@@ -1153,7 +1201,7 @@ TEST_CASE("an editor that cannot open is an error of the method, the engine serv
         const Value missing = client.ok("plugin.instantiate", instantiateParams("vst3", utf8(dir.path() / "missing.vst3")));
         CHECK(at(missing, "state").asString() == "failed");
 #if defined(SIANN_ENGINE_WITH_JUCE)
-        CHECK(at(at(missing, "error"), "code").asString() == "plugin_not_found");
+        CHECK(at(at(missing, "error"), "code").asString() == "plugin_not_registered");
 #else
         CHECK(at(at(missing, "error"), "code").asString() == "no_plugin_host");
 #endif
@@ -1240,9 +1288,10 @@ void checkCrashed(PipedProcess& child) {
 
 // The relaunch: the last durable revision, stopped, the slot running, and playing
 // does not crash again (the trigger was never durable).
-void checkRecovered(const fs::path& bundle, const std::string& slotId, const std::string& revision,
-                    const std::string& documentHash) {
-    PipedProcess restarted(SIANN_ENGINE_EXE, launchArgs(bundle));
+void checkRecovered(const fs::path& bundle, const fs::path& registry, const std::string& slotId,
+                    const std::string& revision, const std::string& documentHash) {
+    // The approval the crashed engine kept: the relaunch loads the slot without one.
+    PipedProcess restarted(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-registry", utf8(registry)}));
     const Value ready = readyLine(restarted);
     {
         EngineClient client(ready);
@@ -1267,15 +1316,17 @@ TEST_CASE("a plugin crash during playback ends the engine, and the relaunch reco
     const std::string crashId = hostileCrashParameterId();
     TempDir dir;
     const fs::path bundle = dir.path() / "Song.siann";
+    const fs::path registry = dir.path() / "plugin-registry.json";
     writeBundle(bundle, dir.path());
     std::string slotId;
     std::string revision;
     std::string documentHash;
     {
-        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        PipedProcess crashed(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-registry", utf8(registry)}));
         const Value ready = readyLine(crashed);
         {
             EngineClient client(ready);
+            client.ok("plugin.approve", approveParams("clap", SIANN_HOSTILE_PLUGIN_CLAP));
             const Value loaded = client.ok("plugin.instantiate", hostileInstantiateParams());
             REQUIRE(at(loaded, "state").asString() == "done");
             slotId = at(at(loaded, "result"), "slotId").asString();
@@ -1291,7 +1342,7 @@ TEST_CASE("a plugin crash during playback ends the engine, and the relaunch reco
         }
         checkCrashed(crashed);
     }
-    checkRecovered(bundle, slotId, revision, documentHash);
+    checkRecovered(bundle, registry, slotId, revision, documentHash);
 }
 
 TEST_CASE("a crash asked for while stopped lands at the first block played, and the relaunch recovers",
@@ -1300,15 +1351,17 @@ TEST_CASE("a crash asked for while stopped lands at the first block played, and 
     const std::string crashId = hostileCrashParameterId();
     TempDir dir;
     const fs::path bundle = dir.path() / "Song.siann";
+    const fs::path registry = dir.path() / "plugin-registry.json";
     writeBundle(bundle, dir.path());
     std::string slotId;
     std::string revision;
     std::string documentHash;
     {
-        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        PipedProcess crashed(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-registry", utf8(registry)}));
         const Value ready = readyLine(crashed);
         {
             EngineClient client(ready);
+            client.ok("plugin.approve", approveParams("clap", SIANN_HOSTILE_PLUGIN_CLAP));
             const Value loaded = client.ok("plugin.instantiate", hostileInstantiateParams());
             REQUIRE(at(loaded, "state").asString() == "done");
             slotId = at(at(loaded, "result"), "slotId").asString();
@@ -1330,7 +1383,7 @@ TEST_CASE("a crash asked for while stopped lands at the first block played, and 
         }
         checkCrashed(crashed);
     }
-    checkRecovered(bundle, slotId, revision, documentHash);
+    checkRecovered(bundle, registry, slotId, revision, documentHash);
 }
 
 #if defined(SIANN_ENGINE_WITH_JUCE)
@@ -1541,6 +1594,7 @@ TEST_CASE("the desktop engine opens an editor through plugin.open_editor and sti
     {
         EngineClient client(ready);
         client.ok("command.execute", trackAddCommand("trk_1"));
+        client.ok("plugin.approve", approveParams("vst3", SIANN_TEST_PLUGIN_VST3));
         const Value loaded = client.ok("plugin.instantiate", instantiateParams("vst3", SIANN_TEST_PLUGIN_VST3));
         REQUIRE(at(loaded, "state").asString() == "done");
         const std::string slotId = at(at(loaded, "result"), "slotId").asString();
@@ -1566,6 +1620,7 @@ TEST_CASE("a CLAP plugin on the desktop target has no editor window yet", "[engi
     {
         EngineClient client(ready);
         client.ok("command.execute", trackAddCommand("trk_1"));
+        client.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
         const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
         REQUIRE(at(loaded, "state").asString() == "done");
         const std::string slotId = at(at(loaded, "result"), "slotId").asString();
@@ -1601,6 +1656,7 @@ TEST_CASE("the desktop engine lists its JUCE formats and a VST3's capability fla
               R"(["sampleAccurateParameters","midiInput","midiOutput","sidechain","variableLatency","editor"])");
 
         client.ok("command.execute", trackAddCommand("trk_1"));
+        client.ok("plugin.approve", approveParams("vst3", SIANN_TEST_PLUGIN_VST3));
         const Value loaded = client.ok("plugin.instantiate", instantiateParams("vst3", SIANN_TEST_PLUGIN_VST3));
         REQUIRE(at(loaded, "state").asString() == "done");
         const Value& result = at(loaded, "result");
@@ -1643,6 +1699,7 @@ TEST_CASE("the editor belongs to the window named by --owner-window, and the JUC
     const Value ready = readyLine(child);
     EngineClient client(ready);
     client.ok("command.execute", trackAddCommand("trk_1"));
+    client.ok("plugin.approve", approveParams("vst3", SIANN_TEST_PLUGIN_VST3));
     const Value loaded = client.ok("plugin.instantiate", instantiateParams("vst3", SIANN_TEST_PLUGIN_VST3));
     const std::string slotId = at(at(loaded, "result"), "slotId").asString();
     const Value opened = client.ok("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}}));
@@ -1662,3 +1719,129 @@ TEST_CASE("the editor belongs to the window named by --owner-window, and the JUC
 
 #endif  // _WIN32
 #endif  // SIANN_ENGINE_WITH_JUCE
+
+// ---- the plugin registry at launch (m5-plugin-registry; Protocol v0 items 17 and 21) ----
+
+namespace {
+
+// The entry plugin.registry lists for `path`, or nullptr.
+const Value* registryEntry(const Value& listed, const std::string& path) {
+    for (const Value& entry : at(listed, "plugins").asArray()) {
+        if (fs::path(at(entry, "path").asString()).lexically_normal() == fs::path(path).lexically_normal()) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("a --plugin-dir on a UNC path or inside the bundle is a usage error", "[engine][launch][registry]") {
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    for (const std::string& refused :
+         {std::string(R"(\\server\share)"), std::string("//server/share/plugins"), utf8(bundle / "plugins")}) {
+        INFO(refused);
+        PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-dir", refused}));
+        CHECK(child.wait() == 1);
+        CHECK(child.stdoutText().empty());
+        CHECK(errorCode(child) == "usage");
+    }
+    PipedProcess bare(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-registry"}));
+    CHECK(bare.wait() == 1);
+    CHECK(errorCode(bare) == "usage");
+    // An ordinary directory, given twice, is no error.
+    const fs::path plugins = dir.path() / "plugins";
+    fs::create_directories(plugins);
+    PipedProcess fine(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-dir", utf8(plugins), "--plugin-dir",
+                                                                      utf8(plugins)}));
+    CHECK(at(readyLine(fine), "schema").asString() == engine_app::kReadySchema);
+    CHECK(stopEngine(fine) == 0);
+}
+
+TEST_CASE("approvals live in the --plugin-registry file and a relaunch loads the slot", "[engine][launch][registry]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    const fs::path registry = dir.path() / "settings" / "plugin-registry.json";
+    const std::vector<std::string> args = withArgs(launchArgs(bundle), {"--plugin-registry", utf8(registry)});
+    std::string slotId;
+    {
+        PipedProcess child(SIANN_ENGINE_EXE, args);
+        const Value ready = readyLine(child);
+        {
+            EngineClient client(ready);
+            // Both --plugin-dir directories were scanned; nothing is approved yet.
+            const Value listed = client.ok("plugin.registry");
+            for (const auto& [format, path] : testPlugins()) {
+                INFO(path);
+                const Value* entry = registryEntry(listed, path);
+                REQUIRE(entry != nullptr);
+                CHECK_FALSE(at(*entry, "approved").asBool());
+                CHECK(at(*entry, "uid").kind() == Value::Kind::null);
+            }
+            CHECK_FALSE(fs::exists(registry));
+            client.ok("command.execute", trackAddCommand("trk_1"));
+            const Value refused = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
+            CHECK(at(at(refused, "error"), "code").asString() == "plugin_not_approved");
+
+            const Value approved = client.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
+            CHECK(at(approved, "uid").asString() == "org.siann.test-plugin");
+            CHECK(fs::exists(registry));  // created by the first approval
+            const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
+            REQUIRE(at(loaded, "state").asString() == "done");
+            slotId = at(at(loaded, "result"), "slotId").asString();
+        }
+        CHECK(stopEngine(child) == 0);
+    }
+    PipedProcess relaunched(SIANN_ENGINE_EXE, args);
+    const Value ready = readyLine(relaunched);
+    {
+        EngineClient client(ready);
+        const Value listed = client.ok("plugin.registry");
+        const Value* entry = registryEntry(listed, SIANN_TEST_PLUGIN_CLAP);
+        REQUIRE(entry != nullptr);
+        CHECK(at(*entry, "approved").asBool());
+        CHECK(at(*entry, "uid").asString() == "org.siann.test-plugin");
+        const Value status = client.ok("engine.status");
+        const Value* slot = pluginEntry(status, slotId);
+        REQUIRE(slot != nullptr);
+        CHECK(at(*slot, "state").asString() == "running");
+    }
+    CHECK(stopEngine(relaunched) == 0);
+}
+
+TEST_CASE("a document naming an unknown uid and a real library never opens it", "[engine][launch][registry]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    const fs::path marker = dir.path() / "marker.txt";
+    const fs::path original(SIANN_TEST_PLUGIN_CLAP);
+    const fs::path copy = dir.path() / "siann-unscanned-copy" / original.filename();
+    fs::create_directories(copy.parent_path());
+    fs::copy(original, copy, fs::copy_options::recursive);
+    writeBundle(bundle, dir.path());
+    {
+        session::Session s = session::Session::open(bundle);
+        const std::string insert = R"({"op":"plugin.insert","trackId":"trk_a","index":0,"slotId":"slt_1",)"
+                                   R"("descriptor":{"format":"clap","uid":"org.example.unknown","path":)" +
+                                   jcs::canonicalize(Value(utf8(copy))) + R"(},"stateBlob":"sha256:)" +
+                                   std::string(64, 'd') + R"("})";
+        s.commit({live_rig::cmd(insert)}, "test", "2026-11-09T00:00:00Z");
+    }
+    const ScopedEnvironment watch("SIANN_TEST_PLUGIN_MARKER", utf8(marker));
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value status = client.ok("engine.status");
+        const Value* slot = pluginEntry(status, "slt_1");
+        REQUIRE(slot != nullptr);
+        CHECK(at(*slot, "state").asString() == "missing");
+        CHECK(at(at(*slot, "error"), "code").asString() == "plugin_not_registered");
+        CHECK(at(at(*slot, "error"), "message").asString().find("unregistered_path") != std::string::npos);
+    }
+    CHECK(stopEngine(child) == 0);
+    const std::string text = fs::exists(marker) ? io::readFile(marker) : std::string();
+    CHECK(text.find("siann-unscanned-copy") == std::string::npos);
+}

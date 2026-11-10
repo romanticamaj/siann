@@ -226,7 +226,7 @@ const std::vector<std::string_view> kMethods = {
     "plan.apply",      "plan.rollback",   "plan.propose",    "proposal.merge",    "proposal.discard",
     "audition.hear",   "render.start",    "job.status",      "transport.play",    "transport.stop",
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
-    "plugin.set_parameter", "engine.devices", "engine.select_device",
+    "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -892,6 +892,11 @@ struct ProtocolServer::Impl {
         if (wanted.descriptor.path.empty() && wanted.descriptor.uid.empty()) {
             throw ProtocolError("invalid_params", "plugin.instantiate: the descriptor needs a path or a uid");
         }
+        // Refused where it enters, before any plugin host is reached (Protocol v0 item 21).
+        if (const auto refused = model::pluginPathRefusal(wanted.descriptor.path, session->bundlePath())) {
+            throw ProtocolError("invalid_params", "plugin.instantiate: the path is refused (" + *refused +
+                                                      "): plugins load from registered installs only");
+        }
         wanted.stateBlob = optionalString(request.params, "stateBlob", method);
         if (wanted.stateBlob && !model::isStateBlobHash(*wanted.stateBlob)) {
             throw ProtocolError("invalid_params", "plugin.instantiate: stateBlob must be sha256:<64 lowercase hex>");
@@ -982,6 +987,40 @@ struct ProtocolServer::Impl {
         return success(request.requestId, Value(Object{{"slotId", Value(slotId)},
                                                        {"paramId", Value(paramId)},
                                                        {"value", Value(value->asNumber())}}));
+    }
+
+    // plugin.registry and plugin.approve (Protocol v0 item 21): which installs may
+    // load. No document change; never MCP tools.
+    static Value registryEntryJson(const PluginRegistryEntry& entry) {
+        return Value(Object{{"format", Value(entry.format)},
+                            {"path", Value(entry.path)},
+                            {"uid", entry.uid ? Value(*entry.uid) : Value(nullptr)},
+                            {"name", Value(entry.name)},
+                            {"approved", Value(entry.approved)}});
+    }
+
+    std::string pluginRegistry(const Pending& request) {
+        PluginPort& plugins = requirePluginPort();
+        Array out;
+        for (const PluginRegistryEntry& entry : plugins.registry()) {
+            out.push_back(registryEntryJson(entry));
+        }
+        return success(request.requestId, Value(Object{{"plugins", Value(std::move(out))}}));
+    }
+
+    std::string pluginApprove(const Pending& request) {
+        const std::string_view method = "plugin.approve";
+        PluginPort& plugins = requirePluginPort();
+        const std::string& format = requireString(request.params, "format", method);
+        if (format != "clap" && format != "vst3" && format != "au" && format != "lv2") {
+            throw ProtocolError("invalid_params", "plugin.approve: format must be clap, vst3, au or lv2");
+        }
+        const std::string& path = requireString(request.params, "path", method);
+        const Value* approved = request.params.find("approved");
+        if (approved == nullptr || approved->kind() != Value::Kind::boolean) {
+            throw ProtocolError("invalid_params", "plugin.approve needs a boolean approved");
+        }
+        return success(request.requestId, registryEntryJson(plugins.approve(format, path, approved->asBool())));
     }
 
     // The render jobs' plugin sets, back on the command thread to be destroyed.
@@ -1313,6 +1352,12 @@ struct ProtocolServer::Impl {
         }
         if (method == "plugin.set_parameter") {
             return pluginSetParameter(request);
+        }
+        if (method == "plugin.registry") {
+            return pluginRegistry(request);
+        }
+        if (method == "plugin.approve") {
+            return pluginApprove(request);
         }
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }

@@ -77,9 +77,11 @@ class FakeScheduler {
 }
 
 // Lets promise chains (WebCrypto digests, the client's queue) run: polls a
-// condition across event-loop turns, never a wall-clock wait.
+// condition across event-loop turns. WebCrypto digests finish on the thread pool,
+// so a slow runner needs more turns: it gives up only after 2000 turns and 10 s.
 async function until(condition: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 2000; i += 1) {
+  const start = performance.now();
+  for (let i = 0; i < 2000 || performance.now() - start < 10_000; i += 1) {
     if (condition()) return;
     await new Promise<void>((resolve) => setImmediate(resolve));
   }

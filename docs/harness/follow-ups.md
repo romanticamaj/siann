@@ -24,6 +24,22 @@ a session from anyone else can be opened (import, a shared bundle, the M5 UI's o
   64 hex digits, so `sha256:../../x` reads a file outside the bundle as plugin
   state. Validate the id where the document is parsed and in `blobPath`.
 
+Taken: `m5-plugin-registry` (Protocol v0 item 21) fixes both. Every load resolves
+`{format, uid}` through `host::PluginRegistry` (installs keyed by `{format, path}`,
+filled from `scan` and `--plugin-dir`, approved through `plugin.approve` and kept in
+`--plugin-registry`); a slot's path is only a hint between approved installs, and a
+UNC path, a path inside the bundle or an unregistered one is never opened.
+`blobPath` throws `bad_state` for anything but `sha256:` and 64 lowercase hex digits.
+
+What it leaves:
+
+- A library holding several plugins (a VST3 shell, a CLAP file with more than one
+  descriptor) is one install, approved as the first plugin its probe lists. The
+  others in it stay unresolvable until installs are keyed by `{format, path, uid}`
+  once probed.
+- The e2e tests pass `--plugin-dir` through `SIANN_ENGINE_TEST_ARGS`, which the shell
+  splits at spaces, so a plugin build path with a space in it cannot be given there.
+
 ## Before M5: the shell (from PR #47)
 
 Taken into `m5-shell-hardening` (decided by Fable, delegated by the maintainer,

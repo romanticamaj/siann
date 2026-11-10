@@ -2,13 +2,19 @@
 
 #include <algorithm>
 #include <exception>
+#include <set>
+#include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #include "siann/engine/offline.hpp"
+#include "siann/hash/jcs.hpp"
+#include "siann/hash/json.hpp"
 #include "siann/host/clap_plugin_host.hpp"
 #include "siann/host/plugin_error.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
+#include "siann/model/document.hpp"
 #include "siann/playback/plugin_instances.hpp"
 #if defined(SIANN_ENGINE_WITH_JUCE)
 #include "siann/host/juce_plugin_host.hpp"
@@ -41,11 +47,96 @@ constexpr int kOutputChannels = 2;
 // render.start renders in blocks of 512 (Jobs v0).
 constexpr int kRenderBlockFrames = 512;
 
-playback::PlaybackOptions withoutAutoPlay(playback::PlaybackOptions options, PluginHostSet& hosts) {
+playback::PlaybackOptions withoutAutoPlay(playback::PlaybackOptions options, PluginHostSet& hosts,
+                                          const host::PluginRegistry& registry) {
     options.playOnStart = false;
     options.pluginHosts = hosts.byFormat();
+    options.pluginRegistry = &registry;
     return options;
 }
+
+constexpr std::string_view kRegistrySchema = "siann.plugin_registry.v0";
+
+std::string utf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
+protocol::PluginRegistryEntry entryOf(const host::PluginInstall& install) {
+    return {install.format, install.path, install.uid, install.name, install.approved};
+}
+
+[[noreturn]] void badRegistry(const std::string& why) {
+    throw std::runtime_error(why);
+}
+
+const json::Value& member(const json::Value& object, std::string_view key, json::Value::Kind kind,
+                          const char* where) {
+    const json::Value* found = object.find(key);
+    if (found == nullptr || found->kind() != kind) {
+        badRegistry(std::string(where) + " needs " + std::string(key) + " of the right type");
+    }
+    return *found;
+}
+
+}  // namespace
+
+std::vector<host::PluginInstall> readPluginRegistry(const std::filesystem::path& file) {
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec)) {
+        return {};
+    }
+    json::Value root;
+    try {
+        root = json::parse(io::readFile(file));
+    } catch (const std::exception& error) {
+        badRegistry(std::string("not JSON: ") + error.what());
+    }
+    if (root.kind() != json::Value::Kind::object) {
+        badRegistry("not a JSON object");
+    }
+    if (member(root, "schema", json::Value::Kind::string, "the file").asString() != kRegistrySchema) {
+        badRegistry("its schema is not " + std::string(kRegistrySchema));
+    }
+    std::vector<host::PluginInstall> out;
+    for (const json::Value& entry : member(root, "plugins", json::Value::Kind::array, "the file").asArray()) {
+        if (entry.kind() != json::Value::Kind::object) {
+            badRegistry("a plugin entry is not an object");
+        }
+        host::PluginInstall install;
+        install.format = member(entry, "format", json::Value::Kind::string, "a plugin entry").asString();
+        install.path = member(entry, "path", json::Value::Kind::string, "a plugin entry").asString();
+        const json::Value* uid = entry.find("uid");
+        if (uid != nullptr && uid->kind() == json::Value::Kind::string) {
+            install.uid = uid->asString();
+        } else if (uid != nullptr && !uid->isNull()) {
+            badRegistry("a plugin entry's uid must be a string or null");
+        }
+        install.name = member(entry, "name", json::Value::Kind::string, "a plugin entry").asString();
+        install.approved = member(entry, "approved", json::Value::Kind::boolean, "a plugin entry").asBool();
+        out.push_back(std::move(install));
+    }
+    return out;
+}
+
+void writePluginRegistry(const std::filesystem::path& file, const std::vector<host::PluginInstall>& installs) {
+    json::Array plugins;
+    for (const host::PluginInstall& install : installs) {
+        plugins.push_back(json::Value(json::Object{{"format", json::Value(install.format)},
+                                                   {"path", json::Value(install.path)},
+                                                   {"uid", install.uid ? json::Value(*install.uid) : json::Value()},
+                                                   {"name", json::Value(install.name)},
+                                                   {"approved", json::Value(install.approved)}}));
+    }
+    const json::Value root(json::Object{{"schema", json::Value(std::string(kRegistrySchema))},
+                                        {"plugins", json::Value(std::move(plugins))}});
+    if (file.has_parent_path()) {
+        io::createDirectoriesDurable(file.parent_path());
+    }
+    io::writeFileAtomic(file, jcs::canonicalize(root));
+}
+
+namespace {
 
 protocol::PluginCapabilityFlags flagsOf(const host::PluginCapabilities& capabilities) {
     protocol::PluginCapabilityFlags flags;
@@ -82,6 +173,7 @@ std::optional<protocol::DeviceProblem> graphProblem(Build build) {
 
 EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
     : pluginHosts_(std::make_unique<PluginHostSet>()),
+      registryFile_(std::move(options.pluginRegistryFile)),
       ownerWindow_(options.ownerWindow),
       session_(&session),
       device_(std::move(options.device)),
@@ -89,11 +181,12 @@ EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
       listDevices_(std::move(options.listDevices)),
       deviceFactory_(std::move(options.deviceFactory)),
       missingDevice_(options.deviceError.value_or(protocol::DeviceProblem{"no_device", "no audio device was given"})),
-      playbackOptions_(withoutAutoPlay(std::move(options.playback), *pluginHosts_)),
+      playbackOptions_(withoutAutoPlay(std::move(options.playback), *pluginHosts_, registry_)),
       diagnostic_(std::move(options.diagnostic)),
       bufferFrames_(options.bufferFrames),
       backoff_(options.backoff),
       clock_(std::move(options.clock)) {
+    fillRegistry(options.pluginDirs);  // before the first load resolves through it
     bind(session);
 }
 
@@ -276,6 +369,122 @@ void EngineHost::shutdown() {
     }
 }
 
+// ---- the plugin registry (m5-plugin-registry, Protocol v0 item 21) ---------------
+
+// What scan lists over the standard directories and `pluginDirs`, which runs no
+// plugin code, then what the registry file says of those paths. Nothing is probed.
+// A listed path inside the session's bundle or on a share is not registered,
+// wherever it was found (a --plugin-dir holding the bundle, a CLAP_PATH entry):
+// the code a downloaded bundle ships never loads (Protocol v0 item 21).
+void EngineHost::fillRegistry(const std::vector<std::string>& pluginDirs) {
+    std::set<host::PluginHost*> scanned;  // vst3 and au share the JUCE host
+    for (const auto& [format, pluginHost] : pluginHosts_->byFormat()) {
+        if (!scanned.insert(pluginHost).second) {
+            continue;
+        }
+        try {
+            for (const host::PluginDescriptor& found : pluginHost->scan(pluginDirs)) {
+                if (const auto refused = installRefusal(found.path)) {
+                    say("the " + found.format + " plugin " + found.path + " is not registered (" + *refused + ")");
+                    continue;
+                }
+                registry_.addScanned(found.format, found.path, found.name);
+            }
+        } catch (const std::exception& error) {
+            say("cannot list the " + format + " plugins: " + error.what());
+        }
+    }
+    if (registryFile_.empty()) {
+        return;
+    }
+    std::vector<host::PluginInstall> kept;
+    try {
+        kept = readPluginRegistry(registryFile_);
+    } catch (const std::exception& error) {
+        say("the plugin registry " + utf8(registryFile_) + " is unreadable (" + error.what() +
+            "); starting with no approvals");
+        return;
+    }
+    for (const host::PluginInstall& install : kept) {
+        if (!registry_.restore(install)) {
+            unscannedKept_.push_back(install);
+        }
+    }
+}
+
+// Writes what is known of each install: the probed ones, and the file's entries
+// for paths not listed this time.
+void EngineHost::keepRegistry() const {
+    if (registryFile_.empty()) {
+        return;
+    }
+    std::vector<host::PluginInstall> installs;
+    for (const host::PluginInstall& install : registry_.installs()) {
+        if (install.uid || install.approved) {
+            installs.push_back(install);
+        }
+    }
+    installs.insert(installs.end(), unscannedKept_.begin(), unscannedKept_.end());
+    writePluginRegistry(registryFile_, installs);
+}
+
+std::vector<protocol::PluginRegistryEntry> EngineHost::registry() const {
+    std::vector<protocol::PluginRegistryEntry> out;
+    for (const host::PluginInstall& install : registry_.installs()) {
+        out.push_back(entryOf(install));
+    }
+    return out;
+}
+
+protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, const std::string& path, bool approved) {
+    const host::PluginInstall* install = registry_.find(format, path);
+    if (install == nullptr) {
+        throw protocol::PluginPortError("plugin_not_registered", "unregistered_path: no " + format +
+                                                                     " plugin is registered at " + path);
+    }
+    if (const auto refused = installRefusal(install->path)) {
+        throw protocol::PluginPortError("plugin_not_registered", install->path + " is refused (" + *refused + ")");
+    }
+    const host::PluginInstall before = *install;
+    if (approved && !install->uid) {
+        // The user's choice to run this code: probe it now.
+        const playback::PluginHosts hosts = pluginHosts_->byFormat();
+        const auto found = hosts.find(format);
+        if (found == hosts.end()) {
+            throw protocol::PluginPortError("no_plugin_host", "this engine hosts no " + format + " plugins");
+        }
+        std::vector<host::PluginDescriptor> probed;
+        try {
+            probed = found->second->scanPath(install->path);
+        } catch (const host::PluginError& error) {
+            throw protocol::PluginPortError(error.code(), error.what());
+        } catch (const std::exception& error) {
+            throw protocol::PluginPortError("plugin_load_failed", error.what());
+        }
+        if (probed.empty()) {
+            throw protocol::PluginPortError("plugin_load_failed", "no plugin in " + install->path);
+        }
+        // A library holding several plugins is approved as the first it lists.
+        registry_.setProbed(format, install->path, probed.front().uid, probed.front().name);
+    }
+    const std::string installPath = install->path;
+    if (registry_.approve(format, installPath, approved) != host::ApproveOutcome::done) {
+        throw protocol::PluginPortError("plugin_load_failed", "the probe of " + installPath + " named no plugin");
+    }
+    try {
+        keepRegistry();
+    } catch (...) {
+        registry_.restore(before);  // not kept, so not approved either
+        throw;
+    }
+    return entryOf(*registry_.find(format, installPath));
+}
+
+// Why an install's path may not load: on a share, or inside the session's bundle.
+std::optional<std::string> EngineHost::installRefusal(const std::string& path) const {
+    return model::pluginPathRefusal(path, session_->bundlePath());
+}
+
 // ---- PluginPort ----------------------------------------------------------------
 
 protocol::PluginInstantiateResult EngineHost::instantiate(const protocol::PluginInstantiateRequest& request) {
@@ -290,23 +499,44 @@ protocol::PluginInstantiateResult EngineHost::instantiate(const protocol::Plugin
     const int maxBlock = std::max(engine_->options().maxBlockFrames, kRenderBlockFrames);
     protocol::PluginInstantiateResult result;
     std::unique_ptr<host::PluginInstance> instance;
+    // Through the registry (Protocol v0 item 21): a path must be a registered,
+    // approved install's; a uid alone needs exactly one approved install.
+    host::PluginInstall chosen;
+    if (!request.descriptor.path.empty()) {
+        const host::PluginInstall* install = registry_.find(request.descriptor.format, request.descriptor.path);
+        if (install == nullptr) {
+            throw protocol::PluginPortError("plugin_not_registered", "unregistered_path: no " +
+                                                                         request.descriptor.format +
+                                                                         " plugin is registered at " +
+                                                                         request.descriptor.path);
+        }
+        if (!install->approved) {
+            throw protocol::PluginPortError("plugin_not_approved", install->path +
+                                                                       " is registered but not approved; plugin.approve "
+                                                                       "approves it");
+        }
+        if (!request.descriptor.uid.empty() && install->uid != request.descriptor.uid) {
+            throw protocol::PluginPortError("plugin_not_found",
+                                            "no plugin " + request.descriptor.uid + " in " + install->path);
+        }
+        chosen = *install;
+    } else {
+        host::PluginResolution resolved = registry_.resolve(request.descriptor.format, request.descriptor.uid, "");
+        if (!resolved.install) {
+            throw protocol::PluginPortError(resolved.code, resolved.message);
+        }
+        chosen = std::move(*resolved.install);
+    }
+    if (const auto refused = installRefusal(chosen.path)) {
+        throw protocol::PluginPortError("plugin_not_registered", "the registered install at " + chosen.path +
+                                                                     " is refused (" + *refused + ")");
+    }
     try {
         host::PluginDescriptor descriptor;
-        descriptor.format = request.descriptor.format;
-        descriptor.uid = request.descriptor.uid;
-        descriptor.name = request.descriptor.name;
-        descriptor.path = request.descriptor.path;
-        if (!descriptor.path.empty()) {
-            // The probe names the plugin: its uid goes into the document.
-            const auto probed = pluginHost.scanPath(descriptor.path);
-            const auto match = std::find_if(probed.begin(), probed.end(), [&](const host::PluginDescriptor& one) {
-                return descriptor.uid.empty() || one.uid == descriptor.uid;
-            });
-            if (match == probed.end()) {
-                throw host::PluginError("plugin_not_found", "no plugin " + descriptor.uid + " in " + descriptor.path);
-            }
-            descriptor = *match;
-        }
+        descriptor.format = chosen.format;
+        descriptor.uid = chosen.uid.value_or("");
+        descriptor.name = chosen.name;
+        descriptor.path = chosen.path;
         instance = pluginHost.instantiate(descriptor, sampleRate, maxBlock);
         result.descriptor = {descriptor.format, descriptor.uid, descriptor.name, descriptor.path};
         if (request.stateBlob) {
@@ -438,7 +668,8 @@ std::vector<std::string> EngineHost::formats() const {
 }
 
 std::shared_ptr<engine::PluginNodeSource> EngineHost::instantiateForRender(const model::Document& document) {
-    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(), session_->bundlePath(),
+    return std::make_shared<playback::RenderInstanceSet>(document, pluginHosts_->byFormat(),
+                                                         engine_->options().pluginRegistry, session_->bundlePath(),
                                                          kRenderBlockFrames);
 }
 

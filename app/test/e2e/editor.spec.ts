@@ -97,14 +97,17 @@ test('on Windows the plugin editor is owned by the Electron window, and shows', 
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
 
   sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-editor-'));
+  // The plugin's directory is a --plugin-dir and the test approves it, in its own
+  // <userData>/plugin-registry.json (m5-plugin-registry).
   app = await electron.launch({
-    args: [MAIN],
+    args: [MAIN, `--user-data-dir=${path.join(sessionDir, 'user-data')}`],
     cwd: APP_DIR,
     env: {
       ...process.env,
       SIANN_ENGINE_EXE: desktopEngine!,
       SIANN_SESSION_DIR: sessionDir,
       SIANN_SHELL_TEST: '1',
+      SIANN_ENGINE_TEST_ARGS: `--plugin-dir ${path.dirname(plugin!)}`,
     },
   });
   const page = await app.firstWindow();
@@ -123,10 +126,12 @@ test('on Windows the plugin editor is owned by the Electron window, and shows', 
     await client.call('command.execute', {
       commands: [{ op: 'track.add', trackId: 'trk_editor', name: 'Editor', channels: 2 }],
     });
+    const format = plugin!.endsWith('.component') ? 'au' : 'vst3';
+    await client.call('plugin.approve', { format, path: plugin!, approved: true });
     const loaded = await client.call('plugin.instantiate', {
       trackId: 'trk_editor',
       index: 0,
-      descriptor: { format: plugin!.endsWith('.component') ? 'au' : 'vst3', path: plugin! },
+      descriptor: { format, path: plugin! },
     });
     expect(loaded.state).toBe('done');
     const slotId = (loaded.result as { slotId: string }).slotId;

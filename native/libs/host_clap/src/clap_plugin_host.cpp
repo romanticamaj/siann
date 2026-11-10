@@ -1123,12 +1123,16 @@ struct ClapPluginHost::Impl {
 ClapPluginHost::ClapPluginHost() : impl_(std::make_unique<Impl>()) {}
 ClapPluginHost::~ClapPluginHost() = default;
 
-std::vector<PluginDescriptor> ClapPluginHost::scan() {
+std::vector<PluginDescriptor> ClapPluginHost::scan(const std::vector<std::string>& extraDirectories) {
     // Lists without loading: loading a file runs its code in this process, and one
     // plugin that crashes on load would take the engine with it.
     std::vector<PluginDescriptor> result;
     std::set<fs::path> seen;
-    for (const auto& directory : searchDirectories()) {
+    std::vector<fs::path> directories = searchDirectories();
+    for (const auto& extra : extraDirectories) {
+        directories.push_back(pathFromUtf8(extra));
+    }
+    for (const auto& directory : directories) {
         std::error_code error;
         fs::recursive_directory_iterator walker(directory, fs::directory_options::skip_permission_denied, error);
         for (const fs::recursive_directory_iterator end; !error && walker != end; walker.increment(error)) {

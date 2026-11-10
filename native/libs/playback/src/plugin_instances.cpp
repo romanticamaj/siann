@@ -10,33 +10,53 @@ namespace siann::playback {
 
 namespace {
 
-host::PluginDescriptor descriptorOf(const model::PluginSlot& slot) {
+// The registered install's path, never the slot's: the slot only names the uid.
+host::PluginDescriptor descriptorOf(const model::PluginSlot& slot, const host::PluginInstall& install) {
     host::PluginDescriptor descriptor;
     descriptor.format = slot.format;
     descriptor.uid = slot.uid;
     descriptor.name = slot.name;
-    descriptor.path = slot.path;
+    descriptor.path = install.path;
     return descriptor;
 }
 
 }  // namespace
 
 std::filesystem::path blobPath(const std::filesystem::path& bundle, const std::string& stateBlob) {
+    if (!model::isStateBlobHash(stateBlob)) {
+        throw host::PluginError("bad_state", "a state blob must be sha256:<64 lowercase hex>, not " + stateBlob);
+    }
     constexpr std::string_view prefix = "sha256:";
-    const std::string hex = stateBlob.rfind(prefix, 0) == 0 ? stateBlob.substr(prefix.size()) : stateBlob;
-    return bundle / "blobs" / hex;
+    return bundle / "blobs" / stateBlob.substr(prefix.size());
 }
 
-LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts, const std::filesystem::path& bundle,
-                        std::int64_t sampleRate, int maxBlockFrames) {
+LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts, const host::PluginRegistry* registry,
+                        const std::filesystem::path& bundle, std::int64_t sampleRate, int maxBlockFrames) {
     LoadedPlugin loaded;
     const auto host = hosts.find(slot.format);
     if (host == hosts.end() || host->second == nullptr) {
         loaded.error = PluginProblem{"no_plugin_host", "this engine hosts no " + slot.format + " plugins"};
         return loaded;
     }
+    const std::optional<std::string> refusal = model::pluginPathRefusal(slot.path, bundle);
+    static const host::PluginRegistry nothingRegistered;
+    const host::PluginRegistry& installs = registry != nullptr ? *registry : nothingRegistered;
+    const host::PluginResolution resolved = installs.resolve(slot.format, slot.uid, slot.path, refusal.value_or(""));
+    if (!resolved.install) {
+        loaded.error = PluginProblem{resolved.code, resolved.message};
+        return loaded;
+    }
+    // The install's own path too: a library inside the bundle or on a share is
+    // never opened, however it came to be registered (Protocol v0 item 21).
+    if (const auto installRefusal = model::pluginPathRefusal(resolved.install->path, bundle)) {
+        loaded.error = PluginProblem{"plugin_not_registered", "the registered install of " + slot.format +
+                                                                  " plugin " + slot.uid + " at " +
+                                                                  resolved.install->path + " is refused (" +
+                                                                  *installRefusal + ")"};
+        return loaded;
+    }
     try {
-        loaded.instance = host->second->instantiate(descriptorOf(slot), sampleRate, maxBlockFrames);
+        loaded.instance = host->second->instantiate(descriptorOf(slot, *resolved.install), sampleRate, maxBlockFrames);
     } catch (const host::PluginError& error) {
         loaded.error = PluginProblem{error.code(), error.what()};
         return loaded;
@@ -45,7 +65,13 @@ LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts,
         return loaded;
     }
     if (slot.stateBlob) {
-        const std::filesystem::path file = blobPath(bundle, *slot.stateBlob);
+        std::filesystem::path file;
+        try {
+            file = blobPath(bundle, *slot.stateBlob);
+        } catch (const host::PluginError& error) {
+            loaded.error = PluginProblem{error.code(), error.what()};  // the default state, nothing read
+            return loaded;
+        }
         std::error_code ec;
         if (!std::filesystem::exists(file, ec)) {
             loaded.error = PluginProblem{"state_missing", "the state blob " + *slot.stateBlob +
@@ -66,9 +92,11 @@ LoadedPlugin loadPlugin(const model::PluginSlot& slot, const PluginHosts& hosts,
 
 // ---- PluginInstanceTable ---------------------------------------------------
 
-PluginInstanceTable::PluginInstanceTable(PluginHosts hosts, std::filesystem::path bundle, std::int64_t sampleRate,
-                                         int maxBlockFrames, std::size_t eventCapacity)
+PluginInstanceTable::PluginInstanceTable(PluginHosts hosts, const host::PluginRegistry* registry,
+                                         std::filesystem::path bundle, std::int64_t sampleRate, int maxBlockFrames,
+                                         std::size_t eventCapacity)
     : hosts_(std::move(hosts)),
+      registry_(registry),
       bundle_(std::move(bundle)),
       sampleRate_(sampleRate),
       maxBlockFrames_(maxBlockFrames),
@@ -146,7 +174,7 @@ void PluginInstanceTable::sync(const model::Document& document) {
                 continue;
             }
         }
-        install(*slot, loadPlugin(*slot, hosts_, bundle_, sampleRate_, maxBlockFrames_));
+        install(*slot, loadPlugin(*slot, hosts_, registry_, bundle_, sampleRate_, maxBlockFrames_));
     }
     for (auto& [id, entry] : entries_) {
         entry->inDocument = present.count(id) != 0;
@@ -389,10 +417,11 @@ std::vector<PluginInstanceStatus> PluginInstanceTable::status(const model::Docum
 // ---- RenderInstanceSet -------------------------------------------------------
 
 RenderInstanceSet::RenderInstanceSet(const model::Document& document, const PluginHosts& hosts,
-                                     const std::filesystem::path& bundle, int maxBlockFrames)
+                                     const host::PluginRegistry* registry, const std::filesystem::path& bundle,
+                                     int maxBlockFrames)
     : sampleRate_(document.root().sampleRate) {
     for (const model::PluginSlot* slot : document.allPluginSlots()) {
-        LoadedPlugin loaded = loadPlugin(*slot, hosts, bundle, sampleRate_, maxBlockFrames);
+        LoadedPlugin loaded = loadPlugin(*slot, hosts, registry, bundle, sampleRate_, maxBlockFrames);
         if (loaded.instance) {
             instances_.emplace(slot->id, std::move(loaded.instance));
         }

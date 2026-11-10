@@ -256,9 +256,15 @@ years. Milestones are designed so that something useful exists at every stage.
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
   [--owner-window <handle>] [--device <id>]
   [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] [--fake-callback-nanos N]
-  [--fake-open-failures N] [--test-wedge]`
+  [--fake-open-failures N] [--plugin-dir <dir>]... [--plugin-registry <file>] [--test-wedge]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
-  item 17). `--test-wedge` is test-only (m5-shell-hardening): the engine serves
+  item 17). `--plugin-dir` (repeatable) adds a directory to the platform's
+  standard plugin directories the registry is filled from; one on a UNC path or
+  inside the session bundle is a usage error. `--plugin-registry` names the JSON
+  file that keeps the approvals (Protocol v0 item 21); the shell passes
+  `<userData>/plugin-registry.json`. Filling the registry at launch lists paths
+  only and runs no plugin code, so one bad file cannot fail the launch.
+  `--test-wedge` is test-only (m5-shell-hardening): the engine serves
   with no stop flag, so it ignores stdin EOF and SIGTERM the way a wedged engine
   does, and the shell's e2e proves the bounded quit against it. It is a usage error
   unless the engine's environment has `SIANN_SHELL_TEST=1` (inherited from the
@@ -1268,7 +1274,11 @@ app) with no JUCE present.
 The interfaces the graph and the engine use to reach devices, plugins and media,
 with SIANN-owned buffer views (`float* const* channels, int frames`), event lists and
 capability types. It contains no implementation and depends only on `siann-time` and
-`siann-midi`. `siann-graph` depends on it; `siann-host-desktop` and
+`siann-midi`; the one header-only value type it holds is `host::PluginRegistry`
+(m5-plugin-registry): the plugin installs keyed by `{format, path}`, each `{uid,
+name, approved}`, with add and merge, approve, and resolve by `{format, uid}` with
+a path hint ("siann-host"). Reading and writing the `--plugin-registry` file lives
+in `native/apps/engine`, which links siann-hash's JSON. `siann-graph` depends on it; `siann-host-desktop` and
 `siann-host-headless` implement it and are linked only into engine executables. The
 interface definitions are listed under "siann-host". Control-only operations (scan,
 editors) live in separate interfaces from the realtime `process` path.
@@ -1417,15 +1427,23 @@ Jobs v0, plugins (m4-plugin-node; decided by Fable, delegated by the maintainer,
 
 - `plugin.instantiate {trackId, index, descriptor: {format, path?, uid?},
   stateBlob?}` runs on the command thread (the main thread in M4) inside the
-  request, not on the worker: it probes and instantiates the plugin, writes the
+  request, not on the worker: it resolves the descriptor through the plugin
+  registry (Protocol v0 item 21; m5-plugin-registry) and instantiates the
+  approved install's path, never one the request names and never with a probe of
+  its own (the probe is `plugin.approve`'s), writes the
   state blob to `<bundle>/blobs/<sha256 hex>` durably (or uses the blob it was
   given), commits `plugin.insert {trackId, index, slotId, descriptor, stateBlob}`
   as its completion command, and answers `{jobId, kind: "plugin.instantiate",
   state: "done", result: {revision, slotId, descriptor, stateBlob, latencyFrames,
   tailFrames, capabilities}}` at once (`capabilities` are the six `PluginHost`
-  flags as booleans). A failure is `state: "failed"` with the `PluginError` code
-  (`plugin_load_failed`, `not_found`, `no_plugin_host` for vst3 and au in a
-  core-only build). The worker's one-at-a-time order covers render jobs only. The
+  flags as booleans). A failure is `state: "failed"` with its code: before any
+  plugin host is reached, `plugin_not_registered` (no registered install at the
+  path, message `unregistered_path`; no approved install of the uid, or several
+  and no path; an install whose own path is refused) or `plugin_not_approved` (a
+  registered install that is not approved); then the `PluginError` code
+  (`plugin_load_failed`, `plugin_not_found`), or `no_plugin_host` for vst3 and au
+  in a core-only build. A UNC path or a path inside the bundle in the descriptor
+  is `invalid_params` and no job. The worker's one-at-a-time order covers render jobs only. The
   instance enters the instance table under the new slot id, so the next compile
   reuses it instead of loading the plugin again.
 - Slot ids (fix round 1 of m4-plugin-node): the server picks
@@ -1813,6 +1831,13 @@ Shared by both targets:
   (Protocol v0 items 14, 18 and 19). They are facts about the loaded instance,
   not user intent, so the document never stores them and no state migration
   follows.
+- `scan(extraDirectories)` lists the format's standard locations and the given
+  directories, still without running plugin code. Which installs may load is not
+  the host's decision: the engine resolves every descriptor through
+  `host::PluginRegistry`, a header-only value type in `siann-host-api` (installs
+  keyed by `{format, path}`, each `{uid, name, approved}`; Protocol v0 item 21),
+  and hands `instantiate` the approved install's path, never a path a document
+  names (m5-plugin-registry).
 
 #### Hostile test plugin
 
@@ -2026,7 +2051,9 @@ contradicts none of them):
    `session_mismatch`, `revision_mismatch`, `unknown_method`, `invalid_params`,
    `queue_full`, `internal_error`, plus the
    `CommandError` and `SessionError` codes passed through unchanged (with `step` for
-   commands). HTTP error bodies are `{ok: false, error: {code, message}}` with
+   commands) and the `PluginError` codes of the plugin methods (`plugin_not_found`,
+   `plugin_load_failed`, `bad_state`, and, new stable codes with m5-plugin-registry,
+   `plugin_not_registered` and `plugin_not_approved`; item 21). HTTP error bodies are `{ok: false, error: {code, message}}` with
    `unauthenticated` (401), `origin_not_allowed` (403) and `not_found` (404).
    `message` is for people and not stable. It is always valid UTF-8: the server never
    echoes request bytes it has not parsed as JSON (Origin, HTTP method and path), and
@@ -2208,7 +2235,8 @@ Protocol v0, launcher (decided with m0-electron-shell):
 17. Launcher handshake. `siann-engine --session <bundle> [--host 127.0.0.1]
     [--port 0] [--mcp-trusted] [--owner-window <handle>]
     [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
-    [--fake-callback-nanos N] [--fake-open-failures N] [--test-wedge]`
+    [--fake-callback-nanos N] [--fake-open-failures N]
+    [--plugin-dir <dir>]... [--plugin-registry <file>] [--test-wedge]`
     (`--test-wedge`: test-only, serves with no stop flag so stdin EOF and SIGTERM
     are ignored; a usage error unless the environment has `SIANN_SHELL_TEST=1`)
     writes exactly one line to stdout once it is
@@ -2331,6 +2359,58 @@ with the M4 wave 2 and 3 plans):
     trigger re-crashes the relaunched engine at its first block (the fake device
     runs callbacks while stopped) and the shell gives up after five restarts.
 
+Protocol v0, plugin registry (m5-plugin-registry, decided 2026-11-09 with the M5
+spec check):
+
+21. A session never chooses what code loads. The engine host keeps a
+    `host::PluginRegistry` of installs keyed by `{format, path}`, each `{uid: string
+    | null, name, approved}`; `uid` is known once the install has been probed. At
+    launch it holds `PluginHost::scan`'s paths over the platform's standard
+    directories and every `--plugin-dir` (item 17), each carrying the uid, name and
+    approval the `--plugin-registry` file holds for that path; nothing is probed at
+    launch (`scan` runs no plugin code, "siann-host"). Methods, both through the
+    command thread, honouring `expectedRevision` and the idempotency cache, in
+    `engine.capabilities`' `methods`, `not_supported` without a port:
+    `plugin.registry {}` returns `{plugins: [{format, path, uid, name, approved}]}`;
+    `plugin.approve {format, path, approved}` (`format` one of clap, vst3, au, lv2,
+    `path` a string, `approved` a boolean; otherwise `invalid_params`) returns the
+    entry. Approving an unprobed install probes it with `scanPath` (running its code
+    is the user's choice at that moment), records uid and name, and persists; a probe
+    that fails answers its `PluginError` code (`plugin_not_found`,
+    `plugin_load_failed`) and leaves it unapproved. `approved: false` needs no probe.
+    A path the registry does not hold is `plugin_not_registered`. The flag takes effect at the
+    next instantiate or relaunch. Neither method is an MCP tool: an agent must not
+    choose what code loads.
+    Every load goes through the registry (`PluginInstanceTable::sync`,
+    `RenderInstanceSet`, `EngineHost::instantiate`). A slot resolves by `{format,
+    uid}` to the approved installs with that uid: one is it; several, and the slot's
+    path chooses, otherwise `plugin_not_registered` naming the ambiguity; none is
+    `plugin_not_approved` when an unapproved install of it is registered and
+    `plugin_not_registered` otherwise. The slot's `path` is only a hint: a refused
+    hint (`unc_path`: a share or device path, `\\server\share`, `//server/share`,
+    `\\?\...`, `\\.\...` or `\??\...` with either separator, and on Windows any root that is
+    not a drive letter (`model::pluginPathRefusal`), `inside_bundle`:
+    a path inside the session bundle) or an unknown one (`unregistered_path`) is
+    ignored and never opened, and the `plugin_not_registered` message names its
+    reason. The same refusal applies to the installs themselves (fix round 1 of
+    m5-plugin-registry): a path `scan` lists inside the session bundle or on a share
+    is not registered, wherever it was found (a `--plugin-dir` that holds the bundle,
+    a `CLAP_PATH` entry), and is one diagnostic; and `plugin.approve`,
+    `EngineHost::instantiate` and every slot load check the resolved install's own
+    path before any library opens (`plugin_not_registered`, the message naming
+    `unc_path` or `inside_bundle`). `plugin.instantiate` answers `invalid_params` for a UNC path or a path
+    inside the bundle before any plugin host is reached; with a `path` it needs a
+    registered install there (job failed, `plugin_not_registered`, message
+    `unregistered_path`) that is approved (`plugin_not_approved`), with a `uid` and no
+    path exactly one approved install. `plugin.insert`, a pure command with no
+    bundle in reach, rejects a UNC path with `invalid_params`. A missing slot keeps its
+    `stateBlob` and passes audio through. A state blob names a file only as
+    `sha256:` and 64 lowercase hex digits (`model::isStateBlobHash`): `blobPath`
+    throws `bad_state` otherwise, so a blob never reads outside `<bundle>/blobs`.
+    Files: `{"schema": "siann.plugin_registry.v0", "plugins": [...]}` as the method
+    lists them, written atomically on every approval; a file that does not parse
+    is one diagnostic and an empty registry. A library holding several plugins is
+    one install, approved as the first plugin its probe lists (follow-ups).
 Protocol v0, devices and sessions (decided with m5-engine-sessions-devices; item 21
 is m5-plugin-registry's):
 

@@ -46,7 +46,10 @@
 // that counts a parameter it cannot describe.
 //
 // Creating an instance prints one line to stdout ("siann_test_plugin: loaded"), as
-// a chatty third-party plugin would.
+// a chatty third-party plugin would. When SIANN_TEST_PLUGIN_MARKER names a file, the
+// entry point (clap_entry.init, the first code of the library a host runs) appends
+// the path it was loaded from and a newline to it: the registry tests' proof that a
+// library was never opened (m5-plugin-registry).
 //
 // State blob: magic "SIANNTP1", version u32, gain f32, latency u8, tail u8, little
 // endian. process() does not allocate, lock or do I/O.
@@ -727,6 +730,21 @@ const clap_plugin_factory_t factory = {factoryCount, factoryDescriptor, factoryC
 
 bool entryInit(const char* path) {
     homeDirectoryName = std::filesystem::path(path).parent_path().filename().string();
+    if (const std::string marker = environmentValue("SIANN_TEST_PLUGIN_MARKER"); !marker.empty()) {
+        std::FILE* file = nullptr;
+#if defined(_MSC_VER)
+        if (fopen_s(&file, marker.c_str(), "ab") != 0) {
+            file = nullptr;
+        }
+#else
+        file = std::fopen(marker.c_str(), "ab");
+#endif
+        if (file != nullptr) {
+            std::fputs(path, file);
+            std::fputs("\n", file);
+            std::fclose(file);
+        }
+    }
     return true;
 }
 

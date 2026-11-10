@@ -59,6 +59,8 @@ struct Options {
     std::optional<std::int64_t> fakeCallbackNanos;
     std::optional<int> fakeOpenFailures;
     std::optional<DeviceBackoff> deviceBackoff;
+    std::vector<std::string> pluginDirs;  // UTF-8, absolute
+    fs::path pluginRegistry;
     // Test-only: serve with no stop flag (spec, "Process model"; m5-shell-hardening).
     bool testWedge = false;
 };
@@ -178,6 +180,10 @@ Options parseOptions(const std::vector<std::string>& args) {
             options.fakeOpenFailures = parseOpenFailures(value());
         } else if (arg == "--device-backoff") {
             options.deviceBackoff = parseBackoff(value());
+        } else if (arg == "--plugin-dir") {
+            options.pluginDirs.push_back(value());
+        } else if (arg == "--plugin-registry") {
+            options.pluginRegistry = pathFromUtf8(value());
         } else if (arg == "--test-wedge") {
             options.testWedge = true;
         } else {
@@ -185,7 +191,8 @@ Options parseOptions(const std::vector<std::string>& args) {
                                            "; usage: siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] "
                                            "[--mcp-trusted] [--owner-window <handle>] "
                                            "[--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] "
-                                           "[--fake-callback-nanos N] [--fake-open-failures N] [--test-wedge]");
+                                           "[--fake-callback-nanos N] [--fake-open-failures N] "
+                                           "[--plugin-dir <dir>]... [--plugin-registry <file>] [--test-wedge]");
         }
     }
     if (!haveSession || options.session.empty()) {
@@ -196,6 +203,19 @@ Options parseOptions(const std::vector<std::string>& args) {
     }
     if (options.fakeOpenFailures && options.device != kFakeDevice) {
         throw LaunchError("usage", "--fake-open-failures needs --device fake");
+    }
+    // A plugin directory holds code the engine may run: never a share, never the
+    // session's own bundle (Protocol v0 item 21).
+    for (std::string& dir : options.pluginDirs) {
+        if (const auto refused = model::pluginPathRefusal(dir, options.session)) {
+            throw LaunchError("usage", "--plugin-dir " + dir + " is refused (" + *refused + ")");
+        }
+        std::error_code ec;
+        const fs::path absolute = fs::absolute(pathFromUtf8(dir), ec);
+        if (!ec) {
+            const std::u8string text = absolute.lexically_normal().u8string();
+            dir.assign(text.begin(), text.end());
+        }
     }
     // Only a shell under test (which passes SIANN_SHELL_TEST=1 on) may wedge an engine.
     if (options.testWedge && environmentValue("SIANN_SHELL_TEST") != "1") {
@@ -214,6 +234,8 @@ EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
     chosen.deviceId = options.device.value_or("");
     chosen.backoff = options.deviceBackoff.value_or(DeviceBackoff{});
     chosen.ownerWindow = options.ownerWindow;
+    chosen.pluginDirs = options.pluginDirs;
+    chosen.pluginRegistryFile = options.pluginRegistry;
     chosen.diagnostic = [&err](const std::string& line) {
         err << "siann-engine: " << line << "\n";
         err.flush();

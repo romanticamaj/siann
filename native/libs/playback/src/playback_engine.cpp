@@ -241,7 +241,8 @@ CompiledPlayback compileForPlayback(const model::Document& document, const std::
 PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions options)
     : session_(session),
       options_(std::move(options)),
-      plugins_(options_.pluginHosts, session.bundlePath(), session.history().head().document.root().sampleRate,
+      plugins_(options_.pluginHosts, options_.pluginRegistry, session.bundlePath(),
+               session.history().head().document.root().sampleRate,
                options_.maxBlockFrames, options_.pluginEventCapacity),
       butler_(options_.butler),
       driver_(realtime::GraphDriver::Options{options_.fadeFrames, std::chrono::milliseconds(500),
