@@ -334,9 +334,11 @@ years. Milestones are designed so that something useful exists at every stage.
   `SIANN_SHELL_BACKOFF_MS` and `SIANN_SHELL_MAX_RESTARTS` override, so tests run
   fast. A restart yields a new port and token (item 7: per-launch); the renderer
   receives the new pair through the preload API (`window.siann.engine.current()`
-  and `onChange`) and reconnects. The M0 renderer holds no read model: it shows
-  what the auth reply carries and does not call `session.sync`; a client that
-  keeps a read model resyncs as in item 11.
+  and `onChange`) and reconnects. Since m5-read-model the renderer holds the
+  read model ("Frontend") and resyncs on reconnect as in item 11: with
+  `session.sync` when the auth reply's `seq` is newer than its `lastSeq` or the
+  `sessionId` changed (an engine restart), as `protocol-events-v1.md`, "Client
+  read model", describes.
 - Ending the engine: the engine catches SIGTERM and only sets a flag its main
   thread polls, so neither stdin EOF nor SIGTERM ends a wedged engine. On quit the
   shell closes the engine's stdin and sends SIGKILL after 5 s. A failed launch (a
