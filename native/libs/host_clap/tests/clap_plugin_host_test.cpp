@@ -23,6 +23,8 @@
 #include <windows.h>
 #endif
 
+#include <clap/clap.h>
+
 #include "clap_library.hpp"
 #include "hosting_checks.hpp"
 #include "siann/host/clap_plugin_host.hpp"
@@ -329,6 +331,10 @@ TEST_CASE("clap host: parameters are listed and normalized", "[clap][plugin]") {
     CHECK(instance->control().getParameter(gain) == Approx(0.25));
     instance->control().setParameter(gain, 2.0);
     CHECK(instance->control().getParameter(gain) == Approx(1.0));
+
+    // The 21 probes and settings of M4, and "editorSize" (m5-clap-editor-window).
+    CHECK(parameters.size() == 22);
+    CHECK(parameters[static_cast<std::size_t>(parameterIndex(*instance, "editorSize"))].defaultValue == Approx(0.0));
 
     const int beyond = static_cast<int>(parameters.size());
     requireError("bad_parameter", [&] { instance->control().getParameter(beyond); });
@@ -869,13 +875,76 @@ TEST_CASE("clap host: a block longer than the maximum is cleared, not processed"
     CHECK(measureDelay(*instance).frames == 64);  // and the instance still works at its block size
 }
 
-TEST_CASE("clap host: the editor is not there yet", "[clap][plugin]") {
+// m5-clap-editor-window: a CLAP editor embeds into a window an EditorWindowFactory
+// supplies. A host built without one (the headless target's) has no editor, though
+// the plugin's gui extension supports the platform API.
+TEST_CASE("clap host: without a window factory there is no editor", "[clap][plugin][editor]") {
     host::ClapPluginHost host;
+    CHECK_FALSE(testPlugin(host).hasEditor);
     auto instance = loadTestPlugin(host);
+    CHECK_FALSE(instance->capabilities().editor);
     requireError("editor_failed", [&] { instance->control().openEditor({}); });
     CHECK_FALSE(instance->control().editorOpen());
     CHECK(instance->control().editorNativeHandle() == 0);
     instance->control().closeEditor();
+    instance->control().closeEditor();  // idempotent
+    CHECK_FALSE(instance->control().editorOpen());
+}
+
+namespace {
+
+const clap_host_t* bareHost() {
+    static const clap_host_t host = {
+        CLAP_VERSION,
+        nullptr,
+        "SIANN test",
+        "SIANN",
+        "",
+        "0",
+        [](const clap_host_t*, const char*) -> const void* { return nullptr; },
+        [](const clap_host_t*) {},
+        [](const clap_host_t*) {},
+        [](const clap_host_t*) {},
+    };
+    return &host;
+}
+
+// The test plugin's gui extension asked directly through the SDK, as a host with a
+// window would ask it.
+void checkGuiExtension(const char* api) {
+    const auto library = host::ClapLibrary::open(std::filesystem::path(SIANN_TEST_PLUGIN_CLAP));
+    const clap_plugin_factory_t* factory = library->factory();
+    const clap_plugin_t* plugin = factory->create_plugin(factory, bareHost(), testPluginUid);
+    REQUIRE(plugin != nullptr);
+    REQUIRE(plugin->init(plugin));
+    const auto* gui = static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI));
+    if (gui == nullptr) {
+        plugin->destroy(plugin);
+        FAIL("the test plugin has no gui extension");
+    }
+    CHECK(gui->is_api_supported(plugin, api, false));
+    CHECK_FALSE(gui->is_api_supported(plugin, api, true));  // embedded only, never floating
+    CHECK_FALSE(gui->is_api_supported(plugin, "siann-no-such-api", false));
+    const char* preferred = nullptr;
+    bool floating = true;
+    CHECK(gui->get_preferred_api(plugin, &preferred, &floating));
+    CHECK(std::string(preferred == nullptr ? "" : preferred) == api);
+    CHECK_FALSE(floating);
+    plugin->destroy(plugin);
+}
+
+}  // namespace
+
+TEST_CASE("clap host: the test plugin offers the gui extension for the platform API", "[clap][plugin][editor]") {
+#if defined(_WIN32)
+    checkGuiExtension(CLAP_WINDOW_API_WIN32);
+#elif defined(__APPLE__)
+    checkGuiExtension(CLAP_WINDOW_API_COCOA);
+#elif defined(SIANN_TEST_PLUGIN_X11)
+    checkGuiExtension(CLAP_WINDOW_API_X11);
+#else
+    SKIP("the test plugin was built without X11 (find_package(X11) failed): it has no platform view here");
+#endif
 }
 
 TEST_CASE("clap host: an instance outlives its host", "[clap][plugin]") {

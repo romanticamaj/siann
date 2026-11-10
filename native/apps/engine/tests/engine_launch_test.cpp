@@ -1612,21 +1612,62 @@ TEST_CASE("the desktop engine opens an editor through plugin.open_editor and sti
     CHECK(child.stderrText().find("siann_test_plugin: loaded") != std::string::npos);
 }
 
-TEST_CASE("a CLAP plugin on the desktop target has no editor window yet", "[engine][launch][juce]") {
+// m5-clap-editor-window (Protocol v0 item 19): the desktop engine hands
+// ClapPluginHost a window factory, so a CLAP slot's editor opens and closes
+// through the protocol like a VST3's.
+namespace {
+
+// Opens and closes the editor of a CLAP plugin the engine has registered.
+void openAndCloseClapEditor(const std::vector<std::string>& extraArgs, const std::string& path) {
     ix::initNetSystem();
     TempDir dir;
-    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"), extraArgs));
     const Value ready = readyLine(child);
     {
         EngineClient client(ready);
         client.ok("command.execute", trackAddCommand("trk_1"));
-        client.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
-        const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        client.ok("plugin.approve", approveParams("clap", path));
+        const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", path));
         REQUIRE(at(loaded, "state").asString() == "done");
         const std::string slotId = at(at(loaded, "result"), "slotId").asString();
-        CHECK(client.errorOf("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}})) == "editor_failed");
+        CHECK(at(at(at(loaded, "result"), "capabilities"), "editor").asBool());
+        const Value opened = client.ok("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK(at(opened, "editorOpen").asBool());
+        CHECK(at(opened, "nativeHandle").asString() != "0");
+        const Value again = client.ok("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK(at(again, "nativeHandle").asString() == at(opened, "nativeHandle").asString());
+        const Value closed = client.ok("plugin.close_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK_FALSE(at(closed, "editorOpen").asBool());
+        CHECK(at(closed, "nativeHandle").asString() == "0");
+        CHECK(client.ok("engine.status").kind() == Value::Kind::object);
     }
     CHECK(stopEngine(child) == 0);
+}
+
+}  // namespace
+
+TEST_CASE("the desktop engine opens a CLAP editor through plugin.open_editor and still serves",
+          "[engine][launch][juce]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    openAndCloseClapEditor({}, SIANN_TEST_PLUGIN_CLAP);
+}
+
+// The maintainer's CLAP (Surge XT's .clap, runbook): the same, through the method.
+TEST_CASE("the maintainer's CLAP opens its editor through plugin.open_editor", "[engine][launch][juce][thirdparty]") {
+    const std::optional<std::string> path = environmentValue("SIANN_TEST_CLAP");
+    if (!path) {
+        SKIP("set SIANN_TEST_CLAP to a .clap");
+    }
+    if (!fs::exists(fs::path(*path))) {
+        FAIL("SIANN_TEST_CLAP points at a missing file: " << *path);
+    }
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    INFO("SIANN_TEST_CLAP " << *path);
+    openAndCloseClapEditor({"--plugin-dir", utf8(fs::path(*path).parent_path())}, *path);
 }
 
 // m4-juce-formats: what an agent learns about the JUCE formats (Protocol v0 items
@@ -1717,8 +1758,73 @@ TEST_CASE("the editor belongs to the window named by --owner-window, and the JUC
     CHECK_FALSE(IsWindow(editor));
 }
 
+TEST_CASE("a CLAP editor belongs to --owner-window and its title bar closes it", "[engine][launch][juce]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const OwnerWindow owner;
+    PipedProcess child(SIANN_ENGINE_EXE,
+                       withArgs(launchArgs(dir.path() / "Song.siann"), {"--owner-window", owner.handleArgument()}));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("command.execute", trackAddCommand("trk_1"));
+        client.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        REQUIRE(at(loaded, "state").asString() == "done");
+        const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+        const Value opened = client.ok("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}}));
+        REQUIRE(at(opened, "editorOpen").asBool());
+
+        HWND editor = ownedWindow(child.pid(), owner.hwnd());
+        REQUIRE(editor != nullptr);
+        CHECK(at(opened, "nativeHandle").asString() == std::to_string(reinterpret_cast<std::uintptr_t>(editor)));
+        CHECK(IsWindowVisible(editor));
+
+        // The title bar's close button, as a user presses it. Each round trip waits
+        // for the engine's loop to answer, so this polls without a fixed sleep.
+        PostMessageW(editor, WM_CLOSE, 0, 0);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (IsWindow(editor) && std::chrono::steady_clock::now() < deadline) {
+            DWORD_PTR answer = 0;
+            SendMessageTimeoutW(editor, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 1'000, &answer);
+        }
+        CHECK_FALSE(IsWindow(editor));
+
+        const Value closed = client.ok("plugin.close_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK_FALSE(at(closed, "editorOpen").asBool());
+        CHECK(at(closed, "nativeHandle").asString() == "0");
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        CHECK(client.ok("engine.status").kind() == Value::Kind::object);
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
 #endif  // _WIN32
 #endif  // SIANN_ENGINE_WITH_JUCE
+
+#if !defined(SIANN_ENGINE_WITH_JUCE)
+// m5-clap-editor-window: the headless engine has no window to embed a CLAP editor
+// into (Protocol v0 item 19), so the slot reports no editor and opening one fails.
+TEST_CASE("a CLAP editor is editor_failed in the headless engine", "[engine][launch]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("command.execute", trackAddCommand("trk_1"));
+        client.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        const Value loaded = client.ok("plugin.instantiate", instantiateParams("clap", SIANN_TEST_PLUGIN_CLAP));
+        REQUIRE(at(loaded, "state").asString() == "done");
+        const std::string slotId = at(at(loaded, "result"), "slotId").asString();
+        CHECK_FALSE(at(at(at(loaded, "result"), "capabilities"), "editor").asBool());
+        CHECK(client.errorOf("plugin.open_editor", Value(Object{{"slotId", Value(slotId)}})) == "editor_failed");
+        const Value closed = client.ok("plugin.close_editor", Value(Object{{"slotId", Value(slotId)}}));
+        CHECK_FALSE(at(closed, "editorOpen").asBool());
+    }
+    CHECK(stopEngine(child) == 0);
+}
+#endif
 
 // ---- the plugin registry at launch (m5-plugin-registry; Protocol v0 items 17 and 21) ----
 
