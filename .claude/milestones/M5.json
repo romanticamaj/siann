@@ -5,7 +5,7 @@
   "goal": "Arrange and mix by hand in the Electron app, and review and approve an agent plan visually.",
   "specSections": ["Frontend", "siann-protocol", "Plans", "Proposal audition (A/B)", "Process model", "Plugin editor windows", "Milestones"],
   "status": "in_progress",
-  "done": ["m5-read-model", "m5-engine-sessions-devices", "m5-plugin-registry"],
+  "done": ["m5-read-model", "m5-engine-sessions-devices", "m5-plugin-registry", "m5-shell-hardening"],
   "prerequisites": [
     "M3 (done): protocol and plans. M0 Electron shell: m0-electron-shell is merged (PR #47); M0 itself stays in progress on m0-macos-bundle, which M5 does not need.",
     "docs/harness/follow-ups.md, section Before M5: taken into the wave 1 and 2 features m5-plugin-registry, m5-shell-hardening, m5-engine-sessions-devices and m5-clap-editor-window below (decided by Fable, delegated by the maintainer, 2026-11-09: the hardening is built by the same TDD, verify and land loop as every feature, and the UI features depend on it). The third-party restart test (from PR #62) lands in its own PR beside them and is not a prerequisite."

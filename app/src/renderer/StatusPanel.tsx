@@ -51,6 +51,8 @@ export function StatusPanel({ client }: { client: SessionClient }) {
         <dd data-testid="clip-count">{snapshot ? String(snapshot.clips.length) : ''}</dd>
         <dt>Syncs</dt>
         <dd data-testid="sync-count">{String(state.syncCount)}</dd>
+        <dt>Connections</dt>
+        <dd data-testid="connections">{String(state.connections)}</dd>
       </dl>
       <footer data-testid="about">{aboutText(state.about)}</footer>
     </>

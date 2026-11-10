@@ -68,6 +68,17 @@ function reap(pids: number[]): void {
   for (const pid of pids) if (isAlive(pid)) process.kill(pid, 'SIGKILL');
 }
 
+// Every test ends here: the supervisor is stopped first, so a stop() or give-up
+// regression fails at the deadline instead of leaving a timer or a child that
+// keeps the runner open, and only then are any children left reaped.
+async function stopThenReap(supervisor: EngineSupervisor, pids: number[]): Promise<void> {
+  try {
+    await within('stop()', supervisor.stop());
+  } finally {
+    reap(pids);
+  }
+}
+
 test('stop() ends a process that ignores stdin EOF and SIGTERM', { timeout: 30_000 }, async () => {
   const { supervisor, pids } = wedged(READY);
   try {
@@ -77,7 +88,7 @@ test('stop() ends a process that ignores stdin EOF and SIGTERM', { timeout: 30_0
     await within('stop()', supervisor.stop());
     assert.equal(isAlive(line.pid), false);
   } finally {
-    reap(pids);
+    await stopThenReap(supervisor, pids);
   }
 });
 
@@ -91,6 +102,6 @@ test('a failed launch that ignores SIGTERM is ended', { timeout: 30_000 }, async
     assert.equal(pids.length, 1);
     assert.equal(isAlive(pids[0]!), false);
   } finally {
-    reap(pids);
+    await stopThenReap(supervisor, pids);
   }
 });

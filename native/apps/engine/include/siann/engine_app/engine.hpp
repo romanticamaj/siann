@@ -7,12 +7,16 @@
 //                [--owner-window <handle>]
 //                [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
 //                [--fake-callback-nanos N] [--fake-open-failures N]
-//                [--plugin-dir <dir>]... [--plugin-registry <file>]
+//                [--plugin-dir <dir>]... [--plugin-registry <file>] [--test-wedge]
 //
 // --plugin-dir adds a directory the plugin registry is filled from, beside the
 // standard ones (one on a UNC path or inside the bundle is a usage error);
 // --plugin-registry names the JSON file the approvals are kept in (Protocol v0
 // item 21, m5-plugin-registry).
+//
+// --test-wedge is test-only: the engine serves with no stop flag, so it ignores
+// stdin EOF and SIGTERM as a wedged engine does (the shell's bounded-quit e2e). It
+// is a usage error unless the environment has SIANN_SHELL_TEST=1.
 //
 // Opens the bundle, or creates a new empty session there when the directory
 // does not exist, loads it into the playback graph on a device (EngineHost; a

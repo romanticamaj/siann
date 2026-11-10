@@ -5,15 +5,19 @@
 // ready line. The supervisor parses it strictly and emits `ready`; anything
 // else on stdout (a malformed first line, a second line) is a failed launch:
 // the child is killed and restarted, so a half-parsed token never reaches the
-// renderer. Every exit not asked for by stop() schedules a restart after a
+// renderer. So is a launch that writes no ready line within readyTimeoutMs.
+// Every exit not asked for by stop() schedules a restart after a
 // delay that doubles from initialMs up to maxMs; the count resets once an
 // engine has stayed up resetAfterMs after its ready line; after maxRestarts
 // consecutive restarts the next failure emits `gave-up`. stop() closes the
 // child's stdin (the engine exits on EOF), sends SIGKILL when a grace timer
-// expires, and never restarts. A failed launch gets SIGTERM, then SIGKILL.
-// SIGTERM alone cannot end a wedged engine on POSIX: the engine catches it
-// and only sets a flag its main thread polls. A child that outlives SIGKILL
-// by killGraceMs counts as exited, so stop() and restarts are always bounded.
+// expires, and never restarts. A failed launch has its stdin closed, then gets
+// SIGTERM, then SIGKILL. SIGTERM alone cannot end a wedged engine on POSIX: the
+// engine catches it and only sets a flag its main thread polls. A child that
+// outlives SIGKILL by killGraceMs counts as exited, so stop() and restarts are
+// always bounded. A kill() that fails (returns false, throws, or emits 'error'
+// inside the call) is logged to the launch's stderr lines and is no exit: the
+// child may still run, so only its exit event or that grace ends the launch.
 //
 // Process creation and timers are injected (spawn, schedule), so the unit
 // tests drive every path without real processes or wall-clock waits.
@@ -73,6 +77,9 @@ export interface SupervisorOptions {
   // How long a failed launch gets after SIGTERM before SIGKILL, and how long
   // any child gets after SIGKILL before it counts as exited.
   killGraceMs?: number;
+  // How long a launch may take to write its ready line before it is a failed
+  // launch.
+  readyTimeoutMs?: number;
   // stderr lines kept for `gave-up`.
   stderrLines?: number;
 }
@@ -123,6 +130,8 @@ interface Launch {
   exited: boolean;
   stderr: string[];
   stderrPartial: string;
+  // Set by an 'error' event emitted inside kill().
+  killError: string | null;
 }
 
 export class EngineSupervisor extends EventEmitter {
@@ -134,6 +143,9 @@ export class EngineSupervisor extends EventEmitter {
   private started = false;
   private cancelRestart: (() => void) | null = null;
   private cancelReset: (() => void) | null = null;
+  private cancelReady: (() => void) | null = null;
+  // The launch whose kill() is on the stack: an 'error' it emits is the kill's.
+  private killing: Launch | null = null;
   // The next step in ending the current child; non-null once that has begun.
   private cancelKill: (() => void) | null = null;
   private stopWaiters: Array<() => void> = [];
@@ -167,6 +179,7 @@ export class EngineSupervisor extends EventEmitter {
     this.stopping = true;
     this.cancel('restart');
     this.cancel('reset');
+    this.cancel('ready');
     const launch = this.launch;
     if (launch === null || launch.exited) return Promise.resolve();
     const done = new Promise<void>((resolve) => this.stopWaiters.push(resolve));
@@ -186,21 +199,48 @@ export class EngineSupervisor extends EventEmitter {
   }
 
   private forceKill(launch: Launch): void {
-    launch.child.kill('SIGKILL');
-    // A kill that fails emits 'error' at once, and onExit has already run.
+    this.cancelKill = null;
+    this.sendKill(launch, 'SIGKILL');
     if (launch.exited) return;
+    // Whether SIGKILL was sent or failed: the exit event, or this grace, ends it.
     this.cancelKill = this.options.schedule(() => {
       this.cancelKill = null;
-      launch.stderr.push('siann-shell: the engine did not exit after SIGKILL');
+      this.pushStderr(launch, 'siann-shell: the engine did not exit after SIGKILL');
       this.onExit(launch, null, 'SIGKILL');
     }, this.killGraceMs());
   }
 
-  private cancel(which: 'restart' | 'reset' | 'kill'): void {
-    const key = which === 'restart' ? 'cancelRestart' : which === 'reset' ? 'cancelReset' : 'cancelKill';
+  // kill(), with every way it can fail logged and none of them an exit. Node's
+  // ChildProcess emits 'error' synchronously inside kill() when the signal
+  // cannot be sent and returns false; it throws for a signal it rejects.
+  private sendKill(launch: Launch, signal: 'SIGKILL' | undefined): void {
+    const name = signal ?? 'SIGTERM';
+    launch.killError = null;
+    this.killing = launch;
+    let failure: string | null = null;
+    try {
+      if (!launch.child.kill(signal)) failure = launch.killError ?? 'kill() returned false';
+    } catch (error) {
+      failure = String(error);
+    } finally {
+      this.killing = null;
+    }
+    if (failure !== null) this.pushStderr(launch, `siann-shell: kill(${name}) failed: ${failure}`);
+  }
+
+  private cancel(which: 'restart' | 'reset' | 'ready' | 'kill'): void {
+    const key = (
+      { restart: 'cancelRestart', reset: 'cancelReset', ready: 'cancelReady', kill: 'cancelKill' } as const
+    )[which];
     const fn = this[key];
     this[key] = null;
     if (fn) fn();
+  }
+
+  private pushStderr(launch: Launch, ...lines: string[]): void {
+    launch.stderr.push(...lines);
+    const keep = this.options.stderrLines ?? 20;
+    if (launch.stderr.length > keep) launch.stderr.splice(0, launch.stderr.length - keep);
   }
 
   private spawnEngine(): void {
@@ -212,7 +252,7 @@ export class EngineSupervisor extends EventEmitter {
     } catch (error) {
       // Treated like a launch that exited at once.
       const launch: Launch = this.newLaunch(new EventEmitter() as unknown as EngineChild);
-      launch.stderr.push(String(error));
+      this.pushStderr(launch, String(error));
       this.launch = launch;
       this.onExit(launch, null, null);
       return;
@@ -224,26 +264,53 @@ export class EngineSupervisor extends EventEmitter {
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (chunk: string) => this.onStderr(launch, chunk));
     child.on('exit', (code: number | null, signal: string | null) => this.onExit(launch, code, signal));
-    // A spawn failure (ENOENT): no 'exit' follows.
     child.on('error', (error: unknown) => {
-      launch.stderr.push(String(error));
+      // A kill that failed: the child may still run, so this is no exit.
+      if (this.killing === launch || (error as { syscall?: unknown } | null)?.syscall === 'kill') {
+        if (this.killing === launch) launch.killError = String(error);
+        else this.pushStderr(launch, `siann-shell: kill failed: ${String(error)}`);
+        return;
+      }
+      // A spawn failure (ENOENT, on a later tick): no 'exit' follows.
+      this.pushStderr(launch, String(error));
       this.onExit(launch, null, null);
     });
+    const readyMs = this.options.readyTimeoutMs ?? 30_000;
+    this.cancelReady = this.options.schedule(() => {
+      this.cancelReady = null;
+      this.failLaunch(launch, `no ready line within ${readyMs} ms`);
+    }, readyMs);
   }
 
   private newLaunch(child: EngineChild): Launch {
-    return { child, stdout: '', ready: null, failed: false, exited: false, stderr: [], stderrPartial: '' };
+    return {
+      child,
+      stdout: '',
+      ready: null,
+      failed: false,
+      exited: false,
+      stderr: [],
+      stderrPartial: '',
+      killError: null,
+    };
   }
 
   private failLaunch(launch: Launch, reason: string): void {
     if (launch.failed || launch.exited) return;
     launch.failed = true;
     launch.ready = null;
-    launch.stderr.push(`siann-shell: ${reason}`);
+    if (this.launch === launch) this.cancel('ready');
+    this.pushStderr(launch, `siann-shell: ${reason}`);
     this.emit('protocol-error', reason);
-    launch.child.kill();
-    // As in forceKill: a timer here would outlive this launch and make the next
-    // launch's stop() skip stdin and the kill.
+    // EOF first, as stop() asks: an engine that still polls its flag exits 0.
+    try {
+      launch.child.stdin?.end();
+    } catch {
+      // A closed pipe: the child is on its way out anyway.
+    }
+    this.sendKill(launch, undefined);
+    // A timer here would outlive an exited launch and make the next launch's
+    // stop() skip stdin and the kill.
     if (launch.exited) return;
     this.cancel('kill');
     this.cancelKill = this.options.schedule(() => this.forceKill(launch), this.killGraceMs());
@@ -272,6 +339,7 @@ export class EngineSupervisor extends EventEmitter {
       return;
     }
     launch.ready = ready;
+    this.cancel('ready');
     if (this.stopping) return;
     this.cancel('reset');
     this.cancelReset = this.options.schedule(() => {
@@ -285,9 +353,7 @@ export class EngineSupervisor extends EventEmitter {
     const text = launch.stderrPartial + chunk;
     const lines = text.split(/\r?\n/);
     launch.stderrPartial = lines.pop() ?? '';
-    launch.stderr.push(...lines.filter((l) => l.length > 0));
-    const keep = this.options.stderrLines ?? 20;
-    if (launch.stderr.length > keep) launch.stderr.splice(0, launch.stderr.length - keep);
+    this.pushStderr(launch, ...lines.filter((l) => l.length > 0));
   }
 
   private onExit(launch: Launch, code: number | null, signal: string | null): void {
@@ -295,11 +361,12 @@ export class EngineSupervisor extends EventEmitter {
     launch.exited = true;
     launch.ready = null;
     if (launch.stderrPartial.length > 0) {
-      launch.stderr.push(launch.stderrPartial);
+      this.pushStderr(launch, launch.stderrPartial);
       launch.stderrPartial = '';
     }
     if (this.launch !== launch) return;
     this.cancel('reset');
+    this.cancel('ready');
     this.cancel('kill');
     if (this.stopping) {
       this.emit('exit', { code, signal, restartInMs: null } satisfies EngineExit);

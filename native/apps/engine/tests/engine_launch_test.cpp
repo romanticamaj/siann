@@ -102,6 +102,27 @@ private:
     fs::path path_;
 };
 
+// Sets an environment variable of this process, and so of the engines it starts,
+// for the length of a scope; an empty value is no value for the engine.
+class ScopedEnv {
+public:
+    ScopedEnv(const char* name, const char* value) : name_(name) { set(value); }
+    ~ScopedEnv() { set(""); }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(name_, value);
+#else
+        setenv(name_, value, 1);
+#endif
+    }
+
+    const char* name_;
+};
+
 std::string utf8(const fs::path& path) {
     const std::u8string text = path.u8string();
     return std::string(text.begin(), text.end());
@@ -681,7 +702,9 @@ TEST_CASE("a fake callback time needs the fake device and sane bounds", "[engine
         {"--session", utf8(bundle), "--device-backoff", "500:250:30000"},
         {"--session", utf8(bundle), "--device-backoff", "1:2:99999999999"},
         {"--session", utf8(bundle), "--device-backoff"},
+        {"--session", utf8(bundle), "--device", "fake", "--test-wedge"},
     };
+    const ScopedEnv notUnderTest("SIANN_SHELL_TEST", "");
     for (const auto& args : launches) {
         INFO("args: " << args.back());
         PipedProcess child(SIANN_ENGINE_EXE, args);
@@ -1126,6 +1149,45 @@ TEST_CASE("the --open-editor flag is a usage error now", "[engine][launch]") {
     CHECK(child.wait() == 1);
     CHECK(child.stdoutText().empty());
     CHECK(errorCode(child) == "usage");
+}
+
+// m5-shell-hardening: the shell's bounded-quit e2e needs an engine that ignores
+// what stops it, and a shipped shell must not be able to ask for one.
+TEST_CASE("the test-wedge option is a usage error without SIANN_SHELL_TEST=1", "[engine][launch]") {
+    TempDir dir;
+    for (const char* value : {"", "0", "true"}) {
+        INFO("SIANN_SHELL_TEST=" << value);
+        const ScopedEnv env("SIANN_SHELL_TEST", value);
+        PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"), {"--test-wedge"}));
+        CHECK(child.wait() == 1);
+        CHECK(child.stdoutText().empty());
+        CHECK(errorCode(child) == "usage");
+    }
+    CHECK_FALSE(fs::exists(dir.path() / "Song.siann"));
+}
+
+TEST_CASE("with SIANN_SHELL_TEST=1 the test-wedge option serves and ignores stdin EOF and SIGTERM",
+          "[engine][launch]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const ScopedEnv env("SIANN_SHELL_TEST", "1");
+    PipedProcess child(SIANN_ENGINE_EXE, withArgs(launchArgs(dir.path() / "Song.siann"), {"--test-wedge"}));
+    const Value ready = readyLine(child);
+    child.closeStdin();
+#if !defined(_WIN32)
+    // On Windows a SIGTERM from Node is TerminateProcess; on POSIX the engine catches it.
+    REQUIRE(::kill(static_cast<pid_t>(child.pid()), SIGTERM) == 0);
+#endif
+    // An unstopped engine exits within a tick or two of EOF; this one must not exit at all.
+    CHECK_FALSE(child.waitFor(std::chrono::milliseconds(1'000)).has_value());
+    {
+        // Still serving after EOF.
+        WsClient ws(static_cast<std::uint16_t>(at(ready, "port").asNumber()));
+        REQUIRE(ws.start());
+        CHECK(at(ws.call(authFrame(at(ready, "token").asString())), "ok").asBool());
+    }
+    CHECK_FALSE(child.waitFor(std::chrono::milliseconds(0)).has_value());
+    child.kill();
 }
 
 TEST_CASE("an editor that cannot open is an error of the method, the engine serves on", "[engine][launch]") {

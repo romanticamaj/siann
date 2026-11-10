@@ -50,6 +50,8 @@ export interface ClientState {
   readonly lastSeq: string | null;
   // Completed session.sync replacements of the model.
   readonly syncCount: number;
+  // WebSocket opens since this client was made: a page reload starts it again at 0.
+  readonly connections: number;
   // The last failure that left the model behind, for people; not stable.
   readonly error: string | null;
 }
@@ -145,6 +147,7 @@ export class SessionClient {
     about: null,
     lastSeq: null,
     syncCount: 0,
+    connections: 0,
     error: null,
   };
   #lastSeq: bigint | null = null;
@@ -204,7 +207,9 @@ export class SessionClient {
     this.#connection = connection;
     this.#update({ status: 'connecting' });
     socket.onopen = () => {
-      if (this.#connection === connection) socket.send(JSON.stringify({ type: 'auth', token: next.token, events: true }));
+      if (this.#connection !== connection) return;
+      this.#update({ connections: this.#state.connections + 1 });
+      socket.send(JSON.stringify({ type: 'auth', token: next.token, events: true }));
     };
     socket.onmessage = (event) => {
       if (this.#connection !== connection || typeof event.data !== 'string') return;

@@ -256,7 +256,7 @@ years. Milestones are designed so that something useful exists at every stage.
   `siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] [--mcp-trusted]
   [--owner-window <handle>] [--device <id>]
   [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] [--fake-callback-nanos N]
-  [--fake-open-failures N] [--plugin-dir <dir>]... [--plugin-registry <file>]`
+  [--fake-open-failures N] [--plugin-dir <dir>]... [--plugin-registry <file>] [--test-wedge]`
   and announces itself with the launcher handshake (siann-protocol, Protocol v0
   item 17). `--plugin-dir` (repeatable) adds a directory to the platform's
   standard plugin directories the registry is filled from; one on a UNC path or
@@ -264,6 +264,11 @@ years. Milestones are designed so that something useful exists at every stage.
   file that keeps the approvals (Protocol v0 item 21); the shell passes
   `<userData>/plugin-registry.json`. Filling the registry at launch lists paths
   only and runs no plugin code, so one bad file cannot fail the launch.
+  `--test-wedge` is test-only (m5-shell-hardening): the engine serves
+  with no stop flag, so it ignores stdin EOF and SIGTERM the way a wedged engine
+  does, and the shell's e2e proves the bounded quit against it. It is a usage error
+  unless the engine's environment has `SIANN_SHELL_TEST=1` (inherited from the
+  shell under test; the launch test sets it), so a shipped shell cannot pass it.
 - The engine runs the graph driver on a device (m4-engine-device). M4 interim note:
   the process's main thread is both the command thread and the control thread. The
   protocol server runs without a pump thread, and the main thread calls one tick at
@@ -355,13 +360,36 @@ years. Milestones are designed so that something useful exists at every stage.
   read model", describes.
 - Ending the engine: the engine catches SIGTERM and only sets a flag its main
   thread polls, so neither stdin EOF nor SIGTERM ends a wedged engine. On quit the
-  shell closes the engine's stdin and sends SIGKILL after 5 s. A failed launch (a
-  bad ready line) gets SIGTERM, then SIGKILL after 2 s. In both cases, if no exit
-  follows 2 s after SIGKILL the shell counts the engine as gone and carries on, so
-  quitting and restarting are always bounded. The worst case for a quit is about
-  11 s: a launch that fails just before the 2 s after SIGKILL run out starts the
+  shell closes the engine's stdin and sends SIGKILL after 5 s. A launch that writes
+  no ready line within 30 s (`SIANN_SHELL_READY_MS` overrides it) is a failed
+  launch, as a bad ready line is. A failed launch ends the engine's stdin, then gets
+  SIGTERM, then SIGKILL after 2 s, and restarts under the backoff. In both cases, if
+  no exit follows 2 s after SIGKILL the shell counts the engine as gone and carries
+  on, so quitting and restarting are always bounded. A `kill()` that returns false
+  or throws (either signal) is logged to the launch's stderr lines (shown when the
+  shell gives up); the child still counts as gone only on its exit event or once the
+  2 s after SIGKILL have run out, never at the failed kill itself.
+  `SIANN_SHELL_STOP_GRACE_MS` and `SIANN_SHELL_KILL_GRACE_MS` override the 5 s and
+  2 s graces (tests set them short). The worst case for a quit is about 11 s: a
+  launch that fails just before the 2 s after SIGKILL run out starts the
   failed-launch sequence again, so 5 s, then 2 s, then 2 s, then 2 s. On Windows
   both signals are `TerminateProcess`.
+- Single instance (m5-shell-hardening): the shell calls
+  `app.requestSingleInstanceLock()` before `whenReady`; a second launch that does
+  not get the lock quits at once, before it starts an engine, and the holder
+  restores and focuses its window on `second-instance`. Two shells on one machine
+  would run two engines on one session bundle.
+- Permissions: `session.defaultSession`'s permission request, permission check and
+  device permission handlers deny everything for every origin. The renderer needs no
+  microphone, camera, notifications or devices: audio I/O is the engine's.
+- No devtools or reload: the shell installs an application menu built from role
+  items without `toggleDevTools`, `reload` and `forceReload` (quit and the edit
+  roles stay, and the app menu on macOS), the window has `webPreferences.devTools`
+  false, and `before-input-event` swallows F12, Ctrl/Cmd+Shift+I, Ctrl/Cmd+R and F5.
+  This does not depend on `app.isPackaged`, so the e2e proves the packaged build's
+  behaviour; `SIANN_SHELL_DEVTOOLS=1` re-enables devtools and the keys for
+  debugging. `setWindowOpenHandler` denies every `window.open`, and `will-navigate`
+  blocks any URL outside `siann://app/`.
 - Crash: Electron restarts the engine with backoff; the engine recovers from the
   last checkpoint plus journal replay; the UI reconnects and resyncs. Exclusive-mode
   and ASIO devices may need a retry delay before reopening. The engine raises no
@@ -2208,7 +2236,9 @@ Protocol v0, launcher (decided with m0-electron-shell):
     [--port 0] [--mcp-trusted] [--owner-window <handle>]
     [--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>]
     [--fake-callback-nanos N] [--fake-open-failures N]
-    [--plugin-dir <dir>]... [--plugin-registry <file>]`
+    [--plugin-dir <dir>]... [--plugin-registry <file>] [--test-wedge]`
+    (`--test-wedge`: test-only, serves with no stop flag so stdin EOF and SIGTERM
+    are ignored; a usage error unless the environment has `SIANN_SHELL_TEST=1`)
     writes exactly one line to stdout once it is
     listening,
     `{"schema":"siann.engine.ready.v0","port":<n>,"token":"<64 hex>","mcpToken":"<64 hex>","sessionId":"ses_<hex>","pid":<n>,"about":{...aboutJson()}}`,
