@@ -30,7 +30,10 @@
 #include "siann/hash/json.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/io/durable_file.hpp"
+#include "siann/media/audio.hpp"
+#include "siann/media/peaks.hpp"
 #include "siann/session/journal.hpp"
+#include "siann/session/media_import.hpp"
 
 namespace siann::protocol {
 
@@ -435,6 +438,24 @@ std::string nextSlotId(const command::History& history) {
 }
 
 // ^[A-Za-z0-9._-]{1,64}$ and not "." or "..": a file name, never a path.
+// GET /v0/peaks/<sha256 hex> (Protocol v0 item 23).
+constexpr std::string_view kPeaksPrefix = "/v0/peaks/";
+
+bool isLowerHex64(std::string_view text) noexcept {
+    return text.size() == 64 && std::all_of(text.begin(), text.end(), [](char c) {
+               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+           });
+}
+
+// The head's media table as the protocol thread reads it: content hash (hex)
+// to the stored file's hash and format, and the bundle that holds them.
+struct MediaTable {
+    const session::Session* session = nullptr;
+    std::string revision;
+    std::filesystem::path bundle;
+    std::map<std::string, std::pair<hash::Digest, model::MediaFormat>, std::less<>> files;
+};
+
 bool validRenderName(const std::string& name) {
     if (name.empty() || name.size() > 64 || name == "." || name == "..") {
         return false;
@@ -488,6 +509,13 @@ struct ProtocolServer::Impl {
 
     std::mutex mutex;                              // guards connections and sessionId
     std::map<ConnectionId, Connection> connections;
+
+    // Peaks (Protocol v0 item 23): the head's media table, written by the
+    // command thread and read by transport threads, and the job queued for
+    // each hash whose pyramid is being computed. Both under peaksMutex.
+    std::mutex peaksMutex;
+    MediaTable mediaTable;
+    std::map<std::string, std::string, std::less<>> peaksJobs;  // hex -> jobId
 
     std::mutex pumpMutex;                          // one consumer at a time
     std::unordered_map<std::string, std::string> cache;  // requestId -> response text
@@ -586,9 +614,133 @@ struct ProtocolServer::Impl {
                                             {"data", Value(Object{{"code", Value("request_timeout")}})}})}})));
     }
 
+    // Command thread: copies the head's media table for the peaks route when
+    // the served revision or session changed since the last copy.
+    void refreshMediaTable() {
+        const command::Revision& head = session->history().head();
+        {
+            std::lock_guard lock(peaksMutex);
+            if (mediaTable.session == session && mediaTable.revision == head.envelope.id) {
+                return;
+            }
+        }
+        MediaTable next;
+        next.session = session;
+        next.revision = head.envelope.id;
+        next.bundle = session->bundlePath();
+        for (const model::Media* entity : head.document.allMedia()) {
+            next.files.emplace(hash::toHex(entity->contentHash), std::pair{entity->contentHash, entity->format});
+        }
+        std::lock_guard lock(peaksMutex);
+        if (mediaTable.bundle != next.bundle) {
+            peaksJobs.clear();
+        }
+        mediaTable = std::move(next);
+    }
+
+    // The cached pyramid's bytes when the file parses.
+    static std::optional<std::string> cachedPeaks(const std::filesystem::path& file) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec)) {
+            return std::nullopt;
+        }
+        try {
+            std::string bytes = io::readFile(file);
+            media::decodePeaks(bytes);
+            return bytes;
+        } catch (const std::exception&) {
+            return std::nullopt;  // regenerable: rebuilt below
+        }
+    }
+
+    // A transport thread: GET (and the CORS preflight of) /v0/peaks/<hex>,
+    // answered from the cache file or by queueing its computation, never
+    // through the command thread.
+    HttpResponse onPeaks(const HttpRequest& request) {
+        auto origin = request.headers.find("origin");
+        const bool hasOrigin = origin != request.headers.end();
+        const bool originAllowed =
+            !hasOrigin || std::find(options.allowedOrigins.begin(), options.allowedOrigins.end(), origin->second) !=
+                              options.allowedOrigins.end();
+        const auto cors = [&](HttpResponse response) {
+            if (hasOrigin && originAllowed) {
+                response.headers["Access-Control-Allow-Origin"] = origin->second;
+                response.headers["Vary"] = "Origin";
+            }
+            return response;
+        };
+        if (request.method == "OPTIONS") {
+            if (!hasOrigin || !originAllowed) {
+                return jsonResponse(403, httpError("origin_not_allowed", "this Origin is not allowed"));
+            }
+            HttpResponse preflight = cors(HttpResponse{204, "text/plain", {}, {}});
+            preflight.headers["Access-Control-Allow-Methods"] = "GET";
+            preflight.headers["Access-Control-Allow-Headers"] = "authorization";
+            preflight.headers["Access-Control-Max-Age"] = "600";
+            return preflight;
+        }
+        if (!authorized(request, token)) {
+            return cors(unauthenticated());
+        }
+        if (!originAllowed) {
+            return jsonResponse(403, httpError("origin_not_allowed", "this Origin is not allowed"));
+        }
+        const std::string_view hex = std::string_view(request.path).substr(kPeaksPrefix.size());
+        if (request.method != "GET" || !isLowerHex64(hex)) {
+            return cors(jsonResponse(404, httpError("not_found", "no route for this method and path")));
+        }
+        // The hash names a file only once the served document holds it.
+        std::filesystem::path bundle;
+        hash::Digest contentHash{};
+        model::MediaFormat format = model::MediaFormat::wav;
+        {
+            std::lock_guard lock(peaksMutex);
+            auto entry = mediaTable.files.find(hex);
+            if (entry == mediaTable.files.end()) {
+                return cors(jsonResponse(404, httpError("not_found", "no media of the served document has this hash")));
+            }
+            bundle = mediaTable.bundle;
+            contentHash = entry->second.first;
+            format = entry->second.second;
+        }
+        std::error_code ec;
+        if (!std::filesystem::exists(session::mediaPath(bundle, contentHash, format), ec)) {
+            return cors(jsonResponse(404, httpError("media_missing", "the media file of this hash is missing")));
+        }
+        const std::filesystem::path file = media::peaksPath(bundle, hex);
+        const auto served = [&](std::string bytes) {
+            return cors(HttpResponse{200, "application/octet-stream", std::move(bytes), {}});
+        };
+        if (auto bytes = cachedPeaks(file)) {
+            return served(std::move(*bytes));
+        }
+        std::lock_guard lock(peaksMutex);
+        auto job = peaksJobs.find(hex);
+        if (job != peaksJobs.end()) {
+            const std::optional<detail::JobState> state = jobs.state(job->second);
+            if (state == detail::JobState::queued || state == detail::JobState::running) {
+                return cors(jsonResponse(202, httpError("peaks_pending", "the peak pyramid is being computed; retry")));
+            }
+            const auto failed = jobs.failure(job->second);
+            peaksJobs.erase(job);
+            if (failed) {
+                return cors(jsonResponse(500, httpError(failed->first, failed->second)));
+            }
+            // Done since the cache was read above.
+            if (auto bytes = cachedPeaks(file)) {
+                return served(std::move(*bytes));
+            }
+        }
+        peaksJobs.emplace(std::string(hex), jobs.startPeaks(detail::PeaksRequest{bundle, contentHash, format}));
+        return cors(jsonResponse(202, httpError("peaks_pending", "the peak pyramid is being computed; retry")));
+    }
+
     HttpResponse onHttp(const HttpRequest& request) {
         if (request.path == kMcpPath) {
             return waitMcp(request);
+        }
+        if (request.path.rfind(kPeaksPrefix, 0) == 0) {
+            return onPeaks(request);
         }
         if (!authorized(request, token)) {
             return unauthenticated();
@@ -1048,7 +1200,8 @@ struct ProtocolServer::Impl {
                                       {"audition", Value(options.auditionPort != nullptr)},
                                       {"transport", Value(options.transportPort != nullptr)},
                                       {"render", Value(true)},
-                                      {"plugins", pluginsFeatureJson()}})},
+                                      {"plugins", pluginsFeatureJson()},
+                                      {"peaks", Value(true)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
@@ -1475,6 +1628,7 @@ struct ProtocolServer::Impl {
             remember(request.requestId, response);
             deliver(request, response);
         }
+        refreshMediaTable();
         events.flush();
     }
 
@@ -1497,6 +1651,7 @@ ProtocolServer::ProtocolServer(Transport& transport, session::Session& session, 
     handlers.onClose = [impl](ConnectionId connection) { impl->onClose(connection); };
     handlers.onHttp = [impl](const HttpRequest& request) { return impl->onHttp(request); };
     impl_->transport.setHandlers(std::move(handlers));
+    impl_->refreshMediaTable();
 }
 
 ProtocolServer::~ProtocolServer() {
@@ -1568,6 +1723,7 @@ std::uint16_t ProtocolServer::port() const noexcept {
 
 void ProtocolServer::publishRevision(const command::Revision& revision) {
     impl_->events.publishRevision(revision);
+    impl_->refreshMediaTable();
 }
 
 EventStream& ProtocolServer::events() noexcept {

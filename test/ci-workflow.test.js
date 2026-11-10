@@ -217,3 +217,18 @@ test("the desktop job keeps pluginval's logs when it fails", () => {
   assert.match(upload, /if: failure\(\)/);
   assert.match(upload, /pluginval-logs/);
 });
+
+test('the app job builds siann-cli and hands it to the timeline e2e as SIANN_CLI_EXE', () => {
+  const job = jobs(fs.readFileSync(WORKFLOW, 'utf8')).find((j) => j.id === 'app');
+  assert.ok(job, 'an app job exists');
+  const build = job.text.split('\n').find((line) => /cmake --build native\/build\/app/.test(line));
+  assert.ok(build, 'the app job builds native/build/app');
+  assert.match(build, /--target[^\n]*\bsiann-cli\b/);
+  assert.match(job.text, /SIANN_CLI_EXE=/);
+});
+
+test("check-all's app step passes the dev build's siann-cli to the e2e", () => {
+  const text = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'check-all.js'), 'utf8');
+  assert.match(text, /SIANN_CLI_EXE/);
+  assert.match(text, /'apps', 'cli'/);
+});

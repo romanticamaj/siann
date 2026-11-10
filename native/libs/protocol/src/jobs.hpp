@@ -4,8 +4,10 @@
 // run one at a time in creation order, on one worker thread (the
 // offline-render thread) or, without it, by runQueued() on the caller's
 // thread. A render job renders an immutable document snapshot offline and
-// writes <bundle>/renders/<name>.wav atomically. Jobs are not journaled and
-// change nothing in the document.
+// writes <bundle>/renders/<name>.wav atomically. A peaks job (Protocol v0
+// item 23) computes one media file's peak pyramid and writes
+// <bundle>/peaks/<hex>.peaks atomically. Jobs are not journaled and change
+// nothing in the document.
 
 #include <chrono>
 #include <condition_variable>
@@ -18,12 +20,14 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include <memory>
 #include <vector>
 
 #include "siann/engine/offline.hpp"
 #include "siann/hash/json.hpp"
+#include "siann/hash/sha256.hpp"
 #include "siann/model/document.hpp"
 
 namespace siann::protocol::detail {
@@ -41,6 +45,13 @@ struct RenderRequest {
     std::shared_ptr<engine::PluginNodeSource> plugins;
 };
 
+// One media file's peak pyramid (Protocol v0 item 23).
+struct PeaksRequest {
+    std::filesystem::path bundle;
+    hash::Digest contentHash{};
+    model::MediaFormat format = model::MediaFormat::wav;
+};
+
 class JobRunner {
 public:
     explicit JobRunner(bool workerThread);
@@ -50,6 +61,8 @@ public:
 
     // Queues a render and returns its id ("job_<n>").
     std::string startRender(RenderRequest request);
+    // Queues a peak pyramid computation and returns its id.
+    std::string startPeaks(PeaksRequest request);
     // A job that ran inside its request on the command thread (plugin.instantiate):
     // recorded done or failed, so job.status answers it. Returns its id.
     std::string recordDone(std::string kind, json::Value result);
@@ -59,6 +72,10 @@ public:
     std::vector<std::shared_ptr<engine::PluginNodeSource>> takeFinishedPlugins();
     // {jobId, kind, state, result?, error?}, or nullopt for an unknown id.
     std::optional<json::Value> status(const std::string& jobId) const;
+    // The job's state; nullopt for an unknown id.
+    std::optional<JobState> state(const std::string& jobId) const;
+    // {code, message} of a failed job; nullopt for any other.
+    std::optional<std::pair<std::string, std::string>> failure(const std::string& jobId) const;
     // Runs every queued job on the calling thread; returns how many ran.
     std::size_t runQueued();
     // Waits until the job is done or failed; false on timeout or unknown id.
@@ -71,7 +88,8 @@ private:
         std::string id;
         std::string kind = "render";
         JobState state = JobState::queued;
-        std::optional<RenderRequest> request;  // until it runs
+        std::optional<RenderRequest> request;  // until it runs (kind render)
+        std::optional<PeaksRequest> peaks;     // until it runs (kind peaks)
         json::Value result;
         std::string errorCode;
         std::string errorMessage;

@@ -1,0 +1,56 @@
+{
+  "schema": "siann.peaks_fixture.v0",
+  "name": "overload-mono",
+  "signal": {
+    "kind": "square",
+    "channels": 1,
+    "frames": 300,
+    "sampleRate": 48000,
+    "amplitude": 1.5,
+    "period": 64
+  },
+  "file": "overload-mono.peaks",
+  "size": 48,
+  "sha256": "deed21078f3171676338e59182ecfdb14a21b232f4793f5757380ad973d44c37",
+  "header": {
+    "version": 1,
+    "channels": 1,
+    "levels": 2,
+    "frames": "300",
+    "sampleRate": 48000
+  },
+  "levels": [
+    {
+      "binFrames": 256,
+      "binCount": 2,
+      "first": [
+        {
+          "min": -32768,
+          "max": 32767
+        }
+      ],
+      "last": [
+        {
+          "min": -32768,
+          "max": 32767
+        }
+      ]
+    },
+    {
+      "binFrames": 1024,
+      "binCount": 1,
+      "first": [
+        {
+          "min": -32768,
+          "max": 32767
+        }
+      ],
+      "last": [
+        {
+          "min": -32768,
+          "max": 32767
+        }
+      ]
+    }
+  ]
+}

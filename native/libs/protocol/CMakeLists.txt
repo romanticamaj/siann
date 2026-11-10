@@ -42,8 +42,9 @@ if(SIANN_BUILD_TESTS)
   # AuditionPort (the engine host's own header-only AuditionerPort) and reuse the
   # playback tests' live rig (live_rig.hpp).
   target_link_libraries(siann_protocol_tests PRIVATE siann::protocol siann::realtime siann::host_fake
-    siann::playback siann_rt_alloc_guard siann_third_party_ixwebsocket Catch2::Catch2WithMain)
+    siann::playback siann::io siann_rt_alloc_guard siann_third_party_ixwebsocket Catch2::Catch2WithMain)
   target_include_directories(siann_protocol_tests PRIVATE tests "${PROJECT_SOURCE_DIR}/libs/playback/tests/support"
+    "${PROJECT_SOURCE_DIR}/libs/media/tests"
     "${PROJECT_SOURCE_DIR}/apps/engine/include")
   if(SIANN_WITH_JUCE)
     set(siann_test_with_juce 1)

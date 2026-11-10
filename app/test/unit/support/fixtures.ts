@@ -19,3 +19,11 @@ function repoRoot(): string {
 export function readFixture<T>(...parts: string[]): T {
   return JSON.parse(fs.readFileSync(path.join(repoRoot(), 'fixtures', ...parts), 'utf8')) as T;
 }
+
+export function readFixtureBytes(...parts: string[]): Uint8Array {
+  return new Uint8Array(fs.readFileSync(path.join(repoRoot(), 'fixtures', ...parts)));
+}
+
+export function listFixtures(...parts: string[]): string[] {
+  return fs.readdirSync(path.join(repoRoot(), 'fixtures', ...parts)).sort();
+}

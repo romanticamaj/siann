@@ -4,6 +4,9 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 
+// The renderer argument main.ts adds under SIANN_SHELL_TEST=1.
+const TEST_HOOKS_ARG = '--siann-test-hooks';
+
 interface EngineEndpoint {
   port: number;
   token: string;
@@ -13,6 +16,12 @@ function endpoint(value: unknown): EngineEndpoint | null {
   if (typeof value !== 'object' || value === null) return null;
   const { port, token } = value as Record<string, unknown>;
   return typeof port === 'number' && typeof token === 'string' ? { port, token } : null;
+}
+
+// Under SIANN_SHELL_TEST=1 the main process adds the argument, and the renderer
+// exposes its test hooks (window.__siannTimeline); window.siann stays as it is.
+if (process.argv.includes(TEST_HOOKS_ARG)) {
+  contextBridge.exposeInMainWorld('siannTest', { timelineHooks: true });
 }
 
 contextBridge.exposeInMainWorld('siann', {

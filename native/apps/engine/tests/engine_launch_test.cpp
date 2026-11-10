@@ -30,6 +30,7 @@
 #include <thread>
 #include <vector>
 
+#include <ixwebsocket/IXHttpClient.h>
 #include <ixwebsocket/IXNetSystem.h>
 
 #include "live_rig.hpp"
@@ -47,6 +48,8 @@
 #if defined(SIANN_ENGINE_WITH_JUCE)
 #include "siann/host/juce_audio_device.hpp"
 #endif
+#include "siann/media/audio.hpp"
+#include "support/peaks_fixtures.hpp"
 #include "support/piped_process.hpp"
 #include "support/ws_clients.hpp"
 
@@ -1950,4 +1953,76 @@ TEST_CASE("a document naming an unknown uid and a real library never opens it", 
     CHECK(stopEngine(child) == 0);
     const std::string text = fs::exists(marker) ? io::readFile(marker) : std::string();
     CHECK(text.find("siann-unscanned-copy") == std::string::npos);
+}
+
+// ---- peak pyramids over HTTP (m5-timeline; spec, Protocol v0 item 23) ----
+
+namespace {
+
+ix::HttpResponsePtr peaksGet(std::uint16_t port, const std::string& hex, const std::optional<std::string>& token,
+                             const std::string& method = "GET") {
+    ix::HttpClient client;
+    auto args = client.createRequest();
+    args->connectTimeout = 10;
+    args->transferTimeout = 10;
+    args->extraHeaders["Origin"] = std::string(protocol::kAppOrigin);
+    if (token) {
+        args->extraHeaders["Authorization"] = "Bearer " + *token;
+    }
+    const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/v0/peaks/" + hex;
+    if (method == "OPTIONS") {
+        args->extraHeaders["Access-Control-Request-Method"] = "GET";
+        args->extraHeaders["Access-Control-Request-Headers"] = "authorization";
+        return client.request(url, "OPTIONS", "", args);
+    }
+    return client.get(url, args);
+}
+
+}  // namespace
+
+TEST_CASE("siann-engine serves a media file's peak pyramid over HTTP, computed on its jobs worker",
+          "[engine][launch][peaks]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    std::string hex;
+    {
+        session::Session s =
+            session::Session::create(bundle, model::Document::create("Song", 48'000), "test", "2026-11-10T00:00:00Z");
+        const fs::path wav = dir.path() / "square.wav";
+        io::writeFileAtomic(wav, media::encodeWavFloat32(media::testing::fixtureSignal(
+                                     media::testing::peaksFixture("square-mono"))));
+        hex = session::importMedia(s, wav, "med_sq", "test", "2026-11-10T00:00:00Z").storedFile.stem().string();
+    }
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    const auto port = static_cast<std::uint16_t>(at(ready, "port").asNumber());
+    const std::string token = at(ready, "token").asString();
+
+    CHECK(peaksGet(port, hex, std::nullopt)->statusCode == 401);
+    CHECK(peaksGet(port, std::string(64, 'c'), token)->statusCode == 404);
+    const auto preflight = peaksGet(port, hex, std::nullopt, "OPTIONS");
+    CHECK(preflight->statusCode == 204);
+    CHECK(preflight->headers["Access-Control-Allow-Origin"] == std::string(protocol::kAppOrigin));
+
+    const auto first = peaksGet(port, hex, token);
+    CHECK(first->statusCode == 202);
+    CHECK(at(at(json::parse(first->body), "error"), "code").asString() == "peaks_pending");
+    // The worker computes it off the command thread; each poll is one request, bounded.
+    ix::HttpResponsePtr served;
+    for (int i = 0; i < 2'000; ++i) {
+        served = peaksGet(port, hex, token);
+        if (served->statusCode != 202) {
+            break;
+        }
+    }
+    REQUIRE(served->statusCode == 200);
+    CHECK(served->headers["Content-Type"] == "application/octet-stream");
+    CHECK(served->body == media::testing::peaksFixtureBytes("square-mono"));
+    CHECK(io::readFile(bundle / "peaks" / (hex + ".peaks")) == served->body);
+    {
+        EngineClient client(ready);
+        CHECK(at(at(client.ok("engine.capabilities"), "features"), "peaks").asBool());
+    }
+    CHECK(stopEngine(child) == 0);
 }

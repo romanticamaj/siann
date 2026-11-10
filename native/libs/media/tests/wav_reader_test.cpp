@@ -152,6 +152,98 @@ TEST_CASE("16-bit PCM streams to exact floats", "[media][stream]") {
     }
 }
 
+TEST_CASE("A data chunk claiming more bytes than the file holds is clamped to the file", "[media][stream]") {
+    // 16-bit stereo: 4 bytes a frame. The file holds 10 whole frames and half
+    // of an eleventh, but its data chunk claims nearly 2 GB.
+    TempDir dir;
+    std::string wav = "RIFF";
+    const auto putU32 = [&](std::uint32_t v) {
+        for (int b = 0; b < 4; ++b) {
+            wav.push_back(static_cast<char>((v >> (8 * b)) & 0xFF));
+        }
+    };
+    const auto putU16 = [&](std::uint16_t v) {
+        wav.push_back(static_cast<char>(v & 0xFF));
+        wav.push_back(static_cast<char>(v >> 8));
+    };
+    putU32(0x7FFF'FFF0u);
+    wav += "WAVEfmt ";
+    putU32(16);
+    putU16(1);
+    putU16(2);
+    putU32(48'000);
+    putU32(192'000);
+    putU16(4);
+    putU16(16);
+    wav += "data";
+    putU32(0x7FFF'FF00u);
+    for (int i = 0; i < 10 * 2; ++i) {
+        putU16(static_cast<std::uint16_t>(8'192));
+    }
+    putU16(static_cast<std::uint16_t>(8'192));
+    const fs::path file = dir.path() / "lying.wav";
+    writeBytes(file, wav);
+
+    WavFileReader reader(file);
+    CHECK(reader.info().channels == 2);
+    CHECK(reader.info().frames == 10);
+    Planar dest(2, 64);
+    CHECK(reader.read(0, dest.view()) == 10);
+    CHECK(dest.data[1][9] == 0.25f);
+    CHECK(dest.data[1][10] == 0.0f);
+}
+
+TEST_CASE("An RF64 sample count beyond what the data chunk holds is clamped to the data", "[media][stream]") {
+    // dr_wav takes an RF64 file's length from the ds64 sample count, unchecked
+    // against the data; this one claims 2^40 frames over 10 frames of data.
+    TempDir dir;
+    std::string wav = "RF64";
+    const auto putU64 = [&](std::uint64_t v) {
+        for (int b = 0; b < 8; ++b) {
+            wav.push_back(static_cast<char>((v >> (8 * b)) & 0xFF));
+        }
+    };
+    const auto putU32 = [&](std::uint32_t v) {
+        for (int b = 0; b < 4; ++b) {
+            wav.push_back(static_cast<char>((v >> (8 * b)) & 0xFF));
+        }
+    };
+    const auto putU16 = [&](std::uint16_t v) {
+        wav.push_back(static_cast<char>(v & 0xFF));
+        wav.push_back(static_cast<char>(v >> 8));
+    };
+    constexpr std::uint32_t dataBytes = 10 * 4;
+    putU32(0xFFFF'FFFFu);
+    wav += "WAVEds64";
+    putU32(28);
+    putU64(4 + 36 + 24 + 8 + dataBytes);
+    putU64(dataBytes);
+    putU64(std::uint64_t{1} << 40);
+    putU32(0);
+    wav += "fmt ";
+    putU32(16);
+    putU16(1);
+    putU16(2);
+    putU32(48'000);
+    putU32(192'000);
+    putU16(4);
+    putU16(16);
+    wav += "data";
+    putU32(0xFFFF'FFFFu);
+    for (int i = 0; i < 10 * 2; ++i) {
+        putU16(static_cast<std::uint16_t>(8'192));
+    }
+    const fs::path file = dir.path() / "lying.rf64.wav";
+    writeBytes(file, wav);
+
+    WavFileReader reader(file);
+    CHECK(reader.info().channels == 2);
+    CHECK(reader.info().frames == 10);
+    Planar dest(2, 64);
+    CHECK(reader.read(0, dest.view()) == 10);
+    CHECK(dest.data[0][9] == 0.25f);
+}
+
 TEST_CASE("Non-ASCII paths and bad files", "[media][stream]") {
     TempDir dir;
     const fs::path unicode = dir.path() / fs::path(u8"聲.wav");
