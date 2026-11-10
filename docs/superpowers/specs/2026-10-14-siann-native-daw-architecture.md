@@ -445,6 +445,11 @@ published graph, the map from entity ID to slot, and the overlay of values held 
 open gestures; after every graph publication it re-sends the overlay with the new
 epoch, so a fader drag continues across a recompile. When `paramInbox` is full it
 keeps only the latest value per (slot, param) and retries on its next tick.
+M5 (m5-mixer): protocol gestures do not come from the protocol thread yet.
+`gesture.update` runs on the command thread like every protocol method, so the
+command thread is the producer that puts a gesture's values on `controlInbox`
+(`PlaybackEngine::updateGesture`); a direct path from the protocol thread is a
+follow-up ("Gestures", M5 amendments).
 
 Continuous gestures (fader drags, knob turns, Touch/Latch automation) use the
 parameter channel for every intermediate value. The command layer records only the
@@ -534,7 +539,7 @@ gesture boundaries (see "Gestures").
 | `retireOutbox` | audio → command | SPSC, capacity 1 | retired `PreparedGraph*` + epoch | cannot overflow: one transition in flight |
 | `paramInbox` | dispatcher → audio | SPSC | `ParamChange` | dispatcher coalesces per (slot, param) and retries |
 | `transportInbox` | dispatcher → audio | SPSC | `TransportCommand{generation, position, play}` | bounded; the dispatcher keeps the latest locate pending and retries on its next tick |
-| `controlInbox` | protocol, main, command, butler → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate, seek-ready | bounded; never waited on: coalesce per key or reply `queue_full` |
+| `controlInbox` | protocol (M5: none yet, gestures arrive from command), main, command, butler → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate, seek-ready | bounded; never waited on: coalesce per key or reply `queue_full` |
 | `commandInbox` | protocol, main, compiler, butler, dispatcher → command | MPSC, mutex | requests, completions, gesture commits | bounded; never waited on: reply `queue_full`; gesture commits are coalesced per target |
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
 | `diskRing[track][2]` | butler → audio | two SPSC rings per playing track: the current and the pending slot | audio frames of one seek generation per slot | underrun outputs silence and counts a disk underrun (not an xrun) |
@@ -2000,7 +2005,13 @@ Consistency rules:
 - Channels are separated by priority: commands and events (reliable, ordered);
   gestures (parameter channel, latest wins per target); meters and playhead (binary,
   latest wins, dropped when the socket is congested). Meters never queue behind
-  commands.
+  commands. M5 (m5-mixer): the protocol has one command socket, and `gesture.update`
+  rides it as an ordinary request, reliable and ordered with commands through the
+  request inbox and the command thread (a full inbox answers `queue_full`); nothing
+  is coalesced per target on the server. Latest wins is the client's coalescing, at
+  most one `gesture.update` in flight per target (`docs/schemas/protocol-gestures-v0.md`,
+  "Client rules"). A separate priority lane for gestures is a follow-up ("Gestures",
+  M5 amendments).
 - Playhead position is sent with engine timestamps; the UI interpolates.
 - The UI is optimistic only for continuous gestures; structural edits wait for the
   engine's revision.
