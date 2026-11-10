@@ -1148,6 +1148,42 @@ TEST_CASE("clap editor: request_resize resizes the window", "[juce][clap][editor
     CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
 }
 
+TEST_CASE("clap editor: request_resize from another thread resizes the window", "[juce][clap][editor]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ClapEditorRig rig;
+    auto instance = rig.load();
+    instance->control().openEditor({});
+    REQUIRE(rig.factory.record.width == 320);
+    // The plugin asks from a thread of its own: the host keeps the size for the main thread.
+    const int worker = parameterIndex(*instance, "editorSizeWorker");
+    instance->control().setParameter(worker, 1.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 480 && rig.factory.record.height == 300; }));
+    instance->control().setParameter(worker, 0.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 320 && rig.factory.record.height == 200; }));
+    CHECK(instance->control().editorOpen());
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
+}
+
+TEST_CASE("clap editor: resize_hints_changed resizes the window to the plugin's size", "[juce][clap][editor]") {
+    if (!displayAvailable()) {
+        SKIP("no display: set DISPLAY or run under xvfb-run");
+    }
+    ClapEditorRig rig;
+    auto instance = rig.load();
+    instance->control().openEditor({});
+    REQUIRE(rig.factory.record.width == 320);
+    // The plugin never asks request_resize here: the host reads get_size again.
+    const int hints = parameterIndex(*instance, "editorSizeHints");
+    instance->control().setParameter(hints, 1.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 480 && rig.factory.record.height == 300; }));
+    instance->control().setParameter(hints, 0.0);
+    REQUIRE(rig.runUntil([&] { return rig.factory.record.width == 320 && rig.factory.record.height == 200; }));
+    CHECK(instance->control().editorOpen());
+    CHECK(instance->control().getParameter(parameterIndex(*instance, "wrongThread")) < 0.5);
+}
+
 #if defined(_WIN32)
 TEST_CASE("clap editor: the window's close button closes it", "[juce][clap][editor]") {
     ClapEditorRig rig;

@@ -42,7 +42,11 @@
 // X11; no gui extension otherwise). The view is a flat colour of 320 x 200, or 480 x
 // 300 with "editorSize" on: a change of it is serviced in on_main_thread, which
 // resizes the view and asks the host's request_resize, as a plugin's own resize
-// does. Every gui call checks it is on the main thread ("wrongThread").
+// does. "editorSizeHints" makes the same change, told through resize_hints_changed
+// instead (the host must read get_size again), and "editorSizeWorker" through a
+// request_resize from a thread of the plugin's own, joined before on_main_thread
+// returns (the host must take it off the main thread). Every gui call checks it is
+// on the main thread ("wrongThread").
 //
 // Parameter ids are neither indices nor sorted, so a host that takes one for the
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
@@ -73,6 +77,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <thread>
 
 #include "siann_test_plugin_gui.hpp"
 
@@ -121,6 +126,8 @@ enum Parameter : std::uint32_t {
     paramConcurrentProcess,
     paramMidiSysex,
     paramEditorSize,
+    paramEditorSizeHints,
+    paramEditorSizeWorker,
     parameterCount,
 };
 
@@ -128,7 +135,7 @@ constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
     "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess", "midiSysex",
-    "editorSize",
+    "editorSize", "editorSizeHints", "editorSizeWorker",
 };
 
 constexpr std::uint32_t smallEditorWidth = 320;
@@ -189,6 +196,7 @@ struct TestPlugin {
     std::atomic<bool> rescanRequested{false};
     std::atomic<bool> nudgeOutPending{false};
     std::atomic<bool> resizeRequested{false};
+    std::atomic<Parameter> resizeVia{paramEditorSize};  // which of the three asked
 
     // The editor, main thread only.
     bool guiCreated = false;
@@ -204,8 +212,9 @@ struct TestPlugin {
 
     std::uint32_t wantedDelay() const { return on(paramLatency) ? longLatency : shortLatency; }
 
-    std::uint32_t editorWidth() const { return on(paramEditorSize) ? largeEditorWidth : smallEditorWidth; }
-    std::uint32_t editorHeight() const { return on(paramEditorSize) ? largeEditorHeight : smallEditorHeight; }
+    bool largeEditor() const { return on(paramEditorSize) || on(paramEditorSizeHints) || on(paramEditorSizeWorker); }
+    std::uint32_t editorWidth() const { return largeEditor() ? largeEditorWidth : smallEditorWidth; }
+    std::uint32_t editorHeight() const { return largeEditor() ? largeEditorHeight : smallEditorHeight; }
 
     void mustBeMainThread() {
         if (hostThreads == nullptr || !hostThreads->is_main_thread(host)) {
@@ -274,6 +283,9 @@ struct TestPlugin {
                 }
                 break;
             case paramEditorSize:
+            case paramEditorSizeHints:
+            case paramEditorSizeWorker:
+                resizeVia.store(static_cast<Parameter>(index));
                 resizeRequested.store(true);
                 host->request_callback(host);
                 break;
@@ -861,7 +873,21 @@ void pluginOnMainThread(const clap_plugin_t* plugin) {
     if (test.resizeRequested.exchange(false) && test.view != nullptr) {
         siann_test_plugin_gui::resizeView(test.view, test.editorWidth(), test.editorHeight());
         if (test.hostGui != nullptr) {
-            test.hostGui->request_resize(test.host, test.editorWidth(), test.editorHeight());
+            const auto width = test.editorWidth();
+            const auto height = test.editorHeight();
+            switch (test.resizeVia.load()) {
+                case paramEditorSizeHints:
+                    test.hostGui->resize_hints_changed(test.host);
+                    break;
+                case paramEditorSizeWorker: {
+                    std::thread worker([&] { test.hostGui->request_resize(test.host, width, height); });
+                    worker.join();
+                    break;
+                }
+                default:
+                    test.hostGui->request_resize(test.host, width, height);
+                    break;
+            }
         }
     }
 #else

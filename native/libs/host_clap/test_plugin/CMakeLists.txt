@@ -2,7 +2,9 @@
 # against the SDK, so it builds with no JUCE in every preset. Never installed: the
 # tests use the build artefact's path, which the target's SIANN_PLUGIN_FILE names.
 add_library(siann_test_plugin_CLAP MODULE siann_test_plugin_clap.cpp siann_test_plugin_gui.cpp)
-target_link_libraries(siann_test_plugin_CLAP PRIVATE siann_third_party_clap)
+# Threads: "editorSizeWorker" asks for a resize from a thread of the plugin's own.
+find_package(Threads REQUIRED)
+target_link_libraries(siann_test_plugin_CLAP PRIVATE siann_third_party_clap Threads::Threads)
 target_compile_features(siann_test_plugin_CLAP PRIVATE cxx_std_20)
 siann_apply_compile_options(siann_test_plugin_CLAP)
 # The editor's view (m5-clap-editor-window), drawn with the platform's own API. On

@@ -332,9 +332,12 @@ TEST_CASE("clap host: parameters are listed and normalized", "[clap][plugin]") {
     instance->control().setParameter(gain, 2.0);
     CHECK(instance->control().getParameter(gain) == Approx(1.0));
 
-    // The 21 probes and settings of M4, and "editorSize" (m5-clap-editor-window).
-    CHECK(parameters.size() == 22);
-    CHECK(parameters[static_cast<std::size_t>(parameterIndex(*instance, "editorSize"))].defaultValue == Approx(0.0));
+    // The 21 probes and settings of M4, and "editorSize", "editorSizeHints" and
+    // "editorSizeWorker" (m5-clap-editor-window).
+    CHECK(parameters.size() == 24);
+    for (const char* name : {"editorSize", "editorSizeHints", "editorSizeWorker"}) {
+        CHECK(parameters[static_cast<std::size_t>(parameterIndex(*instance, name))].defaultValue == Approx(0.0));
+    }
 
     const int beyond = static_cast<int>(parameters.size());
     requireError("bad_parameter", [&] { instance->control().getParameter(beyond); });
