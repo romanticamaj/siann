@@ -38,6 +38,8 @@ test('the desktop job runs the editor-ownership test against its JUCE engine, no
   assert.ok(job, 'a job builds with JUCE');
   assert.match(job.text, /SIANN_DESKTOP_ENGINE_EXE=/);
   assert.match(job.text, /SIANN_TEST_PLUGIN=/);
+  // m5-clap-editor-window: the CLAP case of editor.spec.ts runs too.
+  assert.match(job.text, /SIANN_TEST_PLUGIN_CLAP=/);
   assert.match(job.text, /playwright test editor\.spec\.ts/);
 });
 

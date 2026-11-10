@@ -198,8 +198,11 @@ jobs:
         run: |
           exe=$(find native/build/desktop -type f -name siann-engine.exe | head -n 1)
           plugin=$(find native/build/desktop -type d -name siann_test_plugin.vst3 | head -n 1)
-          test -n "$exe" && test -n "$plugin"
+          # The CLAP editor case (m5-clap-editor-window): siann_test_plugin's CLAP, a file on Windows.
+          clap=$(find native/build/desktop -type f -name siann_test_plugin.clap | head -n 1)
+          test -n "$exe" && test -n "$plugin" && test -n "$clap"
           export SIANN_DESKTOP_ENGINE_EXE="$GITHUB_WORKSPACE/$exe" SIANN_TEST_PLUGIN="$GITHUB_WORKSPACE/$plugin"
+          export SIANN_TEST_PLUGIN_CLAP="$GITHUB_WORKSPACE/$clap"
           cd app
           # install.js below downloads Electron with retries; npm ci would try once.
           ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
