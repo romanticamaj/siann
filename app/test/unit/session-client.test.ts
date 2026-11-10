@@ -583,3 +583,69 @@ test('(13) a resync drops an ended gesture whose commit it never saw; a held one
   assert.equal(model.getView().gesture, null);
   assert.equal(shownGain(), gainIn(step1.document));
 });
+
+test('(14) a gap that swallows session.opened adopts the event sessionId and syncs the new session', async () => {
+  const r = rig();
+  const socket = await synced(r);
+  const NEW = 'ses_0000000000000bee';
+  // session.open at seq 8: its session.opened is dropped from the outbox, so
+  // the client still names the old session when the next event arrives.
+  r.script.sessionId = NEW;
+  r.script.sync = chunksOf(seq.base.document, 'r3', '8', seq.base.documentHash);
+  socket.deliver({ ...event(1), seq: '9', sessionId: NEW, revision: 'r4', documentHash: seq.base.documentHash, changedIds: [] });
+  await until(() => r.client.getState().lastSeq === '9', 'the sync of the new session and then the event');
+  assert.equal(r.client.getState().sessionId, NEW);
+  assert.equal(r.client.getState().syncCount, 2);
+  assert.equal(r.client.getState().error, null);
+  const syncs = socket.requests('session.sync');
+  assert.ok(syncs.slice(4).length > 0 && syncs.slice(4).every((m) => m.sessionId === NEW), 'the gap sync names the new session');
+  assert.equal(r.scheduler.pending().length, 0, 'no retry of a stale sync');
+  // Later events and requests belong to the new session.
+  socket.deliver({ ...event(1), seq: '10', sessionId: NEW, revision: 'r5', documentHash: seq.base.documentHash, changedIds: [] });
+  await until(() => r.client.getState().lastSeq === '10', 'the next event');
+  const status = r.client.request('engine.status', {});
+  const sent = socket.sent[socket.sent.length - 1]!;
+  assert.equal(sent.sessionId, NEW);
+  socket.deliver({ requestId: sent.requestId, ok: true, result: { device: null } });
+  assert.deepEqual(await status, { device: null });
+});
+
+test('(15) a sync answering session_mismatch re-authenticates for the current session instead of retrying the stale id', async () => {
+  const r = rig({ failSyncs: 1 });
+  const first = await connected(r);
+  await until(() => r.scheduler.pending().length === 1, 'the scheduled retry');
+  // The server switched sessions and no event told the client.
+  const NEW = 'ses_0000000000000bee';
+  r.script.sessionId = NEW;
+  r.script.sync = chunksOf(seq.base.document, 'r3', '8', seq.base.documentHash);
+  r.scheduler.fire(250);
+  await until(() => r.sockets.length === 2, 'the re-authentication');
+  assert.equal(first.closedByClient, true);
+  assert.equal(first.requests('session.sync').filter((m) => m.sessionId === SESSION).length, 2, 'the stale id is sent once more, never again');
+  r.last().onopen?.();
+  await until(() => r.client.model.getSnapshot() !== null, 'the sync of the current session');
+  assert.equal(r.client.getState().sessionId, NEW);
+  assert.equal(r.client.getState().lastSeq, '8');
+  assert.equal(r.client.getState().error, null);
+  assert.ok(r.last().requests('session.sync').every((m) => m.sessionId === NEW));
+  assert.equal(r.scheduler.pending().length, 0);
+});
+
+test('(16) a request answering session_mismatch rejects with it and re-authenticates, so later requests name the current session', async () => {
+  const r = rig();
+  const first = await synced(r);
+  const NEW = 'ses_0000000000000bee';
+  r.script.sessionId = NEW;
+  r.script.sync = chunksOf(seq.base.document, 'r3', '8', seq.base.documentHash);
+  r.script.other = (message) => (message.method === 'engine.status' ? { ok: true, result: { device: null } } : null);
+  // The command was meant for the old session: it is not resent to the new one.
+  await assert.rejects(r.client.request('engine.status', {}), (e: unknown) => e instanceof ProtocolError && e.code === 'session_mismatch');
+  await until(() => r.sockets.length === 2, 'the re-authentication');
+  assert.equal(first.closedByClient, true);
+  r.last().onopen?.();
+  await until(() => r.client.getState().syncCount === 2, 'the sync of the current session');
+  assert.equal(r.client.getState().sessionId, NEW);
+  const status = r.client.request('engine.status', {});
+  assert.equal(r.last().sent[r.last().sent.length - 1]!.sessionId, NEW);
+  assert.deepEqual(await status, { device: null });
+});
