@@ -395,6 +395,7 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
         serverOptions.mcpScope = options.mcpTrusted ? protocol::McpScope::trusted : protocol::McpScope::propose;
         serverOptions.transportPort = &host;
         serverOptions.pluginPort = &host;
+        serverOptions.gesturePort = &host;
         serverOptions.auditionPort = host.auditionPort();
         // The new bundle is opened (and locked) first, so a refusal changes nothing;
         // the old one is released once the host plays the new one.

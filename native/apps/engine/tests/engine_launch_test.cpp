@@ -280,7 +280,7 @@ public:
     }
 
     Value call(const std::string& method, Value params = Value(Object{})) {
-        return ws_.call(jcs::canonicalize(Value(Object{{"requestId", Value("req_" + std::to_string(++next_))},
+        return ws_.call(jcs::canonicalize(Value(Object{{"requestId", Value(prefix_ + std::to_string(++next_))},
                                                        {"sessionId", Value(sessionId_)},
                                                        {"method", Value(method)},
                                                        {"params", std::move(params)}})));
@@ -288,7 +288,7 @@ public:
 
     // A request whose reply may never come (the engine can end first).
     void send(const std::string& method, Value params = Value(Object{})) {
-        ws_.send(jcs::canonicalize(Value(Object{{"requestId", Value("req_" + std::to_string(++next_))},
+        ws_.send(jcs::canonicalize(Value(Object{{"requestId", Value(prefix_ + std::to_string(++next_))},
                                                 {"sessionId", Value(sessionId_)},
                                                 {"method", Value(method)},
                                                 {"params", std::move(params)}})));
@@ -366,7 +366,10 @@ private:
     WsClient ws_;
     RealtimeClient realtime_;
     std::string sessionId_;
+    // Request ids are unique across clients: the server's idempotency cache is shared.
+    std::string prefix_ = "req_" + std::to_string(++clients_) + "_";
     int next_ = 0;
+    static inline int clients_ = 0;
 };
 
 std::uint64_t decimalOf(const Value& status, const char* key) {
