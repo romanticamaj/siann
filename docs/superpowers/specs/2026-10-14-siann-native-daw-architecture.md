@@ -975,8 +975,27 @@ The documented precision is shown to users and agents.
   channels into the audio thread"), so a recompile never snaps a held fader back.
 - A gesture is held under a client lease, not an update timer. Holding a fader still
   is a valid gesture (Touch writes a constant value). The lease ends when the client
-  sends `gesture.end`, cancels, or stops answering the protocol heartbeat; the
-  gesture then commits the last accepted value and emits an event.
+  sends `gesture.end`, cancels, or stops renewing it; the gesture then commits the
+  last accepted value and emits an event.
+
+M5 amendments (m5-mixer, Protocol v0 item 23):
+
+- The `param.set` above is `gesture.update {target, value}`. It runs on the command
+  thread like every protocol method and reaches the control dispatcher through
+  `controlInbox` (`PlaybackEngine::updateGesture`); it is never cached (latest wins)
+  and never creates a revision. A direct path from the protocol thread to
+  `controlInbox`, skipping the command inbox, waits until fader latency through the
+  command thread is noticed (follow-ups).
+- The protocol has no separate heartbeat. Every `gesture.*` request on the target
+  renews its lease, and `gesture.hold {target}` renews it while the fader is held
+  still; a lease not renewed for `leaseMs` expires on the command thread's next
+  pump, and closing the connection that holds it ends it at once. Both commit the
+  last accepted value with the server's actor and publish `gesture.ended`.
+- `gesture.end` still commits one plain `track.set_gain`, `track.set_pan` or
+  `track.set_mute` revision carrying the end value (the M2 interim note under
+  "Status"). The start value is reported in `gesture.end`'s result and in
+  `gesture.ended`, and it is the parent revision's value; recording both values in
+  the journal entry arrives with automation write passes (M6a).
 - Plugin editors have no socket. Their gestures are owned by the plugin instance and
   end on the plugin's end event, on editor close, or on instance destruction. If the
   engine crashes mid-gesture, the session returns to the last durable revision.
@@ -2465,6 +2484,46 @@ is m5-plugin-registry's):
     whose session recovers or is replaced keeps `audition.hear`. Documented in
     docs/schemas/protocol-engine-v0.md.
 
+Protocol v0, fader gestures (decided with m5-mixer; the wire details are in
+`docs/schemas/protocol-gestures-v0.md`):
+
+23. Five methods hold a continuous gesture on a track fader ("Gestures"):
+    `gesture.begin {target}` returns `{target, startValue, leaseMs}`;
+    `gesture.update {target, value}` and `gesture.hold {target}` return `{}`;
+    `gesture.end {target, value?}` returns `{target, startValue, value, revision}`,
+    `revision` being the envelope `command.execute` returns, or null when the gesture
+    never moved; `gesture.cancel {target}` returns `{}` and the sound returns to the
+    document's value. `target` is `{ref: "track:<id>", param: "gain" | "pan" |
+    "mute"}` and `value` a number in the entity's units (milli-dB, pan units, 0 or 1);
+    `gesture.end`'s `value`, when given, is one last update before the end. All five
+    run on the command thread through `ServerOptions::gesturePort`
+    (`protocol::GesturePort`, implemented by the engine host over `PlaybackEngine`
+    as `TransportPort` is); without a port they are `not_supported`. They honour
+    `expectedRevision`. `gesture.begin`, `gesture.end` and `gesture.cancel` are in
+    the idempotency cache; `gesture.update` and `gesture.hold` are not (latest wins,
+    and running one twice changes nothing). Lease: a gesture belongs to the
+    connection that began it; `leaseMs` is `ServerOptions::gestureLeaseMs` (default
+    5000, measured on `ServerOptions::steadyClock`, injected by tests); every
+    `gesture.*` request of the owner on the target renews it. `pump()` ends a lease
+    not renewed for `leaseMs`, and a connection's close ends its gestures at once
+    (the close reaches the command thread through the inbox, after the connection's
+    queued requests), both committing the last accepted value with the server's
+    actor. Every gesture that closes publishes `gesture.ended {target, reason:
+    "ended" | "cancelled" | "lease_expired" | "disconnected", startValue, value,
+    committed}` (`committed` the revision id or null) after the commit's
+    `session.changed`. New stable codes: `gesture_held` (another connection holds
+    the target), `no_gesture` (`update`, `hold`, `end` or `cancel` with no open
+    gesture), `gesture_open` (`begin` while this connection already holds the
+    target). `not_found` (no such track), `invalid_params` (a bad target or value)
+    and the commit's `CommandError` codes (`invalid_gain`, `invalid_pan`, ...) and
+    `audition_not_found` pass through; a commit that fails closes the gesture as
+    cancelled. A gesture commits on the side heard (main, or the auditioned
+    proposal, `PlaybackEngine::setGestureBranch`). `engine.capabilities` lists the
+    five methods and `features.gestures` (whether a port is present). They are not
+    MCP tools: an agent changes a fader through commands and plans. Mute and solo
+    buttons commit through `command.execute` (`track.set_mute`, `track.set_solo`):
+    no gesture, and a solo change recompiles.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -2802,8 +2861,9 @@ plain `track.set_gain`, `track.set_pan` or `track.set_mute` revision carrying
 only the end value. The start value is not recorded in the command: the
 overlay never changes the document mid-gesture, so the start value is the
 value in the parent revision. Recording both values in the
-journal entry, as "Gestures" requires, arrives with the protocol's
-`gesture.end` and automation write passes; other parameters are rejected
+journal entry, as "Gestures" requires, arrives with automation write passes
+(M6a); the protocol's `gesture.end` (Protocol v0 item 23, M5) reports the start
+value in its result and keeps this plain commit; other parameters are rejected
 before a gesture opens, so every open gesture can be ended.
 Duck-and-swap for a structural edit ducks the whole master output in M2, not
 only the affected paths ("Publishing and retiring graphs"): a structural
