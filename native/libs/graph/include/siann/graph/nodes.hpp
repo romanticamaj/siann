@@ -53,6 +53,11 @@ public:
     static constexpr std::uint32_t kGainMilliDb = 1;  // INT32_MIN is minus infinity
     static constexpr std::uint32_t kPan = 2;          // [-10000, 10000]
     static constexpr std::uint32_t kMute = 3;         // 0 or 1: the track's own mute
+    // The gain range of the track entity (model::Gain). setParameter clamps a
+    // gain into it, keeping INT32_MIN (or below) as minus infinity, and clamps
+    // a pan into [-10000, 10000]; a NaN changes nothing.
+    static constexpr std::int32_t kMinGainMilliDb = -144'000;
+    static constexpr std::int32_t kMaxGainMilliDb = 24'000;
 
     // soloSilenced: another track is soloed and this one is not. It silences
     // the fader independently of kMute, so a mute change cannot unsilence it.

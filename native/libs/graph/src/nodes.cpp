@@ -98,10 +98,15 @@ void TrackFaderNode::retarget(int rampFrames) noexcept {
 }
 
 void TrackFaderNode::setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept {
+    if (std::isnan(value)) {
+        return;
+    }
     switch (paramId) {
         case kGainMilliDb:
-            gainMilliDb_ = value <= static_cast<double>(INT32_MIN) ? INT32_MIN
-                                                                   : static_cast<std::int32_t>(std::lround(value));
+            gainMilliDb_ = value <= static_cast<double>(INT32_MIN)
+                               ? INT32_MIN
+                               : static_cast<std::int32_t>(std::lround(std::clamp(
+                                     value, static_cast<double>(kMinGainMilliDb), static_cast<double>(kMaxGainMilliDb))));
             break;
         case kPan:
             pan_ = static_cast<std::int32_t>(std::lround(std::clamp(value, -10'000.0, 10'000.0)));

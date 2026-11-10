@@ -28,8 +28,10 @@ those of Protocol v0; events are those of `protocol-events-v1.md`.
   entity's `gainMilliDb`; `-2147483648` is minus infinity, the fader minimum),
   `pan` from `-10000` to `10000`, `mute` `0` or `1`. A value that is not a number,
   or a mute value other than 0 and 1, is `invalid_params`. A gain or pan out of the
-  entity's range moves the sound as far as the fader allows and is refused by the
-  commit at `gesture.end` (`invalid_gain`, `invalid_pan`).
+  entity's range moves the sound as far as the fader allows (a gain is clamped to
+  `-144000`..`24000`, one at or below `-2147483648` is minus infinity; a pan to
+  `-10000`..`10000`) and is refused by the commit at `gesture.end`
+  (`invalid_gain`, `invalid_pan`).
 
 ## Methods
 
