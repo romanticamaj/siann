@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -356,6 +357,36 @@ TEST_CASE("Track fader pan laws", "[nodes]") {
     const TrackFaderNode muted(2, 0, 0, true);
     CHECK(muted.leftGain() == 0.0f);
     CHECK(muted.rightGain() == 0.0f);
+}
+
+TEST_CASE("Track fader gain is clamped to the model's range, minus infinity kept", "[nodes]") {
+    const float top = gainFromMilliDb(24'000);
+    const float bottom = gainFromMilliDb(-144'000);
+    TrackFaderNode fader(2, 0, 0, false);
+    for (const double value : {24'001.0, 1e6, 3e9, 1e300, std::numeric_limits<double>::infinity()}) {
+        INFO(value);
+        fader.setParameter(TrackFaderNode::kGainMilliDb, value, 0);
+        CHECK(std::isfinite(fader.leftGain()));
+        CHECK(fader.leftGain() == top);
+        CHECK(fader.rightGain() == top);
+    }
+    for (const double value : {-144'001.0, -1e6, static_cast<double>(INT32_MIN) + 1.0}) {
+        INFO(value);
+        fader.setParameter(TrackFaderNode::kGainMilliDb, value, 0);
+        CHECK(fader.leftGain() == bottom);
+    }
+    for (const double value : {static_cast<double>(INT32_MIN), -3e9, -std::numeric_limits<double>::infinity()}) {
+        INFO(value);
+        fader.setParameter(TrackFaderNode::kGainMilliDb, -6'000, 0);
+        fader.setParameter(TrackFaderNode::kGainMilliDb, value, 0);
+        CHECK(fader.leftGain() == 0.0f);
+    }
+    fader.setParameter(TrackFaderNode::kGainMilliDb, -6'000, 0);
+    const float before = fader.leftGain();
+    fader.setParameter(TrackFaderNode::kGainMilliDb, std::numeric_limits<double>::quiet_NaN(), 0);
+    fader.setParameter(TrackFaderNode::kPan, std::numeric_limits<double>::quiet_NaN(), 0);
+    CHECK(fader.leftGain() == before);
+    CHECK(fader.rightGain() == before);
 }
 
 TEST_CASE("Track fader solo silence is not the mute parameter", "[nodes]") {

@@ -348,6 +348,7 @@ TEST_CASE("A fader gesture moves the sound through the parameter channel and end
     const auto frames = static_cast<std::int64_t>(40) * kBlock;
     const auto at6 = offline(withCommand(f.doc(), setGain("trk_a", -6'000)), bundle, frames);
     const auto at3 = offline(withCommand(f.doc(), setGain("trk_a", -3'000)), bundle, frames);
+    const auto atMax = offline(withCommand(f.doc(), setGain("trk_a", 24'000)), bundle, frames);
     const std::size_t before = f.session.history().revisions().size();
 
     {
@@ -365,6 +366,7 @@ TEST_CASE("A fader gesture moves the sound through the parameter channel and end
             p.engine.updateGesture("trk_a", kGain, 30'000.0, 0);  // above +24 dB
             p.engine.tick();
             p.pump(1);
+            CHECK(blocks(p.out[0], 2, 3) == blocks(atMax[0], 2, 3));  // no further than the fader allows
             try {
                 p.engine.endGesture("trk_a", kGain, "user", "t9");
                 FAIL("expected invalid_gain");
@@ -376,6 +378,20 @@ TEST_CASE("A fader gesture moves the sound through the parameter channel and end
             p.pump(1);
             const auto reference = offline(f.doc(), bundle, frames);
             CHECK(blocks(p.out[0], 3, 4) == blocks(reference[0], 3, 4));
+        }
+
+        SECTION("a gain far out of range moves the sound only as far as +24 dB") {
+            p.engine.beginGesture("trk_a", kGain);
+            for (const double value : {1e6, 3e9, 1e300}) {
+                INFO(value);
+                const int from = static_cast<int>(p.out[0].size()) / kBlock;
+                p.engine.updateGesture("trk_a", kGain, value, 0);
+                p.engine.tick();
+                p.pump(1);
+                CHECK(blocks(p.out[0], from, from + 1) == blocks(atMax[0], from, from + 1));
+                CHECK(blocks(p.out[1], from, from + 1) == blocks(atMax[1], from, from + 1));
+            }
+            CHECK(f.session.history().revisions().size() == before);
         }
 
         SECTION("moving and ending commits one revision") {
