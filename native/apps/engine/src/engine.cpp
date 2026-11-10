@@ -1,5 +1,6 @@
 #include "siann/engine_app/engine.hpp"
 
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "device.hpp"
 #include "launch_error.hpp"
@@ -200,6 +202,8 @@ Options parseOptions(const std::vector<std::string>& args) {
 // --device fake: a paced software device with loopback, reporting one buffer of
 // input and output latency, as siann-cli's. Anything else is the build's real
 // device; a build or machine without one leaves deviceError for the host to report.
+// engine.devices lists fake and the build's hardware devices; engine.select_device
+// makes either kind the same way (Protocol v0 item 22).
 EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
     EngineHostOptions chosen;
     chosen.deviceId = options.device.value_or("");
@@ -211,13 +215,28 @@ EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
         err << "siann-engine: " << line << "\n";
         err.flush();
     };
+    host::FakeAudioDevice::Options fake;
+    fake.paced = true;
+    fake.loopback = true;
+    fake.inputLatencyFrames = chosen.bufferFrames;
+    fake.outputLatencyFrames = chosen.bufferFrames;
+    // One budget for every fake handle: a selection makes a new one, and the device
+    // stays held for N opens in all, whichever handle tries.
+    fake.sharedRefusals = std::make_shared<std::atomic<int>>(options.fakeOpenFailures.value_or(0));
+    chosen.listDevices = [] {
+        std::vector<protocol::DeviceDescription> listed{{kFakeDevice, kFakeDevice, kFakeDevice, false, false}};
+        for (protocol::DeviceDescription& one : listHardwareDevices()) {
+            listed.push_back(std::move(one));
+        }
+        return listed;
+    };
+    chosen.deviceFactory = [fake](const std::string& id) -> std::unique_ptr<host::AudioDevice> {
+        if (id == kFakeDevice) {
+            return std::make_unique<host::FakeAudioDevice>(fake);
+        }
+        return hardwareDevice();
+    };
     if (options.device == kFakeDevice) {
-        host::FakeAudioDevice::Options fake;
-        fake.paced = true;
-        fake.loopback = true;
-        fake.inputLatencyFrames = chosen.bufferFrames;
-        fake.outputLatencyFrames = chosen.bufferFrames;
-        fake.refuseOpens = options.fakeOpenFailures.value_or(0);
         chosen.device = std::make_unique<host::FakeAudioDevice>(fake);
         if (options.fakeCallbackNanos) {
             host::setFakeCallbackNanos(*options.fakeCallbackNanos);
@@ -337,9 +356,10 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
     try {
         const Options options = parseOptions(args);
         MainThread mainThread;
-        session::Session served = openOrCreate(options.session);
+        // Stable while served; session.open replaces it (Protocol v0 item 22).
+        auto served = std::make_unique<session::Session>(openOrCreate(options.session));
 
-        EngineHost host(served, hostOptions(options, err));
+        EngineHost host(*served, hostOptions(options, err));
 
         // No pump thread: this thread is the command and control thread.
         protocol::ServerOptions serverOptions;
@@ -351,8 +371,16 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
         serverOptions.transportPort = &host;
         serverOptions.pluginPort = &host;
         serverOptions.auditionPort = host.auditionPort();
+        // The new bundle is opened (and locked) first, so a refusal changes nothing;
+        // the old one is released once the host plays the new one.
+        serverOptions.openSession = [&served, &host](const fs::path& path) -> session::Session& {
+            auto next = std::make_unique<session::Session>(session::Session::open(path));
+            host.rebind(*next);
+            served = std::move(next);
+            return *served;
+        };
         protocol::IxTransport transport;
-        protocol::ProtocolServer server(transport, served, serverOptions);
+        protocol::ProtocolServer server(transport, *served, serverOptions);
         host.attachPublisher(server.realtime(), server.events());
         server.start();
 

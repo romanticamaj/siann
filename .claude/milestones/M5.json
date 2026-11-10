@@ -4,14 +4,15 @@
   "title": "Desktop UI v1",
   "goal": "Arrange and mix by hand in the Electron app, and review and approve an agent plan visually.",
   "specSections": ["Frontend", "siann-protocol", "Plans", "Proposal audition (A/B)", "Process model", "Plugin editor windows", "Milestones"],
-  "status": "not_started",
-  "done": [],
+  "status": "in_progress",
+  "done": ["m5-read-model", "m5-engine-sessions-devices", "m5-plugin-registry"],
   "prerequisites": [
     "M3 (done): protocol and plans. M0 Electron shell: m0-electron-shell is merged (PR #47); M0 itself stays in progress on m0-macos-bundle, which M5 does not need.",
     "docs/harness/follow-ups.md, section Before M5: taken into the wave 1 and 2 features m5-plugin-registry, m5-shell-hardening, m5-engine-sessions-devices and m5-clap-editor-window below (decided by Fable, delegated by the maintainer, 2026-11-09: the hardening is built by the same TDD, verify and land loop as every feature, and the UI features depend on it). The third-party restart test (from PR #62) lands in its own PR beside them and is not a prerequisite."
   ],
   "humanGates": [
-    {"id": "framework-choice", "text": "Choose the frontend framework (React or Svelte) at the start of M5, as the spec requires.", "how": "The plan phase presents a short comparison; the maintainer decides. Needed before m5-read-model and the UI features; the wave 1 hardening features (m5-plugin-registry, m5-shell-hardening, m5-engine-sessions-devices) and m5-clap-editor-window do not need it and can run first as a subset."},
+    {"id": "framework-choice", "text": "Choose the frontend framework (React or Svelte) at the start of M5, as the spec requires.", "how": "The plan phase presents a short comparison; the maintainer decides. Needed before m5-read-model and the UI features; the wave 1 hardening features (m5-plugin-registry, m5-shell-hardening, m5-engine-sessions-devices) and m5-clap-editor-window do not need it and can run first as a subset.",
+     "resolution": "Decided by Fable, delegated by the maintainer, 2026-11-09 (ADR-0019). React 19 with react-dom, bundled by esbuild and type-checked by the existing strict tsc build. The read model stays framework-free TypeScript (immutable snapshots keyed by revision, unit-tested with node --test) that React reads through useSyncExternalStore; timeline, waveform and meter surfaces are imperative Canvas/WebGL classes and no meter value passes through React state. Strongest reasons: agent authoring reliability, a toolchain that fits app/ as it stands, and an external revision-keyed store that matches React's store contract. m5-read-model adds the pinned dependencies; this PR adds none."},
     {"id": "ux-review", "text": "Review timeline, mixer and plan review usability.", "how": "The maintainer uses the app and lists required changes before the exit check."}
   ],
   "features": [

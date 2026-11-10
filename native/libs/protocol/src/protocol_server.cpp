@@ -226,7 +226,7 @@ const std::vector<std::string_view> kMethods = {
     "plan.apply",      "plan.rollback",   "plan.propose",    "proposal.merge",    "proposal.discard",
     "audition.hear",   "render.start",    "job.status",      "transport.play",    "transport.stop",
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
-    "plugin.set_parameter", "plugin.registry", "plugin.approve",
+    "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -338,6 +338,18 @@ Value deviceJson(const std::optional<DeviceInfo>& device) {
                         {"bufferFrames", Value(device->bufferFrames)},
                         {"inputLatencyFrames", Value(device->inputLatencyFrames)},
                         {"outputLatencyFrames", Value(device->outputLatencyFrames)}});
+}
+
+Value devicesJson(const std::vector<DeviceDescription>& devices) {
+    Array out;
+    for (const DeviceDescription& device : devices) {
+        out.push_back(Value(Object{{"id", Value(device.id)},
+                                   {"type", Value(device.type)},
+                                   {"name", Value(device.name)},
+                                   {"isDefault", Value(device.isDefault)},
+                                   {"current", Value(device.current)}}));
+    }
+    return Value(Object{{"devices", Value(std::move(out))}});
 }
 
 Value engineStatusJson(const EngineStatus& status) {
@@ -1317,6 +1329,14 @@ struct ProtocolServer::Impl {
         }
         if (method == "engine.status") {
             return success(request.requestId, engineStatus());
+        }
+        if (method == "engine.devices") {
+            return success(request.requestId, devicesJson(requireTransport().devices()));
+        }
+        if (method == "engine.select_device") {
+            TransportPort& transportPort = requireTransport();
+            const std::string& id = requireString(request.params, "id", method);
+            return success(request.requestId, deviceJson(transportPort.selectDevice(id)));
         }
         if (method == "plugin.instantiate") {
             return pluginInstantiate(request);

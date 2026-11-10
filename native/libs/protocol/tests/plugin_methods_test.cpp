@@ -145,6 +145,8 @@ public:
     protocol::TransportState stop() override { return {}; }
     protocol::TransportState locate(std::int64_t) override { return {}; }
     protocol::EngineStatus status() const override { return {}; }
+    std::vector<protocol::DeviceDescription> devices() const override { return {}; }
+    protocol::DeviceInfo selectDevice(const std::string&) override { return {}; }
 };
 
 ServerOptions withPort(PluginPort& port) {

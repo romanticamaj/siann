@@ -187,9 +187,10 @@ inline std::optional<ReadyState> waitForReady(const std::filesystem::path& file,
     return std::nullopt;
 }
 
-// The committed media file of a recorded take (clip "clp_<takeId>").
-inline std::filesystem::path takeMediaFile(const std::filesystem::path& bundle, const std::string& takeId) {
-    const session::Session s = session::Session::open(bundle);
+// The committed media file of a recorded take (clip "clp_<takeId>"), from a
+// session the caller holds open (a second open of the bundle is session_locked).
+inline std::filesystem::path takeMediaFile(const session::Session& s, const std::string& takeId) {
+    const std::filesystem::path& bundle = s.bundlePath();
     const model::Document& doc = s.history().head().document;
     const model::Clip* clip = doc.clip("clp_" + takeId);
     if (clip == nullptr) {
@@ -200,6 +201,11 @@ inline std::filesystem::path takeMediaFile(const std::filesystem::path& bundle, 
         throw std::runtime_error("no media for take " + takeId);
     }
     return session::mediaPath(bundle, media->contentHash, media->format);
+}
+
+inline std::filesystem::path takeMediaFile(const std::filesystem::path& bundle, const std::string& takeId) {
+    const session::Session s = session::Session::open(bundle);
+    return takeMediaFile(s, takeId);
 }
 
 // What checkCounterWav found in a float WAV recorded from the counter input.
