@@ -178,6 +178,24 @@ Deferred:
   after spawn. Measure engine ready time with and without it on `siann-macos`; it
   becomes a feature only if the cost is over 100 ms.
 
+## Before M6a: fader gestures (from m5-mixer)
+
+1. `gesture.update` reaches the control dispatcher through the command inbox and
+   the command thread (Protocol v0 item 23). If fader latency through that path is
+   noticed, hand `param.set` from the protocol thread straight to `controlInbox`,
+   keeping the lease checks on the command thread.
+2. Multi-touch gestures: the renderer's `ReadModel` holds one gesture overlay and
+   the `GestureController` one gesture, so two faders cannot move at once (the
+   server's lease table already keys by target).
+3. Record the start value next to the end value in the journal entry of a
+   gesture's commit, with automation write passes (spec, "Gestures", M5
+   amendments); `gesture.end` and `gesture.ended` report it until then.
+4. The fake device meters only while the transport plays (frames carry no entries
+   while stopped); the mixer's meters e2e test plays the transport. Decide whether a
+   stopped engine should still meter its inputs once input monitoring arrives.
+5. A realtime socket the engine closes on its own while the command socket stays
+   open is reopened at the session client's next state change, not at once.
+
 ## Before M6b: recording (from PR #46)
 
 1. Make an early end unmissable: add `endedBy: "seconds" | "overflow" | "interrupt"`
