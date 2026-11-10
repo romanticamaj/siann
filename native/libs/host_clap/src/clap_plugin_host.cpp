@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "clap_library.hpp"
+#include "siann/host/editor_window.hpp"
 #include "siann/host/state_envelope.hpp"
 
 namespace fs = std::filesystem;
@@ -43,6 +44,34 @@ constexpr std::int64_t minimumAudioWindowNanos = 50'000'000;
 constexpr const char* hostName = "SIANN";
 constexpr const char* hostVersion = "0.1.0";
 
+// The window API an editor embeds with: what the platform's EditorWindow handle is.
+#if defined(_WIN32)
+constexpr const char* platformWindowApi = CLAP_WINDOW_API_WIN32;
+#elif defined(__APPLE__)
+constexpr const char* platformWindowApi = CLAP_WINDOW_API_COCOA;
+#else
+constexpr const char* platformWindowApi = CLAP_WINDOW_API_X11;
+#endif
+
+clap_window_t platformWindow(std::uintptr_t handle) {
+    clap_window_t window{};
+    window.api = platformWindowApi;
+#if defined(_WIN32)
+    window.win32 = reinterpret_cast<clap_hwnd>(handle);
+#elif defined(__APPLE__)
+    window.cocoa = reinterpret_cast<clap_nsview>(handle);
+#else
+    window.x11 = static_cast<clap_xwnd>(handle);
+#endif
+    return window;
+}
+
+// Whether a plugin's gui extension embeds with the platform's API. Main thread; may
+// throw what the plugin throws.
+bool embedsOnPlatform(const clap_plugin_t* plugin, const clap_plugin_gui_t* gui) {
+    return gui != nullptr && gui->is_api_supported(plugin, platformWindowApi, false);
+}
+
 // Plugins ask this during calls CLAP calls [audio-thread], which is symbolic: the
 // main thread is one too, while it holds the audio thread out.
 thread_local int tAudioScope = 0;
@@ -65,6 +94,9 @@ class ClapInstance;
 // What a host and its instances share, so an instance may outlive the host.
 struct HostShared {
     std::thread::id mainThread = std::this_thread::get_id();
+    // Makes the windows editors embed into; null in the headless target. Its owner
+    // keeps it for as long as instances live (the engine's PluginHostSet does).
+    EditorWindowFactory* editorWindows = nullptr;
     std::vector<ClapInstance*> instances;
     std::vector<std::unique_ptr<std::function<void()>>> wakeHandlers;
     std::atomic<const std::function<void()>*> wakeHandler{nullptr};
@@ -135,6 +167,7 @@ public:
     ~ClapInstance() override {
         auto& instances = shared_->instances;
         instances.erase(std::remove(instances.begin(), instances.end(), this), instances.end());
+        closeEditor();  // the plugin's view goes before its window, the window before the plugin
         try {
             deactivate();
         } catch (...) {
@@ -218,6 +251,7 @@ public:
             if (callbackRequested_.exchange(false)) {
                 plugin_->on_main_thread(plugin_);
             }
+            serviceEditor();
             // While blocks are coming the next one delivers this; a pause would drop it dry.
             if (flushRequested_.load() && !blocksComing()) {
                 const ProcessingPause pause(*this);
@@ -302,6 +336,11 @@ private:
         static constexpr clap_host_tail_t tail = {hostTailChanged};
         static constexpr clap_host_params_t params = {hostParamsRescan, hostParamsClear, hostParamsRequestFlush};
         static constexpr clap_host_state_t state = {hostStateMarkDirty};
+        static constexpr clap_host_gui_t gui = {hostGuiResizeHintsChanged, hostGuiRequestResize, hostGuiRequestShow,
+                                                hostGuiRequestHide, hostGuiClosed};
+        if (std::strcmp(id, CLAP_EXT_GUI) == 0) {
+            return &gui;
+        }
         if (std::strcmp(id, CLAP_EXT_THREAD_CHECK) == 0) {
             return &threadCheck;
         }
@@ -386,6 +425,51 @@ private:
     // Nothing to do: the session asks for state when it saves.
     static void hostStateMarkDirty(const clap_host_t*) {}
 
+    // clap.gui's host side, [thread-safe]: on the main thread a resize applies at
+    // once (it calls no plugin code); everything else is a flag honoured in
+    // serviceEditor, after the plugin call in flight returns.
+    static void hostGuiResizeHintsChanged(const clap_host_t* host) {
+        auto& self = from(host);
+        self.editorResizeStale_.store(true);
+        self.shared_->wake();
+    }
+
+    static bool hostGuiRequestResize(const clap_host_t* host, std::uint32_t width, std::uint32_t height) {
+        auto& self = from(host);
+        if (hostIsMainThread(host)) {
+            if (self.window_ == nullptr) {
+                return false;
+            }
+            self.window_->setContentSize(static_cast<int>(width), static_cast<int>(height));
+            return true;
+        }
+        self.requestedSize_.store((static_cast<std::uint64_t>(width) << 32) | height);
+        self.shared_->wake();
+        return true;
+    }
+
+    static bool hostGuiRequestShow(const clap_host_t* host) {
+        auto& self = from(host);
+        self.editorVisibility_.store(1);
+        self.shared_->wake();
+        return true;
+    }
+
+    static bool hostGuiRequestHide(const clap_host_t* host) {
+        auto& self = from(host);
+        self.editorVisibility_.store(0);
+        self.shared_->wake();
+        return true;
+    }
+
+    // Lost or closed, the gui is destroyed and its window goes: closeEditor's destroy
+    // is the acknowledgement CLAP asks for when was_destroyed is true.
+    static void hostGuiClosed(const clap_host_t* host, bool) {
+        auto& self = from(host);
+        self.editorClosedByPlugin_.store(true);
+        self.shared_->wake();
+    }
+
     static std::uint32_t inputEventsSize(const clap_input_events_t* list) {
         return static_cast<ClapInstance*>(list->ctx)->eventCount_;
     }
@@ -438,7 +522,9 @@ private:
         capabilities_.variableLatency = true;           // any plugin can restart with another
         capabilities_.midiInput = notePorts != nullptr && notePorts->count(plugin_, true) > 0;
         capabilities_.midiOutput = notePorts != nullptr && notePorts->count(plugin_, false) > 0;
-        capabilities_.editor = plugin_->get_extension(plugin_, CLAP_EXT_GUI) != nullptr;
+        gui_ = extension<clap_plugin_gui_t>(CLAP_EXT_GUI);
+        // A window to embed into, and a gui that embeds with the platform's API.
+        capabilities_.editor = shared_->editorWindows != nullptr && embedsOnPlatform(plugin_, gui_);
     }
 
     // Buffers for each port, and one flat array of channel pointers behind them. Ports
@@ -907,15 +993,112 @@ private:
         shared_->wake();
     }
 
-    void openEditor(EditorOwner) override {
-        throw PluginError("editor_failed", "CLAP editors need a window from the desktop target");
+    // Main thread. The gui extension embeds into a window the factory makes; every
+    // plugin call is inside the boundary, and a plugin that throws or refuses leaves
+    // nothing open behind it.
+    void openEditor(EditorOwner owner) override {
+        if (window_ != nullptr) {
+            window_->applyOwner(owner);
+            window_->toFront();
+            return;
+        }
+        if (shared_->editorWindows == nullptr) {
+            throw PluginError("editor_failed", "CLAP editors need a window, and this target has none");
+        }
+        if (!capabilities_.editor) {
+            throw PluginError("editor_failed", uid_ + " has no editor for the " + platformWindowApi + " window API");
+        }
+        throwIfFailed();
+        const std::uint64_t generation = ++editorGeneration_;
+        auto onCloseButton = [this, alive = std::weak_ptr<int>(alive_), generation] {
+            // Deferred by the factory, so outside the window's own event; the
+            // instance, or this editor, may be gone by now.
+            if (!alive.expired() && editorGeneration_ == generation) {
+                closeEditor();
+            }
+        };
+        try {
+            const bool named = plugin_->desc != nullptr && plugin_->desc->name != nullptr;
+            window_ = shared_->editorWindows->create(named ? plugin_->desc->name : uid_, owner, std::move(onCloseButton));
+            if (!gui_->create(plugin_, platformWindowApi, false)) {
+                throw PluginError("editor_failed", uid_ + " did not create its editor");
+            }
+            guiCreated_ = true;
+            const clap_window_t parent = platformWindow(window_->nativeHandle());
+            if (!gui_->set_parent(plugin_, &parent)) {
+                throw PluginError("editor_failed", uid_ + " did not embed its editor");
+            }
+            resizeToPlugin();
+            gui_->show(plugin_);
+            window_->show();
+            window_->toFront();
+        } catch (const PluginError&) {
+            closeEditor();
+            throw;
+        } catch (...) {
+            closeEditor();
+            throw PluginError("editor_failed", uid_ + " threw while opening its editor");
+        }
     }
 
-    void closeEditor() override {}
+    // Main thread. Idempotent. A plugin that throws here still loses its window.
+    void closeEditor() override {
+        ++editorGeneration_;
+        if (guiCreated_) {
+            guiCreated_ = false;
+            try {
+                gui_->hide(plugin_);
+            } catch (...) {
+                // destroy follows all the same
+            }
+            try {
+                gui_->destroy(plugin_);
+            } catch (...) {
+                // the window goes all the same
+            }
+        }
+        window_.reset();
+        editorResizeStale_.store(false);
+        requestedSize_.store(0);
+        editorVisibility_.store(-1);
+        editorClosedByPlugin_.store(false);
+    }
 
-    bool editorOpen() const override { return false; }
+    bool editorOpen() const override { return window_ != nullptr; }
 
-    std::uintptr_t editorNativeHandle() const override { return 0; }
+    std::uintptr_t editorNativeHandle() const override { return window_ == nullptr ? 0 : window_->nativeHandle(); }
+
+    // Main thread: the window takes the size the plugin says it has.
+    void resizeToPlugin() {
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        if (window_ != nullptr && gui_->get_size(plugin_, &width, &height) && width > 0 && height > 0) {
+            window_->setContentSize(static_cast<int>(width), static_cast<int>(height));
+        }
+    }
+
+    // Main thread, from serviceMainThread: what the plugin's gui asked of the host.
+    // Throws what the plugin throws.
+    void serviceEditor() {
+        if (editorClosedByPlugin_.exchange(false)) {
+            closeEditor();
+            return;
+        }
+        if (window_ == nullptr) {
+            return;
+        }
+        if (const std::uint64_t size = requestedSize_.exchange(0); size != 0) {
+            window_->setContentSize(static_cast<int>(size >> 32), static_cast<int>(size & 0xffffffffu));
+        }
+        if (editorResizeStale_.exchange(false)) {
+            resizeToPlugin();
+        }
+        if (const int visibility = editorVisibility_.exchange(-1); visibility == 1) {
+            window_->show();
+        } else if (visibility == 0) {
+            window_->hide();
+        }
+    }
 
     void setEventSink(EventSink sink) override {
         // A plugin may be reporting on another thread right now, so the previous
@@ -974,7 +1157,19 @@ private:
     const clap_plugin_latency_t* latency_ = nullptr;
     const clap_plugin_tail_t* tail_ = nullptr;
     const clap_plugin_state_t* state_ = nullptr;
+    const clap_plugin_gui_t* gui_ = nullptr;
     PluginCapabilities capabilities_;
+
+    // The editor, main thread only; what the plugin asks of it from any thread is
+    // the atomics below.
+    std::unique_ptr<EditorWindow> window_;
+    bool guiCreated_ = false;
+    std::uint64_t editorGeneration_ = 0;  // a deferred close button names the editor it belongs to
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    std::atomic<bool> editorResizeStale_{false};
+    std::atomic<std::uint64_t> requestedSize_{0};  // width << 32 | height; 0 for none
+    std::atomic<int> editorVisibility_{-1};        // -1 nothing asked, 0 hide, 1 show
+    std::atomic<bool> editorClosedByPlugin_{false};
 
     // What process() owns, which the main thread touches only under a pause.
     bool activating_ = false;
@@ -1037,12 +1232,22 @@ const clap_host_t* probeHost() {
     return &host;
 }
 
-bool probeHasEditor(const clap_plugin_factory_t* factory, const char* id) {
+// With a window to embed into, whether the plugin's gui embeds with the platform's API.
+bool probeHasEditor(const clap_plugin_factory_t* factory, const char* id, bool haveWindows) {
+    if (!haveWindows) {
+        return false;
+    }
     const clap_plugin_t* plugin = factory->create_plugin(factory, probeHost(), id);
     if (plugin == nullptr) {
         return false;
     }
-    const bool hasEditor = plugin->init(plugin) && plugin->get_extension(plugin, CLAP_EXT_GUI) != nullptr;
+    bool hasEditor = false;
+    try {
+        hasEditor = plugin->init(plugin) &&
+                    embedsOnPlatform(plugin, static_cast<const clap_plugin_gui_t*>(plugin->get_extension(plugin, CLAP_EXT_GUI)));
+    } catch (...) {
+        hasEditor = false;  // listed all the same; instantiate reports why it fails
+    }
     plugin->destroy(plugin);
     return hasEditor;
 }
@@ -1120,7 +1325,9 @@ struct ClapPluginHost::Impl {
     std::map<std::string, std::set<std::string>> known;
 };
 
-ClapPluginHost::ClapPluginHost() : impl_(std::make_unique<Impl>()) {}
+ClapPluginHost::ClapPluginHost(EditorWindowFactory* editorWindows) : impl_(std::make_unique<Impl>()) {
+    impl_->shared->editorWindows = editorWindows;
+}
 ClapPluginHost::~ClapPluginHost() = default;
 
 std::vector<PluginDescriptor> ClapPluginHost::scan(const std::vector<std::string>& extraDirectories) {
@@ -1170,7 +1377,7 @@ std::vector<PluginDescriptor> ClapPluginHost::scanPath(const std::string& path) 
         descriptor.vendor = found->vendor == nullptr ? "" : found->vendor;
         descriptor.version = found->version == nullptr ? "" : found->version;
         descriptor.path = path;
-        descriptor.hasEditor = probeHasEditor(factory, found->id);
+        descriptor.hasEditor = probeHasEditor(factory, found->id, impl_->shared->editorWindows != nullptr);
         impl_->known[descriptor.uid].insert(path);
         result.push_back(std::move(descriptor));
     }

@@ -19,9 +19,18 @@
 // told nothing, the host guesses from the last block (50 ms or four block periods).
 //
 // PluginControl for CLAP: setState throws bad_state when the plugin refuses the
-// payload; openEditor throws editor_failed until the desktop target can supply a
-// window (docs/harness/follow-ups.md). State blobs are the envelope of
-// state_envelope.hpp.
+// payload. State blobs are the envelope of state_envelope.hpp.
+//
+// Editors (m5-clap-editor-window): the gui extension embeds into a top-level window
+// the EditorWindowFactory given at construction makes; the desktop target supplies
+// one, the headless target none. capabilities().editor and hasEditor are true only
+// with a factory and a gui that embeds with the platform's API (win32, cocoa, x11).
+// openEditor runs create, set_parent, get_size (which sizes the window) and show;
+// closeEditor runs hide and destroy, and an instance closes its editor as it goes.
+// The host's resize_hints_changed and request_resize resize the window, and a
+// plugin's closed closes it. Without a factory, or for a plugin without such a gui,
+// openEditor throws editor_failed; a plugin that throws or refuses while opening
+// leaves nothing open and is editor_failed too.
 //
 // A plugin that throws (spec, "siann-host", Hostile test plugin) is caught at the
 // boundary of every plugin call. Out of instantiate it is plugin_load_failed; out of
@@ -48,9 +57,13 @@
 
 namespace siann::host {
 
+class EditorWindowFactory;
+
 class ClapPluginHost final : public PluginHost {
 public:
-    ClapPluginHost();
+    // editorWindows makes the windows editors embed into, and must outlive every
+    // instance of this host; null for none (the headless target).
+    explicit ClapPluginHost(EditorWindowFactory* editorWindows = nullptr);
     ~ClapPluginHost() override;
     ClapPluginHost(const ClapPluginHost&) = delete;
     ClapPluginHost& operator=(const ClapPluginHost&) = delete;
