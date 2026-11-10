@@ -181,7 +181,12 @@ function appStep() {
   if (!fs.existsSync(exe)) {
     return { ok: false, output: `run the native step first: ${exe} is missing` };
   }
-  const env = { ...process.env, SIANN_ENGINE_EXE: exe };
+  // The timeline e2e prepares its bundles with siann-cli create and import.
+  const cli = path.join(NATIVE, 'build', 'dev', 'apps', 'cli', isWindows ? 'siann-cli.exe' : 'siann-cli');
+  if (!fs.existsSync(cli)) {
+    return { ok: false, output: `run the native step first: ${cli} is missing` };
+  }
+  const env = { ...process.env, SIANN_ENGINE_EXE: exe, SIANN_CLI_EXE: cli };
   // The crash-recovery e2e crashes the engine with the hostile plugin; it skips without one.
   // (a file, or the bundle directory on macOS)
   const hostile = path.join(NATIVE, 'build', 'dev', 'libs', 'host_clap', 'hostile_plugin', 'siann_hostile_plugin.clap');

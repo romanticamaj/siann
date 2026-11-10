@@ -19,7 +19,8 @@
 //   SIANN_SHELL_STOP_GRACE_MS stdin EOF to SIGKILL on quit (default 5000)
 //   SIANN_SHELL_KILL_GRACE_MS SIGTERM to SIGKILL on a failed launch, and SIGKILL
 //                             to counting the engine gone (default 2000)
-//   SIANN_SHELL_TEST=1        exposes the supervisor as globalThis.__siannShell
+//   SIANN_SHELL_TEST=1        exposes the supervisor as globalThis.__siannShell,
+//                             and the renderer's timeline as window.__siannTimeline
 //   SIANN_USER_DATA           under SIANN_SHELL_TEST only: the user data directory
 //                             (the single-instance lock lives there), so tests
 //                             never meet the maintainer's running app
@@ -222,6 +223,8 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       devTools: devtools,
+      // The renderer's test hooks (window.__siannTimeline), under SIANN_SHELL_TEST=1 only.
+      additionalArguments: underTest ? ['--siann-test-hooks'] : [],
     },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
