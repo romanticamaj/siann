@@ -31,6 +31,9 @@ if(SIANN_BUILD_TESTS)
     SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>"
     SIANN_HOSTILE_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_hostile_plugin_CLAP,SIANN_PLUGIN_FILE>>"
     SIANN_HOST_CLAP_TESTS_EXE="$<TARGET_FILE:siann_host_clap_tests>")
+  if(SIANN_TEST_PLUGIN_X11)
+    target_compile_definitions(siann_host_clap_tests PRIVATE SIANN_TEST_PLUGIN_X11=1)
+  endif()
   # A hang fails the test instead of holding the job until the runner gives up.
   catch_discover_tests(siann_host_clap_tests PROPERTIES TIMEOUT 120)
 endif()

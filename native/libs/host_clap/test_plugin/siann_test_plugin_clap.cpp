@@ -37,6 +37,13 @@
 //   sysexMessage (F0 ... F7, more than 8 data bytes, a size JUCE's MidiMessage keeps
 //   on the heap), before its parameter out-events.
 //
+// The editor (m5-clap-editor-window): clap.gui, embedded only, with the platform's
+// window API (siann_test_plugin_gui.hpp: win32, cocoa, or x11 when the build found
+// X11; no gui extension otherwise). The view is a flat colour of 320 x 200, or 480 x
+// 300 with "editorSize" on: a change of it is serviced in on_main_thread, which
+// resizes the view and asks the host's request_resize, as a plugin's own resize
+// does. Every gui call checks it is on the main thread ("wrongThread").
+//
 // Parameter ids are neither indices nor sorted, so a host that takes one for the
 // other is caught. The environment variable SIANN_TEST_PLUGIN_LAYOUT changes the
 // ports of instances created after it is set: "wide" has 32 channels on the main
@@ -66,6 +73,8 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+
+#include "siann_test_plugin_gui.hpp"
 
 namespace {
 
@@ -111,6 +120,7 @@ enum Parameter : std::uint32_t {
     paramMidiFlood,
     paramConcurrentProcess,
     paramMidiSysex,
+    paramEditorSize,
     parameterCount,
 };
 
@@ -118,7 +128,13 @@ constexpr const char* parameterNames[parameterCount] = {
     "latency",  "gain",   "futureState",      "nudgeGain", "requestRestart", "overlapped",  "restarted",
     "watchRestore", "restored", "holdProcessBlock", "tail",      "rescan",         "wrongThread", "home:",
     "watchSave", "savedWhileProcessing", "watchFlush", "flushed", "midiFlood", "concurrentProcess", "midiSysex",
+    "editorSize",
 };
+
+constexpr std::uint32_t smallEditorWidth = 320;
+constexpr std::uint32_t smallEditorHeight = 200;
+constexpr std::uint32_t largeEditorWidth = 480;
+constexpr std::uint32_t largeEditorHeight = 300;
 
 constexpr clap_id idOf(std::uint32_t index) { return 5000 - 7 * index; }
 
@@ -159,6 +175,7 @@ struct TestPlugin {
     const clap_host_params_t* hostParams = nullptr;
     const clap_host_tail_t* hostTail = nullptr;
     const clap_host_thread_check_t* hostThreads = nullptr;
+    const clap_host_gui_t* hostGui = nullptr;
     Layout layout = Layout::stereo;
     bool badInfo = false;
     double sampleRate = 48'000.0;
@@ -171,6 +188,11 @@ struct TestPlugin {
     std::atomic<bool> nudgeRequested{false};
     std::atomic<bool> rescanRequested{false};
     std::atomic<bool> nudgeOutPending{false};
+    std::atomic<bool> resizeRequested{false};
+
+    // The editor, main thread only.
+    bool guiCreated = false;
+    void* view = nullptr;
     std::atomic<std::uint64_t> processCalls{0};
     std::atomic<int> entered{0};
     std::atomic<int> mostEntered{0};
@@ -181,6 +203,9 @@ struct TestPlugin {
     bool on(Parameter parameter) const { return values[parameter].load() >= 0.5; }
 
     std::uint32_t wantedDelay() const { return on(paramLatency) ? longLatency : shortLatency; }
+
+    std::uint32_t editorWidth() const { return on(paramEditorSize) ? largeEditorWidth : smallEditorWidth; }
+    std::uint32_t editorHeight() const { return on(paramEditorSize) ? largeEditorHeight : smallEditorHeight; }
 
     void mustBeMainThread() {
         if (hostThreads == nullptr || !hostThreads->is_main_thread(host)) {
@@ -247,6 +272,10 @@ struct TestPlugin {
                 if (hostTail != nullptr) {
                     hostTail->changed(host);
                 }
+                break;
+            case paramEditorSize:
+                resizeRequested.store(true);
+                host->request_callback(host);
                 break;
             default:
                 break;
@@ -519,10 +548,18 @@ bool pluginInit(const clap_plugin_t* plugin) {
     test.hostParams = static_cast<const clap_host_params_t*>(extension(CLAP_EXT_PARAMS));
     test.hostTail = static_cast<const clap_host_tail_t*>(extension(CLAP_EXT_TAIL));
     test.hostThreads = static_cast<const clap_host_thread_check_t*>(extension(CLAP_EXT_THREAD_CHECK));
+    test.hostGui = static_cast<const clap_host_gui_t*>(extension(CLAP_EXT_GUI));
     return true;
 }
 
-void pluginDestroy(const clap_plugin_t* plugin) { delete &self(plugin); }
+void pluginDestroy(const clap_plugin_t* plugin) {
+#if SIANN_TEST_PLUGIN_HAS_VIEW
+    if (self(plugin).view != nullptr) {
+        siann_test_plugin_gui::destroyView(self(plugin).view);  // a host that never called gui.destroy
+    }
+#endif
+    delete &self(plugin);
+}
 
 bool pluginActivate(const clap_plugin_t* plugin, double sampleRate, std::uint32_t, std::uint32_t) {
     auto& test = self(plugin);
@@ -645,7 +682,149 @@ clap_process_status pluginProcess(const clap_plugin_t* plugin, const clap_proces
     return CLAP_PROCESS_CONTINUE;
 }
 
+// --- clap.gui
+
+#if SIANN_TEST_PLUGIN_HAS_VIEW
+
+#if defined(_WIN32)
+constexpr const char* viewApi = CLAP_WINDOW_API_WIN32;
+#elif defined(__APPLE__)
+constexpr const char* viewApi = CLAP_WINDOW_API_COCOA;
+#else
+constexpr const char* viewApi = CLAP_WINDOW_API_X11;
+#endif
+
+std::uintptr_t parentHandle(const clap_window_t& window) {
+#if defined(_WIN32)
+    return reinterpret_cast<std::uintptr_t>(window.win32);
+#elif defined(__APPLE__)
+    return reinterpret_cast<std::uintptr_t>(window.cocoa);
+#else
+    return static_cast<std::uintptr_t>(window.x11);
+#endif
+}
+
+bool embedsWith(const char* api, bool isFloating) { return !isFloating && api != nullptr && std::strcmp(api, viewApi) == 0; }
+
+bool guiIsApiSupported(const clap_plugin_t* plugin, const char* api, bool isFloating) {
+    self(plugin).mustBeMainThread();
+    return embedsWith(api, isFloating);
+}
+
+bool guiGetPreferredApi(const clap_plugin_t* plugin, const char** api, bool* isFloating) {
+    self(plugin).mustBeMainThread();
+    *api = viewApi;
+    *isFloating = false;
+    return true;
+}
+
+bool guiCreate(const clap_plugin_t* plugin, const char* api, bool isFloating) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (test.guiCreated || !embedsWith(api, isFloating)) {
+        return false;
+    }
+    test.guiCreated = true;
+    return true;
+}
+
+void guiDestroy(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (test.view != nullptr) {
+        siann_test_plugin_gui::destroyView(test.view);
+        test.view = nullptr;
+    }
+    test.guiCreated = false;
+}
+
+bool guiSetScale(const clap_plugin_t* plugin, double) {
+    self(plugin).mustBeMainThread();
+    return false;  // a flat colour has nothing to scale
+}
+
+bool guiGetSize(const clap_plugin_t* plugin, std::uint32_t* width, std::uint32_t* height) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (!test.guiCreated) {
+        return false;
+    }
+    *width = test.editorWidth();
+    *height = test.editorHeight();
+    return true;
+}
+
+bool guiCanResize(const clap_plugin_t* plugin) {
+    self(plugin).mustBeMainThread();
+    return false;
+}
+
+bool guiGetResizeHints(const clap_plugin_t* plugin, clap_gui_resize_hints_t*) {
+    self(plugin).mustBeMainThread();
+    return false;
+}
+
+bool guiAdjustSize(const clap_plugin_t* plugin, std::uint32_t*, std::uint32_t*) {
+    self(plugin).mustBeMainThread();
+    return false;
+}
+
+// Not resizable by the host: only the size it has is accepted.
+bool guiSetSize(const clap_plugin_t* plugin, std::uint32_t width, std::uint32_t height) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    return width == test.editorWidth() && height == test.editorHeight();
+}
+
+bool guiSetParent(const clap_plugin_t* plugin, const clap_window_t* window) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (!test.guiCreated || test.view != nullptr || window == nullptr || !embedsWith(window->api, false)) {
+        return false;
+    }
+    test.view = siann_test_plugin_gui::createView(parentHandle(*window), test.editorWidth(), test.editorHeight());
+    return test.view != nullptr;
+}
+
+bool guiSetTransient(const clap_plugin_t* plugin, const clap_window_t*) {
+    self(plugin).mustBeMainThread();
+    return false;  // never floating
+}
+
+void guiSuggestTitle(const clap_plugin_t* plugin, const char*) { self(plugin).mustBeMainThread(); }
+
+bool guiShow(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (test.view == nullptr) {
+        return false;
+    }
+    siann_test_plugin_gui::showView(test.view, true);
+    return true;
+}
+
+bool guiHide(const clap_plugin_t* plugin) {
+    auto& test = self(plugin);
+    test.mustBeMainThread();
+    if (test.view == nullptr) {
+        return false;
+    }
+    siann_test_plugin_gui::showView(test.view, false);
+    return true;
+}
+
+const clap_plugin_gui_t gui = {guiIsApiSupported, guiGetPreferredApi, guiCreate,      guiDestroy,     guiSetScale,
+                               guiGetSize,        guiCanResize,       guiGetResizeHints, guiAdjustSize, guiSetSize,
+                               guiSetParent,      guiSetTransient,    guiSuggestTitle, guiShow,        guiHide};
+
+#endif  // SIANN_TEST_PLUGIN_HAS_VIEW
+
 const void* pluginGetExtension(const clap_plugin_t* plugin, const char* id) {
+#if SIANN_TEST_PLUGIN_HAS_VIEW
+    if (std::strcmp(id, CLAP_EXT_GUI) == 0) {
+        return &gui;
+    }
+#endif
     if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) {
         return &audioPorts;
     }
@@ -678,6 +857,16 @@ void pluginOnMainThread(const clap_plugin_t* plugin) {
         test.values[paramGain].store(rescannedGain);
         test.hostParams->rescan(test.host, CLAP_PARAM_RESCAN_VALUES);
     }
+#if SIANN_TEST_PLUGIN_HAS_VIEW
+    if (test.resizeRequested.exchange(false) && test.view != nullptr) {
+        siann_test_plugin_gui::resizeView(test.view, test.editorWidth(), test.editorHeight());
+        if (test.hostGui != nullptr) {
+            test.hostGui->request_resize(test.host, test.editorWidth(), test.editorHeight());
+        }
+    }
+#else
+    test.resizeRequested.store(false);
+#endif
 }
 
 // --- the factory and the entry
@@ -748,7 +937,11 @@ bool entryInit(const char* path) {
     return true;
 }
 
-void entryDeinit() {}
+void entryDeinit() {
+#if SIANN_TEST_PLUGIN_HAS_VIEW
+    siann_test_plugin_gui::releaseViews();
+#endif
+}
 
 const void* entryGetFactory(const char* id) {
     return std::strcmp(id, CLAP_PLUGIN_FACTORY_ID) == 0 ? &factory : nullptr;
