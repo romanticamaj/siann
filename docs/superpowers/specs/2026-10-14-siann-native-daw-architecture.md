@@ -2357,7 +2357,9 @@ spec check):
     path chooses, otherwise `plugin_not_registered` naming the ambiguity; none is
     `plugin_not_approved` when an unapproved install of it is registered and
     `plugin_not_registered` otherwise. The slot's `path` is only a hint: a refused
-    hint (`unc_path`: a `\\server\share` or `//server/share` path, `inside_bundle`:
+    hint (`unc_path`: a share or device path, `\\server\share`, `//server/share`,
+    `\\?\...`, `\\.\...` or `\??\...` with either separator, and on Windows any root that is
+    not a drive letter (`model::pluginPathRefusal`), `inside_bundle`:
     a path inside the session bundle) or an unknown one (`unregistered_path`) is
     ignored and never opened, and the `plugin_not_registered` message names its
     reason. The same refusal applies to the installs themselves (fix round 1 of
