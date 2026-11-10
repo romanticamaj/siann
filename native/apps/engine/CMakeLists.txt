@@ -53,7 +53,9 @@ if(SIANN_BUILD_TESTS)
     siann_third_party_ixwebsocket Catch2::Catch2WithMain)
   # hosting_checks.hpp runs blocks through the third-party plugin in this process.
   target_include_directories(siann_engine_launch_tests PRIVATE tests "${PROJECT_SOURCE_DIR}/libs/protocol/tests"
-    "${PROJECT_SOURCE_DIR}/libs/playback/tests/support" "${PROJECT_SOURCE_DIR}/libs/host_common/tests")
+    "${PROJECT_SOURCE_DIR}/libs/playback/tests/support" "${PROJECT_SOURCE_DIR}/libs/host_common/tests"
+    "${PROJECT_SOURCE_DIR}/libs/media/tests")
+  target_compile_definitions(siann_engine_launch_tests PRIVATE "SIANN_FIXTURES_DIR=\"${SIANN_FIXTURES_DIR}\"")
   target_compile_definitions(siann_engine_launch_tests PRIVATE "SIANN_ENGINE_EXE=\"$<TARGET_FILE:siann-engine>\"")
   # The crash-recovery tests crash a child engine with siann_hostile_plugin (m4-crash-recovery);
   # siann_host_clap reads the crash parameter's id in this process.
