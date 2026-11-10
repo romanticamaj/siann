@@ -4,8 +4,12 @@
 // session.changed deltas fetched at each event's revision, and resyncs on a
 // gap, on revision_unavailable, on a delta that does not hash to the event's
 // documentHash, on session.opened, and on a reconnect that missed events or
-// reached another engine. Structural changes are never optimistic: execute()
-// resolves with the engine's answer and leaves the model to session.changed.
+// reached another engine. Every event envelope names the current session, so
+// an event of another session (its session.opened lost in a gap) is adopted
+// before the sync; a session_mismatch that no queued event explains
+// re-authenticates, since the auth reply is what names the current session.
+// Structural changes are never optimistic: execute() resolves with the
+// engine's answer and leaves the model to session.changed.
 //
 // Framework-free: the socket factory, the endpoint source (the preload's
 // window.siann.engine.current) and the reconnect scheduler are injected.
@@ -82,6 +86,8 @@ export const SYNC_RETRY_MAX_MS = 8000;
 interface Pending {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
+  // The session the request named.
+  sessionId: string | null;
 }
 
 interface EventMessage {
@@ -256,7 +262,7 @@ export class SessionClient {
     const envelope: Record<string, unknown> = { requestId, sessionId: connection.sessionId, method, params };
     if (expectedRevision !== undefined) envelope.expectedRevision = expectedRevision;
     return new Promise((resolve, reject) => {
-      connection.pending.set(requestId, { resolve, reject });
+      connection.pending.set(requestId, { resolve, reject, sessionId: connection.sessionId });
       connection.socket.send(JSON.stringify(envelope));
     });
   }
@@ -275,6 +281,7 @@ export class SessionClient {
       } else {
         const error = (message.error ?? {}) as { code?: string; message?: string; step?: number; data?: unknown };
         pending.reject(new ProtocolError(error.code ?? 'internal_error', error.message ?? '', error.step, error.data));
+        if (error.code === 'session_mismatch') this.#sessionStale(connection, pending.sessionId);
       }
       return;
     }
@@ -335,11 +342,16 @@ export class SessionClient {
     const at = seqOf(event.seq);
     if (at === null) return;
     if (this.#lastSeq !== null && at <= this.#lastSeq) return;
+    if (typeof event.sessionId === 'string' && event.sessionId !== connection.sessionId) {
+      // Every envelope names the current session: a session.opened lost in a
+      // gap leaves the client naming the old one, which the engine refuses
+      // (session_mismatch). Adopt the new id; the model is of another session,
+      // so it is behind and the sync below replaces it.
+      connection.sessionId = event.sessionId;
+      this.#update({ sessionId: event.sessionId });
+      this.#behind();
+    }
     if (event.type === 'session.opened') {
-      if (typeof event.sessionId === 'string') {
-        connection.sessionId = event.sessionId;
-        this.#update({ sessionId: event.sessionId });
-      }
       await this.#sync(connection);
       return;
     }
@@ -408,6 +420,19 @@ export class SessionClient {
       this.#update({ error: error instanceof Error ? `${(error as { code?: string }).code ?? 'error'}: ${error.message}` : String(error) });
       this.#scheduleSyncRetry(connection);
     }
+  }
+
+  // A request naming `sentId` was session_mismatch: the server serves another
+  // session. If the client has adopted it since, or a queued event names it
+  // (that event adopts it in order), nothing more is needed; otherwise only a
+  // new auth reply names the current session, so re-authenticate (the sync of
+  // the new connection replaces the model). Never resend the stale id.
+  #sessionStale(connection: Connection, sentId: string | null): void {
+    if (connection.closed || this.#connection !== connection || connection.sessionId !== sentId) return;
+    const explained = connection.queue.some(
+      (work) => work.kind === 'event' && typeof work.event.sessionId === 'string' && work.event.sessionId !== sentId,
+    );
+    if (!explained) this.connect(connection.endpoint, true);
   }
 
   #behind(): void {

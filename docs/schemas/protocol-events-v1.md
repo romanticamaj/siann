@@ -116,6 +116,14 @@ full `session.sync` instead of applying the step when:
 Events that arrive while a sync runs are buffered; those with `seq` at most the
 sync's `seq` are dropped and the rest applied in order.
 
+Every envelope names the current `sessionId`. An event newer than `lastSeq`
+whose `sessionId` differs from the one the client names (its `session.opened`
+was dropped in a gap) makes the client adopt that id first, so the sync it
+starts names the new session. A request answered `session_mismatch` is never
+resent with the same id: unless the client has adopted another id since, or a
+buffered event names one, it re-authenticates, since the auth reply names the
+current session, and syncs on the new connection.
+
 ### `meters.legend`
 
 Published when the engine publishes a graph with meters:
