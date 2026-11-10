@@ -13,7 +13,9 @@ void* createView(std::uintptr_t parent, std::uint32_t width, std::uint32_t heigh
     if (parent == 0) {
         return nullptr;
     }
-    NSView* view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];  // retained: the plugin's
+    // Retained by alloc: the plugin's until destroyView.
+    const NSRect frame = NSMakeRect(0, 0, static_cast<CGFloat>(width), static_cast<CGFloat>(height));
+    NSView* view = [[NSView alloc] initWithFrame:frame];
     [view setWantsLayer:YES];
     [[view layer] setBackgroundColor:[[NSColor colorWithCalibratedRed:0x2a / 255.0
                                                                 green:0x6f / 255.0
@@ -21,17 +23,17 @@ void* createView(std::uintptr_t parent, std::uint32_t width, std::uint32_t heigh
                                                                 alpha:1.0] CGColor]];
     [view setHidden:YES];
     [reinterpret_cast<NSView*>(parent) addSubview:view];
-    return view;
+    return (__bridge void*)view;
 }
 
 void resizeView(void* view, std::uint32_t width, std::uint32_t height) {
-    [static_cast<NSView*>(view) setFrameSize:NSMakeSize(width, height)];
+    [(__bridge NSView*)view setFrameSize:NSMakeSize(static_cast<CGFloat>(width), static_cast<CGFloat>(height))];
 }
 
-void showView(void* view, bool visible) { [static_cast<NSView*>(view) setHidden:visible ? NO : YES]; }
+void showView(void* view, bool visible) { [(__bridge NSView*)view setHidden:visible ? NO : YES]; }
 
 void destroyView(void* view) {
-    NSView* nsView = static_cast<NSView*>(view);
+    NSView* nsView = (__bridge NSView*)view;
     [nsView removeFromSuperview];
     [nsView release];
 }
