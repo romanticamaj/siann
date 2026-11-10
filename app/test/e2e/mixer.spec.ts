@@ -3,9 +3,9 @@
 // held, exactly one at release), mute and solo committed through
 // command.execute, meters from the realtime channel's binary frames, and a
 // renderer reload mid-drag that the engine ends as disconnected. The engine
-// runs on the fake device, which runs callbacks while stopped, so meter frames
-// flow without playing. Waits are Playwright condition waits with bounded
-// timeouts.
+// runs on the fake device: frames flow while stopped (entry count 0 until the
+// first meter reading), and the meters read once the transport plays. Waits
+// are Playwright condition waits with bounded timeouts.
 
 import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
@@ -172,15 +172,19 @@ test('mute and solo commit one revision each and the buttons show the commit', a
 test('meters come from the realtime channel: frames keep arriving with one entry per legend entity', async () => {
   const client = await withTrack();
   const meter = page.getByTestId(`meter-${TRACK}`);
+  // Stopped: frames already arrive.
   await expect.poll(async () => Number((await meter.getAttribute('data-frames')) ?? '0')).toBeGreaterThan(0);
   const first = Number(await meter.getAttribute('data-frames'));
   await expect.poll(async () => Number((await meter.getAttribute('data-frames')) ?? '0')).toBeGreaterThan(first);
+  // Playing: every metered entity has a reading in each frame.
+  expect((await client.call('transport.play')).playing).toBe(true);
   // The legend of the graph with the track: the master and the track.
   const synced = (await client.call('session.sync')) as { meters: { entities: string[] } };
   expect(synced.meters.entities).toContain(`track:${TRACK}`);
   await expect(meter).toHaveAttribute('data-legend', String(synced.meters.entities.length));
   await expect(meter).toHaveAttribute('data-entries', String(synced.meters.entities.length));
   expect(await meter.getAttribute('data-peak')).toMatch(/^\d/);
+  await client.call('transport.stop');
   client.close();
 });
 
