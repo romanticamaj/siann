@@ -1951,3 +1951,128 @@ TEST_CASE("a document naming an unknown uid and a real library never opens it", 
     const std::string text = fs::exists(marker) ? io::readFile(marker) : std::string();
     CHECK(text.find("siann-unscanned-copy") == std::string::npos);
 }
+
+namespace {
+
+// A client subscribed to the event stream: reads the events in order.
+class EventWatcher {
+public:
+    explicit EventWatcher(const Value& ready) : ws_(static_cast<std::uint16_t>(at(ready, "port").asNumber())) {
+        REQUIRE(ws_.start());
+        const Value reply = ws_.call(jcs::canonicalize(Value(
+            Object{{"type", Value("auth")}, {"token", Value(at(ready, "token").asString())}, {"events", Value(true)}})));
+        REQUIRE(at(reply, "ok").asBool());
+    }
+
+    // The events up to and including the next gesture.ended; at most kBound read.
+    std::vector<Value> untilGestureEnded() {
+        std::vector<Value> seen;
+        for (int i = 0; i < kBound; ++i) {
+            const std::optional<Value> event = ws_.next();
+            REQUIRE(event.has_value());
+            seen.push_back(*event);
+            if (at(*event, "type").asString() == "gesture.ended") {
+                return seen;
+            }
+        }
+        FAIL("no gesture.ended in " << kBound << " events");
+        return seen;
+    }
+
+private:
+    static constexpr int kBound = 1'000;
+    WsClient ws_;
+};
+
+std::vector<Value> ofType(const std::vector<Value>& events, const std::string& type) {
+    std::vector<Value> out;
+    for (const Value& event : events) {
+        if (at(event, "type").asString() == type) {
+            out.push_back(event);
+        }
+    }
+    return out;
+}
+
+Value gestureTarget(const std::string& param) {
+    return Value(Object{{"target", Value(Object{{"ref", Value("track:trk_g")}, {"param", Value(param)}})}});
+}
+
+Value gestureValue(const std::string& param, double value) {
+    Object params = gestureTarget(param).asObject();
+    params.emplace_back("value", Value(value));
+    return Value(std::move(params));
+}
+
+double revisionCount(EngineClient& client) {
+    return at(client.ok("session.inspect"), "revisions").asNumber();
+}
+
+Value fetchedTrack(EngineClient& client) {
+    const Value fetched =
+        client.ok("session.fetch", Value(Object{{"refs", Value(json::Array{Value("track:trk_g")})}}));
+    const auto& entities = at(fetched, "entities").asArray();
+    REQUIRE(entities.size() == 1);
+    return at(entities[0], "entity");
+}
+
+}  // namespace
+
+TEST_CASE("a fader gesture over the protocol commits one revision at its end, and a closed socket ends it",
+          "[engine][launch][gesture]") {
+    ix::initNetSystem();
+    TempDir dir;
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(dir.path() / "Song.siann"));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("command.execute",
+                  Value(Object{{"commands", Value(json::Array{Value(Object{{"op", Value("track.add")},
+                                                                           {"trackId", Value("trk_g")},
+                                                                           {"name", Value("Gesture")},
+                                                                           {"channels", Value(2)}})})}}));
+        const Value capabilities = client.ok("engine.capabilities");
+        CHECK(at(at(capabilities, "features"), "gestures").asBool());
+        EventWatcher watcher(ready);
+        const double before = revisionCount(client);
+
+        const Value begun = client.ok("gesture.begin", gestureTarget("gain"));
+        CHECK(at(begun, "startValue").asNumber() == 0.0);
+        CHECK(at(begun, "leaseMs").asNumber() == 5'000);
+        for (const double value : {-1'000.0, -2'000.0, -3'000.0}) {
+            client.ok("gesture.update", gestureValue("gain", value));
+        }
+        CHECK(revisionCount(client) == before);  // nothing commits mid-gesture
+        const Value ended = client.ok("gesture.end", gestureTarget("gain"));
+        CHECK(at(ended, "value").asNumber() == -3'000);
+        const std::string committed = at(at(ended, "revision"), "id").asString();
+        CHECK(revisionCount(client) == before + 1);
+        CHECK(at(fetchedTrack(client), "gainMilliDb").asNumber() == -3'000);
+
+        const std::vector<Value> events = watcher.untilGestureEnded();
+        const std::vector<Value> changed = ofType(events, "session.changed");
+        REQUIRE(changed.size() == 1);
+        CHECK(at(changed[0], "revision").asString() == committed);
+        CHECK(at(changed[0], "cause").asString() == "command");
+        CHECK(jcs::canonicalize(at(changed[0], "changedIds")) == R"([{"change":"modified","ref":"track:trk_g"}])");
+        const Value& gestureEnded = events.back();
+        CHECK(at(gestureEnded, "reason").asString() == "ended");
+        CHECK(at(gestureEnded, "committed").asString() == committed);
+
+        // A client that closes its socket mid-gesture: the engine commits its last value.
+        {
+            EngineClient closing(ready);
+            CHECK(at(closing.ok("gesture.begin", gestureTarget("pan")), "startValue").asNumber() == 0.0);
+            closing.ok("gesture.update", gestureValue("pan", 1'500));
+            closing.ok("gesture.update", gestureValue("pan", 2'500));
+        }
+        const std::vector<Value> afterClose = watcher.untilGestureEnded();
+        CHECK(ofType(afterClose, "session.changed").size() == 1);
+        CHECK(at(afterClose.back(), "reason").asString() == "disconnected");
+        CHECK(at(afterClose.back(), "value").asNumber() == 2'500);
+        CHECK(revisionCount(client) == before + 2);
+        CHECK(at(fetchedTrack(client), "pan").asNumber() == 2'500);
+        CHECK(at(fetchedTrack(client), "gainMilliDb").asNumber() == -3'000);
+    }
+    CHECK(stopEngine(child) == 0);
+}
