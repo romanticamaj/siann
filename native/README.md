@@ -176,7 +176,7 @@ skip, and pointing at a missing file fails:
 | Variable | Value |
 |---|---|
 | `SIANN_TEST_VST3` | A `.vst3` bundle, for example `C:\Program Files\Common Files\VST3\TDR Nova.vst3` |
-| `SIANN_TEST_AU` | A `.component` bundle (macOS), for example `/Library/Audio/Plug-Ins/Components/TDR Nova.component` |
+| `SIANN_TEST_AU` | A `.component` bundle (macOS), for example `/Library/Audio/Plug-Ins/Components/TDR Nova.component`. Run it in the logged-in (Aqua) session, from Terminal or a `gui/<uid>` agent: from a background or SSH shell only the root registrar answers, which lists Apple's AUs and not the ones in `/Library/Audio/Plug-Ins/Components`, so the AU is "not found" |
 
 The hosting tests open editor windows, so on Linux run them with a display
 (`xvfb-run -a ctest ...`). `ctest -R "plugin host"` selects them.

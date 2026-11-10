@@ -104,9 +104,22 @@ the value through the blob (a fresh instance in the test process reads it back) 
 the relaunch's unchanged document hash. On this machine with `SIANN_TEST_VST3` set to
 `C:\Program Files\Common Files\VST3\TDR Nova.vst3` it passes, 139 assertions: Nova's
 "Band 1 selected" moved to 0, latency 184 frames before the crash and after the
-relaunch, slot A `running` before and after playing again. Owed: the Mac half, the
-same case with `SIANN_TEST_VST3` set to the Mac's Nova VST3, run through
-`siann-macos`.
+relaunch, slot A `running` before and after playing again.
+
+Mac half done (2026-11-10, through `siann-macos`, main a4b8f96): the same case with
+`SIANN_TEST_VST3=/Library/Audio/Plug-Ins/VST3/TDR Nova.vst3` passes, 133
+assertions, with the same parameter and 184 frames before and after the relaunch.
+
+## Before the M5 exit: the plugin registry's minor findings (from PR #70)
+
+- A library holding several plugins is approved as the first plugin its probe lists.
+- `SIANN_ENGINE_TEST_ARGS` is split at spaces, so a plugin path with a space cannot
+  be passed through it.
+- The launch-time filter that skips installs inside the bundle runs against the
+  launch bundle only: after `session.open`, an install inside the new bundle can
+  still be listed by `plugin.registry` (approving or loading it is refused).
+- Rooted paths with one leading separator, such as a path that starts with one backslash and a dot, are not refused;
+  they resolve on the current drive and are not device paths.
 
 ## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
 
