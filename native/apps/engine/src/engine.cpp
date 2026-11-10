@@ -4,6 +4,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <exception>
 #include <filesystem>
@@ -58,7 +59,25 @@ struct Options {
     std::optional<std::int64_t> fakeCallbackNanos;
     std::optional<int> fakeOpenFailures;
     std::optional<DeviceBackoff> deviceBackoff;
+    // Test-only: serve with no stop flag (spec, "Process model"; m5-shell-hardening).
+    bool testWedge = false;
 };
+
+std::string environmentValue(const char* name) {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t size = 0;
+    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) {
+        return {};
+    }
+    std::string result(value);
+    std::free(value);
+    return result;
+#else
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string() : std::string(value);
+#endif
+}
 
 fs::path pathFromUtf8(const std::string& text) {
     return fs::path(std::u8string(text.begin(), text.end()));
@@ -159,12 +178,14 @@ Options parseOptions(const std::vector<std::string>& args) {
             options.fakeOpenFailures = parseOpenFailures(value());
         } else if (arg == "--device-backoff") {
             options.deviceBackoff = parseBackoff(value());
+        } else if (arg == "--test-wedge") {
+            options.testWedge = true;
         } else {
             throw LaunchError("usage", "unknown option " + arg +
                                            "; usage: siann-engine --session <bundle> [--host 127.0.0.1] [--port 0] "
                                            "[--mcp-trusted] [--owner-window <handle>] "
                                            "[--device <id>] [--device-backoff <initialMs>:<maxMs>:<resetAfterMs>] "
-                                           "[--fake-callback-nanos N] [--fake-open-failures N]");
+                                           "[--fake-callback-nanos N] [--fake-open-failures N] [--test-wedge]");
         }
     }
     if (!haveSession || options.session.empty()) {
@@ -175,6 +196,10 @@ Options parseOptions(const std::vector<std::string>& args) {
     }
     if (options.fakeOpenFailures && options.device != kFakeDevice) {
         throw LaunchError("usage", "--fake-open-failures needs --device fake");
+    }
+    // Only a shell under test (which passes SIANN_SHELL_TEST=1 on) may wedge an engine.
+    if (options.testWedge && environmentValue("SIANN_SHELL_TEST") != "1") {
+        throw LaunchError("usage", "--test-wedge needs SIANN_SHELL_TEST=1 in the environment");
     }
     return options;
 }
@@ -373,7 +398,8 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
             << "\n";
         out.flush();
 
-        mainThread.serve(stop, [&server, &host, &err] {
+        // --test-wedge: no stop flag, so neither stdin EOF nor SIGTERM ends it.
+        mainThread.serve(options.testWedge ? nullptr : stop, [&server, &host, &err] {
             try {
                 server.pump();
                 host.tick();
