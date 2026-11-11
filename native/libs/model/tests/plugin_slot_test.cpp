@@ -299,6 +299,17 @@ TEST_CASE("pluginPathRefusal refuses Windows device and extended path forms", "[
 #if defined(_WIN32)
     CHECK_FALSE(pluginPathRefusal(R"(C:\Program Files\Common Files\CLAP\x.clap)").has_value());
     CHECK_FALSE(pluginPathRefusal("c:/Plugins/x.clap").has_value());
+    // The follow-up of PR #70: one leading separator, then a segment of dots or
+    // question marks, spells a device prefix with a separator missing. It resolves
+    // on the current drive, which no install path should depend on.
+    for (const char* path : {R"(\.\pipe\x)", R"(\.\C:\Plugins\x.clap)", R"(/./pipe/x)", R"(\?\C:\Plugins\x.clap)",
+                             R"(/?/UNC/server/x.clap)", R"(\..\Plugins\x.clap)", R"(\.)", R"(/.)"}) {
+        INFO(path);
+        CHECK(pluginPathRefusal(path) == unc);
+    }
+    // A rooted path of another platform stays a hint (a session made on macOS).
+    CHECK_FALSE(pluginPathRefusal("/Library/Audio/Plug-Ins/CLAP/x.clap").has_value());
+    CHECK_FALSE(pluginPathRefusal(R"(\.hidden\x.clap)").has_value());
 #else
     CHECK_FALSE(pluginPathRefusal("/usr/lib/clap/x.clap").has_value());
 #endif
