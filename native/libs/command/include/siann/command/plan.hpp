@@ -13,6 +13,7 @@
 // Plans are in-memory engine state in M3; they are not stored in the bundle.
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -173,7 +174,16 @@ public:
     void landProposal(const BranchId& branchId, const std::string& revisionId);
     void withdrawProposal(const BranchId& branchId);
 
+    // Changes whenever a plan is stored or a plan's state or proposal link
+    // changes, and only then (protocol server: plan.changed is looked for only
+    // after a request that moved it). Values are unique across stores, so a
+    // new store never shows an older store's value; a copy keeps its source's.
+    std::uint64_t generation() const noexcept { return generation_; }
+
 private:
+    static std::uint64_t nextGeneration() noexcept;
+    void touch() noexcept { generation_ = nextGeneration(); }
+
     Plan& require(std::string_view planHashText);
     const Plan& store(Plan plan);
     void requireFresh(const History& history, const Plan& plan) const;
@@ -182,6 +192,7 @@ private:
     std::map<std::string, Plan, std::less<>> plans_;
     std::vector<std::string> order_;  // hash texts in the order they were first stored
     std::map<BranchId, std::string> proposals_;  // open branch -> plan hash text
+    std::uint64_t generation_ = nextGeneration();
 };
 
 }  // namespace siann::command

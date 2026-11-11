@@ -1,6 +1,7 @@
 #include "siann/command/plan.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #include "siann/hash/jcs.hpp"
@@ -354,6 +355,11 @@ const Plan* PlanStore::find(std::string_view planHashText) const noexcept {
     return it == plans_.end() ? nullptr : &it->second;
 }
 
+std::uint64_t PlanStore::nextGeneration() noexcept {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
 Plan& PlanStore::require(std::string_view planHashText) {
     const auto it = plans_.find(planHashText);
     if (it == plans_.end()) {
@@ -368,6 +374,7 @@ const Plan& PlanStore::store(Plan plan) {
     const auto [it, inserted] = plans_.try_emplace(key, std::move(plan));
     if (inserted) {
         order_.push_back(std::move(key));
+        touch();
     }
     return it->second;
 }
@@ -420,6 +427,7 @@ const Plan& PlanStore::approve(const History& history, std::string_view planHash
     plan.state = PlanState::approved;
     plan.approvedBy = std::move(approvedBy);
     plan.approvedAt = std::move(time);
+    touch();
     return plan;
 }
 
@@ -472,6 +480,7 @@ const Plan& PlanStore::approvePartial(const History& history, std::string_view p
     original.rejectedBy = approvedBy;
     original.rejectedAt = time;
     original.rejectionNote = "partially approved as " + subHash;
+    touch();
 
     return approve(history, subHash, std::move(approvedBy), std::move(time));
 }
@@ -488,6 +497,7 @@ const Plan& PlanStore::reject(std::string_view planHashText, std::string rejecte
     plan.rejectedBy = std::move(rejectedBy);
     plan.rejectedAt = std::move(time);
     plan.rejectionNote = std::move(note);
+    touch();
     return plan;
 }
 
@@ -511,6 +521,7 @@ const Revision& PlanStore::apply(const History& history, std::string_view planHa
     const Revision& revision = commit(plan.steps, std::move(actor), std::move(time));
     plan.state = PlanState::applied;
     plan.appliedRevision = revision.envelope.id;
+    touch();
     return revision;
 }
 
@@ -531,6 +542,7 @@ const Revision& PlanStore::rollback(std::string_view planHashText, std::string a
     }
     const Revision& revision = rollbackRevision(*plan.appliedRevision, std::move(actor), std::move(time));
     plan.state = PlanState::rolled_back;
+    touch();
     return revision;
 }
 
@@ -550,6 +562,7 @@ BranchId PlanStore::propose(std::string_view planHashText, const Propose& open) 
     requireNotProposed(planHashText);
     BranchId branchId = open(plan);
     proposals_[branchId] = *plan.hashText;
+    touch();
     return branchId;
 }
 
@@ -592,10 +605,13 @@ void PlanStore::landProposal(const BranchId& branchId, const std::string& revisi
     plan.state = PlanState::applied;
     plan.appliedRevision = revisionId;
     proposals_.erase(it);
+    touch();
 }
 
 void PlanStore::withdrawProposal(const BranchId& branchId) {
-    proposals_.erase(branchId);
+    if (proposals_.erase(branchId) > 0) {
+        touch();
+    }
 }
 
 }  // namespace siann::command
