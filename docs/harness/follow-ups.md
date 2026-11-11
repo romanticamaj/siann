@@ -116,6 +116,37 @@ Mac half done (2026-11-10, through `siann-macos`, main a4b8f96): the same case w
 `SIANN_TEST_VST3=/Library/Audio/Plug-Ins/VST3/TDR Nova.vst3` passes, 133
 assertions, with the same parameter and 184 frames before and after the relaunch.
 
+## Before the M5 exit: plan review's minor findings (from PR #77)
+
+For the ux-review gate (the maintainer decides):
+- The default approval granularity (whole plan by default, step checkboxes for
+  partial approval) was chosen by the implementer; the manifest names the
+  operations, not the default. The spec records it as decided; the maintainer
+  confirms or changes it, and the spec then says so.
+
+Spec and docs amendments:
+- The Frontend bullet "Plan review is a first-class UI" says every action is one
+  request, but Audition is two (`plan.propose`, then `audition.hear`). Say so,
+  and say that a refused hear leaves the plan proposed, to Discard or Hear
+  proposal. Add a test where the hear is refused.
+- On an approved plan the UI also offers Reject, which the protocol allows: the
+  bullet should read "Apply, Audition or Reject".
+- "Any state previews" (item 25, `plan-v1.md`): an applied plan that added an
+  entity answers `already_exists`, and the UI shows an error line. Either the
+  docs say so, or the UI shows "applied at <revision>" for applied and
+  rolled-back plans instead of previewing them.
+
+Code and tests:
+- Audition and the Hear buttons are not gated on the engine having an
+  auditioner (`heard` null): disable them there.
+- `execute()` builds two `PlanMark` vectors around every request, including
+  `gesture.update`: O(plans) allocation per request on the command thread.
+  Snapshot only for the plan and proposal methods, or keep a generation counter
+  in `PlanStore`.
+- Untested claims of item 25: `audition.changed {heard: "main"}` on
+  `session.open` while a branch is heard, and `plan.changed` `validated` for a
+  partial approval's sub-plan whose approval answered `plan_stale`.
+
 ## Before the M5 exit: the plugin registry's minor findings (from PR #70)
 
 - A library holding several plugins is approved as the first plugin its probe lists.
