@@ -106,8 +106,11 @@ the entity JSON at the head and `after` in the prepared document, `null` where t
 entity is absent. A writeSet entity the steps leave unchanged appears with equal
 `before` and `after`. A step that fails at the head answers that step's error
 (`not_found`, `invalid_gain`, ...) with `step`, as `command.execute` does; the
-plan's state never changes. Any state previews. Errors: `not_found` (no such plan),
-`invalid_params` (no `plan`).
+plan's state never changes. Any state previews, always against the head: an
+applied plan's effects are already there, so one that added an entity answers
+`already_exists` (the renderer shows "applied at `appliedRevision`" for applied
+and rolled-back plans instead of previewing them). Errors: `not_found` (no such
+plan), `invalid_params` (no `plan`).
 
 ### Events
 

@@ -2600,7 +2600,10 @@ Protocol v0, plans in the UI (decided with m5-plan-review; the wire details are 
       entity JSON at the head and in the prepared document, `null` when absent.
       A step that fails at the head answers that step's `CommandError` with
       `step`, as `command.execute` does, and nothing changes. A plan in any state
-      previews (a rejected or applied one too).
+      previews (a rejected or applied one too), always against the head: an
+      applied plan that added an entity answers `already_exists`, so the UI
+      does not preview applied and rolled-back plans and shows "applied at
+      <revision>" from `appliedRevision` instead.
     - Event `plan.changed {plan, state, proposalBranch?}` is published once per
       lifecycle transition, after the response and after any `session.changed`
       of the same request: `plan.submit` of a new plan (`validated`),
@@ -2742,22 +2745,31 @@ MySong.siann/                    a directory
   stale entities marked from `plan.status`). Actions follow the plan lifecycle:
   Reject (`plan.reject` with a note) and Approve (`plan.approve`) on a validated
   plan, Approve selected steps (`plan.approve` with step indexes) when a proper
-  subset is ticked; on an approved plan, Apply (`plan.apply`) or Audition, which is
+  subset is ticked; on an approved plan, Apply (`plan.apply`), Audition or Reject
+  (`plan.reject`, which the protocol allows on an approved plan), Audition being
   `plan.propose` then `audition.hear {side: branch}`; on a proposed plan, Hear main
   / Hear proposal (`audition.hear`), Merge (`proposal.merge`, which lands the plan)
   and Discard (`proposal.discard`, the plan stays approved). Audition comes after
   approval because the protocol only auditions a proposed branch and proposing
   needs an approved plan; while proposed, `plan.apply` and `plan.reject` are
-  `invalid_state` and the plan lands through `proposal.merge`. The UI shows which
-  side is heard from the event `audition.changed {heard}` (Protocol v0 item 25),
-  published whenever the heard side changes, whoever asked (an agent's MCP
-  `audition` too); the renderer never guesses it. Every action is one protocol
-  request; the model follows `session.changed` and `plan.changed`, never an
-  optimistic plan state. A `plan_stale` answer is shown with its
-  `changedEntities` and leaves the plan where it was.
+  `invalid_state` and the plan lands through `proposal.merge`. Audition and the
+  Hear buttons need an auditioner: while the side heard is unknown (no audition
+  port, or not yet read) they are disabled. The UI shows which side is heard from
+  the event `audition.changed {heard}` (Protocol v0 item 25), published whenever
+  the heard side changes, whoever asked (an agent's MCP `audition` too); the
+  renderer never guesses it. Every action is one protocol request except
+  Audition, which is two (`plan.propose`, then `audition.hear`): a refused hear
+  (`audition_budget_exceeded`, say) leaves the plan proposed, to Discard or Hear
+  proposal again. The model follows `session.changed` and `plan.changed`, never
+  an optimistic plan state. A `plan_stale` answer is shown with its
+  `changedEntities` and leaves the plan where it was. An applied or rolled-back
+  plan is not previewed (its effects are already in the head, so a plan that
+  added an entity would answer `already_exists`); the UI shows "applied at
+  <revision>" (`appliedRevision`) instead.
 - The default action approves the whole plan; the step list with checkboxes is
   partial approval (a non-empty proper subset), as the manifest decided
-  (m5-plan-review: "approve, reject and partial approve").
+  (m5-plan-review: "approve, reject and partial approve"). The default is
+  provisional, pending the M5 ux-review.
 - Reusing open-source web DAW UI code requires a license check first (openDAW is
   AGPL).
 
