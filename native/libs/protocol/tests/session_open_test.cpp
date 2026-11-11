@@ -6,13 +6,17 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "support/protocol_fixture.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/protocol/audition_port.hpp"
 
 using namespace siann;
 using namespace siann::protocol::testing;
 using protocol::ConnectionId;
+using protocol::AuditionPort;
+using protocol::AuditionPortError;
 using protocol::ServerOptions;
 
 namespace {
@@ -38,6 +42,36 @@ std::string requestFor(const std::string& sessionId, const std::string& requestI
                                           {"sessionId", Value(sessionId)},
                                           {"method", Value(method)},
                                           {"params", std::move(params)}}));
+}
+
+// Hears whatever it is told; reset() is what the engine host's rebind does
+// on session.open (a new auditioner, main heard).
+class FakeAuditionPort final : public AuditionPort {
+public:
+    void audition(const command::BranchId& branchId) override { heard_ = branchId; }
+    void hearMain() override { heard_.reset(); }
+    std::optional<command::BranchId> heard() const override { return heard_; }
+    const command::Revision& merge(const command::BranchId&, std::string, std::string) override {
+        throw AuditionPortError("audition_not_found", "the fake merges nothing");
+    }
+    void discard(const command::BranchId&) override {
+        throw AuditionPortError("audition_not_found", "the fake discards nothing");
+    }
+    void reset() { heard_.reset(); }
+
+private:
+    std::optional<command::BranchId> heard_;
+};
+
+// The heard values of the audition.changed events among the events.
+std::vector<std::string> heardChanges(const std::vector<Value>& events) {
+    std::vector<std::string> out;
+    for (const Value& event : events) {
+        if (at(event, "type").asString() == "audition.changed") {
+            out.push_back(at(event, "heard").asString());
+        }
+    }
+    return out;
 }
 
 }  // namespace
@@ -175,4 +209,27 @@ TEST_CASE("session.open answers the callback's SessionError and keeps the old se
         CHECK(&f.server.session() == &f.session);
         CHECK(at(f.ok(c, "session.inspect"), "revision").asString() == "r1");
     }
+}
+
+TEST_CASE("session.open while a branch is heard publishes audition.changed {heard: main}",
+          "[protocol][session][audition][ui]") {
+    FakeAuditionPort port;
+    std::optional<session::Session> opened;
+    ServerOptions options = manualOptions();
+    options.auditionPort = &port;
+    options.openSession = [&](const std::filesystem::path& path) -> session::Session& {
+        opened.emplace(session::Session::open(path));
+        port.reset();
+        return *opened;
+    };
+    Fixture f(std::move(options));
+    const std::filesystem::path bundle = otherBundle(f);
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.ok(c, "audition.hear", Value(Object{{"side", Value("p1")}}));
+    CHECK(heardChanges(f.events(watcher)) == std::vector<std::string>{"p1"});
+
+    f.ok(c, "session.open", Value(Object{{"path", Value(utf8(bundle))}}));
+    CHECK(heardChanges(f.events(watcher)) == std::vector<std::string>{"p1", "main"});
+    CHECK(at(f.ok(c, "session.inspect"), "heard").asString() == "main");
 }
