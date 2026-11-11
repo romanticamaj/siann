@@ -365,7 +365,20 @@ Plan& PlanStore::require(std::string_view planHashText) {
 const Plan& PlanStore::store(Plan plan) {
     std::string key = hash::formatHash(planHash(plan));
     plan.hashText = key;
-    return plans_.try_emplace(std::move(key), std::move(plan)).first->second;
+    const auto [it, inserted] = plans_.try_emplace(key, std::move(plan));
+    if (inserted) {
+        order_.push_back(std::move(key));
+    }
+    return it->second;
+}
+
+std::vector<const Plan*> PlanStore::list() const {
+    std::vector<const Plan*> out;
+    out.reserve(order_.size());
+    for (const std::string& key : order_) {
+        out.push_back(&plans_.find(key)->second);
+    }
+    return out;
 }
 
 void PlanStore::requireFresh(const History& history, const Plan& plan) const {

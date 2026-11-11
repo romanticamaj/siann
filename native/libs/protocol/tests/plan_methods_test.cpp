@@ -47,6 +47,13 @@ std::vector<std::string> types(const std::vector<Value>& events) {
     return out;
 }
 
+// The events without plan.changed (Protocol v0 item 25), for the tests that
+// count the revision and proposal events of a plan method.
+std::vector<Value> nonPlan(std::vector<Value> events) {
+    std::erase_if(events, [](const Value& event) { return at(event, "type").asString() == "plan.changed"; });
+    return events;
+}
+
 // A copy: callers pass the temporary response of call().
 Value errorOf(const Value& response) {
     INFO(canonical(response));
@@ -127,7 +134,7 @@ TEST_CASE("plan.approve then plan.apply publishes one plan revision and session.
     CHECK(at(approved, "state").asString() == "approved");
     CHECK(at(approved, "approvedBy").asString() == "protocol");
     const std::size_t revisions = f.session.history().revisions().size();
-    const std::size_t eventsBefore = f.events(watcher).size();
+    const std::size_t eventsBefore = nonPlan(f.events(watcher)).size();
 
     const Value applied = f.ok(c, "plan.apply", planParams(plan));
     const Value& revision = at(applied, "revision");
@@ -136,7 +143,7 @@ TEST_CASE("plan.approve then plan.apply publishes one plan revision and session.
     CHECK(f.session.history().revisions().size() == revisions + 1);
     CHECK(f.session.plans().find(plan)->state == command::PlanState::applied);
 
-    const auto events = f.events(watcher);
+    const auto events = nonPlan(f.events(watcher));
     REQUIRE(events.size() == eventsBefore + 1);
     CHECK(at(events.back(), "type").asString() == "session.changed");
     CHECK(at(events.back(), "cause").asString() == "plan");
@@ -210,7 +217,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
     const std::string mainHead = f.head().envelope.id;
     const std::string plan = submitted(f, c, Array{trackAdd("trk_b")});
     f.ok(c, "plan.approve", planParams(plan));
-    const std::size_t eventsBefore = f.events(watcher).size();
+    const std::size_t eventsBefore = nonPlan(f.events(watcher)).size();
 
     const Value proposed = f.ok(c, "plan.propose", planParams(plan));
     CHECK(at(proposed, "branch").asString() == "p1");
@@ -222,7 +229,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
     CHECK(at(inspected, "branches").asArray().size() == 1);
     CHECK(inspected.find("heard") == nullptr);  // no audition port
 
-    auto events = f.events(watcher);
+    auto events = nonPlan(f.events(watcher));
     REQUIRE(events.size() == eventsBefore + 1);
     CHECK(at(events.back(), "type").asString() == "proposal.changed");
     CHECK(at(events.back(), "branch").asString() == "p1");
@@ -236,7 +243,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
         CHECK(at(revision, "parents").asArray().size() == 2);
         CHECK(f.head().envelope.id == at(revision, "id").asString());
         CHECK(at(f.ok(c, "plan.status", planParams(plan)), "state").asString() == "applied");
-        events = f.events(watcher);
+        events = nonPlan(f.events(watcher));
         REQUIRE(events.size() == eventsBefore + 3);
         CHECK(types(events).back() == "proposal.closed");
         CHECK(at(events[events.size() - 2], "type").asString() == "session.changed");
@@ -249,7 +256,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
         CHECK(f.ok(c, "proposal.discard", Value(Object{{"branch", Value("p1")}})).asObject().empty());
         CHECK(f.head().envelope.id == mainHead);
         CHECK(at(f.ok(c, "plan.status", planParams(plan)), "state").asString() == "approved");
-        events = f.events(watcher);
+        events = nonPlan(f.events(watcher));
         REQUIRE(events.size() == eventsBefore + 2);
         CHECK(at(events.back(), "type").asString() == "proposal.closed");
         CHECK_FALSE(at(events.back(), "merged").asBool());
@@ -562,8 +569,9 @@ TEST_CASE("plan.changed is published once per plan transition", "[protocol][plan
 TEST_CASE("engine.capabilities lists plan.list and plan.preview", "[protocol][plans][ui]") {
     Fixture f;
     const ConnectionId c = f.authed();
+    const Value capabilities = f.ok(c, "engine.capabilities");
     std::vector<std::string> methods;
-    for (const Value& method : at(f.ok(c, "engine.capabilities"), "methods").asArray()) {
+    for (const Value& method : at(capabilities, "methods").asArray()) {
         methods.push_back(method.asString());
     }
     CHECK(std::count(methods.begin(), methods.end(), "plan.list") == 1);

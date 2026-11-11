@@ -149,6 +149,10 @@ public:
 
     const Plan* find(std::string_view planHashText) const noexcept;
     std::size_t size() const noexcept { return plans_.size(); }
+    // Every plan in the order it was first stored (submission order; a
+    // partial approval's sub-plan after the plans before it), for plan.list.
+    std::vector<const Plan*> list() const;
+
     // Proposed plans (spec, "Revision DAG — single history", proposed plans):
     // an approved plan linked to the open branch it was proposed onto. While
     // linked, apply, reject and propose are invalid_state; the plan stays
@@ -176,6 +180,7 @@ private:
     void requireNotProposed(std::string_view planHashText) const;
 
     std::map<std::string, Plan, std::less<>> plans_;
+    std::vector<std::string> order_;  // hash texts in the order they were first stored
     std::map<BranchId, std::string> proposals_;  // open branch -> plan hash text
 };
 

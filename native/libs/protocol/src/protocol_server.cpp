@@ -292,6 +292,7 @@ const std::vector<std::string_view> kMethods = {
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
+    "plan.list",       "plan.preview",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -1488,20 +1489,76 @@ struct ProtocolServer::Impl {
         return success(request.requestId, plan.toJson());
     }
 
-    std::string planStatus(const Pending& request) {
-        const std::string& planHash = requireString(request.params, "plan", "plan.status");
-        const command::Plan& plan = requirePlan(planHash);
-        Object out = plan.toJson().asObject();
+    // The stale entities of a stored plan at the head, as plan.status reports them.
+    Value staleJson(const std::string& planHash) const {
         Array stale;
         for (const command::StaleEntity& entity : session->plans().validate(session->history(), planHash)) {
             stale.push_back(Value(Object{{"ref", Value(formatRef(entity.entity))},
                                          {"change", Value(std::string(changeName(entity.change)))}}));
         }
-        out.emplace_back("stale", Value(std::move(stale)));
+        return Value(std::move(stale));
+    }
+
+    // A stored plan as plan.status and plan.list answer it.
+    Value planStatusJson(const command::Plan& plan) const {
+        const std::string& planHash = *plan.hashText;
+        Object out = plan.toJson().asObject();
+        out.emplace_back("stale", staleJson(planHash));
         if (const auto branch = session->plans().proposalBranch(planHash)) {
             out.emplace_back("proposalBranch", Value(*branch));
         }
-        return success(request.requestId, Value(std::move(out)));
+        return Value(std::move(out));
+    }
+
+    std::string planStatus(const Pending& request) {
+        const std::string& planHash = requireString(request.params, "plan", "plan.status");
+        return success(request.requestId, planStatusJson(requirePlan(planHash)));
+    }
+
+    // Protocol v0 item 25: every plan in submission order.
+    std::string planList(const Pending& request) const {
+        Array plans;
+        for (const command::Plan* plan : session->plans().list()) {
+            plans.push_back(planStatusJson(*plan));
+        }
+        return success(request.requestId, Value(Object{{"plans", Value(std::move(plans))}}));
+    }
+
+    // Protocol v0 item 25: what plan.apply would produce now, never committed.
+    // A failing step throws its CommandError (with the step index).
+    std::string planPreview(const Pending& request) const {
+        const std::string& planHash = requireString(request.params, "plan", "plan.preview");
+        const command::Plan& plan = requirePlan(planHash);
+        const command::Revision& head = session->history().head();
+        const command::Prepared prepared = command::prepareTransaction(head.document, plan.steps);
+        std::vector<model::EntityRef> refs;
+        for (const command::EntitySnapshot& entry : plan.writeSet) {
+            refs.push_back(entry.ref);
+        }
+        for (const model::DiffEntry& entry : model::diff(head.document, prepared.result)) {
+            refs.push_back(entry.entity);
+        }
+        // (type name, id) as byte strings, like the plan's entity sets.
+        const auto byName = [](const model::EntityRef& a, const model::EntityRef& b) {
+            const std::string_view ta = model::entityTypeName(a.type);
+            const std::string_view tb = model::entityTypeName(b.type);
+            return ta != tb ? ta < tb : a.id < b.id;
+        };
+        std::sort(refs.begin(), refs.end(), byName);
+        refs.erase(std::unique(refs.begin(), refs.end()), refs.end());
+        Array entities;
+        for (const model::EntityRef& ref : refs) {
+            std::optional<Value> before = entityJson(head.document, ref);
+            std::optional<Value> after = entityJson(prepared.result, ref);
+            entities.push_back(Value(Object{{"ref", Value(formatRef(ref))},
+                                            {"before", before ? std::move(*before) : Value(nullptr)},
+                                            {"after", after ? std::move(*after) : Value(nullptr)}}));
+        }
+        return success(request.requestId,
+                       Value(Object{{"revision", Value(head.envelope.id)},
+                                    {"documentHash", Value(hash::formatHash(head.envelope.documentHash))},
+                                    {"stale", staleJson(planHash)},
+                                    {"entities", Value(std::move(entities))}}));
     }
 
     std::string planApprove(const Pending& request) {
@@ -1684,6 +1741,12 @@ struct ProtocolServer::Impl {
         if (method == "plan.status") {
             return planStatus(request);
         }
+        if (method == "plan.list") {
+            return planList(request);
+        }
+        if (method == "plan.preview") {
+            return planPreview(request);
+        }
         if (method == "plan.approve") {
             return planApprove(request);
         }
@@ -1786,8 +1849,67 @@ struct ProtocolServer::Impl {
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }
 
-    // Command thread: every exception becomes one error response.
+    // Where a plan stands, to tell a lifecycle transition (plan.changed).
+    struct PlanMark {
+        std::string hash;
+        command::PlanState state = command::PlanState::draft;
+        std::optional<command::BranchId> proposalBranch;
+    };
+
+    std::vector<PlanMark> planMarks() const {
+        std::vector<PlanMark> out;
+        for (const command::Plan* plan : session->plans().list()) {
+            out.push_back(PlanMark{*plan->hashText, plan->state, session->plans().proposalBranch(*plan->hashText)});
+        }
+        return out;
+    }
+
+    std::optional<command::BranchId> heardSide() const {
+        return options.auditionPort != nullptr ? options.auditionPort->heard() : std::nullopt;
+    }
+
+    // Command thread, after a request (Protocol v0 item 25): plan.changed for
+    // every plan whose state or proposal link the request changed, in
+    // submission order (the store only appends, so the marks line up), and
+    // audition.changed when the side heard changed. A session.open serves
+    // other plans; only the heard side is compared then.
+    void publishLifecycle(const std::vector<PlanMark>& before, const session::Session* servedBefore,
+                          const std::optional<command::BranchId>& heardBefore) {
+        if (session == servedBefore) {
+            const std::vector<PlanMark> after = planMarks();
+            for (std::size_t i = 0; i < after.size(); ++i) {
+                const PlanMark& mark = after[i];
+                const bool changed = i >= before.size() || before[i].state != mark.state ||
+                                     before[i].proposalBranch != mark.proposalBranch;
+                if (!changed) {
+                    continue;
+                }
+                Object payload{{"plan", Value(mark.hash)},
+                               {"state", Value(std::string(command::planStateName(mark.state)))}};
+                if (mark.proposalBranch) {
+                    payload.emplace_back("proposalBranch", Value(*mark.proposalBranch));
+                }
+                events.publish("plan.changed", std::move(payload));
+            }
+        }
+        const std::optional<command::BranchId> heardAfter = heardSide();
+        if (options.auditionPort != nullptr && heardAfter != heardBefore) {
+            events.publish("audition.changed", Object{{"heard", Value(heardAfter.value_or("main"))}});
+        }
+    }
+
+    // Command thread: runs the request, then publishes the lifecycle events it caused.
     std::string execute(const Pending& request) {
+        const std::vector<PlanMark> plansBefore = planMarks();
+        const session::Session* servedBefore = session;
+        const std::optional<command::BranchId> heardBefore = heardSide();
+        std::string response = run(request);
+        publishLifecycle(plansBefore, servedBefore, heardBefore);
+        return response;
+    }
+
+    // Command thread: every exception becomes one error response.
+    std::string run(const Pending& request) {
         const Value id(request.requestId);
         try {
             if (request.expectedRevision) {
