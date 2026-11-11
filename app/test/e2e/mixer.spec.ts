@@ -86,8 +86,11 @@ async function faderPoint(fader: Locator, fraction: number): Promise<{ x: number
   return { x: box.x + box.width * fraction, y: box.y + box.height / 2 };
 }
 
-// Mouse down on the fader and a few moves; the button stays down.
+// Mouse down on the fader and a few moves; the button stays down. The
+// timeline sits above the mixer, so the strip may start below the window:
+// mouse events at a point outside the viewport reach nothing.
 async function dragWithoutRelease(fader: Locator): Promise<void> {
+  await fader.scrollIntoViewIfNeeded();
   const start = await faderPoint(fader, 0.5);
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
