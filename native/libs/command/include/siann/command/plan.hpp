@@ -149,7 +149,6 @@ public:
 
     const Plan* find(std::string_view planHashText) const noexcept;
     std::size_t size() const noexcept { return plans_.size(); }
-
     // Proposed plans (spec, "Revision DAG — single history", proposed plans):
     // an approved plan linked to the open branch it was proposed onto. While
     // linked, apply, reject and propose are invalid_state; the plan stays

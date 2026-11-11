@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -496,4 +497,31 @@ TEST_CASE("A proposed plan merged into main can be rolled back", "[plan][rollbac
     CHECK(revision.target == std::optional{mergedId});
     CHECK(revision.envelope.documentHash == before);
     CHECK(store.find(hash)->state == PlanState::rolled_back);
+}
+
+TEST_CASE("list returns the plans in submission order, a sub-plan after them", "[plan][list]") {
+    History history = base();
+    PlanStore store;
+    CHECK(store.list().empty());
+    std::vector<std::string> submitted;
+    // Enough plans that hash order and submission order differ.
+    for (int i = 1; i <= 6; ++i) {
+        submitted.push_back(*store.submit(history, {setGain("t1", -100 * i), setPan("t2", 10 * i)}, {}, "r2").hashText);
+    }
+    std::vector<std::string> byHash = submitted;
+    std::sort(byHash.begin(), byHash.end());
+    REQUIRE(byHash != submitted);
+
+    // Submitting an identical plan again does not move or repeat it.
+    store.submit(history, {setGain("t1", -100), setPan("t2", 10)}, {}, "r2");
+    const std::string sub = *store.approvePartial(history, submitted[2], {1}, "user", "t").hashText;
+
+    std::vector<std::string> listed;
+    for (const Plan* plan : store.list()) {
+        listed.push_back(*plan->hashText);
+        CHECK(store.find(*plan->hashText) == plan);
+    }
+    std::vector<std::string> expected = submitted;
+    expected.push_back(sub);
+    CHECK(listed == expected);
 }

@@ -607,3 +607,26 @@ TEST_CASE("a propose client's select_device is scope_denied and runs nothing", "
     CHECK(at(at(mcp.ok("engine_status"), "device"), "id").asString() == "fake");
     CHECK(at(mcp.ok("play"), "playing").asBool());
 }
+
+// m5-plan-review (Protocol v0 item 25): plan.list and plan.preview serve the
+// review UI; an agent knows its plans, so they are no tool in v0.
+TEST_CASE("plan.list and plan.preview are not MCP tools", "[protocol][mcp][plans]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    for (const Value& tool : tools.asArray()) {
+        const std::string name = at(tool, "name").asString();
+        INFO(name);
+        CHECK(name.find("list_plans") == std::string::npos);
+        CHECK(name.find("plan_list") == std::string::npos);
+        CHECK(name.find("preview") == std::string::npos);
+    }
+    for (const char* name : {"plan.list", "plan.preview", "list_plans", "preview_plan"}) {
+        INFO(name);
+        const HttpResponse response =
+            mcp.post(Mcp::rpc(Value(2), "tools/call", Value(Object{{"name", Value(name)}, {"arguments", Value(Object{})}})));
+        REQUIRE(response.status == 200);
+        CHECK(at(at(json::parse(response.body), "error"), "code").asNumber() == -32602);
+    }
+}
