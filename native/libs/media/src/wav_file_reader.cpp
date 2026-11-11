@@ -24,6 +24,7 @@
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+#include "wav_frames.hpp"
 
 namespace siann::media {
 
@@ -71,11 +72,9 @@ drwav_bool32 onTell(void* user, drwav_int64* cursor) {
     return DRWAV_TRUE;
 }
 
-// The most frames the data chunk can hold. dr_wav already clamps the data
-// chunk to the file, but takes the frame count of an RF64 (ds64), W64 or
-// MS-ADPCM (fact) file from a header field it never checks against the data,
-// so a lying header could claim far more frames than the file has.
-std::uint64_t framesTheDataHolds(const drwav& wav) {
+}  // namespace
+
+std::uint64_t detail::framesTheDataHolds(const drwav& wav) {
     const std::uint64_t bytes = wav.dataChunkDataSize;
     if (wav.translatedFormatTag == DR_WAVE_FORMAT_ADPCM || wav.translatedFormatTag == DR_WAVE_FORMAT_DVI_ADPCM) {
         // 4-bit ADPCM: under two samples a byte, block headers included.
@@ -87,8 +86,6 @@ std::uint64_t framesTheDataHolds(const drwav& wav) {
                                             : static_cast<std::uint64_t>(wav.fmt.blockAlign);
     return bytesPerFrame == 0 ? 0 : bytes / bytesPerFrame;
 }
-
-}  // namespace
 
 struct WavFileReader::Impl {
     std::FILE* file = nullptr;
@@ -130,7 +127,7 @@ WavFileReader::WavFileReader(const std::filesystem::path& path, int chunkFrames)
     if (impl_->wav.channels == 0 || impl_->wav.sampleRate == 0) {
         throw MediaError("decode_failed", "the WAV header has no channels or sample rate");
     }
-    const std::uint64_t frames = std::min<std::uint64_t>(impl_->wav.totalPCMFrameCount, framesTheDataHolds(impl_->wav));
+    const std::uint64_t frames = std::min<std::uint64_t>(impl_->wav.totalPCMFrameCount, detail::framesTheDataHolds(impl_->wav));
     impl_->info = host::MediaInfo{static_cast<int>(impl_->wav.channels), static_cast<std::int64_t>(impl_->wav.sampleRate),
                                   static_cast<std::int64_t>(frames)};
     impl_->chunkFrames = chunkFrames;

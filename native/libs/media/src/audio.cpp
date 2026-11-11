@@ -1,5 +1,6 @@
 #include "siann/media/audio.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -25,6 +26,7 @@
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+#include "wav_frames.hpp"
 
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
@@ -66,9 +68,11 @@ public:
 
     drwav& get() noexcept { return wav_; }
 
+    // The frame count, clamped to what the data chunk holds.
     AudioInfo info() const {
+        const std::uint64_t frames = std::min<std::uint64_t>(wav_.totalPCMFrameCount, detail::framesTheDataHolds(wav_));
         return AudioInfo{static_cast<std::int32_t>(wav_.channels), static_cast<std::int64_t>(wav_.sampleRate),
-                         static_cast<std::int64_t>(wav_.totalPCMFrameCount)};
+                         static_cast<std::int64_t>(frames)};
     }
 
 private:
@@ -170,11 +174,24 @@ AudioBuffer decodeFlac(std::string_view bytes) {
     if (total > std::numeric_limits<std::size_t>::max() / sizeof(float)) {
         throw MediaError("too_large", "the FLAC file is too large to decode in memory");
     }
-    buffer.samples.resize(static_cast<std::size_t>(total));
-    const drflac_uint64 read =
-        drflac_read_pcm_frames_f32(flac.get(), static_cast<drflac_uint64>(buffer.info.frames), buffer.samples.data());
-    if (read != static_cast<drflac_uint64>(buffer.info.frames)) {
-        throw MediaError("decode_failed", "the FLAC data ended early or failed its checksum");
+    // STREAMINFO's total is not checked against the stream, and a frame of a
+    // few bytes can hold 65535 samples a channel, so the input's size does not
+    // bound it tightly either: the buffer grows only as samples decode. The
+    // first reserve (a sample a byte) holds a 16-bit stream at half its size.
+    const auto channels = static_cast<std::uint64_t>(buffer.info.channels);
+    const auto claimed = static_cast<std::uint64_t>(buffer.info.frames);
+    buffer.samples.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(total, bytes.size())));
+    constexpr std::uint64_t kChunkFrames = 1u << 16;
+    std::uint64_t decoded = 0;
+    while (decoded < claimed) {
+        const std::uint64_t want = std::min(kChunkFrames, claimed - decoded);
+        buffer.samples.resize(static_cast<std::size_t>((decoded + want) * channels));
+        const drflac_uint64 read = drflac_read_pcm_frames_f32(flac.get(), static_cast<drflac_uint64>(want),
+                                                              buffer.samples.data() + decoded * channels);
+        decoded += read;
+        if (read != want) {
+            throw MediaError("decode_failed", "the FLAC data ended early or failed its checksum");
+        }
     }
     return buffer;
 }

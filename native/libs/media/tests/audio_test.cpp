@@ -3,11 +3,14 @@
 
 #include <cmath>
 #include <cstdint>
+#include <new>
 #include <numbers>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "siann/media/audio.hpp"
+#include "support/allocation_fuse.hpp"
 
 using siann::media::AudioBuffer;
 using siann::media::AudioInfo;
@@ -216,5 +219,131 @@ TEST_CASE("A FLAC frame with a bad checksum is rejected", "[media][flac]") {
         FAIL("expected decode_failed");
     } catch (const MediaError& error) {
         CHECK(error.code() == "decode_failed");
+    }
+}
+
+namespace {
+
+// An RF64 WAV built byte by byte: 10 stereo 16-bit frames of 8192 (0.25), with
+// the ds64 sample count set to claimedFrames. dr_wav takes an RF64 file's
+// length from that count, unchecked against the data chunk.
+std::string rf64Wav(std::uint64_t claimedFrames) {
+    std::string out = "RF64";
+    const auto putU64 = [&](std::uint64_t v) {
+        for (int b = 0; b < 8; ++b) {
+            out.push_back(static_cast<char>((v >> (8 * b)) & 0xFF));
+        }
+    };
+    constexpr std::uint32_t dataBytes = 10 * 4;
+    putU32(out, 0xFFFF'FFFFu);
+    out += "WAVEds64";
+    putU32(out, 28);
+    putU64(4 + 36 + 24 + 8 + dataBytes);
+    putU64(dataBytes);
+    putU64(claimedFrames);
+    putU32(out, 0);
+    out += "fmt ";
+    putU32(out, 16);
+    putU16(out, 1);
+    putU16(out, 2);
+    putU32(out, 48'000);
+    putU32(out, 192'000);
+    putU16(out, 4);
+    putU16(out, 16);
+    out += "data";
+    putU32(out, 0xFFFF'FFFFu);
+    for (int i = 0; i < 10 * 2; ++i) {
+        putU16(out, static_cast<std::uint16_t>(8'192));
+    }
+    return out;
+}
+
+// Sets the 36-bit total-samples field of the STREAMINFO block encodeFlac16
+// writes first: the low nibble of byte 21 and bytes 22 to 25 of the stream.
+std::string withFlacTotal(std::string flac, std::uint64_t frames) {
+    flac[21] = static_cast<char>((static_cast<unsigned char>(flac[21]) & 0xF0) | ((frames >> 32) & 0x0F));
+    for (std::size_t i = 0; i < 4; ++i) {
+        flac[22 + i] = static_cast<char>((frames >> (8 * (3 - i))) & 0xFF);
+    }
+    return flac;
+}
+
+// The MediaError code of decoding bytes, "bad_alloc" if an allocation was
+// refused, or "no error" (with the buffer in *decoded).
+std::string decodeOutcome(const std::string& bytes, AudioBuffer* decoded = nullptr) {
+    try {
+        AudioBuffer buffer = siann::media::decode(bytes);
+        if (decoded != nullptr) {
+            *decoded = std::move(buffer);
+        }
+    } catch (const MediaError& error) {
+        return error.code();
+    } catch (const std::bad_alloc&) {
+        return "bad_alloc";
+    }
+    return "no error";
+}
+
+}  // namespace
+
+TEST_CASE("An in-memory RF64 sample count beyond the data chunk is clamped, not allocated", "[media]") {
+    // 2^40 frames claimed over 10 real ones: taken at its word, the header
+    // would size the buffer at 8 TiB before a sample was read.
+    const std::string lying = rf64Wav(std::uint64_t{1} << 40);
+    AudioBuffer decoded;
+    std::string outcome;
+    bool blown = true;
+    {
+        const siann::media::testing::AllocationFuse fuse(1u << 20);
+        outcome = decodeOutcome(lying, &decoded);
+        blown = fuse.blown();
+    }
+    CHECK_FALSE(blown);
+    REQUIRE(outcome == "no error");
+    CHECK(decoded.info.channels == 2);
+    CHECK(decoded.info.frames == 10);
+    CHECK(probeWav(lying).frames == 10);
+    CHECK(decoded.samples == std::vector<float>(20, 0.25f));
+
+    // The honest RF64 file decodes to the same buffer.
+    const AudioBuffer honest = decodeWav(rf64Wav(10));
+    CHECK(honest.info.frames == 10);
+    CHECK(honest.samples == decoded.samples);
+}
+
+TEST_CASE("A FLAC STREAMINFO total beyond the stream is refused without allocating for the claim",
+          "[media][flac]") {
+    std::vector<std::int16_t> samples;
+    for (int i = 0; i < 40; ++i) {  // 40 stereo frames: 3 FLAC frames at block size 16
+        samples.push_back(static_cast<std::int16_t>(i * 800 - 16'000));
+        samples.push_back(static_cast<std::int16_t>(-i * 700));
+    }
+    const std::string honest = siann::test::encodeFlac16(2, 44'100, samples);
+    REQUIRE(withFlacTotal(honest, 40) == honest);
+    // The most the 36-bit field holds, about 2^36 stereo frames (512 GiB of
+    // floats), over 40 real ones.
+    const std::string lying = withFlacTotal(honest, (std::uint64_t{1} << 36) - 1);
+    CHECK(siann::media::probe(lying).frames == (std::int64_t{1} << 36) - 1);
+    std::string outcome;
+    bool blown = true;
+    {
+        const siann::media::testing::AllocationFuse fuse(1u << 20);
+        outcome = decodeOutcome(lying);
+        blown = fuse.blown();
+    }
+    CHECK_FALSE(blown);
+    CHECK(outcome == "decode_failed");
+
+    // A small lie, one frame more than the stream holds, is refused the same way.
+    CHECK(decodeOutcome(withFlacTotal(honest, 41)) == "decode_failed");
+
+    // The honest stream still decodes exactly.
+    AudioBuffer decoded;
+    REQUIRE(decodeOutcome(honest, &decoded) == "no error");
+    CHECK(decoded.info.frames == 40);
+    REQUIRE(decoded.samples.size() == samples.size());
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        INFO("sample " << i);
+        CHECK(decoded.samples[i] == static_cast<float>(samples[i]) / 32768.0f);
     }
 }
