@@ -181,7 +181,11 @@ test('Approve, Audition (the branch is heard, main unchanged), then Merge lands 
   await expect(page.getByTestId('track-count')).toHaveText('3');
   await expect(stateBadge(hash)).toHaveText('applied');
   await expect(page.getByTestId('plan-heard')).toHaveText('main');
-  expect((await status(hash)).state).toBe('applied');
+  const merged = await status(hash);
+  expect(merged.state).toBe('applied');
+  // A landed plan names its revision instead of previewing (already_exists).
+  await expect(page.getByTestId('plan-landed')).toHaveText(`applied at ${merged.appliedRevision as string}`);
+  await expect(page.getByTestId('plan-preview-error')).toHaveCount(0);
 });
 
 test('Reject with a note', async () => {
@@ -212,6 +216,8 @@ test('Approve selected makes an approved sub-plan, rejects the original, and the
   await page.getByTestId('plan-apply').click();
   await expect(page.getByTestId('track-count')).toHaveText('3');
   await expect(stateBadge(subHash)).toHaveText('applied');
+  await expect(page.getByTestId('plan-landed')).toHaveText(/^applied at r\d+$/);
+  await expect(page.getByTestId('plan-preview-error')).toHaveCount(0);
   expect(await gainOfTrackA()).toBe(0);
 });
 

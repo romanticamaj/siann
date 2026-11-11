@@ -107,6 +107,16 @@ test('fromList replaces the plans in submission order; the snapshot keeps its id
   assert.equal(first.plans.length, 2, 'the old snapshot is unchanged');
 });
 
+test('an applied plan keeps the revision it landed at (appliedRevision)', () => {
+  const store = new PlanStore();
+  store.fromList({ plans: [planObject(H1, 'validated')] });
+  assert.equal(store.getSnapshot().byHash.get(H1)!.appliedRevision, undefined);
+  store.setStatus(planObject(H1, 'applied', { appliedRevision: 'r7' }));
+  assert.equal(store.getSnapshot().byHash.get(H1)!.appliedRevision, 'r7');
+  store.applyChanged(changed(H1, 'rolled_back'));
+  assert.equal(store.getSnapshot().byHash.get(H1)!.appliedRevision, 'r7', 'kept through plan.changed');
+});
+
 test('applyChanged updates one plan, keeps the others, and marks an unknown hash as needing plan.status', () => {
   const store = new PlanStore();
   store.fromList({ plans: [planObject(H1, 'approved', { proposalBranch: 'p1' }), planObject(H2, 'validated')] });
