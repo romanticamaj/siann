@@ -116,6 +116,14 @@ Mac half done (2026-11-10, through `siann-macos`, main a4b8f96): the same case w
 `SIANN_TEST_VST3=/Library/Audio/Plug-Ins/VST3/TDR Nova.vst3` passes, 133
 assertions, with the same parameter and 184 frames before and after the relaunch.
 
+## Before the M5 exit: in-memory decoders trust the header (from PR #73)
+
+- `decodeWav` and `decodeFlac` in `native/libs/media/src/audio.cpp` allocate
+  `frames x channels` from the header (the RF64 sample count, the FLAC STREAMINFO
+  total) before decoding; the size check guards only against `size_t` overflow.
+  Grow as samples decode, or clamp to what the input bytes can hold, as PR #73 did
+  for `computePeaks` and the WAV file reader, with a test whose header lies.
+
 ## Before the M5 exit: the plugin registry's minor findings (from PR #70)
 
 - A library holding several plugins is approved as the first plugin its probe lists.
