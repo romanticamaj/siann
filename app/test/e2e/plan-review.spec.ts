@@ -160,7 +160,7 @@ test('an MCP-submitted plan is listed as validated with its diff against the cur
   await expect(page.getByTestId('diff-root:root')).toHaveAttribute('data-kind', 'modified');
   await expect(page.getByTestId('diff-root:root').getByTestId('diff-fields')).toContainText('trackOrder');
   await expect(page.getByTestId('step-0')).toContainText('Add track New');
-  await expect(page.getByTestId('step-1')).toContainText('-6.00 dB');
+  await expect(page.getByTestId('step-1')).toContainText('Set gain of trk_a to -0.60 dB');
   expect(await gainOfTrackA()).toBe(0);
 });
 

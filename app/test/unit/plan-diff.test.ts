@@ -76,20 +76,22 @@ test('stale rows come from plan.status stale, also for a ref the preview lacks',
   assert.equal(extra.before, null);
 });
 
-test('formatMilliDb prints decibels with two decimals', () => {
-  assert.equal(formatMilliDb(-600), '-6.00 dB');
+test('formatMilliDb prints decibels with two decimals (the gain is in milli-dB)', () => {
+  assert.equal(formatMilliDb(-600), '-0.60 dB');
+  assert.equal(formatMilliDb(-6000), '-6.00 dB');
   assert.equal(formatMilliDb(0), '0.00 dB');
   assert.equal(formatMilliDb(1250), '+1.25 dB');
+  assert.equal(formatMilliDb(-2147483648), '-inf dB');
 });
 
 test('step summaries name what each op does', () => {
   const names = (id: string) => (id === 'trk_a' ? 'Lead' : undefined);
   assert.equal(stepSummary({ op: 'track.add', trackId: 'trk_b', name: 'Bass', channels: 2 }, names), 'Add track Bass');
   assert.equal(
-    stepSummary({ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -600 }, names),
+    stepSummary({ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -6000 }, names),
     'Set gain of Lead to -6.00 dB',
   );
-  assert.equal(stepSummary({ op: 'track.set_gain', trackId: 'trk_x', gainMilliDb: -600 }, names), 'Set gain of trk_x to -6.00 dB');
+  assert.equal(stepSummary({ op: 'track.set_gain', trackId: 'trk_x', gainMilliDb: -600 }, names), 'Set gain of trk_x to -0.60 dB');
   assert.equal(stepSummary({ op: 'track.remove', trackId: 'trk_a' }, names), 'Remove track Lead');
   assert.equal(stepSummary({ op: 'track.set_mute', trackId: 'trk_a', mute: true }, names), 'Mute Lead');
   assert.equal(stepSummary({ op: 'track.set_pan', trackId: 'trk_a', pan: -2500 }, names), 'Set pan of Lead to -2500');

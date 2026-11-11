@@ -97,7 +97,7 @@ interface Pending {
   sessionId: string | null;
 }
 
-interface EventMessage {
+export interface EventMessage {
   readonly schema: string;
   readonly seq: string;
   readonly sessionId?: string;
@@ -142,6 +142,7 @@ export class SessionClient {
   readonly #options: SessionClientOptions;
   readonly #prefix = randomPrefix();
   readonly #listeners = new Set<() => void>();
+  readonly #eventListeners = new Map<string, Set<(event: EventMessage) => void>>();
   #nextId = 0;
   #connection: Connection | null = null;
   #retry: (() => void) | null = null;
@@ -181,6 +182,23 @@ export class SessionClient {
     this.#listeners.add(listener);
     return () => {
       this.#listeners.delete(listener);
+    };
+  }
+
+  // Listens to events of one type once the client has taken them in, in seq
+  // order: a session.changed after the model applied it, any other type as
+  // it advances lastSeq (plan.changed, audition.changed, ...). An event a
+  // gap's sync covered is never handed over; a listener that keeps state
+  // from events re-reads it after each sync (syncCount).
+  onEvent(type: string, listener: (event: EventMessage) => void): () => void {
+    let listeners = this.#eventListeners.get(type);
+    if (!listeners) {
+      listeners = new Set();
+      this.#eventListeners.set(type, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
     };
   }
 
@@ -386,6 +404,7 @@ export class SessionClient {
         this.#update({ legend: { epoch: event.epoch, entities: event.entities } });
       }
       this.#advance(at);
+      this.#emit(event);
       return;
     }
     const changed = event as unknown as SessionChanged;
@@ -401,6 +420,7 @@ export class SessionClient {
       if (connection.closed) return;
       await this.model.applyChanged(changed, fetched);
       this.#advance(at);
+      this.#emit(event);
     } catch (error) {
       if (connection.closed) return;
       if (error instanceof ProtocolError && error.code === 'disconnected') return;
@@ -484,6 +504,19 @@ export class SessionClient {
   #advance(at: bigint): void {
     this.#lastSeq = at;
     this.#update({ lastSeq: at.toString() });
+  }
+
+  #emit(event: EventMessage): void {
+    const listeners = this.#eventListeners.get(event.type);
+    if (!listeners) return;
+    for (const listener of [...listeners]) {
+      try {
+        listener(event);
+      } catch (error) {
+        // A listener's failure must not stop the client's queue.
+        this.#update({ error: `listener: ${String(error)}` });
+      }
+    }
   }
 
   #drop(connection: Connection): void {

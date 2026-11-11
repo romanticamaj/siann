@@ -5,7 +5,8 @@
 // model in step with the engine (protocol-events-v1.md, "Client read model"),
 // opens the realtime channel beside it (meters) and the fader gesture
 // controller over it (protocol-gestures-v0.md), fetches peak pyramids from the
-// same engine (Protocol v0 item 23), and mounts the React chrome. Under
+// same engine (Protocol v0 item 23), mirrors the engine's plans for plan
+// review (Protocol v0 item 25), and mounts the React chrome. Under
 // SIANN_SHELL_TEST=1 (the preload's window.siannTest) the timeline's test
 // hooks are window.__siannTimeline.
 
@@ -14,6 +15,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
+import { PlanStore } from './model/plan-store';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { SessionClient, type EngineEndpoint, type SocketLike } from './model/session-client';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
@@ -51,6 +53,8 @@ const realtime = new RealtimeClient({
 });
 const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
+const plans = new PlanStore();
+plans.attach(client);
 
 let endpoint: EngineEndpoint | null = null;
 const peaks = new PeaksCache({
@@ -81,6 +85,7 @@ createRoot(container).render(
     gestures={gestures}
     realtime={realtime}
     peaks={peaks}
+    plans={plans}
     onTimelineHooks={onTimelineHooks}
   />,
 );
