@@ -129,7 +129,7 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
       SIANN_SESSION_DIR: sessionDir,
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: `--device fake --plugin-dir ${path.dirname(hostilePlugin!)}`,
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', '--plugin-dir', path.dirname(hostilePlugin!)]),
     },
   });
   const page = await app.firstWindow();

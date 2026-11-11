@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { engineArgs, pluginRegistryFile } from '../../src/main/engine-args';
+import { engineArgs, engineTestArgs, pluginRegistryFile } from '../../src/main/engine-args';
 
 const session = '/tmp/Untitled.siann';
 
@@ -94,4 +94,29 @@ test('the e2e tests can add engine arguments, last', () => {
     '--device',
     'fake',
   ]);
+});
+
+// The follow-up of PR #70: SIANN_ENGINE_TEST_ARGS split at spaces could not carry a
+// plugin path with a space in it. A JSON array of strings carries any argument.
+test('SIANN_ENGINE_TEST_ARGS as a JSON array keeps an argument with spaces whole', () => {
+  const dir = path.join(os.tmpdir(), 'SIANN build', 'plugins');
+  assert.deepEqual(engineTestArgs(JSON.stringify(['--device', 'fake', '--plugin-dir', dir])), [
+    '--device',
+    'fake',
+    '--plugin-dir',
+    dir,
+  ]);
+  assert.deepEqual(engineTestArgs('  ["--device", "fake"] '), ['--device', 'fake']);
+});
+
+test('SIANN_ENGINE_TEST_ARGS as plain words is split at spaces', () => {
+  assert.deepEqual(engineTestArgs('--device fake  --test-wedge'), ['--device', 'fake', '--test-wedge']);
+  assert.equal(engineTestArgs(undefined), undefined);
+  assert.deepEqual(engineTestArgs(''), []);
+});
+
+test('SIANN_ENGINE_TEST_ARGS that starts as JSON but is not an array of strings is refused', () => {
+  for (const text of ['[--device fake]', '["--device", 7]', '[', '["a"] trailing']) {
+    assert.throws(() => engineTestArgs(text), /SIANN_ENGINE_TEST_ARGS/, text);
+  }
 });

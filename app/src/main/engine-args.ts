@@ -16,7 +16,8 @@ export interface EngineLaunch {
   // The JSON file the engine keeps plugin approvals in (--plugin-registry;
   // m5-plugin-registry): pluginRegistryFile(userData).
   pluginRegistry?: string;
-  // SIANN_ENGINE_TEST_ARGS, only under SIANN_SHELL_TEST: the e2e tests' fake device.
+  // SIANN_ENGINE_TEST_ARGS (engineTestArgs), only under SIANN_SHELL_TEST: the e2e
+  // tests' fake device and plugin directories.
   testArgs?: readonly string[];
 }
 
@@ -43,4 +44,24 @@ export function engineArgs(launch: EngineLaunch): string[] {
   if (launch.pluginRegistry) args.push('--plugin-registry', launch.pluginRegistry);
   if (launch.testArgs) args.push(...launch.testArgs);
   return args;
+}
+
+// SIANN_ENGINE_TEST_ARGS: a JSON array of strings, which carries an argument with a
+// space in it (a plugin build path), or plain words split at spaces. Text that
+// starts with "[" and is not an array of strings throws: a test must not run with
+// arguments it did not mean.
+export function engineTestArgs(text: string | undefined): string[] | undefined {
+  if (text === undefined) return undefined;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('[')) return trimmed.split(' ').filter(Boolean);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`SIANN_ENGINE_TEST_ARGS is not a JSON array: ${text}`);
+  }
+  if (!Array.isArray(parsed) || !parsed.every((arg) => typeof arg === 'string')) {
+    throw new Error(`SIANN_ENGINE_TEST_ARGS must be an array of strings: ${text}`);
+  }
+  return parsed;
 }
