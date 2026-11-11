@@ -55,6 +55,9 @@
 // host's limit), "sidechain" a second input port and note ports in both directions.
 // SIANN_TEST_PLUGIN_BADINFO set makes params.get_info fail for "tail", a plugin
 // that counts a parameter it cannot describe.
+// SIANN_TEST_PLUGIN_TWIN set makes the factory list a second plugin,
+// "org.siann.test-plugin-twin" (the same delay), read at each call: a library
+// holding several plugins, as a VST3 shell or a multi-plugin CLAP is.
 //
 // Creating an instance prints one line to stdout ("siann_test_plugin: loaded"), as
 // a chatty third-party plugin would. When SIANN_TEST_PLUGIN_MARKER names a file, the
@@ -904,14 +907,25 @@ const clap_plugin_descriptor_t descriptor = {
     features,
 };
 
-std::uint32_t factoryCount(const clap_plugin_factory_t*) { return 1; }
+const clap_plugin_descriptor_t twinDescriptor = {
+    CLAP_VERSION_INIT, "org.siann.test-plugin-twin", "SIANN Test Plugin Twin", "SIANN", "", "", "", "1.0.0",
+    "A known delay",   features,
+};
+
+bool twinListed() { return !environmentValue("SIANN_TEST_PLUGIN_TWIN").empty(); }
+
+std::uint32_t factoryCount(const clap_plugin_factory_t*) { return twinListed() ? 2 : 1; }
 
 const clap_plugin_descriptor_t* factoryDescriptor(const clap_plugin_factory_t*, std::uint32_t index) {
-    return index == 0 ? &descriptor : nullptr;
+    if (index == 0) {
+        return &descriptor;
+    }
+    return index == 1 && twinListed() ? &twinDescriptor : nullptr;
 }
 
 const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
-    if (std::strcmp(id, descriptor.id) != 0) {
+    const bool twin = twinListed() && std::strcmp(id, twinDescriptor.id) == 0;
+    if (!twin && std::strcmp(id, descriptor.id) != 0) {
         return nullptr;
     }
     auto* test = new TestPlugin;
@@ -923,7 +937,7 @@ const clap_plugin_t* factoryCreate(const clap_plugin_factory_t*, const clap_host
                                            : Layout::stereo;
     test->badInfo = !environmentValue("SIANN_TEST_PLUGIN_BADINFO").empty();
     test->values[paramGain].store(1.0);
-    test->clap.desc = &descriptor;
+    test->clap.desc = twin ? &twinDescriptor : &descriptor;
     test->clap.plugin_data = test;
     test->clap.init = pluginInit;
     test->clap.destroy = pluginDestroy;

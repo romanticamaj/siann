@@ -1248,7 +1248,12 @@ struct ProtocolServer::Impl {
         if (approved == nullptr || approved->kind() != Value::Kind::boolean) {
             throw ProtocolError("invalid_params", "plugin.approve needs a boolean approved");
         }
-        return success(request.requestId, registryEntryJson(plugins.approve(format, path, approved->asBool())));
+        // Which plugin of a library holding several (follow-up of PR #70).
+        const std::optional<std::string> uid = optionalString(request.params, "uid", method);
+        if (uid && uid->empty()) {
+            throw ProtocolError("invalid_params", "plugin.approve: uid must not be empty");
+        }
+        return success(request.requestId, registryEntryJson(plugins.approve(format, path, approved->asBool(), uid)));
     }
 
     // ---- fader gestures (Protocol v0 item 24, docs/schemas/protocol-gestures-v0.md) ----
