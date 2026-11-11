@@ -2578,6 +2578,52 @@ Protocol v0, fader gestures (decided with m5-mixer; the wire details are in
     buttons commit through `command.execute` (`track.set_mute`, `track.set_solo`):
     no gesture, and a solo change recompiles.
 
+Protocol v0, plans in the UI (decided with m5-plan-review; the wire details are in
+`docs/schemas/plan-v1.md`, "Protocol methods", and `protocol-events-v1.md`):
+
+25. The renderer must find a plan an agent submitted and show its diff before
+    anyone approves it. `plan.status` answers one plan by hash and `plan.propose`
+    needs an approved plan, so neither serves a review-before-approve diff, and
+    the renderer never computes command results itself.
+    - `plan.list {}` returns `{plans: [...]}`, every plan of the session in
+      submission order (`PlanStore` keeps the order its plans were first
+      stored in; a sub-plan follows the plans before it), each entry the object
+      `plan.status` returns for it (the lifecycle fields, `stale`, and
+      `proposalBranch` while proposed).
+    - `plan.preview {plan}` returns `{revision, documentHash, stale, entities}`:
+      `prepareTransaction(plan.steps)` at main's head document without
+      committing (what `plan.apply` would produce now). `revision` and
+      `documentHash` are the head's, `stale` is as `plan.status` reports it, and
+      `entities` is the union of the plan's writeSet refs and the refs of the
+      diff between the head and the prepared document, sorted by `(type, id)` as
+      byte strings like the entity sets, each `{ref, before, after}` with the
+      entity JSON at the head and in the prepared document, `null` when absent.
+      A step that fails at the head answers that step's `CommandError` with
+      `step`, as `command.execute` does, and nothing changes. A plan in any state
+      previews (a rejected or applied one too).
+    - Event `plan.changed {plan, state, proposalBranch?}` is published once per
+      lifecycle transition, after the response and after any `session.changed`
+      of the same request: `plan.submit` of a new plan (`validated`),
+      `plan.approve` (`approved`; a partial approval publishes the original
+      `rejected`, then the sub-plan `approved`, or `validated` when its approval
+      was `plan_stale`), `plan.reject`, `plan.apply`, `plan.rollback`,
+      `plan.propose` (`approved` with `proposalBranch`), `proposal.merge`
+      (`applied`, no `proposalBranch`) and `proposal.discard` (`approved`, the
+      link dropped). The server compares the plans' states and links before and
+      after each request, so a request that leaves every plan as it was (a
+      refusal, `plan_stale` on approval, a resubmitted identical plan) publishes
+      nothing; the events follow submission order.
+    - Event `audition.changed {heard}` (`"main"` or the branch id) is published
+      whenever the side heard differs after a request on the command thread from
+      what it was before it: `audition.hear`, `proposal.merge` and
+      `proposal.discard` of the heard branch, an MCP `audition` call, and
+      `session.open` (which hears main of the new session). Hearing the side
+      already heard publishes nothing. Without an audition port it never fires.
+    - Both methods run on the command thread, honour `expectedRevision`, are
+      listed in `engine.capabilities` `methods`, and are not MCP tools in v0 (an
+      agent knows the plans it submitted). Plans stay in engine memory, not in
+      the bundle.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -2690,8 +2736,28 @@ MySong.siann/                    a directory
   importing a file from the UI is not part of m5-timeline (no `media.import`
   protocol method exists yet; follow-ups).
 - The frontend holds a read model keyed by revision; it never owns session truth.
-- Plan review is a first-class UI: diff of the plan against the current revision,
-  audition of the branch, approve / reject / partial approve.
+- Plan review is a first-class UI (m5-plan-review). It lists the engine's plans
+  (`plan.list`, `plan.changed`) and for the selected plan shows the steps and the
+  diff against the current revision (`plan.preview`; before and after per entity,
+  stale entities marked from `plan.status`). Actions follow the plan lifecycle:
+  Reject (`plan.reject` with a note) and Approve (`plan.approve`) on a validated
+  plan, Approve selected steps (`plan.approve` with step indexes) when a proper
+  subset is ticked; on an approved plan, Apply (`plan.apply`) or Audition, which is
+  `plan.propose` then `audition.hear {side: branch}`; on a proposed plan, Hear main
+  / Hear proposal (`audition.hear`), Merge (`proposal.merge`, which lands the plan)
+  and Discard (`proposal.discard`, the plan stays approved). Audition comes after
+  approval because the protocol only auditions a proposed branch and proposing
+  needs an approved plan; while proposed, `plan.apply` and `plan.reject` are
+  `invalid_state` and the plan lands through `proposal.merge`. The UI shows which
+  side is heard from the event `audition.changed {heard}` (Protocol v0 item 25),
+  published whenever the heard side changes, whoever asked (an agent's MCP
+  `audition` too); the renderer never guesses it. Every action is one protocol
+  request; the model follows `session.changed` and `plan.changed`, never an
+  optimistic plan state. A `plan_stale` answer is shown with its
+  `changedEntities` and leaves the plan where it was.
+- The default action approves the whole plan; the step list with checkboxes is
+  partial approval (a non-empty proper subset), as the manifest decided
+  (m5-plan-review: "approve, reject and partial approve").
 - Reusing open-source web DAW UI code requires a license check first (openDAW is
   AGPL).
 
@@ -3170,8 +3236,7 @@ FIFO fill ("Latency model", "Device-side SRC").
    a restart-attributed xrun reproduced on a maintainer machine, (b) hosting a
    plugin set the maintainer did not choose, (c) the first build distributed
    beyond the maintainer's machines.
-2. Default plan approval granularity in the UI (whole plan vs step list).
-3. Developer ID certificate and notarization key: the maintainer's Apple Developer
+2. Developer ID certificate and notarization key: the maintainer's Apple Developer
    account exists; the certificate and key are created at the end of M0 (ADR-0017).
 
 ## References

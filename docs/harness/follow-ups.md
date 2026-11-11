@@ -196,6 +196,14 @@ Deferred:
 5. A realtime socket the engine closes on its own while the command socket stays
    open is reopened at the session client's next state change, not at once.
 
+## Later: plans in the UI (from m5-plan-review)
+
+1. `plan.list` and `plan.preview` are protocol methods only: there are no
+   `list_plans` or `preview_plan` MCP tools in v0 (an agent knows the plans it
+   submitted and reads them with `plan_status`).
+2. Plans stay in engine memory and are not persisted in the bundle (spec,
+   "Plans"); a relaunch or `session.open` empties the review list.
+
 ## Before M6b: recording (from PR #46)
 
 1. Make an early end unmissable: add `endedBy: "seconds" | "overflow" | "interrupt"`
