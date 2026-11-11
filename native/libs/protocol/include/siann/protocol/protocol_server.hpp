@@ -35,6 +35,11 @@
 // inside its request), plugin.open_editor and plugin.close_editor, engine.status
 // plugins[], and render.start's own plugin instances, through
 // ServerOptions::pluginPort.
+//
+// m5-mixer (spec, Protocol v0 item 24): gesture.begin, gesture.update,
+// gesture.hold, gesture.end and gesture.cancel through ServerOptions::
+// gesturePort, each gesture under a lease of the connection that began it
+// (docs/schemas/protocol-gestures-v0.md).
 
 #include <chrono>
 #include <cstddef>
@@ -48,6 +53,7 @@
 
 #include "siann/protocol/audition_port.hpp"
 #include "siann/protocol/event_stream.hpp"
+#include "siann/protocol/gesture_port.hpp"
 #include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport.hpp"
@@ -106,6 +112,13 @@ struct ServerOptions {
     // The engine host's plugin hosts; nullptr: plugin.* is not_supported and
     // render.start renders every plugin slot dry. Must outlive the server.
     PluginPort* pluginPort = nullptr;
+    // The engine host's fader gestures (Protocol v0 item 24); nullptr: gesture.*
+    // is not_supported. Must outlive the server.
+    GesturePort* gesturePort = nullptr;
+    // How long a gesture's lease lasts without a renewal, and the clock it is
+    // measured on (empty: the steady clock; tests inject one).
+    std::chrono::milliseconds gestureLeaseMs{5'000};
+    std::function<std::chrono::steady_clock::time_point()> steadyClock;
     // session.open: opens the bundle and returns the session to serve from now
     // on (owned by the launcher, which rebinds its engine inside). Runs on the
     // command thread. Empty: session.open is not_supported.

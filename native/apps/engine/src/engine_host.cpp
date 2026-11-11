@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "siann/engine/offline.hpp"
+#include "siann/graph/nodes.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/host/clap_plugin_host.hpp"
@@ -791,6 +792,93 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
         say("audio device " + id + " running");
     }
     return *status().device;
+}
+
+// ---- fader gestures (Protocol v0 item 24) ---------------------------------------
+
+namespace {
+
+// Frames each gesture.update ramps over: short enough to follow a drag, long
+// enough not to click.
+constexpr int kGestureRampFrames = 64;
+
+std::uint32_t faderParam(const std::string& param) {
+    if (param == "pan") {
+        return graph::TrackFaderNode::kPan;
+    }
+    if (param == "mute") {
+        return graph::TrackFaderNode::kMute;
+    }
+    return graph::TrackFaderNode::kGainMilliDb;
+}
+
+double faderValue(const model::Track& track, const std::string& param) {
+    if (param == "pan") {
+        return static_cast<double>(track.pan);
+    }
+    if (param == "mute") {
+        return track.mute ? 1.0 : 0.0;
+    }
+    return static_cast<double>(track.gain.milliDb);
+}
+
+std::string gestureKey(const protocol::GestureTarget& target) {
+    return target.trackId + "/" + target.param;
+}
+
+// The track as the side a gesture commits on holds it: the heard proposal, or main.
+const model::Track* heardTrack(playback::PlaybackEngine& engine, session::Session& session,
+                                      const std::string& trackId) {
+    const command::History& history = session.history();
+    const auto& branch = engine.gestureBranch();
+    const model::Document& document =
+        branch && history.isOpen(*branch) ? history.branchHead(*branch).document : history.head().document;
+    return document.track(trackId);
+}
+
+}  // namespace
+
+double EngineHost::begin(const protocol::GestureTarget& target) {
+    const model::Track* track = heardTrack(*engine_, *session_, target.trackId);
+    if (track == nullptr) {
+        throw protocol::GesturePortError("not_found", "no track with id " + target.trackId);
+    }
+    const double start = faderValue(*track, target.param);
+    engine_->beginGesture(target.trackId, faderParam(target.param));
+    gestureStarts_[gestureKey(target)] = start;
+    return start;
+}
+
+void EngineHost::update(const protocol::GestureTarget& target, double value) {
+    engine_->updateGesture(target.trackId, faderParam(target.param), value, kGestureRampFrames);
+}
+
+protocol::GestureEnd EngineHost::end(const protocol::GestureTarget& target, std::string actor, std::string time) {
+    const auto started = gestureStarts_.find(gestureKey(target));
+    const double start = started != gestureStarts_.end() ? started->second : 0.0;
+    if (started != gestureStarts_.end()) {
+        gestureStarts_.erase(started);
+    }
+    const command::Revision* revision = nullptr;
+    try {
+        revision = engine_->endGesture(target.trackId, faderParam(target.param), std::move(actor), std::move(time));
+    } catch (const playback::AuditionError& error) {
+        throw protocol::GesturePortError(error.code(), error.what());
+    }
+    if (revision == nullptr) {
+        return {start, start, nullptr};
+    }
+    const model::Track* committed = revision->document.track(target.trackId);
+    return {start, committed != nullptr ? faderValue(*committed, target.param) : start, revision};
+}
+
+void EngineHost::cancel(const protocol::GestureTarget& target) {
+    gestureStarts_.erase(gestureKey(target));
+    const realtime::ParamKey key{playback::trackSlotKey(target.trackId), faderParam(target.param)};
+    engine_->dispatcher().endGesture(key);  // the value is dropped
+    if (const model::Track* track = heardTrack(*engine_, *session_, target.trackId)) {
+        engine_->dispatcher().setParameter(key, faderValue(*track, target.param), 0);
+    }
 }
 
 }  // namespace siann::engine_app

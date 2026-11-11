@@ -18,6 +18,10 @@
 
 namespace siann::playback {
 
+// The fader node clamps a gesture's gain into the track entity's range.
+static_assert(graph::TrackFaderNode::kMinGainMilliDb == model::Gain::kMinMilliDb);
+static_assert(graph::TrackFaderNode::kMaxGainMilliDb == model::Gain::kMaxMilliDb);
+
 namespace {
 
 // One reader per content hash. WAV streams from the bundle; FLAC is decoded

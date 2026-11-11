@@ -8,6 +8,7 @@ This directory defines internal SIANN command and observation contracts before i
 - [Intake plan v0](intake-plan-v0.md) defines the AI-to-deterministic-bridge boundary for loose audio inputs.
 - [Plan v1](plan-v1.md) defines the engine-side plan with per-entity read and write sets, its lifecycle, and the shared plan hash fixtures.
 - [Protocol events v1](protocol-events-v1.md) defines the native engine's protocol event stream, gap detection with `session.sync`, the binary meter channel and the build's source location.
+- [Protocol gestures v0](protocol-gestures-v0.md) defines the fader gesture methods (gesture.begin, update, hold, end, cancel), their client lease and the gesture.ended event.
 - [Protocol engine v0](protocol-engine-v0.md) defines the transport, engine.status, the device list and selection, session.open's rebind in siann-engine and the session bundle lock.
 - [Protocol plugins v0](protocol-plugins-v0.md) defines the plugin slot entity, plugin.instantiate, the plugin registry (plugin.registry, plugin.approve), the editor methods, engine.status plugins[] and render.start's own plugin instances.
 - [Protocol peaks v0](protocol-peaks-v0.md) defines the peak pyramid file the engine caches per media file and the `GET /v0/peaks/<hash>` route the renderer draws waveforms from.

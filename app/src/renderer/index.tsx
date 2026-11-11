@@ -3,14 +3,18 @@
 // (Protocol v0 item 2: the first frame is {type: "auth", token}), reconnects
 // when the socket closes or the shell announces a new engine, keeps the read
 // model in step with the engine (protocol-events-v1.md, "Client read model"),
-// fetches peak pyramids from the same engine (Protocol v0 item 23), and mounts
-// the React chrome. Under SIANN_SHELL_TEST=1 (the preload's window.siannTest) the
-// timeline's test hooks are window.__siannTimeline.
+// opens the realtime channel beside it (meters) and the fader gesture
+// controller over it (protocol-gestures-v0.md), fetches peak pyramids from the
+// same engine (Protocol v0 item 23), and mounts the React chrome. Under
+// SIANN_SHELL_TEST=1 (the preload's window.siannTest) the timeline's test
+// hooks are window.__siannTimeline.
 
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
+import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { SessionClient, type EngineEndpoint, type SocketLike } from './model/session-client';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
@@ -22,6 +26,8 @@ declare global {
         onChange(callback: (next: EngineEndpoint | null) => void): void;
       };
     };
+    // The gesture controller, for the e2e tests to wait on (settled).
+    __siannGestures?: GestureController;
     // Present only when the shell runs under SIANN_SHELL_TEST=1.
     siannTest?: { timelineHooks?: boolean };
     __siannTimeline?: TimelineTestHooks;
@@ -39,6 +45,12 @@ const client = new SessionClient({
   schedule,
   initialStatus: 'connecting',
 });
+const realtime = new RealtimeClient({
+  session: client,
+  createSocket: (url) => new WebSocket(url) as unknown as RealtimeSocket,
+});
+const gestures = new GestureController({ client, schedule });
+window.__siannGestures = gestures;
 
 let endpoint: EngineEndpoint | null = null;
 const peaks = new PeaksCache({
@@ -63,7 +75,15 @@ const onTimelineHooks = window.siannTest?.timelineHooks
 
 const container = document.getElementById('root');
 if (!container) throw new Error('missing #root');
-createRoot(container).render(<App client={client} peaks={peaks} onTimelineHooks={onTimelineHooks} />);
+createRoot(container).render(
+  <App
+    client={client}
+    gestures={gestures}
+    realtime={realtime}
+    peaks={peaks}
+    onTimelineHooks={onTimelineHooks}
+  />,
+);
 
 window.siann.engine.onChange(connect);
 void window.siann.engine.current().then(connect);

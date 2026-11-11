@@ -17,6 +17,15 @@
       .media-pool { display: flex; gap: 8px; list-style: none; margin: 0; padding: 0; }
       .media-pool button[aria-pressed="true"] { outline: 2px solid #3d6fb6; }
       .timeline-canvas { display: block; width: 100%; height: 140px; border: 0; touch-action: none; }
+      .mixer { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+      .strip { display: grid; gap: 6px; justify-items: center; padding: 8px; width: 160px;
+               border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 6px; }
+      .strip-name { font-weight: 600; }
+      .strip-meter { background: color-mix(in srgb, currentColor 10%, transparent); }
+      .strip label { display: grid; gap: 2px; justify-items: center; font-size: 12px; }
+      .strip input[type=range] { width: 140px; }
+      .strip-buttons { display: flex; gap: 6px; }
+      .strip-buttons button[aria-pressed=true] { background: #e8a33a; color: #000; }
     </style>
   </head>
   <body>

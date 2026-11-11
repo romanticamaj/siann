@@ -153,6 +153,20 @@ public:
         return out;
     }
 
+    // The next text frame (a reply or an event), or nothing within the timeout.
+    std::optional<json::Value> next() {
+        std::unique_lock lock(mutex_);
+        if (!changed_.wait_for(lock, kClientTimeout, [this] { return !received_.empty(); })) {
+            return std::nullopt;
+        }
+        json::Value out = json::parse(received_.front());
+        received_.pop_front();
+        return out;
+    }
+
+    // Closes the socket from the client side and waits until it is closed.
+    void close() { socket_.stop(); }
+
     // Sends without waiting for a reply (one may never come: the engine can end first).
     void send(const std::string& text) { socket_.sendText(text); }
 

@@ -15,6 +15,7 @@
 // window.siann.engine.current) and the reconnect scheduler are injected.
 
 import type { FetchedEntity, SessionChanged, SyncChunk } from './document';
+import { isMeterLegend, type MeterLegend } from './meter-frames';
 import { ReadModel, ReadModelError } from './read-model';
 
 export interface EngineEndpoint {
@@ -54,6 +55,10 @@ export interface ClientState {
   readonly connections: number;
   // The last failure that left the model behind, for people; not stable.
   readonly error: string | null;
+  // The meter legend of the realtime channel (protocol-events-v1.md,
+  // "meters.legend"): from the auth reply, replaced by each sync's `meters` and
+  // each meters.legend event applied in order; null before the engine has one.
+  readonly legend: MeterLegend | null;
 }
 
 export interface SessionClientOptions {
@@ -149,6 +154,7 @@ export class SessionClient {
     syncCount: 0,
     connections: 0,
     error: null,
+    legend: null,
   };
   #lastSeq: bigint | null = null;
   // The session the model's snapshot belongs to.
@@ -162,6 +168,13 @@ export class SessionClient {
 
   getState(): ClientState {
     return this.#state;
+  }
+
+  // The engine the authenticated command socket is on (the realtime channel
+  // opens beside it), or null.
+  endpoint(): EngineEndpoint | null {
+    const connection = this.#connection;
+    return connection && !connection.closed && connection.authenticated ? connection.endpoint : null;
   }
 
   subscribe(listener: () => void): () => void {
@@ -312,6 +325,7 @@ export class SessionClient {
       sessionId: reply.sessionId,
       revision: typeof reply.revision === 'string' ? reply.revision : null,
       about: (reply.about as AboutInfo | undefined) ?? null,
+      legend: isMeterLegend(reply.meters) ? reply.meters : null,
     });
     // Protocol v0 item 11: a client that missed events, or reached another
     // engine (a restart has a new session id and starts its seq again), syncs.
@@ -368,6 +382,9 @@ export class SessionClient {
       return;
     }
     if (event.type !== 'session.changed') {
+      if (event.type === 'meters.legend' && isMeterLegend(event)) {
+        this.#update({ legend: { epoch: event.epoch, entities: event.entities } });
+      }
       this.#advance(at);
       return;
     }
@@ -416,7 +433,13 @@ export class SessionClient {
         connection.syncRetry();
         connection.syncRetry = null;
       }
-      this.#update({ lastSeq: snapshot.seq, syncCount: this.#state.syncCount + 1, error: null });
+      const meters = chunks[0]?.meters;
+      this.#update({
+        lastSeq: snapshot.seq,
+        syncCount: this.#state.syncCount + 1,
+        error: null,
+        legend: isMeterLegend(meters) ? meters : null,
+      });
     } catch (error) {
       if (connection.closed) return;
       // The model is not known to be in step: the next event syncs instead of

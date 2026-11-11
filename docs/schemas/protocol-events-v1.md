@@ -164,6 +164,20 @@ no `revision`):
 {"type": "proposal.closed", "branch": "p1", "merged": true, "revision": "r8"}
 ```
 
+### `gesture.ended` (m5-mixer)
+
+Published once for every fader gesture that closes (`protocol-gestures-v0.md`),
+after the `session.changed` of its commit:
+
+```json
+{"type": "gesture.ended", "target": {"ref": "track:trk_1", "param": "gain"},
+ "reason": "ended", "startValue": -6000, "value": -3500, "committed": "r9"}
+```
+
+`reason` is `ended`, `cancelled`, `lease_expired` or `disconnected`; `committed` is
+the revision the gesture committed, or `null` (it never moved, was cancelled, or
+its commit was refused). The envelope's `revision` stays the head at publication.
+
 ### `session.opened` (m3-mcp)
 
 Published when `session.open` switched the server to another bundle:

@@ -214,7 +214,68 @@ struct Pending {
     // MCP: the scope of the credential the request came with (mcpToken
     // carries ServerOptions::mcpScope). Empty: the UI (token), unscoped.
     std::optional<McpScope> scope;
+    // Not a request: the connection closed. The command thread ends its
+    // gestures after the requests it queued before the close.
+    bool closed = false;
 };
+
+// An open fader gesture (Protocol v0 item 24): who holds it and since when it
+// was last renewed. Command thread only.
+struct Lease {
+    ConnectionId owner = 0;
+    GestureTarget target;
+    double startValue = 0.0;
+    std::chrono::steady_clock::time_point renewed{};
+};
+
+std::string leaseKey(const GestureTarget& target) {
+    return target.ref() + "/" + target.param;
+}
+
+Value targetJson(const GestureTarget& target) {
+    return Value(Object{{"ref", Value(target.ref())}, {"param", Value(target.param)}});
+}
+
+// {target: {ref: "track:<id>", param}}. Throws ProtocolError invalid_params.
+GestureTarget requireTarget(const Value& params, std::string_view method) {
+    const Value* target = params.find("target");
+    if (target == nullptr || target->kind() != Value::Kind::object) {
+        throw ProtocolError("invalid_params", std::string(method) + " needs a target object {ref, param}");
+    }
+    const Value* ref = stringMember(*target, "ref");
+    const std::optional<model::EntityRef> parsed = ref != nullptr ? parseRef(ref->asString()) : std::nullopt;
+    if (!parsed || parsed->type != model::EntityType::track) {
+        throw ProtocolError("invalid_params", std::string(method) + ": target.ref must be \"track:<id>\"");
+    }
+    const Value* param = stringMember(*target, "param");
+    if (param == nullptr ||
+        (param->asString() != "gain" && param->asString() != "pan" && param->asString() != "mute")) {
+        throw ProtocolError("invalid_params", std::string(method) + ": target.param must be gain, pan or mute");
+    }
+    return GestureTarget{parsed->id, param->asString()};
+}
+
+// The value in the entity's units: a number, and 0 or 1 for mute.
+std::optional<double> gestureValue(const Value& params, std::string_view method, const GestureTarget& target,
+                                   bool required) {
+    const Value* value = params.find("value");
+    if (value == nullptr && !required) {
+        return std::nullopt;
+    }
+    if (value == nullptr || value->kind() != Value::Kind::number) {
+        throw ProtocolError("invalid_params", std::string(method) + " needs a number value");
+    }
+    const double number = value->asNumber();
+    if (target.param == "mute" && number != 0.0 && number != 1.0) {
+        throw ProtocolError("invalid_params", std::string(method) + ": a mute value is 0 or 1");
+    }
+    return number;
+}
+
+// Methods that are never cached: running one again changes nothing (latest wins).
+bool uncachedMethod(std::string_view method) noexcept {
+    return method == "gesture.update" || method == "gesture.hold";
+}
 
 struct Connection {
     bool authenticated = false;
@@ -230,6 +291,7 @@ const std::vector<std::string_view> kMethods = {
     "audition.hear",   "render.start",    "job.status",      "transport.play",    "transport.stop",
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
+    "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -520,6 +582,10 @@ struct ProtocolServer::Impl {
     std::mutex pumpMutex;                          // one consumer at a time
     std::unordered_map<std::string, std::string> cache;  // requestId -> response text
     std::deque<std::string> cacheOrder;
+    // Open gestures by leaseKey(target); command thread, under pumpMutex.
+    std::map<std::string, Lease> leases;
+    // Closes the inbox could not take (it was full), under `mutex`.
+    std::vector<ConnectionId> closedOverflow;
 
     bool started = false;
     std::atomic<bool> running{false};
@@ -766,10 +832,19 @@ struct ProtocolServer::Impl {
 
     void onClose(ConnectionId connection) {
         std::lock_guard lock(mutex);
-        connections.erase(connection);
+        const bool known = connections.erase(connection) != 0;
         events.unsubscribe(connection);
         realtime.remove(connection);
         readModel.forget(connection);
+        // Its gestures end on the command thread, after its queued requests.
+        if (known) {
+            Pending closed;
+            closed.connection = connection;
+            closed.closed = true;
+            if (!inbox.tryPush(std::move(closed))) {
+                closedOverflow.push_back(connection);
+            }
+        }
     }
 
     // A realtime connection: one auth frame, then nothing but outgoing binary
@@ -1175,6 +1250,185 @@ struct ProtocolServer::Impl {
         return success(request.requestId, registryEntryJson(plugins.approve(format, path, approved->asBool())));
     }
 
+    // ---- fader gestures (Protocol v0 item 24, docs/schemas/protocol-gestures-v0.md) ----
+
+    std::chrono::steady_clock::time_point steadyNow() const {
+        return options.steadyClock ? options.steadyClock() : std::chrono::steady_clock::now();
+    }
+
+    GesturePort& requireGesturePort() const {
+        if (options.gesturePort == nullptr) {
+            throw ProtocolError("not_supported", "this engine host has no fader gestures");
+        }
+        return *options.gesturePort;
+    }
+
+    // The gesture `request`'s connection holds on `target`, renewed.
+    Lease& ownedLease(const Pending& request, const GestureTarget& target) {
+        auto it = leases.find(leaseKey(target));
+        if (it == leases.end()) {
+            throw ProtocolError("no_gesture", "no gesture is open on " + target.ref() + " " + target.param);
+        }
+        if (it->second.owner != request.connection) {
+            throw ProtocolError("gesture_held", "another connection holds a gesture on " + target.ref());
+        }
+        it->second.renewed = steadyNow();
+        return it->second;
+    }
+
+    // A revision a gesture committed, on main or on the heard proposal branch.
+    void publishCommit(const command::Revision& revision) {
+        if (revision.branch) {
+            events.publishBranchRevision(revision);
+            if (options.auditionPort != nullptr) {
+                options.auditionPort->branchCommitted(*revision.branch);
+            }
+            return;
+        }
+        events.publishRevision(revision);
+        if (options.auditionPort != nullptr) {
+            options.auditionPort->mainCommitted();
+        }
+    }
+
+    void publishEnded(const GestureTarget& target, std::string_view reason, double startValue, double value,
+                      const command::Revision* committed) {
+        events.publish("gesture.ended",
+                       Object{{"target", targetJson(target)},
+                              {"reason", Value(std::string(reason))},
+                              {"startValue", Value(startValue)},
+                              {"value", Value(value)},
+                              {"committed", committed != nullptr ? Value(committed->envelope.id) : Value(nullptr)}});
+    }
+
+    // Ends a lease through the port, committing its last value. A commit that
+    // throws closes it as cancelled, and the exception propagates.
+    GestureEnd closeLease(const std::string& key, std::string_view reason) {
+        const Lease lease = leases.at(key);
+        leases.erase(key);
+        GestureEnd end;
+        try {
+            end = requireGesturePort().end(lease.target, options.actor, options.clock());
+        } catch (...) {
+            publishEnded(lease.target, "cancelled", lease.startValue, lease.startValue, nullptr);
+            throw;
+        }
+        if (end.revision != nullptr) {
+            publishCommit(*end.revision);
+        }
+        publishEnded(lease.target, reason, end.startValue, end.value, end.revision);
+        return end;
+    }
+
+    // The lease's end without a requester: failures were published as cancelled.
+    void closeQuietly(const std::string& key, std::string_view reason) {
+        try {
+            closeLease(key, reason);
+        } catch (...) {
+        }
+    }
+
+    // Command thread: leases not renewed for gestureLeaseMs.
+    void expireLeases() {
+        if (leases.empty()) {
+            return;
+        }
+        const auto now = steadyNow();
+        std::vector<std::string> expired;
+        for (const auto& [key, lease] : leases) {
+            if (now - lease.renewed >= options.gestureLeaseMs) {
+                expired.push_back(key);
+            }
+        }
+        for (const std::string& key : expired) {
+            closeQuietly(key, "lease_expired");
+        }
+    }
+
+    // Command thread: a connection closed; its gestures end at once.
+    void endConnection(ConnectionId connection) {
+        std::vector<std::string> owned;
+        for (const auto& [key, lease] : leases) {
+            if (lease.owner == connection) {
+                owned.push_back(key);
+            }
+        }
+        for (const std::string& key : owned) {
+            closeQuietly(key, "disconnected");
+        }
+    }
+
+    // session.open: the old session's gestures go with its engine, uncommitted.
+    void dropLeases() {
+        for (const auto& [key, lease] : leases) {
+            (void)key;
+            publishEnded(lease.target, "cancelled", lease.startValue, lease.startValue, nullptr);
+        }
+        leases.clear();
+    }
+
+    std::string gestureBegin(const Pending& request) {
+        const std::string_view method = "gesture.begin";
+        GesturePort& gestures = requireGesturePort();
+        const GestureTarget target = requireTarget(request.params, method);
+        auto it = leases.find(leaseKey(target));
+        if (it != leases.end()) {
+            if (it->second.owner == request.connection) {
+                throw ProtocolError("gesture_open", "this connection already holds a gesture on " + target.ref());
+            }
+            throw ProtocolError("gesture_held", "another connection holds a gesture on " + target.ref());
+        }
+        const double startValue = gestures.begin(target);
+        leases.emplace(leaseKey(target), Lease{request.connection, target, startValue, steadyNow()});
+        return success(request.requestId,
+                       Value(Object{{"target", targetJson(target)},
+                                    {"startValue", Value(startValue)},
+                                    {"leaseMs", Value(static_cast<double>(options.gestureLeaseMs.count()))}}));
+    }
+
+    std::string gestureUpdate(const Pending& request) {
+        const std::string_view method = "gesture.update";
+        GesturePort& gestures = requireGesturePort();
+        const GestureTarget target = requireTarget(request.params, method);
+        const double value = *gestureValue(request.params, method, target, true);
+        ownedLease(request, target);
+        gestures.update(target, value);
+        return success(request.requestId, Value(Object{}));
+    }
+
+    std::string gestureHold(const Pending& request) {
+        requireGesturePort();
+        ownedLease(request, requireTarget(request.params, "gesture.hold"));
+        return success(request.requestId, Value(Object{}));
+    }
+
+    std::string gestureEnd(const Pending& request) {
+        const std::string_view method = "gesture.end";
+        GesturePort& gestures = requireGesturePort();
+        const GestureTarget target = requireTarget(request.params, method);
+        const std::optional<double> value = gestureValue(request.params, method, target, false);
+        ownedLease(request, target);
+        if (value) {
+            gestures.update(target, *value);
+        }
+        const GestureEnd end = closeLease(leaseKey(target), "ended");
+        return success(request.requestId,
+                       Value(Object{{"target", targetJson(target)},
+                                    {"startValue", Value(end.startValue)},
+                                    {"value", Value(end.value)},
+                                    {"revision", end.revision != nullptr ? revisionJson(*end.revision) : Value(nullptr)}}));
+    }
+
+    std::string gestureCancel(const Pending& request) {
+        GesturePort& gestures = requireGesturePort();
+        const GestureTarget target = requireTarget(request.params, "gesture.cancel");
+        const Lease lease = ownedLease(request, target);
+        leases.erase(leaseKey(target));
+        gestures.cancel(target);
+        publishEnded(target, "cancelled", lease.startValue, lease.startValue, nullptr);
+        return success(request.requestId, Value(Object{}));
+    }
+
     // The render jobs' plugin sets, back on the command thread to be destroyed.
     void returnRenderInstances() {
         for (auto& instances : jobs.takeFinishedPlugins()) {
@@ -1201,6 +1455,7 @@ struct ProtocolServer::Impl {
                                       {"transport", Value(options.transportPort != nullptr)},
                                       {"render", Value(true)},
                                       {"plugins", pluginsFeatureJson()},
+                                      {"gestures", Value(options.gesturePort != nullptr)},
                                       {"peaks", Value(true)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
@@ -1372,6 +1627,7 @@ struct ProtocolServer::Impl {
         }
         session::Session& next = options.openSession(path);
         session = &next;
+        dropLeases();
         const command::Revision& head = next.history().head();
         const std::string nextId = "ses_" + randomHex(16);
         {
@@ -1512,6 +1768,21 @@ struct ProtocolServer::Impl {
         if (method == "plugin.approve") {
             return pluginApprove(request);
         }
+        if (method == "gesture.begin") {
+            return gestureBegin(request);
+        }
+        if (method == "gesture.update") {
+            return gestureUpdate(request);
+        }
+        if (method == "gesture.hold") {
+            return gestureHold(request);
+        }
+        if (method == "gesture.end") {
+            return gestureEnd(request);
+        }
+        if (method == "gesture.cancel") {
+            return gestureCancel(request);
+        }
         return failure(Value(request.requestId), "unknown_method", "unknown method " + request.method);
     }
 
@@ -1557,6 +1828,8 @@ struct ProtocolServer::Impl {
         } catch (const TransportPortError& e) {
             return failure(id, e.code(), e.what());
         } catch (const PluginPortError& e) {
+            return failure(id, e.code(), e.what());
+        } catch (const GesturePortError& e) {
             return failure(id, e.code(), e.what());
         } catch (const std::exception& e) {
             return failure(id, "internal_error", e.what());
@@ -1605,7 +1878,12 @@ struct ProtocolServer::Impl {
 
     // Command thread, under pumpMutex.
     void handle(std::vector<Pending> requests) {
+        expireLeases();
         for (const auto& request : requests) {
+            if (request.closed) {
+                endConnection(request.connection);
+                continue;
+            }
             // Envelope errors are answered before the cache and never cached
             // (Protocol v0 item 5), so a retry with the same requestId runs.
             // A request queued before a session.open in the same pump still
@@ -1619,14 +1897,27 @@ struct ProtocolServer::Impl {
                 deliver(request, *denied);
                 continue;
             }
-            auto cached = cache.find(request.requestId);
-            if (cached != cache.end()) {
-                deliver(request, cached->second);
-                continue;
+            const bool cached = !uncachedMethod(request.method);
+            if (cached) {
+                auto hit = cache.find(request.requestId);
+                if (hit != cache.end()) {
+                    deliver(request, hit->second);
+                    continue;
+                }
             }
             std::string response = execute(request);
-            remember(request.requestId, response);
+            if (cached) {
+                remember(request.requestId, response);
+            }
             deliver(request, response);
+        }
+        std::vector<ConnectionId> overflow;
+        {
+            std::lock_guard lock(mutex);
+            overflow.swap(closedOverflow);
+        }
+        for (const ConnectionId connection : overflow) {
+            endConnection(connection);
         }
         refreshMediaTable();
         events.flush();

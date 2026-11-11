@@ -44,6 +44,7 @@
 #include "siann/playback/audition.hpp"
 #include "siann/playback/playback_engine.hpp"
 #include "siann/protocol/event_stream.hpp"
+#include "siann/protocol/gesture_port.hpp"
 #include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/realtime_channel.hpp"
 #include "siann/protocol/transport_port.hpp"
@@ -103,7 +104,7 @@ void writePluginRegistry(const std::filesystem::path& file, const std::vector<ho
 
 struct PluginHostSet;
 
-class EngineHost final : public protocol::TransportPort, public protocol::PluginPort {
+class EngineHost final : public protocol::TransportPort, public protocol::PluginPort, public protocol::GesturePort {
 public:
     // The session must outlive the host (or its next rebind).
     EngineHost(session::Session& session, EngineHostOptions options);
@@ -157,6 +158,15 @@ public:
     // an unprobed install with scanPath and is written to the registry file.
     std::vector<protocol::PluginRegistryEntry> registry() const override;
     protocol::PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) override;
+
+    // protocol::GesturePort (Protocol v0 item 24), on the command thread, over the
+    // engine's fader gestures: the start value from the heard side's document, a
+    // short ramp per update, and endGesture's one revision. cancel ends the
+    // dispatcher's gesture and sends the document's value back.
+    double begin(const protocol::GestureTarget& target) override;
+    void update(const protocol::GestureTarget& target, double value) override;
+    protocol::GestureEnd end(const protocol::GestureTarget& target, std::string actor, std::string time) override;
+    void cancel(const protocol::GestureTarget& target) override;
 
     protocol::TransportState transportState() const;
     playback::PlaybackEngine& playback() noexcept { return *engine_; }
@@ -215,6 +225,8 @@ private:
     protocol::RealtimeChannel* channel_ = nullptr;
     protocol::EventStream* events_ = nullptr;
     std::optional<protocol::MeterPublisher> publisher_;
+    // The start value of each open gesture, by "<trackId>/<param>".
+    std::map<std::string, double> gestureStarts_;
 };
 
 }  // namespace siann::engine_app
