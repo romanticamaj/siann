@@ -64,3 +64,52 @@ set entries), `invalid_plan` (anything else malformed, including unknown fields)
 `plan_stale` (with `changedEntities`: `"<type>:<id>"` and `added`, `removed` or
 `modified`), `invalid_state`, `not_found`, `invalid_params`. Plans live in engine
 memory in M3 and are not stored in the session bundle.
+
+## Protocol methods (m5-plan-review)
+
+The plan methods of Protocol v0 item 14 (`plan.submit`, `plan.status`,
+`plan.approve`, `plan.reject`, `plan.apply`, `plan.rollback`, `plan.propose`) are
+joined by two read-only methods for the plan review UI (spec, Protocol v0 item 25).
+Both run on the command thread, honour `expectedRevision`, are listed in
+`engine.capabilities` `methods` and are not MCP tools in v0.
+
+### `plan.list`
+
+```json
+{"method": "plan.list", "params": {}}
+-> {"plans": [{"schema": "siann.plan.v1", "hash": "sha256:...", "state": "validated",
+               "baseRevision": "r2", "steps": [...], "readSet": [...], "writeSet": [...],
+               "stale": [], "proposalBranch": "p1"}]}
+```
+
+Every plan of the session in submission order (the order the plan store first
+stored them; a partial approval's sub-plan comes after the plans before it). Each
+entry is what `plan.status` returns for that plan: the plan with its lifecycle
+fields, `stale` (`[{ref, change}]`, empty when fresh) and `proposalBranch` while
+the plan is proposed.
+
+### `plan.preview`
+
+```json
+{"method": "plan.preview", "params": {"plan": "sha256:..."}}
+-> {"revision": "r3", "documentHash": "sha256:...", "stale": [],
+    "entities": [{"ref": "root:root", "before": {...}, "after": {...}},
+                 {"ref": "track:trk_1", "before": {"gainMilliDb": 0, ...}, "after": {"gainMilliDb": -600, ...}},
+                 {"ref": "track:trk_n", "before": null, "after": {...}}]}
+```
+
+What `plan.apply` would produce now: `prepareTransaction(steps)` at main's head
+document, never committed. `revision` and `documentHash` name the head. `entities`
+is the union of the writeSet refs and the refs whose entity differs between the
+head and the prepared document, sorted by `(type, id)` as byte strings; `before` is
+the entity JSON at the head and `after` in the prepared document, `null` where the
+entity is absent. A writeSet entity the steps leave unchanged appears with equal
+`before` and `after`. A step that fails at the head answers that step's error
+(`not_found`, `invalid_gain`, ...) with `step`, as `command.execute` does; the
+plan's state never changes. Any state previews. Errors: `not_found` (no such plan),
+`invalid_params` (no `plan`).
+
+### Events
+
+`plan.changed` and `audition.changed` (`protocol-events-v1.md`) tell a client when
+to re-read a plan and which side is heard.

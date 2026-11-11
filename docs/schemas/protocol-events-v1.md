@@ -178,6 +178,41 @@ after the `session.changed` of its commit:
 the revision the gesture committed, or `null` (it never moved, was cancelled, or
 its commit was refused). The envelope's `revision` stays the head at publication.
 
+### `plan.changed` (m5-plan-review)
+
+Published once per plan lifecycle transition (spec, Protocol v0 item 25), after the
+response and after any `session.changed` of the same request:
+
+```json
+{"type": "plan.changed", "plan": "sha256:...", "state": "approved", "proposalBranch": "p1"}
+```
+
+`state` is the plan's state after the request (`validated`, `approved`,
+`rejected`, `applied`, `rolled_back`); `proposalBranch` is present while the plan
+is proposed. Transitions: `plan.submit` of a new plan (`validated`), `plan.approve`
+(`approved`), a partial approval (the original `rejected`, then the sub-plan
+`approved`, or `validated` when its approval was `plan_stale`), `plan.reject`
+(`rejected`), `plan.apply` (`applied`), `plan.rollback` (`rolled_back`),
+`plan.propose` (`approved` with `proposalBranch`), `proposal.merge` of a proposed
+plan's branch (`applied`, no `proposalBranch`) and `proposal.discard` of it
+(`approved`, no `proposalBranch`). Several plans changed by one request are
+published in submission order. A request that leaves every plan as it was
+publishes none. A client that sees an unknown `plan` reads it with `plan.status`.
+
+### `audition.changed` (m5-plan-review)
+
+Published when the side heard after a request differs from the side heard before
+it (`audition.hear`, `proposal.merge` or `proposal.discard` of the heard branch,
+the MCP `audition` tool, `session.open`), whoever sent the request:
+
+```json
+{"type": "audition.changed", "heard": "p1"}
+```
+
+`heard` is `"main"` or the branch id, as `session.inspect` reports it. Hearing the
+side already heard publishes nothing; an engine without an audition port never
+publishes it.
+
 ### `session.opened` (m3-mcp)
 
 Published when `session.open` switched the server to another bundle:

@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,6 +45,13 @@ std::vector<std::string> types(const std::vector<Value>& events) {
         out.push_back(at(event, "type").asString());
     }
     return out;
+}
+
+// The events without plan.changed (Protocol v0 item 25), for the tests that
+// count the revision and proposal events of a plan method.
+std::vector<Value> nonPlan(std::vector<Value> events) {
+    std::erase_if(events, [](const Value& event) { return at(event, "type").asString() == "plan.changed"; });
+    return events;
 }
 
 // A copy: callers pass the temporary response of call().
@@ -126,7 +134,7 @@ TEST_CASE("plan.approve then plan.apply publishes one plan revision and session.
     CHECK(at(approved, "state").asString() == "approved");
     CHECK(at(approved, "approvedBy").asString() == "protocol");
     const std::size_t revisions = f.session.history().revisions().size();
-    const std::size_t eventsBefore = f.events(watcher).size();
+    const std::size_t eventsBefore = nonPlan(f.events(watcher)).size();
 
     const Value applied = f.ok(c, "plan.apply", planParams(plan));
     const Value& revision = at(applied, "revision");
@@ -135,7 +143,7 @@ TEST_CASE("plan.approve then plan.apply publishes one plan revision and session.
     CHECK(f.session.history().revisions().size() == revisions + 1);
     CHECK(f.session.plans().find(plan)->state == command::PlanState::applied);
 
-    const auto events = f.events(watcher);
+    const auto events = nonPlan(f.events(watcher));
     REQUIRE(events.size() == eventsBefore + 1);
     CHECK(at(events.back(), "type").asString() == "session.changed");
     CHECK(at(events.back(), "cause").asString() == "plan");
@@ -209,7 +217,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
     const std::string mainHead = f.head().envelope.id;
     const std::string plan = submitted(f, c, Array{trackAdd("trk_b")});
     f.ok(c, "plan.approve", planParams(plan));
-    const std::size_t eventsBefore = f.events(watcher).size();
+    const std::size_t eventsBefore = nonPlan(f.events(watcher)).size();
 
     const Value proposed = f.ok(c, "plan.propose", planParams(plan));
     CHECK(at(proposed, "branch").asString() == "p1");
@@ -221,7 +229,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
     CHECK(at(inspected, "branches").asArray().size() == 1);
     CHECK(inspected.find("heard") == nullptr);  // no audition port
 
-    auto events = f.events(watcher);
+    auto events = nonPlan(f.events(watcher));
     REQUIRE(events.size() == eventsBefore + 1);
     CHECK(at(events.back(), "type").asString() == "proposal.changed");
     CHECK(at(events.back(), "branch").asString() == "p1");
@@ -235,7 +243,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
         CHECK(at(revision, "parents").asArray().size() == 2);
         CHECK(f.head().envelope.id == at(revision, "id").asString());
         CHECK(at(f.ok(c, "plan.status", planParams(plan)), "state").asString() == "applied");
-        events = f.events(watcher);
+        events = nonPlan(f.events(watcher));
         REQUIRE(events.size() == eventsBefore + 3);
         CHECK(types(events).back() == "proposal.closed");
         CHECK(at(events[events.size() - 2], "type").asString() == "session.changed");
@@ -248,7 +256,7 @@ TEST_CASE("plan.propose opens a branch, proposal.merge lands it, proposal.discar
         CHECK(f.ok(c, "proposal.discard", Value(Object{{"branch", Value("p1")}})).asObject().empty());
         CHECK(f.head().envelope.id == mainHead);
         CHECK(at(f.ok(c, "plan.status", planParams(plan)), "state").asString() == "approved");
-        events = f.events(watcher);
+        events = nonPlan(f.events(watcher));
         REQUIRE(events.size() == eventsBefore + 2);
         CHECK(at(events.back(), "type").asString() == "proposal.closed");
         CHECK_FALSE(at(events.back(), "merged").asBool());
@@ -363,4 +371,209 @@ TEST_CASE("command.list and engine.capabilities describe the registry and the se
     CHECK(at(features, "render").asBool());
     CHECK_FALSE(at(features, "plugins").asBool());
     CHECK(at(at(capabilities, "limits"), "syncChunkEntities").asNumber() == 500);
+}
+
+// Plans in the UI (spec, Protocol v0 item 25; docs/schemas/plan-v1.md,
+// "Protocol methods"; protocol-events-v1.md, plan.changed).
+
+namespace {
+
+std::vector<std::string> refsOfEntities(const Value& entities) {
+    std::vector<std::string> out;
+    for (const Value& entry : entities.asArray()) {
+        out.push_back(at(entry, "ref").asString());
+    }
+    return out;
+}
+
+Value entityRow(const Value& preview, const std::string& ref) {
+    for (const Value& entry : at(preview, "entities").asArray()) {
+        if (at(entry, "ref").asString() == ref) {
+            return entry;
+        }
+    }
+    FAIL("no preview row " << ref);
+    return preview;
+}
+
+// The plan.changed events of a connection after the first `from` events, as
+// "<plan> <state>[ <proposalBranch>]".
+std::vector<std::string> planChanges(const Fixture& f, ConnectionId watcher, std::size_t from) {
+    std::vector<std::string> out;
+    const auto all = f.events(watcher);
+    for (std::size_t i = from; i < all.size(); ++i) {
+        const Value& event = all[i];
+        if (at(event, "type").asString() != "plan.changed") {
+            continue;
+        }
+        std::string line = at(event, "plan").asString() + " " + at(event, "state").asString();
+        if (const Value* branch = event.find("proposalBranch")) {
+            line += " " + branch->asString();
+        }
+        out.push_back(line);
+    }
+    return out;
+}
+
+Value trackRemove(const std::string& id) {
+    return Value(Object{{"op", Value("track.remove")}, {"trackId", Value(id)}});
+}
+
+}  // namespace
+
+TEST_CASE("plan.list lists every plan in submission order as plan.status returns it", "[protocol][plans][ui]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    CHECK(canonical(f.ok(c, "plan.list")) == R"({"plans":[]})");
+
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string first = submitted(f, c, Array{trackGain("trk_a", -600)});
+    const std::string second = submitted(f, c, Array{trackAdd("trk_b")});
+    f.ok(c, "plan.approve", planParams(second));
+    f.ok(c, "plan.propose", planParams(second));
+    f.commit(c, Array{trackGain("trk_a", -100)});  // makes the first plan stale
+
+    const Value listed = f.ok(c, "plan.list");
+    const auto& plans = at(listed, "plans").asArray();
+    REQUIRE(plans.size() == 2);
+    CHECK(at(plans[0], "hash").asString() == first);
+    CHECK(at(plans[1], "hash").asString() == second);
+    CHECK(canonical(plans[0]) == canonical(f.ok(c, "plan.status", planParams(first))));
+    CHECK(canonical(plans[1]) == canonical(f.ok(c, "plan.status", planParams(second))));
+    CHECK(at(plans[0], "stale").asArray().size() == 1);
+    CHECK(at(plans[1], "proposalBranch").asString() == "p1");
+}
+
+TEST_CASE("plan.preview answers the prepared entities at the head and commits nothing", "[protocol][plans][ui]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string plan = submitted(f, c, Array{trackAdd("trk_n"), trackGain("trk_a", -600)});
+    const std::string head = f.head().envelope.id;
+    const std::size_t revisions = f.session.history().revisions().size();
+    const std::size_t eventsBefore = f.events(watcher).size();
+
+    const Value preview = f.ok(c, "plan.preview", planParams(plan));
+    CHECK(at(preview, "revision").asString() == head);
+    CHECK(at(preview, "documentHash").asString() == hash::formatHash(f.head().envelope.documentHash));
+    CHECK(at(preview, "stale").asArray().empty());
+    CHECK(refsOfEntities(at(preview, "entities")) ==
+          std::vector<std::string>{"root:root", "track:trk_a", "track:trk_n"});
+
+    const Value root = entityRow(preview, "root:root");
+    CHECK(at(at(root, "before"), "trackOrder").asArray().size() == 1);
+    CHECK(at(at(root, "after"), "trackOrder").asArray().size() == 2);
+    const Value gained = entityRow(preview, "track:trk_a");
+    CHECK(at(at(gained, "before"), "gainMilliDb").asNumber() == 0);
+    CHECK(at(at(gained, "after"), "gainMilliDb").asNumber() == -600);
+    const Value added = entityRow(preview, "track:trk_n");
+    CHECK(at(added, "before").kind() == Value::Kind::null);
+    CHECK(at(at(added, "after"), "id").asString() == "trk_n");
+    CHECK(at(at(added, "after"), "name").asString() == "trk_n");
+
+    // Nothing committed, nothing published, the plan untouched.
+    CHECK(f.head().envelope.id == head);
+    CHECK(f.session.history().revisions().size() == revisions);
+    CHECK(f.events(watcher).size() == eventsBefore);
+    CHECK(f.session.plans().find(plan)->state == command::PlanState::validated);
+
+    // Any state previews: the applied plan still answers (against the new head).
+    f.ok(c, "plan.approve", planParams(plan));
+    f.ok(c, "plan.apply", planParams(plan));
+    CHECK(errorCode(f.call(c, "plan.preview", planParams(plan))) == "already_exists");
+
+    CHECK(errorCode(f.call(c, "plan.preview", planParams("sha256:" + std::string(64, '0')))) == "not_found");
+    CHECK(errorCode(f.call(c, "plan.preview", Value(Object{}))) == "invalid_params");
+}
+
+TEST_CASE("plan.preview of a step that fails at the head answers its error with the step", "[protocol][plans][ui]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string plan = submitted(f, c, Array{trackAdd("trk_n"), trackGain("trk_a", -600)});
+    f.commit(c, Array{trackRemove("trk_a")});
+
+    const Value& error = errorOf(f.call(c, "plan.preview", planParams(plan)));
+    CHECK(at(error, "code").asString() == "not_found");
+    CHECK(at(error, "step").asNumber() == 1);
+    CHECK(f.session.plans().find(plan)->state == command::PlanState::validated);
+}
+
+TEST_CASE("plan.changed is published once per plan transition", "[protocol][plans][ui]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_a")});
+    std::size_t mark = f.events(watcher).size();
+    const auto changes = [&] {
+        auto out = planChanges(f, watcher, mark);
+        mark = f.events(watcher).size();
+        return out;
+    };
+
+    const std::string plan = submitted(f, c, Array{trackGain("trk_a", -600)});
+    CHECK(changes() == std::vector<std::string>{plan + " validated"});
+    submitted(f, c, Array{trackGain("trk_a", -600)});  // the same plan again: no transition
+    CHECK(changes().empty());
+    f.ok(c, "plan.status", planParams(plan));
+    f.ok(c, "plan.list");
+    f.ok(c, "plan.preview", planParams(plan));
+    CHECK(changes().empty());
+
+    SECTION("approve, apply, rollback") {
+        f.ok(c, "plan.approve", planParams(plan));
+        CHECK(changes() == std::vector<std::string>{plan + " approved"});
+        CHECK(errorCode(f.call(c, "plan.approve", planParams(plan))) == "invalid_state");
+        CHECK(changes().empty());
+        f.ok(c, "plan.apply", planParams(plan));
+        const auto all = f.events(watcher);
+        CHECK(changes() == std::vector<std::string>{plan + " applied"});
+        // After the commit's session.changed.
+        REQUIRE(all.size() >= 2);
+        CHECK(at(all[all.size() - 2], "type").asString() == "session.changed");
+        f.ok(c, "plan.rollback", planParams(plan));
+        CHECK(changes() == std::vector<std::string>{plan + " rolled_back"});
+    }
+    SECTION("reject") {
+        f.ok(c, "plan.reject", Value(Object{{"plan", Value(plan)}, {"note", Value("no")}}));
+        CHECK(changes() == std::vector<std::string>{plan + " rejected"});
+        // A rejected plan still previews.
+        CHECK(at(entityRow(f.ok(c, "plan.preview", planParams(plan)), "track:trk_a"), "after").find("gainMilliDb")
+                  ->asNumber() == -600);
+    }
+    SECTION("propose, then merge") {
+        f.ok(c, "plan.approve", planParams(plan));
+        changes();
+        f.ok(c, "plan.propose", planParams(plan));
+        CHECK(changes() == std::vector<std::string>{plan + " approved p1"});
+        f.ok(c, "proposal.merge", Value(Object{{"branch", Value("p1")}}));
+        CHECK(changes() == std::vector<std::string>{plan + " applied"});
+    }
+    SECTION("propose, then discard") {
+        f.ok(c, "plan.approve", planParams(plan));
+        f.ok(c, "plan.propose", planParams(plan));
+        changes();
+        f.ok(c, "proposal.discard", Value(Object{{"branch", Value("p1")}}));
+        CHECK(changes() == std::vector<std::string>{plan + " approved"});
+    }
+    SECTION("partial approval: the original rejected, then the sub-plan approved") {
+        const std::string two = submitted(f, c, Array{trackGain("trk_a", -300), trackAdd("trk_b")});
+        changes();
+        const Value sub = f.ok(c, "plan.approve", Value(Object{{"plan", Value(two)}, {"steps", Value(Array{Value(1)})}}));
+        CHECK(changes() ==
+              std::vector<std::string>{two + " rejected", at(sub, "hash").asString() + " approved"});
+    }
+}
+
+TEST_CASE("engine.capabilities lists plan.list and plan.preview", "[protocol][plans][ui]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const Value capabilities = f.ok(c, "engine.capabilities");
+    std::vector<std::string> methods;
+    for (const Value& method : at(capabilities, "methods").asArray()) {
+        methods.push_back(method.asString());
+    }
+    CHECK(std::count(methods.begin(), methods.end(), "plan.list") == 1);
+    CHECK(std::count(methods.begin(), methods.end(), "plan.preview") == 1);
 }

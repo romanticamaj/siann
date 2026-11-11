@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "live_rig.hpp"
 #include "siann/playback/audition.hpp"
@@ -147,4 +148,69 @@ TEST_CASE("without an audition port audition.hear is audition_unavailable", "[pr
     const ConnectionId c = f.authed();
     CHECK(errorCode(f.call(c, "audition.hear", side("main"))) == "audition_unavailable");
     CHECK(at(f.ok(c, "session.inspect"), "branches").asArray().empty());
+}
+
+// audition.changed (spec, Protocol v0 item 25; protocol-events-v1.md).
+namespace {
+
+// The heard values of the audition.changed events after the first `from`.
+std::vector<std::string> heardChanges(const Harness& harness, ConnectionId watcher, std::size_t& from) {
+    std::vector<std::string> out;
+    const auto all = harness.events(watcher);
+    for (std::size_t i = from; i < all.size(); ++i) {
+        if (at(all[i], "type").asString() == "audition.changed") {
+            out.push_back(at(all[i], "heard").asString());
+        }
+    }
+    from = all.size();
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("audition.changed follows audition.hear only when the heard side changes", "[protocol][audition][ui]") {
+    Rig rig;
+    const ConnectionId c = rig.harness.authed();
+    const ConnectionId watcher = rig.harness.authed(true);
+    const std::string b = rig.proposeTrackC(c);
+    std::size_t mark = rig.harness.events(watcher).size();
+
+    rig.harness.ok(c, "audition.hear", side(b));
+    CHECK(heardChanges(rig.harness, watcher, mark) == std::vector<std::string>{b});
+    rig.harness.ok(c, "audition.hear", side(b));
+    CHECK(heardChanges(rig.harness, watcher, mark).empty());
+    CHECK(errorCode(rig.harness.call(c, "audition.hear", side("p9"))) == "audition_not_found");
+    CHECK(heardChanges(rig.harness, watcher, mark).empty());
+    rig.harness.ok(c, "audition.hear", side("main"));
+    CHECK(heardChanges(rig.harness, watcher, mark) == std::vector<std::string>{"main"});
+    rig.harness.ok(c, "audition.hear", side("main"));
+    CHECK(heardChanges(rig.harness, watcher, mark).empty());
+}
+
+TEST_CASE("audition.changed follows a merge or discard of the heard branch", "[protocol][audition][ui]") {
+    Rig rig;
+    const ConnectionId c = rig.harness.authed();
+    const ConnectionId watcher = rig.harness.authed(true);
+    const std::string b = rig.proposeTrackC(c);
+    rig.harness.ok(c, "audition.hear", side(b));
+    std::size_t mark = rig.harness.events(watcher).size();
+
+    SECTION("merge") {
+        rig.harness.ok(c, "proposal.merge", branch(b));
+        CHECK(heardChanges(rig.harness, watcher, mark) == std::vector<std::string>{"main"});
+    }
+    SECTION("discard") {
+        rig.harness.ok(c, "proposal.discard", branch(b));
+        CHECK(heardChanges(rig.harness, watcher, mark) == std::vector<std::string>{"main"});
+    }
+}
+
+TEST_CASE("closing a branch that is not heard publishes no audition.changed", "[protocol][audition][ui]") {
+    Rig rig;
+    const ConnectionId c = rig.harness.authed();
+    const ConnectionId watcher = rig.harness.authed(true);
+    const std::string b = rig.proposeTrackC(c);
+    std::size_t mark = rig.harness.events(watcher).size();
+    rig.harness.ok(c, "proposal.merge", branch(b));
+    CHECK(heardChanges(rig.harness, watcher, mark).empty());
 }

@@ -651,3 +651,45 @@ test('(16) a request answering session_mismatch rejects with it and re-authentic
   assert.equal(r.last().sent[r.last().sent.length - 1]!.sessionId, NEW);
   assert.deepEqual(await status, { device: null });
 });
+
+// m5-plan-review (protocol-events-v1.md, plan.changed and audition.changed):
+// events that are not session.changed reach onEvent listeners in seq order and
+// leave the model alone.
+test('(17) onEvent listeners receive plan.changed and audition.changed in seq order, also after a gap sync', async () => {
+  const r = rig();
+  const socket = await synced(r);
+  const seen: string[] = [];
+  const off = r.client.onEvent('plan.changed', (e) => seen.push(`${e.seq} plan ${String(e.plan)} ${String(e.state)}`));
+  r.client.onEvent('audition.changed', (e) => seen.push(`${e.seq} heard ${String(e.heard)}`));
+  const before = r.client.model.getSnapshot();
+  const envelope = { schema: 'siann.event.v1', sessionId: SESSION, revision: seq.base.revision };
+  socket.deliver({ ...envelope, seq: '8', type: 'plan.changed', plan: 'sha256:aa', state: 'validated' });
+  socket.deliver({ ...envelope, seq: '9', type: 'audition.changed', heard: 'p1' });
+  socket.deliver({ ...envelope, seq: '9', type: 'audition.changed', heard: 'p1' }); // a repeat: ignored
+  await until(() => r.client.getState().lastSeq === '9', 'both events');
+  assert.deepEqual(seen, ['8 plan sha256:aa validated', '9 heard p1']);
+  assert.equal(r.client.model.getSnapshot(), before, 'the model is untouched');
+  assert.equal(socket.requests('session.fetch').length, 0);
+
+  // A gap: the client syncs, then hands over the event that follows the sync's seq.
+  r.script.sync = chunksOf(seq.base.document, seq.base.revision, '10', seq.base.documentHash);
+  socket.deliver({ ...envelope, seq: '11', type: 'plan.changed', plan: 'sha256:bb', state: 'approved' });
+  await until(() => r.client.getState().lastSeq === '11', 'the event after the sync');
+  assert.equal(r.client.getState().syncCount, 2);
+  assert.deepEqual(seen.slice(2), ['11 plan sha256:bb approved']);
+
+  off();
+  socket.deliver({ ...envelope, seq: '12', type: 'plan.changed', plan: 'sha256:cc', state: 'rejected' });
+  await until(() => r.client.getState().lastSeq === '12', 'the next event');
+  assert.equal(seen.length, 3, 'an unsubscribed listener hears nothing');
+});
+
+test('(18) a session.changed reaches onEvent listeners once the model has applied it', async () => {
+  const r = rig();
+  const socket = await synced(r);
+  const revisions: string[] = [];
+  r.client.onEvent('session.changed', () => revisions.push(r.client.model.getSnapshot()!.revision));
+  socket.deliver(event(0));
+  await until(() => revisions.length === 1, 'the listener');
+  assert.deepEqual(revisions, [seq.steps[0]!.event.revision]);
+});
