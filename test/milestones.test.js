@@ -60,17 +60,28 @@ test('feature ids are unique and dependencies point to earlier waves', () => {
   }
 });
 
-test('spec references name headings that exist in the architecture spec', () => {
-  const headings = new Set(
-    fs.readFileSync(SPEC, 'utf8').split(/\r?\n/)
-      .filter((line) => /^#{1,6} /.test(line))
-      .map((line) => line.replace(/^#{1,6} /, '').trim()),
-  );
+// A ref 'UI redesign: <heading>' names a heading of the UI redesign spec: the heading
+// itself or its number ('3.2'); a trailing ' (...)' names a ticket within it.
+const UI_SPEC = path.join(ROOT, 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+const headingsOf = (file) => fs.readFileSync(file, 'utf8').split(/\r?\n/)
+  .filter((line) => /^#{1,6} /.test(line))
+  .map((line) => line.replace(/^#{1,6} /, '').trim());
+const uiHeadings = headingsOf(UI_SPEC);
+const inUiSpec = (ref) => {
+  const name = ref.replace(/ \([^)]*\)$/, '');
+  return uiHeadings.some((h) => h === name || h.startsWith(name + ' '));
+};
+
+test('spec references name headings that exist in the architecture or UI redesign spec', () => {
+  const headings = new Set(headingsOf(SPEC));
   const missing = [];
   for (const id of EXPECTED) {
     const m = load(id);
     const refs = [...m.specSections, ...m.features.flatMap((f) => f.specRefs)];
-    for (const ref of refs) if (!headings.has(ref)) missing.push(`${id}: ${ref}`);
+    for (const ref of refs) {
+      const ok = ref.startsWith('UI redesign: ') ? inUiSpec(ref.slice('UI redesign: '.length)) : headings.has(ref);
+      if (!ok) missing.push(`${id}: ${ref}`);
+    }
   }
   assert.deepEqual(missing, []);
 });
