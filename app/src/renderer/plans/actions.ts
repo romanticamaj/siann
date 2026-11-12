@@ -1,8 +1,11 @@
 // The plan review's actions (m5-plan-review; spec "Frontend", plan review).
-// Each button is one protocol request; Audition is plan.propose followed by
-// audition.hear of the branch it opened. The answer is reported, never
-// retried, and the plan's state is left to plan.changed: a plan_stale answer
-// names the changed entities and leaves the plan where it was.
+// Each button is one protocol request except Audition, which is two:
+// plan.propose, then audition.hear of the branch it opened. A refused hear
+// leaves the plan proposed (Discard or Hear proposal follow). The answer is
+// reported, never retried, and the plan's state is left to plan.changed: a
+// plan_stale answer names the changed entities and leaves the plan where it
+// was. Audition and the Hear buttons need an auditioner: while the side heard
+// is unknown (null) they are not offered.
 
 import type { PlanEntry } from '../model/plan-store';
 import { ProtocolError } from '../model/session-client';
@@ -41,8 +44,20 @@ export function availableActions(plan: PlanEntry, heard: string | null): ActionI
   if (plan.state === 'validated') return ['approve', 'approveSelected', 'reject'];
   if (plan.state !== 'approved') return [];
   const branch = plan.proposalBranch;
-  if (branch === undefined) return ['apply', 'audition', 'reject'];
+  if (branch === undefined) return heard === null ? ['apply', 'reject'] : ['apply', 'audition', 'reject'];
+  if (heard === null) return ['merge', 'discard'];
   return [heard === branch ? 'hearMain' : 'hearProposal', 'merge', 'discard'];
+}
+
+// What the review shows instead of a diff for a plan that has landed: an
+// applied plan previews against a head that already holds its effects (one
+// that added an entity answers already_exists), so it is not previewed.
+// Null for a plan that previews.
+export function landedLabel(plan: PlanEntry): string | null {
+  const at = plan.appliedRevision !== undefined ? ` at ${plan.appliedRevision}` : '';
+  if (plan.state === 'applied') return `applied${at}`;
+  if (plan.state === 'rolled_back') return at ? `rolled back (applied${at})` : 'rolled back';
+  return null;
 }
 
 function changedEntitiesOf(data: unknown): string[] {
