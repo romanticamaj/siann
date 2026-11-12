@@ -1483,6 +1483,7 @@ TEST_CASE("a third-party plugin beside a crashing one comes back running with it
     const std::string crashId = hostileCrashParameterId();
     TempDir dir;
     const fs::path bundle = dir.path() / "Song.siann";
+    const fs::path registry = dir.path() / "plugin-registry.json";
     writeBundle(bundle, dir.path());
 
     const MovedState moved = thirdPartyStateWithOneParameterMoved(*path);
@@ -1498,10 +1499,12 @@ TEST_CASE("a third-party plugin beside a crashing one comes back running with it
     std::string documentHash;
     double latencyFrames = -1;
     {
-        PipedProcess crashed(SIANN_ENGINE_EXE, launchArgs(bundle));
+        PipedProcess crashed(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-registry", utf8(registry)}));
         const Value ready = readyLine(crashed);
         {
             EngineClient client(ready);
+            client.ok("plugin.approve", approveParams("vst3", *path));
+            client.ok("plugin.approve", approveParams("clap", SIANN_HOSTILE_PLUGIN_CLAP));
             const Value thirdParty = client.ok(
                 "plugin.instantiate",
                 Value(Object{{"trackId", Value("trk_a")},
@@ -1540,7 +1543,7 @@ TEST_CASE("a third-party plugin beside a crashing one comes back running with it
     // (the document hash covers it), and the blob is unchanged on disk. No method
     // reads a parameter back yet, so the value is checked through the blob: this
     // process read the moved value back from the bytes the engine loads.
-    PipedProcess restarted(SIANN_ENGINE_EXE, launchArgs(bundle));
+    PipedProcess restarted(SIANN_ENGINE_EXE, withArgs(launchArgs(bundle), {"--plugin-registry", utf8(registry)}));
     const Value ready = readyLine(restarted);
     {
         EngineClient client(ready);
