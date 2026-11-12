@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SIANN — proposed main window (mockup)</title>
+<meta name="viewport" content="width=1440">
+<!-- Open with ?lang=zh-TW for the Traditional Chinese rendering. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ------------------------------------------------------------------ tokens */
+:root{
+  --bg-0:#090A0D; --bg-1:#0F1115; --bg-2:#14171D; --bg-3:#1B1F27; --bg-4:#242934; --bg-5:#2E3441;
+  --line:#22262F; --line-2:#2F3542; --line-hi:rgba(255,255,255,.045);
+  --tx-1:#E8EBF1; --tx-2:#A3ABB9; --tx-3:#6C7483; --tx-4:#474E5B;
+  --play:#3DDC84; --rec:#FF4D57; --solo:#FFD23F; --mute:#5AA9FF; --warn:#F5A524; --ok:#3DDC84; --err:#FF5C66;
+  /* the agent / proposal colour: used for nothing else */
+  --ai:#A78BFF; --ai-2:#C4B3FF; --ai-dim:rgba(167,139,255,.14); --ai-line:rgba(167,139,255,.55);
+  /* Latin and digits always come from Inter; Han glyphs from the system font of the locale */
+  --font-ui:"Inter","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --font-num:"JetBrains Mono","Cascadia Mono",ui-monospace,Consolas,monospace;
+}
+:root:lang(zh-TW){--font-ui:"Inter","PingFang TC","Microsoft JhengHei UI","Microsoft JhengHei","Noto Sans TC","Noto Sans CJK TC",sans-serif}
+:root:lang(zh-CN){--font-ui:"Inter","PingFang SC","Microsoft YaHei UI","Microsoft YaHei","Noto Sans SC","Noto Sans CJK SC",sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg-0);color:var(--tx-1);overflow:hidden}
+body{font:500 12px/1.3 var(--font-ui);-webkit-font-smoothing:antialiased;font-feature-settings:"tnum" 1,"cv11" 1,"ss01" 1;letter-spacing:.005em}
+.num{font-variant-numeric:tabular-nums;letter-spacing:0}
+.mono{font-family:var(--font-num);letter-spacing:0}
+.up{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--tx-3);font-weight:600}
+:lang(zh) .up{font-size:11px;letter-spacing:.04em}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.i.s{width:14px;height:14px}
+
+/* ------------------------------------------------------------------ shell: left zone | project zone + lower zone | right zone */
+.app{width:1440px;height:900px;display:grid;grid-template-columns:216px minmax(0,1fr) 348px;grid-template-rows:48px minmax(0,1fr) 24px;background:var(--bg-0)}
+.topbar{grid-column:1/-1;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 10px 0 0;
+  background:linear-gradient(#171A21,#12151A);border-bottom:1px solid #000;box-shadow:inset 0 1px 0 var(--line-hi);position:relative;z-index:3}
+.leftzone{background:var(--bg-1);border-right:1px solid #000;display:flex;flex-direction:column;min-height:0}
+.center{display:grid;grid-template-rows:minmax(0,1fr) 280px;grid-template-columns:minmax(0,1fr);min-width:0;min-height:0;overflow:hidden}
+.plans{background:var(--bg-1);border-left:1px solid #000;display:flex;flex-direction:column;min-height:0}
+.statusbar{grid-column:1/-1;background:#0C0D11;border-top:1px solid #000;display:flex;align-items:center;gap:14px;padding:0 10px;font-size:11px;color:var(--tx-3)}
+
+/* ------------------------------------------------------------------ top bar */
+.tb-left{display:flex;align-items:center;gap:10px;height:100%}
+.brand{width:44px;height:100%;display:grid;place-items:center;border-right:1px solid #000}
+.brand b{width:22px;height:22px;border-radius:6px;background:conic-gradient(from 210deg,#A78BFF,#5B8FF5,#3FC4DD,#57C98A,#E6C547,#F0675B,#EC6BB0,#A78BFF);display:grid;place-items:center}
+.brand b i{width:16px;height:16px;border-radius:4px;background:#12151A;display:grid;place-items:center}
+.brand b i::after{content:"";width:2px;height:8px;background:#fff;border-radius:1px;box-shadow:-4px 2px 0 0 rgba(255,255,255,.55),4px 1px 0 0 rgba(255,255,255,.8)}
+.session{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;padding:5px 4px}
+.session svg{color:var(--tx-3)}
+.chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:11px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--tx-2);font-size:11px}
+.iconbtn{width:28px;height:28px;border-radius:5px;display:grid;place-items:center;color:var(--tx-2);border:1px solid transparent}
+.iconbtn.on{background:var(--bg-4);color:var(--tx-1);border-color:var(--line-2)}
+.iconbtn.dim{color:var(--tx-4)}
+.sep{width:1px;height:20px;background:var(--line-2);margin:0 2px}
+.transport{display:flex;align-items:center;gap:10px}
+.tgroup{display:flex;align-items:center;gap:2px;padding:3px;background:#0B0C10;border:1px solid #000;border-radius:8px;box-shadow:0 1px 0 var(--line-hi)}
+.tbtn{width:32px;height:28px;border-radius:5px;display:grid;place-items:center;color:var(--tx-2);background:linear-gradient(#232832,#1B1F27);border:1px solid #2A303B;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+.tbtn.play{color:#06210F;background:linear-gradient(#55E896,#2FC873);border-color:#2BB868;box-shadow:0 0 14px rgba(61,220,132,.35),inset 0 1px 0 rgba(255,255,255,.35)}
+.tbtn.rec{color:var(--rec)}
+.tbtn.lit{color:#0B0C10;background:linear-gradient(#EDEFF4,#C9CED8);border-color:#B8BEC9}
+.lcd{display:flex;align-items:stretch;height:36px;background:#07080A;border:1px solid #000;border-radius:8px;box-shadow:inset 0 1px 6px rgba(0,0,0,.8),0 1px 0 var(--line-hi);overflow:hidden}
+.lcd .cell{display:flex;flex-direction:column;justify-content:center;padding:0 11px;border-right:1px solid #16191F}
+.lcd .cell:last-child{border-right:0}
+.lcd .lbl{font-size:8.5px;letter-spacing:.12em;color:var(--tx-4);text-transform:uppercase;font-weight:600;line-height:1}
+:lang(zh) .lcd .lbl{font-size:10px;letter-spacing:.02em;line-height:1.05}
+.lcd .val{font:500 17px/1.15 var(--font-num);color:#F2F4F8}
+.lcd .val.sm{font-size:13px;color:var(--tx-2);line-height:1.4}
+.lcd .val em{font-style:normal;color:var(--tx-3)}
+.tb-right{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.dsp{display:flex;align-items:center;gap:6px;color:var(--tx-3);font-size:11px;margin-right:2px}
+.dsp .bar{width:40px;height:4px;border-radius:2px;background:#07080A;overflow:hidden;border:1px solid #000}
+.dsp .bar i{display:block;height:100%;width:22%;background:var(--ok)}
+.zones{display:flex;gap:1px;padding:1px;background:#0B0C10;border:1px solid #000;border-radius:6px}
+.zones .iconbtn{width:26px;height:24px;border-radius:4px}
+.aibtn{display:flex;align-items:center;gap:6px;height:28px;padding:0 10px 0 8px;border-radius:14px;background:var(--ai-dim);border:1px solid var(--ai-line);color:var(--ai-2);font-weight:600;white-space:nowrap}
+.aibtn .n{min-width:16px;height:16px;border-radius:8px;background:var(--ai);color:#120B2E;font-size:10px;display:grid;place-items:center;font-weight:700}
+
+/* ------------------------------------------------------------------ left zone: Inspector */
+.z-head{height:32px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid #000;background:var(--bg-2);box-shadow:inset 0 1px 0 var(--line-hi);font-weight:600}
+.z-head .k{margin-left:auto;font:500 9px var(--font-num);color:var(--tx-4);border:1px solid var(--line-2);border-radius:3px;padding:1px 4px}
+.i-track{padding:10px 10px 9px;border-bottom:1px solid #000;display:flex;flex-direction:column;gap:8px;background:#1D212A;box-shadow:inset 3px 0 0 #3FC4DD}
+.i-name{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}
+.i-name small{margin-left:auto;font-weight:500;font-size:10.5px;color:var(--tx-3)}
+.i-btns{display:flex;gap:3px}
+.i-row{display:grid;grid-template-columns:44px 1fr 46px;align-items:center;gap:8px;font-size:11px;color:var(--tx-3)}
+.i-row b{font-weight:600;color:var(--tx-1);text-align:right}
+.hs{height:4px;border-radius:2px;background:#07080A;border:1px solid #000;position:relative}
+.hs i{position:absolute;left:0;top:0;bottom:0;background:#C9CED8;border-radius:2px}
+.hs u{position:absolute;top:-5px;width:8px;height:12px;margin-left:-4px;border-radius:2px;background:linear-gradient(#EEF0F4,#9BA2AF);border:1px solid #000}
+.sec{border-bottom:1px solid #000}
+.sec-h{height:26px;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--bg-2);color:var(--tx-2);font-size:11px;font-weight:600}
+.sec-h svg{color:var(--tx-4)} .sec-h span{margin-left:auto;color:var(--tx-4);font-weight:500}
+.sec.shut .sec-h{color:var(--tx-3)} .sec.shut .sec-h svg{transform:rotate(-90deg)}
+.sec-b{padding:7px 8px 9px;display:flex;flex-direction:column;gap:4px}
+.irow{display:grid;grid-template-columns:40px 1fr;align-items:center;gap:6px;font-size:11px;color:var(--tx-3)}
+.pick{height:22px;border-radius:4px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--tx-1);padding:0 7px;display:flex;align-items:center;justify-content:space-between;font-size:11px}
+.pick svg{color:var(--tx-4)}
+.islot{height:22px;border-radius:4px;background:var(--bg-4);border:1px solid var(--line-2);padding:0 7px;display:flex;align-items:center;gap:6px;font-size:11px}
+.islot::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.islot em{margin-left:auto;font-style:normal;color:var(--tx-3);font-weight:700;font-size:10px}
+.islot.empty{background:transparent;border-style:dashed;color:var(--tx-4)} .islot.empty::before{display:none}
+.hist{font-size:11px;color:var(--tx-2);line-height:1.45;font-weight:400}
+.hist b{color:var(--tx-1);font-weight:600} .hist .mono{font-size:10px;color:var(--tx-3)}
+.z-foot{margin-top:auto;height:26px;display:flex;border-top:1px solid #000;background:var(--bg-2);font-size:11px;color:var(--tx-3)}
+.z-foot span{flex:1;display:grid;place-items:center;position:relative}
+.z-foot span.on{color:var(--tx-1)} .z-foot span.on::after{content:"";position:absolute;left:12px;right:12px;top:0;height:2px;background:var(--tx-1)}
+
+/* ------------------------------------------------------------------ project zone */
+.arrange{display:grid;grid-template-rows:32px 24px 1fr;min-height:0;background:var(--bg-1);position:relative}
+.arrange::after{content:"";position:absolute;inset:0;border:1px solid rgba(232,235,241,.20);pointer-events:none;z-index:4} /* focused zone frame */
+.arr-toolbar{display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid #000;background:var(--bg-2);box-shadow:inset 0 1px 0 var(--line-hi)}
+.seg{display:flex;background:#0B0C10;border:1px solid #000;border-radius:6px;padding:1px;gap:1px}
+.seg .b{height:22px;min-width:24px;padding:0 3px;border-radius:4px;display:flex;align-items:center;justify-content:center;gap:2px;color:var(--tx-3);font-size:11px}
+.seg .b.on{background:var(--bg-5);color:var(--tx-1);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.seg .b kbd{font:500 8.5px var(--font-num);color:var(--tx-4)}
+.field{display:flex;align-items:center;gap:5px;height:24px;padding:0 7px;border-radius:5px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--tx-2);font-size:11px;white-space:nowrap}
+.field.on{color:var(--tx-1)} .field.on svg:first-child{color:var(--solo)}
+.field svg:last-child{color:var(--tx-4)} .field em{font-style:normal;color:var(--tx-3)}
+.spacer{flex:1}
+.overlaypill{display:flex;align-items:center;gap:7px;height:24px;padding:0 3px 0 8px;border-radius:12px;background:var(--ai-dim);border:1px dashed var(--ai-line);color:var(--ai-2);font-size:11px;white-space:nowrap}
+.overlaypill b{font-weight:600;color:#fff}
+.overlaypill .tog{display:flex;align-items:center;gap:4px;height:18px;padding:0 7px;border-radius:9px;background:var(--ai);color:#120B2E;font-weight:700;font-size:10px}
+.infoline{display:flex;align-items:center;gap:0;padding:0 8px;border-bottom:1px solid #000;background:#101216;font-size:11px;color:var(--tx-3);white-space:nowrap}
+.infoline .f{display:flex;gap:5px;align-items:baseline;padding:0 8px;border-right:1px solid var(--line)}
+.infoline .f:first-child{padding-left:2px} .infoline .f:last-child{border-right:0}
+.infoline .f b{color:var(--tx-1);font-weight:500}
+.infoline .f i{width:8px;height:8px;border-radius:2px;background:#3FC4DD;align-self:center}
+
+.arr-body{display:grid;grid-template-columns:216px minmax(0,1fr);min-height:0;position:relative}
+.headers{border-right:1px solid #000;background:var(--bg-1);z-index:1}
+.corner{height:40px;border-bottom:1px solid #000;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--bg-2)}
+.corner .add{display:flex;align-items:center;gap:4px;height:24px;padding:0 8px 0 6px;border-radius:5px;background:var(--bg-4);border:1px solid var(--line-2);color:var(--tx-1);font-size:11px;white-space:nowrap}
+.corner .cnt{color:var(--tx-3);font-size:10.5px;margin-left:auto;white-space:nowrap}
+.mk{height:20px;border-bottom:1px solid #000;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;background:#101216;color:var(--tx-3);font-size:10.5px}
+.mk svg{width:11px;height:11px}
+.th{height:53px;display:grid;grid-template-columns:4px 20px 1fr;border-bottom:1px solid #000;position:relative;background:var(--bg-2)}
+.th:nth-child(odd){background:#12151A}
+.th .col{background:var(--c)}
+.th .idx{display:grid;place-items:center;color:var(--tx-4);font:500 10px var(--font-ui);border-right:1px solid var(--line)}
+.th .body{padding:6px 8px 0 8px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.th .r1{display:flex;align-items:center;gap:2px}
+.th .name{font-weight:600;font-size:12px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.th .r2{display:flex;align-items:center;gap:6px;color:var(--tx-3);font-size:10.5px;white-space:nowrap}
+.th .r2 .db{color:var(--tx-2);width:50px}
+.th .r2 .pan{width:24px}
+.msr{width:20px;height:18px;border-radius:3px;display:grid;place-items:center;font:700 10px "Inter",sans-serif;color:var(--tx-3);background:var(--bg-4);border:1px solid #333A47;box-shadow:inset 0 1px 0 rgba(255,255,255,.04);flex:none}
+.msr.m.on{background:var(--mute);border-color:#7DBBFF;color:#071A30}
+.msr.s.on{background:var(--solo);border-color:#FFE27A;color:#2A2000}
+.msr.r.on{background:var(--rec);border-color:#FF8088;color:#2B0508}
+.msr.rd.on{background:#3DDC84;border-color:#7BEBAE;color:#052812}
+.msr.r i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.msr.e{font-style:italic;font-family:Georgia,serif;font-size:11px}
+.msr.ghost{outline:1.5px dashed var(--ai);outline-offset:1.5px}
+.hmeter{flex:1;height:4px;border-radius:2px;background:#07080A;border:1px solid #000;position:relative;overflow:hidden}
+.hmeter i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#2FBF71 0,#3DDC84 62%,#F5D547 82%,#FF5C66 100%);background-size:96px 100%}
+.th.muted .name,.th.muted .r2{opacity:.45}
+.th.ghost{background:repeating-linear-gradient(135deg,rgba(167,139,255,.10) 0 6px,rgba(167,139,255,.03) 6px 12px),#12151A}
+.th.ghost::after{content:"";position:absolute;inset:0;border:1px dashed var(--ai-line);pointer-events:none}
+.th.ghost .col{background:var(--ai)} .th.ghost .name{color:var(--ai-2)}
+.stepn{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;background:var(--ai);color:#120B2E;font:700 9.5px "Inter",sans-serif;flex:none}
+.th.sel{background:#1D212A}
+.th.sel::before{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);pointer-events:none}
+.lanes{position:relative;min-width:0;overflow:hidden;background:var(--bg-0)}
+#tl{position:absolute;left:0;top:0}
+.hscroll{position:absolute;left:0;right:0;bottom:0;height:8px;background:#0B0C10;border-top:1px solid #000}
+.hscroll i{position:absolute;left:2px;top:2px;height:4px;width:52%;border-radius:2px;background:var(--bg-5)}
+.hscroll u{position:absolute;right:6px;top:2px;height:4px;width:56px;border-radius:2px;background:var(--bg-4)}
+.hscroll u::after{content:"";position:absolute;left:40%;top:-2px;width:8px;height:8px;border-radius:50%;background:#C9CED8}
+
+/* ------------------------------------------------------------------ lower zone: MixConsole */
+.lower{display:grid;grid-template-rows:26px 1fr;border-top:1px solid #000;background:var(--bg-1);min-height:0;box-shadow:0 -1px 0 var(--line-hi)}
+.tabs{display:flex;align-items:center;gap:2px;padding:0 6px;background:var(--bg-2);border-bottom:1px solid #000;color:var(--tx-3);font-size:11px;white-space:nowrap}
+.tab{height:26px;padding:0 10px;display:flex;align-items:center;gap:6px;position:relative}
+.tab.on{color:var(--tx-1)} .tab.on::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:2px;background:var(--tx-1);border-radius:1px}
+.tabs kbd{font:500 9px var(--font-num);color:var(--tx-4);border:1px solid var(--line-2);border-radius:3px;padding:0 3px}
+.mixer{display:flex;min-width:0;background:var(--bg-0)}
+.strip{width:88px;flex:none;border-right:1px solid #000;display:grid;grid-template-rows:34px 28px 22px 1fr 16px 22px 22px;background:var(--bg-2);position:relative}
+.strip:nth-child(even){background:#12151A}
+.strip.master{width:112px;margin-left:auto;border-left:1px solid #000;border-right:0;background:#181B22}
+.ins{padding:3px 4px 0;display:flex;flex-direction:column;gap:2px}
+.slot{height:14px;border-radius:3px;background:var(--bg-4);border:1px solid var(--line-2);font-size:9.5px;color:var(--tx-2);padding:0 5px;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden}
+.slot::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ok);flex:none}
+.slot.empty{background:transparent;border-style:dashed;color:var(--tx-4);justify-content:center}.slot.empty::before{display:none}
+.panrow{display:flex;align-items:center;justify-content:center;gap:6px;font:500 10px var(--font-ui);color:var(--tx-2);white-space:nowrap}
+.panrow .lab{width:26px}
+.knob{width:24px;height:24px;position:relative}
+.fad{display:grid;grid-template-columns:20px 22px 1fr;gap:2px;padding:4px 6px 2px 4px;min-height:0}
+.strip.master .fad{grid-template-columns:22px 26px 1fr}
+.scale{position:relative;font:500 8px "Inter",sans-serif;color:var(--tx-4)}
+.scale span{position:absolute;right:1px;transform:translateY(50%);line-height:1}
+.ftrack{position:relative}
+.ftrack::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:4px;margin-left:-2px;border-radius:2px;background:#07080A;border:1px solid #000;box-shadow:0 1px 0 var(--line-hi)}
+.ftrack .unity{position:absolute;left:1px;right:1px;height:1px;background:var(--tx-4)}
+.cap{position:absolute;left:1px;right:1px;height:24px;margin-bottom:-12px;border-radius:3px;background:linear-gradient(#EEF0F4 0,#C4C9D3 46%,#1A1D24 46%,#1A1D24 54%,#B3B9C4 54%,#8E95A2 100%);border:1px solid #000;box-shadow:0 3px 8px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.7)}
+.cap.ghost{z-index:1;background:repeating-linear-gradient(135deg,rgba(167,139,255,.35) 0 3px,rgba(167,139,255,.12) 3px 6px);border:1.5px dashed var(--ai);box-shadow:0 0 12px rgba(167,139,255,.45)}
+.gline{position:absolute;left:50%;width:2px;margin-left:-1px;background:var(--ai)}
+.meter{display:flex;gap:2px;justify-content:center;position:relative}
+.meter .ch{width:6px;position:relative;background:#07080A;border:1px solid #000;border-radius:1.5px;overflow:hidden}
+.strip.master .meter .ch{width:9px}
+.meter .ch i{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(0deg,#27B565 0,#3DDC84 55%,#F5D547 78%,#FF5C66 96%);background-size:100% 104px;background-position:bottom}
+.meter .ch u{position:absolute;left:0;right:0;height:1.5px;background:#F2F4F8}
+.readout{display:flex;justify-content:center;gap:5px;font:600 10.5px var(--font-ui);color:var(--tx-1);align-items:center;white-space:nowrap}
+.readout .pk{color:var(--tx-4)} .readout .to{color:var(--ai-2)}
+.btns{display:flex;justify-content:center;gap:3px;align-items:center;white-space:nowrap}
+.nametag{margin:0 3px 3px;border-radius:3px;background:color-mix(in srgb,var(--c) 88%,#000);color:#0B0C10;font-weight:700;font-size:10.5px;display:grid;place-items:center;white-space:nowrap}
+.strip.muted .nametag{background:color-mix(in srgb,var(--c) 34%,#1B1F27);color:var(--tx-2)}
+.strip.ghost{background:repeating-linear-gradient(135deg,rgba(167,139,255,.10) 0 6px,rgba(167,139,255,.03) 6px 12px),#12151A}
+.strip.ghost::after{content:"";position:absolute;inset:0;border:1px dashed var(--ai-line);pointer-events:none}
+.strip.ghost .nametag{background:var(--ai)}
+.strip.sel{background:#1D212A}
+.strip>.stepn{position:absolute;z-index:2}
+
+/* ------------------------------------------------------------------ right zone: Plans */
+.p-head{height:32px;flex:none;display:flex;align-items:center;gap:2px;padding:0 8px 0 4px;border-bottom:1px solid #000;background:var(--bg-2);box-shadow:inset 0 1px 0 var(--line-hi);font-size:11.5px;color:var(--tx-3);white-space:nowrap}
+.p-head .tab{height:32px;padding:0 8px;font-weight:600}
+.p-head .tab.on svg{color:var(--ai)}
+.ab{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--tx-3)}
+.ab .seg .b{min-width:50px;font-weight:600;padding:0 7px}
+.ab .seg .b.on{background:#E8EBF1;color:#0B0C10}
+.agent{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);font-size:11px;color:var(--tx-3);white-space:nowrap}
+.agent .av{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#A78BFF,#5B8FF5);display:grid;place-items:center;color:#fff}
+.agent b{color:var(--tx-1);font-weight:600}
+.agent .live{margin-left:auto;display:flex;align-items:center;gap:5px}
+.agent .live i{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(61,220,132,.18)}
+.p-scroll{flex:1;min-height:0;overflow:hidden;padding:10px;display:flex;flex-direction:column;gap:10px}
+.card{border:1px solid var(--ai-line);border-radius:10px;background:linear-gradient(180deg,rgba(167,139,255,.10),rgba(167,139,255,.02) 90px),var(--bg-2);box-shadow:0 0 0 3px rgba(167,139,255,.07),0 10px 30px rgba(0,0,0,.35)}
+.card-h{padding:11px 12px 9px}
+.badge{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 7px;border-radius:9px;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+:lang(zh) .badge{font-size:10.5px;letter-spacing:.02em}
+.badge.pending{background:var(--ai);color:#120B2E}
+.badge.applied{background:rgba(61,220,132,.14);color:#6FE7A6}
+.badge.rejected{background:rgba(255,92,102,.14);color:#FF8A92}
+.badge.stale{background:rgba(245,165,36,.16);color:#F7BC5A}
+.card-h .top{display:flex;align-items:center;gap:8px;color:var(--tx-3);font-size:10.5px;white-space:nowrap}
+.card-h .top .hash{margin-left:auto;font-size:10px}
+.card-h h3{margin:8px 0 4px;font-size:14px;line-height:1.3;font-weight:600}
+.card-h p{margin:0;color:var(--tx-2);font-size:11.5px;line-height:1.45;font-weight:400}
+.sum{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap}
+.sum span{height:19px;padding:0 7px;border-radius:5px;background:var(--bg-4);border:1px solid var(--line-2);font-size:10.5px;color:var(--tx-2);display:flex;align-items:center;gap:4px}
+.sum span b{color:var(--tx-1);font-weight:500}
+.steps{border-top:1px solid var(--line)}
+.steps-h{display:flex;align-items:center;padding:6px 12px}
+.steps-h a{margin-left:auto;color:var(--tx-3);font-weight:500;font-size:10.5px}
+.step{display:grid;grid-template-columns:16px 15px 1fr auto;gap:8px;align-items:center;padding:6px 12px;border-top:1px solid var(--line);font-size:11.5px}
+.step.hot{background:rgba(167,139,255,.13);box-shadow:inset 2px 0 0 var(--ai)}
+.cb{width:14px;height:14px;border-radius:4px;background:var(--ai);display:grid;place-items:center;color:#120B2E}
+.cb svg{width:10px;height:10px;stroke-width:2.6}
+.step .t{min-width:0;line-height:1.35}
+.step .t b{font-weight:600}
+.step .t .d{display:block;font:400 11px var(--font-ui);color:var(--tx-3);margin-top:1px}
+.step .t .d s{text-decoration-color:var(--tx-4)} .step .t .d em{font-style:normal;color:var(--ai-2)}
+.tdot{display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--c);margin-right:5px;vertical-align:1px}
+.step .go{color:var(--tx-4)} .step.hot .go{color:var(--ai-2)}
+.acts{display:grid;grid-template-columns:1fr 1.3fr 34px;gap:6px;padding:10px 12px 12px;border-top:1px solid var(--line)}
+.btn{height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:12px;border:1px solid var(--line-2);background:var(--bg-4);color:var(--tx-1);white-space:nowrap}
+.btn kbd{font:500 9px var(--font-num);opacity:.55;border:1px solid currentColor;border-radius:3px;padding:0 3px}
+.btn.primary{background:linear-gradient(#B7A0FF,#9477F5);border-color:#C9B8FF;color:#120B2E;box-shadow:0 4px 16px rgba(148,119,245,.35),inset 0 1px 0 rgba(255,255,255,.4)}
+.btn.danger{color:#FF8A92}
+.hist-h{padding:2px 2px 0;display:flex}
+.hist-h span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500}
+.hrow{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 10px;border-radius:8px;background:var(--bg-2);border:1px solid var(--line)}
+.hrow b{font-weight:600;font-size:11.5px}
+.hrow small{grid-column:1/-1;color:var(--tx-3);font-size:10.5px;font-weight:400}
+.composer{margin:0 10px 10px;border:1px solid var(--line-2);border-radius:10px;background:var(--bg-3);padding:9px 10px;display:flex;align-items:center;gap:8px;color:var(--tx-3);font-size:11.5px}
+.composer svg:first-child{color:var(--ai)}
+.composer .send{margin-left:auto;width:24px;height:24px;border-radius:7px;background:var(--bg-5);display:grid;place-items:center;color:var(--tx-2)}
+
+/* ------------------------------------------------------------------ status bar */
+.statusbar b{color:var(--tx-2);font-weight:500}
+.statusbar .ok{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:6px}
+.statusbar .right{margin-left:auto;display:flex;gap:14px;align-items:center}
+.statusbar a{color:var(--tx-3);text-decoration:underline;text-decoration-color:var(--tx-4);text-underline-offset:2px}
+.statusbar .hear{display:flex;align-items:center;gap:5px;color:var(--tx-2)}
+.statusbar .loc{display:flex;align-items:center;gap:4px;padding:0 6px;height:16px;border:1px solid var(--line-2);border-radius:4px;color:var(--tx-2)}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+/* ============================== locale: chrome is translated, session content (track, clip, plug-in names) is not */
+const LANG=new URLSearchParams(location.search).get('lang')||'en';
+document.documentElement.lang=LANG;
+const ZH={
+ 'Inspector':'檢視器','Track':'音軌','Editor':'編輯器','Mono':'單聲道','Volume':'音量','Pan':'聲相','Routing':'路由','In':'輸入','Out':'輸出',
+ 'Mono In 1':'單聲道輸入 1','Stereo Out':'立體聲輸出','Inserts':'插入效果','Add insert':'新增插入效果','Sends':'傳送','Automation':'自動化','Notepad':'記事本',
+ 'Agent changes':'代理變更','Off':'關閉','Read':'讀取','No pending change on this track.':'這條音軌沒有待審核的變更。',
+ 'Comp added by':'加入 Comp：','Tame the low end':'收緊低頻',
+ 'Bar · Beat · Tick':'小節 · 拍 · Tick','Time':'時間','Tempo':'速度','Sig':'拍號','Locators':'定位點','Plans':'計畫',
+ 'Snap':'貼齊','Grid':'格線','Adapt to Zoom':'依縮放調整','Auto-Scroll':'自動捲動','Proposal':'提案','changes':'項變更','Ghosts':'預覽',
+ 'Start':'起點','End':'終點','Length':'長度','Offset':'偏移','Fade In':'淡入','Fade Out':'淡出','Mute':'靜音','off':'關',
+ 'tracks':'條音軌','clips':'個片段','Markers':'標記','proposed track':'提案音軌','stereo · 0.0 dB · C · no inserts':'立體聲 · 0.0 dB · C · 無插入效果',
+ 'MixConsole':'混音台','Media':'媒體','Meter':'電平表','Narrow':'窄版','NEW · STEP 1':'新增 · 步驟 1','Master':'主輸出','PAN':'聲相',
+ 'Main':'主線','mix-assistant':'mix-assistant','connected · idle':'已連線 · 閒置','Needs review':'待審核','2 min ago · base':'2 分鐘前 · 基於',
+ 'Lift the chorus':'提升副歌','Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.':'在副歌下方鋪一層 Pad，把和聲往前推，並讓 Riser 剛好落在第 9 小節的正拍。',
+ 'track':'音軌','clip':'片段','move':'移動','mix':'混音','Steps · 6 of 6 selected':'步驟 · 已選 6 / 6','Select none':'全部取消',
+ 'Add track <b>Pad</b>':'新增音軌 <b>Pad</b>','stereo · after FX':'立體聲 · 排在 FX 之後','Place <b>Pad swell</b> on Pad':'在 Pad 放置 <b>Pad swell</b>',
+ 'bar 9.1 → 17.1 · pad_swell.wav':'小節 9.1 → 17.1 · pad_swell.wav','<b>Vox BG</b> gain':'<b>Vox BG</b> 音量','<b>Keys</b> pan':'<b>Keys</b> 聲相',
+ 'Unmute <b>FX</b>':'取消 <b>FX</b> 靜音','<s>muted</s> → <em>on</em>':'<s>靜音</s> → <em>開啟</em>','Move <b>Riser</b> on FX':'移動 FX 上的 <b>Riser</b>',
+ '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1':'<s>小節 6.1</s> → <em>小節 7.1</em> · 結束於 9.1',
+ 'Audition':'試聽','Approve 6 of 6':'核准 6 / 6','Earlier':'先前','3 plans':'3 個計畫','Applied · r31':'已套用 · r31','Rejected':'已拒絕','Stale':'已過期',
+ '4 steps · mix-assistant · 1 h ago · Roll back':'4 個步驟 · mix-assistant · 1 小時前 · 回復','Double the lead vocal':'疊加主唱',
+ '“Too wide for the verse — keep it mono.” · sent to agent':'「主歌聽起來太寬，維持單聲道。」· 已傳給代理','Trim silence on drums':'修剪鼓組的空白',
+ 'Kick clips changed since r27 · ask the agent to rebase':'Kick 片段自 r27 後已變更 · 請代理重新產生',
+ 'Ask mix-assistant for a change…':'請 mix-assistant 修改…','Engine connected':'引擎已連線','xruns':'次中斷','Hearing':'監聽','main':'主線',
+ 'Saved':'已儲存','source':'原始碼','English':'繁體中文'
+};
+const L=s=>LANG.startsWith('zh')&&ZH[s]!==undefined?ZH[s]:s;
+
+/* ============================== icons (own drawings, 16px grid, stroke) */
+const P={
+ rtz:'<path d="M4 3.5v9"/><path d="M12.5 3.5 6.5 8l6 4.5z" fill="currentColor"/>',
+ stop:'<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none"/>',
+ play:'<path d="M5 3.2v9.6L13 8z" fill="currentColor" stroke="none"/>',
+ rec:'<circle cx="8" cy="8" r="4.2" fill="currentColor" stroke="none"/>',
+ loop:'<path d="M11 2.5 13 4.5 11 6.5"/><path d="M3 7.5V6a1.5 1.5 0 0 1 1.5-1.5H13"/><path d="M5 13.5 3 11.5 5 9.5"/><path d="M13 8.5V10a1.5 1.5 0 0 1-1.5 1.5H3"/>',
+ metro:'<path d="M5.5 2.5h5l2.5 11h-10z"/><path d="M8 11 12.5 4"/><path d="M4.4 10.5h7.2"/>',
+ undo:'<path d="M3.5 6.5h6a3 3 0 0 1 0 6H6"/><path d="M6 4 3.5 6.5 6 9"/>',
+ redo:'<path d="M12.5 6.5h-6a3 3 0 0 0 0 6H10"/><path d="M10 4l2.5 2.5L10 9"/>',
+ ptr:'<path d="M4 2.5 12 8.2 8.4 9l-1.3 3.6z" fill="currentColor" stroke-width="1"/>',
+ range:'<path d="M4 3v10M12 3v10"/><path d="M4 5.5h8M4 10.5h8" opacity=".45"/><path d="M6.5 8h3"/>',
+ cut:'<circle cx="4.5" cy="4.5" r="1.8"/><circle cx="4.5" cy="11.5" r="1.8"/><path d="M6 5.6 13 11M6 10.4 13 5"/>',
+ glue:'<path d="M6 2.5h4l-.6 3h-2.8z"/><path d="M6.2 5.5h3.6l1.2 8H5z"/>',
+ erase:'<path d="M9.5 3 13 6.5 7.5 12H5l-2-2z"/><path d="M6.5 6 10 9.5"/><path d="M5 13.5h8"/>',
+ zoom:'<circle cx="7" cy="7" r="4"/><path d="M10 10l3.5 3.5"/>',
+ mutex:'<circle cx="8" cy="8" r="5.5"/><path d="M6 6l4 4M10 6l-4 4"/>',
+ pen:'<path d="M3 13l.6-2.8L10.8 3a1.4 1.4 0 0 1 2 2L5.7 12.3z"/>',
+ mon:'<path d="M2.5 9.5v-3h2.2L8 3.8v8.4L4.7 9.5z"/><path d="M10.5 6a3 3 0 0 1 0 4M12.3 4.3a5.4 5.4 0 0 1 0 7.4"/>',
+ magnet:'<path d="M4 3v5a4 4 0 0 0 8 0V3h-2.6v5a1.4 1.4 0 0 1-2.8 0V3z"/><path d="M4 5.3h2.6M9.4 5.3H12"/>',
+ grid:'<path d="M2.5 5.5h11M2.5 10.5h11M5.5 2.5v11M10.5 2.5v11"/>',
+ follow:'<path d="M2.5 8h7"/><path d="M7 5l3 3-3 3"/><path d="M13 3v10"/>',
+ chev:'<path d="M4.5 6.5 8 10l3.5-3.5"/>',
+ plus:'<path d="M8 3.5v9M3.5 8h9"/>',
+ folder:'<path d="M2.5 4.5a1 1 0 0 1 1-1h2.6l1.4 1.5h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
+ wave:'<path d="M2.5 8v0M4.7 6v4M6.9 3.5v9M9.1 5.5v5M11.3 4v8M13.5 7v2"/>',
+ flag:'<path d="M4 13.5v-11"/><path d="M4 3h8l-2 2.75 2 2.75H4"/>',
+ sliders:'<path d="M4 2.5v11M8 2.5v11M12 2.5v11"/><rect x="2.6" y="8.5" width="2.8" height="2.4" rx=".6" fill="currentColor"/><rect x="6.6" y="4" width="2.8" height="2.4" rx=".6" fill="currentColor"/><rect x="10.6" y="7" width="2.8" height="2.4" rx=".6" fill="currentColor"/>',
+ bars:'<path d="M4 13V7M8 13V3M12 13V9"/>',
+ spark:'<path d="M7 2.5 8.2 6 11.5 7 8.2 8.2 7 11.5 5.8 8.2 2.5 7 5.8 6z" fill="currentColor" stroke-width="1"/><path d="M12 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor" stroke="none"/>',
+ check:'<path d="M3.5 8.5 6.5 11.5 12.5 4.5"/>',
+ x:'<path d="M4 4l8 8M12 4l-8 8"/>',
+ phones:'<path d="M3 10.5V8a5 5 0 0 1 10 0v2.5"/><rect x="2.5" y="9.5" width="2.8" height="4" rx="1"/><rect x="10.7" y="9.5" width="2.8" height="4" rx="1"/>',
+ branch:'<circle cx="4.5" cy="4" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="11.5" cy="5.5" r="1.5"/><path d="M4.5 5.5v5"/><path d="M11.5 7c0 2.5-7 1.5-7 3.5"/>',
+ target:'<circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/>',
+ zCh:'<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M5.5 3v10"/><path d="M4 9.5v0" stroke-width="2"/>',
+ zLeft:'<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M6.5 3v10"/><rect x="3.3" y="3.8" width="2.6" height="8.4" fill="currentColor" stroke="none" opacity=".55"/>',
+ zLow:'<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 9h11"/><rect x="3.3" y="9.6" width="9.4" height="2.6" fill="currentColor" stroke="none" opacity=".55"/>',
+ zRight:'<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M9.5 3v10"/><rect x="10.1" y="3.8" width="2.6" height="8.4" fill="currentColor" stroke="none" opacity=".55"/>',
+ send:'<path d="M8 12.5v-9"/><path d="M4.5 7 8 3.5 11.5 7"/>',
+ dots:'<circle cx="4" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12" cy="8" r="1" fill="currentColor"/>',
+ globe:'<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c2 2 2 9 0 11M8 2.5c-2 2-2 9 0 11"/>'
+};
+const ic=(n,c='')=>`<svg class="i ${c}" viewBox="0 0 16 16">${P[n]}</svg>`;
+
+/* ============================== session data */
+const AI='#A78BFF';
+const T=[
+ {n:'Kick',     c:'#F0675B', db:0,    pan:0,   m:[.80,.74], pk:-3.1,  ins:['Transient','—']},
+ {n:'Snare',    c:'#F2994A', db:-2.5, pan:0,   m:[.66,.62], pk:-6.4,  ins:['Gate','EQ']},
+ {n:'Bass',     c:'#E6C547', db:-4,   pan:0,   m:[.72,.70], pk:-5.0,  ins:['Comp','Amp']},
+ {n:'Keys',     c:'#57C98A', db:-8,   pan:-35, m:[.58,.47], pk:-10.2, ins:['Chorus','—'], gPan:-20, gStep:4},
+ {n:'Vox Lead', c:'#3FC4DD', db:1.5,  pan:0,   m:[.77,.75], pk:-4.2,  ins:['De-ess','Comp'], sel:true},
+ {n:'Vox BG',   c:'#5B8FF5', db:-9,   pan:40,  m:[.40,.52], pk:-14.8, ins:['EQ','Verb'], gDb:-6, gStep:3},
+ {n:'FX',       c:'#EC6BB0', db:-12,  pan:0,   m:[0,0],     pk:null,  ins:['Delay','—'], mute:true, gUnmute:true, gStep:5},
+ {n:'Pad',      c:AI,        db:0,    pan:0,   m:[0,0],     pk:null,  ins:['—','—'], ghost:true, gStep:1}
+];
+// clips: [track, name, startBar(1-based), lengthBars, kind, opts]
+const CLIPS=[
+ [0,'Kick 909',1,4,'kick'],[0,'Kick 909',5,4,'kick'],[0,'Kick 909',9,4,'kick'],[0,'Kick 909',13,4,'kick'],
+ [1,'Snare',5,4,'snare'],[1,'Snare',9,4,'snare'],[1,'Snare',13,4,'snare'],
+ [2,'Bass DI',3,6,'bass'],[2,'Bass DI · chorus',9,8,'bass'],
+ [3,'Rhodes · verse',1,8,'keys'],[3,'Rhodes · chorus',9,8,'keys'],
+ [4,'Verse 1',5,3.5,'vox'],[4,'Chorus A · take 3',9,3.75,'vox',{sel:true}],[4,'Chorus B',13,3.5,'vox'],
+ [5,'BGV stack',9,8,'bgv'],
+ [6,'Riser',6,2,'riser',{moved:7,step:6}],[6,'Impact',9,1.5,'impact'],
+ [7,'Pad swell',9,8,'pad',{ghost:true,step:2}]
+];
+
+/* ============================== helpers */
+const hex=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+const mix=(a,b,t)=>{const A=hex(a),B=hex(b);return `rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(',')})`};
+const mixHex=(a,b,t)=>{const A=hex(a),B=hex(b);return '#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')};
+const rgba=(h,a)=>`rgba(${hex(h).join(',')},${a})`;
+const fdb=v=>v===null?'−∞':(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(1);
+const fpan=p=>p===0?'C':(p<0?'L':'R')+Math.abs(p);
+// audio taper: 0 dB at 75 % of travel, top at +6 dB (Cubase's default Volume Max)
+const BP=[[0,-144],[.05,-60],[.15,-40],[.3,-24],[.45,-12],[.6,-6],[.75,0],[1,6]];
+const pos=db=>{for(let i=1;i<BP.length;i++){if(db<=BP[i][1]){const[a,x]=BP[i-1],[b,y]=BP[i];return a+(b-a)*(db-x)/(y-x)}}return 1};
+const SCALE=[[6,'6'],[0,'0'],[-6,'6'],[-12,'12'],[-24,'24'],[-40,'40'],[-60,'60']];
+
+/* ============================== knob */
+function knob(pan,ghost){
+  const a=p=>(-135+(p+100)/200*270)*Math.PI/180, pt=(ang,r)=>[12+r*Math.sin(ang),12-r*Math.cos(ang)];
+  const arc=(p,col,w)=>{const a0=a(0),a1=a(p);const [x0,y0]=pt(Math.min(a0,a1),9.5),[x1,y1]=pt(Math.max(a0,a1),9.5);
+    return p===0?'':`<path d="M${x0} ${y0}A9.5 9.5 0 0 1 ${x1} ${y1}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`};
+  const [bx0,by0]=pt(a(-100),9.5),[bx1,by1]=pt(a(100),9.5);const [nx,ny]=pt(a(pan),6.5),[cx,cy]=pt(a(pan),2.5);
+  let g='';
+  if(ghost!==undefined){const [gx,gy]=pt(a(ghost),10.5),[hx,hy]=pt(a(ghost),5);g=`<path d="M${hx} ${hy}L${gx} ${gy}" stroke="${AI}" stroke-width="2" stroke-linecap="round"/><circle cx="${gx}" cy="${gy}" r="2" fill="${AI}"/>`}
+  return `<svg class="knob" viewBox="0 0 24 24"><path d="M${bx0} ${by0}A9.5 9.5 0 1 1 ${bx1} ${by1}" stroke="#07080A" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+  ${arc(pan,'#E8EBF1',2)}<circle cx="12" cy="12" r="7" fill="#2A303B" stroke="#000"/><circle cx="12" cy="11.5" r="6.2" fill="url(#kg)"/>
+  <path d="M${cx} ${cy}L${nx} ${ny}" stroke="#F2F4F8" stroke-width="1.6" stroke-linecap="round"/>${g}</svg>`;
+}
+
+/* ============================== markup */
+const app=document.getElementById('app');
+const th=(t,i)=>`
+ <div class="th ${t.ghost?'ghost':''} ${t.mute?'muted':''} ${t.sel?'sel':''}" style="--c:${t.c}">
+  <div class="col"></div><div class="idx">${t.ghost?'+':i+1}</div>
+  <div class="body">
+   <div class="r1">${t.ghost?`<span class="stepn" style="margin-right:3px">1</span>`:''}<span class="name">${t.n}</span>
+     ${t.ghost?`<span style="color:var(--ai-2);font-size:10.5px;white-space:nowrap">${L('proposed track')}</span>`:`
+     <span class="msr m ${t.mute?'on':''} ${t.gUnmute?'ghost':''}">M</span><span class="msr s">S</span><span class="msr r ${t.sel?'on':''}"><i></i></span><span class="msr rd on">R</span><span class="msr">W</span>`}
+   </div>
+   <div class="r2">${t.ghost?`<span>${L('stereo · 0.0 dB · C · no inserts')}</span>`:`
+     <span class="db num">${fdb(t.db)} dB</span><span class="pan num">${fpan(t.pan)}</span>
+     <span class="hmeter"><i style="width:${Math.round(Math.max(t.m[0],t.m[1])*100)}%"></i></span>`}
+   </div>
+  </div>
+ </div>`;
+
+// A MixConsole strip in Cubase's order: (inserts rack) · pan · M S e · fader + meter · level and peak · R W record · name
+function strip(t){
+  const y=p=>`${(p*100).toFixed(1)}%`;
+  const scale=SCALE.map(([d,l])=>`<span style="bottom:${y(pos(d))}">${l}</span>`).join('');
+  const ghostCap=t.gDb!==undefined?`<div class="gline" style="bottom:${y(pos(t.db))};height:${((pos(t.gDb)-pos(t.db))*100).toFixed(1)}%"></div><div class="cap ghost" style="bottom:${y(pos(t.gDb))}"></div>`:'';
+  const m=t.m.map(v=>`<div class="ch"><i style="height:${(v*100).toFixed(0)}%"></i>${v?`<u style="bottom:${Math.min(98,v*100+7).toFixed(0)}%"></u>`:''}</div>`).join('');
+  const ro=t.gDb!==undefined?`<span>${fdb(t.db)}</span><span class="to">→ ${fdb(t.gDb)}</span>`:`<span>${fdb(t.db)}</span><span class="pk">${t.pk===null?'':fdb(t.pk)}</span>`;
+  const gainBadge=t.gDb!==undefined?`<span class="stepn" style="right:4px;top:118px">${t.gStep}</span>`:'';
+  return `<div class="strip ${t.ghost?'ghost':''} ${t.mute?'muted':''} ${t.sel?'sel':''}" style="--c:${t.c}">
+   ${gainBadge}
+   <div class="ins">${t.ins.map(s=>s==='—'?`<div class="slot empty">+</div>`:`<div class="slot">${s}</div>`).join('')}</div>
+   <div class="panrow">${t.gPan!==undefined?`<span class="lab" style="display:flex;justify-content:flex-end"><span class="stepn">${t.gStep}</span></span>`:`<span class="lab" style="text-align:right;color:var(--tx-4);font-size:${LANG==='en'?10:10.5}px">${L('PAN')}</span>`}${knob(t.pan,t.gPan)}<span class="lab" style="${t.gPan!==undefined?'color:var(--ai-2)':''}">${t.gPan!==undefined?fpan(t.gPan):fpan(t.pan)}</span></div>
+   <div class="btns">${t.ghost?`<span style="font-size:9.5px;color:var(--ai-2);font-weight:600;letter-spacing:.04em">${L('NEW · STEP 1')}</span>`:
+      `${t.gUnmute?`<span class="stepn">${t.gStep}</span>`:''}<span class="msr m ${t.mute?'on':''} ${t.gUnmute?'ghost':''}">M</span><span class="msr s">S</span>${t.gUnmute?'':`<span class="msr e">e</span>`}`}</div>
+   <div class="fad"><div class="scale">${scale}</div>
+     <div class="ftrack"><div class="unity" style="bottom:${y(pos(0))}"></div>${ghostCap}<div class="cap" style="bottom:${y(pos(t.db))}"></div></div>
+     <div class="meter">${m}</div></div>
+   <div class="readout">${ro}</div>
+   <div class="btns">${t.ghost?'':`<span class="msr rd on">R</span><span class="msr">W</span><span class="msr r ${t.sel?'on':''}"><i></i></span>`}</div>
+   <div class="nametag">${t.n}</div>
+  </div>`;
+}
+const master=`<div class="strip master" style="--c:#C9CED8">
+   <div class="ins"><div class="slot">Limiter</div><div class="slot empty">+</div></div>
+   <div class="panrow"><span style="color:var(--tx-4)">LUFS-S</span><span style="color:var(--tx-1)">−13.8</span></div>
+   <div class="btns"><span class="msr m">M</span><span class="msr e">e</span></div>
+   <div class="fad"><div class="scale">${SCALE.map(([d,l])=>`<span style="bottom:${(pos(d)*100).toFixed(1)}%">${l}</span>`).join('')}</div>
+     <div class="ftrack"><div class="unity" style="bottom:75%"></div><div class="cap" style="bottom:75%"></div></div>
+     <div class="meter"><div class="ch"><i style="height:84%"></i><u style="bottom:91%"></u></div><div class="ch"><i style="height:81%"></i><u style="bottom:90%"></u></div></div></div>
+   <div class="readout"><span>0.0</span><span class="pk">−1.9</span></div>
+   <div class="btns"><span class="msr rd on">R</span><span class="msr">W</span></div>
+   <div class="nametag">${L('Master')}</div></div>`;
+
+const step=(n,html,d,c,hot)=>`<div class="step ${hot?'hot':''}"><span class="cb">${ic('check')}</span><span class="stepn">${n}</span>
+  <span class="t"><span class="tdot" style="--c:${c}"></span>${L(html)}<span class="d">${L(d)}</span></span><span class="go">${ic('target','s')}</span></div>`;
+const tool=(icon,key,on)=>`<span class="b ${on?'on':''}">${ic(icon,'s')}<kbd>${key}</kbd></span>`;
+const sec=(title,body,right='')=>`<div class="sec ${body?'':'shut'}"><div class="sec-h">${ic('chev','s')}${L(title)}<span>${right}</span></div>${body?`<div class="sec-b">${body}</div>`:''}</div>`;
+
+app.innerHTML=`
+<svg width="0" height="0" style="position:absolute"><defs><linearGradient id="kg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A5160"/><stop offset="1" stop-color="#22262F"/></linearGradient></defs></svg>
+
+<header class="topbar">
+  <div class="tb-left">
+    <div class="brand"><b><i></i></b></div>
+    <div class="session">Night Drive ${ic('chev','s')}</div>
+    <span class="chip">${ic('branch','s')}<span>main</span><span class="num" style="color:var(--tx-3)">r39</span></span>
+    <span class="sep"></span>
+    <span class="iconbtn">${ic('undo')}</span><span class="iconbtn dim">${ic('redo')}</span>
+  </div>
+  <div class="transport">
+    <div class="tgroup">
+      <span class="tbtn">${ic('rtz')}</span><span class="tbtn lit">${ic('loop')}</span><span class="tbtn">${ic('stop')}</span><span class="tbtn play">${ic('play')}</span><span class="tbtn rec">${ic('rec')}</span>
+    </div>
+    <div class="lcd">
+      <div class="cell"><span class="lbl">${L('Bar · Beat · Tick')}</span><span class="val">10<em>.</em>3<em>.</em>000</span></div>
+      <div class="cell"><span class="lbl">${L('Time')}</span><span class="val sm">00:00:19<em>.</em>000</span></div>
+      <div class="cell"><span class="lbl">${L('Locators')}</span><span class="val sm">9<em>.</em>1 <em>–</em> 13<em>.</em>1</span></div>
+      <div class="cell"><span class="lbl">${L('Tempo')}</span><span class="val sm">120<em>.</em>00</span></div>
+      <div class="cell"><span class="lbl">${L('Sig')}</span><span class="val sm">4<em>/</em>4</span></div>
+    </div>
+    <div class="tgroup"><span class="tbtn">${ic('metro')}</span></div>
+  </div>
+  <div class="tb-right">
+    <span class="dsp">DSP <span class="bar"><i></i></span><span class="num" style="color:var(--tx-2)">12%</span></span>
+    <span class="zones"><span class="iconbtn">${ic('zCh')}</span><span class="iconbtn on">${ic('zLeft')}</span><span class="iconbtn on">${ic('zLow')}</span><span class="iconbtn on">${ic('zRight')}</span></span>
+    <span class="aibtn">${ic('spark')}${L('Plans')}<span class="n">1</span></span>
+  </div>
+</header>
+
+<aside class="leftzone">
+  <div class="z-head">${L('Inspector')}<span class="k">Alt+I</span></div>
+  <div class="i-track">
+    <div class="i-name"><span style="width:10px;height:10px;border-radius:3px;background:#3FC4DD"></span>Vox Lead<small>${L('Mono')}</small></div>
+    <div class="i-btns"><span class="msr m">M</span><span class="msr s">S</span><span class="msr r on"><i></i></span><span class="msr">${ic('mon','s')}</span><span class="msr rd on">R</span><span class="msr">W</span><span class="msr e" style="margin-left:auto">e</span></div>
+    <div class="i-row"><span>${L('Volume')}</span><span class="hs"><i style="width:81%"></i><u style="left:81%"></u></span><b class="num">+1.5 dB</b></div>
+    <div class="i-row"><span>${L('Pan')}</span><span class="hs"><u style="left:50%"></u></span><b class="num">C</b></div>
+  </div>
+  ${sec('Routing',`<div class="irow"><span>${L('In')}</span><span class="pick">${L('Mono In 1')}${ic('chev','s')}</span></div><div class="irow"><span>${L('Out')}</span><span class="pick">${L('Stereo Out')}${ic('chev','s')}</span></div>`)}
+  ${sec('Inserts',`<div class="islot">De-ess<em>e</em></div><div class="islot">Comp<em>e</em></div><div class="islot empty">+ ${L('Add insert')}</div>`,'2')}
+  ${sec('Sends','','0')}
+  ${sec('Automation','',L('Read'))}
+  ${sec('Agent changes',`<div class="hist"><span class="mono">r31</span> · ${L('Comp added by')} <b>${L('Tame the low end')}</b></div><div class="hist" style="color:var(--tx-3)">${L('No pending change on this track.')}</div>`)}
+  ${sec('Notepad','')}
+  <div class="z-foot"><span class="on">${L('Track')}</span><span>${L('Editor')}</span></div>
+</aside>
+
+<main class="center">
+  <section class="arrange">
+    <div class="arr-toolbar">
+      <div class="seg">${tool('ptr',1,true)}${tool('range',2)}${tool('cut',3)}${tool('glue',4)}${tool('erase',5)}${tool('zoom',6)}${tool('mutex',7)}${tool('pen',8)}${tool('mon',9)}</div>
+      <span class="field on">${ic('magnet','s')}${L('Snap')}<em>${L('Grid')}</em>${ic('chev','s')}</span>
+      <span class="field">${ic('grid','s')}${L('Adapt to Zoom')}${ic('chev','s')}</span>
+      <span class="field" title="Auto-Scroll (F)" style="padding:0 6px">${ic('follow','s')}</span>
+      <span class="spacer"></span>
+      <span class="overlaypill">${ic('spark','s')}<span><b>${L('Lift the chorus')}</b> · 6 ${L('changes')}</span><span class="tog">${ic('check','s')}${L('Ghosts')}</span></span>
+    </div>
+    <div class="infoline">
+      <span class="f"><i></i><b>Chorus A · take 3</b></span>
+      <span class="f">${L('Start')}<b class="num">9.1.1.0</b></span><span class="f">${L('End')}<b class="num">12.4.1.0</b></span><span class="f">${L('Length')}<b class="num">3.3.0.0</b></span>
+      <span class="f">${L('Offset')}<b class="num">1.0.2.0</b></span><span class="f">${L('Volume')}<b class="num">0.00 dB</b></span>
+      <span class="f">${L('Fade In')}<b class="num">12 ms</b></span><span class="f">${L('Fade Out')}<b class="num">180 ms</b></span>
+    </div>
+    <div class="arr-body">
+      <div class="headers">
+        <div class="corner"><span class="add">${ic('plus','s')}${L('Track')}</span><span class="cnt">7 ${L('tracks')} · 17 ${L('clips')}</span></div>
+        <div class="mk">${ic('flag')}${L('Markers')}</div>
+        ${T.map(th).join('')}
+      </div>
+      <div class="lanes" id="lanes"><canvas id="tl"></canvas><div class="hscroll"><i></i><u></u></div></div>
+    </div>
+  </section>
+
+  <section class="lower">
+    <div class="tabs">
+      <span class="tab on">${ic('sliders','s')}${L('MixConsole')} <kbd>Alt+F3</kbd></span><span class="tab">${ic('wave','s')}${L('Editor')}</span>
+      <span class="spacer"></span>
+      <span style="display:flex;gap:10px;align-items:center;padding-right:6px"><span style="color:var(--tx-2)">${L('Routing')}</span><span style="color:var(--tx-1)">${L('Inserts')}</span><span style="color:var(--tx-4)">${L('Sends')}</span><span>${L('Narrow')}</span>${ic('dots','s')}</span>
+    </div>
+    <div class="mixer">${T.map(strip).join('')}${master}</div>
+  </section>
+</main>
+
+<aside class="plans">
+  <div class="p-head">
+    <span class="tab on">${ic('spark','s')}${L('Plans')}</span><span class="tab">${ic('folder','s')}${L('Media')}</span><span class="tab">${ic('bars','s')}${L('Meter')}</span>
+    <div class="ab">${ic('phones','s')}<div class="seg"><span class="b on">${L('Main')}</span><span class="b">${L('Proposal')}</span></div></div>
+  </div>
+  <div class="agent"><span class="av">${ic('spark','s')}</span><span><b>mix-assistant</b> · MCP</span><span class="live"><i></i>${L('connected · idle')}</span></div>
+  <div class="p-scroll">
+    <div class="card">
+      <div class="card-h">
+        <div class="top"><span class="badge pending">${L('Needs review')}</span><span>${L('2 min ago · base')} <span class="num">r39</span></span><span class="hash mono">8994e5fe</span></div>
+        <h3>${L('Lift the chorus')}</h3>
+        <p>${L('Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.')}</p>
+        <div class="sum"><span><b>+1</b> ${L('track')}</span><span><b>+1</b> ${L('clip')}</span><span><b>1</b> ${L('move')}</span><span><b>3</b> ${L('mix')}</span></div>
+      </div>
+      <div class="steps">
+        <div class="steps-h up">${L('Steps · 6 of 6 selected')}<a style="text-transform:none;letter-spacing:0">${L('Select none')}</a></div>
+        ${step(1,'Add track <b>Pad</b>','stereo · after FX',AI)}
+        ${step(2,'Place <b>Pad swell</b> on Pad','bar 9.1 → 17.1 · pad_swell.wav',AI)}
+        ${step(3,'<b>Vox BG</b> gain','<s>−9.0 dB</s> → <em>−6.0 dB</em>','#5B8FF5',true)}
+        ${step(4,'<b>Keys</b> pan','<s>L35</s> → <em>L20</em>','#57C98A')}
+        ${step(5,'Unmute <b>FX</b>','<s>muted</s> → <em>on</em>','#EC6BB0')}
+        ${step(6,'Move <b>Riser</b> on FX','<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1','#EC6BB0')}
+      </div>
+      <div class="acts">
+        <span class="btn">${ic('phones','s')}${L('Audition')}</span>
+        <span class="btn primary">${ic('check','s')}${L('Approve 6 of 6')} <kbd>⏎</kbd></span>
+        <span class="btn danger">${ic('x','s')}</span>
+      </div>
+    </div>
+    <div class="hist-h up">${L('Earlier')}<span>${L('3 plans')}</span></div>
+    <div class="hrow"><b>${L('Tame the low end')}</b><span class="badge applied">${L('Applied · r31')}</span><small>${L('4 steps · mix-assistant · 1 h ago · Roll back')}</small></div>
+    <div class="hrow"><b>${L('Double the lead vocal')}</b><span class="badge rejected">${L('Rejected')}</span><small>${L('“Too wide for the verse — keep it mono.” · sent to agent')}</small></div>
+    <div class="hrow"><b>${L('Trim silence on drums')}</b><span class="badge stale">${L('Stale')}</span><small>${L('Kick clips changed since r27 · ask the agent to rebase')}</small></div>
+  </div>
+  <div class="composer">${ic('spark')}<span>${L('Ask mix-assistant for a change…')}</span><span class="send">${ic('send','s')}</span></div>
+</aside>
+
+<footer class="statusbar">
+  <span><i class="ok"></i><b>${L('Engine connected')}</b></span>
+  <span>ASIO · Scarlett 4i4 · <b class="num">48 kHz</b> / <b class="num">128</b> · <span class="num">5.3 ms</span></span>
+  <span><b class="num">0</b> ${L('xruns')}</span>
+  <span class="hear">${ic('phones','s')}${L('Hearing')} <b>${L('main')}</b></span>
+  <span class="right"><span class="loc">${ic('globe','s')}${L('English')}</span><span>${L('Saved')} · <b class="num">r39</b></span><span>siann-engine 0.1.0 (<span class="mono" style="font-size:10px">308d846</span>) · AGPL-3.0-or-later · <a>${L('source')}</a></span></span>
+</footer>`;
+
+/* ============================== event display: one surface (ruler + marker track + lanes + events + ghosts + cursor) */
+function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function vnoise(seed){const r=rng(seed),v=Array.from({length:512},()=>r());return x=>{const i=Math.floor(x),f=x-i,s=f*f*(3-2*f);return v[i&511]*(1-s)+v[(i+1)&511]*s}}
+const N1=vnoise(7),N2=vnoise(99);
+function amp(kind,beat,p,r){
+  const ph=beat-Math.floor(beat);
+  switch(kind){
+    case 'kick': return Math.exp(-ph*4.6)*(.8+.2*r)+.02;
+    case 'snare':{const b=Math.floor(beat)%4;const g=(b===3&&ph>.74)?Math.exp(-(ph-.75)*22)*.35:0;return (b===1||b===3?Math.exp(-ph*3.6)*(.55+.4*r):.02)+g*r}
+    case 'bass':{const e=beat*2,i=Math.floor(e)%8,f=e-Math.floor(e);const on=[1,1,0,1,1,0,1,1][i];return on?(.5+.14*Math.sin(i*1.7))*(1-.45*f)*(.82+.18*r):.02}
+    case 'keys':{const f=(beat/2)-Math.floor(beat/2);return (.5*Math.exp(-f*1.6)+.1+.06*N2(beat*3))*(.7+.3*r)}
+    case 'vox':{const n=Math.max(0,N1(beat*1.15+p*3)-.34)*1.9;return Math.min(.92,n*(.55+.6*N2(beat*5)))*(.7+.3*r)+.008}
+    case 'bgv': return (.2+.3*N1(beat*.6))*(.55+.45*N2(beat*2.5))*(.8+.2*r);
+    case 'riser': return Math.pow(p,2.3)*.9*(.65+.35*r)+.01;
+    case 'impact': return Math.exp(-p*4.2)*.95*(.6+.4*r);
+    case 'pad': return (.16+.3*Math.pow(Math.sin(Math.PI*Math.min(1,p*1.15)),.7))*(.85+.15*r);
+  }
+  return 0;
+}
+
+function draw(){
+  const host=document.getElementById('lanes'),cv=document.getElementById('tl');
+  // Ruler as in Cubase: upper half = locators and cycle, lower half = project cursor (and drag-zoom). Marker track below it.
+  const W=host.clientWidth,RU=18,RULER=40,MK=20,TOP=RULER+MK,LANE=53,H=TOP+LANE*T.length,dpr=window.devicePixelRatio||1;
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
+  const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const UI=getComputedStyle(document.body).fontFamily;
+  const PXB=40,xb=b=>(b-1)*PXB,laneY=i=>TOP+i*LANE;
+
+  for(let i=0;i<T.length;i++){g.fillStyle=i%2?'#0D0F13':'#0A0B0E';g.fillRect(0,laneY(i),W,LANE)}
+  const L0=xb(9),L1=xb(13);
+  g.fillStyle='rgba(255,255,255,.028)';g.fillRect(L0,TOP,L1-L0,H-TOP);            // cycle range tint over the lanes
+  for(let b=1;xb(b)<W;b++){
+    for(let q=1;q<4;q++){g.fillStyle='rgba(255,255,255,.026)';g.fillRect(Math.round(xb(b)+q*PXB/4),TOP,1,H-TOP)}
+    g.fillStyle=(b-1)%4===0?'rgba(255,255,255,.11)':'rgba(255,255,255,.06)';g.fillRect(Math.round(xb(b)),TOP,1,H-TOP);
+  }
+  for(let i=1;i<=T.length;i++){g.fillStyle='#000';g.fillRect(0,laneY(i)-1,W,1)}
+  {const y=laneY(7);g.save();g.beginPath();g.rect(0,y,W,LANE-1);g.clip();g.strokeStyle='rgba(167,139,255,.07)';g.lineWidth=5;
+   for(let x=-LANE;x<W;x+=14){g.beginPath();g.moveTo(x,y+LANE);g.lineTo(x+LANE,y);g.stroke()}g.restore()}
+
+  // ruler, upper half: locator band
+  g.fillStyle='#0E1014';g.fillRect(0,0,W,RU);
+  g.fillStyle='rgba(232,235,241,.20)';g.fillRect(L0,2,L1-L0,RU-3);
+  g.fillStyle='#E8EBF1';g.fillRect(L0,2,L1-L0,2);
+  g.beginPath();g.moveTo(L0,2);g.lineTo(L0+8,2);g.lineTo(L0,RU-1);g.fill();
+  g.beginPath();g.moveTo(L1,2);g.lineTo(L1-8,2);g.lineTo(L1,RU-1);g.fill();
+  g.font='700 8.5px Inter, sans-serif';g.textBaseline='middle';g.fillStyle='#0B0C10';
+  g.fillStyle='#C9CED8';g.fillText('L',L0+10,RU/2+2);g.textAlign='right';g.fillText('R',L1-10,RU/2+2);g.textAlign='left';
+  g.fillStyle='rgba(255,255,255,.05)';g.fillRect(0,RU,W,1);
+  // ruler, lower half: bars and the cursor
+  g.fillStyle='#14171D';g.fillRect(0,RU+1,W,RULER-RU-1);
+  g.font='500 10px Inter, sans-serif';
+  for(let b=1;xb(b)<W;b++){const x=Math.round(xb(b)),maj=(b-1)%4===0;
+    g.fillStyle=maj?'#8A93A3':'#3A414D';g.fillRect(x,maj?RU+3:RULER-9,1,maj?RULER-RU-3:9);
+    for(let q=1;q<4;q++){g.fillStyle='#2A303B';g.fillRect(Math.round(x+q*PXB/4),RULER-5,1,5)}
+    g.fillStyle=maj?'#C9CED8':'#6C7483';g.fillText(String(b),x+4,RU+10)}
+  g.fillStyle='#000';g.fillRect(0,RULER-1,W,1);
+  // marker track
+  g.fillStyle='#101216';g.fillRect(0,RULER,W,MK);g.fillStyle='#000';g.fillRect(0,TOP-1,W,1);
+  const SEC=[[1,'Intro','#6C7483'],[5,'Verse 1','#57C98A'],[9,'Chorus','#E6C547']];
+  g.font='600 10px Inter, sans-serif';
+  SEC.forEach(([b,name,c],k)=>{const x=xb(b),x2=k+1<SEC.length?xb(SEC[k+1][0]):xb(17);
+    g.fillStyle=rgba(c,.14);g.fillRect(x+1,RULER+2,x2-x-2,MK-5);g.fillStyle=c;g.fillRect(x,RULER+2,2,MK-5);
+    g.fillStyle=mix(c,'#FFFFFF',.25);g.fillText((k+1)+'  '+name,x+7,RULER+MK/2)});
+
+  const rr=(x,y,w,h,r)=>{g.beginPath();g.roundRect(x,y,w,h,r)};
+  function clip(ti,name,start,len,kind,o={},asGhostAt){
+    const t=T[ti],ghost=o.ghost||asGhostAt!==undefined,st=asGhostAt??start;
+    const x=xb(st)+1,w=len*PXB-2,y=laneY(ti)+3,h=LANE-7,HDR=13,col=ghost?AI:t.c,dim=t.mute&&!ghost,old=o.moved&&asGhostAt===undefined;
+    g.save();
+    if(old) g.globalAlpha=.38; else if(dim) g.globalAlpha=.5;
+    rr(x,y,w,h,4);g.fillStyle=ghost?'rgba(167,139,255,.10)':mix(col,'#0B0C10',o.sel?.62:.74);g.fill();
+    g.save();rr(x,y,w,h,4);g.clip();
+    if(ghost){g.strokeStyle='rgba(167,139,255,.16)';g.lineWidth=4;for(let k=-h;k<w;k+=11){g.beginPath();g.moveTo(x+k,y+h);g.lineTo(x+k+h,y);g.stroke()}}
+    g.fillStyle=ghost?'rgba(167,139,255,.30)':(o.sel?mix(col,'#FFFFFF',.12):mix(col,'#0B0C10',.12));g.fillRect(x,y,w,HDR);
+    const r=rng(ti*977+Math.round(start*13)+kind.length),mid=y+HDR+(h-HDR)/2,half=(h-HDR)/2-2,stp=1/dpr;
+    g.fillStyle=ghost?'rgba(196,179,255,.55)':rgba(mixHex(col,'#FFFFFF',o.sel?.28:.12),.5);
+    const cols=[];for(let px=0;px<w;px+=stp){const bars=px/PXB,beat=(start-1+bars)*4;const a=Math.min(1,amp(kind,beat,bars/len,r()));cols.push(a);
+      const hh=Math.max(.5,a*half);g.fillRect(x+px,mid-hh,stp,hh*2)}
+    g.fillStyle=ghost?'rgba(214,202,255,.9)':mixHex(col,'#FFFFFF',o.sel?.45:.25);
+    cols.forEach((a,k)=>{const hh=Math.max(.5,a*half*.52);g.fillRect(x+k*stp,mid-hh,stp,hh*2)});
+    if(o.sel){const fi=8,fo=22;                                                   // fades, as curves from the upper corners
+      g.fillStyle='rgba(9,10,13,.55)';
+      g.beginPath();g.moveTo(x,y+HDR);g.lineTo(x+fi,y+HDR);g.quadraticCurveTo(x+1,y+HDR+6,x,y+h);g.fill();
+      g.beginPath();g.moveTo(x+w,y+HDR);g.lineTo(x+w-fo,y+HDR);g.quadraticCurveTo(x+w-3,y+HDR+8,x+w,y+h);g.fill();
+      g.strokeStyle='#fff';g.lineWidth=1;g.beginPath();g.moveTo(x+fi,y+HDR);g.quadraticCurveTo(x+1,y+HDR+6,x,y+h);g.stroke();
+      g.beginPath();g.moveTo(x+w-fo,y+HDR);g.quadraticCurveTo(x+w-3,y+HDR+8,x+w,y+h);g.stroke()}
+    g.font='600 10px '+UI;g.textBaseline='middle';
+    let tx=x+6;
+    if(o.step&&ghost){g.fillStyle=AI;g.beginPath();g.arc(x+8.5,y+6.5,5.2,0,7);g.fill();g.fillStyle='#120B2E';g.font='700 8.5px Inter';g.textAlign='center';g.fillText(String(o.step),x+8.5,y+7);g.textAlign='left';g.font='600 10px '+UI;tx=x+18}
+    g.fillStyle=ghost?'#E3DBFF':'#0B0C10';
+    if(w>26)g.fillText(name,tx,y+7,w-(tx-x)-6);
+    g.restore();
+    if(ghost){g.setLineDash([4,3]);g.strokeStyle=AI;g.lineWidth=1.25;rr(x+.5,y+.5,w-1,h-1,4);g.stroke();g.setLineDash([])}
+    else if(o.sel){g.strokeStyle='#FFFFFF';g.lineWidth=1.5;rr(x+.25,y+.25,w-.5,h-.5,4);g.stroke();
+      // Cubase event handles: fade triangles in the upper corners, resize squares in the lower corners,
+      // the volume control at the bottom left, the repeat handle in the middle of the right border
+      const fi=8,fo=22;g.fillStyle='#fff';
+      g.beginPath();g.moveTo(x+fi-4,y+HDR-1);g.lineTo(x+fi+4,y+HDR-1);g.lineTo(x+fi,y+HDR+5);g.fill();
+      g.beginPath();g.moveTo(x+w-fo-4,y+HDR-1);g.lineTo(x+w-fo+4,y+HDR-1);g.lineTo(x+w-fo,y+HDR+5);g.fill();
+      g.fillRect(x-1,y+h-6,6,6);g.fillRect(x+w-5,y+h-6,6,6);
+      g.beginPath();g.arc(x+w,y+HDR+(h-HDR)/2,3.2,0,7);g.fill();
+      g.fillStyle='#0B0C10';rr(x+9,y+h-12,38,10,3);g.fill();g.strokeStyle='rgba(255,255,255,.7)';g.lineWidth=1;rr(x+9.5,y+h-11.5,37,9,3);g.stroke();
+      g.fillStyle='#fff';g.font='600 8px Inter';g.fillText('0.0 dB',x+13,y+h-6.5)}
+    else{g.strokeStyle='rgba(0,0,0,.55)';g.lineWidth=1;rr(x+.5,y+.5,w-1,h-1,4);g.stroke()}
+    g.restore();
+  }
+  CLIPS.forEach(c=>clip(c[0],c[1],c[2],c[3],c[4],c[5]||{}));
+  {const c=CLIPS.find(c=>c[5]&&c[5].moved);clip(c[0],c[1],c[2],c[3],c[4],c[5],c[5].moved);
+   const y=laneY(c[0])+LANE-6,x0=xb(c[2])+10,x1=xb(c[5].moved)+10;g.strokeStyle=AI;g.fillStyle=AI;g.lineWidth=1.5;
+   g.beginPath();g.moveTo(x0,y);g.lineTo(x1-4,y);g.stroke();g.beginPath();g.moveTo(x1,y);g.lineTo(x1-6,y-3.5);g.lineTo(x1-6,y+3.5);g.fill();
+   g.beginPath();g.arc(x0,y,2.2,0,7);g.fill()}
+
+  // project cursor at 10.3.1: its head lives in the lower half of the ruler
+  const px=Math.round(xb(10)+2*PXB/4)+.5;
+  g.fillStyle='rgba(255,255,255,.07)';g.fillRect(px-3,TOP,6,H-TOP);
+  g.strokeStyle='#FFFFFF';g.lineWidth=1;g.beginPath();g.moveTo(px,RU+2);g.lineTo(px,H);g.stroke();
+  g.fillStyle='#FFFFFF';g.beginPath();g.moveTo(px-5.5,RU+2);g.lineTo(px+5.5,RU+2);g.lineTo(px+5.5,RU+8);g.lineTo(px,RU+13);g.lineTo(px-5.5,RU+8);g.fill();
+}
+
+(document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve()).then(()=>{draw();document.body.dataset.ready='1'});
+</script>
+</body>
+</html>
