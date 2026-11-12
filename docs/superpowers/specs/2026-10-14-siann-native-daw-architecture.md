@@ -3190,8 +3190,13 @@ running with its parameter and latency" (`[engine][launch][crash][thirdparty]`, 
 restart is proven with a third-party plugin. `SIANN_TEST_AU` with TDR Nova AU passes
 on the Mac (87 assertions: format `au`, measured delay 184 equal to the reported
 latency, state round trip, editor opened and closed), run in the logged-in Aqua
-session. Still owed by the maintainer: `node scripts/pluginval.js --compat` on
-Windows and the Mac (pluginval and Surge XT are not installed).
+session. `node scripts/pluginval.js --compat` with pluginval v1.0.4 at strictness 5
+(2026-11-11, main 37352ef): on Windows TDR Nova, TDR VOS SlickEQ, Surge XT
+(VST3), Superior Drummer 3 and UAD 1176 (`uaudio_ua_1176.vst3`, authorised by the
+maintainer) all PASS, HALion Sonic SKIP; on the Mac, in the Aqua session, TDR Nova
+VST3 and AU PASS (two non-fatal AU warnings: current program -1, disabling
+non-main buses failed), the rest SKIP. Still owed: the Mac's Surge XT entries
+(VST3 and AU), once the maintainer installs Surge XT there.
 
 Seen during the check, outside the exit criterion: two `main` runs went red
 after a merge and green on the next commit, neither in M4 code paths. Run
