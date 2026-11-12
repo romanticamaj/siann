@@ -440,7 +440,7 @@ std::vector<std::filesystem::path::string_type> components(const std::filesystem
 // A share or a Windows device namespace, whichever separators it mixes: two
 // leading separators (\\server\share, \\?\UNC\..., \\?\C:\..., \\.\pipe\...),
 // the NT object namespace (\??\...), and on Windows any root name that is not
-// a drive letter.
+// a drive letter and a drive-relative device prefix (\.\..., \?\...).
 bool isShareOrDevicePath(std::string_view path) {
     if (path.size() >= 2 && isSeparator(path[0]) && isSeparator(path[1])) {
         return true;
@@ -454,6 +454,16 @@ bool isShareOrDevicePath(std::string_view path) {
                        ((root[0] >= L'A' && root[0] <= L'Z') || (root[0] >= L'a' && root[0] <= L'z'));
     if (!root.empty() && !drive) {
         return true;
+    }
+    // One leading separator, then a segment of dots or question marks (\.\pipe,
+    // \?\C:, \..\x): a device prefix with a separator missing, which resolves on
+    // the current drive. A rooted path of another platform (/Library/...) stays.
+    if (!path.empty() && isSeparator(path[0])) {
+        const std::size_t end = path.find_first_of("\\/", 1);
+        const std::string_view first = path.substr(1, end == std::string_view::npos ? std::string_view::npos : end - 1);
+        if (!first.empty() && first.find_first_not_of(".?") == std::string_view::npos) {
+            return true;
+        }
     }
 #endif
     return false;

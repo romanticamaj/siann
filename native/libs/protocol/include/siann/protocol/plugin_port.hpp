@@ -150,7 +150,11 @@ public:
     // Throws PluginPortError plugin_not_registered (no install at {format, path})
     // or the probe's code (plugin_not_found, plugin_load_failed), leaving it
     // unapproved. Never an MCP tool: an agent must not choose what code loads.
-    virtual PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) = 0;
+    // `uid` names the plugin of a library holding several (a VST3 shell, a CLAP
+    // with several descriptors); approving such a library without one is
+    // invalid_params, and a uid the library does not hold is plugin_not_found.
+    virtual PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved,
+                                        const std::optional<std::string>& uid) = 0;
 };
 
 }  // namespace siann::protocol

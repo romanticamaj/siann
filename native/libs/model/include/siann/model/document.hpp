@@ -138,7 +138,9 @@ bool isStateBlobHash(std::string_view text) noexcept;
 // Protocol v0 item 21): "unc_path" for a share or a device path, whichever
 // separators it mixes: one that starts with two separators (\\server\share,
 // //server/share, \\?\UNC\..., \\?\C:\..., \\.\pipe\...), one in the NT object
-// namespace (\??\...), and on Windows one whose root name is not a drive letter;
+// namespace (\??\...), and on Windows one whose root name is not a drive letter
+// or that has one leading separator and then a segment of dots or question marks
+// (\.\pipe\..., \?\C:\..., \..\...: drive-relative, a device prefix misspelt);
 // "inside_bundle" for one at or under `bundle` (both made
 // weakly_canonical; case-insensitive on Windows). An empty path is no hint and
 // is never refused.

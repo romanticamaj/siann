@@ -34,11 +34,13 @@ UNC path, a path inside the bundle or an unregistered one is never opened.
 What it leaves:
 
 - A library holding several plugins (a VST3 shell, a CLAP file with more than one
-  descriptor) is one install, approved as the first plugin its probe lists. The
-  others in it stay unresolvable until installs are keyed by `{format, path, uid}`
+  descriptor) is one install. Since fix/m5-plugin-registry-followups it is approved
+  as the plugin `plugin.approve`'s `uid` names (no uid is `invalid_params`), not as
+  the first its probe lists; but only one plugin of it is approved at a time, and
+  the others stay unresolvable until installs are keyed by `{format, path, uid}`
   once probed.
-- The e2e tests pass `--plugin-dir` through `SIANN_ENGINE_TEST_ARGS`, which the shell
-  splits at spaces, so a plugin build path with a space in it cannot be given there.
+- Closed by fix/m5-plugin-registry-followups: `SIANN_ENGINE_TEST_ARGS` takes a JSON
+  array of strings, so the e2e tests pass a `--plugin-dir` with a space in it.
 
 ## Before M5: the shell (from PR #47)
 
@@ -124,17 +126,6 @@ For the ux-review gate (the maintainer decides):
   operations, not the default. The spec records it as decided; the maintainer
   confirms or changes it, and the spec then says so (it marks the choice
   provisional, pending the M5 ux-review).
-
-## Before the M5 exit: the plugin registry's minor findings (from PR #70)
-
-- A library holding several plugins is approved as the first plugin its probe lists.
-- `SIANN_ENGINE_TEST_ARGS` is split at spaces, so a plugin path with a space cannot
-  be passed through it.
-- The launch-time filter that skips installs inside the bundle runs against the
-  launch bundle only: after `session.open`, an install inside the new bundle can
-  still be listed by `plugin.registry` (approving or loading it is refused).
-- Rooted paths with one leading separator, such as a path that starts with one backslash and a dot, are not refused;
-  they resolve on the current drive and are not device paths.
 
 ## Before M4 wave 2: the graph driver says when blocks are coming (from m4-clap-host)
 

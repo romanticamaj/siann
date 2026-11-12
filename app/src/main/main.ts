@@ -41,7 +41,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { engineArgs, pluginRegistryFile } from './engine-args';
+import { engineArgs, engineTestArgs, pluginRegistryFile } from './engine-args';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
 
 // native/libs/protocol/include/siann/protocol/protocol_server.hpp, kAppOrigin.
@@ -140,7 +140,7 @@ async function serveApp(request: Request): Promise<Response> {
 }
 
 const backoff = backoffFromEnv();
-const engineTestArgs = underTest ? process.env.SIANN_ENGINE_TEST_ARGS?.split(' ').filter(Boolean) : undefined;
+const testArgs = underTest ? engineTestArgs(process.env.SIANN_ENGINE_TEST_ARGS) : undefined;
 
 const supervisor = new EngineSupervisor({
   exe: engineExecutable(),
@@ -151,7 +151,7 @@ const supervisor = new EngineSupervisor({
       windowHandle: mainWindow && !mainWindow.isDestroyed() ? mainWindow.getNativeWindowHandle() : null,
       backoff,
       pluginRegistry: pluginRegistryFile(app.getPath('userData')),
-      testArgs: engineTestArgs,
+      testArgs,
     }),
   backoff,
   readyTimeoutMs: positiveInt('SIANN_SHELL_READY_MS'),

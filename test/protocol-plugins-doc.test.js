@@ -49,6 +49,15 @@ test('the plugin.registry, plugin.approve section names the codes and keeps them
   }
 });
 
+// The follow-ups of PR #70: a library of several plugins is approved as the one named,
+// and plugin.registry reads the bound session's bundle.
+test('plugin.approve names one plugin of a library holding several', () => {
+  const prose = section('plugin.registry, plugin.approve');
+  assert.ok(prose.includes('`plugin.approve {format, path, approved, uid?}`'));
+  assert.ok(!prose.includes('approved as the first plugin its probe lists'));
+  assert.ok(prose.includes('the bound session'), 'the registry filter reads the bound session');
+});
+
 test('the plugin.registry section stands before the editor methods in the document', () => {
   const text = fs.readFileSync(DOC, 'utf8');
   assert.ok(text.indexOf('## plugin.registry, plugin.approve') < text.indexOf('## plugin.open_editor'));

@@ -95,8 +95,10 @@ public:
         }
     }
     std::vector<PluginRegistryEntry> registry() const override { return installs; }
-    PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) override {
+    PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved,
+                                const std::optional<std::string>& uid) override {
         ++approveCalls;
+        approvedUid = uid;
         if (approveRefusal) {
             throw PluginPortError(*approveRefusal, "the port refused the approval");
         }
@@ -118,6 +120,7 @@ public:
     };
     int approveCalls = 0;
     std::optional<std::string> approveRefusal;
+    std::optional<std::string> approvedUid;  // the last approve's
     int instantiated = 0;
     std::vector<PluginInstantiateRequest> requests;
     std::vector<std::pair<std::string, bool>> settled;
@@ -633,6 +636,32 @@ TEST_CASE("plugin.approve sets the flag through the port and returns the entry",
         CHECK(errorCode(f.call(c, "plugin.approve", params)) == "invalid_params");
     }
     CHECK(port.approveCalls == 4);
+}
+
+// The follow-up of PR #70: a library holding several plugins is approved as the
+// one the request names.
+TEST_CASE("plugin.approve passes the uid naming one plugin of the library to the port",
+          "[protocol][plugin][registry]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    f.ok(c, "plugin.approve", approveParams("/plugins/test.clap", true));
+    CHECK_FALSE(port.approvedUid.has_value());
+    const auto withUid = [](Value uid) {
+        return Value(Object{{"format", Value("clap")},
+                            {"path", Value("/plugins/test.clap")},
+                            {"approved", Value(true)},
+                            {"uid", std::move(uid)}});
+    };
+    f.ok(c, "plugin.approve", withUid(Value("org.siann.test-plugin")));
+    CHECK(port.approvedUid == std::optional<std::string>{"org.siann.test-plugin"});
+    CHECK(port.approveCalls == 2);
+    for (const Value& uid : {Value(7), Value(""), Value(nullptr)}) {
+        const Value params = withUid(uid);
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "plugin.approve", params)) == "invalid_params");
+    }
+    CHECK(port.approveCalls == 2);
 }
 
 TEST_CASE("plugin.approve honours expectedRevision and the idempotency cache", "[protocol][plugin][registry]") {

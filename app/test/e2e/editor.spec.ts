@@ -122,7 +122,7 @@ for (const { name, variable } of CASES) {
         SIANN_ENGINE_EXE: desktopEngine!,
         SIANN_SESSION_DIR: sessionDir,
         SIANN_SHELL_TEST: '1',
-        SIANN_ENGINE_TEST_ARGS: `--plugin-dir ${path.dirname(plugin!)}`,
+        SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--plugin-dir', path.dirname(plugin!)]),
       },
     });
     const page = await app.firstWindow();

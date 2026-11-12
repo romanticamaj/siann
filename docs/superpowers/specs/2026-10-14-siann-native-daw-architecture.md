@@ -2422,10 +2422,12 @@ spec check):
     launch (`scan` runs no plugin code, "siann-host"). Methods, both through the
     command thread, honouring `expectedRevision` and the idempotency cache, in
     `engine.capabilities`' `methods`, `not_supported` without a port:
-    `plugin.registry {}` returns `{plugins: [{format, path, uid, name, approved}]}`;
-    `plugin.approve {format, path, approved}` (`format` one of clap, vst3, au, lv2,
-    `path` a string, `approved` a boolean; otherwise `invalid_params`) returns the
-    entry. Approving an unprobed install probes it with `scanPath` (running its code
+    `plugin.registry {}` returns `{plugins: [{format, path, uid, name, approved}]}`,
+    leaving out an install the bound session refuses (inside its bundle, after
+    `session.open`, or on a share);
+    `plugin.approve {format, path, approved, uid?}` (`format` one of clap, vst3, au, lv2,
+    `path` a string, `approved` a boolean, `uid` a non-empty string; otherwise
+    `invalid_params`) returns the entry. Approving an unprobed install probes it with `scanPath` (running its code
     is the user's choice at that moment), records uid and name, and persists; a probe
     that fails answers its `PluginError` code (`plugin_not_found`,
     `plugin_load_failed`) and leaves it unapproved. `approved: false` needs no probe.
@@ -2440,7 +2442,8 @@ spec check):
     `plugin_not_registered` otherwise. The slot's `path` is only a hint: a refused
     hint (`unc_path`: a share or device path, `\\server\share`, `//server/share`,
     `\\?\...`, `\\.\...` or `\??\...` with either separator, and on Windows any root that is
-    not a drive letter (`model::pluginPathRefusal`), `inside_bundle`:
+    not a drive letter and one leading separator then a segment of dots or question
+    marks, `\.\...` or `\?\...` (`model::pluginPathRefusal`), `inside_bundle`:
     a path inside the session bundle) or an unknown one (`unregistered_path`) is
     ignored and never opened, and the `plugin_not_registered` message names its
     reason. The same refusal applies to the installs themselves (fix round 1 of
@@ -2461,7 +2464,11 @@ spec check):
     Files: `{"schema": "siann.plugin_registry.v0", "plugins": [...]}` as the method
     lists them, written atomically on every approval; a file that does not parse
     is one diagnostic and an empty registry. A library holding several plugins is
-    one install, approved as the first plugin its probe lists (follow-ups).
+    one install, approved as the plugin `uid` names: without one it is
+    `invalid_params` naming the uids it holds, a uid it does not hold is
+    `plugin_not_found`, and another uid than the recorded one probes again and moves
+    the install to it (one plugin of such a library is approved at a time;
+    follow-ups).
 Protocol v0, devices and sessions (decided with m5-engine-sessions-devices; item 21
 is m5-plugin-registry's):
 

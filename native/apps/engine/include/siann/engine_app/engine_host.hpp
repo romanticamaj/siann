@@ -157,7 +157,8 @@ public:
     // plugin.registry and plugin.approve (Protocol v0 item 21). An approval probes
     // an unprobed install with scanPath and is written to the registry file.
     std::vector<protocol::PluginRegistryEntry> registry() const override;
-    protocol::PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved) override;
+    protocol::PluginRegistryEntry approve(const std::string& format, const std::string& path, bool approved,
+                                          const std::optional<std::string>& uid = std::nullopt) override;
 
     // protocol::GesturePort (Protocol v0 item 24), on the command thread, over the
     // engine's fader gestures: the start value from the heard side's document, a

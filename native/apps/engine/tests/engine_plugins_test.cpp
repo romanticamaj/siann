@@ -77,6 +77,31 @@ Value approveParams(const std::string& format, const std::string& path, bool app
     return Value(Object{{"format", Value(format)}, {"path", Value(path)}, {"approved", Value(approved)}});
 }
 
+Value approveUidParams(const std::string& format, const std::string& path, const std::string& uid) {
+    return Value(Object{{"format", Value(format)}, {"path", Value(path)}, {"approved", Value(true)}, {"uid", Value(uid)}});
+}
+
+// Sets an environment variable for the length of a scope; empty is unset for the
+// test plugin.
+class ScopedEnvironment {
+public:
+    ScopedEnvironment(const char* name, const std::string& value) : name_(name) { set(value.c_str()); }
+    ~ScopedEnvironment() { set(""); }
+    ScopedEnvironment(const ScopedEnvironment&) = delete;
+    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+private:
+    void set(const char* value) {
+#if defined(_WIN32)
+        _putenv_s(name_, value);
+#else
+        setenv(name_, value, 1);
+#endif
+    }
+
+    const char* name_;
+};
+
 void approveTestPlugins(Harness& harness, protocol::ConnectionId connection) {
     for (const auto& [format, path] : testPlugins()) {
         INFO(path);
@@ -678,4 +703,100 @@ TEST_CASE("a malformed registry file is one diagnostic and an empty registry", "
         CHECK_FALSE(at(*entry, "approved").asBool());
         host->shutdown();
     }
+}
+
+TEST_CASE("a library holding several plugins is approved as the plugin plugin.approve names",
+          "[engine][plugin][registry]") {
+    // The follow-up of PR #70: approval took the first plugin the probe listed.
+    const ScopedEnvironment twin("SIANN_TEST_PLUGIN_TWIN", "1");
+    ManualRig rig(false);
+    const std::string library = SIANN_TEST_PLUGIN_CLAP;
+    const std::string twinUid = "org.siann.test-plugin-twin";
+
+    // No uid: ambiguous, refused, and nothing recorded.
+    const Value ambiguous = rig.harness->call(rig.connection, "plugin.approve", approveParams("clap", library));
+    CHECK(errorCode(ambiguous) == "invalid_params");
+    const std::string said = at(at(ambiguous, "error"), "message").asString();
+    CHECK(said.find("org.siann.test-plugin,") != std::string::npos);
+    CHECK(said.find(twinUid) != std::string::npos);
+    const Value listed = rig.ok("plugin.registry");
+    const Value* entry = registryEntry(listed, library);
+    REQUIRE(entry != nullptr);
+    CHECK_FALSE(at(*entry, "approved").asBool());
+    CHECK(at(*entry, "uid").kind() == Value::Kind::null);
+
+    // A uid the library does not hold.
+    CHECK(errorCode(rig.harness->call(rig.connection, "plugin.approve",
+                                      approveUidParams("clap", library, "org.example.none"))) == "plugin_not_found");
+    const Value relisted = rig.ok("plugin.registry");
+    const Value* still = registryEntry(relisted, library);
+    REQUIRE(still != nullptr);
+    CHECK_FALSE(at(*still, "approved").asBool());
+
+    // The second plugin, named.
+    const Value approved = rig.ok("plugin.approve", approveUidParams("clap", library, twinUid));
+    CHECK(at(approved, "uid").asString() == twinUid);
+    CHECK(at(approved, "name").asString() == "SIANN Test Plugin Twin");
+    CHECK(at(approved, "approved").asBool());
+    const auto byUid = [&](const std::string& uid) {
+        return rig.ok("plugin.instantiate",
+                      Value(Object{{"trackId", Value("trk_a")},
+                                   {"index", Value(0)},
+                                   {"descriptor", Value(Object{{"format", Value("clap")}, {"uid", Value(uid)}})}}));
+    };
+    const Value loaded = byUid(twinUid);
+    REQUIRE(at(loaded, "state").asString() == "done");
+    CHECK(at(at(at(loaded, "result"), "descriptor"), "uid").asString() == twinUid);
+    CHECK(at(at(byUid("org.siann.test-plugin"), "error"), "code").asString() == "plugin_not_registered");
+
+    // Naming the other plugin moves the install to it, probed again.
+    const Value moved = rig.ok("plugin.approve", approveUidParams("clap", library, "org.siann.test-plugin"));
+    CHECK(at(moved, "uid").asString() == "org.siann.test-plugin");
+    CHECK(at(moved, "approved").asBool());
+    CHECK(at(at(byUid(twinUid), "error"), "code").asString() == "plugin_not_registered");
+}
+
+TEST_CASE("plugin.approve with a uid checks it against a one-plugin library", "[engine][plugin][registry]") {
+    ManualRig rig(false);
+    CHECK(errorCode(rig.harness->call(rig.connection, "plugin.approve",
+                                      approveUidParams("clap", SIANN_TEST_PLUGIN_CLAP, "org.example.none"))) ==
+          "plugin_not_found");
+    const Value approved = rig.ok("plugin.approve", approveParams("clap", SIANN_TEST_PLUGIN_CLAP));
+    CHECK(at(approved, "uid").asString() == "org.siann.test-plugin");
+    const Value again =
+        rig.ok("plugin.approve", approveUidParams("clap", SIANN_TEST_PLUGIN_CLAP, "org.siann.test-plugin"));
+    CHECK(at(again, "approved").asBool());
+    CHECK(errorCode(rig.harness->call(rig.connection, "plugin.approve",
+                                      Value(Object{{"format", Value("clap")},
+                                                   {"path", Value(std::string(SIANN_TEST_PLUGIN_CLAP))},
+                                                   {"approved", Value(true)},
+                                                   {"uid", Value(7)}}))) == "invalid_params");
+}
+
+TEST_CASE("plugin.registry leaves out installs inside the bundle session.open rebinds to", "[engine][plugin][registry]") {
+    // The follow-up of PR #70: the launch-time filter read the launch bundle only.
+    Fixture first;
+    Fixture other;
+    const std::filesystem::path original(SIANN_TEST_PLUGIN_CLAP);
+    const std::filesystem::path inside = other.bundle() / "plugins" / original.filename();
+    std::filesystem::create_directories(inside.parent_path());
+    std::filesystem::copy(original, inside, std::filesystem::copy_options::recursive);
+    EngineHostOptions options;
+    options.playback = live_rig::testOptions();
+    options.pluginDirs = {inside.parent_path().string()};
+    auto host = std::make_unique<EngineHost>(first.session, std::move(options));
+    const auto lists = [&] {
+        for (const protocol::PluginRegistryEntry& entry : host->registry()) {
+            if (host::PluginRegistry::samePath(entry.path, inside.string())) {
+                return true;
+            }
+        }
+        return false;
+    };
+    CHECK(lists());  // outside the first bundle
+    host->rebind(other.session);
+    CHECK_FALSE(lists());
+    host->rebind(first.session);
+    CHECK(lists());
+    host->shutdown();
 }

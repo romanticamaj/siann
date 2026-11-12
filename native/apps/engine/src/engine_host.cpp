@@ -435,15 +435,22 @@ void EngineHost::keepRegistry() const {
     writePluginRegistry(registryFile_, installs);
 }
 
+// The installs that may load now: the refusal reads the bound session's bundle,
+// so after session.open an install inside the new bundle is not listed (the
+// launch-time filter in fillRegistry read the launch bundle only).
 std::vector<protocol::PluginRegistryEntry> EngineHost::registry() const {
     std::vector<protocol::PluginRegistryEntry> out;
     for (const host::PluginInstall& install : registry_.installs()) {
+        if (installRefusal(install.path)) {
+            continue;
+        }
         out.push_back(entryOf(install));
     }
     return out;
 }
 
-protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, const std::string& path, bool approved) {
+protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, const std::string& path, bool approved,
+                                                  const std::optional<std::string>& uid) {
     const host::PluginInstall* install = registry_.find(format, path);
     if (install == nullptr) {
         throw protocol::PluginPortError("plugin_not_registered", "unregistered_path: no " + format +
@@ -453,7 +460,9 @@ protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, con
         throw protocol::PluginPortError("plugin_not_registered", install->path + " is refused (" + *refused + ")");
     }
     const host::PluginInstall before = *install;
-    if (approved && !install->uid) {
+    // A uid other than the one recorded is another plugin of the library: probe
+    // again, so the approval goes to code the library does hold.
+    if (approved && (!install->uid || (uid && *uid != *install->uid))) {
         // The user's choice to run this code: probe it now.
         const playback::PluginHosts hosts = pluginHosts_->byFormat();
         const auto found = hosts.find(format);
@@ -471,8 +480,29 @@ protocol::PluginRegistryEntry EngineHost::approve(const std::string& format, con
         if (probed.empty()) {
             throw protocol::PluginPortError("plugin_load_failed", "no plugin in " + install->path);
         }
-        // A library holding several plugins is approved as the first it lists.
-        registry_.setProbed(format, install->path, probed.front().uid, probed.front().name);
+        // A library holding several plugins is approved as the one `uid` names,
+        // never as whichever its probe lists first (follow-up of PR #70).
+        std::string held;
+        for (const host::PluginDescriptor& one : probed) {
+            held += (held.empty() ? "" : ", ") + one.uid;
+        }
+        const host::PluginDescriptor* chosen = nullptr;
+        if (uid) {
+            const auto named = std::find_if(probed.begin(), probed.end(),
+                                            [&](const host::PluginDescriptor& one) { return one.uid == *uid; });
+            if (named == probed.end()) {
+                throw protocol::PluginPortError("plugin_not_found", "no plugin " + *uid + " in " + install->path +
+                                                                        "; it holds " + held);
+            }
+            chosen = &*named;
+        } else if (probed.size() > 1) {
+            throw protocol::PluginPortError("invalid_params", install->path + " holds " +
+                                                                  std::to_string(probed.size()) + " plugins (" + held +
+                                                                  "): plugin.approve needs a uid naming one");
+        } else {
+            chosen = &probed.front();
+        }
+        registry_.setProbed(format, install->path, chosen->uid, chosen->name);
     }
     const std::string installPath = install->path;
     if (registry_.approve(format, installPath, approved) != host::ApproveOutcome::done) {
