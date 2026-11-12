@@ -525,3 +525,41 @@ TEST_CASE("list returns the plans in submission order, a sub-plan after them", "
     expected.push_back(sub);
     CHECK(listed == expected);
 }
+
+TEST_CASE("generation changes with every lifecycle or proposal change and only then", "[plan][generation]") {
+    History history = base();
+    PlanStore store;
+    PlanStore other;
+    // Unique across stores, so a store that replaces another never matches it.
+    CHECK(store.generation() != other.generation());
+
+    auto changes = [&store, last = store.generation()](auto&& step) mutable {
+        step();
+        const bool changed = store.generation() != last;
+        last = store.generation();
+        return changed;
+    };
+    std::string hash;
+    CHECK(changes([&] { hash = *store.submit(history, {setGain("t1", -600), addTrack("t4")}, {}, "r2").hashText; }));
+    CHECK_FALSE(changes([&] {
+        (void)store.find(hash);
+        (void)store.list();
+        (void)store.validate(history, hash);
+        (void)store.proposalBranch(hash);
+        (void)store.guardedEntities("p1");
+    }));
+    CHECK(changes([&] { store.approve(history, hash, "user", "t"); }));
+    siann::command::BranchId branch;
+    CHECK(changes([&] {
+        branch = store.propose(hash, [&](const Plan& plan) {
+            const siann::command::BranchId opened = history.branch(plan.baseRevision);
+            history.commitOn(opened, plan.steps, "agent", "t", Cause::plan);
+            return opened;
+        });
+    }));
+    CHECK(changes([&] { store.withdrawProposal(branch); }));
+    CHECK(changes([&] { store.apply(history, hash, "user", "t"); }));
+    CHECK(changes([&] { store.rollback(history, hash, "user", "t"); }));
+    const std::string two = *store.submit(history, {setGain("t2", -300), setPan("t3", 100)}, {}, history.head().envelope.id).hashText;
+    CHECK(changes([&] { store.reject(two, "user", "t", "no"); }));
+}

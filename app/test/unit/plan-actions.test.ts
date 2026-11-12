@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import { ProtocolError } from '../../src/renderer/model/session-client';
 import type { PlanEntry } from '../../src/renderer/model/plan-store';
-import { availableActions, runAction, type ActionClient, type PlanAction } from '../../src/renderer/plans/actions';
+import { availableActions, landedLabel, runAction, type ActionClient, type PlanAction } from '../../src/renderer/plans/actions';
 
 const PLAN = 'sha256:' + '1'.repeat(64);
 
@@ -81,12 +81,31 @@ test('a refused propose never hears; another refusal carries its code', async ()
   assert.deepEqual(client.sent.map((s) => s.method), ['plan.propose']);
 });
 
-const entry = (state: PlanEntry['state'], proposalBranch?: string): PlanEntry => ({
+test('Audition is two requests: a refused hear after a proposed plan reports the refusal', async () => {
+  const client = new FakeActionClient((method) => {
+    if (method === 'plan.propose') return { branch: 'p4', revision: { id: 'r5' } };
+    throw new ProtocolError('audition_budget_exceeded', 'the branch does not fit the budget');
+  });
+  const outcome = await runAction(client, { kind: 'audition', plan: PLAN });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.code, 'audition_budget_exceeded');
+  assert.deepEqual(client.sent, [
+    { method: 'plan.propose', params: { plan: PLAN } },
+    { method: 'audition.hear', params: { side: 'p4' } },
+  ]);
+  // The plan stays proposed (plan.changed names its branch): main is still
+  // heard, so it offers Hear proposal, Merge and Discard.
+  assert.deepEqual(availableActions(entry('approved', 'p4'), 'main'), ['hearProposal', 'merge', 'discard']);
+});
+
+const entry = (state: PlanEntry['state'], proposalBranch?: string, appliedRevision?: string): PlanEntry => ({
   hash: PLAN,
   state,
   steps: [{ op: 'track.add', trackId: 'trk_b', name: 'Bass', channels: 2 }],
   stale: [],
   ...(proposalBranch ? { proposalBranch } : {}),
+  ...(appliedRevision ? { appliedRevision } : {}),
   raw: {},
 });
 
@@ -97,5 +116,20 @@ test('the actions follow the plan lifecycle', () => {
   assert.deepEqual(availableActions(entry('approved', 'p1'), 'p1'), ['hearMain', 'merge', 'discard']);
   for (const state of ['rejected', 'applied', 'rolled_back', 'draft'] as const) {
     assert.deepEqual(availableActions(entry(state), 'main'), [], state);
+  }
+});
+
+test('without an auditioner (heard unknown) Audition and the Hear buttons are not offered', () => {
+  assert.deepEqual(availableActions(entry('approved'), null), ['apply', 'reject']);
+  assert.deepEqual(availableActions(entry('approved', 'p1'), null), ['merge', 'discard']);
+  assert.deepEqual(availableActions(entry('validated'), null), ['approve', 'approveSelected', 'reject']);
+});
+
+test('an applied or rolled-back plan names where it landed instead of previewing', () => {
+  assert.equal(landedLabel(entry('applied', undefined, 'r7')), 'applied at r7');
+  assert.equal(landedLabel(entry('rolled_back', undefined, 'r7')), 'rolled back (applied at r7)');
+  assert.equal(landedLabel(entry('applied')), 'applied');
+  for (const state of ['draft', 'validated', 'approved', 'rejected'] as const) {
+    assert.equal(landedLabel(entry(state)), null, state);
   }
 });

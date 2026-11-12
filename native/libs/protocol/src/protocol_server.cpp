@@ -1869,6 +1869,20 @@ struct ProtocolServer::Impl {
         return out;
     }
 
+    // Command thread: the served plans' marks as of PlanStore generation
+    // marksGeneration_. Rebuilt only when the generation moved, so a request
+    // that touches no plan (gesture.update, say) costs no O(plans) work.
+    std::vector<PlanMark> marks_;
+    std::uint64_t marksGeneration_ = 0;  // PlanStore never issues 0
+
+    void refreshMarks() {
+        const std::uint64_t generation = session->plans().generation();
+        if (generation != marksGeneration_) {
+            marks_ = planMarks();
+            marksGeneration_ = generation;
+        }
+    }
+
     std::optional<command::BranchId> heardSide() const {
         return options.auditionPort != nullptr ? options.auditionPort->heard() : std::nullopt;
     }
@@ -1876,12 +1890,15 @@ struct ProtocolServer::Impl {
     // Command thread, after a request (Protocol v0 item 25): plan.changed for
     // every plan whose state or proposal link the request changed, in
     // submission order (the store only appends, so the marks line up), and
-    // audition.changed when the side heard changed. A session.open serves
-    // other plans; only the heard side is compared then.
-    void publishLifecycle(const std::vector<PlanMark>& before, const session::Session* servedBefore,
+    // audition.changed when the side heard changed. The marks are compared
+    // only when the store's generation moved; marks_ hold the plans before
+    // the request (execute refreshed them). A session.open serves other
+    // plans; only the heard side is compared then.
+    void publishLifecycle(const session::Session* servedBefore,
                           const std::optional<command::BranchId>& heardBefore) {
-        if (session == servedBefore) {
-            const std::vector<PlanMark> after = planMarks();
+        if (session == servedBefore && session->plans().generation() != marksGeneration_) {
+            std::vector<PlanMark> after = planMarks();
+            const std::vector<PlanMark>& before = marks_;
             for (std::size_t i = 0; i < after.size(); ++i) {
                 const PlanMark& mark = after[i];
                 const bool changed = i >= before.size() || before[i].state != mark.state ||
@@ -1896,6 +1913,8 @@ struct ProtocolServer::Impl {
                 }
                 events.publish("plan.changed", std::move(payload));
             }
+            marks_ = std::move(after);
+            marksGeneration_ = session->plans().generation();
         }
         const std::optional<command::BranchId> heardAfter = heardSide();
         if (options.auditionPort != nullptr && heardAfter != heardBefore) {
@@ -1905,11 +1924,11 @@ struct ProtocolServer::Impl {
 
     // Command thread: runs the request, then publishes the lifecycle events it caused.
     std::string execute(const Pending& request) {
-        const std::vector<PlanMark> plansBefore = planMarks();
+        refreshMarks();
         const session::Session* servedBefore = session;
         const std::optional<command::BranchId> heardBefore = heardSide();
         std::string response = run(request);
-        publishLifecycle(plansBefore, servedBefore, heardBefore);
+        publishLifecycle(servedBefore, heardBefore);
         return response;
     }
 

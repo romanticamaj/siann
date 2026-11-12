@@ -478,7 +478,9 @@ TEST_CASE("plan.preview answers the prepared entities at the head and commits no
     CHECK(f.events(watcher).size() == eventsBefore);
     CHECK(f.session.plans().find(plan)->state == command::PlanState::validated);
 
-    // Any state previews: the applied plan still answers (against the new head).
+    // Any state previews, against the head: once applied, the head already
+    // holds trk_n, so the plan's track.add answers already_exists (the UI
+    // shows "applied at <revision>" instead of previewing a landed plan).
     f.ok(c, "plan.approve", planParams(plan));
     f.ok(c, "plan.apply", planParams(plan));
     CHECK(errorCode(f.call(c, "plan.preview", planParams(plan))) == "already_exists");
@@ -563,6 +565,18 @@ TEST_CASE("plan.changed is published once per plan transition", "[protocol][plan
         const Value sub = f.ok(c, "plan.approve", Value(Object{{"plan", Value(two)}, {"steps", Value(Array{Value(1)})}}));
         CHECK(changes() ==
               std::vector<std::string>{two + " rejected", at(sub, "hash").asString() + " approved"});
+    }
+    SECTION("partial approval answering plan_stale: the original rejected, then the sub-plan validated") {
+        const std::string two = submitted(f, c, Array{trackGain("trk_a", -300), trackAdd("trk_b")});
+        f.commit(c, Array{trackGain("trk_a", -100)});  // trk_a changes after the submit
+        changes();
+        const Value& error =
+            errorOf(f.call(c, "plan.approve", Value(Object{{"plan", Value(two)}, {"steps", Value(Array{Value(0)})}})));
+        CHECK(at(error, "code").asString() == "plan_stale");
+        const std::string sub = at(at(error, "data"), "plan").asString();
+        CHECK(sub != two);
+        CHECK(changes() == std::vector<std::string>{two + " rejected", sub + " validated"});
+        CHECK(at(f.ok(c, "plan.status", planParams(sub)), "state").asString() == "validated");
     }
 }
 

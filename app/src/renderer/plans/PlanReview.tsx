@@ -2,16 +2,19 @@
 // item 25). Lists the engine's plans from the PlanStore with a state badge
 // each and the side heard; for the selected plan shows its steps (with
 // checkboxes for partial approval) and its diff against the current revision
-// from plan.preview, re-read whenever the head or the plan changes. The
-// buttons follow the plan lifecycle (plans/actions.ts); each is one protocol
-// request, and the list follows plan.changed, never an optimistic state. A
-// refusal (plan_stale with its entities) is shown on the error line.
+// from plan.preview, re-read whenever the head or the plan changes; an
+// applied or rolled-back plan is not previewed and shows the revision it
+// landed at instead. The buttons follow the plan lifecycle (plans/actions.ts;
+// Audition and the Hear buttons only with an auditioner); each is one protocol
+// request (Audition two), and the list follows plan.changed, never an
+// optimistic state. A refusal (plan_stale with its entities) is shown on the
+// error line.
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import type { PlanEntry, PlanStore } from '../model/plan-store';
 import { ProtocolError, type SessionClient } from '../model/session-client';
-import { availableActions, runAction, type ActionId, type PlanAction } from './actions';
+import { availableActions, landedLabel, runAction, type ActionId, type PlanAction } from './actions';
 import { selection, type PlanPreview } from './diff';
 import { PlanDiff } from './PlanDiff';
 import { StepList } from './StepList';
@@ -42,10 +45,10 @@ function useSnapshot(client: SessionClient) {
 }
 
 // plan.preview of the selected plan, read again when the head revision, the
-// plan's state or its staleness changes.
+// plan's state or its staleness changes; none for a plan that has landed.
 function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision: string | null): PreviewState | null {
   const [state, setState] = useState<PreviewState | null>(null);
-  const hash = plan?.hash ?? null;
+  const hash = plan && landedLabel(plan) === null ? plan.hash : null;
   const planState = plan?.state ?? null;
   const staleKey = plan ? plan.stale.map((s) => `${s.ref}:${s.change}`).join(',') : '';
   useEffect(() => {
@@ -104,7 +107,10 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
     return typeof track?.name === 'string' ? track.name : undefined;
   };
 
+  // availableActions leaves out Audition and the Hear buttons while the side
+  // heard is unknown (no auditioner), so enabled() disables them there.
   const available = plan ? availableActions(plan, snapshot.heard) : [];
+  const landed = plan ? landedLabel(plan) : null;
   const chosen = selection(ticked, plan?.steps.length ?? 0);
 
   const actionFor = (id: ActionId, entry: PlanEntry): PlanAction | null => {
@@ -216,6 +222,11 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
           <p className="plan-error" data-testid="plan-error" role="status">
             {error}
           </p>
+          {landed !== null ? (
+            <p className="plan-landed" data-testid="plan-landed">
+              {landed}
+            </p>
+          ) : null}
           {preview && 'preview' in preview ? <PlanDiff preview={preview.preview} stale={plan.stale} /> : null}
           {preview && 'error' in preview ? (
             <p className="plan-preview-error" data-testid="plan-preview-error">

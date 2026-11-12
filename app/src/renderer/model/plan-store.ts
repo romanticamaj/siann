@@ -25,6 +25,8 @@ export interface PlanEntry {
   readonly proposalBranch?: string;
   readonly parentPlan?: string;
   readonly rejectionNote?: string;
+  // The revision an applied (or since rolled-back) plan landed at.
+  readonly appliedRevision?: string;
   // The plan object as the engine answered it (plan.status / plan.list).
   readonly raw: Readonly<Record<string, unknown>>;
 }
@@ -77,6 +79,7 @@ export function planEntry(raw: unknown): PlanEntry | null {
     ...(typeof plan.proposalBranch === 'string' ? { proposalBranch: plan.proposalBranch } : {}),
     ...(typeof plan.parentPlan === 'string' ? { parentPlan: plan.parentPlan } : {}),
     ...(typeof plan.rejectionNote === 'string' ? { rejectionNote: plan.rejectionNote } : {}),
+    ...(typeof plan.appliedRevision === 'string' ? { appliedRevision: plan.appliedRevision } : {}),
     raw: Object.freeze({ ...plan }),
   };
   return Object.freeze(entry);
