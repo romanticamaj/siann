@@ -3,6 +3,7 @@
 // plan.preview). Pure functions over the engine's answers: the after-state
 // comes from plan.preview, never from the renderer running commands itself.
 
+import { formatGainDb, formatPan } from '../format';
 import type { StaleRef } from '../model/plan-store';
 
 export interface PreviewEntity {
@@ -48,7 +49,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined';
 }
 
-function changesOf(before: Record<string, unknown>, after: Record<string, unknown>): FieldChange[] {
+export function changesOf(before: Record<string, unknown>, after: Record<string, unknown>): FieldChange[] {
   const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
   return fields
     .filter((field) => canonical(before[field]) !== canonical(after[field]))
@@ -94,14 +95,10 @@ export function formatValue(value: unknown): string {
   return value === undefined ? '—' : JSON.stringify(value);
 }
 
-// The model's minus infinity (Gain::kMinusInfinity, INT32_MIN).
-const MINUS_INFINITY_MILLI_DB = -2147483648;
-
-// Gains are integer milli-dB (spec, "siann-model").
+// Gains are integer milli-dB (spec, "siann-model"): the renderer's one gain
+// formatter (format.ts), one decimal.
 export function formatMilliDb(milliDb: number): string {
-  if (milliDb === MINUS_INFINITY_MILLI_DB) return '-inf dB';
-  const text = (milliDb / 1000).toFixed(2);
-  return `${milliDb > 0 ? '+' : ''}${text} dB`;
+  return formatGainDb(milliDb);
 }
 
 // A one-line summary of a step for the step list. `trackName` names a track
@@ -120,7 +117,8 @@ export function stepSummary(step: Record<string, unknown>, trackName: (id: strin
       if (typeof step.gainMilliDb === 'number') return `Set gain of ${track} to ${formatMilliDb(step.gainMilliDb)}`;
       break;
     case 'track.set_pan':
-      return `Set pan of ${track} to ${String(step.pan)}`;
+      if (typeof step.pan === 'number') return `Set pan of ${track} to ${formatPan(step.pan)}`;
+      break;
     case 'track.set_mute':
       return `${step.mute ? 'Mute' : 'Unmute'} ${track}`;
     case 'track.set_solo':

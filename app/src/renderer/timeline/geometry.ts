@@ -18,6 +18,8 @@ export interface Viewport {
   // Pixels per track lane.
   readonly laneHeight: number;
   readonly width: number;
+  // Pixels the lanes are scrolled up by (the ruler stays put); 0 when absent.
+  readonly scrollY?: number;
 }
 
 export interface ClipRect {
@@ -64,13 +66,13 @@ export function deltaFrames(dx: number, view: Viewport): bigint {
 }
 
 export function laneTop(index: number, view: Viewport): number {
-  return view.rulerHeight + index * view.laneHeight;
+  return view.rulerHeight + index * view.laneHeight - (view.scrollY ?? 0);
 }
 
 // The track whose lane holds y, or null above or below the lanes.
 export function trackAt(snapshot: Snapshot, y: number, view: Viewport): string | null {
   if (y < view.rulerHeight) return null;
-  const index = Math.floor((y - view.rulerHeight) / view.laneHeight);
+  const index = Math.floor((y - view.rulerHeight + (view.scrollY ?? 0)) / view.laneHeight);
   return snapshot.trackOrder[index] ?? null;
 }
 
@@ -143,4 +145,66 @@ export function snapTrim(
   const lowest = -(sourceStart < position ? sourceStart : position);
   const d = clamp(delta, lowest, length - 1n);
   return { position: (position + d).toString(), sourceStart: (sourceStart + d).toString(), length: (length - d).toString() };
+}
+
+// ---------------------------------------------------------------- zoom and scroll
+
+// The zoom range: one frame per pixel at the closest, an hour across ~1000 px
+// at the farthest (at 48 kHz).
+export const MIN_FRAMES_PER_PIXEL = 1;
+export const MAX_FRAMES_PER_PIXEL = 200_000;
+
+function clampZoom(framesPerPixel: number): number {
+  return Math.min(MAX_FRAMES_PER_PIXEL, Math.max(MIN_FRAMES_PER_PIXEL, Math.round(framesPerPixel)));
+}
+
+// The last frame any clip reaches ('0' for an empty session).
+export function contentEndFrames(snapshot: Snapshot | null): bigint {
+  let end = 0n;
+  for (const clip of snapshot?.clips ?? []) {
+    if (clip.position.domain !== 'audio') continue;
+    const clipEnd = big(clip.position.value) + big(clip.length);
+    if (clipEnd > end) end = clipEnd;
+  }
+  return end;
+}
+
+// How far the view can scroll: the content plus half a view of room after
+// it, and never less than one view.
+export function scrollableFrames(snapshot: Snapshot | null, view: Viewport): bigint {
+  const viewFrames = BigInt(Math.ceil(view.width * view.framesPerPixel));
+  const end = contentEndFrames(snapshot) + viewFrames / 2n;
+  return end > viewFrames ? end : viewFrames;
+}
+
+// A horizontal scroll to `scrollFrames`, kept within 0..scrollable - view.
+export function clampScroll(snapshot: Snapshot | null, view: Viewport, scrollFrames: bigint): string {
+  const viewFrames = BigInt(Math.ceil(view.width * view.framesPerPixel));
+  const max = scrollableFrames(snapshot, view) - viewFrames;
+  const clamped = scrollFrames < 0n ? 0n : scrollFrames > max ? (max > 0n ? max : 0n) : scrollFrames;
+  return clamped.toString();
+}
+
+// The zoom `factor` times closer (factor > 1 zooms in) around the pixel x:
+// the frame under x stays under x.
+export function zoomAround(snapshot: Snapshot | null, view: Viewport, factor: number, x: number): Viewport {
+  const anchor = xToFrame(x, view);
+  const framesPerPixel = clampZoom(view.framesPerPixel / factor);
+  const zoomed = { ...view, framesPerPixel };
+  const scroll = anchor - deltaFrames(x, zoomed);
+  return { ...zoomed, scrollFrames: clampScroll(snapshot, zoomed, scroll) };
+}
+
+// The zoom that shows every clip in the view's width (with a little room),
+// scrolled to the start; the current zoom for an empty session.
+export function zoomToFit(snapshot: Snapshot | null, view: Viewport): Viewport {
+  const end = contentEndFrames(snapshot);
+  if (end === 0n) return { ...view, scrollFrames: '0' };
+  const usable = Math.max(1, view.width * 0.95);
+  return { ...view, framesPerPixel: clampZoom(Math.ceil(Number(end) / usable)), scrollFrames: '0' };
+}
+
+// The height of every lane together (for vertical scrolling).
+export function lanesHeight(snapshot: Snapshot | null, view: Viewport): number {
+  return (snapshot?.trackOrder.length ?? 0) * view.laneHeight;
 }

@@ -111,7 +111,7 @@ const entry = (state: PlanEntry['state'], proposalBranch?: string, appliedRevisi
 
 test('the actions follow the plan lifecycle', () => {
   assert.deepEqual(availableActions(entry('validated'), 'main'), ['approve', 'approveSelected', 'reject']);
-  assert.deepEqual(availableActions(entry('approved'), 'main'), ['apply', 'audition', 'reject']);
+  assert.deepEqual(availableActions(entry('approved'), 'main'), ['audition', 'apply', 'reject']);
   assert.deepEqual(availableActions(entry('approved', 'p1'), 'main'), ['hearProposal', 'merge', 'discard']);
   assert.deepEqual(availableActions(entry('approved', 'p1'), 'p1'), ['hearMain', 'merge', 'discard']);
   for (const state of ['rejected', 'applied', 'rolled_back', 'draft'] as const) {
