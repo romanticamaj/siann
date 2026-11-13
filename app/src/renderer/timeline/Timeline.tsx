@@ -30,10 +30,13 @@ export function Timeline({
   commands,
   onSelect,
   onHooks,
+  reconnects = 0,
 }: {
   client: SessionClient;
   peaks: PeaksCache;
   commands: CommandRegistry;
+  // The reconnects so far (model/connection-phase.ts); each one clears the selection.
+  reconnects?: number;
   // The selected clip, for the left zone.
   onSelect?: (clipId: string | null) => void;
   // Test-only (SIANN_SHELL_TEST=1): the canvas's hooks once it is mounted.
@@ -93,6 +96,14 @@ export function Timeline({
   useEffect(() => {
     onSelect?.(state.selectedClipId);
   }, [onSelect, state.selectedClipId]);
+
+  // A reconnect clears the selection (UI redesign spec 4.5 C8).
+  const seenReconnects = useRef(reconnects);
+  useEffect(() => {
+    if (!timeline || reconnects === seenReconnects.current) return;
+    seenReconnects.current = reconnects;
+    timeline.clearSelection();
+  }, [timeline, reconnects]);
 
   return (
     <section className="timeline">

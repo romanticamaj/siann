@@ -31,6 +31,8 @@ export const en = {
   'connection.connecting': 'connecting',
   'connection.connected': 'connected',
   'connection.disconnected': 'disconnected',
+  // The banner over the zones while the engine is away (m5-ui-connection; glossary 6.5).
+  'connection.banner': 'Engine disconnected. The controls are paused until it reconnects.',
   'about.unknownCommit': 'unknown',
   'about.source': 'source: {url}',
   'about.title': 'About',
@@ -121,7 +123,8 @@ export const en = {
   'step.solo': 'Solo {track}',
   'step.unsolo': 'Unsolo {track}',
 
-  // Toasts (the surface arrives with P1-5 and P1-6).
+  // Toasts (shell/Toasts.tsx).
+  'toast.dismiss': 'Dismiss',
   'toast.planArrived': ({ steps }: { steps: number }): string =>
     plural('en', steps, { one: `A plan with ${steps} step arrived`, other: `A plan with ${steps} steps arrived` }),
   'toast.reconnected': 'Reconnected at {revision}',

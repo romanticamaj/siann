@@ -27,6 +27,7 @@ export const zhHans: Catalog = {
   'connection.connecting': '正在连接',
   'connection.connected': '已连接',
   'connection.disconnected': '已断开',
+  'connection.banner': '引擎已断开。重新连接前，控件暂停使用。',
   'about.unknownCommit': '未知',
   'about.source': '源代码：{url}',
   'about.title': '关于',
@@ -108,6 +109,7 @@ export const zhHans: Catalog = {
   'step.solo': '独奏 {track}',
   'step.unsolo': '取消 {track} 的独奏',
 
+  'toast.dismiss': '关闭通知',
   'toast.planArrived': ({ steps }) => `收到一份 ${steps} 个步骤的计划`,
   'toast.reconnected': '已在 {revision} 重新连接',
 

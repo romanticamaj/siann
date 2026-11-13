@@ -83,6 +83,9 @@
   --divider-w: 1px;
   --divider-hit: 7px;
   --panel-motion: 120ms ease-out;
+  /* toasts slide in (1.6); zones dim while the engine is disconnected (3.0) */
+  --toast-motion: 160ms ease-out;
+  --offline-opacity: .45;
 
   /* font stacks (6.4) */
   --font-ui: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;

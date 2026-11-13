@@ -19,6 +19,14 @@
 // element's own handler; every other key goes through the dispatcher in one
 // bubbling listener on the window, to the focused zone's commands first, then
 // to the window's. Under 1280 px the right zone is an overlay drawer.
+//
+// While the engine is disconnected (m5-ui-connection; UI redesign spec 7
+// P1-6): a full-width banner under the top bar says so, the four zones are
+// inert and dimmed (no pointer, focus or key reaches their controls), and
+// the key dispatcher runs only the window's layout and focus commands, since
+// its window-level listener is not stopped by inert. The top bar's zone
+// buttons and the status bar send nothing and stay live. The toasts sit
+// outside the zones.
 
 import {
   useCallback,
@@ -39,6 +47,7 @@ import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
 import { isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
+import type { Phase } from '../model/connection-phase';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
@@ -56,6 +65,8 @@ import {
 } from './layout';
 import { useShellState, type LayoutStore } from './layout-store';
 import { StatusBar } from './StatusBar';
+import type { ToastStore } from './toast-store';
+import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
 
 // The order Tab walks the zones in.
@@ -123,6 +134,10 @@ export interface ShellProps {
   readonly store: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
+  // The connection phase (model/connection-phase.ts): 'offline' shows the
+  // banner and makes the zones inert.
+  readonly phase: Phase;
+  readonly toasts: ToastStore;
   readonly left: ReactNode;
   readonly project: ReactNode;
   readonly lower: ReactNode;
@@ -133,6 +148,7 @@ interface ZoneFrameProps {
   readonly zone: ZoneScope;
   readonly visible: boolean;
   readonly focused: boolean;
+  readonly offline: boolean;
   readonly drawer?: { readonly width: number } | null;
   readonly tabs?: ReactNode;
   readonly onFocus: (zone: ZoneScope) => void;
@@ -140,7 +156,7 @@ interface ZoneFrameProps {
   readonly children: ReactNode;
 }
 
-function ZoneFrame({ zone, visible, focused, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
+function ZoneFrame({ zone, visible, focused, offline, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
   const t = useT();
   return (
     <section
@@ -151,6 +167,8 @@ function ZoneFrame({ zone, visible, focused, drawer, tabs, onFocus, frameRef, ch
       data-visible={String(visible)}
       data-focused={String(focused && visible)}
       data-drawer={drawer ? 'true' : undefined}
+      data-offline={offline ? 'true' : undefined}
+      inert={offline}
       style={drawer ? ({ '--drawer-width': `${drawer.width}px` } as CSSProperties) : undefined}
       hidden={!visible}
       tabIndex={-1}
@@ -257,7 +275,7 @@ function ZoneSeparator({
   );
 }
 
-export function Shell({ client, plans, engineStatus, store, commands, platform, left, project, lower, right }: ShellProps) {
+export function Shell({ client, plans, engineStatus, store, commands, platform, phase, toasts, left, project, lower, right }: ShellProps) {
   const t = useT();
   const viewport = useViewport();
   const state = useShellState(store);
@@ -284,8 +302,9 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
     }
     return (panel.getSize().asPercentage / 100) * axis;
   };
-  const latest = useRef({ effective, focused });
-  latest.current = { effective, focused };
+  const offline = phase === 'offline';
+  const latest = useRef({ effective, focused, offline });
+  latest.current = { effective, focused, offline };
 
   // Zones that open or close by a button or key animate (spec 1.6); drags,
   // arrow steps and the first layout do not.
@@ -420,6 +439,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
           targetIsTextField: isTextField(event.target),
           focusedZone: latest.current.focused,
           platform,
+          offline: latest.current.offline,
         },
         preset,
       );
@@ -461,7 +481,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
   );
 
   return (
-    <div className="shell" data-testid="shell" data-viewport={`${viewport.width}x${viewport.height}`}>
+    <div className="shell" data-testid="shell" data-viewport={`${viewport.width}x${viewport.height}`} data-offline={offline ? 'true' : undefined}>
       <TopBar
         client={client}
         plans={plans}
@@ -469,6 +489,11 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
         onToggle={(zone) => dispatch((size) => ({ type: 'toggle', zone, viewport: size }))}
         onPlans={() => dispatch((size) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport: size }))}
       />
+      {offline ? (
+        <div className="connection-banner" data-testid="connection-banner" role="status">
+          {t('connection.banner')}
+        </div>
+      ) : null}
       <Group orientation="horizontal" id="zones" className="zones" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
         <Panel
           id="panel-left"
@@ -482,7 +507,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
           groupResizeBehavior="preserve-pixel-size"
           className="panel-inner"
         >
-          <ZoneFrame zone="left" visible={zones.left.visible} focused={focused === 'left'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('left')}>
+          <ZoneFrame offline={offline} zone="left" visible={zones.left.visible} focused={focused === 'left'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('left')}>
             {left}
           </ZoneFrame>
         </Panel>
@@ -496,7 +521,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
             onLayoutChanged={verticalChanged}
           >
             <Panel id="panel-project" className="panel-inner" minSize={PROJECT_CHROME + EVENT_MIN_HEIGHT}>
-              <ZoneFrame zone="project" visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
+              <ZoneFrame offline={offline} zone="project" visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
                 {project}
               </ZoneFrame>
             </Panel>
@@ -513,7 +538,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
               groupResizeBehavior="preserve-pixel-size"
               className="panel-inner"
             >
-              <ZoneFrame
+              <ZoneFrame offline={offline}
                 zone="lower"
                 visible={zones.lower.visible}
                 focused={focused === 'lower'}
@@ -539,7 +564,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
           groupResizeBehavior="preserve-pixel-size"
           className="panel-inner"
         >
-          <ZoneFrame
+          <ZoneFrame offline={offline}
             zone="right"
             visible={zones.right.visible}
             focused={focused === 'right'}
@@ -553,6 +578,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
         </Panel>
       </Group>
       <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
+      <Toasts store={toasts} />
     </div>
   );
 }
