@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatDb, formatMilliDb, formatPan, formatSeconds } from '../../src/renderer/format';
+import { formatDb, formatMilliDb, formatPan, formatPeakDb, formatSeconds } from '../../src/renderer/format';
 import { LOCALES } from '../../src/renderer/i18n/locale';
 import { catalogFor } from '../../src/renderer/i18n/t';
 import { formatBbt } from '../../src/renderer/timeline/musical-time';
@@ -49,4 +49,31 @@ test('ruler and info line positions are the same bytes in every locale (no catal
   assert.equal(formatDb(-3500), '-3.5 dB');
   // The catalogs carry no ruler unit any more: the ruler is bars and beats.
   for (const locale of LOCALES) assert.ok(!('timeline.seconds' in catalogFor(locale)), locale);
+});
+
+// m5-ui-mixer (UI redesign spec 3.4, 4.5 C7): the mixer's values are dB with
+// one decimal and an explicit sign, rounded half away from zero; the peak
+// value is the meter's linear peak in dBFS, same style without the unit.
+test('formatDb prints one decimal with an explicit sign', () => {
+  assert.equal(formatDb.length, 1);
+  assert.equal(formatDb(1500), '+1.5 dB');
+  assert.equal(formatDb(-6000), '-6.0 dB');
+  assert.equal(formatDb(0), '0.0 dB');
+  assert.equal(formatDb(-50), '-0.1 dB');
+  assert.equal(formatDb(50), '+0.1 dB');
+  assert.equal(formatDb(-49), '0.0 dB');
+  assert.equal(formatDb(9000), '+9.0 dB');
+  assert.equal(formatDb(-6500), '-6.5 dB');
+  assert.equal(formatDb(-2147483648), '-inf dB');
+});
+
+test('formatPeakDb prints a linear peak in dBFS with one decimal', () => {
+  assert.equal(formatPeakDb.length, 1);
+  assert.equal(formatPeakDb(1), '0.0');
+  assert.equal(formatPeakDb(0.5), '-6.0');
+  assert.equal(formatPeakDb(2), '+6.0');
+  assert.equal(formatPeakDb(0.1), '-20.0');
+  assert.equal(formatPeakDb(0), '-inf');
+  assert.equal(formatPeakDb(-1), '-inf');
+  assert.equal(formatPeakDb(Number.NaN), '-inf');
 });

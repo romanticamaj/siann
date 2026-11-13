@@ -282,6 +282,15 @@ async function scrollTop(): Promise<void> {
   await page.evaluate(() => window.scrollTo(0, 0));
 }
 
+// The newest linear peak of a metered entity, from the mixer's one meter
+// canvas (window.__siannMeters under SIANN_SHELL_TEST=1; m5-ui-mixer).
+async function meterPeak(p: Page, ref: string): Promise<number> {
+  return p.evaluate((r) => {
+    const hooks = (window as unknown as { __siannMeters?: { read(ref: string): { peak: number } | null } }).__siannMeters;
+    return hooks?.read(r)?.peak ?? 0;
+  }, ref);
+}
+
 type Rect = { clipId: string; trackId: string; x: number; y: number; width: number; height: number };
 
 async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX', arg?: string): Promise<T> {
@@ -467,14 +476,15 @@ test('UX screenshot tour', async () => {
   await watcher.call('transport.play');
   await scrollTo('timeline-canvas');
   for (const id of ['trk_kick', 'trk_voxlead']) {
-    await expect.poll(async () => Number((await page.getByTestId(`meter-${id}`).getAttribute('data-peak')) ?? '0')).toBeGreaterThan(0.05);
+    await expect.poll(() => meterPeak(page, `track:${id}`)).toBeGreaterThan(0.05);
   }
   await expect.poll(async () => (await timeline<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
   const peaks: string[] = [];
   for (const track of TRACKS) {
-    const peak = Number((await page.getByTestId(`meter-${track.id}`).getAttribute('data-peak')) ?? '0');
+    const peak = await meterPeak(page, `track:${track.id}`);
     peaks.push(`${track.name} ${peak.toFixed(3)}`);
   }
+  peaks.push(`master ${(await meterPeak(page, 'master')).toFixed(3)}`);
   await shoot(
     page,
     'Playing meters',
@@ -528,21 +538,22 @@ test('UX screenshot tour', async () => {
   // ---- 4. A fader held mid-drag (one gesture, nothing committed yet).
   const fader = page.getByTestId('fader-trk_bass');
   await scrollTo('mixer');
-  const fbox = (await fader.boundingBox())!;
-  const at = (fraction: number) => ({ x: fbox.x + fbox.width * fraction, y: fbox.y + fbox.height / 2 });
-  const startValue = Number(await fader.inputValue());
-  const startFraction = (startValue + 60_000) / 72_000;
-  await page.mouse.move(at(startFraction).x, at(startFraction).y);
+  // The fader is vertical (UI redesign spec 3.4): the drag starts on its cap
+  // and moves up, toward 0 dB at three quarters of the travel.
+  const capBox = (await fader.locator('.fader-cap').boundingBox())!;
+  const grabCap = { x: capBox.x + capBox.width / 2, y: capBox.y + capBox.height / 2 };
+  const startValue = (await fader.getAttribute('aria-valuetext')) ?? '';
+  await page.mouse.move(grabCap.x, grabCap.y);
   await page.mouse.down();
-  for (const fraction of [startFraction + 0.05, startFraction + 0.1, startFraction + 0.14]) {
-    await page.mouse.move(at(fraction).x, at(fraction).y, { steps: 3 });
+  for (const dy of [-6, -12, -18]) {
+    await page.mouse.move(grabCap.x, grabCap.y + dy, { steps: 3 });
   }
   await gestureSettled();
-  const held = await fader.inputValue();
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} mdB from ${startValue}: the strip shows the gesture's value; no revision is committed until release.`);
+  const held = (await fader.getAttribute('aria-valuetext')) ?? '';
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release.`);
   await page.mouse.up();
-  await expect.poll(async () => Number(await page.getByTestId('fader-value-trk_bass').textContent())).toBe(Number(held));
-  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held} mdB.`);
+  await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
+  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}.`);
   await scrollTop();
 
   // ---- 5. A clip selected, mid-move, and moved.
