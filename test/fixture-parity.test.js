@@ -21,6 +21,16 @@ for (const [name, generator] of Object.entries(generators)) {
   });
 }
 
+test('the click beat fixture matches its Node generator', () => {
+  const { CLICK_FIXTURE_FILE, buildClickFixture } = generators.time;
+  const committed = JSON.parse(fs.readFileSync(CLICK_FIXTURE_FILE, 'utf8'));
+  assert.deepEqual(committed, buildClickFixture());
+  // Spot checks by hand: beat 1 at 120 BPM is half a second; beat 3 starts the 97.531 BPM step.
+  assert.equal(committed.beats[1].frame, '24000');
+  assert.equal(committed.beats[3].frame, '72000');
+  assert.deepEqual(committed.beats.filter((b) => b.accent).map((b) => b.beat), [0, 4, 8, 12, 16, 20]);
+});
+
 test('the v2 model fixture matches its Node generator', () => {
   const { FIXTURE_FILE_V2, buildFixtureV2 } = generators.model;
   const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
