@@ -541,6 +541,9 @@ gesture boundaries (see "Gestures").
 | `retireOutbox` | audio → command | SPSC, capacity 1 | retired `PreparedGraph*` + epoch | cannot overflow: one transition in flight |
 | `paramInbox` | dispatcher → audio | SPSC | `ParamChange` | dispatcher coalesces per (slot, param) and retries |
 | `transportInbox` | dispatcher → audio | SPSC | `TransportCommand{generation, position, play}` | bounded; the dispatcher keeps the latest locate pending and retries on its next tick |
+| `cycleInbox` | dispatcher → audio | SPSC, capacity 64 | `CycleCommand{enabled, left, right, generation}` | newest wins (the audio thread keeps the last one popped); when full the transport keeps the wrap unarmed and retries on its next tick, and asks the butler for no seek until the push succeeds |
+| `clickInbox` | command (`PlaybackEngine::update`) → audio | SPSC, capacity 8 (`kClickTempoTables`) | `const ClickTempo*` | cannot overflow: at most 8 tables are lent to the audio thread (queued, live or awaiting reclaim); a newer table past that waits on the control side, replacing any older one still waiting, and the next `poll()` lends it; never throws, so an update of a committed revision never fails |
+| `clickRetire` | audio → command | SPSC, capacity 8 | the replaced `const ClickTempo*` | cannot overflow: bounded by the same 8 lent tables; the control side destroys each on `setClickTempo` and every `poll()` |
 | `controlInbox` | protocol (M5: none yet, gestures arrive from command), main, command, butler → dispatcher | MPSC, mutex | gestures, editor edits, committed values, locate, seek-ready | bounded; never waited on: coalesce per key or reply `queue_full` |
 | `commandInbox` | protocol, main, compiler, butler, dispatcher → command | MPSC, mutex | requests, completions, gesture commits | bounded; never waited on: reply `queue_full`; gesture commits are coalesced per target |
 | `midiInbox[device]` | MIDI driver thread → audio | SPSC per device | timestamped MIDI 1.0 events | drop and count; the audio thread then sends all-notes-off on the affected channels |
@@ -686,8 +689,8 @@ records who that is:
   `TempoMap::toAudio(n * 1920)`; until a signature map exists (E-10) every fourth
   beat from tick 0 is accented. The burst is a 10 ms decaying sine, 1760 Hz
   accented and 880 Hz otherwise, from a table built off the audio thread; the
-  tempo table reaches the audio thread like a graph (pointer inbox, retire
-  outbox). No render, bounce or recording contains it: the offline driver has no
+  tempo table reaches the audio thread like a graph (`clickInbox`, retired
+  through `clickRetire`; latest wins, see "Queues"). No render, bounce or recording contains it: the offline driver has no
   click path. Its gain is `gainMilliDb` in [-60000, 0], default -12000.
 
 ### Realtime rules and enforcement
