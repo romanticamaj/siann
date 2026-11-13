@@ -46,6 +46,11 @@ class MeterBoard implements MetersRegistry {
   #container: HTMLElement | null = null;
   #canvas: HTMLCanvasElement | null = null;
   readonly #peaks = new Map<string, HTMLElement>();
+  // The slots, observed while mounted: a slot can change size without the
+  // mixer changing size (a strip's row growing), and its rect is measured
+  // only when something says so.
+  readonly #slots = new Set<HTMLElement>();
+  #observer: ResizeObserver | null = null;
 
   constructor(realtime: RealtimeClient) {
     this.meters = new MixerMeters({
@@ -55,21 +60,36 @@ class MeterBoard implements MetersRegistry {
   }
 
   mount(container: HTMLElement | null, canvas: HTMLCanvasElement | null): void {
+    this.#observer?.disconnect();
+    this.#observer = null;
     this.#container = container;
     this.#canvas = canvas;
+    if (container) {
+      const observer = new ResizeObserver(() => this.meters.invalidate());
+      observer.observe(container);
+      for (const element of this.#slots) observer.observe(element);
+      this.#observer = observer;
+    }
     this.meters.attach(canvas);
   }
 
   slot(ref: string, element: HTMLElement): () => void {
     const peaks = this.#peaks;
     const board = this;
-    return this.meters.addSlot({
+    this.#slots.add(element);
+    this.#observer?.observe(element);
+    const remove = this.meters.addSlot({
       ref,
       measure: () => board.#measure(element),
       get peakText(): PeakText | null {
         return peaks.get(ref) ?? null;
       },
     });
+    return () => {
+      this.#slots.delete(element);
+      this.#observer?.unobserve(element);
+      remove();
+    };
   }
 
   peak(ref: string, element: HTMLElement): () => void {
@@ -118,19 +138,19 @@ export function Mixer({ client, gestures, realtime, onMeterHooks }: MixerProps) 
     meters.setPalette(paletteFromTokens());
     board.mount(el, surface);
     const offFrames = realtime.subscribe(() => meters.onFrame());
-    const resize = new ResizeObserver(() => meters.invalidate());
-    resize.observe(el);
     const visible = () => meters.wake();
     document.addEventListener('visibilitychange', visible);
     onMeterHooks?.(meters.testHooks());
     return () => {
       offFrames();
-      resize.disconnect();
       document.removeEventListener('visibilitychange', visible);
       onMeterHooks?.(null);
       board.mount(null, null);
     };
   }, [board, realtime, onMeterHooks]);
+
+  // Strips moved without changing size (a new track order): measure again.
+  useEffect(() => board.meters.invalidate(), [board, order, hasMaster]);
 
   return (
     <MetersContext.Provider value={board}>

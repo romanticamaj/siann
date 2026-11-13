@@ -321,11 +321,17 @@ async function waveformsDrawn(): Promise<void> {
   const count = Number(await page.getByTestId('clip-count').textContent());
   await expect.poll(async () => (await timeline<Rect[]>('clips')).length).toBe(count);
   const rects = await timeline<Rect[]>('clips');
-  const width = (await timeline<{ width: number }>('view')).width;
-  for (const rect of rects.filter((r) => r.x < width)) {
+  for (const rect of rects) {
     // drawn, not nonZero: a clip whose visible part is silence (the riser's
-    // quiet start) has its columns drawn, all zero.
-    await expect.poll(async () => (await timeline<{ drawn: number }>('peakColumns', rect.clipId)).drawn).toBeGreaterThan(0);
+    // quiet start) has its columns drawn, all zero. The view's width is read
+    // in the poll: after a resize the zones animate to their sizes (120 ms),
+    // so a clip at the right edge may leave the view while this waits.
+    await expect
+      .poll(async () => {
+        const width = (await timeline<{ width: number }>('view')).width;
+        return rect.x >= width || (await timeline<{ drawn: number }>('peakColumns', rect.clipId)).drawn > 0;
+      })
+      .toBe(true);
   }
 }
 
