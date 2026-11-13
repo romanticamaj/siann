@@ -315,8 +315,16 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   await press('F3', 'lower', true);
   await press(`${MOD}+Alt+KeyR`, 'right', false);
   await press(`${MOD}+Alt+KeyP`, 'right', true);
-  await press(`${MOD}+Alt+KeyP`, 'right', false);
+  // Ctrl+Alt+P only shows the Plans tab: pressed again the zone stays shown.
+  await press(`${MOD}+Alt+KeyP`, 'right', true);
+  await press(`${MOD}+Alt+KeyR`, 'right', false);
   await press(`${MOD}+Alt+KeyR`, 'right', true);
+  // So does the top bar's Plans button.
+  for (let i = 0; i < 2; i += 1) {
+    await page.getByTestId('plans-button').click();
+    await expectButton('right', true);
+  }
+  await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
   await expect(page.getByTestId('zone-button-project')).toHaveCount(0);
 
   // Tab and Shift+Tab move the focus frame through the visible zones in order.

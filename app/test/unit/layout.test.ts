@@ -155,14 +155,23 @@ test('tabs: showTab shows a zone on a tab, and hides it when it already shows th
   assert.equal(shown.layout.tabs.lower, 'mixconsole');
   const again = reduce(shown, { type: 'showTab', zone: 'lower', tab: 'mixconsole', viewport: WIDE });
   assert.equal(effectiveLayout(again, WIDE).zones.lower.visible, false);
+});
+
+// Ctrl+Alt+P and the Plans button only show the right zone on the Plans tab
+// (UI redesign spec 2.1 and 3.6): pressed again they leave it shown, unlike
+// Ctrl+Alt+R (a toggle) and Alt+F3 / F3 (show, then hide).
+test('tabs: openTab shows a zone on a tab and leaves it shown when it already shows that tab', () => {
   const right = reduce(reduce(start(), { type: 'hide', zone: 'right', viewport: WIDE }), {
-    type: 'showTab',
+    type: 'openTab',
     zone: 'right',
     tab: 'plans',
     viewport: WIDE,
   });
   assert.equal(effectiveLayout(right, WIDE).zones.right.visible, true);
   assert.equal(right.layout.tabs.right, 'plans');
+  const again = reduce(right, { type: 'openTab', zone: 'right', tab: 'plans', viewport: WIDE });
+  assert.equal(effectiveLayout(again, WIDE).zones.right.visible, true);
+  assert.deepEqual(again, right);
 });
 
 test('the event display keeps 360x320: the lower zone, then the right, then the left give way, the stored layout untouched', () => {
