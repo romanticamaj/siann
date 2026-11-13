@@ -197,9 +197,13 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
     return compiled;
 }
 
-// True when the edit changes nothing but track gain, pan or mute.
+// True when the edit changes nothing but track gain, pan or mute, and the
+// locators (the transport's cycle range, never part of a graph).
 bool onlyFaderChanges(const model::Document& before, const model::Document& after) {
     for (const model::DiffEntry& entry : model::diff(before, after)) {
+        if (entry.entity.type == model::EntityType::locators) {
+            continue;
+        }
         if (entry.entity.type != model::EntityType::track || entry.change != model::DiffEntry::Change::modified) {
             return false;
         }
@@ -269,8 +273,34 @@ void PlaybackEngine::load() {
         butler_.addStream(*stream);  // the butler is not running yet: filled from 0 at once
     }
     publishPrepared();
+    hearTimeline(head, nullptr);
     latest_ = head;
     loaded_ = true;
+}
+
+void PlaybackEngine::hearTimeline(const model::Document& document, const model::Document* before) {
+    const model::Locators* locators = document.locators();
+    transport_.setRegion(locators ? std::optional{std::pair{locators->left, locators->right}} : std::nullopt);
+    const model::Root& root = document.root();
+    if (before == nullptr || before->root().tempo != root.tempo || before->root().sampleRate != root.sampleRate) {
+        driver_.setClickTempo(realtime::ClickTempo::build(root.tempo, root.sampleRate));
+    }
+}
+
+void PlaybackEngine::setCycle(bool enabled) {
+    transport_.setCycle(enabled);
+}
+
+bool PlaybackEngine::cycle() const {
+    return transport_.cycle();
+}
+
+void PlaybackEngine::setClick(bool enabled, std::int32_t gainMilliDb) {
+    if (gainMilliDb < realtime::ClickSettings::kMinGainMilliDb || gainMilliDb > realtime::ClickSettings::kMaxGainMilliDb) {
+        throw std::invalid_argument("the click gain must be in [-60000, 0] milli-dB");
+    }
+    click_ = realtime::ClickSettings{enabled, gainMilliDb};
+    driver_.setClick(enabled, realtime::clickGain(gainMilliDb));
 }
 
 void PlaybackEngine::compile(const model::Document& document) {
@@ -366,8 +396,12 @@ void PlaybackEngine::update(const model::Document& document) {
         throw std::logic_error("load the playback engine before updating it");
     }
     // A compile that waits or is pending is older than this document: recompile.
+    hearTimeline(document, &*latest_);
     if (!prepared_ && !pendingDoc_ && onlyFaderChanges(*latest_, document)) {
         for (const model::DiffEntry& entry : model::diff(*latest_, document)) {
+            if (entry.entity.type != model::EntityType::track) {
+                continue;  // the locators went to the transport above
+            }
             const model::Track& old = *latest_->track(entry.entity.id);
             const model::Track& now = *document.track(entry.entity.id);
             const std::string key = trackSlotKey(now.id);

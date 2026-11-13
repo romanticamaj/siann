@@ -30,6 +30,18 @@
 // Any other publish (a structural edit) ducks the whole output, as does a
 // locate ("ducks the master around the jump").
 //
+// Cycle (m5-ui-engine-loop-click, spec "Realtime data flow", "Cycle"): the
+// transport arms a wrap {left, right, generation} through pushCycle() after the
+// butler was asked to prepare `left` under that generation. When a block
+// reaches `right` the audio thread renders up to it, moves the playhead to
+// `left` as a locate of that generation (the streams claim the prepared slot)
+// and renders the rest of the block from there: no duck, no flush. A playhead
+// already at or past `right` plays on. The offline driver never cycles.
+//
+// Click (spec, "Click"): while playing, a metronome from the tempo table handed
+// over with setClickTempo() is added to each rendered span after the graph's
+// output (after the master meter and the duck) and before device-side SRC.
+//
 // Device-side SRC (spec, "Device-side SRC (M2)"): when the device opens at a
 // rate other than the session rate (AudioDeviceConfig::sampleRate), the graph
 // keeps running at the session rate in fixed blocks. Each step renders one
@@ -58,6 +70,7 @@
 
 #include "siann/graph/graph.hpp"
 #include "siann/host/interfaces.hpp"
+#include "siann/realtime/click.hpp"
 #include "siann/rt/callback_timer.hpp"
 #include "siann/rt/latest_mailbox.hpp"
 #include "siann/rt/spsc_queue.hpp"
@@ -105,6 +118,16 @@ struct TransportCommand {
     std::uint64_t generation = 0;
     std::int64_t position = 0;
     bool play = false;
+};
+
+// A cycle wrap armed for the audio thread (m5-ui-engine-loop-click). Disabled,
+// nothing wraps. `generation` is the locate generation the butler prepared
+// `left` under; a wrap applies it like a locate.
+struct CycleCommand {
+    bool enabled = false;
+    std::int64_t left = 0;
+    std::int64_t right = 0;
+    std::uint64_t generation = 0;
 };
 
 // A node of the graph with `epoch` reported a new latency (pluginEventRt for
@@ -232,6 +255,23 @@ public:
     // still follows that locate (nodes ignore a generation they already follow).
     bool pushLocate(const TransportCommand& command) noexcept;
 
+    // The control dispatcher's thread only (the single producer, as for
+    // pushLocate). The newest command wins; while stopped the next poll()
+    // takes it. Returns false when the queue is full.
+    bool pushCycle(const CycleCommand& command) noexcept;
+    // Wraps applied by the audio thread since construction.
+    std::uint64_t cycleWraps() const noexcept { return cycleWraps_.load(std::memory_order_relaxed); }
+
+    // Any non-realtime thread: the metronome on or off and its linear gain.
+    void setClick(bool enabled, float gain) noexcept {
+        clickGain_.store(gain, std::memory_order_relaxed);
+        clickEnabled_.store(enabled, std::memory_order_release);
+    }
+    // Control side: the tempo table the click follows (session rate). Handed to
+    // the audio thread like a graph; the one it replaces is destroyed here
+    // after the audio thread retired it.
+    void setClickTempo(std::unique_ptr<const ClickTempo> tempo);
+
     // The control dispatcher's thread only (the single meterOutbox consumer).
     // meterOutbox is latest-value-wins (spec, "Queues"): every processed block
     // publishes one frame with a sample per MeterNode of the live graph and
@@ -317,6 +357,12 @@ private:
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     std::int64_t nowNanos() const noexcept;  // audio thread: options_.nowNanos or the steady clock
     void renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept;
+    void renderSpan(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept;
+    void wrapToLeft() noexcept;
+    void addClick(const host::AudioBufferView& output, int offset, int frames, std::int64_t position) noexcept;
+    void drainCycle() noexcept;
+    void drainClickTempo() noexcept;  // audio thread (or the control side while stopped)
+    void reclaimClickTempos();        // control side
     void processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
                           bool playing) noexcept;
     void srcStep(bool playing) noexcept;
@@ -391,6 +437,24 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<std::uint64_t> pausedThrough_{0};
     std::atomic<std::uint64_t> appliedLocate_{0};
+    // Cycle (audio side once started).
+    rt::SpscQueue<CycleCommand> cycleInbox_{64};
+    CycleCommand cycle_{};
+    std::atomic<std::uint64_t> cycleWraps_{0};
+    // Click: settings from any thread, sound built by start(), tempo tables
+    // owned here and lent to the audio thread.
+    std::atomic<bool> clickEnabled_{false};
+    std::atomic<float> clickGain_{1.0f};
+    ClickSound clickSound_;
+    std::vector<std::unique_ptr<const ClickTempo>> clickTempos_;  // control side: every table not yet retired
+    rt::SpscQueue<const ClickTempo*> clickInbox_{8};
+    rt::SpscQueue<const ClickTempo*> clickRetire_{8};
+    const ClickTempo* clickTempo_ = nullptr;  // audio side
+    std::int64_t clickCursor_ = -1;           // the position the click expects next; -1: resync
+    std::int64_t clickBeat_ = 0;
+    std::int64_t clickBeatFrame_ = 0;
+    std::size_t clickBurst_ = 0;  // samples of the burst played; at its size, none sounds
+    bool clickAccent_ = false;
     rt::LatestMailbox<detail::MeterFrame> meterOutbox_;
     std::size_t meterCursor_ = 0;  // dispatcher side: next entry of meterOutbox_.front()
     std::atomic<std::uint64_t> meterDrops_{0};

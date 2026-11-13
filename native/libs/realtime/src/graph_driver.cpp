@@ -181,6 +181,11 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
     if (state_ != DriverState::stopped) {
         throw std::logic_error("the graph driver is already running");
     }
+    if (config.sampleRate > 0) {
+        clickSound_ = ClickSound::build(config.sampleRate);  // the session rate
+        clickBurst_ = clickSound_.normal.size();
+    }
+    clickCursor_ = -1;
     deviceStatus_ = device.open(config);
     setUpResampling(config);
     srcUnderruns_.store(0, std::memory_order_relaxed);
@@ -225,8 +230,12 @@ void GraphDriver::stop() {
 }
 
 void GraphDriver::poll() {
+    reclaimClickTempos();
     if (state_ == DriverState::stopped) {
         drainParams();  // nobody else drives the graph; apply changes here
+        drainCycle();
+        drainClickTempo();
+        reclaimClickTempos();
         TransportCommand command;
         while (transportInbox_.pop(command)) {
             applyLocate(command);
@@ -296,6 +305,60 @@ bool GraphDriver::pushParam(const ParamChange& change) noexcept {
 
 bool GraphDriver::pushLocate(const TransportCommand& command) noexcept {
     return transportInbox_.push(command);
+}
+
+bool GraphDriver::pushCycle(const CycleCommand& command) noexcept {
+    return cycleInbox_.push(command);
+}
+
+void GraphDriver::setClickTempo(std::unique_ptr<const ClickTempo> tempo) {
+    if (!tempo) {
+        return;
+    }
+    reclaimClickTempos();
+    const ClickTempo* raw = tempo.get();
+    clickTempos_.push_back(std::move(tempo));
+    if (state_ == DriverState::stopped) {
+        // Nobody runs the callback: the audio-side fields are ours.
+        const ClickTempo* old = clickTempo_;
+        clickTempo_ = raw;
+        clickCursor_ = -1;
+        std::erase_if(clickTempos_, [old](const auto& owned) { return owned.get() == old; });
+        return;
+    }
+    if (!clickInbox_.push(raw)) {
+        // Full (the audio thread has not run for eight tempo edits): the newest
+        // replaces the last one queued when the callback drains the inbox; the
+        // ones in between stay owned until they are retired or the driver goes.
+        clickTempos_.pop_back();
+        throw std::length_error("the click tempo inbox is full");
+    }
+}
+
+void GraphDriver::drainCycle() noexcept {
+    CycleCommand command;
+    while (cycleInbox_.pop(command)) {
+        cycle_ = command;
+    }
+}
+
+void GraphDriver::drainClickTempo() noexcept {
+    const ClickTempo* next = nullptr;
+    while (clickInbox_.pop(next)) {
+        if (clickTempo_ != nullptr && !clickRetire_.push(clickTempo_)) {
+            // The control side drains this every poll; if it ever lags, the
+            // table stays owned until the driver is destroyed.
+        }
+        clickTempo_ = next;
+        clickCursor_ = -1;
+    }
+}
+
+void GraphDriver::reclaimClickTempos() {
+    const ClickTempo* retired = nullptr;
+    while (clickRetire_.pop(retired)) {
+        std::erase_if(clickTempos_, [retired](const auto& owned) { return owned.get() == retired; });
+    }
 }
 
 bool GraphDriver::popMeter(MeterSample& sample) noexcept {
@@ -422,6 +485,9 @@ void GraphDriver::finishStop() {
         applyLocate(pendingLocate_);
         locatePending_ = false;
     }
+    drainCycle();
+    drainClickTempo();
+    reclaimClickTempos();
     if (retirePending_ && unsentRetire_.epoch != 0) {
         retire(unsentRetire_.epoch);
     }
@@ -447,6 +513,8 @@ void GraphDriver::finishStop() {
 // ---- audio thread ----------------------------------------------------------
 
 void GraphDriver::process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept {
+    drainCycle();
+    drainClickTempo();
     if (recorder_ != nullptr && src_ == nullptr) {
         // The input block lines up with the output block rendered from the
         // current playhead in this same callback.
@@ -666,6 +734,72 @@ void GraphDriver::srcStep(bool playing) noexcept {
 }
 
 void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept {
+    // Cycle: a block that reaches the right locator renders up to it, wraps,
+    // and renders the rest from the left locator (spec, "Cycle").
+    while (frames > 0) {
+        const std::int64_t position = playhead_.load(std::memory_order_relaxed);
+        const bool wraps = playing && current_ != nullptr && cycle_.enabled && cycle_.left < cycle_.right &&
+                           position < cycle_.right && position + frames >= cycle_.right;
+        const int span = wraps ? static_cast<int>(cycle_.right - position) : frames;
+        renderSpan(output, offset, span, playing);
+        if (wraps) {
+            wrapToLeft();
+        }
+        offset += span;
+        frames -= span;
+    }
+}
+
+void GraphDriver::wrapToLeft() noexcept {
+    // A locate of the armed generation without a duck: the streams claim the
+    // slot the butler prefilled from the left locator. A generation already
+    // applied (the next wrap not armed in time) still moves the playhead; the
+    // streams then count underruns as after a late locate.
+    playhead_.store(cycle_.left, std::memory_order_release);
+    if (cycle_.generation > appliedLocate_.load(std::memory_order_relaxed)) {
+        lastLocate_ = TransportCommand{cycle_.generation, cycle_.left, false};
+        if (current_ != nullptr) {
+            current_->locate(cycle_.generation, cycle_.left);
+        }
+        appliedLocate_.store(cycle_.generation, std::memory_order_release);
+    }
+    cycleWraps_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void GraphDriver::addClick(const host::AudioBufferView& output, int offset, int frames,
+                           std::int64_t position) noexcept {
+    const bool on = clickEnabled_.load(std::memory_order_acquire);
+    if (!on || clickTempo_ == nullptr || clickSound_.normal.empty()) {
+        clickCursor_ = -1;
+        clickBurst_ = clickSound_.normal.size();
+        return;
+    }
+    if (position != clickCursor_) {
+        // Started, located, wrapped or a new tempo table: find the next beat.
+        clickBeat_ = clickTempo_->firstBeatAtOrAfter(position);
+        clickBeatFrame_ = clickTempo_->beatFrame(clickBeat_);
+    }
+    const float gain = clickGain_.load(std::memory_order_relaxed);
+    const std::size_t length = clickSound_.normal.size();
+    for (int i = 0; i < frames; ++i) {
+        if (position + i == clickBeatFrame_) {
+            clickBurst_ = 0;
+            clickAccent_ = clickBeat_ % 4 == 0;
+            ++clickBeat_;
+            clickBeatFrame_ = clickTempo_->beatFrame(clickBeat_);
+        }
+        if (clickBurst_ < length) {
+            const float v = (clickAccent_ ? clickSound_.accent : clickSound_.normal)[clickBurst_] * gain;
+            ++clickBurst_;
+            for (int c = 0; c < output.channelCount; ++c) {
+                output.channel(c)[offset + i] += v;
+            }
+        }
+    }
+    clickCursor_ = position + frames;
+}
+
+void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept {
     const std::int64_t position = playhead_.load(std::memory_order_relaxed);
     const host::AudioBufferView* source = nullptr;
     // Path ramps run inside the graph on the affected edges only: the duck in
@@ -715,6 +849,11 @@ void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, i
             }
             output.channel(c)[offset + i] = v;
         }
+    }
+    // After the graph's output and its meters, before device-side SRC; only
+    // while the graph plays.
+    if (source != nullptr) {
+        addClick(output, offset, frames, position);
     }
 }
 

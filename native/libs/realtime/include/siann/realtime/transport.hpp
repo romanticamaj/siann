@@ -14,15 +14,26 @@
 // the audio thread moves the playhead and starts it at the same block
 // boundary. stop() pauses at once.
 //
-// locate(), play(), stop() and the getters may be called from any
-// non-realtime thread; tick() runs on the control dispatcher's thread, the
-// single producer of transportInbox. Nothing here runs on the audio thread.
+// Cycle (m5-ui-engine-loop-click, spec "Realtime data flow", "Cycle"): while
+// cycle is on and a region (the heard document's locators) is set, tick() arms
+// the wrap: a new generation, the butler asked to prepare the left locator
+// under it, and the driver told {left, right, generation}. Once the audio
+// thread has applied that wrap, the next tick arms the next one, so the butler
+// prepares it in the slot the wrap freed. A user locate (or a play from stop)
+// disarms the wrap until it has been applied; its generation is newer, so it
+// cancels a prepared wrap at the butler too.
+//
+// locate(), play(), stop(), setCycle(), setRegion() and the getters may be
+// called from any non-realtime thread; tick() runs on the control dispatcher's
+// thread, the single producer of transportInbox and the driver's cycle inbox.
+// Nothing here runs on the audio thread.
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 #include "siann/realtime/disk_stream.hpp"
 #include "siann/realtime/graph_driver.hpp"
@@ -59,6 +70,12 @@ public:
     // longer starts the transport, and neither does one already sent.
     void stop();
 
+    // Cycle on or off; takes effect on the next tick. Not a revision.
+    void setCycle(bool enabled);
+    bool cycle() const;
+    // The cycle range, [left, right) in session frames, or none.
+    void setRegion(std::optional<std::pair<std::int64_t, std::int64_t>> region);
+
     // Dispatcher thread. Sends the pending locate when the butler is ready or
     // the timeout (counted from the first tick that saw it) has passed.
     // Returns the number of commands sent (0 or 1); a full transportInbox
@@ -90,9 +107,17 @@ private:
         bool play = false;
     };
 
+    struct Armed {
+        std::uint64_t generation = 0;
+        std::int64_t left = 0;
+        std::int64_t right = 0;
+    };
+
     bool playingLocked() const noexcept;
     std::int64_t positionLocked() const noexcept;
     bool sentUnapplied() const noexcept;
+    std::size_t sendPendingLocked(std::chrono::steady_clock::time_point now);
+    void tickCycleLocked();
 
     GraphDriver& driver_;
     Butler& butler_;
@@ -102,6 +127,9 @@ private:
     std::optional<Sent> sent_;  // the last command sent
     std::uint64_t generation_ = 0;
     std::uint64_t lateLocates_ = 0;
+    bool cycle_ = false;
+    std::optional<std::pair<std::int64_t, std::int64_t>> region_;
+    std::optional<Armed> armed_;  // the wrap the driver was last told about
 };
 
 }  // namespace siann::realtime
