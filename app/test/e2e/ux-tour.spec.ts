@@ -2,26 +2,32 @@
 // real siann-engine (SIANN_ENGINE_EXE) on the fake device, a bundle prepared
 // with siann-cli (SIANN_CLI_EXE) like timeline.spec.ts, an MCP agent submitting
 // plans like plan-review.spec.ts, and a full-window PNG of each state the
-// window shows, written to SIANN_UX_OUT (default: a new temp directory) as
-// NN-description.png with an index.json of {file, state, notes}.
+// window shows, written to <SIANN_UX_OUT>/<locale>/ (SIANN_UX_OUT defaults to
+// a new temp directory) as NN-description.png with an index.json of {file,
+// state, notes}. SIANN_UX_LOCALE=en|zh-Hant|zh-Hans (default en) picks the
+// locale: the launches report the system language that detects it (en-US,
+// zh-TW, zh-CN) on a fresh profile. File names keep the English slugs, so the
+// numbers line up across locales; waits use test ids and data attributes, not
+// text, so the tour runs in every locale.
 //
 // It runs only with SIANN_UX_TOUR=1 (playwright.config.ts ignores this file
 // otherwise, so the normal e2e run and CI never see it):
 //
-//   SIANN_UX_TOUR=1 SIANN_UX_OUT=<dir> npx playwright test ux-tour
+//   SIANN_UX_TOUR=1 SIANN_UX_OUT=<dir> [SIANN_UX_LOCALE=zh-Hant] npx playwright test ux-tour
 //
 // The audio is generated into the scratch directory (synthetic drums, bass,
 // keys, voices and a riser) and removed with it; nothing is written into the
 // repository. The tour drives the UI as a user does wherever the UI offers the
 // action, and leaves a note where it does not (zoom, plugins).
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -195,7 +201,15 @@ interface Shot {
   readonly notes: string;
 }
 
-const OUT = process.env.SIANN_UX_OUT ? path.resolve(process.env.SIANN_UX_OUT) : fs.mkdtempSync(path.join(os.tmpdir(), 'siann-ux-'));
+// The locale of the run and the system languages that select it.
+const UX_LOCALES: Record<string, readonly string[]> = { en: ['en-US'], 'zh-Hant': ['zh-TW'], 'zh-Hans': ['zh-CN'] };
+const LOCALE = process.env.SIANN_UX_LOCALE || 'en';
+const LANGUAGES = UX_LOCALES[LOCALE];
+if (!LANGUAGES) throw new Error(`SIANN_UX_LOCALE must be one of ${Object.keys(UX_LOCALES).join(', ')}, not ${LOCALE}`);
+const OUT = path.join(
+  process.env.SIANN_UX_OUT ? path.resolve(process.env.SIANN_UX_OUT) : fs.mkdtempSync(path.join(os.tmpdir(), 'siann-ux-')),
+  LOCALE,
+);
 const shots: Shot[] = [];
 
 function slug(text: string): string {
@@ -227,8 +241,9 @@ let page: Page;
 
 async function launch(sessionDir: string, extraEnv: Record<string, string> = {}): Promise<void> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
-  app = await electron.launch({
+  app = await launchElectron({
     args: [MAIN],
+    languages: LANGUAGES,
     cwd: APP_DIR,
     env: {
       ...process.env,
@@ -422,7 +437,7 @@ test('UX screenshot tour', async () => {
   // ---- 1. A first launch on an empty session directory: a new, empty session.
   await launch(path.join(scratch, 'empty-sessions'));
   await resize(WIDE);
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText('0');
   await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans.');
   await app!.close();
@@ -432,7 +447,7 @@ test('UX screenshot tour', async () => {
   const bundle = prepareBundle();
   await launch(path.dirname(bundle), { SIANN_SHELL_BACKOFF_MS: String(RESTART_MS) });
   await resize(WIDE);
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText('10');
   await waveformsDrawn();
@@ -559,10 +574,10 @@ test('UX screenshot tour', async () => {
   await scrollTo('plan-review');
   await shoot(page, 'Partial approval steps checked', 'Steps 0, 1 and 3 ticked: Approve selected is enabled.');
   await page.getByTestId('plan-approve-selected').click();
-  await expect(page.getByTestId(`plan-state-${hash8(mixHash)}`)).toHaveText('rejected');
+  await expect(page.getByTestId(`plan-state-${hash8(mixHash)}`)).toHaveAttribute('data-state', 'rejected');
   const listed = (await watcher.call('plan.list')).plans as Array<Record<string, unknown>>;
   const subHash = listed.find((p) => p.parentPlan === mixHash)!.hash as string;
-  await expect(page.getByTestId(`plan-state-${hash8(subHash)}`)).toHaveText('approved');
+  await expect(page.getByTestId(`plan-state-${hash8(subHash)}`)).toHaveAttribute('data-state', 'approved');
   await page.getByTestId(`plan-${hash8(subHash)}`).click();
   await expect(page.getByTestId('plan-audition')).toBeEnabled();
   await scrollTo('plan-review');
@@ -586,7 +601,7 @@ test('UX screenshot tour', async () => {
   await scrollTo('plan-review');
   await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected with a rejection note typed.`);
   await page.getByTestId('plan-reject').click();
-  await expect(page.getByTestId(`plan-state-${hash8(tidyHash)}`)).toHaveText('rejected');
+  await expect(page.getByTestId(`plan-state-${hash8(tidyHash)}`)).toHaveAttribute('data-state', 'rejected');
   const rejected = await watcher.call('plan.status', { plan: tidyHash });
   await scrollTo('plan-review');
   await shoot(page, 'Plan rejected with note', `Rejected; the engine recorded the note "${String(rejected.rejectionNote)}". The note field is cleared after Reject.`);
@@ -607,10 +622,10 @@ test('UX screenshot tour', async () => {
   watcher = null;
   await scrollTop();
   process.kill(pid!);
-  await expect(page.getByTestId('status')).not.toHaveText('connected');
+  await expect(page.getByTestId('status')).not.toHaveAttribute('data-status', 'connected');
   const down = await page.getByTestId('status').textContent();
   await shoot(page, 'Engine disconnected', `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it.`);
-  await expect(page.getByTestId('status')).toHaveText('connected', { timeout: RESTART_MS + 30_000 });
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected', { timeout: RESTART_MS + 30_000 });
   await expect(page.getByTestId('track-count')).not.toHaveText('');
   await waveformsDrawn().catch(() => undefined);
   await shoot(page, 'Engine reconnected', 'The shell restarted the engine on the same bundle and the renderer reconnected to a new session.');

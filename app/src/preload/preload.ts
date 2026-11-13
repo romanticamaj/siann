@@ -4,8 +4,9 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 
-// The renderer argument main.ts adds under SIANN_SHELL_TEST=1.
+// The renderer arguments main.ts adds under SIANN_SHELL_TEST=1.
 const TEST_HOOKS_ARG = '--siann-test-hooks';
+const TEST_LANGS_ARG = '--siann-test-langs=';
 
 interface EngineEndpoint {
   port: number;
@@ -19,9 +20,13 @@ function endpoint(value: unknown): EngineEndpoint | null {
 }
 
 // Under SIANN_SHELL_TEST=1 the main process adds the argument, and the renderer
-// exposes its test hooks (window.__siannTimeline); window.siann stays as it is.
+// exposes its test hooks (window.__siannTimeline, window.__siannLocale);
+// window.siann stays as it is. SIANN_TEST_LANGS, when set, is the system
+// language list the test pins (the renderer's locale detection reads it first).
 if (process.argv.includes(TEST_HOOKS_ARG)) {
-  contextBridge.exposeInMainWorld('siannTest', { timelineHooks: true });
+  const langs = process.argv.find((arg) => arg.startsWith(TEST_LANGS_ARG));
+  const languages = langs ? langs.slice(TEST_LANGS_ARG.length).split(',').filter(Boolean) : undefined;
+  contextBridge.exposeInMainWorld('siannTest', { timelineHooks: true, ...(languages ? { languages } : {}) });
 }
 
 contextBridge.exposeInMainWorld('siann', {

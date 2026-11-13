@@ -4,6 +4,7 @@
 
 import { useSyncExternalStore } from 'react';
 
+import { useT } from '../i18n/t';
 import type { GestureController } from '../model/gesture-controller';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
@@ -20,9 +21,10 @@ export function Mixer({ client, gestures, realtime }: MixerProps) {
     (listener) => client.model.subscribe(listener),
     () => client.model.getSnapshot(),
   );
+  const t = useT();
   const order = snapshot?.trackOrder ?? [];
   return (
-    <section className="mixer" data-testid="mixer" aria-label="Mixer">
+    <section className="mixer" data-testid="mixer" aria-label={t('mixer.label')}>
       {order.map((trackId) => (
         <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} realtime={realtime} />
       ))}

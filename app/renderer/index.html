@@ -7,7 +7,17 @@
     <title>SIANN</title>
     <style>
       :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      /* Chinese UI fonts (UI redesign spec 6.4): the system's, not bundled; line
+         height 1.4. The English :root stack and the tokens come with P1-1. */
+      :root:lang(zh-TW) { font-family: "Inter", "PingFang TC", "Microsoft JhengHei UI", "Noto Sans TC", "Noto Sans CJK TC", sans-serif; line-height: 1.4; }
+      :root:lang(zh-CN) { font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", "Noto Sans CJK SC", sans-serif; line-height: 1.4; }
+      /* The generic monospace resolves per language (a CJK font under zh-CN):
+         name the Latin monospace fonts, so ids, hashes and JSON look as in English. */
+      :root:is(:lang(zh-TW), :lang(zh-CN)) :is(dd, code, .plan-heard) { font-family: ui-monospace, Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; }
       body { margin: 0; padding: 24px; }
+      /* The language switch sits in the corner, so nothing else moves (P1-1
+         moves it into the status bar). */
+      .locale-switch { position: absolute; top: 24px; right: 24px; display: flex; gap: 6px; align-items: center; font-size: 12px; }
       dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
       dt { opacity: 0.7; }
       dd { margin: 0; font-family: ui-monospace, monospace; }
@@ -38,6 +48,9 @@
       .plan-diff td, .plan-diff th { padding: 2px 8px; text-align: left; vertical-align: top;
                                      border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
       .plan-diff code { word-break: break-all; }
+      /* Chinese breaks between any two characters: keep the short words of the
+         diff's headers, change kind and stale mark on one line. */
+      :root:is(:lang(zh-TW), :lang(zh-CN)) .plan-diff :is(th, td:nth-child(2), td[data-testid="diff-stale"]) { white-space: nowrap; }
       .plan-diff tr[data-stale="true"] { background: color-mix(in srgb, #e8a33a 25%, transparent); }
     </style>
   </head>

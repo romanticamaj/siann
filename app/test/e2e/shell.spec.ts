@@ -5,10 +5,12 @@
 // app ends the engine. Waits are Playwright condition waits with bounded
 // timeouts; SIANN_SHELL_BACKOFF_MS sets the restart delay.
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -41,7 +43,7 @@ async function enginePid(): Promise<number | null> {
 }
 
 async function launch(backoffMs: number, env: Record<string, string> = {}): Promise<void> {
-  app = await electron.launch({
+  app = await launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
     env: {

@@ -6,11 +6,13 @@
 // (SIANN_USER_DATA), so the single-instance lock never meets the maintainer's
 // running app. Waits are Playwright condition waits or waits on a process, bounded.
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -49,7 +51,7 @@ test.beforeEach(async () => {
   delete env.SIANN_SHELL_DEVTOOLS;
   // Chromium's fake capture devices: without a microphone getUserMedia fails with
   // NotFoundError before any permission is asked (CI runners have none).
-  app = await electron.launch({ args: ['--use-fake-device-for-media-stream', MAIN], cwd: APP_DIR, env });
+  app = await launchElectron({ args: ['--use-fake-device-for-media-stream', MAIN], cwd: APP_DIR, env });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveText('connected');
 });

@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useSyncExternalStore, type ChangeEvent } from 'react';
 
+import { useT } from '../i18n/t';
 import type { TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
 import type { GestureField } from '../model/read-model';
@@ -40,6 +41,7 @@ function useView(client: SessionClient) {
 
 export function Strip({ trackId, client, gestures, realtime }: StripProps) {
   const view = useView(client);
+  const t = useT();
   const ref = `track:${trackId}`;
   const track = client.model.select(ref) as TrackEntity | undefined;
   // The field a pointer drag holds right now (a ref: no re-render per drag).
@@ -106,11 +108,11 @@ export function Strip({ trackId, client, gestures, realtime }: StripProps) {
       <header className="strip-name">{track.name}</header>
       <canvas className="strip-meter" data-testid={`meter-${trackId}`} width={24} height={120} ref={canvas} />
       <label className="strip-fader">
-        <span>Gain</span>
+        <span>{t('strip.gain')}</span>
         <input
           type="range"
           data-testid={`fader-${trackId}`}
-          aria-label={`${track.name} gain`}
+          aria-label={t('strip.gainLabel', { track: track.name })}
           min={FADER_MIN_MILLI_DB}
           max={FADER_MAX_MILLI_DB}
           step={100}
@@ -121,11 +123,11 @@ export function Strip({ trackId, client, gestures, realtime }: StripProps) {
         <output data-testid={`fader-value-${trackId}`}>{String(track.gainMilliDb)}</output>
       </label>
       <label className="strip-pan">
-        <span>Pan</span>
+        <span>{t('strip.pan')}</span>
         <input
           type="range"
           data-testid={`pan-${trackId}`}
-          aria-label={`${track.name} pan`}
+          aria-label={t('strip.panLabel', { track: track.name })}
           min={-PAN_RANGE}
           max={PAN_RANGE}
           step={100}

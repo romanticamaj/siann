@@ -1,8 +1,11 @@
 // A plan's steps with a checkbox each (m5-plan-review): ticking a non-empty
 // proper subset enables Approve selected (partial approval). The summaries
-// name tracks as the read model knows them.
+// name tracks as the read model knows them and are worded through the catalogs
+// (plans/describe.ts).
 
-import { selection, stepSummary } from './diff';
+import { useT } from '../i18n/t';
+import { describeStep } from './describe';
+import { selection } from './diff';
 
 export interface StepListProps {
   readonly steps: readonly Record<string, unknown>[];
@@ -13,6 +16,7 @@ export interface StepListProps {
 }
 
 export function StepList({ steps, ticked, onToggle, trackName, disabled }: StepListProps) {
+  const t = useT();
   const chosen = selection(ticked, steps.length);
   return (
     <ol className="plan-steps" data-testid="plan-steps" start={0}>
@@ -25,7 +29,7 @@ export function StepList({ steps, ticked, onToggle, trackName, disabled }: StepL
               disabled={disabled}
               onChange={() => onToggle(index)}
             />{' '}
-            {stepSummary(step, trackName)}
+            {describeStep(step, t, trackName)}
           </label>
         </li>
       ))}

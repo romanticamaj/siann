@@ -10,11 +10,13 @@
 // siann_test_plugin's CLAP, whose gui extension embeds into the window the desktop
 // engine supplies.
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -114,7 +116,7 @@ for (const { name, variable } of CASES) {
     sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-editor-'));
     // The plugin's directory is a --plugin-dir and the test approves it, in its own
     // <userData>/plugin-registry.json (m5-plugin-registry).
-    app = await electron.launch({
+    app = await launchElectron({
       args: [MAIN, `--user-data-dir=${path.join(sessionDir, 'user-data')}`],
       cwd: APP_DIR,
       env: {

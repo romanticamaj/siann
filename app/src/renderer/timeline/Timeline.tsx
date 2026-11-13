@@ -2,14 +2,18 @@
 // TimelineCanvas on a <canvas> through a ref and renders around it what is
 // plain UI: the media pool to place from, the delete button and key, and the
 // selected clip and last refusal. No drawing state passes through React.
+// The canvas words its ruler through the installed locale store and redraws
+// when it changes; the chrome reads the same store through useT().
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
+import { refusalLine } from '../i18n/errors';
+import { localeStore, translator, useLocale } from '../i18n/t';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { SessionClient } from '../model/session-client';
 import { TimelineCanvas, type TimelineState, type TimelineTestHooks } from './TimelineCanvas';
 
-const IDLE: TimelineState = { selectedClipId: null, placingMediaId: null, error: '' };
+const IDLE: TimelineState = { selectedClipId: null, placingMediaId: null, error: null };
 
 export function Timeline({
   client,
@@ -22,6 +26,8 @@ export function Timeline({
   onHooks?: (hooks: TimelineTestHooks | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const locale = useLocale();
+  const t = translator(locale);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
 
   useEffect(() => {
@@ -32,6 +38,10 @@ export function Timeline({
       model: client.model,
       peaks,
       execute: (commands, expectedRevision) => client.execute(commands, expectedRevision),
+      locale: {
+        t: () => translator(localeStore().getSnapshot()),
+        subscribe: (listener) => localeStore().subscribe(listener),
+      },
     });
     setTimeline(surface);
     onHooks?.(surface.testHooks());
@@ -66,7 +76,7 @@ export function Timeline({
   return (
     <section className="timeline">
       <div className="timeline-bar">
-        <ul className="media-pool" data-testid="media-pool" aria-label="Media pool">
+        <ul className="media-pool" data-testid="media-pool" aria-label={t('timeline.mediaPool')}>
           {(snapshot?.media ?? []).map((media) => (
             <li key={media.id}>
               <button
@@ -86,15 +96,17 @@ export function Timeline({
           disabled={!state.selectedClipId}
           onClick={() => void timeline?.deleteSelected()}
         >
-          Delete clip
+          {t('timeline.deleteClip')}
         </button>
       </div>
       <canvas ref={canvasRef} data-testid="timeline-canvas" className="timeline-canvas" />
       <dl>
-        <dt>Selected</dt>
+        <dt>{t('timeline.selected')}</dt>
         <dd data-testid="selected-clip">{state.selectedClipId ?? ''}</dd>
-        <dt>Last error</dt>
-        <dd data-testid="timeline-error">{state.error}</dd>
+        <dt>{t('timeline.lastError')}</dt>
+        <dd data-testid="timeline-error" data-code={state.error?.code ?? undefined}>
+          {state.error ? refusalLine(state.error.code, state.error.message, locale) : ''}
+        </dd>
       </dl>
     </section>
   );
