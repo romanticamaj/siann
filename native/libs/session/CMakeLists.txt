@@ -14,6 +14,7 @@ siann_apply_compile_options(siann_session)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_session_tests
     tests/session_test.cpp
+    tests/locators_session_test.cpp
     tests/session_lock_test.cpp
     tests/media_import_test.cpp
     tests/takes_test.cpp
