@@ -121,6 +121,45 @@ async function expectButton(zone: Zone, pressed: boolean): Promise<void> {
 
 const TOGGLE_KEY: Record<Zone, string> = { left: `${MOD}+Alt+KeyL`, lower: `${MOD}+Alt+KeyE`, right: `${MOD}+Alt+KeyR` };
 
+// The element holding the DOM focus, by its test id (or tag name).
+async function active(): Promise<string | null> {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null;
+    return el ? (el.dataset.testid ?? el.tagName) : null;
+  });
+}
+
+// Whether the DOM focus is inside the zone: its root, one of its controls or its divider.
+async function focusInside(zone: string): Promise<boolean> {
+  return page.evaluate((z) => {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return false;
+    return el.closest(`[data-zone="${z}"]`) !== null || el.dataset.testid === `separator-${z}`;
+  }, zone);
+}
+
+// Real key presses only: F6 until the zone itself has the focus.
+async function focusZoneByKeys(zone: string): Promise<void> {
+  for (let i = 0; i < 6; i += 1) {
+    if ((await active()) === `zone-${zone}`) return;
+    await page.keyboard.press('F6');
+  }
+  expect(await active(), `F6 reaches zone-${zone}`).toBe(`zone-${zone}`);
+}
+
+// Real key presses only: from the zone, Enter, then Tab until `testId` has
+// the focus; the focus never leaves the zone on the way.
+async function tabInZoneTo(zone: string, testId: string, key: 'Tab' | 'Shift+Tab' = 'Tab'): Promise<number> {
+  await focusZoneByKeys(zone);
+  await page.keyboard.press('Enter');
+  for (let presses = 0; presses < 60; presses += 1) {
+    expect(await focusInside(zone), `the focus stays in the ${zone} zone`).toBe(true);
+    if ((await active()) === testId) return presses;
+    await page.keyboard.press(key);
+  }
+  throw new Error(`${key} never reached ${testId} in the ${zone} zone`);
+}
+
 test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside', async () => {
   const sessionDir = seedBundle(scratch, TRACKS);
   await launch(sessionDir);
@@ -183,8 +222,10 @@ test('each zone boundary drags within its range, collapses below its minimum, re
     await expectSize(zone, inside);
     // Past the top of the range: held at the maximum.
     await dragTo(zone, zone === 'lower' ? 560 : 900);
+    let max = zone === 'lower' ? 0 : RANGE[zone].max;
     if (zone === 'lower') {
       const top = await sizeOf('lower');
+      max = top;
       expect(top).toBeGreaterThan(400);
       expect(await eventDisplayHeight()).toBeGreaterThanOrEqual(EVENT_MIN_HEIGHT - 0.5);
       // One more pixel up would leave the event display under 320 px: it stays.
@@ -211,9 +252,23 @@ test('each zone boundary drags within its range, collapses below its minimum, re
     await page.keyboard.press(TOGGLE_KEY[zone]);
     await expectButton(zone, true);
     await expectSize(zone, min);
-    // Arrow keys on the focused separator: 8 px per press, in the arrow's direction.
+    // From the keyboard alone: F6 to the zone, Enter into it, Tab to its divider.
     const separator = page.getByTestId(`separator-${zone}`);
-    await separator.focus();
+    await tabInZoneTo(zone, `separator-${zone}`);
+    await expect(separator).toHaveAttribute('role', 'separator');
+    await expect(separator).toHaveAttribute('aria-orientation', zone === 'lower' ? 'horizontal' : 'vertical');
+    await expect(separator).toHaveAttribute('aria-valuemin', String(min));
+    await expect(separator).toHaveAttribute('aria-valuemax', String(max));
+    await expect(separator).toHaveAttribute('aria-valuenow', String(min));
+    // A visible focus ring.
+    expect(
+      await separator.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 1;
+      }),
+      `separator-${zone} shows its focus`,
+    ).toBe(true);
+    // Arrow keys: 8 px per press, in the arrow's direction; Shift: 32 px.
     const [grow, shrink] = zone === 'left' ? ['ArrowRight', 'ArrowLeft'] : zone === 'right' ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown'];
     await page.keyboard.press(grow!);
     await expectSize(zone, min + 8);
@@ -221,7 +276,26 @@ test('each zone boundary drags within its range, collapses below its minimum, re
     await expectSize(zone, min + 16);
     await page.keyboard.press(shrink!);
     await expectSize(zone, min + 8);
-    // Double-click restores the default.
+    await expect(separator).toHaveAttribute('aria-valuenow', String(min + 8));
+    await page.keyboard.press(`Shift+${grow!}`);
+    await expectSize(zone, min + 40);
+    await page.keyboard.press(`Shift+${shrink!}`);
+    await expectSize(zone, min + 8);
+    // End and Home: the maximum and the minimum, never collapsed.
+    await page.keyboard.press('End');
+    await expectSize(zone, max);
+    await page.keyboard.press('Home');
+    await expectSize(zone, min);
+    await expectButton(zone, true);
+    // Enter restores the default.
+    await page.keyboard.press('Enter');
+    await expectSize(zone, DEFAULTS[zone]);
+    // Escape returns the focus to the zone.
+    await page.keyboard.press('Escape');
+    expect(await active()).toBe(`zone-${zone}`);
+    // Double-click restores the default too.
+    await dragTo(zone, min);
+    await expectSize(zone, min);
     await separator.dblclick();
     await expectSize(zone, DEFAULTS[zone]);
   }
@@ -370,6 +444,71 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   await note.pressSequentially('ok');
   await expect(note).toHaveValue('ok');
   for (const zone of ZONES) await expectButton(zone, true);
+});
+
+// Keyboard focus (UI redesign spec 2.1 and 3.6), by real key presses only:
+// Tab from the page or a zone cycles the zones; Enter enters a zone; inside
+// it Tab and Shift+Tab walk its controls and its divider and wrap at its
+// ends; Escape returns to the zone; F6 and Shift+F6 cycle the zones from a
+// control too. Every stop shows a focus ring.
+test('the keyboard reaches each divider and the controls of a zone from the zone itself', async () => {
+  test.setTimeout(120_000);
+  const sessionDir = seedBundle(scratch, TRACKS);
+  await launch(sessionDir);
+  const ring = async () =>
+    page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const style = getComputedStyle(el);
+      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 1;
+    });
+
+  // From the page, Tab and Shift+Tab move between the zones themselves.
+  expect(await active()).toBe('BODY');
+  await page.keyboard.press('Tab');
+  expect(await active()).toMatch(/^zone-(left|project|lower|right)$/);
+  await focusZoneByKeys('lower');
+  await page.keyboard.press('Tab');
+  expect(await active()).toBe('zone-right');
+  await page.keyboard.press('Shift+Tab');
+  expect(await active()).toBe('zone-lower');
+  expect(await ring()).toBe(true);
+
+  // Enter, then Tab: the lower zone's controls, its divider among them.
+  await page.keyboard.press('Enter');
+  const seen: string[] = [];
+  for (let i = 0; i < 60; i += 1) {
+    const id = (await active()) ?? '';
+    expect(await focusInside('lower'), `${id} is in the lower zone`).toBe(true);
+    expect(await ring(), `${id} shows its focus`).toBe(true);
+    if (seen.includes(id)) break;
+    seen.push(id);
+    await page.keyboard.press('Tab');
+  }
+  // Tab wrapped back to where it started, inside the zone.
+  expect(await active()).toBe(seen[0]);
+  for (const id of ['separator-lower', 'mute-trk_kick', 'solo-trk_kick', 'fader-trk_kick', 'mute-trk_bass']) {
+    expect(seen, id).toContain(id);
+  }
+  // Shift+Tab from the first stop wraps to the last.
+  await page.keyboard.press('Shift+Tab');
+  expect(await active()).toBe(seen[seen.length - 1]);
+  // Escape returns to the zone; F6 from a control moves to the next zone.
+  await page.keyboard.press('Escape');
+  expect(await active()).toBe('zone-lower');
+  await page.keyboard.press('Enter');
+  expect(await focusInside('lower')).toBe(true);
+  await page.keyboard.press('F6');
+  expect(await active()).toBe('zone-right');
+  await page.keyboard.press('Shift+F6');
+  expect(await active()).toBe('zone-lower');
+
+  // Every divider is in its zone's Tab order.
+  for (const zone of ZONES) {
+    await tabInZoneTo(zone, `separator-${zone}`);
+    expect(await ring(), `separator-${zone} shows its focus`).toBe(true);
+    await expect(page.getByTestId(`zone-${zone}`)).toHaveAttribute('data-focused', 'true');
+  }
 });
 
 // The licence line (UI redesign spec 2.1; AGPL section 13): in every locale,

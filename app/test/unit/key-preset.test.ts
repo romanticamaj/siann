@@ -39,8 +39,15 @@ test('the zone keys of Cubase, the SIANN Plans key and the zone focus keys', () 
     ['F3', 'zone.lower.mixconsole'],
     ['Mod+Alt+R', 'zone.right.toggle'],
     ['Mod+Alt+P', 'zone.right.plans'],
-    ['Tab', 'focus.nextZone'],
-    ['Shift+Tab', 'focus.prevZone'],
+    // Tab and Shift+Tab cycle the zones from a zone or the page, and move
+    // between the controls of a zone from inside it; F6 and Shift+F6 always
+    // cycle the zones; Enter on a zone enters it, Escape returns to it.
+    ['Tab', 'focus.next'],
+    ['Shift+Tab', 'focus.prev'],
+    ['F6', 'focus.nextZone'],
+    ['Shift+F6', 'focus.prevZone'],
+    ['Enter', 'focus.enterZone'],
+    ['Escape', 'focus.zoneRoot'],
   ];
   for (const [chord, commandId] of expected) {
     const found = CUBASE_PRESET.filter((b) => b.chord === chord && b.scope === 'window');

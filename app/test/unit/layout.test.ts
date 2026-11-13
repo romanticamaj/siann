@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   ARROW_STEP,
+  ARROW_STEP_LARGE,
   DEFAULT_LAYOUT,
   DEFAULT_SIZES,
   EVENT_MIN_HEIGHT,
@@ -123,6 +124,25 @@ test('an arrow step moves a boundary by 8 px inside the range', () => {
   );
   assert.equal(atMin.layout.sizes.lower, 160);
   assert.equal(atMin.layout.collapsed.lower, false, 'a key step never collapses');
+});
+
+test('Shift+arrow moves a boundary by 32 px; Home and End take it to its minimum and maximum', () => {
+  assert.equal(ARROW_STEP_LARGE, 32);
+  const grown = reduce(start(), { type: 'step', zone: 'left', direction: 1, large: true, viewport: WIDE });
+  assert.equal(grown.layout.sizes.left, 248);
+  const shrunk = reduce(start(), { type: 'step', zone: 'lower', direction: -1, large: true, viewport: WIDE });
+  assert.equal(shrunk.layout.sizes.lower, 248);
+  for (const zone of ['left', 'lower', 'right'] as const) {
+    const { min, max } = limits(zone, WIDE);
+    const low = reduce(start(), { type: 'edge', zone, edge: 'min', viewport: WIDE });
+    assert.equal(low.layout.sizes[zone], min, `${zone} Home`);
+    assert.equal(low.layout.collapsed[zone], false, `${zone} Home never collapses`);
+    const high = reduce(start(), { type: 'edge', zone, edge: 'max', viewport: WIDE });
+    assert.equal(high.layout.sizes[zone], max, `${zone} End`);
+    // A hidden zone is shown at the edge.
+    const hidden = reduce(start(), { type: 'hide', zone, viewport: WIDE });
+    assert.equal(reduce(hidden, { type: 'edge', zone, edge: 'min', viewport: WIDE }).layout.collapsed[zone], false, zone);
+  }
 });
 
 test('reset returns the default size and shows the zone', () => {

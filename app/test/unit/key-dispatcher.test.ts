@@ -64,7 +64,15 @@ test('nothing fires while a text field has focus', () => {
     resolveKey(input({ code: 'KeyL', key: 'l', modifiers: { ...NONE, ctrl: true, alt: true }, targetIsTextField: true }), PRESET),
     null,
   );
-  assert.equal(resolveKey(input({ code: 'Tab', key: 'Tab', targetIsTextField: true }), CUBASE_PRESET), null);
+  // Only the focus keys leave a text field, as the platform's own Tab and F6 do.
+  assert.equal(resolveKey(input({ code: 'Tab', key: 'Tab', targetIsTextField: true }), CUBASE_PRESET)?.commandId, 'focus.next');
+  assert.equal(resolveKey(input({ code: 'F6', key: 'F6', targetIsTextField: true }), CUBASE_PRESET)?.commandId, 'focus.nextZone');
+  assert.equal(
+    resolveKey(input({ code: 'Escape', key: 'Escape', targetIsTextField: true }), CUBASE_PRESET)?.commandId,
+    'focus.zoneRoot',
+  );
+  assert.equal(resolveKey(input({ code: 'Enter', key: 'Enter', targetIsTextField: true }), CUBASE_PRESET), null);
+  assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete', targetIsTextField: true }), CUBASE_PRESET), null);
 });
 
 test('isTextField: input, textarea, select and contenteditable', () => {
