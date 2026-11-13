@@ -12,6 +12,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { AboutInfo } from '../../src/renderer/model/session-client';
 import { SessionClient } from '../../src/renderer/model/session-client';
 import { AboutButton, AboutLine, AboutPanel, StatusBar } from '../../src/renderer/shell/StatusBar';
+import type { Capabilities } from '../../src/renderer/model/capabilities';
+import { parseEngineStatus, type EngineStatus, type EngineStatusSource } from '../../src/renderer/model/engine-status';
+import { PlanStore } from '../../src/renderer/model/plan-store';
+import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 
 const DESKTOP: AboutInfo = {
   name: 'siann-engine',
@@ -57,7 +61,7 @@ test('no about renders no licence text', () => {
     currentEndpoint: async () => null,
     schedule: () => () => undefined,
   });
-  const bar = renderToStaticMarkup(<StatusBar client={client} />);
+  const bar = renderToStaticMarkup(<StatusBar client={client} plans={new PlanStore()} engineStatus={statusSource(null)} />);
   assert.match(bar, /data-testid="status"[^>]*data-status="disconnected"/);
   assert.match(bar, /data-testid="about"/);
   assert.ok(!/GPL/.test(bar), bar);
@@ -96,4 +100,75 @@ test('the About panel shows the whole about line', () => {
     assert.ok(shown.includes(part), `${JSON.stringify(shown)} lacks ${part}`);
   }
   assert.match(panel, /data-testid="about-close"/);
+});
+
+// The bar's content (UI redesign spec 2.1, "Status bar"; 3.0): engine
+// connection, device and latency, xruns (engine.status), side heard,
+// language, saved revision and the about line. The session id and the read
+// model's counts are diagnostics: they sit in the About panel, not the bar.
+// Device, latency and xruns exist only when engine.capabilities lists
+// engine.status and an answer is known; the side heard only when it lists
+// audition.hear and a side is known.
+function statusSource(snapshot: EngineStatus | null): EngineStatusSource {
+  return { getSnapshot: () => snapshot, subscribe: () => () => undefined };
+}
+
+function disconnectedClient(): SessionClient {
+  return new SessionClient({
+    createSocket: () => {
+      throw new Error('no socket in this test');
+    },
+    currentEndpoint: async () => null,
+    schedule: () => () => undefined,
+  });
+}
+
+const STATUS = parseEngineStatus({
+  device: { id: 'fake', sampleRate: 48000, bufferFrames: 256, inputLatencyFrames: 240, outputLatencyFrames: 480 },
+  xruns: '4',
+});
+
+test('the status bar shows device, latency, xruns and the side heard, and keeps the diagnostics in the About panel', () => {
+  const plans = new PlanStore();
+  plans.setHeard('main');
+  const caps: Capabilities = { methods: ['engine.status', 'audition.hear'], features: {} };
+  const bar = renderToStaticMarkup(
+    <CapabilitiesContext.Provider value={caps}>
+      <StatusBar client={disconnectedClient()} plans={plans} engineStatus={statusSource(STATUS)} />
+    </CapabilitiesContext.Provider>,
+  );
+  const panelAt = bar.indexOf('data-testid="about-panel"');
+  assert.ok(panelAt > 0, bar);
+  const outside = bar.slice(0, panelAt);
+  const inside = bar.slice(panelAt);
+  assert.match(outside, /data-testid="device"[^>]*>fake</);
+  assert.match(outside, /data-testid="latency"[^>]*>5\.0 \/ 10\.0 ms</);
+  assert.match(outside, /data-testid="xruns"[^>]*>4</);
+  assert.match(outside, /data-testid="status-heard"[^>]*>main</);
+  assert.match(outside, /data-testid="revision"/);
+  assert.match(outside, /data-testid="locale-switch"/);
+  for (const id of ['session-id', 'track-count', 'clip-count', 'sync-count', 'connections']) {
+    assert.ok(!outside.includes(`data-testid="${id}"`), `${id} is not in the bar`);
+    assert.ok(inside.includes(`data-testid="${id}"`), `${id} is in the About panel`);
+  }
+});
+
+test('without engine.status or audition.hear in the capabilities, or before an answer, the bar has no device, latency, xruns or side heard', () => {
+  const plans = new PlanStore();
+  plans.setHeard('main');
+  const caps: ReadonlyArray<Capabilities | null> = [null, { methods: ['engine.capabilities'], features: {} }];
+  for (const cap of caps) {
+    const bar = renderToStaticMarkup(
+      <CapabilitiesContext.Provider value={cap}>
+        <StatusBar client={disconnectedClient()} plans={plans} engineStatus={statusSource(STATUS)} />
+      </CapabilitiesContext.Provider>,
+    );
+    for (const id of ['device', 'latency', 'xruns', 'status-heard']) assert.ok(!bar.includes(`data-testid="${id}"`), id);
+  }
+  const unknown = renderToStaticMarkup(
+    <CapabilitiesContext.Provider value={{ methods: ['engine.status', 'audition.hear'], features: {} }}>
+      <StatusBar client={disconnectedClient()} plans={new PlanStore()} engineStatus={statusSource(null)} />
+    </CapabilitiesContext.Provider>,
+  );
+  for (const id of ['device', 'latency', 'xruns', 'status-heard']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
 });
