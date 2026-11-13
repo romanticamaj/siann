@@ -517,6 +517,13 @@ test('UX screenshot tour', async () => {
   const inside = (await timeline<{ scrollY?: number }>('view')).scrollY ?? 0;
   await shoot(page, 'Page scrolled to mixer', `A vertical wheel over the timeline: the page does not scroll (the zones keep their place); the lanes scrolled ${inside} px under the ruler (a transform, not a DOM scroll). The mixer is always in the lower zone.`);
   await scrollTop();
+  // Back to the whole session (Shift+F in the project zone) so the later
+  // states show every clip; a click below the lanes focuses the zone.
+  const reset = await canvasBox();
+  await page.mouse.click(reset.x + 20, reset.y + (await page.getByTestId('timeline-canvas').boundingBox())!.height - 10);
+  await page.keyboard.press('Shift+KeyF');
+  await expect.poll(async () => (await timeline<{ scrollFrames: string }>('view')).scrollFrames).toBe('0');
+  await waveformsDrawn();
 
   // ---- 4. A fader held mid-drag (one gesture, nothing committed yet).
   const fader = page.getByTestId('fader-trk_bass');
@@ -556,7 +563,8 @@ test('UX screenshot tour', async () => {
   await expect(page.getByTestId('revision')).not.toHaveText(revisionBefore ?? '');
   await expect.poll(async () => (await clipRect('clp_06_keys')).x).toBe(target.x + 120);
   await waveformsDrawn();
-  await shoot(page, 'Clip moved', 'Released: one clip.move committed; the Keys clip starts 120 px (0.25 s) later on its lane and stays selected.');
+  const movedSeconds = ((120 * (await timeline<{ framesPerPixel: number }>('view')).framesPerPixel) / RATE).toFixed(2);
+  await shoot(page, 'Clip moved', `Released: one clip.move committed; the Keys clip starts 120 px (${movedSeconds} s) later on its lane and stays selected; the info line shows its new start.`);
 
   // ---- 6. The Plans tab (m5-ui-plan-panel): an agent's plan as a card, in user wording.
   const client = await agent();
