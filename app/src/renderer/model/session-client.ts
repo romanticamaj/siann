@@ -15,6 +15,7 @@
 // window.siann.engine.current) and the reconnect scheduler are injected.
 
 import type { FetchedEntity, SessionChanged, SyncChunk } from './document';
+import type { Capabilities } from './capabilities';
 import { isMeterLegend, type MeterLegend } from './meter-frames';
 import { ReadModel, ReadModelError } from './read-model';
 
@@ -59,6 +60,10 @@ export interface ClientState {
   // "meters.legend"): from the auth reply, replaced by each sync's `meters` and
   // each meters.legend event applied in order; null before the engine has one.
   readonly legend: MeterLegend | null;
+  // engine.capabilities, asked once per connection after auth (UI redesign
+  // spec 3.0); the last known value is kept across a reconnect, null before
+  // the first answer.
+  readonly capabilities: Capabilities | null;
 }
 
 export interface SessionClientOptions {
@@ -156,6 +161,7 @@ export class SessionClient {
     connections: 0,
     error: null,
     legend: null,
+    capabilities: null,
   };
   #lastSeq: bigint | null = null;
   // The session the model's snapshot belongs to.

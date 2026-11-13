@@ -1,0 +1,17 @@
+{
+  "about": {
+    "name": "siann-engine",
+    "version": "0.1.0",
+    "source": { "url": "https://github.com/romanticamaj/siann", "commit": "0123456789abcdef0123456789abcdef01234567", "dirty": false },
+    "license": "GPL-2.0-or-later"
+  },
+  "scope": "propose",
+  "scopes": ["propose", "trusted"],
+  "commands": ["track.set_gain", "track.set_mute", "track.set_solo"],
+  "methods": [
+    "session.inspect", "session.sync", "session.fetch", "command.execute", "engine.about",
+    "engine.capabilities", "plan.list", "plan.preview", "plan.status", "plan.reject"
+  ],
+  "features": { "plans": true, "proposals": false, "audition": false, "transport": false, "render": false, "plugins": false, "gestures": false, "peaks": true },
+  "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024 }
+}

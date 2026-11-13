@@ -11,11 +11,18 @@
 //   `hook: false`: only --lang is given, and the renderer reads
 //   navigator.languages as it does outside the tests (Windows and Linux only).
 //
+// The window's viewport is pinned to 1440x900 (the redesign's reference size,
+// m5-ui-shell) once the first window is up: Windows clamps a window to the
+// screen's work area, and a CI runner's screen is smaller than that, which
+// would turn the right zone into a closed drawer (UI redesign spec 2.4).
+// `viewport: null` keeps the window as the shell made it.
+//
 // Specs pass their own args (the main script included) and env as before.
 
 import { _electron as electron, type ElectronApplication } from '@playwright/test';
 
 export const DEFAULT_LANGUAGES: readonly string[] = ['en-US'];
+export const DEFAULT_VIEWPORT = { width: 1440, height: 900 } as const;
 
 export interface LaunchOptions {
   readonly args: readonly string[];
@@ -26,17 +33,25 @@ export interface LaunchOptions {
   // false: report the languages through --lang alone, without SIANN_TEST_LANGS
   // (default true).
   readonly hook?: boolean;
+  // The first window's viewport (default DEFAULT_VIEWPORT); null leaves it alone.
+  readonly viewport?: { readonly width: number; readonly height: number } | null;
 }
 
-export function launchElectron(options: LaunchOptions): Promise<ElectronApplication> {
+export async function launchElectron(options: LaunchOptions): Promise<ElectronApplication> {
   const languages = options.languages ?? DEFAULT_LANGUAGES;
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(options.env ?? process.env)) if (value !== undefined) env[key] = value;
   if (options.hook === false) delete env.SIANN_TEST_LANGS;
   else env.SIANN_TEST_LANGS = languages.join(',');
-  return electron.launch({
+  const app = await electron.launch({
     args: [`--lang=${languages[0] ?? 'en-US'}`, ...options.args],
     cwd: options.cwd,
     env,
   });
+  const viewport = options.viewport === undefined ? DEFAULT_VIEWPORT : options.viewport;
+  if (viewport) {
+    const page = await app.firstWindow();
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  }
+  return app;
 }

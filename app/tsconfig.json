@@ -18,5 +18,5 @@
     "sourceMap": false,
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/unit/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/unit/**/*.ts", "test/unit/**/*.tsx"]
 }

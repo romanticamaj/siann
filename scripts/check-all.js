@@ -222,6 +222,11 @@ function appStep() {
     const step = run(process.execPath, [path.join('node_modules', 'electron', 'install.js')], APP, env);
     if (!step.ok) return { ...step, failedAt: 'electron install.js' };
   }
+  // The plain-tab e2e (m5-ui-shell) runs in Playwright's own Chromium; the
+  // install is a no-op once the pinned revision is there.
+  const npx = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npx', ...args], APP, env) : run('npx', args, APP, env));
+  const chromium = npx(['playwright', 'install', ...(process.platform === 'linux' ? ['--with-deps'] : []), 'chromium']);
+  if (!chromium.ok) return { ...chromium, failedAt: 'npx playwright install chromium' };
   for (const args of [['run', 'build'], ['test']]) {
     const step = npm(args);
     if (!step.ok) return { ...step, failedAt: `npm ${args.join(' ')}` };
