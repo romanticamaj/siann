@@ -35,8 +35,8 @@ const STEPS = [
   { op: 'track.set_mute', trackId: 'trk_b', mute: true },
 ];
 
-async function launch(languages: readonly string[]): Promise<void> {
-  app = await launchApp({ sessionDir, userData, languages });
+async function launch(languages: readonly string[], hook = true): Promise<void> {
+  app = await launchApp({ sessionDir, userData, languages, hook });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText('2');
@@ -125,6 +125,13 @@ async function expectLocale(locale: Locale): Promise<void> {
   await expect(page.getByTestId('mute-trk_a')).toHaveText('M');
   await expect(page.getByTestId('solo-trk_a')).toHaveText('S');
   await expect(page.getByTestId('step-1')).toContainText('-0.60 dB');
+  // The canvas ruler, the one text drawn rather than in the DOM: its first
+  // label (0 s) is worded in the locale, redrawn on a switch.
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __siannTimeline?: { rulerLabels(): string[] } }).__siannTimeline?.rulerLabels()[0]),
+    )
+    .toBe(t('timeline.seconds', { value: '0' }));
 
   const shown = await shownTexts();
   const others = (Object.keys(CATALOGS) as Locale[]).filter((l) => l !== locale);
@@ -148,6 +155,23 @@ async function submitAndSelect(): Promise<void> {
   await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
   await expect(page.getByTestId('plan-detail')).toBeVisible();
 }
+
+// The real detection path: no test hook, only Chromium's --lang, which fills
+// navigator.languages as the OS does in the shipped app. macOS ignores --lang
+// and reports the OS languages, so this case runs on Windows and Linux.
+test('navigator.languages, not a test hook, decides the first launch', async () => {
+  test.skip(process.platform === 'darwin', 'macOS ignores --lang');
+  test.setTimeout(90_000);
+  await launch(['zh-TW'], false);
+  const seen = await page.evaluate(() => ({
+    hook: (window as unknown as { siannTest?: { languages?: unknown } }).siannTest?.languages ?? null,
+    languages: [...navigator.languages],
+  }));
+  expect(seen.hook).toBeNull();
+  expect(seen.languages[0]).toBe('zh-TW');
+  await submitAndSelect();
+  await expectLocale('zh-Hant');
+});
 
 test('the system language decides the first launch, the switch is live, the choice survives a restart', async () => {
   test.setTimeout(150_000);

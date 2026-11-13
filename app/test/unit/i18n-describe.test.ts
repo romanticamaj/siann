@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { errorText, KNOWN_ERROR_CODES } from '../../src/renderer/i18n/errors';
+import { errorText, KNOWN_ERROR_CODES, refusalLine } from '../../src/renderer/i18n/errors';
 import { LOCALES, type Locale } from '../../src/renderer/i18n/locale';
 import { planArrivedMessage, reconnectedMessage } from '../../src/renderer/i18n/messages';
 import { plural, relativeTime, translator } from '../../src/renderer/i18n/t';
@@ -126,6 +126,20 @@ test('engine error codes: catalog text in Chinese, the engine\'s own message in 
 
 test('an unknown error code shows the engine\'s English message in every locale', () => {
   for (const locale of LOCALES) assert.equal(errorText('brand_new_code', 'something went wrong', locale), 'something went wrong', locale);
+});
+
+// UI redesign 6.2: the refusal line keeps the protocol code in front in every
+// locale; a refusal without a code is the message alone.
+test('the refusal line is "<code>: <text>" in every locale', () => {
+  const engine = 'Entities changed: track:trk_v';
+  for (const locale of LOCALES) {
+    assert.equal(refusalLine('plan_stale', engine, locale), `plan_stale: ${errorText('plan_stale', engine, locale)}`, locale);
+    assert.equal(refusalLine('plan_stale', engine, locale, ' (trk_v)'), `plan_stale: ${errorText('plan_stale', engine, locale)} (trk_v)`, locale);
+    assert.equal(refusalLine('brand_new_code', 'boom', locale), 'brand_new_code: boom', locale);
+    assert.equal(refusalLine(null, 'socket closed', locale), 'socket closed', locale);
+  }
+  assert.equal(refusalLine('plan_stale', engine, 'en'), `plan_stale: ${engine}`);
+  assert.equal(refusalLine('plan_stale', engine, 'zh-Hant'), `plan_stale: ${translator('zh-Hant')('error.plan_stale')}`);
 });
 
 test('toast messages per locale: a plan arrived, reconnected at a revision', () => {

@@ -50,12 +50,18 @@ export function seedBundle(scratch: string, tracks: readonly SeedTrack[]): strin
   return path.dirname(bundle);
 }
 
-export function launchApp(options: { sessionDir: string; userData: string; languages: readonly string[] }): Promise<ElectronApplication> {
+export function launchApp(options: {
+  sessionDir: string;
+  userData: string;
+  languages: readonly string[];
+  hook?: boolean;
+}): Promise<ElectronApplication> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   return launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
     languages: options.languages,
+    hook: options.hook,
     env: {
       ...process.env,
       SIANN_ENGINE_EXE: exeFromEnv('SIANN_ENGINE_EXE'),
