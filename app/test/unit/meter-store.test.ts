@@ -88,6 +88,24 @@ test('an entity missing from the newest frame reads as silence', () => {
   assert.doesNotThrow(() => store.sync());
 });
 
+// The engine keeps sending its newest reading of every entity once the
+// transport stops (protocol-events-v1.md, "Realtime channel"), and nothing
+// is metered while stopped (no input monitoring before M6b): a frame whose
+// playing flag is 0 reads as silence, so the bars fall after a stop.
+test('a frame of a stopped transport reads as silence', () => {
+  const source = new FakeSource();
+  source.legendValue = { epoch: '1', entities: ['master', 'track:a'] };
+  const store = new MeterStore(source);
+  source.push([[0, [0.8]], [1, [0.7]]], true);
+  store.sync();
+  assert.ok(store.peak[0]! > 0.79);
+  source.push([[0, [0.8]], [1, [0.7]]], false);
+  store.sync();
+  assert.deepEqual([...store.peak], [0, 0]);
+  assert.deepEqual([...store.rms], [0, 0]);
+  assert.equal(store.playing(), false);
+});
+
 test('advance applies the ballistics; read and reset by ref', () => {
   const source = new FakeSource();
   source.legendValue = { epoch: '1', entities: ['master', 'track:a'] };

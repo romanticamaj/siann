@@ -504,8 +504,10 @@ test('zero React commits while playing (profiling bundle), and the counter does 
   const startFrames = await meterFrames();
   await expect.poll(() => meterFrames()).toBeGreaterThan(startFrames + 10);
   const before = await commits();
+  // About three seconds of display frames: longer than the status bar's
+  // engine.status poll (1 s), which must not commit an unchanged answer.
   const frames = await meterFrames();
-  await expect.poll(() => meterFrames()).toBeGreaterThan(frames + 60);
+  await expect.poll(() => meterFrames()).toBeGreaterThan(frames + 180);
   expect(await commits()).toBe(before);
   await client.call('transport.stop');
 });
