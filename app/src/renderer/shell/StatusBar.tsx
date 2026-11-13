@@ -9,18 +9,30 @@
 // The data-testids are those of the former status panel, so the specs that
 // read them keep working.
 
-import { useSyncExternalStore, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react';
 
 import { htmlLang, LOCALE_NAMES, LOCALES, type UserLocale } from '../i18n/locale';
-import { localeStore, translator, useLocale } from '../i18n/t';
+import { localeStore, translator, useLocale, type T } from '../i18n/t';
 import type { ReadModel } from '../model/read-model';
 import type { AboutInfo, SessionClient } from '../model/session-client';
+
+function shortCommit(about: AboutInfo, t: T): string {
+  const source = about.source ?? {};
+  return source.commit ? source.commit.slice(0, 12) + (source.dirty ? '+dirty' : '') : t('about.unknownCommit');
+}
+
+// The whole line as one string, for the about button's title.
+function aboutText(about: AboutInfo, t: T): string {
+  const url = about.source?.url;
+  const head = `${about.name ?? ''} ${about.version ?? ''} (${shortCommit(about, t)}) · ${about.license ?? ''}`;
+  return url ? `${head} · ${t('about.source', { url })}` : head;
+}
 
 export function AboutLine({ about }: { about: AboutInfo | null }) {
   const t = translator(useLocale());
   if (!about) return null;
   const source = about.source ?? {};
-  const commit = source.commit ? source.commit.slice(0, 12) + (source.dirty ? '+dirty' : '') : t('about.unknownCommit');
+  const commit = shortCommit(about, t);
   return (
     <>
       <span className="about-name">{about.name ?? ''}</span> <span className="about-version">{about.version ?? ''}</span>{' '}
@@ -32,6 +44,78 @@ export function AboutLine({ about }: { about: AboutInfo | null }) {
         </>
       ) : null}
     </>
+  );
+}
+
+// The licence line in the status bar (spec 2.1: it stays visible or one click
+// away, for the source offer of section 13). The licence is its own span at the end and never
+// shrinks, so when the bar is short only the rest of the line is cut; the
+// button's title is the whole line, and a click opens the About panel.
+export function AboutButton({ about, onOpen }: { about: AboutInfo | null; onOpen: () => void }) {
+  const t = translator(useLocale());
+  if (!about) return <button type="button" className="about" data-testid="about" aria-haspopup="dialog" disabled />;
+  const url = about.source?.url;
+  return (
+    <button
+      type="button"
+      className="about"
+      data-testid="about"
+      aria-haspopup="dialog"
+      title={aboutText(about, t)}
+      onClick={onOpen}
+    >
+      <span className="about-summary">
+        {`${about.name ?? ''} ${about.version ?? ''} (${shortCommit(about, t)})`}
+        {url ? ` · ${t('about.source', { url })}` : ''}
+      </span>
+      <span className="about-sep" aria-hidden="true">
+        ·
+      </span>
+      <span className="about-license">{about.license ?? ''}</span>
+    </button>
+  );
+}
+
+// The About panel: the whole about line, selectable, in a modal dialog. Its
+// own keydown handler keeps keys (Escape above all) from the shell's
+// dispatcher, whose project-zone Escape would otherwise cancel the close.
+export function AboutPanel({ about, open, onClose }: { about: AboutInfo | null; open: boolean; onClose: () => void }) {
+  const t = translator(useLocale());
+  const ref = useRef<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    if (!open && dialog.open) dialog.close();
+  }, [open]);
+  const onKeyDown = (event: KeyboardEvent<HTMLDialogElement>) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+    }
+  };
+  return (
+    <dialog
+      ref={ref}
+      className="about-panel"
+      data-testid="about-panel"
+      aria-labelledby="about-panel-title"
+      onClose={onClose}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onKeyDown={onKeyDown}
+    >
+      <h2 id="about-panel-title">{t('about.title')}</h2>
+      <p data-testid="about-panel-line" className="about-panel-line">
+        <AboutLine about={about} />
+      </p>
+      <button type="button" data-testid="about-close" onClick={onClose}>
+        {t('about.close')}
+      </button>
+    </dialog>
   );
 }
 
@@ -67,6 +151,7 @@ export function StatusBar({ client }: { client: SessionClient }) {
   const state = useClientState(client);
   const snapshot = useSnapshot(client.model);
   const t = translator(useLocale());
+  const [aboutOpen, setAboutOpen] = useState(false);
   const revision = snapshot?.revision ?? state.revision ?? '';
   return (
     <footer className="status-bar" data-testid="status-bar" aria-label={t('status.label')}>
@@ -91,9 +176,8 @@ export function StatusBar({ client }: { client: SessionClient }) {
         <dt>{t('status.connections')}</dt>
         <dd data-testid="connections">{String(state.connections)}</dd>
       </dl>
-      <span className="about" data-testid="about">
-        <AboutLine about={state.about} />
-      </span>
+      <AboutButton about={state.about} onOpen={() => setAboutOpen(true)} />
+      <AboutPanel about={state.about} open={aboutOpen && state.about !== null} onClose={() => setAboutOpen(false)} />
     </footer>
   );
 }

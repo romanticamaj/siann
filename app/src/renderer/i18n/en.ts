@@ -26,6 +26,8 @@ export const en = {
   'connection.disconnected': 'disconnected',
   'about.unknownCommit': 'unknown',
   'about.source': 'source: {url}',
+  'about.title': 'About',
+  'about.close': 'Close',
 
   // The shell (m5-ui-shell): zones, zone buttons, tabs, the left zone.
   'zone.project': 'Project zone',

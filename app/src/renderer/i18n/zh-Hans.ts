@@ -22,6 +22,8 @@ export const zhHans: Catalog = {
   'connection.disconnected': '已断开',
   'about.unknownCommit': '未知',
   'about.source': '源代码：{url}',
+  'about.title': '关于',
+  'about.close': '关闭',
 
   'zone.project': '工程区',
   'zone.left': '左区',

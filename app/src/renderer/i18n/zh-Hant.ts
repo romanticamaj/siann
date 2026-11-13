@@ -22,6 +22,8 @@ export const zhHant: Catalog = {
   'connection.disconnected': '已中斷',
   'about.unknownCommit': '未知',
   'about.source': '原始碼：{url}',
+  'about.title': '關於',
+  'about.close': '關閉',
 
   'zone.project': '專案區',
   'zone.left': '左側區',
