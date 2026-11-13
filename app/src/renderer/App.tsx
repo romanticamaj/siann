@@ -13,6 +13,7 @@
 import { useState, useSyncExternalStore } from 'react';
 
 import type { CommandRegistry } from './keys/commands';
+import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
 import type { PlanStore } from './model/plan-store';
@@ -33,13 +34,14 @@ export interface AppProps {
   readonly realtime: RealtimeClient;
   readonly peaks: PeaksCache;
   readonly plans: PlanStore;
+  readonly engineStatus: EngineStatusSource;
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
 }
 
-export function App({ client, gestures, realtime, peaks, plans, layout, commands, platform, onTimelineHooks }: AppProps) {
+export function App({ client, gestures, realtime, peaks, plans, engineStatus, layout, commands, platform, onTimelineHooks }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
     () => client.getState().capabilities,
@@ -50,6 +52,7 @@ export function App({ client, gestures, realtime, peaks, plans, layout, commands
       <Shell
         client={client}
         plans={plans}
+        engineStatus={engineStatus}
         store={layout}
         commands={commands}
         platform={platform}

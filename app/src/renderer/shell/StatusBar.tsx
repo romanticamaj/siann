@@ -1,20 +1,26 @@
-// The status bar (UI redesign spec 2.1): engine connection, the language
-// switch (m5-ui-i18n), session, revision, what the read model holds, and the
-// about line built only from engine.about and the auth reply (ADR-0017 point
+// The status bar (UI redesign spec 2.1): engine connection, device and
+// latency and xruns (engine.status, only when engine.capabilities lists it),
+// the side heard (only when it lists audition.hear), the language switch
+// (m5-ui-i18n), the saved revision, and the about line built only from engine.about and the auth reply (ADR-0017 point
 // 4, the source offer of the engine's licence): name, version, commit,
 // licence and source, exactly as the engine reports them. No licence is ever
 // named in the renderer's source.
 // Reads the session client and the read model through useSyncExternalStore;
 // no meter or playhead value passes through React state (ADR-0019 point 3).
-// The data-testids are those of the former status panel, so the specs that
+// The session id and what the read model holds (tracks, clips, syncs,
+// connections) are diagnostics, not the bar's content: they sit in the About
+// panel, under the data-testids of the former status panel, so the specs that
 // read them keep working.
 
-import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react';
 
 import { htmlLang, LOCALE_NAMES, LOCALES, type UserLocale } from '../i18n/locale';
 import { localeStore, translator, useLocale, type T } from '../i18n/t';
+import { statusFields, type EngineStatusSource } from '../model/engine-status';
+import type { PlanStore } from '../model/plan-store';
 import type { ReadModel } from '../model/read-model';
 import type { AboutInfo, SessionClient } from '../model/session-client';
+import { useCapabilities } from './Capable';
 
 function shortCommit(about: AboutInfo, t: T): string {
   const source = about.source ?? {};
@@ -79,7 +85,18 @@ export function AboutButton({ about, onOpen }: { about: AboutInfo | null; onOpen
 // The About panel: the whole about line, selectable, in a modal dialog. Its
 // own keydown handler keeps keys (Escape above all) from the shell's
 // dispatcher, whose project-zone Escape would otherwise cancel the close.
-export function AboutPanel({ about, open, onClose }: { about: AboutInfo | null; open: boolean; onClose: () => void }) {
+export function AboutPanel({
+  about,
+  open,
+  onClose,
+  children,
+}: {
+  about: AboutInfo | null;
+  open: boolean;
+  onClose: () => void;
+  // The diagnostics, below the about line.
+  children?: ReactNode;
+}) {
   const t = translator(useLocale());
   const ref = useRef<HTMLDialogElement | null>(null);
   useEffect(() => {
@@ -112,6 +129,7 @@ export function AboutPanel({ about, open, onClose }: { about: AboutInfo | null; 
       <p data-testid="about-panel-line" className="about-panel-line">
         <AboutLine about={about} />
       </p>
+      {children}
       <button type="button" data-testid="about-close" onClick={onClose}>
         {t('about.close')}
       </button>
@@ -147,12 +165,27 @@ function useSnapshot(model: ReadModel) {
   return useSyncExternalStore((listener) => model.subscribe(listener), get, get);
 }
 
-export function StatusBar({ client }: { client: SessionClient }) {
+function useStore<S>(store: { getSnapshot(): S; subscribe(listener: () => void): () => void }): S {
+  const get = () => store.getSnapshot();
+  return useSyncExternalStore((listener) => store.subscribe(listener), get, get);
+}
+
+export interface StatusBarProps {
+  readonly client: SessionClient;
+  readonly plans: PlanStore;
+  readonly engineStatus: EngineStatusSource;
+}
+
+export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
   const state = useClientState(client);
   const snapshot = useSnapshot(client.model);
+  const status = useStore(engineStatus);
+  const heard = useStore(plans).heard;
+  const can = useCapabilities();
   const t = translator(useLocale());
   const [aboutOpen, setAboutOpen] = useState(false);
   const revision = snapshot?.revision ?? state.revision ?? '';
+  const fields = status ? statusFields(status, t) : null;
   return (
     <footer className="status-bar" data-testid="status-bar" aria-label={t('status.label')}>
       <dl>
@@ -161,23 +194,49 @@ export function StatusBar({ client }: { client: SessionClient }) {
           {t(`connection.${state.status}`)}
         </dd>
       </dl>
+      {fields && can.has('engine.status') ? (
+        <dl className="status-engine">
+          <dt>{t('status.device')}</dt>
+          <dd data-testid="device" className="status-device" title={fields.device}>
+            {fields.device}
+          </dd>
+          {fields.latency ? (
+            <>
+              <dt>{t('status.latency')}</dt>
+              <dd data-testid="latency">{fields.latency}</dd>
+            </>
+          ) : null}
+          <dt>{t('status.xruns')}</dt>
+          <dd data-testid="xruns">{fields.xruns}</dd>
+        </dl>
+      ) : null}
+      {heard !== null && can.has('audition.hear') ? (
+        <dl>
+          <dt>{t('status.heard')}</dt>
+          <dd data-testid="status-heard">{heard}</dd>
+        </dl>
+      ) : null}
       <LocaleSwitch />
       <dl>
         <dt>{t('status.revision')}</dt>
         <dd data-testid="revision">{revision}</dd>
-        <dt>{t('status.session')}</dt>
-        <dd data-testid="session-id">{state.sessionId ?? ''}</dd>
-        <dt>{t('status.tracks')}</dt>
-        <dd data-testid="track-count">{snapshot ? String(snapshot.tracks.length) : ''}</dd>
-        <dt>{t('status.clips')}</dt>
-        <dd data-testid="clip-count">{snapshot ? String(snapshot.clips.length) : ''}</dd>
-        <dt>{t('status.syncs')}</dt>
-        <dd data-testid="sync-count">{String(state.syncCount)}</dd>
-        <dt>{t('status.connections')}</dt>
-        <dd data-testid="connections">{String(state.connections)}</dd>
       </dl>
       <AboutButton about={state.about} onOpen={() => setAboutOpen(true)} />
-      <AboutPanel about={state.about} open={aboutOpen && state.about !== null} onClose={() => setAboutOpen(false)} />
+      <AboutPanel about={state.about} open={aboutOpen && state.about !== null} onClose={() => setAboutOpen(false)}>
+        <h3>{t('about.diagnostics')}</h3>
+        <dl className="about-diagnostics">
+          <dt>{t('status.session')}</dt>
+          <dd data-testid="session-id">{state.sessionId ?? ''}</dd>
+          <dt>{t('status.tracks')}</dt>
+          <dd data-testid="track-count">{snapshot ? String(snapshot.tracks.length) : ''}</dd>
+          <dt>{t('status.clips')}</dt>
+          <dd data-testid="clip-count">{snapshot ? String(snapshot.clips.length) : ''}</dd>
+          <dt>{t('status.syncs')}</dt>
+          <dd data-testid="sync-count">{String(state.syncCount)}</dd>
+          <dt>{t('status.connections')}</dt>
+          <dd data-testid="connections">{String(state.connections)}</dd>
+        </dl>
+      </AboutPanel>
     </footer>
   );
 }

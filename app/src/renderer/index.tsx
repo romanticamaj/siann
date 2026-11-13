@@ -27,6 +27,7 @@ import { CommandRegistry } from './keys/commands';
 import { platformOf } from './keys/dispatcher';
 import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } from './i18n/locale';
 import { installLocaleStore } from './i18n/t';
+import { EngineStatusStore } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { PlanStore } from './model/plan-store';
@@ -98,6 +99,7 @@ const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
+const engineStatus = new EngineStatusStore({ client, schedule });
 
 let endpoint: EngineEndpoint | null = null;
 const peaks = new PeaksCache({
@@ -132,6 +134,7 @@ createRoot(container).render(
     realtime={realtime}
     peaks={peaks}
     plans={plans}
+    engineStatus={engineStatus}
     layout={layout}
     commands={commands}
     platform={platformOf(navigator.platform)}

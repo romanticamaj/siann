@@ -258,6 +258,8 @@ code, dd, .mono { font-family: var(--font-mono); }
 .status-bar [data-status="connected"] { color: var(--ok); }
 .status-bar [data-status="disconnected"] { color: var(--err); }
 .status-bar select { min-height: 18px; font-size: var(--fs-small); }
+/* A JUCE device id can be long ("<type>/<name>"); the title holds it whole. */
+.status-device { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 .locale-switch { display: flex; gap: 6px; align-items: center; }
 /* The licence line (2.1): the button takes what the bar has left; the rest of
    the line clips before the licence, which never shrinks. */
@@ -294,6 +296,16 @@ code, dd, .mono { font-family: var(--font-mono); }
 .about-panel::backdrop { background: rgb(0 0 0 / .45); }
 .about-panel h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
+.about-panel h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
+.about-diagnostics {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px calc(var(--space) * 2);
+  margin: 0 0 calc(var(--space) * 3);
+  font-size: var(--fs-small);
+}
+.about-diagnostics dt { color: var(--tx-3); }
+.about-diagnostics dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
 
 /* Small windows (2.4): the top bar drops what does not fit. */
 @container (max-width: 700px) {

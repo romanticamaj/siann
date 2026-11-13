@@ -32,6 +32,7 @@ import { useT } from '../i18n/t';
 import type { CommandRegistry, ZoneScope } from '../keys/commands';
 import { isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
+import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import {
@@ -74,6 +75,8 @@ export function useViewport(): Viewport {
 export interface ShellProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // engine.status as last polled, for the status bar.
+  readonly engineStatus: EngineStatusSource;
   readonly store: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
@@ -153,7 +156,7 @@ function ZoneSeparator({ zone, disabled, dispatch }: { zone: Zone; disabled?: bo
   );
 }
 
-export function Shell({ client, plans, store, commands, platform, left, project, lower, right }: ShellProps) {
+export function Shell({ client, plans, engineStatus, store, commands, platform, left, project, lower, right }: ShellProps) {
   const t = useT();
   const viewport = useViewport();
   const state = useShellState(store);
@@ -403,7 +406,7 @@ export function Shell({ client, plans, store, commands, platform, left, project,
           </ZoneFrame>
         </Panel>
       </Group>
-      <StatusBar client={client} />
+      <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
     </div>
   );
 }
