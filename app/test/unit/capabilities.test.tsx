@@ -12,12 +12,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { CommandRegistry } from '../../src/renderer/keys/commands';
+import { Strip } from '../../src/renderer/mixer/Strip';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
+import type { GestureController } from '../../src/renderer/model/gesture-controller';
+import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
+import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import { SessionClient } from '../../src/renderer/model/session-client';
+import { PlanActions } from '../../src/renderer/plans/PlanReview';
+import { StepList } from '../../src/renderer/plans/StepList';
 import { Capable, CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { clipRects } from '../../src/renderer/timeline/geometry';
+import { Timeline } from '../../src/renderer/timeline/Timeline';
+import { TimelineCanvas } from '../../src/renderer/timeline/TimelineCanvas';
 import { FakeScheduler, FakeSocket, until } from './support/fakes';
+import { sampleSnapshot } from './support/timeline';
 
 // dist/test/unit -> app/test/unit/fixtures
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
@@ -57,6 +69,173 @@ test('Capable renders nothing for an absent method and while the capabilities ar
   assert.equal(render(REDUCED, 'plan.approve'), '');
   assert.equal(render(null, 'plan.approve'), '');
   assert.equal(render(REDUCED, 'plan.reject'), '<button type="button" data-testid="control"></button>');
+});
+
+// command(name): command.execute is listed and the name is in `commands`.
+test('command(name) reads the capabilities\' commands list, under command.execute', () => {
+  const full = capabilitySelector(FULL);
+  const reduced = capabilitySelector(REDUCED);
+  for (const name of ['track.set_gain', 'track.set_mute', 'track.set_solo']) {
+    assert.equal(full.command(name), true, name);
+    assert.equal(reduced.command(name), true, name);
+  }
+  for (const name of ['clip.place', 'clip.move', 'clip.trim', 'clip.remove', 'track.set_pan']) {
+    assert.equal(full.command(name), true, name);
+    assert.equal(reduced.command(name), false, name);
+  }
+  const noExecute = { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'command.execute') };
+  assert.equal(capabilitySelector(noExecute).command('track.set_mute'), false, 'no command.execute, no command');
+  assert.equal(capabilitySelector(null).command('track.set_mute'), false);
+});
+
+// Real controls (not a stand-in inside Capable): each is absent from the
+// markup when the command or method it sends is not listed.
+const g = globalThis as unknown as Record<string, unknown>;
+const frames = new Map<number, () => void>();
+let nextFrame = 1;
+g.requestAnimationFrame = (fn: () => void) => {
+  const id = nextFrame++;
+  frames.set(id, fn);
+  return id;
+};
+g.cancelAnimationFrame = (id: number) => frames.delete(id);
+
+function fakeClient(snapshot = sampleSnapshot(), execute: (commands: readonly unknown[]) => Promise<unknown> = async () => undefined) {
+  const model = {
+    getSnapshot: () => snapshot,
+    getView: () => ({ snapshot, gesture: null, overlaid: null }),
+    select: (ref: string) => snapshot.entities[ref],
+    subscribe: () => () => undefined,
+  };
+  return { model, execute: (commands: readonly unknown[]) => execute(commands) } as unknown as SessionClient;
+}
+
+function within(caps: Capabilities | null, node: ReactNode): string {
+  return renderToStaticMarkup(<CapabilitiesContext.Provider value={caps}>{node}</CapabilitiesContext.Provider>);
+}
+
+const ONLY_GAIN: Capabilities = { ...FULL, commands: ['track.set_gain'] };
+
+test('mixer strip: fader, pan, mute and solo each need their command; the reduced fixture keeps only mute and solo', () => {
+  const strip = (caps: Capabilities | null) =>
+    within(
+      caps,
+      <Strip
+        trackId="trk_a"
+        client={fakeClient()}
+        gestures={{} as unknown as GestureController}
+        realtime={{} as unknown as RealtimeClient}
+      />,
+    );
+  const full = strip(FULL);
+  for (const id of ['fader-trk_a', 'pan-trk_a', 'mute-trk_a', 'solo-trk_a']) assert.ok(full.includes(`data-testid="${id}"`), id);
+  const reduced = strip(REDUCED);
+  for (const id of ['mute-trk_a', 'solo-trk_a']) assert.ok(reduced.includes(`data-testid="${id}"`), id);
+  for (const id of ['fader-trk_a', 'pan-trk_a']) assert.ok(!reduced.includes(`data-testid="${id}"`), id);
+  const gainOnly = strip(ONLY_GAIN);
+  assert.ok(gainOnly.includes('data-testid="fader-trk_a"'));
+  for (const id of ['pan-trk_a', 'mute-trk_a', 'solo-trk_a']) assert.ok(!gainOnly.includes(`data-testid="${id}"`), id);
+  const unknown = strip(null);
+  for (const id of ['fader-trk_a', 'pan-trk_a', 'mute-trk_a', 'solo-trk_a']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
+});
+
+test('timeline: the media pool place buttons need clip.place and the delete button clip.remove', () => {
+  const timeline = (caps: Capabilities | null) =>
+    within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
+  const full = timeline(FULL);
+  assert.ok(full.includes('data-testid="pool-med_sq"'));
+  assert.ok(full.includes('data-testid="delete-clip"'));
+  for (const caps of [REDUCED, null]) {
+    const shown = timeline(caps);
+    assert.ok(!shown.includes('data-testid="pool-'), 'no place button');
+    assert.ok(!shown.includes('data-testid="delete-clip"'), 'no delete button');
+    assert.ok(shown.includes('data-testid="timeline-canvas"'), 'the canvas still draws the session');
+  }
+});
+
+// The canvas's gestures (place, move, trim) send nothing the capabilities do not list.
+function pointerCanvas() {
+  const listeners = new Map<string, (event: unknown) => void>();
+  const ctx = new Proxy({}, { get: () => () => undefined, set: () => true });
+  const canvas = {
+    clientWidth: 800,
+    width: 0,
+    height: 0,
+    style: { height: '', cursor: '' },
+    getContext: () => ctx,
+    getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    addEventListener: (type: string, fn: (event: unknown) => void) => listeners.set(type, fn),
+    removeEventListener: (type: string) => listeners.delete(type),
+  };
+  const fire = (type: string, x: number, y: number) => listeners.get(type)?.({ button: 0, pointerId: 1, clientX: x, clientY: y });
+  return { canvas: canvas as unknown as HTMLCanvasElement, fire };
+}
+
+test('timeline canvas: a drag, a trim and a placement execute only the commands engine.capabilities lists', async () => {
+  for (const [caps, expected] of [
+    [FULL, ['clip.move', 'clip.trim+clip.move', 'clip.place']],
+    [REDUCED, []],
+  ] as const) {
+    const sent: string[] = [];
+    const snapshot = sampleSnapshot();
+    const { canvas, fire } = pointerCanvas();
+    const allows = capabilitySelector(caps);
+    const timeline = new TimelineCanvas({
+      canvas,
+      model: fakeClient(snapshot).model,
+      peaks: { get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache,
+      execute: async (commands) => {
+        sent.push(commands.map((c) => (c as { op: string }).op).join('+'));
+      },
+      allows: (op) => allows.command(op),
+    });
+    const rect = clipRects(snapshot, timeline.testHooks().view()).find((r) => r.clipId === 'clp_1')!;
+    const midY = rect.y + rect.height / 2;
+    // Move: drag the body 40 px right.
+    fire('pointerdown', rect.x + rect.width / 2, midY);
+    fire('pointermove', rect.x + rect.width / 2 + 40, midY);
+    fire('pointerup', rect.x + rect.width / 2 + 40, midY);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Trim: drag the start edge 20 px right.
+    fire('pointerdown', rect.x + 1, midY);
+    fire('pointermove', rect.x + 21, midY);
+    fire('pointerup', rect.x + 21, midY);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Place: arm a media and click a lane.
+    timeline.setPlacing('med_si');
+    fire('pointerdown', 700, midY);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await timeline.deleteSelected();
+    assert.deepEqual(sent.slice(0, 3), expected, JSON.stringify(sent));
+    if (caps === REDUCED) assert.deepEqual(sent, [], 'no clip.remove either');
+    timeline.destroy();
+  }
+});
+
+test('plan review: the note field needs plan.reject, the step checkboxes plan.approve', () => {
+  const actions = (caps: Capabilities | null) =>
+    within(caps, <PlanActions note="" onNote={() => undefined} enabled={() => true} onRun={() => undefined} />);
+  assert.ok(actions(FULL).includes('data-testid="plan-note"'));
+  assert.ok(actions(REDUCED).includes('data-testid="plan-note"'), 'the reduced fixture lists plan.reject');
+  const noReject = { ...REDUCED, methods: (REDUCED.methods ?? []).filter((m) => m !== 'plan.reject') };
+  assert.ok(!actions(noReject).includes('data-testid="plan-note"'));
+  assert.ok(!actions(noReject).includes('data-testid="plan-reject"'));
+  assert.ok(!actions(REDUCED).includes('data-testid="plan-approve"'));
+
+  const steps = (caps: Capabilities | null) =>
+    within(
+      caps,
+      <StepList
+        steps={[{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -6000 }]}
+        ticked={new Set()}
+        onToggle={() => undefined}
+        trackName={() => undefined}
+        disabled={false}
+      />,
+    );
+  assert.ok(steps(FULL).includes('type="checkbox"'));
+  assert.ok(!steps(REDUCED).includes('type="checkbox"'), 'no plan.approve, no partial approval');
+  assert.ok(steps(REDUCED).includes('data-testid="step-0"'), 'the steps are still listed');
 });
 
 // The engine's side: auth, then engine.capabilities from `answer`; nothing else is answered.
