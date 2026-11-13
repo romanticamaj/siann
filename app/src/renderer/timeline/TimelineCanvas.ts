@@ -56,6 +56,9 @@ export interface TimelineTestHooks {
   peakColumns(clipId: string): { drawn: number; nonZero: number };
   view(): Viewport;
   lanes(): string[];
+  // The ruler labels of the last frame, left to right (the canvas's only
+  // localized text).
+  rulerLabels(): string[];
 }
 
 interface Drag {
@@ -89,6 +92,7 @@ export class TimelineCanvas {
   #rects: ClipRect[] = [];
   #resize: ResizeObserver | null = null;
   #destroyed = false;
+  #rulerLabels: string[] = [];
 
   constructor(options: TimelineCanvasOptions) {
     this.#options = options;
@@ -164,6 +168,7 @@ export class TimelineCanvas {
       peakColumns: (clipId) => ({ ...(this.#columns.get(clipId) ?? { drawn: 0, nonZero: 0 }) }),
       view: () => ({ ...this.#view }),
       lanes: () => [...(this.#options.model.getSnapshot()?.trackOrder ?? [])],
+      rulerLabels: () => [...this.#rulerLabels],
     };
   }
 
@@ -390,11 +395,15 @@ export class TimelineCanvas {
     const secondsPerPixel = view.framesPerPixel / rate;
     const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60].find((s) => s / secondsPerPixel >= 60) ?? 120;
     const scroll = Number(view.scrollFrames) / rate;
+    const labels: string[] = [];
     for (let t = Math.ceil(scroll / step) * step; (t - scroll) / secondsPerPixel < width; t += step) {
       const x = (t - scroll) / secondsPerPixel;
       ctx.fillRect(x, RULER_HEIGHT - 6, 1, 6);
-      ctx.fillText(words('timeline.seconds', { value: formatSeconds(t) }), x + 2, 11);
+      const label = words('timeline.seconds', { value: formatSeconds(t) });
+      labels.push(label);
+      ctx.fillText(label, x + 2, 11);
     }
+    this.#rulerLabels = labels;
   }
 
   // The clip's waveform: one min/max column per pixel from the level the zoom
