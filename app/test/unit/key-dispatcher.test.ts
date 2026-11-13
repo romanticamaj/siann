@@ -90,6 +90,24 @@ test('isTextField: input, textarea, select and contenteditable', () => {
   assert.equal(isTextField(null), false);
 });
 
+test('while the engine is disconnected no zone command runs; the window layout and focus commands still do', () => {
+  const offline = (over: Partial<KeyInput>) => input({ ...over, offline: true });
+  // Delete in the project zone would remove the selected clip (a request).
+  assert.equal(resolveKey(offline({ code: 'Delete', key: 'Delete' }), CUBASE_PRESET), null);
+  assert.equal(resolveKey(offline({ code: 'Backspace', key: 'Backspace' }), CUBASE_PRESET), null);
+  assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete' }), CUBASE_PRESET)?.commandId, 'edit.delete');
+  // The project zone's Escape gives way to the window's.
+  assert.equal(resolveKey(offline({ code: 'Escape', key: 'Escape' }), CUBASE_PRESET)?.commandId, 'focus.zoneRoot');
+  // Layout and focus keys send nothing and stay.
+  assert.equal(resolveKey(offline({ code: 'F3', key: 'F3' }), CUBASE_PRESET)?.commandId, 'zone.lower.mixconsole');
+  assert.equal(
+    resolveKey(offline({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true, alt: true } }), CUBASE_PRESET)?.commandId,
+    'zone.right.plans',
+  );
+  assert.equal(resolveKey(offline({ code: 'Tab', key: 'Tab' }), CUBASE_PRESET)?.commandId, 'focus.next');
+  assert.equal(resolveKey(offline({ code: 'F6', key: 'F6' }), CUBASE_PRESET)?.commandId, 'focus.nextZone');
+});
+
 test('Opt+I on macOS toggles the left zone (event.key is a dead character there)', () => {
   const optI = input({ code: 'KeyI', key: 'ˆ', modifiers: { ...NONE, alt: true }, platform: 'mac' });
   assert.equal(resolveKey(optI, CUBASE_PRESET)?.commandId, 'zone.left.toggle');

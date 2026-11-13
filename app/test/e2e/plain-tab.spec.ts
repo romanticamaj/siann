@@ -65,6 +65,9 @@ test('the bundle renders its disconnected state in a plain tab without an except
     await expect(page.getByTestId(`zone-${zone}`)).toBeAttached();
   }
   await expect(page.getByTestId('zone-project')).toHaveAttribute('data-visible', 'true');
+  // No engine: the disconnected banner (m5-ui-connection) shows, and the zones are inert.
+  await expect(page.getByTestId('connection-banner')).toBeVisible();
+  await expect(page.getByTestId('zone-project')).toHaveAttribute('inert', '');
   // The bundled fonts load from the same origin.
   const loaded = await page.evaluate(async () => [
     (await document.fonts.load('12px Inter')).filter((face) => face.status === 'loaded').length,
