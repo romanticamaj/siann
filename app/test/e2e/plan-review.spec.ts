@@ -9,13 +9,14 @@
 // second protocol client watches the engine. Waits are Playwright condition
 // waits with bounded timeouts, never sleeps.
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -81,7 +82,7 @@ test.beforeEach(async () => {
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'Plans', '--rate', '48000');
   for (const id of ['trk_a', 'trk_b']) cli('exec', bundle, JSON.stringify({ op: 'track.add', trackId: id, name: id, channels: 2 }));
-  app = await electron.launch({
+  app = await launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
     env: {

@@ -1,16 +1,14 @@
 // The plan review's diff and step list (m5-plan-review; spec "Frontend", plan
 // review; docs/schemas/plan-v1.md, plan.preview): rows from a plan.preview
-// answer, stale marks from plan.status, one-line step summaries, and the
-// partial-approval selection. Pure functions over protocol answers.
+// answer, stale marks from plan.status, and the partial-approval selection
+// (step wording: i18n-describe.test.ts; dB: i18n-format.test.ts). Pure functions over protocol answers.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   diffRows,
-  formatMilliDb,
   selection,
-  stepSummary,
   type PlanPreview,
 } from '../../src/renderer/plans/diff';
 
@@ -74,29 +72,6 @@ test('stale rows come from plan.status stale, also for a ref the preview lacks',
   const extra = rows.find((r) => r.ref === 'track:trk_gone')!;
   assert.equal(extra.kind, 'unchanged');
   assert.equal(extra.before, null);
-});
-
-test('formatMilliDb prints decibels with two decimals (the gain is in milli-dB)', () => {
-  assert.equal(formatMilliDb(-600), '-0.60 dB');
-  assert.equal(formatMilliDb(-6000), '-6.00 dB');
-  assert.equal(formatMilliDb(0), '0.00 dB');
-  assert.equal(formatMilliDb(1250), '+1.25 dB');
-  assert.equal(formatMilliDb(-2147483648), '-inf dB');
-});
-
-test('step summaries name what each op does', () => {
-  const names = (id: string) => (id === 'trk_a' ? 'Lead' : undefined);
-  assert.equal(stepSummary({ op: 'track.add', trackId: 'trk_b', name: 'Bass', channels: 2 }, names), 'Add track Bass');
-  assert.equal(
-    stepSummary({ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -6000 }, names),
-    'Set gain of Lead to -6.00 dB',
-  );
-  assert.equal(stepSummary({ op: 'track.set_gain', trackId: 'trk_x', gainMilliDb: -600 }, names), 'Set gain of trk_x to -0.60 dB');
-  assert.equal(stepSummary({ op: 'track.remove', trackId: 'trk_a' }, names), 'Remove track Lead');
-  assert.equal(stepSummary({ op: 'track.set_mute', trackId: 'trk_a', mute: true }, names), 'Mute Lead');
-  assert.equal(stepSummary({ op: 'track.set_pan', trackId: 'trk_a', pan: -2500 }, names), 'Set pan of Lead to -2500');
-  // Anything else shows its op and parameters.
-  assert.equal(stepSummary({ op: 'clip.remove', clipId: 'clp_1' }, names), 'clip.remove {"clipId":"clp_1"}');
 });
 
 test('Approve selected is enabled only for a non-empty proper subset and yields sorted indexes', () => {

@@ -7,12 +7,14 @@
 // with a second protocol client. Waits are Playwright condition waits with
 // bounded timeouts, never sleeps.
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -86,7 +88,7 @@ function place(clipId: string, trackId: string, mediaId: string, position: numbe
 
 async function launch(): Promise<void> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
-  app = await electron.launch({
+  app = await launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
     env: {

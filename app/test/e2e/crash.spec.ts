@@ -10,10 +10,12 @@
 // Skips unless SIANN_HOSTILE_PLUGIN_CLAP is set (check-all --app and the CI app job
 // set it).
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -120,7 +122,7 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
   // The plugin's build directory is a --plugin-dir, and the approval below lands in
   // this test's own <userData>/plugin-registry.json, which the restarted engine
   // reads (m5-plugin-registry).
-  app = await electron.launch({
+  app = await launchElectron({
     args: [MAIN, `--user-data-dir=${path.join(sessionDir, 'user-data')}`],
     cwd: APP_DIR,
     env: {
