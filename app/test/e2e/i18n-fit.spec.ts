@@ -2,7 +2,9 @@
 // the pseudo-locale that pads every English string by 40 %, at 1440x900 and
 // 1024x700, on a session seeded like the tour's (its seven tracks and mixer
 // settings) with an agent's plan selected, no labelled control is wider
-// inside than it is shown (scrollWidth <= clientWidth). The pseudo-locale is
+// inside than it is shown (scrollWidth <= clientWidth), and no button, header
+// cell or term breaks its label over lines (Chinese wraps between any two
+// characters, so a narrow column stacks a two-character header vertically). The pseudo-locale is
 // reachable only through the test hooks (window.__siannLocale under
 // SIANN_SHELL_TEST=1). Waits are Playwright condition waits, never sleeps.
 
@@ -19,6 +21,7 @@ const SIZES = [
 ];
 const LOCALES = ['en', 'zh-Hant', 'zh-Hans', 'pseudo'] as const;
 const LABELLED = 'button, select, summary, label, th, dt, [role=tab], [role=button]';
+const ONE_LINE = 'button, summary, th, dt, [role=tab]';
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -75,7 +78,25 @@ async function overflowing(): Promise<string[]> {
   }, LABELLED);
 }
 
-test('no labelled control overflows in any locale at either window size', async () => {
+// Labels drawn on more than one line: the line boxes of each text node.
+async function wrapped(): Promise<string[]> {
+  return page.evaluate((selector) => {
+    const out: string[] = [];
+    for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+      if (el.getClientRects().length === 0) continue;
+      for (const node of el.childNodes) {
+        if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const tops = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+        if (tops.size > 1) out.push(`${el.tagName.toLowerCase()} "${node.textContent.trim()}" on ${tops.size} lines`);
+      }
+    }
+    return out;
+  }, ONE_LINE);
+}
+
+test('no labelled control overflows or wraps its label in any locale at either window size', async () => {
   test.setTimeout(150_000);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-'));
   const sessionDir = seedBundle(scratch, TRACKS);
@@ -99,6 +120,7 @@ test('no labelled control overflows in any locale at either window size', async 
     for (const size of SIZES) {
       await resize(size);
       for (const entry of await overflowing()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await wrapped()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
     }
   }
   expect(failures).toEqual([]);
