@@ -4,6 +4,7 @@
 // mixer's meters are MeterCanvas instances its strips mount. Plan review
 // (m5-plan-review) is chrome over the PlanStore and plan.preview.
 
+import { useT } from './i18n/t';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
 import type { PlanStore } from './model/plan-store';
@@ -25,9 +26,10 @@ export interface AppProps {
 }
 
 export function App({ client, gestures, realtime, peaks, plans, onTimelineHooks }: AppProps) {
+  const t = useT();
   return (
     <>
-      <h1>SIANN</h1>
+      <h1>{t('app.title')}</h1>
       <StatusPanel client={client} />
       <Timeline client={client} peaks={peaks} onHooks={onTimelineHooks} />
       <Mixer client={client} gestures={gestures} realtime={realtime} />

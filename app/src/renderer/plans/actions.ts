@@ -7,6 +7,7 @@
 // was. Audition and the Hear buttons need an auditioner: while the side heard
 // is unknown (null) they are not offered.
 
+import { translator, type T } from '../i18n/t';
 import type { PlanEntry } from '../model/plan-store';
 import { ProtocolError } from '../model/session-client';
 
@@ -26,7 +27,18 @@ export type PlanAction =
 
 export type ActionOutcome =
   | { readonly ok: true; readonly result: unknown }
-  | { readonly ok: false; readonly code: string; readonly message: string; readonly changedEntities: readonly string[] };
+  | {
+      readonly ok: false;
+      // null for an error without a protocol code.
+      readonly code: string | null;
+      // "<code>: <engine message> (<changed entities>)", in the engine's English.
+      readonly message: string;
+      // The engine's message alone, and the " (<changed entities>)" suffix,
+      // for a line built through the catalogs (i18n/errors.ts refusalLine).
+      readonly engineMessage: string;
+      readonly detail: string;
+      readonly changedEntities: readonly string[];
+    };
 
 // The buttons a plan offers, in display order, given the side heard.
 export type ActionId =
@@ -52,11 +64,11 @@ export function availableActions(plan: PlanEntry, heard: string | null): ActionI
 // What the review shows instead of a diff for a plan that has landed: an
 // applied plan previews against a head that already holds its effects (one
 // that added an entity answers already_exists), so it is not previewed.
-// Null for a plan that previews.
-export function landedLabel(plan: PlanEntry): string | null {
-  const at = plan.appliedRevision !== undefined ? ` at ${plan.appliedRevision}` : '';
-  if (plan.state === 'applied') return `applied${at}`;
-  if (plan.state === 'rolled_back') return at ? `rolled back (applied${at})` : 'rolled back';
+// Null for a plan that previews. Worded through `t` (English by default).
+export function landedLabel(plan: PlanEntry, t: T = translator('en')): string | null {
+  const revision = plan.appliedRevision;
+  if (plan.state === 'applied') return revision !== undefined ? t('plans.appliedAt', { revision }) : t('plans.applied');
+  if (plan.state === 'rolled_back') return revision !== undefined ? t('plans.rolledBackAt', { revision }) : t('plans.rolledBack');
   return null;
 }
 
@@ -72,9 +84,16 @@ function refused(error: unknown): ActionOutcome {
   if (error instanceof ProtocolError) {
     const changedEntities = error.code === 'plan_stale' ? changedEntitiesOf(error.data) : [];
     const detail = changedEntities.length > 0 ? ` (${changedEntities.join(', ')})` : '';
-    return { ok: false, code: error.code, message: `${error.code}: ${error.message}${detail}`, changedEntities };
+    return {
+      ok: false,
+      code: error.code,
+      message: `${error.code}: ${error.message}${detail}`,
+      engineMessage: error.message,
+      detail,
+      changedEntities,
+    };
   }
-  return { ok: false, code: 'error', message: String(error), changedEntities: [] };
+  return { ok: false, code: null, message: String(error), engineMessage: String(error), detail: '', changedEntities: [] };
 }
 
 export async function runAction(client: ActionClient, action: PlanAction): Promise<ActionOutcome> {

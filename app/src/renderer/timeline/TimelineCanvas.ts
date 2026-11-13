@@ -7,8 +7,11 @@
 // end in one command.execute each (timeline/commands.ts), with the revision
 // of the snapshot the gesture began on; the model then follows
 // session.changed (structural edits are never optimistic), and a refusal is
-// shown as the last error and the gesture discarded.
+// shown as the last error and the gesture discarded. The ruler's unit comes
+// from the catalogs through the `t` it is given; it redraws on a locale change.
 
+import { formatSeconds } from '../format';
+import { translator, type T } from '../i18n/t';
 import type { MediaEntity } from '../model/document';
 import { chooseLevel, columnRange } from '../model/peaks';
 import type { PeaksCache } from '../model/peaks-cache';
@@ -20,8 +23,20 @@ export interface TimelineState {
   readonly selectedClipId: string | null;
   // The media a click on a lane places (the media pool's armed entry).
   readonly placingMediaId: string | null;
-  // The last refusal, as "<code>: <message>"; empty after a command succeeds.
-  readonly error: string;
+  // The last refusal (its protocol code, null for none, and the engine's
+  // message); null after a command succeeds. The chrome words it.
+  readonly error: TimelineRefusal | null;
+}
+
+export interface TimelineRefusal {
+  readonly code: string | null;
+  readonly message: string;
+}
+
+// The locale the canvas draws its own words in, and its changes.
+export interface TimelineLocale {
+  t(): T;
+  subscribe(listener: () => void): () => void;
 }
 
 export interface TimelineCanvasOptions {
@@ -31,6 +46,8 @@ export interface TimelineCanvasOptions {
   // command.execute; rejects with an error carrying `code`.
   readonly execute: (commands: TimelineCommand['commands'], expectedRevision: string) => Promise<unknown>;
   readonly framesPerPixel?: number;
+  // English, unchanging, when absent.
+  readonly locale?: TimelineLocale;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -64,7 +81,7 @@ export class TimelineCanvas {
   readonly #canvas: HTMLCanvasElement;
   readonly #listeners = new Set<() => void>();
   readonly #unsubscribe: Array<() => void> = [];
-  #state: TimelineState = { selectedClipId: null, placingMediaId: null, error: '' };
+  #state: TimelineState = { selectedClipId: null, placingMediaId: null, error: null };
   #view: Viewport;
   #drag: Drag | null = null;
   #frame: number | null = null;
@@ -85,6 +102,7 @@ export class TimelineCanvas {
     };
     this.#unsubscribe.push(options.model.subscribe(() => this.#modelChanged()));
     this.#unsubscribe.push(options.peaks.subscribe(() => this.invalidate()));
+    if (options.locale) this.#unsubscribe.push(options.locale.subscribe(() => this.invalidate()));
     const canvas = this.#canvas;
     const down = (e: PointerEvent) => this.#pointerDown(e);
     const move = (e: PointerEvent) => this.#pointerMove(e);
@@ -269,13 +287,14 @@ export class TimelineCanvas {
       if (!command) return;
       try {
         await this.#options.execute(command.commands, command.expectedRevision);
-        this.#update({ error: '' });
+        this.#update({ error: null });
         return;
       } catch (error) {
         const code = (error as { code?: unknown }).code;
         if (gesture.kind === 'place' && code === 'already_exists' && attempt < PLACE_ATTEMPTS) continue;
-        const text = typeof code === 'string' ? `${code}: ${(error as Error).message}` : String(error);
-        this.#update({ error: text });
+        const refusal: TimelineRefusal =
+          typeof code === 'string' ? { code, message: (error as Error).message } : { code: null, message: String(error) };
+        this.#update({ error: refusal });
         return;
       }
     }
@@ -363,6 +382,7 @@ export class TimelineCanvas {
   #drawRuler(ctx: CanvasRenderingContext2D, snapshot: Snapshot, width: number): void {
     const rate = snapshot.root?.sampleRate ?? 48000;
     const view = this.#view;
+    const words = this.#options.locale?.t() ?? translator('en');
     ctx.fillStyle = '#15171b';
     ctx.fillRect(0, 0, width, RULER_HEIGHT);
     ctx.fillStyle = '#8a93a3';
@@ -373,7 +393,7 @@ export class TimelineCanvas {
     for (let t = Math.ceil(scroll / step) * step; (t - scroll) / secondsPerPixel < width; t += step) {
       const x = (t - scroll) / secondsPerPixel;
       ctx.fillRect(x, RULER_HEIGHT - 6, 1, 6);
-      ctx.fillText(`${Number(t.toFixed(2))}s`, x + 2, 11);
+      ctx.fillText(words('timeline.seconds', { value: formatSeconds(t) }), x + 2, 11);
     }
   }
 

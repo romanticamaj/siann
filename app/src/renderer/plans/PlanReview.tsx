@@ -8,10 +8,14 @@
 // Audition and the Hear buttons only with an auditioner); each is one protocol
 // request (Audition two), and the list follows plan.changed, never an
 // optimistic state. A refusal (plan_stale with its entities) is shown on the
-// error line.
+// error line. Every word comes from the catalogs (m5-ui-i18n); hashes, branch
+// names, refs and the names in the agent's steps are shown as they are.
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
+import type { MessageKey } from '../i18n/en';
+import { refusalLine } from '../i18n/errors';
+import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
 import { ProtocolError, type SessionClient } from '../model/session-client';
 import { availableActions, landedLabel, runAction, type ActionId, type PlanAction } from './actions';
@@ -28,7 +32,9 @@ export function hash8(hash: string): string {
   return hash.replace(/^sha256:/, '').slice(0, 8);
 }
 
-type PreviewState = { readonly plan: string; readonly preview: PlanPreview } | { readonly plan: string; readonly error: string };
+type Refusal = { readonly code: string | null; readonly message: string; readonly detail: string };
+
+type PreviewState = { readonly plan: string; readonly preview: PlanPreview } | { readonly plan: string; readonly error: Refusal };
 
 function usePlans(plans: PlanStore) {
   return useSyncExternalStore(
@@ -63,8 +69,11 @@ function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision
       },
       (error: unknown) => {
         if (!current) return;
-        const text = error instanceof ProtocolError ? `${error.code}: ${error.message}` : String(error);
-        setState({ plan: hash, error: text });
+        const refusal: Refusal =
+          error instanceof ProtocolError
+            ? { code: error.code, message: error.message, detail: '' }
+            : { code: null, message: String(error), detail: '' };
+        setState({ plan: hash, error: refusal });
       },
     );
     return () => {
@@ -74,16 +83,16 @@ function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision
   return state !== null && state.plan === hash ? state : null;
 }
 
-const BUTTONS: ReadonlyArray<{ id: ActionId; testId: string; label: string }> = [
-  { id: 'approve', testId: 'plan-approve', label: 'Approve' },
-  { id: 'approveSelected', testId: 'plan-approve-selected', label: 'Approve selected' },
-  { id: 'reject', testId: 'plan-reject', label: 'Reject' },
-  { id: 'apply', testId: 'plan-apply', label: 'Apply' },
-  { id: 'audition', testId: 'plan-audition', label: 'Audition' },
-  { id: 'hearMain', testId: 'plan-hear-main', label: 'Hear main' },
-  { id: 'hearProposal', testId: 'plan-hear-proposal', label: 'Hear proposal' },
-  { id: 'merge', testId: 'plan-merge', label: 'Merge' },
-  { id: 'discard', testId: 'plan-discard', label: 'Discard' },
+const BUTTONS: ReadonlyArray<{ id: ActionId; testId: string; label: MessageKey }> = [
+  { id: 'approve', testId: 'plan-approve', label: 'plans.approve' },
+  { id: 'approveSelected', testId: 'plan-approve-selected', label: 'plans.approveSelected' },
+  { id: 'reject', testId: 'plan-reject', label: 'plans.reject' },
+  { id: 'apply', testId: 'plan-apply', label: 'plans.apply' },
+  { id: 'audition', testId: 'plan-audition', label: 'plans.audition' },
+  { id: 'hearMain', testId: 'plan-hear-main', label: 'plans.hearMain' },
+  { id: 'hearProposal', testId: 'plan-hear-proposal', label: 'plans.hearProposal' },
+  { id: 'merge', testId: 'plan-merge', label: 'plans.merge' },
+  { id: 'discard', testId: 'plan-discard', label: 'plans.discard' },
 ];
 
 export function PlanReview({ client, plans }: PlanReviewProps) {
@@ -93,13 +102,15 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
   const [ticked, setTicked] = useState<ReadonlySet<number>>(new Set());
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Refusal | null>(null);
+  const locale = useLocale();
+  const t = translator(locale);
   const plan = selected !== null ? snapshot.byHash.get(selected) : undefined;
   const preview = usePreview(client, plan, model?.revision ?? null);
 
   useEffect(() => {
     setTicked(new Set());
-    setError('');
+    setError(null);
   }, [selected]);
 
   const trackName = (id: string): string | undefined => {
@@ -110,7 +121,7 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
   // availableActions leaves out Audition and the Hear buttons while the side
   // heard is unknown (no auditioner), so enabled() disables them there.
   const available = plan ? availableActions(plan, snapshot.heard) : [];
-  const landed = plan ? landedLabel(plan) : null;
+  const landed = plan ? landedLabel(plan, t) : null;
   const chosen = selection(ticked, plan?.steps.length ?? 0);
 
   const actionFor = (id: ActionId, entry: PlanEntry): PlanAction | null => {
@@ -144,7 +155,7 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
     setBusy(true);
     void runAction(client, action).then((outcome) => {
       setBusy(false);
-      setError(outcome.ok ? '' : outcome.message);
+      setError(outcome.ok ? null : { code: outcome.code, message: outcome.engineMessage, detail: outcome.detail });
       if (outcome.ok && (id === 'approveSelected' || id === 'reject')) setTicked(new Set());
       if (outcome.ok && id === 'reject') setNote('');
     });
@@ -154,9 +165,9 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
     !busy && available.includes(id) && (id !== 'approveSelected' || chosen.canApproveSelected);
 
   return (
-    <section className="plan-review" data-testid="plan-review" aria-label="Plan review">
+    <section className="plan-review" data-testid="plan-review" aria-label={t('plans.label')}>
       <h2>
-        Plans <span className="plan-heard-label">heard:</span>{' '}
+        {t('plans.title')} <span className="plan-heard-label">{t('plans.heard')}</span>{' '}
         <span className="plan-heard" data-testid="plan-heard">
           {snapshot.heard ?? ''}
         </span>
@@ -170,16 +181,20 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
               aria-pressed={entry.hash === selected}
               onClick={() => setSelected(entry.hash)}
             >
-              <code>{hash8(entry.hash)}</code> {entry.steps.length} step{entry.steps.length === 1 ? '' : 's'}
-              {entry.parentPlan ? ` (part of ${hash8(entry.parentPlan)})` : ''}{' '}
-              <span className={`plan-state plan-state-${entry.state}`} data-testid={`plan-state-${hash8(entry.hash)}`}>
-                {entry.state}
+              <code>{hash8(entry.hash)}</code> {t('plans.steps', { count: entry.steps.length })}
+              {entry.parentPlan ? ` ${t('plans.partOf', { plan: hash8(entry.parentPlan) })}` : ''}{' '}
+              <span
+                className={`plan-state plan-state-${entry.state}`}
+                data-testid={`plan-state-${hash8(entry.hash)}`}
+                data-state={entry.state}
+              >
+                {t(`planState.${entry.state}`)}
               </span>
               {entry.proposalBranch ? (
                 <span className="plan-branch" data-testid={`plan-branch-${hash8(entry.hash)}`}>
                   {' '}
                   {entry.proposalBranch}
-                  {snapshot.heard === entry.proposalBranch ? ' (heard)' : ''}
+                  {snapshot.heard === entry.proposalBranch ? ` ${t('plans.heardMark')}` : ''}
                 </span>
               ) : null}
             </button>
@@ -204,7 +219,7 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
           />
           <div className="plan-actions">
             <label>
-              Note{' '}
+              {t('plans.note')}{' '}
               <input data-testid="plan-note" value={note} onChange={(event) => setNote(event.target.value)} />
             </label>
             {BUTTONS.map((button) => (
@@ -215,12 +230,12 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
                 disabled={!enabled(button.id)}
                 onClick={() => run(button.id)}
               >
-                {button.label}
+                {t(button.label)}
               </button>
             ))}
           </div>
-          <p className="plan-error" data-testid="plan-error" role="status">
-            {error}
+          <p className="plan-error" data-testid="plan-error" role="status" data-code={error?.code ?? undefined}>
+            {error ? refusalLine(error.code, error.message, locale, error.detail) : ''}
           </p>
           {landed !== null ? (
             <p className="plan-landed" data-testid="plan-landed">
@@ -229,8 +244,8 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
           ) : null}
           {preview && 'preview' in preview ? <PlanDiff preview={preview.preview} stale={plan.stale} /> : null}
           {preview && 'error' in preview ? (
-            <p className="plan-preview-error" data-testid="plan-preview-error">
-              {preview.error}
+            <p className="plan-preview-error" data-testid="plan-preview-error" data-code={preview.error.code ?? undefined}>
+              {refusalLine(preview.error.code, preview.error.message, locale)}
             </p>
           ) : null}
         </div>
