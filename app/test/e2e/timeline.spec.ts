@@ -328,7 +328,7 @@ test('delete issues clip.remove', async () => {
   const box = await canvasBox();
   const before = await revision();
   await page.mouse.click(box.x + target.x + target.width / 2, box.y + target.y + target.height / 2);
-  await expect(page.getByTestId('selected-clip')).toHaveText('clp_si');
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_si');
   // Selecting is no command.
   await expect(page.getByTestId('revision')).toHaveText(`r${before}`);
   await page.getByTestId('delete-clip').click();
@@ -336,7 +336,7 @@ test('delete issues clip.remove', async () => {
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   expect(await fetchClip('clp_si')).toBeNull();
   expect(await fetchClip('clp_sq')).not.toBeNull();
-  await expect(page.getByTestId('selected-clip')).toHaveText('');
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', '');
 });
 
 test('a stale revision is refused and not retried', async () => {

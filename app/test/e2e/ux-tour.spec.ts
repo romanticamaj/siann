@@ -284,7 +284,7 @@ async function scrollTop(): Promise<void> {
 
 type Rect = { clipId: string; trackId: string; x: number; y: number; width: number; height: number };
 
-async function timeline<T>(name: 'clips' | 'peakColumns' | 'view', arg?: string): Promise<T> {
+async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX', arg?: string): Promise<T> {
   return page.evaluate(
     ({ name: called, arg: value }) => {
       const hooks = (window as unknown as { __siannTimeline?: Record<string, (a?: string) => unknown> }).__siannTimeline;
@@ -469,6 +469,7 @@ test('UX screenshot tour', async () => {
   for (const id of ['trk_kick', 'trk_voxlead']) {
     await expect.poll(async () => Number((await page.getByTestId(`meter-${id}`).getAttribute('data-peak')) ?? '0')).toBeGreaterThan(0.05);
   }
+  await expect.poll(async () => (await timeline<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
   const peaks: string[] = [];
   for (const track of TRACKS) {
     const peak = Number((await page.getByTestId(`meter-${track.id}`).getAttribute('data-peak')) ?? '0');
@@ -477,7 +478,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Playing meters',
-    `Transport playing from 1.2 s on the fake device with Vox Lead's solo clicked off (FX stays muted); the timeline and the mixer are both in view. Meter peaks (linear) at the shot: ${peaks.join(', ')}. The timeline draws no playhead.`,
+    `Transport playing from 1.2 s on the fake device with Vox Lead's solo clicked off (FX stays muted); the timeline and the mixer are both in view. Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px.`,
   );
   await watcher.call('transport.stop');
   await solo.click();
@@ -513,8 +514,8 @@ test('UX screenshot tour', async () => {
   await page.mouse.wheel(0, 400);
   await painted(page);
   expect(await page.evaluate(() => [window.scrollY, document.documentElement.scrollHeight - document.documentElement.clientHeight])).toEqual([0, 0]);
-  const inside = await page.getByTestId('event-display').evaluate((el) => el.scrollTop);
-  await shoot(page, 'Page scrolled to mixer', `A vertical wheel over the timeline: the page does not scroll (the zones keep their place); the event display scrolled ${inside} px inside. The mixer is always in the lower zone.`);
+  const inside = (await timeline<{ scrollY?: number }>('view')).scrollY ?? 0;
+  await shoot(page, 'Page scrolled to mixer', `A vertical wheel over the timeline: the page does not scroll (the zones keep their place); the lanes scrolled ${inside} px under the ruler (a transform, not a DOM scroll). The mixer is always in the lower zone.`);
   await scrollTop();
 
   // ---- 4. A fader held mid-drag (one gesture, nothing committed yet).
@@ -542,8 +543,8 @@ test('UX screenshot tour', async () => {
   const cbox = await canvasBox();
   const grab = { x: cbox.x + target.x + target.width / 2, y: cbox.y + target.y + target.height / 2 };
   await page.mouse.click(grab.x, grab.y);
-  await expect(page.getByTestId('selected-clip')).toHaveText('clp_06_keys');
-  await shoot(page, 'Clip selected', 'The Keys clip clicked: drawn selected; the selection and the enabled Delete clip button show beside the canvas.');
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
+  await shoot(page, 'Clip selected', 'The Keys clip clicked: a 2 px outline on the overlay; the info line shows its start, end, length, offset and gain, and the Delete clip button is enabled.');
   await page.mouse.move(grab.x, grab.y);
   await page.mouse.down();
   await page.mouse.move(grab.x + 60, grab.y, { steps: 5 });

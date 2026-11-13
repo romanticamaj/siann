@@ -1,5 +1,6 @@
 // The zone shell end to end (m5-ui-shell; UI redesign spec 2.3, 2.4, 3.6):
-// the page never scrolls and each zone scrolls inside; the three zone
+// the page never scrolls and each zone scrolls inside (the project zone by
+// a transform in its event display, m5-ui-arrange); the three zone
 // boundaries drag within their ranges, collapse below their minimums,
 // restore by button and key, work from the keyboard (reached by real key
 // presses from their zone; arrows, Shift+arrows, Home, End, Enter) and reset
@@ -187,7 +188,7 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
       if (!(await visible(zone))) await page.getByTestId(`zone-button-${zone}`).click();
       await expect(page.getByTestId(`zone-${zone}`)).toHaveAttribute('data-visible', 'true');
     }
-    for (const zone of [...ZONES, 'project'] as const) {
+    for (const zone of ZONES) {
       const body = page.getByTestId(`zone-${zone}-body`);
       const result = await body.evaluate((el) => {
         const filler = document.createElement('div');
@@ -207,6 +208,21 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
       const root = await page.evaluate(() => [document.documentElement.scrollHeight, document.documentElement.clientHeight]);
       expect(root[0], `${zone}: the page did not grow`).toBe(root[1]);
     }
+    // The project zone scrolls by a transform in the event display, never by
+    // DOM overflow (m5-ui-arrange; spec 5.2): its body clips, and the page still does not grow.
+    const project = await page.getByTestId('zone-project-body').evaluate((el) => {
+      const filler = document.createElement('div');
+      filler.style.height = '5000px';
+      el.appendChild(filler);
+      el.scrollTop = 100;
+      const result = { overflowY: getComputedStyle(el).overflowY, scrolled: el.scrollTop };
+      filler.remove();
+      el.scrollTop = 0;
+      return result;
+    });
+    expect(project.overflowY).toBe('hidden');
+    const root = await page.evaluate(() => [document.documentElement.scrollHeight, document.documentElement.clientHeight]);
+    expect(root[0], 'project: the page did not grow').toBe(root[1]);
   }
 });
 
