@@ -343,6 +343,19 @@ Prepared sessionSetTempo(const Document& doc, const Command& command) {
     return {{kRoot}, doc.withRoot(std::move(root))};
 }
 
+// The left and right locators (m5-ui-engine-loop-click), audio-domain frames
+// as decimal strings. A number or a malformed string is invalid_params (the
+// field reader's ModelError); an order or range problem is the document's
+// invalid_locators.
+Prepared sessionSetLocators(const Document& doc, const Command& command) {
+    Params p(command);
+    model::Locators value;
+    value.left = p->int64String("left");
+    value.right = p->int64String("right");
+    p.finish();
+    return {{EntityRef{EntityType::locators, std::string(model::kLocatorsId)}}, doc.withLocators(value)};
+}
+
 using Handler = Prepared (*)(const Document&, const Command&);
 
 const std::map<std::string, Handler, std::less<>>& registry() {
@@ -367,6 +380,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
         {"plugin.remove", &pluginRemove},
         {"plugin.set_bypass", &pluginSetBypass},
         {"session.rename", &sessionRename},
+        {"session.set_locators", &sessionSetLocators},
         {"session.set_tempo", &sessionSetTempo},
         {"track.add", &trackAdd},
         {"track.remove", &trackRemove},
