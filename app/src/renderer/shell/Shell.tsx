@@ -4,14 +4,20 @@
 // and turns pointer drags into sizes; the reducer of layout.ts owns the
 // layout. A drag that ends reports the zone's size to the reducer (below the
 // minimum: collapsed), and every render brings the panels to the effective
-// layout. Arrow keys on a focused boundary (8 px) and double-click (the
-// default size) go to the reducer too; the library's own keyboard steps,
-// double-click and persistence are not used, so the layout lives under one
-// key (siann.layout.v1) and nowhere else.
+// layout. A focused boundary's keys (arrows 8 px, Shift+arrows 32 px, Home
+// and End the minimum and maximum, Enter the default) and double-click go to
+// the reducer too; the library's own keyboard steps, double-click and
+// persistence are not used, so the layout lives under one key
+// (siann.layout.v1) and nowhere else. A boundary is a role="separator" whose
+// aria values are its zone's size, minimum and maximum in px.
 //
-// Keyboard focus is per zone: a click focuses its zone, Tab and Shift+Tab
-// cycle the visible zones, and the one keydown listener on the window sends
-// each key through the dispatcher to the focused zone's commands first, then
+// Keyboard focus is per zone (zone-focus.ts): a click focuses its zone; Tab
+// and Shift+Tab cycle the visible zones from a zone or the page and walk the
+// controls of a zone, its boundary among them, from inside it; F6 and
+// Shift+F6 cycle the zones from anywhere; Enter enters a zone, Escape returns
+// to it. The focus keys run in a capture listener on the window, before any
+// element's own handler; every other key goes through the dispatcher in one
+// bubbling listener on the window, to the focused zone's commands first, then
 // to the window's. Under 1280 px the right zone is an overlay drawer.
 
 import {
@@ -29,9 +35,10 @@ import {
 import { Group, Panel, Separator, usePanelRef, type LayoutChangedMeta, type PanelImperativeHandle } from 'react-resizable-panels';
 
 import { useT } from '../i18n/t';
-import type { CommandRegistry, ZoneScope } from '../keys/commands';
+import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
 import { isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
+import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
@@ -55,6 +62,42 @@ import { TopBar } from './TopBar';
 const FOCUS_ORDER: readonly ZoneScope[] = ['left', 'project', 'lower', 'right'];
 // A drag this far below a zone's minimum collapses it.
 const COLLAPSE_THRESHOLD = 4;
+// The focus keys run before any element's handler; the rest after.
+const FOCUS_PRESET = CUBASE_PRESET.filter((b) => FOCUS_COMMANDS.has(b.commandId));
+const COMMAND_PRESET = CUBASE_PRESET.filter((b) => !FOCUS_COMMANDS.has(b.commandId));
+const TABBABLE = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+
+function isZoneScope(value: string | undefined): value is ZoneScope {
+  return value === 'left' || value === 'project' || value === 'lower' || value === 'right';
+}
+
+// Where the focus is: a zone itself, a control inside one (its boundary
+// included), the page, a modal dialog, or elsewhere (top bar, status bar).
+function placeOf(target: EventTarget | null): FocusPlace {
+  if (!(target instanceof HTMLElement) || target === document.body || target === document.documentElement) return { kind: 'page' };
+  if (target.closest('dialog[open]')) return { kind: 'dialog' };
+  const divider = target.dataset.dividerZone;
+  if (isZoneScope(divider)) return { kind: 'control', zone: divider };
+  const section = target.closest<HTMLElement>('[data-zone]');
+  const zone = section?.dataset.zone;
+  if (!section || !isZoneScope(zone)) return { kind: 'outside' };
+  return section === target ? { kind: 'zone', zone } : { kind: 'control', zone };
+}
+
+function tabbable(el: HTMLElement): boolean {
+  if (el.tabIndex < 0 || el.closest('[hidden], [inert]')) return false;
+  if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') return false;
+  return el.getClientRects().length > 0;
+}
+
+// The Tab order inside a zone: its controls and its boundary, in document order.
+function zoneRing(section: HTMLElement | null | undefined, zone: ZoneScope): HTMLElement[] {
+  if (!section) return [];
+  const items = Array.from(section.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => tabbable(el));
+  const divider = document.querySelector<HTMLElement>(`[data-divider-zone="${zone}"]`);
+  if (divider && tabbable(divider)) items.push(divider);
+  return items.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+}
 
 let viewportCache: Viewport = { width: 0, height: 0 };
 function readViewport(): Viewport {
@@ -122,8 +165,28 @@ function ZoneFrame({ zone, visible, focused, drawer, tabs, onFocus, frameRef, ch
   );
 }
 
-// A boundary: the library's separator plus 8 px arrow steps and the double-click reset.
-function ZoneSeparator({ zone, disabled, dispatch }: { zone: Zone; disabled?: boolean; dispatch: (action: (viewport: Viewport) => ShellAction) => void }) {
+interface SeparatorValues {
+  readonly now: number;
+  readonly min: number;
+  readonly max: number;
+}
+
+// A boundary: the library's separator (pointer drags) with SIANN's keys: the
+// arrows step 8 px (Shift: 32 px), Home and End go to the minimum and the
+// maximum, Enter and double-click restore the default. Its aria values are
+// the zone's size and range in px; the library writes its own (percentages
+// of the panel before it) on every layout, so they are put back.
+function ZoneSeparator({
+  zone,
+  disabled,
+  values,
+  dispatch,
+}: {
+  zone: Zone;
+  disabled?: boolean;
+  values: SeparatorValues;
+  dispatch: (action: (viewport: Viewport) => ShellAction) => void;
+}) {
   const t = useT();
   const element = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -131,21 +194,59 @@ function ZoneSeparator({ zone, disabled, dispatch }: { zone: Zone; disabled?: bo
     if (!el) return undefined;
     const grow = zone === 'left' ? 'ArrowRight' : zone === 'right' ? 'ArrowLeft' : 'ArrowUp';
     const shrink = zone === 'left' ? 'ArrowLeft' : zone === 'right' ? 'ArrowRight' : 'ArrowDown';
-    // Capture, so the library's own 5 % step never runs.
+    // Capture, so the library's own 5 % steps, Home, End and Enter never run.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== grow && event.key !== shrink) return;
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      let make: ((viewport: Viewport) => ShellAction) | null = null;
+      if (event.key === grow || event.key === shrink) {
+        const direction = event.key === grow ? 1 : -1;
+        const large = event.shiftKey;
+        make = (viewport) => ({ type: 'step', zone, direction, large, viewport });
+      } else if (event.shiftKey) {
+        return;
+      } else if (event.key === 'Home' || event.key === 'End') {
+        const edge = event.key === 'Home' ? 'min' : 'max';
+        make = (viewport) => ({ type: 'edge', zone, edge, viewport });
+      } else if (event.key === 'Enter') {
+        make = (viewport) => ({ type: 'reset', zone, viewport });
+      }
+      if (!make) return;
       event.preventDefault();
       event.stopPropagation();
-      const direction = event.key === grow ? 1 : -1;
-      dispatch((viewport) => ({ type: 'step', zone, direction, viewport }));
+      dispatch(make);
     };
     el.addEventListener('keydown', onKey, true);
     return () => el.removeEventListener('keydown', onKey, true);
   }, [zone, dispatch]);
+  const latest = useRef(values);
+  latest.current = values;
+  const apply = useCallback(() => {
+    const el = element.current;
+    if (!el) return;
+    const { now, min, max } = latest.current;
+    const wanted: ReadonlyArray<readonly [string, number]> = [
+      ['aria-valuenow', now],
+      ['aria-valuemin', min],
+      ['aria-valuemax', max],
+    ];
+    for (const [name, value] of wanted) {
+      const text = String(Math.round(value));
+      if (el.getAttribute(name) !== text) el.setAttribute(name, text);
+    }
+  }, []);
+  useLayoutEffect(apply);
+  useEffect(() => {
+    const el = element.current;
+    if (!el) return undefined;
+    const observer = new MutationObserver(apply);
+    observer.observe(el, { attributes: true, attributeFilter: ['aria-valuenow', 'aria-valuemin', 'aria-valuemax'] });
+    return () => observer.disconnect();
+  }, [apply]);
   return (
     <Separator
       id={`separator-${zone}`}
       data-testid={`separator-${zone}`}
+      data-divider-zone={zone}
       className={`divider divider-${zone}`}
       elementRef={element}
       disabled={disabled}
@@ -248,13 +349,46 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
     if (focused !== 'project' && !effective.zones[focused].visible) setFocused('project');
   }, [effective, focused]);
 
+  // The DOM focus entering a zone (by Tab, a click or a script) moves the focus frame there.
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const place = placeOf(event.target);
+      if (place.kind === 'zone' || place.kind === 'control') setFocused(place.zone);
+    };
+    window.addEventListener('focusin', onFocusIn);
+    return () => window.removeEventListener('focusin', onFocusIn);
+  }, []);
+
   // The window's commands.
   useEffect(() => {
-    const cycle = (step: 1 | -1) => () => {
+    const cycle = (step: 1 | -1) => {
       const order = FOCUS_ORDER.filter(isVisible);
       const at = order.indexOf(latest.current.focused);
       const next = order[(at + step + order.length) % order.length] ?? 'project';
       focusZone(next, true);
+    };
+    // A focus command; false (the key keeps its default) where it does not apply.
+    const move = (commandId: CommandId) => (): boolean => {
+      const active = document.activeElement;
+      const step = focusMove(commandId, placeOf(active));
+      if (!step) return false;
+      switch (step.type) {
+        case 'zone':
+          cycle(step.step);
+          return true;
+        case 'control': {
+          const ring = zoneRing(frames.current[step.zone], step.zone);
+          ringStep(ring, active instanceof HTMLElement ? active : null, step.step)?.focus();
+          return true;
+        }
+        case 'enter':
+          zoneRing(frames.current[step.zone], step.zone)[0]?.focus();
+          return true;
+        case 'root':
+          // The key goes on: the zone's own Escape (edit.cancel) still runs.
+          focusZone(step.zone, true);
+          return false;
+      }
     };
     const offs = [
       commands.register('window', 'zone.left.toggle', () => dispatch((viewport) => ({ type: 'toggle', zone: 'left', viewport }))),
@@ -266,15 +400,17 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
       commands.register('window', 'zone.right.plans', () =>
         dispatch((viewport) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport })),
       ),
-      commands.register('window', 'focus.nextZone', cycle(1)),
-      commands.register('window', 'focus.prevZone', cycle(-1)),
+      ...[...FOCUS_COMMANDS].map((id) => commands.register('window', id, move(id))),
     ];
     return () => offs.forEach((off) => off());
   }, [commands, dispatch, focusZone, isVisible]);
 
-  // The one keydown listener: preset table -> dispatcher -> the focused zone first, then the window.
+  // The keydown listeners: preset table -> dispatcher -> the focused zone
+  // first, then the window. The focus keys in the capture phase, before any
+  // element's handler (a boundary's, the library's); the rest bubbling, so an
+  // element (the About dialog) can keep its keys.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
+    const listener = (preset: typeof CUBASE_PRESET) => (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const binding = resolveKey(
         {
@@ -285,12 +421,18 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
           focusedZone: latest.current.focused,
           platform,
         },
-        CUBASE_PRESET,
+        preset,
       );
       if (binding && commands.run(binding.scope, binding.commandId)) event.preventDefault();
     };
+    const onFocusKey = listener(FOCUS_PRESET);
+    const onKey = listener(COMMAND_PRESET);
+    window.addEventListener('keydown', onFocusKey, true);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onFocusKey, true);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [commands, platform]);
 
   const frameRef = (zone: ZoneScope) => (el: HTMLElement | null) => {
@@ -300,6 +442,10 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
   const initial = useRef(effective).current.zones;
   const startSize = (zone: Zone) => (initial[zone].visible && !initial[zone].drawer ? initial[zone].size : 0);
   const lowerLimits = limits('lower', viewport);
+  const separatorValues = (zone: Zone): SeparatorValues => {
+    const { min, max } = limits(zone, viewport);
+    return { now: zones[zone].visible ? zones[zone].size : 0, min, max };
+  };
   const tab = (zone: 'lower' | 'right', id: 'mixconsole' | 'plans') => (
     <div className="zone-tabs" role="tablist">
       <button
@@ -340,7 +486,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
             {left}
           </ZoneFrame>
         </Panel>
-        <ZoneSeparator zone="left" dispatch={dispatch} />
+        <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
         <Panel id="panel-center" className="panel-inner" minSize={EVENT_MIN_WIDTH}>
           <Group
             orientation="vertical"
@@ -354,7 +500,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
                 {project}
               </ZoneFrame>
             </Panel>
-            <ZoneSeparator zone="lower" dispatch={dispatch} />
+            <ZoneSeparator zone="lower" values={separatorValues('lower')} dispatch={dispatch} />
             <Panel
               id="panel-lower"
               panelRef={panels.lower}
@@ -380,7 +526,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
             </Panel>
           </Group>
         </Panel>
-        <ZoneSeparator zone="right" disabled={zones.right.drawer} dispatch={dispatch} />
+        <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />
         <Panel
           id="panel-right"
           panelRef={panels.right}

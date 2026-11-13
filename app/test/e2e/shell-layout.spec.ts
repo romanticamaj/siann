@@ -1,7 +1,8 @@
 // The zone shell end to end (m5-ui-shell; UI redesign spec 2.3, 2.4, 3.6):
 // the page never scrolls and each zone scrolls inside; the three zone
 // boundaries drag within their ranges, collapse below their minimums,
-// restore by button and key, move 8 px per arrow key when focused and reset
+// restore by button and key, work from the keyboard (reached by real key
+// presses from their zone; arrows, Shift+arrows, Home, End, Enter) and reset
 // on double-click; the layout survives a restart and a session.open, lives
 // under one localStorage key and never reaches the engine; zone keys toggle
 // their zones, nothing hides the project zone, Tab and Shift+Tab move the

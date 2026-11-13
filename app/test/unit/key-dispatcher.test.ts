@@ -33,7 +33,7 @@ const PRESET: readonly Binding[] = [
   { chord: 'F3', commandId: 'zone.lower.mixconsole', scope: 'window' },
   // The same chord in a zone and in the window: the zone wins when focused.
   { chord: 'Escape', commandId: 'edit.cancel', scope: 'project' },
-  { chord: 'Escape', commandId: 'focus.nextZone', scope: 'window' },
+  { chord: 'Escape', commandId: 'zone.right.toggle', scope: 'window' },
 ];
 
 test('chords: Mod is Ctrl on Windows and Linux and Cmd on macOS; the key comes from event.code', () => {
@@ -48,7 +48,7 @@ test('chords: Mod is Ctrl on Windows and Linux and Cmd on macOS; the key comes f
 test('the focused zone wins over the window for the same chord, and a key falls through to the window', () => {
   const escape = input({ code: 'Escape', key: 'Escape' });
   assert.equal(resolveKey(escape, PRESET)?.commandId, 'edit.cancel');
-  assert.equal(resolveKey({ ...escape, focusedZone: 'right' }, PRESET)?.commandId, 'focus.nextZone');
+  assert.equal(resolveKey({ ...escape, focusedZone: 'right' }, PRESET)?.commandId, 'zone.right.toggle');
   assert.equal(resolveKey(input({ code: 'F3', key: 'F3', focusedZone: 'lower' }), PRESET)?.commandId, 'zone.lower.mixconsole');
   // A zone binding does not fire in another zone.
   assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete', focusedZone: 'right' }), PRESET), null);

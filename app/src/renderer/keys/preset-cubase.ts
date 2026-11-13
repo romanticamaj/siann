@@ -22,9 +22,17 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+Alt+R', commandId: 'zone.right.toggle', scope: 'window' },
   // SIANN addition: show the right zone on the Plans tab.
   { chord: 'Mod+Alt+P', commandId: 'zone.right.plans', scope: 'window' },
-  // The focus frame.
-  { chord: 'Tab', commandId: 'focus.nextZone', scope: 'window' },
-  { chord: 'Shift+Tab', commandId: 'focus.prevZone', scope: 'window' },
+  // The focus frame (zone-focus.ts). Tab and Shift+Tab cycle the zones from a
+  // zone or the page and walk a zone's controls from inside it; F6 and
+  // Shift+F6 cycle the zones from anywhere; Enter on a zone enters it and
+  // Escape from a control returns to its zone (the project zone's Escape,
+  // edit.cancel, still runs after it).
+  { chord: 'Tab', commandId: 'focus.next', scope: 'window' },
+  { chord: 'Shift+Tab', commandId: 'focus.prev', scope: 'window' },
+  { chord: 'F6', commandId: 'focus.nextZone', scope: 'window' },
+  { chord: 'Shift+F6', commandId: 'focus.prevZone', scope: 'window' },
+  { chord: 'Enter', commandId: 'focus.enterZone', scope: 'window' },
+  { chord: 'Escape', commandId: 'focus.zoneRoot', scope: 'window' },
   // The project zone: delete the selected clip; Escape leaves placing mode.
   { chord: 'Delete', commandId: 'edit.delete', scope: 'project' },
   { chord: 'Backspace', commandId: 'edit.delete', scope: 'project' },

@@ -2,11 +2,13 @@
 // modifiers, the focused zone, whether the target takes typing and the
 // platform go in; the binding to run, or null, comes out. The focused zone's
 // binding wins over the window's for the same chord; nothing fires while a
-// text field has focus. Keys match on event.code, not event.key, so Opt+I on
+// text field has focus but the focus keys (Tab, Shift+Tab, F6, Shift+F6,
+// Escape), which leave a field as the platform's own keys do. Keys match on event.code, not event.key, so Opt+I on
 // macOS (event.key is a dead accent there) and other layouts' characters
 // still reach their commands.
 
 import type { Binding, ZoneScope } from './commands';
+import { FOCUS_COMMANDS_IN_FIELDS } from './zone-focus';
 
 export interface KeyModifiers {
   readonly ctrl: boolean;
@@ -44,13 +46,14 @@ export function chordOf(input: KeyInput): string {
 }
 
 export function resolveKey(input: KeyInput, preset: readonly Binding[]): Binding | null {
-  if (input.targetIsTextField || !input.code) return null;
+  if (!input.code) return null;
   // The Windows key (Meta off macOS) belongs to the OS.
   if (input.platform !== 'mac' && input.modifiers.meta) return null;
   const chord = chordOf(input);
+  const table = input.targetIsTextField ? preset.filter((b) => FOCUS_COMMANDS_IN_FIELDS.has(b.commandId)) : preset;
   return (
-    preset.find((b) => b.chord === chord && b.scope === input.focusedZone) ??
-    preset.find((b) => b.chord === chord && b.scope === 'window') ??
+    table.find((b) => b.chord === chord && b.scope === input.focusedZone) ??
+    table.find((b) => b.chord === chord && b.scope === 'window') ??
     null
   );
 }

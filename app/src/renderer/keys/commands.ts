@@ -18,9 +18,14 @@ export const COMMAND_IDS = [
   'zone.lower.mixconsole',
   'zone.right.toggle',
   'zone.right.plans',
-  // The focus frame (spec 2.1, "Keyboard focus is per zone").
+  // The focus frame (spec 2.1, "Keyboard focus is per zone"; zone-focus.ts):
+  // Tab and Shift+Tab, F6 and Shift+F6, Enter into a zone, Escape out of a control.
+  'focus.next',
+  'focus.prev',
   'focus.nextZone',
   'focus.prevZone',
+  'focus.enterZone',
+  'focus.zoneRoot',
   // The project zone's edits (moved from the timeline's own key listener).
   'edit.delete',
   'edit.cancel',

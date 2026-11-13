@@ -96,6 +96,11 @@ code, dd, .mono { font-family: var(--font-mono); }
 .zone[hidden] { display: none; }
 .zone:focus { outline-color: var(--focus); }
 .zone:focus:not([data-focused="true"]) { outline: none; }
+/* Every control reached from the keyboard shows a ring (spec 2.1): zones' controls, the top bar, the status bar. */
+:where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
 .zone-tabs {
   display: flex;
   flex: 0 0 var(--zone-tabs);
@@ -158,6 +163,8 @@ code, dd, .mono { font-family: var(--font-mono); }
   inset: calc((var(--divider-hit) - var(--divider-w)) / -2) 0;
 }
 .divider:hover, .divider:focus-visible, .divider[data-separator="active"] { background: var(--tx-3); }
+/* A divider reached from the keyboard: a 2 px ring around its line. */
+.divider:focus-visible { background: var(--focus); outline: 2px solid var(--focus); outline-offset: 0; }
 
 /* ---- the project zone: toolbar, info line, event display */
 .zone-project .zone-body {

@@ -54,8 +54,11 @@ export interface Viewport {
 export type ShellAction =
   // A drag ended at `size` px (0 or below the minimum: collapsed).
   | { readonly type: 'resize'; readonly zone: Zone; readonly size: number; readonly viewport: Viewport }
-  // An arrow key on the focused boundary: +1 grows the zone by ARROW_STEP.
-  | { readonly type: 'step'; readonly zone: Zone; readonly direction: 1 | -1; readonly viewport: Viewport }
+  // An arrow key on the focused boundary: +1 grows the zone by ARROW_STEP
+  // (ARROW_STEP_LARGE with Shift).
+  | { readonly type: 'step'; readonly zone: Zone; readonly direction: 1 | -1; readonly large?: boolean; readonly viewport: Viewport }
+  // Home and End on the focused boundary: the zone's minimum or maximum, shown.
+  | { readonly type: 'edge'; readonly zone: Zone; readonly edge: 'min' | 'max'; readonly viewport: Viewport }
   // Double-click on the boundary: the default size, shown.
   | { readonly type: 'reset'; readonly zone: Zone; readonly viewport: Viewport }
   | { readonly type: 'toggle'; readonly zone: Zone; readonly viewport: Viewport }
@@ -81,6 +84,7 @@ export interface EffectiveLayout {
 export const LAYOUT_KEY = 'siann.layout.v1';
 export const DEFAULT_SIZES: Readonly<Record<Zone, number>> = Object.freeze({ left: 216, lower: 280, right: 348 });
 export const ARROW_STEP = 8;
+export const ARROW_STEP_LARGE = 32;
 export const TOP_BAR = 48;
 export const STATUS_BAR = 24;
 // The project zone above its event display: the toolbar and the info line.
@@ -190,8 +194,13 @@ export function reduce(state: ShellState, action: ShellAction): ShellState {
     case 'step': {
       if (state.layout.collapsed[zone]) return state;
       const { min, max } = limits(zone, action.viewport);
-      const size = clamp(state.layout.sizes[zone] + action.direction * ARROW_STEP, min, max);
+      const step = action.large ? ARROW_STEP_LARGE : ARROW_STEP;
+      const size = clamp(state.layout.sizes[zone] + action.direction * step, min, max);
       return setSize(state, zone, size);
+    }
+    case 'edge': {
+      const { min, max } = limits(zone, action.viewport);
+      return show(setSize(state, zone, action.edge === 'min' ? min : max), zone, action.viewport);
     }
     case 'reset':
       return show(setSize(state, zone, DEFAULT_SIZES[zone]), zone, action.viewport);
