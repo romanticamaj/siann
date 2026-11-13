@@ -31,7 +31,8 @@ const std::vector<std::string> kTools = {
     "approve_plan",   "reject_plan",           "apply_plan",      "rollback_plan", "propose_plan",
     "audition",       "merge_proposal",        "discard_proposal", "execute",      "job_status",
     "render",         "open_session",          "save_session",    "play",          "stop",
-    "locate",         "engine_status",         "list_devices",    "select_device",
+    "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
+    "select_device",
 };
 
 // A transport port that records what each tool reached.
@@ -43,11 +44,25 @@ public:
         position = frames;
         return reached("locate", {false, frames});
     }
+    protocol::TransportState setCycle(bool enabled) override {
+        cycle = enabled;
+        return reached("set_cycle", current());
+    }
+    protocol::TransportState setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) override {
+        click.enabled = enabled;
+        if (gainMilliDb) {
+            click.gainMilliDb = *gainMilliDb;
+        }
+        return reached("set_click", current());
+    }
     protocol::EngineStatus status() const override {
         protocol::EngineStatus out;
         out.device = protocol::DeviceInfo{"fake", 48'000, 256, 256, 256};
+        out.cycle = cycle;
+        out.click = click;
         return out;
     }
+    protocol::TransportState current() const { return {false, position, cycle, click}; }
     std::vector<protocol::DeviceDescription> devices() const override {
         return {{"fake", "fake", "fake", false, true}};
     }
@@ -64,6 +79,8 @@ public:
     std::vector<std::string> selected;
     std::optional<std::string> refusal;
     std::int64_t position = 0;
+    bool cycle = false;
+    protocol::ClickState click;
 
 private:
     protocol::TransportState reached(const std::string& name, protocol::TransportState state) {
@@ -289,7 +306,7 @@ TEST_CASE("plugin.registry and plugin.approve are not MCP tools", "[protocol][mc
     }
 }
 
-TEST_CASE("tools/list returns the 24 tools with input schemas", "[protocol][mcp]") {
+TEST_CASE("tools/list returns the 26 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
@@ -629,4 +646,45 @@ TEST_CASE("plan.list and plan.preview are not MCP tools", "[protocol][mcp][plans
         REQUIRE(response.status == 200);
         CHECK(at(at(json::parse(response.body), "error"), "code").asNumber() == -32602);
     }
+}
+
+// m5-ui-engine-loop-click (Protocol v0 item 26): set_cycle and set_click wrap
+// transport.set_cycle and transport.set_click one to one in the propose scope.
+TEST_CASE("set_cycle and set_click wrap their methods one to one under propose", "[protocol][mcp][transport][cycle]") {
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::propose));
+    Mcp mcp(f);
+    mcp.initialize();
+    const ConnectionId ui = f.authed();
+
+    const Value cycled = mcp.ok("set_cycle", Value(Object{{"enabled", Value(true)}}));
+    CHECK(at(cycled, "cycle").asBool());
+    CHECK(at(cycled, "position").asString() == "0");
+    CHECK_FALSE(at(at(cycled, "click"), "enabled").asBool());
+    const Value direct = f.ok(ui, "transport.set_cycle", Value(Object{{"enabled", Value(true)}}));
+    CHECK(canonical(direct) == canonical(cycled));
+
+    const Value clicked =
+        mcp.ok("set_click", Value(Object{{"enabled", Value(true)}, {"gainMilliDb", Value(-6000)}}));
+    CHECK(at(at(clicked, "click"), "enabled").asBool());
+    CHECK(at(at(clicked, "click"), "gainMilliDb").asNumber() == -6'000);
+    CHECK(at(at(mcp.ok("set_click", Value(Object{{"enabled", Value(false)}})), "click"), "gainMilliDb").asNumber() ==
+          -6'000);
+    CHECK(port.calls == std::vector<std::string>{"set_cycle", "set_cycle", "set_click", "set_click"});
+
+    // The method's own errors, no_device included.
+    CHECK(at(mcp.error("set_cycle", Value(Object{{"enabled", Value(1)}})), "code").asString() == "invalid_params");
+    CHECK(at(mcp.error("set_click", Value(Object{{"enabled", Value(true)}, {"gainMilliDb", Value(5)}})), "code")
+              .asString() == "invalid_params");
+    port.refusal = "no_device";
+    CHECK(at(mcp.error("set_cycle", Value(Object{{"enabled", Value(false)}})), "code").asString() == "no_device");
+    CHECK(at(mcp.error("set_click", Value(Object{{"enabled", Value(false)}})), "code").asString() == "no_device");
+}
+
+TEST_CASE("without a transport port set_cycle and set_click answer not_supported", "[protocol][mcp][transport][cycle]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    CHECK(at(mcp.error("set_cycle", Value(Object{{"enabled", Value(true)}})), "code").asString() == "not_supported");
+    CHECK(at(mcp.error("set_click", Value(Object{{"enabled", Value(true)}})), "code").asString() == "not_supported");
 }
