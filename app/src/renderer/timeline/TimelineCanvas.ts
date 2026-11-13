@@ -7,7 +7,9 @@
 // end in one command.execute each (timeline/commands.ts), with the revision
 // of the snapshot the gesture began on; the model then follows
 // session.changed (structural edits are never optimistic), and a refusal is
-// shown as the last error and the gesture discarded. The ruler's unit comes
+// shown as the last error and the gesture discarded. A gesture whose
+// commands engine.capabilities does not list (`allows`) does not begin and
+// sends nothing (UI redesign spec 3.0). The ruler's unit comes
 // from the catalogs through the `t` it is given; it redraws on a locale change.
 
 import { formatSeconds } from '../format';
@@ -48,6 +50,9 @@ export interface TimelineCanvasOptions {
   readonly framesPerPixel?: number;
   // English, unchanging, when absent.
   readonly locale?: TimelineLocale;
+  // Whether a command op may be sent (engine.capabilities' commands); every
+  // op when absent.
+  readonly allows?: (op: string) => boolean;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -223,6 +228,9 @@ export class TimelineCanvas {
       return;
     }
     this.#update({ selectedClipId: hit.rect.clipId });
+    // A move sends clip.move; a trim clip.trim (and clip.move for the left edge).
+    const ops = hit.part === 'body' ? ['clip.move'] : hit.part === 'left' ? ['clip.trim', 'clip.move'] : ['clip.trim'];
+    if (!ops.every((op) => this.#allows(op))) return;
     this.#drag = { rect: hit.rect, part: hit.part, startX: x, startY: y, snapshot, dx: 0, dy: 0 };
     try {
       this.#canvas.setPointerCapture(e.pointerId);
@@ -290,6 +298,7 @@ export class TimelineCanvas {
     for (let attempt = 1; ; attempt += 1) {
       const command = gestureCommand(snapshot, gesture, newClipId);
       if (!command) return;
+      if (!command.commands.every((c) => this.#allows(String((c as { op?: unknown }).op)))) return;
       try {
         await this.#options.execute(command.commands, command.expectedRevision);
         this.#update({ error: null });
@@ -303,6 +312,10 @@ export class TimelineCanvas {
         return;
       }
     }
+  }
+
+  #allows(op: string): boolean {
+    return this.#options.allows ? this.#options.allows(op) : true;
   }
 
   // The clip as the open drag shows it (a preview; the document is unchanged).

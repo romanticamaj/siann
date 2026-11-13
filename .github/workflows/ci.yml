@@ -268,6 +268,12 @@ jobs:
         run: |
           sudo chown root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      # The plain-tab e2e (app/test/e2e/plain-tab.spec.ts) loads the bundle in
+      # Playwright's own Chromium, outside Electron.
+      - name: Install Playwright Chromium
+        working-directory: app
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then npx playwright install --with-deps chromium; else npx playwright install chromium; fi
       - name: Build app
         working-directory: app
         run: npm run build

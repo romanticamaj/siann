@@ -139,7 +139,7 @@ test('the walker catches each kind of literal (inline fixtures)', () => {
 
 test('the renderer sources hold no UI literals outside the catalogs', () => {
   const files = sources(RENDERER);
-  assert.ok(files.some((f) => f.endsWith('StatusPanel.tsx')), `no sources found under ${RENDERER}`);
+  assert.ok(files.some((f) => f.endsWith('StatusBar.tsx')), `no sources found under ${RENDERER}`);
   const findings = files.flatMap((file) => findLiterals(path.relative(RENDERER, file), fs.readFileSync(file, 'utf8')));
   assert.deepEqual(
     findings.map((f) => `${f.file}:${f.line} ${f.where} ${JSON.stringify(f.text)}`),

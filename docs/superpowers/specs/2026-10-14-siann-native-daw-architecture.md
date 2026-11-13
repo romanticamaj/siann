@@ -2815,6 +2815,8 @@ before adoption, including transitive dependencies.
 | Electron shell tests | Playwright (`@playwright/test`, Electron driver), pinned | Apache-2.0 |
 | Frontend language | TypeScript, pinned | Apache-2.0 |
 | Frontend framework and bundler | React 19 with react-dom, esbuild, pinned by `m5-read-model` (ADR-0019) | MIT |
+| Resizable zones | react-resizable-panels 4.x, pinned by `m5-ui-shell` (ADR-0019 point 5) | MIT, no runtime dependencies |
+| UI fonts | Inter, JetBrains Mono (`.woff2` in `app/renderer/fonts`, licence texts beside them), pinned releases | OFL-1.1; bundling allowed, the fonts stay under OFL |
 
 Not used: Taskflow (allocates at runtime).
 

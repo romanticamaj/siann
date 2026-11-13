@@ -1,0 +1,37 @@
+{
+  "about": {
+    "name": "siann-engine",
+    "version": "0.1.0",
+    "source": { "url": "https://github.com/romanticamaj/siann", "commit": "0123456789abcdef0123456789abcdef01234567", "dirty": false },
+    "license": "GPL-2.0-or-later"
+  },
+  "scope": "propose",
+  "scopes": ["propose", "trusted"],
+  "commands": [
+    "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add", "media.remove",
+    "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename", "session.set_tempo", "track.add",
+    "track.remove", "track.rename", "track.set_gain", "track.set_mute", "track.set_pan", "track.set_solo"
+  ],
+  "methods": [
+    "session.inspect", "session.sync", "session.fetch", "session.undo", "session.redo",
+    "session.save", "session.open", "command.execute", "command.list", "engine.about",
+    "engine.capabilities", "plan.submit", "plan.status", "plan.approve", "plan.reject",
+    "plan.apply", "plan.rollback", "plan.propose", "proposal.merge", "proposal.discard",
+    "audition.hear", "render.start", "job.status", "transport.play", "transport.stop",
+    "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
+    "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
+    "gesture.begin", "gesture.update", "gesture.hold", "gesture.end", "gesture.cancel",
+    "plan.list", "plan.preview"
+  ],
+  "features": {
+    "plans": true,
+    "proposals": true,
+    "audition": true,
+    "transport": true,
+    "render": true,
+    "plugins": false,
+    "gestures": true,
+    "peaks": true
+  },
+  "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024 }
+}

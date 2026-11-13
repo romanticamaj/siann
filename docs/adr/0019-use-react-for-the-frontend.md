@@ -63,6 +63,8 @@ What the frontend has to do, read from the protocol and the M5 manifest:
    version would be more code than the dependency: list virtualisation
    (`@tanstack/react-virtual`), resizable panels. Drag, trim and fader gestures
    are pointer-event code on the surfaces, not a drag-and-drop library.
+   Bundled fonts under OFL-1.1 (Inter, JetBrains Mono) are allowed assets: they
+   ship as files with their licence text beside them and stay under the OFL.
    openDAW and other AGPL web DAW UI code is not copied (spec, "Frontend").
 
 ## Comparison

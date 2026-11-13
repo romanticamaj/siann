@@ -3,56 +3,10 @@
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'">
+          content="default-src 'self'; script-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self'">
     <title>SIANN</title>
-    <style>
-      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-      /* Chinese UI fonts (UI redesign spec 6.4): the system's, not bundled; line
-         height 1.4. The English :root stack and the tokens come with P1-1. */
-      :root:lang(zh-TW) { font-family: "Inter", "PingFang TC", "Microsoft JhengHei UI", "Noto Sans TC", "Noto Sans CJK TC", sans-serif; line-height: 1.4; }
-      :root:lang(zh-CN) { font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", "Noto Sans CJK SC", sans-serif; line-height: 1.4; }
-      /* The generic monospace resolves per language (a CJK font under zh-CN):
-         name the Latin monospace fonts, so ids, hashes and JSON look as in English. */
-      :root:is(:lang(zh-TW), :lang(zh-CN)) :is(dd, code, .plan-heard) { font-family: ui-monospace, Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace; }
-      body { margin: 0; padding: 24px; }
-      /* The language switch sits in the corner, so nothing else moves (P1-1
-         moves it into the status bar). */
-      .locale-switch { position: absolute; top: 24px; right: 24px; display: flex; gap: 6px; align-items: center; font-size: 12px; }
-      dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
-      dt { opacity: 0.7; }
-      dd { margin: 0; font-family: ui-monospace, monospace; }
-      footer { margin-top: 32px; font-size: 12px; opacity: 0.7; }
-      .timeline { margin-top: 24px; }
-      .timeline-bar { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
-      .media-pool { display: flex; gap: 8px; list-style: none; margin: 0; padding: 0; }
-      .media-pool button[aria-pressed="true"] { outline: 2px solid #3d6fb6; }
-      .timeline-canvas { display: block; width: 100%; height: 140px; border: 0; touch-action: none; }
-      .mixer { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
-      .strip { display: grid; gap: 6px; justify-items: center; padding: 8px; width: 160px;
-               border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 6px; }
-      .strip-name { font-weight: 600; }
-      .strip-meter { background: color-mix(in srgb, currentColor 10%, transparent); }
-      .strip label { display: grid; gap: 2px; justify-items: center; font-size: 12px; }
-      .strip input[type=range] { width: 140px; }
-      .strip-buttons { display: flex; gap: 6px; }
-      .strip-buttons button[aria-pressed=true] { background: #e8a33a; color: #000; }
-      .plan-review { margin-top: 24px; }
-      .plan-list { display: grid; gap: 4px; list-style: none; margin: 0 0 12px; padding: 0; }
-      .plan-list button[aria-pressed="true"] { outline: 2px solid #3d6fb6; }
-      .plan-state { font-size: 12px; padding: 1px 6px; border-radius: 8px;
-                    background: color-mix(in srgb, currentColor 12%, transparent); }
-      .plan-heard { font-family: ui-monospace, monospace; }
-      .plan-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
-      .plan-error { color: #c0392b; min-height: 1.2em; }
-      .plan-diff { border-collapse: collapse; font-size: 12px; }
-      .plan-diff td, .plan-diff th { padding: 2px 8px; text-align: left; vertical-align: top;
-                                     border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
-      .plan-diff code { word-break: break-all; }
-      /* Chinese breaks between any two characters: keep the short words of the
-         diff's headers, change kind and stale mark on one line. */
-      :root:is(:lang(zh-TW), :lang(zh-CN)) .plan-diff :is(th, td:nth-child(2), td[data-testid="diff-stale"]) { white-space: nowrap; }
-      .plan-diff tr[data-stale="true"] { background: color-mix(in srgb, #e8a33a 25%, transparent); }
-    </style>
+    <link rel="stylesheet" href="tokens.css">
+    <link rel="stylesheet" href="shell.css">
   </head>
   <body>
     <div id="root"></div>

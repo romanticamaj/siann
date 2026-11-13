@@ -454,7 +454,7 @@ test('UX screenshot tour', async () => {
   watcher = await engineClient(page, { events: true });
   const summary = 'Kick 0 dB, Snare -2.5 dB, Bass -4 dB, Keys -8 dB pan L35, Vox Lead +1.5 dB solo, Vox BG -9 dB pan R40, FX -12 dB muted';
   await shoot(page, 'Session loaded', `A 7-track session (${summary}); 10 clips with waveforms from the engine's peaks. Transport stopped.`);
-  await shoot(page, 'Session loaded full page', 'The same state as the whole page, below the fold included (status, timeline, mixer, plan review).', { fullPage: true });
+  await shoot(page, 'Session loaded full page', 'The same state as the whole page: since m5-ui-shell the page never scrolls, so this is the window.', { fullPage: true });
 
   // Playing: the meters read (fake device). Vox Lead's solo is clicked off
   // first, so every unmuted track sounds, and back on after.
@@ -475,7 +475,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Playing meters',
-    `Transport playing from 1.2 s on the fake device with Vox Lead's solo clicked off (FX stays muted), window scrolled to the timeline and mixer. Meter peaks (linear) at the shot: ${peaks.join(', ')}. The timeline draws no playhead.`,
+    `Transport playing from 1.2 s on the fake device with Vox Lead's solo clicked off (FX stays muted); the timeline and the mixer are both in view. Meter peaks (linear) at the shot: ${peaks.join(', ')}. The timeline draws no playhead.`,
   );
   await watcher.call('transport.stop');
   await solo.click();
@@ -506,11 +506,13 @@ test('UX screenshot tour', async () => {
       : `the timeline view went from ${before.framesPerPixel} frames/px, scroll ${before.scrollFrames} to ${after.framesPerPixel} frames/px, scroll ${after.scrollFrames}`;
   await shoot(page, 'Timeline after scroll and zoom', `Horizontal wheel then Ctrl+wheel over the timeline canvas: ${viewNote}; page zoom factor ${zoom}.`);
   if (zoom !== 1) await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1));
-  // A vertical wheel scrolls the page.
+  // A vertical wheel scrolls inside the event display, never the page (m5-ui-shell).
   await page.mouse.move(box.x + 400, box.y + 100);
   await page.mouse.wheel(0, 400);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-  await shoot(page, 'Page scrolled to mixer', 'A vertical wheel over the timeline scrolls the page: the lower lanes and the mixer strips.');
+  await painted(page);
+  expect(await page.evaluate(() => [window.scrollY, document.documentElement.scrollHeight - document.documentElement.clientHeight])).toEqual([0, 0]);
+  const inside = await page.getByTestId('event-display').evaluate((el) => el.scrollTop);
+  await shoot(page, 'Page scrolled to mixer', `A vertical wheel over the timeline: the page does not scroll (the zones keep their place); the event display scrolled ${inside} px inside. The mixer is always in the lower zone.`);
   await scrollTop();
 
   // ---- 4. A fader held mid-drag (one gesture, nothing committed yet).
@@ -566,7 +568,7 @@ test('UX screenshot tour', async () => {
   await expect(page.getByTestId('diff-track:trk_pad')).toBeVisible();
   await scrollTo('plan-review');
   await shoot(page, 'Plan submitted with diff', `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): listed as validated, its steps with checkboxes, the action buttons, and its diff against the current revision.`);
-  await shoot(page, 'Plan submitted full page', 'The same state as the whole page.', { fullPage: true });
+  await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls).', { fullPage: true });
 
   // Partial approval: steps 0, 1 and 3 ticked.
   for (const step of [0, 1, 3]) await page.getByTestId(`step-${step}`).getByRole('checkbox').check();
