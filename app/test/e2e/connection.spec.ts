@@ -134,9 +134,11 @@ test('while the engine is down a full-width banner shows, the zones are inert an
   await frames();
 
   expect((await refused()).filter((method) => CONTROL_METHOD.test(method))).toEqual([]);
+  // Each frame by its method, or its type (auth), or as sent.
   const frameTypes = sent.map((payload) => {
     try {
-      return (JSON.parse(payload) as { type?: string; method?: string }).method ?? (JSON.parse(payload) as { type?: string }).type ?? payload;
+      const frame = JSON.parse(payload) as { type?: string; method?: string };
+      return frame.method ?? frame.type ?? payload;
     } catch {
       return payload;
     }

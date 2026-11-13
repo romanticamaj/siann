@@ -2,9 +2,9 @@
 // 5.8): Playwright's own Chromium, not Electron, loads index.html from a
 // local HTTP server that serves app/renderer and app/dist/src/renderer the
 // way main.ts's siann://app handler does. There is no preload, so
-// window.siann is undefined: the shell must render its disconnected state,
-// the three zones and the project zone, with no page error and no console
-// error. Runs in the Playwright project "chromium".
+// window.siann is undefined: the shell must render its disconnected state
+// (the banner and inert zones of m5-ui-connection), the three zones and the
+// project zone, with no page error and no console error. Runs in the Playwright project "chromium".
 
 import { expect, test } from '@playwright/test';
 import * as fs from 'node:fs';
