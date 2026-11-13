@@ -363,3 +363,83 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   await expect(note).toHaveValue('ok');
   for (const zone of ZONES) await expectButton(zone, true);
 });
+
+// The licence line (UI redesign spec 2.1; AGPL section 13): in every locale,
+// at 1440x900 and 1024x700, with the engine's real about (and the rest of the
+// line padded as a long revision, session id or source URL would make it),
+// the licence span is drawn whole inside the status bar's about button, the
+// button's title is the whole line, and one click opens the About panel
+// showing the whole line unclipped; Escape closes it.
+test('the licence line stays visible at 1440x900 and 1024x700 in every locale, and the About panel is one click away', async () => {
+  const sessionDir = seedBundle(scratch, TRACKS);
+  await launch(sessionDir);
+  const about = page.getByTestId('about');
+  await expect(about).toContainText(/(A?GPL)-\d\.\d-or-later/);
+  const license = (await page.locator('.about .about-license').textContent()) ?? '';
+  expect(license).toMatch(/^(A?GPL)-\d\.\d-or-later$/);
+  const title = (await about.getAttribute('title')) ?? '';
+  expect(title).toContain(license);
+  expect(title).toContain('siann-engine');
+
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    // Pads the rest of the line with a node React does not own.
+    await page.locator('.about .about-summary').evaluate((el) => {
+      if (el.querySelector('[data-pad]')) return;
+      const pad = document.createElement('span');
+      pad.dataset.pad = 'true';
+      pad.textContent = ` ${'https://example.invalid/a-very-long-source-path/'.repeat(4)}`;
+      el.appendChild(pad);
+    });
+    for (const size of [
+      { width: 1440, height: 900 },
+      { width: 1024, height: 700 },
+    ]) {
+      await resize(size);
+      const where = `${locale} ${size.width}x${size.height}`;
+      const boxes = await page.evaluate(() => {
+        const rect = (selector: string) => {
+          const r = document.querySelector(selector)!.getBoundingClientRect();
+          return { left: r.left, right: r.right, width: r.width };
+        };
+        const span = document.querySelector<HTMLElement>('.about .about-license')!;
+        return {
+          button: rect('[data-testid=about]'),
+          bar: rect('[data-testid=status-bar]'),
+          license: rect('.about .about-license'),
+          clipped: span.scrollWidth > span.clientWidth,
+          viewport: window.innerWidth,
+        };
+      });
+      expect(boxes.license.width, where).toBeGreaterThan(0);
+      expect(boxes.clipped, where).toBe(false);
+      expect(boxes.license.left, where).toBeGreaterThanOrEqual(boxes.button.left - 0.5);
+      expect(boxes.license.right, where).toBeLessThanOrEqual(boxes.button.right + 0.5);
+      expect(boxes.button.right, where).toBeLessThanOrEqual(boxes.bar.right + 0.5);
+      expect(boxes.bar.right, where).toBeLessThanOrEqual(boxes.viewport + 0.5);
+
+      // One click away: the panel shows the whole line, nothing clipped.
+      await about.click();
+      const panel = page.getByTestId('about-panel');
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText(license);
+      await expect(panel).toContainText('siann-engine');
+      const fits = await panel.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const line = el.querySelector<HTMLElement>('[data-testid=about-panel-line]')!;
+        return {
+          inside: r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight,
+          lineFits: line.scrollWidth <= line.clientWidth && line.scrollHeight <= line.clientHeight + 1,
+        };
+      });
+      expect(fits, where).toEqual({ inside: true, lineFits: true });
+      await page.keyboard.press('Escape');
+      await expect(panel).toBeHidden();
+    }
+  }
+});
