@@ -2821,6 +2821,11 @@ MySong.siann/                    a directory
   `useSyncExternalStore`; the Canvas/WebGL surfaces are imperative classes
   outside React state; the renderer is bundled by esbuild and type-checked by
   `tsc`.
+- UI strings come from typed catalogs in `renderer/i18n` (en, zh-Hant, zh-Hans;
+  no i18n library); the locale follows `navigator.languages` with a stored
+  manual override (`siann.locale`); `<html lang>` is zh-TW or zh-CN for the
+  Chinese locales; dB, pan, positions and the letters M, S, R, W, e are
+  locale-independent. Details: `2026-11-13-siann-ui-redesign.md` section 6.
 - Timeline, waveforms, automation and meters are drawn with Canvas/WebGL.
   Waveforms come from the engine's peak pyramids (Protocol v0 item 23), fetched
   once per `contentHash`; the timeline draws the level whose bins are the widest

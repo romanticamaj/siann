@@ -24,6 +24,9 @@
 //   SIANN_USER_DATA           under SIANN_SHELL_TEST only: the user data directory
 //                             (the single-instance lock lives there), so tests
 //                             never meet the maintainer's running app
+//   SIANN_TEST_LANGS          under SIANN_SHELL_TEST only: comma-separated system
+//                             languages the renderer's locale detection reads
+//                             instead of navigator.languages (e2e pin)
 //   SIANN_SHELL_DEVTOOLS=1    devtools, the View menu's reload and the keys back,
 //                             for debugging
 
@@ -223,8 +226,11 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       devTools: devtools,
-      // The renderer's test hooks (window.__siannTimeline), under SIANN_SHELL_TEST=1 only.
-      additionalArguments: underTest ? ['--siann-test-hooks'] : [],
+      // The renderer's test hooks (window.__siannTimeline, window.__siannLocale)
+      // and the pinned system languages, under SIANN_SHELL_TEST=1 only.
+      additionalArguments: underTest
+        ? ['--siann-test-hooks', ...(process.env.SIANN_TEST_LANGS ? [`--siann-test-langs=${process.env.SIANN_TEST_LANGS}`] : [])]
+        : [],
     },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -246,6 +252,10 @@ app.on('before-quit', (event) => {
   // Stop the engine first; stop() is bounded even if the engine never exits.
   event.preventDefault();
   quitting = true;
+  // The renderer's localStorage (the UI locale, siann.locale) is written lazily:
+  // flush it before the process goes. (A second instance quits before ready,
+  // when there is no session to touch.)
+  if (app.isReady()) session.defaultSession.flushStorageData();
   void supervisor.stop().finally(() => app.quit());
 });
 

@@ -6,13 +6,19 @@
 // opens the realtime channel beside it (meters) and the fader gesture
 // controller over it (protocol-gestures-v0.md), fetches peak pyramids from the
 // same engine (Protocol v0 item 23), mirrors the engine's plans for plan
-// review (Protocol v0 item 25), and mounts the React chrome. Under
-// SIANN_SHELL_TEST=1 (the preload's window.siannTest) the timeline's test
-// hooks are window.__siannTimeline.
+// review (Protocol v0 item 25), and mounts the React chrome. The UI locale
+// (m5-ui-i18n) follows navigator.languages, or a stored manual choice, and
+// sets <html lang> on start and on every switch. Under SIANN_SHELL_TEST=1
+// (the preload's window.siannTest) the timeline's test hooks are
+// window.__siannTimeline, the locale store is window.__siannLocale (which
+// accepts the pseudo-locale), and window.siannTest.languages, when the test
+// pinned them, stands in for navigator.languages.
 
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } from './i18n/locale';
+import { installLocaleStore } from './i18n/t';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { PlanStore } from './model/plan-store';
@@ -31,10 +37,34 @@ declare global {
     // The gesture controller, for the e2e tests to wait on (settled).
     __siannGestures?: GestureController;
     // Present only when the shell runs under SIANN_SHELL_TEST=1.
-    siannTest?: { timelineHooks?: boolean };
+    siannTest?: { timelineHooks?: boolean; languages?: readonly string[] };
     __siannTimeline?: TimelineTestHooks;
+    __siannLocale?: LocaleStore;
   }
 }
+
+function localStorageOrNull(): LocaleStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+const locales = createLocaleStore({
+  languages: window.siannTest?.languages ?? navigator.languages,
+  storage: localStorageOrNull(),
+  allowPseudo: window.siannTest !== undefined,
+});
+installLocaleStore(locales);
+const applyLocale = () => {
+  const locale = locales.getSnapshot();
+  document.documentElement.lang = htmlLang(locale);
+  document.documentElement.dataset.locale = locale;
+};
+applyLocale();
+locales.subscribe(applyLocale);
+if (window.siannTest) window.__siannLocale = locales;
 
 const schedule = (fn: () => void, ms: number) => {
   const timer = setTimeout(fn, ms);

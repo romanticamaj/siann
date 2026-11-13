@@ -7,12 +7,13 @@
 // first meter reading), and the meters read once the transport plays. Waits
 // are Playwright condition waits with bounded timeouts.
 
-import { _electron as electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
+import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -34,7 +35,7 @@ let watcher: EngineClient | null = null;
 test.beforeEach(async () => {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-mixer-'));
-  app = await electron.launch({
+  app = await launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
     env: {
