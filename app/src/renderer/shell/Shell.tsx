@@ -123,6 +123,11 @@ export interface ShellProps {
   readonly store: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
+  // A row under the top bar, outside the zones (the audition banner): visible
+  // whichever zones are open.
+  readonly banner?: ReactNode;
+  // The toast region, over the zones.
+  readonly toasts?: ReactNode;
   readonly left: ReactNode;
   readonly project: ReactNode;
   readonly lower: ReactNode;
@@ -257,7 +262,7 @@ function ZoneSeparator({
   );
 }
 
-export function Shell({ client, plans, engineStatus, store, commands, platform, left, project, lower, right }: ShellProps) {
+export function Shell({ client, plans, engineStatus, store, commands, platform, banner, toasts, left, project, lower, right }: ShellProps) {
   const t = useT();
   const viewport = useViewport();
   const state = useShellState(store);
@@ -469,6 +474,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
         onToggle={(zone) => dispatch((size) => ({ type: 'toggle', zone, viewport: size }))}
         onPlans={() => dispatch((size) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport: size }))}
       />
+      <div className="shell-banner">{banner}</div>
       <Group orientation="horizontal" id="zones" className="zones" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
         <Panel
           id="panel-left"
@@ -553,6 +559,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
         </Panel>
       </Group>
       <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
+      {toasts}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 // Toast messages built from the catalogs (UI redesign spec 6.2). The toast
-// surface itself arrives with P1-5 and P1-6; the builders and their wording
-// per locale exist now so those tickets only place them.
+// surface is shell/toast-store.ts and shell/Toasts.tsx (P1-5); a plan's
+// arrival is raised by plans/arrivals.ts, the reconnect by P1-6.
 
 import type { Locale } from './locale';
 import { translator } from './t';

@@ -63,6 +63,8 @@ test('a plan arrival pushes the planArrived message in the current locale', () =
   plans.applyChanged({ schema: 'siann.event.v1', seq: '1', type: 'plan.changed', plan: hash, state: 'validated' });
   plans.setStatus(planObject(hash, 'validated'));
   assert.deepEqual(toasts.getSnapshot().map((t) => t.message), [planArrivedMessage('en', { steps: 3 })]);
+  // A language switch re-words a toast already shown.
+  assert.equal(toasts.getSnapshot()[0]!.reword?.('zh-Hans'), planArrivedMessage('zh-Hans', { steps: 3 }));
 
   locale = 'zh-Hant';
   const other = 'sha256:' + '2'.repeat(64);

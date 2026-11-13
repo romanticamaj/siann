@@ -7,6 +7,12 @@
 // session.changed (a commit can make a plan stale), plan.status for a
 // plan.changed that names a plan the store does not hold, and the heard side
 // from session.inspect and audition.changed.
+//
+// m5-ui-plan-panel: plan.changed carries no time, note or approval time (E-7),
+// so the store records when it first learnt of a plan through plan.changed
+// (firstSeen, by an injected clock; a plan of a plan.list has none), raises
+// an arrival for a new validated plan that is not a sub-plan (the toast), and
+// re-reads plan.status when a held plan becomes rejected or approved.
 
 import type { ClientState, EventMessage } from './session-client';
 
@@ -40,6 +46,13 @@ export interface PlanSnapshot {
   // The side heard ("main" or a branch id), or null when unknown (no engine,
   // no auditioner).
   readonly heard: string | null;
+  // When plan.changed first named each plan (the store's clock, ms).
+  readonly firstSeen: ReadonlyMap<string, number>;
+}
+
+export interface PlanStoreOptions {
+  // The clock firstSeen reads (Date.now by default).
+  readonly now?: () => number;
 }
 
 export type PlanEvent = EventMessage;
@@ -85,14 +98,28 @@ export function planEntry(raw: unknown): PlanEntry | null {
   return Object.freeze(entry);
 }
 
-function freezeSnapshot(plans: PlanEntry[], needsStatus: string[], heard: string | null): PlanSnapshot {
+function freezeSnapshot(
+  plans: PlanEntry[],
+  needsStatus: string[],
+  heard: string | null,
+  firstSeen: ReadonlyMap<string, number> = new Map(),
+): PlanSnapshot {
   const byHash = new Map(plans.map((p) => [p.hash, p] as const));
-  return Object.freeze({ plans: Object.freeze(plans), byHash, needsStatus: Object.freeze(needsStatus), heard });
+  return Object.freeze({ plans: Object.freeze(plans), byHash, needsStatus: Object.freeze(needsStatus), heard, firstSeen });
 }
 
 export class PlanStore {
   #snapshot: PlanSnapshot = freezeSnapshot([], [], null);
   readonly #listeners = new Set<() => void>();
+  readonly #arrivalListeners = new Set<(plan: PlanEntry) => void>();
+  // Plans plan.changed named before the store held them: each raises an
+  // arrival once it is held, when it is a validated plan of its own.
+  readonly #announce = new Set<string>();
+  readonly #now: () => number;
+
+  constructor(options: PlanStoreOptions = {}) {
+    this.#now = options.now ?? (() => Date.now());
+  }
 
   getSnapshot(): PlanSnapshot {
     return this.#snapshot;
@@ -105,13 +132,24 @@ export class PlanStore {
     };
   }
 
+  // A new plan from an agent: validated, not a sub-plan, first named by
+  // plan.changed (not a plan the first plan.list after a connect found).
+  onArrival(listener: (plan: PlanEntry) => void): () => void {
+    this.#arrivalListeners.add(listener);
+    return () => {
+      this.#arrivalListeners.delete(listener);
+    };
+  }
+
   // Replaces every plan with a plan.list answer.
   fromList(result: unknown): void {
     const list = (result as { plans?: unknown } | null)?.plans;
     if (!Array.isArray(list)) return;
     const plans = list.map(planEntry).filter((p): p is PlanEntry => p !== null);
     const held = new Set(plans.map((p) => p.hash));
-    this.#set(freezeSnapshot(plans, this.#snapshot.needsStatus.filter((h) => !held.has(h)), this.#snapshot.heard));
+    const current = this.#snapshot;
+    this.#set(freezeSnapshot(plans, current.needsStatus.filter((h) => !held.has(h)), current.heard, current.firstSeen));
+    for (const plan of plans) this.#arrived(plan);
   }
 
   // One plan as plan.status answered it: replaced in place, or added at the end.
@@ -122,18 +160,26 @@ export class PlanStore {
     const index = plans.findIndex((p) => p.hash === entry.hash);
     if (index >= 0) plans[index] = entry;
     else plans.push(entry);
-    this.#set(freezeSnapshot(plans, this.#snapshot.needsStatus.filter((h) => h !== entry.hash), this.#snapshot.heard));
+    const current = this.#snapshot;
+    this.#set(freezeSnapshot(plans, current.needsStatus.filter((h) => h !== entry.hash), current.heard, current.firstSeen));
+    this.#arrived(entry);
   }
 
-  // A plan.changed event: the plan's state and proposal link. A plan the
-  // store does not hold is marked as needing plan.status (returns true then).
+  // A plan.changed event: the plan's state and proposal link. Returns true
+  // when the plan needs plan.status: one the store does not hold (marked as
+  // needing it, its firstSeen recorded), or a held one that became rejected
+  // or approved (the event carries neither the note nor the times, E-7).
   applyChanged(event: PlanEvent): boolean {
     const hash = event.plan;
     if (typeof hash !== 'string' || !isState(event.state)) return false;
-    const current = this.#snapshot.byHash.get(hash);
+    const snapshot = this.#snapshot;
+    const current = snapshot.byHash.get(hash);
     if (!current) {
-      if (!this.#snapshot.needsStatus.includes(hash)) {
-        this.#set(freezeSnapshot([...this.#snapshot.plans], [...this.#snapshot.needsStatus, hash], this.#snapshot.heard));
+      if (!snapshot.needsStatus.includes(hash)) {
+        const firstSeen = new Map(snapshot.firstSeen);
+        if (!firstSeen.has(hash)) firstSeen.set(hash, this.#now());
+        this.#announce.add(hash);
+        this.#set(freezeSnapshot([...snapshot.plans], [...snapshot.needsStatus, hash], snapshot.heard, firstSeen));
       }
       return true;
     }
@@ -143,14 +189,21 @@ export class PlanStore {
     if (branch === undefined) delete raw.proposalBranch;
     else raw.proposalBranch = branch;
     const next = planEntry(raw)!;
-    const plans = this.#snapshot.plans.map((p) => (p.hash === hash ? next : p));
-    this.#set(freezeSnapshot(plans, [...this.#snapshot.needsStatus], this.#snapshot.heard));
-    return false;
+    const plans = snapshot.plans.map((p) => (p.hash === hash ? next : p));
+    this.#set(freezeSnapshot(plans, [...snapshot.needsStatus], snapshot.heard, snapshot.firstSeen));
+    return current.state !== event.state && (event.state === 'rejected' || event.state === 'approved');
   }
 
   setHeard(heard: string | null): void {
-    if (heard === this.#snapshot.heard) return;
-    this.#set(freezeSnapshot([...this.#snapshot.plans], [...this.#snapshot.needsStatus], heard));
+    const snapshot = this.#snapshot;
+    if (heard === snapshot.heard) return;
+    this.#set(freezeSnapshot([...snapshot.plans], [...snapshot.needsStatus], heard, snapshot.firstSeen));
+  }
+
+  #arrived(plan: PlanEntry): void {
+    if (!this.#announce.delete(plan.hash)) return;
+    if (plan.state !== 'validated' || plan.parentPlan !== undefined) return;
+    for (const listener of [...this.#arrivalListeners]) listener(plan);
   }
 
   // Follows a session client until the returned function is called.

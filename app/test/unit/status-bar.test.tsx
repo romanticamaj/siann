@@ -144,7 +144,8 @@ test('the status bar shows device, latency, xruns and the side heard, and keeps 
   assert.match(outside, /data-testid="device"[^>]*>fake</);
   assert.match(outside, /data-testid="latency"[^>]*>5\.0 \/ 10\.0 ms</);
   assert.match(outside, /data-testid="xruns"[^>]*>4</);
-  assert.match(outside, /data-testid="status-heard"[^>]*>main</);
+  // The side heard in words (m5-ui-plan-panel): Main or Proposal, never a branch id.
+  assert.match(outside, /data-testid="status-heard"[^>]*>Main</);
   assert.match(outside, /data-testid="revision"/);
   assert.match(outside, /data-testid="locale-switch"/);
   for (const id of ['session-id', 'track-count', 'clip-count', 'sync-count', 'connections']) {

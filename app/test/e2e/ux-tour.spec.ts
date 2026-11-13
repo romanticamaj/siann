@@ -27,6 +27,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { Locale } from '../../src/renderer/i18n/locale';
+import { formatMilliDb } from '../../src/renderer/format';
 import { translator } from '../../src/renderer/i18n/t';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
@@ -643,7 +644,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Plan stale error',
-    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge, the reason reads in dB ("Vox Lead: volume was +1.5 dB, now +0.5 dB"), and Approve and apply is disabled with the reason as its tooltip; Reject stays.`,
+    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge, the reason reads in dB ("Vox Lead: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}"), and Approve and apply is disabled with the reason as its tooltip; Reject stays.`,
   );
 
   // ---- 7. The engine dies: the window while the shell waits to restart it.

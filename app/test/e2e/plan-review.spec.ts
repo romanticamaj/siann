@@ -186,7 +186,7 @@ test('a new plan raises a toast and the count without taking the focus; a collap
   await expect(page.getByTestId('plans-count')).toHaveCount(0);
 
   const plan = await (await agent()).tool('submit_plan', { steps: STEPS });
-  await expect(page.getByTestId('toast')).toHaveText(planArrivedMessage('en', { steps: STEPS.length }));
+  await expect(page.getByTestId('toast-message')).toHaveText(planArrivedMessage('en', { steps: STEPS.length }));
   await expect(page.getByTestId('toasts')).toHaveAttribute('role', 'status');
   await expect(page.getByTestId('plans-count')).toHaveText('1');
   expect(await focusedId()).toBe(before);

@@ -34,6 +34,7 @@ import { PlanStore } from './model/plan-store';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { SessionClient, type EngineEndpoint, type SocketLike } from './model/session-client';
 import { createLayoutStore } from './shell/layout-store';
+import { ToastStore } from './shell/toast-store';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
@@ -51,6 +52,8 @@ declare global {
     siannTest?: { timelineHooks?: boolean; languages?: readonly string[] };
     __siannTimeline?: TimelineTestHooks;
     __siannLocale?: LocaleStore;
+    // The toast store, for the fit test to raise a toast per locale.
+    __siannToasts?: ToastStore;
   }
 }
 
@@ -99,6 +102,8 @@ const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
+const toasts = new ToastStore({ schedule });
+if (testHooks) window.__siannToasts = toasts;
 const engineStatus = new EngineStatusStore({ client, schedule });
 
 let endpoint: EngineEndpoint | null = null;
@@ -134,6 +139,7 @@ createRoot(container).render(
     realtime={realtime}
     peaks={peaks}
     plans={plans}
+    toasts={toasts}
     engineStatus={engineStatus}
     layout={layout}
     commands={commands}

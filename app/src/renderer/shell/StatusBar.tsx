@@ -213,7 +213,9 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
       {heard !== null && can.has('audition.hear') ? (
         <dl>
           <dt>{t('status.heard')}</dt>
-          <dd data-testid="status-heard">{heard}</dd>
+          <dd data-testid="status-heard" data-heard={heard === 'main' ? 'main' : 'proposal'}>
+            {t(heard === 'main' ? 'hearing.main' : 'hearing.proposal')}
+          </dd>
         </dl>
       ) : null}
       <LocaleSwitch />
