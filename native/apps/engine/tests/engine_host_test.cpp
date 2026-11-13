@@ -6,7 +6,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -1084,6 +1086,138 @@ TEST_CASE("a loaded session without a device is never built again", "[engine][ho
     host.auditionPort()->mainCommitted();
     host.tick();
     CHECK(host.playback().compileCount() == 2);  // the same engine compiled, not a new one
+}
+
+// ---- cycle and click through the host (Protocol v0 item 26) -------------------------
+//
+// What transport.set_cycle and transport.set_click do on the device, not only what
+// they report: the host passes both to the playback engine, keeps them across
+// selectDevice, gives the engine bind() builds the opened session's cycle flag, and
+// keeps the click across a rebind.
+
+namespace {
+
+// Neither locator on a block boundary; the fixture's audio runs on past both.
+constexpr std::int64_t kLeft = 10'003;
+constexpr std::int64_t kRight = 30'007;
+
+std::string setLocators(std::int64_t left, std::int64_t right) {
+    return R"({"op":"session.set_locators","left":")" + std::to_string(left) + R"(","right":")" +
+           std::to_string(right) + R"("})";
+}
+
+// Locators committed on main and heard by the live graph.
+void commitLocators(Rig& rig) {
+    rig.fixture.exec(setLocators(kLeft, kRight));
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(2);
+}
+
+// Plays from `from` for `blocks` blocks; returns channel 0 of what the device put out.
+std::vector<float> playFrom(Rig& rig, std::int64_t from, int blocks) {
+    rig.host->stop();
+    rig.pump(1);
+    rig.host->locate(from);
+    rig.host->play();
+    rig.settle();
+    std::vector<float> out;
+    for (int b = 0; b < blocks; ++b) {
+        rig.device->pump(1, &out);
+        rig.service();
+    }
+    return out;
+}
+
+// From L, 200 blocks (51,200 frames) is more than two passes of the 20,004-frame
+// range: with cycle on the playhead is back inside it, with cycle off long past R.
+bool wraps(Rig& rig) {
+    playFrom(rig, kLeft, 200);
+    const std::int64_t at = rig.position();
+    return at >= kLeft && at < kRight;
+}
+
+// At 120 BPM a beat falls on 96,000; the fixture's audio ends at 50,000, so from
+// 90,000 the device is silent unless the click sounds.
+float clickPeak(Rig& rig) {
+    const std::vector<float> out = playFrom(rig, 90'000, 40);
+    float peak = 0.0f;
+    for (const float sample : out) {
+        peak = std::max(peak, std::abs(sample));
+    }
+    return peak;
+}
+
+}  // namespace
+
+TEST_CASE("setCycle on the host makes playback wrap on the device", "[engine][host][cycle]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    Rig rig;
+    commitLocators(rig);
+    CHECK_FALSE(wraps(rig));
+
+    CHECK(rig.host->setCycle(true).cycle);
+    CHECK(rig.engine().cycle());
+    CHECK(wraps(rig));
+
+    CHECK_FALSE(rig.host->setCycle(false).cycle);
+    CHECK_FALSE(wraps(rig));
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("setClick on the host adds the click to the device output", "[engine][host][click]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    Rig rig;
+    CHECK(clickPeak(rig) == 0.0f);
+
+    CHECK(rig.host->setClick(true, 0).click.enabled);
+    const float loud = clickPeak(rig);
+    CHECK(loud > 0.1f);
+
+    // The gain reaches the engine too: -20 dB is a tenth of the level.
+    rig.host->setClick(true, -20'000);
+    const float quiet = clickPeak(rig);
+    CHECK(quiet > 0.0f);
+    CHECK(std::abs(quiet - loud / 10.0f) < loud / 100.0f);
+
+    rig.host->setClick(false, std::nullopt);
+    CHECK(clickPeak(rig) == 0.0f);
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("cycle and click keep sounding on a device selectDevice opens", "[engine][host][cycle][click][devices]") {
+    Rig rig;
+    commitLocators(rig);
+    rig.host->setCycle(true);
+    rig.host->setClick(true, 0);
+
+    rig.host->selectDevice("b");
+    rig.useMade();
+    CHECK(wraps(rig));
+    CHECK(clickPeak(rig) > 0.1f);
+}
+
+TEST_CASE("rebind gives the new engine the opened session's cycle flag and keeps the click",
+          "[engine][host][cycle][click][rebind]") {
+    Rig rig;
+    rig.host->setClick(true, 0);
+    CHECK_FALSE(rig.host->setCycle(false).cycle);
+
+    Fixture other;
+    other.exec(setLocators(kLeft, kRight));
+    other.session.setCycle(true);
+    rig.host->rebind(other.session);
+    CHECK(rig.host->status().cycle);
+    CHECK(rig.engine().cycle());
+    CHECK(wraps(rig));
+    CHECK(clickPeak(rig) > 0.1f);
+
+    // And a session saved with cycle off opens with it off.
+    Fixture plain;
+    plain.exec(setLocators(kLeft, kRight));
+    rig.host->setCycle(true);
+    rig.host->rebind(plain.session);
+    CHECK_FALSE(rig.engine().cycle());
+    CHECK_FALSE(wraps(rig));
 }
 
 // m4-crash-recovery (spec, "Process model", Crash): a plugin crash raises no WER or
