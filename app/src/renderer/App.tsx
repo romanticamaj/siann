@@ -1,7 +1,7 @@
 // The renderer's root component. React renders chrome only; timeline,
 // waveform and meter surfaces are imperative canvas classes (ADR-0019
 // point 3): the timeline's drawing is a canvas class it mounts, and the
-// mixer's meters are MeterCanvas instances its strips mount. Plan review
+// mixer's meters are one MixerMeters canvas over its strips. Plan review
 // (m5-plan-review, m5-ui-plan-panel) is chrome over the PlanStore and
 // plan.preview.
 //
@@ -39,6 +39,7 @@ import { Shell } from './shell/Shell';
 import type { ToastStore } from './shell/toast-store';
 import { Timeline } from './timeline/Timeline';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
+import type { MeterTestHooks } from './mixer/MixerMeters';
 
 export interface AppProps {
   readonly client: SessionClient;
@@ -53,6 +54,7 @@ export interface AppProps {
   readonly connection: ConnectionPhaseStore;
   readonly toasts: ToastStore;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
+  readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
 }
 
 export function App({
@@ -68,6 +70,7 @@ export function App({
   connection,
   toasts,
   onTimelineHooks,
+  onMeterHooks,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -98,7 +101,7 @@ export function App({
         banner={<AuditionBanner client={client} plans={plans} />}
         phase={phase}
         toasts={toasts}
-        left={<Inspector client={client} trackId={selectedTrack} />}
+        left={<Inspector client={client} gestures={gestures} trackId={selectedTrack} />}
         project={
           <Timeline
             client={client}
@@ -113,7 +116,7 @@ export function App({
             reconnects={reconnects}
           />
         }
-        lower={<Mixer client={client} gestures={gestures} realtime={realtime} />}
+        lower={<Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />}
         right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
       />
     </CapabilitiesContext.Provider>
