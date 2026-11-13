@@ -261,7 +261,7 @@ export function Shell({ client, plans, store, commands, platform, left, project,
         dispatch((viewport) => ({ type: 'showTab', zone: 'lower', tab: 'mixconsole', viewport })),
       ),
       commands.register('window', 'zone.right.plans', () =>
-        dispatch((viewport) => ({ type: 'showTab', zone: 'right', tab: 'plans', viewport })),
+        dispatch((viewport) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport })),
       ),
       commands.register('window', 'focus.nextZone', cycle(1)),
       commands.register('window', 'focus.prevZone', cycle(-1)),
@@ -318,7 +318,7 @@ export function Shell({ client, plans, store, commands, platform, left, project,
         plans={plans}
         zones={zones}
         onToggle={(zone) => dispatch((size) => ({ type: 'toggle', zone, viewport: size }))}
-        onPlans={() => dispatch((size) => ({ type: 'showTab', zone: 'right', tab: 'plans', viewport: size }))}
+        onPlans={() => dispatch((size) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport: size }))}
       />
       <Group orientation="horizontal" id="zones" className="zones" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
         <Panel

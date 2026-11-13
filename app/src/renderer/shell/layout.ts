@@ -62,8 +62,10 @@ export type ShellAction =
   | { readonly type: 'show'; readonly zone: Zone; readonly viewport: Viewport }
   | { readonly type: 'hide'; readonly zone: Zone; readonly viewport: Viewport }
   | { readonly type: 'tab'; readonly zone: Zone; readonly tab: string }
-  // Show the zone on `tab`, or hide it when it already shows that tab (Alt+F3, Ctrl+Alt+P).
-  | { readonly type: 'showTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport };
+  // Show the zone on `tab`, or hide it when it already shows that tab (Alt+F3, F3).
+  | { readonly type: 'showTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport }
+  // Show the zone on `tab` and leave it shown (Ctrl+Alt+P, the Plans button).
+  | { readonly type: 'openTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport };
 
 export interface ZoneView {
   readonly visible: boolean;
@@ -208,6 +210,8 @@ export function reduce(state: ShellState, action: ShellAction): ShellState {
       if (visible && state.layout.tabs[zone] === action.tab) return hide(state, zone, action.viewport);
       return setTab(show(state, zone, action.viewport), zone, action.tab);
     }
+    case 'openTab':
+      return setTab(show(state, zone, action.viewport), zone, action.tab);
   }
 }
 
