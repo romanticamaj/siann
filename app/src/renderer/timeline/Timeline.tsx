@@ -1,7 +1,10 @@
 // The timeline's React chrome (ADR-0019 point 3): it mounts the imperative
 // TimelineCanvas on a <canvas> through a ref and renders around it what is
-// plain UI: the media pool to place from, the delete button and key, and the
-// selected clip and last refusal. No drawing state passes through React.
+// plain UI: the media pool to place from and the delete button (the project
+// zone's toolbar), the selected clip and last refusal (its info line), and the
+// event display that holds the canvas. Delete, Backspace and Escape are the
+// project zone's key commands (keys/preset-cubase.ts), registered here. No
+// drawing state passes through React.
 // The canvas words its ruler through the installed locale store and redraws
 // when it changes; the chrome reads the same store through useT().
 
@@ -9,6 +12,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { refusalLine } from '../i18n/errors';
 import { localeStore, translator, useLocale } from '../i18n/t';
+import type { CommandRegistry } from '../keys/commands';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { SessionClient } from '../model/session-client';
 import { TimelineCanvas, type TimelineState, type TimelineTestHooks } from './TimelineCanvas';
@@ -18,10 +22,15 @@ const IDLE: TimelineState = { selectedClipId: null, placingMediaId: null, error:
 export function Timeline({
   client,
   peaks,
+  commands,
+  onSelect,
   onHooks,
 }: {
   client: SessionClient;
   peaks: PeaksCache;
+  commands: CommandRegistry;
+  // The selected clip, for the left zone.
+  onSelect?: (clipId: string | null) => void;
   // Test-only (SIANN_SHELL_TEST=1): the canvas's hooks once it is mounted.
   onHooks?: (hooks: TimelineTestHooks | null) => void;
 }) {
@@ -63,15 +72,16 @@ export function Timeline({
 
   useEffect(() => {
     if (!timeline) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-      if (event.key === 'Delete' || event.key === 'Backspace') void timeline.deleteSelected();
-      if (event.key === 'Escape') timeline.setPlacing(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [timeline]);
+    const offs = [
+      commands.register('project', 'edit.delete', () => void timeline.deleteSelected()),
+      commands.register('project', 'edit.cancel', () => timeline.setPlacing(null)),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [timeline, commands]);
+
+  useEffect(() => {
+    onSelect?.(state.selectedClipId);
+  }, [onSelect, state.selectedClipId]);
 
   return (
     <section className="timeline">
@@ -99,8 +109,7 @@ export function Timeline({
           {t('timeline.deleteClip')}
         </button>
       </div>
-      <canvas ref={canvasRef} data-testid="timeline-canvas" className="timeline-canvas" />
-      <dl>
+      <dl className="info-line" data-testid="info-line">
         <dt>{t('timeline.selected')}</dt>
         <dd data-testid="selected-clip">{state.selectedClipId ?? ''}</dd>
         <dt>{t('timeline.lastError')}</dt>
@@ -108,6 +117,9 @@ export function Timeline({
           {state.error ? refusalLine(state.error.code, state.error.message, locale) : ''}
         </dd>
       </dl>
+      <div className="event-display" data-testid="event-display">
+        <canvas ref={canvasRef} data-testid="timeline-canvas" className="timeline-canvas" />
+      </div>
     </section>
   );
 }

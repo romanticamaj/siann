@@ -66,6 +66,8 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 interface EngineEndpoint {
@@ -217,10 +219,18 @@ function denyPermissions(): void {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 720,
+    // The redesign's reference size; the shell lays out down to 960x600 (UI
+    // redesign spec 2.4).
+    width: 1440,
+    height: 900,
+    minWidth: 960,
+    minHeight: 600,
+    useContentSize: true,
     title: 'SIANN',
     webPreferences: {
+      // Meters and the transport keep running behind a plugin editor window
+      // (spec 5.7); the draw loops still stop when the page is hidden.
+      backgroundThrottling: false,
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,

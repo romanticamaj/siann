@@ -8,7 +8,13 @@
 // same engine (Protocol v0 item 23), mirrors the engine's plans for plan
 // review (Protocol v0 item 25), and mounts the React chrome. The UI locale
 // (m5-ui-i18n) follows navigator.languages, or a stored manual choice, and
-// sets <html lang> on start and on every switch. Under SIANN_SHELL_TEST=1
+// sets <html lang> on start and on every switch. The zone layout
+// (m5-ui-shell) is read from and kept in localStorage (siann.layout.v1), and
+// the key commands' registry is made here for the shell and the zones.
+//
+// This is the only renderer file that names the shell's preload bridge
+// (UI redesign spec 5.8): in a plain browser tab it is absent and the
+// renderer stays disconnected. Under SIANN_SHELL_TEST=1
 // (the preload's window.siannTest) the timeline's test hooks are
 // window.__siannTimeline, the locale store is window.__siannLocale (which
 // accepts the pseudo-locale), and window.siannTest.languages, when the test
@@ -17,6 +23,8 @@
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { CommandRegistry } from './keys/commands';
+import { platformOf } from './keys/dispatcher';
 import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } from './i18n/locale';
 import { installLocaleStore } from './i18n/t';
 import { GestureController } from './model/gesture-controller';
@@ -24,11 +32,13 @@ import { PeaksCache } from './model/peaks-cache';
 import { PlanStore } from './model/plan-store';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { SessionClient, type EngineEndpoint, type SocketLike } from './model/session-client';
+import { createLayoutStore } from './shell/layout-store';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
   interface Window {
-    siann: {
+    // The preload bridge; absent in a plain browser tab.
+    siann?: {
       engine: {
         current(): Promise<EngineEndpoint | null>;
         onChange(callback: (next: EngineEndpoint | null) => void): void;
@@ -71,11 +81,14 @@ const schedule = (fn: () => void, ms: number) => {
   return () => clearTimeout(timer);
 };
 
+const bridge = window.siann;
+const testHooks = window.siannTest;
+
 const client = new SessionClient({
   createSocket: (url) => new WebSocket(url) as unknown as SocketLike,
-  currentEndpoint: () => window.siann.engine.current(),
+  currentEndpoint: () => (bridge ? bridge.engine.current() : Promise.resolve(null)),
   schedule,
-  initialStatus: 'connecting',
+  initialStatus: bridge ? 'connecting' : 'disconnected',
 });
 const realtime = new RealtimeClient({
   session: client,
@@ -100,7 +113,10 @@ function connect(next: EngineEndpoint | null): void {
   if (changed) peaks.endpointChanged();
 }
 
-const onTimelineHooks = window.siannTest?.timelineHooks
+const layout = createLayoutStore({ storage: localStorageOrNull() });
+const commands = new CommandRegistry();
+
+const onTimelineHooks = testHooks?.timelineHooks
   ? (hooks: TimelineTestHooks | null) => {
       if (hooks) window.__siannTimeline = hooks;
       else delete window.__siannTimeline;
@@ -116,9 +132,14 @@ createRoot(container).render(
     realtime={realtime}
     peaks={peaks}
     plans={plans}
+    layout={layout}
+    commands={commands}
+    platform={platformOf(navigator.platform)}
     onTimelineHooks={onTimelineHooks}
   />,
 );
 
-window.siann.engine.onChange(connect);
-void window.siann.engine.current().then(connect);
+if (bridge) {
+  bridge.engine.onChange(connect);
+  void bridge.engine.current().then(connect);
+}

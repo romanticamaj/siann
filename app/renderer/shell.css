@@ -1,0 +1,267 @@
+/* The window (UI redesign spec 2): a top bar, the zones and a status bar on a
+   grid that fills the window. The page never scrolls; each zone body
+   scrolls inside. Dividers are 1 px lines with a 7 px hit area. The focused
+   zone has a light frame. Panels open and close in 120 ms, not at all under
+   prefers-reduced-motion (the token is 0s there). */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-1);
+  color: var(--tx-1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-ui);
+  line-height: var(--line-height);
+  font-variant-numeric: tabular-nums;
+}
+
+#root { height: 100%; }
+
+button, select, input { font: inherit; color: inherit; }
+button {
+  white-space: nowrap;
+  min-height: var(--control-h);
+  padding: 0 calc(var(--space) * 2);
+  background: var(--bg-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--bg-5); }
+button:disabled { color: var(--tx-4); cursor: default; }
+button[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+select, input:not([type]), input[type="text"] {
+  min-height: var(--control-h);
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-s);
+}
+code, dd, .mono { font-family: var(--font-mono); }
+
+.shell {
+  display: grid;
+  grid-template-rows: var(--top-bar) minmax(0, 1fr) var(--status-bar);
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---- top bar */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  padding: 0 calc(var(--space) * 3);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--divider);
+  overflow: hidden;
+  white-space: nowrap;
+  container-type: inline-size;
+}
+.top-bar h1 { margin: 0; font-size: var(--fs-session); font-weight: 600; letter-spacing: .02em; }
+.top-bar .session-name { font-size: var(--fs-session); color: var(--tx-2); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.top-bar .spacer { flex: 1; }
+.zone-buttons { display: flex; gap: var(--space); }
+.plans-button { display: inline-flex; align-items: center; gap: var(--space); }
+.plans-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--ai);
+  color: #000;
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+/* ---- zones */
+.zones { min-height: 0; }
+/* The library's inner element of each panel: the zone fills it. */
+.panel-inner { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden !important; }
+.zones-center { flex: 1 1 0; }
+.zone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-1);
+  outline: 0 solid transparent;
+  outline-offset: -1px;
+}
+.zone[data-focused="true"] { outline: 1px solid var(--focus); }
+.zone[hidden] { display: none; }
+.zone:focus { outline-color: var(--focus); }
+.zone:focus:not([data-focused="true"]) { outline: none; }
+.zone-tabs {
+  display: flex;
+  flex: 0 0 var(--zone-tabs);
+  align-items: stretch;
+  gap: var(--space);
+  padding: 0 calc(var(--space) * 2);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+.zone-tabs [role="tab"] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--tx-3);
+  font-size: var(--fs-small);
+  min-height: 0;
+}
+.zone-tabs [role="tab"][aria-selected="true"] { color: var(--tx-1); box-shadow: inset 0 -2px 0 var(--tx-2); }
+.zone-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: calc(var(--space) * 2);
+  container-type: inline-size;
+}
+.zone-body[hidden] { display: none; }
+
+/* The right zone under 1280 px (spec 2.4): an overlay drawer over the project zone. */
+.zone[data-drawer="true"] {
+  position: fixed;
+  top: var(--top-bar);
+  right: 0;
+  bottom: var(--status-bar);
+  width: var(--drawer-width, 348px);
+  height: auto;
+  z-index: 10;
+  border-left: 1px solid var(--divider);
+  box-shadow: -8px 0 24px rgb(0 0 0 / .45);
+}
+
+/* Panels animate their size when a zone opens or closes (not while dragging). */
+.zones[data-animate="true"] [data-panel] { transition: flex-grow var(--panel-motion); }
+.zones:has([data-separator="active"]) [data-panel] { transition: none; }
+
+/* ---- dividers: a 1 px line, a 7 px hit area */
+.divider {
+  position: relative;
+  background: var(--divider);
+  outline: none;
+  z-index: 2;
+}
+.divider-left, .divider-right { width: var(--divider-w); }
+.divider-lower { height: var(--divider-w); }
+.divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 calc((var(--divider-hit) - var(--divider-w)) / -2);
+}
+.divider-lower::before {
+  inset: calc((var(--divider-hit) - var(--divider-w)) / -2) 0;
+}
+.divider:hover, .divider:focus-visible, .divider[data-separator="active"] { background: var(--tx-3); }
+
+/* ---- the project zone: toolbar, info line, event display */
+.zone-project .zone-body {
+  display: grid;
+  grid-template-rows: var(--toolbar) var(--info-line) minmax(0, 1fr);
+  padding: 0;
+}
+.timeline { display: contents; }
+.timeline-bar {
+  display: flex;
+  gap: calc(var(--space) * 4);
+  align-items: center;
+  padding: 0 calc(var(--space) * 2);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.info-line {
+  display: flex;
+  gap: calc(var(--space) * 2);
+  align-items: center;
+  margin: 0;
+  padding: 0 calc(var(--space) * 2);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--fs-small);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.info-line dt { color: var(--tx-3); }
+.info-line dd { margin: 0 calc(var(--space) * 2) 0 0; }
+.event-display { min-height: 0; overflow: auto; background: var(--bg-0); }
+.media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; }
+.media-pool button[aria-pressed="true"] { outline: 2px solid var(--select); }
+.timeline-canvas { display: block; width: 100%; height: 140px; border: 0; touch-action: none; }
+
+/* ---- the left zone: the selected track */
+.inspector h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-small); color: var(--tx-3); font-weight: 500; }
+.inspector-track { font-size: var(--fs-session); color: var(--tx-1); }
+.inspector-empty { color: var(--tx-3); }
+
+/* ---- the lower zone: MixConsole */
+.mixer { display: flex; flex-wrap: nowrap; gap: calc(var(--space) * 3); align-items: flex-start; }
+.strip {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 6px;
+  justify-items: center;
+  padding: 8px;
+  width: 160px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+}
+.strip-name { font-weight: 600; }
+.strip-meter { background: var(--bg-0); }
+.strip label { display: grid; gap: 2px; justify-items: center; font-size: var(--fs-body); }
+.strip input[type=range] { width: 140px; }
+.strip-buttons { display: flex; gap: 6px; }
+.strip-buttons button[aria-pressed=true] { background: var(--solo); color: #000; }
+.strip-buttons button[data-testid^="mute-"][aria-pressed=true] { background: var(--mute); }
+
+/* ---- the right zone: plans */
+.plan-review h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); }
+.plan-list { display: grid; gap: 4px; justify-items: start; list-style: none; margin: 0 0 12px; padding: 0; }
+.plan-list button[aria-pressed="true"] { outline: 2px solid var(--select); }
+.plan-state { font-size: var(--fs-small); padding: 1px 6px; border-radius: 8px; background: var(--bg-5); }
+.plan-heard { font-family: var(--font-mono); }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.plan-actions label { white-space: nowrap; }
+.plan-error { color: var(--err); min-height: 1.2em; }
+.plan-diff { border-collapse: collapse; font-size: var(--fs-small); }
+.plan-diff td, .plan-diff th { padding: 2px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.plan-diff th { white-space: nowrap; color: var(--tx-3); }
+.plan-diff code { word-break: break-all; }
+/* Chinese breaks between any two characters: keep the change kind and stale mark on one line. */
+:root:is(:lang(zh-TW), :lang(zh-CN)) .plan-diff :is(td:nth-child(2), td[data-testid="diff-stale"]) { white-space: nowrap; }
+.plan-diff tr[data-stale="true"] { background: color-mix(in srgb, var(--warn) 25%, transparent); }
+.steps { margin: 0; padding-left: 20px; }
+
+/* ---- status bar */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  padding: 0 calc(var(--space) * 3);
+  background: var(--bg-2);
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-small);
+  color: var(--tx-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.status-bar dl { display: flex; gap: var(--space); margin: 0; }
+.status-bar dt { color: var(--tx-3); }
+.status-bar dd { margin: 0 calc(var(--space) * 2) 0 0; }
+.status-bar [data-status="connected"] { color: var(--ok); }
+.status-bar [data-status="disconnected"] { color: var(--err); }
+.status-bar select { min-height: 18px; font-size: var(--fs-small); }
+.locale-switch { display: flex; gap: 6px; align-items: center; }
+.about { margin-left: auto; color: var(--tx-3); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Small windows (2.4): the top bar drops what does not fit. */
+@container (max-width: 700px) {
+  .top-bar .session-name { display: none; }
+}

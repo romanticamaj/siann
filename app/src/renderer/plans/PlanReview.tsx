@@ -18,6 +18,7 @@ import { refusalLine } from '../i18n/errors';
 import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
 import { ProtocolError, type SessionClient } from '../model/session-client';
+import { Capable } from '../shell/Capable';
 import { availableActions, landedLabel, runAction, type ActionId, type PlanAction } from './actions';
 import { selection, type PlanPreview } from './diff';
 import { PlanDiff } from './PlanDiff';
@@ -83,16 +84,19 @@ function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision
   return state !== null && state.plan === hash ? state : null;
 }
 
-const BUTTONS: ReadonlyArray<{ id: ActionId; testId: string; label: MessageKey }> = [
-  { id: 'approve', testId: 'plan-approve', label: 'plans.approve' },
-  { id: 'approveSelected', testId: 'plan-approve-selected', label: 'plans.approveSelected' },
-  { id: 'reject', testId: 'plan-reject', label: 'plans.reject' },
-  { id: 'apply', testId: 'plan-apply', label: 'plans.apply' },
-  { id: 'audition', testId: 'plan-audition', label: 'plans.audition' },
-  { id: 'hearMain', testId: 'plan-hear-main', label: 'plans.hearMain' },
-  { id: 'hearProposal', testId: 'plan-hear-proposal', label: 'plans.hearProposal' },
-  { id: 'merge', testId: 'plan-merge', label: 'plans.merge' },
-  { id: 'discard', testId: 'plan-discard', label: 'plans.discard' },
+// Each action's button exists only when engine.capabilities lists the method
+// it sends (UI redesign spec 3.0); audition sends plan.approve and
+// plan.propose before audition.hear, and is listed under plan.propose.
+const BUTTONS: ReadonlyArray<{ id: ActionId; testId: string; label: MessageKey; method: string }> = [
+  { id: 'approve', testId: 'plan-approve', label: 'plans.approve', method: 'plan.approve' },
+  { id: 'approveSelected', testId: 'plan-approve-selected', label: 'plans.approveSelected', method: 'plan.approve' },
+  { id: 'reject', testId: 'plan-reject', label: 'plans.reject', method: 'plan.reject' },
+  { id: 'apply', testId: 'plan-apply', label: 'plans.apply', method: 'plan.apply' },
+  { id: 'audition', testId: 'plan-audition', label: 'plans.audition', method: 'plan.propose' },
+  { id: 'hearMain', testId: 'plan-hear-main', label: 'plans.hearMain', method: 'audition.hear' },
+  { id: 'hearProposal', testId: 'plan-hear-proposal', label: 'plans.hearProposal', method: 'audition.hear' },
+  { id: 'merge', testId: 'plan-merge', label: 'plans.merge', method: 'proposal.merge' },
+  { id: 'discard', testId: 'plan-discard', label: 'plans.discard', method: 'proposal.discard' },
 ];
 
 export function PlanReview({ client, plans }: PlanReviewProps) {
@@ -223,15 +227,11 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
               <input data-testid="plan-note" value={note} onChange={(event) => setNote(event.target.value)} />
             </label>
             {BUTTONS.map((button) => (
-              <button
-                key={button.id}
-                type="button"
-                data-testid={button.testId}
-                disabled={!enabled(button.id)}
-                onClick={() => run(button.id)}
-              >
-                {t(button.label)}
-              </button>
+              <Capable key={button.id} method={button.method}>
+                <button type="button" data-testid={button.testId} disabled={!enabled(button.id)} onClick={() => run(button.id)}>
+                  {t(button.label)}
+                </button>
+              </Capable>
             ))}
           </div>
           <p className="plan-error" data-testid="plan-error" role="status" data-code={error?.code ?? undefined}>

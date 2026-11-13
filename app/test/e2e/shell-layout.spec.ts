@@ -63,6 +63,8 @@ async function resize(size: { width: number; height: number }): Promise<void> {
   }, size);
   await page.setViewportSize(size);
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight])).toEqual([size.width, size.height]);
+  // The shell has laid out for this size.
+  await expect(page.getByTestId('shell')).toHaveAttribute('data-viewport', `${size.width}x${size.height}`);
 }
 
 // The zone's size along its boundary's axis, or 0 when hidden.
@@ -84,6 +86,14 @@ async function eventDisplayHeight(): Promise<number> {
 
 // Drags the zone's separator so the zone becomes `size` px.
 async function dragTo(zone: Zone, size: number): Promise<void> {
+  // A zone that just opened may still be animating (120 ms): start from where it settles.
+  let last = -1;
+  await expect.poll(async () => {
+    const now = await sizeOf(zone);
+    const settled = now === last;
+    last = now;
+    return settled;
+  }).toBe(true);
   const separator = page.getByTestId(`separator-${zone}`);
   const box = await separator.boundingBox();
   if (!box) throw new Error(`separator-${zone} is not laid out`);

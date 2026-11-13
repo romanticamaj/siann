@@ -77,7 +77,7 @@ export function localeStore(): LocaleStore {
 
 export function useLocale(): Locale {
   const store = active;
-  return useSyncExternalStore(store.subscribe, store.getSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
 
 export function useT(): T {

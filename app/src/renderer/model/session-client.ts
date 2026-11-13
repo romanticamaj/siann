@@ -11,11 +11,14 @@
 // Structural changes are never optimistic: execute() resolves with the
 // engine's answer and leaves the model to session.changed.
 //
-// Framework-free: the socket factory, the endpoint source (the preload's
-// window.siann.engine.current) and the reconnect scheduler are injected.
+// After each auth it asks engine.capabilities once (UI redesign spec 3.0) and
+// keeps the last answer across reconnects.
+//
+// Framework-free: the socket factory, the endpoint source (the shell's
+// preload bridge, read in index.tsx) and the reconnect scheduler are injected.
 
 import type { FetchedEntity, SessionChanged, SyncChunk } from './document';
-import type { Capabilities } from './capabilities';
+import { isCapabilities, type Capabilities } from './capabilities';
 import { isMeterLegend, type MeterLegend } from './meter-frames';
 import { ReadModel, ReadModelError } from './read-model';
 
@@ -208,8 +211,8 @@ export class SessionClient {
     };
   }
 
-  // Connects to the endpoint the shell announces (window.siann.engine.current
-  // and onChange). The same endpoint again leaves a live socket alone unless
+  // Connects to the endpoint the shell announces (its preload bridge's
+  // current() and onChange, read in index.tsx). The same endpoint again leaves a live socket alone unless
   // forced; null disconnects.
   connect(next: EngineEndpoint | null, force = false): void {
     const current = this.#connection;
@@ -351,6 +354,13 @@ export class SessionClient {
       about: (reply.about as AboutInfo | undefined) ?? null,
       legend: isMeterLegend(reply.meters) ? reply.meters : null,
     });
+    // What this engine can do, once per connection; a failure keeps the last answer.
+    this.#send(connection, 'engine.capabilities', {}).then(
+      (result) => {
+        if (this.#connection === connection && !connection.closed && isCapabilities(result)) this.#update({ capabilities: result });
+      },
+      () => undefined,
+    );
     // Protocol v0 item 11: a client that missed events, or reached another
     // engine (a restart has a new session id and starts its seq again), syncs.
     const authSeq = typeof reply.seq === 'string' ? seqOf(reply.seq) : null;

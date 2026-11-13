@@ -27,6 +27,22 @@ export const en = {
   'about.unknownCommit': 'unknown',
   'about.source': 'source: {url}',
 
+  // The shell (m5-ui-shell): zones, zone buttons, tabs, the left zone.
+  'zone.project': 'Project zone',
+  'zone.left': 'Left zone',
+  'zone.lower': 'Lower zone',
+  'zone.right': 'Right zone',
+  'zone.buttons': 'Zones',
+  'zone.resize': 'Resize the {zone}',
+  'tab.track': 'Track',
+  'tab.mixconsole': 'MixConsole',
+  'tab.plans': 'Plans',
+  'topbar.plans': 'Plans',
+  'topbar.pending': 'Plans waiting for review: {count}',
+  'inspector.label': 'Inspector',
+  'inspector.noTrack': 'No track selected',
+  'status.label': 'Status',
+
   // Timeline.
   'timeline.mediaPool': 'Media pool',
   'timeline.deleteClip': 'Delete clip',
