@@ -38,11 +38,11 @@ const std::vector<std::string> kTools = {
 // A transport port that records what each tool reached.
 class RecordingPort final : public protocol::TransportPort {
 public:
-    protocol::TransportState play() override { return reached("play", {true, position}); }
-    protocol::TransportState stop() override { return reached("stop", {false, position}); }
+    protocol::TransportState play() override { return reached("play", {true, position, cycle, click}); }
+    protocol::TransportState stop() override { return reached("stop", {false, position, cycle, click}); }
     protocol::TransportState locate(std::int64_t frames) override {
         position = frames;
-        return reached("locate", {false, frames});
+        return reached("locate", {false, frames, cycle, click});
     }
     protocol::TransportState setCycle(bool enabled) override {
         cycle = enabled;

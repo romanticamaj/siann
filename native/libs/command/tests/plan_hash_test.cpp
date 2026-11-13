@@ -88,11 +88,11 @@ TEST_CASE("parentPlan and step order are part of the hash", "[plan][fixtures]") 
 }
 
 TEST_CASE("A writeSet may name the locators entity", "[plan][fixtures][locators]") {
-    const Value& c = validCase("locators_write_set");
-    const Plan plan = Plan::fromJson(*c.find("plan"));
+    const Value* c = &validCase("locators_write_set");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
     REQUIRE(plan.writeSet.size() == 1);
     CHECK(plan.writeSet[0].ref == siann::model::EntityRef{siann::model::EntityType::locators, "locators"});
-    CHECK(formatHash(planHash(plan)) == c.find("planHash")->asString());
+    CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
 }
 
 TEST_CASE("Invalid plans are rejected with the fixture's code", "[plan][fixtures]") {
