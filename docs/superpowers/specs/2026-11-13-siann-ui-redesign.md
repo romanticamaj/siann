@@ -92,7 +92,7 @@ Lucide (ISC), 16 px grid, 1.6 px stroke, copied as SVG files into the repo and i
 
 - Nothing animates on the audio path: faders, meters, playhead and clip drags follow the pointer or the engine with no easing.
 - Panels open and close in 120 ms ease-out. Toasts slide 160 ms. Ghosts fade in over 150 ms when a plan is selected.
-- Meter ballistics are part of the design: instant attack, release of 20 dB in 1.7 s (the IEC 60268-18 digital PPM return rate [M1]), peak hold 1.5 s (review A17; I found no standard for hold time).
+- Meter ballistics are part of the design: instant attack, release of 20 dB in 1.7 s (the IEC 60268-18 digital PPM return rate [M1]), peak hold 1.5 s (review A17; I found no standard for hold time). After the 1.5 s hold the peak-hold line falls at the same release rate until it meets the bar; the numeric peak value is the maximum since the last reset and, with the clip indicator (latched by any sample peak at or above 0 dBFS), is cleared only by clicking the peak value.
 - `prefers-reduced-motion` removes the panel and ghost transitions.
 
 ## 2. Layout
@@ -319,7 +319,7 @@ Strip order, top to bottom, as in Cubase (`research/cubase.md` 5.3): (insert rac
 | Lower-zone MixConsole in track order | `Alt+F3` | P1-4 |
 | Fader, -inf to +6 dB, finer near 0 dB | Volume Max defaults to +6 dB (confirmed in the Cubase manual) | P1-4 |
 | Reset a control; fine adjust; type a value | `Ctrl`-click; `Shift`-drag; double-click the value | P1-4, for every value control in the app |
-| Wheel over a control changes it | Subject to a preference | P1-4 (off inside scrollable areas by default) |
+| Wheel over a control changes it | Subject to a preference | Phase 3, with the preference (every phase 1 value control sits in a zone that scrolls, where the wheel is off by default, and no preference UI exists yet) |
 | Pan | Balance panner; `Ctrl`-click centres | P1-4 |
 | Meter with peak hold; click the peak value to reset | Global Meter Settings | P1-4 |
 | Clip indication | — | P1-4 |
@@ -494,7 +494,7 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 | C4 | Apply against Audition then Merge | Decided: one primary button at a time. Not auditioning: "Approve and apply" runs `plan.approve` then `plan.apply`. Auditioning: "Merge". Phase 1 chains today's methods, and the Audition button runs approve, propose, hear with the card reading "approved for audition". Auditioning without approval is E-6 |
 | C5 | Editing while auditioning | Edits go to the side that is heard, as the engine already does for fader gestures; the frame and banner say so. Structural edits are disabled while a proposal is heard until `command.execute` can target the branch |
 | C6 | Concurrent plans; stale approved plans | Any number may wait; one is auditioned at a time. After a merge, plans whose entities changed show "Stale" with the reason in user units and Approve disabled. An approved plan that goes stale keeps its Approved badge beside the Stale badge; Apply and Audition are disabled with the reason and Reject stays; it becomes valid again if an undo restores the recorded entities (the engine never changes a plan's state on staleness, and `plan.approve` on an approved plan is `invalid_state`) |
-| C7 | Fader range; dB everywhere | Decided: -inf to +6 dB, 0 dB at 75 % of travel. Cubase's Volume Max defaults to +6 dB (`research/cubase.md` 5.4); Logic's maximum boost is +6 dB [M4]. A stored value above +6 dB pins the cap at the top and shows the true value in the warning colour. A +12 dB project setting, which Cubase also has, can follow |
+| C7 | Fader range; dB everywhere | Decided: -inf to +6 dB, 0 dB at 75 % of travel. The taper (`mixer/taper.ts`) is piecewise linear in dB between these breakpoints of travel: 100 % = +6 dB, 75 % = 0 dB, 50 % = -12 dB, 30 % = -24 dB, 15 % = -40 dB, 5 % = -60 dB; below 5 % it is linear in amplitude from -60 dB down to silence, and 0 % is minus infinity (`INT32_MIN`, `Gain::kMinusInfinity`). So the travel is finer near 0 dB (4.2 % of travel per dB above 0 dB, 2.1 % per dB between -12 and 0 dB, 0.9 % per dB between -40 and -24 dB). Cubase's Volume Max defaults to +6 dB (`research/cubase.md` 5.4); Logic's maximum boost is +6 dB [M4]. A stored value above +6 dB pins the cap at the top and shows the true value in the warning colour. A +12 dB project setting, which Cubase also has, can follow |
 | C8 | Restart semantics | The shell reopens the same bundle; a toast gives the recovered revision; selection is cleared. Plans live in engine memory, so a restart loses them and the panel says so (E-12 persists them) |
 | C9 | Reject note to the agent | The field is labelled "Reason (sent to agent)". E-7 carries the note in plan status so the agent and every client see it |
 | C10 | Seconds or bars and beats; snap | Bars+Beats primary, Seconds secondary, `.` swaps them; snap on (`J`), type Grid, grid Adapt to Zoom; `Ctrl` while resizing disables snap |
@@ -569,7 +569,7 @@ The realtime socket stays on the main thread: its frames are a few hundred bytes
 | Fader: pointer move to cap movement | same frame | by construction (transform in the pointer handler) |
 | Fader: pointer move to `gesture.update` on the wire | under 20 ms; at most one update per animation frame, latest value wins | unit test on the gesture controller's coalescing |
 | Meter: frame received to drawn | under two display frames | timestamp in the test hook |
-| React commits while playing with no edits | zero | React Profiler count in the perf scenario |
+| React commits while playing with no edits | zero | React Profiler count in the perf scenario. The count is taken on a second bundle built with `react-dom/profiling` (an esbuild alias of `react-dom/client`; the production `react-dom/client` never calls `onRender`), served in place of `renderer.js` only under `SIANN_SHELL_TEST=1` with `SIANN_SHELL_PROFILING=1`; the e2e first proves the counter moves on a commit (a mute click) before asserting zero while playing |
 | Idle window (stopped, no pointer) | no `requestAnimationFrame` callbacks | test hook counter |
 | Memory | parsed peaks LRU capped at 256 MB; GPU textures at 128 MB; JS heap under 300 MB on the 64-track session | `performance.memory` in the scenario |
 | Cold start to first painted session | under 1.5 s after the engine is ready | e2e timing |
@@ -756,10 +756,11 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 
 **P1-4 MixConsole and Inspector basics** (`m5-ui-mixer`)
 
-- Scope: lower-zone strips in track order with Cubase's layout (pan, M S, fader with meter, level and peak values, name on the colour); fader on `taper.ts` with its top changed from +12 to +6 dB; `Ctrl`-click reset, `Shift` fine, double-click to type, wheel, value tooltip, for every value control; one meter canvas with peak hold, clip indication, and a peak value that resets on click; meter-only master strip; the Inspector's Track tab with name, colour, M, S, volume and pan built from the same controls.
+- Scope: lower-zone strips in track order with Cubase's layout (pan, M S, fader with meter, level and peak values, name on the colour); fader on a new `mixer/taper.ts` (breakpoints in 4.5 C7) that replaces m5-mixer's linear -60..+12 dB range input; `Ctrl`-click reset, `Shift` fine, double-click to type, value tooltip, for every value control (the wheel waits for its preference, phase 3); one meter canvas with peak hold, clip indication, and a peak value that resets on click; meter-only master strip; the Inspector's Track tab with name, colour, M, S, volume and pan built from the same controls.
 - Acceptance: one revision per fader gesture, as today, and a held fader keeps its lease; values are dB with one decimal and L/C/R; `Ctrl`-click sets 0.0 dB or C in one revision; a stored gain above +6 dB pins the cap at the top and shows the true value; meters draw at display rate with zero React commits; the Inspector and the strip of the selected track always agree; review items A3, A4, A5, A16, A17, B11, B17 are closed.
-- Tests: unit (taper with the +6 dB top, format, peak hold, knob mapping); e2e (drag, `Shift`-drag, `Ctrl`-click, typed value, wheel).
-- Tour states changed: 04, 07, 08, 09.
+- Notes: values use a one-decimal formatter (`formatDb`: `+1.5 dB`, `-6.0 dB`, `0.0 dB`, `-inf dB`) beside `formatMilliDb`, which keeps two decimals for the plan wording of `plans/describe.ts` (P1-5's area). Until P1-3 selects tracks, the selected track is the selected clip's track. Track colour is the renderer's stable hash of the track id (3.0) in P1-3's `timeline/track-colour.ts` and its `--track-<n>` tokens, so P1-4 depends on P1-3 (while P1-3 is unmerged the mixer branch carries that module, its test and the tokens byte-identical, so the later merge is an identical add); the Inspector shows it and cannot change it (no command until E-2). The zero-commit count uses the profiling bundle of 5.6.
+- Tests: unit (taper with the +6 dB top, format, peak hold, knob mapping); e2e (drag, `Shift`-drag, `Ctrl`-click, typed value).
+- Tour states changed: 01-22 (every state shows the lower zone's MixConsole and the left zone's Inspector since m5-ui-shell); the review reads 04, 07, 08, 09.
 - Protocol used: `gesture.*`, `command.execute` with `track.set_gain/pan/mute/solo`, realtime meter frames, `meters.legend` including `master`.
 
 **P1-5 Plans tab** (`m5-ui-plan-panel`)
