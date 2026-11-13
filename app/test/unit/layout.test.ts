@@ -19,6 +19,9 @@ import {
   PROJECT_CHROME,
   STATUS_BAR,
   TOP_BAR,
+  TRACK_LIST_DEFAULT,
+  TRACK_LIST_MAX,
+  TRACK_LIST_MIN,
   effectiveLayout,
   initialShellState,
   limits,
@@ -201,14 +204,15 @@ test('the event display keeps 360x320: the lower zone, then the right, then the 
     { type: 'resize', zone: 'right', size: 560, viewport: WIDE },
     { type: 'resize', zone: 'lower', size: limits('lower', WIDE).max, viewport: WIDE },
   );
-  // 1300 wide: 1300 - 420 - 560 - 2 = 318 < 360. The right zone gives way first.
+  // 1300 wide: 1300 - 420 - 560 - 2 = 318 < 216 + 1 + 360 (the track list,
+  // its divider and the event display). The right zone gives way first.
   const narrow: Viewport = { width: 1300, height: 900 };
   const shown = effectiveLayout(big, narrow);
   const width = (s: typeof shown) =>
     narrow.width -
     (s.zones.left.visible ? s.zones.left.size + 1 : 0) -
     (s.zones.right.visible && !s.zones.right.drawer ? s.zones.right.size + 1 : 0);
-  assert.ok(width(shown) >= EVENT_MIN_WIDTH, `event display ${width(shown)} px wide`);
+  assert.ok(width(shown) >= TRACK_LIST_DEFAULT + 1 + EVENT_MIN_WIDTH, `project zone ${width(shown)} px wide`);
   assert.equal(shown.zones.left.size, 420, 'the left zone gives way last');
   assert.ok(shown.zones.right.size < 560);
   assert.equal(big.layout.sizes.right, 560, 'the stored layout is not rewritten');
@@ -223,12 +227,12 @@ test('the event display keeps 360x320: the lower zone, then the right, then the 
   const opened = reduce(start(), { type: 'show', zone: 'lower', viewport: { width: 1440, height: 600 } });
   assert.equal(effectiveLayout(opened, { width: 1440, height: 600 }).zones.lower.visible, false);
   // The left zone gives way last, in a window narrower than the shell allows
-  // (a browser tab): it shrinks to what leaves 360 px, then hides.
-  const tab: Viewport = { width: 600, height: 900 };
+  // (a browser tab): it shrinks to what leaves the track list and 360 px, then hides.
+  const tab: Viewport = { width: 900, height: 900 };
   const left = reduce(big, { type: 'show', zone: 'left', viewport: tab });
   assert.equal(effectiveLayout(left, tab).zones.left.visible, true);
-  assert.equal(effectiveLayout(left, tab).zones.left.size, 600 - EVENT_MIN_WIDTH - 1);
-  const tiny: Viewport = { width: 500, height: 900 };
+  assert.equal(effectiveLayout(left, tab).zones.left.size, 900 - (TRACK_LIST_DEFAULT + 1 + EVENT_MIN_WIDTH) - 1);
+  const tiny: Viewport = { width: 700, height: 900 };
   assert.equal(effectiveLayout(reduce(big, { type: 'show', zone: 'left', viewport: tiny }), tiny).zones.left.visible, false);
   assert.equal(big.layout.sizes.left, 420);
 });
@@ -268,7 +272,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const withHeights: Layout = { ...changed, stripWidth: 'narrow', trackHeights: { ses_a: { trk_1: 96 } } };
   const text = serializeLayout(withHeights);
   const object = JSON.parse(text) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(object).sort(), ['collapsed', 'sizes', 'stripWidth', 'tabs', 'trackHeights']);
+  assert.deepEqual(Object.keys(object).sort(), ['collapsed', 'sizes', 'stripWidth', 'tabs', 'trackHeights', 'trackList']);
   assert.deepEqual(parseLayout(text), withHeights);
   for (const bad of [null, '', '{', 'null', '42', '[]', '"x"']) assert.deepEqual(parseLayout(bad), DEFAULT_LAYOUT, String(bad));
   // Field by field: a bad field falls back, the rest is kept.
@@ -319,4 +323,80 @@ test('the layout store reads and writes one key and survives storage that throws
   broken.dispatch({ type: 'hide', zone: 'left', viewport: WIDE });
   assert.equal(broken.getSnapshot().layout.collapsed.left, true);
   assert.deepEqual(createLayoutStore({ storage: null }).getSnapshot().layout, DEFAULT_LAYOUT);
+});
+
+// m5-ui-arrange: the track list / event display boundary (spec 2.3: 216 px,
+// 140-420 px, never collapses) and the per-session track heights.
+test('the track list is 216 px by default, drags within 140-420 and never collapses', () => {
+  assert.equal(TRACK_LIST_DEFAULT, 216);
+  assert.equal(TRACK_LIST_MIN, 140);
+  assert.equal(TRACK_LIST_MAX, 420);
+  assert.equal(DEFAULT_LAYOUT.trackList, 216);
+  const at = (size: number) => reduce(start(), { type: 'trackListResize', size }).layout.trackList;
+  assert.equal(at(300), 300);
+  assert.equal(at(900), 420);
+  assert.equal(at(100), 140, 'below the minimum it stops there');
+  assert.equal(at(0), 140, 'and never collapses');
+  assert.equal(at(Number.NaN), 216, 'a bad size changes nothing');
+  assert.equal(at(250.6), 251);
+});
+
+test('the track list boundary keys: arrows 8 px, Shift 32 px, Home and End, Enter resets', () => {
+  const step = (direction: 1 | -1, large = false, from = start()) =>
+    reduce(from, { type: 'trackListStep', direction, large }).layout.trackList;
+  assert.equal(step(1), 224);
+  assert.equal(step(-1), 208);
+  assert.equal(step(1, true), 248);
+  assert.equal(step(-1, true), 184);
+  const nearMin = reduce(start(), { type: 'trackListResize', size: 144 });
+  assert.equal(step(-1, false, nearMin), 140);
+  assert.equal(reduce(start(), { type: 'trackListEdge', edge: 'min' }).layout.trackList, 140);
+  assert.equal(reduce(start(), { type: 'trackListEdge', edge: 'max' }).layout.trackList, 420);
+  const moved = reduce(start(), { type: 'trackListResize', size: 333 });
+  assert.equal(reduce(moved, { type: 'trackListReset' }).layout.trackList, 216);
+  // The zone guard does not swallow it, and it leaves the zones alone.
+  assert.deepEqual(reduce(moved, { type: 'trackListReset' }).layout.sizes, DEFAULT_SIZES);
+});
+
+test('track heights: one track or all, per session id, clamped to 24-240', () => {
+  const one = reduce(start(), { type: 'trackHeight', sessionId: 'ses_a', trackId: 'trk_1', height: 96 });
+  assert.deepEqual(one.layout.trackHeights, { ses_a: { trk_1: 96 } });
+  const clamped = reduce(one, { type: 'trackHeight', sessionId: 'ses_a', trackId: 'trk_2', height: 5 });
+  assert.deepEqual(clamped.layout.trackHeights, { ses_a: { trk_1: 96, trk_2: 24 } });
+  const all = reduce(clamped, { type: 'allTrackHeights', sessionId: 'ses_a', trackIds: ['trk_1', 'trk_2', 'trk_3'], height: 500 });
+  assert.deepEqual(all.layout.trackHeights, { ses_a: { trk_1: 240, trk_2: 240, trk_3: 240 } });
+  const other = reduce(all, { type: 'trackHeight', sessionId: 'ses_b', trackId: 'trk_1', height: 64 });
+  assert.deepEqual(other.layout.trackHeights.ses_a, { trk_1: 240, trk_2: 240, trk_3: 240 });
+  assert.deepEqual(other.layout.trackHeights.ses_b, { trk_1: 64 });
+  assert.deepEqual(viewFor(other.layout, 'ses_b').trackHeights, { trk_1: 64 });
+  // An unchanged height is the same state (nothing to store).
+  assert.equal(reduce(one, { type: 'trackHeight', sessionId: 'ses_a', trackId: 'trk_1', height: 96 }), one);
+  assert.equal(reduce(start(), { type: 'trackHeight', sessionId: '', trackId: 'trk_1', height: 96 }).layout, DEFAULT_LAYOUT, 'no session, nothing stored');
+});
+
+test('the track list width and heights round-trip through siann.layout.v1; bad values fall back', () => {
+  const layout: Layout = { ...DEFAULT_LAYOUT, trackList: 300, trackHeights: { ses_a: { trk_1: 96 } } };
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+  for (const bad of ['wide', -5, 0, 1000, null]) {
+    const parsed = parseLayout(JSON.stringify({ trackList: bad }));
+    assert.equal(parsed.trackList, bad === 1000 ? 420 : 216, String(bad));
+  }
+  assert.equal(parseLayout(JSON.stringify({ trackList: 100 })).trackList, 216, 'below the minimum: the default');
+  const heights = parseLayout(JSON.stringify({ trackHeights: { s: { a: 500, b: 10, c: 'x' } } })).trackHeights;
+  assert.deepEqual(heights, { s: { a: 240, b: 24 } });
+});
+
+test('the zone rule reserves the track list and 360 px for the event display', () => {
+  // 1440 wide, left 420, right 560: 1440 - 421 - 561 = 458 < 216 + 1 + 360.
+  const big = run(
+    start(),
+    { type: 'resize', zone: 'left', size: 420, viewport: WIDE },
+    { type: 'resize', zone: 'right', size: 560, viewport: WIDE },
+  );
+  const shown = effectiveLayout(big, WIDE);
+  assert.equal(shown.trackList, 216);
+  assert.equal(shown.zones.right.size, 1440 - 421 - (216 + 1 + 360) - 1, 'the right zone gives way');
+  // A narrower track list leaves the right zone more.
+  const narrowList = reduce(big, { type: 'trackListResize', size: 140 });
+  assert.equal(effectiveLayout(narrowList, WIDE).zones.right.size, 1440 - 421 - (140 + 1 + 360) - 1);
 });

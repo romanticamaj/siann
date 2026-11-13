@@ -1,8 +1,11 @@
-// The timeline canvas words its ruler through the locale it is given and
-// redraws when that locale changes (m5-ui-i18n; UI redesign spec 6.2: "the
-// canvas surfaces take the same function and redraw on a locale change").
-// The canvas runs on a recording 2D context and a hand-driven animation-frame
-// queue: no DOM, no timers. Expected labels come from the catalogs.
+// The timeline canvas and the locale (m5-ui-i18n, m5-ui-arrange; UI redesign
+// spec 6.2: "the canvas surfaces take the same function and redraw on a
+// locale change"; bar.beat.tick positions "are the same in all three
+// locales"). The ruler is bars and beats, byte-identical in every locale; the
+// one sentence the canvas words itself is the empty session's guidance, which
+// follows the locale store and redraws when it changes. Runs on fake
+// canvases and a hand-driven animation-frame queue (support/surface.ts).
+// Expected text comes from the catalogs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,93 +13,79 @@ import assert from 'node:assert/strict';
 import { createLocaleStore } from '../../src/renderer/i18n/locale';
 import { translator } from '../../src/renderer/i18n/t';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
-import type { ReadModel } from '../../src/renderer/model/read-model';
+import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
 import { TimelineCanvas } from '../../src/renderer/timeline/TimelineCanvas';
-import { sampleSnapshot } from './support/timeline';
+import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
+import { sampleSnapshot, snapshotOf } from './support/timeline';
 
-// One queue of animation-frame callbacks, run by flush().
-const frames = new Map<number, () => void>();
-let nextFrame = 1;
-const g = globalThis as unknown as Record<string, unknown>;
-g.requestAnimationFrame = (fn: () => void) => {
-  const id = nextFrame++;
-  frames.set(id, fn);
-  return id;
-};
-g.cancelAnimationFrame = (id: number) => frames.delete(id);
+installSurfaceGlobals();
 
-function flush(): number {
-  const pending = [...frames.values()];
-  frames.clear();
-  for (const fn of pending) fn();
-  return pending.length;
-}
+const peaks = { get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache;
 
-// A canvas whose 2D context records the text drawn into it.
-function recordingCanvas(): { canvas: HTMLCanvasElement; texts: string[] } {
-  const texts: string[] = [];
-  const ctx = new Proxy(
-    { fillText: (text: string) => texts.push(text) },
-    { get: (target, key) => (key in target ? (target as Record<string | symbol, unknown>)[key] : () => undefined), set: () => true },
-  );
-  const canvas = {
-    clientWidth: 800,
-    width: 0,
-    height: 0,
-    style: { height: '' },
-    getContext: () => ctx,
-    getBoundingClientRect: () => ({ left: 0, top: 0 }),
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
-  };
-  return { canvas: canvas as unknown as HTMLCanvasElement, texts };
-}
-
-test('the ruler is worded in the given locale and redraws on a locale change', () => {
-  frames.clear();
-  const snapshot = sampleSnapshot();
+function canvasFor(snapshot: Snapshot, locale?: ReturnType<typeof createLocaleStore>) {
+  clearFrames();
+  setDevicePixelRatio(1);
+  const surface = fakeSurface(800, 300);
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
-  const peaks = { get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache;
-  const store = createLocaleStore({ languages: ['zh-TW'], storage: null });
-  const { canvas, texts } = recordingCanvas();
   const timeline = new TimelineCanvas({
-    canvas,
+    content: surface.content,
+    overlay: surface.overlay,
+    container: surface.container,
     model,
     peaks,
     execute: async () => undefined,
-    locale: { t: () => translator(store.getSnapshot()), subscribe: (listener) => store.subscribe(listener) },
+    locale: locale ? { t: () => translator(locale.getSnapshot()), subscribe: (listener) => locale.subscribe(listener) } : undefined,
   });
+  return { surface, timeline };
+}
 
-  assert.equal(flush(), 1, 'the first frame');
-  const zero = (locale: 'en' | 'zh-Hant' | 'zh-Hans') => translator(locale)('timeline.seconds', { value: '0' });
-  assert.ok(texts.includes(zero('zh-Hant')), `zh-Hant ruler: ${texts.join(' | ')}`);
-  assert.ok(!texts.includes(zero('en')), 'no English ruler label');
-  // The test hook reads the labels of the last frame.
-  assert.deepEqual(timeline.testHooks().rulerLabels()[0], zero('zh-Hant'));
+test('the ruler is bars and beats, the same in every locale', () => {
+  const labels: string[][] = [];
+  for (const language of ['en', 'zh-TW', 'zh-CN']) {
+    const store = createLocaleStore({ languages: [language], storage: null });
+    const { timeline } = canvasFor(sampleSnapshot(), store);
+    flushFrames();
+    labels.push(timeline.testHooks().rulerLabels());
+    timeline.destroy();
+  }
+  assert.ok(labels[0]!.length > 0);
+  assert.equal(labels[0]![0], '1', 'bar 1 at the start');
+  assert.ok(labels[0]!.every((label) => /^\d+(\.\d+(\.\d+)?)?$/.test(label)), labels[0]!.join(' '));
+  assert.deepEqual(labels[1], labels[0]);
+  assert.deepEqual(labels[2], labels[0]);
+});
 
-  texts.length = 0;
+test('the empty session guidance is worded in the given locale and redraws on a locale change', () => {
+  const store = createLocaleStore({ languages: ['zh-TW'], storage: null });
+  const { surface, timeline } = canvasFor(snapshotOf([], [], [], []), store);
+  const texts = surface.contentCalls.texts;
+  assert.ok(flushFrames() >= 1, 'the first frame');
+  const guidance = (locale: 'en' | 'zh-Hant' | 'zh-Hans') => translator(locale)('timeline.empty');
+  assert.ok(texts.includes(guidance('zh-Hant')), `zh-Hant: ${texts.join(' | ')}`);
+  assert.ok(!texts.includes(guidance('en')), 'no English guidance');
+  assert.equal(timeline.testHooks().guidance(), guidance('zh-Hant'));
+
+  surface.contentCalls.clear();
   store.setLocale('en');
-  assert.equal(flush(), 1, 'a locale change schedules one redraw');
-  assert.ok(texts.includes(zero('en')), `en ruler: ${texts.join(' | ')}`);
+  assert.ok(flushFrames() >= 1, 'a locale change schedules a redraw');
+  assert.ok(texts.includes(guidance('en')), `en: ${texts.join(' | ')}`);
   assert.ok(texts.every((text) => !/\p{Script=Han}/u.test(text)), `no Chinese after the switch: ${texts.join(' | ')}`);
-  assert.equal(timeline.testHooks().rulerLabels()[0], zero('en'));
-
-  // Track names are the user's and are the same in every locale.
-  assert.ok(texts.includes('trk_a') && texts.includes('trk_b'));
+  assert.equal(timeline.testHooks().guidance(), guidance('en'));
 
   timeline.destroy();
   store.setLocale('zh-Hans');
-  assert.equal(flush(), 0, 'no redraw after destroy');
+  assert.equal(flushFrames(), 0, 'no redraw after destroy');
 });
 
-test('without a locale the ruler is English', () => {
-  frames.clear();
-  const snapshot = sampleSnapshot();
-  const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
-  const peaks = { get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache;
-  const { canvas, texts } = recordingCanvas();
-  const timeline = new TimelineCanvas({ canvas, model, peaks, execute: async () => undefined });
-  flush();
-  assert.ok(texts.includes(translator('en')('timeline.seconds', { value: '0' })), texts.join(' | '));
-  timeline.destroy();
+test('without a locale the guidance is English; a session with tracks shows none', () => {
+  const empty = canvasFor(snapshotOf([], [], [], []));
+  flushFrames();
+  assert.equal(empty.timeline.testHooks().guidance(), translator('en')('timeline.empty'));
+  empty.timeline.destroy();
+  const full = canvasFor(sampleSnapshot());
+  flushFrames();
+  assert.equal(full.timeline.testHooks().guidance(), null);
+  // Track names are the track list's (DOM), not the canvas's.
+  assert.ok(!full.surface.contentCalls.texts.includes('trk_a'));
+  full.timeline.destroy();
 });
