@@ -15,7 +15,8 @@ import { en, type Catalog } from '../../src/renderer/i18n/en';
 import { zhHans } from '../../src/renderer/i18n/zh-Hans';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import { translator } from '../../src/renderer/i18n/t';
-import { describeStep } from '../../src/renderer/plans/describe';
+import { formatMilliDb } from '../../src/renderer/format';
+import { describePlan, type StepNames } from '../../src/renderer/plans/describe';
 import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
 
 type Locale = 'en' | 'zh-Hant' | 'zh-Hans';
@@ -114,17 +115,22 @@ async function expectLocale(locale: Locale): Promise<void> {
   await expect(page.getByTestId('status')).toHaveText(catalog['connection.connected']);
   await expect(page.getByTestId('status-bar').locator('dt').first()).toHaveText(catalog['status.engine']);
   await expect(page.getByTestId('delete-clip')).toHaveText(catalog['timeline.deleteClip']);
-  await expect(page.getByTestId('plan-approve')).toHaveText(catalog['plans.approve']);
+  await expect(page.getByTestId('plan-approve-apply')).toHaveText(catalog['plans.approveApply']);
   await expect(page.getByTestId('fader-trk_a')).toHaveAttribute('aria-label', t('strip.gainLabel', { track: 'trk_a' }));
   await expect(page.getByTestId('mixer')).toHaveAttribute('aria-label', catalog['mixer.label']);
-  const names = (id: string) => ({ trk_a: 'trk_a', trk_b: 'trk_b' })[id];
-  for (const [index, step] of STEPS.entries()) {
-    await expect(page.getByTestId(`step-${index}`)).toHaveText(describeStep(step, t, names));
+  const names: StepNames = {
+    track: (id) => ({ trk_a: 'trk_a', trk_b: 'trk_b' } as Record<string, string>)[id],
+    clip: () => undefined,
+    slot: () => undefined,
+    sampleRate: 48000,
+  };
+  for (const [index, text] of describePlan(STEPS, t, names).entries()) {
+    await expect(page.getByTestId(`step-text-${index}`)).toHaveText(text);
   }
   // The letters stay M and S, and the dB value is the same bytes.
   await expect(page.getByTestId('mute-trk_a')).toHaveText('M');
   await expect(page.getByTestId('solo-trk_a')).toHaveText('S');
-  await expect(page.getByTestId('step-1')).toContainText('-0.60 dB');
+  await expect(page.getByTestId('step-1')).toContainText(formatMilliDb(-600));
   // The canvas ruler, the one text drawn rather than in the DOM: its first
   // label (0 s) is worded in the locale, redrawn on a switch.
   await expect

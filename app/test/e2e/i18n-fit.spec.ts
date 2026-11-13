@@ -1,7 +1,8 @@
 // Fit check (m5-ui-i18n; UI redesign spec 6.3): in en, zh-Hant, zh-Hans and
 // the pseudo-locale that pads every English string by 40 %, at 1440x900 and
 // 1024x700, on a session seeded like the tour's (its seven tracks and mixer
-// settings) with an agent's plan selected, no labelled control is wider
+// settings) with an agent's plan selected, a second plan auditioned (its
+// banner shown) and a plan-arrival toast in the locale, no labelled control is wider
 // inside than it is shown (scrollWidth <= clientWidth), and no button, header
 // cell or term breaks its label over lines (Chinese wraps between any two
 // characters, so a narrow column stacks a two-character header vertically). The pseudo-locale is
@@ -13,6 +14,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import type { Locale } from '../../src/renderer/i18n/locale';
+import { planArrivedMessage } from '../../src/renderer/i18n/messages';
 import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
 
 const SIZES = [
@@ -105,9 +108,17 @@ test('no labelled control overflows or wraps its label in any locale at either w
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
   const agent = await agentFor(app);
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  // A plan auditioned: its card reads approved for audition and the banner shows.
+  const auditioned = await agent.tool('submit_plan', { steps: MIX_PASS.slice(1, 3) });
+  await page.getByTestId(`plan-${hash8(auditioned.hash as string)}`).click();
+  await page.getByTestId('plan-audition').click();
+  await expect(page.getByTestId('audition-banner')).toBeVisible();
+  // The plan under review, selected: steps, actions and diff.
   const plan = await agent.tool('submit_plan', { steps: MIX_PASS });
   await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
-  await expect(page.getByTestId('diff-track:trk_pad')).toBeVisible();
+  await expect(page.getByTestId('plan-diff')).toBeVisible();
+  await expect(page.getByTestId('plan-approve-apply')).toBeVisible();
 
   const failures: string[] = [];
   for (const locale of LOCALES) {
@@ -117,6 +128,13 @@ test('no labelled control overflows or wraps its label in any locale at either w
       store.setLocale(next);
     }, locale);
     await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    // A toast in this locale (a toast keeps the locale it was raised in).
+    await page.evaluate((message) => {
+      const toasts = (window as unknown as { __siannToasts?: { push(m: string): number } }).__siannToasts;
+      if (!toasts) throw new Error('window.__siannToasts is missing (SIANN_SHELL_TEST=1)');
+      toasts.push(message);
+    }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
+    await expect(page.getByTestId('toast').last()).toBeVisible();
     for (const size of SIZES) {
       await resize(size);
       for (const entry of await overflowing()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);

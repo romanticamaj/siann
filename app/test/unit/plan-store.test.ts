@@ -214,3 +214,87 @@ test('heard follows audition.changed and session.inspect, and is unknown while d
   await settle();
   assert.equal(store.getSnapshot().heard, null);
 });
+
+// m5-ui-plan-panel: the card's time, the toast's arrivals, and the re-read of
+// the fields plan.changed does not carry (E-7).
+
+async function connected(store: PlanStore, listed: () => unknown[], status: (hash: string) => unknown) {
+  const client = new FakePlanClient();
+  client.answers.set('plan.list', () => ({ plans: listed() }));
+  client.answers.set('plan.status', (params) => status(String(params.plan)));
+  client.answers.set('session.inspect', () => ({ revision: 'r2', heard: 'main' }));
+  store.attach(client);
+  client.setState({ status: 'connected', sessionId: 'ses_1', syncCount: 1 });
+  await until(() => client.count('plan.list') === 1 && store.getSnapshot().heard === 'main', 'the first list');
+  await settle();
+  return client;
+}
+
+test('firstSeen: the injected clock when plan.changed taught the plan, none for the first list, kept across lists', async () => {
+  let clock = 1_000;
+  const store = new PlanStore({ now: () => clock });
+  let listed = [planObject(H1, 'validated')];
+  const client = await connected(store, () => listed, (hash) => planObject(hash, 'validated'));
+  assert.equal(store.getSnapshot().firstSeen.has(H1), false, 'a plan of the first list has no time');
+
+  clock = 2_500;
+  client.emit(changed(H2, 'validated'));
+  await until(() => store.getSnapshot().byHash.has(H2), 'the new plan');
+  assert.equal(store.getSnapshot().firstSeen.get(H2), 2_500);
+
+  clock = 9_000;
+  listed = [planObject(H1, 'validated'), planObject(H2, 'approved')];
+  client.setState({ syncCount: 2 });
+  await until(() => store.getSnapshot().byHash.get(H2)?.state === 'approved', 'the second list');
+  assert.equal(store.getSnapshot().firstSeen.get(H2), 2_500, 'kept across plan.list');
+  assert.equal(store.getSnapshot().firstSeen.has(H1), false);
+});
+
+test('arrivals: a new validated plan from plan.changed, not the first list, a sub-plan or a held plan', async () => {
+  const store = new PlanStore({ now: () => 0 });
+  const arrived: string[] = [];
+  store.onArrival((plan) => arrived.push(plan.hash));
+  const client = await connected(
+    store,
+    () => [planObject(H1, 'validated')],
+    (hash) => (hash === H3 ? planObject(H3, 'approved', { parentPlan: H2 }) : planObject(hash, 'validated')),
+  );
+  assert.deepEqual(arrived, [], 'nothing for the list on connect');
+
+  client.emit(changed(H2, 'validated'));
+  await until(() => store.getSnapshot().byHash.has(H2), 'the new plan');
+  assert.deepEqual(arrived, [H2]);
+
+  client.emit(changed(H3, 'approved'));
+  await until(() => store.getSnapshot().byHash.has(H3), 'the sub-plan');
+  client.emit(changed(H1, 'approved'));
+  client.emit(changed(H2, 'rejected'));
+  await settle();
+  assert.deepEqual(arrived, [H2], 'a sub-plan and state changes raise none');
+});
+
+test('a held plan that becomes rejected or approved is re-read with plan.status (note and times)', async () => {
+  const store = new PlanStore({ now: () => 0 });
+  const client = await connected(
+    store,
+    () => [planObject(H1, 'validated'), planObject(H2, 'validated'), planObject(H3, 'approved')],
+    (hash) =>
+      hash === H1
+        ? planObject(H1, 'rejected', { rejectionNote: 'too loud', rejectedAt: '2026-11-14T12:00:00Z' })
+        : planObject(hash, 'approved', { approvedAt: '2026-11-14T12:00:00Z' }),
+  );
+  client.emit(changed(H1, 'rejected'));
+  await until(() => store.getSnapshot().byHash.get(H1)?.rejectionNote === 'too loud', 'the note');
+  assert.equal(store.getSnapshot().byHash.get(H1)!.raw.rejectedAt, '2026-11-14T12:00:00Z');
+  client.emit(changed(H2, 'approved'));
+  await until(() => store.getSnapshot().byHash.get(H2)?.raw.approvedAt !== undefined, 'approvedAt');
+  assert.deepEqual(
+    client.requests.filter((r) => r.method === 'plan.status').map((r) => r.params.plan),
+    [H1, H2],
+  );
+  // A proposal of an approved plan or an apply is not a transition to re-read.
+  client.emit(changed(H3, 'approved', 'p1'));
+  client.emit(changed(H3, 'applied'));
+  await settle();
+  assert.equal(client.count('plan.status'), 2);
+});

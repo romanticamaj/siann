@@ -26,6 +26,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import type { Locale } from '../../src/renderer/i18n/locale';
+import { translator } from '../../src/renderer/i18n/t';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
 
@@ -555,7 +557,7 @@ test('UX screenshot tour', async () => {
   await waveformsDrawn();
   await shoot(page, 'Clip moved', 'Released: one clip.move committed; the Keys clip starts 120 px (0.25 s) later on its lane and stays selected.');
 
-  // ---- 6. Plan review: an agent's plan and its diff.
+  // ---- 6. The Plans tab (m5-ui-plan-panel): an agent's plan as a card, in user wording.
   const client = await agent();
   const mixPass = [
     { op: 'track.add', trackId: 'trk_pad', name: 'Pad', channels: 2 },
@@ -565,35 +567,56 @@ test('UX screenshot tour', async () => {
     { op: 'track.rename', trackId: 'trk_fx', name: 'FX Riser' },
   ];
   const mixHash = await submit(client, mixPass);
-  await expect(page.getByTestId('diff-track:trk_pad')).toBeVisible();
+  await expect(page.getByTestId('plan-diff')).toBeVisible();
+  await expect(page.getByTestId('toast')).toBeVisible();
   await scrollTo('plan-review');
-  await shoot(page, 'Plan submitted with diff', `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): listed as validated, its steps with checkboxes, the action buttons, and its diff against the current revision.`);
+  await shoot(
+    page,
+    'Plan submitted with diff',
+    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it; the card leads with its first step, the step count, when it arrived, a Needs review badge and the short hash; the steps are numbered from 1, all ticked, in user wording (dB, L/C/R pan, names, no ids); one filled primary (Approve and apply) beside Audition and Reject with its reason field; the diff in user units, raw JSON behind each row's disclosure.`,
+  );
   await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls).', { fullPage: true });
 
-  // Partial approval: steps 0, 1 and 3 ticked.
-  for (const step of [0, 1, 3]) await page.getByTestId(`step-${step}`).getByRole('checkbox').check();
-  await expect(page.getByTestId('plan-approve-selected')).toBeEnabled();
+  // Partial approval: steps 3 and 5 unticked, the primary reads "Approve 3 of 5".
+  for (const step of [2, 4]) await page.getByTestId(`step-${step}`).getByRole('checkbox').uncheck();
+  await expect(page.getByTestId('plan-approve-apply')).toBeEnabled();
   await scrollTo('plan-review');
-  await shoot(page, 'Partial approval steps checked', 'Steps 0, 1 and 3 ticked: Approve selected is enabled.');
-  await page.getByTestId('plan-approve-selected').click();
+  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): the primary now reads "Approve 3 of 5"; Select all and Select none sit above the steps.');
+  await page.getByTestId('plan-approve-apply').click();
   await expect(page.getByTestId(`plan-state-${hash8(mixHash)}`)).toHaveAttribute('data-state', 'rejected');
   const listed = (await watcher.call('plan.list')).plans as Array<Record<string, unknown>>;
   const subHash = listed.find((p) => p.parentPlan === mixHash)!.hash as string;
-  await expect(page.getByTestId(`plan-state-${hash8(subHash)}`)).toHaveAttribute('data-state', 'approved');
-  await page.getByTestId(`plan-${hash8(subHash)}`).click();
-  await expect(page.getByTestId('plan-audition')).toBeEnabled();
+  await expect(page.getByTestId(`plan-state-${hash8(subHash)}`)).toHaveAttribute('data-state', 'applied');
+  await expect(page.getByTestId(`plan-split-${hash8(mixHash)}`)).toBeVisible();
   await scrollTo('plan-review');
-  await shoot(page, 'Partial approval sub-plan approved', `Approve selected made an approved 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and rejected the original; the sub-plan is selected.`);
+  await shoot(
+    page,
+    'Partial approval sub-plan approved',
+    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted); the original card reads "Split, 3 of 5 approved".`,
+  );
 
-  // Audition: the proposal branch is heard.
+  // Audition: a plan approved, proposed and heard in one action.
+  const lift = [
+    { op: 'track.set_gain', trackId: 'trk_keys', gainMilliDb: -5000 },
+    { op: 'track.set_pan', trackId: 'trk_voxbg', pan: 2500 },
+    { op: 'track.set_solo', trackId: 'trk_voxlead', solo: false },
+  ];
+  const liftHash = await submit(client, lift);
   await page.getByTestId('plan-audition').click();
-  await expect(page.getByTestId('plan-heard')).toHaveText('p1');
+  await expect(page.getByTestId('audition-banner')).toBeVisible();
+  await expect(page.getByTestId('hear-proposal')).toHaveAttribute('aria-pressed', 'true');
   await scrollTo('plan-review');
-  await shoot(page, 'Audition active', 'Audition: the approved sub-plan is applied on proposal branch p1 and p1 is heard (badge in the heading and on the plan row); main is unchanged.');
-  await page.getByTestId('plan-hear-main').click();
-  await expect(page.getByTestId('plan-heard')).toHaveText('main');
+  await shoot(
+    page,
+    'Audition active',
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card reads "Approved for audition", the banner under the top bar names the plan with Hear main, Merge and Discard, the hearing switch at the top of the Plans tab and the status bar show Proposal; main is unchanged.`,
+  );
+  await page.getByTestId('banner-hear-main').click();
+  await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('plan-discard').click();
+  await expect(page.getByTestId(`plan-state-${hash8(liftHash)}`)).toHaveText(translator(LOCALE as Locale)('badge.approved'));
 
-  // A rejected plan with a note.
+  // A rejected plan with a reason.
   const tidy = [
     { op: 'track.remove', trackId: 'trk_fx' },
     { op: 'track.set_gain', trackId: 'trk_kick', gainMilliDb: 3000 },
@@ -601,22 +624,27 @@ test('UX screenshot tour', async () => {
   const tidyHash = await submit(client, tidy);
   await page.getByTestId('plan-note').fill('Keep the FX riser; kick is loud enough');
   await scrollTo('plan-review');
-  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected with a rejection note typed.`);
+  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected with a reason typed in "Reason (sent to agent)".`);
   await page.getByTestId('plan-reject').click();
   await expect(page.getByTestId(`plan-state-${hash8(tidyHash)}`)).toHaveAttribute('data-state', 'rejected');
+  await expect(page.getByTestId(`plan-reason-${hash8(tidyHash)}`)).toBeVisible();
   const rejected = await watcher.call('plan.status', { plan: tidyHash });
   await scrollTo('plan-review');
-  await shoot(page, 'Plan rejected with note', `Rejected; the engine recorded the note "${String(rejected.rejectionNote)}". The note field is cleared after Reject.`);
+  await shoot(page, 'Plan rejected with note', `Rejected; the card shows the reason the engine recorded ("${String(rejected.rejectionNote)}"). The reason field is cleared after Reject.`);
 
-  // plan_stale: another client commits to an entity of the plan.
+  // A stale plan: another client commits to an entity of the plan.
   const vox = [{ op: 'track.set_gain', trackId: 'trk_voxlead', gainMilliDb: -1000 }, { op: 'track.set_solo', trackId: 'trk_voxlead', solo: false }];
   const voxHash = await submit(client, vox);
   await watcher.call('command.execute', { commands: [{ op: 'track.set_gain', trackId: 'trk_voxlead', gainMilliDb: 500 }] });
-  await expect(page.getByTestId('diff-track:trk_voxlead')).toHaveAttribute('data-stale', 'true');
-  await page.getByTestId('plan-approve').click();
-  await expect(page.getByTestId('plan-error')).toContainText('plan_stale');
+  await expect(page.getByTestId(`plan-stale-${hash8(voxHash)}`)).toBeVisible();
+  await expect(page.getByTestId('plan-stale-reasons')).toBeVisible();
+  await expect(page.getByTestId('plan-approve-apply')).toBeDisabled();
   await scrollTo('plan-review');
-  await shoot(page, 'Plan stale error', `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead gain: its diff row is marked stale and Approve shows the plan_stale refusal.`);
+  await shoot(
+    page,
+    'Plan stale error',
+    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge, the reason reads in dB ("Vox Lead: volume was +1.5 dB, now +0.5 dB"), and Approve and apply is disabled with the reason as its tooltip; Reject stays.`,
+  );
 
   // ---- 7. The engine dies: the window while the shell waits to restart it.
   const pid = await app!.evaluate(() => (globalThis as unknown as { __siannShell: { pid(): number | null } }).__siannShell.pid());
