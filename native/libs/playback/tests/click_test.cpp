@@ -193,6 +193,39 @@ TEST_CASE("Stopped, the click is silent", "[playback][click]") {
     CHECK(std::all_of(live.out[0].begin(), live.out[0].end(), [](float v) { return v == 0.0f; }));
 }
 
+TEST_CASE("Tempo edits faster than the audio thread runs never fail update(); the newest is heard",
+          "[playback][click]") {
+    // Each committed tempo change hands the driver a new tempo table; with the
+    // callback stalled, more of them than clickInbox holds must still update
+    // the heard document (spec, "Queues", clickInbox: latest-wins).
+    const json::Value fixture = clickFixture();
+    EmptyFixture f(fixture);
+    Live live(f.session);
+    live.engine.setClick(true, 0);
+    live.pump(10);  // past the burst of the beat at 0
+    for (int i = 0; i < 20; ++i) {
+        const std::int32_t bpm = (i == 19) ? 60'000 : 200'000 + i * 1'000;
+        f.session.commit({Command::fromJson(json::Value(json::Object{
+                             {"op", json::Value("session.set_tempo")},
+                             {"tempo", json::Value(json::Array{json::Value(json::Object{
+                                           {"ticks", json::Value("0")},
+                                           {"milliBpm", json::Value(bpm)}})})}}))},
+                         "test", "t");
+        REQUIRE_NOTHROW(live.engine.update(f.session.history().head().document));
+    }
+    CHECK(live.engine.driver().clickTempoTables() <= realtime::GraphDriver::kClickTempoTables + 2);
+    const std::size_t from = live.out[0].size();
+    live.pump(48'000 * 3 / kBlock);  // three seconds
+    CHECK(live.engine.driver().clickTempoTables() == 1);
+    // 60 bpm: one beat a second, on the second.
+    std::vector<float> tail(live.out[0].begin() + static_cast<std::ptrdiff_t>(from), live.out[0].end());
+    const std::vector<std::int64_t> found = onsets(tail);
+    REQUIRE(found.size() >= 2);
+    for (std::size_t n = 0; n < found.size(); ++n) {
+        CHECK((found[n] + static_cast<std::int64_t>(from)) % 48'000 == 0);
+    }
+}
+
 TEST_CASE("No audio-thread allocation while the click sounds", "[playback][click][rt]") {
     const json::Value fixture = clickFixture();
     EmptyFixture f(fixture);
