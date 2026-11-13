@@ -108,7 +108,12 @@ function fakeClient(snapshot = sampleSnapshot(), execute: (commands: readonly un
     select: (ref: string) => snapshot.entities[ref],
     subscribe: () => () => undefined,
   };
-  return { model, execute: (commands: readonly unknown[]) => execute(commands) } as unknown as SessionClient;
+  return {
+    model,
+    execute: (commands: readonly unknown[]) => execute(commands),
+    subscribe: () => () => undefined,
+    getState: () => ({ sessionId: 'ses_test' }),
+  } as unknown as SessionClient;
 }
 
 function within(caps: Capabilities | null, node: ReactNode): string {

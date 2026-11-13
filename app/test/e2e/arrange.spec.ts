@@ -78,8 +78,8 @@ function squareWav(file: string): void {
 }
 
 // A bundle with the tracks, media med_sq (4 s of square wave) and the clips.
-function prepare(tracks: readonly SeedTrack[], clips: readonly SeedClip[] = []): void {
-  sessionDir = path.join(scratch, 'sessions');
+function prepare(tracks: readonly SeedTrack[], clips: readonly SeedClip[] = [], root = scratch): void {
+  sessionDir = path.join(root, 'sessions');
   const bundle = path.join(sessionDir, 'Untitled.siann');
   fs.mkdirSync(sessionDir, { recursive: true });
   cli('create', bundle, '--name', 'Arrange', '--rate', String(RATE));
@@ -92,8 +92,8 @@ function prepare(tracks: readonly SeedTrack[], clips: readonly SeedClip[] = []):
     if (track.solo) exec({ op: 'track.set_solo', trackId: track.id, solo: true });
   }
   if (clips.length > 0) {
-    squareWav(path.join(scratch, 'square.wav'));
-    cli('import', bundle, path.join(scratch, 'square.wav'), '--media-id', 'med_sq');
+    squareWav(path.join(root, 'square.wav'));
+    cli('import', bundle, path.join(root, 'square.wav'), '--media-id', 'med_sq');
   }
   for (const clip of clips) {
     exec({
@@ -230,10 +230,11 @@ async function pageStill(what: string): Promise<void> {
   expect(await zoomFactor(), what).toBe(1);
 }
 
-// Clicks an empty spot of the canvas (below the lanes), which focuses the project zone.
+// Clicks an empty spot of the canvas (below the lanes, left of the zoom
+// slider), which focuses the project zone and selects nothing.
 async function focusProject(): Promise<void> {
   const canvas = await box('timeline-canvas');
-  await page.mouse.click(canvas.x + canvas.width - 20, canvas.y + canvas.height - 10);
+  await page.mouse.click(canvas.x + 20, canvas.y + canvas.height - 10);
   await expect(page.getByTestId('zone-project')).toHaveAttribute('data-focused', 'true');
 }
 
@@ -464,9 +465,10 @@ test('H, G, Ctrl+wheel and a drag in the ruler\'s lower half zoom about the poin
   await page.keyboard.press('Shift+KeyF');
   await expect.poll(async () => (await view()).scrollFrames).toBe('0');
   const full = await view();
-  const end = (await rect('clp_2')).x + (await rect('clp_2')).width;
-  expect(end).toBeLessThanOrEqual(full.width);
-  expect(end).toBeGreaterThan(full.width / 2);
+  // The clip rectangles are the next content frame's.
+  const end = async () => (await rect('clp_2')).x + (await rect('clp_2')).width;
+  await expect.poll(end).toBeLessThanOrEqual(full.width);
+  expect(await end()).toBeGreaterThan(full.width / 2);
   await pageStill('Shift+F');
 
   // Shift+wheel: the horizontal scroll only.
@@ -482,7 +484,11 @@ test('H, G, Ctrl+wheel and a drag in the ruler\'s lower half zoom about the poin
   await pageStill('Shift+wheel');
 });
 
-test('dragging a header\'s lower border sizes that lane, Ctrl-drag sizes all; heights survive a restart for the session', async () => {
+// Heights are kept per session id (spec 2.3). The engine names a session
+// anew each time it opens a bundle (protocol_server.cpp: "ses_" + random
+// hex), so they survive a reload of the window on the same engine, and a
+// session opened under another id starts from the defaults.
+test('dragging a header\'s lower border sizes that lane, Ctrl-drag sizes all; heights stay with the session id', async () => {
   prepare([
     { id: 'trk_a', name: 'Alpha' },
     { id: 'trk_b', name: 'Beta' },
@@ -512,11 +518,30 @@ test('dragging a header\'s lower border sizes that lane, Ctrl-drag sizes all; he
   await expect.poll(heights).toEqual([73, 73, 73]);
   await pageStill('height drag');
 
-  await app!.close();
-  app = undefined;
-  await launch({ userData });
+  const sessionId = await page.getByTestId('session-id').textContent();
+  await page.reload();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('session-id')).toHaveText(sessionId ?? '');
   await expect(page.getByTestId('track-count')).toHaveText('3');
   await expect.poll(heights).toEqual([73, 73, 73]);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('siann.layout.v1') ?? '{}') as { trackHeights?: Record<string, unknown> });
+  expect(stored.trackHeights?.[sessionId ?? '']).toEqual({ trk_a: 73, trk_b: 73, trk_c: 73 });
+
+  // Another bundle opened is another session id: the defaults.
+  const otherScratch = path.join(scratch, 'other');
+  fs.mkdirSync(otherScratch);
+  const keep = sessionDir;
+  prepare([
+    { id: 'trk_a', name: 'Alpha' },
+    { id: 'trk_b', name: 'Beta' },
+    { id: 'trk_c', name: 'Gamma' },
+  ], [], otherScratch);
+  sessionDir = keep;
+  const engine = await engineClient(page);
+  await engine.call('session.open', { path: path.join(otherScratch, 'sessions', 'Untitled.siann') });
+  engine.close();
+  await expect(page.getByTestId('session-id')).not.toHaveText(sessionId ?? '');
+  await expect.poll(heights).toEqual([53, 53, 53]);
 });
 
 test('while playing with no edits the content layer is not redrawn and the overlay is', async () => {
@@ -539,6 +564,11 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   await launch();
   const line = page.getByTestId('info-line');
   for (const field of ['start', 'end', 'length', 'offset', 'gain']) await expect(page.getByTestId(`info-${field}`)).toHaveText('');
+  // The whole session in view, so the clip can be clicked.
+  await focusProject();
+  await page.keyboard.press('Shift+KeyF');
+  await expect.poll(async () => (await view()).scrollFrames).toBe('0');
+  await expect.poll(async () => (await rect('clp_x')).x + (await rect('clp_x')).width).toBeLessThanOrEqual((await view()).width);
   const target = await rect('clp_x');
   const canvas = await box('timeline-canvas');
   await page.mouse.click(canvas.x + target.x + target.width / 2, canvas.y + target.y + target.height / 2);
