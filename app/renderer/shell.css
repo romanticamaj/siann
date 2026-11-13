@@ -212,11 +212,13 @@ code, dd, .mono { font-family: var(--font-mono); }
 /* A divider reached from the keyboard: a 2 px ring around its line. */
 .divider:focus-visible { background: var(--focus); outline: 2px solid var(--focus); outline-offset: 0; }
 
-/* ---- the project zone: toolbar, info line, event display */
+/* ---- the project zone: toolbar, info line, track list and event display.
+   It scrolls by a transform in the event display, never by DOM overflow. */
 .zone-project .zone-body {
   display: grid;
   grid-template-rows: var(--toolbar) var(--info-line) minmax(0, 1fr);
   padding: 0;
+  overflow: hidden;
 }
 .timeline { display: contents; }
 .timeline-bar {
@@ -241,12 +243,153 @@ code, dd, .mono { font-family: var(--font-mono); }
   overflow: hidden;
   white-space: nowrap;
 }
+.info-field { display: flex; gap: var(--space); align-items: baseline; }
 .info-line dt { color: var(--tx-3); }
-.info-line dd { margin: 0 calc(var(--space) * 2) 0 0; }
-.event-display { min-height: 0; overflow: auto; background: var(--bg-0); }
+.info-line dd {
+  margin: 0 calc(var(--space) * 2) 0 0;
+  min-width: 7ch;
+  font-variant-numeric: tabular-nums;
+  color: var(--tx-1);
+}
 .media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; }
 .media-pool button[aria-pressed="true"] { outline: 2px solid var(--select); }
-.timeline-canvas { display: block; width: 100%; height: 140px; border: 0; touch-action: none; }
+.timeline-error { color: var(--err); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; }
+
+.arrange {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.event-display {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-1);
+  overscroll-behavior: contain;
+}
+.timeline-layer {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border: 0;
+}
+.timeline-overlay { touch-action: none; }
+.drag-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  background: var(--bg-4);
+  color: var(--tx-1);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  pointer-events: none;
+}
+.drag-tooltip[hidden] { display: none; }
+.zoom-slider {
+  position: absolute;
+  right: calc(var(--space) * 2);
+  bottom: calc(var(--space) * 2);
+  z-index: 2;
+  width: 96px;
+  height: 14px;
+  margin: 0;
+  opacity: .7;
+}
+.zoom-slider:hover, .zoom-slider:focus-visible { opacity: 1; }
+
+/* The track list (spec 3.3): headers beside the lanes, translated with them. */
+.track-list {
+  display: grid;
+  grid-template-rows: var(--ruler-h) minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg-2);
+  container-type: inline-size;
+}
+.track-list-head {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space);
+  border-bottom: 1px solid var(--line-2);
+}
+.track-add {
+  width: var(--ms-h);
+  height: var(--ms-h);
+  min-height: 0;
+  padding: 0;
+  font-size: var(--fs-body);
+  line-height: 1;
+}
+.track-add::before { content: "+"; }
+.track-list-body { position: relative; min-height: 0; overflow: hidden; }
+.track-list-column { will-change: transform; }
+.track-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  padding: 0 18px 0 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-2);
+  overflow: hidden;
+  box-sizing: border-box;
+  font-size: var(--fs-small);
+}
+.track-header[aria-selected="true"] { background: var(--bg-4); }
+.track-colour { flex: 0 0 4px; align-self: stretch; }
+.track-number { flex: 0 0 auto; min-width: 2ch; color: var(--tx-3); font-variant-numeric: tabular-nums; text-align: right; }
+.track-name, .track-rename { flex: 1 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx-1); }
+.track-rename { height: var(--ms-h); padding: 0 var(--space); font: inherit; }
+.track-buttons { display: flex; flex: 0 0 auto; gap: 2px; }
+.track-buttons button {
+  width: var(--ms-h);
+  height: var(--ms-h);
+  min-height: 0;
+  padding: 0;
+  font-size: var(--fs-micro);
+}
+.track-mute[aria-pressed="true"] { background: var(--mute); color: var(--bg-0); }
+.track-solo[aria-pressed="true"] { background: var(--solo); color: var(--bg-0); }
+.track-readouts {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--tx-2);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.track-meter { position: absolute; top: 4px; bottom: 4px; right: 4px; width: 8px; }
+.track-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  cursor: ns-resize;
+}
+.track-meters {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 4px;
+  width: 8px;
+  height: 100%;
+  pointer-events: none;
+}
+/* At the narrow end the header keeps colour, name, M and S (spec 2.3). */
+@container (max-width: 200px) {
+  .track-number, .track-readouts { display: none; }
+}
+.divider-tracklist { width: var(--divider-w); cursor: ew-resize; }
+.divider-tracklist[data-active="true"] { background: var(--tx-3); }
 
 /* ---- the left zone: the selected track */
 .inspector h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-small); color: var(--tx-3); font-weight: 500; }

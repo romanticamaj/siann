@@ -12,6 +12,16 @@ export function formatMilliDb(milliDb: number): string {
   return `${milliDb > 0 ? '+' : ''}${text} dB`;
 }
 
+// The user's dB (UI redesign spec 3.3, 3.4: the track header, the info line
+// and the MixConsole): one decimal, an explicit sign, no sign on a value that
+// rounds to zero.
+export function formatDb(milliDb: number): string {
+  if (milliDb === MINUS_INFINITY_MILLI_DB) return '-inf dB';
+  const tenths = Math.round(milliDb / 100);
+  if (tenths === 0) return '0.0 dB';
+  return `${tenths > 0 ? '+' : '-'}${(Math.abs(tenths) / 10).toFixed(1)} dB`;
+}
+
 // Pan is -10000 (hard left) to 10000 (hard right): L35 / C / R40.
 export function formatPan(pan: number): string {
   const percent = Math.round(Math.abs(pan) / 100);

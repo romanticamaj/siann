@@ -54,9 +54,9 @@ import type { SessionClient } from '../model/session-client';
 import {
   effectiveLayout,
   EVENT_MIN_HEIGHT,
-  EVENT_MIN_WIDTH,
   limits,
   PROJECT_CHROME,
+  projectMinWidth,
   ZONES,
   type EffectiveLayout,
   type ShellAction,
@@ -518,7 +518,7 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
           </ZoneFrame>
         </Panel>
         <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
-        <Panel id="panel-center" className="panel-inner" minSize={EVENT_MIN_WIDTH}>
+        <Panel id="panel-center" className="panel-inner" minSize={projectMinWidth(state.layout.trackList)}>
           <Group
             orientation="vertical"
             id="zones-center"

@@ -66,7 +66,7 @@ async function selectClip(clipId: string): Promise<void> {
   const rect = (await rects()).find((r) => r.clipId === clipId)!;
   const box = (await page.getByTestId('timeline-canvas').boundingBox())!;
   await page.mouse.click(box.x + rect.x + rect.width / 2, box.y + rect.y + rect.height / 2);
-  await expect(page.getByTestId('selected-clip')).toHaveText(clipId);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', clipId);
 }
 
 async function killEngine(): Promise<void> {
@@ -167,7 +167,7 @@ test('on reconnect a toast names the recovered revision, the selection is cleare
   }
   expect(committed).not.toBe('');
   await expect(page.getByTestId('revision')).toHaveText(committed);
-  await expect(page.getByTestId('selected-clip')).toHaveText('clp_a');
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_a');
 
   await killEngine();
   await expect(page.getByTestId('toast')).toBeVisible({ timeout: 60_000 });
@@ -181,7 +181,7 @@ test('on reconnect a toast names the recovered revision, the selection is cleare
   } finally {
     recovered.close();
   }
-  await expect(page.getByTestId('selected-clip')).toHaveText('');
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', '');
   await expect(page.getByTestId('connection-banner')).toHaveCount(0);
   for (const zone of ZONES) {
     await expect(page.getByTestId(`zone-${zone}`)).not.toHaveAttribute('inert');

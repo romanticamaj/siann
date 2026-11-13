@@ -37,4 +37,12 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Delete', commandId: 'edit.delete', scope: 'project' },
   { chord: 'Backspace', commandId: 'edit.delete', scope: 'project' },
   { chord: 'Escape', commandId: 'edit.cancel', scope: 'project' },
+  // The event display's zoom (m5-ui-arrange; research/cubase.md 7.6, 8.1).
+  { chord: 'H', commandId: 'view.zoomIn', scope: 'project' },
+  { chord: 'G', commandId: 'view.zoomOut', scope: 'project' },
+  { chord: 'Shift+H', commandId: 'view.tracksTaller', scope: 'project' },
+  { chord: 'Shift+G', commandId: 'view.tracksShorter', scope: 'project' },
+  { chord: 'Shift+F', commandId: 'view.zoomFull', scope: 'project' },
+  // Add a track (spec 3.3).
+  { chord: 'T', commandId: 'track.add', scope: 'project' },
 ];

@@ -51,6 +51,20 @@
   --ai-dim: rgb(167 139 255 / .14);
   /* user selection is white, never a hue */
   --select: #FFFFFF;
+  /* the track palette (1.2): 12 colours at equal lightness; violet stays out.
+     A track's entry is a stable hash of its id (timeline/track-colour.ts). */
+  --track-0: #F0675B;
+  --track-1: #F2994A;
+  --track-2: #E6C547;
+  --track-3: #A8D05A;
+  --track-4: #57C98A;
+  --track-5: #3FC4A8;
+  --track-6: #3FC4DD;
+  --track-7: #5B8FF5;
+  --track-8: #7C7CF0;
+  --track-9: #B57BEA;
+  --track-10: #EC6BB0;
+  --track-11: #9AA3B2;
   /* the focused zone's frame */
   --focus: rgb(232 235 241 / .55);
 
@@ -77,6 +91,9 @@
   --strip-w: calc(88px * var(--scale));
   --strip-w-narrow: calc(56px * var(--scale));
   --track-h: calc(53px * var(--scale));
+  /* the ruler: two halves (locators above, cursor and zoom below); the
+     canvas's RULER_HEIGHT, and the track list's head beside it */
+  --ruler-h: 32px;
   --radius-s: 3px;
   --radius-m: 5px;
   --radius-l: 8px;
