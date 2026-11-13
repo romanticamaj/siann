@@ -299,3 +299,45 @@ async function hashWith(snapshot: Snapshot, ref: string, entity: unknown): Promi
   }
   return documentHash(leaves);
 }
+
+// m5-ui-engine-loop-click: the singleton locators entity. Before this the
+// model's parseRef refused locators:locators (invalid_ref), so the shell broke
+// as soon as any client set the locators.
+test('(e) locators:locators parses, syncs as one object and follows session.changed', async () => {
+  assert.deepEqual(parseRef('locators:locators'), { type: 'locators', id: 'locators' });
+
+  // The base session, its steps, then set, change and remove the locators.
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  for (let i = 0; i < seq.steps.length; i += 1) await model.applyChanged(step(i).event, step(i).fetched);
+  assert.equal(model.getSnapshot()!.locators, null);
+  const expected = [
+    { left: '96000', right: '480000' },
+    { left: '48000', right: '480000' },
+    null,
+  ];
+  seq.locators.steps.forEach((s, i) => assert.equal(s.event.changedIds[0]!.ref, 'locators:locators', `step ${i}`));
+  for (let i = 0; i < seq.locators.steps.length; i += 1) {
+    const s = seq.locators.steps[i]!;
+    const snapshot = await model.applyChanged(
+      s.event as unknown as SessionChanged,
+      s.fetch.result.entities as unknown as FetchedEntity[],
+    );
+    assert.equal(snapshot.documentHash, s.documentHash, `step ${i}`);
+    const want = expected[i];
+    if (want) {
+      assert.equal(snapshot.locators?.left, want.left, `step ${i}`);
+      assert.equal(snapshot.locators?.right, want.right, `step ${i}`);
+      assert.equal(snapshot.entities['locators:locators'], snapshot.locators);
+    } else {
+      assert.equal(snapshot.locators, null, `step ${i}`);
+      assert.equal(snapshot.entities['locators:locators'], undefined);
+    }
+  }
+
+  // A sync that holds the locators, as the last chunk's single object.
+  const synced = await new ReadModel().fromSync(seq.locators.sync as unknown as SyncChunk[]);
+  assert.equal(synced.documentHash, seq.locators.steps[0]!.documentHash);
+  assert.deepEqual(synced.locators, { schema: 'siann.entity.locators.v1', id: 'locators', left: '96000', right: '480000' });
+  assert.ok(Object.keys(synced.entities).includes('locators:locators'));
+});

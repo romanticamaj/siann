@@ -46,6 +46,11 @@ export interface Sequence {
     next: string | null;
   }>;
   steps: SequenceStep[];
+  // m5-ui-engine-loop-click: deltas on locators:locators and a sync that holds it.
+  locators: {
+    steps: SequenceStep[];
+    sync: Sequence['sync'];
+  };
 }
 
 export function sequence(): Sequence {
