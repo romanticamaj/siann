@@ -1,6 +1,7 @@
 #include "siann/realtime/graph_driver.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <climits>
 #include <stdexcept>
 #include <vector>
@@ -230,7 +231,7 @@ void GraphDriver::stop() {
 }
 
 void GraphDriver::poll() {
-    reclaimClickTempos();
+    lendClickTempo();  // reclaims retired tables, then lends a waiting one
     if (state_ == DriverState::stopped) {
         drainParams();  // nobody else drives the graph; apply changes here
         drainCycle();
@@ -315,24 +316,39 @@ void GraphDriver::setClickTempo(std::unique_ptr<const ClickTempo> tempo) {
     if (!tempo) {
         return;
     }
+    // The newest wins: a table still waiting was never lent and goes now.
+    pendingClickTempo_ = std::move(tempo);
+    lendClickTempo();
+}
+
+void GraphDriver::lendClickTempo() {
     reclaimClickTempos();
-    const ClickTempo* raw = tempo.get();
-    clickTempos_.push_back(std::move(tempo));
+    if (!pendingClickTempo_) {
+        return;
+    }
     if (state_ == DriverState::stopped) {
         // Nobody runs the callback: the audio-side fields are ours.
+        drainClickTempo();
+        reclaimClickTempos();
         const ClickTempo* old = clickTempo_;
-        clickTempo_ = raw;
+        clickTempo_ = pendingClickTempo_.get();
         clickCursor_ = -1;
+        clickTempos_.push_back(std::move(pendingClickTempo_));
         std::erase_if(clickTempos_, [old](const auto& owned) { return owned.get() == old; });
         return;
     }
-    if (!clickInbox_.push(raw)) {
-        // Full (the audio thread has not run for eight tempo edits): the newest
-        // replaces the last one queued when the callback drains the inbox; the
-        // ones in between stay owned until they are retired or the driver goes.
-        clickTempos_.pop_back();
-        throw std::length_error("the click tempo inbox is full");
+    // Every table in clickInbox or clickRetire is one of clickTempos_, so
+    // below kClickTempoTables neither queue can be full (spec, "Queues").
+    // Otherwise the table waits for a poll() after the audio thread retired
+    // some.
+    if (clickTempos_.size() >= kClickTempoTables) {
+        return;
     }
+    const ClickTempo* raw = pendingClickTempo_.get();
+    clickTempos_.push_back(std::move(pendingClickTempo_));
+    const bool pushed = clickInbox_.push(raw);
+    assert(pushed);
+    (void)pushed;
 }
 
 void GraphDriver::drainCycle() noexcept {
@@ -345,9 +361,9 @@ void GraphDriver::drainCycle() noexcept {
 void GraphDriver::drainClickTempo() noexcept {
     const ClickTempo* next = nullptr;
     while (clickInbox_.pop(next)) {
-        if (clickTempo_ != nullptr && !clickRetire_.push(clickTempo_)) {
-            // The control side drains this every poll; if it ever lags, the
-            // table stays owned until the driver is destroyed.
+        if (clickTempo_ != nullptr) {
+            // Cannot fail: at most kClickTempoTables tables are lent at a time.
+            clickRetire_.push(clickTempo_);
         }
         clickTempo_ = next;
         clickCursor_ = -1;
@@ -503,6 +519,7 @@ void GraphDriver::finishStop() {
     state_ = DriverState::stopped;
     device_ = nullptr;
     src_.reset();
+    lendClickTempo();  // a table still waiting is installed directly
     if (waiting_) {
         const std::uint64_t epoch = *waiting_;
         waiting_.reset();
