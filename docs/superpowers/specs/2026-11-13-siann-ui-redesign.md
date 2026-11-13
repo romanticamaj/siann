@@ -614,7 +614,7 @@ Maintainer decision: three languages from phase 1.
 | Simplified Chinese | `zh-Hans` (shown as 简体中文) | `zh-CN`, `zh-SG`, `zh-Hans-*`, bare `zh` |
 
 - The locale follows the OS: the renderer reads `navigator.languages`, which Electron fills from the system and a browser from its own settings, so the same code serves both.
-- A manual switch in Settings and in the status bar overrides it; the choice is stored per user (`siann.locale`), beside the layout. Switching is live, with no restart.
+- A manual switch in the status bar (and in Settings once a Settings dialog exists) overrides it; the choice is stored per user (`siann.locale`), beside the layout. Switching is live, with no restart.
 - `<html lang>` is set to `zh-TW` or `zh-CN` for the Chinese locales. This is not cosmetic: Han characters share code points, and without the language tag the system picks one regional glyph set for all of them. A Cubase 15 forum thread reports exactly that defect, Japanese UI drawn with Chinese glyph shapes [I3].
 
 ### 6.2 How strings work
@@ -622,13 +622,13 @@ Maintainer decision: three languages from phase 1.
 - **No library.** `renderer/i18n/` holds one catalog per locale as a typed object; `en.ts` defines the type, so `tsc` refuses a catalog with a missing or extra key. Messages are strings with named placeholders, or functions where grammar needs one. Plurals use `Intl.PluralRules` (English needs them, Chinese does not), relative times `Intl.RelativeTimeFormat`.
 - `t(key, params)` reads a small locale store through `useSyncExternalStore`; the canvas surfaces take the same function and redraw on a locale change.
 - **Formatters are locale-aware where language is involved and fixed where it is not.** dB values, pan as `L35` / `C` / `R40`, bar.beat.tick positions, sample rates and the letters M, S, R, W, e are the same in all three locales, as they are on hardware and in Cubase. Words around them (units spelled out, "muted", "bar") come from the catalog.
-- **Plan step descriptions** are built by `plans/describe.ts` from catalog entries, so "Vox BG gain −9.0 dB → −6.0 dB" and "Vox BG 音量 −9.0 dB → −6.0 dB" come from the same code path. Text an agent wrote (a plan's intent, a clip name) is shown as written and never translated.
+- **Plan step descriptions** are built by `plans/describe.ts` from catalog entries, so "Vox BG gain −9.0 dB → −6.0 dB" and "Vox BG 音量 −9.0 dB → −6.0 dB" come from the same code path. Text an agent wrote (a plan's intent, a clip name) is shown as written and never translated. P1-0 keeps today's English wording ("Set gain of Vox BG to -9.00 dB"); the wording shown here arrives with P1-5.
 - **Engine errors** are shown from their stable `code` through the catalog; an unknown code falls back to the engine's English message.
 - **Session content is not chrome.** Track, clip, plugin and marker names are the user's.
 
 ### 6.3 Tests
 
-- **No literals:** a unit test walks the renderer's TSX with the TypeScript compiler API (already a dev dependency) and fails on JSX text, on string literals in `title`, `aria-label`, `placeholder` and `alt`, and on string literals passed to `fillText`. An allow-list covers the fixed symbols of 6.2.
+- **No literals:** a unit test walks the renderer's `.ts` and `.tsx` sources with the TypeScript compiler API (already a dev dependency) and fails on JSX text, on string literals and on the literal text of template literals in `title`, `aria-label`, `placeholder` and `alt` and in the first argument of `fillText`. An allow-list covers the fixed symbols of 6.2.
 - **Catalog completeness:** `tsc` enforces the key set; a unit test adds what types cannot see: every placeholder of the English message appears in the other two, no value is empty, no Chinese catalog value is identical to the English one unless allow-listed, and `zh-Hant` contains no Simplified-only characters and the reverse (a small table of common pairs such as 轨/軌, 声/聲, 发/發, 独/獨, 静/靜, 环/環, 设/設, 档/檔).
 - **Fit:** an e2e runs the shell in each locale, and in a pseudo-locale that pads every English string by 40 %, at 1440x900 and 1024x700 and asserts that no labelled control has `scrollWidth > clientWidth` and no text is clipped. Layouts are sized for the longest of the three; controls that hold words grow with their content, and only numeric fields have fixed widths.
 - **The tour runs per locale:** `SIANN_UX_LOCALE=en|zh-Hant|zh-Hans` writes the states into a folder per locale. Every ticket attaches its changed states in all three.
@@ -715,10 +715,10 @@ The harness entries for these tickets are in `features.json`.
 
 **P1-0 Internationalisation** (`m5-ui-i18n`)
 
-- Scope: `renderer/i18n/` with typed catalogs for `en`, `zh-Hant`, `zh-Hans`; locale store, detection from `navigator.languages`, manual switch, `<html lang>`; `t()` for React and for the canvas surfaces; every existing renderer string moved into the catalogs, including `plans/describe.ts`, `format.ts` wording, toasts and error codes; the font stacks of 6.4; the tour's per-locale run and the pseudo-locale.
+- Scope: `renderer/i18n/` with typed catalogs for `en`, `zh-Hant`, `zh-Hans`; locale store, detection from `navigator.languages`, manual switch, `<html lang>`; `t()` for React and for the canvas surfaces; every existing renderer string moved into the catalogs; creates `plans/describe.ts` (step wording moved out of `plans/diff.ts`) and `format.ts`; adds catalog-backed message builders for toasts, engine error codes and relative times with unit tests per locale (the toast surface and the plan-card times come with P1-5 and P1-6); the switch is added to the existing `StatusPanel` (P1-1 moves it into the status bar); the `:lang(zh-TW)` and `:lang(zh-CN)` font stacks of 6.4 (the `:root` English stack and the tokens come with P1-1); the tour's per-locale run and the pseudo-locale.
 - Acceptance: the no-literal test and the completeness test of 6.3 pass; switching the language changes every visible string without a reload and survives a restart; with the OS in `zh-TW` the first launch is in Traditional Chinese; numbers, dB values, pan values and M/S letters are identical in all three locales.
 - Tests: unit (no literals; completeness; locale mapping for a table of system tags; step descriptions per locale; plural and relative-time helpers); e2e (switch language; fit check in three locales and the pseudo-locale).
-- Tour states changed: none in English; adds the `zh-Hant` and `zh-Hans` sets of 01–22.
+- Tour states changed: in English, 01–22 gain only the language switch in the status panel (no English wording, order or other layout changes); adds the `zh-Hant` and `zh-Hans` sets of 01–22. The English set moves to `<SIANN_UX_OUT>/en/`.
 - Protocol used: none.
 - Risks: the glossary is unconfirmed (human gate `zh-glossary`); doing this first costs a few days but every later ticket would otherwise have to be retrofitted.
 
