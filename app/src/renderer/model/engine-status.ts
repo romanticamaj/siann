@@ -161,8 +161,11 @@ export class EngineStatusStore implements EngineStatusSource {
     });
   }
 
+  // An answer that reads the same keeps the snapshot and tells nobody, so a
+  // poll causes no React commit (UI redesign spec 5.6).
   #set(snapshot: EngineStatus | null): void {
     if (snapshot === this.#snapshot) return;
+    if (snapshot && this.#snapshot && JSON.stringify(snapshot) === JSON.stringify(this.#snapshot)) return;
     this.#snapshot = snapshot;
     for (const listener of [...this.#listeners]) listener();
   }

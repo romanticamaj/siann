@@ -76,6 +76,7 @@ export class GestureController {
   #active: Active | null = null;
   // The newest gesture not yet released: a new begin waits behind it.
   #tail: Active | null = null;
+  #holdsAnswered = 0;
 
   constructor(options: GestureControllerOptions) {
     this.#client = options.client;
@@ -88,6 +89,12 @@ export class GestureController {
   // True from begin() until the gesture's end is answered or it is cancelled.
   get active(): boolean {
     return this.#active !== null;
+  }
+
+  // gesture.hold requests the engine has answered (the e2e tests count the
+  // renewals of a fader held still).
+  get holdsAnswered(): number {
+    return this.#holdsAnswered;
   }
 
   // True while a gesture is held with nothing in flight and nothing unsent: the
@@ -233,7 +240,9 @@ export class GestureController {
     active.hold = this.#schedule(() => {
       active.hold = null;
       if (this.#active !== active || active.ending || active.inFlight) return;
-      this.#send(active, 'gesture.hold', { target: active.target });
+      this.#send(active, 'gesture.hold', { target: active.target }, () => {
+        this.#holdsAnswered += 1;
+      });
     }, active.leaseMs / 2);
   }
 

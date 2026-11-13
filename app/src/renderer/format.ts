@@ -12,14 +12,25 @@ export function formatMilliDb(milliDb: number): string {
   return `${milliDb > 0 ? '+' : ''}${text} dB`;
 }
 
-// The user's dB (UI redesign spec 3.3, 3.4: the track header, the info line
-// and the MixConsole): one decimal, an explicit sign, no sign on a value that
-// rounds to zero.
+// One decimal, rounded half away from zero, with an explicit sign (UI
+// redesign spec 3.4: the mixer's and the Inspector's values).
+function oneDecimal(tenths: number): string {
+  if (tenths === 0) return '0.0';
+  const text = (Math.abs(tenths) / 10).toFixed(1);
+  return `${tenths > 0 ? '+' : '-'}${text}`;
+}
+
+// A gain in milli-dB as the mixer shows it: +1.5 dB, -6.0 dB, 0.0 dB, -inf dB.
 export function formatDb(milliDb: number): string {
   if (milliDb === MINUS_INFINITY_MILLI_DB) return '-inf dB';
-  const tenths = Math.round(milliDb / 100);
-  if (tenths === 0) return '0.0 dB';
-  return `${tenths > 0 ? '+' : '-'}${(Math.abs(tenths) / 10).toFixed(1)} dB`;
+  return `${oneDecimal(Math.sign(milliDb) * Math.round(Math.abs(milliDb) / 100))} dB`;
+}
+
+// A meter's linear peak in dBFS, the strip's peak value: -6.0, +0.4, -inf.
+export function formatPeakDb(linear: number): string {
+  if (!(linear > 0)) return '-inf';
+  const tenths = 200 * Math.log10(linear);
+  return oneDecimal(Math.sign(tenths) * Math.round(Math.abs(tenths)));
 }
 
 // Pan is -10000 (hard left) to 10000 (hard right): L35 / C / R40.
