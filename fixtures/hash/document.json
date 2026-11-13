@@ -106,6 +106,37 @@
         }
       ],
       "documentHash": "sha256:6ceb399f81155d33100982e766caeea899849c9e0a1d880787f4b4244aab97cc"
+    },
+    {
+      "name": "locators_singleton",
+      "entities": [
+        {
+          "type": "track",
+          "id": "trk_1",
+          "entityHash": "sha256:856b851e74644e310d44c586d3a71ca7d558457512eb68d0e22a186d823b5054"
+        },
+        {
+          "type": "locators",
+          "id": "locators",
+          "entityHash": "sha256:79765176a919f583d665de09eb6233b6fdd4446a5e95252661ce0c26af29dd63"
+        },
+        {
+          "type": "root",
+          "id": "root",
+          "entityHash": "sha256:b07d2897683b06b854e6f1ee8c05ee7856bb41b6f6cc9157d012ac2de409e31a"
+        },
+        {
+          "type": "clip",
+          "id": "clp_1",
+          "entityHash": "sha256:095ed8d08e4185ab9446fb9b7114a3330a2dd409e1b28f6dcf4cb41df93a584d"
+        },
+        {
+          "type": "plugin_slot",
+          "id": "slt_1",
+          "entityHash": "sha256:6c96f7f6da309e37b10dc5bc2882e64b630e9a75b83a2791ad2fc8fa92222ab2"
+        }
+      ],
+      "documentHash": "sha256:9dc95c683a7ff0f648b1e01b7408872958945de84eba37d6d8929e4418b63d17"
     }
   ],
   "invalid": [

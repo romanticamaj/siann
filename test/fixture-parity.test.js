@@ -21,6 +21,26 @@ for (const [name, generator] of Object.entries(generators)) {
   });
 }
 
+test('the v2 model fixture matches its Node generator', () => {
+  const { FIXTURE_FILE_V2, buildFixtureV2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV2());
+});
+
+// m5-ui-engine-loop-click: v2 adds the locators entity and nothing else, so every
+// v1 entity keeps its hash (the schemaVersion string is not hashed).
+test('the v2 model fixture keeps every v1 entity hash and adds locators:locators', () => {
+  const v1 = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE, 'utf8'));
+  const v2 = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE_V2, 'utf8'));
+  assert.equal(v2.document.schemaVersion, 'siann.session_document.v2');
+  assert.deepEqual(v2.entityHashes.slice(0, v1.entityHashes.length), v1.entityHashes);
+  const extra = v2.entityHashes.slice(v1.entityHashes.length);
+  assert.deepEqual(extra.map((leaf) => `${leaf.type}:${leaf.id}`), ['locators:locators']);
+  assert.equal(extra[0].entityHash, sha256Jcs(v2.document.locators));
+  assert.equal(documentHash(v2.entityHashes), v2.documentHash);
+  assert.notEqual(v2.documentHash, v1.documentHash);
+});
+
 test('model fixture hashes are reproduced by the Node hash code', () => {
   const fixture = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE, 'utf8'));
   const { document } = fixture;
