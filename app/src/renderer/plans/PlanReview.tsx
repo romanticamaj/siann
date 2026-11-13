@@ -41,12 +41,14 @@ function usePlans(plans: PlanStore) {
   return useSyncExternalStore(
     (listener) => plans.subscribe(listener),
     () => plans.getSnapshot(),
+    () => plans.getSnapshot(),
   );
 }
 
 function useSnapshot(client: SessionClient) {
   return useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
+    () => client.model.getSnapshot(),
     () => client.model.getSnapshot(),
   );
 }
@@ -98,6 +100,36 @@ const BUTTONS: ReadonlyArray<{ id: ActionId; testId: string; label: MessageKey; 
   { id: 'merge', testId: 'plan-merge', label: 'plans.merge', method: 'proposal.merge' },
   { id: 'discard', testId: 'plan-discard', label: 'plans.discard', method: 'proposal.discard' },
 ];
+
+// The note field (sent with plan.reject, so it exists only when that method
+// is listed) and the action buttons.
+export interface PlanActionsProps {
+  readonly note: string;
+  readonly onNote: (note: string) => void;
+  readonly enabled: (id: ActionId) => boolean;
+  readonly onRun: (id: ActionId) => void;
+}
+
+export function PlanActions({ note, onNote, enabled, onRun }: PlanActionsProps) {
+  const t = translator(useLocale());
+  return (
+    <div className="plan-actions">
+      <Capable method="plan.reject">
+        <label>
+          {t('plans.note')}{' '}
+          <input data-testid="plan-note" value={note} onChange={(event) => onNote(event.target.value)} />
+        </label>
+      </Capable>
+      {BUTTONS.map((button) => (
+        <Capable key={button.id} method={button.method}>
+          <button type="button" data-testid={button.testId} disabled={!enabled(button.id)} onClick={() => onRun(button.id)}>
+            {t(button.label)}
+          </button>
+        </Capable>
+      ))}
+    </div>
+  );
+}
 
 export function PlanReview({ client, plans }: PlanReviewProps) {
   const snapshot = usePlans(plans);
@@ -221,19 +253,7 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
               })
             }
           />
-          <div className="plan-actions">
-            <label>
-              {t('plans.note')}{' '}
-              <input data-testid="plan-note" value={note} onChange={(event) => setNote(event.target.value)} />
-            </label>
-            {BUTTONS.map((button) => (
-              <Capable key={button.id} method={button.method}>
-                <button type="button" data-testid={button.testId} disabled={!enabled(button.id)} onClick={() => run(button.id)}>
-                  {t(button.label)}
-                </button>
-              </Capable>
-            ))}
-          </div>
+          <PlanActions note={note} onNote={setNote} enabled={enabled} onRun={run} />
           <p className="plan-error" data-testid="plan-error" role="status" data-code={error?.code ?? undefined}>
             {error ? refusalLine(error.code, error.message, locale, error.detail) : ''}
           </p>

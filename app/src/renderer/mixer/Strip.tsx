@@ -5,9 +5,10 @@
 // ReadModel.select; a keyboard step is a gesture of one move. Mute and solo
 // commit through command.execute and show only what the engine committed.
 // The meter is a MeterCanvas the strip mounts; its values never pass through
-// React (ADR-0019 point 3). The fader and pan exist only when
-// engine.capabilities lists the gesture methods and feature, mute and solo
-// only when it lists command.execute (UI redesign spec 3.0).
+// React (ADR-0019 point 3). The fader and the pan exist only when
+// engine.capabilities lists the gesture methods and feature and the command
+// the gesture ends in (track.set_gain, track.set_pan); mute and solo only when
+// it lists track.set_mute and track.set_solo (UI redesign spec 3.0).
 
 import { useEffect, useRef, useSyncExternalStore, type ChangeEvent } from 'react';
 
@@ -38,6 +39,7 @@ function faderValue(gainMilliDb: number): number {
 function useView(client: SessionClient) {
   return useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
+    () => client.model.getView(),
     () => client.model.getView(),
   );
 }
@@ -110,7 +112,7 @@ export function Strip({ trackId, client, gestures, realtime }: StripProps) {
     <section className="strip" data-testid={`mixer-strip-${trackId}`}>
       <header className="strip-name">{track.name}</header>
       <canvas className="strip-meter" data-testid={`meter-${trackId}`} width={24} height={120} ref={canvas} />
-      <Capable method="gesture.begin" feature="gestures">
+      <Capable method="gesture.begin" feature="gestures" command="track.set_gain">
       <label className="strip-fader">
         <span>{t('strip.gain')}</span>
         <input
@@ -126,6 +128,8 @@ export function Strip({ trackId, client, gestures, realtime }: StripProps) {
         />
         <output data-testid={`fader-value-${trackId}`}>{String(track.gainMilliDb)}</output>
       </label>
+      </Capable>
+      <Capable method="gesture.begin" feature="gestures" command="track.set_pan">
       <label className="strip-pan">
         <span>{t('strip.pan')}</span>
         <input
@@ -141,16 +145,18 @@ export function Strip({ trackId, client, gestures, realtime }: StripProps) {
         />
       </label>
       </Capable>
-      <Capable method="command.execute">
       <div className="strip-buttons">
-        <button type="button" data-testid={`mute-${trackId}`} aria-pressed={track.mute} onClick={() => toggle('track.set_mute')}>
-          M
-        </button>
-        <button type="button" data-testid={`solo-${trackId}`} aria-pressed={track.solo} onClick={() => toggle('track.set_solo')}>
-          S
-        </button>
+        <Capable command="track.set_mute">
+          <button type="button" data-testid={`mute-${trackId}`} aria-pressed={track.mute} onClick={() => toggle('track.set_mute')}>
+            M
+          </button>
+        </Capable>
+        <Capable command="track.set_solo">
+          <button type="button" data-testid={`solo-${trackId}`} aria-pressed={track.solo} onClick={() => toggle('track.set_solo')}>
+            S
+          </button>
+        </Capable>
       </div>
-      </Capable>
     </section>
   );
 }

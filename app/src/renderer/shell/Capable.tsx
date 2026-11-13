@@ -1,6 +1,7 @@
 // The capability rule of UI redesign spec 3.0 as a wrapper: <Capable
 // method="plan.approve"> renders its children only when engine.capabilities
-// lists the method (or, with `feature`, the feature), and nothing at all
+// lists the method (and, with `feature`, the feature; with `command`, the
+// command under command.execute), and nothing at all
 // otherwise, including while the capabilities are unknown. No placeholder,
 // no reserved space. App provides the session client's last known value.
 
@@ -15,8 +16,18 @@ export function useCapabilities(): CapabilitySelector {
   return useMemo(() => capabilitySelector(capabilities), [capabilities]);
 }
 
-export function Capable({ method, feature, children }: { method: string; feature?: string; children: ReactNode }) {
+export interface CapableProps {
+  readonly method?: string;
+  readonly feature?: string;
+  readonly command?: string;
+  readonly children: ReactNode;
+}
+
+export function Capable({ method, feature, command, children }: CapableProps) {
   const can = useCapabilities();
-  if (!can.has(method) || (feature !== undefined && !can.feature(feature))) return null;
+  if (method === undefined && feature === undefined && command === undefined) return null;
+  if (method !== undefined && !can.has(method)) return null;
+  if (feature !== undefined && !can.feature(feature)) return null;
+  if (command !== undefined && !can.command(command)) return null;
   return <>{children}</>;
 }

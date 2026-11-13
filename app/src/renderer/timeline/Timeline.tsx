@@ -5,6 +5,10 @@
 // event display that holds the canvas. Delete, Backspace and Escape are the
 // project zone's key commands (keys/preset-cubase.ts), registered here. No
 // drawing state passes through React.
+// The capability rule (UI redesign spec 3.0): the media pool's place buttons
+// exist only when engine.capabilities lists clip.place, the delete button and
+// key only with clip.remove, and the canvas sends no gesture whose commands
+// are not listed (it reads the latest capabilities through a ref).
 // The canvas words its ruler through the installed locale store and redraws
 // when it changes; the chrome reads the same store through useT().
 
@@ -15,6 +19,7 @@ import { localeStore, translator, useLocale } from '../i18n/t';
 import type { CommandRegistry } from '../keys/commands';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { SessionClient } from '../model/session-client';
+import { Capable, useCapabilities } from '../shell/Capable';
 import { TimelineCanvas, type TimelineState, type TimelineTestHooks } from './TimelineCanvas';
 
 const IDLE: TimelineState = { selectedClipId: null, placingMediaId: null, error: null };
@@ -38,6 +43,11 @@ export function Timeline({
   const locale = useLocale();
   const t = translator(locale);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
+  const can = useCapabilities();
+  const canRef = useRef(can);
+  canRef.current = can;
+  const canRemove = can.command('clip.remove');
+  const canPlace = can.command('clip.place');
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,6 +61,7 @@ export function Timeline({
         t: () => translator(localeStore().getSnapshot()),
         subscribe: (listener) => localeStore().subscribe(listener),
       },
+      allows: (op) => canRef.current.command(op),
     });
     setTimeline(surface);
     onHooks?.(surface.testHooks());
@@ -64,20 +75,20 @@ export function Timeline({
   const state = useSyncExternalStore(
     (listener) => (timeline ? timeline.subscribe(listener) : () => {}),
     () => (timeline ? timeline.getState() : IDLE),
+    () => (timeline ? timeline.getState() : IDLE),
   );
   const snapshot = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
+    () => client.model.getSnapshot(),
     () => client.model.getSnapshot(),
   );
 
   useEffect(() => {
     if (!timeline) return undefined;
-    const offs = [
-      commands.register('project', 'edit.delete', () => void timeline.deleteSelected()),
-      commands.register('project', 'edit.cancel', () => timeline.setPlacing(null)),
-    ];
+    const offs = [commands.register('project', 'edit.cancel', () => timeline.setPlacing(null))];
+    if (canRemove) offs.push(commands.register('project', 'edit.delete', () => void timeline.deleteSelected()));
     return () => offs.forEach((off) => off());
-  }, [timeline, commands]);
+  }, [timeline, commands, canRemove]);
 
   useEffect(() => {
     onSelect?.(state.selectedClipId);
@@ -89,17 +100,22 @@ export function Timeline({
         <ul className="media-pool" data-testid="media-pool" aria-label={t('timeline.mediaPool')}>
           {(snapshot?.media ?? []).map((media) => (
             <li key={media.id}>
-              <button
-                type="button"
-                data-testid={`pool-${media.id}`}
-                aria-pressed={state.placingMediaId === media.id}
-                onClick={() => timeline?.setPlacing(state.placingMediaId === media.id ? null : media.id)}
-              >
-                {media.id}
-              </button>
+              {canPlace ? (
+                <button
+                  type="button"
+                  data-testid={`pool-${media.id}`}
+                  aria-pressed={state.placingMediaId === media.id}
+                  onClick={() => timeline?.setPlacing(state.placingMediaId === media.id ? null : media.id)}
+                >
+                  {media.id}
+                </button>
+              ) : (
+                <span className="media-name">{media.id}</span>
+              )}
             </li>
           ))}
         </ul>
+        <Capable command="clip.remove">
         <button
           type="button"
           data-testid="delete-clip"
@@ -108,6 +124,7 @@ export function Timeline({
         >
           {t('timeline.deleteClip')}
         </button>
+        </Capable>
       </div>
       <dl className="info-line" data-testid="info-line">
         <dt>{t('timeline.selected')}</dt>
