@@ -256,8 +256,7 @@ async function launch(sessionDir: string, extraEnv: Record<string, string> = {})
       ...extraEnv,
     },
   });
-  page = await app.firstWindow();
-}
+  page = await app.firstWindow();}
 
 // The window's content area at `size` (what a screenshot captures).
 async function resize(size: { width: number; height: number }): Promise<void> {
@@ -625,12 +624,28 @@ test('UX screenshot tour', async () => {
   await scrollTop();
   process.kill(pid!);
   await expect(page.getByTestId('status')).not.toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('connection-banner')).toBeVisible();
+  await expect(page.getByTestId('zone-project')).toHaveAttribute('data-offline', 'true');
   const down = await page.getByTestId('status').textContent();
-  await shoot(page, 'Engine disconnected', `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it.`);
+  await shoot(
+    page,
+    'Engine disconnected',
+    `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it. A full-width banner under the top bar says the engine is disconnected; the four zones are dimmed and inert, so no control can send a request (the top bar's zone buttons and the status bar stay live).`,
+  );
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected', { timeout: RESTART_MS + 30_000 });
+  // The toast is shot while it shows (it dismisses itself after a few seconds).
+  const toast = page.getByTestId('toast');
+  await expect(toast).toBeVisible();
   await expect(page.getByTestId('track-count')).not.toHaveText('');
-  await waveformsDrawn().catch(() => undefined);
-  await shoot(page, 'Engine reconnected', 'The shell restarted the engine on the same bundle and the renderer reconnected to a new session.');
+  await expect(page.getByTestId('connection-banner')).toHaveCount(0);
+  const toastText = await toast.locator('.toast-text').textContent();
+  await painted(page);
+  await expect(toast).toBeVisible();
+  await shoot(
+    page,
+    'Engine reconnected',
+    `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}").`,
+  );
 
   // ---- What the window has no surface for.
   shots.push({
