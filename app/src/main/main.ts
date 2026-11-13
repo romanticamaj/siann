@@ -27,6 +27,9 @@
 //   SIANN_TEST_LANGS          under SIANN_SHELL_TEST only: comma-separated system
 //                             languages the renderer's locale detection reads
 //                             instead of navigator.languages (e2e pin)
+//   SIANN_SHELL_PROFILING=1   under SIANN_SHELL_TEST only: serves the profiling
+//                             bundle (react-dom/profiling) as renderer.js, so the
+//                             renderer's root <Profiler> counts React commits
 //   SIANN_SHELL_DEVTOOLS=1    devtools, the View menu's reload and the keys back,
 //                             for debugging
 
@@ -45,6 +48,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { engineArgs, engineTestArgs, pluginRegistryFile } from './engine-args';
+import { rendererRequestPath } from './serve';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
 
 // native/libs/protocol/include/siann/protocol/protocol_server.hpp, kAppOrigin.
@@ -128,7 +132,8 @@ function endpointOf(ready: EngineReady | null): EngineEndpoint | null {
 async function serveApp(request: Request): Promise<Response> {
   const url = new URL(request.url);
   if (url.host !== APP_HOST) return new Response('not found', { status: 404 });
-  const relative = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+  const relative = rendererRequestPath(decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname), process.env);
+  if (relative === null) return new Response('not found', { status: 404 });
   for (const root of RENDERER_ROOTS) {
     const file = path.resolve(root, `.${relative}`);
     if (file !== root && !file.startsWith(root + path.sep)) continue;
