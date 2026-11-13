@@ -72,6 +72,8 @@ test('the time falls back to rejectedAt or approvedAt, and is absent otherwise',
   assert.equal(cardOf(applied, [applied], 'main', NOW, undefined, 'en', NAMES).time, null);
   // firstSeen wins over the lifecycle times.
   assert.equal(cardOf(approved, [approved], 'main', NOW, NOW - 30_000, 'en', NAMES).time, '30 seconds ago');
+  // A clock read before the plan arrived never reads as the future.
+  assert.equal(cardOf(approved, [approved], 'main', NOW, NOW + 6_000, 'en', NAMES).time, 'now');
 });
 
 test('badges per state; an approved plan with a proposal branch is approved for audition', () => {

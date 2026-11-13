@@ -87,23 +87,9 @@ export function PlanPanelView(props: PlanPanelViewProps) {
   const set = plan ? actionSet(plan, heard, chosen) : null;
   const entries = set && plan ? [...(set.primary ? [set.primary] : []), ...set.secondary].filter((e) => actionMethods(e.id, plan).every((m) => can.has(m))) : [];
   const landed = plan ? landedLabel(plan, t) : null;
-  return (
-    <section className="plan-review" data-testid="plan-review" aria-label={t('plans.label')}>
-      {props.header}
-      {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
-      <ul className="plan-list" data-testid="plan-list" aria-label={t('plans.list')}>
-        {newestFirst.map((entry) => (
-          <li key={entry.hash}>
-            <PlanCard
-              plan={entry}
-              card={cardOf(entry, plans, heard, nowMs, firstSeen.get(entry.hash), locale, names)}
-              selected={entry.hash === selected}
-              onSelect={() => props.onSelect(entry.hash)}
-            />
-          </li>
-        ))}
-      </ul>
-      {plan && set ? (
+  // The selected plan's detail, directly under its card.
+  const detail =
+    plan && set ? (
         <div className="plan-detail" data-testid="plan-detail">
           <StepList
             key={plan.hash}
@@ -168,7 +154,24 @@ export function PlanPanelView(props: PlanPanelViewProps) {
             </p>
           ) : null}
         </div>
-      ) : null}
+      ) : null;
+  return (
+    <section className="plan-review" data-testid="plan-review" aria-label={t('plans.label')}>
+      {props.header}
+      {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
+      <ul className="plan-list" data-testid="plan-list" aria-label={t('plans.list')}>
+        {newestFirst.map((entry) => (
+          <li key={entry.hash}>
+            <PlanCard
+              plan={entry}
+              card={cardOf(entry, plans, heard, nowMs, firstSeen.get(entry.hash), locale, names)}
+              selected={entry.hash === selected}
+              onSelect={() => props.onSelect(entry.hash)}
+            />
+            {entry.hash === selected ? detail : null}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -237,14 +240,14 @@ function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision
   return state !== null && state.plan === hash ? state : null;
 }
 
-// The relative times are read again every 30 s.
+// The clock at this render; the relative times are re-rendered every 30 s.
 function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
+  const [, setTick] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
-  return now;
+  return Date.now();
 }
 
 export interface PlanPanelProps {

@@ -62,11 +62,12 @@ export function badgeOf(plan: PlanEntry): BadgeKey {
 }
 
 function timeOf(plan: PlanEntry, firstSeen: number | undefined, nowMs: number, locale: Locale): string | null {
-  if (firstSeen !== undefined) return relativeTime(firstSeen, nowMs, locale);
+  // Never the future: a clock read before the plan arrived reads "now".
+  if (firstSeen !== undefined) return relativeTime(Math.min(firstSeen, nowMs), nowMs, locale);
   for (const field of ['rejectedAt', 'approvedAt'] as const) {
     const value = plan.raw[field];
     const ms = typeof value === 'string' ? Date.parse(value) : Number.NaN;
-    if (Number.isFinite(ms)) return relativeTime(ms, nowMs, locale);
+    if (Number.isFinite(ms)) return relativeTime(Math.min(ms, nowMs), nowMs, locale);
   }
   return null;
 }
