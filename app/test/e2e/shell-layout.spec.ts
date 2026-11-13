@@ -210,7 +210,7 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
   }
 });
 
-test('each zone boundary drags within its range, collapses below its minimum, restores, steps 8 px by key and resets on double-click', async () => {
+test('each zone boundary drags within its range, collapses below its minimum, restores, works from the keyboard and resets on double-click', async () => {
   test.setTimeout(150_000);
   const sessionDir = seedBundle(scratch, TRACKS);
   await launch(sessionDir);
