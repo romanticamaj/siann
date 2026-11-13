@@ -1,7 +1,7 @@
 #pragma once
 
 // The protocol server's way to the transport and the device (architecture spec,
-// "siann-protocol", Protocol v0 items 18 and 22). siann-protocol does not link the
+// "siann-protocol", Protocol v0 items 18, 22 and 26). siann-protocol does not link the
 // playback engine; the engine host implements this interface and hands it to
 // the server in ServerOptions. Every call runs on the command thread.
 
@@ -14,9 +14,24 @@
 
 namespace siann::protocol {
 
+// The metronome (Protocol v0 item 26): on or off and its gain, an integer
+// milli-dB in [kMinGainMilliDb, kMaxGainMilliDb].
+struct ClickState {
+    static constexpr std::int32_t kDefaultGainMilliDb = -12'000;
+    static constexpr std::int32_t kMinGainMilliDb = -60'000;
+    static constexpr std::int32_t kMaxGainMilliDb = 0;
+
+    bool enabled = false;
+    std::int32_t gainMilliDb = kDefaultGainMilliDb;
+
+    friend bool operator==(const ClickState&, const ClickState&) = default;
+};
+
 struct TransportState {
     bool playing = false;
     std::int64_t position = 0;  // session frames
+    bool cycle = false;         // Protocol v0 item 26
+    ClickState click;
 };
 
 // The running device, as it reported itself.
@@ -50,6 +65,8 @@ struct EngineStatus {
     std::optional<DeviceInfo> device;
     std::optional<DeviceProblem> deviceError;  // set when device is not
     bool playing = false;
+    bool cycle = false;
+    ClickState click;
     std::uint64_t xruns = 0;
     double maxCallbackMicros = 0.0;
     std::uint64_t unmeasuredCallbacks = 0;
@@ -81,6 +98,10 @@ public:
     virtual TransportState play() = 0;
     virtual TransportState stop() = 0;
     virtual TransportState locate(std::int64_t frames) = 0;
+    // Protocol v0 item 26: engine state, never a revision. setClick keeps the
+    // current gain when `gainMilliDb` is empty; the server has checked its range.
+    virtual TransportState setCycle(bool enabled) = 0;
+    virtual TransportState setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) = 0;
     virtual EngineStatus status() const = 0;
 
     // engine.devices: every device --device could name, `current` marking one.

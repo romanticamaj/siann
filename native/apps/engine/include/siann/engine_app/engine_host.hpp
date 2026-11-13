@@ -137,6 +137,12 @@ public:
     protocol::TransportState play() override;
     protocol::TransportState stop() override;
     protocol::TransportState locate(std::int64_t frames) override;
+    // Protocol v0 item 26: engine state kept across device changes and rebinds.
+    // The cycle flag is the served session's (Session::cycle(), written with its
+    // next checkpoint), so session.open takes the opened bundle's; the click is
+    // the host's own and is not stored.
+    protocol::TransportState setCycle(bool enabled) override;
+    protocol::TransportState setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) override;
     protocol::EngineStatus status() const override;
     std::vector<protocol::DeviceDescription> devices() const override;
     protocol::DeviceInfo selectDevice(const std::string& id) override;
@@ -228,6 +234,8 @@ private:
     std::optional<protocol::MeterPublisher> publisher_;
     // The start value of each open gesture, by "<trackId>/<param>".
     std::map<std::string, double> gestureStarts_;
+    // The metronome, applied to every engine bind() makes.
+    protocol::ClickState click_;
 };
 
 }  // namespace siann::engine_app

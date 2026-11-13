@@ -215,6 +215,9 @@ void EngineHost::bind(session::Session& session) {
     loaded_ = false;
     session_ = &session;
     engine_ = std::make_unique<playback::PlaybackEngine>(session, playbackOptions_);
+    // Cycle and click are engine state, not the graph's: every engine gets them.
+    engine_->setCycle(session.cycle());
+    engine_->setClick(click_.enabled, click_.gainMilliDb);
     loadAttemptHead_ = session.history().head().envelope.id;
     if (auto problem = graphProblem([this] { engine_->load(); })) {
         say("cannot load the session (" + problem->code + "): " + problem->message);
@@ -739,9 +742,24 @@ protocol::TransportState EngineHost::locate(std::int64_t frames) {
     return transportState();
 }
 
+protocol::TransportState EngineHost::setCycle(bool enabled) {
+    requireDevice();
+    session_->setCycle(enabled);  // written with the session's next checkpoint
+    engine_->setCycle(enabled);
+    return transportState();
+}
+
+protocol::TransportState EngineHost::setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) {
+    requireDevice();
+    protocol::ClickState next{enabled, gainMilliDb.value_or(click_.gainMilliDb)};
+    engine_->setClick(next.enabled, next.gainMilliDb);
+    click_ = next;
+    return transportState();
+}
+
 protocol::TransportState EngineHost::transportState() const {
     const realtime::Transport& transport = engine_->transport();
-    return {transport.playing(), transport.position()};
+    return {transport.playing(), transport.position(), session_->cycle(), click_};
 }
 
 protocol::EngineStatus EngineHost::status() const {
@@ -753,6 +771,8 @@ protocol::EngineStatus EngineHost::status() const {
     } else {
         out.deviceError = problem_;
     }
+    out.cycle = session_->cycle();
+    out.click = click_;
     if (loaded_) {
         const rt::CallbackTimer& timing = engine_->driver().callbackTiming();
         out.playing = engine_->transport().playing();
