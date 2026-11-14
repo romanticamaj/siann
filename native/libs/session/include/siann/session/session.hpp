@@ -112,7 +112,7 @@ public:
     // commit(), so the plan revision is journaled before it is published.
     const command::PlanStore& plans() const noexcept;
     const command::Plan& submitPlan(std::vector<command::Command> steps, std::vector<model::EntityRef> readSet,
-                                    const std::string& baseRevision);
+                                    const std::string& baseRevision, command::PlanMetadata metadata = {});
     const command::Plan& approvePlan(std::string_view planHashText, std::string approvedBy, std::string time);
     const command::Plan& approvePlanPartial(std::string_view planHashText, const std::vector<std::size_t>& stepIndexes,
                                             std::string approvedBy, std::string time);

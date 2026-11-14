@@ -8,7 +8,8 @@
 // throw PlanStaleError otherwise. Partial approval turns a proper subset of
 // the steps into a sub-plan with its own hash and rejects the original.
 //
-// planHash = sha256(JCS(plan)) without the lifecycle fields; it must match
+// planHash = sha256(JCS(plan)) without the lifecycle fields and the metadata
+// (title, intent, actor); it must match
 // the Node bridge (src/hash/plan-hash.js) on fixtures/plan/plan-hash.json.
 // Plans are in-memory engine state in M3; they are not stored in the bundle.
 
@@ -44,6 +45,36 @@ struct EntitySnapshot {
     friend bool operator==(const EntitySnapshot&, const EntitySnapshot&) = default;
 };
 
+// Who submitted a plan (m5b-engine-plan-metadata): the kind of the credential
+// the request came with and the client's name, both set by the protocol server.
+enum class PlanActorKind { mcp, ui };
+
+std::string_view planActorKindName(PlanActorKind kind) noexcept;
+
+struct PlanActor {
+    PlanActorKind kind = PlanActorKind::ui;
+    std::string name;
+
+    friend bool operator==(const PlanActor&, const PlanActor&) = default;
+};
+
+// A plan's metadata, fixed at submission and not part of planHash (spec,
+// "Plans", decisions of 2026-11-15).
+struct PlanMetadata {
+    std::optional<std::string> title;
+    std::optional<std::string> intent;
+    std::optional<PlanActor> actor;
+};
+
+// The submission limits: a title is 1 to kPlanTitleMaxBytes UTF-8 bytes on one
+// line without a control character (U+0000 to U+001F, U+007F to U+009F); an
+// intent is 1 to kPlanIntentMaxBytes bytes without a control character other
+// than tab, LF and CR. Throws CommandError invalid_plan_metadata. The text is
+// valid UTF-8 (it came through the JSON parser).
+inline constexpr std::size_t kPlanTitleMaxBytes = 200;
+inline constexpr std::size_t kPlanIntentMaxBytes = 2000;
+void checkPlanMetadata(const PlanMetadata& metadata);
+
 struct Plan {
     std::string baseRevision;
     std::vector<Command> steps;
@@ -60,6 +91,11 @@ struct Plan {
     std::optional<std::string> rejectedAt;
     std::optional<std::string> rejectionNote;
     std::optional<std::string> appliedRevision;
+
+    // Metadata (m5b-engine-plan-metadata); not part of planHash either.
+    std::optional<std::string> title;
+    std::optional<std::string> intent;
+    std::optional<PlanActor> actor;
 
     // Parses a siann.plan.v1 object. Unknown fields are rejected. Throws
     // CommandError invalid_plan or invalid_entity_set.
@@ -113,9 +149,11 @@ public:
 
     // Prepares the steps at baseRevision, computes writeSet from their
     // declared effects and resolves readSet hashes there. The plan is stored
-    // as validated. Submitting an identical plan returns the stored one.
+    // as validated with the metadata (checkPlanMetadata first: nothing is
+    // stored when it throws). Submitting an identical plan returns the stored
+    // one unchanged, whatever metadata the resubmission carries.
     const Plan& submit(const History& history, std::vector<Command> steps, std::vector<model::EntityRef> readSet,
-                       const std::string& baseRevision);
+                       const std::string& baseRevision, PlanMetadata metadata = {});
 
     // Entities of the read and write sets whose head hash differs from the
     // recorded one; empty means the plan is not stale.
@@ -126,8 +164,9 @@ public:
 
     // See the spec for the order: the sub-plan is prepared at the base
     // revision first (invalid_params with the step index within the sub-plan,
-    // nothing changes), then stored as validated, the original is rejected,
-    // and the sub-plan is approved (PlanStaleError leaves it validated).
+    // nothing changes), then stored as validated with the original's title,
+    // intent and actor, the original is rejected, and the sub-plan is approved
+    // (PlanStaleError leaves it validated).
     const Plan& approvePartial(const History& history, std::string_view planHashText,
                                const std::vector<std::size_t>& stepIndexes, std::string approvedBy,
                                std::string time);
