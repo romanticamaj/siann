@@ -23,6 +23,16 @@ Every subagent started by `.claude/workflows/siann-milestone.js` reads this file
 
 Fixture expectations come from outside the code under test (RFCs, published vectors, separate generators in `scripts/`). Tests are deterministic: no wall-clock sleeps as synchronization, no real devices in CI (use `ManualAudioDevice` or paced `FakeAudioDevice`).
 
+## Test matrix
+
+`docs/harness/test-matrix.md` maps every feature to its tests by layer and platform. Its section 8 rules apply to every feature:
+
+1. Every acceptance item names its test layer (unit, e2e, ctest, Node, or manual with who runs it and when); the PR checklist names the test.
+2. A new protocol method gets a native protocol test, an `engine.capabilities` entry, a row in its `docs/schemas/protocol-*.md`, an MCP tool with an adapter test or an explicit reasoned exclusion, the app's `capabilities-full.json` entry, and an app client unit test when the app calls it.
+3. A UI feature gets unit tests for its pure logic, a Playwright e2e per user path against the real engine, the i18n fit check for its new controls, and its tour states.
+4. Tests run on Windows, macOS and Linux unless the behaviour is platform-specific; every platform skip or env gate carries a reason and a row in the matrix's section 3.
+5. The feature's branch adds or updates its row in the matrix (section 2) and moves closed gaps out of section 6. The verifier checks that row.
+
 ## Checks
 
 ```sh
