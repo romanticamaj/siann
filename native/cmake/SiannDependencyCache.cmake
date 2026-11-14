@@ -11,6 +11,7 @@
 #
 # Without it, FetchContent behaves as before (sources under <build>/_deps).
 include(FetchContent)
+include("${CMAKE_CURRENT_LIST_DIR}/SiannStaleBuildCache.cmake")
 
 if(NOT SIANN_DEPS_CACHE_DIR AND DEFINED ENV{SIANN_DEPS_CACHE_DIR})
   file(TO_CMAKE_PATH "$ENV{SIANN_DEPS_CACHE_DIR}" SIANN_DEPS_CACHE_DIR)
@@ -38,6 +39,23 @@ function(_siann_git_fetch dir repository commit no_submodules)
     endif()
   endforeach()
   file(RENAME "${tmp}" "${dir}")
+endfunction()
+
+# Where FetchContent puts <name>'s sources and build when nothing overrides them.
+function(_siann_default_dirs source_out binary_out lower)
+  cmake_parse_arguments(dep "" "SOURCE_DIR;BINARY_DIR" "" ${ARGN})
+  set(base "${FETCHCONTENT_BASE_DIR}")
+  if(NOT base)
+    set(base "${CMAKE_BINARY_DIR}/_deps")
+  endif()
+  if(NOT dep_SOURCE_DIR)
+    set(dep_SOURCE_DIR "${base}/${lower}-src")
+  endif()
+  if(NOT dep_BINARY_DIR)
+    set(dep_BINARY_DIR "${base}/${lower}-build")
+  endif()
+  set(${source_out} "${dep_SOURCE_DIR}" PARENT_SCOPE)
+  set(${binary_out} "${dep_BINARY_DIR}" PARENT_SCOPE)
 endfunction()
 
 # siann_declare_dependency(<name> [NO_SUBMODULES] <FetchContent_Declare content options>)
@@ -73,6 +91,11 @@ function(siann_declare_dependency name)
   endif()
   set(SIANN_DEP_SOURCE_DIR_${upper} "${own}" CACHE INTERNAL "Source directory of ${name} outside the build tree")
   if(NOT SIANN_DEPS_CACHE_DIR OR NOT own STREQUAL "")
+    _siann_default_dirs(source binary "${lower}" ${args})
+    if(NOT own STREQUAL "")
+      set(source "${own}")
+    endif()
+    siann_remove_stale_nested_caches("${binary}" "${source}")
     return()
   endif()
 
@@ -113,6 +136,11 @@ function(siann_declare_dependency name)
     file(WRITE "${dir}/.siann-complete" "${identity}\n")
   endif()
   file(LOCK "${dir}.lock" RELEASE)
+
+  # Build trees configured before the sources moved here keep nested caches of the
+  # old location (JUCE's juceaide); see SiannStaleBuildCache.cmake.
+  _siann_default_dirs(source binary "${lower}" ${args})
+  siann_remove_stale_nested_caches("${binary}" "${dir}")
 
   set(FETCHCONTENT_SOURCE_DIR_${upper} "${dir}" PARENT_SCOPE)
   set(SIANN_DEP_SOURCE_DIR_${upper} "${dir}" CACHE INTERNAL "Shared source directory of ${name}")
