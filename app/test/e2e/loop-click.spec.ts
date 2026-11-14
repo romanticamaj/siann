@@ -198,8 +198,21 @@ async function frameAt(x: number): Promise<bigint> {
   return frame < 0n ? 0n : frame;
 }
 
-// A press, a move and a release in the ruler's upper half, canvas x.
-async function upperDrag(from: number, to: number, modifiers: readonly string[] = []): Promise<void> {
+// The band shows what the engine holds: a gesture starts on the committed
+// range, not on one whose session.changed has not arrived yet.
+async function inStep(): Promise<void> {
+  await expect
+    .poll(async () => {
+      const [drawn, held] = [await band(), await locators()];
+      return drawn === null ? held === null : held !== null && drawn.left === held.left && drawn.right === held.right;
+    })
+    .toBe(true);
+}
+
+// A press, a move and a release in the ruler's upper half, canvas x; with
+// `sync` (the default) once the band is in step with the engine.
+async function upperDrag(from: number, to: number, modifiers: readonly string[] = [], sync = true): Promise<void> {
+  if (sync) await inStep();
   const box = await canvasBox();
   const y = box.y + RULER_UPPER_HEIGHT / 2;
   for (const key of modifiers) await page.keyboard.down(key);
@@ -461,7 +474,10 @@ test('without a device cycle and the metronome are disabled with the reason and 
   // The band: drawn and edited without a device.
   await upperDrag(100, 300);
   await expect.poll(locators).not.toBeNull();
-  await expect.poll(band).not.toBeNull();
+  // The band shows the document's range (after the release the drag's preview
+  // is gone until session.changed brings the commit: never optimistic).
+  const committed = (await locators())!;
+  await expect.poll(async () => (await band())?.left).toBe(committed.left);
   const drawn = (await band())!;
   // A click on the range, the keys and Alt+P send nothing.
   const polls = (await sent()).filter((r) => r.method === 'engine.status').length;
@@ -530,9 +546,9 @@ test('against an engine whose capabilities lack the methods none of the controls
     expect(await hold.getAttribute('data-part')).toBeNull();
   }
   // No gesture or key sends any of them.
-  await upperDrag(100, 300);
-  await upperDrag(200, 200);
-  await upperDrag(250, 250, ['Alt']);
+  await upperDrag(100, 300, [], false);
+  await upperDrag(200, 200, [], false);
+  await upperDrag(250, 250, ['Alt'], false);
   await focusProject();
   for (const key of ['NumpadDivide', 'Slash', 'KeyC', `${MOD}+Numpad2`]) await page.keyboard.press(key);
   await clickClip('clp_a');
