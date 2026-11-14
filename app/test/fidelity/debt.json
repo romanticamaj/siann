@@ -8,7 +8,6 @@
   "literals": {
     "app/renderer/shell.css": { "colours": 5, "sizes": 92 },
     "app/src/renderer/mixer/MixerMeters.ts": { "colours": 6, "sizes": 0 },
-    "app/src/renderer/timeline/TimelineCanvas.ts": { "colours": 0, "sizes": 3 },
-    "docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html": { "colours": 74, "sizes": 19 }
+    "app/src/renderer/timeline/TimelineCanvas.ts": { "colours": 0, "sizes": 3 }
   }
 }
