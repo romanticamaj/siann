@@ -109,6 +109,13 @@ export const en = {
   'transport.positionField': 'Go to position',
   'transport.autoScroll': 'Auto-scroll',
   'transport.tempo': 'Tempo at the project cursor (BPM)',
+  // The position display's right-click menu (spec 3.2, P1-2) and undo/redo (spec 3.2).
+  'transport.formatMenu': 'Time format',
+  'transport.formatBars': 'Bars+Beats',
+  'transport.formatSeconds': 'Seconds',
+  'transport.undoRedo': 'Undo and redo',
+  'transport.undo': 'Undo',
+  'transport.redo': 'Redo',
 
   // The Plans tab (m5-ui-plan-panel; UI redesign section 4 and P1-5).
   'plans.label': 'Plans',

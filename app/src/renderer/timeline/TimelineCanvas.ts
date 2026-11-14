@@ -46,6 +46,7 @@ import type { MeterFrame } from '../model/meter-frames';
 import { chooseLevel, columnRange } from '../model/peaks';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { ReadModel, Snapshot } from '../model/read-model';
+import { PlayheadClock } from '../transport/playhead-clock';
 import { nextScroll } from './auto-scroll';
 import { gestureCommand, newClipId, type TimelineCommand, type TimelineGesture } from './commands';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
@@ -129,6 +130,9 @@ export interface TimelineCanvasOptions {
   readonly onLocate?: (frames: string) => void;
   // Auto-scroll in page mode while playing (off when absent; setAutoScroll).
   readonly autoScroll?: boolean;
+  // The cursor clock's time in milliseconds (performance.now when absent;
+  // the tests move it by hand).
+  readonly now?: () => number;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -225,8 +229,12 @@ export class TimelineCanvas {
   #contentDraws = 0;
   #overlayDraws = 0;
   #cursorX: number | null = null;
+  // The cursor's position as last drawn, from the clock.
   #playhead: string | null = null;
+  // The newest realtime frame's playhead, as received.
+  #framePlayhead: string | null = null;
   #playing = false;
+  readonly #clock: PlayheadClock;
   #autoScroll: boolean;
   #outline = 0;
   #dimmed: string[] = [];
@@ -240,6 +248,7 @@ export class TimelineCanvas {
     this.#overlay = options.overlay;
     this.#container = options.container;
     this.#autoScroll = options.autoScroll ?? false;
+    this.#clock = new PlayheadClock({ now: options.now ?? (() => performance.now()) });
     this.#view = {
       framesPerPixel: options.framesPerPixel ?? DEFAULT_FRAMES_PER_PIXEL,
       scrollFrames: '0',
@@ -504,12 +513,17 @@ export class TimelineCanvas {
     this.invalidate();
   }
 
+  // A realtime frame: the clock restarts from it. While playing the overlay
+  // runs on every animation frame anyway (#drawOverlay asks for the next);
+  // stopped, a frame whose playhead did not move draws nothing.
   #playheadChanged(): void {
     const frame = this.#options.playhead?.latest() ?? null;
+    this.#clock.observe(frame);
     const playhead = frame ? frame.playheadSamples : null;
-    this.#playing = frame?.playing ?? false;
-    if (playhead === this.#playhead) return;
-    this.#playhead = playhead;
+    const playing = frame?.playing ?? false;
+    if (playhead === this.#framePlayhead && playing === this.#playing) return;
+    this.#framePlayhead = playhead;
+    this.#playing = playing;
     this.#invalidateOverlay();
   }
 
@@ -933,6 +947,9 @@ export class TimelineCanvas {
 
   #drawOverlay(): void {
     this.#overlayDraws += 1;
+    // The cursor at this animation frame: extrapolated while playing.
+    const rate = this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000;
+    this.#playhead = this.#clock.position(rate);
     // Auto-scroll (page mode): a cursor that left the view while playing
     // turns the page here, so the content is redrawn only on a page turn;
     // never while a clip or ruler drag is held.
@@ -983,6 +1000,9 @@ export class TimelineCanvas {
       ctx.fillStyle = palette.tx1;
       ctx.fillRect(Math.round(this.#cursorX), 0, 1, view.height ?? 0);
     }
+    // Display rate while playing: the next animation frame draws the cursor
+    // again from the clock; stopped, the loop ends here.
+    if (this.#clock.playing()) this.#invalidateOverlay();
   }
 
   // The drag tooltip: the new position (start, or the trimmed edge) and the

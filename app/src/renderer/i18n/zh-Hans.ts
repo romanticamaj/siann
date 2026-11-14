@@ -94,6 +94,12 @@ export const zhHans: Catalog = {
   'transport.positionField': '移至位置',
   'transport.autoScroll': '自动滚动',
   'transport.tempo': '播放光标处的速度 (BPM)',
+  'transport.formatMenu': '时间格式',
+  'transport.formatBars': '小节+拍',
+  'transport.formatSeconds': '秒',
+  'transport.undoRedo': '撤销与重做',
+  'transport.undo': '撤销',
+  'transport.redo': '重做',
 
   'plans.label': '计划',
   'plans.list': '智能体提交的计划',

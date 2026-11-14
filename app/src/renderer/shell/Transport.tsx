@@ -4,13 +4,17 @@
 //
 // - The position display shows the project cursor in the primary format over
 //   the secondary one (Bars+Beats and Seconds; the period key exchanges
-//   them). Its digits are written with textContent from an animation frame
-//   scheduled by the realtime channel, never through React state (ADR-0019
-//   point 3), so a playing transport causes no React commit. React hears of
-//   the transport only when the playing flag flips (the start button's
-//   pressed state). Its tooltip says bars are counted in 4/4 (spec 3.0, E-10).
-//   Beside it, the tempo in force at the cursor (root.tempo; editing it is
-//   phase 3), written the same way.
+//   them; so does its right-click menu). Its digits are written with
+//   textContent from one animation-frame loop, never through React state
+//   (ADR-0019 point 3), so a playing transport causes no React commit. The
+//   loop runs on every animation frame while playing, from the extrapolating
+//   clock (transport/playhead-clock.ts: the realtime channel ticks slower
+//   than the display), and once after a frame changed while stopped. React
+//   hears of the transport only when the playing flag flips (the start
+//   button's pressed state), the formats are exchanged or the field opens.
+//   Its tooltip says bars are counted in 4/4 (spec 3.0, E-10). Beside it, the
+//   tempo in force at the cursor (root.tempo; editing it is phase 3), written
+//   the same way.
 // - Shift+P opens a real text field over the display, so the dispatcher's
 //   text-field rule keeps every key in it; Enter locates to the typed
 //   position (read in the primary format), Escape or leaving it cancels, and
@@ -20,8 +24,10 @@
 //   why (spec 3.0), the device error's code in front. An engine whose
 //   capabilities lack transport.play, transport.stop or transport.locate gets
 //   no transport at all (Capable).
+// - Undo and redo (spec 3.2) sit beside it, need no device, and are absent
+//   without session.undo and session.redo.
 
-import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
 
 import { useT, type T } from '../i18n/t';
 import type { CommandRegistry } from '../keys/commands';
@@ -29,12 +35,20 @@ import type { EngineStatus, EngineStatusSource } from '../model/engine-status';
 import type { MeterFrame } from '../model/meter-frames';
 import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
-import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt } from '../timeline/transport-time';
+import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt, type TimeFormat } from '../timeline/transport-time';
+import { PlayheadClock } from '../transport/playhead-clock';
 import { Capable } from './Capable';
 import { Counted } from './Counted';
 import type { LayoutStore } from './layout-store';
 
 const DEFAULT_RATE = 48000;
+
+// Animation frames in which the position display's text changed (the
+// display-rate e2e reads it through window.__siannTransport).
+let writes = 0;
+export function displayWrites(): number {
+  return writes;
+}
 
 export interface TransportAvailability {
   readonly enabled: boolean;
@@ -140,31 +154,43 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   const tempoRef = useRef<HTMLSpanElement | null>(null);
   const [editing, setEditing] = useState(false);
   const [invalid, setInvalid] = useState(false);
+  // The time format menu (right-click on the display), where it opened.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
-  // The display's digits, outside React: one write per animation frame in
-  // which the playhead (or the tempo map) changed.
+  // The display's digits, outside React: on every animation frame while
+  // playing (the clock extrapolates between realtime frames), once after a
+  // change while stopped.
   useEffect(() => {
     const primaryEl = primaryRef.current;
     const secondaryEl = secondaryRef.current;
     const tempoEl = tempoRef.current;
     if (!primaryEl || !secondaryEl || !tempoEl) return undefined;
+    const clock = new PlayheadClock({ now: () => performance.now() });
     let frame: number | null = null;
-    let position = '0';
     const write = () => {
       frame = null;
-      const latest = realtime?.latest() ?? null;
-      if (latest) position = latest.playheadSamples;
+      clock.observe(realtime?.latest() ?? null);
       const root = client.model.getSnapshot()?.root;
       const rate = root?.sampleRate ?? DEFAULT_RATE;
       const tempo = root?.tempo ?? [];
+      const position = clock.position(rate) ?? '0';
       const first = formatPosition(position, tempo, rate, primary);
       const second = formatPosition(position, tempo, rate, otherFormat(primary));
-      if (primaryEl.textContent !== first) primaryEl.textContent = first;
-      if (secondaryEl.textContent !== second) secondaryEl.textContent = second;
+      let changed = false;
+      if (primaryEl.textContent !== first) {
+        primaryEl.textContent = first;
+        changed = true;
+      }
+      if (secondaryEl.textContent !== second) {
+        secondaryEl.textContent = second;
+        changed = true;
+      }
       const bpm = formatTempo(tempoAt(position, tempo, rate));
       if (tempoEl.textContent !== bpm) tempoEl.textContent = bpm;
+      if (changed) writes += 1;
+      if (clock.playing()) schedule();
     };
     const schedule = () => {
       if (frame === null) frame = requestAnimationFrame(write);
@@ -193,6 +219,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     setEditing(false);
     setInvalid(false);
   };
+  const closeMenu = useCallback(() => setMenu(null), []);
   const onFieldKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -258,6 +285,10 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         role="group"
         aria-label={t('transport.position')}
         title={t('transport.fourFour')}
+        onContextMenu={(event: MouseEvent<HTMLDivElement>) => {
+          event.preventDefault();
+          setMenu({ x: event.clientX, y: event.clientY });
+        }}
       >
         <span className="position-primary" data-testid="position-primary" ref={primaryRef} />
         <span className="position-secondary" data-testid="position-secondary" ref={secondaryRef} />
@@ -277,6 +308,18 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           />
         ) : null}
       </div>
+      {menu ? (
+        <TimeFormatMenu
+          primary={primary}
+          x={menu.x}
+          y={menu.y}
+          onChoose={(format) => {
+            setMenu(null);
+            if (format !== primary) layout.dispatch({ type: 'exchangeFormats' });
+          }}
+          onClose={closeMenu}
+        />
+      ) : null}
       <span className="transport-tempo" data-testid="transport-tempo" title={t('transport.tempo')} ref={tempoRef} />
       <button
         type="button"
@@ -293,16 +336,112 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   );
 }
 
+export interface TimeFormatMenuProps {
+  readonly primary: TimeFormat;
+  // Where it opened (client coordinates).
+  readonly x: number;
+  readonly y: number;
+  readonly onChoose: (format: TimeFormat) => void;
+  readonly onClose: () => void;
+}
+
+const FORMATS: readonly TimeFormat[] = ['bars', 'seconds'];
+
+// The two-item time format menu (spec 3.2, P1-2): Bars+Beats and Seconds,
+// the primary one checked. Escape or a press outside closes it.
+export function TimeFormatMenu({ primary, x, y, onChoose, onClose }: TimeFormatMenuProps) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
+    };
+    const onDown = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [onClose]);
+  return (
+    <div
+      className="time-format-menu"
+      data-testid="time-format-menu"
+      role="menu"
+      aria-label={t('transport.formatMenu')}
+      style={{ left: x, top: y }}
+      ref={ref}
+    >
+      {FORMATS.map((format) => (
+        <button
+          key={format}
+          type="button"
+          role="menuitemradio"
+          className="time-format-item"
+          data-testid={`time-format-${format}`}
+          aria-checked={primary === format}
+          onClick={() => onChoose(format)}
+        >
+          {t(format === 'bars' ? 'transport.formatBars' : 'transport.formatSeconds')}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Undo and redo (spec 3.2): they need no device. While the engine is away
+// the request is refused like any other, as a toast.
+function UndoRedo({ transport }: { transport: TransportController }) {
+  const t = useT();
+  return (
+    <div className="transport undo-redo" data-testid="undo-redo" role="group" aria-label={t('transport.undoRedo')}>
+      <button
+        type="button"
+        className="transport-button"
+        data-testid="undo"
+        title={t('transport.undo')}
+        aria-label={t('transport.undo')}
+        onClick={() => void transport.undo()}
+      >
+        <Icon path="M6 3 1 7.5 6 12V9h4a3 3 0 0 1 0 6H8v1h2a4 4 0 0 0 0-8H6z" />
+      </button>
+      <button
+        type="button"
+        className="transport-button"
+        data-testid="redo"
+        title={t('transport.redo')}
+        aria-label={t('transport.redo')}
+        onClick={() => void transport.redo()}
+      >
+        <Icon path="M10 3l5 4.5-5 4.5V9H6a3 3 0 0 0 0 6h2v1H6a4 4 0 0 1 0-8h4z" />
+      </button>
+    </div>
+  );
+}
+
 export function Transport(props: TransportProps) {
   return (
-    <Capable method="transport.play">
-      <Capable method="transport.stop">
-        <Capable method="transport.locate">
-          <Counted id="transport">
-            <TransportBar {...props} />
-          </Counted>
+    <>
+      <Capable method="transport.play">
+        <Capable method="transport.stop">
+          <Capable method="transport.locate">
+            <Counted id="transport">
+              <TransportBar {...props} />
+            </Counted>
+          </Capable>
         </Capable>
       </Capable>
-    </Capable>
+      <Capable method="session.undo">
+        <Capable method="session.redo">
+          <UndoRedo transport={props.transport} />
+        </Capable>
+      </Capable>
+    </>
   );
 }

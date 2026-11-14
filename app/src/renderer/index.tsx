@@ -50,6 +50,7 @@ import { TransportController } from './model/transport';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
 import { setCommitSink } from './shell/Counted';
+import { displayWrites } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
@@ -70,6 +71,8 @@ declare global {
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
     __siannToasts?: ToastStore;
+    // The position display's write count (m5-ui-transport display-rate e2e).
+    __siannTransport?: { displayWrites(): number };
     __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }>; sent(): ReadonlyArray<SentRequest> };
     __siannMeters?: MeterTestHooks;
     // React commits counted at the root (profiling bundle only).
@@ -130,6 +133,7 @@ if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: (
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
+if (testHooks) window.__siannTransport = { displayWrites };
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
 const transport = new TransportController({
   client,

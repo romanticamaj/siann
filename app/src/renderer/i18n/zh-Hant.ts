@@ -94,6 +94,12 @@ export const zhHant: Catalog = {
   'transport.positionField': '移至位置',
   'transport.autoScroll': '自動捲動',
   'transport.tempo': '播放游標處的速度 (BPM)',
+  'transport.formatMenu': '時間格式',
+  'transport.formatBars': '小節+拍',
+  'transport.formatSeconds': '秒',
+  'transport.undoRedo': '復原與重做',
+  'transport.undo': '復原',
+  'transport.redo': '重做',
 
   'plans.label': '計畫',
   'plans.list': '代理提交的計畫',
