@@ -82,6 +82,9 @@ const DESKTOP_PATHS = [
   /\.cmake$/,
 ];
 
+// The redesign's mockup (docs/harness/agent-rules.md, "UI fidelity").
+const MOCKUP_DIR = 'docs/superpowers/specs/2026-11-13-siann-ui-redesign/';
+
 // Steps for one changed path (forward slashes, relative to the repository root).
 // The Node tests run for every change; the rest follow the table below.
 function stepsForPath(file) {
@@ -92,6 +95,8 @@ function stepsForPath(file) {
   if (p === 'scripts/pluginval.js') return ['node', 'desktop'];
   // Prose builds nothing, wherever it lives.
   if (/\.md$/i.test(p)) return ['node'];
+  // The UI mockup is what the app's fidelity gate compares the window with.
+  if (p.startsWith(MOCKUP_DIR)) return ['node', 'app'];
   if (/^native\//.test(p)) {
     return DESKTOP_PATHS.some((re) => re.test(p)) ? ['node', 'native', 'desktop', 'gcc'] : ['node', 'native', 'gcc'];
   }
@@ -489,14 +494,32 @@ function appStep(options) {
   }
   // The plain-tab e2e (m5-ui-shell) runs in Playwright's own Chromium; the
   // install is a no-op once the pinned revision is there.
-  const npx = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npx', ...args], APP, env) : run('npx', args, APP, env));
+  const npx = (args, withEnv = env) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npx', ...args], APP, withEnv) : run('npx', args, APP, withEnv));
   const chromium = npx(['playwright', 'install', ...(process.platform === 'linux' ? ['--with-deps'] : []), 'chromium']);
   if (!chromium.ok) return { ...chromium, failedAt: 'npx playwright install chromium' };
   for (const args of [['run', 'build'], ['test']]) {
     const step = npm(args);
     if (!step.ok) return { ...step, failedAt: `npm ${args.join(' ')}` };
   }
-  return { ok: true, output: '' };
+  return fidelityGate(APP, env, npx);
+}
+
+// The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the window
+// against the mockup, geometry, computed styles and pixels, in en and zh-TW. The
+// report goes to app/test-results/fidelity. While no gate of the manifest is
+// `enforce` the gate only reports: a failed run is noted, not a failed step.
+function fidelityEnforced() {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'test', 'fidelity', 'manifest.json'), 'utf8'));
+  return Object.values(manifest.gates).includes('enforce');
+}
+
+function fidelityGate(APP, env, npx) {
+  const out = path.join(APP, 'test-results', 'fidelity');
+  const step = npx(['playwright', 'test', '--project', 'fidelity'], { ...env, SIANN_FIDELITY: '1', SIANN_FIDELITY_OUT: out });
+  const report = path.join(out, 'report.md');
+  if (step.ok) return { ok: true, output: '', note: `fidelity report: ${report}` };
+  if (fidelityEnforced()) return { ...step, failedAt: `the mockup fidelity gate (${report})` };
+  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (report-only until m5-ui-mockup-alignment): ${report}` };
 }
 
 const STEPS = {
@@ -550,5 +573,5 @@ if (require.main === module) {
 
 module.exports = {
   ALL_STEPS, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, listSources, nativeEnv,
-  needsInstall, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath, stepsForPaths,
+  fidelityEnforced, needsInstall, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath, stepsForPaths,
 };

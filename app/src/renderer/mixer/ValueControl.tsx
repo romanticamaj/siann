@@ -187,6 +187,7 @@ export function ValueControl({ kind, orientation, entityRef, value, gestures, te
         tabIndex={0}
         className={`fader ${orientation}${warn ? ' warn' : ''}`}
         data-testid={testId}
+        data-part-of={kind === 'gain' ? 'fader' : 'pan-knob'}
         data-position={String(position)}
         aria-label={label}
         aria-orientation={orientation}
@@ -203,7 +204,7 @@ export function ValueControl({ kind, orientation, entityRef, value, gestures, te
         onDoubleClick={typing ? () => setEditing(true) : undefined}
       >
         {showText ? <span className="fader-text">{text}</span> : null}
-        <span className="fader-cap" aria-hidden="true" />
+        <span className="fader-cap" data-part-of={kind === 'gain' ? 'cap' : undefined} aria-hidden="true" />
       </div>
       <span ref={tooltip} className="value-tooltip" data-testid={`${testId}-tooltip`} role="status" hidden />
     </div>

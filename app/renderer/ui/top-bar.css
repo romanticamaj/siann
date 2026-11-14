@@ -1,0 +1,43 @@
+/* The top bar: session, transport, displays, zone buttons, Plans button.
+
+   Shared source of the redesign's mockup and the app (docs/harness/agent-rules.md,
+   "UI fidelity"): docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html
+   loads this file, and the React component that draws this part of the window
+   uses the same class names and structure. Colours, font sizes and radii are
+   tokens of ../tokens.css. Changing a rule here changes the reference: that
+   needs the maintainer. */
+
+.tb-left{display:flex;align-items:center;gap:10px;height:100%}
+.brand{width:44px;height:100%;display:grid;place-items:center;border-right:1px solid var(--divider)}
+.brand b{width:22px;height:22px;border-radius:var(--radius-6);background:conic-gradient(from 210deg,var(--ai),var(--track-7),var(--track-6),var(--track-4),var(--track-2),var(--track-0),var(--track-10),var(--ai));display:grid;place-items:center}
+.brand b i{width:16px;height:16px;border-radius:var(--radius-4);background:var(--bg-alt);display:grid;place-items:center}
+.brand b i::after{content:"";width:2px;height:8px;background:var(--select);border-radius:var(--radius-1);box-shadow:-4px 2px 0 0 var(--white-a550),4px 1px 0 0 var(--white-a800)}
+.session{display:flex;align-items:center;gap:6px;font-weight:600;font-size:var(--fs-session);padding:5px 4px}
+.session svg{color:var(--tx-3)}
+.chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:var(--radius-11);background:var(--bg-3);border:1px solid var(--line-2);color:var(--tx-2);font-size:var(--fs-small)}
+.iconbtn{width:28px;height:28px;border-radius:var(--radius-m);display:grid;place-items:center;color:var(--tx-2);border:1px solid transparent}
+.iconbtn.on{background:var(--bg-4);color:var(--tx-1);border-color:var(--line-2)}
+.iconbtn.dim{color:var(--tx-4)}
+.sep{width:1px;height:20px;background:var(--line-2);margin:0 2px}
+.transport{display:flex;align-items:center;gap:10px}
+.tgroup{display:flex;align-items:center;gap:2px;padding:3px;background:var(--bg-well);border:1px solid var(--divider);border-radius:var(--radius-l);box-shadow:0 1px 0 var(--line-hi)}
+.tbtn{width:32px;height:28px;border-radius:var(--radius-m);display:grid;place-items:center;color:var(--tx-2);background:linear-gradient(var(--button-0),var(--bg-3));border:1px solid var(--button-line);box-shadow:inset 0 1px 0 var(--white-a050)}
+.tbtn.play{color:var(--play-ink);background:linear-gradient(var(--play-0),var(--play-1));border-color:var(--play-line);box-shadow:0 0 14px var(--play-a350),inset 0 1px 0 var(--white-a350)}
+.tbtn.rec{color:var(--rec)}
+.tbtn.lit{color:var(--bg-well);background:linear-gradient(var(--lit-0),var(--lit-1));border-color:var(--lit-line)}
+.lcd{display:flex;align-items:stretch;height:36px;background:var(--bg-slot);border:1px solid var(--divider);border-radius:var(--radius-l);box-shadow:inset 0 1px 6px var(--black-a800),0 1px 0 var(--line-hi);overflow:hidden}
+.lcd .cell{display:flex;flex-direction:column;justify-content:center;padding:0 11px;border-right:1px solid var(--display-line)}
+.lcd .cell:last-child{border-right:0}
+.lcd .lbl{font-size:var(--fs-8h);letter-spacing:.12em;color:var(--tx-4);text-transform:uppercase;font-weight:600;line-height:1}
+:lang(zh) .lcd .lbl{font-size:var(--fs-micro);letter-spacing:.02em;line-height:1.05}
+.lcd .val{font:500 17px/1.15 var(--font-num);color:var(--tx-0)}
+.lcd .val.sm{font-size:var(--fs-session);color:var(--tx-2);line-height:1.4}
+.lcd .val em{font-style:normal;color:var(--tx-3)}
+.tb-right{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.dsp{display:flex;align-items:center;gap:6px;color:var(--tx-3);font-size:var(--fs-small);margin-right:2px}
+.dsp .bar{width:40px;height:4px;border-radius:var(--radius-2);background:var(--bg-slot);overflow:hidden;border:1px solid var(--divider)}
+.dsp .bar i{display:block;height:100%;width:22%;background:var(--ok)}
+.zones{display:flex;gap:1px;padding:1px;background:var(--bg-well);border:1px solid var(--divider);border-radius:var(--radius-6)}
+.zones .iconbtn{width:26px;height:24px;border-radius:var(--radius-4)}
+.aibtn{display:flex;align-items:center;gap:6px;height:28px;padding:0 10px 0 8px;border-radius:var(--radius-14);background:var(--ai-dim);border:1px solid var(--ai-line);color:var(--ai-2);font-weight:600;white-space:nowrap}
+.aibtn .n{min-width:16px;height:16px;border-radius:var(--radius-l);background:var(--ai);color:var(--ai-ink);font-size:var(--fs-micro);display:grid;place-items:center;font-weight:700}

@@ -66,6 +66,7 @@ export function AboutButton({ about, onOpen }: { about: AboutInfo | null; onOpen
       type="button"
       className="about"
       data-testid="about"
+      data-part="status-about"
       aria-haspopup="dialog"
       title={aboutText(about, t)}
       onClick={onOpen}
@@ -142,7 +143,7 @@ function LocaleSwitch() {
   const t = translator(locale);
   const change = (event: ChangeEvent<HTMLSelectElement>) => localeStore().setLocale(event.target.value as UserLocale);
   return (
-    <label className="locale-switch">
+    <label className="locale-switch" data-part="status-locale">
       {t('locale.label')}{' '}
       <select data-testid="locale-switch" value={locale} onChange={change}>
         {LOCALES.map((option) => (
@@ -187,15 +188,15 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
   const revision = snapshot?.revision ?? state.revision ?? '';
   const fields = status ? statusFields(status, t) : null;
   return (
-    <footer className="status-bar" data-testid="status-bar" aria-label={t('status.label')}>
-      <dl>
+    <footer className="status-bar" data-testid="status-bar" data-region="status-bar" aria-label={t('status.label')}>
+      <dl data-part="status-engine">
         <dt>{t('status.engine')}</dt>
         <dd data-testid="status" data-status={state.status}>
           {t(`connection.${state.status}`)}
         </dd>
       </dl>
       {fields && can.has('engine.status') ? (
-        <dl className="status-engine">
+        <dl className="status-engine" data-part="status-device">
           <dt>{t('status.device')}</dt>
           <dd data-testid="device" className="status-device" title={fields.device}>
             {fields.device}
@@ -207,11 +208,11 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
             </>
           ) : null}
           <dt>{t('status.xruns')}</dt>
-          <dd data-testid="xruns">{fields.xruns}</dd>
+          <dd data-testid="xruns" data-part="status-xruns">{fields.xruns}</dd>
         </dl>
       ) : null}
       {heard !== null && can.has('audition.hear') ? (
-        <dl>
+        <dl data-part="status-hearing">
           <dt>{t('status.heard')}</dt>
           <dd data-testid="status-heard" data-heard={heard === 'main' ? 'main' : 'proposal'}>
             {t(heard === 'main' ? 'hearing.main' : 'hearing.proposal')}
@@ -219,7 +220,7 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
         </dl>
       ) : null}
       <LocaleSwitch />
-      <dl>
+      <dl data-part="status-saved">
         <dt>{t('status.revision')}</dt>
         <dd data-testid="revision">{revision}</dd>
       </dl>

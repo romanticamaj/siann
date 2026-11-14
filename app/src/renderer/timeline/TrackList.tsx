@@ -122,13 +122,13 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
   };
 
   return (
-    <div className="track-list" data-testid="track-list" role="group" aria-label={t('tracklist.label')}>
-      <div className="track-list-head">
+    <div className="track-list" data-testid="track-list" data-part="track-list" role="group" aria-label={t('tracklist.label')}>
+      <div className="track-list-head" data-part="track-list-head">
         <Capable command="track.add">
           <button
             type="button"
             className="track-add"
-            data-testid="track-add"
+            data-testid="track-add" data-part="track-add"
             aria-label={t('tracklist.add')}
             title={t('tracklist.add')}
             onClick={() => addTrack(client, t)}
@@ -226,14 +226,14 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
   return (
     <div
       className="track-header"
-      data-testid={`track-header-${id}`}
+      data-testid={`track-header-${id}`} data-part-item="track"
       data-dimmed={dimmed ? 'true' : undefined}
       aria-selected={selected}
       style={{ height: `${height}px`, opacity: dimmed ? DIMMED_ALPHA : undefined }}
       onPointerDown={() => onSelect(id)}
     >
-      <span className="track-colour" data-testid={`track-colour-${id}`} style={{ background: `var(${trackColourVar(id)})` }} />
-      <span className="track-number" data-testid={`track-number-${id}`}>
+      <span className="track-colour" data-testid={`track-colour-${id}`} data-part-of="colour" style={{ background: `var(${trackColourVar(id)})` }} />
+      <span className="track-number" data-testid={`track-number-${id}`} data-part-of="number">
         {number}
       </span>
       {editing ? (
@@ -257,7 +257,7 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
       ) : (
         <span
           className="track-name"
-          data-testid={`track-name-${id}`}
+          data-testid={`track-name-${id}`} data-part-of="name"
           data-renamable={canRename ? 'true' : undefined}
           title={track.name}
           onDoubleClick={canRename ? () => setEditing(true) : undefined}
@@ -270,7 +270,7 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
           <button
             type="button"
             className="track-mute"
-            data-testid={`track-mute-${id}`}
+            data-testid={`track-mute-${id}`} data-part-of="mute"
             aria-pressed={track.mute}
             aria-label={t('tracklist.mute', { track: track.name })}
             onClick={() => toggle('track.set_mute')}
@@ -282,7 +282,7 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
           <button
             type="button"
             className="track-solo"
-            data-testid={`track-solo-${id}`}
+            data-testid={`track-solo-${id}`} data-part-of="solo"
             aria-pressed={track.solo}
             aria-label={t('tracklist.solo', { track: track.name })}
             onClick={() => toggle('track.set_solo')}
@@ -292,14 +292,14 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
         </Capable>
       </span>
       <span className="track-readouts">
-        <span className="track-gain" data-testid={`track-gain-${id}`}>
+        <span className="track-gain" data-testid={`track-gain-${id}`} data-part-of="gain">
           {formatDb(track.gainMilliDb)}
         </span>
-        <span className="track-pan" data-testid={`track-pan-${id}`}>
+        <span className="track-pan" data-testid={`track-pan-${id}`} data-part-of="pan">
           {formatPan(track.pan)}
         </span>
       </span>
-      <span className="track-meter" data-testid={`track-meter-${id}`} aria-label={t('tracklist.meter', { track: track.name })} />
+      <span className="track-meter" data-testid={`track-meter-${id}`} data-part-of="meter" aria-label={t('tracklist.meter', { track: track.name })} />
       <div
         className="track-resize"
         data-testid={`track-resize-${id}`}

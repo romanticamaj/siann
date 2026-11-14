@@ -67,7 +67,8 @@
        "Hovering a step highlights its ghosts and scrolls them into view, the target icon on a step row locates it, clicking a ghost selects its step, and unticking a step removes exactly its ghosts (e2e compares the test hook's ghost list with the ticked steps).",
        "A pill in the toolbar names the overlaid plan and toggles ghosts, as does Ctrl+Alt+G; ghosts are drawn for the selected plan only and never for an applied, rejected or stale plan.",
        "No protocol request is added: the e2e's request log holds plan.preview and what the Plans tab already sent.",
-       "Every new string is in the three catalogs. Tour states changed: 13 to 16; appends 26 (ghosts in the event display) and 27 (ghosts on the MixConsole)."
+       "Every new string is in the three catalogs. Tour states changed: 13 to 16; appends 26 (ghosts in the event display) and 27 (ghosts on the MixConsole).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: *ghost*, proposal-pill, inspector-agent-changes (app/test/fidelity/manifest.json, gate m5b-ui-ghosts); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-engine-clip-fades", "title": "Engine: clip fade in and fade out (the fade half of E-9)", "wave": 2, "dependsOn": [],
      "specRefs": ["UI redesign: Usable release (UR-6)", "UI redesign: 7. Implementation plan (E-9)", "siann-model (pure C++)", "siann-command (pure C++) — the core of SIANN", "siann-graph and siann-engine"],
@@ -101,7 +102,8 @@
        "While the proposal is heard its ghosts are drawn solid from the branch snapshot (session.fetch at the branch revision that proposal.changed announces) and the values they replace as faint outlines; the snapshot is dropped on proposal.closed and on reconnect (unit test on the store, e2e on the crash scenario).",
        "Structural edits (clip, track, marker and import commands, record) are disabled with a tooltip naming the reason while the proposal is heard; fader gestures still go to the side heard.",
        "Merge sends proposal.merge and Discard sends proposal.discard; after either the frame, banner and ghosts are gone and the plan's card shows the new state. A partial approval auditions and merges only the ticked steps (e2e: 2 of 3 steps ticked; the merged revision holds exactly those two changes).",
-       "Tour states changed: 17 to 20; appends 28 (hearing the proposal: frame, banner, solid ghosts)."
+       "Tour states changed: 17 to 20; appends 28 (hearing the proposal: frame, banner, solid ghosts).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: branch-chip (app/test/fidelity/manifest.json, gate m5b-ui-audition); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-project", "title": "Projects and audio setup: new, open, recent, save, the start view and the Studio Setup dialog", "wave": 2, "dependsOn": ["m5b-engine-project-media", "m5b-engine-record"],
      "specRefs": ["UI redesign: Usable release (UR-4)", "Process model", "Session bundle", "Frontend"],
@@ -149,7 +151,8 @@
        "Clip titles show the media name.",
        "In a plain browser tab the drop target and the Import button are absent, and against capabilities without media.import nothing of this feature is in the DOM (e2e with a reduced capabilities fixture).",
        "e2e with files written by scripts/create-demo-audio.js: a drop of two files on the Electron window, an import from the tab, a drag from the tab, a 44.1 kHz file into a 48 kHz session, and undo.",
-       "Every new string is in the three catalogs. Tour states changed: clip titles in 01, 02, 06, 10, 11, 12 and 25; appends 31 (Media tab with imported files)."
+       "Every new string is in the three catalogs. Tour states changed: clip titles in 01, 02, 06, 10, 11, 12 and 25; appends 31 (Media tab with imported files).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: tab-media (app/test/fidelity/manifest.json, gate m5b-ui-media); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-edit-more", "title": "The rest of the editing criterion C names: glue, erase, cut, copy and paste, repeat, nudge, rubber band, snap types, an editable info line", "wave": 3, "dependsOn": [],
      "specRefs": ["UI redesign: Usable release (UR-7)", "UI redesign: Phase 3", "UI redesign: 3.2", "Frontend"],
@@ -162,7 +165,8 @@
        "The info line edits the selection's start, length, offset and volume: a typed value changes every selected clip relatively, and absolutely with Ctrl, in one revision.",
        "Each operation is one command.execute and one revision, and one undo restores the previous state (a unit test per command builder, an e2e per operation).",
        "Not part of this feature (they stay in phase 3 of the UI redesign): the Range Selection, Zoom and Play tools, Shuffle, slip, zoom history, the stationary cursor, the lower-zone editor and the key-command editor.",
-       "Every new string is in the three catalogs. Tour states changed: the toolbar in every state; appends 32 (two pieces glued, the snap type menu open)."
+       "Every new string is in the three catalogs. Tour states changed: the toolbar in every state; appends 32 (two pieces glued, the snap type menu open).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: tool-2, tool-4, tool-5, tool-6, tool-7, tool-8, tool-9 (app/test/fidelity/manifest.json, gate m5b-ui-edit-more); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-fades", "title": "Fade handles on clips and fade fields in the info line", "wave": 4, "dependsOn": ["m5b-engine-clip-fades", "m5b-ui-edit-more"],
      "specRefs": ["UI redesign: Usable release (UR-6)", "UI redesign: 3.2", "Frontend"],
@@ -172,7 +176,8 @@
        "Resizing a clip to less than its fades shortens them in the same revision (the engine's rule) and the handles follow; one undo restores clip and fades.",
        "A plan's fade step shows as a ghost curve (the ghost model gains the kind, with a unit test).",
        "Against capabilities without features.clipFades no handle is hit-testable and no fade field is in the DOM (e2e with a reduced capabilities fixture).",
-       "Every new string is in the three catalogs. Tour states changed: none of the earlier states; appends 33 (a clip with fade in and fade out, handles shown)."
+       "Every new string is in the three catalogs. Tour states changed: none of the earlier states; appends 33 (a clip with fade in and fade out, handles shown).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: info-fade-in, info-fade-out (app/test/fidelity/manifest.json, gate m5b-ui-fades); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-inserts-master", "title": "MixConsole: the master fader, and insert slots with bypass, editor and plugin picker", "wave": 4, "dependsOn": ["m5b-engine-master"],
      "specRefs": ["UI redesign: Usable release (UR-10)", "UI redesign: 3.4", "UI redesign: Phase 3", "Plugin editor windows", "Gestures"],
@@ -182,7 +187,8 @@
        "A missing or unapproved plugin shows its state with the engine's code; a registered install can be approved (plugin.approve) from the picker after a confirmation that names the file.",
        "Against capabilities without the plugin methods no slot is in the DOM, and without features.masterGain the master strip stays the meter it is in M5 (e2e with reduced capabilities fixtures).",
        "e2e with siann_test_plugin (CLAP): insert, bypass, open and close the editor, remove, and undo of each; a fader gesture on the master commits one revision and Ctrl-click sets 0.0 dB.",
-       "Every new string is in the three catalogs. Tour states changed: 04, 07, 08, 09 (the master strip, the racks); appends 34 (an insert rack with a plugin, the picker open)."
+       "Every new string is in the three catalogs. Tour states changed: 04, 07, 08, 09 (the master strip, the racks); appends 34 (an insert rack with a plugin, the picker open).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: strip-*-inserts, strip-*-edit, strip-master-fader, strip-master-cap, strip-master-buttons, strip-master-mute, inspector-inserts, inspector-edit, mixer-racks (app/test/fidelity/manifest.json, gate m5b-ui-inserts-master); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-recording", "title": "Recording in the UI: input, record enable, monitor, record, punch, pre-roll and count-in", "wave": 4, "dependsOn": ["m5b-engine-punch-count-in", "m5b-ui-project"],
      "specRefs": ["UI redesign: Usable release (UR-8)", "UI redesign: 3.5", "UI redesign: 3.1", "Recording"],
@@ -193,7 +199,8 @@
        "Stopping replaces the red clip with the committed clip (one revision; Ctrl+Z removes it); an early end raises a toast with its reason.",
        "After a crash during recording the relaunched app lists the pending takes with Keep and Discard per take (record.recover_take).",
        "e2e on the fake device with a generated input: arm, record four bars after a one-bar count-in, stop, and find a clip of four bars; punch at the locators yields a clip exactly between them; monitor shows the input on the track's meter; against capabilities without features.recording none of the controls is in the DOM.",
-       "Every new string is in the three catalogs. Tour states changed: the top bar and the track headers in every state; appends 35 (an armed track, recording in progress) and 36 (punch and count-in on)."
+       "Every new string is in the three catalogs. Tour states changed: the top bar and the track headers in every state; appends 35 (an armed track, recording in progress) and 36 (punch and count-in on).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: *-record, inspector-monitor (app/test/fidelity/manifest.json, gate m5b-ui-recording); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-markers", "title": "Marker track: position markers, cycle markers and their keys", "wave": 5, "dependsOn": ["m5b-engine-markers", "m5b-ui-edit-more"],
      "specRefs": ["UI redesign: Usable release (UR-9)", "UI redesign: 3.1", "UI redesign: 7. Implementation plan (E-8)"],
@@ -203,7 +210,8 @@
        "Shift+3 to Shift+9 and Num 3 to Num 9 move the cursor to markers 3 to 9 (Shift+1 and Shift+2 stay the locators, as section 3.6 decides), Shift+N and Shift+B go to the next and the previous marker, and double-clicking a cycle marker sets the locators to it with one session.set_locators.",
        "Snap type Events is magnetic to markers; markers survive save and reopen and follow other connections, undo and applied plans; a plan's marker step shows as a ghost flag.",
        "Against capabilities without features.markers no marker track is in the DOM (e2e with a reduced capabilities fixture).",
-       "Every new string is in the three catalogs. Tour states changed: none of the earlier states; appends 37 (marker track with two position markers and a cycle marker)."
+       "Every new string is in the three catalogs. Tour states changed: none of the earlier states; appends 37 (marker track with two position markers and a cycle marker).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: marker-head, marker-track (app/test/fidelity/manifest.json, gate m5b-ui-markers); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-sends-buses", "title": "MixConsole: bus strips, send slots and output routing", "wave": 5, "dependsOn": ["m5b-engine-buses-sends", "m5b-ui-inserts-master"],
      "specRefs": ["UI redesign: Usable release (UR-10)", "UI redesign: 3.4", "Channels and I/O", "Gestures"],
@@ -214,7 +222,8 @@
        "Removing a bus that has sends or routed tracks asks for confirmation naming them, is one revision, and one undo restores the bus, its sends and the routing.",
        "A plan's bus or send step shows as a dashed strip or slot (the ghost model gains the kinds, with unit tests).",
        "e2e: add a bus, send a track to it post-fader, lower the track fader and see the bus meter fall, switch the send to pre and see it stay, route a track to the bus, undo each; against capabilities without features.buses and features.sends none of it is in the DOM.",
-       "Every new string is in the three catalogs. Tour states changed: 04, 07, 08, 09; appends 38 (a bus strip and a send slot)."
+       "Every new string is in the three catalogs. Tour states changed: 04, 07, 08, 09; appends 38 (a bus strip and a send slot).",
+       "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for this feature's parts in en and zh-TW: inspector-routing, inspector-sends (app/test/fidelity/manifest.json, gate m5b-ui-sends-buses); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
      ]},
     {"id": "m5b-ui-keymap", "title": "Cubase key commands completed and audited, the application menu, and a Key Commands list in three languages", "wave": 6, "dependsOn": ["m5b-ui-audition", "m5b-ui-media", "m5b-ui-fades", "m5b-ui-recording", "m5b-ui-markers", "m5b-ui-sends-buses"],
      "specRefs": ["UI redesign: Usable release (UR-11)", "UI redesign: 3.6", "UI redesign: 3.1", "UI redesign: 6. Internationalisation"],

@@ -47,6 +47,34 @@ GCC catches what MSVC does not. Known traps:
 
 No allocation, no locks, no blocking I/O, no logging, no exceptions on the audio thread. One exception, accepted 2026-11-07 (ADR-0018, amended the same day): what JUCE's own VST3 and AU hosting wrappers do inside `processBlock`, audited in the architecture spec under "Locks inside a hosted plugin's `processBlock`" (the locks, and the allocation a MIDI-producing plugin can cause there). It covers nothing in SIANN's code (`JucePluginInstance::process` takes no lock). In M0 no shipped path processes a hosted plugin (no graph node wraps a `PluginInstance`), so the exception is exercised by the hosting tests only; the graph driver's deadline-miss counter (`xruns`, `maxCallbackMicros`, `unmeasuredCallbacks` in `siann-cli play` and `record`, and in the engine's `engine.status`) is what will show a plugin's wait once the M4 plugin node puts one in a driver callback. A plugin event sink only pushes to `pluginEventAny`: never `setState`, `setParameter`, device control or any wait for the audio thread (it runs under a JUCE lock). Do not add a lock anywhere else and cite this exception. Communication only through the bounded preallocated queues in `siann-realtime`. Prove it in tests by linking `siann_rt_alloc_guard`. Follow revision 3.1 of the spec: one graph transition in flight, duck-and-swap, retirement acknowledged by the butler, generations on locate. Change a plugin parameter with `setParameter`, never with `setState`; a `setState` during playback holds that plugin out of processing (input passes through dry) until it returns.
 
+## UI fidelity
+
+Maintainer rule (2026-11-14): the UI is checked against the mockup, and the finished UI must look exactly like it. Design: UI redesign spec, section 10.
+
+**The mockup is the reference implementation of styling and markup, and UI work ports from it.**
+
+- Reference: `docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html` (`?lang=zh-TW` for Traditional Chinese). Its stylesheet is the app's: `app/renderer/tokens.css` (the one token source) and `app/renderer/ui/*.css` (the component rules). The mockup links those files and has no styles of its own.
+- A UI component takes its DOM structure and class names from the corresponding mockup markup and is styled by the shared rules. Do not restyle from a screenshot, and do not write a second rule for something the shared rules already draw.
+- Canvas code copies the mockup's drawing parameters (row heights, colours, the clip title strip, handles) from `app/src/renderer/tokens.ts`, generated from `tokens.css` by `node scripts/gen-ui-tokens.js`.
+- No colour or size literal in renderer CSS or TypeScript: name a token. `test/ui-tokens.test.js` fails otherwise; `app/test/fidelity/debt.json` is the ledger of what does not hold yet, and it only shrinks.
+- Every region and key component carries the mockup's id: `data-region`, `data-part`, or `data-part-item` with `data-part-of` for a repeated component (spec 10.3).
+- **A part whose feature has not landed is absent** (spec 3.0). A placeholder or a disabled control is never a substitute and never passes the gate. The part is `pending` in `app/test/fidelity/manifest.json` under the feature that owns it, and that feature's acceptance includes the gate for it.
+
+**Every UI pull request runs the gate and attaches its report.**
+
+```sh
+node --test test/ui-tokens.test.js test/mockup-fidelity.test.js    # layer 1 and the manifest, no build needed
+cd app && npm run build
+SIANN_FIDELITY=1 SIANN_FIDELITY_OUT=<dir> npx playwright test --project fidelity   # layers 2 and 3, en and zh-TW
+```
+
+(`SIANN_ENGINE_EXE` and `SIANN_CLI_EXE` as for the other e2e specs; `node scripts/check-all.js --only app` sets them and runs the gate after the app's tests.) The gate compares, per part, the bounding box (within 1 px on x, y, width, height) and the listed computed styles (identical), and per region the chrome's pixels (at most 0.5 % differing; waveform interiors and dynamic content are masked). It forces device scale factor 1, so the display's scaling does not matter. Put `report.md` (with its region images) in the pull request: the parts your feature owns must be clean in both locales.
+
+- A feature that lands sets its gate to `enforce` in the manifest, in the same pull request.
+- Until `m5-ui-mockup-alignment` lands, the gate for the parts M5 already built is `report`: it measures and reports and does not fail CI. From that feature on it fails.
+
+**Not without the maintainer:** changing `tokens.css`, `app/renderer/ui/*.css`, `mockup.html` or its PNGs; changing the manifest's rules, thresholds, style list or masks; adding to `debt.json`; marking a part unowned. If the mockup is wrong or cannot be built as drawn, that is a stop condition: return `status: blocked` with the part and the reason.
+
 ## Windows working tree
 
 - Files are CRLF in the working tree (`core.autocrlf=true`). Scripted edits must keep CRLF; prefer the Edit tool.

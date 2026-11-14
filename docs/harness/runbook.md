@@ -22,6 +22,23 @@ How to run one milestone of the native engine with the harness. One milestone pe
 
 The path-to-step table is in `docs/harness/agent-rules.md` ("Checks") and in `stepsForPath` in `scripts/check-all.js`.
 
+### UI fidelity gate
+
+The UI is checked against the mockup (`docs/harness/agent-rules.md`, "UI fidelity"; UI redesign spec, section 10). Three layers:
+
+| Layer | Command | Needs |
+|---|---|---|
+| Tokens, shared stylesheets, the manifest | `node --test test/ui-tokens.test.js test/mockup-fidelity.test.js` (part of `npm test`) | Node only |
+| Geometry, computed styles, pixels | `cd app && SIANN_FIDELITY=1 SIANN_FIDELITY_OUT=<dir> npx playwright test --project fidelity` | The app built (`npm run build`), `SIANN_ENGINE_EXE`, `SIANN_CLI_EXE`, Playwright's Chromium |
+
+`node scripts/check-all.js --only app` (and `--changed` when `app/` or the mockup's directory changed) runs the second after the app's own tests and prints where the report is: `app/test-results/fidelity/report.md`, with `report.json` and per region the mockup's, the app's and the diff PNG, for `en` and `zh-TW`. CI's app job runs it on Windows and Linux and uploads the directory as the artifact `fidelity-<os>`.
+
+- The run forces device scale factor 1 (this PC runs at 150 %; the gate does not care). It needs no network: the mockup loads the app's stylesheets and fonts from the checkout.
+- **Report-only until `m5-ui-mockup-alignment` lands.** While no gate in `app/test/fidelity/manifest.json` is `enforce`, check-all prints the summary and passes even when the gate's run fails, and CI's step is `continue-on-error`. That feature sets its gate to `enforce` and removes both.
+- Reading the report: start with "Computed-style differences, by how many parts show them" (one line there is often one fix), then "Parts, by visual impact". A part listed as pending or unowned was skipped on purpose.
+- After changing `app/renderer/tokens.css`, run `node scripts/gen-ui-tokens.js` (the mirror for canvas code). Changing the tokens, `app/renderer/ui`, the mockup or the manifest's rules needs the maintainer.
+- The baseline of 2026-11-14 (before any alignment work) is in `D:\siann-ui-proposal\fidelity\baseline\` on this PC.
+
 ### Local caches
 
 `check-all` sets up two caches under one root outside every worktree: `SIANN_CACHE_DIR`, by default `<drive>:\siann-cache` on the repository's drive on Windows (`D:\siann-cache` here) and `~/.cache/siann` elsewhere.

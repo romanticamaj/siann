@@ -189,7 +189,7 @@ export function Timeline({
 
   return (
     <section className="timeline">
-      <div className="timeline-bar">
+      <div className="timeline-bar" data-part="toolbar">
         <ul className="media-pool" data-testid="media-pool" aria-label={t('timeline.mediaPool')}>
           {(snapshot?.media ?? []).map((media) => (
             <li key={media.id}>
@@ -218,7 +218,7 @@ export function Timeline({
         </output>
       </div>
       <InfoLine client={client} clipId={state.selectedClipId} />
-      <div className="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
+      <div className="arrange" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
         <TrackList
           client={client}
           realtime={realtime}
@@ -229,7 +229,7 @@ export function Timeline({
           onSelectTrack={selectTrack}
         />
         <TrackListDivider layout={layout} />
-        <div className="event-display" data-testid="event-display" ref={displayRef}>
+        <div className="event-display" data-testid="event-display" data-part="event-display" ref={displayRef}>
           <canvas ref={contentRef} data-testid="timeline-content" className="timeline-layer" />
           <canvas ref={overlayRef} data-testid="timeline-canvas" className="timeline-layer timeline-overlay" />
           <div ref={tooltipRef} className="drag-tooltip" data-testid="drag-tooltip" role="status" hidden />
@@ -237,7 +237,7 @@ export function Timeline({
             <input
               type="range"
               className="zoom-slider"
-              data-testid="zoom-slider"
+              data-testid="zoom-slider" data-part="scroll-zoom"
               aria-label={t('timeline.zoom')}
               min={0}
               max={ZOOM_MAX}
