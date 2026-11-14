@@ -11,7 +11,8 @@
 //                                             of the JUCE sources too once the desktop preset
 //                                             has configured (run --desktop first)
 //   node scripts/check-all.js --app           also the Electron shell (app/): npm ci on first
-//                                             use, build, unit and Playwright tests against
+//                                             use or a changed package-lock.json, build,
+//                                             unit and Playwright tests against
 //                                             native/build/dev's siann-engine
 //   node scripts/check-all.js --only native   one step: node | native | desktop | app | gcc
 //   node scripts/check-all.js --json          machine-readable summary
@@ -29,6 +30,7 @@
 //
 // Exit code 0 when every selected step passes, 1 otherwise.
 const { spawn, spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -265,6 +267,32 @@ function dependencySource(buildDir, name) {
   return path.join(buildDir, '_deps', `${name.toLowerCase()}-src`);
 }
 
+// The configure preset's CMAKE_BUILD_TYPE (following `inherits`), from native/CMakePresets.json.
+function presetBuildType(name, presets = JSON.parse(fs.readFileSync(path.join(NATIVE, 'CMakePresets.json'), 'utf8'))) {
+  const byName = new Map((presets.configurePresets || []).map((p) => [p.name, p]));
+  const seen = new Set();
+  const find = (presetName) => {
+    const preset = byName.get(presetName);
+    if (!preset || seen.has(presetName)) return null;
+    seen.add(presetName);
+    const own = preset.cacheVariables && preset.cacheVariables.CMAKE_BUILD_TYPE;
+    if (own !== undefined) return typeof own === 'object' ? own.value : own;
+    for (const parent of [].concat(preset.inherits || [])) {
+      const inherited = find(parent);
+      if (inherited) return inherited;
+    }
+    return null;
+  };
+  return find(name);
+}
+
+// JUCE's juce_TargetPlatform.h #warns (an error under -Werror) unless DEBUG or NDEBUG is
+// defined; these match what CMake passes for the build type (JUCE adds DEBUG=1 and
+// _DEBUG=1 in Debug configurations).
+function buildTypeDefines(buildType) {
+  return buildType === 'Debug' || !buildType ? ['-DDEBUG=1', '-D_DEBUG=1'] : ['-DNDEBUG'];
+}
+
 const toPosix = (p) => {
   if (!isWindows) return p;
   const m = /^([A-Za-z]):[\\/](.*)$/.exec(p);
@@ -326,7 +354,8 @@ async function gcc(options) {
       '-isystem', toPosix(juce),
       '-isystem', toPosix(path.join(juce, 'juce_audio_processors_headless', 'format_types', 'VST3_SDK')),
       '-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1', '-DJUCE_STANDALONE_APPLICATION=0', '-DJUCE_PLUGINHOST_VST3=1',
-      '-DJUCE_MODAL_LOOPS_PERMITTED=1', '-DSIANN_ENGINE_WITH_JUCE=1', '-DSIANN_TEST_PLUGIN_VST3="x"'];
+      '-DJUCE_MODAL_LOOPS_PERMITTED=1', '-DSIANN_ENGINE_WITH_JUCE=1', '-DSIANN_TEST_PLUGIN_VST3="x"',
+      ...buildTypeDefines(presetBuildType('desktop'))];
     for (const file of desktopSources()) jobs.push([file, desktopFlags]);
   }
 
@@ -368,6 +397,38 @@ async function gcc(options) {
 function nodeTests() {
   const dir = path.join(ROOT, 'test');
   return fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort().map((f) => path.join('test', f));
+}
+
+// ---- npm installs ----------------------------------------------------------------
+
+// Written into node_modules after a successful `npm ci`: the package-lock.json hash it installed.
+const LOCK_STAMP = '.siann-lock-hash';
+
+function lockHash(dir) {
+  const lock = path.join(dir, 'package-lock.json');
+  if (!fs.existsSync(lock)) return null;
+  return crypto.createHash('sha256').update(fs.readFileSync(lock)).digest('hex');
+}
+
+// Whether `npm ci` must run in <dir>: no node_modules yet, or a package-lock.json that
+// changed since the last install (a dependency added after the first install would
+// otherwise never arrive). Installs from before the stamp existed compare the lockfile's
+// mtime with npm's own node_modules/.package-lock.json.
+function needsInstall(dir) {
+  const modules = path.join(dir, 'node_modules');
+  if (!fs.existsSync(modules)) return true;
+  const hash = lockHash(dir);
+  if (hash === null) return false;
+  const stamp = path.join(modules, LOCK_STAMP);
+  if (fs.existsSync(stamp)) return fs.readFileSync(stamp, 'utf8').trim() !== hash;
+  const installed = path.join(modules, '.package-lock.json');
+  if (!fs.existsSync(installed)) return true;
+  return fs.statSync(path.join(dir, 'package-lock.json')).mtimeMs > fs.statSync(installed).mtimeMs;
+}
+
+function recordInstall(dir) {
+  const hash = lockHash(dir);
+  if (hash !== null) fs.writeFileSync(path.join(dir, 'node_modules', LOCK_STAMP), `${hash}\n`);
 }
 
 // The Electron shell: its own npm package with pinned dependencies (the root
@@ -416,11 +477,10 @@ function appStep(options) {
   }
   // npm is a .cmd shim on Windows, which spawnSync runs only through cmd.exe.
   const npm = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npm', ...args], APP, env) : run('npm', args, APP, env));
-  const steps = [];
-  if (!fs.existsSync(path.join(APP, 'node_modules'))) steps.push(['ci']);
-  for (const args of steps) {
-    const step = npm(args);
-    if (!step.ok) return { ...step, failedAt: `npm ${args.join(' ')}` };
+  if (needsInstall(APP)) {
+    const step = npm(['ci']);
+    if (!step.ok) return { ...step, failedAt: 'npm ci' };
+    recordInstall(APP);
   }
   // Some npm versions skip dependency install scripts; Electron's fetches its binary.
   if (!fs.existsSync(path.join(APP, 'node_modules', 'electron', 'path.txt'))) {
@@ -489,6 +549,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ALL_STEPS, cacheRoot, changedPaths, dependencySource, desktopSources, listSources, nativeEnv, parseArgs,
-  selectSteps, stepsForPath, stepsForPaths,
+  ALL_STEPS, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, listSources, nativeEnv,
+  needsInstall, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath, stepsForPaths,
 };
