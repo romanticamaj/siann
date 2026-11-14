@@ -47,6 +47,9 @@ export interface TrackEntity {
   readonly solo: boolean;
   // Plugin slot ids in signal order; absent when the track has no inserts.
   readonly inserts?: readonly string[];
+  // The input it records from (m5b-engine-record): the first device input channel
+  // (0-based) and 1 or 2 channels; absent while none is set.
+  readonly input?: { readonly port: number; readonly channels: number };
 }
 
 export interface ClipPosition {

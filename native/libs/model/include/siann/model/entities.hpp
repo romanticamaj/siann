@@ -61,6 +61,16 @@ struct Media {
 
 enum class TrackKind { audio };
 
+// A track's input (m5b-engine-record): an IoPort of "Channels and I/O", the
+// first device input channel (0-based) and 1 or 2 channels from it. It indexes
+// the input the engine has open; the document never names a device.
+struct TrackInput {
+    std::int32_t port = 0;
+    std::int32_t channels = 1;
+
+    friend bool operator==(const TrackInput&, const TrackInput&) = default;
+};
+
 struct Track {
     std::string id;
     std::string name;
@@ -73,6 +83,9 @@ struct Track {
     // Plugin slot ids in signal order (M4). Omitted from the JSON when empty, so a
     // track without inserts keeps its M1 hash.
     std::vector<std::string> inserts;
+    // Omitted from the JSON while absent, so a track without an input keeps its
+    // earlier hash (m5b-engine-record).
+    std::optional<TrackInput> input;
 
     friend bool operator==(const Track&, const Track&) = default;
 };
