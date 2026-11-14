@@ -400,3 +400,39 @@ test('the zone rule reserves the track list and 360 px for the event display', (
   const narrowList = reduce(big, { type: 'trackListResize', size: 140 });
   assert.equal(effectiveLayout(narrowList, WIDE).zones.right.size, 1440 - 421 - (140 + 1 + 360) - 1);
 });
+
+// m5-ui-transport (UI redesign spec 3.1): auto-scroll (on by default, as in
+// Cubase) and the position display's primary format (Bars+Beats by default,
+// Seconds secondary) are per-viewer view state in siann.layout.v1; neither
+// reaches the engine.
+test('auto-scroll and the primary time format: defaults, F and the period key, kept in siann.layout.v1', () => {
+  assert.equal(DEFAULT_LAYOUT.autoScroll, true);
+  assert.equal(DEFAULT_LAYOUT.timeFormat, 'bars');
+  const off = reduce(start(), { type: 'autoScroll' });
+  assert.equal(off.layout.autoScroll, false);
+  assert.equal(reduce(off, { type: 'autoScroll' }).layout.autoScroll, true);
+  assert.equal(reduce(off, { type: 'autoScroll', enabled: false }), off, 'unchanged: the same state');
+  const seconds = reduce(start(), { type: 'exchangeFormats' });
+  assert.equal(seconds.layout.timeFormat, 'seconds');
+  assert.equal(reduce(seconds, { type: 'exchangeFormats' }).layout.timeFormat, 'bars');
+  // The zones are untouched.
+  assert.deepEqual(seconds.layout.sizes, DEFAULT_LAYOUT.sizes);
+
+  const layout: Layout = { ...DEFAULT_LAYOUT, autoScroll: false, timeFormat: 'seconds' };
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+  for (const bad of ['yes', 1, null]) assert.equal(parseLayout(JSON.stringify({ autoScroll: bad })).autoScroll, true, String(bad));
+  for (const bad of ['beats', 1, null]) assert.equal(parseLayout(JSON.stringify({ timeFormat: bad })).timeFormat, 'bars', String(bad));
+  // A layout stored before this ticket gets the defaults.
+  const older = parseLayout(JSON.stringify({ trackList: 300 }));
+  assert.equal(older.autoScroll, true);
+  assert.equal(older.timeFormat, 'bars');
+
+  const saved = new Map<string, string>();
+  const store = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => void saved.set(k, v) } });
+  store.dispatch({ type: 'autoScroll' });
+  store.dispatch({ type: 'exchangeFormats' });
+  assert.deepEqual([...saved.keys()], [LAYOUT_KEY]);
+  const stored = JSON.parse(saved.get(LAYOUT_KEY)!) as { autoScroll: unknown; timeFormat: unknown };
+  assert.equal(stored.autoScroll, false);
+  assert.equal(stored.timeFormat, 'seconds');
+});

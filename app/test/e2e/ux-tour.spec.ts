@@ -538,7 +538,13 @@ test('UX screenshot tour', async () => {
   await watcher.call('transport.locate', { frames: String(Math.round(1.2 * RATE)) });
   const metered = ['trk_kick', 'trk_voxlead'].map((id) => `track:${id}`);
   await latchPeaks(page, metered);
-  expect((await watcher.call('transport.play')).playing).toBe(true);
+  // Started from the top bar's transport (m5-ui-transport); auto-scroll is
+  // turned off first so the shot keeps the session's first page in view.
+  const autoScroll = page.getByTestId('auto-scroll');
+  if ((await autoScroll.getAttribute('aria-pressed')) === 'true') await autoScroll.click();
+  await expect(autoScroll).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('transport-play').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'true');
   await scrollTo('timeline-canvas');
   for (const ref of metered) {
     await expect.poll(() => latchedPeak(page, ref), { message: `${ref} metered while playing` }).toBeGreaterThan(0.05);
@@ -554,9 +560,12 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Playing meters',
-    `Transport playing from 1.2 s on the fake device with Vox Lead's solo clicked off (FX stays muted); the timeline and the mixer are both in view. Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px.`,
+    `Transport playing from 1.2 s on the fake device, started with the top bar's start button (pressed), with Vox Lead's solo clicked off (FX stays muted) and auto-scroll off; the timeline and the mixer are both in view. The position display reads ${await page.getByTestId('position-primary').textContent()} (Bars+Beats) over ${await page.getByTestId('position-secondary').textContent()} (Seconds). Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px.`,
   );
-  await watcher.call('transport.stop');
+  await page.getByTestId('transport-stop').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
+  await autoScroll.click();
+  await expect(autoScroll).toHaveAttribute('aria-pressed', 'true');
   await solo.click();
   await expect(solo).toHaveAttribute('aria-pressed', 'true');
   await scrollTop();

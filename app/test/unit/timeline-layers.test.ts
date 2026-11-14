@@ -89,6 +89,7 @@ function make(options: { ratio?: number; snapshot?: Snapshot } = {}) {
   const model = modelOf(options.snapshot ?? sampleSnapshot());
   const playhead = playheadOf();
   const heights = heightsOf();
+  const located: string[] = [];
   const timeline = new TimelineCanvas({
     content: surface.content,
     overlay: surface.overlay,
@@ -98,9 +99,10 @@ function make(options: { ratio?: number; snapshot?: Snapshot } = {}) {
     execute: async () => undefined,
     playhead: playhead.source,
     laneHeights: heights.source,
+    onLocate: (frames) => void located.push(frames),
   });
   flushFrames();
-  return { surface, model, playhead, heights, timeline, hooks: timeline.testHooks() };
+  return { surface, model, playhead, heights, timeline, located, hooks: timeline.testHooks() };
 }
 
 test('a playhead-only change redraws the overlay and not the content', () => {
@@ -253,4 +255,109 @@ test('muted and implicitly muted lanes are dimmed', () => {
   const { hooks, timeline } = make({ snapshot: solo });
   assert.deepEqual(hooks.dimmedLanes(), ['trk_b']);
   timeline.destroy();
+});
+
+// m5-ui-transport (UI redesign spec 3.1, 3.2, 5.2): auto-scroll pages the
+// view in the overlay's frame, so the content layer is redrawn only on a page
+// turn; a cursor move inside the view, a locate while stopped and a playhead
+// move with auto-scroll off all leave the content alone.
+test('a cursor-only frame, a locate and a playhead move without a page turn do not redraw the content', () => {
+  const { hooks, playhead, timeline } = make();
+  timeline.setAutoScroll(true);
+  flushFrames();
+  const content = hooks.contentDraws();
+  const view = hooks.view();
+  // 800 px at 100 frames per px: frames [0, 80000) are in view.
+  for (const frames of ['4800', '40000', '79000']) {
+    playhead.emit(frames, true);
+    flushFrames();
+  }
+  // A locate while stopped, past the right edge: the cursor moves, the view does not.
+  playhead.emit('200000', false);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 2000);
+  assert.equal(hooks.contentDraws(), content, 'no page turn, no content draw');
+  assert.equal(hooks.view().scrollFrames, view.scrollFrames);
+  // Auto-scroll off: playing past the edge moves nothing either.
+  timeline.setAutoScroll(false);
+  playhead.emit('300000', true);
+  flushFrames();
+  assert.equal(hooks.contentDraws(), content);
+  assert.equal(hooks.view().scrollFrames, view.scrollFrames);
+  timeline.destroy();
+});
+
+test('auto-scroll pages when the cursor leaves the view while playing, once per page, and not during a clip drag', () => {
+  const { hooks, playhead, timeline } = make();
+  timeline.setAutoScroll(true);
+  flushFrames();
+  let content = hooks.contentDraws();
+  playhead.emit('80000', true);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '80000', 'the cursor lands at the left edge');
+  assert.equal(hooks.cursorX(), 0);
+  flushFrames();
+  assert.equal(hooks.contentDraws(), content + 1, 'one content draw for the page turn');
+  content = hooks.contentDraws();
+  playhead.emit('120000', true);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '80000');
+  assert.equal(hooks.contentDraws(), content, 'inside the new page: no content draw');
+  timeline.destroy();
+
+  // A clip drag held (clp_1 is on the first page): the cursor leaves the
+  // view, the view stays; after the release paging resumes.
+  const second = make();
+  second.timeline.setAutoScroll(true);
+  flushFrames();
+  const clip = second.hooks.clips().find((r) => r.clipId === 'clp_1')!;
+  const grab = { clientX: clip.x + clip.width / 2, clientY: clip.y + clip.height / 2 };
+  second.surface.fire('pointerdown', grab);
+  second.surface.fire('pointermove', { clientX: grab.clientX + 30, clientY: grab.clientY });
+  second.playhead.emit('90000', true);
+  flushFrames();
+  assert.equal(second.hooks.view().scrollFrames, '0', 'no page turn while the drag is held');
+  second.surface.fire('pointerup', { clientX: grab.clientX + 30, clientY: grab.clientY });
+  second.playhead.emit('91000', true);
+  flushFrames();
+  assert.equal(second.hooks.view().scrollFrames, '91000', 'paging resumes after the release');
+  second.timeline.destroy();
+});
+
+test('a press and release in the ruler\'s lower half locates once; a vertical drag zooms instead; the upper half does neither', () => {
+  const { surface, hooks, timeline, located } = make();
+  timeline.zoomIn();
+  flushFrames();
+  const view = hooks.view();
+  // The lower half of the 32 px ruler: y in [16, 32).
+  surface.fire('pointerdown', { clientX: 250, clientY: 24 });
+  surface.fire('pointermove', { clientX: 251, clientY: 25 });
+  surface.fire('pointerup', { clientX: 251, clientY: 25 });
+  assert.deepEqual(located, [xToFrame(250, view).toString()], 'one locate at the frame under the press');
+  assert.deepEqual(hooks.view(), view, 'the view is unchanged');
+
+  // A vertical drag beyond the threshold zooms about the pointer and does not locate.
+  surface.fire('pointerdown', { clientX: 250, clientY: 20 });
+  surface.fire('pointermove', { clientX: 250, clientY: 40 });
+  surface.fire('pointerup', { clientX: 250, clientY: 60 });
+  assert.equal(located.length, 1, 'no second locate');
+  assert.ok(hooks.view().framesPerPixel < view.framesPerPixel, 'dragged down: zoomed in');
+
+  // The upper half (the locators', P1-7): no locate, no zoom.
+  const zoomed = hooks.view();
+  surface.fire('pointerdown', { clientX: 300, clientY: 8 });
+  surface.fire('pointerup', { clientX: 300, clientY: 8 });
+  surface.fire('pointerdown', { clientX: 300, clientY: 8 });
+  surface.fire('pointermove', { clientX: 300, clientY: 60 });
+  surface.fire('pointerup', { clientX: 300, clientY: 60 });
+  assert.equal(located.length, 1);
+  assert.deepEqual(hooks.view(), zoomed);
+
+  // A locate never goes before the session's start.
+  timeline.destroy();
+  const start = make();
+  start.surface.fire('pointerdown', { clientX: 0, clientY: 24 });
+  start.surface.fire('pointerup', { clientX: 0, clientY: 24 });
+  assert.deepEqual(start.located, ['0']);
+  start.timeline.destroy();
 });

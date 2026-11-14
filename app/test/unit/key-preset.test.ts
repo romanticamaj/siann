@@ -71,3 +71,27 @@ test('the project zone\'s zoom keys of Cubase and T to add a track (m5-ui-arrang
     assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['project', commandId]], chord);
   }
 });
+
+test('the transport keys of Cubase with the laptop fallback, the position display\'s keys, undo and redo, and F for auto-scroll (m5-ui-transport)', () => {
+  const windowRows: Array<[string, string]> = [
+    ['Space', 'transport.toggle'],
+    ['NumpadEnter', 'transport.start'],
+    ['Numpad0', 'transport.stop'],
+    ['NumpadDecimal', 'transport.toStart'],
+    // SIANN addition: the laptop fallback for Num . (UI redesign spec 3.6).
+    ['Comma', 'transport.toStart'],
+    ['Period', 'transport.exchangeFormats'],
+    ['Shift+P', 'transport.enterPosition'],
+    ['Mod+Z', 'edit.undo'],
+    ['Mod+Shift+Z', 'edit.redo'],
+  ];
+  for (const [chord, commandId] of windowRows) {
+    const found = CUBASE_PRESET.filter((b) => b.chord === chord);
+    assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['window', commandId]], chord);
+  }
+  const autoScroll = CUBASE_PRESET.filter((b) => b.chord === 'F');
+  assert.deepEqual(autoScroll.map((b) => [b.scope, b.commandId]), [['project', 'view.autoScroll']]);
+  // The chords beside them keep their commands.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Shift+F').map((b) => b.commandId), ['view.zoomFull']);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Enter').map((b) => b.commandId), ['focus.enterZone']);
+});

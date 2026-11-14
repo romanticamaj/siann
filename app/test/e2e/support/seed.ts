@@ -108,6 +108,8 @@ export function launchApp(options: {
   extraEngineArgs?: readonly string[];
   // SIANN_SHELL_MAX_RESTARTS (the shell's default when unset).
   maxRestarts?: number;
+  // More of the shell's environment (SIANN_SHELL_PROFILING=1 for the commit count).
+  env?: Record<string, string>;
 }): Promise<ElectronApplication> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   return launchElectron({
@@ -124,6 +126,7 @@ export function launchApp(options: {
       SIANN_SHELL_TEST: '1',
       SIANN_ENGINE_TEST_ARGS: ['--device', 'fake', ...(options.extraEngineArgs ?? [])].join(' '),
       ...(options.maxRestarts !== undefined ? { SIANN_SHELL_MAX_RESTARTS: String(options.maxRestarts) } : {}),
+      ...(options.env ?? {}),
     },
   });
 }
