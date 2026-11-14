@@ -245,8 +245,6 @@ export interface LocatorBandSource {
 export interface LocatorBandDrawn extends BandRect {
   // Light (cycle on) or grey (cycle off).
   readonly cycle: boolean;
-  // The tint over the lanes was drawn.
-  readonly tint: boolean;
   readonly left: string;
   readonly right: string;
 }
@@ -1442,7 +1440,7 @@ export class TimelineCanvas {
     ctx.fillText('R', x1 - LABEL_INSET, middle);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    this.#band = { ...rect, cycle, tint: true, left: range.left.toString(), right: range.right.toString() };
+    this.#band = { ...rect, cycle, left: range.left.toString(), right: range.right.toString() };
   }
 
   // A clip in its track's three tones: body, title strip, waveform. Returns

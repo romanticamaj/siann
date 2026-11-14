@@ -565,18 +565,17 @@ function bandRig(snapshot: Snapshot, band = bandSource()) {
 
 const UPPER_Y = RULER_UPPER_HEIGHT / 2;
 
-test('the band is drawn light with cycle on and grey with it off, its tint over the lanes only while locators exist', () => {
+test('the band is drawn light with cycle on and grey with it off, no band without locators', () => {
   const r = bandRig(withLocators(sampleSnapshot(), '10000', '30000'));
   const band = r.hooks.locatorBand();
   assert.ok(band);
   assert.deepEqual({ x: band.x, y: band.y, width: band.width, height: band.height }, { ...bandRect({ left: 10000n, right: 30000n }, r.hooks.view())! });
   assert.equal(band.cycle, true);
-  assert.equal(band.tint, true);
   assert.ok(r.surface.contentCalls.texts.includes('L') && r.surface.contentCalls.texts.includes('R'));
   r.band.setCycle(false);
   flushFrames();
   assert.equal(r.hooks.locatorBand()?.cycle, false);
-  // No locators: no band, no tint.
+  // No locators: no band.
   r.m.set(sampleSnapshot());
   flushFrames();
   assert.equal(r.hooks.locatorBand(), null);
