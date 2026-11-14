@@ -7,6 +7,12 @@ add_library(siann_hostile_plugin_CLAP MODULE siann_hostile_plugin_clap.cpp)
 target_link_libraries(siann_hostile_plugin_CLAP PRIVATE siann_third_party_clap)
 target_compile_features(siann_hostile_plugin_CLAP PRIVATE cxx_std_20)
 siann_apply_compile_options(siann_hostile_plugin_CLAP)
+# Always the shared (DLL) CRT, also in the static-CRT desktop-release preset: the
+# plugin then aborts through the Universal CRT whose flags the host's main() turns
+# off, so the crash tests check the shipped engine reaches them (spec, "Process
+# model", Crash). A plugin with its own static CRT keeps flags no host can reach.
+set_target_properties(siann_hostile_plugin_CLAP PROPERTIES
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 set_target_properties(siann_hostile_plugin_CLAP PROPERTIES OUTPUT_NAME siann_hostile_plugin)
 if(APPLE)
   # A CLAP on macOS is a bundle; CMake writes its minimal Info.plist.

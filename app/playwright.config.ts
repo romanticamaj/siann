@@ -10,6 +10,11 @@ import { defineConfig } from '@playwright/test';
 // The UX screenshot tour runs only when asked for (SIANN_UX_TOUR=1).
 const tour = process.env.SIANN_UX_TOUR === '1' ? [] : ['**/ux-tour.spec.ts'];
 const PLAIN_TAB = '**/plain-tab.spec.ts';
+// The packaged app (m5b-package-windows): its own project, which exists only
+// when SIANN_PACKAGED_EXE names a packaged SIANN.exe (the package step of
+// scripts/check-all.js and the package CI job run `--project packaged`).
+const PACKAGED = '**/packaged.spec.ts';
+const packaged = process.env.SIANN_PACKAGED_EXE ? [{ name: 'packaged', testMatch: PACKAGED }] : [];
 // The mockup fidelity gate runs only when asked for (SIANN_FIDELITY=1), as its
 // own project: it opens the mockup in Chromium and the app in Electron.
 const FIDELITY = '**/mockup-fidelity.spec.ts';
@@ -24,8 +29,9 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
   projects: [
-    { name: 'electron', testIgnore: [...tour, PLAIN_TAB, FIDELITY] },
+    { name: 'electron', testIgnore: [...tour, PLAIN_TAB, PACKAGED, FIDELITY] },
     { name: 'chromium', testMatch: PLAIN_TAB, use: { browserName: 'chromium' } },
+    ...packaged,
     ...fidelity,
   ],
 });

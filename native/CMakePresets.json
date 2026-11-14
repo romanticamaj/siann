@@ -31,6 +31,16 @@
       }
     },
     {
+      "name": "desktop-release",
+      "displayName": "Release, Ninja, with JUCE (AGPLv3), static MSVC runtime: the engine the Windows installer ships",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/desktop-release",
+      "cacheVariables": {
+        "SIANN_WITH_JUCE": "ON",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
+      }
+    },
+    {
       "name": "rtsan",
       "displayName": "Debug, Ninja, Clang RealtimeSanitizer (Linux, Clang 20+; set CMAKE_CXX_COMPILER)",
       "inherits": "dev",
@@ -59,6 +69,10 @@
       "configurePreset": "desktop"
     },
     {
+      "name": "desktop-release",
+      "configurePreset": "desktop-release"
+    },
+    {
       "name": "rtsan",
       "configurePreset": "rtsan"
     }
@@ -81,6 +95,13 @@
     {
       "name": "desktop",
       "configurePreset": "desktop",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "desktop-release",
+      "configurePreset": "desktop-release",
       "output": {
         "outputOnFailure": true
       }

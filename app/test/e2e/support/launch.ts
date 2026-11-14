@@ -39,6 +39,9 @@ export interface LaunchOptions {
   readonly hook?: boolean;
   // The first window's viewport (default DEFAULT_VIEWPORT); null leaves it alone.
   readonly viewport?: { readonly width: number; readonly height: number } | null;
+  // A packaged app's executable (packaged.spec.ts) instead of the electron
+  // binary from node_modules; `args` then holds no main script.
+  readonly executablePath?: string;
 }
 
 export async function launchElectron(options: LaunchOptions): Promise<ElectronApplication> {
@@ -50,6 +53,7 @@ export async function launchElectron(options: LaunchOptions): Promise<ElectronAp
   const factor = process.env.SIANN_E2E_DEVICE_SCALE;
   const scale = factor ? [`--force-device-scale-factor=${factor}`] : [];
   const app = await electron.launch({
+    ...(options.executablePath ? { executablePath: options.executablePath } : {}),
     args: [`--lang=${languages[0] ?? 'en-US'}`, ...scale, ...options.args],
     cwd: options.cwd,
     env,

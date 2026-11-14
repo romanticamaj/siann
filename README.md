@@ -73,6 +73,19 @@ The goal is not to replace producer judgment. The goal is to make detailed sessi
 - **Privacy by design:** provider data flow must be visible and intentional.
 - **Extensible for developers:** the system should support new tools, providers, and production workflows over time.
 
+## Running SIANN
+
+**Windows installer.** Each build of the main branch produces `SIANN-Setup-<version>-x64.exe` with a `.sha256` file beside it. Check the hash, run the installer, and start SIANN from the Start menu. The installer is not code-signed yet, so Windows SmartScreen may say it "protected your PC": choose **More info**, then **Run anyway**, once you have checked the hash. Uninstall SIANN from Windows Settings, under Apps.
+
+**From a source checkout.** With Node.js 22 or later, CMake and a C++ compiler installed (Visual Studio 2022 Build Tools on Windows):
+
+```sh
+npm run app             # installs, builds what is missing, and starts SIANN
+npm run app -- --plan   # shows those steps without running them
+```
+
+The first run builds the audio engine and takes a while; later runs start straight away.
+
 ## Developer Access
 
 This repository contains the public project materials, contributor guidance, and the first developer bridge for exploring SIANN command workflows.

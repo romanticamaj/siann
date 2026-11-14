@@ -16,6 +16,7 @@
     "siann": "bin/siann.js"
   },
   "scripts": {
+    "app": "node scripts/run-app.js",
     "smoke:dawproject": "node scripts/smoke-dawproject.js",
     "test": "node --test test/*.test.js",
     "test:dawproject": "node --test test/dawproject-export.test.js",
