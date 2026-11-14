@@ -277,7 +277,8 @@ test('each zone boundary drags within its range, collapses below its minimum, re
     await expect(separator).toHaveAttribute('aria-valuemin', String(min));
     await expect(separator).toHaveAttribute('aria-valuemax', String(max));
     await expect(separator).toHaveAttribute('aria-valuenow', String(min));
-    // A visible focus ring.
+    // A visible focus ring. Any outline width above zero counts, not a pixel
+    // width: at 150% display scaling a 1px outline computes to 0.667px.
     expect(
       await separator.evaluate((el) => {
         const style = getComputedStyle(el);
