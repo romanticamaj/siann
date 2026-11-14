@@ -65,6 +65,41 @@ The host stops the transport and the graph driver, closes the running device and
 
 `session.open {path}` (item 16) opens the bundle as a new `Session`, taking its lock, then rebinds the engine host to it: a new `PlaybackEngine` on the same device object (never recreated, only closed so that the new driver opens it again at the new session's rate, as at launch), a new `Auditioner` behind the same `AuditionPort`, and a new meter publisher, which sends a new `meters.legend`. Instances `plugin.instantiate` made that no `plugin.insert` committed are dropped. The cycle flag becomes the new bundle's (from its checkpoint, false when absent); the click state is kept. Then the old `Session` is destroyed, which releases its lock. The result is `{sessionId, revision, documentHash}`; the next `session.sync` carries them. Errors: `not_found` (no directory at `path`), `session_locked` (another live process holds the bundle, or this engine serves it already), any other `SessionError` code the open throws (`not_a_bundle`, ...); on every error the old session stays served.
 
+## session.create
+
+`session.create {path, name?}` (item 27, m5b-engine-project-media) creates an empty bundle and serves it. It goes through `ServerOptions::createSession(path, name, sampleRate)`; `siann-engine` creates the `Session` (taking the new bundle's lock), rebinds the engine host exactly as `session.open` does, then destroys the old `Session`, which releases the old bundle's lock. Without the callback the method is `not_supported`.
+
+| Field | Rule |
+|---|---|
+| `path` | UTF-8, absolute, must not exist. A relative path or a UNC path (`\\server\share\x`, `\\?\UNC\server\share\x`) is `invalid_params`; an existing file, directory (empty or not) or bundle is `already_exists`; a missing parent directory is `not_found`. Nothing is created on any refusal. |
+| `name` | optional string; `root.name`. Default: the path's stem (`Song` for `.../Song.siann`). |
+
+The session's sample rate is the rate the output device runs at (`engine.status` `device.sampleRate`), 48000 when no device runs or the server has no transport port. Queued and running `media.import` jobs are cancelled first (they end `failed` with `cancelled`). The result is `{sessionId, revision, documentHash}` (revision `r1`); subscribed connections receive `session.opened`, requests naming the old `sessionId` get `session_mismatch`, as after `session.open`.
+
+## media.import
+
+`media.import {path, clientImportId}` (architecture spec, "Commands and jobs", Jobs v0, import) queues a job and answers `{jobId, kind: "media.import", state: "queued"}`.
+
+| Field | Rule |
+|---|---|
+| `path` | UTF-8, absolute, not UNC (`invalid_params` otherwise, and no job). A WAV (PCM 8 to 32 bit, float 32 or 64 bit, RIFF or RF64) or FLAC file. |
+| `clientImportId` | string, 1 to 128 bytes, chosen by the client (`invalid_params` when missing or not a string). A repeated value for the served session answers the first job's `{jobId, kind, state}` and starts nothing. |
+
+The worker decodes the file, converts it to the session rate when it differs (32-bit float WAV), writes `media/<sha256>.<ext>` and its peak pyramid `peaks/<sha256>.peaks` ([Protocol peaks v0](protocol-peaks-v0.md)), then the command thread commits `media.add` with a server-chosen `mediaId` (`med_<n>`, above every `med_<n>` in the history) and `name` (the file's base name, at most 255 UTF-8 bytes) as one revision, published as `session.changed`. The job is `done` only after that commit.
+
+`job.status {jobId}` for an import:
+
+| State | Fields |
+|---|---|
+| `queued` | `{jobId, kind: "media.import", state}` |
+| `running` | adds `progress: {framesDone, framesTotal}`, decimal strings counting source frames |
+| `done` | `result: {mediaId, revision, contentHash, name, frames, sampleRate, channels, converted, existing?, originalHash?}`; `frames` a decimal string; `originalHash` (the source file's `sha256:`) when `converted` |
+| `failed` | `error: {code, message}` |
+
+Content the head document already holds (same `contentHash`) ends `done` with the existing entity's `mediaId`, `existing: true`, `revision` the head, and no new revision. Failure codes: `not_found` (no file at `path`), `unsupported_media`, `decode_failed` (truncated or damaged), `too_large`, `cancelled` (`session.open`, `session.create` or the server stopping), or the `CommandError` code of a refused `media.add`. A failed or cancelled import commits nothing and removes the files it created; files the bundle held before are kept.
+
+`engine.capabilities` reports `features.mediaImport: {formats: ["wav", "flac"]}`, lists `session.create` and `media.import` in `methods` and `media.rename` in `commands`. MCP: `create_session` and `import_media`, trusted scope only ([Protocol MCP v0](protocol-mcp-v0.md)).
+
 ## The bundle lock
 
 `<bundle>/lock` holds `{"pid": <n>, "startedAt": "<ISO 8601 UTC>"}` while a `Session` is open on the bundle. `Session::create` and `Session::open` create it exclusively (`O_CREAT | O_EXCL`, `CREATE_NEW`) and the `Session`'s destructor removes it, so a second `Session` on the bundle, in any process, throws `SessionError` `session_locked`. A lock file that is empty, unparseable, or names a pid that is not a live process is taken over: removed, and the exclusive create tried once more. Consequences:
