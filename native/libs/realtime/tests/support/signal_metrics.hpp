@@ -33,6 +33,9 @@ inline SineFit fitSine(std::span<const float> samples, double frequency, double 
         xc += x * c;
     }
     const double det = ss * cc - sc * sc;
+    // Too few samples to fit (none, or one): no tone. Also keeps MSVC's Release
+    // optimizer from warning (C4723) on a call it inlines with an empty span.
+    if (det == 0.0) return SineFit{};
     const double a = (xs * cc - xc * sc) / det;
     const double b = (xc * ss - xs * sc) / det;
     double residual = 0.0;

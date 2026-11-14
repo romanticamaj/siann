@@ -1263,8 +1263,12 @@ void checkCrashed(PipedProcess& child) {
         child.kill();
         FAIL("the engine did not end after the crash: a dialog may hold it");
     }
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(_DLL)
     CHECK(*code == 3);  // abort()
+#elif defined(_WIN32)
+    // A statically linked CRT (the desktop-release preset): the plugin's abort()
+    // follows its own CRT's flags, which the engine cannot reach (a fast fail).
+    CHECK((*code == 3 || static_cast<unsigned int>(*code) == 0xC0000409u));
 #else
     CHECK(*code != 0);  // SIGABRT
 #endif
@@ -1287,8 +1291,13 @@ void checkCrashed(PipedProcess& child) {
     const unsigned long abortBehavior = std::stoul(err.substr(modeAt + 8 + abortMarker.size(), 8), nullptr, 16);
     CHECK((errorMode & SEM_FAILCRITICALERRORS) != 0);
     CHECK((errorMode & SEM_NOGPFAULTERRORBOX) != 0);
+#if defined(_DLL)
+    // One CRT for the engine and the plugin: the engine's flags are the plugin's.
     CHECK((abortBehavior & _WRITE_ABORT_MSG) == 0);
     CHECK((abortBehavior & _CALL_REPORTFAULT) == 0);
+#else
+    (void)abortBehavior;  // the plugin's own CRT: not the engine's to set
+#endif
 #endif
 }
 

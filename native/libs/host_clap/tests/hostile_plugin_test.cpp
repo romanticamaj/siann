@@ -560,8 +560,14 @@ TEST_CASE("clap host: hostile crash ends the process with abort and no dialog", 
         code = child.wait();
         endedBy = child.terminatingSignal();
     }
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(_DLL)
     CHECK(code == 3);  // abort(), with no "abort() has been called" box to wait on
+    CHECK(endedBy == 0);
+#elif defined(_WIN32)
+    // A statically linked CRT (the desktop-release preset): the plugin's abort()
+    // follows its own CRT's flags, which no host reaches, so it may end in a
+    // Windows Error Reporting fast fail; the error mode still keeps any box away.
+    CHECK((code == 3 || static_cast<unsigned int>(code) == 0xC0000409u));
     CHECK(endedBy == 0);
 #else
     CHECK(code == -1);
