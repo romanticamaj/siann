@@ -21,9 +21,18 @@ those of Protocol v0; events are those of `protocol-events-v1.md`.
 {"ref": "track:trk_1", "param": "gain"}
 ```
 
-- `ref` is `"track:<id>"`. Any other entity type is `invalid_params`; a track the
-  document does not hold is `not_found`.
-- `param` is `"gain"`, `"pan"` or `"mute"`, the three track fader parameters.
+- `ref` is `"track:<id>"`, or `"master:master"` from m5b-engine-master. Any other
+  entity type is `invalid_params`; a track the document does not hold is
+  `not_found`.
+- `param` is `"gain"`, `"pan"` or `"mute"`, the three track fader parameters. The
+  master target takes `"gain"` only; `"pan"` or `"mute"` on it is `invalid_params`.
+- The master target (`{"ref": "master:master", "param": "gain"}`; specified for
+  m5b-engine-master, not implemented yet; decided by the main session under the
+  maintainer's delegation (Fable rule), 2026-11-15) is the master gain of the
+  `master` singleton entity. It always exists: while the entity is absent (the
+  gain is 0 dB) its start value is 0, so `not_found` does not apply. Its value and
+  range are those of a track's `gain`, its leases are a track fader's, and
+  `gesture.end` commits one `master.set_gain`.
 - `value` is a number in the track entity's own units: `gain` in milli-dB (the
   entity's `gainMilliDb`; `-2147483648` is minus infinity, the fader minimum),
   `pan` from `-10000` to `10000`, `mute` `0` or `1`. A value that is not a number,
@@ -56,7 +65,8 @@ not MCP tools: an agent changes a fader through commands and plans.
   because the newest value wins.
 - `gesture.hold` only renews the lease: the client holds the fader still.
 - `gesture.end` commits the last accepted value as one `track.set_gain`,
-  `track.set_pan` or `track.set_mute` revision on the side heard (main, or the
+  `track.set_pan`, `track.set_mute` or (on the master target) `master.set_gain`
+  revision on the side heard (main, or the
   auditioned proposal) and publishes its `session.changed` (or `proposal.changed`),
   then `gesture.ended`. A given `value` is one last update first. `revision` is the
   revision envelope `command.execute` returns, or `null` when the gesture never
