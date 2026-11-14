@@ -64,13 +64,36 @@ std::int32_t panValue(double value) {
         std::llround(std::clamp(value, static_cast<double>(INT32_MIN), static_cast<double>(INT32_MAX))));
 }
 
-// Fader parameters a gesture can commit, each through its own track command.
-void requireCommittable(std::uint32_t paramId) {
+bool isMasterTarget(const std::string& target) {
+    return target == masterSlotKey();
+}
+
+// Fader parameters a gesture can commit, each through its own track command;
+// the master commits its gain only, through master.set_gain.
+void requireCommittable(const std::string& target, std::uint32_t paramId) {
+    if (isMasterTarget(target)) {
+        if (paramId != graph::TrackFaderNode::kGainMilliDb) {
+            throw std::invalid_argument("master parameter " + std::to_string(paramId) +
+                                        " cannot be committed by a gesture: the master has a gain only");
+        }
+        return;
+    }
     if (paramId != graph::TrackFaderNode::kGainMilliDb && paramId != graph::TrackFaderNode::kPan &&
         paramId != graph::TrackFaderNode::kMute) {
         throw std::invalid_argument("track fader parameter " + std::to_string(paramId) +
                                     " cannot be committed by a gesture");
     }
+}
+
+// The dispatcher's key of a gesture target's parameter.
+realtime::ParamKey gestureKey(const std::string& target, std::uint32_t paramId) {
+    return realtime::ParamKey{isMasterTarget(target) ? masterSlotKey() : trackSlotKey(target), paramId};
+}
+
+// The master gain as the audio thread holds it: 0 dB while the entity is absent.
+double masterValue(const model::Document& document) {
+    const model::Master* value = document.master();
+    return value != nullptr ? static_cast<double>(value->gain.milliDb) : 0.0;
 }
 
 // The command that commits a gesture's last value, and the value the audio
@@ -81,6 +104,12 @@ struct GestureCommit {
 };
 
 GestureCommit gestureCommit(const std::string& trackId, std::uint32_t paramId, double value) {
+    if (isMasterTarget(trackId)) {
+        const std::int32_t milliDb = gainValue(value);
+        return {command::Command::fromJson(
+                    json::Object{{"op", "master.set_gain"}, {"gainMilliDb", static_cast<double>(milliDb)}}),
+                static_cast<double>(milliDb)};
+    }
     if (paramId == graph::TrackFaderNode::kPan) {
         const std::int32_t pan = panValue(value);
         return {command::Command::fromJson(
@@ -185,9 +214,17 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
         compiled.slots.emplace(trackSlotKey(track.id), fader);
         compiled.meterSlots.emplace(trackSlotKey(track.id), meter);
     }
-    // The master meter is the output, so it sees the final mix.
+    // The master gain after the sum of the tracks (m5b-engine-master): a stereo
+    // fader at pan centre, which multiplies by exactly 1.0f at 0 dB.
+    const model::Master* masterEntity = document.master();
+    const graph::NodeId masterGain = builder.add(
+        std::make_unique<graph::TrackFaderNode>(2, masterEntity != nullptr ? masterEntity->gain.milliDb : 0, 0, false),
+        "master.gain");
+    builder.connect(master, masterGain);
+    compiled.slots.emplace(masterSlotKey(), masterGain);
+    // The master meter is the output, so it sees the final mix after the gain.
     const graph::NodeId masterMeter = builder.add(std::make_unique<graph::MeterNode>(2), "master.meter");
-    builder.connect(master, masterMeter);
+    builder.connect(masterGain, masterMeter);
     compiled.meterSlots.emplace(masterMeterKey(), masterMeter);
     builder.setOutput(masterMeter);
     compiled.graph = std::move(builder).compile(options.maxBlockFrames);
@@ -197,11 +234,12 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
     return compiled;
 }
 
-// True when the edit changes nothing but track gain, pan or mute, and the
-// locators (the transport's cycle range, never part of a graph).
+// True when the edit changes nothing but track gain, pan or mute, the master
+// gain (a parameter of the master gain node however the entity changes), and
+// the locators (the transport's cycle range, never part of a graph).
 bool onlyFaderChanges(const model::Document& before, const model::Document& after) {
     for (const model::DiffEntry& entry : model::diff(before, after)) {
-        if (entry.entity.type == model::EntityType::locators) {
+        if (entry.entity.type == model::EntityType::locators || entry.entity.type == model::EntityType::master) {
             continue;
         }
         if (entry.entity.type != model::EntityType::track || entry.change != model::DiffEntry::Change::modified) {
@@ -239,6 +277,10 @@ std::string pluginSlotKey(const std::string& slotId) {
 
 std::string masterMeterKey() {
     return "master";
+}
+
+std::string masterSlotKey() {
+    return "master:master";
 }
 
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
@@ -400,6 +442,11 @@ void PlaybackEngine::update(const model::Document& document) {
     hearTimeline(document, &*latest_);
     if (!prepared_ && !pendingDoc_ && onlyFaderChanges(*latest_, document)) {
         for (const model::DiffEntry& entry : model::diff(*latest_, document)) {
+            if (entry.entity.type == model::EntityType::master) {
+                dispatcher_.setParameter(realtime::ParamKey{masterSlotKey(), graph::TrackFaderNode::kGainMilliDb},
+                                         masterValue(document), 0);
+                continue;
+            }
             if (entry.entity.type != model::EntityType::track) {
                 continue;  // the locators went to the transport above
             }
@@ -441,20 +488,20 @@ void PlaybackEngine::stop() {
     butler_.stop();
 }
 
-void PlaybackEngine::beginGesture(const std::string& trackId, std::uint32_t paramId) {
-    requireCommittable(paramId);  // so no gesture opens that endGesture cannot close
-    dispatcher_.beginGesture(realtime::ParamKey{trackSlotKey(trackId), paramId});
+void PlaybackEngine::beginGesture(const std::string& target, std::uint32_t paramId) {
+    requireCommittable(target, paramId);  // so no gesture opens that endGesture cannot close
+    dispatcher_.beginGesture(gestureKey(target, paramId));
 }
 
-void PlaybackEngine::updateGesture(const std::string& trackId, std::uint32_t paramId, double value, int rampFrames) {
-    requireCommittable(paramId);
-    dispatcher_.updateGesture(realtime::ParamKey{trackSlotKey(trackId), paramId}, value, rampFrames);
+void PlaybackEngine::updateGesture(const std::string& target, std::uint32_t paramId, double value, int rampFrames) {
+    requireCommittable(target, paramId);
+    dispatcher_.updateGesture(gestureKey(target, paramId), value, rampFrames);
 }
 
-const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, std::uint32_t paramId,
+const command::Revision* PlaybackEngine::endGesture(const std::string& target, std::uint32_t paramId,
                                                     std::string actor, std::string time) {
-    requireCommittable(paramId);
-    const realtime::ParamKey key{trackSlotKey(trackId), paramId};
+    requireCommittable(target, paramId);
+    const realtime::ParamKey key = gestureKey(target, paramId);
     const std::optional<double> value = dispatcher_.endGesture(key);
     if (!value) {
         return nullptr;
@@ -466,7 +513,7 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
             throw AuditionError("audition_not_found", "the proposal branch " + *gestureBranch_ +
                                                           " heard for this gesture is closed; hear main first");
         }
-        const GestureCommit commit = gestureCommit(trackId, paramId, *value);
+        const GestureCommit commit = gestureCommit(target, paramId, *value);
         const command::Revision& revision =
             gestureBranch_ ? session_.commitOn(*gestureBranch_, {commit.command}, std::move(actor), std::move(time))
                            : session_.commit({commit.command}, std::move(actor), std::move(time));
@@ -479,7 +526,9 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& trackId, 
         const model::Document& document = gestureBranch_ && history.isOpen(*gestureBranch_)
                                               ? history.branchHead(*gestureBranch_).document
                                               : history.head().document;
-        if (const model::Track* track = document.track(trackId)) {
+        if (isMasterTarget(target)) {
+            dispatcher_.setParameter(key, masterValue(document), 0);
+        } else if (const model::Track* track = document.track(target)) {
             dispatcher_.setParameter(key, documentValue(*track, paramId), 0);
         }
         throw;
@@ -531,9 +580,9 @@ AuditionCost PlaybackEngine::estimateCost(const model::Document& document) const
         ++cost.newStreams;
         cost.bytes += 2 * ringFrames * static_cast<std::size_t>(track.track->channels) * sizeof(float);
     }
-    // As compileWith(): the master bus and its meter, and per track a player,
-    // a fader and a meter.
-    cost.nodes = 2 + 3 * flat.size() + document.allPluginSlots().size();
+    // As compileWith(): the master bus, its gain and its meter, and per track a
+    // player, a fader and a meter.
+    cost.nodes = 3 + 3 * flat.size() + document.allPluginSlots().size();
     return cost;
 }
 

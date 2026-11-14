@@ -138,17 +138,19 @@ TEST_CASE("A bundle after a set and a set back to 0 dB reopens with the recorded
     CHECK(hashes[3] == hashes[1]);
     CHECK(hashes[2] != hashes[1]);
 
-    OpenReport report;
-    const Session reopened = Session::open(dir.bundle(), &report);
-    CHECK(report.checkpointVerified);
-    const auto& revisions = reopened.history().revisions();
-    REQUIRE(revisions.size() == hashes.size());
-    for (std::size_t i = 0; i < hashes.size(); ++i) {
-        INFO("revision " << i);
-        CHECK(revisions[i].envelope.documentHash == hashes[i]);
-        CHECK(revisions[i].document.documentHash() == hashes[i]);
+    {
+        OpenReport report;
+        const Session reopened = Session::open(dir.bundle(), &report);
+        CHECK(report.checkpointVerified);
+        const auto& revisions = reopened.history().revisions();
+        REQUIRE(revisions.size() == hashes.size());
+        for (std::size_t i = 0; i < hashes.size(); ++i) {
+            INFO("revision " << i);
+            CHECK(revisions[i].envelope.documentHash == hashes[i]);
+            CHECK(revisions[i].document.documentHash() == hashes[i]);
+        }
+        CHECK(reopened.history().head().document.master() == nullptr);
     }
-    CHECK(reopened.history().head().document.master() == nullptr);
 
     // Checkpointed at 0 dB, the checkpoint carries no master.
     {

@@ -127,6 +127,15 @@ struct Locators {
     friend bool operator==(const Locators&, const Locators&) = default;
 };
 
+// The master gain (m5b-engine-master, UI redesign E-11): a singleton entity with
+// id "master" and the track gain's range. Present only while the gain is not
+// 0 dB, so a document whose master is at 0 dB hashes as it did before.
+struct Master {
+    Gain gain;
+
+    friend bool operator==(const Master&, const Master&) = default;
+};
+
 struct Clip {
     std::string id;
     std::string trackId;

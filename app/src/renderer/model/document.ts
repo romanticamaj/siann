@@ -4,9 +4,9 @@
 // 64-bit fields (ticks, frames, sample positions, seq) stay decimal strings,
 // because JSON numbers lose precision above 2^53. Framework-free.
 
-export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot' | 'locators';
+export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot' | 'locators' | 'master';
 
-export const ENTITY_TYPES: readonly EntityType[] = ['root', 'media', 'track', 'clip', 'plugin_slot', 'locators'];
+export const ENTITY_TYPES: readonly EntityType[] = ['root', 'media', 'track', 'clip', 'plugin_slot', 'locators', 'master'];
 
 export interface TempoPoint {
   readonly ticks: string;
@@ -92,14 +92,30 @@ export interface LocatorsEntity {
   readonly right: string;
 }
 
-export type Entity = RootEntity | MediaEntity | TrackEntity | ClipEntity | PluginSlotEntity | LocatorsEntity;
+// The master gain (m5b-engine-master): a singleton entity, present only while the
+// gain is not 0 dB. gainMilliDb has the track gain's range (-2147483648 is minus
+// infinity).
+export interface MasterEntity {
+  readonly schema: 'siann.entity.master.v1';
+  readonly id: 'master';
+  readonly gainMilliDb: number;
+}
+
+export type Entity =
+  | RootEntity
+  | MediaEntity
+  | TrackEntity
+  | ClipEntity
+  | PluginSlotEntity
+  | LocatorsEntity
+  | MasterEntity;
 
 export interface EntityRef {
   readonly type: EntityType;
   readonly id: string;
 }
 
-const REF_RE = /^(root|media|track|clip|plugin_slot|locators):([A-Za-z0-9_-]{1,64})$/;
+const REF_RE = /^(root|media|track|clip|plugin_slot|locators|master):([A-Za-z0-9_-]{1,64})$/;
 
 // "<type>:<id>" as session.fetch and changedIds name an entity; null for
 // anything else.
@@ -132,6 +148,8 @@ export interface SyncChunk {
     readonly pluginSlots?: readonly PluginSlotEntity[];
     // A single object, present only in the chunk that holds it.
     readonly locators?: LocatorsEntity;
+    // Likewise, after the locators, and only while the master gain is not 0 dB.
+    readonly master?: MasterEntity;
   };
   readonly next: string | null;
 }

@@ -920,7 +920,8 @@ TEST_CASE("execute and a plan carry master.set_gain; list_commands names it", "[
     CHECK(f.head().document.master() == nullptr);
 
     bool listed = false;
-    for (const Value& name : at(at(mcp.tool("list_commands"), "structuredContent"), "commands").asArray()) {
+    const Value commands = mcp.tool("list_commands");  // kept: the loop reads into it
+    for (const Value& name : at(at(commands, "structuredContent"), "commands").asArray()) {
         listed = listed || name.asString() == "master.set_gain";
     }
     CHECK(listed);

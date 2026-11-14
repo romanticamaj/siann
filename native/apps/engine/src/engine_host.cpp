@@ -1441,22 +1441,43 @@ double faderValue(const model::Track& track, const std::string& param) {
 }
 
 std::string gestureKey(const protocol::GestureTarget& target) {
-    return target.trackId + "/" + target.param;
+    return target.ref() + "/" + target.param;
 }
 
-// The track as the side a gesture commits on holds it: the heard proposal, or main.
-const model::Track* heardTrack(playback::PlaybackEngine& engine, session::Session& session,
-                                      const std::string& trackId) {
+// The playback engine's name of a target: a track id, or the master's slot key.
+std::string engineTarget(const protocol::GestureTarget& target) {
+    return target.isMaster ? playback::masterSlotKey() : target.trackId;
+}
+
+// The document of the side a gesture commits on: the heard proposal, or main.
+const model::Document& heardDocument(playback::PlaybackEngine& engine, session::Session& session) {
     const command::History& history = session.history();
     const auto& branch = engine.gestureBranch();
-    const model::Document& document =
-        branch && history.isOpen(*branch) ? history.branchHead(*branch).document : history.head().document;
-    return document.track(trackId);
+    return branch && history.isOpen(*branch) ? history.branchHead(*branch).document : history.head().document;
+}
+
+// The track as the side a gesture commits on holds it.
+const model::Track* heardTrack(playback::PlaybackEngine& engine, session::Session& session,
+                                      const std::string& trackId) {
+    return heardDocument(engine, session).track(trackId);
+}
+
+// The master gain of a document: 0 while the master entity is absent.
+double masterGainValue(const model::Document& document) {
+    const model::Master* value = document.master();
+    return value != nullptr ? static_cast<double>(value->gain.milliDb) : 0.0;
 }
 
 }  // namespace
 
 double EngineHost::begin(const protocol::GestureTarget& target) {
+    if (target.isMaster) {
+        // Always a target (m5b-engine-master): never not_found.
+        const double start = masterGainValue(heardDocument(*engine_, *session_));
+        engine_->beginGesture(playback::masterSlotKey(), graph::TrackFaderNode::kGainMilliDb);
+        gestureStarts_[gestureKey(target)] = start;
+        return start;
+    }
     const model::Track* track = heardTrack(*engine_, *session_, target.trackId);
     if (track == nullptr) {
         throw protocol::GesturePortError("not_found", "no track with id " + target.trackId);
@@ -1468,7 +1489,7 @@ double EngineHost::begin(const protocol::GestureTarget& target) {
 }
 
 void EngineHost::update(const protocol::GestureTarget& target, double value) {
-    engine_->updateGesture(target.trackId, faderParam(target.param), value, kGestureRampFrames);
+    engine_->updateGesture(engineTarget(target), faderParam(target.param), value, kGestureRampFrames);
 }
 
 protocol::GestureEnd EngineHost::end(const protocol::GestureTarget& target, std::string actor, std::string time) {
@@ -1479,12 +1500,16 @@ protocol::GestureEnd EngineHost::end(const protocol::GestureTarget& target, std:
     }
     const command::Revision* revision = nullptr;
     try {
-        revision = engine_->endGesture(target.trackId, faderParam(target.param), std::move(actor), std::move(time));
+        revision =
+            engine_->endGesture(engineTarget(target), faderParam(target.param), std::move(actor), std::move(time));
     } catch (const playback::AuditionError& error) {
         throw protocol::GesturePortError(error.code(), error.what());
     }
     if (revision == nullptr) {
         return {start, start, nullptr};
+    }
+    if (target.isMaster) {
+        return {start, masterGainValue(revision->document), revision};
     }
     const model::Track* committed = revision->document.track(target.trackId);
     return {start, committed != nullptr ? faderValue(*committed, target.param) : start, revision};
@@ -1492,6 +1517,12 @@ protocol::GestureEnd EngineHost::end(const protocol::GestureTarget& target, std:
 
 void EngineHost::cancel(const protocol::GestureTarget& target) {
     gestureStarts_.erase(gestureKey(target));
+    if (target.isMaster) {
+        const realtime::ParamKey key{playback::masterSlotKey(), graph::TrackFaderNode::kGainMilliDb};
+        engine_->dispatcher().endGesture(key);  // the value is dropped
+        engine_->dispatcher().setParameter(key, masterGainValue(heardDocument(*engine_, *session_)), 0);
+        return;
+    }
     const realtime::ParamKey key{playback::trackSlotKey(target.trackId), faderParam(target.param)};
     engine_->dispatcher().endGesture(key);  // the value is dropped
     if (const model::Track* track = heardTrack(*engine_, *session_, target.trackId)) {

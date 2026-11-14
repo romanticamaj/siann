@@ -18,12 +18,16 @@
 
 namespace siann::protocol {
 
-// A track fader parameter: {ref: "track:<id>", param}.
+// A track fader parameter, {ref: "track:<id>", param}, or the master gain,
+// {ref: "master:master", param: "gain"} (m5b-engine-master), which always exists
+// as a target: its start value is 0 while the master entity is absent.
 struct GestureTarget {
-    std::string trackId;
-    std::string param;  // "gain", "pan" or "mute"
+    std::string trackId;  // empty for the master
+    std::string param;    // "gain", "pan" or "mute"; "gain" only for the master
+    bool isMaster = false;
 
-    std::string ref() const { return "track:" + trackId; }
+    static GestureTarget masterGain() { return GestureTarget{std::string(), "gain", true}; }
+    std::string ref() const { return isMaster ? "master:master" : "track:" + trackId; }
     friend bool operator==(const GestureTarget&, const GestureTarget&) = default;
 };
 
@@ -37,9 +41,10 @@ struct GestureEnd {
     const command::Revision* revision = nullptr;
 };
 
-// Thrown by a port. Codes: not_found (no such track), audition_not_found, or
-// whatever the port cannot do. A command::CommandError from the commit
-// (invalid_gain, invalid_pan, invalid_mute) passes through unchanged.
+// Thrown by a port. Codes: not_found (no such track; never for the master),
+// audition_not_found, or whatever the port cannot do. A command::CommandError
+// from the commit (invalid_gain, invalid_pan, invalid_mute) passes through
+// unchanged.
 class GesturePortError : public std::runtime_error {
 public:
     GesturePortError(std::string code, const std::string& message)
@@ -59,8 +64,9 @@ public:
     virtual double begin(const GestureTarget& target) = 0;
     // Moves the sound to `value`; the gesture's last accepted value.
     virtual void update(const GestureTarget& target, double value) = 0;
-    // Commits the last accepted value as one revision (with `actor` and `time`),
-    // or nothing when the gesture never moved. The gesture is closed afterwards
+    // Commits the last accepted value as one revision (with `actor` and `time`:
+    // a track.set_* or, for the master, master.set_gain), or nothing when the
+    // gesture never moved. The gesture is closed afterwards
     // also when the commit throws; the sound then returns to the document's value.
     virtual GestureEnd end(const GestureTarget& target, std::string actor, std::string time) = 0;
     // Closes the gesture without a commit; the sound returns to the document's value.

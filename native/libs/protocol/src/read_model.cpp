@@ -18,7 +18,8 @@ constexpr std::string_view kSyncPrefix = "sync_";
 
 std::optional<model::EntityType> typeFromName(std::string_view name) {
     for (const auto type : {model::EntityType::root, model::EntityType::media, model::EntityType::track,
-                            model::EntityType::clip, model::EntityType::plugin_slot, model::EntityType::locators}) {
+                            model::EntityType::clip, model::EntityType::plugin_slot, model::EntityType::locators,
+                            model::EntityType::master}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -82,6 +83,9 @@ std::vector<model::EntityRef> syncOrder(const model::Document& document) {
     if (document.locators() != nullptr) {
         out.push_back({model::EntityType::locators, std::string(model::kLocatorsId)});
     }
+    if (document.master() != nullptr) {
+        out.push_back({model::EntityType::master, std::string(model::kMasterId)});
+    }
     return out;
 }
 
@@ -114,6 +118,11 @@ std::optional<json::Value> entityJson(const model::Document& document, const mod
             return std::nullopt;
         case model::EntityType::locators:
             if (const auto* value = document.locators(); value != nullptr && ref.id == model::kLocatorsId) {
+                return model::toJson(*value);
+            }
+            return std::nullopt;
+        case model::EntityType::master:
+            if (const auto* value = document.master(); value != nullptr && ref.id == model::kMasterId) {
                 return model::toJson(*value);
             }
             return std::nullopt;
@@ -161,6 +170,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     Array clips;
     Array slots;
     std::optional<Value> locators;
+    std::optional<Value> master;
     for (std::size_t i = offset; i < end; ++i) {
         const auto& ref = pin.order[i];
         Value entity = *entityJson(pin.document, ref);
@@ -171,6 +181,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
             case model::EntityType::clip: clips.push_back(std::move(entity)); break;
             case model::EntityType::plugin_slot: slots.push_back(std::move(entity)); break;
             case model::EntityType::locators: locators = std::move(entity); break;
+            case model::EntityType::master: master = std::move(entity); break;
         }
     }
     Object chunk;
@@ -187,6 +198,10 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     // A single object, only in the chunk that holds it (m5-ui-engine-loop-click).
     if (locators) {
         chunk.emplace_back("locators", std::move(*locators));
+    }
+    // The master likewise, after the locators (m5b-engine-master).
+    if (master) {
+        chunk.emplace_back("master", std::move(*master));
     }
     const Value next = end < pin.order.size() ? Value(pin.syncId + ":" + std::to_string(end)) : Value(nullptr);
     return Value(Object{{"revision", Value(pin.envelope.id)},

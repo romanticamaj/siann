@@ -22,6 +22,7 @@ import {
   type Entity,
   type FetchedEntity,
   type LocatorsEntity,
+  type MasterEntity,
   type MediaEntity,
   type PluginSlotEntity,
   type RootEntity,
@@ -56,6 +57,8 @@ export interface Snapshot {
   readonly pluginSlots: readonly PluginSlotEntity[];
   // The singleton locators entity, null while none is set.
   readonly locators: LocatorsEntity | null;
+  // The singleton master entity, null while the master gain is 0 dB.
+  readonly master: MasterEntity | null;
   // The user-visible track order (root.trackOrder).
   readonly trackOrder: readonly string[];
 }
@@ -126,10 +129,12 @@ function buildSnapshot(
   const tables: Record<string, Entity[]> = { media: [], track: [], clip: [], plugin_slot: [] };
   let root: RootEntity | null = null;
   let locators: LocatorsEntity | null = null;
+  let master: MasterEntity | null = null;
   for (const [ref, entity] of Object.entries(entities)) {
     const type = parseRef(ref)!.type;
     if (type === 'root') root = entity as RootEntity;
     else if (type === 'locators') locators = entity as LocatorsEntity;
+    else if (type === 'master') master = entity as MasterEntity;
     else tables[type]!.push(entity);
   }
   for (const rows of Object.values(tables)) rows.sort(compareIds);
@@ -145,6 +150,7 @@ function buildSnapshot(
     clips: Object.freeze(tables.clip as ClipEntity[]),
     pluginSlots: Object.freeze(tables.plugin_slot as PluginSlotEntity[]),
     locators,
+    master,
     trackOrder: root ? root.trackOrder : Object.freeze([]),
   });
 }
@@ -215,6 +221,7 @@ export class ReadModel {
       };
       if (chunk.chunk.root) add('root:root', chunk.chunk.root);
       if (chunk.chunk.locators) add('locators:locators', chunk.chunk.locators);
+      if (chunk.chunk.master) add('master:master', chunk.chunk.master);
       for (const [table, type] of TABLES) {
         for (const row of chunk.chunk[table] ?? []) add(entityRef(type, (row as { id: string }).id), row);
       }

@@ -1298,25 +1298,25 @@ TEST_CASE("a master gesture through the port starts from the heard side and canc
         REQUIRE(track->reading.peak[0] > 0.01f);
         return master->reading.peak[0] / track->reading.peak[0];
     };
-    const auto near = [](float ratio, std::int32_t milliDb) {
+    const auto atGain = [](float ratio, std::int32_t milliDb) {
         return std::abs(ratio - graph::gainFromMilliDb(milliDb)) < 1e-5f;
     };
-    CHECK(near(masterRatio(), 0));
+    CHECK(atGain(masterRatio(), 0));
 
     // No master entity: the start value is 0, never not_found.
     CHECK(port.begin(target) == 0.0);
     port.update(target, -20'000.0);
     rig.pump(8);
-    CHECK(near(masterRatio(), -20'000));
+    CHECK(atGain(masterRatio(), -20'000));
     port.cancel(target);
     rig.pump(8);
-    CHECK(near(masterRatio(), 0));
+    CHECK(atGain(masterRatio(), 0));
 
     // A main revision sets -6 dB; a heard proposal holds -12 dB.
     rig.fixture.exec(R"({"op":"master.set_gain","gainMilliDb":-6000})");
     rig.host->auditionPort()->mainCommitted();
     rig.pump(8);
-    CHECK(near(masterRatio(), -6'000));
+    CHECK(atGain(masterRatio(), -6'000));
     CHECK(port.begin(target) == -6'000.0);
     port.cancel(target);
 
@@ -1324,14 +1324,14 @@ TEST_CASE("a master gesture through the port starts from the heard side and canc
     session.commitOn(branch, {live_rig::cmd(R"({"op":"master.set_gain","gainMilliDb":-12000})")}, "test", "t");
     rig.host->auditionPort()->audition(branch);
     rig.pump(8);
-    CHECK(near(masterRatio(), -12'000));
+    CHECK(atGain(masterRatio(), -12'000));
     CHECK(port.begin(target) == -12'000.0);
     port.update(target, -20'000.0);
     rig.pump(8);
-    CHECK(near(masterRatio(), -20'000));
+    CHECK(atGain(masterRatio(), -20'000));
     port.cancel(target);
     rig.pump(8);
-    CHECK(near(masterRatio(), -12'000));
+    CHECK(atGain(masterRatio(), -12'000));
 
     // Back on main, an end commits one master.set_gain on main, heard without a compile.
     rig.host->auditionPort()->hearMain();
@@ -1352,7 +1352,7 @@ TEST_CASE("a master gesture through the port starts from the heard side and canc
     rig.host->auditionPort()->mainCommitted();
     rig.pump(8);
     CHECK(rig.engine().compileCount() == compiles);
-    CHECK(near(masterRatio(), -3'000));
+    CHECK(atGain(masterRatio(), -3'000));
 
     // A gesture that never moved ends with no revision.
     CHECK(port.begin(target) == -3'000.0);

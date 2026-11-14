@@ -137,7 +137,15 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
         builder.connect(previous, fader);
         builder.connect(fader, master);
     }
-    builder.setOutput(master);
+    // The master gain on the sum (m5b-engine-master; spec, "Master path"): the
+    // realtime graph's node, a stereo fader at pan centre, exactly 1.0f at 0 dB,
+    // so a document without the entity renders as before.
+    const model::Master* masterEntity = document.master();
+    const NodeId masterGain = builder.add(
+        std::make_unique<TrackFaderNode>(2, masterEntity != nullptr ? masterEntity->gain.milliDb : 0, 0, false),
+        "master.gain");
+    builder.connect(master, masterGain);
+    builder.setOutput(masterGain);
     return std::move(builder).compile(maxBlockFrames);
 }
 
