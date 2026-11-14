@@ -583,6 +583,49 @@ test('the band is drawn light with cycle on and grey with it off, its tint over 
   r.canvas.destroy();
 });
 
+test('the band fills, lines and labels in the light palette with cycle on and the grey one with it off; the tint covers the range over the lanes', () => {
+  // Each token reads as its own name, so a fill names the token it drew in.
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = g.getComputedStyle;
+  g.getComputedStyle = () => ({ getPropertyValue: (name: string) => name });
+  try {
+    const r = bandRig(withLocators(sampleSnapshot(), '10000', '30000'));
+    const view = r.hooks.view();
+    const rect = bandRect({ left: 10000n, right: 30000n }, view)!;
+    const calls = r.surface.contentCalls;
+    const fillAt = (style: string) => calls.fills.filter((f) => f.style === style).map((f) => f.rect);
+    const labelStyle = (text: string) => calls.labels.filter((l) => l.text === text).map((l) => l.style);
+    const tint: [number, number, number, number] = [rect.x, view.rulerHeight, rect.width, 300 - view.rulerHeight];
+    const assertDrawn = (on: boolean) => {
+      const fill = on ? '--tx-1-a200' : '--white-a060';
+      const line = on ? '--tx-1' : '--tx-3';
+      const label = on ? '--lit-1' : '--tx-3';
+      assert.deepEqual(fillAt(fill), [[rect.x, rect.y, rect.width, rect.height]], `the band's fill (cycle ${on ? 'on' : 'off'})`);
+      assert.ok(fillAt(line).some(([x, y, w]) => x === rect.x && y === rect.y && w === rect.width), `the band's top line (cycle ${on ? 'on' : 'off'})`);
+      assert.equal(calls.paths.filter((p) => p.style === line).length, 2, 'both flags in the line colour');
+      assert.deepEqual(labelStyle('L'), [label]);
+      assert.deepEqual(labelStyle('R'), [label]);
+      assert.deepEqual(fillAt(on ? '--white-a060' : '--tx-1-a200'), [], 'not the other palette');
+      // The tint: the range, from the ruler's bottom to the display's.
+      assert.deepEqual(fillAt('--white-a028'), [tint], 'the tint over the lanes');
+    };
+    assertDrawn(true);
+    calls.clear();
+    r.band.setCycle(false);
+    flushFrames();
+    assertDrawn(false);
+    // No locators: no band and no tint.
+    calls.clear();
+    r.m.set(sampleSnapshot());
+    flushFrames();
+    assert.deepEqual(fillAt('--white-a028'), []);
+    assert.deepEqual(fillAt('--white-a060'), []);
+    r.canvas.destroy();
+  } finally {
+    g.getComputedStyle = saved;
+  }
+});
+
 test('nothing is drawn and the upper half is inert without the capability', () => {
   const band = bandSource();
   band.setEnabled(false);
