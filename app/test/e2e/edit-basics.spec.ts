@@ -332,9 +332,9 @@ test('keys 1 and 3 choose the tools; the Split tool and Alt-click split, Alt-dra
   await operation(
     'Ctrl-drag sideways',
     async () => {
-      await page.keyboard.down('Control');
+      await page.keyboard.down('ControlOrMeta');
       await drag(await middle('clp_b'), 60, 20);
-      await page.keyboard.up('Control');
+      await page.keyboard.up('ControlOrMeta');
     },
     async () => {
       const moved = (await fetchClip('clp_b'))!;
@@ -347,9 +347,9 @@ test('keys 1 and 3 choose the tools; the Split tool and Alt-click split, Alt-dra
   await operation(
     'Ctrl-drag down',
     async () => {
-      await page.keyboard.down('Control');
+      await page.keyboard.down('ControlOrMeta');
       await drag(await middle('clp_b'), 12, laneB.height);
-      await page.keyboard.up('Control');
+      await page.keyboard.up('ControlOrMeta');
     },
     async () => {
       const moved = (await fetchClip('clp_b'))!;
@@ -452,9 +452,9 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
   await operation(
     'lower-right corner with Ctrl',
     async () => {
-      await page.keyboard.down('Control');
+      await page.keyboard.down('ControlOrMeta');
       await drag(lowerRight, 100, 0);
-      await page.keyboard.up('Control');
+      await page.keyboard.up('ControlOrMeta');
     },
     async () => {
       const clip = (await fetchClip('clp_r'))!;
