@@ -339,11 +339,63 @@ TEST_CASE("Undeclared effects are detected", "[command]") {
     }
 }
 
+// ---- m5b-engine-project-media: media names ----------------------------------
+
+namespace {
+
+std::string mediaAddJson(const std::string& id, const std::string& nameField) {
+    return R"({"op":"media.add","mediaId":")" + id + R"(","contentHash":")" + kHash +
+           R"(","format":"wav","channels":2,"sampleRate":48000,"frames":"48000")" + nameField + "}";
+}
+
+std::string renameJson(const std::string& id, const std::string& nameValue) {
+    return R"({"op":"media.rename","mediaId":")" + id + R"(","name":)" + nameValue + "}";
+}
+
+}  // namespace
+
+TEST_CASE("media.add takes an optional name", "[command][media]") {
+    const Document doc = base();
+    REQUIRE_FALSE(doc.media("med_1")->name.has_value());
+    const auto prepared = prepare(doc, cmd(mediaAddJson("med_2", R"(,"name":"kick.wav")")));
+    CHECK(prepared.effects == DeclaredEffects{ref(EntityType::media, "med_2")});
+    REQUIRE(prepared.result.media("med_2")->name.has_value());
+    CHECK(*prepared.result.media("med_2")->name == "kick.wav");
+    CHECK(errorCode(doc, mediaAddJson("med_2", R"(,"name":"")")) == "invalid_params");
+    CHECK(errorCode(doc, mediaAddJson("med_2", R"(,"name":")" + std::string(256, 'a') + "\"")) == "invalid_params");
+    CHECK(errorCode(doc, mediaAddJson("med_2", R"(,"name":7)")) == "invalid_params");
+    CHECK(errorCode(doc, mediaAddJson("med_2", R"(,"name":null)")) == "invalid_params");
+    CHECK(errorCode(doc, mediaAddJson("med_2", "")) == "no error");
+}
+
+TEST_CASE("media.rename sets or removes the name and declares exactly the media", "[command][media]") {
+    const Document doc = base();
+    const auto named = prepare(doc, cmd(renameJson("med_1", R"("Loop 聲.wav")")));
+    CHECK(named.effects == DeclaredEffects{ref(EntityType::media, "med_1")});
+    REQUIRE(named.result.media("med_1")->name.has_value());
+    CHECK(*named.result.media("med_1")->name == "Loop 聲.wav");
+    CHECK(named.result.entityHash(ref(EntityType::media, "med_1")) != doc.entityHash(ref(EntityType::media, "med_1")));
+
+    // null removes the field: the entity hashes as it did before it had a name.
+    const auto cleared = prepare(named.result, cmd(renameJson("med_1", "null")));
+    CHECK(cleared.effects == DeclaredEffects{ref(EntityType::media, "med_1")});
+    CHECK_FALSE(cleared.result.media("med_1")->name.has_value());
+    CHECK(cleared.result.entityHash(ref(EntityType::media, "med_1")) ==
+          doc.entityHash(ref(EntityType::media, "med_1")));
+    CHECK(cleared.result.documentHash() == doc.documentHash());
+
+    CHECK(errorCode(doc, renameJson("med_9", R"("x")")) == "not_found");
+    CHECK(errorCode(doc, renameJson("med_1", R"("")")) == "invalid_params");
+    CHECK(errorCode(doc, renameJson("med_1", "3")) == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"media.rename","mediaId":"med_1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"media.rename","mediaId":"med_1","name":"x","extra":1})") == "invalid_params");
+}
+
 TEST_CASE("The command catalog is listed", "[command]") {
     const auto names = commandNames();
     CHECK(names == std::vector<std::string>{
                        "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add",
-                       "media.remove", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
+                       "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
                        "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_pan",
                        "track.set_solo"});

@@ -32,6 +32,18 @@ test('parentPlan and step order change the hash', () => {
   assert.notEqual(byName.step_order_matters.planHash, byName.two_steps.planHash);
 });
 
+// m5b-engine-project-media: media.add {name} and media.rename are ordinary steps;
+// the name is part of the hash, and native reproduces both cases.
+test('a media name in a step is part of the plan hash', () => {
+  const withName = byName.media_add_with_name.plan;
+  assert.equal(withName.steps[0].name, 'Kick 聲.wav');
+  const { name, ...unnamed } = withName.steps[0];
+  assert.notEqual(planHash({ ...withName, steps: [unnamed] }), byName.media_add_with_name.planHash);
+  const rename = byName.media_rename.plan;
+  assert.deepEqual(rename.steps.map((step) => step.name), ['Loop A.flac', null]);
+  assert.equal(planHash(rename), byName.media_rename.planHash);
+});
+
 test('planHash does not modify its input', () => {
   const plan = structuredClone(byName.lifecycle_fields_ignored.plan);
   const before = JSON.stringify(plan);

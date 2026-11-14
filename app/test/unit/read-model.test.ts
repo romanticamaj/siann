@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { ClipEntity, FetchedEntity, SessionChanged, SyncChunk, TrackEntity } from '../../src/renderer/model/document';
+import type { ClipEntity, FetchedEntity, MediaEntity, SessionChanged, SyncChunk, TrackEntity } from '../../src/renderer/model/document';
 import { parseRef } from '../../src/renderer/model/document';
 import { ReadModel, ReadModelError, type Snapshot } from '../../src/renderer/model/read-model';
 import { readFixture } from './support/fixtures';
@@ -368,4 +368,52 @@ test('a track with an input syncs and keeps its input', async () => {
   const vox = snapshot.entities['track:trk-vox'] as TrackEntity;
   assert.deepEqual(vox.input, { port: 3, channels: 1 });
   assert.equal((snapshot.entities['track:trk_bass'] as TrackEntity).input, undefined);
+});
+
+// m5b-engine-project-media: the media entity's optional name. A sync of the
+// documents with and without it hashes to the generator's document hashes
+// (scripts/generate-model-fixtures.js), and the name reaches the snapshot.
+interface ModelFixture {
+  readonly document: {
+    readonly root: SyncChunk['chunk']['root'];
+    readonly media: readonly MediaEntity[];
+    readonly tracks: SyncChunk['chunk']['tracks'];
+    readonly clips: SyncChunk['chunk']['clips'];
+    readonly pluginSlots: SyncChunk['chunk']['pluginSlots'];
+    readonly locators: SyncChunk['chunk']['locators'];
+  };
+  readonly entityHashes: readonly unknown[];
+  readonly documentHash: string;
+}
+
+function syncOf(fixture: ModelFixture): SyncChunk[] {
+  const { document } = fixture;
+  return [{
+    revision: 'r9',
+    seq: '9',
+    documentHash: fixture.documentHash,
+    entities: fixture.entityHashes.length,
+    meters: null,
+    chunk: {
+      root: document.root,
+      media: document.media,
+      tracks: document.tracks,
+      clips: document.clips,
+      pluginSlots: document.pluginSlots,
+      locators: document.locators,
+    },
+    next: null,
+  }];
+}
+
+test('a media entity with or without a name is accepted and hashes as the fixtures say', async () => {
+  const named = readFixture<ModelFixture>('model', 'session-document-v2-media-name.json');
+  const plain = readFixture<ModelFixture>('model', 'session-document-v2.json');
+  const withName = await new ReadModel().fromSync(syncOf(named));
+  assert.equal(withName.documentHash, named.documentHash);
+  assert.deepEqual(withName.media.map((m) => m.name), ['kick.wav', 'Loop 聲 44k.flac']);
+  const without = await new ReadModel().fromSync(syncOf(plain));
+  assert.equal(without.documentHash, plain.documentHash);
+  assert.deepEqual(without.media.map((m) => m.name), [undefined, undefined]);
+  assert.ok(without.media.every((m) => !Object.prototype.hasOwnProperty.call(m, 'name')));
 });

@@ -947,7 +947,7 @@ protocol::DeviceInfo EngineHost::selectDeviceWithInput(const std::string& id,
     return *status().device;
 }
 
-// ---- recording (m5b-engine-record, Protocol v0 item 27) -------------------------
+// ---- recording (m5b-engine-record, Protocol v0 item 28) -------------------------
 
 namespace fs = std::filesystem;
 

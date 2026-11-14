@@ -95,6 +95,34 @@ TEST_CASE("A writeSet may name the locators entity", "[plan][fixtures][locators]
     CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
 }
 
+// m5b-engine-project-media: a media name in media.add and media.rename steps hashes
+// as Node hashes it, and the steps run on a document holding the media.
+TEST_CASE("Plans with a media name hash as in Node and their steps apply", "[plan][fixtures][media]") {
+    siann::model::Document doc = siann::model::Document::create("Song", 48'000);
+    for (const char* name : {"media_add_with_name", "media_rename"}) {
+        INFO(name);
+        const Value* c = &validCase(name);
+        const Plan plan = Plan::fromJson(*c->find("plan"));
+        CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
+        CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == c->find("planHash")->asString());
+        if (std::string(name) == "media_rename") {
+            doc = siann::command::prepare(doc, siann::command::Command::fromJson(siann::json::parse(
+                                                   R"({"op":"media.add","mediaId":"med_1","contentHash":"sha256:)" +
+                                                   std::string(64, 'c') +
+                                                   R"(","format":"wav","channels":2,"sampleRate":48000,"frames":"1"})")))
+                      .result;
+        }
+        const auto applied = siann::command::prepareTransaction(doc, plan.steps);
+        if (std::string(name) == "media_add_with_name") {
+            REQUIRE(applied.result.media("med_2") != nullptr);
+            CHECK(*applied.result.media("med_2")->name == "Kick \xE8\x81\xB2.wav");
+        } else {
+            CHECK_FALSE(applied.result.media("med_1")->name.has_value());
+            CHECK(applied.result.documentHash() == doc.documentHash());
+        }
+    }
+}
+
 TEST_CASE("Invalid plans are rejected with the fixture's code", "[plan][fixtures]") {
     for (const Value& c : fixture().find("invalid")->asArray()) {
         INFO(c.find("name")->asString());

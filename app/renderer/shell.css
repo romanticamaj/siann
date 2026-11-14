@@ -111,6 +111,64 @@ code, dd, .mono { font-family: var(--font-mono); }
 .top-bar .session-name { font-size: var(--fs-session); color: var(--tx-2); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .top-bar .spacer { flex: 1; }
 .zone-buttons { display: flex; gap: var(--space); }
+
+/* The transport bar (m5-ui-transport; spec 3.1): buttons, the position
+   display (primary over secondary, digits written outside React) and
+   auto-scroll. */
+.transport, .transport-buttons { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
+.transport-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--transport-h);
+  height: var(--transport-h);
+  padding: 0;
+}
+.transport-icon { display: block; }
+.transport-play[aria-pressed="true"] { color: var(--play); border-color: var(--play); }
+.position-display {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto;
+  justify-items: end;
+  min-width: 11ch;
+  padding: 0 calc(var(--space) * 2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  cursor: default;
+}
+.position-primary { font-size: var(--fs-position); color: var(--tx-1); }
+.position-secondary { font-size: var(--fs-small); color: var(--tx-3); }
+.position-display[data-editing="true"] .position-primary { visibility: hidden; }
+.transport-tempo { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); min-width: 7ch; text-align: right; }
+.position-field {
+  position: absolute;
+  top: 0;
+  right: calc(var(--space) * 2);
+  width: 11ch;
+  font: inherit;
+  font-size: var(--fs-position);
+  text-align: right;
+  background: var(--bg-0);
+  border: var(--divider-w) solid var(--select);
+  color: var(--tx-1);
+}
+.position-field[aria-invalid="true"] { border-color: var(--err); }
+/* The position display's time format menu (right-click; spec 3.2). */
+.time-format-menu {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 14ch;
+  padding: calc(var(--space) / 2);
+  background: var(--bg-3);
+  border: var(--divider-w) solid var(--tx-3);
+}
+.time-format-item { justify-content: flex-start; text-align: left; white-space: nowrap; border-color: transparent; }
+.time-format-item[aria-checked="true"]::before { content: "\2713"; margin-right: var(--space); }
+.time-format-item[aria-checked="false"]::before { content: ""; display: inline-block; width: 1ch; margin-right: var(--space); }
 .plans-button { display: inline-flex; align-items: center; gap: var(--space); }
 .plans-count {
   min-width: 16px;
@@ -251,9 +309,22 @@ code, dd, .mono { font-family: var(--font-mono); }
   font-variant-numeric: tabular-nums;
   color: var(--tx-1);
 }
-.media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; }
+.media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; min-width: 0; overflow: hidden; flex: 0 1 auto; }
 .media-pool button[aria-pressed="true"] { outline: 2px solid var(--select); }
 .timeline-error { color: var(--err); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; }
+/* The tools and snap (m5-ui-edit-basics): a segmented pair, a toggle and the grid type. */
+.tool-buttons, .snap-controls { display: flex; gap: 0; align-items: center; flex: none; }
+.tool-buttons .tool { border-radius: 0; }
+.tool-buttons .tool:first-child { border-radius: var(--radius-s) 0 0 var(--radius-s); }
+.tool-buttons .tool:last-child { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
+.tool-buttons .tool + .tool { margin-left: -1px; }
+.tool-buttons .tool[aria-pressed="true"], .snap-toggle[aria-pressed="true"] { background: var(--bg-5); border-color: var(--select); color: var(--tx-1); }
+.snap-controls { gap: var(--space); }
+.grid-type { font-size: var(--fs-small); color: var(--tx-1); }
+/* Shift+Delete's confirmation: the About panel's dialog chrome (below). */
+.confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
+.confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
+.confirm-dialog .danger { background: var(--err); border-color: var(--err); color: var(--bg-0); }
 
 .arrange {
   display: grid;
@@ -686,7 +757,7 @@ code, dd, .mono { font-family: var(--font-mono); }
 .about:hover:not(:disabled) { background: none; color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-sep, .about-license { flex: none; }
-.about-panel {
+.about-panel, .confirm-dialog {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   overflow: auto;
@@ -698,7 +769,7 @@ code, dd, .mono { font-family: var(--font-mono); }
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop { background: rgb(0 0 0 / .45); }
+.about-panel::backdrop, .confirm-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .about-panel h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
 .about-panel h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }

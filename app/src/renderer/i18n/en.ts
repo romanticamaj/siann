@@ -70,6 +70,21 @@ export const en = {
   'tracklist.mute': 'Mute {track}',
   'tracklist.solo': 'Solo {track}',
   'tracklist.meter': '{track} meter',
+  // Editing (m5-ui-edit-basics): the tools, snap and grid, the clip volume
+  // control's tooltip and the track removal confirmation.
+  'tool.label': 'Tools',
+  'tool.select': 'Object Selection',
+  'tool.split': 'Split',
+  'snap.toggle': 'Snap',
+  'snap.grid': 'Grid type',
+  'grid.bar': 'Bar',
+  'grid.beat': 'Beat',
+  'grid.adapt': 'Adapt to Zoom',
+  'clip.gainControl': 'Clip volume: drag up or down, Shift for fine steps',
+  'confirm.removeTracks': ({ count }: { count: number }): string =>
+    plural('en', count, { one: 'Remove the selected track and its clips?', other: `Remove the ${count} selected tracks and their clips?` }),
+  'confirm.remove': 'Remove',
+  'confirm.cancel': 'Cancel',
   // A new track's name; {n} is the next free number.
   'track.defaultName': 'Audio {n}',
   // The info line: the selected clip, read-only.
@@ -95,6 +110,27 @@ export const en = {
   'strip.master': 'Master',
   'inspector.volume': 'Volume',
   'inspector.colour': 'Track colour',
+
+  // The transport bar (m5-ui-transport; UI redesign spec 3.1).
+  'transport.label': 'Transport',
+  'transport.toStart': 'Go to project start',
+  'transport.startStop': 'Start / stop',
+  'transport.stop': 'Stop',
+  // Why the transport is disabled: the device error's code goes in front.
+  'transport.noDevice': 'No audio device is running, so the transport is unavailable',
+  'transport.position': 'Project cursor position',
+  // The position display's tooltip (spec 3.0: no time signature until E-10).
+  'transport.fourFour': 'Bars and beats are counted in 4/4',
+  'transport.positionField': 'Go to position',
+  'transport.autoScroll': 'Auto-scroll',
+  'transport.tempo': 'Tempo at the project cursor (BPM)',
+  // The position display's right-click menu (spec 3.2, P1-2) and undo/redo (spec 3.2).
+  'transport.formatMenu': 'Time format',
+  'transport.formatBars': 'Bars+Beats',
+  'transport.formatSeconds': 'Seconds',
+  'transport.undoRedo': 'Undo and redo',
+  'transport.undo': 'Undo',
+  'transport.redo': 'Redo',
 
   // The Plans tab (m5-ui-plan-panel; UI redesign section 4 and P1-5).
   'plans.label': 'Plans',
@@ -175,7 +211,8 @@ export const en = {
 
   // Plan step descriptions (plans/describe.ts). {track}, {name} and {plugin}
   // are the session's names (never ids), {gain} a formatted dB value, {pan}
-  // L/C/R, {time} and {length} positions in seconds.
+  // L/C/R, {time} a position as the position display's primary format shows
+  // it, {length} a length in seconds.
   'step.aTrack': 'a track',
   'step.aClip': 'a clip',
   'step.clipOn': 'a clip on {track}',
@@ -207,6 +244,8 @@ export const en = {
   'step.setClipGain': 'Set the volume of {clip} to {gain}',
   'step.addMedia': 'Add an audio file to the pool',
   'step.removeMedia': 'Remove an audio file from the pool',
+  'step.renameMedia': 'Rename an audio file in the pool to {name}',
+  'step.unnameMedia': 'Clear the name of an audio file in the pool',
   'step.insertPlugin': 'Insert {plugin}',
   'step.removePlugin': 'Remove {plugin}',
   'step.bypassPlugin': 'Bypass {plugin}',

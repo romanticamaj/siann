@@ -27,6 +27,14 @@
 // its window-level listener is not stopped by inert. The top bar's zone
 // buttons and the status bar send nothing and stay live. The toasts sit
 // outside the zones.
+//
+// The transport (m5-ui-transport; spec 3.1, 3.6): the window's transport
+// keys, undo and redo are registered here over the TransportController
+// (model/transport.ts), and run only while the engine lists them and, for
+// the transport, while a device runs; the period key exchanges the position
+// display's formats and F (project zone) toggles auto-scroll, both view
+// settings of the layout store. Shift+P belongs to the transport bar, which
+// owns the position field.
 
 import {
   useCallback,
@@ -46,11 +54,13 @@ import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
 import { isTextField, resolveKey } from '../keys/dispatcher';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
+import { capabilitySelector } from '../model/capabilities';
 import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zone-focus';
 import type { Phase } from '../model/connection-phase';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
+import { bindTransportCommands, type TransportController } from '../model/transport';
 import {
   effectiveLayout,
   EVENT_MIN_HEIGHT,
@@ -68,6 +78,7 @@ import { StatusBar } from './StatusBar';
 import type { ToastStore } from './toast-store';
 import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
+import { transportEnabled, type TransportPlayhead } from './Transport';
 
 // The order Tab walks the zones in.
 const FOCUS_ORDER: readonly ZoneScope[] = ['left', 'project', 'lower', 'right'];
@@ -76,7 +87,8 @@ const COLLAPSE_THRESHOLD = 4;
 // The focus keys run before any element's handler; the rest after.
 const FOCUS_PRESET = CUBASE_PRESET.filter((b) => FOCUS_COMMANDS.has(b.commandId));
 const COMMAND_PRESET = CUBASE_PRESET.filter((b) => !FOCUS_COMMANDS.has(b.commandId));
-const TABBABLE = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+const TRANSPORT_METHODS = ['transport.play', 'transport.stop', 'transport.locate'];
+const TABBABLE ='a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
 
 function isZoneScope(value: string | undefined): value is ZoneScope {
   return value === 'left' || value === 'project' || value === 'lower' || value === 'right';
@@ -141,6 +153,9 @@ export interface ShellProps {
   // banner and makes the zones inert.
   readonly phase: Phase;
   readonly toasts: ToastStore;
+  // The realtime playhead and the transport (m5-ui-transport).
+  readonly realtime: TransportPlayhead | null;
+  readonly transport: TransportController;
   readonly left: ReactNode;
   readonly project: ReactNode;
   readonly lower: ReactNode;
@@ -278,7 +293,23 @@ function ZoneSeparator({
   );
 }
 
-export function Shell({ client, plans, engineStatus, store, commands, platform, banner, phase, toasts, left, project, lower, right }: ShellProps) {
+export function Shell({
+  client,
+  plans,
+  engineStatus,
+  store,
+  commands,
+  platform,
+  banner,
+  phase,
+  toasts,
+  realtime,
+  transport,
+  left,
+  project,
+  lower,
+  right,
+}: ShellProps) {
   const t = useT();
   const viewport = useViewport();
   const state = useShellState(store);
@@ -427,6 +458,25 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
     return () => offs.forEach((off) => off());
   }, [commands, dispatch, focusZone, isVisible]);
 
+  // The transport, undo and redo; the position display's formats and auto-scroll.
+  useEffect(() => {
+    const can = () => capabilitySelector(client.getState().capabilities);
+    const capable = () => TRANSPORT_METHODS.every((method) => can().has(method));
+    const offs = [
+      bindTransportCommands(commands, transport, {
+        transportReady: () => capable() && transportEnabled(engineStatus.getSnapshot(), client.getState().status === 'connected'),
+        canUndo: () => can().has('session.undo') && can().has('session.redo'),
+      }),
+      commands.register('window', 'transport.exchangeFormats', () => {
+        if (!capable()) return false;
+        store.dispatch({ type: 'exchangeFormats' });
+        return true;
+      }),
+      commands.register('project', 'view.autoScroll', () => store.dispatch({ type: 'autoScroll' })),
+    ];
+    return () => offs.forEach((off) => off());
+  }, [client, commands, engineStatus, store, transport]);
+
   // The keydown listeners: preset table -> dispatcher -> the focused zone
   // first, then the window. The focus keys in the capture phase, before any
   // element's handler (a boundary's, the library's); the rest bubbling, so an
@@ -491,6 +541,11 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
         zones={zones}
         onToggle={(zone) => dispatch((size) => ({ type: 'toggle', zone, viewport: size }))}
         onPlans={() => dispatch((size) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport: size }))}
+        realtime={realtime}
+        engineStatus={engineStatus}
+        layout={store}
+        commands={commands}
+        transport={transport}
       />
       <div className="shell-banner">
         {offline ? (

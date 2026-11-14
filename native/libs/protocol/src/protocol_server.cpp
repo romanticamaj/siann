@@ -296,6 +296,7 @@ const std::vector<std::string_view> kMethods = {
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
     "plan.list",       "plan.preview",    "transport.set_cycle", "transport.set_click",
     "record.arm",      "transport.record", "record.recover_take",
+    "session.create",  "media.import",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -550,6 +551,36 @@ std::string nextSlotId(const command::History& history) {
     return "slt_" + std::to_string(highest + 1);
 }
 
+// med_<n> above every med_<n> any revision of the history holds (Jobs v0,
+// import), as nextSlotId does for slots.
+std::string nextMediaId(const command::History& history) {
+    std::uint64_t highest = 0;
+    for (const command::Revision& revision : history.revisions()) {
+        for (const model::Media* entity : revision.document.allMedia()) {
+            const std::string& id = entity->id;
+            if (id.size() <= 4 || id.compare(0, 4, "med_") != 0 || id.size() > 4 + 19) {
+                continue;
+            }
+            const bool digits = std::all_of(id.begin() + 4, id.end(), [](char c) { return c >= '0' && c <= '9'; });
+            if (digits) {
+                highest = std::max<std::uint64_t>(highest, std::stoull(id.substr(4)));
+            }
+        }
+    }
+    return "med_" + std::to_string(highest + 1);
+}
+
+// A path the engine reads or writes on the user's disk (session.create,
+// media.import): absolute, and not UNC (\\server\share, \\?\UNC\..., //server).
+std::filesystem::path localAbsolutePath(const std::string& text, std::string_view method) {
+    const bool unc = text.size() >= 2 && (text[0] == '\\' || text[0] == '/') && (text[1] == '\\' || text[1] == '/');
+    const std::filesystem::path path(std::u8string(text.begin(), text.end()));
+    if (unc || !path.is_absolute()) {
+        throw ProtocolError("invalid_params", std::string(method) + ": path must be an absolute local path, not UNC");
+    }
+    return path;
+}
+
 // ^[A-Za-z0-9._-]{1,64}$ and not "." or "..": a file name, never a path.
 // GET /v0/peaks/<sha256 hex> (Protocol v0 item 23).
 constexpr std::string_view kPeaksPrefix = "/v0/peaks/";
@@ -596,7 +627,7 @@ struct ProtocolServer::Impl {
                  options.events),
           readModel(options.syncChunkEntities),
           realtime(t, options.realtime),
-          jobs(options.jobs.workerThread),
+          jobs(options.jobs.workerThread, [this] { inbox.wake(); }),
           mcp([this](std::string requestId, std::string method, Value params,
                      std::function<void(const std::string&)> done) {
               return submitMcp(std::move(requestId), std::move(method), std::move(params), std::move(done));
@@ -637,6 +668,8 @@ struct ProtocolServer::Impl {
     std::map<std::string, Lease> leases;
     // Closes the inbox could not take (it was full), under `mutex`.
     std::vector<ConnectionId> closedOverflow;
+    // media.import's clientImportId -> jobId for the served session; command thread.
+    std::map<std::string, std::string, std::less<>> importIds;
 
     bool started = false;
     std::atomic<bool> running{false};
@@ -1614,7 +1647,8 @@ struct ProtocolServer::Impl {
                                       {"locators", Value(true)},
                                       {"cycle", Value(options.transportPort != nullptr)},
                                       {"click", Value(options.transportPort != nullptr)},
-                                      {"recording", Value(options.recordPort != nullptr)}})},
+                                      {"recording", Value(options.recordPort != nullptr)},
+                                      {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
@@ -1839,9 +1873,50 @@ struct ProtocolServer::Impl {
         if (!std::filesystem::is_directory(path, ec)) {
             throw ProtocolError("not_found", "no session bundle at this path");
         }
-        session::Session& next = options.openSession(path);
+        return serveNew(request, options.openSession(path));
+    }
+
+    // session.create (Protocol v0 item 27).
+    std::string sessionCreate(const Pending& request) {
+        const std::string_view method = "session.create";
+        const std::string& pathText = requireString(request.params, "path", method);
+        const std::optional<std::string> given = optionalString(request.params, "name", method);
+        if (!options.createSession) {
+            throw ProtocolError("not_supported", "this engine host cannot create a session");
+        }
+        const std::filesystem::path path = localAbsolutePath(pathText, method);
+        if (given && given->empty()) {
+            throw ProtocolError("invalid_params", "session.create: name must not be empty");
+        }
+        std::error_code ec;
+        if (std::filesystem::exists(std::filesystem::symlink_status(path, ec))) {
+            throw ProtocolError("already_exists", "something already exists at this path");
+        }
+        if (!std::filesystem::is_directory(path.parent_path(), ec)) {
+            throw ProtocolError("not_found", "the parent directory of this path does not exist");
+        }
+        std::string rootName = given.value_or(utf8(path.stem()));
+        if (rootName.empty()) {
+            rootName = "Untitled";
+        }
+        // The rate the output device runs at ("Sample rate and media").
+        std::int64_t sampleRate = 48'000;
+        if (options.transportPort != nullptr) {
+            const EngineStatus status = options.transportPort->status();
+            if (status.device && status.device->sampleRate > 0) {
+                sampleRate = status.device->sampleRate;
+            }
+        }
+        return serveNew(request, options.createSession(path, rootName, sampleRate));
+    }
+
+    // After session.open or session.create: serves `next` under a new sessionId
+    // (Protocol v0 item 16). Imports into the old session are cancelled.
+    std::string serveNew(const Pending& request, session::Session& next) {
         session = &next;
         dropLeases();
+        jobs.cancelImports();
+        importIds.clear();
         const command::Revision& head = next.history().head();
         const std::string nextId = "ses_" + randomHex(16);
         {
@@ -1858,6 +1933,113 @@ struct ProtocolServer::Impl {
                        Value(Object{{"sessionId", Value(nextId)},
                                     {"revision", Value(head.envelope.id)},
                                     {"documentHash", Value(hash::formatHash(head.envelope.documentHash))}}));
+    }
+
+    // media.import (Jobs v0, import): queues the job; the worker prepares it and
+    // finishImports() commits it.
+    std::string mediaImport(const Pending& request) {
+        const std::string_view method = "media.import";
+        const std::string& pathText = requireString(request.params, "path", method);
+        const std::string& clientImportId = requireString(request.params, "clientImportId", method);
+        if (clientImportId.empty() || clientImportId.size() > 128) {
+            throw ProtocolError("invalid_params", "media.import: clientImportId must be 1 to 128 bytes");
+        }
+        const std::filesystem::path path = localAbsolutePath(pathText, method);
+        const auto known = importIds.find(clientImportId);
+        if (known != importIds.end()) {
+            // The first job's answer; nothing new starts.
+            const std::optional<Value> status = jobs.status(known->second);
+            return success(request.requestId, Value(Object{{"jobId", Value(known->second)},
+                                                           {"kind", Value("media.import")},
+                                                           {"state", status ? *status->find("state") : Value("failed")}}));
+        }
+        detail::ImportRequest job;
+        job.bundle = session->bundlePath();
+        job.sessionRate = session->history().head().document.root().sampleRate;
+        job.path = path;
+        job.open = options.openImportSource;
+        job.owner = session;
+        std::string jobId = jobs.startImport(std::move(job));
+        importIds.emplace(clientImportId, jobId);
+        return success(request.requestId, Value(Object{{"jobId", Value(std::move(jobId))},
+                                                       {"kind", Value("media.import")},
+                                                       {"state", Value("queued")}}));
+    }
+
+    static Value importResult(const model::Media& entity, const std::string& revision, bool existing) {
+        Object out{{"mediaId", Value(entity.id)},
+                   {"revision", Value(revision)},
+                   {"contentHash", Value(hash::formatHash(entity.contentHash))},
+                   {"frames", Value(std::to_string(entity.frames))},
+                   {"sampleRate", Value(static_cast<double>(entity.sampleRate))},
+                   {"channels", Value(static_cast<double>(entity.channels))},
+                   {"converted", Value(entity.originalHash.has_value())}};
+        if (entity.name) {
+            out.emplace_back("name", Value(*entity.name));
+        }
+        if (entity.originalHash) {
+            out.emplace_back("originalHash", Value(hash::formatHash(*entity.originalHash)));
+        }
+        if (existing) {
+            out.emplace_back("existing", Value(true));
+        }
+        return Value(std::move(out));
+    }
+
+    // Command thread: commits the imports the worker prepared. Content the head
+    // already holds answers its media; nothing is committed then.
+    void finishImports() {
+        for (detail::FinishedImport& finished : jobs.takeFinishedImports()) {
+            if (finished.owner != session) {
+                session::discardImport(finished.prepared);
+                jobs.failImport(finished.jobId, "cancelled", "the session changed before the import's commit");
+                continue;
+            }
+            const command::Revision& head = session->history().head();
+            const model::Media* known = nullptr;
+            for (const model::Media* entity : head.document.allMedia()) {
+                if (entity->contentHash == finished.prepared.contentHash) {
+                    known = entity;
+                    break;
+                }
+            }
+            if (known != nullptr) {
+                Value result = importResult(*known, head.envelope.id, true);
+                if (!known->name && model::isValidMediaName(finished.prepared.name)) {
+                    Object fields = result.asObject();
+                    fields.emplace_back("name", Value(finished.prepared.name));
+                    result = Value(std::move(fields));
+                }
+                jobs.completeImport(finished.jobId, std::move(result));
+                continue;
+            }
+            try {
+                // A pointer, not a reference: GCC's -Wdangling-reference.
+                const command::Revision* committed = &session::commitImport(
+                    *session, finished.prepared, nextMediaId(session->history()), options.actor, options.clock());
+                const command::Revision& revision = *committed;
+                events.publishRevision(revision);
+                if (options.auditionPort != nullptr) {
+                    options.auditionPort->mainCommitted();
+                }
+                const model::Media* added = nullptr;
+                for (const model::Media* entity : revision.document.allMedia()) {
+                    if (entity->contentHash == finished.prepared.contentHash) {
+                        added = entity;
+                    }
+                }
+                jobs.completeImport(finished.jobId, importResult(*added, revision.envelope.id, false));
+            } catch (const command::CommandError& e) {
+                session::discardImport(finished.prepared);
+                jobs.failImport(finished.jobId, e.code(), e.what());
+            } catch (const session::SessionError& e) {
+                session::discardImport(finished.prepared);
+                jobs.failImport(finished.jobId, e.code(), e.what());
+            } catch (const std::exception& e) {
+                session::discardImport(finished.prepared);
+                jobs.failImport(finished.jobId, "internal_error", e.what());
+            }
+        }
     }
 
     // Command thread.
@@ -1944,6 +2126,12 @@ struct ProtocolServer::Impl {
         }
         if (method == "session.open") {
             return sessionOpen(request);
+        }
+        if (method == "session.create") {
+            return sessionCreate(request);
+        }
+        if (method == "media.import") {
+            return mediaImport(request);
         }
         if (method == "transport.play") {
             return success(request.requestId, transportStateJson(requireTransport().play()));
@@ -2119,7 +2307,8 @@ struct ProtocolServer::Impl {
     // The methods that can change the flags: the two setters, and session.open
     // (the engine takes the opened bundle's cycle flag).
     static bool touchesTransportFlags(const std::string& method) {
-        return method == "transport.set_cycle" || method == "transport.set_click" || method == "session.open";
+        return method == "transport.set_cycle" || method == "transport.set_click" || method == "session.open" ||
+               method == "session.create";
     }
 
     // Command thread: runs the request, then publishes the lifecycle events it caused.
@@ -2285,6 +2474,7 @@ struct ProtocolServer::Impl {
         // What the engine host's tick changed since: a take's start, its durable
         // frames, an early end and its commit (m5b-engine-record).
         syncRecordState();
+        finishImports();
         refreshMediaTable();
         events.flush();
     }
@@ -2352,6 +2542,8 @@ void ProtocolServer::stop() {
         impl_->transport.stop();
         impl_->started = false;
     }
+    // A running import is interrupted and ends cancelled before the worker joins.
+    impl_->jobs.cancelImports();
     impl_->jobs.stop();
 }
 
@@ -2411,6 +2603,10 @@ std::size_t ProtocolServer::runJobs() {
 
 bool ProtocolServer::waitJob(const std::string& jobId, std::chrono::milliseconds timeout) {
     return impl_->jobs.wait(jobId, timeout);
+}
+
+std::optional<json::Value> ProtocolServer::jobStatus(const std::string& jobId) const {
+    return impl_->jobs.status(jobId);
 }
 
 }  // namespace siann::protocol

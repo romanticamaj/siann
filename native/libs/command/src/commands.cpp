@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <optional>
 #include <utility>
 
 #include "siann/model/field_reader.hpp"
@@ -83,6 +84,15 @@ time::Position positionParam(FieldReader& r, std::string_view key) {
         return time::Position::music(value);
     }
     r.fail(key, "domain must be audio or music");
+}
+
+// The media name (m5b-engine-project-media): 1 to 255 bytes of UTF-8.
+std::string mediaNameParam(FieldReader& r) {
+    const std::string name = r.string("name");
+    if (!model::isValidMediaName(name)) {
+        r.fail("name", "must be 1 to 255 bytes of UTF-8");
+    }
+    return name;
 }
 
 const Track& requireTrack(const Document& doc, const std::string& id) {
@@ -179,11 +189,34 @@ Prepared mediaAdd(const Document& doc, const Command& command) {
     m.channels = static_cast<std::int32_t>(p->integer("channels", INT32_MIN, INT32_MAX));
     m.sampleRate = p->integer("sampleRate", 0, INT32_MAX);
     m.frames = p->int64String("frames");
+    if (p->optional("name") != nullptr) {
+        m.name = mediaNameParam(*p);
+    }
     p.finish();
     if (doc.media(m.id) != nullptr) {
         throw CommandError("already_exists", "media with id " + m.id + " already exists");
     }
     const std::string id = m.id;
+    return {{mediaRef(id)}, doc.withMedia(std::move(m))};
+}
+
+// media.rename {mediaId, name}: a string sets the display name, null removes it
+// (the entity then hashes as it did before it had one).
+Prepared mediaRename(const Document& doc, const Command& command) {
+    Params p(command);
+    const std::string id = p->string("mediaId");
+    const json::Value& given = p->require("name");
+    std::optional<std::string> name;
+    if (given.kind() != json::Value::Kind::null) {
+        name = mediaNameParam(*p);
+    }
+    p.finish();
+    const Media* existing = doc.media(id);
+    if (existing == nullptr) {
+        throw CommandError("not_found", "no media with id " + id);
+    }
+    Media m = *existing;
+    m.name = std::move(name);
     return {{mediaRef(id)}, doc.withMedia(std::move(m))};
 }
 
@@ -395,6 +428,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
          }},
         {"media.add", &mediaAdd},
         {"media.remove", &mediaRemove},
+        {"media.rename", &mediaRename},
         {"plugin.insert", &pluginInsert},
         {"plugin.remove", &pluginRemove},
         {"plugin.set_bypass", &pluginSetBypass},

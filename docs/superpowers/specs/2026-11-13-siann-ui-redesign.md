@@ -226,7 +226,7 @@ Applied to what the mockup shows:
 | Click the locator range | Toggle cycle | P1-7 |
 | Drag the range; drag an end | Move it; adjust it | P1-7 |
 | `Ctrl`-click / `Alt`-click the upper half | Set the left / right locator | P1-7 |
-| Right-click | Time format menu | P1-2 |
+| Right-click | Time format menu | Phase 3, with a Seconds ruler: the ruler draws Bars+Beats only (P1-3), so a format menu on it would change nothing it shows; P1-2 exchanges the position display's formats with `.` |
 
 The locator range is shown as a band with L and R flags in the ruler and a tint over the tracks; it is light when cycle is on and grey when off. If the right locator is before the left with cycle on, Cubase skips the range; SIANN refuses that order in E-1's first version.
 
@@ -740,8 +740,8 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 
 **P1-2 Transport and project cursor** (`m5-ui-transport`)
 
-- Scope: start/stop, stop, go to start in the top bar; `Space`, numpad `Enter`, `Num 0`, `Num .` and `,`; position display in Bars+Beats and Seconds, `.` to exchange, `Shift+P` to type; the project cursor (drawn by P1-3) follows at display rate with zero React commits; click in the lower half of the ruler to locate; auto-scroll in page mode on `F`, suspended during a drag; undo and redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
-- Acceptance: `Space` toggles playback; the cursor and the display run at display rate with zero React commits; locating while stopped moves the cursor; at 120 BPM the display reads 3.1.000 at 4 s; with auto-scroll on, the view pages when the cursor leaves it and does not move during a clip drag; with no audio device the transport is disabled and its tooltip says why.
+- Scope: start/stop, stop, go to start in the top bar; `Space`, numpad `Enter`, `Num 0`, `Num .` and `,`; position display in Bars+Beats and Seconds, `.` to exchange, `Shift+P` to type; the project cursor (drawn by P1-3) follows at display rate with zero React commits; click in the lower half of the ruler or `Shift+Alt`-click in the event display to locate; auto-scroll in page mode on `F`, suspended during a drag; undo and redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
+- Acceptance: `Space` toggles playback; the cursor and the display run at display rate with zero React commits; locating while stopped moves the cursor, from the ruler or by `Shift+Alt`-click in the event display; at 120 BPM the display reads 3.1.000 at 4 s; with auto-scroll on, the view pages when the cursor leaves it and does not move during a clip drag; with no audio device the transport is disabled and its tooltip says why.
 - Tests: unit (frames to bars.beats.ticks across a tempo change; auto-scroll paging decision); e2e (play, locate, stop on the fake device; typed position).
 - Tour states changed: 04; the top bar in every state.
 - Protocol used: `transport.play/stop/locate`, the realtime playhead and playing flag, `session.undo/redo`, `root.tempo`.
@@ -810,9 +810,15 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 - Scope: tools `1` and `3`; `Alt`-drag copy; `Ctrl`-drag constrain; `Alt`-click and `Alt+X` split; `Ctrl+D` duplicate; resize from the lower corners with `Ctrl` to disable snap; the clip volume control; snap on `J` with type Grid and grid types Bar, Beat and Adapt to Zoom; `Shift`-click and `Ctrl+A` selection; `L`, `N`, `B`; `Alt+S` and `Shift+E`; `M` and `S` on the selected track; track selection; `Shift+Delete` with confirmation.
 - Acceptance: each operation commits exactly one revision and one undo restores the previous state; a split at bar 3 of a clip with a non-zero source offset yields two clips whose audio is continuous (the right piece's `sourceStart` is the left piece's plus its length); a duplicate of several clips lands as one unit directly after the selection; with snap on and grid Bar, a dragged clip lands on bar lines and `Ctrl` while resizing ignores the grid; Adapt to Zoom changes the grid step when zooming.
 - Tests: unit (a command builder per operation, following `clip-commands.test.ts`; snap maths per grid type); e2e (each operation, asserting one revision and a correct undo).
-- Tour states changed: 10, 11, 12 (handles and snapped positions); appends 25 "clip split and duplicated".
+- Tour states changed: 01–22 (every project-zone state shows the edit toolbar: Object Selection and Split, Snap, grid type); 10, 11, 12 also show the corner handles and the snapped drop, and 13–22 keep the snapped clip position; the review reads 01, 10, 11, 12; appends 25 "clip split and duplicated".
 - Protocol used: `command.execute` with `clip.place/trim/move/remove/set_gain`, `track.set_mute/solo`, `track.remove`.
-- Risks: the largest gesture surface in phase 1; the tool-modifier table from P1-1 keeps it in one place.
+- Risks: the largest gesture surface in phase 1; the tool-modifier table (the second small table of 3.6, `keys/tool-modifiers.ts`, created by this ticket: P1-1 created only the key table) keeps it in one place.
+- Notes:
+  - Key rows (scope project, Cubase preset): `1` select tool, `3` split tool, `Alt+X` split at cursor, `Ctrl+D` duplicate, `J` snap on / off, `Ctrl+A` select all, `L` locate selection start, `N` / `B` next / previous clip, `Alt+S` zoom to selection, `Shift+E` zoom to the selected clip (Zoom to Event), `M` / `S` mute / solo the selected tracks, `Shift+Delete` remove the selected tracks. Tool modifiers: copy `Alt`, split-click `Alt`, constrain `Ctrl` (`Cmd` on macOS), ignore snap while resizing `Ctrl` (`Cmd`), fine `Shift`. A pointer that moves less than the drag threshold (3 px) is a click, so `Alt`-click splits and `Alt`-drag copies; the constrained axis is the dominant one once the pointer is 4 px away.
+  - Snap type Grid is absolute: a moved or copied selection moves by the delta that puts the dragged clip's start on the nearest grid line, a resized edge lands on a grid line, a split by click and a placement land on a grid line; `Alt+X` splits at the cursor as it is. Grid Bar is 7680 ticks, Beat 1920 (4/4 until E-10), through `root.tempo`. Adapt to Zoom takes the finest step of 1/64 note, 1/32, 1/16, 1/8, a beat and a bar (120, 240, 480, 960, 1920, 7680 ticks) whose lines are at least 10 px apart at the current zoom, and Bar when none is; so it never goes below 1/64 or above a bar.
+  - The snap state (on / off and the grid type) is a view setting kept in `siann.layout.v1` with the zone layout, per user and not per session, and never sent to the engine; a stored layout without it reads as snap on, grid Adapt to Zoom (4.5 C10).
+  - `M` and `S` with several tracks selected set every selected track to the opposite of the primary (last clicked) track's state, in one `command.execute`. The track selection is a primary track plus a set (click selects one, `Ctrl`-click toggles, `Shift`-click selects the range from the primary in track order); the Inspector shows the primary.
+  - Tour state 25 is numbered explicitly: the tour writes it after 22 and leaves 23 and 24 to P1-7.
 
 Phase 1 ends with the maintainer's review of the tour in three locales (human gate `ui-redesign-review`) and the confirmation of the glossary (`zh-glossary`).
 

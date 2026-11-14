@@ -1064,6 +1064,78 @@ TEST_CASE("session.open serves another bundle, plays it and releases the first b
     CHECK_FALSE(fs::exists(second / "lock"));
 }
 
+// m5b-engine-project-media (Protocol v0 item 27, Jobs v0 import).
+TEST_CASE("session.create rebinds the engine to a new bundle at the device rate and media.import fills its pool",
+          "[engine][launch][session][media]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path first = dir.path() / "A.siann";
+    const fs::path created = dir.path() / "Fresh.siann";
+    writeBundle(first, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(first));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const std::int64_t deviceRate =
+            static_cast<std::int64_t>(at(at(client.ok("engine.status"), "device"), "sampleRate").asNumber());
+        const Value made = client.ok("session.create", Value(Object{{"path", Value(utf8(created))}}));
+        CHECK(at(made, "revision").asString() == "r1");
+        client.useSession(at(made, "sessionId").asString());
+
+        // The old bundle's lock is gone; the new one is held by the engine.
+        CHECK_FALSE(fs::exists(first / "lock"));
+        CHECK(fs::exists(created / "lock"));
+        const Value synced = client.ok("session.sync");
+        const Value& root = at(at(synced, "chunk"), "root");
+        CHECK(at(root, "name").asString() == "Fresh");
+        CHECK(static_cast<std::int64_t>(at(root, "sampleRate").asNumber()) == deviceRate);
+        CHECK(at(at(synced, "chunk"), "media").asArray().empty());
+
+        // The device stayed and plays the new, empty session.
+        const Value status = client.ok("engine.status");
+        CHECK(at(at(status, "device"), "id").asString() == "fake");
+        CHECK(status.find("deviceError") == nullptr);
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();
+        client.ok("transport.stop");
+
+        // A WAV the test wrote, at another rate: imported as a job, a clip-less media.
+        const fs::path wav = dir.path() / "Drum Loop.wav";
+        media::AudioBuffer loop = live_rig::distinct(2, 44'100);
+        loop.info.sampleRate = 44'100;
+        io::writeFileAtomic(wav, media::encodeWavFloat32(loop));
+        const Value queued = client.ok("media.import",
+                                       Value(Object{{"path", Value(utf8(wav))}, {"clientImportId", Value("imp-1")}}));
+        const Value jobParams(Object{{"jobId", at(queued, "jobId")}});
+        Value status2;
+        for (int i = 0; i < 10'000; ++i) {  // polls the job; each poll is a round trip
+            status2 = client.ok("job.status", jobParams);
+            const std::string state = at(status2, "state").asString();
+            if (state == "done" || state == "failed") {
+                break;
+            }
+        }
+        INFO(jcs::canonicalize(status2));
+        REQUIRE(at(status2, "state").asString() == "done");
+        const Value& result = at(status2, "result");
+        CHECK(at(result, "mediaId").asString() == "med_1");
+        CHECK(at(result, "name").asString() == "Drum Loop.wav");
+        CHECK(at(result, "converted").asBool() == (deviceRate != 44'100));
+
+        const Value after = client.ok("session.sync");
+        const auto& pool = at(at(after, "chunk"), "media").asArray();
+        REQUIRE(pool.size() == 1);
+        CHECK(at(pool[0], "id").asString() == "med_1");
+        CHECK(at(pool[0], "name").asString() == "Drum Loop.wav");
+        CHECK(at(at(after, "chunk"), "clips").asArray().empty());
+        CHECK(at(after, "revision").asString() == "r2");
+    }
+    CHECK(stopEngine(child) == 0);
+    CHECK_FALSE(fs::exists(created / "lock"));
+    const session::Session reopened = session::Session::open(created);
+    CHECK(reopened.history().head().document.media("med_1") != nullptr);
+}
+
 TEST_CASE("a second engine on a served bundle exits with session_locked; a third launches once the first ends",
           "[engine][launch][session]") {
     ix::initNetSystem();
@@ -2279,7 +2351,7 @@ TEST_CASE("session.open takes the opened bundle's cycle flag", "[engine][launch]
     CHECK_FALSE(session::Session::open(second).cycle());
 }
 
-// ---- recording through the protocol (m5b-engine-record, Protocol v0 item 27) ----
+// ---- recording through the protocol (m5b-engine-record, Protocol v0 item 28) ----
 
 namespace {
 

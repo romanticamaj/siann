@@ -410,6 +410,16 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
             served = std::move(next);
             return *served;
         };
+        // session.create (Protocol v0 item 27): the same hand-over, with a new empty
+        // bundle at the device's rate (the server checked the path and chose the rate).
+        serverOptions.createSession = [&served, &host](const fs::path& path, const std::string& rootName,
+                                                       std::int64_t sampleRate) -> session::Session& {
+            auto next = std::make_unique<session::Session>(session::Session::create(
+                path, model::Document::create(rootName, sampleRate, 120'000), "siann-engine", nowUtc()));
+            host.rebind(*next);
+            served = std::move(next);
+            return *served;
+        };
         protocol::IxTransport transport;
         protocol::ProtocolServer server(transport, *served, serverOptions);
         host.attachPublisher(server.realtime(), server.events());

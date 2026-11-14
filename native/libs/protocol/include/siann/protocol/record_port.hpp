@@ -1,7 +1,7 @@
 #pragma once
 
 // The protocol server's way to recording (m5b-engine-record; architecture spec,
-// "Recording", Protocol v0 item 27; docs/schemas/protocol-engine-v0.md). The
+// "Recording", Protocol v0 item 28; docs/schemas/protocol-engine-v0.md). The
 // engine host implements it beside TransportPort and hands it to the server in
 // ServerOptions::recordPort. Every call runs on the command thread. Refusals are
 // TransportPortError (no_device, no_input, not_found, nothing_armed,

@@ -174,7 +174,7 @@ public:
     protocol::DeviceInfo selectDeviceWithInput(const std::string& id,
                                                const std::optional<std::string>& inputId) override;
 
-    // protocol::RecordPort (Protocol v0 item 27), on the command thread.
+    // protocol::RecordPort (Protocol v0 item 28), on the command thread.
     protocol::RecordState arm(const std::string& trackId, bool armed) override;
     protocol::TransportState record(bool enabled) override;
     protocol::RecordState recordState() const override;

@@ -32,7 +32,7 @@ struct TransportState {
     std::int64_t position = 0;  // session frames
     bool cycle = false;         // Protocol v0 item 26
     ClickState click;
-    // Protocol v0 item 27 (m5b-engine-record): a recording runs, and the armed tracks.
+    // Protocol v0 item 28 (m5b-engine-record): a recording runs, and the armed tracks.
     bool recording = false;
     std::vector<std::string> armed{};
 };
@@ -83,7 +83,7 @@ struct EngineStatus {
     bool playing = false;
     bool cycle = false;
     ClickState click;
-    bool recording = false;  // Protocol v0 item 27
+    bool recording = false;  // Protocol v0 item 28
     std::vector<std::string> armed{};
     std::uint64_t xruns = 0;
     double maxCallbackMicros = 0.0;

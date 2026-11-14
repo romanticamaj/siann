@@ -95,6 +95,34 @@ function buildFixture() {
       ],
       writeSet: [entry('track', 'trk_1')],
     }],
+    // m5b-engine-project-media: the media entity's optional name, set by media.add
+    // and by media.rename (null removes it).
+    ['media_add_with_name', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r3',
+      steps: [{
+        op: 'media.add',
+        mediaId: 'med_2',
+        contentHash: h('kick.wav'),
+        format: 'wav',
+        channels: 2,
+        sampleRate: 48000,
+        frames: '96000',
+        name: 'Kick 聲.wav',
+      }],
+      readSet: [],
+      writeSet: [entry('media', 'med_2', null)],
+    }],
+    ['media_rename', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r5',
+      steps: [
+        { op: 'media.rename', mediaId: 'med_1', name: 'Loop A.flac' },
+        { op: 'media.rename', mediaId: 'med_1', name: null },
+      ],
+      readSet: [],
+      writeSet: [entry('media', 'med_1')],
+    }],
     ['non_bmp_key_in_step', {
       ...minimal,
       steps: [{ op: 'session.rename', name: 'Song \u{1F3B5}', '': 'private use', '\u{1F3B5}': 'note' }],
