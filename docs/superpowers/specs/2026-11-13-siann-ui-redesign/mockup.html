@@ -130,8 +130,9 @@ const mixHex=(a,b,t)=>{const A=hex(a),B=hex(b);return '#'+A.map((v,i)=>Math.roun
 const rgba=(h,a)=>`rgba(${hex(h).join(',')},${a})`;
 const fdb=v=>v===null?'−∞':(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(1);
 const fpan=p=>p===0?'C':(p<0?'L':'R')+Math.abs(p);
-// audio taper: 0 dB at 75 % of travel, top at +6 dB (Cubase's default Volume Max)
-const BP=[[0,-144],[.05,-60],[.15,-40],[.3,-24],[.45,-12],[.6,-6],[.75,0],[1,6]];
+// audio taper: 0 dB at 75 % of travel, top at +6 dB (Cubase's default Volume Max). The breakpoints are the
+// spec's (4.5 C7) and the app's (app/src/renderer/mixer/taper.ts): -12 dB at 50 % of travel.
+const BP=[[0,-144],[.05,-60],[.15,-40],[.3,-24],[.5,-12],[.75,0],[1,6]];
 const pos=db=>{for(let i=1;i<BP.length;i++){if(db<=BP[i][1]){const[a,x]=BP[i-1],[b,y]=BP[i];return a+(b-a)*(db-x)/(y-x)}}return 1};
 const SCALE=[[6,'6'],[0,'0'],[-6,'6'],[-12,'12'],[-24,'24'],[-40,'40'],[-60,'60']];
 
@@ -142,7 +143,7 @@ function knob(pan,ghost,id){
     return p===0?'':`<path d="M${x0} ${y0}A9.5 9.5 0 0 1 ${x1} ${y1}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`};
   const [bx0,by0]=pt(a(-100),9.5),[bx1,by1]=pt(a(100),9.5);const [nx,ny]=pt(a(pan),6.5),[cx,cy]=pt(a(pan),2.5);
   let g='';
-  if(ghost!==undefined){const [gx,gy]=pt(a(ghost),10.5),[hx,hy]=pt(a(ghost),5);g=`<path d="M${hx} ${hy}L${gx} ${gy}" stroke="${AI}" stroke-width="2" stroke-linecap="round"/><circle cx="${gx}" cy="${gy}" r="2" fill="${AI}"/>`}
+  if(ghost!==undefined){const [gx,gy]=pt(a(ghost),10.5),[hx,hy]=pt(a(ghost),5);g=`<g ${id?dp(id+'-ghost'):''}><path d="M${hx} ${hy}L${gx} ${gy}" stroke="${AI}" stroke-width="2" stroke-linecap="round"/><circle cx="${gx}" cy="${gy}" r="2" fill="${AI}"/></g>`}
   return `<svg class="knob" ${id?dp(id):''} viewBox="0 0 24 24"><path d="M${bx0} ${by0}A9.5 9.5 0 1 1 ${bx1} ${by1}" stroke="#07080A" stroke-width="2.4" fill="none" stroke-linecap="round"/>
   ${arc(pan,'#E8EBF1',2)}<circle cx="12" cy="12" r="7" fill="#2A303B" stroke="#000"/><circle cx="12" cy="11.5" r="6.2" fill="url(#kg)"/>
   <path d="M${cx} ${cy}L${nx} ${ny}" stroke="#F2F4F8" stroke-width="1.6" stroke-linecap="round"/>${g}</svg>`;
@@ -165,21 +166,23 @@ const th=(t,i)=>`
   </div>
  </div>`;
 
-// A MixConsole strip in Cubase's order: (inserts rack) · pan · M S e · fader + meter · level and peak · R W record · name
+// A MixConsole strip in Cubase's order: (inserts rack) · pan · M S e · fader + meter · level and peak · R W record · name.
+// What the pending plan adds to a strip (step badges, the ghost needle and value of pan, the line to the ghost cap) is a
+// part of its own with "ghost" in its id, so the fidelity gate leaves it to the feature that draws ghosts.
 function strip(t,i){
   const k='strip-'+tk(t,i);
   const y=p=>`${(p*100).toFixed(1)}%`;
   const scale=SCALE.map(([d,l])=>`<span style="bottom:${y(pos(d))}">${l}</span>`).join('');
-  const ghostCap=t.gDb!==undefined?`<div class="gline" style="bottom:${y(pos(t.db))};height:${((pos(t.gDb)-pos(t.db))*100).toFixed(1)}%"></div><div class="cap ghost" ${dp(k+'-cap-ghost')} style="bottom:${y(pos(t.gDb))}"></div>`:'';
+  const ghostCap=t.gDb!==undefined?`<div class="gline" ${dp(k+'-gain-line-ghost')} style="bottom:${y(pos(t.db))};height:${((pos(t.gDb)-pos(t.db))*100).toFixed(1)}%"></div><div class="cap ghost" ${dp(k+'-cap-ghost')} style="bottom:${y(pos(t.gDb))}"></div>`:'';
   const m=t.m.map(v=>`<div class="ch"><i style="height:${(v*100).toFixed(0)}%"></i>${v?`<u style="bottom:${Math.min(98,v*100+7).toFixed(0)}%"></u>`:''}</div>`).join('');
   const ro=t.gDb!==undefined?`<span>${fdb(t.db)}</span><span class="to">→ ${fdb(t.gDb)}</span>`:`<span>${fdb(t.db)}</span><span class="pk">${t.pk===null?'':fdb(t.pk)}</span>`;
-  const gainBadge=t.gDb!==undefined?`<span class="stepn" style="right:4px;top:118px">${t.gStep}</span>`:'';
+  const gainBadge=t.gDb!==undefined?`<span class="stepn" ${dp(k+'-gain-step-ghost')} style="right:4px;top:118px">${t.gStep}</span>`:'';
   return `<div class="strip ${t.ghost?'ghost':''} ${t.mute?'muted':''} ${t.sel?'sel':''}" ${dp(k)} style="--c:${t.c}">
    ${gainBadge}
    <div class="ins" ${dp(k+'-inserts')}>${t.ins.map(s=>s==='—'?`<div class="slot empty">+</div>`:`<div class="slot">${s}</div>`).join('')}</div>
-   <div class="panrow" ${dp(k+'-pan')}>${t.gPan!==undefined?`<span class="lab" style="display:flex;justify-content:flex-end"><span class="stepn">${t.gStep}</span></span>`:`<span class="lab" style="text-align:right;color:var(--tx-4);font-size:${LANG==='en'?10:10.5}px">${L('PAN')}</span>`}${knob(t.pan,t.gPan,k+'-pan-knob')}<span class="lab" style="${t.gPan!==undefined?'color:var(--ai-2)':''}">${t.gPan!==undefined?fpan(t.gPan):fpan(t.pan)}</span></div>
+   <div class="panrow" ${dp(k+'-pan')}>${t.gPan!==undefined?`<span class="lab" ${dp(k+'-pan-step-ghost')} style="display:flex;justify-content:flex-end"><span class="stepn">${t.gStep}</span></span>`:`<span class="lab" style="text-align:right;color:var(--tx-4);font-size:${LANG==='en'?10:10.5}px">${L('PAN')}</span>`}${knob(t.pan,t.gPan,k+'-pan-knob')}<span class="lab" ${t.gPan!==undefined?dp(k+'-pan-value-ghost'):''} style="${t.gPan!==undefined?'color:var(--ai-2)':''}">${t.gPan!==undefined?fpan(t.gPan):fpan(t.pan)}</span></div>
    <div class="btns" ${dp(k+'-buttons')}>${t.ghost?`<span style="font-size:9.5px;color:var(--ai-2);font-weight:600;letter-spacing:.04em">${L('NEW · STEP 1')}</span>`:
-      `${t.gUnmute?`<span class="stepn">${t.gStep}</span>`:''}<span class="msr m ${t.mute?'on':''} ${t.gUnmute?'ghost':''}" ${dp(k+'-mute')}>M</span><span class="msr s" ${dp(k+'-solo')}>S</span>${t.gUnmute?'':`<span class="msr e" ${dp(k+'-edit')}>e</span>`}`}</div>
+      `${t.gUnmute?`<span class="stepn" ${dp(k+'-mute-step-ghost')} style="position:absolute;z-index:2;left:0">${t.gStep}</span>`:''}<span class="msr m ${t.mute?'on':''} ${t.gUnmute?'ghost':''}" ${dp(k+'-mute')}>M</span><span class="msr s" ${dp(k+'-solo')}>S</span><span class="msr e" ${dp(k+'-edit')}>e</span>`}</div>
    <div class="fad" ${dp(k+'-fader-area')}><div class="scale" ${dp(k+'-scale')}>${scale}</div>
      <div class="ftrack" ${dp(k+'-fader')}><div class="unity" style="bottom:${y(pos(0))}"></div>${ghostCap}<div class="cap" ${dp(k+'-cap')} style="bottom:${y(pos(t.db))}"></div></div>
      <div class="meter" ${dp(k+'-meter')}>${m}</div></div>
@@ -199,8 +202,10 @@ const master=`<div class="strip master" ${dp('strip-master')} style="--c:#C9CED8
    <div class="btns" ${dp('strip-master-automation')}><span class="msr rd on">R</span><span class="msr">W</span></div>
    <div class="nametag" ${dp('strip-master-name')}>${L('Master')}</div></div>`;
 
-const step=(n,html,d,c,hot)=>`<div class="step ${hot?'hot':''}" ${dp('plan-step-'+n)}><span class="cb">${ic('check')}</span><span class="stepn">${n}</span>
-  <span class="t"><span class="tdot" style="--c:${c}"></span>${L(html)}<span class="d">${L(d)}</span></span><span class="go">${ic('target','s')}</span></div>`;
+// clip: the title names a clip, which has no name of its own before the clip half of E-4; the title is then a part of its own
+// (plan-step-N-title), so the gate can leave it out until the feature that shows clip names lands.
+const step=(n,html,d,c,hot,clip)=>`<div class="step ${hot?'hot':''}" ${dp('plan-step-'+n)}><span class="cb">${ic('check')}</span><span class="stepn">${n}</span>
+  <span class="t"><span class="tdot" style="--c:${c}"></span>${clip?`<span ${dp('plan-step-'+n+'-title')}>${L(html)}</span>`:L(html)}<span class="d">${L(d)}</span></span><span class="go">${ic('target','s')}</span></div>`;
 const tool=(icon,key,on)=>`<span class="b ${on?'on':''}" ${dp('tool-'+key)}>${ic(icon,'s')}<kbd>${key}</kbd></span>`;
 const sec=(title,body,right='')=>`<div class="sec ${body?'':'shut'}" ${dp('inspector-'+title.toLowerCase().replace(/ /g,'-'))}><div class="sec-h">${ic('chev','s')}${L(title)}<span>${right}</span></div>${body?`<div class="sec-b">${body}</div>`:''}</div>`;
 
@@ -305,11 +310,11 @@ app.innerHTML=`
       <div class="steps" ${dp('plan-steps')}>
         <div class="steps-h up" ${dp('plan-steps-head')}>${L('Steps · 6 of 6 selected')}<a style="text-transform:none;letter-spacing:0">${L('Select none')}</a></div>
         ${step(1,'Add track <b>Pad</b>','stereo · after FX',AI)}
-        ${step(2,'Place <b>Pad swell</b> on Pad','bar 9.1 → 17.1 · pad_swell.wav',AI)}
+        ${step(2,'Place <b>Pad swell</b> on Pad','bar 9.1 → 17.1 · pad_swell.wav',AI,false,true)}
         ${step(3,'<b>Vox BG</b> gain','<s>−9.0 dB</s> → <em>−6.0 dB</em>','#5B8FF5',true)}
         ${step(4,'<b>Keys</b> pan','<s>L35</s> → <em>L20</em>','#57C98A')}
         ${step(5,'Unmute <b>FX</b>','<s>muted</s> → <em>on</em>','#EC6BB0')}
-        ${step(6,'Move <b>Riser</b> on FX','<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1','#EC6BB0')}
+        ${step(6,'Move <b>Riser</b> on FX','<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1','#EC6BB0',false,true)}
       </div>
       <div class="acts" ${dp('plan-actions')}>
         <span class="btn" ${dp('plan-audition')}>${ic('phones','s')}${L('Audition')}</span>

@@ -307,6 +307,31 @@ export function crop(image: Image, rect: Rect): Image {
 
 // ---------------------------------------------------------------- pixels
 
+// What a masked part covers: its box, grown by what its outer box shadows
+// paint beside it (the offset, the blur and the spread of each), so a masked
+// part's glow is masked with it: the ghost fader cap's is 12 px wide. Inset
+// shadows stay inside the box, and a part drawn on a canvas has no styles.
+export function maskOf(part: Part): Rect {
+  let left = 0;
+  let top = 0;
+  let right = 0;
+  let bottom = 0;
+  const shadows = part.styles?.['box-shadow'] ?? 'none';
+  // Commas inside rgb() do not separate shadows.
+  for (const shadow of shadows.split(/,(?![^(]*\))/)) {
+    if (/\binset\b/.test(shadow)) continue;
+    const lengths = [...shadow.replace(/[a-z-]+\([^)]*\)/gi, '').matchAll(/(-?\d*\.?\d+)px/g)].map((m) => Number(m[1]));
+    if (lengths.length < 2) continue;
+    const [x = 0, y = 0, blur = 0, spread = 0] = lengths;
+    const reach = blur + spread;
+    left = Math.max(left, reach - x);
+    right = Math.max(right, reach + x);
+    top = Math.max(top, reach - y);
+    bottom = Math.max(bottom, reach + y);
+  }
+  return { x: part.x - left, y: part.y - top, w: part.w + left + right, h: part.h + top + bottom };
+}
+
 export interface PixelResult {
   readonly region: string;
   // Pixels of the region outside every mask.

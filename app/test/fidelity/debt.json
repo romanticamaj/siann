@@ -11,7 +11,7 @@
     { "family": "JetBrains Mono", "weights": [500], "why": "The mockup's rules ask for JetBrains Mono at 500 (display values, key hints); only Regular (400) is bundled in app/renderer/fonts, so both the mockup and the app draw those texts in Regular. Decided by the maintainer, 2026-11-15: Medium is bundled (the font file under the OFL text already there, one @font-face, font tests), by m5-ui-alignment-chrome. 600, which the mockup's original web-font link also loaded, is not bundled: no rule asks for it." }
   ],
   "literals": {
-    "app/renderer/shell.css": { "colours": 5, "sizes": 94 },
+    "app/renderer/shell.css": { "colours": 5, "sizes": 92 },
     "app/renderer/ui/base.css": { "colours": 0, "sizes": 8 },
     "app/renderer/ui/layout.css": { "colours": 0, "sizes": 15 },
     "app/renderer/ui/left-zone.css": { "colours": 0, "sizes": 49 },

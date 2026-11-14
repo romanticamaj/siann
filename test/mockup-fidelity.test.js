@@ -224,3 +224,101 @@ test('the decisions of 2026-11-15 are written where contributors read them', () 
   assert.match(loop, /Tour states changed: the top bar in every state/);
   assert.doesNotMatch(`${loop}\n${spec.slice(spec.indexOf('**P1-7 '), spec.indexOf('**P1-8 '))}`, /Tour states changed: none of 01/);
 });
+
+// ---- the second round of 2026-11-15 (UI redesign 10.7)
+
+test('the mockup\'s fader taper is the app\'s (spec 4.5 C7), and every strip has M, S and e in place', () => {
+  // Decided by the maintainer, 2026-11-15: the mockup was wrong and is corrected.
+  const pairs = (text) => [...text.matchAll(/\[\s*(-?\d*\.?\d+)\s*,\s*(-?\d+)\s*\]/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  const taper = read('app', 'src', 'renderer', 'mixer', 'taper.ts');
+  const app = pairs(/const BREAKPOINTS[^=]*=\s*\[([\s\S]*?)\];/.exec(taper)[1]);
+  const mockup = pairs(/const BP=\[(.*)\];/.exec(MOCKUP)[1]);
+  assert.deepEqual(app, [[0.05, -60], [0.15, -40], [0.3, -24], [0.5, -12], [0.75, 0], [1, 6]], 'spec 4.5 C7');
+  // The mockup adds the bottom of the travel, which the app computes.
+  assert.deepEqual(mockup, [[0, -144], ...app]);
+  // The step badge of a mute change is out of the flow, and e is on every strip.
+  assert.ok(!/gUnmute\?'':`<span class="msr e"/.test(MOCKUP), 'the e button is not left out on a strip whose mute a plan changes');
+  assert.match(MOCKUP, /<span class="stepn" \$\{dp\(k\+'-mute-step-ghost'\)\} style="position:absolute;[^"]*">/);
+  // What a pending plan adds to a strip belongs to the ghosts, so the gate masks it.
+  for (const id of ['strip-7-mute-step-ghost', 'strip-6-gain-step-ghost', 'strip-6-gain-line-ghost', 'strip-4-pan-step-ghost', 'strip-4-pan-value-ghost', 'strip-4-pan-knob-ghost']) {
+    assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
+  }
+  assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'pending');
+  assert.equal(ruleOf('strip-7-mute').gate, 'm5-ui-alignment-mixer-inspector');
+  assert.equal(ruleOf('strip-7-edit').gate, 'm5b-ui-inserts-master');
+});
+
+test('the Plans tab masks only what M5 cannot derive, and each mask names the feature that removes it', () => {
+  const dynamic = MANIFEST.pixels.dynamic;
+  const masked = (id) => dynamic.some((pattern) => glob(pattern).test(id));
+  for (const id of ['plan-history-1', 'plan-history-2', 'plan-history-3', 'plan-step-2-title', 'plan-step-6-title']) assert.ok(masked(id), `${id} is masked`);
+  // Derived in M5, so compared: the summary chips, the approve button, the steps, the history head.
+  for (const id of ['plan-summary', 'plan-approve', 'plan-step-2', 'plan-step-3', 'plan-steps-head', 'plan-history-head', 'plan-card', 'plan-badge']) {
+    assert.ok(!masked(id), `${id} is compared`);
+    assert.equal(ruleOf(id).gate, 'm5-ui-alignment-plans', id);
+  }
+  // The history rows stay parts of the Plans alignment (boxes and styles); the
+  // step titles that name a clip are pending parts of the feature that shows names.
+  assert.equal(ruleOf('plan-history-2').gate, 'm5-ui-alignment-plans');
+  assert.equal(ruleOf('plan-step-6-title').gate, 'm5b-ui-media');
+  assert.equal(MANIFEST.gates['m5b-ui-media'], 'pending');
+  // The mockup marks a title as a part only where it names a clip: steps 2 and 6.
+  assert.equal((MOCKUP.match(/\$\{step\(\d,[^\n]*,false,true\)\}/g) || []).length, 2);
+  assert.match(MOCKUP, /\$\{step\(2,'Place <b>Pad swell<\/b> on Pad',[^\n]*,false,true\)\}/);
+  assert.match(MOCKUP, /\$\{step\(6,'Move <b>Riser<\/b> on FX',[^\n]*,false,true\)\}/);
+  const plans = FEATURES.get('m5-ui-alignment-plans').acceptance.join('\n');
+  assert.match(plans, /Approve N of M/);
+  assert.match(plans, /count chips/);
+  assert.match(plans, /plan-history-1 to plan-history-3/);
+  assert.doesNotMatch(plans, /still names the plan by its first step/);
+  assert.match(FEATURES.get('m5b-ui-plan-metadata').acceptance.join('\n'), /plan-history-1 to plan-history-3 leave pixels\.dynamic/);
+  assert.match(FEATURES.get('m5b-ui-media').acceptance.join('\n'), /plan-step-\*-title leaves pixels\.dynamic/);
+});
+
+test('the chrome takes the mockup\'s text formats, and only the fidelity run takes its device and build', () => {
+  const chrome = FEATURES.get('m5-ui-alignment-chrome').acceptance.join('\n');
+  assert.match(chrome, /hh:mm:ss\.mmm/);
+  assert.match(chrome, /two decimals/);
+  assert.match(chrome, /changes the formatting m5-ui-transport shipped/);
+  assert.match(chrome, /one latency, the round trip/);
+  assert.match(chrome, /first 7 characters of the commit/);
+  assert.match(chrome, /SIANN_FIDELITY_ENVIRONMENT/);
+  // The environment is the mockup's status bar, value for value.
+  const { device, engineAbout } = MANIFEST.environment;
+  const [type, name] = device.id.split('/');
+  const latency = (((device.inputLatencyFrames + device.outputLatencyFrames) * 1000) / device.sampleRate).toFixed(1);
+  assert.ok(MOCKUP.includes(`>${type} · ${name} · <b class="num">${device.sampleRate / 1000} kHz</b> / <b class="num">${device.bufferFrames}</b> · <span class="num">${latency} ms</span>`), 'status-device');
+  assert.ok(MOCKUP.includes(`>${engineAbout.name} ${engineAbout.version} (<span class="mono" style="font-size:10px">${engineAbout.source.commit.slice(0, 7)}</span>) · ${engineAbout.license} · `), 'status-about');
+  assert.match(engineAbout.source.commit, /^[0-9a-f]{40}$/);
+  // The mockup's own formats.
+  assert.match(MOCKUP, /<span class="val sm">00:00:19<em>\.<\/em>000<\/span>/);
+  assert.match(MOCKUP, /<span class="val sm">120<em>\.<\/em>00<\/span>/);
+  // The switch is the shell's and for tests only; no source reads it yet (it lands with the chrome).
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  assert.match(spec, /`SIANN_FIDELITY_ENVIRONMENT`, which the shell reads only under `SIANN_SHELL_TEST=1`/);
+});
+
+test('the decisions of the second round are written where contributors read them', () => {
+  const rules = read('docs', 'harness', 'agent-rules.md');
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  assert.match(spec, /\n### 10\.7 Decisions of 2026-11-15, second round\n/);
+  for (const [, id] of spec.slice(spec.indexOf('### 10.7 ')).matchAll(/`(m5b?-[a-z0-9-]+|m6a-[a-z0-9-]+)`/g)) assert.ok(FEATURES.has(id) || DONE.has(id), `${id} is a feature`);
+  // Token debt: both changes authorised for the closing feature.
+  const closing = FEATURES.get(CLOSING).acceptance.join('\n');
+  assert.match(closing, /app-only tokens are added to tokens\.css/);
+  assert.match(closing, /conditions of container queries are not counted/);
+  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*\| `m5-ui-mockup-alignment` \|/);
+  // A landed part that can be absent at runtime: a permanent width token, not a hold.
+  assert.match(FEATURES.get('m5-ui-loop-click').acceptance.join('\n'), /its box keeps the width of --display-locators-empty-w/);
+  assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click` \|/);
+  assert.match(spec, /permanent `--<part>-empty-w` token/);
+  assert.equal(ruleOf('display-locators').gate, 'm5-ui-alignment-chrome');
+  // The mixer's acceptance no longer bends around the mockup's two mistakes.
+  const mixer = FEATURES.get('m5-ui-alignment-mixer-inspector').acceptance.join('\n');
+  assert.match(mixer, /The fader's taper is unchanged/);
+  assert.match(mixer, /M and S do not move/);
+  // Clip titles come from the media's name in M5, so the project zone can match.
+  assert.match(FEATURES.get('m5-ui-alignment-arrange').acceptance.join('\n'), /show the media's name \(media\.name/);
+  const gate = milestone('M5').humanGates.find((entry) => entry.id === 'fidelity-decisions-2');
+  assert.match(gate.resolution, /^Decided by the maintainer, 2026-11-15/);
+});

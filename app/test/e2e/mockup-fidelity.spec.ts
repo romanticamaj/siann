@@ -46,6 +46,7 @@ import {
   encodePng,
   failures,
   markdownReport,
+  maskOf,
   matches,
   ownerOf,
   type GateReport,
@@ -467,11 +468,12 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
     const extra = appParts.parts.map((part) => part.id).filter((id) => !mockupIds.has(id));
 
     // Layer 3: the chrome's pixels, per region. Masked on both sides:
-    // waveform interiors, dynamic content, and every skipped part.
+    // waveform interiors, dynamic content, and every skipped part, each with
+    // the shadow it casts beside its box (maskOf).
     const masks: Rect[] = [...mockupParts.masks, ...appParts.masks];
     for (const part of [...mockupParts.parts, ...appParts.parts]) {
       const mode = ownerOf(MANIFEST, part.id)?.mode;
-      if (mode === 'pending' || mode === 'unowned' || matches(MANIFEST.pixels.dynamic, part.id)) masks.push(part);
+      if (mode === 'pending' || mode === 'unowned' || matches(MANIFEST.pixels.dynamic, part.id)) masks.push(maskOf(part));
     }
     const mockupImage = decodePng(mockupShot);
     const appImage = decodePng(appShot);

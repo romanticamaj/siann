@@ -63,7 +63,7 @@ Dark, cool graphite, flat, with hairline separators. Depth comes from five surfa
 
 Track palette, 12 colours at equal lightness so no track shouts: `#F0675B #F2994A #E6C547 #A8D05A #57C98A #3FC4A8 #3FC4DD #5B8FF5 #7C7CF0 #B57BEA #EC6BB0 #9AA3B2`. Violet `#A78BFF` is kept out of the palette. A clip is drawn from its track colour in three tones: a title strip at 88 % colour with dark text, a body at 26 % colour over `--bg-0`, and a waveform at the colour lightened 25 % (RMS body) with a 50 % alpha peak envelope behind it.
 
-Meters: green to -12 dB, yellow to -3 dB, red above, white 1.5 px peak-hold line, latching clip indicator.
+Meters: green to -12 dB, yellow to -3 dB, red above, white 1.5 px peak-hold line, latching clip indicator. A strip meter is drawn as the mockup draws it (10.1): one gradient over the 104 px scale (`--meter-low`, `--play` at 55 %, `--meter-mid` at 78 %, `--err` at 96 %) with a `--tx-0` hold line; where this line and the mockup's parameters differ, the mockup's win (P1-12).
 
 Mute and solo follow review item A16: solo yellow, mute blue, record red. An implicitly muted track (another track is soloed) dims its lane and header to 45 %.
 
@@ -109,14 +109,15 @@ Vocabulary follows Cubase: project zone, left zone, lower zone, right zone, Insp
 | **Lower zone** | 280 px | Tabs: MixConsole, Editor | `Ctrl+Alt+E` or `Ctrl+Alt+B`; `Alt+F3` shows it on the MixConsole tab |
 | **Right zone** | 348 px | Tabs: Plans, Media, Meter | `Ctrl+Alt+R`; `Ctrl+Alt+P` shows it on the Plans tab (SIANN addition) |
 | Channel tab | 96 px, off by default | One full strip for the selected track, beside the Inspector | `Ctrl+Alt+C` (phase 3) |
-| Status bar | 24 px | Engine connection, device and latency, xruns, side heard, language, saved revision, and the engine's name, version, commit, licence and source link | Always shown |
+| Status bar | 24 px | Engine connection, the device (type, name, sample rate, buffer) and its round-trip latency, xruns, side heard, language, saved revision, and the engine's name, version, commit, licence and source link | Always shown |
 
 - **Four zone buttons** sit at the right end of the top bar in Cubase's order: Channel, Left, Lower, Right.
 - **Keyboard focus is per zone.** The focused zone has a light frame (the project zone in the mockup). Clicking a zone focuses it; key commands act on the focused zone. `Ctrl+Alt+Left/Right` step through the tabs of the focused zone.
 - **Focus keys (maintainer decision, 2026-11-14).** `Tab` and `Shift+Tab` cycle the zones, as in Cubase, only while the focus is on a zone itself (its frame) or on the page. While the focus is on a control inside a zone (a button, a checkbox, a fader, a field, the zone's divider), `Tab` and `Shift+Tab` move between that zone's controls in document order and wrap at the zone's ends, so the focus stays in the zone; `Escape` returns the focus to the zone itself (in the project zone its `edit.cancel` still runs). `Enter` on a zone moves into its first control. `F6` and `Shift+F6` cycle the zones from anywhere, a text field included, as the platform convention has it. Outside the zones (top bar, status bar) `Tab` is the browser's own, and a modal dialog keeps the focus. Every stop (a zone, a control, a divider) shows a visible focus ring.
 - **One transport surface.** Cubase has a transport bar, a floating panel, a toolbar group and a pop-up; SIANN has the top bar only (`research/cubase.md` 9.3 lists the overlap as something not to copy).
 - **Licence line.** Built only from `engine.about` and the auth reply, never from a string in the renderer. The engine build reports `AGPL-3.0-or-later` for a JUCE desktop build and `GPL-2.0-or-later` otherwise (`native/cmake/SiannBuildInfo.cmake`). It stays visible or one click away (AGPL section 13).
-- **Status bar content (P1-1).** Device, latency (input / output, ms) and xruns come from `engine.status`, which has no event: the renderer polls it once a second while connected, and only when `engine.capabilities` lists the method. The side heard is the plan store's (`plan.list` and `audition.changed`), shown only when `audition.hear` is listed and a side is known. The session id and the read model's counts (tracks, clips, syncs, connections) of the old status panel are diagnostics, not status: they move to the About panel, beside the licence line.
+- **Status bar content (P1-1).** The device, its latency and xruns come from `engine.status`, which has no event: the renderer polls it once a second while connected, and only when `engine.capabilities` lists the method. The side heard is the plan store's (`plan.list` and `audition.changed`), shown only when `audition.hear` is listed and a side is known. The session id and the read model's counts (tracks, clips, syncs, connections) of the old status panel are diagnostics, not status: they move to the About panel, beside the licence line.
+- **Status bar formats: the mockup's (decided by the maintainer, 2026-11-15; 10.7).** The device segment reads `type · name · kHz / buffer · latency ms`, as in `ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms`. Type and name are the two halves of the device id (`<type>/<name>`; an id without a slash, the fake device, is shown once). The rate is `sampleRate` in kHz (`48`, `44.1`), the buffer is `bufferFrames`. There is **one** latency, the round trip: input plus output (`inputLatencyFrames + outputLatencyFrames`), in ms with one decimal, so 128 frames each way at 48 kHz read 5.3 ms. With no device the segment shows the device error's code or "no device", as before. The about segment shows the engine's name, version and the first 7 characters of its commit, then the licence and the source link; the whole commit and the mark of a modified tree are in the About panel. (P1-1 shipped the device id alone with input / output latency and a 12-character commit; P1-10 changes them.)
 - The MixConsole in the lower zone lists channels in track order, left to right, with the master pinned at the right edge.
 
 ### 2.2 Why zones and not free docking
@@ -177,8 +178,9 @@ Naming: the protocol says *clip* where Cubase says *event*. The UI says "clip" i
 - **What "its space stays empty" means.**
   - The element that holds the space has the size the mockup gives the part. A row or column the shared rules fix needs nothing more: the 20 px marker track row stays empty until `m5b-ui-markers`, the insert row of a strip until `m5b-ui-inserts-master`.
   - A box the mockup sizes by its content (a label, a text block) takes its size from a `--hold-<part>-w` or `--hold-<part>-h` token in `tokens.css`. The token carries the size the gate measures for the part in the mockup, per locale where it differs, and the feature that lands the part deletes it. `test/mockup-fidelity.test.js` fails on a hold token whose part is no longer pending.
+  - A part that has landed but can be absent at runtime (its document entity does not exist yet, or the engine does not list its method) and whose box the mockup sizes by its content takes its empty size from a permanent `--<part>-empty-w` token in `tokens.css`. The token carries the size the gate measures for the part in the mockup, per locale where it differs, and it stays: it is not a hold token, and the hold test does not read it. Authorised for `display-locators` in `m5-ui-loop-click` (10.7, 5): a session has no locators until the range is first set, which is the state of every new session, and the transport is centred, so an empty cell without its width would move every part beside it.
   - The empty element draws nothing: no control, no label, no placeholder text, no border or background of its own. It has no role, is not focusable, is hidden from assistive technology, and does not carry the part's `data-part` id, so the gate can never take it for the part.
-  - Where nothing follows an absent part in its row or column, nothing needs holding, as long as no compared box grows or shrinks with it (the ghost track under the last track).
+  - Where nothing follows an absent part in its row or column, nothing needs holding, as long as no compared box grows or shrinks with it (the ghost track under the last track). That holds because the mockup's canvas (60 px of ruler and marker track and 8 lanes of 53 px: 484 px) ends at the 8 px scroll-zoom bar of the 492 px event display: the app ends the project cursor at the top of the scroll-zoom bar, not at the last lane and not at the display's bottom.
   - The same holds in the finished app on an engine that does not list a method: the control is absent and its space is empty.
 - **This rule and "identical to the mockup" (section 10) do not conflict; they apply at different times.** The mockup is what the finished window looks like, and the finished window must match it. Until a part's feature lands, the part is absent under this rule, its space stays empty, and the fidelity gate skips it: `app/test/fidelity/manifest.json` lists it as pending under the feature that owns it. A placeholder or a disabled control is never a way to pass the gate, and never a way to satisfy this rule. When the feature lands, its acceptance includes the gate for its parts, so the part arrives looking as the mockup shows it. Every part has an owning feature (10.5).
 
@@ -199,8 +201,8 @@ In this table "hidden" means absent with its space empty. Where a later decision
 | Insert slots, `e` buttons, Routing and Sends sections, Notepad | Hidden in phase 1; inserts and `e` arrive in phase 3 from `plugin_slot` entities, routing and sends with M6c, the Notepad with `m5b-ui-notepad` |
 | Tools `2` and `4`–`9`; snap types other than Grid | Hidden until phase 3 implements them (renderer work, not backend). Tools `1` and `3` are in P1-8 |
 | Editor tab, Media and Meter tabs | Hidden until phase 3 (in M5b: `m5b-ui-editor-channel`, `m5b-ui-media`, `m5b-ui-meter`) |
-| Clip titles | The media id (the clip has no name; E-4) |
-| Agent row, plan title and summary | Hidden in phase 1 (E-7 and E-14, in M5b: `m5b-engine-plan-metadata`, `m5b-ui-plan-metadata`); the card names the plan by its first step and "N steps" |
+| Clip titles | The media's name (`media.name`, the imported file's base name, in the document since `m5b-engine-project-media`) and the media id when it has none, from P1-11 (`m5-ui-alignment-arrange`). The clip has no name of its own (the clip half of E-4) |
+| Agent row, plan title and summary | Hidden in phase 1 (E-7 and E-14, in M5b: `m5b-engine-plan-metadata`, `m5b-ui-plan-metadata`); the card has no title line: its summary line is the count chips ("+1 track", "+1 clip", "1 move", "3 mix"), as the mockup draws them (P1-13; 10.7, 3). The audition banner, the toast and the history rows still name a plan by its first step and "N steps" |
 | "Ask the agent" box | Hidden in phase 1; in M5b it hands a request to a connected MCP agent (`m5b-engine-agent-requests`, `m5b-ui-composer`; 4.4) |
 | Track colours | Shown: assigned in the renderer from a stable hash of the track id until E-2 |
 
@@ -210,11 +212,11 @@ In this table "hidden" means absent with its space empty. Where a later decision
 |---|---|---|
 | Start / stop | `Space`; `Enter` (numpad) start; `Num 0` stop | P1-2 |
 | Go to project start | `Num .`; laptop fallback `,` (SIANN addition) | P1-2 |
-| Position display, primary and secondary format | Bars+Beats, Seconds; `.` exchanges them; `Shift+P` types a position | P1-2 |
+| Position display, primary and secondary format | Bars+Beats, Seconds; `.` exchanges them; `Shift+P` types a position | P1-2. The time format is `hh:mm:ss.mmm` (`00:00:19.000`), as the mockup draws it (decided by the maintainer, 2026-11-15; P1-2 shipped `m:ss.mmm`, P1-10 changes the formatter). A typed time is read as `hh:mm:ss.mmm`, `m:ss.mmm` or seconds |
 | Set the cursor | Click in the lower half of the ruler; `Shift+Alt`-click in the event display | P1-2 |
 | Auto-scroll | `F`; page mode; suspended while editing | P1-2. Stationary cursor (`Alt+C`) in phase 3 |
 | Locate selection start; next / previous clip | `L`; `N` / `B` | P1-8 |
-| Tempo | `Shift+T` types it | Display P1-2; edit phase 3 (`session.set_tempo`) |
+| Tempo | `Shift+T` types it | Display P1-2, with two decimals (`120.00`) as the mockup draws it (decided by the maintainer, 2026-11-15; P1-2 shipped three, P1-10 changes the formatter); edit phase 3 (`session.set_tempo`) |
 | Time signature | `Shift+C` | Read-only 4/4 display in M5b (`m5b-ui-signature`); editing and the key E-10 |
 | Locators and cycle | Section 3.2, "Ruler" | P1-7 on E-1 |
 | Go to left / right locator | `Num 1` / `Num 2`; laptop fallback `Shift+1` / `Shift+2` | P1-7 |
@@ -245,6 +247,13 @@ The locator range is shown as a band with L and R flags in the ruler and a tint 
 - With no locators set, setting the right locator (`Alt`-click in the upper half, `Ctrl+Num 2`) gives the range from 0 to that position. Setting the left one (`Ctrl`-click, `Ctrl+Num 1`) sends nothing, because there is no right end to pair it with.
 - A click, key or drag that would not leave left < right sends nothing. The renderer never sends a command it knows the engine will refuse.
 - Dragging an end stops one grid step (or one pixel, with snap off) before the other end; drawing a range of zero length sets nothing.
+
+**Cycle, Loop Selection and no device (P1-7).**
+
+- Loop Selection (`Alt+P`) sends, in order, `session.set_locators` for the selection, `transport.set_cycle {enabled: true}`, `transport.locate` to the left locator and `transport.play`: playback starts from the left locator, as in Cubase.
+- Without an audio device `Alt+P` does nothing and sends nothing, as the cycle key does. Clicking the locator range, which toggles cycle, does nothing either; dragging the range or an end, and `Ctrl`-click and `Alt`-click, still edit the band, because `session.set_locators` needs no device. `P` (locators to the selection) works without a device for the same reason.
+- The band's geometry takes the height of the ruler's upper half from one exported ruler constant, never from a literal: `m5-ui-tokens-spacing` changes `--ruler-h` from 32 px to 40 px (an 18 px locator half and a 22 px cursor half) in the same wave, and either may land first. Tests do not hard-code 16 or 18.
+- The locator display is absent while the session has no locators; its cell stays empty at the width of `--display-locators-empty-w` (3.0).
 
 **Zoom and scroll** (`research/cubase.md` 7.6, 8.1):
 
@@ -303,7 +312,7 @@ The locator range is shown as a band with L and R flags in the ruler and a tint 
 | Rename | `F2` | E-4 |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` | P1-2 |
 | Edit history list | Edit > History | E-16 |
-| Info line: show the selection's start, end, length, offset, volume | `Ctrl+I` toggles it | Read-only P1-3; editing (relative across the selection, `Ctrl` absolute) phase 3 |
+| Info line: show the selection's name (the clip's title, with its track's colour), start, end, length, offset, volume | `Ctrl+I` toggles it | Read-only P1-3; the name field P1-11; editing (relative across the selection, `Ctrl` absolute) phase 3 |
 | Open the editor in the lower zone | Double-click or `Return` | Phase 3 |
 | Drag tooltip with the new position and delta | — | P1-3 |
 | Drop audio files from the OS | — | E-5 |
@@ -490,7 +499,7 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 
 - The hearing switch (Main | Proposal) is at the top of the right zone and repeated in the status bar. `Shift+A` flips sides while a plan is auditioned. It always reflects `audition.changed`, never a guess.
 - While the proposal is heard, the window gets a 2 px violet frame and a banner under the top bar: "Hearing proposal: Lift the chorus — main is unchanged. [Hear main] [Merge] [Discard]". Ghosts turn solid (they are what is playing) and the values they replace show as faint outlines.
-- Until E-7 gives plans a title, the banner names the plan as its card does: its first step in user wording and "N steps" ("Hearing proposal: Set Keys volume to -3.0 dB, 3 steps"). When the heard branch belongs to no plan the store holds, the banner reads "Hearing a proposal" without a name. P1-5 ships the banner and the hearing switch; the violet frame, solid ghosts, `Shift+A` and the branch chip stay in P2-3.
+- Until E-7 gives plans a title, the banner names the plan by its first step in user wording and "N steps" ("Hearing proposal: Set Keys volume to -3.0 dB, 3 steps"). When the heard branch belongs to no plan the store holds, the banner reads "Hearing a proposal" without a name. P1-5 ships the banner and the hearing switch; the violet frame, solid ghosts, `Shift+A` and the branch chip stay in P2-3.
 - The branch chip in the top bar changes from `main r39` to the proposal's name.
 - Branch state comes from `proposal.changed` and `session.fetch {refs, revision}` at the branch revision; both exist today.
 
@@ -508,10 +517,10 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 | C1 | Approval granularity; split against reject; dropped steps | Default approves the whole plan. Unticking steps turns the button into "Approve 4 of 6". The parent is shown as "Split, 4 of 6 approved", from the `parentPlan` sub-plans already carry. Dropped steps and a reason should go back to the agent (E-7) |
 | C2 | Where plan review lives; notifications | Right zone, Plans tab (`Ctrl+Alt+P`), with the badge and toast of 4.4; a drawer under 1280 px |
 | C3 | Proposal shown inline; branch state while auditioning | Yes to both (4.2, 4.3); no protocol change needed |
-| C4 | Apply against Audition then Merge | Decided: one primary button at a time. Not auditioning: "Approve and apply" runs `plan.approve` then `plan.apply`. Auditioning: "Merge". Phase 1 chains today's methods, and the Audition button runs approve, propose, hear with the card reading "approved for audition". Auditioning without approval is E-6 |
+| C4 | Apply against Audition then Merge | Decided: one primary button at a time. Not auditioning: the primary button reads "Approve N of M", N being the ticked steps, and runs `plan.approve` then `plan.apply`; with every step ticked it reads "Approve 6 of 6", as the mockup draws it (decided by the maintainer, 2026-11-15; 10.7, 3. Until P1-13 the all-ticked label is "Approve and apply"; the action is the same). Auditioning: "Merge". Phase 1 chains today's methods, and the Audition button runs approve, propose, hear with the card reading "approved for audition". Auditioning without approval is E-6 |
 | C5 | Editing while auditioning | Edits go to the side that is heard, as the engine already does for fader gestures; the frame and banner say so. Structural edits are disabled while a proposal is heard until `command.execute` can target the branch |
 | C6 | Concurrent plans; stale approved plans | Any number may wait; one is auditioned at a time. After a merge, plans whose entities changed show "Stale" with the reason in user units and Approve disabled. An approved plan that goes stale keeps its Approved badge beside the Stale badge; Apply and Audition are disabled with the reason and Reject stays; it becomes valid again if an undo restores the recorded entities (the engine never changes a plan's state on staleness, and `plan.approve` on an approved plan is `invalid_state`) |
-| C7 | Fader range; dB everywhere | Decided: -inf to +6 dB, 0 dB at 75 % of travel. The taper (`mixer/taper.ts`) is piecewise linear in dB between these breakpoints of travel: 100 % = +6 dB, 75 % = 0 dB, 50 % = -12 dB, 30 % = -24 dB, 15 % = -40 dB, 5 % = -60 dB; below 5 % it is linear in amplitude from -60 dB down to silence, and 0 % is minus infinity (`INT32_MIN`, `Gain::kMinusInfinity`). So the travel is finer near 0 dB (4.2 % of travel per dB above 0 dB, 2.1 % per dB between -12 and 0 dB, 0.9 % per dB between -40 and -24 dB). Cubase's Volume Max defaults to +6 dB (`research/cubase.md` 5.4); Logic's maximum boost is +6 dB [M4]. A stored value above +6 dB pins the cap at the top and shows the true value in the warning colour. A +12 dB project setting, which Cubase also has, can follow |
+| C7 | Fader range; dB everywhere | Decided: -inf to +6 dB, 0 dB at 75 % of travel. The taper (`mixer/taper.ts`) is piecewise linear in dB between these breakpoints of travel: 100 % = +6 dB, 75 % = 0 dB, 50 % = -12 dB, 30 % = -24 dB, 15 % = -40 dB, 5 % = -60 dB; below 5 % it is linear in amplitude from -60 dB down to silence, and 0 % is minus infinity (`INT32_MIN`, `Gain::kMinusInfinity`). So the travel is finer near 0 dB (4.2 % of travel per dB above 0 dB, 2.1 % per dB between -12 and 0 dB, 0.9 % per dB between -40 and -24 dB). Cubase's Volume Max defaults to +6 dB (`research/cubase.md` 5.4); Logic's maximum boost is +6 dB [M4]. A stored value above +6 dB pins the cap at the top and shows the true value in the warning colour. A +12 dB project setting, which Cubase also has, can follow. The mockup's script places its caps and scale labels with the same breakpoints (corrected on 2026-11-15, 10.7, 2: it had -12 dB at 45 % and -6 dB at 60 %) |
 | C8 | Restart semantics | The shell reopens the same bundle; a toast gives the recovered revision; selection is cleared. Plans live in engine memory, so a restart loses them and the panel says so (E-12 persists them) |
 | C9 | Reject note to the agent | The field is labelled "Reason (sent to agent)". E-7 carries the note in plan status so the agent and every client see it |
 | C10 | Seconds or bars and beats; snap | Bars+Beats primary, Seconds secondary, `.` swaps them; snap on (`J`), type Grid, grid Adapt to Zoom; `Ctrl` while resizing disables snap |
@@ -790,6 +799,7 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 - Acceptance: no milli-dB, pan units or entity ids are visible without opening a disclosure; "Approve and apply" sends `plan.approve` then `plan.apply`, and a refusal of the second leaves the plan approved and is shown; "Audition" sends approve, propose, hear and the card reads "approved for audition"; the banner is visible from the event display and the MixConsole whenever `audition.changed` reports a branch; review items A6 (banner), A7–A9, A12, A13, B4–B10 are closed.
 - Tests: unit (diff, wording per locale, action set per state, chained actions with a refusal at each position, toasts); e2e (MCP submit, partial approve, reject with reason, stale).
 - Tour states changed: 13–20.
+- Changed by P1-13 (decided by the maintainer, 2026-11-15; 10.7, 3): the card's summary line is the count chips instead of the first step and the step count, the primary button reads "Approve N of M" also when every step is ticked, and the step rows take the mockup's wording, a title and a second line with the old value struck and the new one emphasised. The action sets, their chains and the rejection and split wording are unchanged.
 - Protocol used: `plan.list/preview/status/approve/reject/apply/propose`, `audition.hear`, `proposal.merge/discard`; events `plan.changed`, `audition.changed`.
 
 **P1-6 Connection states** (`m5-ui-connection`)
@@ -815,11 +825,11 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 
 **P1-7 Locators, cycle and metronome in the UI** (`m5-ui-loop-click`; depends on E-1)
 
-- Scope: the upper half of the ruler as section 3.2 describes (draw, move, adjust, `Ctrl`-click and `Alt`-click, click to toggle cycle); the tint over the tracks; cycle button and `Num /` and `/`; `P` locators to selection and `Alt+P` loop selection; `Num 1` / `Num 2` and `Shift+1` / `Shift+2`; `Ctrl+Num 1` / `Ctrl+Num 2`; the locator display; metronome button and `C`, with a level control on right-click. All of it renders only when the engine lists the methods. The locator display is rendered only while the locators entity exists (3.0, document fields).
+- Scope: the upper half of the ruler as section 3.2 describes (draw, move, adjust, `Ctrl`-click and `Alt`-click, click to toggle cycle); the tint over the tracks; cycle button and `Num /` and `/`; `P` locators to selection and `Alt+P` loop selection; `Num 1` / `Num 2` and `Shift+1` / `Shift+2`; `Ctrl+Num 1` / `Ctrl+Num 2`; the locator display; metronome button and `C`, with a level control on right-click. All of it renders only when the engine lists the methods. The locator display is rendered only while the locators entity exists (3.0, document fields); until then its cell is empty and keeps the width of `--display-locators-empty-w` (3.0; 10.7, 5).
 - Acceptance: the band and both buttons always show the engine's state, including changes by another client, an undo, or an agent's plan; drawing the range sends one `session.set_locators` on release, dragging an end adjusts it, `Ctrl+Num 1` and `Ctrl+Num 2` set the left and right locator to the cursor, and `Ctrl+Z` restores the previous range; the rules of 3.2 for setting one locator hold; the locator display shows the range in bars and beats; reopening the session shows the same range; against an engine without E-1 none of the controls is rendered, their space stays empty (3.0) and no request is sent.
 - Tests: unit (band geometry, snapping, capability gate); e2e (draw, move, toggle, undo, reopen; toggle the click; the same spec against capabilities without the methods).
 - Tour states changed: the top bar in every state (01–22 and 25: the cycle button and the metronome button join the transport, because the tour runs on an engine that has listed the E-1 methods since E-1 landed); nothing else in them changes; appends 23 "locators set, cycle on" and 24 "metronome on". (Until 2026-11-15 this line said "none of 01–22", which the rule that an unnamed state must not change made impossible.)
-- Without an audio device: the cycle and metronome buttons are disabled with the reason, as the transport buttons are (3.0), and their keys do nothing, because the engine answers `no_device` to `transport.set_cycle` and `transport.set_click`. The locator band stays editable: `session.set_locators` needs no device.
+- Without an audio device: the cycle and metronome buttons are disabled with the reason, as the transport buttons are (3.0), and their keys do nothing, because the engine answers `no_device` to `transport.set_cycle` and `transport.set_click`. The locator band stays editable: `session.set_locators` needs no device. `Alt+P` and a click on the range do nothing without a device (3.2).
 - Protocol used: `command.execute` with `session.set_locators`, `transport.set_cycle`, `transport.set_click`, `transport.changed`, `engine.status`.
 
 **P1-8 Editing by Cubase's gestures** (`m5-ui-edit-basics`)
@@ -1063,7 +1073,7 @@ The mockup is hand-written HTML and CSS, and the app's renderer is web technolog
 - **One stylesheet for both.** The mockup's rules live in `app/renderer`: the tokens (colours, type scale, weights, radii, fixed sizes, font stacks, the bundled fonts) in `tokens.css`, the component rules in `ui/base.css`, `ui/layout.css`, `ui/top-bar.css`, `ui/left-zone.css`, `ui/project-zone.css`, `ui/lower-zone.css`, `ui/right-zone.css` and `ui/status-bar.css`. `mockup.html` has no stylesheet of its own; it links exactly those files. The app links the same files, region by region as the alignment features of 10.6 land; a region that is not ported yet still uses `shell.css`.
 - **Markup is ported, not reinvented.** Each React component takes its DOM structure and class names from the corresponding mockup markup: top bar, transport, toolbar, info line, track headers, Inspector, MixConsole strip, plan card, status bar. A component that needs an element the mockup does not have (an input for typing a value, a focus ring, an ARIA wrapper) adds it without changing the boxes the mockup draws.
 - **Canvas surfaces copy the mockup's drawing parameters**: the ruler's two halves (18 px and 22 px), the 20 px marker track, 53 px lanes, the lane and clip colours, the 13 px clip title strip, the selection outline and handles, the project cursor and its head. They read them from `app/src/renderer/tokens.ts`, the generated mirror of `tokens.css` (`node scripts/gen-ui-tokens.js`).
-- **Changing the reference needs the maintainer.** `tokens.css`, `app/renderer/ui`, `mockup.html`, the PNGs, and the gate's manifest rules and thresholds are changed only when the maintainer asks. Asked for on 2026-11-15 (10.5): the token conversion of `m5-ui-tokens-spacing` with the mockup edits it needs, the four token values of the ledger, the Medium face, the hold tokens of 3.0, and the owners of the parts that had none.
+- **Changing the reference needs the maintainer.** `tokens.css`, `app/renderer/ui`, `mockup.html`, the PNGs, and the gate's manifest rules and thresholds are changed only when the maintainer asks. Asked for on 2026-11-15 (10.5): the token conversion of `m5-ui-tokens-spacing` with the mockup edits it needs, the four token values of the ledger, the Medium face, the hold tokens of 3.0, and the owners of the parts that had none. Asked for in the second round of 2026-11-15 (10.7): the two corrections of the mockup's MixConsole and its PNGs retaken, the ids of the ghost adornments and of the step titles that name a clip, the masks of the Plans tab, the app-only tokens of `m5-ui-mockup-alignment`, and the empty-width token of the locator display.
 - The mockup is rendered with the fonts the app bundles: Inter variable, JetBrains Mono Regular and JetBrains Mono Medium (500), which its rules ask for in the display values and key hints. Medium is bundled by `m5-ui-alignment-chrome` (decided by the maintainer, 2026-11-15); until it lands both sides draw Regular there. No rule asks for 600, and it is not bundled.
 
 ### 10.2 The gate: three layers
@@ -1072,7 +1082,7 @@ Literal pixel identity of the whole window is not attainable (real waveforms aga
 
 | Layer | What must hold | Where |
 |---|---|---|
-| 1. Tokens | One token source. The mockup links the shared stylesheets and nothing else; the shared rules name tokens for every colour, font size and radius; every colour, font size and weight of the mockup's canvas code is a token's value; every fixed size of the layout equals its token; renderer CSS and TypeScript hold no colour or size literal; `tokens.ts` is the generated mirror | `test/ui-tokens.test.js`, in `npm test` |
+| 1. Tokens | One token source. The mockup links the shared stylesheets and nothing else; the shared rules name tokens for every colour, font size and radius; every colour, font size and weight of the mockup's canvas code is a token's value; every fixed size of the layout equals its token; renderer CSS and TypeScript hold no colour or size literal (the conditions of media and container queries are not counted: CSS cannot name a custom property there; 10.7, 4); `tokens.ts` is the generated mirror | `test/ui-tokens.test.js`, in `npm test` |
 | 2. Geometry and styles | For every `data-region` / `data-part` id of the mockup: the app carries the same id, its bounding box is within 1 px on x, y, width and height, and the computed styles listed in the manifest (colours, font, borders, radii, padding, shadow, opacity) are identical | `app/test/e2e/mockup-fidelity.spec.ts` |
 | 3. Pixels | Per region, at most 0.5 % of the unmasked pixels differ (a pixel differs when a channel is more than 16 apart). Chrome only: waveform interiors, dynamic content (times, meter levels, counts, hashes) and skipped parts are masked entirely | the same spec |
 
@@ -1080,7 +1090,11 @@ Layers 1 and 2 are the strict gates. Layer 3 catches what they cannot see: icons
 
 The gate compares absolute boxes against the full mockup, and that stays (decided by the maintainer, 2026-11-15). It works because an absent part keeps its space empty (3.0): a part that sits after one is where the mockup draws it. The alternatives were a mockup with the skipped parts removed, which would need a second layout in the shared rules, and moving every displaced part to a later gate, which would leave most of the window unenforced in M5.
 
-How layers 2 and 3 run: the spec opens `mockup.html` in Chromium and the app in Electron, both at 1440x900 and device scale factor 1 (forced, whatever the display's scaling), in English and in Traditional Chinese (`mockup.html?lang=zh-TW`). The app runs on the real engine with a session that reproduces the mockup's: "Night Drive", the same 7 tracks with their colours, levels, pans and mute, 17 clips on the same bars at the same zoom, the same track and clip selected, and the same pending 6-step plan submitted over MCP. Waveform content is not compared. It writes `report.md`, `report.json` and, per region, the mockup's, the app's and the diff image.
+How layers 2 and 3 run: the spec opens `mockup.html` in Chromium and the app in Electron, both at 1440x900 and device scale factor 1 (forced, whatever the display's scaling), in English and in Traditional Chinese (`mockup.html?lang=zh-TW`). The app runs on the real engine with a session that reproduces the mockup's: "Night Drive", the same 7 tracks with their colours, levels, pans and mute, 17 clips on the same bars at the same zoom, the same track and clip selected, and the same pending 6-step plan submitted over MCP. Waveform content is not compared. The session also carries what the mockup shows around the plan and the transport (10.7): every clip has a media of the mockup's clip name; the locators are set to bars 9.1 and 13.1 with cycle on; one undoable command has run, so undo is lit and redo is dim; and three earlier plans were submitted before the pending one, one applied (4 steps), one rejected with the mockup's note and one made stale, none of which changes what the window draws. The pointer rests on step 3 of the plan, which the mockup draws as the hovered step; everywhere else nothing is hovered.
+
+**Device and build data are not part of the session** (decided by the maintainer, 2026-11-15). The gate runs the engine on the fake device, and CI builds an engine without JUCE, so neither the device nor the build can be the mockup's. For the fidelity run alone, the shell answers `engine.status`'s `device` and `engine.about`'s name, version, licence and commit with the mockup's values: `ASIO/Scarlett 4i4` at 48 kHz with 128 frames of buffer and 128 frames of latency each way, and `siann-engine 0.1.0`, commit `308d846`, `AGPL-3.0-or-later`. The values are test data (`environment` in `app/test/fidelity/manifest.json`), handed over in `SIANN_FIDELITY_ENVIRONMENT`, which the shell reads only under `SIANN_SHELL_TEST=1`; a unit test proves the switch is inert otherwise. Outside that run the licence line is built only from `engine.about`, as 2.1 requires, and no licence is named in the renderer's source.
+
+A masked part is masked with the shadow it casts beside its box (the glow of a ghost fader cap). It writes `report.md`, `report.json` and, per region, the mockup's, the app's and the diff image.
 
 ### 10.3 Ids
 
@@ -1096,13 +1110,13 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5-ui-alignment-arrange` | report | Project zone: tools 1 and 3, snap, grid type, auto-scroll, info line, track list and headers, ruler, lanes, clips, locator band, cursor |
 | `m5-ui-alignment-mixer-inspector` | report | Left and lower zones: Inspector basics, MixConsole strips and the master meter |
 | `m5-ui-alignment-plans` | report | Right zone: the Plans tab and its card |
-| `m5b-ui-ghosts` | pending | Every ghost (track, clip, cap, strip, lane), the proposal pill, the Inspector's "Agent changes" |
+| `m5b-ui-ghosts` | pending | Every ghost (track, clip, cap, strip, lane), what a pending plan adds to a strip (step badges, the ghost needle and value of pan, the line to the ghost cap), the proposal pill, the Inspector's "Agent changes" |
 | `m5b-ui-recording` | pending | Record buttons, the monitor button |
 | `m5b-ui-inserts-master` | pending | Insert slots, `e` buttons, the master fader and its buttons, the rack switches |
 | `m5b-ui-sends-buses` | pending | Routing and Sends sections |
 | `m5b-ui-markers` | pending | Marker track and its head |
 | `m5b-ui-fades` | pending | Fade fields of the info line |
-| `m5b-ui-media` | pending | Media tab |
+| `m5b-ui-media` | pending | Media tab; the titles of the plan steps that name a clip (`plan-step-N-title`) |
 | `m5b-ui-edit-more` | pending | Tools 2 and 4 to 9 |
 | `m5b-ui-audition` | pending | Branch chip |
 | `m5b-ui-signature` | pending | Time signature display |
@@ -1114,6 +1128,8 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m6a-ui-automation` | pending | R and W automation buttons and their row on a strip, the Automation section |
 
 A feature flips its own gate to `enforce` in the pull request that lands it. From the first enforced gate on (`m5-ui-alignment-chrome`), an enforced mismatch fails CI, and a gate still in `report` is measured and reported only. `m5-ui-mockup-alignment` ends with all four of M5's gates enforced.
+
+Layer 3 masks beyond the pending parts are the manifest's `pixels.dynamic` list. Two entries are there because M5 cannot show the mockup's text, and each names the feature that removes it (10.7, 3): the history rows `plan-history-1` to `plan-history-3` (`m5b-ui-plan-metadata`) and the step titles `plan-step-*-title` (`m5b-ui-media`). The history rows stay parts of `m5-ui-alignment-plans`, so layer 2 holds their boxes and styles in M5.
 
 ### 10.5 Decisions of 2026-11-15
 
@@ -1152,11 +1168,11 @@ The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Or
 | Ticket | Feature | Wave | After | What it settles |
 |---|---|---|---|---|
 | P1-9 | `m5-ui-tokens-spacing` | 8 | `m5-ui-transport`, `m5-ui-edit-basics` | Decision 2: every literal of the shared rules and of the mockup's script is a token, the four token values change, and the mockup is proven unchanged. The app changes by those four values only |
-| P1-10 | `m5-ui-alignment-chrome` | 9 | P1-9, `m5-ui-loop-click`, `m5-ui-transport` | The app links `tokens.css`, `base.css`, `layout.css`, `top-bar.css` and `status-bar.css`; the zone frames, the top bar and the status bar are ported; JetBrains Mono Medium (decision 3). First enforced gate: from here an enforced mismatch fails CI |
-| P1-11 | `m5-ui-alignment-arrange` | 10 | P1-10, `m5-ui-edit-basics`, `m5-ui-loop-click` | `project-zone.css`; toolbar, info line, track list, and the canvas drawing parameters from `tokens.ts` |
+| P1-10 | `m5-ui-alignment-chrome` | 9 | P1-9, `m5-ui-loop-click`, `m5-ui-transport` | The app links `tokens.css`, `base.css`, `layout.css`, `top-bar.css` and `status-bar.css`; the zone frames, the top bar and the status bar are ported; JetBrains Mono Medium (decision 3). The mockup's text formats of 10.7, 1 (time, tempo, the device and about segments) and the fidelity run's environment data. First enforced gate: from here an enforced mismatch fails CI |
+| P1-11 | `m5-ui-alignment-arrange` | 10 | P1-10, `m5-ui-edit-basics`, `m5-ui-loop-click` | `project-zone.css`; toolbar, info line, track list, and the canvas drawing parameters from `tokens.ts`; clip titles and the info line's name show the media name |
 | P1-12 | `m5-ui-alignment-mixer-inspector` | 10 | P1-10 | `left-zone.css` and `lower-zone.css`; the Inspector, the strips and the meter surface |
-| P1-13 | `m5-ui-alignment-plans` | 10 | P1-10 | `right-zone.css`; the Plans tab and its card |
-| P1-14 | `m5-ui-mockup-alignment` | 11 | P1-10 to P1-13 | The app's stylesheet links equal the mockup's, `shell.css` holds nothing the mockup draws, `debt.json` is empty, all four gates are enforced on Windows and Linux, and the tour is retaken for the `ui-redesign-review` gate |
+| P1-13 | `m5-ui-alignment-plans` | 10 | P1-10 | `right-zone.css`; the Plans tab and its card, with the text M5 can derive (10.7, 3) |
+| P1-14 | `m5-ui-mockup-alignment` | 11 | P1-10 to P1-13 | The app's stylesheet links equal the mockup's, `shell.css` holds nothing the mockup draws, `debt.json` is empty, all four gates are enforced on Windows and Linux, and the tour is retaken for the `ui-redesign-review` gate. App-only tokens for the rules `shell.css` keeps (10.7, 4) |
 
 Rules for all of them:
 
@@ -1164,3 +1180,41 @@ Rules for all of them:
 - An absent part keeps its space empty (3.0). Each ticket's acceptance lists the absent parts of its region.
 - Each flips its own gate to `enforce` in its pull request and attaches the report for `en` and `zh-TW`.
 - Tour states: each names the states it changes; P1-14 retakes the whole tour once, in the three locales.
+
+### 10.7 Decisions of 2026-11-15, second round
+
+The plan phase stopped a second time, on four questions of the alignment features and one of `m5-ui-loop-click`. Decisions 1 to 4 are **decided by the maintainer, 2026-11-15**; decision 5 was taken the same day under two of the maintainer's rulings and is marked so.
+
+**1. Chrome text: the mockup's format wins.** The boxes of the time and tempo displays and of the status bar's device and about segments are as wide as their text, and the transport is centred, so one text of another width moves every part beside it by more than the gate's pixel. Decided:
+
+- The time display reads `hh:mm:ss.mmm` and the tempo has two decimals (3.1). This changes the formatting `m5-ui-transport` shipped (`m:ss.mmm`, three decimals); `m5-ui-alignment-chrome` changes the formatters and their tests.
+- The status bar's device segment reads `type · name · kHz / buffer · latency ms` with one latency, the round trip, and the about segment shows a 7-character commit (2.1).
+- For the fidelity run only, the shell reports the mockup's device and build (10.2): a real run cannot have an ASIO interface or, on CI, an AGPL build. Nothing outside that run changes: the licence line is still built from `engine.about` alone.
+
+**2. MixConsole: the mockup was wrong in two places and is corrected.**
+
+- The taper. The mockup's script placed fader caps and scale labels with -12 dB at 45 % of travel and -6 dB at 60 %; 4.5 C7 and `mixer/taper.ts` put -12 dB at 50 %. The script's table now equals C7's. The app's fader law does not change.
+- The FX strip. The step badge of the plan's unmute sat in the button row before M and replaced the `e` button, which moved M and S by 20.5 px on that strip alone. The badge is now out of the flow, as the gain badge of strip 6 is, M and S sit where they do on every strip, and the `e` button stays.
+- `mockup.png` and `mockup-zh-TW.png` were retaken. The gate's measurement of the mockup before and after, in both locales: no part changed its styles; the only parts that moved are the caps of strips 2, 3, 4, 6 and 7 and the ghost cap of strip 6 (1.0 to 5.2 px up) and M and S of strip 7 (20.5 px left); the pixels that changed (8,787 of 1,296,000) all lie in the fader areas of the strips and in the button row of strip 7.
+
+**3. Plans tab: M5 shows the mockup's text where it can derive it, and the rest is masked.** With text of its own the right zone would differ in about 3 % of its pixels against a limit of 0.5 %. Decided:
+
+- Derived in M5: the summary line is the count chips, from the plan's steps ("+1 track", "+1 clip", "1 move", "3 mix"); the primary button reads "Approve N of M" also with every step ticked (4.5 C4); the step rows take the mockup's wording, a title and a second line with the old value struck and the new one emphasised; "Earlier" and its count.
+- Masked in layer 3, each until the feature that can show the text removes the mask: the history rows (`plan-history-1` to `plan-history-3`), whose titles and agent name need E-7 and E-14, by `m5b-ui-plan-metadata`; the titles of the two steps that name a clip (`plan-step-2-title`, `plan-step-6-title`), by `m5b-ui-media`. A clip has no name of its own before the clip half of E-4, which M5b leaves out, so in M5b a step names a clip by its media's name and `m5b-ui-media`, the feature that shows media names, owns those titles. Nothing else was added to the masks; the history head is derived and compared.
+- The mockup marks a step's title as a part of its own (`plan-step-N-title`) only where it names a clip. Those two parts are pending, so M5 does not carry their ids; the history rows remain parts of `m5-ui-alignment-plans`, and their boxes and styles are held in M5 (one title line and one detail line each).
+
+**4. Token debt of the closing ticket: both changes are authorised**, for `m5-ui-mockup-alignment`.
+
+- (a) App-only tokens. `tokens.css` gains tokens for the values of the rules `shell.css` keeps for things the mockup does not draw: the toast's maximum width, slide and shadow, the dialog's width and margin, the 2 px focus ring, the drawer's shadow and the 45 % scrim behind a dialog. No existing token changes its value, and the mockup is not touched. Left to that feature.
+- (b) The literal scanner of `test/ui-tokens.test.js` no longer counts the condition of a container query, as it never counted a media query's: CSS cannot name a custom property there, and 2.3 and 2.4 are built on container queries. Done with this decision; the ledger's entry for `shell.css` fell from 94 to 92 sizes.
+
+**5. A landed part that can be absent at runtime keeps its width through a permanent token.** Taken on 2026-11-15 under the maintainer's rulings "an absent part keeps its space empty" (10.5, 1) and "app-only tokens are allowed" (4a above). The locator display is content-sized and empty in every new session, its gate (`m5-ui-alignment-chrome`) is not pending, and `m5-ui-loop-click` is the feature that lands it, so a hold token, which names a pending part and is deleted by the feature that lands it, cannot serve. Its empty cell takes its width from `--display-locators-empty-w`, the mockup's measured width per locale (3.0).
+
+Settled by the author with these (Fable, 2026-11-15), none of them a change of the reference's look:
+
+- **Clip titles show the media's name from P1-11.** The mockup names every clip in its title strip and in the info line, neither of which is masked, and a media id cannot hold such a name. The engine has had `media.name` and `media.rename` since `m5b-engine-project-media`, so `m5-ui-alignment-arrange` shows the name (the media id when there is none) and the fidelity session names each clip's media as the mockup names the clip. `m5b-ui-media` keeps import and rename.
+- **What a pending plan adds to a strip belongs to the ghosts.** The step badges, the ghost needle and value of the pan control and the line to the ghost cap had no ids, so the gate counted them against the lower zone: 0.69 % of its unmasked pixels in a window that matched the mockup everywhere else. They now carry ids with "ghost" in them, which the rule of `m5b-ui-ghosts` owns, and a masked part is masked with its shadow. What is left of a ghost in an enforced region (the dashed ring on M of the FX strip and of its track header) is under 0.06 %.
+- **The hovered step.** The mockup draws step 3 of the plan as hovered (class `hot`). The Plans tab marks the row under the pointer so, without any ghost, and the fidelity session rests the pointer there (10.2). Highlighting the step's ghosts stays with `m5b-ui-ghosts`.
+- **Hold boxes of the chrome.** A hold token is for any box that is not a row or column the layout fixes, so the Record button has one too (its size comes from a class the empty element does not carry). The one rule that applies hold tokens lives in `shell.css`, not in `app/renderer/ui`.
+- **Fonts.** "No weight that is not bundled" is a statement about JetBrains Mono (400 and 500 only); Inter is a variable font and the mockup's rules use 600 and 700 of it. Regular and Medium have the same advance width, so the font test reads the face Chromium actually used, not a text width.
+- **`shell.css` at the end.** It may keep rules for elements the mockup does not draw and for states of drawn elements the mockup does not show (a narrow track header, offline zones, hidden and collapsed zones, the small-window drawers, divider hover and focus), each naming tokens.

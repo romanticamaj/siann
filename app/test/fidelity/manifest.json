@@ -17,6 +17,11 @@
       "languages": ["zh-TW"]
     }
   },
+  "environment": {
+    "about": "Decided by the maintainer, 2026-11-15 (UI redesign 10.2): device and build data are not part of the session, so the fidelity run alone answers engine.status's device and engine.about with the mockup's values. mockup-fidelity.spec.ts passes this object as SIANN_FIDELITY_ENVIRONMENT, which the shell reads only under SIANN_SHELL_TEST=1; outside that run the status bar is built from the engine's own answers. The status bar draws them as ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms (one latency, the round trip: input plus output) and siann-engine 0.1.0 (308d846) · AGPL-3.0-or-later.",
+    "device": {"id": "ASIO/Scarlett 4i4", "sampleRate": 48000, "bufferFrames": 128, "inputLatencyFrames": 128, "outputLatencyFrames": 128},
+    "engineAbout": {"name": "siann-engine", "version": "0.1.0", "license": "AGPL-3.0-or-later", "source": {"commit": "308d846000000000000000000000000000000000", "dirty": false}}
+  },
   "regions": ["top-bar", "left-zone", "project-zone", "lower-zone", "right-zone", "status-bar"],
   "geometry": {
     "tolerancePx": 1
@@ -25,8 +30,8 @@
   "pixels": {
     "channelTolerance": 16,
     "maxMismatch": 0.005,
-    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending. DSP load and the master's loudness value are meter levels and joined the list when they got an owner (2026-11-15).",
-    "dynamic": ["display-*", "dsp-load", "strip-master-loudness", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head"]
+    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending. DSP load and the master's loudness value are meter levels and joined the list when they got an owner (2026-11-15). Decided by the maintainer, 2026-11-15 (UI redesign 10.5, second round): the three history rows (plan-history-1 to 3: their titles and the agent's name need E-7 and E-14) are masked until m5b-ui-plan-metadata removes them from this list, and the titles of the steps that name a clip (plan-step-N-title: a clip has no name before the clip half of E-4) until m5b-ui-media does. The history head (plan-history-head) is not masked: M5 derives it.",
+    "dynamic": ["display-*", "dsp-load", "strip-master-loudness", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head", "plan-history-1", "plan-history-2", "plan-history-3", "plan-step-*-title"]
   },
   "gates": {
     "m5-ui-alignment-chrome": "report",
@@ -64,7 +69,7 @@
     {"match":["inspector-routing","inspector-sends"],"feature":"m5b-ui-sends-buses","gate":"m5b-ui-sends-buses"},
     {"match":["marker-head","marker-track"],"feature":"m5b-ui-markers","gate":"m5b-ui-markers"},
     {"match":["info-fade-in","info-fade-out"],"feature":"m5b-ui-fades","gate":"m5b-ui-fades"},
-    {"match":["tab-media"],"feature":"m5b-ui-media","gate":"m5b-ui-media"},
+    {"match":["tab-media","plan-step-*-title"],"feature":"m5b-ui-media","gate":"m5b-ui-media"},
     {"match":["tool-2","tool-4","tool-5","tool-6","tool-7","tool-8","tool-9"],"feature":"m5b-ui-edit-more","gate":"m5b-ui-edit-more"},
     {"match":["branch-chip"],"feature":"m5b-ui-audition","gate":"m5b-ui-audition"},
     {"match":["transport-cycle","transport-click","transport-metronome","display-locators"],"feature":"m5-ui-loop-click","gate":"m5-ui-alignment-chrome"},

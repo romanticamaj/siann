@@ -14,6 +14,7 @@ import {
   failures,
   globToRegExp,
   markdownReport,
+  maskOf,
   ownerOf,
   styleDiff,
   type GateReport,
@@ -136,6 +137,21 @@ test('a region\'s pixels differ beyond the channel tolerance, outside the masks 
   // A sub-rectangle compares only itself.
   assert.equal(diffRegion('r', mockup, app, { x: 0, y: 0, w: 10, h: 10 }, [], 16).mismatched, 0);
   assert.throws(() => diffRegion('r', mockup, solid(10, 10, [0, 0, 0]), whole, [], 16), /differ in size/);
+});
+
+test('a masked part is masked with the shadow it casts beside its box', () => {
+  const box = { x: 100, y: 50, w: 20, h: 24 };
+  const at = (shadow?: string): Part => ({ id: 'strip-6-cap-ghost', ...box, ...(shadow === undefined ? {} : { styles: { 'box-shadow': shadow } }) });
+  // No styles (a canvas part), no shadow, and an inset shadow: the box itself.
+  assert.deepEqual(maskOf(at()), box);
+  assert.deepEqual(maskOf(at('none')), box);
+  assert.deepEqual(maskOf(at('rgba(255, 255, 255, 0.7) 0px 1px 0px 0px inset')), box);
+  // The ghost cap's glow, as Chromium reports it: 12 px on every side.
+  assert.deepEqual(maskOf(at('rgba(167, 139, 255, 0.45) 0px 0px 12px 0px')), { x: 88, y: 38, w: 44, h: 48 });
+  // An offset moves the reach; a spread adds to it; the widest shadow counts,
+  // and the commas of a colour do not split the list.
+  assert.deepEqual(maskOf(at('rgba(0, 0, 0, 0.6) 0px 3px 8px 0px, rgba(255, 255, 255, 0.7) 0px 1px 0px 0px inset')), { x: 92, y: 45, w: 36, h: 40 });
+  assert.deepEqual(maskOf(at('rgb(167, 139, 255) 0px 0px 0px 3px, rgba(0, 0, 0, 0.35) 0px 10px 30px 0px')), { x: 70, y: 30, w: 80, h: 84 });
 });
 
 test('only enforced mismatches and unruled parts fail the gate; the report lists the rest', () => {

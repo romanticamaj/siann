@@ -184,9 +184,13 @@ function stripComments(text) {
 }
 
 // Literals in a stylesheet. Not counted: 0 without a unit, percentages,
-// unitless numbers, times and angles, and the conditions of media queries.
+// unitless numbers, times and angles, and the conditions of media and container
+// queries: CSS cannot name a custom property in a query's condition, so a
+// breakpoint there can never be a token (decided by the maintainer, 2026-11-15;
+// UI redesign 2.3 and 2.4 are built on container queries). Only the condition
+// is skipped: the rules inside the query are counted like any others.
 function cssLiterals(text) {
-  const body = noComments(text).replace(/@media[^{]*\{/g, '{');
+  const body = noComments(text).replace(/@(?:media|container)[^{]*\{/g, '{');
   return {
     colours: (body.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/g) || []).length,
     sizes: (body.match(/(?<![\w.-])\d*\.?\d+(?:px|em|rem|pt)\b/g) || []).length,
@@ -247,6 +251,13 @@ test('the renderer and the mockup hold no colour or size literal beyond the ledg
 test('the literal scanners see what they should', () => {
   assert.deepEqual(cssLiterals('a{color:#fff;margin:0 4px;width:50%;transition:120ms}/* #000 9px */'), { colours: 1, sizes: 1 });
   assert.deepEqual(cssLiterals('a{color:var(--tx-1);height:var(--track-h);flex:1 1 0}'), { colours: 0, sizes: 0 });
+  // A query's condition is not counted, for @media and @container alike (a
+  // named container included); what the query holds is.
+  assert.deepEqual(cssLiterals('@media (max-width: 700px){a{width:var(--x)}}'), { colours: 0, sizes: 0 });
+  assert.deepEqual(cssLiterals('@container (max-width: 200px){a{width:var(--x)}}'), { colours: 0, sizes: 0 });
+  assert.deepEqual(cssLiterals('@container track-header (min-width: 12.5em) and (max-width: 200px){a{width:var(--x)}}'), { colours: 0, sizes: 0 });
+  assert.deepEqual(cssLiterals('@container (max-width: 700px){a{width:320px;color:#fff}}b{margin:2px}'), { colours: 1, sizes: 2 });
+  assert.deepEqual(cssLiterals('a{container-type:inline-size;width:200px}'), { colours: 0, sizes: 1 });
   assert.deepEqual(codeLiterals("const a = '#FF00AA'; // '#000000'\nconst f = `600 10px ${x}`; const n = 10;"), { colours: 1, sizes: 1 });
   assert.deepEqual(codeLiterals('class A { #abc = 1; f() { return this.#abc; } }'), { colours: 0, sizes: 0 });
 });
