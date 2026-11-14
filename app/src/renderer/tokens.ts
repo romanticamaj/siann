@@ -42,6 +42,7 @@ export const TOKENS = {
   "track-10": "#EC6BB0",
   "track-11": "#9AA3B2",
   "focus": "rgb(232 235 241 / .20)",
+  "focus-ring": "rgb(232 235 241 / .55)",
   "meter-green": "#3DDC84",
   "meter-yellow": "#FFD23F",
   "meter-red": "#FF4D57",

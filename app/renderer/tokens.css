@@ -67,6 +67,9 @@
   --track-11: #9AA3B2;
   /* the focused zone's frame */
   --focus: rgb(232 235 241 / .20);
+  /* app-only (spec 10.7, 4a): the 2 px ring of a control or a divider reached
+     from the keyboard; the mockup draws none */
+  --focus-ring: rgb(232 235 241 / .55);
   /* meters (1.2): green to -12 dB, yellow to -3 dB, red above, white hold */
   --meter-green: var(--play);
   --meter-yellow: var(--solo);
