@@ -1216,6 +1216,13 @@ struct ProtocolServer::Impl {
         events.publish("record.changed", recordStateJson(now));
     }
 
+    // The propose-scope methods that end a running recording (and commit it).
+    static bool endsRecording(const std::string& method) {
+        return method == "transport.stop" || method == "transport.locate";
+    }
+
+    bool recordingNow() const { return options.recordPort != nullptr && options.recordPort->recordState().recording; }
+
     // The methods that can end a recording, and with it commit a revision.
     static bool touchesRecording(const std::string& method) {
         return method == "transport.stop" || method == "transport.record" || method == "record.arm" ||
@@ -2421,6 +2428,13 @@ struct ProtocolServer::Impl {
         const Value id(request.requestId);
         for (const detail::McpTool& tool : detail::mcpTools()) {
             if (tool.method == request.method) {
+                // A propose credential cannot start a recording, so it cannot end
+                // one either: stop and locate end a running recording and commit
+                // it (m5b-engine-record), so while one runs they need trusted.
+                if (tool.scope == McpScope::propose && endsRecording(request.method) && recordingNow()) {
+                    return failure(id, "scope_denied",
+                                   std::string(tool.name) + " ends the running recording and needs the trusted scope");
+                }
                 if (tool.scope == McpScope::propose) {
                     return std::nullopt;
                 }
