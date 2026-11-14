@@ -60,8 +60,19 @@ function(siann_declare_dependency name)
   string(TOUPPER "${name}" upper)
   string(TOLOWER "${name}" lower)
   # Where the sources are, for scripts/check-all.js (its g++ step); empty = <build>/_deps.
-  set(SIANN_DEP_SOURCE_DIR_${upper} "" CACHE INTERNAL "Shared source directory of ${name}")
-  if(NOT SIANN_DEPS_CACHE_DIR OR DEFINED FETCHCONTENT_SOURCE_DIR_${upper})
+  # FetchContent keeps FETCHCONTENT_SOURCE_DIR_<NAME> in the cache once set: a value
+  # inside the shared cache is ours and recomputed below (a new pin gets a new
+  # directory); any other value is the user's own checkout and stays.
+  set(own "")
+  if(DEFINED FETCHCONTENT_SOURCE_DIR_${upper})
+    set(own "${FETCHCONTENT_SOURCE_DIR_${upper}}")
+    string(FIND "${own}" "${SIANN_DEPS_CACHE_DIR}/" at)
+    if(SIANN_DEPS_CACHE_DIR AND at EQUAL 0)
+      set(own "")
+    endif()
+  endif()
+  set(SIANN_DEP_SOURCE_DIR_${upper} "${own}" CACHE INTERNAL "Source directory of ${name} outside the build tree")
+  if(NOT SIANN_DEPS_CACHE_DIR OR NOT own STREQUAL "")
     return()
   endif()
 
