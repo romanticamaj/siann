@@ -172,8 +172,8 @@ test('a vertical scroll moves the lanes up under the ruler', () => {
 test('clip rectangles take the lane heights and the vertical scroll', () => {
   const view = { ...ARRANGE, scrollY: 10, laneHeights: { trk_b: 120 } };
   const byId = Object.fromEntries(clipRects(sampleSnapshot(), view).map((r) => [r.clipId, r]));
-  assert.deepEqual({ y: byId.clp_1!.y, height: byId.clp_1!.height }, { y: 22, height: 120 });
-  assert.deepEqual({ y: byId.clp_2!.y, height: byId.clp_2!.height }, { y: 142, height: 53 });
+  assert.deepEqual({ y: byId.clp_1!.y, height: byId.clp_1!.height }, { y: RULER_HEIGHT - 10, height: 120 });
+  assert.deepEqual({ y: byId.clp_2!.y, height: byId.clp_2!.height }, { y: RULER_HEIGHT - 10 + 120, height: 53 });
 });
 
 test('a clip scrolled to before the left edge has a negative x: the canvas begins right of the track list', () => {

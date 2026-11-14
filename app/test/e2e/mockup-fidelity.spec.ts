@@ -52,6 +52,7 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { laneHeightOf, laneTops, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
+import { RULER_LOWER, RULER_UPPER } from '../../src/renderer/timeline/TimelineCanvas';
 import { trackColourIndex } from '../../src/renderer/timeline/track-colour';
 import {
   compareParts,
@@ -310,9 +311,8 @@ async function collectApp(page: Page): Promise<Collected> {
     };
   };
   // The ruler's two halves (TimelineCanvas.ts: locators above, cursor below).
-  const half = view.rulerHeight / 2;
-  parts.push({ id: 'ruler-upper', ...at({ x: 0, y: 0, w: view.width, h: half }) });
-  parts.push({ id: 'ruler-lower', ...at({ x: 0, y: half, w: view.width, h: view.rulerHeight - half }) });
+  parts.push({ id: 'ruler-upper', ...at({ x: 0, y: 0, w: view.width, h: RULER_UPPER }) });
+  parts.push({ id: 'ruler-lower', ...at({ x: 0, y: RULER_UPPER, w: view.width, h: RULER_LOWER }) });
   const tops = laneTops(lanes, view);
   lanes.forEach((id, index) => {
     const n = TRACK_IDS.indexOf(id);
@@ -324,7 +324,7 @@ async function collectApp(page: Page): Promise<Collected> {
     if (match) parts.push({ id: `clip-${Number(match[1])}`, ...at(box) });
     masks.push(at({ x: box.x, y: box.y + CLIP_TITLE, w: box.w, h: Math.max(0, box.h - CLIP_TITLE) }));
   }
-  if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: half, w: 1, h: (view.height ?? display.h) - half }) });
+  if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: RULER_UPPER, w: 1, h: (view.height ?? display.h) - RULER_UPPER }) });
   return { parts, masks };
 }
 
