@@ -506,7 +506,10 @@ export class TimelineCanvas {
     const dy = e.deltaY * scale;
     const snapshot = this.#options.model.getSnapshot();
     if (e.ctrlKey && e.shiftKey) {
-      if (dy !== 0) this.#stepHeights(dy < 0 ? 1 : -1);
+      // Chromium on Windows and Linux reports a vertical wheel with Shift held
+      // as deltaX (deltaY = 0), as the plain Shift branch below allows for.
+      const delta = dy !== 0 ? dy : dx;
+      if (delta !== 0) this.#stepHeights(delta < 0 ? 1 : -1);
       return;
     }
     if (e.ctrlKey || e.metaKey) {
