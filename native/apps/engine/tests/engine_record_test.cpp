@@ -231,6 +231,8 @@ std::string codeOf(const std::function<void()>& call) {
         return error.code();
     } catch (const session::SessionError& error) {
         return error.code();
+    } catch (const command::CommandError& error) {
+        return error.code();
     }
     return "none";
 }
@@ -619,22 +621,22 @@ TEST_CASE("record.recover_take commits or trashes a pending take, idempotently",
     }
     CHECK(rig.host->pendingTakes().size() == 2);
     const std::size_t before = rig.revisions();
-    const protocol::RecoverResult kept = rig.host->recoverTake("take_keep", true, "user", "t");
+    const protocol::RecoverResult kept = rig.host->recoverTake("take_keep", true, std::nullopt, "user", "t");
     REQUIRE(kept.revision != nullptr);
     CHECK(rig.revisions() == before + 1);
     CHECK(rig.fixture.doc().clip("clp_take_keep") != nullptr);
-    const protocol::RecoverResult again = rig.host->recoverTake("take_keep", true, "user", "t");
+    const protocol::RecoverResult again = rig.host->recoverTake("take_keep", true, std::nullopt, "user", "t");
     REQUIRE(again.revision != nullptr);
     CHECK(again.revision->envelope.id == kept.revision->envelope.id);
     CHECK(rig.revisions() == before + 1);
 
-    const protocol::RecoverResult dropped = rig.host->recoverTake("take_drop", false, "user", "t");
+    const protocol::RecoverResult dropped = rig.host->recoverTake("take_drop", false, std::nullopt, "user", "t");
     CHECK(dropped.trashed);
     CHECK(dropped.revision == nullptr);
-    CHECK(rig.host->recoverTake("take_drop", false, "user", "t").trashed);
+    CHECK(rig.host->recoverTake("take_drop", false, std::nullopt, "user", "t").trashed);
     CHECK(fs::exists(rig.fixture.session.bundlePath() / "trash" / "take_drop.wav"));
     CHECK(rig.host->pendingTakes().empty());
-    CHECK(codeOf([&] { rig.host->recoverTake("take_none", true, "user", "t"); }) == "take_not_found");
+    CHECK(codeOf([&] { rig.host->recoverTake("take_none", true, std::nullopt, "user", "t"); }) == "take_not_found");
 }
 
 TEST_CASE("an armed track's input meter is read while stopped", "[engine][record][meters]") {
@@ -861,4 +863,159 @@ TEST_CASE("a device that opens fewer inputs than asked records and meters throug
     CHECK(rig.host->recordState().takes[0].durableFrames > 0);
     rig.host->record(false);
     CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
+}
+
+// ---- a recording's tracks while it runs (m5b-engine-record) -------------------
+//
+// While recording, a new head of main may not remove a track being recorded or
+// change its input: command, plan apply, merge, undo and redo are all refused
+// with track_recording, and nothing is committed. Other changes go through.
+
+namespace {
+
+// Starts recording trk_mono and trk_st, with some audio captured.
+std::vector<protocol::RecordTakeState> startTwoTakes(RecordRig& rig) {
+    rig.openInput();
+    rig.host->arm("trk_mono", true);
+    rig.host->arm("trk_st", true);
+    rig.host->record(true);
+    rig.settle();
+    rig.pump(8);
+    std::vector<protocol::RecordTakeState> takes = rig.host->recordState().takes;
+    REQUIRE(takes.size() == 2);
+    return takes;
+}
+
+std::string takeOn(const std::vector<protocol::RecordTakeState>& takes, const std::string& trackId) {
+    for (const protocol::RecordTakeState& take : takes) {
+        if (take.trackId == trackId) {
+            return take.takeId;
+        }
+    }
+    FAIL("no take on " << trackId);
+    return {};
+}
+
+}  // namespace
+
+TEST_CASE("removing or re-routing a track being recorded is refused while recording", "[engine][record][guard]") {
+    RecordRig rig;
+    const std::vector<protocol::RecordTakeState> takes = startTwoTakes(rig);
+    const std::size_t before = rig.revisions();
+
+    CHECK(codeOf([&] { rig.fixture.exec(R"({"op":"track.remove","trackId":"trk_st"})"); }) == "track_recording");
+    CHECK(codeOf([&] { rig.fixture.exec(setInput("trk_mono", 1, 1)); }) == "track_recording");
+    CHECK(codeOf([&] { rig.fixture.exec(R"({"op":"track.set_input","trackId":"trk_mono","input":null})"); }) ==
+          "track_recording");
+    CHECK(rig.revisions() == before);
+    CHECK(rig.host->recordState().recording);
+
+    // What leaves the recorded tracks and their inputs as they are goes through.
+    rig.exec(R"({"op":"track.rename","trackId":"trk_mono","name":"Vox"})");
+    rig.exec(R"({"op":"track.remove","trackId":"trk_dry"})");
+    CHECK(rig.revisions() == before + 2);
+    rig.pump(4);
+
+    rig.host->record(false);
+    CHECK(rig.revisions() == before + 3);
+    for (const std::string trackId : {"trk_mono", "trk_st"}) {
+        const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeOn(takes, trackId));
+        REQUIRE(clip != nullptr);
+        CHECK(clip->trackId == trackId);
+    }
+    CHECK(session::pendingTakes(rig.fixture.session.bundlePath()).empty());
+    // Stopped, the track can go.
+    rig.exec(R"({"op":"track.remove","trackId":"trk_st"})");
+    CHECK(rig.fixture.doc().track("trk_st") == nullptr);
+}
+
+TEST_CASE("an undo or redo that would remove or re-route a track being recorded is refused",
+          "[engine][record][guard]") {
+    SECTION("undo of the track's own add") {
+        RecordRig rig;
+        rig.fixture.session.commit({cmd(addTrack("trk_new", 1)), cmd(setInput("trk_new", 1, 1))}, "test", "t");
+        rig.host->auditionPort()->mainCommitted();
+        rig.openInput();
+        rig.host->arm("trk_new", true);
+        rig.host->record(true);
+        rig.settle();
+        rig.pump(6);
+        const std::string takeId = rig.host->recordState().takes[0].takeId;
+        const std::size_t before = rig.revisions();
+        CHECK(codeOf([&] { rig.fixture.session.undo("test", "t"); }) == "track_recording");
+        CHECK(rig.revisions() == before);
+        CHECK(rig.fixture.doc().track("trk_new") != nullptr);
+        rig.host->record(false);
+        REQUIRE(rig.fixture.doc().clip("clp_" + takeId) != nullptr);
+        CHECK(rig.fixture.doc().clip("clp_" + takeId)->trackId == "trk_new");
+        // Stopped: undo takes the recording away, then the track.
+        rig.fixture.session.undo("test", "t");
+        rig.fixture.session.undo("test", "t");
+        CHECK(rig.fixture.doc().track("trk_new") == nullptr);
+    }
+    SECTION("redo of an input change") {
+        RecordRig rig;
+        rig.exec(setInput("trk_mono", 0, 2));
+        rig.fixture.session.undo("test", "t");  // back to {0, 1}
+        rig.host->auditionPort()->mainCommitted();
+        rig.openInput();
+        rig.host->arm("trk_mono", true);
+        rig.host->record(true);
+        rig.settle();
+        rig.pump(6);
+        const std::size_t before = rig.revisions();
+        CHECK(codeOf([&] { rig.fixture.session.redo("test", "t"); }) == "track_recording");
+        CHECK(rig.revisions() == before);
+        rig.host->stop();
+        CHECK(rig.revisions() == before + 1);
+        CHECK(rig.fixture.doc().track("trk_mono")->input == std::optional<model::TrackInput>(model::TrackInput{0, 1}));
+    }
+}
+
+TEST_CASE("a track removed on a path that did not refuse it: the other takes commit, its take stays recoverable",
+          "[engine][record][orphan]") {
+    RecordRig rig;
+    const std::vector<protocol::RecordTakeState> takes = startTwoTakes(rig);
+    const std::string monoTake = takeOn(takes, "trk_mono");
+    const std::string orphan = takeOn(takes, "trk_st");
+    // A path past the guard (none is known): the session's guard is taken away.
+    rig.fixture.session.setHeadGuard({});
+    rig.fixture.exec(R"({"op":"track.remove","trackId":"trk_st"})");
+    rig.pump(4);
+    const std::size_t before = rig.revisions();
+    rig.host->record(false);
+
+    CHECK(rig.revisions() == before + 1);
+    CHECK(opsOf(rig.fixture.session.history().head()) == std::vector<std::string>{"clip.place", "media.add"});
+    REQUIRE(rig.fixture.doc().clip("clp_" + monoTake) != nullptr);
+    CHECK(rig.fixture.doc().clip("clp_" + orphan) == nullptr);
+    const std::vector<protocol::PendingTake> pending = rig.host->pendingTakes();
+    REQUIRE(pending.size() == 1);
+    CHECK(pending[0].takeId == orphan);
+    CHECK(pending[0].trackId == "trk_st");
+
+    SECTION("recovered onto a new track when its own is gone and none is named") {
+        const protocol::RecoverResult result = rig.host->recoverTake(orphan, true, std::nullopt, "user", "t");
+        REQUIRE(result.revision != nullptr);
+        const model::Track* track = rig.fixture.doc().track("trk_" + orphan);
+        REQUIRE(track != nullptr);
+        CHECK(track->channels == 2);
+        CHECK(rig.fixture.doc().clip("clp_" + orphan)->trackId == "trk_" + orphan);
+        CHECK(rig.host->pendingTakes().empty());
+        // A repeat answers the same revision.
+        CHECK(rig.host->recoverTake(orphan, true, std::nullopt, "user", "t").revision == result.revision);
+    }
+    SECTION("recovered onto a track the client names") {
+        CHECK(codeOf([&] { rig.host->recoverTake(orphan, true, std::string("trk_none"), "user", "t"); }) ==
+              "not_found");
+        CHECK(rig.host->pendingTakes().size() == 1);
+        const protocol::RecoverResult result =
+            rig.host->recoverTake(orphan, true, std::string("trk_dry"), "user", "t");
+        REQUIRE(result.revision != nullptr);
+        CHECK(rig.fixture.doc().clip("clp_" + orphan)->trackId == "trk_dry");
+    }
+    SECTION("trashed") {
+        CHECK(rig.host->recoverTake(orphan, false, std::nullopt, "user", "t").trashed);
+        CHECK(rig.host->pendingTakes().empty());
+    }
 }

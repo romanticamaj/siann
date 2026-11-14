@@ -343,3 +343,56 @@ TEST_CASE("Takes are validated against the session", "[takes]") {
     CHECK(errorCode([&] { siann::session::beginTake(session, manifest("take_5")); }) == "invalid_take");
     CHECK(errorCode([&] { siann::session::commitTake(session, "take_9", "t", "t"); }) == "take_not_found");
 }
+
+// m5b-engine-record: a take whose track is gone (removed while it was recorded
+// on a path that did not refuse it) stays pending; its recovery places it on
+// another track or on a new one, or trashes it.
+TEST_CASE("An orphan take is recovered onto another track or a new one", "[takes][orphan]") {
+    TempDir dir;
+    Session session = sessionWithTrack(dir.bundle());
+    addGuitar(session);
+    recordTake(session, "take_o1", "trk_vox", 1'000, 300);
+    recordTake(session, "take_o2", "trk_vox", 2'000, 400);
+    recordTake(session, "take_o3", "trk_vox", 3'000, 500);
+    session.commit({Command::fromJson(siann::json::parse(R"({"op":"track.remove","trackId":"trk_vox"})"))}, "test",
+                   "t");
+    // Its own track is gone: a plain commit fails and leaves it pending.
+    CHECK_THROWS(siann::session::commitTake(session, "take_o1", "test", "t"));
+    CHECK(siann::session::pendingTakes(dir.bundle()).size() == 3);
+
+    // Onto another existing track.
+    siann::session::TakePlacement other;
+    other.trackId = "trk_gtr";
+    const auto* onGuitar = &siann::session::commitTake(session, "take_o1", "test", "t", other);
+    REQUIRE(onGuitar->document.clip("clp_take_o1") != nullptr);
+    CHECK(onGuitar->document.clip("clp_take_o1")->trackId == "trk_gtr");
+    CHECK(onGuitar->document.clip("clp_take_o1")->position == siann::time::Position::audio(1'000 - 128));
+
+    // Onto a new track, added in the same revision with the take's channels.
+    siann::session::TakePlacement fresh;
+    fresh.newTrack = true;
+    const std::size_t before = session.history().revisions().size();
+    const auto* onNew = &siann::session::commitTake(session, "take_o2", "test", "t", fresh);
+    CHECK(session.history().revisions().size() == before + 1);
+    const auto* track = onNew->document.track("trk_take_o2");
+    REQUIRE(track != nullptr);
+    CHECK(track->channels == 1);
+    CHECK(onNew->document.clip("clp_take_o2")->trackId == "trk_take_o2");
+    CHECK(onNew->document.root().trackOrder.back() == "trk_take_o2");
+    // A repeat answers the revision that committed it, wherever it went.
+    CHECK(&siann::session::commitTake(session, "take_o2", "test", "t", fresh) == onNew);
+    session.undo("test", "t");  // the take and its new track go together
+    CHECK(session.history().head().document.track("trk_take_o2") == nullptr);
+
+    // A named track that does not exist is not_found and leaves it pending.
+    siann::session::TakePlacement missing;
+    missing.trackId = "trk_none";
+    CHECK(errorCode([&] { siann::session::commitTake(session, "take_o3", "test", "t", missing); }) == "not_found");
+    siann::session::TakePlacement both;
+    both.trackId = "trk_gtr";
+    both.newTrack = true;
+    CHECK(errorCode([&] { siann::session::commitTake(session, "take_o3", "test", "t", both); }) == "invalid_take");
+    CHECK(siann::session::pendingTakes(dir.bundle()).size() == 1);
+    siann::session::discardTake(session, "take_o3");
+    CHECK(siann::session::pendingTakes(dir.bundle()).empty());
+}

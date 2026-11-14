@@ -105,9 +105,11 @@ public:
     }
     RecordState recordState() const override { return recordState_; }
     std::vector<protocol::PendingTake> pendingTakes() const override { return pending; }
-    protocol::RecoverResult recoverTake(const std::string& takeId, bool accept, std::string actor,
+    protocol::RecoverResult recoverTake(const std::string& takeId, bool accept,
+                                        const std::optional<std::string>& trackId, std::string actor,
                                         std::string time) override {
         ++calls;
+        recoverTrackIds.push_back(trackId);
         refuseIfAsked();
         const auto found = std::find_if(pending.begin(), pending.end(),
                                         [&](const protocol::PendingTake& one) { return one.takeId == takeId; });
@@ -149,6 +151,7 @@ public:
     std::uint64_t overflows = 0;
     bool playing = false;
     int calls = 0;
+    std::vector<std::optional<std::string>> recoverTrackIds;  // each recoverTake's trackId
     int recordings = 0;
 
 private:
@@ -483,4 +486,29 @@ TEST_CASE("engine.capabilities lists the record methods, track.set_input and fea
     }
     CHECK(lists(at(capabilities, "commands"), "track.set_input"));
     CHECK(at(at(capabilities, "features"), "recording").asBool());
+}
+
+// m5b-engine-record: an orphan take (its track removed) is recovered onto the
+// track the client names; trackId is passed through, and is optional.
+TEST_CASE("record.recover_take passes an optional trackId to the record port", "[protocol][record][recover]") {
+    RecordFixture f;
+    protocol::PendingTake one;
+    one.takeId = "take_orphan";
+    one.trackId = "trk_gone";
+    protocol::PendingTake two = one;
+    two.takeId = "take_plain";
+    f.port.pending = {one, two};
+    const ConnectionId c = f.harness.authed(true);
+
+    CHECK(errorCode(f.harness.call(c, "record.recover_take",
+                                   Value(Object{{"takeId", Value("take_orphan")},
+                                                {"accept", Value(true)},
+                                                {"trackId", Value(42)}}))) == "invalid_params");
+    f.harness.ok(c, "record.recover_take",
+                 Value(Object{{"takeId", Value("take_orphan")}, {"accept", Value(true)}, {"trackId", Value("trk_1")}}));
+    f.harness.ok(c, "record.recover_take",
+                 Value(Object{{"takeId", Value("take_plain")}, {"accept", Value(false)}}));
+    REQUIRE(f.port.recoverTrackIds.size() == 2);
+    CHECK(f.port.recoverTrackIds[0] == std::optional<std::string>("trk_1"));
+    CHECK_FALSE(f.port.recoverTrackIds[1].has_value());
 }

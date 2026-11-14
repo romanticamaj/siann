@@ -662,7 +662,8 @@ public:
     }
     protocol::RecordState recordState() const override { return state; }
     std::vector<protocol::PendingTake> pendingTakes() const override { return {}; }
-    protocol::RecoverResult recoverTake(const std::string&, bool, std::string, std::string) override {
+    protocol::RecoverResult recoverTake(const std::string&, bool, const std::optional<std::string>&, std::string,
+                                        std::string) override {
         calls.push_back("recover");
         return {};
     }

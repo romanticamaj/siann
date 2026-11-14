@@ -2482,6 +2482,53 @@ TEST_CASE("a take a kill interrupted is listed after the relaunch and recovered 
     CHECK(stopEngine(relaunched) == 0);
 }
 
+// m5b-engine-record: while recording, every protocol path to a new head of main
+// that removes or re-routes a track being recorded is refused with
+// track_recording, and the recording still commits when it ends.
+TEST_CASE("while recording, command.execute, plan.apply and session.undo may not remove or re-route a recorded track",
+          "[engine][launch][record][guard]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle, true));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        RecordWatcher watcher(ready);
+        client.ok("engine.select_device", Value(Object{{"id", Value("fake")}, {"inputId", Value("fake")}}));
+        client.ok("command.execute", commands({setInputCommand("trk_a", 0, 2)}));
+        client.ok("record.arm", Value(Object{{"trackId", Value("trk_a")}, {"armed", Value(true)}}));
+        const Value plan = client.ok(
+            "plan.submit",
+            Value(Object{{"steps", Value(json::Array{json::parse(R"({"op":"track.remove","trackId":"trk_a"})")})}}));
+        const std::string hash = at(plan, "hash").asString();
+        client.ok("plan.approve", Value(Object{{"plan", Value(hash)}}));
+        const std::string head = at(client.ok("session.inspect"), "revision").asString();
+
+        REQUIRE(at(client.ok("transport.record", Value(Object{{"enabled", Value(true)}})), "recording").asBool());
+        const Value event = watcher.untilDurable(1);
+        const std::string takeId = at(at(event, "takes").asArray()[0], "takeId").asString();
+
+        CHECK(client.errorOf("command.execute", commands({R"({"op":"track.remove","trackId":"trk_a"})"})) ==
+              "track_recording");
+        CHECK(client.errorOf("command.execute", commands({setInputCommand("trk_a", 1, 1)})) == "track_recording");
+        CHECK(client.errorOf("plan.apply", Value(Object{{"plan", Value(hash)}})) == "track_recording");
+        CHECK(client.errorOf("session.undo") == "track_recording");  // it would clear trk_a's input
+        CHECK(at(client.ok("session.inspect"), "revision").asString() == head);  // nothing committed
+        // A change that keeps trk_a as it is goes through.
+        client.ok("command.execute", commands({R"({"op":"track.rename","trackId":"trk_b","name":"B"})"}));
+
+        client.ok("transport.record", Value(Object{{"enabled", Value(false)}}));
+        const Value clip = at(fetchOne(client, "clip:clp_" + takeId), "entity");
+        CHECK(at(clip, "trackId").asString() == "trk_a");
+        CHECK(at(client.ok("session.sync"), "pendingTakes").asArray().empty());
+        // Stopped, the track can go.
+        client.ok("command.execute", commands({R"({"op":"track.remove","trackId":"trk_a"})"}));
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
 TEST_CASE("a loopback recording over the wire places the played impulse within one sample",
           "[engine][launch][record][latency]") {
     ix::initNetSystem();
