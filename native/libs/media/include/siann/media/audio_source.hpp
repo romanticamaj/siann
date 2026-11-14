@@ -35,6 +35,9 @@ public:
 
 // A decoder over the bytes of a WAV or FLAC file, which must outlive it. Throws
 // MediaError as decode() does for the header (unsupported_media, decode_failed).
+// Stricter than decode() in one way: a RIFF WAV whose data chunk claims more bytes
+// than the file holds (cut off inside its audio) is decode_failed, where decode()
+// reads what is there.
 std::unique_ptr<AudioSource> openAudioSource(std::string_view bytes);
 
 struct ConvertControl {

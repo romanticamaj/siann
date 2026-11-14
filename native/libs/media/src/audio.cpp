@@ -390,11 +390,40 @@ void checkInfo(const AudioInfo& info) {
     }
 }
 
+std::uint32_t getU32(std::string_view bytes, std::size_t at) {
+    std::uint32_t v = 0;
+    for (int i = 3; i >= 0; --i) {
+        v = (v << 8) | static_cast<unsigned char>(bytes[at + static_cast<std::size_t>(i)]);
+    }
+    return v;
+}
+
+// True when a RIFF file's data chunk claims more bytes than follow it: a file cut
+// off inside its audio, which dr_wav would read short without complaint. RF64
+// (whose sizes live in ds64) is left to dr_wav.
+bool dataChunkCutShort(std::string_view bytes) {
+    if (bytes.size() < 12 || std::memcmp(bytes.data(), "RIFF", 4) != 0) {
+        return false;
+    }
+    std::size_t at = 12;
+    while (at + 8 <= bytes.size()) {
+        const std::uint64_t size = getU32(bytes, at + 4);
+        if (std::memcmp(bytes.data() + at, "data", 4) == 0) {
+            return at + 8 + size > bytes.size();
+        }
+        at += 8 + static_cast<std::size_t>(size) + static_cast<std::size_t>(size & 1u);
+    }
+    return false;
+}
+
 }  // namespace
 
 std::unique_ptr<AudioSource> openAudioSource(std::string_view bytes) {
     if (detectFormat(bytes) == FileFormat::flac) {
         return std::make_unique<FlacSource>(bytes);
+    }
+    if (dataChunkCutShort(bytes)) {
+        throw MediaError("decode_failed", "the WAV data chunk is shorter than its header says");
     }
     return std::make_unique<WavSource>(bytes);
 }
