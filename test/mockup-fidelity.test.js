@@ -19,8 +19,23 @@ const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8').re
 const MANIFEST = JSON.parse(read('app', 'test', 'fidelity', 'manifest.json'));
 const MOCKUP = read(...MANIFEST.mockup.split('/'));
 const milestone = (id) => JSON.parse(read('.claude', 'milestones', `${id}.json`));
-const FEATURES = new Map(['M5', 'M5b'].flatMap((id) => milestone(id).features.map((f) => [f.id, { ...f, milestone: id }])));
-const DONE = new Set(['M5', 'M5b'].flatMap((id) => milestone(id).done));
+// The milestones that own parts of the mockup: M5 built the window, M5b is the
+// usable release, and M6a owns the automation parts (maintainer, 2026-11-15).
+const OWNERS = ['M5', 'M5b', 'M6a'];
+const FEATURES = new Map(OWNERS.flatMap((id) => milestone(id).features.map((f) => [f.id, { ...f, milestone: id }])));
+const DONE = new Set(OWNERS.flatMap((id) => milestone(id).done));
+// M5's parts answer to the alignment feature of their region; the closing
+// feature ends the alignment and empties the debt ledger.
+const ALIGNMENT = ['m5-ui-alignment-chrome', 'm5-ui-alignment-arrange', 'm5-ui-alignment-mixer-inspector', 'm5-ui-alignment-plans'];
+const CLOSING = 'm5-ui-mockup-alignment';
+const REGION_GATES = {
+  'top-bar': 'm5-ui-alignment-chrome',
+  'status-bar': 'm5-ui-alignment-chrome',
+  'project-zone': 'm5-ui-alignment-arrange',
+  'left-zone': 'm5-ui-alignment-mixer-inspector',
+  'lower-zone': 'm5-ui-alignment-mixer-inspector',
+  'right-zone': 'm5-ui-alignment-plans',
+};
 
 const glob = (pattern) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
 const ruleOf = (id) => MANIFEST.rules.find((rule) => rule.match.some((pattern) => glob(pattern).test(id)));
@@ -61,50 +76,84 @@ test('every id the mockup names is owned by a rule, and the regions are marked',
   }
 });
 
-test('every rule names a feature of M5 or M5b and a gate with a mode, or says why it is unowned', () => {
+test('every rule names its feature and a gate with a mode, and no part is unowned', () => {
   const modes = new Set(['pending', 'report', 'enforce']);
   for (const [gate, mode] of Object.entries(MANIFEST.gates)) {
-    assert.ok(FEATURES.has(gate), `gate ${gate} is a feature of M5 or M5b`);
+    assert.ok(FEATURES.has(gate), `gate ${gate} is a feature of ${OWNERS.join(', ')}`);
     assert.ok(modes.has(mode), `${gate}: ${mode}`);
   }
   for (const rule of MANIFEST.rules) {
     assert.ok(Array.isArray(rule.match) && rule.match.length > 0, JSON.stringify(rule));
-    if (rule.gate === null) {
-      assert.equal(rule.feature, null);
-      assert.ok(typeof rule.unowned === 'string' && rule.unowned.length > 20, `an unowned rule says what it waits for: ${rule.match.join(', ')}`);
-      continue;
-    }
-    assert.ok(FEATURES.has(rule.feature) || DONE.has(rule.feature), `${rule.feature} is a feature of M5 or M5b`);
+    // Decided by the maintainer, 2026-11-15: every part has an owner.
+    assert.ok(rule.feature && rule.gate && !('unowned' in rule), `no part is unowned: ${rule.match.join(', ')}`);
+    assert.ok(FEATURES.has(rule.feature) || DONE.has(rule.feature), `${rule.feature} is a feature of ${OWNERS.join(', ')}`);
     assert.ok(rule.gate in MANIFEST.gates, `${rule.gate} has a mode in manifest.gates`);
-    // M5's parts answer to the alignment feature; an M5b feature answers for its own.
-    assert.equal(rule.gate, rule.feature.startsWith('m5b-') ? rule.feature : 'm5-ui-mockup-alignment', rule.match.join(', '));
+    // M5's parts answer to the alignment feature of their region; a later feature answers for its own.
+    if (rule.feature.startsWith('m5-')) assert.ok(ALIGNMENT.includes(rule.gate), `${rule.match.join(', ')}: ${rule.gate}`);
+    else assert.equal(rule.gate, rule.feature, rule.match.join(', '));
   }
   for (const gate of Object.keys(MANIFEST.gates)) assert.ok(MANIFEST.rules.some((rule) => rule.gate === gate), `${gate} owns no part`);
+  for (const gate of ALIGNMENT) assert.ok(gate in MANIFEST.gates, `${gate} has a mode`);
+  // A region's pixels answer to the alignment feature that ports it.
+  assert.deepEqual(Object.keys(REGION_GATES).sort(), [...MANIFEST.regions].sort());
+  for (const [region, gate] of Object.entries(REGION_GATES)) assert.equal(ruleOf(region).gate, gate, region);
 });
 
 test('a feature that owns parts carries the gate in its acceptance, and a landed one enforces it', () => {
   for (const [gate, mode] of Object.entries(MANIFEST.gates)) {
     const feature = FEATURES.get(gate);
     assert.ok(feature.acceptance.some((line) => /fidelity gate|mockup-fidelity\.spec/.test(line)), `${gate}: an acceptance line names the fidelity gate`);
+    assert.ok(feature.acceptance.some((line) => line.includes(`gate ${gate})`) || line.includes(`gate is ${gate} `)), `${gate}: its acceptance names its own gate`);
     if (DONE.has(gate)) assert.equal(mode, 'enforce', `${gate} is done: its gate is enforce`);
   }
 });
 
-test('m5-ui-mockup-alignment follows the in-flight UI features and ports from the mockup', () => {
-  const feature = FEATURES.get('m5-ui-mockup-alignment');
-  assert.equal(feature.milestone, 'M5');
-  for (const dep of ['m5-ui-transport', 'm5-ui-edit-basics', 'm5-ui-loop-click']) {
-    assert.ok(feature.dependsOn.includes(dep), `depends on ${dep}`);
-    assert.ok(FEATURES.get(dep).wave < feature.wave, `a later wave than ${dep}`);
+test('the alignment is split by region after the token conversion, and one feature closes it', () => {
+  const wave = (id) => FEATURES.get(id).wave;
+  const tokens = FEATURES.get('m5-ui-tokens-spacing');
+  assert.equal(tokens.milestone, 'M5');
+  assert.match(tokens.acceptance.join('\n'), /no allowlist/);
+  assert.match(tokens.acceptance.join('\n'), /No visual change to the mockup, proven by the gate's own measurement/);
+  for (const id of ALIGNMENT) {
+    const feature = FEATURES.get(id);
+    assert.equal(feature.milestone, 'M5');
+    assert.ok(wave('m5-ui-tokens-spacing') < feature.wave, `${id} follows the token conversion`);
+    assert.ok(wave('m5-ui-loop-click') < feature.wave, `${id} follows m5-ui-loop-click`);
+    const text = feature.acceptance.join('\n');
+    assert.match(text, /DOM structure and class names/);
+    assert.match(text, /en against mockup\.html and in zh-TW against mockup\.html\?lang=zh-TW/);
+    assert.match(text, /within 1 px/);
+    assert.match(text, /0\.5 %/);
+    assert.match(text, /enforce/);
+    assert.match(text, /An absent part keeps its space empty/);
   }
-  const text = feature.acceptance.join('\n');
-  assert.match(text, /DOM structure and class names/);
+  const chrome = FEATURES.get('m5-ui-alignment-chrome');
+  for (const dep of ['m5-ui-tokens-spacing', 'm5-ui-loop-click', 'm5-ui-transport']) assert.ok(chrome.dependsOn.includes(dep), `the chrome depends on ${dep}`);
+  assert.match(chrome.acceptance.join('\n'), /JetBrains Mono Medium \(500\) is bundled/);
+  for (const id of ALIGNMENT.slice(1)) assert.ok(FEATURES.get(id).dependsOn.includes('m5-ui-alignment-chrome'), `${id} depends on the chrome`);
+  const arrange = FEATURES.get('m5-ui-alignment-arrange');
+  assert.ok(arrange.dependsOn.includes('m5-ui-edit-basics'));
+  assert.match(arrange.acceptance.join('\n'), /Canvas surfaces copy the mockup's drawing parameters/);
+  const closing = FEATURES.get(CLOSING);
+  assert.deepEqual([...closing.dependsOn].sort(), [...ALIGNMENT].sort());
+  for (const id of ALIGNMENT) assert.ok(wave(id) < closing.wave, `a later wave than ${id}`);
+  const text = closing.acceptance.join('\n');
   assert.match(text, /app\/renderer\/ui/);
-  assert.match(text, /Canvas surfaces copy the mockup's drawing parameters/);
-  assert.match(text, /en against mockup\.html and in zh-TW against mockup\.html\?lang=zh-TW/);
-  assert.match(text, /within 1 px/);
-  assert.match(text, /0\.5 %/);
-  assert.match(text, /enforce/);
+  assert.match(text, /debt\.json is empty/);
+  assert.match(text, /All four gates are enforce/);
+  // The closing feature is done only with every alignment gate enforced.
+  if (DONE.has(CLOSING)) for (const id of ALIGNMENT) assert.equal(MANIFEST.gates[id], 'enforce', id);
+});
+
+test('an absent part keeps its space empty: a hold token names a part that is still pending', () => {
+  // Where the shared rules do not size the empty box, a --hold-<part>-w or
+  // --hold-<part>-h token does; the feature that lands the part deletes it.
+  const tokens = read('app', 'renderer', 'tokens.css');
+  for (const m of tokens.matchAll(/--hold-([a-z0-9-]+)-[wh]\s*:/g)) {
+    const rule = ruleOf(m[1]);
+    assert.ok(rule, `--hold-${m[1]}: no part of the mockup has that id`);
+    assert.equal(MANIFEST.gates[rule.gate], 'pending', `--hold-${m[1]}: ${rule.gate} has landed, so the hold goes`);
+  }
 });
 
 test('check-all runs the app step, and with it the gate, when app/ or the mockup changes', () => {
@@ -152,4 +201,26 @@ test('the rules, the runbook, the spec and the workflow carry the guideline', ()
   const workflow = read('.claude', 'workflows', 'siann-milestone.js');
   for (const name of ['uiBuild', 'uiVerify', 'uiSpec']) assert.ok(workflow.includes(`\${${name}(f)}`), `the ${name} prompt is used`);
   assert.match(workflow, /mockup fidelity gate/);
+});
+
+test('the decisions of 2026-11-15 are written where contributors read them', () => {
+  const rules = read('docs', 'harness', 'agent-rules.md');
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  // An absent part keeps its space empty; "no reserved space" is gone as a rule.
+  assert.match(spec, /is not rendered, and its space stays empty\.\*\*/);
+  assert.match(rules, /is absent, and it keeps its space empty/);
+  assert.match(spec, /\n### 10\.5 Decisions of 2026-11-15\n/);
+  assert.match(spec, /\n### 10\.6 The alignment tickets \(P1-9 to P1-14\)\n/);
+  for (const text of [rules, spec]) {
+    assert.match(text, /[Dd]ecided by the maintainer, 2026-11-15/);
+    assert.match(text, /no allowlist/);
+    assert.match(text, /JetBrains Mono Medium/);
+    assert.doesNotMatch(text, /unowned" in the manifest/);
+  }
+  // Every feature the manifest or the spec's ownership table names exists.
+  for (const [, id] of spec.slice(spec.indexOf('### 10.5 ')).matchAll(/`(m5b?-[a-z0-9-]+|m6a-[a-z0-9-]+)`/g)) assert.ok(FEATURES.has(id) || DONE.has(id), `${id} is a feature`);
+  // The loop and click ticket names the states it changes.
+  const loop = FEATURES.get('m5-ui-loop-click').acceptance.join('\n');
+  assert.match(loop, /Tour states changed: the top bar in every state/);
+  assert.doesNotMatch(`${loop}\n${spec.slice(spec.indexOf('**P1-7 '), spec.indexOf('**P1-8 '))}`, /Tour states changed: none of 01/);
 });
