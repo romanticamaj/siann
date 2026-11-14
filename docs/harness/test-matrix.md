@@ -133,7 +133,7 @@ Platform column: which OSes the automated tests actually execute on in CI.
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
-| m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `engine_launch_test` kill-and-recover and wire loopback) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
+| m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `session_test` head guard, `engine_launch_test` kill-and-recover, wire loopback and `track_recording` over the wire) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
 
 Per acceptance item: 1 `engine_record_test` "engine.devices carries channel
 counts ...", "an input reports the channels the device opened ...", "a device

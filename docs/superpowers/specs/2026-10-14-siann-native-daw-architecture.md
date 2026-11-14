@@ -1283,9 +1283,29 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
   audio thread captures nothing more for it.
 - Pending takes are the takes in `media/recording/` that are not being recorded.
   `session.sync` and the auth reply list them (`pendingTakes`); `record.recover_take
-  {takeId, accept}` commits one in the same revision shape or moves it to `trash/`,
-  both idempotent: a repeated accept answers the revision that committed the take,
-  a repeated reject finds nothing left to move and answers the same.
+  {takeId, accept, trackId?}` commits one in the same revision shape or moves it to
+  `trash/`, both idempotent: a repeated accept answers the revision that committed
+  the take, a repeated reject finds nothing left to move and answers the same.
+- A recording's tracks while it runs (decided with m5b-engine-record, after review):
+  the tracks being recorded keep existing and keep the input their takes began
+  with. The engine host sets a head guard on the `Session` (`Session::
+  setHeadGuard`) for as long as it records; every revision that would become
+  main's head (commit, plan apply, merge, rollback, undo, redo, whichever method or
+  MCP tool asked for it) passes it before it is journaled, and one that removes a
+  recorded track or changes its `input` is refused with the stable code
+  `track_recording`; nothing is committed, and the recording goes on. A branch
+  commit is not main and is not checked; merging it while recording is. Other
+  changes to a recorded track (name, gain, clips) go through. Refusing was chosen
+  over ending the recording first: an edit should not silently cut a take short,
+  and the client can end the recording itself and retry.
+- Defence in depth: if a recorded track is gone anyway when the recording ends, the
+  takes on tracks main still holds commit as one revision, and the orphan take stays
+  pending with its `trackId` (one failing `clip.place` no longer leaves every take
+  of the recording uncommitted). `record.recover_take` accepts it onto the track
+  `trackId` names (`not_found` when main has none), or without `trackId` onto a new
+  track `trk_<takeId>` (named after the take, with its channels, added last) in the
+  same revision as its `media.add` and `clip.place` (`session::TakePlacement`);
+  rejected, it goes to `trash/` as any take.
 - The commit hashes each take file on the command thread when recording stops, as
   `siann-cli record` does; M6b's one-hour criterion may need that moved off the
   command thread (follow-ups, "Before M6b: recording").
@@ -2908,11 +2928,18 @@ Protocol v0, recording (decided with m5b-engine-record, M5b; the wire details ar
       (`endedBy` `stop`), then locates and playback continues: a take is one
       contiguous run of the input at one position, so a jump never goes into it.
       The commit's `session.changed` follows.
-    - `record.recover_take {takeId, accept}`: accepted, `{revision}` as
+    - `record.recover_take {takeId, accept, trackId?}`: accepted, `{revision}` as
       `command.execute` answers it (also on a repeat, the revision that committed
-      the take); rejected, `{takeId, trashed: true}`. `take_not_found` for a take
-      that is neither pending, committed nor trashed (or accepted after a reject),
-      `take_has_no_audio`, `invalid_state` for a take being recorded.
+      the take), on `trackId` when given, else on the take's own track, or on a new
+      track `trk_<takeId>` when its own is gone ("Recording"); rejected, `{takeId,
+      trashed: true}`. `take_not_found` for a take that is neither pending,
+      committed nor trashed (or accepted after a reject), `take_has_no_audio`,
+      `not_found` for a `trackId` main does not hold, `invalid_state` for a take
+      being recorded.
+    - While recording, a request whose new head of main would remove a track being
+      recorded or change its `input` (`command.execute`, `plan.apply`,
+      `plan.rollback`, `proposal.merge`, `session.undo`, `session.redo`) fails with
+      `track_recording`, a new stable code, and commits nothing ("Recording").
     - The transport results and `engine.status` add `recording` (a boolean) and
       `armed` (track ids).
     - `record.changed {recording, armed, takes: [{takeId, trackId, startFrame,

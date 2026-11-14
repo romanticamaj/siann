@@ -82,7 +82,7 @@ A track's input is document data, set with the command `track.set_input {trackId
 |---|---|---|
 | `record.arm` | `{trackId, armed: bool}` | the record state `{recording, armed, takes}` |
 | `transport.record` | `{enabled: bool}` | `{playing, position, cycle, click, recording, armed}` |
-| `record.recover_take` | `{takeId, accept: bool}` | accepted `{revision}`, rejected `{takeId, trashed: true}` |
+| `record.recover_take` | `{takeId, accept: bool, trackId?}` | accepted `{revision}`, rejected `{takeId, trashed: true}` |
 
 Errors:
 
@@ -91,16 +91,19 @@ Errors:
 | `invalid_params` | a missing or mistyped param |
 | `no_device` | `record.arm` with `armed: true` or `transport.record` with `enabled: true` while no device runs |
 | `no_input` | arming or recording with no input open; arming a track without `input`, or whose `port + channels` exceeds the open input's channels |
-| `not_found` | `record.arm` for a track main does not hold |
+| `not_found` | `record.arm` for a track main does not hold; `record.recover_take` with a `trackId` main does not hold |
 | `nothing_armed` | `transport.record {enabled: true}` with no armed track |
 | `invalid_state` | arming or disarming while recording; a 17th armed track; recovering a take being recorded |
 | `take_not_found` | `record.recover_take` for a take that is not pending, committed or trashed, or accepted after it was rejected |
 | `take_has_no_audio` | `record.recover_take {accept: true}` for a take without a complete frame |
+| `track_recording` | while recording, any request that would make a new head of main that removes a track being recorded or changes its `input` (set, cleared or re-routed): `command.execute`, `plan.apply`, `proposal.merge`, `plan.rollback`, `session.undo`, `session.redo`, MCP `execute` and the other tools over them. Nothing is committed; end the recording first |
 
 - Arming is engine state, never a revision. Disarming a track that is not armed changes nothing. `session.open` clears the armed set; every new head of main prunes it (a removed track, an input cleared or no longer covered by the open input, an undo that removed it). The prune happens before any record method reads the set, so a `transport.record` that follows a `track.remove` or `track.set_input` in the same batch of requests sees the new head, and `armed` in the results never lists a track the head no longer arms.
 - `transport.record {enabled: true}` begins one take per armed track at the playhead and starts the transport; while recording it changes nothing. `{enabled: false}` ends the recording and commits it as one revision (a `media.add` and a `clip.place` per take with audio; a take with no frame moves to `trash/`), and playback continues; with nothing recording it changes nothing. `transport.stop` ends a recording the same way and stops. `transport.locate` ends it the same way (`endedBy` `stop`), then locates, and playback continues from the new position: a take is one contiguous run at one position, so nothing after a jump goes into it. A device that stops, a ring overflow and a write failure end it too, from the engine's tick. The revision is announced by `session.changed`; `session.undo` removes the clips and the media references and deletes no file.
 - Takes are recorded at the session rate into `media/recording/<takeId>.wav` with the manifest `<takeId>.json` (`siann.take_manifest.v1`); a committed take's media is `med_<takeId>` and its clip `clp_<takeId>`.
-- `record.recover_take` works on a pending take (one in `media/recording/` that is not being recorded, typically left by a crash): accepted, it is committed in the same revision shape; rejected, its files move to `trash/`. Both are idempotent: an accept repeated answers the revision that committed the take, a reject repeated answers `{takeId, trashed: true}` again.
+- While recording, the tracks being recorded keep existing and keep the input their takes began with: a new head of main that would remove one or change its `input` is refused with `track_recording`, whichever method makes it (commands, plans, merges, rollbacks, undo, redo). Every other change goes through, a track being recorded can be renamed, mixed or have clips edited. A proposal branch is not main and may remove it; merging that branch while recording is refused.
+- If a track being recorded is gone anyway when the recording ends (no known path allows it), the other takes still commit as one revision and that track's take stays pending with its `trackId`, for `record.recover_take`.
+- `record.recover_take` works on a pending take (one in `media/recording/` that is not being recorded, typically left by a crash): accepted, it is committed in the same revision shape; rejected, its files move to `trash/`. Accepted with `trackId`, its clip goes on that track of main's head (`not_found` when there is none). Accepted without `trackId`, it goes on its own track, or, when its own track is gone, on a new track `trk_<takeId>` (named after the take, with its channels, added last) in the same revision. Both are idempotent: an accept repeated answers the revision that committed the take, wherever it went, a reject repeated answers `{takeId, trashed: true}` again.
 - With cycle on, a recording records straight through the right locator (the wrap is suspended while capturing).
 
 The record state:
