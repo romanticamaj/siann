@@ -14,7 +14,11 @@
 //                                             use or a changed package-lock.json, build,
 //                                             unit and Playwright tests against
 //                                             native/build/dev's siann-engine
-//   node scripts/check-all.js --only native   one step: node | native | desktop | app | gcc
+//   node scripts/check-all.js --only package  the Windows installer (Windows only; reports
+//                                             skipped elsewhere): the desktop-release engine,
+//                                             npm run dist in app/, the package tests and the
+//                                             packaged e2e against app/release/win-unpacked
+//   node scripts/check-all.js --only native   one step: node | native | desktop | app | package | gcc
 //   node scripts/check-all.js --json          machine-readable summary
 //
 //   --base <ref>    with --changed: diff against <ref> itself instead of the merge-base
@@ -39,7 +43,7 @@ const ROOT = path.resolve(__dirname, '..');
 const NATIVE = path.join(ROOT, 'native');
 const isWindows = process.platform === 'win32';
 
-const ALL_STEPS = ['node', 'native', 'desktop', 'app', 'gcc'];
+const ALL_STEPS = ['node', 'native', 'desktop', 'app', 'package', 'gcc'];
 
 function parseArgs(argv) {
   const options = {
@@ -82,6 +86,23 @@ const DESKTOP_PATHS = [
   /\.cmake$/,
 ];
 
+// What goes into the Windows installer (m5b-package-windows) besides the desktop
+// paths above (siann-engine and the build files): app/'s packaging and main
+// process, the packaged e2e, `npm run app`, and the package tests.
+const PACKAGE_APP_PATHS = [
+  /^app\/package(-lock)?\.json$/,
+  /^app\/electron-builder\.json$/,
+  /^app\/build\//,
+  /^app\/scripts\/collect-licenses\.js$/,
+  /^app\/src\/main\//,
+  /^app\/test\/e2e\/packaged\.spec\.ts$/,
+];
+const PACKAGE_OTHER_PATHS = [
+  /^scripts\/run-app\.js$/,
+  /^scripts\/pe-imports\.js$/,
+  /^test\/package\//,
+];
+
 // Steps for one changed path (forward slashes, relative to the repository root).
 // The Node tests run for every change; the rest follow the table below.
 function stepsForPath(file) {
@@ -93,9 +114,12 @@ function stepsForPath(file) {
   // Prose builds nothing, wherever it lives.
   if (/\.md$/i.test(p)) return ['node'];
   if (/^native\//.test(p)) {
-    return DESKTOP_PATHS.some((re) => re.test(p)) ? ['node', 'native', 'desktop', 'gcc'] : ['node', 'native', 'gcc'];
+    return DESKTOP_PATHS.some((re) => re.test(p))
+      ? ['node', 'native', 'desktop', 'package', 'gcc']
+      : ['node', 'native', 'gcc'];
   }
-  if (/^app\//.test(p)) return ['node', 'app'];
+  if (/^app\//.test(p)) return PACKAGE_APP_PATHS.some((re) => re.test(p)) ? ['node', 'app', 'package'] : ['node', 'app'];
+  if (PACKAGE_OTHER_PATHS.some((re) => re.test(p))) return ['node', 'package'];
   // The native tests read the shared fixtures too.
   if (/^fixtures\//.test(p)) return ['node', 'native'];
   if (/^(docs|\.claude|\.codex|\.github|scripts|test|src|bin|examples)\//.test(p)) return ['node'];
@@ -499,11 +523,74 @@ function appStep(options) {
   return { ok: true, output: '' };
 }
 
+// app/'s locked dependencies are installed and current: npm's own record of the
+// install (node_modules/.package-lock.json) is not older than package-lock.json.
+function appDepsFresh(appDir) {
+  const installed = path.join(appDir, 'node_modules', '.package-lock.json');
+  const lock = path.join(appDir, 'package-lock.json');
+  if (!fs.existsSync(installed) || !fs.existsSync(lock)) return false;
+  return fs.statSync(installed).mtimeMs >= fs.statSync(lock).mtimeMs;
+}
+
+// The Windows installer (m5b-package-windows): the desktop-release engine (Release,
+// JUCE, static MSVC runtime), `npm run dist` in app/ (electron-builder, NSIS, no
+// signing), the package tests over win-unpacked and the packaged e2e on its
+// SIANN.exe. electron-builder makes the Windows installer on Windows only.
+async function packageStep(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== 'win32') {
+    return { ok: true, output: '', note: 'skipped: the Windows installer is built on Windows only' };
+  }
+  const APP = path.join(ROOT, 'app');
+  const built = sequence([
+    ['cmake', ['--preset', 'desktop-release']],
+    ['cmake', ['--build', '--preset', 'desktop-release', '--target', 'siann-engine']],
+  ], options);
+  if (!built.ok) return built;
+  const engine = path.join(NATIVE, 'build', 'desktop-release', 'apps', 'engine', 'siann-engine.exe');
+  if (!fs.existsSync(engine)) return { ok: false, output: `${engine} is missing after the build` };
+
+  // No signing: no certificate is looked up, and none the environment might hold is used.
+  const env = { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
+  for (const key of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'SIANN_ENGINE_EXE']) {
+    delete env[key];
+  }
+  const npm = (args) => run('cmd.exe', ['/d', '/c', 'npm', ...args], APP, env);
+  if (!appDepsFresh(APP)) {
+    const installed = npm(['ci']);
+    if (!installed.ok) return { ...installed, failedAt: 'npm ci' };
+  }
+  if (!fs.existsSync(path.join(APP, 'node_modules', 'electron', 'path.txt'))) {
+    const step = run(process.execPath, [path.join('node_modules', 'electron', 'install.js')], APP, env);
+    if (!step.ok) return { ...step, failedAt: 'electron install.js' };
+  }
+  const dist = npm(['run', 'dist']);
+  if (!dist.ok) return { ...dist, failedAt: 'npm run dist' };
+
+  const unpacked = path.join(APP, 'release', 'win-unpacked');
+  const packageTests = fs.readdirSync(path.join(ROOT, 'test', 'package')).filter((f) => f.endsWith('.test.js')).sort()
+    .map((f) => path.join('test', 'package', f));
+  const tests = run(process.execPath, ['--test', ...packageTests], ROOT, { ...env, SIANN_PACKAGE_DIR: unpacked });
+  if (!tests.ok) return { ...tests, failedAt: 'node --test test/package' };
+
+  const head = git(['rev-parse', 'HEAD']);
+  if (!head) return { ok: false, output: 'git rev-parse HEAD failed' };
+  const e2e = run('cmd.exe', ['/d', '/c', 'npx', 'playwright', 'test', '--project', 'packaged'], APP, {
+    ...env,
+    SIANN_PACKAGED_EXE: path.join(unpacked, 'SIANN.exe'),
+    SIANN_EXPECT_COMMIT: head.trim(),
+  });
+  if (!e2e.ok) return { ...e2e, failedAt: 'playwright test --project packaged' };
+  const installer = fs.readdirSync(path.join(APP, 'release')).find((f) => /^SIANN-Setup-.*-x64\.exe$/.test(f));
+  return { ok: true, output: '', note: installer ? `app/release/${installer}` : undefined };
+}
+
 const STEPS = {
   node: () => run(process.execPath, ['--test', ...nodeTests()], ROOT),
   native: preset('dev'),
   desktop: preset('desktop'),
   app: appStep,
+  package: packageStep,
   gcc,
 };
 
@@ -549,6 +636,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ALL_STEPS, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, listSources, nativeEnv,
-  needsInstall, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath, stepsForPaths,
+  ALL_STEPS, appDepsFresh, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, listSources,
+  nativeEnv, needsInstall, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath,
+  stepsForPaths,
 };

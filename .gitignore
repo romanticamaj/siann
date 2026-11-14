@@ -9,3 +9,9 @@ app/playwright-report/
 # CI cache of the JUCE source archive
 .juce-archive/
 .electron-cache/
+
+# The Windows installer (m5b-package-windows): electron-builder output, and the
+# licence texts app/scripts/collect-licenses.js copies (AGPL-3.0.txt is checked in).
+app/release/
+app/build/licenses/*
+!app/build/licenses/AGPL-3.0.txt

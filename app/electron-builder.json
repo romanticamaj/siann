@@ -1,0 +1,46 @@
+{
+  "appId": "com.github.romanticamaj.siann",
+  "productName": "SIANN",
+  "copyright": "SIANN contributors. AGPL-3.0-or-later as a whole (ADR-0017).",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "package.json",
+    "dist/src/**/*",
+    "renderer/**/*",
+    "!dist/test/**",
+    "!node_modules/**"
+  ],
+  "extraResources": [
+    {
+      "from": "../native/build/desktop-release/apps/engine/siann-engine.exe",
+      "to": "siann-engine.exe"
+    },
+    {
+      "from": "build/licenses",
+      "to": "licenses"
+    }
+  ],
+  "npmRebuild": false,
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "license": "build/licenses/AGPL-3.0.txt",
+    "artifactName": "SIANN-Setup-${version}-x64.exe",
+    "shortcutName": "SIANN",
+    "createDesktopShortcut": false,
+    "createStartMenuShortcut": true,
+    "deleteAppDataOnUninstall": false
+  }
+}
