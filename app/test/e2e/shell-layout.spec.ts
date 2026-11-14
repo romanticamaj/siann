@@ -261,11 +261,12 @@ test('each zone boundary drags within its range, collapses below its minimum, re
     await expect(separator).toHaveAttribute('aria-valuemin', String(min));
     await expect(separator).toHaveAttribute('aria-valuemax', String(max));
     await expect(separator).toHaveAttribute('aria-valuenow', String(min));
-    // A visible focus ring.
+    // A visible focus ring. Any outline width above zero counts, not a pixel
+    // width: at 150% display scaling a 1px outline computes to 0.667px.
     expect(
       await separator.evaluate((el) => {
         const style = getComputedStyle(el);
-        return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 1;
+        return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
       }),
       `separator-${zone} shows its focus`,
     ).toBe(true);
@@ -408,7 +409,7 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   const frame = (zone: string) =>
     page.locator(`[data-zone="${zone}"]`).evaluate((el) => {
       const style = getComputedStyle(el);
-      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 1;
+      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
     });
   await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
   expect(await focused()).toEqual(['project']);
@@ -465,7 +466,7 @@ test('the keyboard reaches each divider and the controls of a zone from the zone
       const el = document.activeElement as HTMLElement | null;
       if (!el) return false;
       const style = getComputedStyle(el);
-      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 1;
+      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
     });
 
   // From the page, Tab and Shift+Tab move between the zones themselves.
