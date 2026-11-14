@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <optional>
-#include <random>
 #include <utility>
 
 #include "siann/hash/jcs.hpp"
@@ -38,8 +37,9 @@ const std::vector<McpTool> kTools = {
      "Returns main's head revision, document hash, revision count, open proposal branches and the side heard.",
      kEmpty},
     {"submit_plan", "plan.submit", McpScope::propose,
-     "Submits commands as a plan for review; returns the validated siann.plan.v1 with its hash.",
-     R"({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object"},"minItems":1,"description":"commands {op, ...}"},"readSet":{"type":"array","items":{"type":"string"},"description":"entities read, <type>:<id>"},"baseRevision":{"type":"string","description":"defaults to main's head"}},"required":["steps"],"additionalProperties":false})"},
+     "Submits commands as a plan for review, optionally with a title and an intent shown to the user; returns the "
+     "validated siann.plan.v1 with its hash and the actor the engine recorded.",
+     R"({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object"},"minItems":1,"description":"commands {op, ...}"},"readSet":{"type":"array","items":{"type":"string"},"description":"entities read, <type>:<id>"},"baseRevision":{"type":"string","description":"defaults to main's head"},"title":{"type":"string","minLength":1,"maxLength":200,"description":"one line, at most 200 UTF-8 bytes, no control characters; not part of the plan hash"},"intent":{"type":"string","minLength":1,"maxLength":2000,"description":"why, at most 2000 UTF-8 bytes; tab, LF and CR are the only control characters allowed; not part of the plan hash"}},"required":["steps"],"additionalProperties":false})"},
     {"plan_status", "plan.status", McpScope::propose,
      "Returns a plan with the entities that changed since its base (stale) and its proposal branch.", kPlanOnly},
     {"approve_plan", "plan.approve", McpScope::trusted,
@@ -105,19 +105,6 @@ const std::vector<McpTool> kTools = {
      R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the audio file"},"clientImportId":{"type":"string","minLength":1,"maxLength":128,"description":"chosen by the client; a repeat answers the first job"}},"required":["path","clientImportId"],"additionalProperties":false})"},
 };
 
-std::string randomHex(std::size_t bytes) {
-    static constexpr char kDigits[] = "0123456789abcdef";
-    std::random_device device;
-    std::uniform_int_distribution<unsigned> byte(0, 255);
-    std::string out;
-    for (std::size_t i = 0; i < bytes; ++i) {
-        const unsigned b = byte(device);
-        out.push_back(kDigits[b >> 4]);
-        out.push_back(kDigits[b & 0xF]);
-    }
-    return out;
-}
-
 HttpResponse reply(int status, std::string body, Headers headers = {}) {
     return HttpResponse{status, "application/json", std::move(body), std::move(headers)};
 }
@@ -162,7 +149,21 @@ const std::vector<McpTool>& mcpTools() {
     return kTools;
 }
 
-McpAdapter::McpAdapter(Submit submit) : submit_(std::move(submit)) {}
+McpAdapter::McpAdapter(Submit submit, AgentRegistry& agents) : submit_(std::move(submit)), agents_(agents) {}
+
+void McpAdapter::end(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
+    const Value nullId(nullptr);
+    auto header = request.headers.find("mcp-session-id");
+    if (header == request.headers.end()) {
+        complete(reply(400, rpcError(nullId, kInvalidRequest, "the Mcp-Session-Id header is required")));
+        return;
+    }
+    if (!agents_.end(header->second)) {
+        complete(reply(404, rpcError(nullId, kInvalidRequest, "unknown MCP session")));
+        return;
+    }
+    complete(reply(204, ""));
+}
 
 void McpAdapter::handle(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
     const Value nullId(nullptr);
@@ -201,11 +202,10 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
             complete(reply(202, ""));
             return;
         }
-        const std::string session = "mcp_" + randomHex(16);
-        {
-            std::lock_guard lock(mutex_);
-            sessions_.insert(session);
-        }
+        const Value* clientInfo = params.find("clientInfo");
+        const Value* clientInfoName =
+            clientInfo != nullptr && clientInfo->kind() == Value::Kind::object ? clientInfo->find("name") : nullptr;
+        const std::string session = agents_.connect(sanitizeClientName(clientInfoName, kDefaultMcpName));
         const BuildInfo& build = buildInfo();
         complete(reply(200,
                        rpcResult(id, Value(Object{{"protocolVersion", Value(std::string(kMcpProtocolVersion))},
@@ -222,12 +222,10 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
         return;
     }
     const std::string session = header->second;
-    {
-        std::lock_guard lock(mutex_);
-        if (sessions_.count(session) == 0) {
-            complete(reply(404, rpcError(nullId, kInvalidRequest, "unknown MCP session; initialize again")));
-            return;
-        }
+    const std::optional<AgentRegistry::Caller> caller = agents_.seen(session);
+    if (!caller) {
+        complete(reply(404, rpcError(nullId, kInvalidRequest, "unknown MCP session; initialize again")));
+        return;
     }
     if (notification) {
         complete(reply(202, ""));
@@ -270,6 +268,7 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
     // command thread (scope_denied, not cached), not here.
     const std::string requestId = session + "/" + jcs::canonicalize(id);
     const bool queued = submit_(requestId, std::string(tool->method), arguments != nullptr ? *arguments : Value(Object{}),
+                                McpCaller{caller->agentId, caller->name, std::string(tool->name)},
                                 [complete, id](const std::string& responseText) {
                                     complete(reply(200, rpcResult(id, toolResult(responseText))));
                                 });
