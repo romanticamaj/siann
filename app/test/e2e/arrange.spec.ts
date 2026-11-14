@@ -662,9 +662,13 @@ test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim
   await expect(tip).toBeHidden();
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 
-  // Trim the right edge.
+  // Trim the right edge. The revision label updates with the document, the
+  // clip rects on the canvas's next frame: wait for the moved clip to be drawn
+  // before reading it (a slower frame, e.g. at a 150 % display scale, read the
+  // pre-move rect here).
+  const unmoved = start.x;
+  await expect.poll(async () => (await rect('clp_sq')).x).toBeGreaterThan(unmoved);
   start = await rect('clp_sq');
-  await expect.poll(async () => (await rect('clp_sq')).x).toBe(start.x);
   before = await revision();
   const edge = { x: canvas.x + start.x + start.width - 2, y: canvas.y + start.y + start.height / 2 };
   await page.mouse.move(edge.x, edge.y);
@@ -673,6 +677,7 @@ test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim
   await expect(tip).toBeVisible();
   await page.mouse.up();
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect.poll(async () => (await rect('clp_sq')).width).toBeLessThan(start.width);
 
   // Place from the media pool on the second lane.
   before = await revision();

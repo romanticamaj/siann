@@ -142,7 +142,8 @@ test('an app CI job runs the Electron shell tests on Windows, macOS and Linux', 
   const oses = matrix[1].split(',').map((s) => s.trim()).sort();
   assert.deepEqual(oses, ['macos-latest', 'ubuntu-latest', 'windows-latest']);
   assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
-  assert.match(text, /xvfb-run -a npm test/, 'Linux runs Electron under xvfb-run');
+  assert.match(text, /xvfb-run -a (-s '[^']*' )?npm test/, 'Linux runs Electron under xvfb-run');
+  assert.match(text, /SIANN_E2E_DEVICE_SCALE:\s*'1\.5'/, 'Linux runs the Electron specs at a 150 % display scale');
 });
 
 test('the app job builds only the core-only siann-engine target and points the tests at it', () => {
