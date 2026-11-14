@@ -186,6 +186,10 @@ async function meter(ref: string): Promise<MeterReading> {
   }, ref);
 }
 
+async function meterEpoch(): Promise<string | null> {
+  return page.evaluate(() => (window as unknown as { __siannMeters: { epoch(): string | null } }).__siannMeters.epoch());
+}
+
 async function meterFrames(): Promise<number> {
   return page.evaluate(() => (window as unknown as { __siannMeters: { frames(): number } }).__siannMeters.frames());
 }
@@ -488,6 +492,31 @@ test('a clip latches after stop until the peak value is clicked', async () => {
   await expect.poll(async () => (await meter(`track:${TRACK}`))!.clip).toBe(false);
   await expect(peakValue).toHaveText('-inf');
   await expect(peakValue).not.toHaveClass(/\bclip\b/);
+});
+
+// A solo republishes the graph, and every publication brings a new
+// meters.legend epoch (protocol item 12); the peak value and the latched clip
+// are cleared only by clicking the peak value (UI redesign spec 1.6).
+test('a latched clip and the peak value survive a solo (a new legend epoch)', async () => {
+  await launch();
+  await setGain(6000);
+  await client.call('transport.play');
+  await expect.poll(async () => (await meter(`track:${TRACK}`))?.clip ?? false).toBe(true);
+  await client.call('transport.stop');
+  await expect.poll(async () => (await meter(`track:${TRACK}`))?.peak ?? 1).toBe(0);
+  const peakValue = page.getByTestId(`peak-value-${TRACK}`);
+  await expect(peakValue).toHaveText(/^\+\d+\.\d$/);
+  const shown = await peakValue.textContent();
+  const epoch = await meterEpoch();
+  expect(epoch).not.toBeNull();
+  const solo = page.getByTestId(`solo-${TRACK}`);
+  await solo.click();
+  await expect(solo).toHaveAttribute('aria-pressed', 'true');
+  // The store takes the new legend with the next realtime frame.
+  await expect.poll(() => meterEpoch()).not.toBe(epoch);
+  expect((await meter(`track:${TRACK}`))!.clip).toBe(true);
+  await expect(peakValue).toHaveText(shown!);
+  await expect(peakValue).toHaveClass(/\bclip\b/);
 });
 
 test('zero React commits while playing (profiling bundle), and the counter does count commits', async () => {

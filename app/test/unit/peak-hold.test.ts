@@ -93,3 +93,37 @@ test('resize starts every meter from silence', () => {
     assert.equal(meter.max[i], 0);
   }
 });
+
+// A new meters.legend epoch follows every graph publication (any structural
+// edit, a solo), so the ballistics follow the entities, not the indices: a
+// meter whose entity stays keeps its bar, hold line, peak value and latched
+// clip; a new entity starts from silence (UI redesign spec 1.6: the peak value
+// and the clip are cleared only by clicking the peak value).
+test('remap carries each meter to its new index and starts new ones from silence', () => {
+  const meter = new PeakHold(2);
+  meter.step(0, 1.5, 1 / 60);
+  meter.step(1, 0.25, 1 / 60);
+  const level1 = meter.level[1]!;
+  // The new order: a new entity, old 1, old 0.
+  meter.remap([-1, 1, 0]);
+  assert.equal(meter.size, 3);
+  assert.equal(meter.level[0], FLOOR_DB);
+  assert.equal(meter.hold[0], FLOOR_DB);
+  assert.equal(meter.max[0], 0);
+  assert.equal(meter.clip[0], 0);
+  near(meter.level[1]!, level1, 'carried level');
+  near(meter.max[1]!, 0.25, 'carried max');
+  assert.equal(meter.clip[1], 0);
+  assert.equal(meter.clip[2], 1, 'clip still latched');
+  near(meter.max[2]!, 1.5, 'peak value kept');
+  near(meter.hold[2]!, db(1.5), 'hold kept');
+  // The hold age carries too: the line is still held just before 1.5 s.
+  meter.step(2, 0, HOLD_SECONDS - 2 / 60);
+  near(meter.hold[2]!, db(1.5), 'still held');
+  // A dropped entity is gone; an out-of-range source starts from silence.
+  meter.remap([5]);
+  assert.equal(meter.size, 1);
+  assert.equal(meter.clip[0], 0);
+  assert.equal(meter.max[0], 0);
+  assert.equal(meter.level[0], FLOOR_DB);
+});

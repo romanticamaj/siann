@@ -86,6 +86,8 @@ export interface MeterTestHooks {
   read(ref: string): { peak: number; hold: number; clip: boolean } | null;
   // Draw callbacks run so far.
   frames(): number;
+  // The meters.legend epoch the store follows.
+  epoch(): string | null;
   readonly canvases: number;
 }
 
@@ -246,6 +248,7 @@ export class MixerMeters {
         return reading ? { peak: reading.peak, hold: reading.hold, clip: reading.clip } : null;
       },
       frames: () => this.#drawn,
+      epoch: () => this.#store.epoch,
       canvases: 1,
     };
   }

@@ -63,13 +63,58 @@ test('the arrays follow the legend: master found, sized per epoch', () => {
   assert.ok(Math.abs(store.peak[1]! - 0.2) < 1e-6);
   assert.ok(Math.abs(store.rms[1]! - 0.1) < 1e-6);
 
-  // A new epoch with another entity list: resized, everything silent.
+  // A new epoch with another entity list: resized, no newest reading yet.
   source.legendValue = { epoch: '2', entities: ['track:b', 'master', 'track:a'] };
   store.sync();
   assert.equal(store.peak.length, 3);
   assert.equal(store.indexOf('master'), 1);
   assert.deepEqual([...store.peak], [0, 0, 0]);
   assert.deepEqual([...store.hold], [FLOOR_DB, FLOOR_DB, FLOOR_DB]);
+});
+
+// The engine sends a new legend epoch after every graph publication (protocol
+// item 12), so every structural edit and every solo brings one. UI redesign
+// spec 1.6: the peak value and the latched clip are cleared only by clicking
+// the peak value, so they follow the entity ref across the epoch; an entity
+// new to the legend starts from silence and one that left is dropped.
+test('a new legend epoch keeps the peak value, hold and latched clip of every entity still in it', () => {
+  const source = new FakeSource();
+  source.legendValue = { epoch: '1', entities: ['master', 'track:a', 'track:gone'] };
+  const store = new MeterStore(source);
+  source.push([[0, [1.3]], [1, [0.5]], [2, [1.1]]]);
+  store.sync();
+  store.advance(1 / 60);
+  source.push([], false);
+  store.sync();
+  store.advance(1 / 60);
+  assert.equal(store.read('master')!.clip, true);
+
+  // A solo republishes the graph: a new epoch, another order, one entity gone, one new.
+  source.legendValue = { epoch: '2', entities: ['track:new', 'track:a', 'master'] };
+  store.sync();
+  const master = store.read('master')!;
+  assert.equal(master.clip, true, 'the clip stays latched');
+  assert.ok(master.max > 1.29, 'the peak value stays');
+  assert.ok(Math.abs(master.hold - 20 * Math.log10(1.3)) < 0.01, 'the hold line stays');
+  assert.ok(master.level > 0, 'the bar does not drop to the floor');
+  const a = store.read('track:a')!;
+  assert.equal(a.clip, false);
+  assert.ok(Math.abs(a.max - 0.5) < 1e-6);
+  const fresh = store.read('track:new')!;
+  assert.equal(fresh.clip, false);
+  assert.equal(fresh.max, 0);
+  assert.equal(fresh.level, FLOOR_DB);
+  assert.equal(store.read('track:gone'), null);
+  // Only a click on the peak value clears it.
+  store.reset('master');
+  assert.equal(store.read('master')!.clip, false);
+
+  // An entity that leaves and comes back starts from silence.
+  source.legendValue = { epoch: '3', entities: ['master'] };
+  store.sync();
+  source.legendValue = { epoch: '4', entities: ['master', 'track:a'] };
+  store.sync();
+  assert.equal(store.read('track:a')!.max, 0);
 });
 
 test('an entity missing from the newest frame reads as silence', () => {

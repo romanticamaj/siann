@@ -44,6 +44,23 @@ export class PeakHold {
     this.clip = new Uint8Array(size);
   }
 
+  // Follows a new entity list: `from[i]` is meter i's index before, or -1 for
+  // a meter new to the list. A carried meter keeps its bar, hold line, peak
+  // value and clip; a new one starts from silence; one not named is dropped.
+  remap(from: ArrayLike<number>): void {
+    const before = { level: this.level, hold: this.hold, holdAge: this.holdAge, max: this.max, clip: this.clip };
+    this.resize(from.length);
+    for (let i = 0; i < from.length; i += 1) {
+      const j = from[i]!;
+      if (!(j >= 0 && j < before.level.length)) continue;
+      this.level[i] = before.level[j]!;
+      this.hold[i] = before.hold[j]!;
+      this.holdAge[i] = before.holdAge[j]!;
+      this.max[i] = before.max[j]!;
+      this.clip[i] = before.clip[j]!;
+    }
+  }
+
   step(index: number, peakLinear: number, dtSeconds: number): void {
     if (index < 0 || index >= this.level.length) return;
     const dt = Math.max(0, dtSeconds);

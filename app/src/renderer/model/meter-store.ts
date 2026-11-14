@@ -44,6 +44,11 @@ export class MeterStore {
     this.#source = source;
   }
 
+  // The meters.legend epoch the arrays follow.
+  get epoch(): string | null {
+    return this.#epoch;
+  }
+
   get hold(): Float32Array {
     return this.#ballistics.hold;
   }
