@@ -79,6 +79,9 @@ GraphDriver::GraphDriver(Options options) : options_(options), meterOutbox_(empt
     if (options_.fadeFrames <= 0) {
         throw std::invalid_argument("fadeFrames must be positive");
     }
+    if (options_.capture.slots > 0) {
+        bank_ = std::make_unique<CaptureBank>(options_.capture);
+    }
 }
 
 GraphDriver::~GraphDriver() {
@@ -131,14 +134,16 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
         path->fed = lookahead;  // slots[0] (silence) is the primed FIFO block
         latency_.srcOutputLatencyFrames = lookahead + path->block;
 
-        if (config.inputChannels > 0) {
+        // The channels the device opened, which may be fewer than asked (a listing
+        // that counts none asks for up to 32): the callback's input has these.
+        const int inputChannels = std::min(config.inputChannels, deviceStatus_.inputChannels);
+        if (inputChannels > 0) {
             const int maxIn = deviceStatus_.bufferFrames > 0 ? deviceStatus_.bufferFrames : config.bufferFrames;
             path->maxInputFrames = maxIn;
             path->input = std::make_unique<StreamResampler>(static_cast<double>(deviceRate),
-                                                            static_cast<double>(sessionRate), config.inputChannels,
-                                                            maxIn);
-            path->inputPointers.assign(static_cast<std::size_t>(config.inputChannels), nullptr);
-            path->inputScratch.allocate(config.inputChannels, path->input->maxOutputFrames());
+                                                            static_cast<double>(sessionRate), inputChannels, maxIn);
+            path->inputPointers.assign(static_cast<std::size_t>(inputChannels), nullptr);
+            path->inputScratch.allocate(inputChannels, path->input->maxOutputFrames());
             latency_.srcInputLatencyFrames =
                 toSessionFrames(path->input->lookaheadFrames(), sessionRate, deviceRate);
         }
@@ -146,9 +151,9 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
         src_ = std::move(path);
     }
 
-    latency_.recordOffsetFrames = latency_.monitoredPathLatencyFrames + latency_.outputLatencyFrames +
-                                  latency_.inputLatencyFrames + latency_.srcOutputLatencyFrames +
-                                  latency_.srcInputLatencyFrames;
+    // The device's terms only; latency() adds the monitored path's when asked.
+    latency_.recordOffsetFrames = latency_.outputLatencyFrames + latency_.inputLatencyFrames +
+                                  latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames;
     resampling_ = ResamplingState{src_ != nullptr, deviceRate, sessionRate,
                                   latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames};
 }
@@ -257,6 +262,14 @@ void GraphDriver::poll() {
         ++watchdogTrips_;
         stop();
     }
+}
+
+LatencyReport GraphDriver::latency() const noexcept {
+    LatencyReport report = latency_;
+    const graph::PreparedGraph* live = liveGraph();
+    report.monitoredPathLatencyFrames = live != nullptr ? live->totalLatency() : 0;
+    report.recordOffsetFrames += report.monitoredPathLatencyFrames;
+    return report;
 }
 
 const graph::PreparedGraph* GraphDriver::liveGraph() const noexcept {
@@ -532,11 +545,6 @@ void GraphDriver::finishStop() {
 void GraphDriver::process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept {
     drainCycle();
     drainClickTempo();
-    if (recorder_ != nullptr && src_ == nullptr) {
-        // The input block lines up with the output block rendered from the
-        // current playhead in this same callback.
-        recorder_->capture(input, playhead_.load(std::memory_order_relaxed), playing_.load(std::memory_order_acquire));
-    }
     if (retirePending_ && retireOutbox_.push(unsentRetire_)) {
         retirePending_ = false;
     }
@@ -580,6 +588,18 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
     drainParams();
 
     const bool playing = playing_.load(std::memory_order_acquire);
+    if (src_ == nullptr) {
+        // After this block's transport command: the input block lines up with
+        // the output block rendered from the current playhead in this same
+        // callback, so a start captures from its first block.
+        const std::int64_t stamp = playhead_.load(std::memory_order_relaxed);
+        if (recorder_ != nullptr) {
+            recorder_->capture(input, stamp, playing);
+        }
+        if (bank_) {
+            bank_->process(input, stamp, playing);
+        }
+    }
     if (src_ != nullptr) {
         processResampled(input, output, playing);
     } else {
@@ -681,7 +701,7 @@ void GraphDriver::pushMeters(std::int64_t position, int frames) noexcept {
 void GraphDriver::processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
                                    bool playing) noexcept {
     SrcPath& s = *src_;
-    if (recorder_ != nullptr && s.input != nullptr && input.channelCount >= s.input->channels()) {
+    if ((recorder_ != nullptr || bank_) && s.input != nullptr && input.channelCount >= s.input->channels()) {
         // Session frame m of the input resampler is device input time
         // m * deviceRate / sessionRate; the output path played timeline position
         // m + base there. Stamped as the playhead would be with that latency.
@@ -697,8 +717,13 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
             const int produced = s.input->process(s.inputPointers.data(), n, s.inputScratch.pointers.data());
             const std::int64_t stamp = s.inputProduced + base + s.stampLead;
             s.inputProduced += produced;
-            recorder_->capture(host::AudioBufferView{s.inputScratch.pointers.data(), channels, produced}, stamp,
-                               playing);
+            const host::AudioBufferView resampled{s.inputScratch.pointers.data(), channels, produced};
+            if (recorder_ != nullptr) {
+                recorder_->capture(resampled, stamp, playing);
+            }
+            if (bank_) {
+                bank_->process(resampled, stamp, playing);
+            }
         }
     }
 
@@ -755,8 +780,10 @@ void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, i
     // and renders the rest from the left locator (spec, "Cycle").
     while (frames > 0) {
         const std::int64_t position = playhead_.load(std::memory_order_relaxed);
+        // While a recording captures, the wrap is suspended (m5b-engine-record).
         const bool wraps = playing && current_ != nullptr && cycle_.enabled && cycle_.left < cycle_.right &&
-                           position < cycle_.right && position + frames >= cycle_.right;
+                           position < cycle_.right && position + frames >= cycle_.right &&
+                           !captureActive_.load(std::memory_order_acquire);
         const int span = wraps ? static_cast<int>(cycle_.right - position) : frames;
         renderSpan(output, offset, span, playing);
         if (wraps) {

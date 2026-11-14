@@ -79,10 +79,22 @@ const std::vector<McpTool> kTools = {
     {"engine_status", "engine.status", McpScope::propose,
      "Returns the device (or deviceError), playing, the driver's timing counters and the plugin instances.", kEmpty},
     {"list_devices", "engine.devices", McpScope::propose,
-     "Lists the audio devices the engine can open: {id, type, name, isDefault, current}.", kEmpty},
+     "Lists the audio devices the engine can open: {id, type, name, isDefault, current, inputChannels, "
+     "outputChannels}.",
+     kEmpty},
     {"select_device", "engine.select_device", McpScope::trusted,
-     "Closes the running audio device and opens another one; returns the device engine_status reports.",
-     R"({"type":"object","properties":{"id":{"type":"string","description":"a device id from list_devices"}},"required":["id"],"additionalProperties":false})"},
+     "Closes the running audio device and opens another one, with an input when inputId names one; returns the "
+     "device engine_status reports.",
+     R"({"type":"object","properties":{"id":{"type":"string","description":"a device id from list_devices"},"inputId":{"type":"string","description":"a device id from list_devices with inputs; omitted, no input"}},"required":["id"],"additionalProperties":false})"},
+    // m5b-engine-record: recording writes to the user's disk and commits a
+    // revision, so both are trusted.
+    {"record_arm", "record.arm", McpScope::trusted,
+     "Arms or disarms a track for recording (engine state, no revision); returns {recording, armed, takes}.",
+     R"({"type":"object","properties":{"trackId":{"type":"string"},"armed":{"type":"boolean"}},"required":["trackId","armed"],"additionalProperties":false})"},
+    {"record", "transport.record", McpScope::trusted,
+     "Starts recording the armed tracks at the playhead, or ends the recording and commits it as one revision; "
+     "returns {playing, position, cycle, click, recording, armed}.",
+     R"({"type":"object","properties":{"enabled":{"type":"boolean"}},"required":["enabled"],"additionalProperties":false})"},
     // m5b-engine-project-media (Protocol v0 item 27): both touch paths on the user's disk.
     {"create_session", "session.create", McpScope::trusted,
      "Creates an empty session bundle at an absolute path that does not exist, at the device's sample rate, and "

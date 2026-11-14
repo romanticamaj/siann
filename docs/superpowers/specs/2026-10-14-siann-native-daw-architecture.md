@@ -680,6 +680,13 @@ records who that is:
   document through `PlaybackEngine::update`), so an undo, a plan and an audition
   change it like any other edit. Toggling cycle compiles nothing and creates no
   revision.
+- While a recording captures (`transport.record`, m5b-engine-record), the wrap is
+  suspended: a block that reaches the right locator renders straight through it,
+  so the take stays one contiguous run of the input. The graph driver reads a
+  `captureActive` flag the engine host sets for the life of the recording; once
+  it clears, a playhead before the right locator wraps again and one already past
+  it plays on, as when cycle is enabled there. Loop recording with one take per
+  pass is M6b (m6b-loop-takes).
 
 ### Click
 
@@ -956,6 +963,11 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   and what they play reaches the engine after the device input latency (plus input
   SRC latency). A captured block whose audio-thread timeline start is `t` is placed
   at `t - monitoredPathLatency - outputLatency - inputLatency - srcLatency`.
+  `monitoredPathLatency` is the live graph's total latency (its output node's:
+  the master path, latent inserts included), read when a take begins; the graph
+  driver's `latency()` sums it with the device terms into `recordOffsetFrames`.
+  A latency change during a take does not move it (until cue mixes, the master
+  path is the only monitored path).
 - Device latencies are converted from the device rate to the session rate. Because
   backends disagree on whether reported latency includes the buffer, a loopback
   calibration (measured round trip) replaces `outputLatency + inputLatency` when
@@ -1238,6 +1250,65 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
   recorded files are never deleted by undo or rollback. Unreferenced takes move to a
   trash folder inside the session and are purged only by an explicit command.
 - The record offset follows the latency model.
+- Recording through the protocol (M5b, m5b-engine-record; Protocol v0 item 28).
+  The graph driver owns a fixed-capacity capture bank (`GraphDriver::Options::
+  capture`, 16 slots of at most 2 channels by default): each slot is a
+  preallocated `Recorder` with a channel map `{port, channels}` into the device
+  input and an atomic armed flag, so a track is armed and disarmed while the device
+  runs, with no allocation, lock or blocking call on the audio thread. Every
+  callback meters each armed slot (peak and RMS per channel, into atomics the meter
+  publisher reads), whether the transport plays or not; a slot's recorder keeps
+  frames only while it records and the transport plays. `attachRecorder` stays for
+  `siann-cli record`.
+- A track's input is document data (`Track.input`, "siann-model"); arming is engine
+  state, as cycle is. `transport.record {enabled: true}` begins one take per armed
+  track (`beginTake` with `recordOffset = recordOffsetFrames` of the running
+  device and the live graph, so a latent insert on the master path counts),
+  starts their recorders, then the transport, so capture starts at the
+  playhead with the first playing block. `transport.record {enabled: false}`,
+  `transport.stop`, `transport.locate` (before it moves the playhead), a lost device, an overflow and a write failure end every take
+  of the recording at once and commit them as one revision (`commitTakes`: a
+  `media.add` and a `clip.place` per take with audio, each clip at
+  `startPosition - recordOffset`): this is the `record.stop` above. A take that
+  captured nothing moves to `trash/`.
+- Every end is named: `endedBy` is `stop` (asked for, or `maxFrames` reached),
+  `overflow` (a block did not fit the ring; `overflows` > 0), `disk` (the writer
+  thread caught a failure of the WAV writer or of the manifest; what was written so
+  far is kept and repaired at commit) or `device` (the device stopped while
+  recording). The recorder reports `stop`, `overflow` and `disk` itself; the engine
+  host sets `device`. The manifest keeps `endedBy` and `overflows` (optional, so a
+  manifest written before M5b still reads), and the commit result and
+  `record.changed` repeat them. The writer thread never lets an exception escape: a
+  failed append, checkpoint, close or `onStart` ends the take with `disk`, and the
+  audio thread captures nothing more for it.
+- Pending takes are the takes in `media/recording/` that are not being recorded.
+  `session.sync` and the auth reply list them (`pendingTakes`); `record.recover_take
+  {takeId, accept, trackId?}` commits one in the same revision shape or moves it to
+  `trash/`, both idempotent: a repeated accept answers the revision that committed
+  the take, a repeated reject finds nothing left to move and answers the same.
+- A recording's tracks while it runs (decided with m5b-engine-record, after review):
+  the tracks being recorded keep existing and keep the input their takes began
+  with. The engine host sets a head guard on the `Session` (`Session::
+  setHeadGuard`) for as long as it records; every revision that would become
+  main's head (commit, plan apply, merge, rollback, undo, redo, whichever method or
+  MCP tool asked for it) passes it before it is journaled, and one that removes a
+  recorded track or changes its `input` is refused with the stable code
+  `track_recording`; nothing is committed, and the recording goes on. A branch
+  commit is not main and is not checked; merging it while recording is. Other
+  changes to a recorded track (name, gain, clips) go through. Refusing was chosen
+  over ending the recording first: an edit should not silently cut a take short,
+  and the client can end the recording itself and retry.
+- Defence in depth: if a recorded track is gone anyway when the recording ends, the
+  takes on tracks main still holds commit as one revision, and the orphan take stays
+  pending with its `trackId` (one failing `clip.place` no longer leaves every take
+  of the recording uncommitted). `record.recover_take` accepts it onto the track
+  `trackId` names (`not_found` when main has none), or without `trackId` onto a new
+  track `trk_<takeId>` (named after the take, with its channels, added last) in the
+  same revision as its `media.add` and `clip.place` (`session::TakePlacement`);
+  rejected, it goes to `trash/` as any take.
+- The commit hashes each take file on the command thread when recording stops, as
+  `siann-cli record` does; M6b's one-hour criterion may need that moved off the
+  command thread (follow-ups, "Before M6b: recording").
 
 ### siann-cli realtime commands (M2)
 
@@ -1430,6 +1501,16 @@ Rules:
   per-instance timer tests of m4-plugin-node use `siann_test_plugin`'s
   `holdProcessBlock` (each block stays in flight 20 ms, longer than a 256-frame
   period at 48 kHz) until `siann_hostile_plugin` lands (m4-hostile-plugin).
+- M5b `Track.input` (m5b-engine-record): the track's input, an `IoPort` of
+  "Channels and I/O", `{port, channels}`: `port` the first device input channel
+  (0-based, a non-negative integer) and `channels` 1 or 2. Absent until set and
+  omitted from the track's JSON while absent, so every earlier document, checkpoint
+  and fixture keeps its hashes. `track.set_input {trackId, input: {port, channels} |
+  null}` sets or clears it as one revision declaring `track:<id>` only; a negative
+  `port`, `channels` other than 1 or 2, or another field is `invalid_params`, an
+  unknown track `not_found`. The document never names a device: the port indexes
+  the input the engine has open, so a session records on another machine's
+  interface unchanged.
 - M5 `locators` (m5-ui-engine-loop-click; singleton entity, gate
   locators-entity-shape resolved 2026-11-13): `{id: "locators", left, right}`,
   audio-domain frames as decimal strings, `0 <= left < right <=
@@ -2612,6 +2693,28 @@ is m5-plugin-registry's):
     command thread, honour `expectedRevision` and the idempotency cache, are in
     `engine.capabilities`' `methods`, and reach the engine through `TransportPort`
     (`devices`, `selectDevice`); without a port both are `not_supported`.
+    M5b (m5b-engine-record) adds inputs. Every `engine.devices` entry carries
+    `inputChannels` and `outputChannels`: integers where known (`fake` 2 and 2, the
+    running device's counts as it opened), null otherwise. A `SIANN_WITH_JUCE`
+    build lists its output devices and, after them, the input devices that are
+    not also output devices (`outputChannels` 0), and counts channels only on the
+    device it has open: it never creates a second driver instance to count them
+    (ASIO allows one). `engine.select_device {id, inputId?}` opens an input with the
+    output: `inputId` names a listed entry with inputs, the same device or, where
+    the backend allows it, another one (a JUCE type pairs an output device and an
+    input device of that type; another type is `invalid_params`). Omitted, no
+    input is opened. A non-string `inputId` is `invalid_params`, an unlisted one
+    `not_found`; `id` must have outputs. The host remembers the input across
+    reopens, the backoff and `session.open`. The result and `engine.status`'s
+    `device` gain `input`: null, or `{id, channels, latencyFrames}`, the channels
+    the device opened and its input latency. Every device reports the channels
+    it opened: an input that opened none (an output-only device named as its own
+    input) is no input, `input` null, and the listing's entry then says 0. A
+    listing that does not count an input's channels has up to 32 asked of it.
+    Capture, metering and device-side SRC's input resampler use the channels
+    the device opened, never the count asked for.
+    Without an input the record methods
+    (item 28) answer `no_input` and playback is unaffected.
     `session.open {path}` (item 16) works in `siann-engine`: `ServerOptions::
     openSession` opens the new `Session` (taking its lock, so a locked bundle is
     `session_locked` and nothing changes) and rebinds the `EngineHost` to it, a new
@@ -2794,6 +2897,74 @@ UR-2; the wire details are in `docs/schemas/protocol-engine-v0.md`):
     disk: the MCP tools `create_session` and `import_media` are in the trusted
     scope only. `engine.capabilities` lists both methods, `media.rename` among the
     commands, and `features.mediaImport: {formats: ["wav", "flac"]}`.
+
+Protocol v0, recording (decided with m5b-engine-record, M5b; the wire details are in
+`docs/schemas/protocol-engine-v0.md`):
+
+28. Recording reaches the engine through `ServerOptions::recordPort`
+    (`protocol::RecordPort`, implemented by the engine host as `TransportPort` is);
+    without one the methods are `not_supported`. Each goes through the command
+    thread, honours `expectedRevision` and the idempotency cache, and is in
+    `engine.capabilities`' `methods`.
+    - `record.arm {trackId, armed}` returns the record state `{recording, armed:
+      [trackId], takes}`. Arming is engine state, never a revision. Errors:
+      `no_device`, `no_input` (no input open, the track has no `input`, or the open
+      input does not cover its channels), `not_found` (no such track on main),
+      `invalid_state` (while recording, or a 17th armed track), `invalid_params`.
+      Disarming an unarmed track is a no-op. The armed set is cleared by
+      `session.open`, pruned at every new head (a removed track, an input cleared
+      or no longer covered) and by `engine.select_device` (kept where the new
+      input covers the channels). The prune runs before any record method reads
+      the set, not only at the engine's next tick, so a `transport.record` after a
+      `track.remove`, a `track.set_input` or an undo handled in the same pump sees
+      the new head; the transport results and `engine.status` never report a
+      track the head no longer arms.
+    - `transport.record {enabled}` returns the transport state. `enabled: true`
+      needs a running device (`no_device`), an input (`no_input`) and an armed track
+      (`nothing_armed`, a new stable code); while recording it changes nothing.
+      `enabled: false` ends the recording and commits it ("Recording"); playback
+      continues; with nothing recording it changes nothing. `transport.stop` ends a
+      recording the same way, then stops. `transport.locate` ends it the same way
+      (`endedBy` `stop`), then locates and playback continues: a take is one
+      contiguous run of the input at one position, so a jump never goes into it.
+      The commit's `session.changed` follows.
+    - `record.recover_take {takeId, accept, trackId?}`: accepted, `{revision}` as
+      `command.execute` answers it (also on a repeat, the revision that committed
+      the take), on `trackId` when given, else on the take's own track, or on a new
+      track `trk_<takeId>` when its own is gone ("Recording"); rejected, `{takeId,
+      trashed: true}`. `take_not_found` for a take that is neither pending,
+      committed nor trashed (or accepted after a reject), `take_has_no_audio`,
+      `not_found` for a `trackId` main does not hold, `invalid_state` for a take
+      being recorded.
+    - While recording, a request whose new head of main would remove a track being
+      recorded or change its `input` (`command.execute`, `plan.apply`,
+      `plan.rollback`, `proposal.merge`, `session.undo`, `session.redo`) fails with
+      `track_recording`, a new stable code, and commits nothing ("Recording").
+    - The transport results and `engine.status` add `recording` (a boolean) and
+      `armed` (track ids).
+    - `record.changed {recording, armed, takes: [{takeId, trackId, startFrame,
+      durableFrames, endedBy?, overflows?}]}` goes to every subscribed connection
+      whenever that state changes: arming, a take's first frame, each
+      `durableFrames` advance (the writer's checkpoint, about once a second) and the
+      end, which carries `endedBy` and `overflows`. `startFrame` is where the take
+      lands (`startPosition - recordOffset`), null until its first frame; 64-bit
+      values are decimal strings. The server compares the port's record state after
+      every request it runs and once per pump, so the engine host's tick needs no
+      event code of its own; a revision the host committed in its tick (an early
+      end) is published as `session.changed` the same way.
+    - `session.sync` chunks and the auth reply carry `pendingTakes: [{takeId,
+      trackId, channels, sampleRate, startFrame, endedBy?, overflows?}]` as part of
+      the stream position, refreshed when a recording ends, after
+      `record.recover_take` and after `session.open`.
+    - `engine.capabilities` adds `features.recording` (true with a record port) and
+      lists `track.set_input` in `commands`. MCP `record_arm` (`record.arm`) and
+      `record` (`transport.record`) are trusted-scope tools: recording writes to the
+      user's disk and commits a revision. `transport.stop` stays in the propose
+      scope; stopping a recording someone else started commits it.
+    - The realtime channel's legend lists `input:<trackId>` after the graph's
+      entities for each armed track, published again (same epoch, earlier indexes
+      unchanged) when the armed set changes; frames carry their peak and RMS while
+      the transport is stopped and while it plays.
 
 ## Plugin editor windows
 
@@ -3129,6 +3300,13 @@ review instead of pushing on.
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
 
 Backlog change (2026-11-14): M5b was added between M5 and M6a for the maintainer's usable-release goal (GitHub #83). It takes from M6b the monitoring modes and punch, pre-roll and count-in, from M6c buses and sends in the document, and adds recording through the protocol, which no milestone owned (only `siann-cli record` records today). The mapping from the goal's criteria A to I to features is in `2026-11-13-siann-ui-redesign.md`, section "Usable release"; the manifest is `.claude/milestones/M5b.json`. M6a is not a prerequisite of M5b.
+
+M5b progress (2026-11-14): m5b-engine-record brings recording to the protocol
+(Protocol v0 items 22 and 27, "Recording", "Cycle", `Track.input` in
+"siann-model"): device inputs, a track's input, record arm, `transport.record`
+committing one revision per recording, input meters, pending takes in
+`session.sync` and `record.recover_take`. Items 1 and 2 of the follow-ups' "Before
+M6b: recording" are done with it.
 
 ### Status (2026-11-09)
 

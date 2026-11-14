@@ -96,6 +96,8 @@ struct PlaybackOptions {
     const host::PluginRegistry* pluginRegistry = nullptr;
     // Capacity of pluginEventAny, the queue every plugin's event sink feeds.
     std::size_t pluginEventCapacity = 1024;
+    // The driver's capture bank (m5b-engine-record): slots 0 builds none.
+    realtime::CaptureOptions capture{};
 };
 
 struct CompiledPlayback {

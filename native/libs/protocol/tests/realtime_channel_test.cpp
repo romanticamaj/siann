@@ -517,3 +517,66 @@ TEST_CASE("a client that connects after the graph publication gets the legend", 
     CHECK(legendOf(newer) == std::vector<std::string>{"master"});
     CHECK(canonical(at(f.ok(later, "session.sync"), "meters")) == canonical(newer));
 }
+
+// m5b-engine-record: the input meters of armed tracks follow the graph's entities
+// in the legend, as "input:<trackId>", and every frame carries them, also while
+// the transport is stopped.
+TEST_CASE("armed tracks' input meters join the legend and the frames while stopped",
+          "[protocol][realtime][input]") {
+    Rig rig;
+    Fixture f;
+    const ConnectionId listener = f.authed(true);
+    const ConnectionId rt = f.realtimeAuthed();
+    MeterPublisher::Options options = publisherOptions(rig);
+    options.playing = [] { return false; };
+    options.playhead = [] { return std::int64_t{4'800}; };
+    options.inputMeter = [](const std::string& trackId) -> std::optional<graph::MeterReading> {
+        if (trackId != "trk_in") {
+            return std::nullopt;
+        }
+        graph::MeterReading reading;
+        reading.channels = 1;
+        reading.peak[0] = 0.5f;
+        reading.rms[0] = 0.25f;
+        return reading;
+    };
+    MeterPublisher publisher(rig.dispatcher, f.server.realtime(), f.server.events(), options);
+    publisher.graphPublished(rig.epoch, rig.meterSlots);
+    const std::vector<std::string> graphLegend = publisher.legend();
+    f.server.pump();
+
+    publisher.setInputs({"trk_in"});
+    f.server.pump();
+    std::vector<std::string> expected = graphLegend;
+    expected.push_back("input:trk_in");
+    CHECK(publisher.legend() == expected);
+    std::vector<Value> legends;
+    for (Value& event : f.events(listener)) {
+        if (at(event, "type").asString() == "meters.legend") {
+            legends.push_back(std::move(event));
+        }
+    }
+    REQUIRE(legends.size() == 2);
+    CHECK(at(legends[1], "epoch").asString() == std::to_string(rig.epoch));  // the same epoch
+    CHECK(legendOf(legends[1]) == expected);
+    // The same armed set again publishes nothing.
+    publisher.setInputs({"trk_in"});
+    f.server.pump();
+    CHECK(f.events(listener).size() == 2);
+
+    // Stopped, before any graph meter reading: the input meter is in the frame.
+    REQUIRE(publisher.tick());
+    const auto frames = f.transport.binary(rt);
+    REQUIRE(frames.size() == 1);
+    const Decoded d = decodeByLayout(frames[0]);
+    CHECK(d.playing == 0);
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].index == graphLegend.size());
+    REQUIRE(d.entries[0].channels == 1);
+    CHECK(d.entries[0].peak[0] == 0.5f);
+    CHECK(d.entries[0].rms[0] == 0.25f);
+
+    // Disarmed: the legend shrinks back.
+    publisher.setInputs({});
+    CHECK(publisher.legend() == graphLegend);
+}

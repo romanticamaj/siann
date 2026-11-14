@@ -109,6 +109,9 @@ public:
         std::function<std::int64_t()> playhead;
         // Engine steady-clock time in microseconds; defaults to steady_clock.
         std::function<std::int64_t()> clockMicros;
+        // m5b-engine-record: an armed track's newest input meter, or nothing yet.
+        // Read for every input entity of the legend on each tick.
+        std::function<std::optional<graph::MeterReading>(const std::string& trackId)> inputMeter;
     };
 
     MeterPublisher(const realtime::ControlDispatcher& dispatcher, RealtimeChannel& channel, EventStream& events,
@@ -119,6 +122,12 @@ public:
     // which also keeps it as the position's `meters` for the auth reply and
     // session.sync of clients that connect or sync later.
     void graphPublished(std::uint64_t epoch, const std::map<std::string, graph::NodeId>& meterSlots);
+
+    // m5b-engine-record: the armed tracks, whose input meters follow the graph's
+    // entities in the legend as "input:<trackId>". A change publishes the legend
+    // again with the same epoch (the graph's entities keep their indexes); the
+    // same set again publishes nothing.
+    void setInputs(std::vector<std::string> trackIds);
 
     // Builds one frame from the newest samples of the legend's epoch and sends
     // it on the channel. False (nothing sent) before a legend, or before a
@@ -132,9 +141,14 @@ private:
     const realtime::ControlDispatcher& dispatcher_;
     RealtimeChannel& channel_;
     EventStream& events_;
+    void publishLegend();
+
     Options options_;
     std::uint64_t epoch_ = 0;
+    bool published_ = false;  // graphPublished ran: there is a legend to extend
     std::vector<std::string> legend_;
+    std::size_t graphEntries_ = 0;   // legend_'s first entries are the graph's
+    std::vector<std::string> inputs_;  // armed track ids, after them
 };
 
 }  // namespace siann::protocol

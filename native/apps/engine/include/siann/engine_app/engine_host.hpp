@@ -47,6 +47,8 @@
 #include "siann/protocol/gesture_port.hpp"
 #include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/realtime_channel.hpp"
+#include "siann/protocol/record_port.hpp"
+#include "siann/realtime/recorder.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "siann/session/session.hpp"
 
@@ -93,6 +95,12 @@ struct EngineHostOptions {
     // The JSON file the approvals are kept in (--plugin-registry); empty: kept for
     // the life of the host only.
     std::filesystem::path pluginRegistryFile;
+    // Recording (m5b-engine-record): the capture bank's slots, the most tracks
+    // armed at once, when playback.capture asks for none.
+    std::size_t recordSlots = 16;
+    // Who commits a recording and when (ISO 8601 UTC); empty is the system clock.
+    std::string actor = "siann-engine";
+    std::function<std::string()> timestamp;
 };
 
 // The --plugin-registry file ({"schema": "siann.plugin_registry.v0", "plugins":
@@ -104,7 +112,24 @@ void writePluginRegistry(const std::filesystem::path& file, const std::vector<ho
 
 struct PluginHostSet;
 
-class EngineHost final : public protocol::TransportPort, public protocol::PluginPort, public protocol::GesturePort {
+// Recording (m5b-engine-record; spec, "Recording", Protocol v0 items 22 and 27):
+// selectDeviceWithInput opens an input with the output, remembered across
+// reopens, the backoff and rebind. The armed set is engine state: a track is
+// armed into a capture bank slot with its input's channel map, refused with
+// no_input without an input that covers it, cleared by rebind and pruned at
+// every new head and device selection. record(true) begins a take per armed
+// track (beginTake, recordOffset = the driver's recordOffsetFrames: the running
+// device's terms plus the live graph's latency, read as the take begins),
+// starts their recorders and the transport, and suspends the cycle wrap.
+// record(false), stop(), a lost device, an overflow and a write failure end
+// every take at once and commit them as one revision (commitTakes); a take that
+// captured nothing goes to trash/. tick() polls the recorders' atomics (and,
+// with the recorder's writerThread off, drains them: tests). shutdown() stops
+// the recorders and leaves the takes pending.
+class EngineHost final : public protocol::TransportPort,
+                         public protocol::RecordPort,
+                         public protocol::PluginPort,
+                         public protocol::GesturePort {
 public:
     // The session must outlive the host (or its next rebind).
     EngineHost(session::Session& session, EngineHostOptions options);
@@ -146,6 +171,20 @@ public:
     protocol::EngineStatus status() const override;
     std::vector<protocol::DeviceDescription> devices() const override;
     protocol::DeviceInfo selectDevice(const std::string& id) override;
+    protocol::DeviceInfo selectDeviceWithInput(const std::string& id,
+                                               const std::optional<std::string>& inputId) override;
+
+    // protocol::RecordPort (Protocol v0 item 28), on the command thread.
+    protocol::RecordState arm(const std::string& trackId, bool armed) override;
+    protocol::TransportState record(bool enabled) override;
+    protocol::RecordState recordState() const override;
+    std::vector<protocol::PendingTake> pendingTakes() const override;
+    protocol::RecoverResult recoverTake(const std::string& takeId, bool accept,
+                                        const std::optional<std::string>& trackId, std::string actor,
+                                        std::string time) override;
+    // The newest input meter of an armed track; empty when it is not armed or
+    // no block was metered yet.
+    std::optional<graph::MeterReading> inputMeter(const std::string& trackId) const;
 
     // protocol::PluginPort, on the command thread.
     protocol::PluginInstantiateResult instantiate(const protocol::PluginInstantiateRequest& request) override;
@@ -194,6 +233,21 @@ private:
     void fillRegistry(const std::vector<std::string>& pluginDirs);
     void keepRegistry() const;
     std::optional<std::string> installRefusal(const std::string& path) const;
+    // Recording.
+    int openInputChannels() const;
+    bool covers(const model::TrackInput& input) const;
+    void pruneArms();
+    void followHead();
+    bool armable(const std::string& trackId) const;
+    void clearArms();
+    std::vector<std::string> armedTracks() const;
+    void startRecording();
+    void pollRecording();
+    void finishRecording(std::optional<realtime::EndedBy> forced);
+    void abandonRecording();
+    void guardRecordedTracks(const model::Document& next) const;
+    std::string newTakeId() const;
+    std::string timestamp() const;
 
     // The plugin hosts, before the engine whose instances they made.
     std::unique_ptr<PluginHostSet> pluginHosts_;
@@ -236,6 +290,25 @@ private:
     std::map<std::string, double> gestureStarts_;
     // The metronome, applied to every engine bind() makes.
     protocol::ClickState click_;
+    // The input selected with the device (m5b-engine-record) and the channels to
+    // ask it for.
+    std::optional<std::string> inputId_;
+    int inputRequest_ = 0;
+    // The armed tracks and their capture bank slots.
+    std::map<std::string, std::size_t> armed_;
+    // The head the armed set was last checked against.
+    std::string armHead_;
+    struct Take {
+        std::size_t slot = 0;
+        std::int64_t recordOffset = 0;
+        model::TrackInput input;  // the track's input when the take began
+        protocol::RecordTakeState state;
+    };
+    bool recording_ = false;
+    std::vector<Take> takes_;  // the current recording's
+    std::vector<protocol::RecordTakeState> lastTakes_;  // the last one's, once it ended
+    std::string actor_;
+    std::function<std::string()> timestamp_;
 };
 
 }  // namespace siann::engine_app

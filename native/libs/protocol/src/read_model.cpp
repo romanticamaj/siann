@@ -136,7 +136,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
         // A new sync: pin the head for this connection.
         const command::Revision& head = history.head();
         Pinned pin{std::string(kSyncPrefix) + std::to_string(nextSync_++), head.envelope, head.document,
-                   syncOrder(head.document), position.seq, position.meters};
+                   syncOrder(head.document), position.seq, position.meters, position.pendingTakes};
         pinned_.insert_or_assign(connection, std::move(pin));
     } else {
         const std::string& text = cursor->asString();
@@ -192,6 +192,7 @@ json::Value ReadModel::sync(ConnectionId connection, const json::Value& params, 
     return Value(Object{{"revision", Value(pin.envelope.id)},
                         {"seq", Value(std::to_string(pin.seq))},
                         {"meters", pin.meters},
+                        {"pendingTakes", pin.pendingTakes},
                         {"documentHash", Value(hash::formatHash(pin.envelope.documentHash))},
                         {"entities", Value(static_cast<double>(pin.order.size()))},
                         {"chunk", Value(std::move(chunk))},

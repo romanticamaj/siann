@@ -67,6 +67,7 @@ private:
         std::vector<model::EntityRef> order;
         std::uint64_t seq = 0;
         json::Value meters;
+        json::Value pendingTakes;  // m5b-engine-record, at the pinned seq
     };
 
     const std::size_t chunkEntities_;

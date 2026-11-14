@@ -343,6 +343,33 @@ test('(e) locators:locators parses, syncs as one object and follows session.chan
   assert.ok(Object.keys(synced.entities).includes('locators:locators'));
 });
 
+// m5b-engine-record: a track carrying its input ({port, channels}) syncs and
+// hashes like any other (fixtures/model/session-document-v2-input.json, hashed
+// by the bridge's src/hash).
+test('a track with an input syncs and keeps its input', async () => {
+  const fixture = readFixture<{ document: Record<string, unknown>; documentHash: string }>(
+    'model',
+    'session-document-v2-input.json',
+  );
+  const doc = fixture.document as unknown as SyncChunk['chunk'];
+  const count = 1 + doc.media!.length + doc.tracks!.length + doc.clips!.length + (doc.pluginSlots?.length ?? 0) +
+    (doc.locators ? 1 : 0);
+  const chunk = {
+    revision: 'r7',
+    seq: '0',
+    documentHash: fixture.documentHash,
+    entities: count,
+    meters: null,
+    chunk: doc,
+    next: null,
+  } as unknown as SyncChunk;
+  const snapshot = await new ReadModel().fromSync([chunk]);
+  assert.equal(snapshot.documentHash, fixture.documentHash);
+  const vox = snapshot.entities['track:trk-vox'] as TrackEntity;
+  assert.deepEqual(vox.input, { port: 3, channels: 1 });
+  assert.equal((snapshot.entities['track:trk_bass'] as TrackEntity).input, undefined);
+});
+
 // m5b-engine-project-media: the media entity's optional name. A sync of the
 // documents with and without it hashes to the generator's document hashes
 // (scripts/generate-model-fixtures.js), and the name reaches the snapshot.

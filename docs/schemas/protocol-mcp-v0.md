@@ -119,7 +119,9 @@ same JSON-RPC `id` runs against the session served now.
 | `set_click` | `transport.set_click` | propose | `{enabled, gainMilliDb?}` |
 | `engine_status` | `engine.status` | propose | `{}` |
 | `list_devices` | `engine.devices` | propose | `{}` |
-| `select_device` | `engine.select_device` | trusted | `{id}` |
+| `select_device` | `engine.select_device` | trusted | `{id, inputId?}` |
+| `record_arm` | `record.arm` | trusted | `{trackId, armed}` |
+| `record` | `transport.record` | trusted | `{enabled}` |
 | `create_session` | `session.create` | trusted | `{path, name?}` |
 | `import_media` | `media.import` | trusted | `{path, clientImportId}` |
 
@@ -129,6 +131,12 @@ items 18, 22 and 26) wrap the transport and device methods of
 codes (`no_device` included). `select_device` is trusted because it changes the
 device the served session plays on for every client. The locators are set with the
 command `session.set_locators` through `execute` (trusted) or a plan.
+
+`record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
+recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted
+scope: recording writes to the user's disk and commits a revision. No tool wraps
+`record.recover_take`. The propose scope's tools are unchanged; `stop` stays in it,
+and a `stop` during a recording commits that recording as the UI's stop does.
 
 `create_session` and `import_media` (m5b-engine-project-media, Protocol v0 item 27)
 wrap `session.create` and `media.import` of [Protocol engine v0](protocol-engine-v0.md).

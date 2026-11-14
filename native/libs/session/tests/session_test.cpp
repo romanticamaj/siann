@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <random>
 #include <string>
@@ -869,4 +870,64 @@ TEST_CASE("A bundle from before the media name opens with its recorded hashes", 
     session.commit({cmd(R"({"op":"media.rename","mediaId":"med_1","name":"kick.wav"})")}, "tester", "t4");
     CHECK(*session.history().head().document.media("med_1")->name == "kick.wav");
     session.checkpoint();
+}
+
+// m5b-engine-record: a recording refuses any new head of main that removes or
+// re-routes a track it records. The guard sees every revision that would become
+// main's head before it is journaled; a branch commit is not main's.
+TEST_CASE("A head guard refuses a new head of main before it is journaled", "[session][guard]") {
+    TempDir dir;
+    Session session = newSession(dir.bundle());
+    session.commit({addTrack("trk_a")}, "t", "t1");
+    session.commit({addTrack("trk_b")}, "t", "t2");
+    std::vector<std::string> seen;
+    session.setHeadGuard([&](const siann::command::Revision& next) {
+        seen.push_back(std::string(siann::command::causeName(next.envelope.cause)));
+        if (next.document.track("trk_a") == nullptr) {
+            throw CommandError("track_recording", "trk_a is being recorded");
+        }
+    });
+    const std::string journal = journalOf(dir.bundle());
+    const std::size_t revisions = session.history().revisions().size();
+    const std::int64_t seq = session.lastSeq();
+    auto refused = [&](const std::function<void()>& call) {
+        try {
+            call();
+        } catch (const CommandError& error) {
+            return error.code();
+        }
+        return std::string("none");
+    };
+
+    CHECK(refused([&] { session.commit({cmd(R"({"op":"track.remove","trackId":"trk_a"})")}, "t", "t3"); }) ==
+          "track_recording");
+    CHECK(session.history().revisions().size() == revisions);
+    CHECK(session.lastSeq() == seq);
+    CHECK(journalOf(dir.bundle()) == journal);
+    CHECK(session.history().head().document.track("trk_a") != nullptr);
+
+    // A change that keeps trk_a goes through, and so do its undo and redo.
+    session.commit({setGain("trk_b", -600)}, "t", "t4");
+    session.undo("t", "t5");
+    session.redo("t", "t6");
+    CHECK(seen == std::vector<std::string>{"command", "command", "undo", "redo"});
+
+    // A proposal branch may remove it; merging that branch into main may not.
+    const siann::command::BranchId branch = session.branch(session.history().head().envelope.id);
+    session.commitOn(branch, {cmd(R"({"op":"track.remove","trackId":"trk_a"})")}, "t", "t7");
+    CHECK(seen.size() == 4);  // the branch commit is not main's head
+    CHECK(refused([&] { session.merge(branch, "t", "t8"); }) == "track_recording");
+    CHECK(session.history().head().document.track("trk_a") != nullptr);
+
+    // An undo that would remove trk_a is refused like the commit; without the
+    // guard it goes.
+    session.discard(branch);
+    session.undo("t", "t9");   // the gain
+    session.undo("t", "t10");  // trk_b's add
+    CHECK(refused([&] { session.undo("t", "t11"); }) == "track_recording");
+    CHECK(session.history().head().document.track("trk_a") != nullptr);
+    CHECK(session.history().canUndo());
+    session.setHeadGuard({});
+    session.undo("t", "t12");
+    CHECK(session.history().head().document.track("trk_a") == nullptr);
 }

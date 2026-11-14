@@ -16,13 +16,16 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cctype>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <map>
 #include <optional>
 #include <random>
 #include <set>
@@ -2346,4 +2349,250 @@ TEST_CASE("session.open takes the opened bundle's cycle flag", "[engine][launch]
     }
     CHECK(stopEngine(child) == 0);
     CHECK_FALSE(session::Session::open(second).cycle());
+}
+
+// ---- recording through the protocol (m5b-engine-record, Protocol v0 item 28) ----
+
+namespace {
+
+// A subscribed connection that reads events until one it waits for.
+class RecordWatcher {
+public:
+    explicit RecordWatcher(const Value& ready) : ws_(static_cast<std::uint16_t>(at(ready, "port").asNumber())) {
+        REQUIRE(ws_.start());
+        const Value reply = ws_.call(jcs::canonicalize(Value(
+            Object{{"type", Value("auth")}, {"token", Value(at(ready, "token").asString())}, {"events", Value(true)}})));
+        REQUIRE(at(reply, "ok").asBool());
+    }
+
+    // The next record.changed whose takes all have durable frames; at most kBound events read.
+    Value untilDurable(std::size_t takes) {
+        for (int i = 0; i < kBound; ++i) {
+            const std::optional<Value> event = ws_.next();
+            REQUIRE(event.has_value());
+            if (at(*event, "type").asString() != "record.changed") {
+                continue;
+            }
+            const auto& listed = at(*event, "takes").asArray();
+            const bool durable =
+                listed.size() == takes && std::all_of(listed.begin(), listed.end(), [](const Value& take) {
+                    return std::stoll(at(take, "durableFrames").asString()) > 0;
+                });
+            if (durable) {
+                return *event;
+            }
+        }
+        FAIL("no record.changed with durable frames in " << kBound << " events");
+        return Value();
+    }
+
+private:
+    static constexpr int kBound = 1'000;
+    WsClient ws_;
+};
+
+Value commands(std::initializer_list<std::string> json) {
+    json::Array list;
+    for (const std::string& one : json) {
+        list.push_back(json::parse(one));
+    }
+    return Value(Object{{"commands", Value(std::move(list))}});
+}
+
+std::string setInputCommand(const std::string& trackId, int port, int channels) {
+    return R"({"op":"track.set_input","trackId":")" + trackId + R"(","input":{"port":)" + std::to_string(port) +
+           R"(,"channels":)" + std::to_string(channels) + "}}";
+}
+
+Value recover(const std::string& takeId, bool accept) {
+    return Value(Object{{"takeId", Value(takeId)}, {"accept", Value(accept)}});
+}
+
+Value fetchOne(EngineClient& client, const std::string& ref) {
+    const Value fetched = client.ok("session.fetch", Value(Object{{"refs", Value(json::Array{Value(ref)})}}));
+    const auto& entities = at(fetched, "entities").asArray();
+    REQUIRE(entities.size() == 1);
+    return entities[0];
+}
+
+}  // namespace
+
+TEST_CASE("a take a kill interrupted is listed after the relaunch and recovered or trashed, idempotently",
+          "[engine][launch][record]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+
+    std::map<std::string, std::int64_t> durable;  // takeId -> durable frames before the kill
+    std::map<std::string, std::string> trackOf;
+    {
+        PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle, true));
+        const Value ready = readyLine(child);
+        EngineClient client(ready);
+        RecordWatcher watcher(ready);
+        const Value device = client.ok("engine.select_device",
+                                       Value(Object{{"id", Value("fake")}, {"inputId", Value("fake")}}));
+        REQUIRE(at(device, "input").kind() == Value::Kind::object);
+        CHECK(at(at(device, "input"), "channels").asNumber() == 2);
+        client.ok("command.execute", commands({setInputCommand("trk_a", 0, 2), setInputCommand("trk_b", 1, 1)}));
+        client.ok("record.arm", Value(Object{{"trackId", Value("trk_a")}, {"armed", Value(true)}}));
+        client.ok("record.arm", Value(Object{{"trackId", Value("trk_b")}, {"armed", Value(true)}}));
+        const Value started = client.ok("transport.record", Value(Object{{"enabled", Value(true)}}));
+        REQUIRE(at(started, "recording").asBool());
+        const Value event = watcher.untilDurable(2);
+        for (const Value& take : at(event, "takes").asArray()) {
+            durable[at(take, "takeId").asString()] = std::stoll(at(take, "durableFrames").asString());
+            trackOf[at(take, "takeId").asString()] = at(take, "trackId").asString();
+        }
+        child.kill();  // the crash hook: no stop, no commit
+    }
+    REQUIRE(durable.size() == 2);
+    std::string keep;
+    std::string drop;
+    for (const auto& [takeId, track] : trackOf) {
+        (track == "trk_a" ? keep : drop) = takeId;
+    }
+
+    PipedProcess relaunched(SIANN_ENGINE_EXE, launchArgs(bundle, true));
+    const Value ready = readyLine(relaunched);
+    {
+        EngineClient client(ready);
+        const Value sync = client.ok("session.sync");
+        std::set<std::string> listed;
+        for (const Value& take : at(sync, "pendingTakes").asArray()) {
+            listed.insert(at(take, "takeId").asString());
+            CHECK(at(take, "startFrame").kind() == Value::Kind::string);
+        }
+        CHECK(listed == std::set<std::string>{keep, drop});
+        CHECK(fetchOne(client, "clip:clp_" + keep).find("missing") != nullptr);
+
+        const Value accepted = client.ok("record.recover_take", recover(keep, true));
+        const Value clip = at(fetchOne(client, "clip:clp_" + keep), "entity");
+        CHECK(at(clip, "trackId").asString() == "trk_a");
+        CHECK(std::stoll(at(clip, "length").asString()) >= durable[keep]);
+        CHECK(jcs::canonicalize(client.ok("record.recover_take", recover(keep, true))) == jcs::canonicalize(accepted));
+
+        const Value trashed = client.ok("record.recover_take", recover(drop, false));
+        CHECK(at(trashed, "trashed").asBool());
+        CHECK(fs::exists(bundle / "trash" / (drop + ".wav")));
+        CHECK(jcs::canonicalize(client.ok("record.recover_take", recover(drop, false))) == jcs::canonicalize(trashed));
+        CHECK(at(client.ok("session.sync"), "pendingTakes").asArray().empty());
+    }
+    CHECK(stopEngine(relaunched) == 0);
+}
+
+// m5b-engine-record: while recording, every protocol path to a new head of main
+// that removes or re-routes a track being recorded is refused with
+// track_recording, and the recording still commits when it ends.
+TEST_CASE("while recording, command.execute, plan.apply and session.undo may not remove or re-route a recorded track",
+          "[engine][launch][record][guard]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle, true));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        RecordWatcher watcher(ready);
+        client.ok("engine.select_device", Value(Object{{"id", Value("fake")}, {"inputId", Value("fake")}}));
+        client.ok("command.execute", commands({setInputCommand("trk_a", 0, 2)}));
+        client.ok("record.arm", Value(Object{{"trackId", Value("trk_a")}, {"armed", Value(true)}}));
+        const Value plan = client.ok(
+            "plan.submit",
+            Value(Object{{"steps", Value(json::Array{json::parse(R"({"op":"track.remove","trackId":"trk_a"})")})}}));
+        const std::string hash = at(plan, "hash").asString();
+        client.ok("plan.approve", Value(Object{{"plan", Value(hash)}}));
+        const std::string head = at(client.ok("session.inspect"), "revision").asString();
+
+        REQUIRE(at(client.ok("transport.record", Value(Object{{"enabled", Value(true)}})), "recording").asBool());
+        const Value event = watcher.untilDurable(1);
+        const std::string takeId = at(at(event, "takes").asArray()[0], "takeId").asString();
+
+        CHECK(client.errorOf("command.execute", commands({R"({"op":"track.remove","trackId":"trk_a"})"})) ==
+              "track_recording");
+        CHECK(client.errorOf("command.execute", commands({setInputCommand("trk_a", 1, 1)})) == "track_recording");
+        CHECK(client.errorOf("plan.apply", Value(Object{{"plan", Value(hash)}})) == "track_recording");
+        CHECK(client.errorOf("session.undo") == "track_recording");  // it would clear trk_a's input
+        CHECK(at(client.ok("session.inspect"), "revision").asString() == head);  // nothing committed
+        // A change that keeps trk_a as it is goes through.
+        client.ok("command.execute", commands({R"({"op":"track.rename","trackId":"trk_b","name":"B"})"}));
+
+        client.ok("transport.record", Value(Object{{"enabled", Value(false)}}));
+        const Value clip = at(fetchOne(client, "clip:clp_" + takeId), "entity");
+        CHECK(at(clip, "trackId").asString() == "trk_a");
+        CHECK(at(client.ok("session.sync"), "pendingTakes").asArray().empty());
+        // Stopped, the track can go.
+        client.ok("command.execute", commands({R"({"op":"track.remove","trackId":"trk_a"})"}));
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("a loopback recording over the wire places the played impulse within one sample",
+          "[engine][launch][record][latency]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Loop.siann";
+    constexpr std::int64_t impulseAt = 24'000;
+    {
+        session::Session s = session::Session::create(bundle, model::Document::create("Loop", 48'000), "test",
+                                                      "2026-11-14T00:00:00Z");
+        media::AudioBuffer impulse;
+        impulse.info = media::AudioInfo{1, 48'000, 100};
+        impulse.samples.assign(100, 0.0f);
+        impulse.samples[0] = 1.0f;
+        const fs::path wav = dir.path() / "impulse.wav";
+        io::writeFileAtomic(wav, media::encodeWavFloat32(impulse));
+        session::importMedia(s, wav, "med_imp", "test", "2026-11-14T00:00:00Z");
+        for (const std::string& json :
+             {live_rig::addTrack("trk_src", 1), live_rig::place("clp_imp", "trk_src", "med_imp", impulseAt, 0, 100),
+              live_rig::addTrack("trk_rec", 1), setInputCommand("trk_rec", 0, 1)}) {
+            s.commit({live_rig::cmd(json)}, "test", "2026-11-14T00:00:00Z");
+        }
+    }
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle, true));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        client.ok("engine.select_device", Value(Object{{"id", Value("fake")}, {"inputId", Value("fake")}}));
+        client.ok("record.arm", Value(Object{{"trackId", Value("trk_rec")}, {"armed", Value(true)}}));
+        client.ok("transport.record", Value(Object{{"enabled", Value(true)}}));
+        client.frameWhere([&](const MeterFrame& f) { return f.playing && f.playheadSamples > impulseAt + 4'800; });
+        const Value ended = client.ok("transport.stop");
+        CHECK_FALSE(at(ended, "recording").asBool());
+        const Value status = client.ok("engine.status");
+        CHECK_FALSE(at(status, "recording").asBool());
+
+        // The committed clip on trk_rec, and its media file in the bundle.
+        const Value sync = client.ok("session.sync");
+        const Value* recorded = nullptr;
+        for (const Value& clip : at(at(sync, "chunk"), "clips").asArray()) {
+            if (at(clip, "trackId").asString() == "trk_rec") {
+                recorded = &clip;
+            }
+        }
+        REQUIRE(recorded != nullptr);
+        const Value media = at(fetchOne(client, "media:" + at(*recorded, "mediaId").asString()), "entity");
+        const std::string hash = at(media, "contentHash").asString();
+        const fs::path file = bundle / "media" / (hash.substr(std::string("sha256:").size()) + ".wav");
+        std::ifstream in(file, std::ios::binary);
+        REQUIRE(in.good());
+        const media::AudioBuffer audio = media::decodeWav(std::string(std::istreambuf_iterator<char>(in), {}));
+        std::int64_t peakAt = -1;
+        float peak = 0.0f;
+        for (std::int64_t i = 0; i < audio.info.frames; ++i) {
+            const float v = std::abs(audio.samples[static_cast<std::size_t>(i)]);
+            if (v > peak) {
+                peak = v;
+                peakAt = i;
+            }
+        }
+        REQUIRE(peak > 0.1f);
+        const std::int64_t placed = std::stoll(at(at(*recorded, "position"), "value").asString()) + peakAt;
+        INFO("placed at " << placed);
+        CHECK(std::llabs(placed - impulseAt) <= 1);
+    }
+    CHECK(stopEngine(child) == 0);
 }

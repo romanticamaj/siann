@@ -14,8 +14,9 @@ namespace siann::engine_app {
 std::unique_ptr<host::AudioDevice> hardwareDevice();
 
 // The output devices hardwareDevice() can open, id "<type>/<name>" as --device
-// takes it (the enumeration siann-cli devices prints); current is left false.
-// Empty in a core-only build.
+// takes it (the enumeration siann-cli devices prints), then the input devices
+// that are no output device (outputChannels 0: an inputId only); current is
+// left false and channel counts unknown. Empty in a core-only build.
 std::vector<protocol::DeviceDescription> listHardwareDevices();
 
 }  // namespace siann::engine_app
