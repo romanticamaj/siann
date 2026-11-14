@@ -361,3 +361,41 @@ test('a press and release in the ruler\'s lower half locates once; a vertical dr
   assert.deepEqual(start.located, ['0']);
   start.timeline.destroy();
 });
+
+// UI redesign spec 3.1, "Set the cursor": Shift+Alt-click in the event
+// display locates too, on an empty lane and on a clip alike, and neither
+// selects, drags nor places.
+test('Shift+Alt-click in the event display locates at the pressed frame and does not select or drag', () => {
+  const { surface, hooks, timeline, located } = make();
+  const view = hooks.view();
+  const clip = hooks.clips().find((r) => r.clipId === 'clp_1')!;
+  const other = hooks.clips().find((r) => r.clipId === 'clp_2')!;
+  surface.fire('pointerdown', { clientX: other.x + other.width / 2, clientY: other.y + other.height / 2 });
+  surface.fire('pointerup', { clientX: other.x + other.width / 2, clientY: other.y + other.height / 2 });
+  assert.equal(timeline.getState().selectedClipId, 'clp_2');
+  assert.deepEqual(located, [], 'a plain click on a clip does not locate');
+
+  // On the clip: a locate, the selection stays, a following move drags nothing.
+  const onClip = { clientX: clip.x + 10, clientY: clip.y + clip.height / 2, shiftKey: true, altKey: true };
+  surface.fire('pointerdown', onClip);
+  surface.fire('pointermove', { ...onClip, clientX: onClip.clientX + 40 });
+  surface.fire('pointerup', { ...onClip, clientX: onClip.clientX + 40 });
+  assert.deepEqual(located, [xToFrame(onClip.clientX, view).toString()]);
+  assert.equal(timeline.getState().selectedClipId, 'clp_2', 'the selection is unchanged');
+  assert.deepEqual(hooks.clips().find((r) => r.clipId === 'clp_1'), clip, 'the clip did not move');
+
+  // On an empty stretch of a lane: a locate, and the selection is not cleared.
+  const empty = { clientX: 700, clientY: clip.y + clip.height / 2, shiftKey: true, altKey: true };
+  surface.fire('pointerdown', empty);
+  surface.fire('pointerup', empty);
+  assert.deepEqual(located.at(-1), xToFrame(700, view).toString());
+  assert.equal(timeline.getState().selectedClipId, 'clp_2');
+
+  // Shift alone or Alt alone in the event display does not locate.
+  for (const mods of [{ shiftKey: true }, { altKey: true }]) {
+    surface.fire('pointerdown', { clientX: 700, clientY: empty.clientY, ...mods });
+    surface.fire('pointerup', { clientX: 700, clientY: empty.clientY, ...mods });
+  }
+  assert.equal(located.length, 2);
+  timeline.destroy();
+});

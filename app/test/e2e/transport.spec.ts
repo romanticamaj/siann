@@ -146,8 +146,12 @@ async function locate(frames: number, display: string): Promise<void> {
   await expect(primary()).toHaveText(display);
 }
 
-async function commits(): Promise<number> {
-  return page.evaluate(() => (window as unknown as { __siannCommits?: number }).__siannCommits ?? 0);
+// React commits at the root, or under one <Counted id> (profiling bundle).
+async function commits(id?: string): Promise<number> {
+  return page.evaluate((counted) => {
+    const w = window as unknown as { __siannCommits?: number; __siannCommitsBy?: Record<string, number> };
+    return (counted === null ? w.__siannCommits : w.__siannCommitsBy?.[counted]) ?? 0;
+  }, id ?? null);
 }
 
 async function revisions(): Promise<number> {
@@ -212,23 +216,34 @@ test('Space starts and stops, numpad Enter starts, Num 0 stops, Num . and the co
   await expectPlaying(false);
 });
 
+// Each callback of the fake device misses its deadline here
+// (--fake-callback-nanos 20 ms against a 256-frame buffer), so the xrun count
+// rises on every engine.status poll and the status bar commits once a
+// second: the count is taken under the transport bar and the timeline
+// (Counted), which no status answer reaches, not at the root.
 test('the cursor and the position display run at display rate with zero React commits (profiling bundle)', async () => {
   test.setTimeout(120_000);
-  await launch({ env: { SIANN_SHELL_PROFILING: '1' } });
-  // The counter moves on a commit: a mute click re-renders the strip.
+  await launch({ env: { SIANN_SHELL_PROFILING: '1' }, engineArgs: ['--fake-callback-nanos', '20000000'] });
+  // The counters move on a commit: a mute click re-renders the strip (root),
+  // the period key the transport bar's formats.
   const first = await commits();
   const mute = page.getByTestId(`mute-${TRACK}`);
   await mute.click();
   await expect(mute).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(commits).toBeGreaterThan(first);
   await focusProject();
+  const firstTransport = await commits('transport');
+  await page.keyboard.press('Period');
+  await expect.poll(() => commits('transport')).toBeGreaterThan(firstTransport);
+  await page.keyboard.press('Period');
 
   await page.keyboard.press('Space');
   await expectPlaying(true);
   // Let the commits the play causes (the playing flag) settle.
   const startDraws = await hook<number>('overlayDraws');
   await expect.poll(() => hook<number>('overlayDraws')).toBeGreaterThan(startDraws + 10);
-  const before = await commits();
+  const before = { transport: await commits('transport'), timeline: await commits('timeline'), root: await commits() };
+  const xruns = await page.getByTestId('xruns').textContent();
   const text = await primary().textContent();
   const secondText = await secondary().textContent();
   const x = await cursorX();
@@ -238,7 +253,11 @@ test('the cursor and the position display run at display rate with zero React co
   await expect(primary()).not.toHaveText(text ?? '');
   await expect(secondary()).not.toHaveText(secondText ?? '');
   expect(await cursorX()).not.toBe(x);
-  expect(await commits()).toBe(before);
+  // The status bar did commit (new xruns); the transport bar and the timeline did not.
+  await expect(page.getByTestId('xruns')).not.toHaveText(xruns ?? '');
+  expect(await commits()).toBeGreaterThan(before.root);
+  expect(await commits('transport')).toBe(before.transport);
+  expect(await commits('timeline')).toBe(before.timeline);
   await page.keyboard.press('Space');
   await expectPlaying(false);
 });
@@ -274,6 +293,26 @@ test('a click in the ruler\'s lower half locates once, stopped and playing; the 
       await expectPlaying(false);
     }
   }
+});
+
+test('Shift+Alt-click in the event display locates once, on a clip too, without selecting it', async () => {
+  await launch();
+  const canvas = await box('timeline-canvas');
+  const v = await view();
+  const clip = await rect(CLIP);
+  const x = clip.x + Math.min(40, clip.width / 2);
+  const before = (await sentOf('transport.locate')).length;
+  await page.keyboard.down('Shift');
+  await page.keyboard.down('Alt');
+  await page.mouse.click(canvas.x + x, canvas.y + clip.y + clip.height / 2);
+  await page.keyboard.up('Alt');
+  await page.keyboard.up('Shift');
+  await expect.poll(async () => (await sentOf('transport.locate')).length).toBe(before + 1);
+  const frames = Number((await sentOf('transport.locate'))[before]!.frames);
+  expect(Math.abs(frames - (Number(v.scrollFrames) + x * v.framesPerPixel))).toBeLessThanOrEqual(2 * v.framesPerPixel);
+  await expect.poll(async () => Math.abs((await cursorX()) - x)).toBeLessThanOrEqual(2);
+  // Not selected: no outline.
+  expect(await hook<number>('selectionOutline')).toBe(0);
 });
 
 test('Shift+P types a position in the primary format; Enter locates, Escape cancels, invalid text sends nothing', async () => {
