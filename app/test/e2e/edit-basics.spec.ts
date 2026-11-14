@@ -427,6 +427,8 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
   await expect.poll(async () => (await view()).framesPerPixel).toBe(800);
   expect((await view()).scrollFrames).toBe('0');
   await setSnap(true, 'bar');
+  // The clip as drawn at the new zoom (the content layer redraws on its next frame).
+  await expect.poll(async () => (await rect('clp_r')).width).toBe(90);
 
   const r = await rect('clp_r');
   const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 3);
@@ -530,6 +532,7 @@ test('J toggles snap; grid Bar and Beat put a dragged clip on their lines; Adapt
   await dropAt(17, (position) => expect(position).toBe(1500));
   await page.keyboard.press('KeyG');
   await expect.poll(async () => (await view()).framesPerPixel).toBe(200);
+  await expect.poll(async () => (await rect('clp_s')).width).toBe(120);
   await dropAt(17, (position) => expect(position).toBe(3000));
 });
 

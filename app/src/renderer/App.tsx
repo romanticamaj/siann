@@ -16,7 +16,9 @@
 // shell's disconnected state, and each reconnect clears the clip and plan
 // selections. The selected track (m5-ui-arrange) is the track list's: a
 // header clicked, or the selected clip's track; the Inspector shows it, and a
-// reconnect clears it too.
+// reconnect clears it too. Since m5-ui-edit-basics it is a primary track (the
+// Inspector's) and a set: Ctrl-click toggles a header, Shift-click selects a
+// range, and M, S and Shift+Delete act on the set; removed tracks leave it.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -38,6 +40,7 @@ import { Inspector } from './shell/Inspector';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
 import type { ToastStore } from './shell/toast-store';
+import { NO_TRACKS, pruneTracks, selectTrack, type TrackSelectMode, type TrackSelection } from './timeline/selection';
 import { Timeline } from './timeline/Timeline';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MeterTestHooks } from './mixer/MixerMeters';
@@ -80,17 +83,24 @@ export function App({
   const phase = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().phase);
   const reconnects = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().reconnect?.count ?? 0);
   useEffect(() => announceArrivals(plans, toasts, () => localeStore().getSnapshot()), [plans, toasts]);
-  const [selectedTrack, setSelectedTrack] = useState<string | null>(null);
+  const [tracks, setTracks] = useState<TrackSelection>(NO_TRACKS);
+  const order = () => client.model.getSnapshot()?.trackOrder ?? [];
   // A clip selected selects its track.
   const selectClip = useCallback(
     (clipId: string | null) => {
       if (!clipId) return;
       const clip = client.model.getSnapshot()?.clips.find((c) => c.id === clipId);
-      if (clip) setSelectedTrack(clip.trackId);
+      if (clip) setTracks((current) => (current.primary === clip.trackId && current.ids.length === 1 ? current : selectTrack(current, clip.trackId, 'replace', [])));
     },
     [client],
   );
-  useEffect(() => setSelectedTrack(null), [reconnects]);
+  const onSelectTrack = useCallback(
+    (trackId: string, mode: TrackSelectMode) => setTracks((current) => selectTrack(current, trackId, mode, client.model.getSnapshot()?.trackOrder ?? [])),
+    [client],
+  );
+  // Removed tracks leave the selection.
+  useEffect(() => client.model.subscribe(() => setTracks((current) => pruneTracks(current, order()))), [client]);
+  useEffect(() => setTracks(NO_TRACKS), [reconnects]);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
       <Shell
@@ -103,7 +113,7 @@ export function App({
         banner={<AuditionBanner client={client} plans={plans} />}
         phase={phase}
         toasts={toasts}
-        left={<Inspector client={client} gestures={gestures} trackId={selectedTrack} />}
+        left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} />}
         project={
           <Timeline
             client={client}
@@ -111,8 +121,10 @@ export function App({
             commands={commands}
             layout={layout}
             realtime={realtime}
-            selectedTrackId={selectedTrack}
-            onSelectTrack={setSelectedTrack}
+            selectedTrackId={tracks.primary}
+            selectedTrackIds={tracks.ids}
+            onSelectTrack={onSelectTrack}
+            platform={platform}
             onSelect={selectClip}
             onHooks={onTimelineHooks}
             reconnects={reconnects}

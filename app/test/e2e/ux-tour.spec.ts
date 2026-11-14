@@ -712,30 +712,41 @@ test('UX screenshot tour', async () => {
     `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}").`,
   );
 
-  // ---- 25 (m5-ui-edit-basics; 23 and 24 are m5-ui-loop-click's): a clip
-  // split at the cursor with Alt+X and the left piece duplicated with Ctrl+D.
+  // ---- 25 (m5-ui-edit-basics; 23 and 24 are m5-ui-loop-click's): the
+  // Keys clip zoomed to with Shift+E, split at the cursor with Alt+X, both
+  // pieces selected (click, Shift-click) and duplicated with Ctrl+D.
   await expect(toast).toBeHidden({ timeout: 30_000 });
   await waveformsDrawn();
   const editor = await engineClient(page);
-  const keys = await clipRect('clp_06_keys');
-  const keysView = await timeline<{ framesPerPixel: number }>('view');
-  const cut = BigInt(keys.position) + BigInt(Math.round((keys.width * keysView.framesPerPixel) / 2));
-  await editor.call('transport.locate', { frames: cut.toString() });
-  await expect.poll(async () => Math.round((await timeline<number | null>('cursorX')) ?? -1)).toBe(Math.round(keys.x + keys.width / 2));
   const keysBox = await canvasBox();
-  await page.mouse.click(keysBox.x + keys.x + keys.width / 4, keysBox.y + keys.y + keys.height / 2);
+  const keysAt = await clipRect('clp_06_keys');
+  await page.mouse.click(keysBox.x + Math.max(0, keysAt.x) + 20, keysBox.y + keysAt.y + keysAt.height / 2);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
+  await page.keyboard.press('Shift+KeyE');
+  const viewWidth = (await timeline<{ width: number }>('view')).width;
+  await expect.poll(async () => (await clipRect('clp_06_keys')).width).toBeLessThan(viewWidth);
+  const keys = await clipRect('clp_06_keys');
+  const keysView = await timeline<{ framesPerPixel: number; scrollFrames: string }>('view');
+  const cut = BigInt(keysView.scrollFrames) + BigInt(Math.round((keys.x + keys.width / 2) * keysView.framesPerPixel));
+  await editor.call('transport.locate', { frames: cut.toString() });
+  await expect.poll(async () => Math.abs(((await timeline<number | null>('cursorX')) ?? -100) - (keys.x + keys.width / 2))).toBeLessThan(2);
   const clipsBefore = Number(await page.getByTestId('clip-count').textContent());
   await page.keyboard.press('Alt+KeyX');
   await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBefore + 1));
+  await expect.poll(async () => (await timeline<Rect[]>('clips')).filter((r) => r.trackId === 'trk_keys').length).toBeGreaterThan(1);
+  const right = (await timeline<Rect[]>('clips')).find((r) => r.trackId === 'trk_keys' && BigInt(r.position) === cut)!;
+  await page.keyboard.down('Shift');
+  await page.mouse.click(keysBox.x + right.x + right.width / 2, keysBox.y + right.y + right.height / 2);
+  await page.keyboard.up('Shift');
   await page.keyboard.press('ControlOrMeta+KeyD');
-  await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBefore + 2));
+  await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBefore + 3));
+  await page.keyboard.press('Shift+KeyF');
   await waveformsDrawn();
   editor.close();
   await shoot(
     page,
     'Clip split and duplicated',
-    'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before, the right one continuing in the file where the left one ends), then the left piece, still selected, duplicated with Ctrl+D: the copy lands directly after it on the same lane. Each was one revision.',
+    'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before: the right one continues in the file where the left one ends), then both pieces selected (click, Shift-click) and duplicated with Ctrl+D: the copies land directly after them on the same lane, as one unit. Each edit was one revision. Zoomed full (Shift+F) to show the whole session.',
     { number: 25 },
   );
 

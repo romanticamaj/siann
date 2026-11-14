@@ -45,4 +45,22 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Shift+F', commandId: 'view.zoomFull', scope: 'project' },
   // Add a track (spec 3.3).
   { chord: 'T', commandId: 'track.add', scope: 'project' },
+  // Editing (m5-ui-edit-basics; research/cubase.md 7.2-7.6): tools on the
+  // number row (Digit1, not the numpad), Split at Cursor, Duplicate, Snap,
+  // Select All, Locate Selection / Next Event / Previous Event, Zoom to
+  // Selection / Event, and M, S and Remove Selected Tracks.
+  { chord: '1', commandId: 'tool.select', scope: 'project' },
+  { chord: '3', commandId: 'tool.split', scope: 'project' },
+  { chord: 'Alt+X', commandId: 'edit.splitAtCursor', scope: 'project' },
+  { chord: 'Mod+D', commandId: 'edit.duplicate', scope: 'project' },
+  { chord: 'J', commandId: 'edit.snapToggle', scope: 'project' },
+  { chord: 'Mod+A', commandId: 'edit.selectAll', scope: 'project' },
+  { chord: 'L', commandId: 'transport.locateSelection', scope: 'project' },
+  { chord: 'N', commandId: 'transport.locateNextClip', scope: 'project' },
+  { chord: 'B', commandId: 'transport.locatePreviousClip', scope: 'project' },
+  { chord: 'Alt+S', commandId: 'view.zoomSelection', scope: 'project' },
+  { chord: 'Shift+E', commandId: 'view.zoomEvent', scope: 'project' },
+  { chord: 'M', commandId: 'track.muteSelected', scope: 'project' },
+  { chord: 'S', commandId: 'track.soloSelected', scope: 'project' },
+  { chord: 'Shift+Delete', commandId: 'track.removeSelected', scope: 'project' },
 ];

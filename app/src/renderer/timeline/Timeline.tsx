@@ -1,50 +1,111 @@
 // The project zone's content (ADR-0019 point 3; UI redesign spec 2.1, 3.2,
-// 3.3, 5.2): the toolbar (the media pool to place from, the delete button and
-// the last refusal), the read-only info line, and below them the track list,
-// its boundary and the event display, whose two canvases the imperative
+// 3.3, 5.2): the toolbar (the media pool to place from, the Object Selection
+// and Split tools, snap and the grid type, the delete button and the last
+// refusal), the read-only info line, and below them the track list, its
+// boundary and the event display, whose two canvases the imperative
 // TimelineCanvas owns through refs. No drawing state passes through React:
 // the track list follows the canvas's view through a listener, the meters
 // and the cursor read the RealtimeClient on their own frames.
 //
 // The project zone's key commands (keys/preset-cubase.ts) are registered
 // here: Delete and Backspace, Escape, H and G, Shift+H and Shift+G, Shift+F,
-// and T. The capability rule (spec 3.0): the media pool's place buttons exist
-// only when engine.capabilities lists clip.place, the delete button and key
-// only with clip.remove, T only with track.add, and the canvas sends no
-// gesture whose commands are not listed (it reads the latest capabilities
-// through a ref). Lane heights are the layout store's, per session id.
+// T, and the editing keys of m5-ui-edit-basics (1, 3, Alt+X, Ctrl+D, J,
+// Ctrl+A, L, N, B, Alt+S, Shift+E, M, S, Shift+Delete). The capability rule
+// (spec 3.0) is editGates: a key, button or control exists only when
+// engine.capabilities lists the commands (or the method) it ends in, and the
+// canvas sends no gesture whose commands are not listed (it reads the latest
+// capabilities through a ref). Lane heights and the snap state are the
+// layout store's (siann.layout.v1). The track selection is the app's: M, S,
+// N, B and Shift+Delete act on its tracks; Shift+Delete asks first.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { refusalLine } from '../i18n/errors';
-import { localeStore, translator, useLocale } from '../i18n/t';
-import type { CommandRegistry } from '../keys/commands';
+import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
+import type { CommandId, CommandRegistry } from '../keys/commands';
+import type { CapabilitySelector } from '../model/capabilities';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
 import { Capable, useCapabilities } from '../shell/Capable';
+import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
+import type { TimelineCommand } from './commands';
+import { removeTracksCommand, trackMuteCommand, trackSoloCommand } from './edit-commands';
 import { InfoLine } from './InfoLine';
-import { TimelineCanvas, type TimelineState, type TimelineTestHooks } from './TimelineCanvas';
+import type { TrackSelectMode } from './selection';
+import { GRID_TYPES, type GridType } from './snap';
+import { IDLE_STATE, TimelineCanvas, type TimelineTestHooks } from './TimelineCanvas';
 import { TrackList, addTrack } from './TrackList';
 import { TrackListDivider } from './TrackListDivider';
 import { MAX_FRAMES_PER_PIXEL } from './zoom';
 
-const IDLE: TimelineState = { selectedClipId: null, placingMediaId: null, error: null };
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
+const NO_IDS: readonly string[] = Object.freeze([]);
+
+// Grid types Bar, Beat and Adapt to Zoom (snap type Grid only, spec 3.0).
+const GRID_LABELS: Readonly<Record<GridType, MessageKey>> = { bar: 'grid.bar', beat: 'grid.beat', adapt: 'grid.adapt' };
 
 // The zoom slider's scale: log2 of the frames per pixel.
 const ZOOM_MAX = Math.log2(MAX_FRAMES_PER_PIXEL);
+
+export type EditCommand = Extract<
+  CommandId,
+  | 'tool.select'
+  | 'tool.split'
+  | 'edit.splitAtCursor'
+  | 'edit.duplicate'
+  | 'edit.snapToggle'
+  | 'edit.selectAll'
+  | 'edit.delete'
+  | 'transport.locateSelection'
+  | 'transport.locateNextClip'
+  | 'transport.locatePreviousClip'
+  | 'view.zoomSelection'
+  | 'view.zoomEvent'
+  | 'track.muteSelected'
+  | 'track.soloSelected'
+  | 'track.removeSelected'
+>;
+
+// Which editing commands (keys, buttons) exist with these capabilities (UI
+// redesign spec 3.0): each needs the commands it ends in (or, for L, N and
+// B, the transport.locate method); selecting and zooming send nothing.
+export function editGates(can: CapabilitySelector): Record<EditCommand, boolean> {
+  const split = can.command('clip.trim') && can.command('clip.place');
+  const locate = can.has('transport.locate');
+  return {
+    'tool.select': can.command('clip.move') || can.command('clip.trim') || can.command('clip.place'),
+    'tool.split': split,
+    'edit.splitAtCursor': split,
+    'edit.duplicate': can.command('clip.place'),
+    'edit.snapToggle': can.command('clip.move') || can.command('clip.trim') || can.command('clip.place'),
+    'edit.selectAll': true,
+    'edit.delete': can.command('clip.remove'),
+    'transport.locateSelection': locate,
+    'transport.locateNextClip': locate,
+    'transport.locatePreviousClip': locate,
+    'view.zoomSelection': true,
+    'view.zoomEvent': true,
+    'track.muteSelected': can.command('track.set_mute'),
+    'track.soloSelected': can.command('track.set_solo'),
+    'track.removeSelected': can.command('track.remove'),
+  };
+}
 
 export interface TimelineProps {
   readonly client: SessionClient;
   readonly peaks: PeaksCache;
   readonly commands: CommandRegistry;
-  // The zone layout (the track list's width, the lane heights); a private one when absent.
+  // The zone layout (the track list's width, the lane heights, snap); a private one when absent.
   readonly layout?: LayoutStore;
   readonly realtime?: RealtimeClient | null;
+  // The primary selected track and every selected track (the app's).
   readonly selectedTrackId?: string | null;
-  readonly onSelectTrack?: (trackId: string) => void;
+  readonly selectedTrackIds?: readonly string[];
+  readonly onSelectTrack?: (trackId: string, mode: TrackSelectMode) => void;
+  // Which key is Mod for the tool modifiers.
+  readonly platform?: 'mac' | 'other';
   // The reconnects so far (model/connection-phase.ts); each one clears the selection.
   readonly reconnects?: number;
   // The selected clip, for the left zone.
@@ -61,6 +122,12 @@ function useSessionId(client: SessionClient): string | null {
   );
 }
 
+function send(client: SessionClient, command: TimelineCommand | null): boolean {
+  if (!command) return false;
+  void client.execute(command.commands, command.expectedRevision).catch(() => undefined);
+  return true;
+}
+
 export function Timeline({
   client,
   peaks,
@@ -68,7 +135,9 @@ export function Timeline({
   layout: given,
   realtime = null,
   selectedTrackId = null,
+  selectedTrackIds,
   onSelectTrack,
+  platform = 'other',
   onSelect,
   onHooks,
   reconnects = 0,
@@ -83,16 +152,25 @@ export function Timeline({
   const layout = given ?? own!;
   const sessionId = useSessionId(client);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
+  const [removing, setRemoving] = useState<readonly string[] | null>(null);
   const can = useCapabilities();
   const canRef = useRef(can);
   canRef.current = can;
-  const canRemove = can.command('clip.remove');
+  const gates = editGates(can);
   const canPlace = can.command('clip.place');
   const canAdd = can.command('track.add');
+  const trackIds = selectedTrackIds ?? (selectedTrackId ? [selectedTrackId] : NO_IDS);
+  const tracksRef = useRef(trackIds);
+  tracksRef.current = trackIds;
   const trackListWidth = useSyncExternalStore(
     (listener) => layout.subscribe(listener),
     () => layout.getSnapshot().layout.trackList,
     () => layout.getSnapshot().layout.trackList,
+  );
+  const snap = useSyncExternalStore(
+    (listener) => layout.subscribe(listener),
+    () => layout.getSnapshot().layout.snap,
+    () => layout.getSnapshot().layout.snap,
   );
 
   useEffect(() => {
@@ -128,7 +206,10 @@ export function Timeline({
         },
       },
       tooltip: tooltipRef.current,
+      platform,
+      locate: (frame) => (canRef.current.has('transport.locate') ? client.request('transport.locate', { frames: frame.toString() }) : undefined),
     });
+    surface.setSnap(layout.getSnapshot().layout.snap);
     const offHeights = surface.onLaneHeights((trackIds, height) => {
       if (sessionId !== null) layout.dispatch({ type: 'allTrackHeights', sessionId, trackIds, height });
     });
@@ -140,12 +221,16 @@ export function Timeline({
       surface.destroy();
       setTimeline(null);
     };
-  }, [client, peaks, realtime, layout, sessionId, onHooks]);
+  }, [client, peaks, realtime, layout, sessionId, onHooks, platform]);
+
+  useEffect(() => {
+    timeline?.setSnap(snap);
+  }, [timeline, snap]);
 
   const state = useSyncExternalStore(
     (listener) => (timeline ? timeline.subscribe(listener) : () => {}),
-    () => (timeline ? timeline.getState() : IDLE),
-    () => (timeline ? timeline.getState() : IDLE),
+    () => (timeline ? timeline.getState() : IDLE_STATE),
+    () => (timeline ? timeline.getState() : IDLE_STATE),
   );
   const snapshot = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -158,8 +243,10 @@ export function Timeline({
     () => 0,
   );
 
+  const gateKey = JSON.stringify(gates);
   useEffect(() => {
     if (!timeline) return undefined;
+    const allowed = editGates(canRef.current);
     const offs = [
       commands.register('project', 'edit.cancel', () => timeline.setPlacing(null)),
       commands.register('project', 'view.zoomIn', () => timeline.zoomIn()),
@@ -168,10 +255,47 @@ export function Timeline({
       commands.register('project', 'view.tracksShorter', () => timeline.tracksShorter()),
       commands.register('project', 'view.zoomFull', () => timeline.zoomFull()),
     ];
-    if (canRemove) offs.push(commands.register('project', 'edit.delete', () => void timeline.deleteSelected()));
+    const edit = (id: EditCommand, handler: () => boolean | void) => {
+      if (allowed[id]) offs.push(commands.register('project', id, handler));
+    };
+    const tracks = () => tracksRef.current;
+    edit('edit.delete', () => void timeline.deleteSelected());
+    edit('tool.select', () => timeline.setTool('select'));
+    edit('tool.split', () => timeline.setTool('split'));
+    edit('edit.splitAtCursor', () => void timeline.splitAtCursor());
+    edit('edit.duplicate', () => void timeline.duplicate());
+    edit('edit.snapToggle', () => layout.dispatch({ type: 'snapToggle' }));
+    edit('edit.selectAll', () => timeline.selectAll());
+    edit('transport.locateSelection', () => void timeline.locateSelection());
+    edit('transport.locateNextClip', () => void timeline.locateNextClip(tracks()));
+    edit('transport.locatePreviousClip', () => void timeline.locatePreviousClip(tracks()));
+    edit('view.zoomSelection', () => timeline.zoomToSelection());
+    edit('view.zoomEvent', () => timeline.zoomToEvent());
+    edit('track.muteSelected', () => {
+      const current = client.model.getSnapshot();
+      return current ? send(client, trackMuteCommand(current, tracks())) : false;
+    });
+    edit('track.soloSelected', () => {
+      const current = client.model.getSnapshot();
+      return current ? send(client, trackSoloCommand(current, tracks())) : false;
+    });
+    edit('track.removeSelected', () => {
+      const current = client.model.getSnapshot();
+      const ids = tracks().filter((id) => current?.entities[`track:${id}`]);
+      if (ids.length === 0) return false;
+      setRemoving(ids);
+      return true;
+    });
     if (canAdd) offs.push(commands.register('project', 'track.add', () => addTrack(client, translator(localeStore().getSnapshot()))));
     return () => offs.forEach((off) => off());
-  }, [timeline, commands, canRemove, canAdd, client]);
+  }, [timeline, commands, gateKey, canAdd, client, layout]);
+
+  const confirmRemove = () => {
+    const ids = removing;
+    setRemoving(null);
+    const current = client.model.getSnapshot();
+    if (ids && current) send(client, removeTracksCommand(current, ids));
+  };
 
   useEffect(() => {
     onSelect?.(state.selectedClipId);
@@ -183,13 +307,70 @@ export function Timeline({
     if (!timeline || reconnects === seenReconnects.current) return;
     seenReconnects.current = reconnects;
     timeline.clearSelection();
+    setRemoving(null);
   }, [timeline, reconnects]);
 
-  const selectTrack = useCallback((trackId: string) => onSelectTrack?.(trackId), [onSelectTrack]);
+  const selectTrack = useCallback((trackId: string, mode: TrackSelectMode) => onSelectTrack?.(trackId, mode), [onSelectTrack]);
 
   return (
     <section className="timeline">
       <div className="timeline-bar">
+        {gates['tool.select'] || gates['tool.split'] ? (
+          <div className="tool-buttons" role="group" aria-label={t('tool.label')}>
+            {gates['tool.select'] ? (
+              <button
+                type="button"
+                className="tool tool-select"
+                data-testid="tool-select"
+                aria-pressed={state.tool === 'select'}
+                title={t('tool.select')}
+                onClick={() => timeline?.setTool('select')}
+              >
+                {t('tool.select')}
+              </button>
+            ) : null}
+            {gates['tool.split'] ? (
+              <button
+                type="button"
+                className="tool tool-split"
+                data-testid="tool-split"
+                aria-pressed={state.tool === 'split'}
+                title={t('tool.split')}
+                onClick={() => timeline?.setTool('split')}
+              >
+                {t('tool.split')}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {gates['edit.snapToggle'] ? (
+          <div className="snap-controls">
+            <button
+              type="button"
+              className="snap-toggle"
+              data-testid="snap-toggle"
+              aria-pressed={snap.on}
+              title={t('snap.toggle')}
+              onClick={() => layout.dispatch({ type: 'snapToggle' })}
+            >
+              {t('snap.toggle')}
+            </button>
+            <select
+              className="grid-type"
+              data-testid="grid-type"
+              aria-label={t('snap.grid')}
+              title={t('snap.grid')}
+              value={snap.grid}
+              onChange={(e) => layout.dispatch({ type: 'setGrid', grid: e.target.value as GridType })}
+            >
+              {GRID_TYPES.map((grid) => (
+                <option key={grid} value={grid}>
+                  {t(GRID_LABELS[grid])}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <ul className="media-pool" data-testid="media-pool" aria-label={t('timeline.mediaPool')}>
           {(snapshot?.media ?? []).map((media) => (
             <li key={media.id}>
@@ -226,6 +407,7 @@ export function Timeline({
           layout={layout}
           sessionId={sessionId}
           selectedTrackId={selectedTrackId}
+          selectedTrackIds={trackIds}
           onSelectTrack={selectTrack}
         />
         <TrackListDivider layout={layout} />
@@ -248,6 +430,14 @@ export function Timeline({
           ) : null}
         </div>
       </div>
+      <ConfirmDialog
+        open={removing !== null}
+        message={t('confirm.removeTracks', { count: removing?.length ?? 0 })}
+        confirmLabel={t('confirm.remove')}
+        cancelLabel={t('confirm.cancel')}
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoving(null)}
+      />
     </section>
   );
 }
