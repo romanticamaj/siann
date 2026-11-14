@@ -319,7 +319,7 @@ TEST_CASE("prepare stores a file at the session rate byte for byte, FLAC include
         samples.push_back(static_cast<std::int16_t>((i * 31) % 20'000 - 10'000));
     }
     const fs::path file = dir.path() / "take.flac";
-    const std::string flac = siann::test::encodeFlac16(2, 48'000, samples);
+    const std::string flac = siann::test::encodeFlac16(2, 48'000, samples, 256);
     siann::io::writeFileAtomic(file, flac);
     Session session = newSession(dir.path() / "Song.siann");
     ImportSource source = openImportSource(file);
@@ -353,7 +353,7 @@ TEST_CASE("A failing import leaves no revision and no new file under media/ or p
     CHECK(importCode(bundle, 48'000, cut) == "decode_failed");
 
     std::vector<std::int16_t> samples(20'000, 1'000);
-    std::string flac = siann::test::encodeFlac16(1, 44'100, samples);
+    std::string flac = siann::test::encodeFlac16(1, 44'100, samples, 256);
     const fs::path cutFlac = dir.path() / "cut.flac";
     siann::io::writeFileAtomic(cutFlac, flac.substr(0, flac.size() * 2 / 3));
     CHECK(importCode(bundle, 48'000, cutFlac) == "decode_failed");

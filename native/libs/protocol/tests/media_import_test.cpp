@@ -180,7 +180,7 @@ TEST_CASE("A failed import ends failed, commits nothing and leaves no file under
     const fs::path cut = dir / "cut.wav";
     io::writeFileAtomic(cut, wav.substr(0, 30));
     std::vector<std::int16_t> samples(30'000, 1'000);
-    const std::string flac = test::encodeFlac16(1, 44'100, samples);
+    const std::string flac = test::encodeFlac16(1, 44'100, samples, 256);
     const fs::path cutFlac = dir / "cut.flac";
     io::writeFileAtomic(cutFlac, flac.substr(0, flac.size() / 2));
 

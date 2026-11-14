@@ -73,7 +73,7 @@ std::string codeOf(const std::function<void()>& run) {
 
 TEST_CASE("An audio source reads a WAV or FLAC in chunks exactly as decode does", "[media][source]") {
     const std::string wav = siann::media::encodeWavFloat32(sine(2, 44'100, 20'000));
-    const std::string flac = siann::test::encodeFlac16(2, 44'100, ramp16(2, 9'000));
+    const std::string flac = siann::test::encodeFlac16(2, 44'100, ramp16(2, 9'000), 256);
     for (const std::string* bytes : {&wav, &flac}) {
         const AudioBuffer whole = siann::media::decode(*bytes);
         const auto source = siann::media::openAudioSource(*bytes);
@@ -93,7 +93,7 @@ TEST_CASE("An audio source refuses what decode refuses", "[media][source]") {
     CHECK(codeOf([&] { (void)siann::media::openAudioSource(wav); }) == "decode_failed");
 
     // A FLAC cut inside its frames opens (STREAMINFO is whole) and fails while reading.
-    std::string flac = siann::test::encodeFlac16(1, 48'000, ramp16(1, 20'000));
+    std::string flac = siann::test::encodeFlac16(1, 48'000, ramp16(1, 20'000), 256);
     flac.resize(flac.size() * 2 / 3);
     CHECK(codeOf([&] {
               const auto source = siann::media::openAudioSource(flac);
