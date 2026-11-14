@@ -30,6 +30,13 @@ export interface Viewport {
   readonly height?: number;
 }
 
+// The ruler above the lanes, in two halves (UI redesign spec 3.2): the upper
+// one is the locators' (m5-ui-loop-click), the lower one the cursor's and the
+// zoom's. RULER_UPPER_HEIGHT is the one constant the upper half's geometry
+// (the locator band, the hit test) and its tests take its height from.
+export const RULER_HEIGHT = 32;
+export const RULER_UPPER_HEIGHT = RULER_HEIGHT / 2;
+
 export const DEFAULT_LANE_HEIGHT = 53;
 export const MIN_LANE_HEIGHT = 24;
 export const MAX_LANE_HEIGHT = 240;

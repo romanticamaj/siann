@@ -269,6 +269,13 @@
   --clip-title-h: calc(13px * var(--scale));
   --icon: calc(16px * var(--scale));
   --icon-s: calc(14px * var(--scale));
+
+  /* The empty box of a part that has landed but can be absent at runtime
+     (UI redesign 3.0; 10.7, 5): permanent, not a hold token. The locator
+     display is absent while the session has no locators; its cell keeps the
+     width the fidelity gate measures for display-locators in the mockup,
+     the same in en and zh-TW (m5-ui-loop-click). */
+  --display-locators-empty-w: calc(101.7px * var(--scale));
 }
 
 @media (prefers-reduced-motion: reduce) {

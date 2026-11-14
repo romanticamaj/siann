@@ -12,6 +12,7 @@ import type { CommandRegistry } from '../keys/commands';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
+import type { LoopClickController } from '../model/loop-click';
 import type { TransportController } from '../model/transport';
 import type { EffectiveLayout, Zone } from './layout';
 import type { LayoutStore } from './layout-store';
@@ -29,11 +30,12 @@ export interface TopBarProps {
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
   readonly transport: TransportController;
+  readonly loopClick: LoopClickController;
 }
 
 const ZONE_ORDER: readonly Zone[] = ['left', 'lower', 'right'];
 
-export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engineStatus, layout, commands, transport }: TopBarProps) {
+export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engineStatus, layout, commands, transport, loopClick }: TopBarProps) {
   const t = useT();
   const snapshot = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -49,7 +51,7 @@ export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engi
       <span className="session-name" data-testid="session-name" data-part="session-name">
         {snapshot?.root?.name ?? ''}
       </span>
-      <Transport client={client} realtime={realtime} engineStatus={engineStatus} layout={layout} commands={commands} transport={transport} />
+      <Transport client={client} realtime={realtime} engineStatus={engineStatus} layout={layout} commands={commands} transport={transport} loopClick={loopClick} />
       <span className="spacer" />
       <div className="zone-buttons" data-part="zone-buttons" role="group" aria-label={t('zone.buttons')}>
         {ZONE_ORDER.map((zone) => (

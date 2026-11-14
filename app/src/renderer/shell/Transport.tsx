@@ -28,15 +28,31 @@
 //   no transport at all (Capable).
 // - Undo and redo (spec 3.2) sit beside it, need no device, and are absent
 //   without session.undo and session.redo.
+// - Locators, cycle and metronome (m5-ui-loop-click; spec 3.1, 3.2): the
+//   cycle button between go to start and stop, the locator display between
+//   the position display and the tempo, and the click group with the
+//   metronome button after them, in the mockup's places and with its ids.
+//   Both buttons show the engine's state (model/loop-click.ts: engine.status,
+//   transport.changed, method results), are disabled with the reason without
+//   a device, as the transport buttons are, and a right-click on the
+//   metronome opens its level. The locator display reads the range in bars
+//   and beats (4/4) and exists only while the session has locators. Whatever
+//   the engine's capabilities do not list is absent and its box stays empty
+//   (spec 3.0): an element of the part's size with no role, no focus, no
+//   data-part, hidden from assistive technology; the locator display's empty
+//   box is --display-locators-empty-w wide.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
 
+import type { MessageKey } from '../i18n/en';
 import { useT, type T } from '../i18n/t';
 import type { CommandRegistry } from '../keys/commands';
 import type { EngineStatus, EngineStatusSource } from '../model/engine-status';
+import { MAX_CLICK_GAIN, MIN_CLICK_GAIN, type LoopClickController } from '../model/loop-click';
 import type { MeterFrame } from '../model/meter-frames';
 import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
+import { formatLocators, rangeOf } from '../timeline/locators';
 import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt, type TimeFormat } from '../timeline/transport-time';
 import { PlayheadClock } from '../transport/playhead-clock';
 import { Capable } from './Capable';
@@ -76,10 +92,14 @@ function deviceKey(status: EngineStatus | null): DeviceKey {
   return status.device ? 'device' : `none:${status.deviceError?.code ?? ''}`;
 }
 
-function availabilityOf(key: DeviceKey, t: T, connected: boolean): TransportAvailability {
+// The reason without a device names what is unavailable: the transport, or
+// (m5-ui-loop-click) cycle or the metronome.
+type NoDeviceKey = Extract<MessageKey, 'transport.noDevice' | 'transport.noDeviceCycle' | 'transport.noDeviceClick'>;
+
+function availabilityOf(key: DeviceKey, t: T, connected: boolean, noDevice: NoDeviceKey = 'transport.noDevice'): TransportAvailability {
   if (key !== null && key !== 'device') {
     const code = key.slice('none:'.length);
-    return { enabled: false, reason: code ? `${code}: ${t('transport.noDevice')}` : t('transport.noDevice') };
+    return { enabled: false, reason: code ? `${code}: ${t(noDevice)}` : t(noDevice) };
   }
   if (connected) return { enabled: true, reason: null };
   return { enabled: false, reason: t('error.disconnected') };
@@ -103,6 +123,7 @@ export interface TransportProps {
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
   readonly transport: TransportController;
+  readonly loopClick: LoopClickController;
 }
 
 const noSubscription = () => () => undefined;
@@ -117,7 +138,7 @@ function Icon({ path }: { path: string }) {
   );
 }
 
-export function useTransportAvailability(client: SessionClient, engineStatus: EngineStatusSource): TransportAvailability {
+export function useTransportAvailability(client: SessionClient, engineStatus: EngineStatusSource, noDevice: NoDeviceKey = 'transport.noDevice'): TransportAvailability {
   const t = useT();
   const key = useSyncExternalStore(
     (listener) => engineStatus.subscribe(listener),
@@ -129,12 +150,56 @@ export function useTransportAvailability(client: SessionClient, engineStatus: En
     () => client.getState().status === 'connected',
     () => client.getState().status === 'connected',
   );
-  return availabilityOf(key, t, connected);
+  return availabilityOf(key, t, connected, noDevice);
 }
 
-function TransportBar({ client, realtime, engineStatus, layout, commands, transport }: TransportProps) {
+// The cycle flag and the click as the engine last said.
+function useTransportState(loopClick: LoopClickController) {
+  const cycle = useSyncExternalStore(
+    (listener) => loopClick.state.subscribe(listener),
+    () => loopClick.state.getSnapshot()?.cycle ?? false,
+    () => loopClick.state.getSnapshot()?.cycle ?? false,
+  );
+  const click = useSyncExternalStore(
+    (listener) => loopClick.state.subscribe(listener),
+    () => loopClick.state.getSnapshot()?.click.enabled ?? false,
+    () => loopClick.state.getSnapshot()?.click.enabled ?? false,
+  );
+  const gain = useSyncExternalStore(
+    (listener) => loopClick.state.subscribe(listener),
+    () => loopClick.state.getSnapshot()?.click.gainMilliDb ?? null,
+    () => loopClick.state.getSnapshot()?.click.gainMilliDb ?? null,
+  );
+  return { cycle, click, gain };
+}
+
+// The locator display's text ("9.1 – 13.1"), or null without locators.
+function useLocatorText(client: SessionClient): string | null {
+  const read = () => {
+    const snapshot = client.model.getSnapshot();
+    const range = rangeOf(snapshot?.locators);
+    return range ? formatLocators(range, snapshot?.root?.tempo ?? [], snapshot?.root?.sampleRate ?? DEFAULT_RATE) : null;
+  };
+  return useSyncExternalStore((listener) => client.model.subscribe(listener), read, read);
+}
+
+// The box an absent part keeps (spec 3.0): nothing in it, no role, no focus,
+// no data-part, hidden from assistive technology.
+function Hold({ className }: { className: string }) {
+  return <span className={className} aria-hidden="true" />;
+}
+
+function TransportBar({ client, realtime, engineStatus, layout, commands, transport, loopClick }: TransportProps) {
   const t = useT();
   const { enabled, reason } = useTransportAvailability(client, engineStatus);
+  const cycleAvailability = useTransportAvailability(client, engineStatus, 'transport.noDeviceCycle');
+  const clickAvailability = useTransportAvailability(client, engineStatus, 'transport.noDeviceClick');
+  const gates = loopClick.gates();
+  const { cycle, click, gain } = useTransportState(loopClick);
+  const locatorText = useLocatorText(client);
+  // The click level control (right-click on the metronome), where it opened.
+  const [level, setLevel] = useState<{ x: number; y: number } | null>(null);
+  const closeLevel = useCallback(() => setLevel(null), []);
   // The playing flag: a commit only when it flips.
   const playing = useSyncExternalStore(
     realtime ? (listener) => realtime.subscribe(listener) : noSubscription,
@@ -240,7 +305,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   const title = (label: string) => (enabled ? label : (reason ?? label));
   return (
     <div className="transport" data-testid="transport" data-part="transport" role="group" aria-label={t('transport.label')}>
-      {/* The mockup's order: go to start, (cycle, P1-7), stop, start. */}
+      {/* The mockup's order: go to start, cycle, stop, start. */}
       <div className="transport-buttons" data-part="transport-buttons">
         <button
           type="button"
@@ -254,6 +319,23 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         >
           <Icon path="M3 2h2v12H3zM14 2v12L6 8z" />
         </button>
+        {gates.cycle ? (
+          <button
+            type="button"
+            className={`transport-button transport-cycle${cycle ? ' lit' : ''}`}
+            data-testid="transport-cycle"
+            data-part="transport-cycle"
+            disabled={!enabled}
+            aria-pressed={cycle}
+            title={cycleAvailability.enabled ? t('transport.cycle') : (cycleAvailability.reason ?? t('transport.cycle'))}
+            aria-label={t('transport.cycle')}
+            onClick={() => void loopClick.toggleCycle()}
+          >
+            <Icon path="M3 5h8V3l3 3-3 3V7H5v2H3zm10 6H5v2l-3-3 3-3v2h6V7h2z" />
+          </button>
+        ) : (
+          <Hold className="transport-hold" />
+        )}
         <button
           type="button"
           className="transport-button"
@@ -324,7 +406,46 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           onClose={closeMenu}
         />
       ) : null}
+      {gates.locators && locatorText !== null ? (
+        <span
+          className="transport-locators"
+          data-testid="display-locators"
+          data-part="display-locators"
+          title={t('transport.locators')}
+          aria-label={`${t('transport.locators')} ${locatorText}`}
+        >
+          {locatorText}
+        </span>
+      ) : (
+        <Hold className="transport-locators-empty" />
+      )}
       <span className="transport-tempo" data-testid="transport-tempo" data-part="display-tempo" title={t('transport.tempo')} ref={tempoRef} />
+      {gates.click ? (
+        <div className="transport-click" data-testid="transport-click" data-part="transport-click" role="group" aria-label={t('transport.click')}>
+          <button
+            type="button"
+            className={`transport-button transport-metronome${click ? ' lit' : ''}`}
+            data-testid="transport-metronome"
+            data-part="transport-metronome"
+            disabled={!enabled}
+            aria-pressed={click}
+            title={clickAvailability.enabled ? t('transport.metronome') : (clickAvailability.reason ?? t('transport.metronome'))}
+            aria-label={t('transport.metronome')}
+            onClick={() => void loopClick.toggleClick()}
+            onContextMenu={(event: MouseEvent<HTMLButtonElement>) => {
+              event.preventDefault();
+              if (enabled) setLevel({ x: event.clientX, y: event.clientY });
+            }}
+          >
+            <Icon path="M6 1h4l3 13H3zm1 2-1 4 5-3zM5 9l-.8 3.5h7.6L11 9z" />
+          </button>
+        </div>
+      ) : (
+        <Hold className="transport-hold" />
+      )}
+      {level && gates.click ? (
+        <ClickLevel gainMilliDb={gain} x={level.x} y={level.y} onChoose={(value) => void loopClick.setClickLevel(value)} onClose={closeLevel} />
+      ) : null}
     </div>
   );
 }
@@ -384,6 +505,72 @@ export function TimeFormatMenu({ primary, x, y, onChoose, onClose }: TimeFormatM
           {t(format === 'bars' ? 'transport.formatBars' : 'transport.formatSeconds')}
         </button>
       ))}
+    </div>
+  );
+}
+
+export interface ClickLevelProps {
+  // The click's level as the engine last said (mdB), null when unknown.
+  readonly gainMilliDb: number | null;
+  // Where it opened (client coordinates).
+  readonly x: number;
+  readonly y: number;
+  // A new level in mdB, on release (one transport.set_click).
+  readonly onChoose: (gainMilliDb: number) => void;
+  readonly onClose: () => void;
+}
+
+const DEFAULT_CLICK_GAIN = -12000;
+
+// The metronome's level (right-click on its button; spec 3.1, P1-7): a fader
+// from -60 dB to 0 dB in whole dB with its value, sent when released.
+// Escape or a press outside closes it.
+export function ClickLevel({ gainMilliDb, x, y, onChoose, onClose }: ClickLevelProps) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const current = gainMilliDb ?? DEFAULT_CLICK_GAIN;
+  const [value, setValue] = useState(Math.round(current / 1000));
+  useEffect(() => setValue(Math.round(current / 1000)), [current]);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('input')?.focus();
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
+    };
+    const onDown = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [onClose]);
+  const commit = (db: number) => {
+    const milli = db * 1000;
+    if (milli !== current) onChoose(milli);
+  };
+  return (
+    <div className="click-level" data-testid="click-level" role="group" aria-label={t('transport.clickLevel')} style={{ left: x, top: y }} ref={ref}>
+      <input
+        type="range"
+        data-testid="click-level-input"
+        aria-label={t('transport.clickLevel')}
+        min={MIN_CLICK_GAIN / 1000}
+        max={MAX_CLICK_GAIN / 1000}
+        step={1}
+        value={value}
+        onChange={(event) => setValue(Number(event.currentTarget.value))}
+        onPointerUp={(event) => commit(Number(event.currentTarget.value))}
+        onKeyUp={(event) => {
+          if (event.key !== 'Escape') commit(Number(event.currentTarget.value));
+        }}
+      />
+      <span className="click-level-value" data-testid="click-level-value">
+        {t('transport.clickLevelValue', { db: String(value) })}
+      </span>
     </div>
   );
 }

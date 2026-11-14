@@ -114,9 +114,10 @@ code, dd, .mono { font-family: var(--font-mono); }
 
 /* The transport bar (m5-ui-transport; spec 3.1): buttons, the position
    display (primary over secondary, digits written outside React) and
-   auto-scroll. */
-.transport, .transport-buttons { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
-.transport-button {
+   auto-scroll. The box of a button an engine does not list (.transport-hold,
+   m5-ui-loop-click; spec 3.0) takes the button's size from the same rule. */
+.transport, .transport-buttons, .transport-click { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
+.transport-button, .transport-hold {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -126,6 +127,25 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 .transport-icon { display: block; }
 .transport-play[aria-pressed="true"] { color: var(--play); border-color: var(--play); }
+/* Cycle and the metronome while on: lit, as the mockup's .tbtn.lit (m5-ui-loop-click). */
+.transport-button.lit { color: var(--bg-well); background: linear-gradient(var(--lit-0), var(--lit-1)); border-color: var(--lit-line); }
+/* The locator display, and its empty cell while the session has no locators. */
+.transport-locators, .transport-locators-empty { display: inline-block; flex: 0 0 auto; min-width: var(--display-locators-empty-w); }
+.transport-locators-empty { width: var(--display-locators-empty-w); }
+.transport-locators { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-session); color: var(--tx-2); text-align: center; }
+/* The metronome's level (right-click on its button). */
+.click-level {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 2);
+  background: var(--bg-3);
+  border: var(--divider-w) solid var(--line-2);
+  border-radius: var(--radius-m);
+}
+.click-level-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); min-width: 7ch; text-align: right; }
 .position-display {
   position: relative;
   display: grid;

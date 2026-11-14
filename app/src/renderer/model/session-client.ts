@@ -12,7 +12,10 @@
 // engine's answer and leaves the model to session.changed.
 //
 // After each auth it asks engine.capabilities once (UI redesign spec 3.0) and
-// keeps the last answer across reconnects.
+// keeps the last answer across reconnects. Under SIANN_SHELL_TEST=1 alone a
+// test may hand it the answer to use instead (`capabilities`, from
+// SIANN_TEST_CAPABILITIES; m5-ui-loop-click), to run the app against an
+// engine that lacks methods.
 //
 // Framework-free: the socket factory, the endpoint source (the shell's
 // preload bridge, read in index.tsx) and the reconnect scheduler are injected.
@@ -80,6 +83,9 @@ export interface SessionClientOptions {
   syncRetryMs?: number;
   // The status before the first connect (the renderer shows connecting).
   initialStatus?: ConnectionStatus;
+  // Test only (index.tsx passes it under SIANN_SHELL_TEST=1 alone): the
+  // engine.capabilities answer to use in place of the engine's.
+  capabilities?: Capabilities;
 }
 
 export class ProtocolError extends Error {
@@ -108,9 +114,15 @@ export interface SentRequest {
   readonly params: Readonly<Record<string, unknown>>;
 }
 
+// A request the engine answered: null for ok, else the error's code.
+export interface AnsweredRequest extends SentRequest {
+  readonly code: string | null;
+}
+
 interface Pending {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
+  readonly sent: SentRequest;
   // The session the request named.
   sessionId: string | null;
 }
@@ -179,6 +191,7 @@ export class SessionClient {
   #lastSeq: bigint | null = null;
   readonly #refused: Array<{ readonly method: string }> = [];
   readonly #sent: Array<SentRequest> = [];
+  readonly #answered: Array<AnsweredRequest> = [];
   // The session the model's snapshot belongs to.
   #modelSessionId: string | null = null;
 
@@ -321,6 +334,13 @@ export class SessionClient {
     return [...this.#sent];
   }
 
+  // The requests the engine answered, oldest first (the last SENT_KEPT), each
+  // with its error code (null: ok): what the locator e2e reads to prove that
+  // no session.set_locators was answered invalid_locators (m5-ui-loop-click).
+  answered(): ReadonlyArray<AnsweredRequest> {
+    return [...this.#answered];
+  }
+
   // command.execute. The model changes only when the session.changed of the
   // commit arrives.
   execute(commands: readonly unknown[], expectedRevision?: string): Promise<unknown> {
@@ -333,10 +353,11 @@ export class SessionClient {
     const requestId = `req_${this.#prefix}_${this.#nextId}`;
     const envelope: Record<string, unknown> = { requestId, sessionId: connection.sessionId, method, params };
     if (expectedRevision !== undefined) envelope.expectedRevision = expectedRevision;
+    const sent: SentRequest = Object.freeze({ method, params });
     if (this.#sent.length >= SENT_KEPT) this.#sent.shift();
-    this.#sent.push(Object.freeze({ method, params }));
+    this.#sent.push(sent);
     return new Promise((resolve, reject) => {
-      connection.pending.set(requestId, { resolve, reject, sessionId: connection.sessionId });
+      connection.pending.set(requestId, { resolve, reject, sessionId: connection.sessionId, sent });
       connection.socket.send(JSON.stringify(envelope));
     });
   }
@@ -350,6 +371,9 @@ export class SessionClient {
       const pending = connection.pending.get(message.requestId);
       if (!pending) return;
       connection.pending.delete(message.requestId);
+      const answer = message.ok === true ? null : String((message.error as { code?: unknown } | undefined)?.code ?? 'internal_error');
+      if (this.#answered.length >= SENT_KEPT) this.#answered.shift();
+      this.#answered.push(Object.freeze({ ...pending.sent, code: answer }));
       if (message.ok === true) {
         pending.resolve(message.result);
       } else {
@@ -386,7 +410,8 @@ export class SessionClient {
     // What this engine can do, once per connection; a failure keeps the last answer.
     this.#send(connection, 'engine.capabilities', {}).then(
       (result) => {
-        if (this.#connection === connection && !connection.closed && isCapabilities(result)) this.#update({ capabilities: result });
+        const answer = this.#options.capabilities ?? result;
+        if (this.#connection === connection && !connection.closed && isCapabilities(answer)) this.#update({ capabilities: answer });
       },
       () => undefined,
     );

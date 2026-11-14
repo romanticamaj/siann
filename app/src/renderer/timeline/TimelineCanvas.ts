@@ -36,7 +36,16 @@
 // resizing ignores it). A gesture whose commands engine.capabilities does not
 // list (`allows`) does not begin and sends nothing (UI redesign spec 3.0). A
 // vertical drag in the lower half of the ruler zooms about the pointer; the
-// upper half is the locators' (P1-7) and inert until then. The wheel is the
+// upper half is the locators' (m5-ui-loop-click, spec 3.2): a drag draws the
+// range, a drag of the band moves it, a drag of an end adjusts it, a click on
+// the band toggles cycle, Ctrl-click (Mod) and Alt-click set the left and the
+// right locator; each sends one session.set_locators on release, through the
+// `locators` source, snapped as clips are (locators.ts says what is sent).
+// The band (light with cycle on, grey with it off, with its L and R flags)
+// and its tint over the lanes are drawn on the content layer from the
+// document's locators and the source's cycle flag, which the canvas hears
+// directly, never through React; without the source (an engine that lacks
+// the command) the upper half is inert and nothing is drawn. The wheel is the
 // surface's (non-passive, default prevented): plain scrolls the lanes, Shift
 // scrolls horizontally, Ctrl zooms at the pointer, Ctrl+Shift changes every
 // track's height. Lane heights are the layout store's (per session id); the
@@ -55,6 +64,7 @@
 // the catalogs through the `t` it is given and is redrawn on a locale change.
 
 import { formatDb } from '../format';
+import { TOKENS } from '../tokens';
 import { translator, type T } from '../i18n/t';
 import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
 import type { ClipEntity, MediaEntity } from '../model/document';
@@ -78,6 +88,8 @@ import {
 } from './edit-commands';
 import {
   DEFAULT_LANE_HEIGHT,
+  RULER_HEIGHT,
+  RULER_UPPER_HEIGHT,
   clipRects,
   cornerSize,
   deltaFrames,
@@ -102,13 +114,32 @@ import { rulerMarks } from './ruler';
 import {
   clickSelection,
   nextClipFrame,
+  selectionSpan as spanOf,
   previousClipFrame,
   pruneSelection,
   selectAllClips,
   selectionStart,
   zoomToSelection as fitSelection,
 } from './selection';
-import { DEFAULT_SNAP, snappedMoveDelta, snapperFor, type SnapSettings, type Snapper } from './snap';
+import {
+  BAND_LINE,
+  FLAG_W,
+  LABEL_INSET,
+  bandRect,
+  dragEnd,
+  drawRange,
+  frameAt,
+  locatorHit,
+  moveRange,
+  rangeOf,
+  setLeft,
+  setRight,
+  type BandRect,
+  type LocatorGrid,
+  type LocatorHit,
+  type LocatorRange,
+} from './locators';
+import { DEFAULT_SNAP, gridStepFrames, snappedMoveDelta, snapperFor, type SnapSettings, type Snapper } from './snap';
 import { clipTones, trackColourVar } from './track-colour';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
 
@@ -189,9 +220,35 @@ export interface TimelineCanvasOptions {
   readonly onLocate?: (frames: string) => void;
   // Auto-scroll in page mode while playing (off when absent; setAutoScroll).
   readonly autoScroll?: boolean;
+  // The locators of the ruler's upper half (m5-ui-loop-click); absent, the
+  // upper half is inert and no band is drawn.
+  readonly locators?: LocatorBandSource;
   // The cursor clock's time in milliseconds (performance.now when absent;
   // the tests move it by hand).
   readonly now?: () => number;
+}
+
+// The locator band's link to the engine (m5-ui-loop-click): whether the
+// engine lists what the band needs now (checked at each press and frame), the
+// cycle flag as the engine last said and its changes, and where an edit goes.
+export interface LocatorBandSource {
+  enabled(): boolean;
+  cycle(): boolean;
+  subscribe(listener: () => void): () => void;
+  // One session.set_locators (the source skips null and the range already set).
+  setLocators(range: LocatorRange | null): void;
+  // A click on the band: cycle on or off; false when it sends nothing (no device).
+  toggleCycle(): boolean;
+}
+
+// The band as the last content frame drew it (the e2e and the fidelity gate).
+export interface LocatorBandDrawn extends BandRect {
+  // Light (cycle on) or grey (cycle off).
+  readonly cycle: boolean;
+  // The tint over the lanes was drawn.
+  readonly tint: boolean;
+  readonly left: string;
+  readonly right: string;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -219,6 +276,8 @@ export interface TimelineTestHooks {
   snap(): SnapSettings;
   // The snap guide's x in the last overlay frame, or null without one.
   snapGuide(): number | null;
+  // The locator band of the last content frame, or null (m5-ui-loop-click).
+  locatorBand(): LocatorBandDrawn | null;
 }
 
 interface Drag {
@@ -258,6 +317,18 @@ interface RulerDrag {
   moved: boolean;
 }
 
+// A gesture in the ruler's upper half: from where, on what, and the range it
+// would end in so far (null: nothing to send).
+interface LocatorDrag {
+  readonly hit: LocatorHit;
+  readonly startX: number;
+  readonly range: LocatorRange | null;
+  readonly snapshot: Snapshot;
+  readonly flags: ModifierFlags;
+  moved: boolean;
+  preview: LocatorRange | null;
+}
+
 interface Palette {
   readonly bg0: string;
   readonly bg1: string;
@@ -270,12 +341,19 @@ interface Palette {
   readonly tx3: string;
   readonly select: string;
   readonly font: string;
+  // The locator band (m5-ui-loop-click): light, grey, its labels, the tint.
+  readonly bandFill: string;
+  readonly bandLine: string;
+  readonly bandLabel: string;
+  readonly bandOffFill: string;
+  readonly bandOff: string;
+  readonly bandTint: string;
   track(trackId: string): string;
 }
 
 export const DEFAULT_FRAMES_PER_PIXEL = 100;
 // Two halves: the locators' (upper) and the cursor's and zoom's (lower).
-export const RULER_HEIGHT = 32;
+export { RULER_HEIGHT, RULER_UPPER_HEIGHT };
 // A pointer that moved less than this is a click (select), not a drag.
 const DRAG_THRESHOLD_PX = 3;
 const PLACE_ATTEMPTS = 3;
@@ -304,6 +382,8 @@ export class TimelineCanvas {
   #view: Viewport;
   #drag: Drag | null = null;
   #rulerDrag: RulerDrag | null = null;
+  #locatorDrag: LocatorDrag | null = null;
+  #band: LocatorBandDrawn | null = null;
   #contentFrame: number | null = null;
   #overlayFrame: number | null = null;
   #columns = new Map<string, { drawn: number; nonZero: number }>();
@@ -350,6 +430,8 @@ export class TimelineCanvas {
     this.#unsubscribe.push(options.peaks.subscribe(() => this.invalidate()));
     if (options.locale) this.#unsubscribe.push(options.locale.subscribe(() => this.invalidate()));
     if (options.playhead) this.#unsubscribe.push(options.playhead.subscribe(() => this.#playheadChanged()));
+    // The cycle flag: the band redraws from here, not through React.
+    if (options.locators) this.#unsubscribe.push(options.locators.subscribe(() => this.#invalidateContent()));
     if (options.laneHeights) {
       const source = options.laneHeights;
       this.#unsubscribe.push(source.subscribe(() => this.#setView({ ...this.#view, laneHeights: source.get() })));
@@ -501,6 +583,12 @@ export class TimelineCanvas {
     this.#select(ids, primary);
   }
 
+  // P and Alt+P (m5-ui-loop-click): the selection's span, or null.
+  selectionSpan(): { start: bigint; end: bigint } | null {
+    const snapshot = this.#options.model.getSnapshot();
+    return snapshot ? spanOf(snapshot, this.#state.selectedClipIds) : null;
+  }
+
   // L: the cursor to the selection's start.
   locateSelection(): boolean {
     const snapshot = this.#options.model.getSnapshot();
@@ -614,6 +702,7 @@ export class TimelineCanvas {
       tool: () => this.#state.tool,
       snap: () => ({ ...this.#snap }),
       snapGuide: () => this.#guideX,
+      locatorBand: () => (this.#band ? { ...this.#band } : null),
     };
   }
 
@@ -792,9 +881,14 @@ export class TimelineCanvas {
     const snapshot = this.#options.model.getSnapshot();
     const { x, y } = this.#point(e);
     if (y < this.#view.rulerHeight) {
-      // The lower half: a click locates, a vertical drag zooms; the upper half is P1-7's.
-      if (y >= this.#view.rulerHeight / 2) {
+      // The lower half: a click locates, a vertical drag zooms; the upper half is the locators'.
+      if (y >= RULER_UPPER_HEIGHT) {
         this.#rulerDrag = { startX: x, startY: y, anchorX: x, view: this.#view, moved: false };
+        this.#capture(e);
+      } else if (snapshot && this.#bandEnabled()) {
+        const range = rangeOf(snapshot.locators);
+        const hit = locatorHit(range, this.#view, x, y);
+        this.#locatorDrag = { hit, startX: x, range, snapshot, flags: this.#flags(e), moved: false, preview: null };
         this.#capture(e);
       }
       return;
@@ -884,6 +978,14 @@ export class TimelineCanvas {
       this.#setView(zoomAbout({ ...ruler.view, width: this.#view.width, height: this.#view.height, laneHeights: this.#view.laneHeights }, ruler.anchorX, factor));
       return;
     }
+    const locator = this.#locatorDrag;
+    if (locator) {
+      if (!locator.moved && Math.abs(x - locator.startX) < DRAG_THRESHOLD_PX) return;
+      locator.moved = true;
+      locator.preview = this.#locatorPlan(locator, x);
+      this.#invalidateContent();
+      return;
+    }
     const drag = this.#drag;
     if (drag) {
       drag.dx = x - drag.startX;
@@ -901,12 +1003,17 @@ export class TimelineCanvas {
     const gain = hit?.part === 'gain';
     const title = gain ? (this.#options.locale?.t() ?? translator('en'))('clip.gainControl') : '';
     if (this.#overlay.title !== title) this.#overlay.title = title;
-    this.#overlay.style.cursor = this.#cursorFor(hit?.part ?? null, y, e.altKey === true);
+    this.#overlay.style.cursor = this.#cursorFor(hit?.part ?? null, y, e.altKey === true, x);
   }
 
-  #cursorFor(part: HitPart | null, y: number, alt: boolean): string {
+  #cursorFor(part: HitPart | null, y: number, alt: boolean, x = 0): string {
     if (this.#state.placingMediaId) return 'copy';
-    if (y < this.#view.rulerHeight) return y >= this.#view.rulerHeight / 2 ? 'ns-resize' : 'default';
+    if (y < this.#view.rulerHeight) {
+      if (y >= RULER_UPPER_HEIGHT) return 'ns-resize';
+      if (!this.#bandEnabled()) return 'default';
+      const hit = locatorHit(rangeOf(this.#options.model.getSnapshot()?.locators), this.#view, x, y);
+      return hit === 'left' || hit === 'right' ? 'ew-resize' : hit === 'body' ? 'grab' : 'default';
+    }
     if (this.#state.tool === 'split') return part ? 'crosshair' : 'default';
     switch (part) {
       case null:
@@ -925,6 +1032,14 @@ export class TimelineCanvas {
   }
 
   #pointerUp(e: PointerEvent): void {
+    const locator = this.#locatorDrag;
+    if (locator) {
+      this.#pointerMove(e);
+      this.#locatorDrag = null;
+      this.#release(e);
+      this.#locatorReleased(locator);
+      return;
+    }
     const ruler = this.#rulerDrag;
     if (ruler) {
       this.#pointerMove(e);
@@ -1026,7 +1141,66 @@ export class TimelineCanvas {
     return Math.abs(drag.dx) >= DRAG_THRESHOLD_PX || Math.abs(drag.dy) >= DRAG_THRESHOLD_PX;
   }
 
+  // The upper half's gesture ends: a click (Ctrl-click, Alt-click, a click on
+  // the band) or a drag (draw, move, adjust), each one edit or none.
+  #locatorReleased(drag: LocatorDrag): void {
+    const source = this.#options.locators;
+    if (drag.moved) this.#invalidateContent();
+    if (!source || !this.#bandEnabled()) return;
+    if (drag.moved) {
+      source.setLocators(drag.preview);
+      return;
+    }
+    const mods = toolModifiers(drag.flags, this.#platform());
+    const frame = this.#locatorGrid(drag.snapshot).snap(frameAt(drag.startX, this.#view));
+    if (mods.constrain) {
+      source.setLocators(setLeft(drag.range, frame));
+      return;
+    }
+    if (drag.flags.altKey) {
+      source.setLocators(setRight(drag.range, frame));
+      return;
+    }
+    if (drag.hit !== 'outside') source.toggleCycle();
+  }
+
+  // The range a moved upper-half gesture would end in at x.
+  #locatorPlan(drag: LocatorDrag, x: number): LocatorRange | null {
+    const grid = this.#locatorGrid(drag.snapshot);
+    const view = this.#view;
+    const range = drag.range;
+    if (!range || drag.hit === 'outside') return drawRange(frameAt(drag.startX, view), frameAt(x, view), grid);
+    if (drag.hit === 'body') return moveRange(range, deltaFrames(x - drag.startX, view), grid);
+    return dragEnd(range, drag.hit, frameAt(x, view), grid);
+  }
+
+  // Snap for the locators: the clips' grid, and one grid step (one pixel with
+  // snap off) as the least gap between the ends.
+  #locatorGrid(snapshot: Snapshot): LocatorGrid {
+    const view = this.#view;
+    const tempo = snapshot.root?.tempo ?? [];
+    const rate = snapshot.root?.sampleRate ?? 48000;
+    const settings = this.#snap;
+    return {
+      snap: this.#snapper(snapshot),
+      minGap: (at) => (settings.on ? gridStepFrames(settings, view.framesPerPixel, tempo, rate, at) : BigInt(Math.max(1, Math.round(view.framesPerPixel)))),
+    };
+  }
+
+  #bandEnabled(): boolean {
+    return this.#options.locators?.enabled() ?? false;
+  }
+
+  // The range the band shows: an open drag's preview, else the document's.
+  #bandRange(snapshot: Snapshot | null): LocatorRange | null {
+    const drag = this.#locatorDrag;
+    if (drag?.moved && drag.preview) return drag.preview;
+    return rangeOf(snapshot?.locators);
+  }
+
   #cancelDrag(): void {
+    if (this.#locatorDrag?.moved) this.#invalidateContent();
+    this.#locatorDrag = null;
     this.#drag = null;
     this.#rulerDrag = null;
     this.#hideTooltip();
@@ -1112,6 +1286,12 @@ export class TimelineCanvas {
       tx3: read('--tx-3'),
       select: read('--select'),
       font: read('--font-ui') || 'sans-serif',
+      bandFill: read('--tx-1-a200'),
+      bandLine: read('--tx-1'),
+      bandLabel: read('--lit-1'),
+      bandOffFill: read('--white-a060'),
+      bandOff: read('--tx-3'),
+      bandTint: read('--white-a028'),
       track: (trackId) => {
         let colour = tracks.get(trackId);
         if (colour === undefined) {
@@ -1169,6 +1349,14 @@ export class TimelineCanvas {
         ctx.fillStyle = palette.line;
         ctx.fillRect(0, top + laneHeight - 1, width, 1);
       });
+      ctx.globalAlpha = 1;
+      const band = this.#bandEnabled() ? this.#bandRange(snapshot) : null;
+      if (band) {
+        // The locator range's tint over the lanes, under the clips.
+        const x0 = frameToX(band.left, view);
+        ctx.fillStyle = palette.bandTint;
+        ctx.fillRect(x0, view.rulerHeight, frameToX(band.right, view) - x0, height - view.rulerHeight);
+      }
       for (const rect of this.#rects) {
         if (rect.x > width || rect.x + rect.width < 0 || rect.y > height || rect.y + rect.height < view.rulerHeight) continue;
         ctx.globalAlpha = dimmed.has(rect.trackId) ? DIMMED_ALPHA : 1;
@@ -1189,19 +1377,22 @@ export class TimelineCanvas {
 
   #drawRuler(ctx: CanvasRenderingContext2D, snapshot: Snapshot | null, palette: Palette): void {
     const view = this.#view;
-    const half = view.rulerHeight / 2;
+    const half = RULER_UPPER_HEIGHT;
+    const lower = view.rulerHeight - half;
     ctx.globalAlpha = 1;
-    // Upper half: the locators' (P1-7); lower half: bars and beats, cursor and zoom.
+    // Upper half: the locators'; lower half: bars and beats, cursor and zoom.
     ctx.fillStyle = palette.bg2;
     ctx.fillRect(0, 0, view.width, half);
     ctx.fillStyle = palette.bg3;
-    ctx.fillRect(0, half, view.width, half);
+    ctx.fillRect(0, half, view.width, lower);
     ctx.fillStyle = palette.line2;
     ctx.fillRect(0, view.rulerHeight - 1, view.width, 1);
+    this.#band = null;
     if (!snapshot) {
       this.#rulerLabels = [];
       return;
     }
+    this.#drawBand(ctx, snapshot, palette);
     const marks = rulerMarks(view, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000);
     ctx.font = `10px ${palette.font}`;
     const labels: string[] = [];
@@ -1213,6 +1404,45 @@ export class TimelineCanvas {
       ctx.fillText(mark.label, Math.round(mark.x) + 3, half + 10);
     }
     this.#rulerLabels = labels;
+  }
+
+  // The locator band in the upper half, as the mockup draws it: the range
+  // filled, a top line, the L and R flags and labels; light with cycle on,
+  // grey with it off. Nothing without the source or without locators.
+  #drawBand(ctx: CanvasRenderingContext2D, snapshot: Snapshot, palette: Palette): void {
+    const source = this.#options.locators;
+    const range = source && source.enabled() ? this.#bandRange(snapshot) : null;
+    const rect = bandRect(range, this.#view);
+    if (!source || !range || !rect) return;
+    const cycle = source.cycle();
+    const line = cycle ? palette.bandLine : palette.bandOff;
+    const x0 = rect.x;
+    const x1 = rect.x + rect.width;
+    const bottom = rect.y + rect.height;
+    ctx.fillStyle = cycle ? palette.bandFill : palette.bandOffFill;
+    ctx.fillRect(x0, rect.y, rect.width, rect.height);
+    ctx.fillStyle = line;
+    ctx.fillRect(x0, rect.y, rect.width, BAND_LINE);
+    ctx.beginPath();
+    ctx.moveTo(x0, rect.y);
+    ctx.lineTo(x0 + FLAG_W, rect.y);
+    ctx.lineTo(x0, bottom);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x1, rect.y);
+    ctx.lineTo(x1 - FLAG_W, rect.y);
+    ctx.lineTo(x1, bottom);
+    ctx.fill();
+    ctx.font = `${TOKENS['fw-bold']} ${TOKENS['fs-8h']} ${palette.font}`;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = cycle ? palette.bandLabel : palette.bandOff;
+    const middle = rect.y + rect.height / 2 + 1;
+    ctx.fillText('L', x0 + LABEL_INSET, middle);
+    ctx.textAlign = 'right';
+    ctx.fillText('R', x1 - LABEL_INSET, middle);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    this.#band = { ...rect, cycle, tint: true, left: range.left.toString(), right: range.right.toString() };
   }
 
   // A clip in its track's three tones: body, title strip, waveform. Returns

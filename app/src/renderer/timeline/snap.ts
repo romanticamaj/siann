@@ -79,6 +79,15 @@ export function snapperFor(
   return (frame) => snapFrame(frame, step, tempo, sampleRate);
 }
 
+// One grid step at a zoom in frames, from `atFrame` (at least 1): the least
+// gap a dragged locator end keeps from the other (m5-ui-loop-click; spec 3.2).
+export function gridStepFrames(settings: SnapSettings, framesPerPixel: number, tempo: readonly TempoPoint[], sampleRate: number, atFrame: bigint): bigint {
+  const step = gridStepTicks(settings.grid, pixelsPerTick(framesPerPixel, tempo, sampleRate, atFrame));
+  const at = Number(atFrame);
+  const next = ticksToFrames(framesToTicks(at, tempo, sampleRate) + step, tempo, sampleRate);
+  return BigInt(Math.max(1, Math.round(next - at)));
+}
+
 // The delta that puts a clip starting at `start`, moved by `delta`, on the grid.
 export function snappedMoveDelta(start: bigint, delta: bigint, snap: Snapper): bigint {
   const moved = start + delta;

@@ -131,6 +131,19 @@ export const en = {
   'transport.undoRedo': 'Undo and redo',
   'transport.undo': 'Undo',
   'transport.redo': 'Redo',
+  // Locators, cycle and metronome (m5-ui-loop-click; spec 3.1, 3.2).
+  'transport.cycle': 'Cycle',
+  'transport.metronome': 'Metronome',
+  'transport.click': 'Metronome click',
+  'transport.clickLevel': 'Metronome level',
+  'transport.clickLevelValue': '{db} dB',
+  'transport.locators': 'Locators',
+  'transport.toLeftLocator': 'Go to left locator',
+  'transport.toRightLocator': 'Go to right locator',
+  'transport.setLeftLocator': 'Set left locator to the project cursor',
+  'transport.setRightLocator': 'Set right locator to the project cursor',
+  'transport.noDeviceCycle': 'No audio device is running, so cycle is unavailable',
+  'transport.noDeviceClick': 'No audio device is running, so the metronome is unavailable',
 
   // The Plans tab (m5-ui-plan-panel; UI redesign section 4 and P1-5).
   'plans.label': 'Plans',

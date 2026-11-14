@@ -69,6 +69,18 @@ export const COMMAND_IDS = [
   'track.muteSelected',
   'track.soloSelected',
   'track.removeSelected',
+  // Locators, cycle and metronome (m5-ui-loop-click; spec 3.1, 3.2): cycle on
+  // and off, the metronome on and off, the locators to the selection, Loop
+  // Selection, the cursor to the left and the right locator, and the left
+  // and the right locator to the cursor.
+  'transport.cycleToggle',
+  'transport.metronomeToggle',
+  'transport.locatorsToSelection',
+  'transport.loopSelection',
+  'transport.toLeftLocator',
+  'transport.toRightLocator',
+  'transport.setLeftLocator',
+  'transport.setRightLocator',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

@@ -206,6 +206,7 @@ export const TOKENS = {
   "clip-title-h": "13px",
   "icon": "16px",
   "icon-s": "14px",
+  "display-locators-empty-w": "101.7px",
 } as const;
 
 export type TokenName = keyof typeof TOKENS;

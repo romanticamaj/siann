@@ -21,7 +21,9 @@
 // range, and M, S and Shift+Delete act on the set; removed tracks leave it.
 // The transport bar (m5-ui-transport) sits in the top bar over the
 // TransportController; the position display's primary format, a layout
-// setting, also words positions in the Plans tab.
+// setting, also words positions in the Plans tab. The locators, cycle and
+// metronome (m5-ui-loop-click) are the LoopClickController's: its buttons in
+// the transport, its band in the event display's ruler, its keys in the shell.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -34,6 +36,7 @@ import type { PeaksCache } from './model/peaks-cache';
 import type { PlanStore } from './model/plan-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
+import type { LoopClickController } from './model/loop-click';
 import type { TransportController } from './model/transport';
 import { Mixer } from './mixer/Mixer';
 import { announceArrivals } from './plans/arrivals';
@@ -64,6 +67,8 @@ export interface AppProps {
   readonly connection: ConnectionPhaseStore;
   readonly toasts: ToastStore;
   readonly transport: TransportController;
+  // Locators, cycle and metronome (m5-ui-loop-click).
+  readonly loopClick: LoopClickController;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
 }
@@ -81,6 +86,7 @@ export function App({
   connection,
   toasts,
   transport,
+  loopClick,
   onTimelineHooks,
   onMeterHooks,
 }: AppProps) {
@@ -126,6 +132,7 @@ export function App({
           toasts={toasts}
           realtime={realtime}
           transport={transport}
+          loopClick={loopClick}
           left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} />}
           project={
             <Counted id="timeline">
@@ -142,6 +149,7 @@ export function App({
                 onSelect={selectClip}
                 onHooks={onTimelineHooks}
                 onLocate={locate}
+                loopClick={loopClick}
                 reconnects={reconnects}
               />
             </Counted>
