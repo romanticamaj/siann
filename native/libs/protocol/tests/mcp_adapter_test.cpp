@@ -703,6 +703,45 @@ TEST_CASE("record_arm and record need the trusted scope", "[protocol][mcp][recor
     }
 }
 
+// m5b-engine-record (security review): stop and locate end a running recording
+// and commit it, and a propose agent cannot start one, so it cannot end one
+// either: while recording they are scope_denied under propose and reach no port.
+// Stopped, they run as before; a trusted credential ends the recording.
+TEST_CASE("a propose client cannot end a recording with stop or locate", "[protocol][mcp][record][scope]") {
+    RecordingPort transport;
+    ArmingPort port;
+    SECTION("propose, while recording") {
+        Fixture f(withRecorder(transport, port, McpScope::propose));
+        Mcp mcp(f);
+        mcp.initialize();
+        port.state.recording = true;
+        CHECK(at(mcp.error("stop"), "code").asString() == "scope_denied");
+        CHECK(at(mcp.error("locate", Value(Object{{"frames", Value("0")}})), "code").asString() == "scope_denied");
+        CHECK(transport.calls.empty());
+        CHECK(port.state.recording);
+        // What does not end it still runs.
+        CHECK(at(at(mcp.ok("engine_status"), "device"), "id").asString() == "fake");
+        mcp.ok("set_click", Value(Object{{"enabled", Value(true)}}));
+    }
+    SECTION("propose, stopped") {
+        Fixture f(withRecorder(transport, port, McpScope::propose));
+        Mcp mcp(f);
+        mcp.initialize();
+        mcp.ok("stop");
+        mcp.ok("locate", Value(Object{{"frames", Value("0")}}));
+        CHECK(transport.calls == std::vector<std::string>{"stop", "locate"});
+    }
+    SECTION("trusted, while recording") {
+        Fixture f(withRecorder(transport, port, McpScope::trusted));
+        Mcp mcp(f);
+        mcp.initialize();
+        port.state.recording = true;
+        mcp.ok("locate", Value(Object{{"frames", Value("0")}}));
+        mcp.ok("stop");
+        CHECK(transport.calls == std::vector<std::string>{"locate", "stop"});
+    }
+}
+
 TEST_CASE("recording adds no tool to the propose scope", "[protocol][mcp][record]") {
     std::vector<std::string> propose;
     for (const auto& tool : protocol::detail::mcpTools()) {

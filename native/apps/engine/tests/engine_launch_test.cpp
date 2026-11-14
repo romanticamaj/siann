@@ -2534,6 +2534,50 @@ TEST_CASE("while recording, command.execute, plan.apply and session.undo may not
     CHECK(stopEngine(child) == 0);
 }
 
+// m5b-engine-record (security review): an MCP agent with the propose scope
+// cannot end the user's recording; the UI's stop still commits it.
+TEST_CASE("over the wire, a propose MCP agent's stop and locate are scope_denied while recording",
+          "[engine][launch][record][mcp][scope]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle, false));  // MCP in the propose scope
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        RecordWatcher watcher(ready);
+        McpClient mcp(static_cast<std::uint16_t>(at(ready, "port").asNumber()), at(ready, "mcpToken").asString());
+        mcp.initialize();
+        client.ok("engine.select_device", Value(Object{{"id", Value("fake")}, {"inputId", Value("fake")}}));
+        client.ok("command.execute", commands({setInputCommand("trk_a", 0, 2)}));
+        client.ok("record.arm", Value(Object{{"trackId", Value("trk_a")}, {"armed", Value(true)}}));
+        REQUIRE(at(client.ok("transport.record", Value(Object{{"enabled", Value(true)}})), "recording").asBool());
+        const Value event = watcher.untilDurable(1);
+        const std::string takeId = at(at(event, "takes").asArray()[0], "takeId").asString();
+
+        auto denied = [&](const std::string& name, Value arguments) {
+            const Value result = mcp.tool(name, std::move(arguments));
+            INFO(name << ": " << jcs::canonicalize(result));
+            REQUIRE(at(result, "isError").asBool());
+            return at(at(at(result, "structuredContent"), "error"), "code").asString();
+        };
+        CHECK(denied("stop", Value(Object{})) == "scope_denied");
+        CHECK(denied("locate", Value(Object{{"frames", Value("0")}})) == "scope_denied");
+        const Value status = client.ok("engine.status");
+        CHECK(at(status, "recording").asBool());
+        CHECK(at(status, "playing").asBool());
+
+        // The UI ends it, and the take commits.
+        const Value stopped = client.ok("transport.stop");
+        CHECK_FALSE(at(stopped, "recording").asBool());
+        CHECK(at(at(fetchOne(client, "clip:clp_" + takeId), "entity"), "trackId").asString() == "trk_a");
+        // Stopped, the agent's stop runs again.
+        CHECK_FALSE(at(mcp.ok("stop"), "playing").asBool());
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
 TEST_CASE("a loopback recording over the wire places the played impulse within one sample",
           "[engine][launch][record][latency]") {
     ix::initNetSystem();
