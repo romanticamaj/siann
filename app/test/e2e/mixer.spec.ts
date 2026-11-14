@@ -406,12 +406,15 @@ test('a gain above +6 dB stored by another client pins the cap at the top and sh
 
 // Selects the track's clip on the timeline (the Inspector shows the selected clip's track).
 async function selectClip(): Promise<void> {
-  const rect = await page.evaluate(async () => {
-    const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
-    if (!hooks) throw new Error('window.__siannTimeline is missing');
-    return hooks.clips().find((r) => r.clipId === 'clp_loud') ?? null;
-  });
-  if (!rect) throw new Error('clp_loud is not drawn');
+  type Rect = { clipId: string; x: number; y: number; width: number; height: number };
+  const drawn = () =>
+    page.evaluate(() => {
+      const hooks = (window as unknown as { __siannTimeline?: { clips(): Rect[] } }).__siannTimeline;
+      return hooks?.clips().find((r) => r.clipId === 'clp_loud') ?? null;
+    });
+  // The timeline draws the clip once the session snapshot has arrived.
+  await expect.poll(drawn, { message: 'clp_loud is drawn' }).not.toBeNull();
+  const rect = (await drawn())!;
   const box = (await page.getByTestId('timeline-canvas').boundingBox())!;
   await page.mouse.click(box.x + rect.x + Math.min(20, rect.width / 2), box.y + rect.y + rect.height / 2);
   await expect(page.getByTestId('inspector-track')).toHaveText('Mix');
