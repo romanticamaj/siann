@@ -262,19 +262,8 @@ code, dd, .mono { font-family: var(--font-mono); }
 .tool-buttons .tool + .tool { margin-left: -1px; }
 .tool-buttons .tool[aria-pressed="true"], .snap-toggle[aria-pressed="true"] { background: var(--bg-5); border-color: var(--select); color: var(--tx-1); }
 .snap-controls { gap: var(--space); }
-.grid-type { font: inherit; font-size: var(--fs-small); background: var(--bg-3); color: var(--tx-1); border: 1px solid var(--line-2); border-radius: var(--radius-s); }
-/* Shift+Delete's confirmation. */
-.confirm-dialog {
-  width: min(420px, calc(100vw - 32px));
-  padding: calc(var(--space) * 4);
-  background: var(--bg-1);
-  color: var(--tx-1);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-l);
-  font-size: var(--fs-body);
-  white-space: normal;
-}
-.confirm-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.grid-type { font-size: var(--fs-small); color: var(--tx-1); }
+/* Shift+Delete's confirmation: the About panel's dialog chrome (below). */
 .confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
 .confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
 .confirm-dialog .danger { background: var(--err); border-color: var(--err); color: var(--bg-0); }
@@ -710,7 +699,7 @@ code, dd, .mono { font-family: var(--font-mono); }
 .about:hover:not(:disabled) { background: none; color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-sep, .about-license { flex: none; }
-.about-panel {
+.about-panel, .confirm-dialog {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   overflow: auto;
@@ -722,7 +711,7 @@ code, dd, .mono { font-family: var(--font-mono); }
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop { background: rgb(0 0 0 / .45); }
+.about-panel::backdrop, .confirm-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .about-panel h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
 .about-panel h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
