@@ -1,0 +1,248 @@
+{
+  "schemaVersion": "siann.milestone.v1",
+  "id": "M5b",
+  "title": "Usable release",
+  "goal": "Open SIANN with one command or an installer and work in it as a Cubase user would: projects, audio import, arranging, transport, MixConsole, recording and plan review in place, in English, Traditional Chinese and Simplified Chinese, proven by a scripted Cubase user's walkthrough (GitHub #83, criteria A to I of the UI redesign spec's section Usable release).",
+  "specSections": ["Frontend", "siann-protocol", "Recording", "Latency model", "Channels and I/O", "Process model", "Session bundle", "Plans", "Proposal audition (A/B)", "Libraries", "Milestones", "UI redesign: 7. Implementation plan", "UI redesign: Usable release"],
+  "status": "not_started",
+  "done": [],
+  "prerequisites": [
+    "M5: every m5-ui-* feature is merged (phase 1 of the UI redesign). M5's own exit may still wait on the maintainer's reviews; M5b builds on the merged shell, not on the exit.",
+    "M2 (write-through recording and crash-safe takes, #21) and M4 (plugin hosting, registry and editors): merged.",
+    "docs/harness/follow-ups.md, section Before M6b, items 1 and 2: taken into m5b-engine-record. Items 3 to 6 stay before M6b.",
+    "M6a is not a prerequisite: nothing in criteria A to I needs automation."
+  ],
+  "humanGates": [
+    {"id": "installer-hands-on", "text": "Install the unsigned Windows installer on a Windows machine that has no compiler, no Node and no SIANN checkout, start the app from the Start menu and play the demo session.", "how": "The maintainer downloads the installer artifact of the package CI job, checks its SHA-256, accepts the SmartScreen notice for an unsigned build and records the result. CI proves the package on a runner that has the build tools; only a clean machine proves criterion A. No signing certificate is created or stored for this milestone."},
+    {"id": "macos-run", "text": "On the Mac, `npm run app` in a fresh checkout opens the app with its engine, and the Cubase walkthrough passes there.", "how": "Run through the siann-macos session in the logged-in Aqua session: `npm run app -- --plan`, `npm run app`, then the walkthrough e2e in app/. The signed macOS bundle stays M0's m0-macos-bundle behind its apple-signing gate and is not needed here."},
+    {"id": "audio-hardware", "text": "Record on a real audio interface: choose the input in Studio Setup, arm a track, monitor it, record with count-in and with punch at the locators, and judge monitoring latency and the placement of the take.", "how": "The maintainer runs the installed build with the studio interface (ASIO and WASAPI) and a loopback cable or a microphone and click; CI proves the same paths on the fake device only. Needed for the exit check, not before the build."},
+    {"id": "phase2-tour-review", "text": "Review tour states 13 to 20 and 26 to 28 (ghosts and audition) in English, Traditional Chinese and Simplified Chinese.", "how": "The maintainer reads the PNGs per locale after m5b-ui-audition lands and lists required changes; fixes land before wave 6."},
+    {"id": "phase3-tour-review", "text": "Review tour states 29 to 39 (projects, Studio Setup, media, editing, fades, inserts and master, recording, markers, sends and buses, key commands) in the three locales.", "how": "The maintainer reads the PNGs per locale after wave 6 lands and lists required changes; fixes land before m5b-cubase-walkthrough is declared done."},
+    {"id": "zh-glossary-m5b", "text": "Confirm the Chinese terms M5b adds (recording, punch, pre-roll, count-in, monitor, input, insert, send, bus, marker, fade, glue, media, project) against Cubase's Chinese interface.", "how": "Same procedure as M5's zh-glossary gate: the maintainer compares the additions to section 6.5 of the UI redesign spec with a Cubase running in Chinese and corrects the catalogs; needed before the exit check."},
+    {"id": "final-tour-review", "text": "Review the complete screenshot tour (01 to the last walkthrough state) in the three locales on Windows and macOS, and watch one recorded run of the walkthrough.", "how": "The maintainer reads the tour artifacts of the package job (Windows) and of the siann-macos run; this is the last gate before the exit check."}
+  ],
+  "features": [
+    {"id": "m5b-package-windows", "title": "One command and an unsigned Windows installer start the app with its engine", "wave": 1, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-1)", "Process model", "Libraries", "Licensing decisions (decided 2026-10-22, ADR-0017)", "Build, test and CI"],
+     "acceptance": [
+       "At the repository root `npm run app` runs scripts/run-app.js (Node built-ins only; the root package stays dependency-free): it installs app/'s locked dependencies with `npm ci` when app/node_modules is missing or older than app/package-lock.json, builds the app, finds the desktop-preset engine and configures and builds it through the preset steps scripts/check-all.js uses when it is missing, then starts Electron on it. `npm run app -- --plan` prints the steps without running them, and a unit test drives the planning function over a table of states (nothing built, app built, engine built, both, each on win32, darwin and linux).",
+       "`npm run dist` in app/ uses electron-builder (a devDependency pinned to a release at least two weeks old, MIT; the Libraries table of the architecture spec names it, so no new ADR is needed) to write the NSIS installer SIANN-Setup-<version>-x64.exe and its win-unpacked directory, with the desktop-preset siann-engine.exe (JUCE, ASIO) where main.ts's engineExecutable() looks when app.isPackaged.",
+       "No signing step runs and no certificate, key or secret is read: the packaging configuration names no certificate, the CI job's environment holds no secret, and a unit test on the configuration fails when a signing field is added.",
+       "The package carries the licence texts: AGPL-3.0 for the package as a whole (ADR-0017), GPL-2.0 for SIANN's own sources, the JUCE and ASIO SDK notices, Electron's and Chromium's licence files and the OFL texts of the fonts; the installer's licence page shows the AGPL text. A test lists the unpacked directory and fails when one is missing.",
+       "A test reads the PE import tables of the packaged siann-engine.exe and of every DLL beside it and fails on an import that is neither in the package nor on an allow-list of Windows system DLLs, so the app needs no compiler runtime the user must install.",
+       "Playwright e2e against win-unpacked/SIANN.exe with SIANN_ENGINE_EXE unset and an empty user data directory: the window opens, the renderer connects with the token handshake, the status bar's licence line reads AGPL-3.0-or-later with the build's commit, playback advances the playhead on the fake device, and quitting leaves no engine process.",
+       "CI: a Windows job `package` (pushes to main, workflow_dispatch, and pull requests whose paths the stepsForPath table of scripts/check-all.js maps to it; never for docs-only changes) builds the installer, runs the tests above, installs it silently (/S) into a temporary directory, repeats the smoke run on the installed app, uninstalls it silently, and uploads the installer with a SHA-256 file as a workflow artifact.",
+       "README.md gains a short section on running SIANN (public wording only): the installer, the SmartScreen notice of an unsigned build, and `npm run app` for a source checkout; docs/harness/runbook.md says how to build the installer locally.",
+       "Tour states changed: none."
+     ]},
+    {"id": "m5b-engine-project-media", "title": "Engine and protocol: create a session, import audio files as a job, media names (E-5 and the media half of E-4)", "wave": 1, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-2)", "UI redesign: 7. Implementation plan (E-5)", "siann-protocol", "Sample rate and media", "Session bundle", "siann-command (pure C++) — the core of SIANN"],
+     "acceptance": [
+       "session.create {path, name?} creates an empty bundle at an absolute path that does not exist (already_exists when it does; a UNC or relative path is invalid_params), rebinds the engine to it exactly as session.open does and answers {sessionId, revision}; its sample rate is the rate the output device runs at, 48000 with no device (Sample rate and media). Protocol tests cover the success, each refusal, and that the previous bundle's lock is released.",
+       "media.import {path, clientImportId} starts a job reported through job.status as render.start's is: it decodes a WAV or FLAC file, converts it offline to the session rate when it differs, writes the content-addressed media and its peak pyramid, and commits one media.add revision. The job's result carries the media id, and both hashes when it converted. A failed or cancelled import commits nothing and leaves no file under media/ (tests: unsupported format, truncated file, missing file, cancel during conversion). A repeated clientImportId answers with the first job, and importing content the session already holds answers the existing media id without a new revision.",
+       "The media entity gains an optional name (the imported file's base name, at most 255 UTF-8 bytes), set by media.add and by a new command media.rename (one revision, undoable). It is omitted from the canonical JSON when absent, so existing bundles and every recorded hash are unchanged (test on a literal earlier bundle). The renderer's read model, its fixture generator and the Node plan hasher accept the field.",
+       "The import does not hold the command thread: a transport.play sent while a ten-minute stereo file converts is answered before the job ends (test with a paced decoder on the fake device).",
+       "media.import and session.create are refused in the MCP propose scope and allowed in the trusted scope (they read and write paths on the user's disk); engine.capabilities lists both methods and features.mediaImport {formats: [wav, flac]}; docs/schemas documents them.",
+       "Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-engine-record", "title": "Engine and protocol: device inputs, track input, record arm, and recording into a committed take", "wave": 1, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-3)", "Recording", "siann-protocol", "Channels and I/O", "Latency model", "Process model"],
+     "acceptance": [
+       "The engine process opens input channels: engine.devices reports inputChannels and outputChannels per device, engine.select_device {id, inputId?} opens an input (the same device, or another one where the backend allows it), and engine.status carries the open input's id, channel count and latency. With no input the record methods answer no_input and playback is unaffected.",
+       "A command track.set_input {trackId, input: {port, channels} | null} stores the track's input (an IoPort of Channels and I/O) as one undoable revision; the field is omitted from the canonical JSON when null, so earlier hashes hold. record.arm {trackId, armed} is engine state, not a revision (as cycle is): engine.status reports it, a record.changed event announces it to every connection, removing the track clears it, and a track without an input is refused with no_input.",
+       "transport.record {enabled: true} with at least one armed track starts playback and capture at the playhead; transport.record {enabled: false} or transport.stop commits exactly one revision holding a media.add and a clip.place per armed track (record.commit_take), placed by the record offset of the latency model: a loopback test on the fake device finds the recorded impulse within one sample of where it was played. session.undo removes the clips and media references and deletes no file.",
+       "While recording, record.changed carries per take {takeId, trackId, startFrame, durableFrames}, and the realtime channel carries the input meters of armed tracks, also while stopped.",
+       "An early end is unmissable (follow-ups, Before M6b, items 1 and 2): the take's result and its manifest carry endedBy (stop, overflow, disk or device) and overflows, record.changed repeats them, and what was captured before the end is still committed.",
+       "A kill during recording followed by a relaunch lists the pending takes in session.sync; record.recover_take {takeId, accept} commits one in the same revision shape or moves it to trash/, idempotently (engine launch test with the crash hook).",
+       "Recording with cycle on records straight through the right locator (the wrap is suspended while capturing); loop recording with one take per pass stays m6b-loop-takes.",
+       "engine.capabilities lists the methods and features.recording; MCP tools wrap record.arm and transport.record in the trusted scope only. The capture path adds no allocation, lock or blocking I/O on the audio thread (test linked with siann_rt_alloc_guard).",
+       "Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-ui-ghosts", "title": "Plan review in place: the ghost model, and ghosts in the event display, MixConsole and Inspector (P2-1, P2-2)", "wave": 1, "dependsOn": [],
+     "specRefs": ["UI redesign: 4.2", "UI redesign: Phase 2", "Plans", "Frontend"],
+     "acceptance": [
+       "A pure function beside plans/describe.ts maps a plan.preview result, the snapshot and the ticked steps to ghost descriptors for every change kind of section 4.2 (add track, place, move, trim and remove clip, remove track, gain, pan, mute, solo, rename, locators), each carrying its step number: one unit test per kind, and one showing that an unticked step contributes none.",
+       "The event display draws them on its overlay layer in the agent violet, dashed and hatched: a placed clip with its waveform, a moved or trimmed clip with the original at 40 % and an arrow, a removed clip cross-hatched, an added track as a hatched lane with a dashed header, a locator change as a ghost band. A frame in which only the project cursor moved still does not redraw the content layer.",
+       "The MixConsole and the Inspector show a ghost cap joined to the real cap with both values, a violet tick on the pan control, a dashed ring on M or S, both names on a rename, and a dashed strip labelled as new.",
+       "Hovering a step highlights its ghosts and scrolls them into view, the target icon on a step row locates it, clicking a ghost selects its step, and unticking a step removes exactly its ghosts (e2e compares the test hook's ghost list with the ticked steps).",
+       "A pill in the toolbar names the overlaid plan and toggles ghosts, as does Ctrl+Alt+G; ghosts are drawn for the selected plan only and never for an applied, rejected or stale plan.",
+       "No protocol request is added: the e2e's request log holds plan.preview and what the Plans tab already sent.",
+       "Every new string is in the three catalogs. Tour states changed: 13 to 16; appends 26 (ghosts in the event display) and 27 (ghosts on the MixConsole)."
+     ]},
+    {"id": "m5b-engine-clip-fades", "title": "Engine: clip fade in and fade out (the fade half of E-9)", "wave": 2, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-6)", "UI redesign: 7. Implementation plan (E-9)", "siann-model (pure C++)", "siann-command (pure C++) — the core of SIANN", "siann-graph and siann-engine"],
+     "acceptance": [
+       "A command clip.set_fade {clipId, fadeIn?: {length, curve}, fadeOut?: {length, curve}} (lengths in media frames as decimal strings, curve linear or equal_power) is one undoable revision; the two lengths together may not exceed the clip's length (invalid_fade), and a clip.trim that makes the clip shorter than its fades shortens them in the same revision. The fields are omitted from the canonical JSON when the length is 0, so existing hashes hold (test on a literal earlier bundle).",
+       "The clip player applies the fade gain per sample: the offline render of a faded clip equals a reference computed from the curve's formula within one LSB at 24 bit, and the realtime path nulls against the offline render, also after a locate into the middle of a fade and across a cycle wrap.",
+       "A plan step may set a fade and plan.preview shows before and after; command.list describes the command; engine.capabilities lists features.clipFades; the renderer's read model, its fixture generator and the Node plan hasher accept the fields.",
+       "Crossfades and clip.set_mute, the rest of E-9, are not part of this feature. Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-engine-master", "title": "Engine: master gain in the document, with a command and a gesture target (E-11)", "wave": 2, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-10)", "UI redesign: 7. Implementation plan (E-11)", "siann-model (pure C++)", "Gestures", "siann-protocol"],
+     "acceptance": [
+       "The document holds the master gain (a field on root or a singleton entity: the plan phase presents both shapes as m5-ui-engine-loop-click did for locators), omitted from the canonical JSON at 0 dB so existing hashes hold, with a command master.set_gain {gainMilliDb} that is one undoable revision, reachable from plans and MCP, and announced by session.changed.",
+       "The master gain is a gesture target: a fader gesture on it follows the lease rules of a track fader and commits one revision at its end.",
+       "The gain is applied after the sum of the tracks and before the master meter, the click and device-side SRC; offline and realtime renders agree (null test), and a render at -6 dB is the 0 dB render scaled.",
+       "engine.capabilities lists features.masterGain; plan.preview shows before and after; a second connection sees the change. Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-engine-monitoring", "title": "Engine: monitoring modes and the low-latency monitoring path (moved from M6b's m6b-monitoring)", "wave": 2, "dependsOn": ["m5b-engine-record"],
+     "specRefs": ["Latency model", "Recording", "siann-protocol"],
+     "acceptance": [
+       "Monitoring per track is off, auto or input, set by a command track.set_monitor (one revision; omitted from the canonical JSON when off): input always passes the track's input through its strip to the output; auto passes it while stopped and while recording on an armed track and plays the track's clips otherwise; off never passes it.",
+       "Monitored input takes the low-latency path of the Latency model section, and engine.status reports the monitored round trip in frames.",
+       "The loopback offset test passes in every mode: a take recorded while monitoring lines up with the played impulse within one sample (fake device with a loopback).",
+       "Changing the mode during playback goes through the graph transition every structural change uses, with no discontinuity above the test's threshold and no allocation on the audio thread; engine.capabilities lists features.monitoring. Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-ui-audition", "title": "Plan review in place: audition presentation, A/B on Shift+A, merge and discard (P2-3)", "wave": 2, "dependsOn": ["m5b-ui-ghosts"],
+     "specRefs": ["UI redesign: 4.3", "UI redesign: Phase 2", "Proposal audition (A/B)", "Plans"],
+     "acceptance": [
+       "While audition.changed reports that a branch is heard, the window has a 2 px violet frame, the banner under the top bar names the plan with Hear main, Merge and Discard, the branch chip shows the proposal's name, and the hearing switch in the right zone and in the status bar shows the side heard; all follow the event, also when another connection flips the side (e2e with a second client).",
+       "Shift+A flips the side heard (audition.hear) while a plan is auditioned and does nothing otherwise.",
+       "While the proposal is heard its ghosts are drawn solid from the branch snapshot (session.fetch at the branch revision that proposal.changed announces) and the values they replace as faint outlines; the snapshot is dropped on proposal.closed and on reconnect (unit test on the store, e2e on the crash scenario).",
+       "Structural edits (clip, track, marker and import commands, record) are disabled with a tooltip naming the reason while the proposal is heard; fader gestures still go to the side heard.",
+       "Merge sends proposal.merge and Discard sends proposal.discard; after either the frame, banner and ghosts are gone and the plan's card shows the new state. A partial approval auditions and merges only the ticked steps (e2e: 2 of 3 steps ticked; the merged revision holds exactly those two changes).",
+       "Tour states changed: 17 to 20; appends 28 (hearing the proposal: frame, banner, solid ghosts)."
+     ]},
+    {"id": "m5b-ui-project", "title": "Projects and audio setup: new, open, recent, save, the start view and the Studio Setup dialog", "wave": 2, "dependsOn": ["m5b-engine-project-media", "m5b-engine-record"],
+     "specRefs": ["UI redesign: Usable release (UR-4)", "Process model", "Session bundle", "Frontend"],
+     "acceptance": [
+       "New Project (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S) and a list of the last ten bundles are commands of the key-command table and items of the application menu; the folder dialogs are the shell's (dialog.showOpenDialog and showSaveDialog behind the preload bridge, reached only from index.tsx), and in a plain browser tab the commands are absent by the capability rule.",
+       "New creates a bundle with session.create and Open sends session.open; the window follows the session-opened event, drops the selection and view state of the old session and shows the new name in the title bar and the top bar. Opening a bundle another engine holds shows the lock refusal with the bundle's path.",
+       "The shell starts on the bundle opened last (remembered in user data, never in the session) and shows a start view with New, Open and the recent list when there is none or it is gone; SIANN_SESSION_DIR keeps working for tests.",
+       "Save sends session.save and the title bar marks revisions newer than the last save. Nothing is lost without it: every revision is journaled, so quitting needs no prompt (e2e: edit, quit without Save, relaunch, the edit is there).",
+       "e2e, the round trip of criterion B: New, add two tracks, place clips, change a gain, set locators, Save, quit, relaunch; the reopened session has the same document hash.",
+       "Studio Setup (Studio menu) lists engine.devices with their input and output channel counts, selects the output and the input device through engine.select_device, and shows sample rate, buffer size, input and output latency and whether device-side SRC is active from engine.status; a failed open shows the engine's error and the previous device stays. With no device, the transport's disabled tooltip opens it.",
+       "Every new string is in the three catalogs. Tour states changed: the title in the top bar of every state; appends 29 (start view) and 30 (Studio Setup)."
+     ]},
+    {"id": "m5b-engine-markers", "title": "Engine: position markers and cycle markers as document entities (E-8)", "wave": 3, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-9)", "UI redesign: 7. Implementation plan (E-8)", "siann-model (pure C++)", "siann-command (pure C++) — the core of SIANN", "Session bundle"],
+     "acceptance": [
+       "A marker entity {id, number, name, position, length?} (audio-domain frames as decimal strings; a length makes it a cycle marker) with the commands marker.add, marker.move, marker.rename and marker.remove, each one revision, undoable, journaled, reachable from plans and MCP and announced by session.changed. Numbers are unique per kind and the lowest free one is assigned when omitted.",
+       "The document format version is raised with a migration that adds nothing: a literal bundle of the previous version opens with every recorded hash kept and is written in the new version at its next checkpoint.",
+       "plan.preview shows a marker with before and after; command.list describes the commands; engine.capabilities lists features.markers; the renderer's read model, its fixture generator and the Node plan hasher accept the entity type.",
+       "Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-engine-buses-sends", "title": "Engine: buses and sends in the document (moved from M6c's m6c-buses-sends)", "wave": 3, "dependsOn": ["m5b-engine-master"],
+     "specRefs": ["UI redesign: Usable release (UR-10)", "siann-model (pure C++)", "Channels and I/O", "Latency model", "Gestures", "siann-protocol"],
+     "acceptance": [
+       "Bus entities (name, gain, pan, mute, solo, inserts) with bus.add, bus.remove, bus.rename and the gain, pan, mute and solo commands; send entities (source track, target bus, level, pre or post fader, enabled) with send.add, send.remove, send.set_level, send.set_pre and send.set_enabled; track.set_output routes a track to a bus or to the master. Each command is one revision; removing a bus removes its sends and routes its tracks to the master in the same revision, a cascade command.list declares; a routing that would form a cycle is refused (routing_cycle).",
+       "Document-level PDC null tests across sends and aux returns pass offline and in realtime; a post-fader send follows the track fader and a pre-fader send does not (render tests).",
+       "Bus gain and send level are gesture targets under the track fader's lease rules; the meter legend lists every bus; a plugin slot may belong to a bus.",
+       "The document format version is raised with a migration that adds nothing and keeps every recorded hash of a literal earlier bundle; plan.preview shows buses and sends with before and after; engine.capabilities lists features.buses and features.sends; the renderer's read model, its fixture generator and the Node plan hasher accept the entity types.",
+       "Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-engine-punch-count-in", "title": "Engine: punch in and out at the locators, pre-roll and count-in (moved from M6b's m6b-punch-loop)", "wave": 3, "dependsOn": ["m5b-engine-monitoring"],
+     "specRefs": ["Recording", "Click", "Cycle", "siann-protocol"],
+     "acceptance": [
+       "transport.set_punch {in, out} (engine state like cycle, written into the checkpoint with it) makes capture start at the left locator and end at the right locator while playback runs on: a take recorded with both on holds exactly the frames between the locators, to the sample (fake device), and auto monitoring switches at the same frames.",
+       "transport.set_preroll {enabled, bars} starts playback that many bars before the record position, clamped at 0, when recording starts. transport.set_count_in {enabled, bars} plays that many bars of click with the transport held at the record position and then starts on the beat within one sample; the count-in click sounds even when the metronome is off and never reaches a take or a render.",
+       "The punch range is the document's locators (m5-ui-engine-loop-click), never a second range.",
+       "The three states are in the transport results, in engine.status and in transport.changed; engine.capabilities lists the methods and features.punch, features.preroll and features.countIn; MCP tools wrap them in the propose scope.",
+       "Loop recording with one take per pass is not part of this feature (m6b-loop-takes). Tour states changed: none (no UI)."
+     ]},
+    {"id": "m5b-ui-media", "title": "Import audio: drop files from the OS, and the Media tab", "wave": 3, "dependsOn": ["m5b-ui-project"],
+     "specRefs": ["UI redesign: Usable release (UR-5)", "UI redesign: 3.2", "Sample rate and media", "Frontend"],
+     "acceptance": [
+       "Dropping WAV or FLAC files from the OS on the event display imports each (media.import; the path comes from webUtils.getPathForFile through the preload bridge) and places a clip at the drop position, snapped as a drag would be: on a track, on that track; below the last track, on a new track named after the file; several files go to consecutive tracks at the same position. Each file ends as the job's media.add revision and one command.execute (track.add when needed, and clip.place), and one undo per file removes its clip.",
+       "While a file imports, a placeholder shows its name and the job's progress; a failed import removes it and raises a toast with the engine's code and the file name; a file of another type is refused before any request is sent.",
+       "The Media tab of the right zone lists the session's media by name with length, channels, sample rate and use count, filtered by a search field; Import opens the shell's file dialog; dragging a row to the event display places a clip; double-click renames (media.rename); Remove is enabled only for unused media.",
+       "Clip titles show the media name.",
+       "In a plain browser tab the drop target and the Import button are absent, and against capabilities without media.import nothing of this feature is in the DOM (e2e with a reduced capabilities fixture).",
+       "e2e with files written by scripts/create-demo-audio.js: a drop of two files on the Electron window, an import from the tab, a drag from the tab, a 44.1 kHz file into a 48 kHz session, and undo.",
+       "Every new string is in the three catalogs. Tour states changed: clip titles in 01, 02, 06, 10, 11, 12 and 25; appends 31 (Media tab with imported files)."
+     ]},
+    {"id": "m5b-ui-edit-more", "title": "The rest of the editing criterion C names: glue, erase, cut, copy and paste, repeat, nudge, rubber band, snap types, an editable info line", "wave": 3, "dependsOn": [],
+     "specRefs": ["UI redesign: Usable release (UR-7)", "UI redesign: Phase 3", "UI redesign: 3.2", "Frontend"],
+     "acceptance": [
+       "Keys 4 and 5 choose the Glue and Erase tools. Glue on a clip joins it with the next clip of the track when the two are adjacent pieces of the same media with continuous source positions (one command.execute of clip.remove and clip.trim) and is refused with a toast otherwise; Alt-click glues every following piece; Glue from the Edit menu joins each such run of the selection. Erase removes the clicked clip.",
+       "Ctrl+X, Ctrl+C and Ctrl+V cut, copy and paste the selected clips at the project cursor with their relative positions and tracks, and Alt+V pastes at the origin; Ctrl+K asks for a count and repeats the selection; dragging the handle in the middle of a clip's right border repeats it.",
+       "Ctrl+Left and Ctrl+Right nudge the selection by the grid step, and the Alt arrow keys of the key-command table nudge its start and end.",
+       "A drag on empty space draws a rubber band that selects the clips it touches; Ctrl+Shift+A selects none.",
+       "The snap type menu offers Grid, Grid Relative, Events and Magnetic Cursor: unit tests on the snap maths of each (Events is magnetic to the starts and ends of other clips, within the pixel tolerance at the current zoom).",
+       "The info line edits the selection's start, length, offset and volume: a typed value changes every selected clip relatively, and absolutely with Ctrl, in one revision.",
+       "Each operation is one command.execute and one revision, and one undo restores the previous state (a unit test per command builder, an e2e per operation).",
+       "Not part of this feature (they stay in phase 3 of the UI redesign): the Range Selection, Zoom and Play tools, Shuffle, slip, zoom history, the stationary cursor, the lower-zone editor and the key-command editor.",
+       "Every new string is in the three catalogs. Tour states changed: the toolbar in every state; appends 32 (two pieces glued, the snap type menu open)."
+     ]},
+    {"id": "m5b-ui-fades", "title": "Fade handles on clips and fade fields in the info line", "wave": 4, "dependsOn": ["m5b-engine-clip-fades", "m5b-ui-edit-more"],
+     "specRefs": ["UI redesign: Usable release (UR-6)", "UI redesign: 3.2", "Frontend"],
+     "acceptance": [
+       "A hovered or selected clip shows fade handles at its upper corners; dragging one sets the fade length (one clip.set_fade on release, one revision, snapped unless Ctrl is held), and the clip draws the curve with its waveform scaled by it.",
+       "The info line shows and edits the fade in and fade out lengths; a double-click on a fade switches its curve between linear and equal power.",
+       "Resizing a clip to less than its fades shortens them in the same revision (the engine's rule) and the handles follow; one undo restores clip and fades.",
+       "A plan's fade step shows as a ghost curve (the ghost model gains the kind, with a unit test).",
+       "Against capabilities without features.clipFades no handle is hit-testable and no fade field is in the DOM (e2e with a reduced capabilities fixture).",
+       "Every new string is in the three catalogs. Tour states changed: none of the earlier states; appends 33 (a clip with fade in and fade out, handles shown)."
+     ]},
+    {"id": "m5b-ui-inserts-master", "title": "MixConsole: the master fader, and insert slots with bypass, editor and plugin picker", "wave": 4, "dependsOn": ["m5b-engine-master"],
+     "specRefs": ["UI redesign: Usable release (UR-10)", "UI redesign: 3.4", "UI redesign: Phase 3", "Plugin editor windows", "Gestures"],
+     "acceptance": [
+       "The master strip has a fader with the track fader's taper (+6 dB top, 0 dB at 75 % of travel), modifiers and one revision per gesture, bound to the master gain; its meter keeps peak hold, the clip indication and the peak value that resets on click.",
+       "Each strip has an insert rack above pan, and the Inspector an Inserts section, showing the track's plugin slots in signal order. An empty slot opens a picker of the approved installs of plugin.registry by name and format with a search field; choosing one inserts it as one revision. A slot shows the plugin's name, a bypass button (plugin.set_bypass), e (plugin.open_editor and plugin.close_editor, following editorOpen) and Remove (plugin.remove).",
+       "A missing or unapproved plugin shows its state with the engine's code; a registered install can be approved (plugin.approve) from the picker after a confirmation that names the file.",
+       "Against capabilities without the plugin methods no slot is in the DOM, and without features.masterGain the master strip stays the meter it is in M5 (e2e with reduced capabilities fixtures).",
+       "e2e with siann_test_plugin (CLAP): insert, bypass, open and close the editor, remove, and undo of each; a fader gesture on the master commits one revision and Ctrl-click sets 0.0 dB.",
+       "Every new string is in the three catalogs. Tour states changed: 04, 07, 08, 09 (the master strip, the racks); appends 34 (an insert rack with a plugin, the picker open)."
+     ]},
+    {"id": "m5b-ui-recording", "title": "Recording in the UI: input, record enable, monitor, record, punch, pre-roll and count-in", "wave": 4, "dependsOn": ["m5b-engine-punch-count-in", "m5b-ui-project"],
+     "specRefs": ["UI redesign: Usable release (UR-8)", "UI redesign: 3.5", "UI redesign: 3.1", "Recording"],
+     "acceptance": [
+       "Track header, strip and Inspector show record enable (R acts on the selected track) and monitor; the Inspector's input selector lists the open input's channels as mono ports and stereo pairs and sends track.set_input. All three follow record.changed and the document, also when another connection changes them.",
+       "The transport bar has Record (Num * and Ctrl+Shift+R), punch in and punch out (I and O), and pre-roll and count-in toggles with their bar counts; each shows the engine's state from transport.changed. Record is disabled, with the reason, when no track is armed or no input is open.",
+       "While recording, a red clip grows on each armed track from the take's start at display rate with a live waveform from the input meter frames and zero React commits per frame; the meters of armed tracks show the input; the shell holds powerSaveBlocker('prevent-app-suspension') from record start to stop (unit test on the main-process handler).",
+       "Stopping replaces the red clip with the committed clip (one revision; Ctrl+Z removes it); an early end raises a toast with its reason.",
+       "After a crash during recording the relaunched app lists the pending takes with Keep and Discard per take (record.recover_take).",
+       "e2e on the fake device with a generated input: arm, record four bars after a one-bar count-in, stop, and find a clip of four bars; punch at the locators yields a clip exactly between them; monitor shows the input on the track's meter; against capabilities without features.recording none of the controls is in the DOM.",
+       "Every new string is in the three catalogs. Tour states changed: the top bar and the track headers in every state; appends 35 (an armed track, recording in progress) and 36 (punch and count-in on)."
+     ]},
+    {"id": "m5b-ui-markers", "title": "Marker track: position markers, cycle markers and their keys", "wave": 5, "dependsOn": ["m5b-engine-markers", "m5b-ui-edit-more"],
+     "specRefs": ["UI redesign: Usable release (UR-9)", "UI redesign: 3.1", "UI redesign: 7. Implementation plan (E-8)"],
+     "acceptance": [
+       "When the engine lists features.markers a marker track is pinned above the track list: position markers as numbered flags with names, cycle markers as named ranges. Insert adds a position marker at the cursor, Alt-click on the marker track adds one there, and Ctrl-drag draws a cycle marker.",
+       "Dragging a marker moves it (snapped unless Ctrl is held), double-click on its name renames it and Delete removes it: each one revision, restored by one undo.",
+       "Shift+3 to Shift+9 and Num 3 to Num 9 move the cursor to markers 3 to 9 (Shift+1 and Shift+2 stay the locators, as section 3.6 decides), Shift+N and Shift+B go to the next and the previous marker, and double-clicking a cycle marker sets the locators to it with one session.set_locators.",
+       "Snap type Events is magnetic to markers; markers survive save and reopen and follow other connections, undo and applied plans; a plan's marker step shows as a ghost flag.",
+       "Against capabilities without features.markers no marker track is in the DOM (e2e with a reduced capabilities fixture).",
+       "Every new string is in the three catalogs. Tour states changed: none of the earlier states; appends 37 (marker track with two position markers and a cycle marker)."
+     ]},
+    {"id": "m5b-ui-sends-buses", "title": "MixConsole: bus strips, send slots and output routing", "wave": 5, "dependsOn": ["m5b-engine-buses-sends", "m5b-ui-inserts-master"],
+     "specRefs": ["UI redesign: Usable release (UR-10)", "UI redesign: 3.4", "Channels and I/O", "Gestures"],
+     "acceptance": [
+       "Bus strips stand after the track strips and before the master, each with the track strip's controls (fader to +6 dB, pan, M, S, meter with peak hold and clip indication, insert rack); a command adds a bus (bus.add) and its name is renamed as a track's is.",
+       "Each track strip has a sends rack, and the Inspector a Sends section: an empty slot picks a target bus (send.add); a slot has an on button, a level control with the value-control modifiers and one revision per gesture, a pre/post switch and Remove.",
+       "The strip's output selector routes the track to a bus or the master (track.set_output); a refusal by the engine (routing_cycle) is shown and nothing changes.",
+       "Removing a bus that has sends or routed tracks asks for confirmation naming them, is one revision, and one undo restores the bus, its sends and the routing.",
+       "A plan's bus or send step shows as a dashed strip or slot (the ghost model gains the kinds, with unit tests).",
+       "e2e: add a bus, send a track to it post-fader, lower the track fader and see the bus meter fall, switch the send to pre and see it stay, route a track to the bus, undo each; against capabilities without features.buses and features.sends none of it is in the DOM.",
+       "Every new string is in the three catalogs. Tour states changed: 04, 07, 08, 09; appends 38 (a bus strip and a send slot)."
+     ]},
+    {"id": "m5b-ui-keymap", "title": "Cubase key commands completed and audited, the application menu, and a Key Commands list in three languages", "wave": 6, "dependsOn": ["m5b-ui-audition", "m5b-ui-media", "m5b-ui-fades", "m5b-ui-recording", "m5b-ui-markers", "m5b-ui-sends-buses"],
+     "specRefs": ["UI redesign: Usable release (UR-11)", "UI redesign: 3.6", "UI redesign: 3.1", "UI redesign: 6. Internationalisation"],
+     "acceptance": [
+       "A unit test reads a checked-in table transcribed from section 7 of docs/superpowers/research/2026-11-13-cubase-reference.md (every default Windows key with its command) and fails unless each row is bound to the same key in the Cubase preset or carries one of the reasons the proposal gives: no backend yet (naming the ticket or milestone), not planned, or replaced by a SIANN addition of section 3.6. A second test fails when the preset binds a key that Cubase gives to another command and the table does not list the difference.",
+       "Every command reachable from the numeric keypad has a second binding off it (unit test over the preset), so a laptop reaches the whole transport: the fallbacks of section 3.6 plus those this feature adds are listed in that section.",
+       "The remaining transport keys are bound: Num - and Num + wind, Ctrl+Num - and Ctrl+Num + nudge the cursor, Shift+T types the tempo (session.set_tempo, one revision).",
+       "On macOS the preset maps Ctrl to Cmd and Alt to Option as the Mac column of the research does (unit test on the platform mapping).",
+       "The application menu (File, Edit, Project, Transport, Studio, Window, Help) and every tooltip read their keys from the preset table: a unit test finds no key literal in menu or tooltip code, and each menu item runs the same command as its key.",
+       "Help > Key Commands opens a searchable, read-only list of every command with its key, by category, in the three languages; rebinding stays the key-command editor of phase 3.",
+       "The i18n tests of M5 (no literal, completeness, the fit check at 1440x900 and 1024x700 in en, zh-Hant, zh-Hans and the pseudo-locale) pass with every dialog and tab M5b added opened by the fit check: start view, Studio Setup, Media, plugin picker, pending takes, Key Commands.",
+       "Tour states changed: tooltips and menus only; appends 39 (the Key Commands list)."
+     ]},
+    {"id": "m5b-cubase-walkthrough", "title": "The Cubase user's walkthrough: one end-to-end scenario over criteria B to G, and the full tour in three languages", "wave": 7, "dependsOn": ["m5b-ui-keymap", "m5b-package-windows"],
+     "specRefs": ["UI redesign: Usable release (UR-12)", "UI redesign: 7. Implementation plan", "Build, test and CI"],
+     "acceptance": [
+       "app/test/e2e/cubase-walkthrough.spec.ts drives one session as a Cubase user would, by real key presses and pointer gestures only (test hooks read state and never issue a command), on the fake device with a generated input, asserting the document after every step. B: New Project, Studio Setup, drop two audio files, import a third from the Media tab, add a track, Save, quit, relaunch, same document hash. C: the bars and beats ruler and grid, snap on J, zoom and scroll by keys and wheel, move, Alt-drag copy, split with Alt+X, glue, trim from a corner, fade in and fade out, clip volume, Ctrl+D, undo and redo back to the same hash, a position marker and a cycle marker, and a locator range that is still there after the reopen. D: Space, Num Enter, Num 0 and the laptop keys, cycle, metronome, count-in, the playhead and the position display advancing, Record. E: a fader to +6 dB with its dB readout, pan, M, S, peak hold and a latched clip indication on a hot signal, an inserted test plugin, a send to a bus, the bus fader and the master fader. F: choose the input, arm, monitor, record four bars into a clip. G: an MCP client submits a plan: ghosts in the event display and on the MixConsole, audition A/B, partial approval of 2 of 3 steps and merge, and a second plan rejected with a reason.",
+       "Each criterion is its own test step, so a failure names the criterion; the spec runs in the app CI job on Windows, macOS and Linux, and in the package job against the installed build.",
+       "The walkthrough passes in en, zh-Hant and zh-Hans: it finds controls by role and test id, never by text.",
+       "ux-tour.spec.ts appends the walkthrough's states from 40 on (listed in index.json, at least one per criterion B to G) and writes the whole tour per locale; the package job uploads the three sets as artifacts.",
+       "The criteria table in the UI redesign spec's section Usable release names, for each of A to I, the test that proves it, and a Node test fails when a test it names no longer exists.",
+       "Tour states changed: appends 40 onward; no earlier state changes."
+     ]}
+  ],
+  "exit": [
+    {"id": "m5b-exit-launch", "text": "A: one command (`npm run app`) or the installer opens the app on Windows with its engine, with no manual preparation; the Mac runs it from source.", "how": "The package CI job (build, silent install, smoke run, uninstall), then the installer-hands-on gate on a clean Windows machine and the macos-run gate through siann-macos."},
+    {"id": "m5b-exit-walkthrough", "text": "B to G and I: the Cubase user's walkthrough passes end to end, including save and reopen, editing, transport, MixConsole, recording and plan review.", "how": "cubase-walkthrough.spec.ts green in CI on Windows, macOS and Linux and against the installed build; recording on real hardware by the audio-hardware gate."},
+    {"id": "m5b-exit-keys-locales", "text": "H and I: Cubase key commands are the default preset, and the app and its screenshot tour are complete in English, Traditional Chinese and Simplified Chinese.", "how": "The key-command audit test and the i18n tests in CI; the tour per locale read by the maintainer (phase2-tour-review, phase3-tour-review, final-tour-review) and the terms confirmed (zh-glossary-m5b)."}
+  ],
+  "killCriterion": "The walkthrough cannot be made deterministic on the fake device (it fails more than one run in fifty in CI after two fix rounds), or the unsigned installer cannot run on a clean Windows machine without a manual step: stop and review the scope with the maintainer instead of weakening the criterion."
+}

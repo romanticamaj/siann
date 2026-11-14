@@ -811,11 +811,15 @@ Phase 1 ends with the maintainer's review of the tour in three locales (human ga
 
 ### Phase 2 — plan review in place (no protocol change)
 
+Harness: P2-1 and P2-2 are `m5b-ui-ghosts`, P2-3 is `m5b-ui-audition` (M5b, section "Usable release" below).
+
 - **P2-1 Ghost model.** Pure function from `plan.preview` entities and the snapshot to ghost descriptors, filtered by ticked steps. Tests: unit per change kind.
 - **P2-2 Ghosts in the event display, MixConsole and Inspector.** Drawing of 4.2; step-to-ghost hover and locate; the toolbar pill. Acceptance: unticking a step removes exactly its ghosts.
 - **P2-3 Audition presentation.** Violet frame, `Shift+A`, ghosts solid while the proposal is heard, structural edits disabled then; branch snapshot from `proposal.changed` and `session.fetch`. Risk: the branch snapshot must be dropped on `proposal.closed` and on reconnect.
 
 ### Phase 3 — the rest of Cubase's editing
+
+Harness: the part of this phase the usable release needs is in M5b (`m5b-ui-edit-more`, `m5b-ui-fades`, `m5b-ui-inserts-master`, `m5b-ui-media`, `m5b-ui-keymap`); section "Usable release" below lists what stays here.
 
 Range Selection tool and its operations; Glue, Erase, Zoom and Play tools; snap types Events, Grid Relative, Shuffle and Cursor; repeat, cut/copy/paste and their variants; nudge; slip content; rubber-band selection; exclusive solo; info-line editing; Inspector sections and insert slots with `e`; the Channel tab; the editor in the lower zone; Media tab; stationary cursor; zoom history; context menus and the toolbox on right-click; the key-command editor. Tests: a unit per command builder and an e2e per operation asserting one revision and a correct undo.
 
@@ -852,6 +856,66 @@ E-1 is in scope. The others are separate tickets on the engine side; each contro
 | E-17 | Solo Defeat on the track entity | `Alt`-click S |
 
 Not needed, after checking the code: `clip.split` and a slip command (compositions of `clip.trim` and `clip.place`), a master meter (published as `master`), branch read access (`session.fetch` with a branch revision plus `proposal.changed`), exclusive solo (several `track.set_solo` in one `command.execute`).
+
+### Usable release — criteria A to I (M5b)
+
+Goal, set by the maintainer on 2026-11-14 (GitHub #83 is the main line): a version that opens, can be used, and is operated as Cubase is. This section maps the goal's nine criteria to harness features. Phase 1 stays in M5 (`m5-ui-*`). Everything else the goal needs is the milestone **M5b "Usable release"** (`.claude/milestones/M5b.json`), which runs after M5 and before M6a.
+
+| | Criterion | Features | Proof |
+|---|---|---|---|
+| A | One command or an installer opens the app on Windows; no manual preparation of the engine or the environment. The Mac is checked through `siann-macos` | `m5b-package-windows` | The `package` CI job (build, silent install, smoke run, uninstall); gates `installer-hands-on` and `macos-run` |
+| B | New or open a project, import audio by drop or from the Media tab, add tracks, save, reopen: everything is still there | `m5b-engine-project-media`, `m5b-ui-project`, `m5b-ui-media`; tracks from `m5-ui-arrange` | Walkthrough step B (same document hash after the reopen) |
+| C | Bars and beats ruler, grid and snap, zoom and scroll, clip move, copy, split, glue, trim, fades, clip volume, `Ctrl+D`, undo and redo, markers, a cycle range saved in the project | `m5-ui-arrange`, `m5-ui-edit-basics`, `m5-ui-transport` (undo), `m5-ui-engine-loop-click`, `m5-ui-loop-click`; `m5b-ui-edit-more` (glue and the rest), `m5b-engine-clip-fades`, `m5b-ui-fades`, `m5b-engine-markers`, `m5b-ui-markers` | Walkthrough step C |
+| D | Play, stop, record, cycle, metronome, count-in, playhead and position display, numeric keypad and laptop keys | `m5-ui-transport`, `m5-ui-loop-click`; `m5b-engine-punch-count-in`, `m5b-ui-recording`, `m5b-ui-keymap` (every keypad command has a second key) | Walkthrough step D |
+| E | MixConsole: vertical faders to +6 dB on a dB scale, pan, M, S, meters with peak hold and clip indication, inserts, sends, bus and master faders | `m5-ui-mixer`; `m5b-engine-master`, `m5b-ui-inserts-master`, `m5b-engine-buses-sends`, `m5b-ui-sends-buses` | Walkthrough step E |
+| F | Recording: choose the input, record enable, monitor, record into a clip | `m5b-engine-record`, `m5b-engine-monitoring`, `m5b-ui-project` (Studio Setup), `m5b-ui-recording` | Walkthrough step F on the fake device; gate `audio-hardware` |
+| G | Agent plans shown as ghosts in the event display and on the MixConsole; audition A/B, approve, partial approve, reject, merge | `m5-ui-plan-panel`; `m5b-ui-ghosts`, `m5b-ui-audition` | Walkthrough step G |
+| H | Cubase key commands by default; English, Traditional Chinese, Simplified Chinese | `m5-ui-shell`, `m5-ui-i18n`; `m5b-ui-keymap`; every M5b UI feature adds its strings to the three catalogs | The key-command audit test and the i18n tests |
+| I | A Cubase user's walkthrough passes end to end (Playwright, B to G), and the screenshot tour is complete in three languages | `m5b-cubase-walkthrough` | `cubase-walkthrough.spec.ts` in CI and against the installed build; gate `final-tour-review` |
+
+`m5b-cubase-walkthrough` replaces the Proof column with test names when it lands, and a Node test then fails if a named test disappears.
+
+**Order.** Engine and protocol work lands before the UI that uses it, and the manifest's waves say so:
+
+| Wave | Engine, protocol, packaging | UI |
+|---|---|---|
+| 1 | `m5b-package-windows`, `m5b-engine-project-media`, `m5b-engine-record` | `m5b-ui-ghosts` |
+| 2 | `m5b-engine-clip-fades`, `m5b-engine-master`, `m5b-engine-monitoring` | `m5b-ui-audition`, `m5b-ui-project` |
+| 3 | `m5b-engine-markers`, `m5b-engine-buses-sends`, `m5b-engine-punch-count-in` | `m5b-ui-media`, `m5b-ui-edit-more` |
+| 4 | | `m5b-ui-fades`, `m5b-ui-inserts-master`, `m5b-ui-recording` |
+| 5 | | `m5b-ui-markers`, `m5b-ui-sends-buses` |
+| 6 | | `m5b-ui-keymap` |
+| 7 | | `m5b-cubase-walkthrough` |
+
+**What moved between milestones (2026-11-14).**
+
+- From M6b to M5b: monitoring modes (`m6b-monitoring` is now `m5b-engine-monitoring`), and the punch, pre-roll and count-in half of `m6b-punch-loop` (now `m5b-engine-punch-count-in`). What stays in M6b is `m6b-loop-takes` (loop record with a take per pass and playlists), `m6b-rf64`, `m6b-midi-record` and the one-hour criterion.
+- From M6c to M5b: `m6c-buses-sends` is now `m5b-engine-buses-sends`. M6c keeps groups and VCAs, sidechain, bounce and the 64-track criterion.
+- New in M5b, owned by no milestone before: recording through the protocol in the engine process (`m5b-engine-record`; until now only `siann-cli record` could record), and the engine tickets E-5, E-8, E-11 and parts of E-4 and E-9.
+- Not moved: automation (M6a). Nothing in A to I needs it.
+
+Where sections 3.0 to 3.7 and "Phase 5" above say M6b for record, record enable, monitor, punch, pre-roll and count-in, or M6c for sends, read M5b. Takes in lanes and comping stay M6b; routing to groups, folders and VCAs stay M6c.
+
+**Tickets.** Acceptance is in the manifest; this is the scope each one settles. Conventions are those of phase 1 (tests, tour, strings in three catalogs, the capability rule of 3.0).
+
+- **UR-1 Launch and installer** (`m5b-package-windows`). Two paths. From a checkout, `npm run app` at the repository root does everything: app dependencies, renderer build, engine build when missing, launch. For a user, an NSIS installer built by electron-builder (MIT; one of the two packagers the architecture spec's Libraries table names; chosen because NSIS is built in, where Electron Forge needs a maker per target) holds the app and the desktop engine. The installer is **unsigned**: no certificate is created, bought or stored, and Windows SmartScreen will warn; signing is a later decision for the maintainer. The package as a whole is AGPL-3.0-or-later because the desktop engine links JUCE (ADR-0017), and it carries the licence texts and the source offer the status bar already shows. macOS keeps `npm run app`; the signed bundle is `m0-macos-bundle` behind its gate.
+- **UR-2 Create, import, names** (`m5b-engine-project-media`; E-5 and the media half of E-4). `session.create`; `media.import` as a job with offline conversion to the session rate and peaks; an optional `name` on the media entity so the UI can show file names. Formats are WAV and FLAC, as the decoder has today. Both methods touch paths on the user's disk, so the MCP propose scope does not get them.
+- **UR-3 Recording through the protocol** (`m5b-engine-record`). The engine process opens device inputs; a track has an input (document) and an armed flag (engine state, like cycle); `transport.record` captures and commits one revision per stop; pending takes after a crash are offered through the protocol. Recording with cycle on runs straight through until `m6b-loop-takes`.
+- **UR-4 Projects and Studio Setup** (`m5b-ui-project`). New, Open, recent, Save, a start view, and the device dialog (output, input, rate, buffer, latency). The dialogs are the shell's; the renderer's only contact with Electron stays `index.tsx`. Save is `session.save`; because every revision is journaled, closing never loses work and there is no "save changes?" prompt.
+- **UR-5 Import in the UI** (`m5b-ui-media`). Drop from the OS onto the event display, and the Media tab (list, search, import, drag to the event display, rename). Clip titles become the media name.
+- **UR-6 Fades** (`m5b-engine-clip-fades`, `m5b-ui-fades`). The fade half of E-9: fade in and fade out with a linear or equal-power curve. Crossfades and clip mute stay in E-9.
+- **UR-7 More editing** (`m5b-ui-edit-more`). The part of phase 3 that criterion C names or that a Cubase user reaches for in the same breath: Glue and Erase tools, cut, copy and paste, repeat, nudge, rubber band, snap types Grid Relative, Events and Magnetic Cursor, an editable info line. The rest of phase 3 is not in the usable release: Range Selection, Zoom and Play tools, Shuffle, slip, zoom history, stationary cursor, the lower-zone editor, the Channel tab, context menus and the key-command editor.
+- **UR-8 Recording in the UI** (`m5b-engine-monitoring`, `m5b-engine-punch-count-in`, `m5b-ui-recording`). Record enable, monitor and input on header, strip and Inspector; Record, punch, pre-roll and count-in on the transport bar; the growing red clip; recovery of pending takes.
+- **UR-9 Markers** (`m5b-engine-markers`, `m5b-ui-markers`; E-8). Position and cycle markers on one marker track. `Shift+1` and `Shift+2` stay the locators (3.6); markers 3 to 9 take `Shift+3..9` and `Num 3..9`.
+- **UR-10 Master, inserts, sends, buses** (`m5b-engine-master`, `m5b-ui-inserts-master`, `m5b-engine-buses-sends`, `m5b-ui-sends-buses`; E-11). The master fader; insert racks on the existing plugin methods; buses with their own strips; sends pre or post fader; output routing to a bus.
+- **UR-11 Key commands** (`m5b-ui-keymap`). The Cubase preset audited row by row against `research/cubase.md` section 7; a second key for every keypad command; the application menu and tooltips read the same table; a read-only Key Commands list.
+- **UR-12 Walkthrough and tour** (`m5b-cubase-walkthrough`). One Playwright scenario over B to G by real keys and pointer gestures, in three locales, in CI and against the installed build; the tour extended over every new state.
+
+**Tour states.** Numbers are reserved here so features that run in the same wave do not collide: 26, 27 `m5b-ui-ghosts`; 28 `m5b-ui-audition`; 29, 30 `m5b-ui-project`; 31 `m5b-ui-media`; 32 `m5b-ui-edit-more`; 33 `m5b-ui-fades`; 34 `m5b-ui-inserts-master`; 35, 36 `m5b-ui-recording`; 37 `m5b-ui-markers`; 38 `m5b-ui-sends-buses`; 39 `m5b-ui-keymap`; 40 onward `m5b-cubase-walkthrough`.
+
+**Human gates** (in the manifest): `installer-hands-on` (a clean Windows machine), `macos-run` (through `siann-macos`), `audio-hardware` (a real interface for input, monitoring and take placement), `phase2-tour-review` and `phase3-tour-review` (the maintainer reads the screenshots of each phase in three locales, as `ui-redesign-review` does for phase 1), `zh-glossary-m5b` (the Chinese terms this milestone adds), `final-tour-review`.
+
+**Left out on purpose,** each still where it was: time signatures (E-10; bars stay 4/4), track colour and reorder (E-2, E-3), clip rename (the clip half of E-4), audition without approval (E-6), plan titles and the agent row (E-7), persisted plans (E-12), DSP load and loudness (E-13), the edit history list (E-16), Solo Defeat (E-17), automation (M6a), takes and comping (M6b), groups, folders and VCAs (M6c), phase 4.
 
 ## 8. Decisions and what is still open
 

@@ -3031,10 +3031,13 @@ review instead of pushing on.
 | M3 Agent access | Protocol server, consistency and security rules, MCP adapter, plans with approval, rollback, audition | An MCP client builds a session through approved plans, rolls back, auditions a branch; reconnect and gap sync tested | — |
 | M4 Plugins | CLAP host first (both targets), then JUCE VST3/AU; capabilities; hostile test plugin | Third-party plugins load, save state, compensate latency, survive restart; capability flags exposed to agents | — |
 | M5 Desktop UI v1 | Timeline, mixer, plan review UI in Electron | Arrange and mix by hand; review and approve an agent plan visually | — |
+| M5b Usable release | Phases 2 and 3 of the UI redesign (as far as its section "Usable release" lists them) with their engine tickets: launch with one command and an unsigned Windows installer; create, open and save sessions; audio import; recording through the protocol with monitoring, punch, pre-roll and count-in; clip fades; markers; master gain, buses and sends; ghosts and audition in place; the Cubase key preset completed | A Cubase user's walkthrough (projects, import, arranging, transport, MixConsole, recording, plan review) passes end to end in English, Traditional Chinese and Simplified Chinese, in CI and against the installed build; the installer runs on a clean Windows machine | The walkthrough cannot be made deterministic on the fake device, or the unsigned installer needs a manual step on a clean machine: review the scope |
 | M6a Automation | Write/Touch/Latch/Trim, lanes, precision contract | Automation passes recorded as single revisions; precision documented per format | — |
-| M6b Recording production | Punch, loop record, takes/playlists, monitoring modes, MIDI recording | One hour 16-track recording criterion passes | — |
-| M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems | Production-level criteria list passes | — |
+| M6b Recording production | Loop record, takes/playlists, MIDI recording, RF64 (punch, pre-roll, count-in and the monitoring modes moved to M5b) | One hour 16-track recording criterion passes | — |
+| M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems (buses and sends in the document moved to M5b) | Production-level criteria list passes | — |
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
+
+Backlog change (2026-11-14): M5b was added between M5 and M6a for the maintainer's usable-release goal (GitHub #83). It takes from M6b the monitoring modes and punch, pre-roll and count-in, from M6c buses and sends in the document, and adds recording through the protocol, which no milestone owned (only `siann-cli record` records today). The mapping from the goal's criteria A to I to features is in `2026-11-13-siann-ui-redesign.md`, section "Usable release"; the manifest is `.claude/milestones/M5b.json`. M6a is not a prerequisite of M5b.
 
 ### Status (2026-11-09)
 

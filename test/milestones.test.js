@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 const DIR = path.join(ROOT, '.claude', 'milestones');
 const WORKFLOW = path.join(ROOT, '.claude', 'workflows', 'siann-milestone.js');
 const SPEC = path.join(ROOT, 'docs', 'superpowers', 'specs', '2026-10-14-siann-native-daw-architecture.md');
-const EXPECTED = ['M0', 'M2', 'M3', 'M4', 'M5', 'M6a', 'M6b', 'M6c', 'M7'];
+const EXPECTED = ['M0', 'M2', 'M3', 'M4', 'M5', 'M5b', 'M6a', 'M6b', 'M6c', 'M7'];
 const STATUSES = new Set(['not_started', 'in_progress', 'exit_pending', 'done']);
 
 function load(id) {
