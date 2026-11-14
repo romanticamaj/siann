@@ -5,8 +5,8 @@ Date: 2026-11-13 (revision 4). Tracked by the GitHub epic "UI redesign: modern D
 
 Files:
 
-- `2026-11-13-siann-ui-redesign/mockup.html`: the proposed main window, self-contained (fonts from Google Fonts, system fallback offline). `?lang=zh-TW` renders the Traditional Chinese chrome.
-- `2026-11-13-siann-ui-redesign/mockup.png` and `mockup-zh-TW.png` (1440x900): screenshots of it, the target state, not phase 1.
+- `2026-11-13-siann-ui-redesign/mockup.html`: the proposed main window and the reference implementation of its styling and markup (section 10). Its stylesheet is shared with the app: it loads `app/renderer/tokens.css` (tokens and the bundled fonts) and `app/renderer/ui/*.css`, so it opens from a checkout of the repository, without the network. `?lang=zh-TW` renders the Traditional Chinese chrome.
+- `2026-11-13-siann-ui-redesign/mockup.png` and `mockup-zh-TW.png` (1440x900): screenshots of it at device scale factor 1 with the bundled fonts, the target state, not phase 1.
 - `../research/2026-11-13-cubase-reference.md` (primary reference; Steinberg's Cubase Pro 15.0.30 help) and `../research/2026-11-13-logic-reference.md` (secondary; Logic Pro 13.0). Below, `research/cubase.md` and `research/logic.md` name these two files.
 
 The mockup shows the target state, not phase 1. Things in it with no backend yet (markers, fades, record arm, automation R/W, time signature, DSP load, LUFS, insert slots, routing, the "ask the agent" box) are hidden in phase 1 by the rule in section 3.0.
@@ -173,6 +173,7 @@ Naming: the protocol says *clip* where Cubase says *event*. The UI says "clip" i
 - The test is `engine.capabilities`: a control is drawn only when the method or feature it needs is listed (or, for document fields, when the entity has the field).
 - "Disabled with a tooltip" is reserved for a control that works in this build but not in this state (no audio device, engine disconnected, plan stale, proposal heard). The tooltip names the reason.
 - Why hidden: a disabled button that can never be enabled teaches the user to ignore disabled buttons, and it makes the screenshot tour show a product that does not exist.
+- **This rule and "identical to the mockup" (section 10) do not conflict; they apply at different times.** The mockup is what the finished window looks like, and the finished window must match it. Until a part's feature lands, the part is absent under this rule, and the fidelity gate skips it: `app/test/fidelity/manifest.json` lists it as pending under the feature that owns it. A placeholder or a disabled control is never a way to pass the gate, and never a way to satisfy this rule. When the feature lands, its acceptance includes the gate for its parts, so the part arrives looking as the mockup shows it. A part with no owning feature is "unowned" in the manifest and stays absent until the maintainer assigns one or changes the mockup.
 
 Applied to what the mockup shows:
 
@@ -1018,3 +1019,69 @@ Research files and internationalisation
 - [I1] Steinberg help, content locales and document list (public API, read 2026-11-13): `https://www.steinberg.help/api/khub/locales` lists `zh-CN` (29 items) and `zh-TW` (12 items); `https://www.steinberg.help/api/khub/maps` lists no Chinese Cubase manual.
 - [I2] Retail listings giving Cubase Pro 15's languages as "English, German, French, Spanish, Italian, Portuguese, Japanese, Chinese", without naming the script — https://www.sonovente.com/en-gb/steinberg-download-cubase-pro-15-licence-p115094.html ; https://www.thomannmusic.com/steinberg_cubase_pro_15_upgrade_le.htm
 - [I3] Steinberg forum: Japanese UI shows Chinese-style glyph shapes in Cubase 15.0.10 on macOS — https://forums.steinberg.net/t/japanese-ui-shows-chinese-style-glyph-shapes-in-cubase-15-0-10-cubase-12-is-correct-on-macos/1025662
+
+## 10. Mockup fidelity
+
+Maintainer decision, 2026-11-14: the finished UI looks exactly like the mockup, and that is checked, not judged by eye. The rule for contributors is in `docs/harness/agent-rules.md`, "UI fidelity"; this section is the design.
+
+### 10.1 The mockup is the reference implementation
+
+The mockup is hand-written HTML and CSS, and the app's renderer is web technology too. So the app does not re-derive the look from screenshots: it reuses the mockup's source.
+
+- **One stylesheet for both.** The mockup's rules live in `app/renderer`: the tokens (colours, type scale, weights, radii, fixed sizes, font stacks, the bundled fonts) in `tokens.css`, the component rules in `ui/base.css`, `ui/layout.css`, `ui/top-bar.css`, `ui/left-zone.css`, `ui/project-zone.css`, `ui/lower-zone.css`, `ui/right-zone.css` and `ui/status-bar.css`. `mockup.html` has no stylesheet of its own; it links exactly those files. The app links the same files (from `m5-ui-mockup-alignment` on; until then its components still use `shell.css`).
+- **Markup is ported, not reinvented.** Each React component takes its DOM structure and class names from the corresponding mockup markup: top bar, transport, toolbar, info line, track headers, Inspector, MixConsole strip, plan card, status bar. A component that needs an element the mockup does not have (an input for typing a value, a focus ring, an ARIA wrapper) adds it without changing the boxes the mockup draws.
+- **Canvas surfaces copy the mockup's drawing parameters**: the ruler's two halves (18 px and 22 px), the 20 px marker track, 53 px lanes, the lane and clip colours, the 13 px clip title strip, the selection outline and handles, the project cursor and its head. They read them from `app/src/renderer/tokens.ts`, the generated mirror of `tokens.css` (`node scripts/gen-ui-tokens.js`).
+- **Changing the reference needs the maintainer.** `tokens.css`, `app/renderer/ui`, `mockup.html`, the PNGs, and the gate's manifest rules and thresholds are changed only when the maintainer asks.
+- The mockup is rendered with the fonts the app bundles (Inter variable, JetBrains Mono Regular). Its rules ask for JetBrains Mono at weight 500 in the displays; no Medium face is bundled, so both sides draw Regular there. Bundling Medium is an open decision (10.5).
+
+### 10.2 The gate: three layers
+
+Literal pixel identity of the whole window is not attainable (real waveforms against drawn ones, live meters and times, per-OS font rasterisation), so the gate has three layers, strict where strictness is meaningful.
+
+| Layer | What must hold | Where |
+|---|---|---|
+| 1. Tokens | One token source. The mockup links the shared stylesheets and nothing else; the shared rules name tokens for every colour, font size and radius; every colour, font size and weight of the mockup's canvas code is a token's value; every fixed size of the layout equals its token; renderer CSS and TypeScript hold no colour or size literal; `tokens.ts` is the generated mirror | `test/ui-tokens.test.js`, in `npm test` |
+| 2. Geometry and styles | For every `data-region` / `data-part` id of the mockup: the app carries the same id, its bounding box is within 1 px on x, y, width and height, and the computed styles listed in the manifest (colours, font, borders, radii, padding, shadow, opacity) are identical | `app/test/e2e/mockup-fidelity.spec.ts` |
+| 3. Pixels | Per region, at most 0.5 % of the unmasked pixels differ (a pixel differs when a channel is more than 16 apart). Chrome only: waveform interiors, dynamic content (times, meter levels, counts, hashes) and skipped parts are masked entirely | the same spec |
+
+Layers 1 and 2 are the strict gates. Layer 3 catches what they cannot see: icons, gradients, canvas drawing, a stacking mistake.
+
+How layers 2 and 3 run: the spec opens `mockup.html` in Chromium and the app in Electron, both at 1440x900 and device scale factor 1 (forced, whatever the display's scaling), in English and in Traditional Chinese (`mockup.html?lang=zh-TW`). The app runs on the real engine with a session that reproduces the mockup's: "Night Drive", the same 7 tracks with their colours, levels, pans and mute, 17 clips on the same bars at the same zoom, the same track and clip selected, and the same pending 6-step plan submitted over MCP. Waveform content is not compared. It writes `report.md`, `report.json` and, per region, the mockup's, the app's and the diff image.
+
+### 10.3 Ids
+
+Every region and key component has a stable id, the same in the mockup and in the app: `data-region` on the six regions (`top-bar`, `left-zone`, `project-zone`, `lower-zone`, `right-zone`, `status-bar`), `data-part` on components. A repeated component is numbered in document order: `track-3`, `track-3-mute`, `strip-3-cap`, `plan-step-2`; in the app the item carries `data-part-item="strip"` and its children `data-part-of="mute"`, and the gate numbers them (`data-part-key` names an unnumbered one, as `strip-master`). Parts drawn on a canvas (`ruler-upper`, `ruler-lower`, `marker-track`, `lane-N`, `clip-N`, `cursor`, `locator-band`) are reported by the surface: the mockup's script records them, the app's timeline test hooks give them.
+
+### 10.4 The manifest: who owns each part
+
+`app/test/fidelity/manifest.json` owns every id through ordered rules (the first match wins). Each rule names the feature that builds the part and the gate: the feature whose acceptance says "the fidelity gate passes for these parts". A gate is `pending` (its parts are skipped: the feature has not landed), `report` (measured and reported, never failing) or `enforce` (a mismatch fails). A mockup id that no rule owns fails the run in every mode.
+
+| Gate | Mode today | Parts |
+|---|---|---|
+| `m5-ui-mockup-alignment` | report | Everything the M5 UI features build: the regions, session name, zone buttons, Plans button, transport and displays (position, time, locators, tempo), cycle and metronome, undo and redo, tools 1 and 3, snap, grid type, auto-scroll, info line, track list and headers, ruler, lanes, clips, cursor, Inspector basics, MixConsole strips and the master meter, the Plans tab and its card, the status bar |
+| `m5b-ui-ghosts` | pending | Every ghost (track, clip, cap, strip, lane), the proposal pill, the Inspector's "Agent changes" |
+| `m5b-ui-recording` | pending | Record buttons, the monitor button |
+| `m5b-ui-inserts-master` | pending | Insert slots, `e` buttons, the master fader and its buttons, the rack switches |
+| `m5b-ui-sends-buses` | pending | Routing and Sends sections |
+| `m5b-ui-markers` | pending | Marker track and its head |
+| `m5b-ui-fades` | pending | Fade fields of the info line |
+| `m5b-ui-media` | pending | Media tab |
+| `m5b-ui-edit-more` | pending | Tools 2 and 4 to 9 |
+| `m5b-ui-audition` | pending | Branch chip |
+
+A feature flips its own gate to `enforce` in the pull request that lands it. From `m5-ui-mockup-alignment` on, the gate fails CI.
+
+### 10.5 What is still open
+
+Parts the mockup shows that no M5 or M5b feature builds are **unowned** in the manifest. They are skipped and named in every report until the maintainer assigns a feature or takes them out of the mockup:
+
+| Parts | Waits for |
+|---|---|
+| R and W automation buttons, the Automation section | M6a |
+| DSP load, LUFS on the master, the Meter tab | E-13 |
+| Time signature display | E-10 |
+| Agent row, plan title and intent text | E-7 |
+| "Ask the agent" box | An agent runtime |
+| Notepad section, Editor tab, Channel zone button | Phase 3, no feature yet |
+
+Also open: whether to bundle JetBrains Mono Medium (10.1); and whether the spacing literals of `app/renderer/ui` (paddings, gaps, small widths) become tokens or an allowlist. Both are recorded in `app/test/fidelity/debt.json`, the ledger of what layer 1 does not hold yet; it can only shrink, and `m5-ui-mockup-alignment` empties it.

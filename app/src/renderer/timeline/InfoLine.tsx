@@ -20,9 +20,9 @@ export function InfoLine({ client, clipId }: { client: SessionClient; clipId: st
   );
   const values = infoLine(snapshot, clipId);
   return (
-    <dl className="info-line" data-testid="info-line" data-clip={values ? (clipId ?? '') : ''} aria-label={t('info.label')}>
+    <dl className="info-line" data-testid="info-line" data-part="info-line" data-clip={values ? (clipId ?? '') : ''} aria-label={t('info.label')}>
       {FIELDS.map((field) => (
-        <div key={field} className="info-field">
+        <div key={field} className="info-field" data-part={`info-${field}`}>
           <dt>{t(`info.${field}`)}</dt>
           <dd data-testid={`info-${field}`}>{values ? values[field] : ''}</dd>
         </div>

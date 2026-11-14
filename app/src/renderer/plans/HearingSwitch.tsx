@@ -36,7 +36,7 @@ export function HearingSwitch({ client, plans }: HearingSwitchProps) {
     void runAction(client, { kind: 'hear', side: target }).then(() => setBusy(false));
   };
   return (
-    <div className="hearing-switch" role="group" aria-label={t('hearing.label')} data-testid="plan-heard" data-heard={side}>
+    <div className="hearing-switch" role="group" aria-label={t('hearing.label')} data-testid="plan-heard" data-part="hearing-switch" data-heard={side}>
       <span className="hearing-label">{t('hearing.label')}</span>
       <button
         type="button"

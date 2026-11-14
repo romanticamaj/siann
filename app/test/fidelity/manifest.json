@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "siann.fidelity.v1",
+  "about": "The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\"). Every data-region / data-part id of the mockup is owned by exactly one rule (first match wins). feature: the feature that builds the part. gate: the feature whose acceptance is \"the fidelity gate passes for these parts\". gates: pending = skipped until that feature lands; report = measured and reported, never failing; enforce = a mismatch fails the gate. A feature flips its own gate to enforce in the pull request that lands it. unowned parts have no M5 or M5b feature: they are skipped and listed in every report until the maintainer assigns one or changes the mockup.",
+  "mockup": "docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "deviceScaleFactor": 1
+  },
+  "locales": {
+    "en": {
+      "query": "",
+      "languages": ["en-US"]
+    },
+    "zh-TW": {
+      "query": "?lang=zh-TW",
+      "languages": ["zh-TW"]
+    }
+  },
+  "regions": ["top-bar", "left-zone", "project-zone", "lower-zone", "right-zone", "status-bar"],
+  "geometry": {
+    "tolerancePx": 1
+  },
+  "styles": ["color", "background-color", "font-family", "font-size", "font-weight", "line-height", "letter-spacing", "text-transform", "font-variant-numeric", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-style", "border-right-style", "border-bottom-style", "border-left-style", "border-top-color", "border-right-color", "border-bottom-color", "border-left-color", "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius", "padding-top", "padding-right", "padding-bottom", "padding-left", "box-shadow", "opacity"],
+  "pixels": {
+    "channelTolerance": 16,
+    "maxMismatch": 0.005,
+    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending and unowned parts.",
+    "dynamic": ["display-*", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head"]
+  },
+  "gates": {
+    "m5-ui-mockup-alignment": "report",
+    "m5b-ui-ghosts": "pending",
+    "m5b-ui-audition": "pending",
+    "m5b-ui-media": "pending",
+    "m5b-ui-edit-more": "pending",
+    "m5b-ui-fades": "pending",
+    "m5b-ui-inserts-master": "pending",
+    "m5b-ui-recording": "pending",
+    "m5b-ui-markers": "pending",
+    "m5b-ui-sends-buses": "pending"
+  },
+  "rules": [
+    {"match":["*ghost*","proposal-pill","inspector-agent-changes"],"feature":"m5b-ui-ghosts","gate":"m5b-ui-ghosts"},
+    {"match":["*-record","inspector-monitor"],"feature":"m5b-ui-recording","gate":"m5b-ui-recording"},
+    {"match":["*-read","*-write","strip-*-automation","inspector-automation"],"feature":null,"gate":null,"unowned":"Automation read/write arrives with M6a; no M5 or M5b feature draws it"},
+    {"match":["dsp-load","strip-master-loudness","tab-meter"],"feature":null,"gate":null,"unowned":"DSP load and loudness need engine ticket E-13, which no M5 or M5b feature carries"},
+    {"match":["display-signature"],"feature":null,"gate":null,"unowned":"The time signature needs engine ticket E-10, which no M5 or M5b feature carries"},
+    {"match":["agent-row","plan-title","plan-intent"],"feature":null,"gate":null,"unowned":"Plan title, intent and the agent row need engine ticket E-7 (plan metadata), which no M5 or M5b feature carries"},
+    {"match":["composer"],"feature":null,"gate":null,"unowned":"The \"ask the agent\" box needs an agent runtime; no M5 or M5b feature builds one"},
+    {"match":["inspector-notepad","tab-editor","zone-button-channel"],"feature":null,"gate":null,"unowned":"The Notepad section, the Editor tab and the Channel zone are phase 3 of the UI spec with no M5 or M5b feature"},
+    {"match":["strip-*-inserts","strip-*-edit","strip-master-fader","strip-master-cap","strip-master-buttons","strip-master-mute","inspector-inserts","inspector-edit","mixer-racks"],"feature":"m5b-ui-inserts-master","gate":"m5b-ui-inserts-master"},
+    {"match":["inspector-routing","inspector-sends"],"feature":"m5b-ui-sends-buses","gate":"m5b-ui-sends-buses"},
+    {"match":["marker-head","marker-track"],"feature":"m5b-ui-markers","gate":"m5b-ui-markers"},
+    {"match":["info-fade-in","info-fade-out"],"feature":"m5b-ui-fades","gate":"m5b-ui-fades"},
+    {"match":["tab-media"],"feature":"m5b-ui-media","gate":"m5b-ui-media"},
+    {"match":["tool-2","tool-4","tool-5","tool-6","tool-7","tool-8","tool-9"],"feature":"m5b-ui-edit-more","gate":"m5b-ui-edit-more"},
+    {"match":["branch-chip"],"feature":"m5b-ui-audition","gate":"m5b-ui-audition"},
+    {"match":["transport-cycle","transport-click","transport-metronome","display-locators","locator-band"],"feature":"m5-ui-loop-click","gate":"m5-ui-mockup-alignment"},
+    {"match":["transport","transport-*","display","display-*","undo","redo","auto-scroll","cursor","cursor-head"],"feature":"m5-ui-transport","gate":"m5-ui-mockup-alignment"},
+    {"match":["tools","tool-1","tool-3"],"feature":"m5-ui-edit-basics","gate":"m5-ui-mockup-alignment"},
+    {"match":["top-bar","brand","session-name","zone-buttons","zone-button-*","plans-button","plans-count","status-bar","status-*"],"feature":"m5-ui-shell","gate":"m5-ui-mockup-alignment"},
+    {"match":["left-zone","inspector-*","lower-zone","lower-tabs","tab-mixconsole","mixer","strip-*"],"feature":"m5-ui-mixer","gate":"m5-ui-mockup-alignment"},
+    {"match":["right-zone","right-tabs","tab-plans","hearing-switch","plan-*"],"feature":"m5-ui-plan-panel","gate":"m5-ui-mockup-alignment"},
+    {"match":["project-zone","toolbar","snap","grid-type","info-line","info-*","arrange","track-list","track-list-head","track-add","track-count","track-*","event-display","scroll-zoom","ruler-upper","ruler-lower","lane-*","clip-*"],"feature":"m5-ui-arrange","gate":"m5-ui-mockup-alignment"}
+  ]
+}

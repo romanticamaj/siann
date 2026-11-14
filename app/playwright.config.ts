@@ -10,6 +10,10 @@ import { defineConfig } from '@playwright/test';
 // The UX screenshot tour runs only when asked for (SIANN_UX_TOUR=1).
 const tour = process.env.SIANN_UX_TOUR === '1' ? [] : ['**/ux-tour.spec.ts'];
 const PLAIN_TAB = '**/plain-tab.spec.ts';
+// The mockup fidelity gate runs only when asked for (SIANN_FIDELITY=1), as its
+// own project: it opens the mockup in Chromium and the app in Electron.
+const FIDELITY = '**/mockup-fidelity.spec.ts';
+const fidelity = process.env.SIANN_FIDELITY === '1' ? [{ name: 'fidelity', testMatch: FIDELITY }] : [];
 
 export default defineConfig({
   testDir: './test/e2e',
@@ -20,7 +24,8 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
   projects: [
-    { name: 'electron', testIgnore: [...tour, PLAIN_TAB] },
+    { name: 'electron', testIgnore: [...tour, PLAIN_TAB, FIDELITY] },
     { name: 'chromium', testMatch: PLAIN_TAB, use: { browserName: 'chromium' } },
+    ...fidelity,
   ],
 });

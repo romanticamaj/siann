@@ -370,6 +370,32 @@ jobs:
         if: runner.os != 'Linux'
         working-directory: app
         run: npm test
+      # The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the
+      # window against the mockup at 1440x900 and device scale factor 1, in en and
+      # zh-TW, on Windows and Linux. Report-only until m5-ui-mockup-alignment lands:
+      # that feature sets its gate to enforce and removes continue-on-error.
+      - name: Mockup fidelity gate
+        if: runner.os != 'macOS'
+        continue-on-error: true
+        working-directory: app
+        env:
+          SIANN_FIDELITY: '1'
+          SIANN_FIDELITY_OUT: ${{ runner.temp }}/fidelity
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npx playwright test --project fidelity; else npx playwright test --project fidelity; fi
+      - name: Fidelity report
+        if: always() && runner.os != 'macOS'
+        env:
+          SIANN_FIDELITY_OUT: ${{ runner.temp }}/fidelity
+        run: |
+          if [ -f "$SIANN_FIDELITY_OUT/report.md" ]; then cat "$SIANN_FIDELITY_OUT/report.md" >> "$GITHUB_STEP_SUMMARY"; else echo "no fidelity report was written" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload the fidelity report
+        if: always() && runner.os != 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fidelity-${{ runner.os }}
+          path: ${{ runner.temp }}/fidelity
+          if-no-files-found: warn
 
   # The one check to require: passes when every job above passed or was skipped
   # because its paths did not change. A skipped matrix job reports under its

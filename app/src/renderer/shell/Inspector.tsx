@@ -38,26 +38,26 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
   const gainListed = can.has('gesture.begin') && can.feature('gestures') && can.command('track.set_gain');
   return (
     <div className="inspector" data-testid="inspector">
-      <h2>{t('inspector.label')}</h2>
-      <div className="inspector-head">
+      <h2 data-part="inspector-head">{t('inspector.label')}</h2>
+      <div className="inspector-head" data-part="inspector-name">
         <span className="inspector-colour" data-testid="inspector-colour" style={{ backgroundColor: `var(${trackColourVar(track.id)})` }} title={t('inspector.colour')} />
         <p className="inspector-track" data-testid="inspector-track">
           {track.name}
         </p>
       </div>
-      <div className="inspector-buttons">
+      <div className="inspector-buttons" data-part="inspector-buttons">
         <Capable command="track.set_mute">
-          <button type="button" className="ms mute" data-testid="inspector-mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
+          <button type="button" className="ms mute" data-testid="inspector-mute" data-part="inspector-mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
             M
           </button>
         </Capable>
         <Capable command="track.set_solo">
-          <button type="button" className="ms solo" data-testid="inspector-solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
+          <button type="button" className="ms solo" data-testid="inspector-solo" data-part="inspector-solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
             S
           </button>
         </Capable>
       </div>
-      <div className="inspector-row">
+      <div className="inspector-row" data-part="inspector-volume">
         <span className="inspector-label">{t('inspector.volume')}</span>
         <ValueReadout
           kind="gain"
@@ -81,7 +81,7 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
         />
       </Capable>
       <Capable method="gesture.begin" feature="gestures" command="track.set_pan">
-        <div className="inspector-row">
+        <div className="inspector-row" data-part="inspector-pan">
           <span className="inspector-label">{t('strip.pan')}</span>
         </div>
         <ValueControl
