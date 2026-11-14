@@ -414,7 +414,12 @@ jobs:
         run: |
           cmake --preset desktop-release "-DSIANN_JUCE_ARCHIVE=${{ env.JUCE_ARCHIVE }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build --preset desktop-release --target siann-engine
+          cmake --build --preset desktop-release --target siann-engine siann_engine_host_tests siann_engine_launch_tests siann_host_clap_tests
+      # The shipped engine links the CRT statically: a plugin's abort() still ends it with
+      # exit code 3 and no dialog (spec, "Process model", Crash).
+      - name: Crash tests of the desktop-release engine
+        working-directory: native
+        run: ctest --preset desktop-release -R crash
       # GitHub's release downloads answer 504 at times: keep Electron's zip in the cache.
       - name: Cache the Electron download
         uses: actions/cache@v4

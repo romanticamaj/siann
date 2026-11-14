@@ -15,7 +15,8 @@
 //                                             unit and Playwright tests against
 //                                             native/build/dev's siann-engine
 //   node scripts/check-all.js --only package  the Windows installer (Windows only; reports
-//                                             skipped elsewhere): the desktop-release engine,
+//                                             skipped elsewhere): the desktop-release engine
+//                                             and its crash tests,
 //                                             npm run dist in app/, the package tests and the
 //                                             packaged e2e against app/release/win-unpacked
 //   node scripts/check-all.js --only native   one step: node | native | desktop | app | package | gcc
@@ -532,20 +533,28 @@ function appDepsFresh(appDir) {
   return fs.statSync(installed).mtimeMs >= fs.statSync(lock).mtimeMs;
 }
 
+// The desktop-release engine the installer ships, and its crash tests: with the
+// static CRT, a plugin's abort() still ends the engine with exit code 3 and no
+// dialog (spec, "Process model", Crash).
+const PACKAGE_NATIVE = [
+  ['cmake', ['--preset', 'desktop-release']],
+  ['cmake', ['--build', '--preset', 'desktop-release', '--target', 'siann-engine', 'siann_engine_host_tests',
+    'siann_engine_launch_tests', 'siann_host_clap_tests']],
+  ['ctest', ['--preset', 'desktop-release', '-R', 'crash']],
+];
+
 // The Windows installer (m5b-package-windows): the desktop-release engine (Release,
-// JUCE, static MSVC runtime), `npm run dist` in app/ (electron-builder, NSIS, no
-// signing), the package tests over win-unpacked and the packaged e2e on its
-// SIANN.exe. electron-builder makes the Windows installer on Windows only.
+// JUCE, static MSVC runtime) and its crash tests, `npm run dist` in app/
+// (electron-builder, NSIS, no signing), the package tests over win-unpacked and the
+// packaged e2e on its SIANN.exe. electron-builder makes the Windows installer on
+// Windows only.
 async function packageStep(options = {}) {
   const platform = options.platform || process.platform;
   if (platform !== 'win32') {
     return { ok: true, output: '', note: 'skipped: the Windows installer is built on Windows only' };
   }
   const APP = path.join(ROOT, 'app');
-  const built = sequence([
-    ['cmake', ['--preset', 'desktop-release']],
-    ['cmake', ['--build', '--preset', 'desktop-release', '--target', 'siann-engine']],
-  ], options);
+  const built = sequence(PACKAGE_NATIVE, options);
   if (!built.ok) return built;
   const engine = path.join(NATIVE, 'build', 'desktop-release', 'apps', 'engine', 'siann-engine.exe');
   if (!fs.existsSync(engine)) return { ok: false, output: `${engine} is missing after the build` };
@@ -637,6 +646,6 @@ if (require.main === module) {
 
 module.exports = {
   ALL_STEPS, appDepsFresh, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, listSources,
-  nativeEnv, needsInstall, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath,
+  nativeEnv, needsInstall, PACKAGE_NATIVE, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps, stepsForPath,
   stepsForPaths,
 };

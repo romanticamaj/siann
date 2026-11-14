@@ -373,6 +373,21 @@ void disableCrashDialogs() {
 #if defined(_WIN32)
     SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#if !defined(_DLL)
+    // A statically linked CRT (the desktop-release preset, which the installer
+    // ships) keeps the flags above to itself. A plugin linked against the shared
+    // CRT aborts through the Universal CRT, ucrtbase.dll (ucrtbased.dll for a
+    // Debug plugin), so clear them there too. The module stays loaded, flags and
+    // all, for the plugins that load it later. A plugin with its own static CRT
+    // keeps flags no host reaches; SetErrorMode above still keeps WER's box away.
+    for (const wchar_t* name : {L"ucrtbase.dll", L"ucrtbased.dll"}) {
+        HMODULE crt = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (crt == nullptr) continue;  // ucrtbased.dll: only where the Windows SDK is
+        using SetAbortBehavior = unsigned int(__cdecl*)(unsigned int, unsigned int);
+        const auto set = reinterpret_cast<SetAbortBehavior>(GetProcAddress(crt, "_set_abort_behavior"));
+        if (set != nullptr) set(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    }
+#endif
 #endif
 }
 
