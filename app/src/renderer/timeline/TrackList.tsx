@@ -8,13 +8,14 @@
 // one canvas down the column (HeaderMeters), with no React commit.
 //
 // Double-click a name to rename it (Enter commits one track.rename; Escape
-// and leaving the field cancel); the + button above the list adds a track
+// and leaving the field cancel); the + button above the list and a
+// double-click on the empty space below the last header add a track
 // (track.add, as the T key does); a header's lower border drags its lane's
 // height, with Ctrl every lane's, kept per session id in siann.layout.v1. A
 // muted track, or one muted by another's solo, is dimmed. Every control that
 // sends a command exists only when engine.capabilities lists it (spec 3.0).
 
-import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
 import { formatDb, formatPan } from '../format';
 import { useT, type T } from '../i18n/t';
@@ -112,6 +113,14 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
     [layout, sessionId],
   );
 
+  // A double-click on the empty space below the last header adds a track
+  // (spec 3.3); one on a header (its name renames) adds nothing.
+  const canAdd = can.command('track.add');
+  const addOnEmptySpace = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.target instanceof Element && event.target.closest('.track-header')) return;
+    addTrack(client, t);
+  };
+
   return (
     <div className="track-list" data-testid="track-list" role="group" aria-label={t('tracklist.label')}>
       <div className="track-list-head">
@@ -126,7 +135,12 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
           />
         </Capable>
       </div>
-      <div className="track-list-body">
+      <div
+        className="track-list-body"
+        data-testid="track-list-body"
+        data-addable={canAdd ? 'true' : undefined}
+        onDoubleClick={canAdd ? addOnEmptySpace : undefined}
+      >
         <div className="track-list-column" ref={column}>
           {order.map((trackId, index) => {
             const track = snapshot?.entities[`track:${trackId}`] as TrackEntity | undefined;
