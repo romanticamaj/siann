@@ -3108,8 +3108,11 @@ MySong.siann/                    a directory
   siann-protocol consistency rules). Positions are audio-domain sample frames as
   decimal strings; a drag snaps to a non-negative position and a trim to
   `[0, media.frames]` with a length of at least one frame.
-- Placing a clip chooses a media entity of the document (the media pool);
-  importing a file from the UI is not part of m5-timeline. The engine side,
+- Placing a clip chooses a media entity of the document in the Pool, a window
+  of its own opened with `Ctrl+P` or from the event display's context menu that
+  lists the media by name and arms placing (UI redesign spec 10.8, 1; the Media
+  tab of m5b-ui-media replaces it and keeps `Ctrl+P`); importing a file from the
+  UI is not part of m5-timeline. The engine side,
   `media.import` (Jobs v0, import) and `session.create` (Protocol v0 item 27),
   exists since m5b-engine-project-media; the UI that drives it is M5b's.
 - The frontend holds a read model keyed by revision; it never owns session truth.
