@@ -320,12 +320,13 @@ export function Timeline({
     <section className="timeline">
       <div className="timeline-bar" data-part="toolbar">
         {gates['tool.select'] || gates['tool.split'] ? (
-          <div className="tool-buttons" role="group" aria-label={t('tool.label')}>
+          <div className="tool-buttons" data-part="tools" role="group" aria-label={t('tool.label')}>
             {gates['tool.select'] ? (
               <button
                 type="button"
                 className="tool tool-select"
                 data-testid="tool-select"
+                data-part="tool-1"
                 aria-pressed={state.tool === 'select'}
                 title={t('tool.select')}
                 onClick={() => timeline?.setTool('select')}
@@ -338,6 +339,7 @@ export function Timeline({
                 type="button"
                 className="tool tool-split"
                 data-testid="tool-split"
+                data-part="tool-3"
                 aria-pressed={state.tool === 'split'}
                 title={t('tool.split')}
                 onClick={() => timeline?.setTool('split')}
@@ -353,6 +355,7 @@ export function Timeline({
               type="button"
               className="snap-toggle"
               data-testid="snap-toggle"
+              data-part="snap"
               aria-pressed={snap.on}
               title={t('snap.toggle')}
               onClick={() => layout.dispatch({ type: 'snapToggle' })}
@@ -362,6 +365,7 @@ export function Timeline({
             <select
               className="grid-type"
               data-testid="grid-type"
+              data-part="grid-type"
               aria-label={t('snap.grid')}
               title={t('snap.grid')}
               value={snap.grid}
