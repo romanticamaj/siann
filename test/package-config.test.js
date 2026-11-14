@@ -107,3 +107,31 @@ test('the installer output stays out of git', () => {
   const ignore = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
   assert.match(ignore, /^app\/release\/$/m);
 });
+
+// Every package app/package-lock.json installs for the app at run time (not a
+// devDependency): esbuild bundles them into the renderer, so their notices
+// ship (React, react-dom, react-resizable-panels and react-dom's scheduler).
+function runtimePackages() {
+  const lock = readJson(path.join(APP, 'package-lock.json'));
+  return Object.entries(lock.packages)
+    .filter(([at, entry]) => at.startsWith('node_modules/') && !entry.dev && !entry.devOptional)
+    .map(([at, entry]) => ({ name: at.slice('node_modules/'.length), license: entry.license }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+test("collect-licenses copies the licence of every package bundled into the renderer", () => {
+  const runtime = runtimePackages();
+  assert.deepEqual(runtime.map((p) => p.name), ['react', 'react-dom', 'react-resizable-panels', 'scheduler']);
+  const { sources, npmLicenceName } = require('../app/scripts/collect-licenses.js');
+  // A build directory that does not exist: only the names matter here.
+  const names = Object.keys(sources(path.join(ROOT, 'no-such-build')));
+  for (const { name } of runtime) {
+    assert.ok(names.includes(npmLicenceName(name)), `${name}: ${npmLicenceName(name)} not in ${names.join(', ')}`);
+  }
+});
+
+test("the per-user installer packs no elevate.exe (no updater; its notice would not ship)", () => {
+  const c = config();
+  assert.equal(c.nsis.perMachine, false);
+  assert.equal(c.nsis.packElevateHelper, false);
+});
