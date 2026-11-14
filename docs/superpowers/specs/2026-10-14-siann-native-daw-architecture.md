@@ -2784,8 +2784,12 @@ MySong.siann/                    a directory
   item 25), published whenever the heard side changes, whoever asked (an
   agent's MCP `audition` too); the renderer never guesses it. The model follows
   `session.changed` and `plan.changed`, never an optimistic plan state. A
-  `plan_stale` answer is shown with its `changedEntities` and leaves the plan
-  where it was. An applied or rolled-back plan is not previewed (its effects are
+  refusal is shown as its code and the catalog's text in every locale, not the
+  engine's message (which names entity ids); a `plan_stale` answer names its
+  `changedEntities` in user wording (a track by its name, a clip by its track)
+  and leaves the plan where it was. The engine's message and the raw refs are
+  behind the refusal line's disclosure (P1-5: no entity id is visible without
+  opening one). An applied or rolled-back plan is not previewed (its effects are
   already in the head, so a plan that added an entity would answer
   `already_exists`); the UI shows "applied at <revision>" (`appliedRevision`)
   instead.
