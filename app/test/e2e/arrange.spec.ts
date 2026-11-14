@@ -607,7 +607,11 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   await launch();
   const line = page.getByTestId('info-line');
   for (const field of ['start', 'end', 'length', 'offset', 'gain']) await expect(page.getByTestId(`info-${field}`)).toHaveText('');
-  // The whole session in view, so the clip can be clicked.
+  // The whole session in view, so the clip can be clicked. "connected" comes
+  // before the read model's first sync: Shift+F fits the clips loaded when it
+  // is pressed (none yet, on a slow runner, and the zoom stays the default),
+  // so wait for the clip to be drawn first.
+  await rect('clp_x');
   await focusProject();
   await page.keyboard.press('Shift+KeyF');
   await expect.poll(async () => (await view()).scrollFrames).toBe('0');
