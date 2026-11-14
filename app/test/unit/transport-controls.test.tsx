@@ -1,5 +1,5 @@
 // The transport bar (m5-ui-transport; UI redesign spec 3.0, 3.1): start/stop,
-// stop and go-to-start buttons, the position display and auto-scroll in the
+// stop and go-to-start buttons, the position display, undo and redo in the
 // top bar. With no audio device (engine.status device null) the controls
 // work in this build but not in this state, so they are disabled and their
 // tooltip names the reason: the device error's code in front of the
@@ -112,11 +112,34 @@ test('with no device the rendered buttons are disabled and their title gives the
     assert.match(button, /disabled=""/, id);
     assert.ok(button.includes(`title="${reason}"`), `${id}: ${button}`);
   }
-  // The position display and auto-scroll are there, the display's tooltip says bars are 4/4.
+  // The position display is there, its tooltip says bars are 4/4. Auto-scroll
+  // is the project zone toolbar's (the mockup's), not the top bar's.
   assert.ok(tag(markup, 'position-display').includes(`title="${translator('en')('transport.fourFour')}"`));
   tag(markup, 'position-primary');
   tag(markup, 'position-secondary');
-  tag(markup, 'auto-scroll');
+  assert.ok(!markup.includes('data-testid="auto-scroll"'));
+});
+
+// agent-rules "UI fidelity": each part carries the mockup's data-part id
+// (mockup.html's top bar), and the buttons keep the mockup's order.
+test('the transport parts carry the mockup ids in the mockup order', () => {
+  const markup = render(FULL, WITH_DEVICE);
+  const parts: Array<[string, string]> = [
+    ['transport', 'transport'],
+    ['transport-to-start', 'transport-start'],
+    ['transport-stop', 'transport-stop'],
+    ['transport-play', 'transport-play'],
+    ['position-display', 'display'],
+    ['position-primary', 'display-position'],
+    ['position-secondary', 'display-time'],
+    ['transport-tempo', 'display-tempo'],
+    ['undo', 'undo'],
+    ['redo', 'redo'],
+  ];
+  for (const [id, part] of parts) assert.ok(tag(markup, id).includes(`data-part="${part}"`), `${id}: data-part="${part}"`);
+  assert.ok(markup.includes('data-part="transport-buttons"'));
+  const order = ['transport-start', 'transport-stop', 'transport-play'].map((part) => markup.indexOf(`data-part="${part}"`));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'go to start, stop, start');
 });
 
 test('the capability rule: no transport.* in engine.capabilities, no transport controls in the DOM', () => {
