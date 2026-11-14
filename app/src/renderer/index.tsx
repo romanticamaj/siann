@@ -109,7 +109,7 @@ plans.attach(client);
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused() };
 
-const connection = new ConnectionPhaseStore(client);
+const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
 
@@ -157,6 +157,11 @@ createRoot(container).render(
 );
 
 if (bridge) {
-  bridge.engine.onChange(connect);
+  // The shell announces no endpoint only after an engine went away (a failed
+  // launch, a crash, giving up): that ends a start without the banner.
+  bridge.engine.onChange((next) => {
+    connect(next);
+    if (next === null) connection.engineDown();
+  });
   void bridge.engine.current().then(connect);
 }

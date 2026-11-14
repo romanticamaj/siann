@@ -4,11 +4,15 @@
 //
 // - 'starting': the shell's engine has not been reached yet (the first launch;
 //   a null endpoint before the engine is up counts too). No banner, nothing
-//   dimmed.
+//   dimmed. Bounded: it ends offline when the shell reports a failed launch
+//   (its onChange with no endpoint: an exit, a protocol error, giving up), when
+//   a first connection fails after its socket opened, or when the start
+//   outlasts STARTING_MS (a report the shell sent before the page listened).
 // - 'online': connected.
 // - 'offline': disconnected after a connection was lost, through the reconnect
 //   loop's disconnected / connecting alternation (the banner must not
-//   flicker), or from the start when there is no shell (a plain tab).
+//   flicker), from the start when there is no shell (a plain tab), or when the
+//   start failed as above. The first connection after that is no reconnect.
 //
 // A reconnect is offline -> online after an earlier connection. It names the
 // recovered revision: the read model's once the sync of that connection
@@ -19,6 +23,12 @@
 // Framework-free; ConnectionPhaseStore follows a SessionClient for React.
 
 import type { ClientState, ConnectionStatus } from './session-client';
+
+// How long the window may wait for its first connection without the banner.
+export const STARTING_MS = 10_000;
+
+// Runs fn after ms; the returned function cancels it.
+export type Schedule = (fn: () => void, ms: number) => () => void;
 
 export type Phase = 'starting' | 'online' | 'offline';
 
@@ -45,6 +55,10 @@ export interface PhaseInput {
   readonly syncCount: number;
   // The read model's snapshot revision, or null before a snapshot.
   readonly snapshotRevision: string | null;
+  // Sockets that opened (the client's connections).
+  readonly connections: number;
+  // The shell reported no engine, or the start outlasted STARTING_MS.
+  readonly startFailed: boolean;
 }
 
 // The phase before any report: 'starting' while the client is connecting to
@@ -73,8 +87,10 @@ function make(prev: PhaseState, next: PhaseState): PhaseState {
 export function reducePhase(prev: PhaseState, input: PhaseInput): PhaseState {
   if (input.status !== 'connected') {
     // Before the first connection the shell may report no engine yet; that is
-    // still the start, unless there never was a shell to wait for.
-    const phase: Phase = prev.phase === 'starting' ? 'starting' : 'offline';
+    // still the start, unless there never was a shell to wait for, or the
+    // start failed: a failed launch, or a socket that opened and closed again.
+    const failed = input.startFailed || (input.status === 'disconnected' && input.connections > 0);
+    const phase: Phase = prev.phase === 'starting' && !failed ? 'starting' : 'offline';
     return make(prev, { ...prev, phase, pending: null });
   }
   if (prev.phase === 'online') {
@@ -110,12 +126,30 @@ export class ConnectionPhaseStore {
   readonly #listeners = new Set<() => void>();
   readonly #offs: Array<() => void>;
   #state: PhaseState;
+  #startFailed = false;
+  #cancelStart: (() => void) | null = null;
 
-  constructor(client: PhaseClient) {
+  // schedule bounds the start by STARTING_MS (index.tsx passes the window's
+  // timers; without it only the shell's reports end the start).
+  constructor(client: PhaseClient, options: { schedule?: Schedule } = {}) {
     this.#client = client;
     this.#state = reducePhase(initialPhase(client.getState().status), this.#input());
     const update = () => this.#update();
     this.#offs = [client.subscribe(update), client.model.subscribe(update)];
+    if (options.schedule && this.#state.phase === 'starting') {
+      this.#cancelStart = options.schedule(() => {
+        this.#cancelStart = null;
+        this.engineDown();
+      }, STARTING_MS);
+    }
+  }
+
+  // The shell reported no engine (its onChange with no endpoint: a failed
+  // launch, a crash, giving up). Ends the start; nothing after it.
+  engineDown(): void {
+    if (this.#startFailed) return;
+    this.#startFailed = true;
+    this.#update();
   }
 
   getSnapshot = (): PhaseState => this.#state;
@@ -128,6 +162,7 @@ export class ConnectionPhaseStore {
   };
 
   destroy(): void {
+    this.#stopStartTimer();
     for (const off of this.#offs.splice(0)) off();
     this.#listeners.clear();
   }
@@ -139,11 +174,19 @@ export class ConnectionPhaseStore {
       revision: state.revision,
       syncCount: state.syncCount,
       snapshotRevision: this.#client.model.getSnapshot()?.revision ?? null,
+      connections: state.connections,
+      startFailed: this.#startFailed,
     };
+  }
+
+  #stopStartTimer(): void {
+    if (this.#cancelStart) this.#cancelStart();
+    this.#cancelStart = null;
   }
 
   #update(): void {
     const next = reducePhase(this.#state, this.#input());
+    if (next.phase !== 'starting') this.#stopStartTimer();
     if (next === this.#state) return;
     this.#state = next;
     for (const listener of [...this.#listeners]) listener();
