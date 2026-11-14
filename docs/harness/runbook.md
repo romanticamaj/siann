@@ -9,8 +9,42 @@ How to run one milestone of the native engine with the harness. One milestone pe
 | Manifests | `.claude/milestones/<M>.json` | Features, waves, acceptance, exit criteria, human gates |
 | Workflow | `.claude/workflows/siann-milestone.js` | Preflight → Plan (Fable spec check) → Build (Opus TDD + verifier + Fable spec review, fix loop) → Land → Exit |
 | Agent rules | `docs/harness/agent-rules.md` | What every subagent must follow |
-| Local checks | `scripts/check-all.js` | One command for Node, native, desktop, app (Electron shell) and GCC checks |
+| Local checks | `scripts/check-all.js` | One command for Node, native, desktop, app (Electron shell) and GCC checks; `--changed` runs what the branch's paths need, `--all` everything |
 | Manifest tests | `test/milestones.test.js` | Keeps manifests and the workflow consistent |
+
+## Checks: local, Mac and CI
+
+| When | Command |
+|---|---|
+| Before every push (agents and you) | `node scripts/check-all.js --changed` |
+| Milestone exit, or when the maintainer asks | `node scripts/check-all.js --all` |
+| Which steps a branch needs, without running them | `node scripts/check-all.js --changed --plan` |
+
+The path-to-step table is in `docs/harness/agent-rules.md` ("Checks") and in `stepsForPath` in `scripts/check-all.js`.
+
+### Local caches
+
+`check-all` sets up two caches under one root outside every worktree: `SIANN_CACHE_DIR`, by default `<drive>:\siann-cache` on the repository's drive on Windows (`D:\siann-cache` here) and `~/.cache/siann` elsewhere.
+
+- **Compiler cache.** `native/cmake/SiannCompilerCache.cmake` uses sccache (else ccache) as the compiler launcher when it finds one: `SIANN_SCCACHE`, then `PATH`, then winget's install folder. On Windows, `winget install Mozilla.sccache`. With MSVC it switches debug info to `/Z7` (`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded`), as sccache cannot cache `/Zi`. `check-all` points `SCCACHE_DIR` at `<root>\sccache` with a 20 GB limit; both only take effect when the sccache server starts, so run `sccache --stop-server` once after changing them. `sccache --show-stats` shows the hit rate. `SIANN_NO_COMPILER_CACHE=1` turns the cache off at the next configure.
+- **Third-party sources.** `native/cmake/SiannDependencyCache.cmake` fetches JUCE, Catch2, dr_libs, r8brain, IXWebSocket and CLAP once into `<root>\fetchcontent\<name>-<hash of the pin>`; every build tree builds its own copy from there. A lock per dependency makes concurrent configures in several worktrees safe. Delete a directory to refetch it. Plain `cmake --preset` uses the cache too when `SIANN_DEPS_CACHE_DIR` is set in the environment.
+- **WSL g++.** The gcc step runs its files in parallel, and through ccache when WSL has it (`sudo apt install ccache` in WSL; nothing installs it for you).
+- **Long paths.** Worktrees under `.claude\worktrees` push Git checkouts past `MAX_PATH`. The shared source cache keeps dependency checkouts on a short path, and dr_libs is fetched without its test submodule. Also run `git config --global core.longpaths true` once on Windows.
+
+### Mac lane (`siann-macos`)
+
+macOS problems show up before CI when the Mac checks the branch while Windows does. On the Mac, in parallel with the Windows `check-all`:
+
+```sh
+git fetch origin && git checkout <branch> && git pull --ff-only
+node scripts/check-all.js --changed
+```
+
+Run it in the logged-in Aqua session (Screen Sharing or the Mac's own terminal, not a plain SSH session): the AU hosting tests and pluginval's AU checks need the window server and fail or skip without it. The Mac uses ccache when installed (`brew install ccache`) and `~/.cache/siann` for the shared sources.
+
+### CI
+
+`.github/workflows/ci.yml` starts with a `changes` job that runs `check-all --changed --plan` on the pull request's diff and gates the other jobs: docs-only pull requests run the Node job alone; `native/` changes run the native and RTSan jobs (and desktop for the paths above); `app/` runs the app job and the desktop job, which holds app's editor e2e. Pushes to main, the nightly schedule and manual runs (`workflow_dispatch`) run everything. The native, RTSan, desktop and app jobs keep a compiler cache in `actions/cache` (ccache on Linux and macOS, a pinned sccache on Windows, which builds with Ninja in the MSVC environment). The `CI ok` job passes when every job passed or was skipped for its paths: it is the check to require for merging, as skipped matrix jobs never report their per-OS names.
 
 ## Recommended order
 
@@ -19,7 +53,7 @@ M2 → M3 → M0 → M4 → M5 → M6a → M6b → M6c → M7. M0 waits for the 
 ## Before each run
 
 1. `git checkout main && git pull`, working tree clean.
-2. The latest CI run on main is green (preflight waits for it; the local `node scripts/check-all.js --gcc` is optional).
+2. The latest CI run on main is green (preflight waits for it; a local `node scripts/check-all.js --all` is optional).
 3. In Claude Code `/config`, raise **Dynamic workflow size** (a milestone uses roughly 5 to 8 agents per feature; M2 with 7 features needs about 50).
 4. Read the manifest's `humanGates` and `prerequisites`; settle what you can up front.
 
