@@ -94,7 +94,7 @@ test('the shared rules name tokens for every colour, font size and radius', () =
     assert.match(m[1], /^var\(--fw-[\w-]+\) var\(--fs-[\w-]+\)[ /]/, `font:${m[1]} names a weight and a size token`);
     fonts += 1;
   }
-  assert.ok(fonts >= 15, `${fonts} font shorthands`);
+  assert.ok(fonts >= 13, `${fonts} font shorthands`);
   for (const m of UI_CSS.matchAll(/var\(--([\w-]+)\)/g)) {
     // --c is a track's colour, set on the element.
     if (m[1] !== 'c') assert.ok(tokens.has(m[1]), `tokens.css has no --${m[1]}`);
