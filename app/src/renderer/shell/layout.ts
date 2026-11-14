@@ -3,6 +3,10 @@
 // strip width, and the per-session track heights reserved for m5-ui-arrange),
 // a reducer over it, and the effective layout a window of a given size shows.
 //
+// The track list / event display boundary (m5-ui-arrange) is not a zone: it
+// drags within 140-420 px and never collapses. Track heights are kept per
+// session id, clamped to 24-240 px.
+//
 // The stored layout is what the user chose and is per user, never per
 // session. The effective layout applies the rules that depend on the window:
 // the event display keeps 360x320 px (the lower zone gives way first, then
@@ -36,6 +40,8 @@ export interface Layout {
   readonly collapsed: Readonly<Record<Zone, boolean>>;
   readonly tabs: ZoneTabs;
   readonly stripWidth: StripWidth;
+  // The track list's width in px (m5-ui-arrange).
+  readonly trackList: number;
   // Session id -> track id -> px (m5-ui-arrange); the zones are the same for every session.
   readonly trackHeights: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }
@@ -68,7 +74,23 @@ export type ShellAction =
   // Show the zone on `tab`, or hide it when it already shows that tab (Alt+F3, F3).
   | { readonly type: 'showTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport }
   // Show the zone on `tab` and leave it shown (Ctrl+Alt+P, the Plans button).
-  | { readonly type: 'openTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport };
+  | { readonly type: 'openTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport }
+  | TrackListAction;
+
+// The track list boundary and the lane heights (m5-ui-arrange): no zone, no viewport.
+export type TrackListAction =
+  // A drag of the boundary to `size` px (clamped; it never collapses).
+  | { readonly type: 'trackListResize'; readonly size: number }
+  // An arrow key on the boundary: +1 widens the list by ARROW_STEP (ARROW_STEP_LARGE with Shift).
+  | { readonly type: 'trackListStep'; readonly direction: 1 | -1; readonly large?: boolean }
+  // Home and End: the minimum or the maximum.
+  | { readonly type: 'trackListEdge'; readonly edge: 'min' | 'max' }
+  // Enter or double-click: the default.
+  | { readonly type: 'trackListReset' }
+  // A header's lower border dragged: that lane's height in this session.
+  | { readonly type: 'trackHeight'; readonly sessionId: string; readonly trackId: string; readonly height: number }
+  // Ctrl-drag, Shift+H / Shift+G, Ctrl+Shift+wheel: every listed lane's height.
+  | { readonly type: 'allTrackHeights'; readonly sessionId: string; readonly trackIds: readonly string[]; readonly height: number };
 
 export interface ZoneView {
   readonly visible: boolean;
@@ -79,6 +101,8 @@ export interface ZoneView {
 
 export interface EffectiveLayout {
   readonly zones: Readonly<Record<Zone, ZoneView>>;
+  // The track list's width in px.
+  readonly trackList: number;
 }
 
 export const LAYOUT_KEY = 'siann.layout.v1';
@@ -95,6 +119,11 @@ export const EVENT_MIN_HEIGHT = 320;
 export const DRAWER_BELOW_WIDTH = 1280;
 export const LEFT_COLLAPSED_BELOW_WIDTH = 1100;
 export const LOWER_COLLAPSED_BELOW_HEIGHT = 760;
+export const TRACK_LIST_DEFAULT = 216;
+export const TRACK_LIST_MIN = 140;
+export const TRACK_LIST_MAX = 420;
+export const TRACK_HEIGHT_MIN = 24;
+export const TRACK_HEIGHT_MAX = 240;
 
 const STATIC_LIMITS: Readonly<Record<Zone, { readonly min: number; readonly max: number }>> = {
   left: { min: 180, max: 420 },
@@ -107,6 +136,7 @@ export const DEFAULT_LAYOUT: Layout = Object.freeze({
   collapsed: Object.freeze({ left: false, lower: false, right: false }),
   tabs: Object.freeze({ left: 'track', lower: 'mixconsole', right: 'plans' } as const),
   stripWidth: 'normal',
+  trackList: TRACK_LIST_DEFAULT,
   trackHeights: Object.freeze({}),
 });
 
@@ -181,7 +211,50 @@ function setTab(state: ShellState, zone: Zone, tab: string): ShellState {
   return withLayout(state, { tabs: { ...state.layout.tabs, [zone]: tab } as ZoneTabs });
 }
 
+function setTrackList(state: ShellState, size: number): ShellState {
+  if (!Number.isFinite(size)) return state;
+  const next = Math.round(clamp(size, TRACK_LIST_MIN, TRACK_LIST_MAX));
+  return next === state.layout.trackList ? state : withLayout(state, { trackList: next });
+}
+
+function trackHeight(height: number): number {
+  return Math.round(clamp(height, TRACK_HEIGHT_MIN, TRACK_HEIGHT_MAX));
+}
+
+function setTrackHeights(state: ShellState, sessionId: string, trackIds: readonly string[], height: number): ShellState {
+  if (sessionId === '' || !Number.isFinite(height) || trackIds.length === 0) return state;
+  const value = trackHeight(height);
+  const current = state.layout.trackHeights[sessionId] ?? {};
+  if (trackIds.every((id) => current[id] === value)) return state;
+  const next: Record<string, number> = { ...current };
+  for (const id of trackIds) next[id] = value;
+  return withLayout(state, { trackHeights: { ...state.layout.trackHeights, [sessionId]: next } });
+}
+
+function reduceTrackList(state: ShellState, action: TrackListAction): ShellState {
+  switch (action.type) {
+    case 'trackListResize':
+      return setTrackList(state, action.size);
+    case 'trackListStep':
+      return setTrackList(state, state.layout.trackList + action.direction * (action.large ? ARROW_STEP_LARGE : ARROW_STEP));
+    case 'trackListEdge':
+      return setTrackList(state, action.edge === 'min' ? TRACK_LIST_MIN : TRACK_LIST_MAX);
+    case 'trackListReset':
+      return setTrackList(state, TRACK_LIST_DEFAULT);
+    case 'trackHeight':
+      return setTrackHeights(state, action.sessionId, [action.trackId], action.height);
+    case 'allTrackHeights':
+      return setTrackHeights(state, action.sessionId, action.trackIds, action.height);
+  }
+}
+
+function isTrackListAction(action: ShellAction): action is TrackListAction {
+  return !('zone' in action);
+}
+
 export function reduce(state: ShellState, action: ShellAction): ShellState {
+  // Before the zone guard, which would swallow these.
+  if (isTrackListAction(action)) return reduceTrackList(state, action);
   if (!isZone(action.zone)) return state;
   const zone = action.zone;
   switch (action.type) {
@@ -224,6 +297,11 @@ export function reduce(state: ShellState, action: ShellAction): ShellState {
   }
 }
 
+// The narrowest the project zone may be: the track list, its divider and the event display's 360 px.
+export function projectMinWidth(trackList: number): number {
+  return trackList + DIVIDER + EVENT_MIN_WIDTH;
+}
+
 export function effectiveLayout(state: ShellState, viewport: Viewport): EffectiveLayout {
   const { layout } = state;
   const view = {} as Record<Zone, { visible: boolean; size: number; drawer: boolean }>;
@@ -248,14 +326,17 @@ export function effectiveLayout(state: ShellState, viewport: Viewport): Effectiv
   const height = () =>
     viewport.height - TOP_BAR - STATUS_BAR - PROJECT_CHROME - (view.lower.visible ? view.lower.size + DIVIDER : 0);
   giveWay('lower', height, EVENT_MIN_HEIGHT);
-  // Then the right zone and the left zone, to keep it EVENT_MIN_WIDTH wide.
+  // Then the right zone and the left zone, to keep it EVENT_MIN_WIDTH wide
+  // right of the track list: the project zone keeps the list, its divider
+  // and EVENT_MIN_WIDTH.
   const width = () =>
     viewport.width -
     (view.left.visible ? view.left.size + DIVIDER : 0) -
     (view.right.visible && !view.right.drawer ? view.right.size + DIVIDER : 0);
-  giveWay('right', width, EVENT_MIN_WIDTH);
-  giveWay('left', width, EVENT_MIN_WIDTH);
-  return { zones: view };
+  const floor = projectMinWidth(layout.trackList);
+  giveWay('right', width, floor);
+  giveWay('left', width, floor);
+  return { zones: view, trackList: layout.trackList };
 }
 
 export function serializeLayout(layout: Layout): string {
@@ -264,6 +345,7 @@ export function serializeLayout(layout: Layout): string {
     collapsed: layout.collapsed,
     tabs: layout.tabs,
     stripWidth: layout.stripWidth,
+    trackList: layout.trackList,
     trackHeights: layout.trackHeights,
   });
 }
@@ -300,7 +382,7 @@ export function parseLayout(text: string | null): Layout {
   for (const [sessionId, heights] of Object.entries(record(object.trackHeights) ?? {})) {
     const kept: Record<string, number> = {};
     for (const [trackId, height] of Object.entries(record(heights) ?? {})) {
-      if (typeof height === 'number' && Number.isFinite(height) && height > 0) kept[trackId] = height;
+      if (typeof height === 'number' && Number.isFinite(height) && height > 0) kept[trackId] = trackHeight(height);
     }
     trackHeights[sessionId] = kept;
   }
@@ -309,6 +391,10 @@ export function parseLayout(text: string | null): Layout {
     collapsed: { left: flag('left'), lower: flag('lower'), right: flag('right') },
     tabs: { left: tab('left'), lower: tab('lower'), right: tab('right') },
     stripWidth: object.stripWidth === 'narrow' ? 'narrow' : 'normal',
+    trackList:
+      typeof object.trackList === 'number' && Number.isFinite(object.trackList) && object.trackList >= TRACK_LIST_MIN
+        ? Math.round(Math.min(object.trackList, TRACK_LIST_MAX))
+        : TRACK_LIST_DEFAULT,
     trackHeights,
   };
 }
@@ -323,6 +409,7 @@ export function viewFor(
     collapsed: layout.collapsed,
     tabs: layout.tabs,
     stripWidth: layout.stripWidth,
+    trackList: layout.trackList,
     trackHeights: (sessionId !== null ? layout.trackHeights[sessionId] : undefined) ?? {},
   };
 }

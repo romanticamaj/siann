@@ -119,6 +119,11 @@ test('no labelled control overflows or wraps its label in any locale at either w
   await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
   await expect(page.getByTestId('plan-diff')).toBeVisible();
   await expect(page.getByTestId('plan-approve-apply')).toBeVisible();
+  // The track list (m5-ui-arrange) is in the check: its + button, M and S of
+  // every header and the info line's terms are labelled controls.
+  await expect(page.getByTestId('track-add')).toBeVisible();
+  await expect(page.getByTestId('track-mute-trk_kick')).toBeVisible();
+  await expect(page.getByTestId('info-line').locator('dt').first()).toBeAttached();
 
   const failures: string[] = [];
   for (const locale of LOCALES) {

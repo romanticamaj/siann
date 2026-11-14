@@ -131,13 +131,13 @@ async function expectLocale(locale: Locale): Promise<void> {
   await expect(page.getByTestId('mute-trk_a')).toHaveText('M');
   await expect(page.getByTestId('solo-trk_a')).toHaveText('S');
   await expect(page.getByTestId('step-1')).toContainText(formatMilliDb(-600));
-  // The canvas ruler, the one text drawn rather than in the DOM: its first
-  // label (0 s) is worded in the locale, redrawn on a switch.
+  // The canvas ruler is bars and beats, the same bytes in every locale (spec
+  // 6.2): its first label is bar 1.
   await expect
     .poll(() =>
       page.evaluate(() => (window as unknown as { __siannTimeline?: { rulerLabels(): string[] } }).__siannTimeline?.rulerLabels()[0]),
     )
-    .toBe(t('timeline.seconds', { value: '0' }));
+    .toBe('1');
 
   const shown = await shownTexts();
   const others = (Object.keys(CATALOGS) as Locale[]).filter((l) => l !== locale);

@@ -14,9 +14,10 @@
 // session client last heard it, decides which controls exist (spec 3.0,
 // through Capable). The connection phase (m5-ui-connection) decides the
 // shell's disconnected state, and each reconnect clears the clip and plan
-// selections.
+// selections. The selected track (m5-ui-arrange) is the track list's: a
+// header clicked, or the selected clip's track; the Inspector shows it.
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 import { localeStore } from './i18n/t';
 import type { CommandRegistry } from './keys/commands';
@@ -74,8 +75,17 @@ export function App({
   );
   const phase = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().phase);
   const reconnects = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().reconnect?.count ?? 0);
-  const [selectedClip, setSelectedClip] = useState<string | null>(null);
   useEffect(() => announceArrivals(plans, toasts, () => localeStore().getSnapshot()), [plans, toasts]);
+  const [selectedTrack, setSelectedTrack] = useState<string | null>(null);
+  // A clip selected selects its track.
+  const selectClip = useCallback(
+    (clipId: string | null) => {
+      if (!clipId) return;
+      const clip = client.model.getSnapshot()?.clips.find((c) => c.id === clipId);
+      if (clip) setSelectedTrack(clip.trackId);
+    },
+    [client],
+  );
   return (
     <CapabilitiesContext.Provider value={capabilities}>
       <Shell
@@ -88,13 +98,17 @@ export function App({
         banner={<AuditionBanner client={client} plans={plans} />}
         phase={phase}
         toasts={toasts}
-        left={<Inspector client={client} clipId={selectedClip} />}
+        left={<Inspector client={client} trackId={selectedTrack} />}
         project={
           <Timeline
             client={client}
             peaks={peaks}
             commands={commands}
-            onSelect={setSelectedClip}
+            layout={layout}
+            realtime={realtime}
+            selectedTrackId={selectedTrack}
+            onSelectTrack={setSelectedTrack}
+            onSelect={selectClip}
             onHooks={onTimelineHooks}
             reconnects={reconnects}
           />

@@ -56,3 +56,18 @@ test('the zone keys of Cubase, the SIANN Plans key and the zone focus keys', () 
   // Nothing hides the project zone.
   assert.ok(!COMMAND_IDS.some((id) => id.startsWith('zone.project')), 'no project zone command');
 });
+
+test('the project zone\'s zoom keys of Cubase and T to add a track (m5-ui-arrange)', () => {
+  const expected: Array<[string, string]> = [
+    ['H', 'view.zoomIn'],
+    ['G', 'view.zoomOut'],
+    ['Shift+H', 'view.tracksTaller'],
+    ['Shift+G', 'view.tracksShorter'],
+    ['Shift+F', 'view.zoomFull'],
+    ['T', 'track.add'],
+  ];
+  for (const [chord, commandId] of expected) {
+    const found = CUBASE_PRESET.filter((b) => b.chord === chord);
+    assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['project', commandId]], chord);
+  }
+});

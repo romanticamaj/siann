@@ -29,6 +29,15 @@ export const COMMAND_IDS = [
   // The project zone's edits (moved from the timeline's own key listener).
   'edit.delete',
   'edit.cancel',
+  // The event display's zoom (m5-ui-arrange; spec 3.2): horizontal zoom in
+  // and out, track heights taller and shorter, Zoom Full.
+  'view.zoomIn',
+  'view.zoomOut',
+  'view.tracksTaller',
+  'view.tracksShorter',
+  'view.zoomFull',
+  // The track list (spec 3.3).
+  'track.add',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

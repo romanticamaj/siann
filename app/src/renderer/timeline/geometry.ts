@@ -1,7 +1,11 @@
 // The timeline's geometry (spec, "Frontend"): audio-domain sample frames to
 // canvas pixels and back at a zoom (whole frames per pixel) and a scroll,
 // clip rectangles in root.trackOrder lanes, hit testing of a clip's body and
-// trim handles, and the snapping a move or trim ends in. Positions are
+// trim handles, and the snapping a move or trim ends in. Lanes have their own
+// heights (UI redesign spec 2.3: 53 px by default, 24-240 px, a view setting
+// kept per session id) and scroll vertically under the fixed ruler
+// (m5-ui-arrange). Coordinates are the event display canvas's, which begins
+// right of the track list, so nothing here knows the list's width. Positions are
 // decimal strings, as the document carries them; arithmetic on them is
 // BigInt, so a position beyond 2^53 keeps every frame. Framework-free.
 
@@ -15,9 +19,44 @@ export interface Viewport {
   readonly scrollFrames: string;
   // Pixels above the first lane.
   readonly rulerHeight: number;
-  // Pixels per track lane.
+  // The height of a lane the map does not name.
   readonly laneHeight: number;
+  // Track id -> lane height in px (clamped to MIN..MAX_LANE_HEIGHT).
+  readonly laneHeights?: Readonly<Record<string, number>>;
+  // Pixels the lanes are scrolled up under the ruler, at least 0.
+  readonly scrollY?: number;
   readonly width: number;
+  readonly height?: number;
+}
+
+export const DEFAULT_LANE_HEIGHT = 53;
+export const MIN_LANE_HEIGHT = 24;
+export const MAX_LANE_HEIGHT = 240;
+
+export function clampLaneHeight(height: number): number {
+  if (!Number.isFinite(height)) return DEFAULT_LANE_HEIGHT;
+  return Math.min(MAX_LANE_HEIGHT, Math.max(MIN_LANE_HEIGHT, Math.round(height)));
+}
+
+export function laneHeightOf(trackId: string, view: Viewport): number {
+  const height = view.laneHeights?.[trackId];
+  return clampLaneHeight(height ?? view.laneHeight);
+}
+
+// The top of each lane in trackOrder, in canvas pixels (the ruler above, the scroll applied).
+export function laneTops(trackOrder: readonly string[], view: Viewport): number[] {
+  const tops: number[] = [];
+  let top = view.rulerHeight - (view.scrollY ?? 0);
+  for (const trackId of trackOrder) {
+    tops.push(top);
+    top += laneHeightOf(trackId, view);
+  }
+  return tops;
+}
+
+// All lanes stacked, in pixels.
+export function lanesHeight(trackOrder: readonly string[], view: Viewport): number {
+  return trackOrder.reduce((sum, trackId) => sum + laneHeightOf(trackId, view), 0);
 }
 
 export interface ClipRect {
@@ -63,21 +102,22 @@ export function deltaFrames(dx: number, view: Viewport): bigint {
   return BigInt(Math.round(dx * view.framesPerPixel));
 }
 
-export function laneTop(index: number, view: Viewport): number {
-  return view.rulerHeight + index * view.laneHeight;
-}
-
-// The track whose lane holds y, or null above or below the lanes.
+// The track whose lane holds y, or null on the ruler or below the lanes.
 export function trackAt(snapshot: Snapshot, y: number, view: Viewport): string | null {
   if (y < view.rulerHeight) return null;
-  const index = Math.floor((y - view.rulerHeight) / view.laneHeight);
-  return snapshot.trackOrder[index] ?? null;
+  const tops = laneTops(snapshot.trackOrder, view);
+  for (let i = 0; i < tops.length; i += 1) {
+    const trackId = snapshot.trackOrder[i]!;
+    if (y >= tops[i]! && y < tops[i]! + laneHeightOf(trackId, view)) return trackId;
+  }
+  return null;
 }
 
 // Every audio-domain clip of a track in trackOrder, in that order. A clip in
 // the music domain needs the tempo map and is not drawn by this timeline yet.
 export function clipRects(snapshot: Snapshot, view: Viewport): ClipRect[] {
   const lanes = new Map(snapshot.trackOrder.map((id, index) => [id, index]));
+  const tops = laneTops(snapshot.trackOrder, view);
   const rects: ClipRect[] = [];
   for (const clip of snapshot.clips) {
     const lane = lanes.get(clip.trackId);
@@ -90,9 +130,9 @@ export function clipRects(snapshot: Snapshot, view: Viewport): ClipRect[] {
       sourceStart: clip.sourceStart,
       length: clip.length,
       x: frameToX(clip.position.value, view),
-      y: laneTop(lane, view),
+      y: tops[lane]!,
       width: pixelsOf(big(clip.length), view),
-      height: view.laneHeight,
+      height: laneHeightOf(clip.trackId, view),
     });
   }
   rects.sort((a, b) => (lanes.get(a.trackId)! - lanes.get(b.trackId)!) || (a.x - b.x));

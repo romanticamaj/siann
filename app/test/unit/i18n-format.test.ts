@@ -1,14 +1,15 @@
 // Locale-free formatters (m5-ui-i18n; UI redesign spec 6.2): dB values, pan
 // as L35 / C / R40 and timeline positions are the same bytes in every locale,
-// as on hardware and in Cubase. They take no locale, and the words around
-// them (the ruler's unit) come from the catalogs.
+// as on hardware and in Cubase. They take no locale; the ruler (bars and
+// beats since m5-ui-arrange) and the info line carry no catalog word.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatMilliDb, formatPan, formatSeconds } from '../../src/renderer/format';
+import { formatDb, formatMilliDb, formatPan, formatSeconds } from '../../src/renderer/format';
 import { LOCALES } from '../../src/renderer/i18n/locale';
-import { translator } from '../../src/renderer/i18n/t';
+import { catalogFor } from '../../src/renderer/i18n/t';
+import { formatBbt } from '../../src/renderer/timeline/musical-time';
 
 test('the formatters take no locale', () => {
   assert.equal(formatMilliDb.length, 1);
@@ -42,9 +43,10 @@ test('formatSeconds prints a ruler position with at most two decimals', () => {
   assert.equal(formatSeconds(12), '12');
 });
 
-test('the ruler label keeps the number byte-identical; only the unit is the catalog\'s', () => {
-  const labels = LOCALES.map((locale) => translator(locale)('timeline.seconds', { value: formatSeconds(1.5) }));
-  assert.equal(labels[0], '1.5s');
-  for (const label of labels) assert.ok(label.startsWith('1.5'), label);
-  assert.ok(labels.slice(1).every((label) => label !== labels[0]), labels.join(' | '));
+test('ruler and info line positions are the same bytes in every locale (no catalog word around them)', () => {
+  const ticks = 7680 * 2 + 1920 + 960;
+  assert.equal(formatBbt(ticks), '3.2.960');
+  assert.equal(formatDb(-3500), '-3.5 dB');
+  // The catalogs carry no ruler unit any more: the ruler is bars and beats.
+  for (const locale of LOCALES) assert.ok(!('timeline.seconds' in catalogFor(locale)), locale);
 });

@@ -26,7 +26,10 @@ import { Capable, CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { clipRects } from '../../src/renderer/timeline/geometry';
 import { Timeline } from '../../src/renderer/timeline/Timeline';
 import { TimelineCanvas } from '../../src/renderer/timeline/TimelineCanvas';
+import { createLayoutStore } from '../../src/renderer/shell/layout-store';
+import { TrackList } from '../../src/renderer/timeline/TrackList';
 import { FakeScheduler, FakeSocket, until } from './support/fakes';
+import { fakeSurface, installSurfaceGlobals } from './support/surface';
 import { sampleSnapshot } from './support/timeline';
 
 // dist/test/unit -> app/test/unit/fixtures
@@ -105,7 +108,12 @@ function fakeClient(snapshot = sampleSnapshot(), execute: (commands: readonly un
     select: (ref: string) => snapshot.entities[ref],
     subscribe: () => () => undefined,
   };
-  return { model, execute: (commands: readonly unknown[]) => execute(commands) } as unknown as SessionClient;
+  return {
+    model,
+    execute: (commands: readonly unknown[]) => execute(commands),
+    subscribe: () => () => undefined,
+    getState: () => ({ sessionId: 'ses_test' }),
+  } as unknown as SessionClient;
 }
 
 function within(caps: Capabilities | null, node: ReactNode): string {
@@ -153,20 +161,10 @@ test('timeline: the media pool place buttons need clip.place and the delete butt
 
 // The canvas's gestures (place, move, trim) send nothing the capabilities do not list.
 function pointerCanvas() {
-  const listeners = new Map<string, (event: unknown) => void>();
-  const ctx = new Proxy({}, { get: () => () => undefined, set: () => true });
-  const canvas = {
-    clientWidth: 800,
-    width: 0,
-    height: 0,
-    style: { height: '', cursor: '' },
-    getContext: () => ctx,
-    getBoundingClientRect: () => ({ left: 0, top: 0 }),
-    addEventListener: (type: string, fn: (event: unknown) => void) => listeners.set(type, fn),
-    removeEventListener: (type: string) => listeners.delete(type),
-  };
-  const fire = (type: string, x: number, y: number) => listeners.get(type)?.({ button: 0, pointerId: 1, clientX: x, clientY: y });
-  return { canvas: canvas as unknown as HTMLCanvasElement, fire };
+  installSurfaceGlobals();
+  const surface = fakeSurface(800, 300);
+  const fire = (type: string, x: number, y: number) => surface.fire(type, { clientX: x, clientY: y });
+  return { surface, fire };
 }
 
 test('timeline canvas: a drag, a trim and a placement execute only the commands engine.capabilities lists', async () => {
@@ -176,10 +174,12 @@ test('timeline canvas: a drag, a trim and a placement execute only the commands 
   ] as const) {
     const sent: string[] = [];
     const snapshot = sampleSnapshot();
-    const { canvas, fire } = pointerCanvas();
+    const { surface, fire } = pointerCanvas();
     const allows = capabilitySelector(caps);
     const timeline = new TimelineCanvas({
-      canvas,
+      content: surface.content,
+      overlay: surface.overlay,
+      container: surface.container,
       model: fakeClient(snapshot).model,
       peaks: { get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache,
       execute: async (commands) => {
@@ -208,6 +208,41 @@ test('timeline canvas: a drag, a trim and a placement execute only the commands 
     if (caps === REDUCED) assert.deepEqual(sent, [], 'no clip.remove either');
     timeline.destroy();
   }
+});
+
+test('track list: + needs track.add, renaming track.rename, M and S track.set_mute and track.set_solo', () => {
+  const list = (caps: Capabilities | null) =>
+    within(
+      caps,
+      <TrackList
+        client={fakeClient()}
+        realtime={null}
+        timeline={null}
+        layout={createLayoutStore({ storage: null })}
+        selectedTrackId={null}
+        onSelectTrack={() => undefined}
+      />,
+    );
+  const full = list(FULL);
+  assert.ok(full.includes('data-testid="track-add"'), 'the + button');
+  assert.match(full, /data-testid="track-list-body"[^>]*data-addable="true"/, 'double-click on empty space adds');
+  for (const id of ['trk_a', 'trk_b']) {
+    assert.match(full, new RegExp(`data-testid="track-name-${id}"[^>]*data-renamable="true"`), id);
+    assert.ok(full.includes(`data-testid="track-mute-${id}"`), id);
+    assert.ok(full.includes(`data-testid="track-solo-${id}"`), id);
+  }
+  const reduced = list(REDUCED);
+  assert.ok(!reduced.includes('data-testid="track-add"'), 'no + without track.add');
+  assert.ok(!reduced.includes('data-addable'), 'no double-click add without track.add');
+  assert.ok(reduced.includes('data-testid="track-name-trk_a"'), 'the name is shown');
+  assert.ok(!reduced.includes('data-renamable'), 'no rename without track.rename');
+  assert.ok(reduced.includes('data-testid="track-mute-trk_a"'), 'the reduced fixture keeps mute');
+  const addOnly = list({ ...FULL, commands: ['track.add'] });
+  assert.ok(addOnly.includes('data-testid="track-add"'));
+  assert.ok(!addOnly.includes('data-testid="track-mute-'), 'no M without track.set_mute');
+  assert.ok(!addOnly.includes('data-testid="track-solo-'), 'no S without track.set_solo');
+  const unknown = list(null);
+  for (const id of ['track-add', 'track-mute-trk_a', 'track-solo-trk_a']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
 });
 
 // The Plans tab's controls (note field, step checkboxes, action buttons)

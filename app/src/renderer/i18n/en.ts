@@ -57,10 +57,28 @@ export const en = {
   // Timeline.
   'timeline.mediaPool': 'Media pool',
   'timeline.deleteClip': 'Delete clip',
-  'timeline.selected': 'Selected',
   'timeline.lastError': 'Last error',
-  // The ruler's labels; {value} is a locale-free number of seconds.
-  'timeline.seconds': '{value}s',
+  // The empty session's guidance, drawn on the event display.
+  'timeline.empty': 'Empty project: press T or click + above the track list to add a track.',
+  'timeline.zoom': 'Horizontal zoom',
+  // The track list (m5-ui-arrange). {track} is the user's track name.
+  'tracklist.label': 'Track list',
+  'tracklist.add': 'Add track',
+  'tracklist.rename': 'Rename {track}',
+  'tracklist.resize': 'Resize the track list',
+  'tracklist.height': 'Height of {track}',
+  'tracklist.mute': 'Mute {track}',
+  'tracklist.solo': 'Solo {track}',
+  'tracklist.meter': '{track} meter',
+  // A new track's name; {n} is the next free number.
+  'track.defaultName': 'Audio {n}',
+  // The info line: the selected clip, read-only.
+  'info.label': 'Info line',
+  'info.start': 'Start',
+  'info.end': 'End',
+  'info.length': 'Length',
+  'info.offset': 'Offset',
+  'info.gain': 'Volume',
 
   // Mixer.
   'mixer.label': 'Mixer',
