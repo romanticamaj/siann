@@ -226,7 +226,7 @@ Applied to what the mockup shows:
 | Click the locator range | Toggle cycle | P1-7 |
 | Drag the range; drag an end | Move it; adjust it | P1-7 |
 | `Ctrl`-click / `Alt`-click the upper half | Set the left / right locator | P1-7 |
-| Right-click | Time format menu | P1-2 |
+| Right-click | Time format menu | Phase 3, with a Seconds ruler: the ruler draws Bars+Beats only (P1-3), so a format menu on it would change nothing it shows; P1-2 exchanges the position display's formats with `.` |
 
 The locator range is shown as a band with L and R flags in the ruler and a tint over the tracks; it is light when cycle is on and grey when off. If the right locator is before the left with cycle on, Cubase skips the range; SIANN refuses that order in E-1's first version.
 
@@ -740,8 +740,8 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 
 **P1-2 Transport and project cursor** (`m5-ui-transport`)
 
-- Scope: start/stop, stop, go to start in the top bar; `Space`, numpad `Enter`, `Num 0`, `Num .` and `,`; position display in Bars+Beats and Seconds, `.` to exchange, `Shift+P` to type; the project cursor (drawn by P1-3) follows at display rate with zero React commits; click in the lower half of the ruler to locate; auto-scroll in page mode on `F`, suspended during a drag; undo and redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
-- Acceptance: `Space` toggles playback; the cursor and the display run at display rate with zero React commits; locating while stopped moves the cursor; at 120 BPM the display reads 3.1.000 at 4 s; with auto-scroll on, the view pages when the cursor leaves it and does not move during a clip drag; with no audio device the transport is disabled and its tooltip says why.
+- Scope: start/stop, stop, go to start in the top bar; `Space`, numpad `Enter`, `Num 0`, `Num .` and `,`; position display in Bars+Beats and Seconds, `.` to exchange, `Shift+P` to type; the project cursor (drawn by P1-3) follows at display rate with zero React commits; click in the lower half of the ruler or `Shift+Alt`-click in the event display to locate; auto-scroll in page mode on `F`, suspended during a drag; undo and redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
+- Acceptance: `Space` toggles playback; the cursor and the display run at display rate with zero React commits; locating while stopped moves the cursor, from the ruler or by `Shift+Alt`-click in the event display; at 120 BPM the display reads 3.1.000 at 4 s; with auto-scroll on, the view pages when the cursor leaves it and does not move during a clip drag; with no audio device the transport is disabled and its tooltip says why.
 - Tests: unit (frames to bars.beats.ticks across a tempo change; auto-scroll paging decision); e2e (play, locate, stop on the fake device; typed position).
 - Tour states changed: 04; the top bar in every state.
 - Protocol used: `transport.play/stop/locate`, the realtime playhead and playing flag, `session.undo/redo`, `root.tempo`.
