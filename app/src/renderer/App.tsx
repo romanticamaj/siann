@@ -146,7 +146,11 @@ export function App({
               />
             </Counted>
           }
-          lower={<Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />}
+          lower={
+            <Counted id="mixer">
+              <Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />
+            </Counted>
+          }
           right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
         />
       </TimeFormatContext.Provider>

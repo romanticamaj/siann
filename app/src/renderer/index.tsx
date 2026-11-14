@@ -71,8 +71,9 @@ declare global {
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
     __siannToasts?: ToastStore;
-    // The position display's write count (m5-ui-transport display-rate e2e).
-    __siannTransport?: { displayWrites(): number };
+    // The position display's write count (m5-ui-transport display-rate e2e)
+    // and the newest realtime frame's playhead, unextrapolated (null without one).
+    __siannTransport?: { displayWrites(): number; playhead(): string | null };
     __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }>; sent(): ReadonlyArray<SentRequest> };
     __siannMeters?: MeterTestHooks;
     // React commits counted at the root (profiling bundle only).
@@ -133,8 +134,8 @@ if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: (
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
-if (testHooks) window.__siannTransport = { displayWrites };
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
+if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.latest()?.playheadSamples ?? null };
 const transport = new TransportController({
   client,
   playing: () => realtime.latest()?.playing ?? false,

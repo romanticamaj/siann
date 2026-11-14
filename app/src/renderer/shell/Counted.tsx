@@ -2,8 +2,8 @@
 // <Counted id> is a <Profiler> whose commits index.tsx adds up in
 // window.__siannCommitsBy[id] once it installed a sink (SIANN_SHELL_TEST=1).
 // Only the profiling bundle calls onRender, so in production the wrapper
-// counts nothing. The e2e tests count the transport bar and the timeline on
-// their own: the status bar commits whenever engine.status answers
+// counts nothing. The e2e tests count the transport bar, the timeline and the
+// mixer on their own: the status bar commits whenever engine.status answers
 // differently (the xrun count), which the root count would include.
 
 import { Profiler, type ReactNode } from 'react';
