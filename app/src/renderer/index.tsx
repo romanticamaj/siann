@@ -24,7 +24,8 @@
 // navigator.languages, window.__siannClient hands the e2e tests the session
 // client's log of requests refused as disconnected and of requests sent, and
 // a <Profiler> at the
-// root counts React commits in window.__siannCommits. Only the profiling
+// root counts React commits in window.__siannCommits, and each <Counted id>
+// (shell/Counted.tsx) those under it in window.__siannCommitsBy[id]. Only the profiling
 // bundle (renderer.profiling.js, served under SIANN_SHELL_PROFILING=1) calls
 // onRender; in the production bundle the count stays absent (UI redesign
 // spec 5.6).
@@ -48,6 +49,7 @@ import { SessionClient, type EngineEndpoint, type SentRequest, type SocketLike }
 import { TransportController } from './model/transport';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
+import { setCommitSink } from './shell/Counted';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
@@ -72,6 +74,8 @@ declare global {
     __siannMeters?: MeterTestHooks;
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
+    // React commits under each <Counted id> (profiling bundle only).
+    __siannCommitsBy?: Record<string, number>;
   }
 }
 
@@ -168,6 +172,12 @@ const onMeterHooks = testHooks
 const countCommit = () => {
   window.__siannCommits = (window.__siannCommits ?? 0) + 1;
 };
+if (testHooks) {
+  setCommitSink((id) => {
+    const counts = (window.__siannCommitsBy ??= {});
+    counts[id] = (counts[id] ?? 0) + 1;
+  });
+}
 
 const container = document.getElementById('root');
 if (!container) throw new Error('missing #root');

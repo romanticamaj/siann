@@ -25,7 +25,8 @@
 // and sends nothing (UI redesign spec 3.0). In the lower half of the ruler a
 // click (a press and release that moved less than DRAG_THRESHOLD_PX) locates
 // the project cursor through onLocate, also while stopped, and a vertical
-// drag zooms about the pointer (m5-ui-transport); the upper half is the
+// drag zooms about the pointer (m5-ui-transport), as a Shift+Alt-click
+// anywhere in the event display locates without selecting; the upper half is the
 // locators' (P1-7) and inert until then. With auto-scroll on (F) the overlay
 // frame turns the page when the cursor leaves the view while playing, never
 // while a drag is held (auto-scroll.ts), so the content layer redraws only on
@@ -122,8 +123,9 @@ export interface TimelineCanvasOptions {
   readonly laneHeights?: LaneHeightSource;
   // The drag tooltip: shown, worded and placed by the overlay while dragging.
   readonly tooltip?: HTMLElement | null;
-  // A click in the ruler's lower half: locate the project cursor to this
-  // frame (a non-negative decimal string; m5-ui-transport).
+  // A click in the ruler's lower half or a Shift+Alt-click in the event
+  // display: locate the project cursor to this frame (a non-negative decimal
+  // string; m5-ui-transport).
   readonly onLocate?: (frames: string) => void;
   // Auto-scroll in page mode while playing (off when absent; setAutoScroll).
   readonly autoScroll?: boolean;
@@ -568,6 +570,13 @@ export class TimelineCanvas {
         this.#rulerDrag = { startX: x, startY: y, anchorX: x, view: this.#view, moved: false };
         this.#capture(e);
       }
+      return;
+    }
+    // Shift+Alt-click in the event display locates too (spec 3.1, "Set the
+    // cursor"), on a clip or not, and neither selects, drags nor places.
+    if (e.shiftKey && e.altKey) {
+      const frame = xToFrame(x, this.#view);
+      this.#options.onLocate?.((frame < 0n ? 0n : frame).toString());
       return;
     }
     if (!snapshot) return;

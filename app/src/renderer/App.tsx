@@ -37,6 +37,7 @@ import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
 import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
+import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
@@ -116,19 +117,21 @@ export function App({
           transport={transport}
           left={<Inspector client={client} gestures={gestures} trackId={selectedTrack} />}
           project={
-            <Timeline
-              client={client}
-              peaks={peaks}
-              commands={commands}
-              layout={layout}
-              realtime={realtime}
-              selectedTrackId={selectedTrack}
-              onSelectTrack={setSelectedTrack}
-              onSelect={selectClip}
-              onHooks={onTimelineHooks}
-              onLocate={locate}
-              reconnects={reconnects}
-            />
+            <Counted id="timeline">
+              <Timeline
+                client={client}
+                peaks={peaks}
+                commands={commands}
+                layout={layout}
+                realtime={realtime}
+                selectedTrackId={selectedTrack}
+                onSelectTrack={setSelectedTrack}
+                onSelect={selectClip}
+                onHooks={onTimelineHooks}
+                onLocate={locate}
+                reconnects={reconnects}
+              />
+            </Counted>
           }
           lower={<Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />}
           right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}

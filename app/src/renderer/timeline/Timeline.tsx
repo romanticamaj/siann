@@ -13,8 +13,8 @@
 // only with clip.remove, T only with track.add, and the canvas sends no
 // gesture whose commands are not listed (it reads the latest capabilities
 // through a ref). Lane heights are the layout store's, per session id.
-// m5-ui-transport: a click in the ruler's lower half locates through
-// onLocate (only when engine.capabilities lists transport.locate), and the
+// m5-ui-transport: a click in the ruler's lower half or a Shift+Alt-click in
+// the event display locates through onLocate (only when engine.capabilities lists transport.locate), and the
 // canvas follows the layout store's auto-scroll setting.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -52,7 +52,8 @@ export interface TimelineProps {
   readonly reconnects?: number;
   // The selected clip, for the left zone.
   readonly onSelect?: (clipId: string | null) => void;
-  // A click in the ruler's lower half: locate the project cursor (frames).
+  // A click in the ruler's lower half or a Shift+Alt-click in the event
+  // display: locate the project cursor (frames).
   readonly onLocate?: (frames: string) => void;
   // Test-only (SIANN_SHELL_TEST=1): the canvas's hooks once it is mounted.
   readonly onHooks?: (hooks: TimelineTestHooks | null) => void;

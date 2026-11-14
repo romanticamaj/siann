@@ -31,6 +31,7 @@ import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
 import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt } from '../timeline/transport-time';
 import { Capable } from './Capable';
+import { Counted } from './Counted';
 import type { LayoutStore } from './layout-store';
 
 const DEFAULT_RATE = 48000;
@@ -45,11 +46,26 @@ export interface TransportAvailability {
 // error's code in front of the catalog's reason), not without an engine.
 // Connected before the first engine.status answer, the engine decides.
 export function transportAvailability(status: EngineStatus | null, t: T, connected = true): TransportAvailability {
-  if (transportEnabled(status, connected)) return { enabled: true, reason: null };
-  if (status && status.device === null) {
-    const code = status.deviceError?.code;
+  return availabilityOf(deviceKey(status), t, connected);
+}
+
+// What of engine.status the transport depends on, as a primitive for
+// useSyncExternalStore: null before an answer, 'device' while one runs, else
+// 'none:' and the device error's code. An answer that differs only in what
+// the status bar shows (the xrun count) commits nothing in the transport.
+type DeviceKey = null | 'device' | `none:${string}`;
+
+function deviceKey(status: EngineStatus | null): DeviceKey {
+  if (!status) return null;
+  return status.device ? 'device' : `none:${status.deviceError?.code ?? ''}`;
+}
+
+function availabilityOf(key: DeviceKey, t: T, connected: boolean): TransportAvailability {
+  if (key !== null && key !== 'device') {
+    const code = key.slice('none:'.length);
     return { enabled: false, reason: code ? `${code}: ${t('transport.noDevice')}` : t('transport.noDevice') };
   }
+  if (connected) return { enabled: true, reason: null };
   return { enabled: false, reason: t('error.disconnected') };
 }
 
@@ -87,17 +103,17 @@ function Icon({ path }: { path: string }) {
 
 export function useTransportAvailability(client: SessionClient, engineStatus: EngineStatusSource): TransportAvailability {
   const t = useT();
-  const status = useSyncExternalStore(
+  const key = useSyncExternalStore(
     (listener) => engineStatus.subscribe(listener),
-    () => engineStatus.getSnapshot(),
-    () => engineStatus.getSnapshot(),
+    () => deviceKey(engineStatus.getSnapshot()),
+    () => deviceKey(engineStatus.getSnapshot()),
   );
   const connected = useSyncExternalStore(
     (listener) => client.subscribe(listener),
     () => client.getState().status === 'connected',
     () => client.getState().status === 'connected',
   );
-  return transportAvailability(status, t, connected);
+  return availabilityOf(key, t, connected);
 }
 
 function TransportBar({ client, realtime, engineStatus, layout, commands, transport }: TransportProps) {
@@ -282,7 +298,9 @@ export function Transport(props: TransportProps) {
     <Capable method="transport.play">
       <Capable method="transport.stop">
         <Capable method="transport.locate">
-          <TransportBar {...props} />
+          <Counted id="transport">
+            <TransportBar {...props} />
+          </Counted>
         </Capable>
       </Capable>
     </Capable>
