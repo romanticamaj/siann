@@ -21,12 +21,40 @@ same params, same result, same error codes. There is no second API.
   `Origin` header not in the allow list: `403 origin_not_allowed`.
 - The body is one JSON-RPC 2.0 request or notification (no batches).
 - A request gets `200`, `Content-Type: application/json`, exactly one JSON-RPC
-  response. No SSE stream in v0; `GET /v0/mcp` is `405`.
+  response. No SSE stream in v0; `GET /v0/mcp` (any method but `POST` and
+  `DELETE`) is `405`.
 - A notification (no `id`) gets `202` with an empty body.
 - `initialize` assigns a session: the response carries the header
   `Mcp-Session-Id: mcp_<32 hex>`. Every later request must send it: missing is
   `400`, unknown is `404` (the client initializes again). Both carry a JSON-RPC
   error body with `id: null`.
+- `DELETE /v0/mcp` with the session header (m5b-engine-plan-metadata) ends the
+  session: `204` with an empty body, after which the header is unknown (`404`).
+  Without the header it is `400`, with an unknown one `404`; the bearer token and
+  the Origin are checked as for `POST`.
+
+### Agents (m5b-engine-plan-metadata)
+
+Every session is an agent (spec, Protocol v0 item 29): `engine.status` lists it
+in `agents` and `agent.changed` announces it ([Protocol events v1](protocol-events-v1.md)).
+
+- `initialize` reads `params.clientInfo.name` as the agent's name, sanitised:
+  control characters removed, leading and trailing spaces trimmed, cut to 64
+  UTF-8 bytes at a character boundary. Without `clientInfo`, or with a name that
+  is not a string or is empty after that, the name is `"MCP client"`. The name is
+  the `actor` of every plan the session submits: `{kind: "mcp", name}`
+  ([Plan v1](plan-v1.md), "Metadata").
+- The agent is connected from `initialize` until `DELETE /v0/mcp` or until no
+  request with its session header has arrived for `ServerOptions::agentIdleMs`
+  (default 300,000 ms, `engine.capabilities` `limits.agentIdleMs`). Any request
+  counts, `ping` and notifications included; after an idle spell the next one
+  connects it again (the session was not ended). An idle agent is not ended.
+- After every tool call the engine executed, the agent's `lastAction` is the
+  tool's name and `lastActionAt` the server's time. Its arguments are never
+  recorded.
+- At most `limits.agentsRetained` (32) agents are kept. A new `initialize` past
+  that forgets the oldest disconnected agent, or, when every one is connected,
+  the oldest agent, whose session ends (`404` afterwards).
 
 ### Methods
 
@@ -97,7 +125,7 @@ same JSON-RPC `id` runs against the session served now.
 | `list_commands` | `command.list` | propose | `{}` |
 | `describe_capabilities` | `engine.capabilities` | propose | `{}` |
 | `inspect_session` | `session.inspect` | propose | `{}` |
-| `submit_plan` | `plan.submit` | propose | `{steps: [command], readSet?: ["<type>:<id>"], baseRevision?}` |
+| `submit_plan` | `plan.submit` | propose | `{steps: [command], readSet?: ["<type>:<id>"], baseRevision?, title?, intent?}` |
 | `plan_status` | `plan.status` | propose | `{plan: "sha256:..."}` |
 | `approve_plan` | `plan.approve` | trusted | `{plan, steps?: [index]}` |
 | `reject_plan` | `plan.reject` | propose | `{plan, note?}` |
@@ -142,6 +170,13 @@ scope: recording writes to the user's disk and commits a revision. No tool wraps
 one, so while a recording runs both are `scope_denied` under `propose` and run
 nothing. Stopped, they work as before; under `trusted` (and from the UI) they end
 the recording as the UI's stop does.
+
+`submit_plan`'s `title` (at most 200 UTF-8 bytes, one line) and `intent` (at
+most 2,000 UTF-8 bytes) are the plan's metadata (m5b-engine-plan-metadata,
+[Plan v1](plan-v1.md)); the input schema lists them with `maxLength` 200 and
+2000, but the engine counts bytes and answers a longer or malformed value
+`invalid_plan_metadata`. An `actor` in the arguments is `invalid_params`: the
+engine records `{kind: "mcp", name}` from the session's `clientInfo.name`.
 
 `create_session` and `import_media` (m5b-engine-project-media, Protocol v0 item 27)
 wrap `session.create` and `media.import` of [Protocol engine v0](protocol-engine-v0.md).

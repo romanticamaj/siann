@@ -198,6 +198,42 @@ silence", "A document without the master renders bit-identically ...";
 features.masterGain", plan.preview and the second connection above;
 `mcp_adapter_test`; app unit `capabilities`.
 
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-plan-metadata (E-7, E-14) | Y (`plan_hash_test`, `plan_test` `[metadata]`, `plan_methods_test` `[metadata]`, `mcp_adapter_test` `[metadata]` and DELETE, `agent_methods_test`, `transport_methods_test` engine.status keys) | Y | Y (`capabilities`, `session-client` (18b)) | Y (`plan-hash`, `read-model-fixtures`) | 3 | - (7: no UI, no tour state) |
+
+Per acceptance item: 1 `plan_methods_test` "plan.submit refuses a title or
+intent outside the limits with invalid_plan_metadata" (200 and 201 bytes, a
+multi-byte title in bytes, LF, CR, tab, C0 and C1 controls, empty and non-string,
+intent 2,000 and 2,001; nothing listed, no `plan.changed`), "plan.status,
+plan.list and plan.changed carry title, intent and actor" (also the resubmission
+that keeps the first title), `plan_test` "Submit stores the title, intent and
+actor; a resubmission keeps the first", "Submit refuses a title or intent outside
+the limits ...", `plan_hash_test` "A plan with and without title, intent and
+actor has the same planHash", Node `plan-hash` "a plan hashed with and without a
+title ..." over `fixtures/plan/plan-hash.json` (`titled_plan`, `plan_with_intent`,
+`plan_with_actor`, `non_ascii_title` and the malformed-metadata invalid cases);
+2 `plan_methods_test` "The actor of a UI submission comes from the auth frame,
+never from the params" (default, sanitised, malformed client; `actor`, `kind`,
+`name`, `owner` params are `invalid_params`), `mcp_adapter_test` "submit_plan
+stores title, intent and the actor from clientInfo.name", "the MCP actor's name:
+the default without clientInfo, sanitised otherwise", `plan_test` "A sub-plan
+keeps its parent's title, intent and actor; approve and apply ignore them",
+`plan_methods_test` "plan.changed and plan.status carry the rejection note; a
+split keeps the parent's metadata"; 3 the same test (`plan.reject {note}` and
+partial approval's "partially approved as ..."); 4 `agent_methods_test`
+"engine.status lists no agent before initialize, then the MCP session's agent",
+"a second client sees agent.changed on connect, action, idle, reconnect and
+DELETE" (marker in the arguments never in the payload, the injected steady
+clock), "past agentsRetained the oldest disconnected agent is forgotten",
+`mcp_adapter_test` "DELETE /v0/mcp ends the session; without the header it is
+400"; 5 `agent_methods_test` "engine.capabilities lists planMetadata, agents and
+the agent limits", `mcp_adapter_test` "tools/list: submit_plan takes a title of
+200 and an intent of 2000 at most", Node `read-model-fixtures` "the unmodelled
+events ...", app `session-client` (18b) and `capabilities` (`capabilities-full.json`
+with both features, `capabilities-reduced.json` without); 6 the tests above;
+7 none (no UI).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -211,7 +247,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 
 | Feature | Wave | After | Owns (layer F) | Tests its acceptance names |
 |---|---|---|---|---|
-| `m5b-engine-plan-metadata` (E-7, E-14) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
+| `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
 | `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
 | `m5b-engine-load-loudness` (E-13) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
 | `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
