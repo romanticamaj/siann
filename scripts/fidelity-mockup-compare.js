@@ -15,7 +15,8 @@
 //   --base <ref>       the commit to compare with (default: the merge-base
 //                      with origin/main)
 //   --out <dir>        where the measurements and compare.md/compare.json go
-//                      (default app/test-results/fidelity-mockup)
+//                      (default <temp>/siann-fidelity-mockup; not under
+//                      app/test-results, which Playwright empties)
 //   --twice            measure the base twice first and fail unless the two
 //                      agree, which proves the measurement deterministic
 //   --base-from <dir>  reuse a base measurement written by an earlier run
@@ -123,7 +124,11 @@ function main(argv) {
   }
   const core = require(CORE);
   const manifest = JSON.parse(fs.readFileSync(path.join(APP, 'test', 'fidelity', 'manifest.json'), 'utf8'));
-  const out = path.resolve(option(argv, '--out') || path.join(APP, 'test-results', 'fidelity-mockup'));
+  const out = path.resolve(option(argv, '--out') || path.join(os.tmpdir(), 'siann-fidelity-mockup'));
+  // Playwright empties app/test-results at the start of every run, and this
+  // script runs it more than once.
+  const inResults = path.relative(path.join(APP, 'test-results'), out);
+  if (!inResults.startsWith('..') && !path.isAbsolute(inResults)) throw new Error(`--out ${out}: Playwright empties app/test-results on every run; choose another directory`);
   const baseRef = option(argv, '--base') || git(['merge-base', 'origin/main', 'HEAD']);
   const baseCommit = git(['rev-parse', '--short', baseRef]);
   const head = git(['rev-parse', '--short', 'HEAD']);
