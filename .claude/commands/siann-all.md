@@ -11,7 +11,7 @@ Read `docs/harness/runbook.md` and `docs/harness/agent-rules.md` first.
 
 ## Order
 
-`M2 → M3 → M0 → M4 → M5 → M6a → M6b → M6c → M7`
+`M2 → M3 → M0 → M4 → M5 → M5b → M6a → M6b → M6c → M7`
 
 Start from the milestone given in the arguments, or from the first one whose manifest (`.claude/milestones/<M>.json`) is not `done`. With `--only`, run just the listed milestones in this order. Skip milestones whose status is `done`.
 

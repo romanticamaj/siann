@@ -206,6 +206,8 @@ Deferred:
 
 ## Before M6b: recording (from PR #46)
 
+Items 1 and 2 are taken by `m5b-engine-record` (M5b, 2026-11-14), where recording reaches the protocol; items 3 to 6 stay before M6b.
+
 1. Make an early end unmissable: add `endedBy: "seconds" | "overflow" | "interrupt"`
    next to `overflows` in the `record` result.
 2. Record `overflows` and `endedBy` in the take manifest as an optional field, and

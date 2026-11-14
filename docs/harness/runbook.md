@@ -48,7 +48,7 @@ Run it in the logged-in Aqua session (Screen Sharing or the Mac's own terminal, 
 
 ## Recommended order
 
-M2 → M3 → M0 → M4 → M5 → M6a → M6b → M6c → M7. M0 waits for the M3 protocol server because the renderer connects through it; M6a–M6c can be reordered.
+M2 → M3 → M0 → M4 → M5 → M5b → M6a → M6b → M6c → M7. M0 waits for the M3 protocol server because the renderer connects through it; M6a–M6c can be reordered among themselves, but M6b and M6c need M5b (it holds the recording path, monitoring, punch, buses and sends they build on). M5b needs M5's `m5-ui-*` features merged, not M5's exit.
 
 ## Before each run
 
@@ -111,6 +111,7 @@ Progress: `/workflows`. Each feature lands as its own PR, merged only after CI i
 | M0 | Apple Developer ID and notarization key (asked before storing secrets), macOS hands-on (since M4 the editor opens through the protocol: `command.execute` `track.add`, `plugin.instantiate`, then `plugin.open_editor`; the engine's `--open-editor` flag and the shell's `SIANN_OPEN_EDITOR` are gone), choice of test plugins |
 | M4 | Choice of third-party plugins; exit: `node scripts/pluginval.js --compat` passed on Windows and, for TDR Nova, on the Mac on 2026-11-11; still owed: the Mac's Surge XT entries (install Surge XT VST3 + AU there, then rerun `--compat` in the Aqua session); on macOS run AU tests in the logged-in Aqua session |
 | M5 | `SIANN_TEST_CLAP` beside `SIANN_TEST_VST3` and `SIANN_TEST_AU`: set it to Surge XT's `.clap` for the engine's `[thirdparty]` CLAP editor case (it SKIPs naming the variable when unset); React or Svelte (before `m5-read-model`; the wave 1 hardening features `m5-plugin-registry`, `m5-shell-hardening` and `m5-engine-sessions-devices` run first as a subset without it), UX review |
+| M5b | Exit only, none blocks the build: the unsigned installer on a clean Windows machine (`installer-hands-on`); `npm run app` and the walkthrough on the Mac through `siann-macos` (`macos-run`); recording on a real interface (`audio-hardware`); screenshot reviews in three locales after phase 2, after phase 3 and at the end (`phase2-tour-review`, `phase3-tour-review`, `final-tour-review`); the added Chinese terms (`zh-glossary-m5b`). No signing certificate or secret is involved |
 | M6b | One-hour 16-track recording run |
 | M6c | Reference machines for the 64-track criterion |
 | M7 | Raspberry Pi class board |
