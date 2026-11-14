@@ -107,7 +107,7 @@ ImportSource openImportSource(const fs::path& file) {
 }
 
 PreparedImport prepareImport(const fs::path& bundle, std::int64_t sessionRate, ImportSource& source,
-                             ImportProgress* progress) {
+                             ImportProgress* progress, bool writePeaks) {
     std::unique_ptr<media::AudioSource> fileDecoder;
     media::AudioSource* audio = source.audio.get();
     if (audio == nullptr) {
@@ -158,7 +158,7 @@ PreparedImport prepareImport(const fs::path& bundle, std::int64_t sessionRate, I
         }
         converted.clear();
         converted.shrink_to_fit();
-        if (!fs::exists(prepared.peaksFile, ec)) {
+        if (writePeaks && !fs::exists(prepared.peaksFile, ec)) {
             InterleavedReader reader(decoded);
             media::writePeaks(bundle, hex, media::computePeaks(reader));
             prepared.created.push_back(prepared.peaksFile);
@@ -200,7 +200,7 @@ ImportResult importMedia(Session& session, const fs::path& source, const std::st
                          std::string time) {
     ImportSource input = openImportSource(source);
     const std::int64_t sessionRate = session.history().head().document.root().sampleRate;
-    const PreparedImport prepared = prepareImport(session.bundlePath(), sessionRate, input);
+    const PreparedImport prepared = prepareImport(session.bundlePath(), sessionRate, input, nullptr, false);
     const command::Revision& revision = commitImport(session, prepared, mediaId, std::move(actor), std::move(time));
     return ImportResult{&revision, prepared.mediaFile, prepared.originalHash.has_value()};
 }

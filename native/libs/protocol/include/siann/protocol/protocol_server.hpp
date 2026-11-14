@@ -40,6 +40,10 @@
 // gesture.hold, gesture.end and gesture.cancel through ServerOptions::
 // gesturePort, each gesture under a lease of the connection that began it
 // (docs/schemas/protocol-gestures-v0.md).
+//
+// m5b-engine-project-media (spec, Protocol v0 item 27; Jobs v0, import):
+// session.create through ServerOptions::createSession, and media.import, a job
+// whose worker writes the files and whose media.add the command thread commits.
 
 #include <chrono>
 #include <cstddef>
@@ -47,10 +51,13 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "siann/hash/json.hpp"
+#include "siann/session/media_import.hpp"
 #include "siann/protocol/audition_port.hpp"
 #include "siann/protocol/event_stream.hpp"
 #include "siann/protocol/gesture_port.hpp"
@@ -123,6 +130,17 @@ struct ServerOptions {
     // on (owned by the launcher, which rebinds its engine inside). Runs on the
     // command thread. Empty: session.open is not_supported.
     std::function<session::Session&(const std::filesystem::path&)> openSession;
+    // session.create (Protocol v0 item 27): creates an empty bundle at `path` (the
+    // server has checked it is absolute, not UNC, absent, with an existing parent),
+    // whose root is `name` at `sampleRate`, and returns the session to serve from
+    // now on (the launcher rebinds its engine inside, as for openSession). Runs on
+    // the command thread. Empty: session.create is not_supported.
+    std::function<session::Session&(const std::filesystem::path& path, const std::string& name,
+                                    std::int64_t sampleRate)>
+        createSession;
+    // media.import (Jobs v0, import): opens the file to import, on the jobs worker.
+    // Empty: session::openImportSource. Tests pass a paced decoder.
+    std::function<session::ImportSource(const std::filesystem::path&)> openImportSource;
     JobOptions jobs{};
 };
 
@@ -178,6 +196,9 @@ public:
     // Waits on the job's condition until it is done or failed; false on
     // timeout or for an unknown id.
     bool waitJob(const std::string& jobId, std::chrono::milliseconds timeout);
+    // What job.status answers for the job (any thread, also after stop());
+    // nullopt for an unknown id.
+    std::optional<json::Value> jobStatus(const std::string& jobId) const;
 
 private:
     struct Impl;

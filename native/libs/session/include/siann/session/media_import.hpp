@@ -37,6 +37,8 @@ struct ImportResult {
     bool converted = false;
 };
 
+// Both phases below on the calling thread, without the peak pyramid (the
+// protocol's peaks route computes it on demand), and with the file's base name.
 // Throws media::MediaError for unreadable or unsupported files, io::IoError
 // for file system failures and command::CommandError if media.add is rejected
 // (the stored file then stays, content-addressed and unreferenced).
@@ -86,11 +88,11 @@ struct PreparedImport {
 };
 
 // Worker thread. Decodes (and converts to sessionRate) the source, writes the
-// media file and its peak pyramid atomically unless they exist. Throws
-// media::MediaError (cancelled when progress->cancel was set, checked between
-// blocks; nothing it wrote is left then) or io::IoError.
+// media file and (with writePeaks) its peak pyramid atomically unless they exist.
+// Throws media::MediaError (cancelled when progress->cancel was set, checked
+// between blocks; nothing it wrote is left then) or io::IoError.
 PreparedImport prepareImport(const std::filesystem::path& bundle, std::int64_t sessionRate, ImportSource& source,
-                             ImportProgress* progress = nullptr);
+                             ImportProgress* progress = nullptr, bool writePeaks = true);
 
 // Command thread: commits media.add {mediaId, contentHash, originalHash?, format,
 // channels, sampleRate, frames, name} as one revision.
