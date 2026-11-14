@@ -22,8 +22,6 @@ import type { GestureController } from '../../src/renderer/model/gesture-control
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import { SessionClient } from '../../src/renderer/model/session-client';
-import { PlanActions } from '../../src/renderer/plans/PlanReview';
-import { StepList } from '../../src/renderer/plans/StepList';
 import { Capable, CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { clipRects } from '../../src/renderer/timeline/geometry';
 import { Timeline } from '../../src/renderer/timeline/Timeline';
@@ -212,31 +210,8 @@ test('timeline canvas: a drag, a trim and a placement execute only the commands 
   }
 });
 
-test('plan review: the note field needs plan.reject, the step checkboxes plan.approve', () => {
-  const actions = (caps: Capabilities | null) =>
-    within(caps, <PlanActions note="" onNote={() => undefined} enabled={() => true} onRun={() => undefined} />);
-  assert.ok(actions(FULL).includes('data-testid="plan-note"'));
-  assert.ok(actions(REDUCED).includes('data-testid="plan-note"'), 'the reduced fixture lists plan.reject');
-  const noReject = { ...REDUCED, methods: (REDUCED.methods ?? []).filter((m) => m !== 'plan.reject') };
-  assert.ok(!actions(noReject).includes('data-testid="plan-note"'));
-  assert.ok(!actions(noReject).includes('data-testid="plan-reject"'));
-  assert.ok(!actions(REDUCED).includes('data-testid="plan-approve"'));
-
-  const steps = (caps: Capabilities | null) =>
-    within(
-      caps,
-      <StepList
-        steps={[{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -6000 }]}
-        ticked={new Set()}
-        onToggle={() => undefined}
-        trackName={() => undefined}
-        disabled={false}
-      />,
-    );
-  assert.ok(steps(FULL).includes('type="checkbox"'));
-  assert.ok(!steps(REDUCED).includes('type="checkbox"'), 'no plan.approve, no partial approval');
-  assert.ok(steps(REDUCED).includes('data-testid="step-0"'), 'the steps are still listed');
-});
+// The Plans tab's controls (note field, step checkboxes, action buttons)
+// follow the same rule: plan-panel.test.tsx and audition-banner.test.tsx.
 
 // The engine's side: auth, then engine.capabilities from `answer`; nothing else is answered.
 function engine(socket: FakeSocket, answer: () => Record<string, unknown>) {

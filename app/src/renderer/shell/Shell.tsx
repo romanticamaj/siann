@@ -134,6 +134,9 @@ export interface ShellProps {
   readonly store: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
+  // A row under the top bar, outside the zones (the audition banner): visible
+  // whichever zones are open.
+  readonly banner?: ReactNode;
   // The connection phase (model/connection-phase.ts): 'offline' shows the
   // banner and makes the zones inert.
   readonly phase: Phase;
@@ -275,7 +278,7 @@ function ZoneSeparator({
   );
 }
 
-export function Shell({ client, plans, engineStatus, store, commands, platform, phase, toasts, left, project, lower, right }: ShellProps) {
+export function Shell({ client, plans, engineStatus, store, commands, platform, banner, phase, toasts, left, project, lower, right }: ShellProps) {
   const t = useT();
   const viewport = useViewport();
   const state = useShellState(store);
@@ -489,11 +492,14 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
         onToggle={(zone) => dispatch((size) => ({ type: 'toggle', zone, viewport: size }))}
         onPlans={() => dispatch((size) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport: size }))}
       />
-      {offline ? (
-        <div className="connection-banner" data-testid="connection-banner" role="status">
-          {t('connection.banner')}
-        </div>
-      ) : null}
+      <div className="shell-banner">
+        {offline ? (
+          <div className="connection-banner" data-testid="connection-banner" role="status">
+            {t('connection.banner')}
+          </div>
+        ) : null}
+        {banner}
+      </div>
       <Group orientation="horizontal" id="zones" className="zones" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
         <Panel
           id="panel-left"

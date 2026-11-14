@@ -1,81 +1,183 @@
-// Catalog-built wording per locale (m5-ui-i18n; UI redesign spec 6.2): plan
-// step descriptions, engine error codes, toast messages, plurals and relative
-// times. English keeps today's wording exactly; Chinese uses the glossary of
-// 6.5; dB values, pan values and the M/S letters are byte-identical across
-// locales, and text an agent wrote (track names) is passed through as is.
+// Catalog-built wording per locale (m5-ui-i18n, m5-ui-plan-panel; UI redesign
+// spec 6.2 and P1-5): plan step descriptions for every op of the engine's
+// command set, engine error codes, toast messages, plurals and relative times.
+// Steps name tracks by their names, clips by their track and position (seconds
+// from the frame string and the root's sample rate), plugins by their names,
+// and never by an id; a track or clip made by an earlier step of the same plan
+// is named from that step. dB and pan go through format.ts and are
+// byte-identical across locales; text an agent wrote is passed through.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { formatMilliDb, formatPan } from '../../src/renderer/format';
 import { errorText, KNOWN_ERROR_CODES, refusalLine } from '../../src/renderer/i18n/errors';
 import { LOCALES, type Locale } from '../../src/renderer/i18n/locale';
 import { planArrivedMessage, reconnectedMessage } from '../../src/renderer/i18n/messages';
 import { plural, relativeTime, translator } from '../../src/renderer/i18n/t';
-import { describeStep } from '../../src/renderer/plans/describe';
+import { describePlan, describeStep, type StepNames } from '../../src/renderer/plans/describe';
 
-const names = (id: string) => ({ trk_a: 'Lead', trk_v: 'Vox BG 主唱' })[id];
+const NAMES: StepNames = {
+  track: (id) => ({ trk_a: 'Lead', trk_v: 'Vox BG 主唱', trk_k: 'Keys' } as Record<string, string>)[id],
+  clip: (id) => ({ clp_1: { trackId: 'trk_k', position: '72000' } } as Record<string, { trackId: string; position: string }>)[id],
+  slot: (id) => ({ slt_1: { trackId: 'trk_k', name: 'Pro-Q 3' } } as Record<string, { trackId: string; name: string }>)[id],
+  sampleRate: 48000,
+};
 
-const STEPS: Record<string, Record<string, unknown>> = {
+const STEPS = {
   add: { op: 'track.add', trackId: 'trk_b', name: 'Bass', channels: 2 },
   remove: { op: 'track.remove', trackId: 'trk_a' },
+  removeUnknown: { op: 'track.remove', trackId: 'trk_x' },
   rename: { op: 'track.rename', trackId: 'trk_a', name: 'FX Riser' },
   gain: { op: 'track.set_gain', trackId: 'trk_v', gainMilliDb: -6000 },
   gainUnknown: { op: 'track.set_gain', trackId: 'trk_x', gainMilliDb: -600 },
   pan: { op: 'track.set_pan', trackId: 'trk_a', pan: -2500 },
+  panCentre: { op: 'track.set_pan', trackId: 'trk_a', pan: 0 },
+  panRight: { op: 'track.set_pan', trackId: 'trk_a', pan: 4000 },
   mute: { op: 'track.set_mute', trackId: 'trk_a', mute: true },
   unmute: { op: 'track.set_mute', trackId: 'trk_a', mute: false },
   solo: { op: 'track.set_solo', trackId: 'trk_a', solo: true },
   unsolo: { op: 'track.set_solo', trackId: 'trk_a', solo: false },
-  other: { op: 'clip.remove', clipId: 'clp_1' },
-};
+  explode: { op: 'track.explode', trackId: 'trk_k' },
+  place: {
+    op: 'clip.place',
+    clipId: 'clp_new',
+    trackId: 'trk_k',
+    mediaId: 'med_1',
+    position: { domain: 'audio', value: '96000' },
+    sourceStart: '0',
+    length: '48000',
+  },
+  move: { op: 'clip.move', clipId: 'clp_1', position: { domain: 'audio', value: '12000' } },
+  moveTrack: { op: 'clip.move', clipId: 'clp_1', trackId: 'trk_a', position: { domain: 'audio', value: '24000' } },
+  trim: { op: 'clip.trim', clipId: 'clp_1', sourceStart: '0', length: '120000' },
+  clipRemove: { op: 'clip.remove', clipId: 'clp_1' },
+  clipRemoveUnknown: { op: 'clip.remove', clipId: 'clp_9' },
+  clipGain: { op: 'clip.set_gain', clipId: 'clp_1', gainMilliDb: -3000 },
+  mediaAdd: { op: 'media.add', mediaId: 'med_2', contentHash: 'sha256:' + 'a'.repeat(64), format: 'wav', channels: 2, sampleRate: 48000, frames: '480000' },
+  mediaRemove: { op: 'media.remove', mediaId: 'med_1' },
+  insert: {
+    op: 'plugin.insert',
+    trackId: 'trk_k',
+    index: 0,
+    slotId: 'slt_new',
+    descriptor: { format: 'clap', uid: 'com.example.eq', name: 'Fine EQ' },
+    stateBlob: null,
+  },
+  pluginRemove: { op: 'plugin.remove', slotId: 'slt_1' },
+  bypass: { op: 'plugin.set_bypass', slotId: 'slt_1', bypass: true },
+  unbypass: { op: 'plugin.set_bypass', slotId: 'slt_1', bypass: false },
+  sessionRename: { op: 'session.rename', name: 'Night Drive' },
+  tempo: { op: 'session.set_tempo', tempo: [{ ticks: '0', milliBpm: 128000 }] },
+  tempoMap: { op: 'session.set_tempo', tempo: [{ ticks: '0', milliBpm: 120000 }, { ticks: '7680', milliBpm: 96500 }] },
+  unknown: { op: 'track.set_colour', trackId: 'trk_a', colour: '#ff0000' },
+} as const satisfies Record<string, Record<string, unknown>>;
 
-const describe = (locale: Locale, step: keyof typeof STEPS) => describeStep(STEPS[step]!, translator(locale), names);
+type StepName = keyof typeof STEPS;
 
-test('English step descriptions are today\'s wording, unchanged', () => {
-  const expected: Record<keyof typeof STEPS, string> = {
+const describe = (locale: Locale, step: StepName) => describeStep(STEPS[step], translator(locale), NAMES);
+
+test('English wording for every op the engine accepts, and a generic line for an unknown one', () => {
+  const expected: Record<StepName, string> = {
     add: 'Add track Bass',
-    remove: 'Remove track Lead',
+    remove: 'Remove Lead',
+    removeUnknown: 'Remove a track',
     rename: 'Rename Lead to FX Riser',
-    gain: 'Set gain of Vox BG 主唱 to -6.00 dB',
-    gainUnknown: 'Set gain of trk_x to -0.60 dB',
-    pan: 'Set pan of Lead to -2500',
+    gain: `Set Vox BG 主唱 volume to ${formatMilliDb(-6000)}`,
+    gainUnknown: `Set a track volume to ${formatMilliDb(-600)}`,
+    pan: 'Pan Lead to L25',
+    panCentre: 'Pan Lead to C',
+    panRight: 'Pan Lead to R40',
     mute: 'Mute Lead',
     unmute: 'Unmute Lead',
     solo: 'Solo Lead',
     unsolo: 'Unsolo Lead',
-    other: 'clip.remove {"clipId":"clp_1"}',
+    explode: 'Split Keys into one track per channel',
+    place: 'Place a clip on Keys at 2 s',
+    move: 'Move a clip on Keys to 0.25 s',
+    moveTrack: 'Move a clip on Keys to Lead at 0.5 s',
+    trim: 'Trim a clip on Keys to 2.5 s',
+    clipRemove: 'Remove a clip on Keys at 1.5 s',
+    clipRemoveUnknown: 'Remove a clip',
+    clipGain: `Set the volume of a clip on Keys to ${formatMilliDb(-3000)}`,
+    mediaAdd: 'Add an audio file to the pool',
+    mediaRemove: 'Remove an audio file from the pool',
+    insert: 'Insert Fine EQ on Keys',
+    pluginRemove: 'Remove Pro-Q 3 on Keys',
+    bypass: 'Bypass Pro-Q 3 on Keys',
+    unbypass: 'Turn Pro-Q 3 on Keys back on',
+    sessionRename: 'Rename the session to Night Drive',
+    tempo: 'Set the tempo to 128 BPM',
+    tempoMap: 'Set a tempo map with 2 changes',
+    unknown: 'Change (details below)',
   };
-  for (const [step, text] of Object.entries(expected)) assert.equal(describe('en', step), text, step);
-  // Without a name lookup the step names the track by id; track.add by its new name.
-  assert.equal(describeStep(STEPS.remove!, translator('en')), 'Remove track trk_a');
-  assert.equal(describeStep({ op: 'track.add', trackId: 'trk_n' }, translator('en')), 'Add track trk_n');
+  for (const [step, text] of Object.entries(expected)) assert.equal(describe('en', step as StepName), text, step);
 });
 
-test('Chinese step descriptions use the glossary terms', () => {
-  const terms: Record<'zh-Hant' | 'zh-Hans', Partial<Record<keyof typeof STEPS, string>>> = {
-    'zh-Hant': { add: '音軌', remove: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏' },
-    'zh-Hans': { add: '音轨', remove: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏' },
-  };
-  for (const [locale, table] of Object.entries(terms) as Array<['zh-Hant' | 'zh-Hans', Record<string, string>]>) {
-    for (const [step, term] of Object.entries(table)) {
+test('a track, clip or plugin made by an earlier step of the plan is named from that step', () => {
+  const t = translator('en');
+  const plan = [
+    { op: 'track.add', trackId: 'trk_pad', name: 'Pad', channels: 2 },
+    { op: 'track.set_gain', trackId: 'trk_pad', gainMilliDb: -9000 },
+    { op: 'clip.place', clipId: 'clp_p', trackId: 'trk_pad', mediaId: 'med_1', position: { domain: 'audio', value: '0' }, sourceStart: '0', length: '48000' },
+    { op: 'clip.move', clipId: 'clp_p', position: { domain: 'audio', value: '48000' } },
+    { op: 'plugin.insert', trackId: 'trk_pad', index: 0, slotId: 'slt_p', descriptor: { format: 'clap', uid: 'u', name: 'Verb' }, stateBlob: null },
+    { op: 'plugin.set_bypass', slotId: 'slt_p', bypass: true },
+  ];
+  assert.deepEqual(describePlan(plan, t, NAMES), [
+    'Add track Pad',
+    `Set Pad volume to ${formatMilliDb(-9000)}`,
+    'Place a clip on Pad at 0 s',
+    'Move a clip on Pad to 1 s',
+    'Insert Verb on Pad',
+    'Bypass Verb on Pad',
+  ]);
+  // Without a sample rate a position is not invented.
+  const noRate: StepNames = { ...NAMES, sampleRate: undefined };
+  assert.equal(describeStep(STEPS.move, t, noRate), 'Move a clip on Keys to a new position');
+});
+
+test('no step description shows an entity id, a raw pan value or a milli-dB integer', () => {
+  const ids = ['trk_a', 'trk_b', 'trk_v', 'trk_k', 'trk_x', 'trk_pad', 'clp_1', 'clp_9', 'clp_new', 'med_1', 'med_2', 'slt_1', 'slt_new', 'com.example.eq'];
+  for (const locale of LOCALES) {
+    for (const step of Object.keys(STEPS) as StepName[]) {
       const text = describe(locale, step);
-      assert.ok(text.includes(term), `${locale} ${step}: ${text} lacks ${term}`);
-      assert.notEqual(text, describe('en', step), `${locale} ${step}`);
+      for (const id of ids) assert.ok(!text.includes(id), `${locale} ${step}: ${text} shows ${id}`);
+      // No integer of four or more digits (milli-dB, pan units, frames, milliBpm).
+      assert.ok(!/\d{4,}/.test(text), `${locale} ${step}: ${text}`);
+      assert.ok(!text.includes('{'), `${locale} ${step}: ${text} (raw JSON or a placeholder)`);
     }
-    // A step the catalogs have no wording for is shown as the protocol has it.
-    assert.equal(describe(locale, 'other'), 'clip.remove {"clipId":"clp_1"}');
   }
 });
 
-test('dB, pan values and agent-written names are byte-identical across locales', () => {
+test('Chinese step descriptions use the glossary terms', () => {
+  const terms: Record<'zh-Hant' | 'zh-Hans', Partial<Record<StepName, string>>> = {
+    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度' },
+    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度' },
+  };
+  for (const [locale, table] of Object.entries(terms) as Array<['zh-Hant' | 'zh-Hans', Record<string, string>]>) {
+    for (const [step, term] of Object.entries(table)) {
+      const text = describe(locale, step as StepName);
+      assert.ok(text.includes(term), `${locale} ${step}: ${text} lacks ${term}`);
+      assert.notEqual(text, describe('en', step as StepName), `${locale} ${step}`);
+    }
+    for (const step of Object.keys(STEPS) as StepName[]) {
+      const text = describe(locale, step);
+      assert.ok(/\p{Script=Han}/u.test(text), `${locale} ${step}: ${text}`);
+    }
+  }
+});
+
+test('dB, pan values, seconds and agent-written names are byte-identical across locales', () => {
   for (const locale of LOCALES) {
-    assert.ok(describe(locale, 'gain').includes('-6.00 dB'), locale);
+    assert.ok(describe(locale, 'gain').includes(formatMilliDb(-6000)), locale);
     assert.ok(describe(locale, 'gain').includes('Vox BG 主唱'), locale);
-    assert.ok(describe(locale, 'gainUnknown').includes('-0.60 dB'), locale);
-    assert.ok(describe(locale, 'gainUnknown').includes('trk_x'), locale);
-    assert.ok(describe(locale, 'pan').includes('-2500'), locale);
+    assert.ok(describe(locale, 'pan').includes(formatPan(-2500)), locale);
+    assert.ok(describe(locale, 'panRight').includes('R40'), locale);
+    assert.ok(describe(locale, 'move').includes('0.25'), locale);
     assert.ok(describe(locale, 'rename').includes('FX Riser'), locale);
     assert.ok(describe(locale, 'add').includes('Bass'), locale);
+    assert.ok(describe(locale, 'insert').includes('Fine EQ'), locale);
   }
 });
 

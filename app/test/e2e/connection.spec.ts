@@ -99,7 +99,7 @@ test('while the engine is down a full-width banner shows, the zones are inert an
   const agent = await agentFor(app!);
   const plan = await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -3000 }] });
   await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
-  await expect(page.getByTestId('plan-approve')).toBeEnabled();
+  await expect(page.getByTestId('plan-approve-apply')).toBeEnabled();
   await selectClip('clp_a');
   const revision = (await page.getByTestId('revision').textContent()) ?? '';
   expect(revision).not.toBe('');
@@ -133,7 +133,7 @@ test('while the engine is down a full-width banner shows, the zones are inert an
   await page.getByTestId('delete-clip').click({ force: true });
   await page.keyboard.press('Delete');
   await page.getByTestId('fader-trk_a').press('ArrowUp');
-  await page.getByTestId('plan-approve').click({ force: true });
+  await page.getByTestId('plan-approve-apply').click({ force: true });
   await frames();
 
   expect((await refused()).filter((method) => CONTROL_METHOD.test(method))).toEqual([]);

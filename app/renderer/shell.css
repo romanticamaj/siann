@@ -44,12 +44,13 @@ code, dd, .mono { font-family: var(--font-mono); }
 
 .shell {
   display: grid;
-  grid-template-rows: var(--top-bar) minmax(0, 1fr) var(--status-bar);
+  /* top bar, the banner row (empty unless a proposal is heard), zones, status bar */
+  grid-template-rows: var(--top-bar) auto minmax(0, 1fr) var(--status-bar);
   height: 100%;
   overflow: hidden;
 }
-/* While the engine is disconnected a banner row sits under the top bar. */
-.shell[data-offline="true"] { grid-template-rows: var(--top-bar) auto minmax(0, 1fr) var(--status-bar); }
+/* The banner row under the top bar (shell-banner) holds the connection banner
+   and the audition banner; it is empty, and 0 px tall, when neither shows. */
 
 /* ---- connection banner and toasts (m5-ui-connection) */
 .connection-banner {
@@ -87,6 +88,7 @@ code, dd, .mono { font-family: var(--font-mono); }
   pointer-events: auto;
   animation: toast-in var(--toast-motion);
 }
+.toast-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .toast-close { min-height: 0; padding: 0 var(--space); background: transparent; border: 0; color: var(--tx-2); }
 @keyframes toast-in {
   from { transform: translateY(12px); opacity: 0; }
@@ -272,22 +274,88 @@ code, dd, .mono { font-family: var(--font-mono); }
 .strip-buttons button[aria-pressed=true] { background: var(--solo); color: #000; }
 .strip-buttons button[data-testid^="mute-"][aria-pressed=true] { background: var(--mute); }
 
-/* ---- the right zone: plans */
-.plan-review h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); }
-.plan-list { display: grid; gap: 4px; justify-items: start; list-style: none; margin: 0 0 12px; padding: 0; }
-.plan-list button[aria-pressed="true"] { outline: 2px solid var(--select); }
-.plan-state { font-size: var(--fs-small); padding: 1px 6px; border-radius: 8px; background: var(--bg-5); }
-.plan-heard { font-family: var(--font-mono); }
-.plan-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
-.plan-actions label { white-space: nowrap; }
-.plan-error { color: var(--err); min-height: 1.2em; }
+/* ---- the right zone: plans (m5-ui-plan-panel; UI redesign 4 and P1-5).
+   One filled primary per plan; violet only for what an agent proposes (the
+   banner, the stale and approved-for-audition badges, spec 1.2). */
+.plan-review { display: grid; gap: calc(var(--space) * 2); align-content: start; }
+.plan-none { margin: 0; color: var(--tx-3); }
+.hearing-switch { display: flex; align-items: center; gap: var(--space); }
+.hearing-label { color: var(--tx-3); font-size: var(--fs-small); margin-right: var(--space); }
+.hearing-switch button[aria-pressed="true"] { background: var(--ai-dim); border-color: var(--ai); color: var(--ai-2); }
+.hearing-switch button[data-testid="hear-main"][aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); color: var(--tx-1); }
+.plan-list { display: grid; gap: calc(var(--space) * 1.5); list-style: none; margin: 0; padding: 0; }
+.plan-card {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: var(--bg-2);
+  border-radius: var(--radius-l);
+}
+.plan-card[aria-pressed="true"] { outline: 2px solid var(--select); outline-offset: -1px; background: var(--bg-3); }
+.plan-card-lead { font-size: var(--fs-plan); font-weight: 600; color: var(--tx-1); }
+.plan-card-meta { display: flex; flex-wrap: wrap; gap: 0 calc(var(--space) * 2); color: var(--tx-3); font-size: var(--fs-small); }
+.plan-card-hash { font-family: var(--font-mono); }
+.plan-card-badges { display: flex; flex-wrap: wrap; gap: var(--space); }
+.plan-card-split, .plan-card-reason, .plan-card-part { font-size: var(--fs-small); color: var(--tx-2); }
+.plan-card-reason::before { content: "“"; }
+.plan-card-reason::after { content: "”"; }
+.badge { font-size: var(--fs-small); padding: 0 6px; border-radius: 8px; background: var(--bg-5); color: var(--tx-2); white-space: nowrap; }
+.badge-needsReview { background: var(--bg-4); color: var(--tx-1); }
+.badge-applied { color: var(--ok); }
+.badge-rejected { color: var(--err); }
+.badge-approvedForAudition, .badge-stale { background: var(--ai-dim); color: var(--ai-2); }
+.plan-detail { display: grid; gap: calc(var(--space) * 2); min-width: 0; margin: calc(var(--space) * 2) 0 calc(var(--space) * 2) calc(var(--space) * 2); }
+.plan-steps-select { display: flex; gap: var(--space); }
+.plan-steps { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.plan-step { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; align-items: start; gap: var(--space); }
+.step-number { color: var(--tx-3); font-variant-numeric: tabular-nums; text-align: right; padding-top: 2px; }
+.step-label { display: flex; gap: var(--space); align-items: start; min-width: 0; }
+.step-text { overflow-wrap: anywhere; }
+.step-raw, .plan-diff-raw code { grid-column: 1 / -1; margin: 0; font-family: var(--font-mono); font-size: var(--fs-small); white-space: pre-wrap; word-break: break-all; color: var(--tx-2); }
+.disclosure { min-height: 0; padding: 0 6px; font-size: var(--fs-small); color: var(--tx-3); background: transparent; }
+.plan-stale-reasons { padding: var(--space) calc(var(--space) * 2); border-left: 2px solid var(--ai); background: var(--ai-dim); }
+.plan-stale-reasons h3 { margin: 0 0 2px; font-size: var(--fs-small); color: var(--ai-2); font-weight: 600; }
+.plan-stale-reasons ul { margin: 0; padding-left: 1.2em; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.plan-actions .plan-note { display: flex; flex-wrap: wrap; gap: var(--space); align-items: center; flex-basis: 100%; }
+.plan-actions .plan-note input { flex: 1 1 8em; min-width: 0; }
+.plan-action.primary { background: var(--tx-1); border-color: var(--tx-1); color: var(--bg-0); font-weight: 600; }
+.plan-action.primary:hover:not(:disabled) { background: var(--tx-2); }
+.plan-action.primary:disabled { background: var(--bg-4); border-color: var(--line-2); color: var(--tx-4); }
+.plan-error { color: var(--err); min-height: 1.2em; margin: 0; }
+.plan-landed, .plan-preview-error { margin: 0; }
 .plan-diff { border-collapse: collapse; font-size: var(--fs-small); }
 .plan-diff td, .plan-diff th { padding: 2px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
 .plan-diff th { white-space: nowrap; color: var(--tx-3); }
 .plan-diff code { word-break: break-all; }
 /* Chinese breaks between any two characters: keep the change kind and stale mark on one line. */
-:root:is(:lang(zh-TW), :lang(zh-CN)) .plan-diff :is(td:nth-child(2), td[data-testid="diff-stale"]) { white-space: nowrap; }
+:root:is(:lang(zh-TW), :lang(zh-CN)) .plan-diff td[data-testid="diff-stale"] { white-space: nowrap; }
 .plan-diff tr[data-stale="true"] { background: color-mix(in srgb, var(--warn) 25%, transparent); }
+.plan-diff { width: 100%; }
+.plan-diff dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space); margin: 2px 0 0; }
+.plan-diff dd { margin: 0; }
+
+/* ---- the audition banner (under the top bar, outside the zones) */
+.shell-banner { min-width: 0; }
+.audition-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space) calc(var(--space) * 2);
+  padding: var(--space) calc(var(--space) * 3);
+  background: var(--ai-dim);
+  border-bottom: 1px solid var(--ai);
+  color: var(--ai-2);
+}
+.audition-banner-text { flex: 1 1 16em; min-width: 0; overflow-wrap: anywhere; }
+.audition-banner .primary { background: var(--tx-1); border-color: var(--tx-1); color: var(--bg-0); font-weight: 600; }
+.audition-banner-error { flex-basis: 100%; color: var(--err); }
+
 .steps { margin: 0; padding-left: 20px; }
 
 /* ---- status bar */

@@ -57,6 +57,8 @@ declare global {
     siannTest?: { timelineHooks?: boolean; languages?: readonly string[] };
     __siannTimeline?: TimelineTestHooks;
     __siannLocale?: LocaleStore;
+    // The toast store, for the fit test to raise a toast per locale.
+    __siannToasts?: ToastStore;
     __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }> };
   }
 }
@@ -111,6 +113,7 @@ if (testHooks) window.__siannClient = { refused: () => client.refused() };
 
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
+if (testHooks) window.__siannToasts = toasts;
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
 
 let endpoint: EngineEndpoint | null = null;
