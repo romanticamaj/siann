@@ -9,14 +9,63 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  ALL_STEPS, cacheRoot, dependencySource, nativeEnv, selectSteps, stepsForPath, stepsForPaths,
+  ALL_STEPS, cacheRoot, dependencySource, nativeEnv, PACKAGE_NATIVE, packageStep, parseArgs, selectSteps, stepsForPath,
+  stepsForPaths,
 } = require('../scripts/check-all');
 
 const none = { desktop: false, gcc: false, app: false, json: false, only: null,
   changed: false, all: false, base: null, plan: false, jobs: null };
 
 test('every step, in run order', () => {
-  assert.deepEqual(ALL_STEPS, ['node', 'native', 'desktop', 'app', 'gcc']);
+  assert.deepEqual(ALL_STEPS, ['node', 'native', 'desktop', 'app', 'package', 'gcc']);
+});
+
+// m5b-package-windows: what goes into the Windows installer runs the package step.
+test('what the installer is built from runs the package step', () => {
+  for (const file of ['app/electron-builder.json', 'app/package.json', 'app/package-lock.json',
+    'app/build/licenses/AGPL-3.0.txt', 'app/scripts/collect-licenses.js', 'app/src/main/main.ts',
+    'app/src/main/supervisor.ts', 'app/test/e2e/packaged.spec.ts']) {
+    assert.deepEqual(stepsForPaths([file]), ['node', 'app', 'package'], file);
+  }
+  for (const file of ['scripts/run-app.js', 'scripts/pe-imports.js', 'test/package/licences.test.js',
+    'test/package/imports.test.js']) {
+    assert.deepEqual(stepsForPaths([file]), ['node', 'package'], file);
+  }
+  for (const file of ['native/apps/engine/src/main.cpp', 'native/CMakePresets.json', 'native/cmake/SiannJuce.cmake',
+    'native/libs/host_desktop/src/juce_plugin_host.cpp', 'native/libs/graph/CMakeLists.txt']) {
+    assert.ok(stepsForPath(file).includes('package'), file);
+  }
+});
+
+// The shipped engine links the CRT statically: its crash tests (no dialog, exit code 3;
+// spec, "Process model", Crash) run in that configuration before the installer is built.
+test('the package step builds the desktop-release engine and runs its crash tests', () => {
+  const commands = PACKAGE_NATIVE.map(([tool, args]) => [tool, ...args].join(' '));
+  assert.equal(commands[0], 'cmake --preset desktop-release');
+  const build = commands.find((c) => c.startsWith('cmake --build --preset desktop-release --target '));
+  assert.ok(build, commands.join('\n'));
+  for (const target of ['siann-engine', 'siann_engine_host_tests', 'siann_engine_launch_tests', 'siann_host_clap_tests']) {
+    assert.ok(build.split(' ').includes(target), target);
+  }
+  assert.ok(commands.indexOf('ctest --preset desktop-release -R crash') > commands.indexOf(build), commands.join('\n'));
+});
+
+test('the package step reports skipped off Windows and runs nothing there', async () => {
+  for (const platform of ['darwin', 'linux']) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await packageStep({ platform, run: () => { throw new Error('ran a command'); } });
+    assert.equal(result.ok, true, platform);
+    assert.match(result.note, /skipped/, platform);
+  }
+  assert.deepEqual(parseArgs(['--only', 'package']).only, 'package');
+});
+
+test('docs, prose, the renderer and the core never run the package step', () => {
+  for (const file of ['docs/harness/runbook.md', 'README.md', 'app/README.md', 'docs/adr/0017-x.md',
+    'app/src/renderer/App.tsx', 'app/test/e2e/editor.spec.ts', 'native/libs/graph/src/graph.cpp',
+    'test/run-app.test.js', '.github/workflows/ci.yml']) {
+    assert.ok(!stepsForPath(file).includes('package'), file);
+  }
 });
 
 test('docs, prose and agent files run the Node tests only', () => {
@@ -35,7 +84,7 @@ test('the bridge, its scripts, tests and CI files run the Node tests', () => {
 });
 
 test('app/ runs node and the Electron shell', () => {
-  for (const file of ['app/src/renderer/main.ts', 'app/package.json', 'app/test/e2e/editor.spec.ts']) {
+  for (const file of ['app/src/renderer/main.ts', 'app/tsconfig.json', 'app/test/e2e/editor.spec.ts']) {
     assert.deepEqual(stepsForPaths([file]), ['node', 'app'], file);
   }
 });
@@ -47,12 +96,12 @@ test('native/ runs native and g++; the core alone leaves the JUCE preset out', (
   }
 });
 
-test('JUCE, plugin hosting, siann-engine and the build files add the desktop preset', () => {
+test('JUCE, plugin hosting, siann-engine and the build files add the desktop preset and the installer', () => {
   for (const file of ['native/libs/host_desktop/src/juce_plugin_host.cpp', 'native/libs/host_clap/src/clap_host.cpp',
     'native/libs/host_common/include/x.h', 'native/libs/host_api/include/siann/host/plugin.h',
     'native/apps/engine/src/main.cpp', 'native/cmake/SiannJuce.cmake', 'native/cmake/SiannThirdParty.cmake',
     'native/CMakePresets.json', 'native/CMakeLists.txt', 'native/libs/graph/CMakeLists.txt']) {
-    assert.deepEqual(stepsForPaths([file]), ['node', 'native', 'desktop', 'gcc'], file);
+    assert.deepEqual(stepsForPaths([file]), ['node', 'native', 'desktop', 'package', 'gcc'], file);
   }
 });
 
@@ -75,7 +124,8 @@ test('paths add up, Windows separators included, and no change still runs node',
   assert.deepEqual(stepsForPaths([]), ['node']);
   assert.deepEqual(stepsForPaths(['docs/x.md', 'app/src/a.ts', 'native\\libs\\graph\\src\\g.cpp']),
     ['node', 'native', 'app', 'gcc']);
-  assert.deepEqual(stepsForPath('native\\libs\\host_desktop\\src\\x.cpp'), ['node', 'native', 'desktop', 'gcc']);
+  assert.deepEqual(stepsForPath('native\\libs\\host_desktop\\src\\x.cpp'), ['node', 'native', 'desktop', 'package', 'gcc']);
+  assert.deepEqual(stepsForPath('app\\src\\main\\main.ts'), ['node', 'app', 'package']);
 });
 
 test('--changed replaces the default steps; the other flags add to it', () => {

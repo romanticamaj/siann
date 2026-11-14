@@ -261,14 +261,14 @@ test('the changes job picks jobs with check-all --changed and a plain git diff',
   assert.match(text, /node scripts\/check-all\.js --changed --base HEAD\^1 --plan --json/);
   // Everything outside a pull request.
   assert.match(text, /github\.event_name \}\}" = pull_request/);
-  assert.match(text, /"steps":\["node","native","desktop","app","gcc"\]/);
-  for (const output of ['native', 'desktop', 'app']) {
+  assert.match(text, /"steps":\["node","native","desktop","app","package","gcc"\]/);
+  for (const output of ['native', 'desktop', 'app', 'package']) {
     assert.ok(text.includes(`\n      ${output}: \${{ steps.pick.outputs.${output} }}`), output);
   }
 });
 
 test('the build jobs run only when their paths change; Node always runs', () => {
-  const gate = { native: 'native', rtsan: 'native', desktop: 'desktop', app: 'app' };
+  const gate = { native: 'native', rtsan: 'native', desktop: 'desktop', app: 'app', package: 'package' };
   for (const [id, output] of Object.entries(gate)) {
     const { text } = job(id);
     assert.match(text, /\n {4}needs: changes\n/, `${id} needs changes`);
@@ -338,4 +338,64 @@ test('a CI ok job passes only when every job passed or was skipped for its paths
   assert.match(text, /join\(needs\.\*\.result, ' '\)/);
   assert.match(text, /success\|skipped\) ;;/);
   assert.match(text, /exit 1/);
+});
+
+// ---- The Windows installer (m5b-package-windows, acceptances 3 and 7) ----
+
+test('the changes job turns the package step into the package output', () => {
+  const { text } = job('changes');
+  assert.match(text, /package: steps\.has\("package"\)/);
+  // A docs-only change never maps to the package step (stepsForPath; check-all-changed.test.js).
+  const { stepsForPaths } = require('../scripts/check-all');
+  assert.ok(!stepsForPaths(['docs/x.md', 'README.md', '.claude/milestones/M5b.json']).includes('package'));
+});
+
+test('a package job builds the installer on windows-latest, signing nothing and reading no secret', () => {
+  const { text } = job('package');
+  assert.match(text, /\n {4}runs-on: windows-latest\n/);
+  assert.doesNotMatch(text, /secrets\./);
+  assert.doesNotMatch(text, /CSC_LINK|CSC_KEY_PASSWORD|WIN_CSC/);
+  assert.match(text, /CSC_IDENTITY_AUTO_DISCOVERY: ['"]?false['"]?/);
+  // The desktop-release engine (static CRT) is what the installer ships.
+  assert.match(text, /cmake --preset desktop-release/);
+  assert.match(text, /cmake --build --preset desktop-release --target siann-engine/);
+  // Its crash tests, in the static-CRT configuration the installer ships.
+  assert.match(text, /--target siann-engine siann_engine_host_tests siann_engine_launch_tests siann_host_clap_tests/);
+  assert.match(text, /ctest --preset desktop-release -R crash/);
+  assert.match(text, /npm run dist/);
+  assert.match(text, /node --test test\/package\//);
+  assert.match(text, /SIANN_PACKAGE_DIR/);
+});
+
+test('the package job runs the smoke e2e on win-unpacked and on the silently installed app, then uninstalls', () => {
+  const all = steps(job('package'));
+  const index = (re) => all.findIndex((s) => re.test(s));
+  const unpacked = index(/SIANN_PACKAGED_EXE[^\n]*win-unpacked/);
+  const install = index(/\/S[^\n]*\/D=/);
+  const installed = all.findIndex((s, i) => i > install && /SIANN_PACKAGED_EXE/.test(s) && /playwright test --project packaged/.test(s));
+  const uninstall = index(/Uninstall SIANN\.exe[^\n]*\/S/);
+  assert.ok(unpacked >= 0, 'the smoke run on win-unpacked');
+  assert.match(all[unpacked], /playwright test --project packaged/);
+  assert.match(all[unpacked], /SIANN_EXPECT_COMMIT/);
+  assert.ok(install > unpacked, 'a silent install into a directory of its own');
+  assert.ok(installed > install, 'the smoke run on the installed app');
+  assert.match(all[installed], /SIANN_EXPECT_COMMIT/);
+  assert.ok(uninstall > installed, 'a silent uninstall');
+  // The uninstaller removes what it installed.
+  assert.match(all.slice(uninstall).join('\n'), /Test-Path/);
+});
+
+test('the package job uploads the installer with its SHA-256', () => {
+  const all = steps(job('package'));
+  const hash = all.find((s) => /Get-FileHash|certutil/.test(s));
+  assert.ok(hash, 'a step hashes the installer');
+  assert.match(hash, /\.sha256/);
+  const upload = all.find((s) => /actions\/upload-artifact@v4/.test(s) && /SIANN-Setup/.test(s));
+  assert.ok(upload, 'an upload of the installer');
+  assert.match(upload, /\.sha256/);
+});
+
+test('ci-ok waits for the package job', () => {
+  const { text } = job('ci-ok');
+  assert.match(text, /needs: \[[^\]]*\bpackage\b[^\]]*\]/);
 });

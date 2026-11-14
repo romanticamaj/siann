@@ -78,7 +78,9 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
 // SEM_NOGPFAULTERRORBOX to the process's error mode (keeping the flags already
 // set) and clears _WRITE_ABORT_MSG and _CALL_REPORTFAULT from the CRT's abort
 // behaviour, so a plugin's crash ends the process at once and the shell restarts
-// it. main() calls it first, before any plugin loads. Elsewhere it does nothing.
+// it. With a statically linked CRT (desktop-release) it clears those flags in the
+// shared Universal CRT (ucrtbase.dll) as well, the one a DLL-CRT plugin aborts
+// through. main() calls it first, before any plugin loads. Elsewhere it does nothing.
 void disableCrashDialogs();
 
 }  // namespace siann::engine_app

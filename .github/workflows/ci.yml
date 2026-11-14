@@ -37,6 +37,7 @@ jobs:
       native: ${{ steps.pick.outputs.native }}
       desktop: ${{ steps.pick.outputs.desktop }}
       app: ${{ steps.pick.outputs.app }}
+      package: ${{ steps.pick.outputs.package }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,7 +50,7 @@ jobs:
           if [ "${{ github.event_name }}" = pull_request ]; then
             node scripts/check-all.js --changed --base HEAD^1 --plan --json > "$RUNNER_TEMP/plan.json"
           else
-            echo '{"steps":["node","native","desktop","app","gcc"],"changed":null}' > "$RUNNER_TEMP/plan.json"
+            echo '{"steps":["node","native","desktop","app","package","gcc"],"changed":null}' > "$RUNNER_TEMP/plan.json"
           fi
           cat "$RUNNER_TEMP/plan.json"
           # gcc's CI counterpart is the Linux native job. The desktop job also runs
@@ -60,6 +61,7 @@ jobs:
               native: steps.has("native") || steps.has("gcc"),
               desktop: steps.has("desktop") || steps.has("app"),
               app: steps.has("app"),
+              package: steps.has("package"),
             };
             for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
           ' "$RUNNER_TEMP/plan.json" | tee -a "$GITHUB_OUTPUT"
@@ -397,13 +399,137 @@ jobs:
           path: ${{ runner.temp }}/fidelity
           if-no-files-found: warn
 
+  # The unsigned Windows installer (m5b-package-windows): the desktop-release
+  # siann-engine (Release, JUCE, ASIO, static MSVC runtime) and the NSIS installer
+  # from electron-builder; the package tests over win-unpacked; the packaged e2e
+  # on win-unpacked, then on a silent install into a directory of its own; a
+  # silent uninstall; the installer and its SHA-256 as an artifact (the
+  # installer-hands-on gate downloads it). It reads no secret and signs nothing.
+  package:
+    name: Windows installer
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
+    timeout-minutes: 120
+    runs-on: windows-latest
+    env:
+      electron_config_cache: ${{ github.workspace }}/.electron-cache
+      # electron-builder looks for no certificate; none is given either.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      # As in the desktop job: a cached copy keeps the configure off GitHub's archive endpoint.
+      - name: Cache the JUCE archive
+        uses: actions/cache@v4
+        with:
+          path: .juce-archive
+          key: juce-be29c81492b6151c8ea8d14c840e1311963b3a83
+      - name: Download the JUCE archive
+        shell: bash
+        run: |
+          mkdir -p .juce-archive
+          if [ ! -s .juce-archive/juce.tar.gz ]; then
+            curl -fL --retry 6 --retry-all-errors --retry-delay 20 -o .juce-archive/juce.tar.gz https://github.com/juce-framework/JUCE/archive/be29c81492b6151c8ea8d14c840e1311963b3a83.tar.gz
+          fi
+          echo "JUCE_ARCHIVE=$(pwd -W)/.juce-archive/juce.tar.gz" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: package
+      - name: Build the desktop-release siann-engine
+        working-directory: native
+        run: |
+          cmake --preset desktop-release "-DSIANN_JUCE_ARCHIVE=${{ env.JUCE_ARCHIVE }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset desktop-release --target siann-engine siann_engine_host_tests siann_engine_launch_tests siann_host_clap_tests
+      # The shipped engine links the CRT statically: a plugin's abort() still ends it with
+      # exit code 3 and no dialog (spec, "Process model", Crash).
+      - name: Crash tests of the desktop-release engine
+        working-directory: native
+        run: ctest --preset desktop-release -R crash
+      # GitHub's release downloads answer 504 at times: keep Electron's zip in the cache.
+      - name: Cache the Electron download
+        uses: actions/cache@v4
+        with:
+          path: .electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+      - name: Install app dependencies
+        working-directory: app
+        shell: bash
+        run: |
+          ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+          for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
+      - name: Build the installer
+        working-directory: app
+        run: npm run dist
+      - name: Package tests (licences, PE imports)
+        env:
+          SIANN_PACKAGE_DIR: ${{ github.workspace }}\app\release\win-unpacked
+        run: node --test test/package/*.test.js
+      - name: Smoke run on win-unpacked
+        working-directory: app
+        run: |
+          $env:SIANN_PACKAGED_EXE = "$PWD\release\win-unpacked\SIANN.exe"; $env:SIANN_EXPECT_COMMIT = (git rev-parse HEAD)
+          npx playwright test --project packaged
+      - name: Install silently
+        run: |
+          $installer = Get-ChildItem app/release/SIANN-Setup-*-x64.exe | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP 'siann-installed'
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$dir" -Wait
+          if (-not (Test-Path (Join-Path $dir 'SIANN.exe'))) { throw "the installer left no SIANN.exe in $dir" }
+          if (-not (Test-Path (Join-Path $dir 'resources\siann-engine.exe'))) { throw 'the installed app has no engine' }
+          "SIANN_INSTALL_DIR=$dir" >> $env:GITHUB_ENV
+      - name: Smoke run on the installed app
+        working-directory: app
+        run: |
+          $env:SIANN_PACKAGED_EXE = "$env:SIANN_INSTALL_DIR\SIANN.exe"; $env:SIANN_EXPECT_COMMIT = (git rev-parse HEAD)
+          npx playwright test --project packaged
+      - name: Uninstall silently
+        run: |
+          Start-Process -FilePath (Join-Path $env:SIANN_INSTALL_DIR 'Uninstall SIANN.exe') -ArgumentList '/S' -Wait
+          # The NSIS uninstaller runs on from a copy of itself: wait for it to finish.
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Test-Path (Join-Path $env:SIANN_INSTALL_DIR 'SIANN.exe')) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+          if (Test-Path (Join-Path $env:SIANN_INSTALL_DIR 'SIANN.exe')) { throw 'the uninstaller left SIANN.exe behind' }
+      - name: SHA-256 of the installer
+        run: |
+          $installer = Get-ChildItem app/release/SIANN-Setup-*-x64.exe | Select-Object -First 1
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLower()
+          [IO.File]::WriteAllText("$($installer.FullName).sha256", "$hash  $($installer.Name)`n")
+          Get-Content "$($installer.FullName).sha256"
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SIANN-Setup-windows-x64
+          path: |
+            app/release/SIANN-Setup-*-x64.exe
+            app/release/SIANN-Setup-*-x64.exe.sha256
+          if-no-files-found: error
+      - name: Keep the Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-test-results
+          path: app/test-results
+          if-no-files-found: ignore
+      - name: Compiler cache statistics
+        if: always()
+        shell: bash
+        run: sccache --show-stats 2>/dev/null || true
+
   # The one check to require: passes when every job above passed or was skipped
   # because its paths did not change. A skipped matrix job reports under its
   # unexpanded name, so the per-OS checks cannot be required on their own.
   ci-ok:
     name: CI ok
     if: always()
-    needs: [changes, node, native, rtsan, desktop, app]
+    needs: [changes, node, native, rtsan, desktop, app, package]
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:

@@ -4,6 +4,8 @@
   "private": true,
   "description": "SIANN desktop shell: Electron app that spawns and supervises siann-engine",
   "license": "GPL-2.0-or-later",
+  "author": "SIANN contributors",
+  "homepage": "https://github.com/romanticamaj/siann",
   "type": "commonjs",
   "main": "dist/src/main/main.js",
   "engines": {
@@ -13,7 +15,8 @@
     "build": "tsc -p . && node scripts/bundle-renderer.js",
     "test:unit": "node --test dist/test/unit/*.test.js",
     "test:e2e": "playwright test",
-    "test": "npm run test:unit && npm run test:e2e"
+    "test": "npm run test:unit && npm run test:e2e",
+    "dist": "npm run build && node scripts/collect-licenses.js && electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
@@ -21,6 +24,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "electron": "44.9.3",
+    "electron-builder": "26.18.0",
     "esbuild": "0.28.2",
     "typescript": "5.9.3"
   },

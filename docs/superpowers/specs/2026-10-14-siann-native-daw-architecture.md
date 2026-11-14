@@ -399,7 +399,18 @@ years. Milestones are designed so that something useful exists at every stage.
   `SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)` and
   `_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT)` before any plugin
   loads, so a plugin crash ends the process at once instead of waiting on a WER or
-  CRT dialog until the shell's kill path (m4-crash-recovery). A crash before a live
+  CRT dialog until the shell's kill path (m4-crash-recovery). The abort flags live
+  in each CRT: a plugin linked against the shared CRT aborts through the Universal
+  CRT (`ucrtbase.dll`), whose flags are the engine's own only when the engine links
+  the shared CRT too. The installer's engine links it statically (the
+  `desktop-release` preset, "Build, test and CI"), so `main()` there also clears
+  `_WRITE_ABORT_MSG` and `_CALL_REPORTFAULT` in `ucrtbase.dll` (and `ucrtbased.dll`
+  where present), through `GetProcAddress`, before any plugin loads; the engine still
+  imports no Visual C++ runtime. A plugin that links its own static CRT keeps flags no
+  host reaches, in either configuration: its `abort()` may show the CRT's box or fast
+  fail, and only the error mode (which is per process) still applies to it. The
+  package step and the package job run the crash tests against the `desktop-release`
+  build. A crash before a live
   parameter change is captured leaves the last durable revision, so the relaunched
   engine never re-runs the change that crashed the plugin ("Gestures", Protocol v0
   item 20). Decided by Fable, delegated by the maintainer, 2026-11-08.
@@ -2061,7 +2072,10 @@ with `process()` on a realtime-marked thread:
    writes one line to stderr with `GetErrorMode()` and the CRT's abort flags as
    they were when its entry was initialized (`siann_hostile_plugin: crash; at load
    errorMode 0x<hex> abortBehavior 0x<hex>`), so the engine launch tests check
-   that `main()` turned the dialogs off before the plugin loaded. The parameter is reached through the live path only
+   that `main()` turned the dialogs off before the plugin loaded. The plugin links
+   the shared CRT in every preset (`MSVC_RUNTIME_LIBRARY` `MultiThreaded[Debug]DLL`,
+   also in the static-CRT `desktop-release`), so those flags are the Universal
+   CRT's, which an engine with either CRT turns off ("Process model", Crash). The parameter is reached through the live path only
    (`plugin.set_parameter`, Protocol v0 item 20); the plugin leaves it out of
    `state.save` and ignores it in `state.load`, so a restored blob never crashes
    again and the relaunched engine plays the recovered session. Nothing in the
@@ -2997,7 +3011,7 @@ before adoption, including transitive dependencies.
 | DAWproject | pugixml + miniz | MIT |
 | Build / packages | CMake + vcpkg or CPM | — |
 | Tests | Catch2 or GoogleTest; pluginval for hosting tests | BSL-1.0 / BSD; GPL tool, not linked |
-| Desktop shell | Electron + Electron Forge or electron-builder | MIT |
+| Desktop shell | Electron; packaged by electron-builder 26.18.0 (pinned by m5b-package-windows; NSIS installer, unsigned) | MIT |
 | Electron shell tests | Playwright (`@playwright/test`, Electron driver), pinned | Apache-2.0 |
 | Frontend language | TypeScript, pinned | Apache-2.0 |
 | Frontend framework and bundler | React 19 with react-dom, esbuild, pinned by `m5-read-model` (ADR-0019) | MIT |
@@ -3036,6 +3050,49 @@ Not used: Taskflow (allocates at runtime).
   core-only `siann-engine` target, runs `npm ci` and the Playwright Electron tests
   in `app/` with `SIANN_ENGINE_EXE` pointing at the built engine; locally
   `node scripts/check-all.js --app` runs the same after the native step.
+- `npm run app` at the repository root (`scripts/run-app.js`, Node built-ins only)
+  starts the app from a source checkout: `npm ci` in `app/` when its
+  dependencies are missing or older than `app/package-lock.json`, `npm run build`,
+  the Debug `desktop` preset's `siann-engine` when it is missing (configured and
+  built as `scripts/check-all.js` does, through `native/tools/msvc-env.cmd` on
+  Windows), then Electron with `SIANN_ENGINE_EXE` pointing at it.
+  `npm run app -- --plan` prints the steps and runs nothing.
+- The Windows installer ships the `siann-engine.exe` of the `desktop-release`
+  preset (Release, JUCE with ASIO, `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`),
+  not the Debug `desktop` preset's: a Debug build links the debug CRT
+  (`MSVCP140D.dll`, `VCRUNTIME140D.dll`, `ucrtbased.dll`), which Microsoft does
+  not license for redistribution, and a dynamically linked Release build needs
+  the Visual C++ runtime the user would have to install. The static CRT leaves
+  only Windows system DLLs among the engine's imports. It also leaves the engine's
+  `_set_abort_behavior` in its own CRT copy, so `main()` clears the abort flags in
+  the shared Universal CRT as well ("Process model", Crash); the `desktop-release`
+  crash tests (`ctest --preset desktop-release -R crash`) prove a plugin's
+  `abort()` still ends the engine with exit code 3 and no dialog.
+- A Windows `package` job (pushes to main, workflow_dispatch, and pull requests
+  whose paths `stepsForPath` maps to the `package` step: `app/package.json`,
+  `app/package-lock.json`, the electron-builder configuration and `app/build/`,
+  `app/src/main/`, `native/apps/engine/`, `native/libs/host_*`, `native/cmake/`,
+  CMake files, `scripts/run-app.js` and the package tests) builds the
+  `desktop-release` engine with its crash tests and the NSIS installer with
+  electron-builder, runs the package tests, installs silently, repeats the smoke run, uninstalls, and
+  uploads the installer with its SHA-256. It reads no secret and signs nothing.
+  Locally `node scripts/check-all.js --only package` does the same up to the
+  installer (the step reports skipped off Windows); the steps run in the order
+  node, native, desktop, app, package, gcc.
+- The installer carries the licence text of everything third-party it ships, in
+  `resources/licenses` (gathered by `app/scripts/collect-licenses.js`): AGPL-3.0
+  for the package as a whole (also the installer's licence page) and GPL-2.0 for
+  SIANN's own sources; for the engine, JUCE's licence, the ASIO and VST3 SDK
+  notices, CLAP, IXWebSocket, r8brain and dr_libs; for the renderer, the OFL
+  texts of Inter and JetBrains Mono and the MIT notice of every npm package
+  `app/package-lock.json` installs for run time (React, react-dom, its
+  scheduler, react-resizable-panels; esbuild bundles them into `app.asar`), as
+  `<package>-LICENSE.txt`. Electron's `LICENSE.electron.txt` and
+  `LICENSES.chromium.html` sit beside `SIANN.exe`. electron-builder's
+  `elevate.exe` is not packed (`nsis.packElevateHelper` false: the per-user
+  install has no updater and never elevates), so the package holds no
+  executable but `SIANN.exe` and `siann-engine.exe`. The package tests check the
+  list, the npm part against the lock file.
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
   manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
