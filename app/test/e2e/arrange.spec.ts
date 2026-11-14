@@ -277,6 +277,19 @@ test('the track list shows each track, clips are never under it, double-click re
     await expect(page.getByTestId(`track-pan-${row.id}`)).toHaveText(row.pan);
     await expect(page.getByTestId(`track-meter-${row.id}`)).toBeVisible();
   }
+  // The mini meters are one canvas for the column (UI spec 5.1), not one per
+  // header, and it spans every header's meter cell.
+  const trackList = page.getByTestId('track-list');
+  await expect(trackList.locator('canvas')).toHaveCount(1);
+  await expect(trackList.getByTestId('track-meters')).toBeVisible();
+  const metersBox = await box('track-meters');
+  for (const row of expected) {
+    const cell = await box(`track-meter-${row.id}`);
+    expect(cell.x + cell.width / 2).toBeGreaterThanOrEqual(metersBox.x);
+    expect(cell.x + cell.width / 2).toBeLessThanOrEqual(metersBox.x + metersBox.width);
+    expect(cell.y).toBeGreaterThanOrEqual(metersBox.y - 1);
+    expect(cell.y + cell.height).toBeLessThanOrEqual(metersBox.y + metersBox.height + 1);
+  }
   // Scroll so the clip starts left of the canvas: it is cut at the canvas's
   // edge, which is right of the track list, never drawn under it.
   const canvas = await box('timeline-canvas');
@@ -457,6 +470,15 @@ test('H, G, Ctrl+wheel and a drag in the ruler\'s lower half zoom about the poin
   await page.keyboard.up('Shift');
   await page.keyboard.up('Control');
   await expect.poll(height).toBeGreaterThan(h2);
+  // A real mouse on Windows and Linux: Chromium turns a vertical wheel with
+  // Shift held into deltaX (CDP does not apply that swap, so send it as such).
+  const h3 = await height();
+  await page.keyboard.down('Control');
+  await page.keyboard.down('Shift');
+  await page.mouse.wheel(100, 0);
+  await page.keyboard.up('Shift');
+  await page.keyboard.up('Control');
+  await expect.poll(height).toBeLessThan(h3);
   expect((await view()).framesPerPixel).toBe(before.framesPerPixel);
   expect((await view()).scrollFrames).toBe(before.scrollFrames);
   await pageStill('heights');
@@ -555,6 +577,14 @@ test('while playing with no edits the content layer is not redrawn and the overl
   const overlay = await hook<number>('overlayDraws');
   await expect.poll(async () => hook<number>('overlayDraws'), { timeout: 20_000 }).toBeGreaterThan(overlay + 20);
   expect(await hook<number>('contentDraws')).toBe(content);
+  // The track's mini meter draws the engine's meter frames and lights while
+  // the square wave plays.
+  const meters = page.getByTestId('track-meters');
+  const drawnFrames = async () => Number((await meters.getAttribute('data-frames')) ?? '0');
+  await expect.poll(drawnFrames).toBeGreaterThan(0);
+  const firstDrawn = await drawnFrames();
+  await expect.poll(drawnFrames).toBeGreaterThan(firstDrawn);
+  await expect.poll(async () => Number((await meters.getAttribute('data-lit')) ?? '0')).toBeGreaterThan(0);
   await engine.call('transport.stop');
   engine.close();
 });

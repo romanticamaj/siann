@@ -201,11 +201,25 @@ test('the wheel: Ctrl zooms at the pointer, Shift scrolls horizontally, Ctrl+Shi
   assert.equal(hooks.view().framesPerPixel, zoomed.framesPerPixel);
   assert.equal(BigInt(hooks.view().scrollFrames), BigInt(zoomed.scrollFrames) + BigInt(Math.round(50 * zoomed.framesPerPixel)));
   assert.equal(hooks.view().scrollY, 0);
+  const scrolledFrames = hooks.view().scrollFrames;
 
-  const heights = surface.fire('wheel', { deltaY: -100, ctrlKey: true, shiftKey: true });
+  const heights =surface.fire('wheel', { deltaY: -100, ctrlKey: true, shiftKey: true });
   assert.equal(heights.defaultPrevented, true);
   assert.deepEqual(heightChanges, [[tall.trackOrder, 64]]);
   assert.equal(hooks.view().framesPerPixel, zoomed.framesPerPixel, 'heights only');
+
+  // Chromium on Windows and Linux turns a vertical wheel with Shift held into
+  // deltaX (deltaY = 0): Ctrl+Shift+wheel must still change the heights.
+  const swappedUp = surface.fire('wheel', { deltaX: -100, deltaY: 0, ctrlKey: true, shiftKey: true });
+  assert.equal(swappedUp.defaultPrevented, true);
+  assert.equal(heightChanges.length, 2, 'a Shift-swapped wheel up changes the heights');
+  assert.deepEqual(heightChanges[1], heightChanges[0], 'the same step as an unswapped wheel up');
+  const swappedDown = surface.fire('wheel', { deltaX: 100, deltaY: 0, ctrlKey: true, shiftKey: true });
+  assert.equal(swappedDown.defaultPrevented, true);
+  assert.equal(heightChanges.length, 3, 'a Shift-swapped wheel down changes the heights');
+  assert.ok(heightChanges[2]![1] < heightChanges[1]![1], `shorter: ${heightChanges[2]![1]}`);
+  assert.equal(hooks.view().framesPerPixel, zoomed.framesPerPixel, 'heights only');
+  assert.equal(hooks.view().scrollFrames, scrolledFrames, 'no horizontal scroll');
 
   // 8 lanes of 53 px under a 300 px view: the lanes scroll.
   const lanes = surface.fire('wheel', { deltaY: 60 });
