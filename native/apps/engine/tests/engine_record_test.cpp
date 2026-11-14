@@ -911,7 +911,10 @@ TEST_CASE("removing or re-routing a track being recorded is refused while record
     CHECK(rig.host->recordState().recording);
 
     // What leaves the recorded tracks and their inputs as they are goes through.
+    // A block after each commit acknowledges its graph: two commits in a row with
+    // no block between can outlast the driver's ack watchdog on a slow machine.
     rig.exec(R"({"op":"track.rename","trackId":"trk_mono","name":"Vox"})");
+    rig.pump(1);
     rig.exec(R"({"op":"track.remove","trackId":"trk_dry"})");
     CHECK(rig.revisions() == before + 2);
     rig.pump(4);
