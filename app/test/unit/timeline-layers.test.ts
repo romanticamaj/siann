@@ -17,7 +17,7 @@ import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
 import { xToFrame } from '../../src/renderer/timeline/geometry';
-import { TimelineCanvas, type PlayheadSource, type LaneHeightSource } from '../../src/renderer/timeline/TimelineCanvas';
+import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type PlayheadSource, type LaneHeightSource } from '../../src/renderer/timeline/TimelineCanvas';
 import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
 import { sampleSnapshot, snapshotOf, track } from './support/timeline';
 
@@ -386,7 +386,7 @@ test('a press and release in the ruler\'s lower half locates once; a vertical dr
   timeline.zoomIn();
   flushFrames();
   const view = hooks.view();
-  // The lower half of the 32 px ruler: y in [16, 32).
+  // The lower half of the ruler: y in [RULER_UPPER, RULER_HEIGHT), [18, 40).
   surface.fire('pointerdown', { clientX: 250, clientY: 24 });
   surface.fire('pointermove', { clientX: 251, clientY: 25 });
   surface.fire('pointerup', { clientX: 251, clientY: 25 });
@@ -417,6 +417,30 @@ test('a press and release in the ruler\'s lower half locates once; a vertical dr
   start.surface.fire('pointerup', { clientX: 0, clientY: 24 });
   assert.deepEqual(start.located, ['0']);
   start.timeline.destroy();
+});
+
+// UI redesign spec 3.2: the ruler's halves are 18 and 22 px (RULER_UPPER and
+// RULER_LOWER), not two halves of its height: the press and the pointer
+// switch at the upper half's height.
+test("the ruler switches from the locators' half to the cursor's at RULER_UPPER, not at half the height", () => {
+  const { surface, hooks, timeline, located } = make();
+  assert.equal(hooks.view().rulerHeight, RULER_HEIGHT);
+  assert.notEqual(RULER_UPPER, RULER_HEIGHT / 2);
+  const move = (y: number) => {
+    surface.fire('pointermove', { clientX: 200, clientY: y });
+    return surface.overlay.style.cursor;
+  };
+  assert.equal(move(RULER_UPPER - 1), 'default', "the locators' half");
+  assert.equal(move(RULER_UPPER), 'ns-resize', "the cursor's half starts at RULER_UPPER");
+  assert.equal(move(RULER_HEIGHT / 2 - 1), 'ns-resize');
+  assert.equal(move(RULER_HEIGHT - 1), 'ns-resize');
+  surface.fire('pointerdown', { clientX: 200, clientY: RULER_UPPER - 1 });
+  surface.fire('pointerup', { clientX: 200, clientY: RULER_UPPER - 1 });
+  assert.deepEqual(located, [], "a press in the locators' half does not locate");
+  surface.fire('pointerdown', { clientX: 200, clientY: RULER_UPPER });
+  surface.fire('pointerup', { clientX: 200, clientY: RULER_UPPER });
+  assert.equal(located.length, 1, 'a press at RULER_UPPER locates');
+  timeline.destroy();
 });
 
 // UI redesign spec 3.1, "Set the cursor": Shift+Alt-click in the event

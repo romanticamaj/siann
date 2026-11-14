@@ -19,6 +19,8 @@ import {
 import { chooseRulerStep, rulerMarks, RULER_MIN_LABEL_PX } from '../../src/renderer/timeline/ruler';
 import type { TempoPoint } from '../../src/renderer/model/document';
 import type { Viewport } from '../../src/renderer/timeline/geometry';
+import { RULER_HEIGHT, RULER_LOWER, RULER_UPPER } from '../../src/renderer/timeline/TimelineCanvas';
+import { TOKENS } from '../../src/renderer/tokens';
 
 const RATE = 48000;
 const T120: readonly TempoPoint[] = [{ ticks: '0', milliBpm: 120000 }];
@@ -88,7 +90,7 @@ test('the subdivision gets finer as the frames per pixel fall, labels at least t
 });
 
 test('the marks across a view are bar numbers, then beats and subdivisions zoomed in', () => {
-  const view: Viewport = { framesPerPixel: 1000, scrollFrames: '0', rulerHeight: 32, laneHeight: 53, width: 400, height: 300, scrollY: 0 };
+  const view: Viewport = { framesPerPixel: 1000, scrollFrames: '0', rulerHeight: RULER_HEIGHT, laneHeight: 53, width: 400, height: 300, scrollY: 0 };
   const bars = rulerMarks(view, T120, RATE);
   // A bar is 96 px: bars 1-5 at 0, 96, 192, 288, 384.
   assert.deepEqual(bars.map((m) => m.label), ['1', '2', '3', '4', '5']);
@@ -103,4 +105,15 @@ test('the marks across a view are bar numbers, then beats and subdivisions zoome
   const scrolled = rulerMarks({ ...view, scrollFrames: '100000' }, T120, RATE);
   assert.equal(scrolled[0]!.label, '3');
   assert.equal(scrolled[0]!.x, 92);
+});
+
+// UI redesign spec 3.2 and 1.4: the ruler is 40 px, an 18 px locator half
+// above a 22 px cursor half; the canvas takes all three from the tokens
+// (app/renderer/tokens.css --ruler-h, --ruler-upper-h, --ruler-lower-h).
+test("the ruler's height and its two halves are the tokens' values", () => {
+  assert.equal(RULER_HEIGHT, parseFloat(TOKENS['ruler-h']));
+  assert.equal(RULER_UPPER, parseFloat(TOKENS['ruler-upper-h']));
+  assert.equal(RULER_LOWER, parseFloat(TOKENS['ruler-lower-h']));
+  assert.deepEqual([RULER_HEIGHT, RULER_UPPER, RULER_LOWER], [40, 18, 22]);
+  assert.equal(RULER_UPPER + RULER_LOWER, RULER_HEIGHT);
 });

@@ -9,11 +9,17 @@
 //
 //   - mockup.html links tokens.css and every file of app/renderer/ui, has no
 //     <style> and asks the network for nothing;
-//   - the shared rules name tokens for every colour, font size and radius, and
-//     every colour, font size and weight of the mockup's canvas code is the
-//     value of a token;
+//   - the shared rules name a token for every colour and every size: no
+//     literal is left in app/renderer/ui (m5-ui-tokens-spacing, decided by the
+//     maintainer 2026-11-15: every size literal becomes a token, no allowlist);
 //   - every fixed size of the mockup's layout (bars, rows, strips, headers)
-//     equals its token;
+//     is the token the SIZES table names, and four of them carry the values
+//     the redesign spec gives (the mockup wins);
+//   - the mockup's script holds no colour or size literal: it reads the
+//     custom properties of :root through one helper, with names tokens.css
+//     declares;
+//   - new size tokens follow the file's convention for the UI scale, and a
+//     spacing step has one token;
 //   - the renderer's stylesheets and TypeScript hold no colour or size literal
 //     of their own: they name tokens;
 //   - app/src/renderer/tokens.ts, the mirror for canvas code, is the generated
@@ -33,6 +39,7 @@ const { readTokens, resolve, simplify, generate, OUT } = require('../scripts/gen
 const ROOT = path.resolve(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
 const MOCKUP_PATH = ['docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'];
+const MOCKUP_FILE = MOCKUP_PATH.join('/');
 const TOKENS_CSS = read('app', 'renderer', 'tokens.css');
 const MOCKUP = read(...MOCKUP_PATH);
 const MOCKUP_JS = MOCKUP.slice(MOCKUP.indexOf('<script>') + 8, MOCKUP.lastIndexOf('</script>'));
@@ -59,17 +66,7 @@ function colour(text) {
   return null;
 }
 
-// Colours compare as colours, everything else without its spaces.
-function same(a, b) {
-  if (colour(a) !== null || colour(b) !== null) return colour(a) === colour(b);
-  return a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
-}
-
 const COLOUR = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b|rgba?\(\s*[\d.]+\s*[, ][^)$]*\)/g;
-
-function tokenValues(prefix) {
-  return new Set([...tokens.keys()].filter((name) => name.startsWith(prefix)).map(value));
-}
 
 test('the mockup loads the shared stylesheets and nothing else', () => {
   assert.ok(!/<style[\s>]/.test(MOCKUP), 'mockup.html has no <style>: its rules are app/renderer/ui/*.css');
@@ -91,90 +88,87 @@ test('the shared rules name tokens for every colour, font size and radius', () =
     }
   }
   assert.ok(checked > 100, `${checked} font sizes and radii`);
+  // The font shorthand names a weight and a size token.
+  let fonts = 0;
+  for (const m of UI_CSS.matchAll(/[{;]font:\s*([^;}]+)/g)) {
+    assert.match(m[1], /^var\(--fw-[\w-]+\) var\(--fs-[\w-]+\)[ /]/, `font:${m[1]} names a weight and a size token`);
+    fonts += 1;
+  }
+  assert.ok(fonts >= 15, `${fonts} font shorthands`);
   for (const m of UI_CSS.matchAll(/var\(--([\w-]+)\)/g)) {
     // --c is a track's colour, set on the element.
     if (m[1] !== 'c') assert.ok(tokens.has(m[1]), `tokens.css has no --${m[1]}`);
   }
 });
 
-test('every colour, font size and weight of the mockup is the value of a token', () => {
-  const have = new Set([...tokens.keys()].map((name) => colour(value(name))).filter(Boolean));
-  const sizes = tokenValues('fs-');
-  const weights = tokenValues('fw-');
-  const missing = new Set();
-  const colours = MOCKUP_JS.match(COLOUR) || [];
-  assert.ok(colours.length > 60, `${colours.length} colours in the mockup's script`);
-  for (const literal of colours) {
-    const c = colour(literal);
-    assert.ok(c, `unreadable colour ${literal}`);
-    if (!have.has(c)) missing.add(literal);
-  }
-  // The font shorthand `W Npx`, in the rules and in the canvas code.
-  let fonts = 0;
-  for (const m of `${UI_CSS}\n${MOCKUP_JS}`.matchAll(/\b(\d{3}) ([\d.]+px)[ /]/g)) {
-    fonts += 1;
-    if (!weights.has(m[1])) missing.add(`font weight ${m[1]}`);
-    if (!sizes.has(m[2])) missing.add(`font size ${m[2]}`);
-  }
-  assert.ok(fonts >= 15, `${fonts} font shorthands`);
-  for (const m of `${UI_CSS}\n${MOCKUP}`.matchAll(/font-weight:\s*(\d{3})/g)) if (!weights.has(m[1])) missing.add(`font weight ${m[1]}`);
-  for (const m of MOCKUP.matchAll(/font-size:\s*([\d.]+px)/g)) if (!sizes.has(m[1])) missing.add(`font size ${m[1]}`);
-  assert.deepEqual([...missing], [], 'values of the mockup with no token in tokens.css');
-});
-
-// The mockup's fixed sizes and the token each one is: the pattern captures
-// the value in the shared rules.
+// The mockup's fixed sizes and the token each one names: the pattern captures
+// the name of the token the shared rule uses.
+const V = 'var\\(--[\\w-]+\\)';
+const N = 'var\\(--([\\w-]+)\\)';
+const at = (source) => new RegExp(source.replace(/§/g, V).replace(/@/g, N));
 const SIZES = [
-  ['top-bar', /\.app\{[^}]*grid-template-rows:(\d+px)/],
-  ['status-bar', /\.app\{[^}]*grid-template-rows:\d+px minmax\(0,1fr\) (\d+px)/],
-  ['left-zone-w', /\.app\{[^}]*grid-template-columns:(\d+px)/],
-  ['right-zone-w', /\.app\{[^}]*grid-template-columns:\d+px minmax\(0,1fr\) (\d+px)/],
-  ['lower-zone-h', /\.center\{[^}]*grid-template-rows:minmax\(0,1fr\) (\d+px)/],
-  ['toolbar', /\.arrange\{[^}]*grid-template-rows:(\d+px)/],
-  ['info-line', /\.arrange\{[^}]*grid-template-rows:\d+px (\d+px)/],
-  ['track-list-w', /\.arr-body\{[^}]*grid-template-columns:(\d+px)/],
-  ['zone-head', /\.z-head\{height:(\d+px)/],
-  ['zone-tabs', /\.tab\{height:(\d+px)/],
-  ['ruler-h', /\.corner\{height:(\d+px)/],
-  ['marker-h', /\.mk\{height:(\d+px)/],
-  ['track-h', /\.th\{height:(\d+px)/],
-  ['strip-w', /\.strip\{width:(\d+px)/],
-  ['strip-master-w', /\.strip\.master\{width:(\d+px)/],
-  ['ms-h', /\.msr\{width:\d+px;height:(\d+px)/],
-  ['control-h', /\.seg \.b\{height:(\d+px)/],
-  ['transport-h', /\.tbtn\{width:\d+px;height:(\d+px)/],
-  ['display-h', /\.lcd\{[^}]*height:(\d+px)/],
-  ['fader-cap-h', /\.cap\{[^}]*height:(\d+px)/],
-  ['meter-w', /\.meter \.ch\{width:(\d+px)/],
-  ['icon', /svg\.i\{width:(\d+px)/],
-  ['icon-s', /svg\.i\.s\{width:(\d+px)/],
-  ['letter-spacing', /body\{[^}]*letter-spacing:([\d.]+em)/],
-  ['line-height', /body\{font:\d+ \d+px\/([\d.]+) /],
-  ['fs-body', /body\{font:\d+ (\d+px)/],
-  ['fw-ui', /body\{font:(\d+) /],
-  ['focus', /\.arrange::after\{[^}]*border:1px solid var\(--([\w-]+)\)/],
+  ['app-w', at(String.raw`\.app\{width:@`)],
+  ['app-h', at(String.raw`\.app\{[^}]*height:@`)],
+  ['top-bar', at(String.raw`\.app\{[^}]*grid-template-rows:@`)],
+  ['status-bar', at(String.raw`\.app\{[^}]*grid-template-rows:§ minmax\(0,1fr\) @`)],
+  ['left-zone-w', at(String.raw`\.app\{[^}]*grid-template-columns:@`)],
+  ['right-zone-w', at(String.raw`\.app\{[^}]*grid-template-columns:§ minmax\(0,1fr\) @`)],
+  ['lower-zone-h', at(String.raw`\.center\{[^}]*grid-template-rows:minmax\(0,1fr\) @`)],
+  ['toolbar', at(String.raw`\.arrange\{[^}]*grid-template-rows:@`)],
+  ['info-line', at(String.raw`\.arrange\{[^}]*grid-template-rows:§ @`)],
+  ['track-list-w', at(String.raw`\.arr-body\{[^}]*grid-template-columns:@`)],
+  ['zone-head', at(String.raw`\.z-head\{height:@`)],
+  ['zone-head', at(String.raw`\.p-head\{height:@`)],
+  ['zone-tabs', at(String.raw`\.tab\{height:@`)],
+  ['zone-tabs', at(String.raw`\.lower\{[^}]*grid-template-rows:@`)],
+  ['ruler-h', at(String.raw`\.corner\{height:@`)],
+  ['marker-h', at(String.raw`\.mk\{height:@`)],
+  ['track-h', at(String.raw`\.th\{height:@`)],
+  ['strip-w', at(String.raw`\.strip\{width:@`)],
+  ['strip-master-w', at(String.raw`\.strip\.master\{width:@`)],
+  ['ms-h', at(String.raw`\.msr\{width:§;height:@`)],
+  ['control-h', at(String.raw`\.seg \.b\{height:@`)],
+  ['transport-h', at(String.raw`\.tbtn\{width:§;height:@`)],
+  ['display-h', at(String.raw`\.lcd\{[^}]*height:@`)],
+  ['fader-cap-h', at(String.raw`\.cap\{[^}]*height:@`)],
+  ['meter-w', at(String.raw`\.meter \.ch\{width:@`)],
+  ['meter-master-w', at(String.raw`\.strip\.master \.meter \.ch\{width:@`)],
+  ['meter-scale-h', at(String.raw`\.meter \.ch i\{[^}]*background-size:100% @`)],
+  ['status-dot', at(String.raw`\.statusbar \.ok\{width:@`)],
+  ['status-chip-h', at(String.raw`\.statusbar \.loc\{[^}]*height:@`)],
+  ['icon', at(String.raw`svg\.i\{width:@`)],
+  ['icon-s', at(String.raw`svg\.i\.s\{width:@`)],
+  ['letter-spacing', at(String.raw`body\{[^}]*letter-spacing:@`)],
+  ['fs-body', at(String.raw`body\{font:§ @`)],
+  ['fw-ui', at(String.raw`body\{font:@`)],
+  ['hairline', at(String.raw`\.arrange::after\{[^}]*border:@ solid`)],
+  ['focus', at(String.raw`\.arrange::after\{[^}]*border:§ solid @`)],
 ];
 
-test('every fixed size of the mockup equals its token, except the ledger\'s debts', () => {
-  const debts = new Map(DEBT.tokens.map((entry) => [entry.token, entry]));
-  const seen = new Set();
-  for (const [name, at] of SIZES) {
-    const found = at.exec(UI_CSS);
-    assert.ok(found, `the shared rules no longer match ${at} (token ${name})`);
+test('every fixed size of the mockup is the token the table names', () => {
+  for (const [name, pattern] of SIZES) {
+    const found = pattern.exec(UI_CSS);
+    assert.ok(found, `the shared rules no longer match ${pattern} (token ${name})`);
     assert.ok(tokens.has(name), `tokens.css has no --${name}`);
-    // A captured token name stands for its value.
-    const theirs = tokens.has(found[1]) ? value(found[1]) : found[1];
-    const ours = value(name);
-    const debt = debts.get(name);
-    if (debt) {
-      seen.add(name);
-      assert.ok(!same(theirs, ours), `--${name} now equals the mockup: remove it from debt.json`);
-      assert.ok(same(debt.mockup, theirs) && same(debt.app, ours), `debt.json is stale for --${name}: mockup ${theirs}, tokens.css ${ours}`);
-    } else {
-      assert.ok(same(theirs, ours), `--${name}: the mockup has ${theirs}, tokens.css has ${ours}`);
-    }
+    assert.equal(found[1], name, `${pattern} names --${found[1]}, not --${name}`);
   }
-  assert.deepEqual(DEBT.tokens.map((entry) => entry.token).filter((name) => !seen.has(name)), [], 'debt.json names tokens this test does not compare');
+  // The body's line height is a number, not a size: the rule keeps it, and it
+  // equals the token the app's own rules use.
+  const lineHeight = /body\{font:var\(--fw-ui\) var\(--fs-body\)\/([\d.]+) /.exec(UI_CSS);
+  assert.ok(lineHeight, 'the body names its line height');
+  assert.equal(lineHeight[1], value('line-height'));
+});
+
+// UI redesign spec 1.4 and 3.2 (decided by the maintainer, 2026-11-15: the
+// mockup wins): the four values the ledger used to name, from the spec's text.
+test('the ruler, the zone tab rows, the meter slot and the focus frame carry the spec\'s values', () => {
+  assert.equal(value('ruler-h'), '40px');
+  assert.equal(value('ruler-upper-h'), '18px', 'the locators\' half');
+  assert.equal(value('ruler-lower-h'), '22px', 'the cursor\'s half');
+  assert.equal(parseFloat(value('ruler-upper-h')) + parseFloat(value('ruler-lower-h')), parseFloat(value('ruler-h')));
+  assert.equal(value('zone-tabs'), '26px');
+  assert.equal(value('meter-w'), '6px');
+  assert.equal(colour(value('focus')), '232,235,241,0.2');
 });
 
 // ---- the renderer names tokens: no colour or size literal of its own
@@ -195,6 +189,13 @@ function cssLiterals(text) {
     colours: (body.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/g) || []).length,
     sizes: (body.match(/(?<![\w.-])\d*\.?\d+(?:px|em|rem|pt)\b/g) || []).length,
   };
+}
+
+// Negative sizes, which cssLiterals does not count (its lookbehind skips the
+// minus sign); token names (`--space-2`) are not sizes.
+function negativeLiterals(text) {
+  const body = noComments(text).replace(/var\(--[\w-]+\)/g, 'var()');
+  return body.match(/-\d*\.?\d+(?:px|em|rem|pt)\b/g) || [];
 }
 
 // Literals in code: colours and px sizes inside string literals.
@@ -234,6 +235,85 @@ function rendererLiterals() {
   return found;
 }
 
+test('the shared rules hold no size literal, negative ones included', () => {
+  for (const file of UI_FILES) {
+    const text = read('app', 'renderer', 'ui', file);
+    assert.deepEqual(cssLiterals(text), { colours: 0, sizes: 0 }, `app/renderer/ui/${file}: name a token of app/renderer/tokens.css`);
+    assert.deepEqual(negativeLiterals(text), [], `app/renderer/ui/${file}: a negative size is calc(var(--token) * -1)`);
+  }
+});
+
+// The mockup's script reads every colour and size from the custom properties
+// of :root, through one helper (and readers built on it).
+function mockupHelpers() {
+  const READ = 'getComputedStyle(document.documentElement).getPropertyValue';
+  const body = stripComments(MOCKUP_JS);
+  const definitions = body.split(READ).length - 1;
+  const helper = new RegExp(String.raw`const (\w+)=\(?\w+\)?=>getComputedStyle\(document\.documentElement\)\.getPropertyValue`).exec(body);
+  const readers = helper ? [...body.matchAll(new RegExp(String.raw`const (\w+)=\(?\w+\)?=>[^\n]*\b${helper[1]}\(`, 'g'))].map((m) => m[1]) : [];
+  return { body, definitions, helper: helper && helper[1], names: helper ? [helper[1], ...readers] : [] };
+}
+
+test('the mockup\'s script holds no colour or size literal: it reads tokens through one helper', () => {
+  assert.deepEqual(codeLiterals(MOCKUP_JS), { colours: 0, sizes: 0 }, 'colour and px literals in the mockup\'s script');
+  const { body, definitions, helper, names } = mockupHelpers();
+  assert.equal(definitions, 1, 'one helper reads the custom properties of :root');
+  assert.ok(helper, 'the helper is `const <name>=n=>getComputedStyle(document.documentElement).getPropertyValue(...)`');
+  // No em or rem literal in a string either (letter spacing is a token too).
+  for (const m of body.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g)) {
+    assert.deepEqual(m[0].match(/(?<![\w.-])\d*\.?\d+(?:em|rem|pt)\b/g) || [], [], `size literal in ${m[0].slice(0, 80)}`);
+  }
+  let colours = 0;
+  let sizes = 0;
+  const count = (name) => {
+    assert.ok(tokens.has(name), `the mockup reads --${name}, which tokens.css does not declare`);
+    if (colour(value(name))) colours += 1;
+    else if (/^(fs|fw|letter-spacing)/.test(name) || /^-?[\d.]+(px|em)$/.test(value(name))) sizes += 1;
+  };
+  const call = new RegExp(String.raw`\b(${names.join('|')})\(`, 'g');
+  for (const m of body.matchAll(call)) {
+    const rest = body.slice(m.index + m[0].length);
+    // A reader's own definition passes its parameter on.
+    if (/^\w+\)/.test(rest) && new RegExp(String.raw`const \w+=\(?(\w+)\)?=>[^\n]*$`).test(body.slice(0, m.index).split('\n').pop())) continue;
+    const arg = /^'([\w-]+)'\)/.exec(rest);
+    assert.ok(arg, `${m[1]}( is called with a token name: ${rest.slice(0, 40)}`);
+    count(arg[1]);
+  }
+  for (const m of body.matchAll(/var\(--([\w-]+)\)/g)) if (m[1] !== 'c') count(m[1]);
+  // Floors, so an emptied script cannot pass: the 74 colours and the font
+  // sizes, weights and spacings it drew with literals.
+  assert.ok(colours >= 74, `${colours} colour reads`);
+  assert.ok(sizes >= 13, `${sizes} font and size reads`);
+  // Every canvas font names a weight and a size token.
+  const fonts = [...body.matchAll(/\bg\.font=([^;]+);/g)].map((m) => m[1]);
+  assert.ok(fonts.length >= 6, `${fonts.length} canvas fonts`);
+  for (const font of fonts) {
+    assert.match(font, new RegExp(String.raw`^${helper}\('fw-[\w-]+'\)\+' '\+${helper}\('fs-[\w-]+'\)\+`), `g.font=${font}`);
+  }
+});
+
+// New size tokens follow the file's convention for the UI scale: a px size is
+// calc(Npx * var(--scale)). Font sizes, radii and the divider's fixed widths
+// are the families the convention left plain. Letter spacing is in em and so
+// scales with its font. A step of the spacing scale has one token.
+test('size tokens scale with the UI, and a spacing step has one token', () => {
+  const plain = /^(fs|radius|divider)-/;
+  for (const [name, raw] of tokens) {
+    if (/^[\d.]+px$/.test(raw)) assert.ok(plain.test(name), `--${name}: ${raw} is calc(${raw} * var(--scale))`);
+    if (/^calc\(/.test(raw) && /px/.test(raw)) assert.match(raw, /^calc\([\d.]+px \* var\(--scale\)\)$/, `--${name}`);
+    if (/em$/.test(raw)) assert.match(name, /^letter-spacing/, `--${name}: an em token is a letter spacing`);
+  }
+  const steps = new Map();
+  for (const name of tokens.keys()) {
+    if (!/^space(-|$)/.test(name)) continue;
+    const v = value(name);
+    assert.ok(!steps.has(v), `--${name} and --${steps.get(v)} are both ${v}`);
+    steps.set(v, name);
+  }
+  assert.ok(steps.size >= 8, `${steps.size} spacing steps`);
+  for (const n of [1, 2, 3, 4]) assert.ok(steps.has(`${4 * n}px`), `the grid step ${4 * n}px has a token`);
+});
+
 test('the renderer and the mockup hold no colour or size literal beyond the ledger\'s debts', () => {
   const found = rendererLiterals();
   for (const [file, counts] of Object.entries(found)) {
@@ -258,6 +338,7 @@ test('the literal scanners see what they should', () => {
   assert.deepEqual(cssLiterals('@container track-header (min-width: 12.5em) and (max-width: 200px){a{width:var(--x)}}'), { colours: 0, sizes: 0 });
   assert.deepEqual(cssLiterals('@container (max-width: 700px){a{width:320px;color:#fff}}b{margin:2px}'), { colours: 1, sizes: 2 });
   assert.deepEqual(cssLiterals('a{container-type:inline-size;width:200px}'), { colours: 0, sizes: 1 });
+  assert.deepEqual(negativeLiterals('a{top:-5px;margin:0 -1.5em;left:var(--space-2);right:calc(var(--space-1h) * -1)}'), ['-5px', '-1.5em']);
   assert.deepEqual(codeLiterals("const a = '#FF00AA'; // '#000000'\nconst f = `600 10px ${x}`; const n = 10;"), { colours: 1, sizes: 1 });
   assert.deepEqual(codeLiterals('class A { #abc = 1; f() { return this.#abc; } }'), { colours: 0, sizes: 0 });
 });
@@ -265,9 +346,21 @@ test('the literal scanners see what they should', () => {
 test('the debt ledger is owned by a feature of M5', () => {
   const m5 = JSON.parse(read('.claude', 'milestones', 'M5.json'));
   assert.ok(m5.features.some((f) => f.id === DEBT.gate), `${DEBT.gate} is a feature of M5`);
-  for (const entry of DEBT.tokens) assert.ok(entry.token && entry.mockup && entry.app && entry.why, `debt.json token entry ${JSON.stringify(entry)}`);
   for (const entry of DEBT.fonts) assert.ok(entry.family && entry.why, `debt.json font entry ${JSON.stringify(entry)}`);
   assert.ok(!m5.done.includes(DEBT.gate) || (DEBT.tokens.length === 0 && Object.keys(DEBT.literals).length === 0), `${DEBT.gate} is done: debt.json must be empty`);
+});
+
+// m5-ui-tokens-spacing cleared the token entries and the literals of the
+// shared rules and of the mockup; what is left belongs to the alignment
+// features of the regions, and the font entry to m5-ui-alignment-chrome.
+test('the ledger holds no token entry and nothing of the shared rules or the mockup', () => {
+  assert.deepEqual(DEBT.tokens, [], 'every token carries the mockup\'s value');
+  const files = Object.keys(DEBT.literals);
+  assert.deepEqual(files.filter((file) => file.startsWith('app/renderer/ui/')), []);
+  assert.ok(!files.includes(MOCKUP_FILE), 'the mockup\'s script has no literal debt');
+  const left = ['app/renderer/shell.css', 'app/src/renderer/mixer/MixerMeters.ts', 'app/src/renderer/timeline/TimelineCanvas.ts'];
+  assert.deepEqual(files.filter((file) => !left.includes(file)), [], 'what is left belongs to the alignment features');
+  assert.equal(DEBT.fonts.length, 1, 'the JetBrains Mono Medium entry stays until m5-ui-alignment-chrome');
 });
 
 test('tokens.ts is the generated mirror of tokens.css', () => {
