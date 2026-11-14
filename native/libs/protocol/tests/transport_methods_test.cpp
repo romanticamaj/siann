@@ -1,6 +1,8 @@
 // transport.play, transport.stop, transport.locate and engine.status (spec,
 // Protocol v0 item 18, m4-engine-device), engine.devices and
-// engine.select_device (item 22, m5-engine-sessions-devices) through the
+// engine.select_device (item 22, m5-engine-sessions-devices),
+// transport.set_cycle and transport.set_click with transport.changed (item 26,
+// m5-ui-engine-loop-click) through the
 // TransportPort: the server side only, on a fake port. The engine's real port is tested in
 // apps/engine/tests.
 
@@ -47,7 +49,29 @@ public:
         position = frames;
         return state();
     }
-    EngineStatus status() const override { return reported; }
+    TransportState setCycle(bool enabled) override {
+        ++calls;
+        cycleCalls.push_back(enabled);
+        refuseIfAsked();
+        cycle = enabled;
+        return state();
+    }
+    TransportState setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) override {
+        ++calls;
+        clickCalls.emplace_back(enabled, gainMilliDb);
+        refuseIfAsked();
+        click.enabled = enabled;
+        if (gainMilliDb) {
+            click.gainMilliDb = *gainMilliDb;
+        }
+        return state();
+    }
+    EngineStatus status() const override {
+        EngineStatus out = reported;
+        out.cycle = cycle;
+        out.click = click;
+        return out;
+    }
     std::vector<protocol::DeviceDescription> devices() const override {
         ++deviceListings;
         return listed;
@@ -65,11 +89,15 @@ public:
     std::vector<protocol::DeviceDescription> listed;
     bool playing = false;
     std::int64_t position = 1'024;
+    bool cycle = false;
+    protocol::ClickState click;
+    std::vector<bool> cycleCalls;
+    std::vector<std::pair<bool, std::optional<std::int32_t>>> clickCalls;
     std::optional<std::string> refusal;
     EngineStatus reported;
 
 private:
-    TransportState state() const { return TransportState{playing, position}; }
+    TransportState state() const { return TransportState{playing, position, cycle, click}; }
     void refuseIfAsked() const {
         if (refusal) {
             throw TransportPortError(*refusal, "the port refused");
@@ -166,8 +194,9 @@ TEST_CASE("engine.status carries the device and the driver's timing, counts as d
         port.reported.srcUnderruns = 5;
 
         const Value status = f.ok(c, "engine.status");
-        CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "xruns", "maxCallbackMicros",
-                                                      "unmeasuredCallbacks", "underruns", "srcUnderruns"});
+        CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "xruns",
+                                                      "maxCallbackMicros", "unmeasuredCallbacks", "underruns",
+                                                      "srcUnderruns"});
         const Value& device = at(status, "device");
         CHECK(keysOf(device) == std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames",
                                                       "outputLatencyFrames"});
@@ -387,4 +416,219 @@ TEST_CASE("device methods: a duplicate requestId is cached and a stale expectedR
     }
     CHECK(port.selected.size() == 1);
     CHECK(port.deviceListings == 0);
+}
+
+// ---- m5-ui-engine-loop-click (Protocol v0 item 26) -------------------------
+
+namespace {
+
+Value enabled(bool on) {
+    return Value(Object{{"enabled", Value(on)}});
+}
+
+Value clickParams(bool on, double gain) {
+    return Value(Object{{"enabled", Value(on)}, {"gainMilliDb", Value(gain)}});
+}
+
+std::vector<Value> transportEvents(const Harness& f, ConnectionId connection) {
+    std::vector<Value> out;
+    for (Value& event : f.events(connection)) {
+        if (at(event, "type").asString() == "transport.changed") {
+            out.push_back(std::move(event));
+        }
+    }
+    return out;
+}
+
+void checkTransportResult(const Value& result, bool cycle, bool clickOn, double gain) {
+    CHECK(keysOf(result) == std::set<std::string>{"playing", "position", "cycle", "click"});
+    CHECK(at(result, "cycle").asBool() == cycle);
+    CHECK(keysOf(at(result, "click")) == std::set<std::string>{"enabled", "gainMilliDb"});
+    CHECK(at(at(result, "click"), "enabled").asBool() == clickOn);
+    CHECK(at(at(result, "click"), "gainMilliDb").asNumber() == gain);
+}
+
+}  // namespace
+
+TEST_CASE("transport.set_cycle and transport.set_click reach the port and return the transport state",
+          "[protocol][transport][cycle][click]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    const Value cycled = f.ok(c, "transport.set_cycle", enabled(true));
+    checkTransportResult(cycled, true, false, -12'000);
+    CHECK(at(cycled, "position").asString() == "1024");
+    CHECK(port.cycleCalls == std::vector<bool>{true});
+
+    const Value clicked = f.ok(c, "transport.set_click", clickParams(true, -6'000));
+    checkTransportResult(clicked, true, true, -6'000);
+    // gainMilliDb omitted keeps the gain: the port gets nothing for it.
+    const Value off = f.ok(c, "transport.set_click", enabled(false));
+    checkTransportResult(off, true, false, -6'000);
+    REQUIRE(port.clickCalls.size() == 2);
+    CHECK(port.clickCalls[0] == std::pair<bool, std::optional<std::int32_t>>{true, -6'000});
+    CHECK(port.clickCalls[1] == std::pair<bool, std::optional<std::int32_t>>{false, std::nullopt});
+    // The range ends are accepted.
+    checkTransportResult(f.ok(c, "transport.set_click", clickParams(true, -60'000)), true, true, -60'000);
+    checkTransportResult(f.ok(c, "transport.set_click", clickParams(true, 0)), true, true, 0);
+
+    // play, stop and locate carry the same fields.
+    checkTransportResult(f.ok(c, "transport.play"), true, true, 0);
+    checkTransportResult(f.ok(c, "transport.locate", frames("0")), true, true, 0);
+    checkTransportResult(f.ok(c, "transport.stop"), true, true, 0);
+
+    const Value status = f.ok(c, "engine.status");
+    CHECK(at(status, "cycle").asBool());
+    CHECK(at(at(status, "click"), "enabled").asBool());
+    CHECK(at(at(status, "click"), "gainMilliDb").asNumber() == 0);
+}
+
+TEST_CASE("transport.changed goes to every subscribed connection on a real change only",
+          "[protocol][transport][cycle][click]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    const ConnectionId watcher = f.authed(true);
+
+    f.ok(c, "transport.set_cycle", enabled(true));
+    auto events = transportEvents(f, watcher);
+    REQUIRE(events.size() == 1);
+    CHECK(at(events[0], "cycle").asBool());
+    CHECK_FALSE(at(at(events[0], "click"), "enabled").asBool());
+    CHECK(at(at(events[0], "click"), "gainMilliDb").asNumber() == -12'000);
+    CHECK(transportEvents(f, c).size() == 1);  // whoever asked
+
+    f.ok(c, "transport.set_cycle", enabled(true));  // the same value
+    CHECK(transportEvents(f, watcher).size() == 1);
+
+    f.ok(c, "transport.set_click", enabled(true));
+    events = transportEvents(f, watcher);
+    REQUIRE(events.size() == 2);
+    CHECK(at(at(events[1], "click"), "enabled").asBool());
+
+    f.ok(c, "transport.set_click", clickParams(true, -12'000));  // the same again
+    CHECK(transportEvents(f, watcher).size() == 2);
+    f.ok(c, "transport.set_click", clickParams(true, -3'000));  // the gain alone
+    events = transportEvents(f, watcher);
+    REQUIRE(events.size() == 3);
+    CHECK(at(at(events[2], "click"), "gainMilliDb").asNumber() == -3'000);
+
+    f.ok(c, "transport.play");  // play changes neither flag
+    f.ok(c, "transport.set_cycle", enabled(false));
+    events = transportEvents(f, watcher);
+    REQUIRE(events.size() == 4);
+    CHECK_FALSE(at(events[3], "cycle").asBool());
+    // No revision: no session.changed with them.
+    for (const Value& event : f.events(watcher)) {
+        CHECK(at(event, "type").asString() != "session.changed");
+    }
+}
+
+TEST_CASE("cycle and click create no revision", "[protocol][transport][cycle][click]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::string head = f.head().envelope.id;
+    const std::size_t revisions = f.session.history().revisions().size();
+    f.ok(c, "transport.set_cycle", enabled(true));
+    f.ok(c, "transport.set_click", clickParams(true, -1'000));
+    f.ok(c, "transport.set_cycle", enabled(false));
+    f.ok(c, "transport.set_click", enabled(false));
+    CHECK(f.head().envelope.id == head);
+    CHECK(f.session.history().revisions().size() == revisions);
+    CHECK(at(f.ok(c, "session.inspect"), "revision").asString() == head);
+}
+
+TEST_CASE("transport.set_cycle and set_click refuse bad params before the port", "[protocol][transport][cycle][click]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::vector<Value> badCycle = {Value(Object{}), Value(Object{{"enabled", Value(1)}}),
+                                         Value(Object{{"enabled", Value("true")}}),
+                                         Value(Object{{"enabled", Value(nullptr)}})};
+    for (const Value& params : badCycle) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "transport.set_cycle", params)) == "invalid_params");
+        CHECK(errorCode(f.call(c, "transport.set_click", params)) == "invalid_params");
+    }
+    const std::vector<Value> badGain = {clickParams(true, 1), clickParams(true, -60'001), clickParams(true, -0.5),
+                                        clickParams(true, 1e12),
+                                        Value(Object{{"enabled", Value(true)}, {"gainMilliDb", Value("-6000")}}),
+                                        Value(Object{{"enabled", Value(true)}, {"gainMilliDb", Value(nullptr)}})};
+    for (const Value& params : badGain) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "transport.set_click", params)) == "invalid_params");
+    }
+    CHECK(port.calls == 0);
+}
+
+TEST_CASE("cycle and click: without a port not_supported, a port's no_device passes through",
+          "[protocol][transport][cycle][click]") {
+    {
+        Fixture f;
+        const ConnectionId c = f.authed();
+        CHECK(errorCode(f.call(c, "transport.set_cycle", enabled(true))) == "not_supported");
+        CHECK(errorCode(f.call(c, "transport.set_click", enabled(true))) == "not_supported");
+    }
+    FakePort port;
+    port.refusal = "no_device";
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    const Value refused = f.call(c, "transport.set_cycle", enabled(true));
+    CHECK(errorCode(refused) == "no_device");
+    CHECK(at(at(refused, "error"), "message").asString() == "the port refused");
+    CHECK(errorCode(f.call(c, "transport.set_click", enabled(true))) == "no_device");
+    CHECK(transportEvents(f, watcher).empty());
+}
+
+TEST_CASE("cycle and click: a duplicate requestId is cached and a stale expectedRevision runs nothing",
+          "[protocol][transport][cycle][click]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    for (const auto& [method, params] : std::vector<std::pair<std::string, Value>>{
+             {"transport.set_cycle", enabled(true)}, {"transport.set_click", clickParams(true, -2'000)}}) {
+        INFO(method);
+        const int before = port.calls;
+        const std::string request = f.request("dup_" + method, method, params);
+        f.transport.deliver(c, request);
+        f.server.pump();
+        f.transport.deliver(c, request);
+        f.server.pump();
+        CHECK(port.calls == before + 1);
+        const auto sent = f.transport.sent(c);
+        REQUIRE(sent.size() >= 2);
+        CHECK(sent[sent.size() - 1] == sent[sent.size() - 2]);
+
+        f.transport.deliver(c, jcs::canonicalize(Value(Object{{"requestId", Value("stale_" + method)},
+                                                              {"sessionId", Value(f.server.sessionId())},
+                                                              {"method", Value(method)},
+                                                              {"params", params},
+                                                              {"expectedRevision", Value("rev_not_the_head")}})));
+        f.server.pump();
+        CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+        CHECK(port.calls == before + 1);
+    }
+}
+
+TEST_CASE("engine.capabilities lists set_cycle and set_click with features cycle and click",
+          "[protocol][transport][cycle][click]") {
+    for (const bool withTransport : {false, true}) {
+        INFO("with a port: " << withTransport);
+        FakePort port;
+        Fixture f(withTransport ? withPort(port) : manualOptions());
+        const Value capabilities = f.ok(f.authed(), "engine.capabilities");
+        const auto& methods = at(capabilities, "methods").asArray();
+        for (const char* name : {"transport.set_cycle", "transport.set_click"}) {
+            INFO(name);
+            CHECK(std::any_of(methods.begin(), methods.end(), [&](const Value& m) { return m.asString() == name; }));
+        }
+        const Value& features = at(capabilities, "features");
+        CHECK(at(features, "locators").asBool());
+        CHECK(at(features, "cycle").asBool() == withTransport);
+        CHECK(at(features, "click").asBool() == withTransport);
+    }
 }

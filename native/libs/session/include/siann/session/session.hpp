@@ -73,8 +73,15 @@ public:
     // Only the document changes: media, blobs and renders stay in the bundle.
     const command::Revision& rollback(std::string_view planRevisionId, std::string actor, std::string time);
 
-    // Writes session.json for the current head.
+    // Writes session.json for the current head, with the cycle flag.
     void checkpoint();
+
+    // The transport's cycle flag (m5-ui-engine-loop-click): engine state, not a
+    // revision. It is written into the checkpoint as transport: {cycle} by every
+    // checkpoint write (checkpoint() and the automatic one), never by setCycle
+    // alone, and read back on open (false when the checkpoint has no field).
+    bool cycle() const noexcept;
+    void setCycle(bool enabled) noexcept;
 
     // Proposal branches (command/history.hpp). Every branch commit and merge
     // is one journal record, durable before it is published. Opening and

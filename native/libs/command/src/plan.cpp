@@ -37,7 +37,8 @@ bool setLess(const EntityRef& a, const EntityRef& b) noexcept {
 
 std::optional<EntityType> entityTypeFromName(std::string_view name) noexcept {
     for (const EntityType type :
-         {EntityType::root, EntityType::media, EntityType::track, EntityType::clip, EntityType::plugin_slot}) {
+         {EntityType::root, EntityType::media, EntityType::track, EntityType::clip, EntityType::plugin_slot,
+          EntityType::locators}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -80,7 +81,8 @@ std::vector<EntitySnapshot> entitySetFromJson(const Value* value, const std::str
             invalidSet(where + " has an unknown entity type");
         }
         if (id == nullptr || id->kind() != Value::Kind::string || !validEntityId(id->asString()) ||
-            (*entityType == EntityType::root && id->asString() != "root")) {
+            (*entityType == EntityType::root && id->asString() != "root") ||
+            (*entityType == EntityType::locators && id->asString() != model::kLocatorsId)) {
             invalidSet(where + " has an invalid id");
         }
         EntitySnapshot snapshot{EntityRef{*entityType, id->asString()}, std::nullopt};

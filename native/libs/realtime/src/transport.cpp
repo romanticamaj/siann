@@ -42,8 +42,58 @@ void Transport::stop() {
     driver_.pause(sent_ ? sent_->generation : 0);
 }
 
+void Transport::setCycle(bool enabled) {
+    std::lock_guard lock(mutex_);
+    cycle_ = enabled;
+}
+
+bool Transport::cycle() const {
+    std::lock_guard lock(mutex_);
+    return cycle_;
+}
+
+void Transport::setRegion(std::optional<std::pair<std::int64_t, std::int64_t>> region) {
+    std::lock_guard lock(mutex_);
+    if (region && region->first >= region->second) {
+        region.reset();
+    }
+    region_ = region;
+}
+
 std::size_t Transport::tick(std::chrono::steady_clock::time_point now) {
     std::lock_guard lock(mutex_);
+    const std::size_t sent = sendPendingLocked(now);
+    tickCycleLocked();
+    return sent;
+}
+
+void Transport::tickCycleLocked() {
+    // A user locate is waiting or on its way: no wrap until it has landed, and
+    // no seek that would replace it at the butler.
+    const bool locating = pending_.has_value() || sentUnapplied();
+    if (!cycle_ || !region_ || locating) {
+        if (armed_ && driver_.pushCycle(CycleCommand{})) {
+            armed_.reset();
+        }
+        return;
+    }
+    const auto [left, right] = *region_;
+    const bool current = armed_ && armed_->left == left && armed_->right == right &&
+                         driver_.appliedLocate() < armed_->generation;
+    if (current) {
+        return;  // armed and not yet used
+    }
+    // Arm the next wrap: the butler prepares the left locator in the free slot.
+    const std::uint64_t generation = generation_ + 1;
+    if (!driver_.pushCycle(CycleCommand{true, left, right, generation})) {
+        return;  // full: retry on the next tick
+    }
+    generation_ = generation;
+    butler_.seek(generation, left);
+    armed_ = Armed{generation, left, right};
+}
+
+std::size_t Transport::sendPendingLocked(std::chrono::steady_clock::time_point now) {
     if (!pending_) {
         return 0;
     }

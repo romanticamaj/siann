@@ -2159,3 +2159,119 @@ TEST_CASE("a fader gesture over the protocol commits one revision at its end, an
     }
     CHECK(stopEngine(child) == 0);
 }
+
+// ---- m5-ui-engine-loop-click (Protocol v0 item 26) ---------------------------
+
+namespace {
+
+// Starts a render and waits for its job to finish; returns the file's bytes.
+std::string renderBytes(EngineClient& client, const fs::path& bundle, const std::string& name) {
+    const Value started =
+        client.ok("render.start", Value(Object{{"name", Value(name)}, {"start", Value("0")}, {"frames", Value("96000")}}));
+    const std::string jobId = at(started, "jobId").asString();
+    for (int i = 0; i < 3'000; ++i) {
+        const Value status = client.ok("job.status", Value(Object{{"jobId", Value(jobId)}}));
+        const std::string state = at(status, "state").asString();
+        if (state == "done") {
+            return io::readFile(bundle / "renders" / (name + ".wav"));
+        }
+        REQUIRE(state != "failed");
+    }
+    FAIL("the render did not finish");
+    return {};
+}
+
+}  // namespace
+
+TEST_CASE("a render started with the click on is byte-identical to one with the click off",
+          "[engine][launch][click]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value on =
+            client.ok("transport.set_click", Value(Object{{"enabled", Value(true)}, {"gainMilliDb", Value(0)}}));
+        CHECK(at(at(on, "click"), "enabled").asBool());
+        CHECK(at(client.ok("transport.play"), "playing").asBool());
+        client.waitAdvancing();  // the click sounds on the device meanwhile
+        const std::string withClick = renderBytes(client, bundle, "with_click");
+        client.ok("transport.set_click", Value(Object{{"enabled", Value(false)}}));
+        const std::string withoutClick = renderBytes(client, bundle, "without_click");
+        CHECK(withClick.size() > 96'000);
+        CHECK(withClick == withoutClick);
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("cycle and click show in engine.status and survive engine.select_device", "[engine][launch][cycle][click]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value idle = client.ok("engine.status");
+        CHECK_FALSE(at(idle, "cycle").asBool());
+        CHECK_FALSE(at(at(idle, "click"), "enabled").asBool());
+        CHECK(at(at(idle, "click"), "gainMilliDb").asNumber() == -12'000);
+
+        const Value cycled = client.ok("transport.set_cycle", Value(Object{{"enabled", Value(true)}}));
+        CHECK(at(cycled, "cycle").asBool());
+        const Value clicked =
+            client.ok("transport.set_click", Value(Object{{"enabled", Value(true)}, {"gainMilliDb", Value(-3000)}}));
+        CHECK(at(clicked, "cycle").asBool());
+        CHECK(at(at(clicked, "click"), "gainMilliDb").asNumber() == -3'000);
+        const std::string head = at(client.ok("session.inspect"), "revision").asString();
+
+        const Value status = client.ok("engine.status");
+        CHECK(at(status, "cycle").asBool());
+        CHECK(at(at(status, "click"), "enabled").asBool());
+        CHECK(at(at(status, "click"), "gainMilliDb").asNumber() == -3'000);
+
+        client.ok("engine.select_device", Value(Object{{"id", Value("fake")}}));
+        const Value after = client.waitForDevice();
+        CHECK(at(after, "cycle").asBool());
+        CHECK(at(at(after, "click"), "enabled").asBool());
+        CHECK(at(at(after, "click"), "gainMilliDb").asNumber() == -3'000);
+        // Neither is a revision.
+        CHECK(at(client.ok("session.inspect"), "revision").asString() == head);
+    }
+    CHECK(stopEngine(child) == 0);
+}
+
+TEST_CASE("session.open takes the opened bundle's cycle flag", "[engine][launch][cycle][session]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path first = dir.path() / "A.siann";
+    const fs::path second = dir.path() / "B.siann";
+    writeBundle(first, dir.path());
+    writeBundle(second, dir.path());
+    {
+        session::Session b = session::Session::open(second);
+        b.setCycle(true);
+        b.checkpoint();
+    }
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(first));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        CHECK_FALSE(at(client.ok("engine.status"), "cycle").asBool());
+        const Value opened = client.ok("session.open", Value(Object{{"path", Value(utf8(second))}}));
+        client.useSession(at(opened, "sessionId").asString());
+        CHECK(at(client.ok("engine.status"), "cycle").asBool());
+        // Saved with the flag off, B reopens with it off.
+        CHECK_FALSE(at(client.ok("transport.set_cycle", Value(Object{{"enabled", Value(false)}})), "cycle").asBool());
+        client.ok("session.save");
+    }
+    CHECK(stopEngine(child) == 0);
+    CHECK_FALSE(session::Session::open(second).cycle());
+}

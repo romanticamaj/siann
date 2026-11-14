@@ -117,11 +117,137 @@ TEST_CASE("findEntityHash returns the entity hash or nothing for an absent entit
 }
 
 TEST_CASE("JSON round trip is byte-identical under JCS", "[model]") {
-    const Value fixture = readFixture("model/session-document-v1.json");
+    const Value fixture = readFixture("model/session-document-v2.json");
     const Value& original = *fixture.find("document");
     const Document doc = Document::fromJson(original);
     CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
+}
+
+TEST_CASE("The v2 fixture with locators gives the Node bridge's hashes", "[model][fixtures][locators]") {
+    const Value fixture = readFixture("model/session-document-v2.json");
+    const Document doc = Document::fromJson(*fixture.find("document"));
+    CHECK(doc.validate().empty());
+    REQUIRE(doc.locators() != nullptr);
+    CHECK(doc.locators()->left == 96'000);
+    CHECK(doc.locators()->right == 4'800'001);
+
+    bool sawLocators = false;
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        const EntityType entityType = type == "root"          ? EntityType::root
+                                      : type == "media"       ? EntityType::media
+                                      : type == "track"       ? EntityType::track
+                                      : type == "plugin_slot" ? EntityType::plugin_slot
+                                      : type == "locators"    ? EntityType::locators
+                                                              : EntityType::clip;
+        sawLocators = sawLocators || entityType == EntityType::locators;
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{entityType, id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(sawLocators);
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    CHECK(siann::model::entityTypeName(EntityType::locators) == "locators");
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(*doc.locators())) ==
+          siann::jcs::canonicalize(*fixture.find("document")->find("locators")));
+}
+
+TEST_CASE("A v1 document reads through the migration with no locators and its v1 hash", "[model][locators]") {
+    const Value v1 = readFixture("model/session-document-v1.json");
+    const Document doc = Document::fromJson(*v1.find("document"));
+    CHECK(doc.locators() == nullptr);
+    CHECK_FALSE(doc.findEntityHash(EntityRef{EntityType::locators, "locators"}).has_value());
+    CHECK(formatHash(doc.documentHash()) == v1.find("documentHash")->asString());
+
+    // Written as v2, with locators omitted while absent; otherwise the same JSON.
+    const Value written = doc.toJson();
+    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v2");
+    CHECK(written.find("locators") == nullptr);
+    std::string expected = siann::jcs::canonicalize(*v1.find("document"));
+    const std::string from = "siann.session_document.v1";
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v2");
+    CHECK(siann::jcs::canonicalize(written) == expected);
+    CHECK(Document::fromJson(written).documentHash() == doc.documentHash());
+
+    // The v2 fixture minus its locators is the v1 document.
+    const Value v2 = readFixture("model/session-document-v2.json");
+    CHECK(Document::fromJson(*v2.find("document")).withoutLocators().documentHash() == doc.documentHash());
+}
+
+TEST_CASE("A v1 document that carries locators is rejected", "[model][locators]") {
+    const Value v2 = readFixture("model/session-document-v2.json");
+    std::string text = siann::jcs::canonicalize(*v2.find("document"));
+    const std::string from = "siann.session_document.v2";
+    text.replace(text.find(from), from.size(), "siann.session_document.v1");
+    CHECK(errorCode(siann::json::parse(text)) == "unknown_field");
+}
+
+TEST_CASE("Locators reject a malformed entity in JSON", "[model][locators]") {
+    const Value v2 = readFixture("model/session-document-v2.json");
+    const std::string text = siann::jcs::canonicalize(*v2.find("document"));
+    auto mutated = [&](const std::string& from, const std::string& to) {
+        std::string copy = text;
+        const auto pos = copy.find(from);
+        REQUIRE(pos != std::string::npos);
+        copy.replace(pos, from.size(), to);
+        return siann::json::parse(copy);
+    };
+    CHECK(errorCode(mutated(R"("left":"96000")", R"("left":96000)")) == "invalid_field");
+    CHECK(errorCode(mutated(R"("id":"locators")", R"("id":"loc")")) == "invalid_field");
+    CHECK(errorCode(mutated("siann.entity.locators.v1", "siann.entity.locators.v2")) == "unsupported_version");
+    CHECK(errorCode(mutated(R"("left":"96000")", R"("extra":1,"left":"96000")")) == "unknown_field");
+    CHECK(errorCode(mutated(R"("left":"96000")", R"("left":"4800001")")) == "invalid_document");
+}
+
+TEST_CASE("Locators out of order or out of range are invalid_locators", "[model][locators]") {
+    using siann::model::Locators;
+    const Document doc = Document::create("Song", 48'000);
+    CHECK(codes(doc.withLocators(Locators{0, 1})).empty());
+    CHECK(codes(doc.withLocators(Locators{0, siann::time::kMaxPositionMagnitude})).empty());
+    CHECK(codes(doc.withLocators(Locators{10, 10})) == std::vector<std::string>{"invalid_locators"});
+    CHECK(codes(doc.withLocators(Locators{11, 10})) == std::vector<std::string>{"invalid_locators"});
+    CHECK(codes(doc.withLocators(Locators{-1, 10})) == std::vector<std::string>{"invalid_locators"});
+    CHECK(codes(doc.withLocators(Locators{0, siann::time::kMaxPositionMagnitude + 1})) ==
+          std::vector<std::string>{"invalid_locators"});
+    const auto issues = doc.withLocators(Locators{5, 1}).validate();
+    REQUIRE(issues.size() == 1);
+    CHECK(issues.front().entity == EntityRef{EntityType::locators, "locators"});
+}
+
+TEST_CASE("Locators are added, modified and removed like any entity", "[model][locators]") {
+    using siann::model::Locators;
+    const Document a = Document::create("Song", 48'000);
+    const Document b = a.withLocators(Locators{100, 200});
+    const Document c = b.withLocators(Locators{100, 300});
+    const Document d = c.withoutLocators();
+    const EntityRef ref{EntityType::locators, "locators"};
+
+    REQUIRE(b.locators() != nullptr);
+    CHECK(*b.locators() == Locators{100, 200});
+    CHECK(a.locators() == nullptr);
+    CHECK(d.locators() == nullptr);
+
+    auto only = [&](const Document& before, const Document& after, DiffEntry::Change change) {
+        const auto changes = diff(before, after);
+        REQUIRE(changes.size() == 1);
+        CHECK(changes[0].entity == ref);
+        CHECK(changes[0].change == change);
+    };
+    only(a, b, DiffEntry::Change::added);
+    only(b, c, DiffEntry::Change::modified);
+    only(c, d, DiffEntry::Change::removed);
+    CHECK(diff(b, b.withLocators(Locators{100, 200})).empty());
+
+    CHECK(b.findEntityHash(ref).has_value());
+    CHECK(c.sharesEntity(c, ref));
+    CHECK(addTrack(c, track("trk_x")).sharesEntity(c, ref));
+    CHECK_FALSE(c.sharesEntity(b, ref));
+    CHECK_FALSE(a.sharesEntity(a, ref));
+    CHECK(b.documentHash() != a.documentHash());
+    CHECK(d.documentHash() == a.documentHash());
+    CHECK(c.withLocators(Locators{100, 200}).documentHash() == b.documentHash());
+    CHECK_THROWS_AS(a.withoutLocators(), ModelError);
 }
 
 TEST_CASE("Edits return new documents and share unchanged entities", "[model]") {

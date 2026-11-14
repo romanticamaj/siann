@@ -25,13 +25,16 @@ std::string_view entityTypeName(EntityType type) noexcept {
         case EntityType::track: return "track";
         case EntityType::clip: return "clip";
         case EntityType::plugin_slot: return "plugin_slot";
+        case EntityType::locators: return "locators";
     }
     return "unknown";
 }
 
 namespace {
 
-constexpr std::string_view kDocumentSchema = "siann.session_document.v1";
+constexpr std::string_view kDocumentSchema = "siann.session_document.v2";
+constexpr std::string_view kDocumentSchemaV1 = "siann.session_document.v1";
+constexpr std::string_view kLocatorsSchema = "siann.entity.locators.v1";
 constexpr std::string_view kRootSchema = "siann.entity.root.v1";
 constexpr std::string_view kMediaSchema = "siann.entity.media.v1";
 constexpr std::string_view kTrackSchema = "siann.entity.track.v1";
@@ -188,6 +191,19 @@ Clip clipFromJson(const Value& value) {
     c.gain = Gain{static_cast<std::int32_t>(r.integer("gainMilliDb", INT32_MIN, INT32_MAX))};
     r.finish();
     return c;
+}
+
+Locators locatorsFromJson(const Value& value) {
+    detail::FieldReader r(value, "locators");
+    r.expectSchema(kLocatorsSchema);
+    if (r.string("id") != kLocatorsId) {
+        r.fail("id", "must be \"locators\"");
+    }
+    Locators l;
+    l.left = r.int64String("left");
+    l.right = r.int64String("right");
+    r.finish();
+    return l;
 }
 
 // ---- tables ---------------------------------------------------------------
@@ -490,6 +506,15 @@ std::optional<std::string> pluginPathRefusal(std::string_view path,
     return std::nullopt;
 }
 
+Value toJson(const Locators& value) {
+    return Value(Object{
+        {"schema", str(kLocatorsSchema)},
+        {"id", str(kLocatorsId)},
+        {"left", int64String(value.left)},
+        {"right", int64String(value.right)},
+    });
+}
+
 Value toJson(const Clip& clip) {
     return Value(Object{
         {"schema", str(kClipSchema)},
@@ -524,10 +549,25 @@ Document Document::create(std::string name, std::int64_t sampleRate, std::int32_
     return doc;
 }
 
+namespace {
+
+// v1 to v2 (m5-ui-engine-loop-click): v2 only adds the optional locators
+// entity, so a v1 document reads unchanged and has none. Nothing is inserted:
+// every entity and the document hash stay as recorded (schemaVersion is not
+// hashed), which Session::open relies on when it checks replayed revisions and
+// the checkpoint against the journal. A v1 document that carries locators fails
+// the v1 field check below as an unknown field.
+bool migrateV1ToV2(std::string_view version) {
+    return version == kDocumentSchemaV1;
+}
+
+}  // namespace
+
 Document Document::fromJson(const Value& value) {
     detail::FieldReader r(value, "document");
     const std::string version = r.string("schemaVersion");
-    if (version != kDocumentSchema) {
+    const bool fromV1 = migrateV1ToV2(version);
+    if (version != kDocumentSchema && !fromV1) {
         throw ModelError("unsupported_version", "document schemaVersion " + version + " is not supported");
     }
     r.require("root");
@@ -535,6 +575,7 @@ Document Document::fromJson(const Value& value) {
     r.require("tracks");
     r.require("clips");
     (void)r.optional("pluginSlots");
+    const Value* locatorsJson = fromV1 ? nullptr : r.optional("locators");
     r.finish();
 
     Document doc;
@@ -543,6 +584,9 @@ Document Document::fromJson(const Value& value) {
     doc.tracks_ = tableFromJson<Track>(value, "tracks", &trackFromJson);
     doc.clips_ = tableFromJson<Clip>(value, "clips", &clipFromJson);
     doc.slots_ = tableFromJson<PluginSlot>(value, "pluginSlots", &pluginSlotFromJson, true);
+    if (locatorsJson != nullptr) {
+        doc.locators_ = makeStored(locatorsFromJson(*locatorsJson));
+    }
     const auto issues = doc.validate();
     if (!issues.empty()) {
         throw ModelError("invalid_document", issues.front().code + ": " + issues.front().message);
@@ -561,6 +605,10 @@ Value Document::toJson() const {
     // Omitted when empty, like Track.inserts, so M1 to M3 documents read the same.
     if (!slots_->empty()) {
         out.emplace_back("pluginSlots", tableToJson(*slots_));
+    }
+    // Omitted while absent, so a document without locators reads as before.
+    if (locators_) {
+        out.emplace_back("locators", model::toJson(locators_->value));
     }
     return Value(std::move(out));
 }
@@ -588,6 +636,25 @@ std::vector<const PluginSlot*> Document::allPluginSlots() const {
         out.push_back(&item->value);
     }
     return out;
+}
+
+const Locators* Document::locators() const noexcept {
+    return locators_ ? &locators_->value : nullptr;
+}
+
+Document Document::withLocators(Locators value) const {
+    Document doc = *this;
+    doc.locators_ = makeStored(value);
+    return doc;
+}
+
+Document Document::withoutLocators() const {
+    if (!locators_) {
+        throw ModelError("unknown_entity", "no locators are set");
+    }
+    Document doc = *this;
+    doc.locators_.reset();
+    return doc;
 }
 
 Document Document::withPluginSlot(PluginSlot slot) const {
@@ -809,6 +876,13 @@ std::vector<ValidationIssue> Document::validate() const {
                   "stateBlob must be null or sha256:<64 lowercase hex>");
         }
     }
+    if (locators_) {
+        const Locators& l = locators_->value;
+        if (l.left < 0 || l.right > time::kMaxPositionMagnitude || l.left >= l.right) {
+            issue(out, "invalid_locators", EntityType::locators, std::string(kLocatorsId),
+                  "locators must satisfy 0 <= left < right <= 2^42");
+        }
+    }
     return out;
 }
 
@@ -841,6 +915,9 @@ std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const
         case EntityType::plugin_slot:
             if (const auto* s = findStored(*slots_, ref.id)) found = &s->hash;
             break;
+        case EntityType::locators:
+            if (locators_ && ref.id == kLocatorsId) found = &locators_->hash;
+            break;
     }
     if (found == nullptr) {
         return std::nullopt;
@@ -856,6 +933,9 @@ hash::Digest Document::documentHash() const {
     collectLeaves(EntityType::track, *tracks_, leaves);
     collectLeaves(EntityType::clip, *clips_, leaves);
     collectLeaves(EntityType::plugin_slot, *slots_, leaves);
+    if (locators_) {
+        leaves.push_back({"locators", std::string(kLocatorsId), locators_->hash});
+    }
     try {
         return hash::documentHash(std::move(leaves));
     } catch (const hash::DocumentHashError& error) {
@@ -883,6 +963,8 @@ bool Document::sharesEntity(const Document& other, const EntityRef& ref) const n
             const auto* a = findStored(*slots_, ref.id);
             return a != nullptr && a == findStored(*other.slots_, ref.id);
         }
+        case EntityType::locators:
+            return locators_ != nullptr && ref.id == kLocatorsId && locators_ == other.locators_;
     }
     return false;
 }
@@ -896,6 +978,16 @@ std::vector<DiffEntry> diff(const Document& before, const Document& after) {
     diffTables(EntityType::track, *before.tracks_, *after.tracks_, out);
     diffTables(EntityType::clip, *before.clips_, *after.clips_, out);
     diffTables(EntityType::plugin_slot, *before.slots_, *after.slots_, out);
+    if (before.locators_ != after.locators_) {
+        const EntityRef ref{EntityType::locators, std::string(kLocatorsId)};
+        if (!before.locators_) {
+            out.push_back({DiffEntry::Change::added, ref});
+        } else if (!after.locators_) {
+            out.push_back({DiffEntry::Change::removed, ref});
+        } else if (before.locators_->hash != after.locators_->hash) {
+            out.push_back({DiffEntry::Change::modified, ref});
+        }
+    }
     return out;
 }
 

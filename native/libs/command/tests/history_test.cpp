@@ -194,6 +194,42 @@ TEST_CASE("Undo and redo create revisions that restore earlier documents", "[his
     CHECK_THROWS_AS(history.redo("user", "t"), CommandError);
 }
 
+TEST_CASE("Setting the locators twice is one revision each; undo and redo walk back and forth",
+          "[history][locators]") {
+    History history = fresh();
+    const EntityRef ref{EntityType::locators, "locators"};
+    auto setLocators = [](const std::string& left, const std::string& right) {
+        return cmd(R"({"op":"session.set_locators","left":")" + left + R"(","right":")" + right + R"("})");
+    };
+    const auto none = history.head().envelope.documentHash;
+    const Revision& a = history.commit({setLocators("100", "200")}, "a", "t");
+    REQUIRE(a.diff.size() == 1);
+    CHECK(a.diff[0].entity == ref);
+    CHECK(a.diff[0].change == DiffEntry::Change::added);
+    const auto withA = a.envelope.documentHash;
+    const Revision& b = history.commit({setLocators("300", "400")}, "a", "t");
+    REQUIRE(b.diff.size() == 1);
+    CHECK(b.diff[0].change == DiffEntry::Change::modified);
+    CHECK(history.revisions().size() == 3);
+
+    const Revision& u1 = history.undo("a", "t");
+    CHECK(u1.envelope.documentHash == withA);
+    REQUIRE(history.head().document.locators() != nullptr);
+    CHECK(history.head().document.locators()->left == 100);
+    CHECK(history.head().document.locators()->right == 200);
+
+    const Revision& u2 = history.undo("a", "t");
+    CHECK(u2.envelope.documentHash == none);
+    CHECK(history.head().document.locators() == nullptr);
+    REQUIRE(u2.diff.size() == 1);
+    CHECK(u2.diff[0].change == DiffEntry::Change::removed);
+
+    history.redo("a", "t");
+    REQUIRE(history.head().document.locators() != nullptr);
+    CHECK(history.head().document.locators()->left == 100);
+    CHECK(history.head().envelope.documentHash == withA);
+}
+
 TEST_CASE("A new commit after undo clears redo", "[history]") {
     History history = fresh();
     history.commit({addTrack("trk_1")}, "a", "t");

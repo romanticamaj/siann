@@ -21,6 +21,7 @@ function hashDocument(document) {
   for (const [table, type] of TABLES) {
     for (const entity of document[table] || []) entities.push({ type, id: entity.id, entityHash: sha256Jcs(entity) });
   }
+  if (document.locators) entities.push({ type: 'locators', id: 'locators', entityHash: sha256Jcs(document.locators) });
   return documentHash(entities);
 }
 
@@ -74,4 +75,30 @@ test('each step hashes to its event and fetch documentHash with src/hash', () =>
   ]);
   assert.notEqual(fixture.steps[0].documentHash, fixture.base.documentHash);
   assert.equal(fixture.steps[2].document.tracks.length, fixture.base.document.tracks.length);
+});
+
+// m5-ui-engine-loop-click: the locators part continues the base steps.
+test('the locators steps add, modify and remove locators:locators and hash with src/hash', () => {
+  const { steps, sync } = fixture.locators;
+  assert.deepEqual(steps.map((s) => s.event.changedIds), [
+    [{ ref: 'locators:locators', change: 'added' }],
+    [{ ref: 'locators:locators', change: 'modified' }],
+    [{ ref: 'locators:locators', change: 'removed' }],
+  ]);
+  let seq = Number(fixture.steps[fixture.steps.length - 1].event.seq);
+  for (const step of steps) {
+    seq += 1;
+    assert.equal(step.event.seq, String(seq));
+    assert.equal(step.document.schemaVersion, 'siann.session_document.v2');
+    assert.equal(hashDocument(step.document), step.documentHash);
+    assert.equal(step.event.documentHash, step.documentHash);
+    for (const answer of step.fetch.result.entities) assert.deepEqual(answer.entity, step.document.locators);
+  }
+  assert.equal(steps[2].documentHash, fixture.steps[fixture.steps.length - 1].documentHash);
+  // The sync: locators once, as an object in the last chunk.
+  const holding = sync.filter((chunk) => 'locators' in chunk.chunk);
+  assert.equal(holding.length, 1);
+  assert.equal(holding[0], sync[sync.length - 1]);
+  assert.deepEqual(holding[0].chunk.locators, steps[0].document.locators);
+  assert.equal(sync[0].documentHash, steps[0].documentHash);
 });

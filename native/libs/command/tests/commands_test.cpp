@@ -255,6 +255,43 @@ TEST_CASE("Session commands change the root", "[command]") {
           "invalid_tempo");
 }
 
+TEST_CASE("session.set_locators sets the pair and declares exactly the locators entity", "[command][locators]") {
+    const Document doc = base();
+    const auto prepared = prepare(doc, cmd(R"({"op":"session.set_locators","left":"96000","right":"480000"})"));
+    CHECK(prepared.effects == DeclaredEffects{ref(EntityType::locators, "locators")});
+    REQUIRE(prepared.result.locators() != nullptr);
+    CHECK(prepared.result.locators()->left == 96'000);
+    CHECK(prepared.result.locators()->right == 480'000);
+    CHECK(doc.locators() == nullptr);
+
+    // Setting again replaces the pair; the same pair is no change at all.
+    const auto again = prepare(prepared.result, cmd(R"({"op":"session.set_locators","left":"0","right":"1"})"));
+    CHECK(again.effects == DeclaredEffects{ref(EntityType::locators, "locators")});
+    CHECK(again.result.locators()->left == 0);
+    CHECK(again.result.locators()->right == 1);
+    const auto same = prepare(prepared.result, cmd(R"({"op":"session.set_locators","left":"96000","right":"480000"})"));
+    CHECK(diff(prepared.result, same.result).empty());
+    CHECK(prepare(doc, cmd(R"({"op":"session.set_locators","left":"0","right":"4398046511104"})"))
+              .result.locators()
+              ->right == siann::time::kMaxPositionMagnitude);
+}
+
+TEST_CASE("session.set_locators refuses a bad pair and malformed values", "[command][locators]") {
+    const Document doc = base();
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"480000","right":"480000"})") == "invalid_locators");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"480001","right":"480000"})") == "invalid_locators");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"-1","right":"480000"})") == "invalid_locators");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"0","right":"4398046511105"})") ==
+          "invalid_locators");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":96000,"right":"480000"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"96000","right":480000})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"096000","right":"480000"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"1.5","right":"480000"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"96000"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"session.set_locators","left":"0","right":"1","cycle":true})") ==
+          "invalid_params");
+}
+
 TEST_CASE("Malformed commands are rejected with stable codes", "[command]") {
     const Document doc = base();
     CHECK(errorCode(doc, R"({"op":"track.explode","trackId":"trk_1"})") == "unknown_command");
@@ -307,6 +344,6 @@ TEST_CASE("The command catalog is listed", "[command]") {
     CHECK(names == std::vector<std::string>{
                        "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add",
                        "media.remove", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
-                       "session.set_tempo", "track.add", "track.remove",
+                       "session.set_locators", "session.set_tempo", "track.add", "track.remove",
                        "track.rename", "track.set_gain", "track.set_mute", "track.set_pan", "track.set_solo"});
 }

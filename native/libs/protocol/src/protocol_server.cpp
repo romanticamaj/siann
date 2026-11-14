@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <ctime>
@@ -292,7 +293,7 @@ const std::vector<std::string_view> kMethods = {
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
-    "plan.list",       "plan.preview",
+    "plan.list",       "plan.preview",    "transport.set_cycle", "transport.set_click",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -391,8 +392,36 @@ std::vector<command::Command> commandList(const Value& params, std::string_view 
     return commands;
 }
 
+Value clickJson(const ClickState& click) {
+    return Value(Object{{"enabled", Value(click.enabled)}, {"gainMilliDb", Value(click.gainMilliDb)}});
+}
+
 Value transportStateJson(const TransportState& state) {
-    return Value(Object{{"playing", Value(state.playing)}, {"position", decimal(state.position)}});
+    return Value(Object{{"playing", Value(state.playing)},
+                        {"position", decimal(state.position)},
+                        {"cycle", Value(state.cycle)},
+                        {"click", clickJson(state.click)}});
+}
+
+bool requireBool(const Value& params, std::string_view key, std::string_view method) {
+    const Value* value = params.find(key);
+    if (value == nullptr || value->kind() != Value::Kind::boolean) {
+        throw ProtocolError("invalid_params", std::string(method) + " needs a boolean " + std::string(key));
+    }
+    return value->asBool();
+}
+
+// transport.set_click's optional gainMilliDb: an integer in the click's range.
+std::optional<std::int32_t> optionalClickGain(const Value& params) {
+    const Value* value = params.find("gainMilliDb");
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    if (value->kind() != Value::Kind::number || std::floor(value->asNumber()) != value->asNumber() ||
+        value->asNumber() < ClickState::kMinGainMilliDb || value->asNumber() > ClickState::kMaxGainMilliDb) {
+        throw ProtocolError("invalid_params", "transport.set_click: gainMilliDb must be an integer in [-60000, 0]");
+    }
+    return static_cast<std::int32_t>(value->asNumber());
 }
 
 Value deviceJson(const std::optional<DeviceInfo>& device) {
@@ -421,6 +450,8 @@ Value devicesJson(const std::vector<DeviceDescription>& devices) {
 Value engineStatusJson(const EngineStatus& status) {
     Object out{{"device", deviceJson(status.device)},
                {"playing", Value(status.playing)},
+               {"cycle", Value(status.cycle)},
+               {"click", clickJson(status.click)},
                {"xruns", decimal(status.xruns)},
                {"maxCallbackMicros", Value(status.maxCallbackMicros)},
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
@@ -1462,7 +1493,10 @@ struct ProtocolServer::Impl {
                                       {"render", Value(true)},
                                       {"plugins", pluginsFeatureJson()},
                                       {"gestures", Value(options.gesturePort != nullptr)},
-                                      {"peaks", Value(true)}})},
+                                      {"peaks", Value(true)},
+                                      {"locators", Value(true)},
+                                      {"cycle", Value(options.transportPort != nullptr)},
+                                      {"click", Value(options.transportPort != nullptr)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
@@ -1804,6 +1838,17 @@ struct ProtocolServer::Impl {
             const std::int64_t frames = requireCount(request.params, "frames", method);
             return success(request.requestId, transportStateJson(transportPort.locate(frames)));
         }
+        if (method == "transport.set_cycle") {
+            TransportPort& transportPort = requireTransport();
+            const bool enabled = requireBool(request.params, "enabled", method);
+            return success(request.requestId, transportStateJson(transportPort.setCycle(enabled)));
+        }
+        if (method == "transport.set_click") {
+            TransportPort& transportPort = requireTransport();
+            const bool enabled = requireBool(request.params, "enabled", method);
+            const std::optional<std::int32_t> gain = optionalClickGain(request.params);
+            return success(request.requestId, transportStateJson(transportPort.setClick(enabled, gain)));
+        }
         if (method == "engine.status") {
             return success(request.requestId, engineStatus());
         }
@@ -1922,13 +1967,43 @@ struct ProtocolServer::Impl {
         }
     }
 
+    // The cycle flag and the click, for transport.changed (Protocol v0 item 26).
+    struct TransportFlags {
+        bool cycle = false;
+        ClickState click;
+        friend bool operator==(const TransportFlags&, const TransportFlags&) = default;
+    };
+
+    std::optional<TransportFlags> transportFlags() const {
+        if (options.transportPort == nullptr) {
+            return std::nullopt;
+        }
+        const EngineStatus status = options.transportPort->status();
+        return TransportFlags{status.cycle, status.click};
+    }
+
+    // The methods that can change the flags: the two setters, and session.open
+    // (the engine takes the opened bundle's cycle flag).
+    static bool touchesTransportFlags(const std::string& method) {
+        return method == "transport.set_cycle" || method == "transport.set_click" || method == "session.open";
+    }
+
     // Command thread: runs the request, then publishes the lifecycle events it caused.
     std::string execute(const Pending& request) {
         refreshMarks();
         const session::Session* servedBefore = session;
         const std::optional<command::BranchId> heardBefore = heardSide();
+        const bool watchFlags = touchesTransportFlags(request.method);
+        const std::optional<TransportFlags> flagsBefore = watchFlags ? transportFlags() : std::nullopt;
         std::string response = run(request);
         publishLifecycle(servedBefore, heardBefore);
+        if (watchFlags) {
+            const std::optional<TransportFlags> flagsAfter = transportFlags();
+            if (flagsAfter && flagsAfter != flagsBefore) {
+                events.publish("transport.changed",
+                               Object{{"cycle", Value(flagsAfter->cycle)}, {"click", clickJson(flagsAfter->click)}});
+            }
+        }
         return response;
     }
 

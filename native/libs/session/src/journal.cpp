@@ -55,6 +55,7 @@ EntityType typeFromName(const std::string& name) {
     if (name == "track") return EntityType::track;
     if (name == "clip") return EntityType::clip;
     if (name == "plugin_slot") return EntityType::plugin_slot;
+    if (name == "locators") return EntityType::locators;
     throw SessionError("corrupt_record", "unknown entity type " + name);
 }
 

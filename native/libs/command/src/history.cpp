@@ -172,6 +172,11 @@ model::Document restoreEntity(const model::Document& document, const model::Docu
                 return document.withPluginSlot(*slot);
             }
             return document.withoutPluginSlot(ref.id);
+        case EntityType::locators:
+            if (const model::Locators* value = source.locators()) {
+                return document.withLocators(*value);
+            }
+            return document.withoutLocators();
     }
     return document;
 }

@@ -4,9 +4,9 @@
 // 64-bit fields (ticks, frames, sample positions, seq) stay decimal strings,
 // because JSON numbers lose precision above 2^53. Framework-free.
 
-export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot';
+export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot' | 'locators';
 
-export const ENTITY_TYPES: readonly EntityType[] = ['root', 'media', 'track', 'clip', 'plugin_slot'];
+export const ENTITY_TYPES: readonly EntityType[] = ['root', 'media', 'track', 'clip', 'plugin_slot', 'locators'];
 
 export interface TempoPoint {
   readonly ticks: string;
@@ -77,14 +77,23 @@ export interface PluginSlotEntity {
   readonly bypass: boolean;
 }
 
-export type Entity = RootEntity | MediaEntity | TrackEntity | ClipEntity | PluginSlotEntity;
+// The left and right locators (m5-ui-engine-loop-click): a singleton entity,
+// absent until first set. Audio-domain frames as decimal strings, left < right.
+export interface LocatorsEntity {
+  readonly schema: 'siann.entity.locators.v1';
+  readonly id: 'locators';
+  readonly left: string;
+  readonly right: string;
+}
+
+export type Entity = RootEntity | MediaEntity | TrackEntity | ClipEntity | PluginSlotEntity | LocatorsEntity;
 
 export interface EntityRef {
   readonly type: EntityType;
   readonly id: string;
 }
 
-const REF_RE = /^(root|media|track|clip|plugin_slot):([A-Za-z0-9_-]{1,64})$/;
+const REF_RE = /^(root|media|track|clip|plugin_slot|locators):([A-Za-z0-9_-]{1,64})$/;
 
 // "<type>:<id>" as session.fetch and changedIds name an entity; null for
 // anything else.
@@ -115,6 +124,8 @@ export interface SyncChunk {
     readonly clips?: readonly ClipEntity[];
     // Present only in a chunk that holds slots.
     readonly pluginSlots?: readonly PluginSlotEntity[];
+    // A single object, present only in the chunk that holds it.
+    readonly locators?: LocatorsEntity;
   };
   readonly next: string | null;
 }

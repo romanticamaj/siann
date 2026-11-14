@@ -18,7 +18,7 @@
 
 namespace siann::model {
 
-enum class EntityType { root, media, track, clip, plugin_slot };
+enum class EntityType { root, media, track, clip, plugin_slot, locators };
 
 std::string_view entityTypeName(EntityType type) noexcept;
 
@@ -64,8 +64,10 @@ public:
     // An empty session with one constant tempo.
     static Document create(std::string name, std::int64_t sampleRate, std::int32_t milliBpm = 120'000);
 
-    // Parses and validates a siann.session_document.v1 JSON value. Unknown
-    // fields and versions are rejected.
+    // Parses and validates a siann.session_document.v2 JSON value, or a v1 one
+    // through a migration that adds nothing (v1 has no locators; a v1 document
+    // that carries them is rejected). Unknown fields and versions are rejected.
+    // toJson always writes v2.
     static Document fromJson(const json::Value& value);
     json::Value toJson() const;
 
@@ -74,6 +76,8 @@ public:
     const Track* track(std::string_view id) const noexcept;
     const Clip* clip(std::string_view id) const noexcept;
     const PluginSlot* pluginSlot(std::string_view id) const noexcept;
+    // The singleton locators entity, or null while none is set.
+    const Locators* locators() const noexcept;
 
     std::vector<const Media*> allMedia() const;
     std::vector<const Track*> tracksInOrder() const;
@@ -93,6 +97,9 @@ public:
     Document withoutTrack(std::string_view id) const;
     Document withoutClip(std::string_view id) const;
     Document withoutPluginSlot(std::string_view id) const;
+    Document withLocators(Locators value) const;
+    // Throws ModelError unknown_entity when no locators are set.
+    Document withoutLocators() const;
 
     // Structural and referential checks; empty means valid.
     std::vector<ValidationIssue> validate() const;
@@ -120,6 +127,7 @@ private:
     Table<Track> tracks_;
     Table<Clip> clips_;
     Table<PluginSlot> slots_;
+    StoredPtr<Locators> locators_;  // null while absent
 };
 
 std::vector<DiffEntry> diff(const Document& before, const Document& after);
@@ -130,6 +138,10 @@ json::Value toJson(const Media& media);
 json::Value toJson(const Track& track);
 json::Value toJson(const Clip& clip);
 json::Value toJson(const PluginSlot& slot);
+json::Value toJson(const Locators& value);
+
+// The locators entity's id, the only one it has.
+inline constexpr std::string_view kLocatorsId = "locators";
 
 // True for "sha256:" followed by 64 lowercase hex digits.
 bool isStateBlobHash(std::string_view text) noexcept;

@@ -419,6 +419,34 @@ std::string appliedPlan(History& history, PlanStore& store, std::vector<Command>
 
 }  // namespace
 
+TEST_CASE("A plan step may set the locators; it writes locators:locators, applies and rolls back",
+          "[plan][locators]") {
+    History history = base();
+    PlanStore store;
+    const EntityRef ref{EntityType::locators, "locators"};
+    const auto before = history.head().envelope.documentHash;
+    const Plan& plan = store.submit(history, {cmd(R"({"op":"session.set_locators","left":"96000","right":"480000"})")},
+                                    {}, history.head().envelope.id);
+    REQUIRE(plan.writeSet.size() == 1);
+    CHECK(plan.writeSet[0].ref == ref);
+    CHECK_FALSE(plan.writeSet[0].entityHash.has_value());  // absent at the base
+    const std::string hash = *plan.hashText;
+    // The plan's JSON form names the entity type and round-trips.
+    CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == hash);
+
+    store.approve(history, hash, "user", "t1");
+    const Revision& applied = store.apply(history, hash, "agent", "t2");
+    REQUIRE(applied.diff.size() == 1);
+    CHECK(applied.diff[0].entity == ref);
+    REQUIRE(history.head().document.locators() != nullptr);
+    CHECK(history.head().document.locators()->right == 480'000);
+
+    const Revision& inverse = store.rollback(history, hash, "user", "t3");
+    CHECK(inverse.envelope.documentHash == before);
+    CHECK(history.head().document.locators() == nullptr);
+    CHECK(store.find(hash)->state == PlanState::rolled_back);
+}
+
 TEST_CASE("Rolling back an applied plan marks it rolled_back and returns the inverse revision",
           "[plan][rollback]") {
     History history = base();

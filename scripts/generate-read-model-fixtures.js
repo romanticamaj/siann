@@ -5,7 +5,10 @@
 // (docs/schemas/protocol-events-v1.md, "Client read model"): a base document
 // served by session.sync in chunks of 2 entities at one pinned revision, then
 // three session.changed events with the session.fetch answers at each event's
-// revision and the document and documentHash after each step. Hashes come from
+// revision and the document and documentHash after each step. A second part
+// (m5-ui-engine-loop-click) continues the session with the singleton locators
+// entity: deltas that add, modify and remove locators:locators, and a sync of a
+// document that holds it (a single object after pluginSlots). Hashes come from
 // the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
@@ -98,14 +101,20 @@ const BASE = {
   ],
 };
 
-// Every entity of a document in sync order: root, then each table in id order.
+// Every entity of a document in sync order: root, each table in id order, then
+// the locators when the document has them.
 function entitiesOf(document) {
   const out = [{ type: 'root', entity: document.root }];
   for (const [table, type] of TABLES) {
     const rows = [...(document[table] || [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     for (const entity of rows) out.push({ type, entity });
   }
+  if (document.locators) out.push({ type: 'locators', entity: document.locators });
   return out;
+}
+
+function locators(left, right) {
+  return { schema: 'siann.entity.locators.v1', id: 'locators', left, right };
 }
 
 function hashDocument(document) {
@@ -131,6 +140,9 @@ function syncChunks(document, revision, seq) {
       // pluginSlots only in a chunk that holds slots, as read_model.cpp emits it.
       if (table !== 'pluginSlots' || rows.length > 0) chunk[table] = rows;
     }
+    // The locators as one object, only in the chunk that holds them.
+    const locatorsEntry = slice.find((e) => e.type === 'locators');
+    if (locatorsEntry) chunk.locators = locatorsEntry.entity;
     const end = offset + slice.length;
     chunks.push({
       revision,
@@ -149,10 +161,58 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 // The steps: what each commit does to the document, and its changedIds.
 function buildSteps() {
+  return recordSteps(clone(BASE), 7, 3, (commit) => {
+    commit(
+      (d) => {
+        d.tracks.push(track('trk_3', 'Vox', { channels: 1 }));
+        d.root.trackOrder = [...d.root.trackOrder, 'trk_3'];
+      },
+      [
+        { ref: 'root:root', change: 'modified' },
+        { ref: 'track:trk_3', change: 'added' },
+      ],
+    );
+    commit(
+      (d) => {
+        d.clips.find((c) => c.id === 'clp_1').gainMilliDb = -6000;
+      },
+      [{ ref: 'clip:clp_1', change: 'modified' }],
+    );
+    commit(
+      (d) => {
+        d.tracks = d.tracks.filter((t) => t.id !== 'trk_3');
+        d.root.trackOrder = d.root.trackOrder.filter((id) => id !== 'trk_3');
+      },
+      [
+        { ref: 'root:root', change: 'modified' },
+        { ref: 'track:trk_3', change: 'removed' },
+      ],
+    );
+  });
+}
+
+// After the base steps: session.set_locators twice, then an undo to none.
+function buildLocatorSteps(after) {
+  const start = clone(after.document);
+  start.schemaVersion = 'siann.session_document.v2';
+  return recordSteps(start, Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      d.locators = locators('96000', '480000');
+    }, [{ ref: 'locators:locators', change: 'added' }]);
+    commit((d) => {
+      d.locators = locators('48000', '480000');
+    }, [{ ref: 'locators:locators', change: 'modified' }]);
+    commit((d) => {
+      delete d.locators;
+    }, [{ ref: 'locators:locators', change: 'removed' }]);
+  });
+}
+
+function recordSteps(initial, firstSeq, firstRevision, run) {
   const steps = [];
-  let document = clone(BASE);
-  let seq = 7;
-  let revision = 3;
+  let document = initial;
+  let seq = firstSeq;
+  let revision = firstRevision;
   const commit = (mutate, changedIds) => {
     const parent = `r${revision}`;
     revision += 1;
@@ -192,37 +252,15 @@ function buildSteps() {
     });
   };
 
-  commit(
-    (d) => {
-      d.tracks.push(track('trk_3', 'Vox', { channels: 1 }));
-      d.root.trackOrder = [...d.root.trackOrder, 'trk_3'];
-    },
-    [
-      { ref: 'root:root', change: 'modified' },
-      { ref: 'track:trk_3', change: 'added' },
-    ],
-  );
-  commit(
-    (d) => {
-      d.clips.find((c) => c.id === 'clp_1').gainMilliDb = -6000;
-    },
-    [{ ref: 'clip:clp_1', change: 'modified' }],
-  );
-  commit(
-    (d) => {
-      d.tracks = d.tracks.filter((t) => t.id !== 'trk_3');
-      d.root.trackOrder = d.root.trackOrder.filter((id) => id !== 'trk_3');
-    },
-    [
-      { ref: 'root:root', change: 'modified' },
-      { ref: 'track:trk_3', change: 'removed' },
-    ],
-  );
+  run(commit);
   return steps;
 }
 
 function buildFixture() {
   const base = { revision: 'r3', seq: '7', document: BASE, documentHash: hashDocument(BASE) };
+  const steps = buildSteps();
+  const locatorSteps = buildLocatorSteps(steps[steps.length - 1]);
+  const withLocators = locatorSteps[0];
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -231,7 +269,12 @@ function buildFixture() {
     chunkEntities: CHUNK_ENTITIES,
     base,
     sync: syncChunks(BASE, base.revision, base.seq),
-    steps: buildSteps(),
+    steps,
+    locators: {
+      steps: locatorSteps,
+      // A sync pinned at the revision that added the locators.
+      sync: syncChunks(withLocators.document, withLocators.event.revision, withLocators.event.seq),
+    },
   };
 }
 
