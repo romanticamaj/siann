@@ -11,12 +11,29 @@
 #
 # No other dependency: usable in script mode (cmake -P), where the tests run it.
 
+# One spelling per location, whether or not it exists yet: the longest existing
+# ancestor is resolved (symlinks, macOS's /var -> /private/var, Windows 8.3 short
+# names such as RUNNER~1) and the components that do not exist yet are appended.
 function(_siann_normalized_path out path)
-  if(EXISTS "${path}")
-    file(REAL_PATH "${path}" path)
-  endif()
   file(TO_CMAKE_PATH "${path}" path)
-  string(REGEX REPLACE "/+$" "" path "${path}")
+  string(REGEX REPLACE "(.)/+$" "\\1" path "${path}")
+  set(head "${path}")
+  set(tail "")
+  while(NOT EXISTS "${head}")
+    get_filename_component(parent "${head}" DIRECTORY)
+    get_filename_component(name "${head}" NAME)
+    if(parent STREQUAL "" OR parent STREQUAL head OR name STREQUAL "")
+      break()
+    endif()
+    set(tail "/${name}${tail}")
+    set(head "${parent}")
+  endwhile()
+  if(EXISTS "${head}")
+    file(REAL_PATH "${head}" head)
+    file(TO_CMAKE_PATH "${head}" head)
+  endif()
+  string(REGEX REPLACE "/+$" "" head "${head}")  # a root keeps no slash: the tail brings one
+  set(path "${head}${tail}")
   if(CMAKE_HOST_WIN32)
     string(TOLOWER "${path}" path)  # drive letters and paths compare without case on Windows
   endif()
