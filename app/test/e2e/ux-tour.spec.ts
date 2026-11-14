@@ -291,6 +291,56 @@ async function meterPeak(p: Page, ref: string): Promise<number> {
   }, ref);
 }
 
+// The meters.legend epoch the mixer's meter store follows.
+async function meterEpoch(p: Page): Promise<string | null> {
+  return p.evaluate(() => {
+    const hooks = (window as unknown as { __siannMeters?: { epoch(): string | null } }).__siannMeters;
+    return hooks?.epoch() ?? null;
+  });
+}
+
+type PeakLatch = { max: Record<string, number>; on: boolean };
+
+// From now on, the loudest linear peak of each metered entity on every animation
+// frame (the meter store takes the newest realtime frame once a frame). A poll of
+// meterPeak samples one frame a few times a second, and an entity sounds only
+// while the transport is inside one of its clips: a stem with gaps, or one whose
+// clips the transport has passed by the time a slow poll gets to it, can read 0
+// at every sample. The latch sees every frame the meters drew. Stopped frames
+// read as silence (meter-store.ts), so a latched peak above 0 is a playing frame.
+async function latchPeaks(p: Page, refs: readonly string[]): Promise<void> {
+  await p.evaluate((list) => {
+    const w = window as unknown as {
+      __siannMeters?: { read(ref: string): { peak: number } | null };
+      __siannTourPeaks?: PeakLatch;
+    };
+    if (w.__siannTourPeaks) w.__siannTourPeaks.on = false;
+    const latch: PeakLatch = { max: Object.fromEntries(list.map((ref) => [ref, 0])), on: true };
+    w.__siannTourPeaks = latch;
+    const tick = () => {
+      if (!latch.on) return;
+      for (const ref of list) {
+        const peak = w.__siannMeters?.read(ref)?.peak ?? 0;
+        if (peak > latch.max[ref]!) latch.max[ref] = peak;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, refs);
+}
+
+async function latchedPeak(p: Page, ref: string): Promise<number> {
+  return p.evaluate((r) => (window as unknown as { __siannTourPeaks?: PeakLatch }).__siannTourPeaks?.max[r] ?? 0, ref);
+}
+
+async function stopLatch(p: Page): Promise<void> {
+  await p.evaluate(() => {
+    const w = window as unknown as { __siannTourPeaks?: PeakLatch };
+    if (w.__siannTourPeaks) w.__siannTourPeaks.on = false;
+    delete w.__siannTourPeaks;
+  });
+}
+
 type Rect = { clipId: string; trackId: string; x: number; y: number; width: number; height: number };
 
 async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX', arg?: string): Promise<T> {
@@ -474,16 +524,26 @@ test('UX screenshot tour', async () => {
   await shoot(page, 'Session loaded full page', 'The same state as the whole page: since m5-ui-shell the page never scrolls, so this is the window.', { fullPage: true });
 
   // Playing: the meters read (fake device). Vox Lead's solo is clicked off
-  // first, so every unmuted track sounds, and back on after.
+  // first, so every unmuted track sounds, and back on after. The solo
+  // republishes the graph, which brings a new meters.legend epoch; until the
+  // store follows it, every frame of the new epoch is dropped, so the play
+  // waits for it. Vox Lead sounds only from 1.8 s to 2.8 s of the session, the
+  // first second of this play: its meter is latched over every drawn frame
+  // (latchPeaks), not sampled by a poll after the kick's.
   const solo = page.getByTestId('solo-trk_voxlead');
+  const epoch = await meterEpoch(page);
   await solo.click();
   await expect(solo).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => meterEpoch(page)).not.toBe(epoch);
   await watcher.call('transport.locate', { frames: String(Math.round(1.2 * RATE)) });
-  await watcher.call('transport.play');
+  const metered = ['trk_kick', 'trk_voxlead'].map((id) => `track:${id}`);
+  await latchPeaks(page, metered);
+  expect((await watcher.call('transport.play')).playing).toBe(true);
   await scrollTo('timeline-canvas');
-  for (const id of ['trk_kick', 'trk_voxlead']) {
-    await expect.poll(() => meterPeak(page, `track:${id}`)).toBeGreaterThan(0.05);
+  for (const ref of metered) {
+    await expect.poll(() => latchedPeak(page, ref), { message: `${ref} metered while playing` }).toBeGreaterThan(0.05);
   }
+  await stopLatch(page);
   await expect.poll(async () => (await timeline<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
   const peaks: string[] = [];
   for (const track of TRACKS) {
