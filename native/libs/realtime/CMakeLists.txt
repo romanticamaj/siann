@@ -3,6 +3,7 @@ add_library(siann_realtime
   src/control_dispatcher.cpp
   src/disk_stream.cpp
   src/recorder.cpp
+  src/capture_bank.cpp
   src/transport.cpp
   src/stream_resampler.cpp
   src/click.cpp

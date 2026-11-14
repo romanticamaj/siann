@@ -70,6 +70,7 @@
 
 #include "siann/graph/graph.hpp"
 #include "siann/host/interfaces.hpp"
+#include "siann/realtime/capture_bank.hpp"
 #include "siann/realtime/click.hpp"
 #include "siann/rt/callback_timer.hpp"
 #include "siann/rt/latest_mailbox.hpp"
@@ -216,6 +217,9 @@ public:
         // The clock each device callback is timed with, in nanoseconds; nullptr
         // is the steady clock. Tests pass one they advance themselves.
         std::int64_t (*nowNanos)() noexcept = nullptr;
+        // The capture bank (m5b-engine-record): slots > 0 builds one here, owned
+        // for the driver's life and fed every input block from the first start.
+        CaptureOptions capture{};
     };
 
     explicit GraphDriver(Options options);
@@ -335,6 +339,19 @@ public:
     // arming decides what is kept). Pass nullptr to detach.
     void attachRecorder(Recorder* recorder);
 
+    // The capture bank (nullptr without Options::capture.slots). Its slots are
+    // armed and recorded while the device runs (m5b-engine-record); every
+    // callback meters the armed ones and feeds their recorders, after the
+    // transport's commands for that block are applied, stamped with the
+    // playhead the block renders from (through SRC, as attachRecorder's).
+    CaptureBank* captureBank() noexcept { return bank_.get(); }
+
+    // Any non-realtime thread: while set, a block that reaches the right locator
+    // renders straight through it (spec, "Cycle": the wrap is suspended while a
+    // recording captures, so a take stays one contiguous run of the input).
+    void setCaptureActive(bool active) noexcept { captureActive_.store(active, std::memory_order_release); }
+    bool captureActive() const noexcept { return captureActive_.load(std::memory_order_acquire); }
+
     // What the device reported when it was opened by start().
     const host::AudioDeviceStatus& deviceStatus() const noexcept { return deviceStatus_; }
 
@@ -395,6 +412,8 @@ private:
     host::AudioDevice* device_ = nullptr;
     host::AudioDeviceStatus deviceStatus_{};
     Recorder* recorder_ = nullptr;
+    std::unique_ptr<CaptureBank> bank_;
+    std::atomic<bool> captureActive_{false};
     ResamplingState resampling_{};
     LatencyReport latency_{};
     std::unique_ptr<SrcPath> src_;  // built by start() when the rates differ
