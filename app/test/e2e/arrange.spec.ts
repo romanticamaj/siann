@@ -313,7 +313,8 @@ test('the track list shows each track, clips are never under it, double-click re
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   expect(ops(frames, 'track.rename')).toHaveLength(1);
 
-  // T in the project zone and the + button: one track.add each.
+  // T in the project zone, the + button and a double-click on empty space
+  // (spec 3.3): one track.add each.
   await focusProject();
   await page.keyboard.press('KeyT');
   await expect(page.getByTestId('track-count')).toHaveText('3');
@@ -328,6 +329,18 @@ test('the track list shows each track, clips are never under it, double-click re
   await expect(page.getByTestId('track-list').getByText('Audio 1', { exact: true })).toBeVisible();
   await expect(page.getByTestId('track-list').getByText('Audio 2', { exact: true })).toBeVisible();
 
+  // Double-click on the empty space below the headers: one more track.add.
+  // A double-click on a header (not its name) adds nothing.
+  const body = await box('track-list-body');
+  const headers = await box('track-header-trk_a');
+  await page.getByTestId('track-header-trk_a').dblclick({ position: { x: headers.width - 30, y: 4 } });
+  await expect(page.getByTestId('track-count')).toHaveText('4');
+  await page.mouse.dblclick(body.x + body.width / 2, body.y + body.height - 10);
+  await expect(page.getByTestId('track-count')).toHaveText('5');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
+  expect(ops(frames, 'track.add')).toHaveLength(3);
+  await expect(page.getByTestId('track-list').getByText('Audio 3', { exact: true })).toBeVisible();
+
   // T typed in the rename field adds nothing.
   await page.getByTestId('track-name-trk_b').dblclick();
   await page.getByTestId('track-rename-trk_b').fill('');
@@ -335,9 +348,9 @@ test('the track list shows each track, clips are never under it, double-click re
   await expect(page.getByTestId('track-rename-trk_b')).toHaveValue('t');
   await page.getByTestId('track-rename-trk_b').press('Escape');
   await expect(page.getByTestId('track-name-trk_b')).toHaveText('Beta');
-  await expect(page.getByTestId('track-count')).toHaveText('4');
-  await expect(page.getByTestId('revision')).toHaveText(`r${before + 3}`);
-  expect(ops(frames, 'track.add')).toHaveLength(2);
+  await expect(page.getByTestId('track-count')).toHaveText('5');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
+  expect(ops(frames, 'track.add')).toHaveLength(3);
 });
 
 test('the canvas is the event display\'s box in device pixels after a resize and a boundary drag; the ruler is bars, then beats zoomed in', async () => {

@@ -225,6 +225,7 @@ test('track list: + needs track.add, renaming track.rename, M and S track.set_mu
     );
   const full = list(FULL);
   assert.ok(full.includes('data-testid="track-add"'), 'the + button');
+  assert.match(full, /data-testid="track-list-body"[^>]*data-addable="true"/, 'double-click on empty space adds');
   for (const id of ['trk_a', 'trk_b']) {
     assert.match(full, new RegExp(`data-testid="track-name-${id}"[^>]*data-renamable="true"`), id);
     assert.ok(full.includes(`data-testid="track-mute-${id}"`), id);
@@ -232,6 +233,7 @@ test('track list: + needs track.add, renaming track.rename, M and S track.set_mu
   }
   const reduced = list(REDUCED);
   assert.ok(!reduced.includes('data-testid="track-add"'), 'no + without track.add');
+  assert.ok(!reduced.includes('data-addable'), 'no double-click add without track.add');
   assert.ok(reduced.includes('data-testid="track-name-trk_a"'), 'the name is shown');
   assert.ok(!reduced.includes('data-renamable'), 'no rename without track.rename');
   assert.ok(reduced.includes('data-testid="track-mute-trk_a"'), 'the reduced fixture keeps mute');
