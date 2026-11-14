@@ -830,3 +830,43 @@ TEST_CASE("Merging a proposed plan is refused when main changed an entity of its
         CHECK(session.plans().find(hash)->appliedRevision == std::optional<std::string>{mergedId});
     }
 }
+
+// m5b-engine-project-media: a bundle written before media entities could carry
+// a name (siann-cli create and two exec media.add of the build at 71346fc; the
+// checkpoint at r3 checked there with siann-cli verify). The name is omitted when
+// absent, so this build replays it to the same hashes and accepts its checkpoint.
+TEST_CASE("A bundle from before the media name opens with its recorded hashes", "[session][media]") {
+    TempDir dir;
+    const fs::path bundle = dir.bundle();
+    fs::create_directories(bundle);
+    const std::string checkpoint =
+        R"({"coversSeq":"3","document":{"clips":[],"media":[{"channels":2,"contentHash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","format":"wav","frames":"48000","id":"med_1","sampleRate":48000,"schema":"siann.entity.media.v1"},{"channels":1,"contentHash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","format":"wav","frames":"96000","id":"med_2","originalHash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","sampleRate":48000,"schema":"siann.entity.media.v1"}],"root":{"id":"root","name":"Old","sampleRate":48000,"schema":"siann.entity.root.v1","tempo":[{"milliBpm":120000,"ticks":"0"}],"trackOrder":[]},"schemaVersion":"siann.session_document.v2","tracks":[]},"head":{"actor":"tester","cause":"command","documentHash":"sha256:b12a0991a2f4572edc0236711f392a68718809ed5ec4be8fbac920b2249390c0","id":"r3","parents":["r2"],"time":"2026-11-01T00:00:02Z"},"schemaVersion":"siann.checkpoint.v1","transport":{"cycle":false}})";
+    const std::string journal =
+        std::string(
+            R"({"checksum":"sha256:4852de3271b2cb23d7fba5b83ac7a926e798ff6aec3c362de78096f556d91fc1","commands":[],"diff":[],"document":{"clips":[],"media":[],"root":{"id":"root","name":"Old","sampleRate":48000,"schema":"siann.entity.root.v1","tempo":[{"milliBpm":120000,"ticks":"0"}],"trackOrder":[]},"schemaVersion":"siann.session_document.v2","tracks":[]},"revision":{"actor":"cli","cause":"create","documentHash":"sha256:f1167836d0358b52011ea28f7ca94ffaad99995dcbb183cc50ee9b1610776a8c","id":"r1","parents":[],"time":"2026-11-01T00:00:00Z"},"schema":"siann.journal_record.v1","seq":"1"})") +
+        "\n" +
+        R"({"checksum":"sha256:9d8f48df1dfd3e0c6196eb38d45a2f56344e97bfcefb9821a44eb7b7f038de43","commands":[{"channels":2,"contentHash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","format":"wav","frames":"48000","mediaId":"med_1","op":"media.add","sampleRate":48000}],"diff":[{"change":"added","id":"med_1","type":"media"}],"revision":{"actor":"tester","cause":"command","documentHash":"sha256:18833b6490a1b8e399088b19088b2c7094eef6887ad611c188cc1fda30597a87","id":"r2","parents":["r1"],"time":"2026-11-01T00:00:01Z"},"schema":"siann.journal_record.v1","seq":"2"})" +
+        "\n" +
+        R"({"checksum":"sha256:ea4ae0e61b4329f577b23486766b51a6ba9fa1440de457cbb99b2eaccf708513","commands":[{"channels":1,"contentHash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","format":"wav","frames":"96000","mediaId":"med_2","op":"media.add","originalHash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","sampleRate":48000}],"diff":[{"change":"added","id":"med_2","type":"media"}],"revision":{"actor":"tester","cause":"command","documentHash":"sha256:b12a0991a2f4572edc0236711f392a68718809ed5ec4be8fbac920b2249390c0","id":"r3","parents":["r2"],"time":"2026-11-01T00:00:02Z"},"schema":"siann.journal_record.v1","seq":"3"})" +
+        "\n";
+    siann::io::writeFileAtomic(bundle / "session.json", checkpoint);
+    siann::io::writeFileAtomic(bundle / "journal.ndjson", journal);
+
+    OpenReport report;
+    Session session = Session::open(bundle, &report);
+    CHECK(report.checkpointVerified);
+    CHECK(report.recordsReplayed == 3);
+    CHECK_FALSE(report.quarantinedTail.has_value());
+    const auto& head = session.history().head();
+    CHECK(head.envelope.id == "r3");
+    CHECK(siann::hash::formatHash(head.envelope.documentHash) ==
+          "sha256:b12a0991a2f4572edc0236711f392a68718809ed5ec4be8fbac920b2249390c0");
+    for (const auto* media : head.document.allMedia()) {
+        CHECK_FALSE(media->name.has_value());
+    }
+
+    // Naming a media now is a revision; the earlier ones keep their hashes.
+    session.commit({cmd(R"({"op":"media.rename","mediaId":"med_1","name":"kick.wav"})")}, "tester", "t4");
+    CHECK(*session.history().head().document.media("med_1")->name == "kick.wav");
+    session.checkpoint();
+}

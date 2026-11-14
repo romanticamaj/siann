@@ -51,6 +51,15 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.feature('plugins'), false, 'false is absent');
   assert.equal(capabilitySelector({ ...FULL, features: { plugins: { formats: ['clap'], flags: [] } } }).feature('plugins'), true);
   assert.equal(full.feature('locators'), false);
+  // m5b-engine-project-media: create and import, and the media name command.
+  for (const method of ['session.create', 'media.import']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
+  assert.equal(full.feature('mediaImport'), true);
+  assert.deepEqual(FULL.features?.mediaImport, { formats: ['wav', 'flac'] });
+  assert.equal(reduced.feature('mediaImport'), false);
+  assert.equal(full.command('media.rename'), true);
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);

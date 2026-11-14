@@ -246,6 +246,62 @@
       "planHash": "sha256:b6ef4919c63432097f572a57d99708aadf1e16a6d61fe6cc39e3dbadd630d4de"
     },
     {
+      "name": "media_add_with_name",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r3",
+        "steps": [
+          {
+            "op": "media.add",
+            "mediaId": "med_2",
+            "contentHash": "sha256:f691d92aad0c27d1b2666e4b4cbf1064c90c2ede5242ed8570cda3f42a397b2e",
+            "format": "wav",
+            "channels": 2,
+            "sampleRate": 48000,
+            "frames": "96000",
+            "name": "Kick 聲.wav"
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "media",
+            "id": "med_2",
+            "hash": null
+          }
+        ]
+      },
+      "planHash": "sha256:768913def022840a17cafa70937df7bf45cb1376c695ea21a6e009e5bbbbff57"
+    },
+    {
+      "name": "media_rename",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r5",
+        "steps": [
+          {
+            "op": "media.rename",
+            "mediaId": "med_1",
+            "name": "Loop A.flac"
+          },
+          {
+            "op": "media.rename",
+            "mediaId": "med_1",
+            "name": null
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "media",
+            "id": "med_1",
+            "hash": "sha256:96e0099f1a5154d28578f908883496f1d1a4781917f07bbc65aaafbb7cf909aa"
+          }
+        ]
+      },
+      "planHash": "sha256:d50aa11cb130e828ffb3d98548299f4b851f459706c9f69663e946ad1d8eb52e"
+    },
+    {
       "name": "non_bmp_key_in_step",
       "plan": {
         "schema": "siann.plan.v1",

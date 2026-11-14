@@ -230,6 +230,33 @@ TEST_CASE("Setting the locators twice is one revision each; undo and redo walk b
     CHECK(history.head().envelope.documentHash == withA);
 }
 
+TEST_CASE("media.rename is one revision declaring the media; undo restores the old name", "[history][media]") {
+    History history = fresh();
+    history.commit({addMedia("med_1")}, "a", "t");
+    const auto unnamed = history.head().envelope.documentHash;
+    const Revision& named = history.commit({cmd(R"({"op":"media.rename","mediaId":"med_1","name":"first.wav"})")}, "a", "t");
+    REQUIRE(named.diff.size() == 1);
+    CHECK(named.diff[0].entity == EntityRef{EntityType::media, "med_1"});
+    CHECK(named.diff[0].change == DiffEntry::Change::modified);
+    const auto withFirst = named.envelope.documentHash;
+    history.commit({cmd(R"({"op":"media.rename","mediaId":"med_1","name":"second.wav"})")}, "a", "t");
+    CHECK(*history.head().document.media("med_1")->name == "second.wav");
+
+    history.undo("a", "t");
+    CHECK(*history.head().document.media("med_1")->name == "first.wav");
+    CHECK(history.head().envelope.documentHash == withFirst);
+    history.undo("a", "t");
+    CHECK_FALSE(history.head().document.media("med_1")->name.has_value());
+    CHECK(history.head().envelope.documentHash == unnamed);
+
+    // Removing the name with null is a revision back to the unnamed hash.
+    history.redo("a", "t");
+    const Revision& cleared = history.commit({cmd(R"({"op":"media.rename","mediaId":"med_1","name":null})")}, "a", "t");
+    CHECK(cleared.envelope.documentHash == unnamed);
+    CHECK_THROWS_AS(history.commit({cmd(R"({"op":"media.rename","mediaId":"med_9","name":"x"})")}, "a", "t"),
+                    CommandError);
+}
+
 TEST_CASE("A new commit after undo clears redo", "[history]") {
     History history = fresh();
     history.commit({addTrack("trk_1")}, "a", "t");
