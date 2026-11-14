@@ -2922,7 +2922,7 @@ before adoption, including transitive dependencies.
 | DAWproject | pugixml + miniz | MIT |
 | Build / packages | CMake + vcpkg or CPM | — |
 | Tests | Catch2 or GoogleTest; pluginval for hosting tests | BSL-1.0 / BSD; GPL tool, not linked |
-| Desktop shell | Electron + Electron Forge or electron-builder | MIT |
+| Desktop shell | Electron; packaged by electron-builder 26.18.0 (pinned by m5b-package-windows; NSIS installer, unsigned) | MIT |
 | Electron shell tests | Playwright (`@playwright/test`, Electron driver), pinned | Apache-2.0 |
 | Frontend language | TypeScript, pinned | Apache-2.0 |
 | Frontend framework and bundler | React 19 with react-dom, esbuild, pinned by `m5-read-model` (ADR-0019) | MIT |
@@ -2961,6 +2961,31 @@ Not used: Taskflow (allocates at runtime).
   core-only `siann-engine` target, runs `npm ci` and the Playwright Electron tests
   in `app/` with `SIANN_ENGINE_EXE` pointing at the built engine; locally
   `node scripts/check-all.js --app` runs the same after the native step.
+- `npm run app` at the repository root (`scripts/run-app.js`, Node built-ins only)
+  starts the app from a source checkout: `npm ci` in `app/` when its
+  dependencies are missing or older than `app/package-lock.json`, `npm run build`,
+  the Debug `desktop` preset's `siann-engine` when it is missing (configured and
+  built as `scripts/check-all.js` does, through `native/tools/msvc-env.cmd` on
+  Windows), then Electron with `SIANN_ENGINE_EXE` pointing at it.
+  `npm run app -- --plan` prints the steps and runs nothing.
+- The Windows installer ships the `siann-engine.exe` of the `desktop-release`
+  preset (Release, JUCE with ASIO, `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`),
+  not the Debug `desktop` preset's: a Debug build links the debug CRT
+  (`MSVCP140D.dll`, `VCRUNTIME140D.dll`, `ucrtbased.dll`), which Microsoft does
+  not license for redistribution, and a dynamically linked Release build needs
+  the Visual C++ runtime the user would have to install. The static CRT leaves
+  only Windows system DLLs among the engine's imports.
+- A Windows `package` job (pushes to main, workflow_dispatch, and pull requests
+  whose paths `stepsForPath` maps to the `package` step: `app/package.json`,
+  `app/package-lock.json`, the electron-builder configuration and `app/build/`,
+  `app/src/main/`, `native/apps/engine/`, `native/libs/host_*`, `native/cmake/`,
+  CMake files, `scripts/run-app.js` and the package tests) builds the
+  `desktop-release` engine and the NSIS installer with electron-builder, runs the
+  package tests, installs silently, repeats the smoke run, uninstalls, and
+  uploads the installer with its SHA-256. It reads no secret and signs nothing.
+  Locally `node scripts/check-all.js --only package` does the same up to the
+  installer (the step reports skipped off Windows); the steps run in the order
+  node, native, desktop, app, package, gcc.
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
   manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
