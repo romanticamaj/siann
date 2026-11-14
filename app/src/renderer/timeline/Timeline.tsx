@@ -10,13 +10,18 @@
 // The project zone's key commands (keys/preset-cubase.ts) are registered
 // here: Delete and Backspace, Escape, H and G, Shift+H and Shift+G, Shift+F,
 // T, and the editing keys of m5-ui-edit-basics (1, 3, Alt+X, Ctrl+D, J,
-// Ctrl+A, L, N, B, Alt+S, Shift+E, M, S, Shift+Delete). The capability rule
-// (spec 3.0) is editGates: a key, button or control exists only when
-// engine.capabilities lists the commands (or the method) it ends in, and the
-// canvas sends no gesture whose commands are not listed (it reads the latest
-// capabilities through a ref). Lane heights and the snap state are the
-// layout store's (siann.layout.v1). The track selection is the app's: M, S,
-// N, B and Shift+Delete act on its tracks; Shift+Delete asks first.
+// Ctrl+A, L, N, B, Alt+S, Shift+E, M, S, Shift+Delete), and F (auto-scroll,
+// m5-ui-transport). The capability rule (spec 3.0) is editGates: a key,
+// button or control exists only when engine.capabilities lists the commands
+// (or the method) it ends in, and the canvas sends no gesture whose commands
+// are not listed (it reads the latest capabilities through a ref). Lane
+// heights, the snap state and auto-scroll are the layout store's
+// (siann.layout.v1). The track selection is the app's: M, S, N, B and
+// Shift+Delete act on its tracks; Shift+Delete asks first.
+// m5-ui-transport: a click in the ruler's lower half or a Shift+Alt-click in
+// the event display locates through onLocate (only when engine.capabilities
+// lists transport.locate), and the canvas follows the layout store's
+// auto-scroll setting.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -110,6 +115,9 @@ export interface TimelineProps {
   readonly reconnects?: number;
   // The selected clip, for the left zone.
   readonly onSelect?: (clipId: string | null) => void;
+  // A click in the ruler's lower half or a Shift+Alt-click in the event
+  // display: locate the project cursor (frames).
+  readonly onLocate?: (frames: string) => void;
   // Test-only (SIANN_SHELL_TEST=1): the canvas's hooks once it is mounted.
   readonly onHooks?: (hooks: TimelineTestHooks | null) => void;
 }
@@ -140,6 +148,7 @@ export function Timeline({
   platform = 'other',
   onSelect,
   onHooks,
+  onLocate,
   reconnects = 0,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
@@ -156,6 +165,8 @@ export function Timeline({
   const can = useCapabilities();
   const canRef = useRef(can);
   canRef.current = can;
+  const locateRef = useRef(onLocate);
+  locateRef.current = onLocate;
   const gates = editGates(can);
   const canPlace = can.command('clip.place');
   const canAdd = can.command('track.add');
@@ -169,6 +180,12 @@ export function Timeline({
     (listener) => layout.subscribe(listener),
     () => layout.getSnapshot().layout.trackList,
     () => layout.getSnapshot().layout.trackList,
+  );
+  // Auto-scroll (F; m5-ui-transport): a per-viewer setting of the layout store.
+  const autoScroll = useSyncExternalStore(
+    (listener) => layout.subscribe(listener),
+    () => layout.getSnapshot().layout.autoScroll,
+    () => layout.getSnapshot().layout.autoScroll,
   );
   const snap = useSyncExternalStore(
     (listener) => layout.subscribe(listener),
@@ -211,8 +228,13 @@ export function Timeline({
       tooltip: tooltipRef.current,
       platform,
       locate: (frame) => (canRef.current.has('transport.locate') ? client.request('transport.locate', { frames: frame.toString() }) : undefined),
+      onLocate: (frames) => {
+        if (canRef.current.has('transport.locate')) locateRef.current?.(frames);
+      },
+      autoScroll: layout.getSnapshot().layout.autoScroll,
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
+    const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
     const offHeights = surface.onLaneHeights((trackIds, height) => {
       if (sessionId !== null) layout.dispatch({ type: 'allTrackHeights', sessionId, trackIds, height });
     });
@@ -221,6 +243,7 @@ export function Timeline({
     return () => {
       onHooks?.(null);
       offHeights();
+      offAutoScroll();
       surface.destroy();
       setTimeline(null);
     };
@@ -400,6 +423,22 @@ export function Timeline({
         <Capable command="clip.remove">
           <button type="button" data-testid="delete-clip" disabled={!state.selectedClipId} onClick={() => void timeline?.deleteSelected()}>
             {t('timeline.deleteClip')}
+          </button>
+        </Capable>
+        <Capable method="transport.play">
+          <button
+            type="button"
+            className="auto-scroll"
+            data-testid="auto-scroll"
+            data-part="auto-scroll"
+            aria-pressed={autoScroll}
+            title={t('transport.autoScroll')}
+            aria-label={t('transport.autoScroll')}
+            onClick={() => layout.dispatch({ type: 'autoScroll' })}
+          >
+            <svg className="transport-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+              <path d="M2.5 8h7M7 5l3 3-3 3M13 3v10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </Capable>
         <output className="timeline-error" data-testid="timeline-error" data-code={state.error?.code ?? undefined} title={t('timeline.lastError')}>

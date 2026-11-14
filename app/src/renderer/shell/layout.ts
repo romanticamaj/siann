@@ -19,8 +19,15 @@
 // key is remembered for this window only (`opened`).
 //
 // The project zone is not a Zone: it has no size, no collapse and no action.
+//
+// Two view settings of the event display and the transport (m5-ui-transport;
+// spec 3.1) are kept here too, per viewer and never sent to the engine:
+// auto-scroll (F; on by default, as in Cubase) and the position display's
+// primary format (Bars+Beats by default; the period key exchanges it with
+// Seconds).
 
 import { DEFAULT_SNAP, isGridType, type GridType, type SnapSettings } from '../timeline/snap';
+import type { TimeFormat } from '../timeline/transport-time';
 
 export type Zone = 'left' | 'lower' | 'right';
 export const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
@@ -48,6 +55,10 @@ export interface Layout {
   readonly trackList: number;
   // Session id -> track id -> px (m5-ui-arrange); the zones are the same for every session.
   readonly trackHeights: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  // Auto-scroll in page mode while playing (m5-ui-transport).
+  readonly autoScroll: boolean;
+  // The position display's primary format; the other one is the secondary.
+  readonly timeFormat: TimeFormat;
   // Snap on / off (J) and the grid type (m5-ui-edit-basics).
   readonly snap: SnapSettings;
 }
@@ -81,7 +92,15 @@ export type ShellAction =
   | { readonly type: 'showTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport }
   // Show the zone on `tab` and leave it shown (Ctrl+Alt+P, the Plans button).
   | { readonly type: 'openTab'; readonly zone: Zone; readonly tab: string; readonly viewport: Viewport }
-  | TrackListAction;
+  | TrackListAction
+  | ViewAction;
+
+// The transport's view settings (m5-ui-transport): no zone, no viewport.
+export type ViewAction =
+  // F or the auto-scroll button: toggle, or set `enabled`.
+  | { readonly type: 'autoScroll'; readonly enabled?: boolean }
+  // The period key: the primary and the secondary format change places.
+  | { readonly type: 'exchangeFormats' };
 
 // The track list boundary and the lane heights (m5-ui-arrange): no zone, no viewport.
 export type TrackListAction =
@@ -148,6 +167,8 @@ export const DEFAULT_LAYOUT: Layout = Object.freeze({
   stripWidth: 'normal',
   trackList: TRACK_LIST_DEFAULT,
   trackHeights: Object.freeze({}),
+  autoScroll: true,
+  timeFormat: 'bars',
   snap: DEFAULT_SNAP,
 });
 
@@ -264,12 +285,28 @@ function reduceTrackList(state: ShellState, action: TrackListAction): ShellState
   }
 }
 
+function isViewAction(action: ShellAction): action is ViewAction {
+  return action.type === 'autoScroll' || action.type === 'exchangeFormats';
+}
+
+function reduceView(state: ShellState, action: ViewAction): ShellState {
+  switch (action.type) {
+    case 'autoScroll': {
+      const enabled = action.enabled ?? !state.layout.autoScroll;
+      return enabled === state.layout.autoScroll ? state : withLayout(state, { autoScroll: enabled });
+    }
+    case 'exchangeFormats':
+      return withLayout(state, { timeFormat: state.layout.timeFormat === 'bars' ? 'seconds' : 'bars' });
+  }
+}
+
 function isTrackListAction(action: ShellAction): action is TrackListAction {
-  return !('zone' in action);
+  return !('zone' in action) && !isViewAction(action);
 }
 
 export function reduce(state: ShellState, action: ShellAction): ShellState {
   // Before the zone guard, which would swallow these.
+  if (isViewAction(action)) return reduceView(state, action);
   if (isTrackListAction(action)) return reduceTrackList(state, action);
   if (!isZone(action.zone)) return state;
   const zone = action.zone;
@@ -363,6 +400,8 @@ export function serializeLayout(layout: Layout): string {
     stripWidth: layout.stripWidth,
     trackList: layout.trackList,
     trackHeights: layout.trackHeights,
+    autoScroll: layout.autoScroll,
+    timeFormat: layout.timeFormat,
     snap: layout.snap,
   });
 }
@@ -423,6 +462,8 @@ export function parseLayout(text: string | null): Layout {
         ? Math.round(Math.min(object.trackList, TRACK_LIST_MAX))
         : TRACK_LIST_DEFAULT,
     trackHeights,
+    autoScroll: typeof object.autoScroll === 'boolean' ? object.autoScroll : DEFAULT_LAYOUT.autoScroll,
+    timeFormat: object.timeFormat === 'seconds' || object.timeFormat === 'bars' ? object.timeFormat : DEFAULT_LAYOUT.timeFormat,
     snap: parseSnap(object.snap),
   };
 }
@@ -438,6 +479,8 @@ export function viewFor(
     tabs: layout.tabs,
     stripWidth: layout.stripWidth,
     trackList: layout.trackList,
+    autoScroll: layout.autoScroll,
+    timeFormat: layout.timeFormat,
     snap: layout.snap,
     trackHeights: (sessionId !== null ? layout.trackHeights[sessionId] : undefined) ?? {},
   };

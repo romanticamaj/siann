@@ -89,6 +89,9 @@ function make(options: { ratio?: number; snapshot?: Snapshot } = {}) {
   const model = modelOf(options.snapshot ?? sampleSnapshot());
   const playhead = playheadOf();
   const heights = heightsOf();
+  const located: string[] = [];
+  // The cursor's clock (transport/playhead-clock.ts), moved by hand.
+  const clock = { now: 1000, advance(ms: number) { this.now += ms; } };
   const timeline = new TimelineCanvas({
     content: surface.content,
     overlay: surface.overlay,
@@ -98,9 +101,11 @@ function make(options: { ratio?: number; snapshot?: Snapshot } = {}) {
     execute: async () => undefined,
     playhead: playhead.source,
     laneHeights: heights.source,
+    onLocate: (frames) => void located.push(frames),
+    now: () => clock.now,
   });
   flushFrames();
-  return { surface, model, playhead, heights, timeline, hooks: timeline.testHooks() };
+  return { surface, model, playhead, heights, timeline, located, clock, hooks: timeline.testHooks() };
 }
 
 test('a playhead-only change redraws the overlay and not the content', () => {
@@ -108,20 +113,60 @@ test('a playhead-only change redraws the overlay and not the content', () => {
   const content = hooks.contentDraws();
   const overlay = hooks.overlayDraws();
   assert.equal(content, 1, 'one first content draw');
+  // Locates while stopped: one overlay draw each.
   for (let i = 1; i <= 5; i += 1) {
-    playhead.emit(String(i * 4800));
+    playhead.emit(String(i * 4800), false);
     flushFrames();
   }
   assert.equal(hooks.contentDraws(), content, 'the content layer was not redrawn');
   assert.equal(hooks.overlayDraws(), overlay + 5);
   assert.equal(hooks.cursorX(), 5 * 4800 / hooks.view().framesPerPixel);
   // A frame with the same playhead (meters only) draws nothing.
-  playhead.emit('24000');
+  playhead.emit('24000', false);
   assert.equal(flushFrames(), 0, 'no frame scheduled');
   // Stopped and idle: no animation frame is pending.
   playhead.emit('24000', false);
   flushFrames();
   assert.equal(flushFrames(), 0);
+  timeline.destroy();
+});
+
+test('while playing the cursor follows the clock on every animation frame between realtime frames; the content is not redrawn; stopped, the loop ends', () => {
+  const { hooks, playhead, timeline, clock } = make();
+  const content = hooks.contentDraws();
+  // 100 frames per px at 48 kHz: 1 ms is 48 frames, 0.48 px.
+  playhead.emit('4800', true);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 48);
+  let overlay = hooks.overlayDraws();
+  // No new realtime frame: each animation frame extrapolates (50 ms: 2400 frames).
+  clock.advance(50);
+  assert.equal(flushFrames(), 1, 'the overlay asked for the next animation frame itself');
+  assert.equal(hooks.cursorX(), 72);
+  assert.equal(hooks.overlayDraws(), overlay + 1);
+  clock.advance(25);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 84);
+  overlay = hooks.overlayDraws();
+  for (let i = 0; i < 10; i += 1) {
+    clock.advance(1);
+    flushFrames();
+  }
+  assert.equal(hooks.overlayDraws(), overlay + 10, 'one overlay draw per animation frame');
+  assert.equal(hooks.contentDraws(), content, 'the content layer was not redrawn');
+  // A late realtime frame: the lead is bounded (playhead-clock.ts MAX_LEAD_MS).
+  playhead.emit('9600', true);
+  flushFrames();
+  clock.advance(10_000);
+  flushFrames();
+  assert.ok(hooks.cursorX()! <= 96 + (250 * 48) / 100, `bounded lead: ${hooks.cursorX()}`);
+  // The stop frame shows the engine's position, and no frame is pending after.
+  playhead.emit('12000', false);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 120);
+  clock.advance(100);
+  assert.equal(flushFrames(), 0, 'stopped: the loop ended');
+  assert.equal(hooks.cursorX(), 120);
   timeline.destroy();
 });
 
@@ -252,6 +297,163 @@ test('muted and implicitly muted lanes are dimmed', () => {
   const solo = { ...soloed, tracks: [soloed.entities['track:trk_a'] as ReturnType<typeof track>, track('trk_b')] };
   const { hooks, timeline } = make({ snapshot: solo });
   assert.deepEqual(hooks.dimmedLanes(), ['trk_b']);
+  timeline.destroy();
+});
+
+// m5-ui-transport (UI redesign spec 3.1, 3.2, 5.2): auto-scroll pages the
+// view in the overlay's frame, so the content layer is redrawn only on a page
+// turn; a cursor move inside the view, a locate while stopped and a playhead
+// move with auto-scroll off all leave the content alone.
+test('a cursor-only frame, a locate and a playhead move without a page turn do not redraw the content', () => {
+  const { hooks, playhead, timeline } = make();
+  timeline.setAutoScroll(true);
+  flushFrames();
+  const content = hooks.contentDraws();
+  const view = hooks.view();
+  // 800 px at 100 frames per px: frames [0, 80000) are in view.
+  for (const frames of ['4800', '40000', '79000']) {
+    playhead.emit(frames, true);
+    flushFrames();
+  }
+  // A locate while stopped, past the right edge: the cursor moves, the view does not.
+  playhead.emit('200000', false);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 2000);
+  assert.equal(hooks.contentDraws(), content, 'no page turn, no content draw');
+  assert.equal(hooks.view().scrollFrames, view.scrollFrames);
+  // Auto-scroll off: playing past the edge moves nothing either.
+  timeline.setAutoScroll(false);
+  playhead.emit('300000', true);
+  flushFrames();
+  assert.equal(hooks.contentDraws(), content);
+  assert.equal(hooks.view().scrollFrames, view.scrollFrames);
+  timeline.destroy();
+});
+
+test('auto-scroll pages when the cursor leaves the view while playing, once per page, and not during a clip drag', () => {
+  const { hooks, playhead, timeline } = make();
+  timeline.setAutoScroll(true);
+  flushFrames();
+  let content = hooks.contentDraws();
+  playhead.emit('80000', true);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '80000', 'the cursor lands at the left edge');
+  assert.equal(hooks.cursorX(), 0);
+  flushFrames();
+  assert.equal(hooks.contentDraws(), content + 1, 'one content draw for the page turn');
+  content = hooks.contentDraws();
+  playhead.emit('120000', true);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '80000');
+  assert.equal(hooks.contentDraws(), content, 'inside the new page: no content draw');
+  timeline.destroy();
+
+  // A clip drag held (clp_1 is on the first page): the cursor leaves the
+  // view, the view stays; after the release paging resumes.
+  const second = make();
+  second.timeline.setAutoScroll(true);
+  flushFrames();
+  const clip = second.hooks.clips().find((r) => r.clipId === 'clp_1')!;
+  const grab = { clientX: clip.x + clip.width / 2, clientY: clip.y + clip.height / 2 };
+  second.surface.fire('pointerdown', grab);
+  second.surface.fire('pointermove', { clientX: grab.clientX + 30, clientY: grab.clientY });
+  second.playhead.emit('90000', true);
+  flushFrames();
+  assert.equal(second.hooks.view().scrollFrames, '0', 'no page turn while the drag is held');
+  second.surface.fire('pointerup', { clientX: grab.clientX + 30, clientY: grab.clientY });
+  second.playhead.emit('91000', true);
+  flushFrames();
+  assert.equal(second.hooks.view().scrollFrames, '91000', 'paging resumes after the release');
+  second.timeline.destroy();
+});
+
+test('auto-scroll follows the clock: the page turns when the extrapolated cursor leaves the view, between realtime frames', () => {
+  const { hooks, playhead, timeline, clock } = make();
+  timeline.setAutoScroll(true);
+  playhead.emit('79000', true);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '0');
+  // 50 ms later, no new frame: 79000 + 2400 is past the right edge (80000).
+  clock.advance(50);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '81400', 'the cursor lands at the left edge');
+  assert.equal(hooks.cursorX(), 0);
+  timeline.destroy();
+});
+
+test('a press and release in the ruler\'s lower half locates once; a vertical drag zooms instead; the upper half does neither', () => {
+  const { surface, hooks, timeline, located } = make();
+  timeline.zoomIn();
+  flushFrames();
+  const view = hooks.view();
+  // The lower half of the 32 px ruler: y in [16, 32).
+  surface.fire('pointerdown', { clientX: 250, clientY: 24 });
+  surface.fire('pointermove', { clientX: 251, clientY: 25 });
+  surface.fire('pointerup', { clientX: 251, clientY: 25 });
+  assert.deepEqual(located, [xToFrame(250, view).toString()], 'one locate at the frame under the press');
+  assert.deepEqual(hooks.view(), view, 'the view is unchanged');
+
+  // A vertical drag beyond the threshold zooms about the pointer and does not locate.
+  surface.fire('pointerdown', { clientX: 250, clientY: 20 });
+  surface.fire('pointermove', { clientX: 250, clientY: 40 });
+  surface.fire('pointerup', { clientX: 250, clientY: 60 });
+  assert.equal(located.length, 1, 'no second locate');
+  assert.ok(hooks.view().framesPerPixel < view.framesPerPixel, 'dragged down: zoomed in');
+
+  // The upper half (the locators', P1-7): no locate, no zoom.
+  const zoomed = hooks.view();
+  surface.fire('pointerdown', { clientX: 300, clientY: 8 });
+  surface.fire('pointerup', { clientX: 300, clientY: 8 });
+  surface.fire('pointerdown', { clientX: 300, clientY: 8 });
+  surface.fire('pointermove', { clientX: 300, clientY: 60 });
+  surface.fire('pointerup', { clientX: 300, clientY: 60 });
+  assert.equal(located.length, 1);
+  assert.deepEqual(hooks.view(), zoomed);
+
+  // A locate never goes before the session's start.
+  timeline.destroy();
+  const start = make();
+  start.surface.fire('pointerdown', { clientX: 0, clientY: 24 });
+  start.surface.fire('pointerup', { clientX: 0, clientY: 24 });
+  assert.deepEqual(start.located, ['0']);
+  start.timeline.destroy();
+});
+
+// UI redesign spec 3.1, "Set the cursor": Shift+Alt-click in the event
+// display locates too, on an empty lane and on a clip alike, and neither
+// selects, drags nor places.
+test('Shift+Alt-click in the event display locates at the pressed frame and does not select or drag', () => {
+  const { surface, hooks, timeline, located } = make();
+  const view = hooks.view();
+  const clip = hooks.clips().find((r) => r.clipId === 'clp_1')!;
+  const other = hooks.clips().find((r) => r.clipId === 'clp_2')!;
+  surface.fire('pointerdown', { clientX: other.x + other.width / 2, clientY: other.y + other.height / 2 });
+  surface.fire('pointerup', { clientX: other.x + other.width / 2, clientY: other.y + other.height / 2 });
+  assert.equal(timeline.getState().selectedClipId, 'clp_2');
+  assert.deepEqual(located, [], 'a plain click on a clip does not locate');
+
+  // On the clip: a locate, the selection stays, a following move drags nothing.
+  const onClip = { clientX: clip.x + 10, clientY: clip.y + clip.height / 2, shiftKey: true, altKey: true };
+  surface.fire('pointerdown', onClip);
+  surface.fire('pointermove', { ...onClip, clientX: onClip.clientX + 40 });
+  surface.fire('pointerup', { ...onClip, clientX: onClip.clientX + 40 });
+  assert.deepEqual(located, [xToFrame(onClip.clientX, view).toString()]);
+  assert.equal(timeline.getState().selectedClipId, 'clp_2', 'the selection is unchanged');
+  assert.deepEqual(hooks.clips().find((r) => r.clipId === 'clp_1'), clip, 'the clip did not move');
+
+  // On an empty stretch of a lane: a locate, and the selection is not cleared.
+  const empty = { clientX: 700, clientY: clip.y + clip.height / 2, shiftKey: true, altKey: true };
+  surface.fire('pointerdown', empty);
+  surface.fire('pointerup', empty);
+  assert.deepEqual(located.at(-1), xToFrame(700, view).toString());
+  assert.equal(timeline.getState().selectedClipId, 'clp_2');
+
+  // Shift alone or Alt alone in the event display does not locate.
+  for (const mods of [{ shiftKey: true }, { altKey: true }]) {
+    surface.fire('pointerdown', { clientX: 700, clientY: empty.clientY, ...mods });
+    surface.fire('pointerup', { clientX: 700, clientY: empty.clientY, ...mods });
+  }
+  assert.equal(located.length, 2);
   timeline.destroy();
 });
 

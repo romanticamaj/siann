@@ -42,6 +42,13 @@
 // track's height. Lane heights are the layout store's (per session id); the
 // canvas reads them through `laneHeights` and asks for changes through
 // onLaneHeights. The snap state is the layout store's too, given by setSnap.
+// In the lower half of the ruler a click (a press and release that moved
+// less than DRAG_THRESHOLD_PX) locates the project cursor through onLocate,
+// also while stopped, as a Shift+Alt-click anywhere in the event display
+// locates without selecting, splitting or placing (m5-ui-transport). With
+// auto-scroll on (F) the overlay frame turns the page when the cursor leaves
+// the view while playing, never while a drag is held (auto-scroll.ts), so the
+// content layer redraws only on a page turn.
 //
 // Colours are tokens.css custom properties read from the container; the one
 // sentence the canvas words itself, the empty session's guidance, comes from
@@ -55,6 +62,8 @@ import type { MeterFrame } from '../model/meter-frames';
 import { chooseLevel, columnRange } from '../model/peaks';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { ReadModel, Snapshot } from '../model/read-model';
+import { PlayheadClock } from '../transport/playhead-clock';
+import { nextScroll } from './auto-scroll';
 import { gestureCommand, newClipId, type TimelineCommand } from './commands';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
 import {
@@ -174,6 +183,15 @@ export interface TimelineCanvasOptions {
   readonly platform?: 'mac' | 'other';
   // transport.locate for L, N and B; absent when the engine does not list it.
   readonly locate?: (frame: bigint) => unknown;
+  // A click in the ruler's lower half or a Shift+Alt-click in the event
+  // display: locate the project cursor to this frame (a non-negative decimal
+  // string; m5-ui-transport).
+  readonly onLocate?: (frames: string) => void;
+  // Auto-scroll in page mode while playing (off when absent; setAutoScroll).
+  readonly autoScroll?: boolean;
+  // The cursor clock's time in milliseconds (performance.now when absent;
+  // the tests move it by hand).
+  readonly now?: () => number;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -232,9 +250,12 @@ type Plan =
   | { readonly kind: 'trim'; readonly edge: TrimEdge; readonly delta: bigint; readonly guide: bigint | null };
 
 interface RulerDrag {
+  readonly startX: number;
   readonly startY: number;
   readonly anchorX: number;
   readonly view: Viewport;
+  // Past DRAG_THRESHOLD_PX: a zoom; until then a release is a click (locate).
+  moved: boolean;
 }
 
 interface Palette {
@@ -295,7 +316,13 @@ export class TimelineCanvas {
   #contentDraws = 0;
   #overlayDraws = 0;
   #cursorX: number | null = null;
+  // The cursor's position as last drawn, from the clock.
   #playhead: string | null = null;
+  // The newest realtime frame's playhead, as received.
+  #framePlayhead: string | null = null;
+  #playing = false;
+  readonly #clock: PlayheadClock;
+  #autoScroll: boolean;
   #outline = 0;
   #dimmed: string[] = [];
   #guidance: string | null = null;
@@ -307,6 +334,8 @@ export class TimelineCanvas {
     this.#content = options.content;
     this.#overlay = options.overlay;
     this.#container = options.container;
+    this.#autoScroll = options.autoScroll ?? false;
+    this.#clock = new PlayheadClock({ now: options.now ?? (() => performance.now()) });
     this.#view = {
       framesPerPixel: options.framesPerPixel ?? DEFAULT_FRAMES_PER_PIXEL,
       scrollFrames: '0',
@@ -449,7 +478,7 @@ export class TimelineCanvas {
   // Alt+X: the selected clips at the project cursor, or every clip under it.
   async splitAtCursor(): Promise<void> {
     const snapshot = this.#options.model.getSnapshot();
-    const cursor = this.#playhead;
+    const cursor = this.#cursorNow();
     if (!snapshot || cursor === null) return;
     const selection = this.#state.selectedClipIds;
     await this.#send((clipId) => splitAtCursorCommand(snapshot, selection, BigInt(cursor), clipId), true);
@@ -507,7 +536,15 @@ export class TimelineCanvas {
   }
 
   #cursorFrame(): bigint {
-    return this.#playhead === null ? 0n : BigInt(this.#playhead);
+    const cursor = this.#cursorNow();
+    return cursor === null ? 0n : BigInt(cursor);
+  }
+
+  // The project cursor now, from the clock (m5-ui-transport): while playing
+  // the extrapolated position, not the one the last overlay frame drew.
+  #cursorNow(): string | null {
+    this.#clock.observe(this.#options.playhead?.latest() ?? null);
+    return this.#clock.position(this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000);
   }
 
   #locate(frame: bigint | null): boolean {
@@ -542,6 +579,13 @@ export class TimelineCanvas {
   setFramesPerPixel(framesPerPixel: number): void {
     if (!(framesPerPixel > 0)) return;
     this.#setView(zoomAbout(this.#view, this.#view.width / 2, framesPerPixel / this.#view.framesPerPixel));
+  }
+
+  // F: auto-scroll in page mode while playing (UI redesign spec 3.1).
+  setAutoScroll(enabled: boolean): void {
+    if (enabled === this.#autoScroll) return;
+    this.#autoScroll = enabled;
+    this.#invalidateOverlay();
   }
 
   // Shift+H and Shift+G: every track one preset taller or shorter.
@@ -663,11 +707,17 @@ export class TimelineCanvas {
     this.invalidate();
   }
 
+  // A realtime frame: the clock restarts from it. While playing the overlay
+  // runs on every animation frame anyway (#drawOverlay asks for the next);
+  // stopped, a frame whose playhead did not move draws nothing.
   #playheadChanged(): void {
     const frame = this.#options.playhead?.latest() ?? null;
+    this.#clock.observe(frame);
     const playhead = frame ? frame.playheadSamples : null;
-    if (playhead === this.#playhead) return;
-    this.#playhead = playhead;
+    const playing = frame?.playing ?? false;
+    if (playhead === this.#framePlayhead && playing === this.#playing) return;
+    this.#framePlayhead = playhead;
+    this.#playing = playing;
     this.#invalidateOverlay();
   }
 
@@ -742,11 +792,18 @@ export class TimelineCanvas {
     const snapshot = this.#options.model.getSnapshot();
     const { x, y } = this.#point(e);
     if (y < this.#view.rulerHeight) {
-      // The lower half zooms by a vertical drag; the upper half is P1-7's.
+      // The lower half: a click locates, a vertical drag zooms; the upper half is P1-7's.
       if (y >= this.#view.rulerHeight / 2) {
-        this.#rulerDrag = { startY: y, anchorX: x, view: this.#view };
+        this.#rulerDrag = { startX: x, startY: y, anchorX: x, view: this.#view, moved: false };
         this.#capture(e);
       }
+      return;
+    }
+    // Shift+Alt-click in the event display locates too (spec 3.1, "Set the
+    // cursor"), on a clip or not, and neither selects, drags nor places.
+    if (e.shiftKey && e.altKey) {
+      const frame = xToFrame(x, this.#view);
+      this.#options.onLocate?.((frame < 0n ? 0n : frame).toString());
       return;
     }
     if (!snapshot) return;
@@ -821,6 +878,8 @@ export class TimelineCanvas {
     this.#lastPointer = { x, y };
     const ruler = this.#rulerDrag;
     if (ruler) {
+      if (!ruler.moved && Math.abs(y - ruler.startY) < DRAG_THRESHOLD_PX && Math.abs(x - ruler.startX) < DRAG_THRESHOLD_PX) return;
+      ruler.moved = true;
       const factor = Math.pow(2, -(y - ruler.startY) / RULER_DRAG_PX_PER_STEP);
       this.#setView(zoomAbout({ ...ruler.view, width: this.#view.width, height: this.#view.height, laneHeights: this.#view.laneHeights }, ruler.anchorX, factor));
       return;
@@ -866,10 +925,16 @@ export class TimelineCanvas {
   }
 
   #pointerUp(e: PointerEvent): void {
-    if (this.#rulerDrag) {
+    const ruler = this.#rulerDrag;
+    if (ruler) {
       this.#pointerMove(e);
       this.#rulerDrag = null;
       this.#release(e);
+      // A click (no movement past the threshold): locate to the pressed frame.
+      if (!ruler.moved) {
+        const frame = xToFrame(ruler.startX, ruler.view);
+        this.#options.onLocate?.((frame < 0n ? 0n : frame).toString());
+      }
       return;
     }
     const drag = this.#drag;
@@ -1211,6 +1276,23 @@ export class TimelineCanvas {
 
   #drawOverlay(): void {
     this.#overlayDraws += 1;
+    // The cursor at this animation frame: extrapolated while playing.
+    const rate = this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000;
+    this.#playhead = this.#clock.position(rate);
+    // Auto-scroll (page mode): a cursor that left the view while playing
+    // turns the page here, so the content is redrawn only on a page turn;
+    // never while a clip or ruler drag is held.
+    const page = nextScroll({
+      view: this.#view,
+      cursor: this.#playhead,
+      playing: this.#playing,
+      enabled: this.#autoScroll,
+      dragging: this.#drag !== null || this.#rulerDrag !== null,
+    });
+    if (page !== null) {
+      this.#view = { ...this.#view, scrollFrames: page };
+      this.#invalidateContent();
+    }
     const view = this.#view;
     const snapshot = this.#options.model.getSnapshot();
     const ctx = this.#context(this.#overlay);
@@ -1271,6 +1353,9 @@ export class TimelineCanvas {
       ctx.fillStyle = palette.tx1;
       ctx.fillRect(Math.round(this.#cursorX), 0, 1, view.height ?? 0);
     }
+    // Display rate while playing: the next animation frame draws the cursor
+    // again from the clock; stopped, the loop ends here.
+    if (this.#clock.playing()) this.#invalidateOverlay();
   }
 
   // A clip's resize squares in its lower corners and its volume control (a
