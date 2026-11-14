@@ -41,6 +41,9 @@ struct StreamPosition {
     // {epoch, entities} of the newest meters.legend event, null before one. A
     // client that subscribes or syncs later decodes meter frames with it.
     json::Value meters;
+    // m5b-engine-record: the takes in media/recording/ that are not being
+    // recorded, as the auth reply and session.sync list them.
+    json::Value pendingTakes = json::Value(json::Array{});
 };
 
 class EventStream {
@@ -66,6 +69,9 @@ public:
     // it as meters.legend, atomically: a subscriber gets either the new legend
     // in its position or the event, never neither.
     std::uint64_t publishMeterLegend(json::Object legend);
+    // Makes `takes` (an array) the position's pending takes; no event (the
+    // recording's record.changed announces the change).
+    void setPendingTakes(json::Value takes);
     // A commit onto a proposal branch: proposal.changed {branch, changedIds}
     // with the branch revision as the event's revision. The head stays.
     std::uint64_t publishBranchRevision(const command::Revision& revision);

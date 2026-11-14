@@ -35,6 +35,7 @@
 #include "siann/media/peaks.hpp"
 #include "siann/session/journal.hpp"
 #include "siann/session/media_import.hpp"
+#include "siann/session/takes.hpp"
 
 namespace siann::protocol {
 
@@ -294,6 +295,7 @@ const std::vector<std::string_view> kMethods = {
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
     "plan.list",       "plan.preview",    "transport.set_cycle", "transport.set_click",
+    "record.arm",      "transport.record", "record.recover_take",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -400,7 +402,9 @@ Value transportStateJson(const TransportState& state) {
     return Value(Object{{"playing", Value(state.playing)},
                         {"position", decimal(state.position)},
                         {"cycle", Value(state.cycle)},
-                        {"click", clickJson(state.click)}});
+                        {"click", clickJson(state.click)},
+                        {"recording", Value(state.recording)},
+                        {"armed", stringArray(state.armed)}});
 }
 
 bool requireBool(const Value& params, std::string_view key, std::string_view method) {
@@ -428,11 +432,22 @@ Value deviceJson(const std::optional<DeviceInfo>& device) {
     if (!device) {
         return Value(nullptr);
     }
+    Value input(nullptr);
+    if (device->input) {
+        input = Value(Object{{"id", Value(device->input->id)},
+                             {"channels", Value(device->input->channels)},
+                             {"latencyFrames", Value(device->input->latencyFrames)}});
+    }
     return Value(Object{{"id", Value(device->id)},
                         {"sampleRate", Value(static_cast<double>(device->sampleRate))},
                         {"bufferFrames", Value(device->bufferFrames)},
                         {"inputLatencyFrames", Value(device->inputLatencyFrames)},
-                        {"outputLatencyFrames", Value(device->outputLatencyFrames)}});
+                        {"outputLatencyFrames", Value(device->outputLatencyFrames)},
+                        {"input", std::move(input)}});
+}
+
+Value countOrNull(const std::optional<int>& count) {
+    return count ? Value(*count) : Value(nullptr);
 }
 
 Value devicesJson(const std::vector<DeviceDescription>& devices) {
@@ -442,7 +457,9 @@ Value devicesJson(const std::vector<DeviceDescription>& devices) {
                                    {"type", Value(device.type)},
                                    {"name", Value(device.name)},
                                    {"isDefault", Value(device.isDefault)},
-                                   {"current", Value(device.current)}}));
+                                   {"current", Value(device.current)},
+                                   {"inputChannels", countOrNull(device.inputChannels)},
+                                   {"outputChannels", countOrNull(device.outputChannels)}}));
     }
     return Value(Object{{"devices", Value(std::move(out))}});
 }
@@ -452,6 +469,8 @@ Value engineStatusJson(const EngineStatus& status) {
                {"playing", Value(status.playing)},
                {"cycle", Value(status.cycle)},
                {"click", clickJson(status.click)},
+               {"recording", Value(status.recording)},
+               {"armed", stringArray(status.armed)},
                {"xruns", decimal(status.xruns)},
                {"maxCallbackMicros", Value(status.maxCallbackMicros)},
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
@@ -967,6 +986,7 @@ struct ProtocolServer::Impl {
                                                       {"documentHash", Value(current.documentHash)},
                                                       {"seq", Value(std::to_string(current.seq))},
                                                       {"meters", current.meters},
+                                                      {"pendingTakes", current.pendingTakes},
                                                       {"about", aboutJson()}}));
             };
             std::lock_guard lock(mutex);
@@ -1068,6 +1088,103 @@ struct ProtocolServer::Impl {
             throw ProtocolError("not_supported", "this engine host has no transport");
         }
         return *options.transportPort;
+    }
+
+    RecordPort& requireRecordPort() const {
+        if (options.recordPort == nullptr) {
+            throw ProtocolError("not_supported", "this engine host does not record");
+        }
+        return *options.recordPort;
+    }
+
+    // record.recover_take {takeId, accept}: the revision that committed the
+    // take, or the take in trash/; a repeat answers the same.
+    std::string recordRecoverTake(const Pending& request) {
+        const std::string_view method = "record.recover_take";
+        RecordPort& recordPort = requireRecordPort();
+        const std::string& takeId = requireString(request.params, "takeId", method);
+        const bool accept = requireBool(request.params, "accept", method);
+        const RecoverResult result = recordPort.recoverTake(takeId, accept, options.actor, options.clock());
+        refreshPendingTakes();
+        if (accept) {
+            if (result.revision == nullptr) {
+                throw ProtocolError("internal_error", "the take was accepted without a revision");
+            }
+            return success(request.requestId, Value(Object{{"revision", revisionJson(*result.revision)}}));
+        }
+        return success(request.requestId, Value(Object{{"takeId", Value(takeId)}, {"trashed", Value(true)}}));
+    }
+
+    // The pending takes the auth reply and session.sync list: the record
+    // port's, or without one what the bundle holds. A take whose manifest cannot
+    // be read leaves the list as it was.
+    void refreshPendingTakes() {
+        std::vector<PendingTake> takes;
+        try {
+            if (options.recordPort != nullptr) {
+                takes = options.recordPort->pendingTakes();
+            } else {
+                for (const session::TakeManifest& manifest : session::pendingTakes(session->bundlePath())) {
+                    PendingTake take;
+                    take.takeId = manifest.takeId;
+                    take.trackId = manifest.trackId;
+                    take.channels = manifest.channels;
+                    take.sampleRate = manifest.sampleRate;
+                    if (manifest.startPosition) {
+                        take.startFrame = *manifest.startPosition - manifest.recordOffset;
+                    }
+                    take.endedBy = manifest.endedBy;
+                    take.overflows = manifest.overflows;
+                    takes.push_back(std::move(take));
+                }
+            }
+        } catch (const std::exception&) {
+            return;
+        }
+        events.setPendingTakes(pendingTakesJson(takes));
+    }
+
+    // A revision the engine host committed itself (a recording's end) reaches
+    // subscribers as session.changed, once.
+    void publishHeadIfMoved() {
+        const command::Revision& head = session->history().head();
+        if (head.envelope.id != events.position().revision) {
+            events.publishRevision(head);
+            refreshMediaTable();
+        }
+    }
+
+    // The record state as last published (nothing before the first look).
+    std::optional<RecordState> publishedRecord_;
+
+    // Command thread, after every request and once per pump: record.changed when
+    // the port's record state differs from what was last published. A recording
+    // that ended published its commit first, and the pending takes are read again.
+    void syncRecordState() {
+        if (options.recordPort == nullptr) {
+            return;
+        }
+        RecordState now = options.recordPort->recordState();
+        if (!publishedRecord_) {
+            publishedRecord_ = std::move(now);
+            return;
+        }
+        if (now == *publishedRecord_) {
+            return;
+        }
+        const bool ended = publishedRecord_->recording && !now.recording;
+        publishedRecord_ = now;
+        if (ended) {
+            publishHeadIfMoved();
+            refreshPendingTakes();
+        }
+        events.publish("record.changed", recordStateJson(now));
+    }
+
+    // The methods that can end a recording, and with it commit a revision.
+    static bool touchesRecording(const std::string& method) {
+        return method == "transport.stop" || method == "transport.record" || method == "record.arm" ||
+               method == "record.recover_take" || method == "engine.select_device";
     }
 
     Value inspectJson() const {
@@ -1496,7 +1613,8 @@ struct ProtocolServer::Impl {
                                       {"peaks", Value(true)},
                                       {"locators", Value(true)},
                                       {"cycle", Value(options.transportPort != nullptr)},
-                                      {"click", Value(options.transportPort != nullptr)}})},
+                                      {"click", Value(options.transportPort != nullptr)},
+                                      {"recording", Value(options.recordPort != nullptr)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
@@ -1858,7 +1976,23 @@ struct ProtocolServer::Impl {
         if (method == "engine.select_device") {
             TransportPort& transportPort = requireTransport();
             const std::string& id = requireString(request.params, "id", method);
-            return success(request.requestId, deviceJson(transportPort.selectDevice(id)));
+            const std::optional<std::string> inputId = optionalString(request.params, "inputId", method);
+            return success(request.requestId, deviceJson(inputId ? transportPort.selectDeviceWithInput(id, inputId)
+                                                                 : transportPort.selectDevice(id)));
+        }
+        if (method == "record.arm") {
+            RecordPort& recordPort = requireRecordPort();
+            const std::string& trackId = requireString(request.params, "trackId", method);
+            const bool armed = requireBool(request.params, "armed", method);
+            return success(request.requestId, Value(recordStateJson(recordPort.arm(trackId, armed))));
+        }
+        if (method == "transport.record") {
+            RecordPort& recordPort = requireRecordPort();
+            const bool enabled = requireBool(request.params, "enabled", method);
+            return success(request.requestId, transportStateJson(recordPort.record(enabled)));
+        }
+        if (method == "record.recover_take") {
+            return recordRecoverTake(request);
         }
         if (method == "plugin.instantiate") {
             return pluginInstantiate(request);
@@ -1997,6 +2131,14 @@ struct ProtocolServer::Impl {
         const std::optional<TransportFlags> flagsBefore = watchFlags ? transportFlags() : std::nullopt;
         std::string response = run(request);
         publishLifecycle(servedBefore, heardBefore);
+        if (touchesRecording(request.method) && session == servedBefore) {
+            publishHeadIfMoved();
+        }
+        if (request.method == "session.open") {
+            publishedRecord_.reset();  // the new session's state is no change to announce
+            refreshPendingTakes();
+        }
+        syncRecordState();
         if (watchFlags) {
             const std::optional<TransportFlags> flagsAfter = transportFlags();
             if (flagsAfter && flagsAfter != flagsBefore) {
@@ -2140,6 +2282,9 @@ struct ProtocolServer::Impl {
         for (const ConnectionId connection : overflow) {
             endConnection(connection);
         }
+        // What the engine host's tick changed since: a take's start, its durable
+        // frames, an early end and its commit (m5b-engine-record).
+        syncRecordState();
         refreshMediaTable();
         events.flush();
     }
@@ -2164,6 +2309,8 @@ ProtocolServer::ProtocolServer(Transport& transport, session::Session& session, 
     handlers.onHttp = [impl](const HttpRequest& request) { return impl->onHttp(request); };
     impl_->transport.setHandlers(std::move(handlers));
     impl_->refreshMediaTable();
+    impl_->refreshPendingTakes();
+    impl_->syncRecordState();  // the state the first record.changed is compared with
 }
 
 ProtocolServer::~ProtocolServer() {

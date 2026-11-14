@@ -128,8 +128,9 @@ public:
 
     // Ends the recording as the host does: a commit, then the final state.
     void endRecording() {
-        session->commit({command::Command::fromJson(
-                            json::parse(R"({"op":"track.add","trackId":"trk_take","name":"Take","channels":1})"))},
+        const std::string trackId = "trk_take" + std::to_string(++recordings);
+        session->commit({command::Command::fromJson(json::parse(R"({"op":"track.add","trackId":")" + trackId +
+                                                                R"(","name":"Take","channels":1})"))},
                         "siann-engine", "t");
         recordState_.recording = false;
         for (RecordTakeState& take : recordState_.takes) {
@@ -148,6 +149,7 @@ public:
     std::uint64_t overflows = 0;
     bool playing = false;
     int calls = 0;
+    int recordings = 0;
 
 private:
     TransportState state() const {
@@ -237,7 +239,8 @@ TEST_CASE("engine.select_device passes inputId and returns the device with its i
                                    Value(Object{{"id", Value("fake")}, {"inputId", Value("nope")}}))) == "not_found");
     CHECK(f.port.selections.size() == 3);  // the non-string inputId reached nothing
 
-    const auto& devices = at(f.harness.ok(c, "engine.devices"), "devices").asArray();
+    const Value listed = f.harness.ok(c, "engine.devices");
+    const auto& devices = at(listed, "devices").asArray();
     REQUIRE(devices.size() == 2);
     CHECK(at(devices[0], "inputChannels").asNumber() == 2);
     CHECK(at(devices[0], "outputChannels").asNumber() == 2);
