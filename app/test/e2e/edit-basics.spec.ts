@@ -89,9 +89,20 @@ async function launchWith(clips: readonly SeedClip[]): Promise<void> {
   }
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('clip-count')).toHaveText(String(clips.length));
+  await ready(clips.length);
   engine = await engineClient(page);
+}
+
+// "connected" comes before engine.capabilities and the read model's first
+// sync; until they land the edit keys decline (editGates reads the latest
+// capabilities) and a key pressed then is lost, as in arrange.spec.ts. The
+// tool buttons exist once the capabilities list the clip commands, and the
+// undo button once they list session.undo; the clip count once the snapshot is in.
+async function ready(clips: number): Promise<void> {
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('tool-split')).toBeVisible();
+  await expect(page.getByTestId('undo')).toBeVisible();
+  await expect(page.getByTestId('clip-count')).toHaveText(String(clips));
 }
 
 test.afterEach(async () => {
@@ -553,7 +564,7 @@ test('Shift-click adds, Ctrl+A selects all, L, N and B move the cursor, Alt+S fi
   const frames: string[] = [];
   page.on('websocket', (socket) => socket.on('framesent', (frame) => frames.push(String(frame.payload))));
   await page.reload();
-  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await ready(3);
 
   const one = await middle('clp_1');
   await page.mouse.click(one.x, one.y);

@@ -63,7 +63,11 @@ test.afterEach(async () => {
   scratch = '';
 });
 
-async function launch(options: { engineArgs?: readonly string[]; env?: Record<string, string>; clips?: boolean } = {}): Promise<void> {
+// `device: false` for an engine whose device does not open (yet): the
+// transport bar stays disabled, so launch does not wait for it.
+async function launch(
+  options: { engineArgs?: readonly string[]; env?: Record<string, string>; clips?: boolean; device?: boolean } = {},
+): Promise<void> {
   const sessionDir = seedBundle(
     scratch,
     [
@@ -80,8 +84,22 @@ async function launch(options: { engineArgs?: readonly string[]; env?: Record<st
     env: options.env,
   });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await ready({ clips: options.clips === false ? 0 : 1, device: options.device ?? true });
   engine = await engineClient(page);
+}
+
+// "connected" comes before engine.capabilities, the read model's first sync
+// and the first engine.status that reports the device; until each lands the
+// keys that need it decline (bindTransportCommands, the edit gates) and a key
+// pressed then is lost (arrange.spec.ts hit the same on the macOS runner).
+// Wait for what each shows: the undo and redo buttons exist once the
+// capabilities list session.undo, the clip count once the snapshot is in, and
+// the start button is enabled once the capabilities and a running device are.
+async function ready(expected: { clips: number; device: boolean }): Promise<void> {
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('undo')).toBeVisible();
+  await expect(page.getByTestId('clip-count')).toHaveText(String(expected.clips));
+  if (expected.device) await expect(playButton()).toBeEnabled();
 }
 
 // The timeline's test hooks (the CSP allows no eval in the page).
@@ -95,6 +113,18 @@ async function hook<T>(name: string): Promise<T> {
 
 const view = () => hook<View>('view');
 const cursorX = async () => (await hook<number | null>('cursorX')) ?? -1;
+
+// The playhead of the newest realtime frame the renderer received, in frames
+// (-1 without one): where the engine is, without the clock's extrapolation
+// that the cursor and the position display add while playing.
+async function framePlayhead(): Promise<number> {
+  return page.evaluate(() => {
+    const transport = (window as unknown as { __siannTransport?: { playhead(): string | null } }).__siannTransport;
+    if (!transport) throw new Error('window.__siannTransport is missing (SIANN_SHELL_TEST=1)');
+    const playhead = transport.playhead();
+    return playhead === null ? -1 : Number(playhead);
+  });
+}
 
 async function rect(clipId: string): Promise<Rect> {
   await expect.poll(async () => (await hook<Rect[]>('clips')).some((r) => r.clipId === clipId)).toBe(true);
@@ -207,6 +237,11 @@ test('Space starts and stops, numpad Enter starts, Num 0 stops, Num . and the co
   await expectPlaying(true);
   const from = await cursorX();
   await expect.poll(cursorX).toBeGreaterThan(from);
+  // The cursor extrapolates up to MAX_LEAD_MS past the newest realtime frame,
+  // so it moves before the engine's playhead does; on a slow runner the fake
+  // device can still be at 0 then, and a stop there leaves 1.1.000. Wait for
+  // the engine itself to be 10 ms in (a tick at 120 BPM is 25 frames).
+  await expect.poll(framePlayhead).toBeGreaterThan(RATE / 100);
   await page.keyboard.press('Space');
   await expectPlaying(false);
   await page.keyboard.press('NumpadEnter');
@@ -538,7 +573,7 @@ test('Ctrl+Z and Ctrl+Shift+Z undo and redo a clip move; nothing to undo is a to
   await app!.close();
   app = await launchApp({ sessionDir: path.join(scratch, 'fresh'), userData: path.join(scratch, 'user-fresh'), languages: ['en-US'] });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await ready({ clips: 0, device: true });
   await focusProject();
   await page.keyboard.press(`${MOD}+KeyZ`);
   await expect.poll(async () => (await sentOf('session.undo')).length).toBe(1);
@@ -551,7 +586,7 @@ test('Ctrl+Z and Ctrl+Shift+Z undo and redo a clip move; nothing to undo is a to
 
 test('with no audio device the transport is disabled, its tooltip gives the reason, and Space sends nothing', async () => {
   // Every open of the fake device fails (as shell.spec.ts does), on every build.
-  await launch({ engineArgs: ['--fake-open-failures', '1000'] });
+  await launch({ engineArgs: ['--fake-open-failures', '1000'], device: false });
   const reason = new RegExp(`^[a-z_]+: ${en['transport.noDevice'].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
   for (const id of ['transport-play', 'transport-stop', 'transport-to-start']) {
     const button = page.getByTestId(id);
@@ -574,7 +609,7 @@ test('with no audio device the transport is disabled, its tooltip gives the reas
 
 test('a device that opens after a few failed attempts enables the transport once engine.status reports it', async () => {
   test.setTimeout(90_000);
-  await launch({ engineArgs: ['--fake-open-failures', '2'] });
+  await launch({ engineArgs: ['--fake-open-failures', '2'], device: false });
   await expect(playButton()).toBeEnabled({ timeout: 30_000 });
   await expect(playButton()).toHaveAttribute('title', en['transport.startStop']);
   await focusProject();
