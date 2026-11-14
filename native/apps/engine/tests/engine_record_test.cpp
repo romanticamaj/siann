@@ -742,3 +742,123 @@ TEST_CASE("a take recorded through a latent insert on the monitored path lands w
     CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
     rig.host->shutdown();
 }
+
+TEST_CASE("transport.locate while recording ends the take and commits it first", "[engine][record][locate]") {
+    RecordRig rig;
+    rig.openInput();
+    rig.host->arm("trk_mono", true);
+    rig.host->record(true);
+    rig.settle();
+    rig.pumpUntil(kImpulseAt + 4'000);
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    const std::size_t before = rig.revisions();
+
+    const protocol::TransportState located = rig.host->locate(96'000);
+    CHECK_FALSE(located.recording);
+    CHECK(located.playing);  // playback goes on, from the new position
+    CHECK(rig.revisions() == before + 1);
+    const protocol::RecordState ended = rig.host->recordState();
+    REQUIRE(ended.takes.size() == 1);
+    CHECK(ended.takes[0].endedBy == std::optional<std::string>("stop"));
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    const std::int64_t length = clip->length;
+    CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
+
+    // Nothing after the jump reaches the committed take.
+    rig.settle();
+    rig.pump(8);
+    CHECK(rig.fixture.doc().clip("clp_" + takeId)->length == length);
+    CHECK(rig.host->transportState().position >= 96'000);
+    CHECK(rig.revisions() == before + 1);
+    CHECK_FALSE(rig.engine().driver().captureActive());
+}
+
+TEST_CASE("the armed set follows a new head with no tick in between", "[engine][record][arm]") {
+    // As the protocol server runs the requests of one pump: a commit on main, then
+    // transport.record, with no host tick between them.
+    SECTION("a removed track is no longer armed") {
+        RecordRig rig;
+        rig.openInput();
+        rig.host->arm("trk_mono", true);
+        rig.fixture.exec(R"({"op":"track.remove","trackId":"trk_mono"})");
+        CHECK(rig.host->transportState().armed.empty());
+        CHECK(rig.host->status().armed.empty());
+        CHECK(rig.host->recordState().armed.empty());
+        CHECK(codeOf([&] { rig.host->record(true); }) == "nothing_armed");
+        CHECK_FALSE(rig.host->transportState().recording);
+    }
+    SECTION("a cleared input is no longer armed") {
+        RecordRig rig;
+        rig.openInput();
+        rig.host->arm("trk_mono", true);
+        rig.host->arm("trk_st", true);
+        rig.fixture.exec(R"({"op":"track.set_input","trackId":"trk_mono","input":null})");
+        CHECK(rig.host->transportState().armed == std::vector<std::string>{"trk_st"});
+        const protocol::TransportState started = rig.host->record(true);
+        CHECK(started.recording);
+        CHECK(started.armed == std::vector<std::string>{"trk_st"});
+        const protocol::RecordState during = rig.host->recordState();
+        REQUIRE(during.takes.size() == 1);
+        CHECK(during.takes[0].trackId == "trk_st");
+        rig.host->stop();
+    }
+    SECTION("an input changed from mono to stereo records two channels") {
+        RecordRig rig;
+        rig.openInput();
+        rig.host->arm("trk_mono", true);
+        rig.fixture.exec(setInput("trk_mono", 0, 2));
+        rig.device->setInputGenerator([](int channel, std::int64_t) { return channel == 0 ? 0.25f : 0.5f; });
+        rig.host->record(true);
+        rig.settle();
+        rig.pump(6);
+        const std::string takeId = rig.host->recordState().takes[0].takeId;
+        rig.host->record(false);
+        const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+        REQUIRE(clip != nullptr);
+        const model::Media* media = rig.fixture.doc().media(clip->mediaId);
+        REQUIRE(media != nullptr);
+        CHECK(media->channels == 2);
+        const media::AudioBuffer audio = readMedia(rig, *media);
+        REQUIRE(audio.info.channels == 2);
+        REQUIRE(audio.info.frames > 0);
+        const std::size_t last = static_cast<std::size_t>(audio.info.frames - 1) * 2;
+        CHECK(audio.samples[last] == 0.25f);
+        CHECK(audio.samples[last + 1] == 0.5f);
+    }
+}
+
+TEST_CASE("a device that opens fewer inputs than asked records and meters through device-side SRC",
+          "[engine][record][input][src]") {
+    // A listing that counts no inputs (as a JUCE build's): up to 32 are asked, the
+    // device opens one, and it runs at 44.1 kHz under a 48 kHz session.
+    RecordRig rig(
+        [](EngineHostOptions& options) {
+            options.listDevices = [] {
+                std::vector<protocol::DeviceDescription> out = listed();
+                protocol::DeviceDescription unsaid{"unsaid", "test", "unsaid", false, false};
+                unsaid.outputChannels = 2;
+                out.push_back(unsaid);
+                return out;
+            };
+        },
+        44'100);
+    rig.maxInputs = 1;
+    const protocol::DeviceInfo opened = rig.host->selectDeviceWithInput("unsaid", std::string("unsaid"));
+    rig.device = rig.made.back();
+    REQUIRE(opened.input.has_value());
+    CHECK(opened.input->channels == 1);
+    CHECK(rig.engine().resampling().active);
+    rig.host->arm("trk_mono", true);
+
+    rig.pump(4);  // stopped: the armed input is metered
+    CHECK(rig.host->inputMeter("trk_mono").has_value());
+
+    rig.host->record(true);
+    rig.settle();
+    rig.pumpUntil(kImpulseAt + 8'000);
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    CHECK(rig.host->recordState().takes[0].durableFrames > 0);
+    rig.host->record(false);
+    CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
+}
