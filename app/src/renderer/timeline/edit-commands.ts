@@ -19,6 +19,7 @@
 import type { ClipEntity, TrackEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
 import { newClipId, type TimelineCommand } from './commands';
+import type { TrackSelection } from './selection';
 
 type Command = Record<string, unknown>;
 
@@ -239,11 +240,15 @@ function tracksOf(snapshot: Snapshot, trackIds: readonly string[]): TrackEntity[
 }
 
 // M and S over the selected tracks: each one set to the opposite of the
-// primary's (the first) state; tracks already there are left alone.
-function toggleTracks(snapshot: Snapshot, trackIds: readonly string[], field: 'mute' | 'solo'): TimelineCommand | null {
-  const tracks = tracksOf(snapshot, trackIds);
+// primary's (the last clicked track's) state; tracks already there are left
+// alone. The primary need not be the first of the ids (a Ctrl-click appends
+// it, a range is in track order); a primary that is gone or not among the ids
+// gives way to the first selected track still in the snapshot.
+function toggleTracks(snapshot: Snapshot, selection: TrackSelection, field: 'mute' | 'solo'): TimelineCommand | null {
+  const tracks = tracksOf(snapshot, selection.ids);
   if (tracks.length === 0) return null;
-  const target = !tracks[0]![field];
+  const primary = tracks.find((track) => track.id === selection.primary) ?? tracks[0]!;
+  const target = !primary[field];
   const op = field === 'mute' ? 'track.set_mute' : 'track.set_solo';
   return issue(
     snapshot,
@@ -251,12 +256,12 @@ function toggleTracks(snapshot: Snapshot, trackIds: readonly string[], field: 'm
   );
 }
 
-export function trackMuteCommand(snapshot: Snapshot, trackIds: readonly string[]): TimelineCommand | null {
-  return toggleTracks(snapshot, trackIds, 'mute');
+export function trackMuteCommand(snapshot: Snapshot, selection: TrackSelection): TimelineCommand | null {
+  return toggleTracks(snapshot, selection, 'mute');
 }
 
-export function trackSoloCommand(snapshot: Snapshot, trackIds: readonly string[]): TimelineCommand | null {
-  return toggleTracks(snapshot, trackIds, 'solo');
+export function trackSoloCommand(snapshot: Snapshot, selection: TrackSelection): TimelineCommand | null {
+  return toggleTracks(snapshot, selection, 'solo');
 }
 
 // Shift+Delete, once confirmed: track.remove per selected track (the engine

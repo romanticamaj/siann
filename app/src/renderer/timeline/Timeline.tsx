@@ -162,6 +162,9 @@ export function Timeline({
   const trackIds = selectedTrackIds ?? (selectedTrackId ? [selectedTrackId] : NO_IDS);
   const tracksRef = useRef(trackIds);
   tracksRef.current = trackIds;
+  // M and S follow the primary's state, which need not be trackIds[0].
+  const primaryRef = useRef(selectedTrackId);
+  primaryRef.current = selectedTrackId;
   const trackListWidth = useSyncExternalStore(
     (listener) => layout.subscribe(listener),
     () => layout.getSnapshot().layout.trackList,
@@ -259,6 +262,7 @@ export function Timeline({
       if (allowed[id]) offs.push(commands.register('project', id, handler));
     };
     const tracks = () => tracksRef.current;
+    const selection = () => ({ primary: primaryRef.current, ids: tracksRef.current });
     edit('edit.delete', () => void timeline.deleteSelected());
     edit('tool.select', () => timeline.setTool('select'));
     edit('tool.split', () => timeline.setTool('split'));
@@ -273,11 +277,11 @@ export function Timeline({
     edit('view.zoomEvent', () => timeline.zoomToEvent());
     edit('track.muteSelected', () => {
       const current = client.model.getSnapshot();
-      return current ? send(client, trackMuteCommand(current, tracks())) : false;
+      return current ? send(client, trackMuteCommand(current, selection())) : false;
     });
     edit('track.soloSelected', () => {
       const current = client.model.getSnapshot();
-      return current ? send(client, trackSoloCommand(current, tracks())) : false;
+      return current ? send(client, trackSoloCommand(current, selection())) : false;
     });
     edit('track.removeSelected', () => {
       const current = client.model.getSnapshot();
