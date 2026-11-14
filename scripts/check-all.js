@@ -162,6 +162,9 @@ function nativeEnv(options, env = process.env) {
   if (!out.SCCACHE_DIR) out.SCCACHE_DIR = path.join(root, 'sccache');
   if (!out.SCCACHE_CACHE_SIZE) out.SCCACHE_CACHE_SIZE = '20G';
   if (!out.CCACHE_DIR) out.CCACHE_DIR = path.join(root, 'ccache');
+  // English cl output where the English language pack is installed: sccache mangles a
+  // /showIncludes prefix in another code page (native/cmake/SiannCompilerCache.cmake).
+  if (isWindows && !out.VSLANG) out.VSLANG = '1033';
   if (options.jobs) out.CMAKE_BUILD_PARALLEL_LEVEL = String(options.jobs);
   return out;
 }

@@ -135,6 +135,9 @@ test('the compiler cache: sccache, then ccache, an opt-out, and /Z7 for MSVC', (
   assert.match(text, /CMAKE_CXX_COMPILER_LAUNCHER/);
   assert.match(text, /CMAKE_MSVC_DEBUG_INFORMATION_FORMAT[^\n]*Embedded/);
   assert.match(text, /CMAKE_POLICY_DEFAULT_CMP0141 NEW/);
+  // Ninja tracks headers through cl's /showIncludes prefix; a launcher that mangles it is not used.
+  assert.match(text, /\/showIncludes/);
+  assert.match(text, /NOT _siann_prefix STREQUAL CMAKE_CL_SHOWINCLUDES_PREFIX/);
   assert.match(read('CMakeLists.txt'), /include\("\$\{CMAKE_CURRENT_SOURCE_DIR\}\/cmake\/SiannCompilerCache\.cmake"\)/);
 });
 
