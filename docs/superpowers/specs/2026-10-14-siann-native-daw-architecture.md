@@ -1266,7 +1266,7 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
   device and the live graph, so a latent insert on the master path counts),
   starts their recorders, then the transport, so capture starts at the
   playhead with the first playing block. `transport.record {enabled: false}`,
-  `transport.stop`, a lost device, an overflow and a write failure end every take
+  `transport.stop`, `transport.locate` (before it moves the playhead), a lost device, an overflow and a write failure end every take
   of the recording at once and commit them as one revision (`commitTakes`: a
   `media.add` and a `clip.place` per take with audio, each clip at
   `startPosition - recordOffset`): this is the `record.stop` above. A take that
@@ -2639,6 +2639,8 @@ is m5-plugin-registry's):
     it opened: an input that opened none (an output-only device named as its own
     input) is no input, `input` null, and the listing's entry then says 0. A
     listing that does not count an input's channels has up to 32 asked of it.
+    Capture, metering and device-side SRC's input resampler use the channels
+    the device opened, never the count asked for.
     Without an input the record methods
     (item 27) answer `no_input` and playback is unaffected.
     `session.open {path}` (item 16) works in `siann-engine`: `ServerOptions::
@@ -2818,13 +2820,20 @@ Protocol v0, recording (decided with m5b-engine-record, M5b; the wire details ar
       Disarming an unarmed track is a no-op. The armed set is cleared by
       `session.open`, pruned at every new head (a removed track, an input cleared
       or no longer covered) and by `engine.select_device` (kept where the new
-      input covers the channels).
+      input covers the channels). The prune runs before any record method reads
+      the set, not only at the engine's next tick, so a `transport.record` after a
+      `track.remove`, a `track.set_input` or an undo handled in the same pump sees
+      the new head; the transport results and `engine.status` never report a
+      track the head no longer arms.
     - `transport.record {enabled}` returns the transport state. `enabled: true`
       needs a running device (`no_device`), an input (`no_input`) and an armed track
       (`nothing_armed`, a new stable code); while recording it changes nothing.
       `enabled: false` ends the recording and commits it ("Recording"); playback
       continues; with nothing recording it changes nothing. `transport.stop` ends a
-      recording the same way, then stops. The commit's `session.changed` follows.
+      recording the same way, then stops. `transport.locate` ends it the same way
+      (`endedBy` `stop`), then locates and playback continues: a take is one
+      contiguous run of the input at one position, so a jump never goes into it.
+      The commit's `session.changed` follows.
     - `record.recover_take {takeId, accept}`: accepted, `{revision}` as
       `command.execute` answers it (also on a repeat, the revision that committed
       the take); rejected, `{takeId, trashed: true}`. `take_not_found` for a take

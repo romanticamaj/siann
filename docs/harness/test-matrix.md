@@ -129,14 +129,41 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m5-ui-loop-click (open) | - | | - | - | | - | 1-8: not on main |
 | m5-ui-mockup-alignment (open) | | | - | - (F: report-only baseline, 0 of 282 parts match) | every state | - | 1-8: not on main. Its acceptance is the F layer for every part the M5 features build (`app/test/fidelity/manifest.json`), in en and zh-TW, and an empty `app/test/fidelity/debt.json` |
 
-### M5b, M6a, M6b, M6c, M7 (not started)
+### M5b Usable release (landed features)
+
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `engine_launch_test` kill-and-recover and wire loopback) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
+
+Per acceptance item: 1 `engine_record_test` "engine.devices carries channel
+counts ...", "an input reports the channels the device opened ...", "a device
+that opens fewer inputs than asked records and meters through device-side
+SRC", `record_methods_test` "engine.select_device passes inputId ..."; 2
+`commands_test`, `document_test`, `engine_record_test` "arming needs an input
+...", "the armed set follows a new head with no tick in between",
+`record_methods_test` "record.changed reaches every subscribed connection ...";
+3 `engine_record_test` "transport.record needs an armed track ...", "a
+recorded impulse lands within one sample ..." (plain, stereo, SRC, latent
+insert), "transport.locate while recording ends the take and commits it
+first", `engine_launch_test` "a loopback recording over the wire ..."; 4
+`record_methods_test`, `realtime_channel_test` "armed tracks' input meters
+...", `engine_record_test` "an armed track's input meter is read while
+stopped"; 5 `engine_record_test` "an early end is named ...", `recording_test`,
+`takes_test`; 6 `engine_launch_test` "a take a kill interrupted ...",
+`engine_record_test` "record.recover_take ..."; 7 `capture_bank_test` "The
+cycle wrap is suspended ...", `engine_record_test` "recording with cycle on
+...", `cycle_test`; 8 `record_methods_test` "engine.capabilities lists ...",
+`mcp_adapter_test`, the alloc guard linked into `siann_engine_host_tests` and
+the realtime tests; 9 none (no UI).
+
+### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 59/141 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 59/141 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
 `m5b-engine-clip-fades` 1/4, `m5b-engine-master` 1/4,
-`m5b-engine-buses-sends` 1/5, `m5b-engine-record` 3/9, `m5b-ui-edit-more` 3/10.
+`m5b-engine-buses-sends` 1/5, `m5b-ui-edit-more` 3/10.
 The plan phase should add the test layer to those items before the build
 agent starts (rule 1 below). M6b's one-hour 16-track criterion and M7's arm64
 board run cannot run on hosted runners and need a named owner (rule 6).
