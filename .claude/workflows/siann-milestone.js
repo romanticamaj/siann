@@ -227,7 +227,9 @@ for (const wave of waves) {
             `${common}\n\nIndependent verification of branch ${last.branch} (feature ${f.id} of ${M}). You did not write this code; assume it is wrong until shown otherwise. Do not modify files.\n` +
             `Check out the branch in a fresh worktree, run \`node scripts/check-all.js --changed\`, read the diff against origin/main, and check: ` +
             `every acceptance criterion has a test that would fail without the change; tests are deterministic; realtime rules from ${RULES} hold (no allocation, locks or I/O on the audio thread); ` +
-            `no behaviour regressions; GCC and MSVC warnings clean. Report findings with evidence (file:line, command output).`,
+            `no behaviour regressions; GCC and MSVC warnings clean; ` +
+            `the feature's row in docs/harness/test-matrix.md exists, names only tests that exist on the branch, and lists every platform skip or env gate the branch adds (the rules in its section 8). ` +
+            `Report findings with evidence (file:line, command output).`,
             { label: `verify ${f.id} r${round}`, phase: 'Build', schema: REVIEW },
           ),
           () => agent(
