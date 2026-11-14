@@ -1459,6 +1459,7 @@ SessionDocument
  |- tracks, buses, auxInputs, vcas, groups, ioPorts
  |- tempoMap, meterMap, markers
  |- locators (singleton entity; punch reuses it in M6b)
+ |- master (singleton entity, M5b; present only while its gain is not 0 dB)
  `- media: MediaPool (MediaSource by MediaId, content hash)
 
 Track
@@ -1551,6 +1552,24 @@ Rules:
   removes the field with `name: null` (the entity then hashes as it did before it
   had a name). `media.rename` declares exactly `{media:<id>}`, is one revision and
   undoable; an unknown id is `not_found`.
+- M5b `master` (m5b-engine-master, UI redesign E-11; singleton entity; decided by
+  the main session under the maintainer's delegation (Fable rule), 2026-11-15):
+  `{schema: "siann.entity.master.v1", id: "master", gainMilliDb}`, ref
+  `master:master`. The entity exists only while the gain is not 0 dB: the
+  document holds at most one, it is omitted from the document JSON when absent,
+  and every existing bundle, checkpoint and fixture keeps its entity and document
+  hashes. Command `master.set_gain {gainMilliDb}` declares exactly
+  `{master:master}`, is one revision and undoable; `master.set_gain 0` removes
+  the entity, so the document hashes as it did before the first set, and
+  `plan.preview` shows `before: null` (or `after: null`) for the 0 dB side. The
+  document stays `siann.session_document.v2`; m5b-engine-buses-sends raises it
+  later. Why an entity and not a `masterGainMilliDb` field on the root: the root
+  is `root:root`, which `session.rename` and `session.set_tempo` declare, so every
+  master fader move would make rename and tempo plans stale and the reverse; the
+  gesture target `{ref: "master:master", param: "gain"}` fits the leases unchanged;
+  the playback engine's entity diff picks a parameter set rather than a recompile
+  without a field-level root comparison; the master will grow mute and inserts;
+  and `locators` (E-1) set the precedent.
 
 ### siann-command (pure C++) — the core of SIANN
 
