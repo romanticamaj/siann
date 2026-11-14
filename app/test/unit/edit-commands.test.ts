@@ -242,19 +242,48 @@ test('clip gain: one clip.set_gain, nothing when unchanged; the drag is 100 mdB 
 
 test('M and S set every selected track to the opposite of the primary\'s state, in one list', () => {
   const snapshot = editSnapshot();
-  assert.deepEqual(trackMuteCommand(snapshot, ['trk_a']), {
+  const sel = (primary: string | null, ids: readonly string[]) => ({ primary, ids });
+  assert.deepEqual(trackMuteCommand(snapshot, sel('trk_a', ['trk_a'])), {
     expectedRevision: 'r7',
     commands: [{ op: 'track.set_mute', trackId: 'trk_a', mute: true }],
   });
   // trk_b is muted: unmuting it leaves the unmuted trk_c alone.
-  assert.deepEqual(trackMuteCommand(snapshot, ['trk_b', 'trk_c'])!.commands, [{ op: 'track.set_mute', trackId: 'trk_b', mute: false }]);
-  assert.deepEqual(trackMuteCommand(snapshot, ['trk_a', 'trk_b'])!.commands, [{ op: 'track.set_mute', trackId: 'trk_a', mute: true }]);
-  assert.deepEqual(trackSoloCommand(snapshot, ['trk_a', 'trk_c'])!.commands, [
+  assert.deepEqual(trackMuteCommand(snapshot, sel('trk_b', ['trk_b', 'trk_c']))!.commands, [{ op: 'track.set_mute', trackId: 'trk_b', mute: false }]);
+  assert.deepEqual(trackMuteCommand(snapshot, sel('trk_a', ['trk_a', 'trk_b']))!.commands, [{ op: 'track.set_mute', trackId: 'trk_a', mute: true }]);
+  assert.deepEqual(trackSoloCommand(snapshot, sel('trk_a', ['trk_a', 'trk_c']))!.commands, [
     { op: 'track.set_solo', trackId: 'trk_a', solo: true },
     { op: 'track.set_solo', trackId: 'trk_c', solo: true },
   ]);
-  assert.equal(trackMuteCommand(snapshot, []), null);
-  assert.equal(trackSoloCommand(snapshot, ['trk_gone']), null);
+  assert.equal(trackMuteCommand(snapshot, sel(null, [])), null);
+  assert.equal(trackSoloCommand(snapshot, sel('trk_gone', ['trk_gone'])), null);
+});
+
+// The primary is the last clicked track, not the first of the list: click
+// trk_a (unmuted), Ctrl-click trk_b (muted) gives { primary: trk_b, ids:
+// [trk_a, trk_b] } (selection.test.ts), and M follows trk_b: unmute, which
+// leaves the already unmuted trk_a alone.
+test('M and S follow the primary\'s state when the primary is not the first selected track', () => {
+  const snapshot = editSnapshot();
+  assert.deepEqual(trackMuteCommand(snapshot, { primary: 'trk_b', ids: ['trk_a', 'trk_b'] })!.commands, [
+    { op: 'track.set_mute', trackId: 'trk_b', mute: false },
+  ]);
+  // A range is in track order; its primary (trk_c, unmuted) can be last: mute the others.
+  assert.deepEqual(trackMuteCommand(snapshot, { primary: 'trk_c', ids: ['trk_a', 'trk_b', 'trk_c'] })!.commands, [
+    { op: 'track.set_mute', trackId: 'trk_a', mute: true },
+    { op: 'track.set_mute', trackId: 'trk_c', mute: true },
+  ]);
+  const soloC = { ...snapshot.entities['track:trk_c'], solo: true };
+  const soloed = { ...snapshot, entities: { ...snapshot.entities, 'track:trk_c': soloC } } as typeof snapshot;
+  assert.deepEqual(trackSoloCommand(soloed, { primary: 'trk_c', ids: ['trk_a', 'trk_c'] })!.commands, [
+    { op: 'track.set_solo', trackId: 'trk_c', solo: false },
+  ]);
+  // A primary that is gone, or not among the ids, gives way to the first track still there.
+  assert.deepEqual(trackMuteCommand(snapshot, { primary: 'trk_gone', ids: ['trk_b', 'trk_a'] })!.commands, [
+    { op: 'track.set_mute', trackId: 'trk_b', mute: false },
+  ]);
+  assert.deepEqual(trackMuteCommand(snapshot, { primary: 'trk_b', ids: ['trk_a'] })!.commands, [
+    { op: 'track.set_mute', trackId: 'trk_a', mute: true },
+  ]);
 });
 
 test('Shift+Delete removes the selected tracks in one list', () => {

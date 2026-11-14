@@ -668,4 +668,25 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
   expect((await track('trk_c')).missing).toBeFalsy();
   expect(await fetchClip('clp_b')).not.toBeNull();
   expect(await fetchClip('clp_c')).not.toBeNull();
+
+  // M follows the primary (the last clicked track), not the first selected:
+  // trk_b muted, click trk_a, Ctrl-click trk_b: the primary is trk_b, so M
+  // unmutes, and trk_a (already unmuted) is left alone.
+  await page.getByTestId('track-mute-trk_b').click();
+  await expect.poll(async () => (await track('trk_b')).entity!.mute).toBe(true);
+  await expect(page.getByTestId('track-mute-trk_b')).toHaveAttribute('aria-pressed', 'true');
+  await header('trk_a').click({ position: { x: 4, y: 4 } });
+  await header('trk_b').click({ position: { x: 4, y: 4 }, modifiers: ['ControlOrMeta'] });
+  await expect(header('trk_a')).toHaveAttribute('aria-selected', 'true');
+  await expect(header('trk_b')).toHaveAttribute('aria-selected', 'true');
+  await focusProject();
+  await operation(
+    'M, primary not first',
+    () => page.keyboard.press('KeyM'),
+    async () => {
+      expect((await track('trk_b')).entity!.mute).toBe(false);
+      expect((await track('trk_a')).entity!.mute).toBe(false);
+      await expect(page.getByTestId('track-mute-trk_b')).toHaveAttribute('aria-pressed', 'false');
+    },
+  );
 });
