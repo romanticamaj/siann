@@ -11,7 +11,7 @@
 // error line. Every word comes from the catalogs (m5-ui-i18n); hashes, branch
 // names, refs and the names in the agent's steps are shown as they are.
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { MessageKey } from '../i18n/en';
 import { refusalLine } from '../i18n/errors';
@@ -27,6 +27,9 @@ import { StepList } from './StepList';
 export interface PlanReviewProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // The reconnects so far (model/connection-phase.ts); each one clears the
+  // selected plan and its ticked steps (UI redesign spec 4.5 C8).
+  readonly reconnects?: number;
 }
 
 export function hash8(hash: string): string {
@@ -131,7 +134,7 @@ export function PlanActions({ note, onNote, enabled, onRun }: PlanActionsProps) 
   );
 }
 
-export function PlanReview({ client, plans }: PlanReviewProps) {
+export function PlanReview({ client, plans, reconnects = 0 }: PlanReviewProps) {
   const snapshot = usePlans(plans);
   const model = useSnapshot(client);
   const [selected, setSelected] = useState<string | null>(null);
@@ -148,6 +151,14 @@ export function PlanReview({ client, plans }: PlanReviewProps) {
     setTicked(new Set());
     setError(null);
   }, [selected]);
+
+  // A reconnect clears the selection (the ticked steps follow it above).
+  const seenReconnects = useRef(reconnects);
+  useEffect(() => {
+    if (reconnects === seenReconnects.current) return;
+    seenReconnects.current = reconnects;
+    setSelected(null);
+  }, [reconnects]);
 
   const trackName = (id: string): string | undefined => {
     const track = client.model.select(`track:${id}`) as { name?: unknown } | undefined;

@@ -8,11 +8,14 @@
 // timeline in the project zone, the mixer on the lower zone's MixConsole tab,
 // plan review on the right zone's Plans tab, and the selected track in the
 // left zone. engine.capabilities, as the session client last heard it, decides
-// which controls exist (spec 3.0, through Capable).
+// which controls exist (spec 3.0, through Capable). The connection phase
+// (m5-ui-connection) decides the shell's disconnected state, and each
+// reconnect clears the clip and plan selections.
 
 import { useState, useSyncExternalStore } from 'react';
 
 import type { CommandRegistry } from './keys/commands';
+import type { ConnectionPhaseStore } from './model/connection-phase';
 import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
@@ -25,6 +28,7 @@ import { CapabilitiesContext } from './shell/Capable';
 import { Inspector } from './shell/Inspector';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
+import type { ToastStore } from './shell/toast-store';
 import { Timeline } from './timeline/Timeline';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
@@ -38,14 +42,31 @@ export interface AppProps {
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
   readonly platform: 'mac' | 'other';
+  readonly connection: ConnectionPhaseStore;
+  readonly toasts: ToastStore;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
 }
 
-export function App({ client, gestures, realtime, peaks, plans, engineStatus, layout, commands, platform, onTimelineHooks }: AppProps) {
+export function App({
+  client,
+  gestures,
+  realtime,
+  peaks,
+  plans,
+  engineStatus,
+  layout,
+  commands,
+  platform,
+  connection,
+  toasts,
+  onTimelineHooks,
+}: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
     () => client.getState().capabilities,
   );
+  const phase = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().phase);
+  const reconnects = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().reconnect?.count ?? 0);
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
@@ -56,10 +77,21 @@ export function App({ client, gestures, realtime, peaks, plans, engineStatus, la
         store={layout}
         commands={commands}
         platform={platform}
+        phase={phase}
+        toasts={toasts}
         left={<Inspector client={client} clipId={selectedClip} />}
-        project={<Timeline client={client} peaks={peaks} commands={commands} onSelect={setSelectedClip} onHooks={onTimelineHooks} />}
+        project={
+          <Timeline
+            client={client}
+            peaks={peaks}
+            commands={commands}
+            onSelect={setSelectedClip}
+            onHooks={onTimelineHooks}
+            reconnects={reconnects}
+          />
+        }
         lower={<Mixer client={client} gestures={gestures} realtime={realtime} />}
-        right={<PlanReview client={client} plans={plans} />}
+        right={<PlanReview client={client} plans={plans} reconnects={reconnects} />}
       />
     </CapabilitiesContext.Provider>
   );

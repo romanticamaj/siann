@@ -159,6 +159,13 @@ export class TimelineCanvas {
     this.#update({ placingMediaId: mediaId });
   }
 
+  // Drops the selection (and an open drag): a reconnect clears it (UI
+  // redesign spec 4.5 C8), even when the recovered session still has the clip.
+  clearSelection(): void {
+    this.#drag = null;
+    this.#update({ selectedClipId: null });
+  }
+
   // clip.remove of the selected clip.
   async deleteSelected(): Promise<void> {
     const snapshot = this.#options.model.getSnapshot();

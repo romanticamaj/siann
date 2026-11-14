@@ -34,8 +34,39 @@ export interface SeedTrack {
   readonly solo?: boolean;
 }
 
-// A bundle with tracks at <scratch>/sessions/Untitled.siann; returns its directory.
-export function seedBundle(scratch: string, tracks: readonly SeedTrack[]): string {
+// A clip of one second of a square wave (media med_seed, imported once).
+export interface SeedClip {
+  readonly id: string;
+  readonly trackId: string;
+  // Where it starts, in seconds.
+  readonly at: number;
+}
+
+const RATE = 48000;
+
+// A mono 16-bit PCM WAV of one second: a square wave at half scale.
+function squareWav(file: string): void {
+  const data = Buffer.alloc(RATE * 2);
+  for (let i = 0; i < RATE; i += 1) data.writeInt16LE(Math.floor(i / 240) % 2 === 0 ? 16384 : -16384, i * 2);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVEfmt ', 8, 'latin1');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(RATE, 24);
+  header.writeUInt32LE(RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(data.length, 40);
+  fs.writeFileSync(file, Buffer.concat([header, data]));
+}
+
+// A bundle with tracks (and clips, when given) at
+// <scratch>/sessions/Untitled.siann; returns its directory.
+export function seedBundle(scratch: string, tracks: readonly SeedTrack[], clips: readonly SeedClip[] = []): string {
   const bundle = path.join(scratch, 'sessions', 'Untitled.siann');
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'I18n', '--rate', '48000');
@@ -47,6 +78,22 @@ export function seedBundle(scratch: string, tracks: readonly SeedTrack[]): strin
     if (track.mute) exec({ op: 'track.set_mute', trackId: track.id, mute: true });
     if (track.solo) exec({ op: 'track.set_solo', trackId: track.id, solo: true });
   }
+  if (clips.length > 0) {
+    const wav = path.join(scratch, 'seed-square.wav');
+    squareWav(wav);
+    cli('import', bundle, wav, '--media-id', 'med_seed');
+    for (const clip of clips) {
+      exec({
+        op: 'clip.place',
+        clipId: clip.id,
+        trackId: clip.trackId,
+        mediaId: 'med_seed',
+        position: { domain: 'audio', value: String(Math.round(clip.at * RATE)) },
+        sourceStart: '0',
+        length: String(RATE),
+      });
+    }
+  }
   return path.dirname(bundle);
 }
 
@@ -55,6 +102,12 @@ export function launchApp(options: {
   userData: string;
   languages: readonly string[];
   hook?: boolean;
+  // The shell's first restart delay after the engine exits (default 50 ms).
+  backoffMs?: number;
+  // Appended to the engine's test arguments (an unknown option fails every launch).
+  extraEngineArgs?: readonly string[];
+  // SIANN_SHELL_MAX_RESTARTS (the shell's default when unset).
+  maxRestarts?: number;
 }): Promise<ElectronApplication> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   return launchElectron({
@@ -67,9 +120,10 @@ export function launchApp(options: {
       SIANN_ENGINE_EXE: exeFromEnv('SIANN_ENGINE_EXE'),
       SIANN_SESSION_DIR: options.sessionDir,
       SIANN_USER_DATA: options.userData,
-      SIANN_SHELL_BACKOFF_MS: '50',
+      SIANN_SHELL_BACKOFF_MS: String(options.backoffMs ?? 50),
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: '--device fake',
+      SIANN_ENGINE_TEST_ARGS: ['--device', 'fake', ...(options.extraEngineArgs ?? [])].join(' '),
+      ...(options.maxRestarts !== undefined ? { SIANN_SHELL_MAX_RESTARTS: String(options.maxRestarts) } : {}),
     },
   });
 }

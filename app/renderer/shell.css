@@ -48,6 +48,50 @@ code, dd, .mono { font-family: var(--font-mono); }
   height: 100%;
   overflow: hidden;
 }
+/* While the engine is disconnected a banner row sits under the top bar. */
+.shell[data-offline="true"] { grid-template-rows: var(--top-bar) auto minmax(0, 1fr) var(--status-bar); }
+
+/* ---- connection banner and toasts (m5-ui-connection) */
+.connection-banner {
+  padding: var(--space) calc(var(--space) * 3);
+  background: var(--warn);
+  color: #000;
+  font-weight: 600;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zone[data-offline="true"] { opacity: var(--offline-opacity); }
+.toasts {
+  position: fixed;
+  right: calc(var(--space) * 3);
+  bottom: calc(var(--status-bar) + var(--space) * 3);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--space) * 2);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  max-width: calc(320px * var(--scale));
+  padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 3);
+  background: var(--bg-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-l);
+  box-shadow: 0 6px 18px rgb(0 0 0 / .45);
+  pointer-events: auto;
+  animation: toast-in var(--toast-motion);
+}
+.toast-close { min-height: 0; padding: 0 var(--space); background: transparent; border: 0; color: var(--tx-2); }
+@keyframes toast-in {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
 
 /* ---- top bar */
 .top-bar {

@@ -772,8 +772,9 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 **P1-6 Connection states** (`m5-ui-connection`)
 
 - Scope: full-width banner and inert, dimmed zones while disconnected; toast on reconnect with the recovered revision; selection cleared.
+- The start: while the window waits for its first connection to the shell's engine it shows no banner, so a normal launch does not flash one. That wait is bounded: a failed launch the shell reports (its endpoint bridge announces no endpoint after an exit, a protocol error or giving up), a first connection that fails after its socket opened, or 10 s without a connection end it, and from then on the window is disconnected as above. The first connection after a failed start is no reconnect (no toast). A plain tab has no shell and is disconnected from the start.
 - Acceptance: no control sends a request while disconnected; review items A10, A11 are closed.
-- Tests: e2e on the existing crash scenario.
+- Tests: e2e on the existing crash scenario, and on a first launch that fails.
 - Tour states changed: 21, 22.
 - Protocol used: the connection state of `SessionClient`.
 
