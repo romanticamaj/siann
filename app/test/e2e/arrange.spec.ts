@@ -573,18 +573,18 @@ test('while playing with no edits the content layer is not redrawn and the overl
   const engine = await engineClient(page);
   await engine.call('transport.play');
   await expect.poll(async () => (await hook<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
+  // The track's mini meter draws the engine's meter frames and lights while
+  // the square wave plays (checked first: the clip is 4 s long).
+  const meters = page.getByTestId('track-meters');
+  await expect.poll(async () => Number((await meters.getAttribute('data-lit')) ?? '0')).toBeGreaterThan(0);
+  const drawnFrames = async () => Number((await meters.getAttribute('data-frames')) ?? '0');
+  const firstDrawn = await drawnFrames();
+  expect(firstDrawn).toBeGreaterThan(0);
+  await expect.poll(drawnFrames).toBeGreaterThan(firstDrawn);
   const content = await hook<number>('contentDraws');
   const overlay = await hook<number>('overlayDraws');
   await expect.poll(async () => hook<number>('overlayDraws'), { timeout: 20_000 }).toBeGreaterThan(overlay + 20);
   expect(await hook<number>('contentDraws')).toBe(content);
-  // The track's mini meter draws the engine's meter frames and lights while
-  // the square wave plays.
-  const meters = page.getByTestId('track-meters');
-  const drawnFrames = async () => Number((await meters.getAttribute('data-frames')) ?? '0');
-  await expect.poll(drawnFrames).toBeGreaterThan(0);
-  const firstDrawn = await drawnFrames();
-  await expect.poll(drawnFrames).toBeGreaterThan(firstDrawn);
-  await expect.poll(async () => Number((await meters.getAttribute('data-lit')) ?? '0')).toBeGreaterThan(0);
   await engine.call('transport.stop');
   engine.close();
 });
