@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { engineArgs, engineTestArgs, pluginRegistryFile } from '../../src/main/engine-args';
+import { TEST_CAPABILITIES_ARG, engineArgs, engineTestArgs, pluginRegistryFile, testCapabilitiesArgs } from '../../src/main/engine-args';
 
 const session = '/tmp/Untitled.siann';
 
@@ -119,4 +119,25 @@ test('SIANN_ENGINE_TEST_ARGS that starts as JSON but is not an array of strings 
   for (const text of ['[--device fake]', '["--device", 7]', '[', '["a"] trailing']) {
     assert.throws(() => engineTestArgs(text), /SIANN_ENGINE_TEST_ARGS/, text);
   }
+});
+
+// m5-ui-loop-click: SIANN_TEST_CAPABILITIES reaches the renderer only under
+// SIANN_SHELL_TEST=1, as one argument carrying the file's JSON.
+test('SIANN_TEST_CAPABILITIES: one renderer argument under SIANN_SHELL_TEST=1, nothing otherwise', () => {
+  const answer = { methods: ['engine.capabilities'], commands: [], features: { plans: true } };
+  const read = (file: string) => {
+    assert.equal(file, '/tmp/caps.json');
+    return JSON.stringify(answer);
+  };
+  const args = testCapabilitiesArgs({ SIANN_SHELL_TEST: '1', SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, read);
+  assert.equal(args.length, 1);
+  assert.ok(args[0]!.startsWith(TEST_CAPABILITIES_ARG));
+  assert.deepEqual(JSON.parse(decodeURIComponent(args[0]!.slice(TEST_CAPABILITIES_ARG.length))), answer);
+  // Not under test, or no file: nothing, and the file is not read.
+  const never = () => assert.fail('read');
+  assert.deepEqual(testCapabilitiesArgs({ SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, never), []);
+  assert.deepEqual(testCapabilitiesArgs({ SIANN_SHELL_TEST: '0', SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, never), []);
+  assert.deepEqual(testCapabilitiesArgs({ SIANN_SHELL_TEST: '1' }, never), []);
+  // Not an engine.capabilities answer: refused.
+  assert.throws(() => testCapabilitiesArgs({ SIANN_SHELL_TEST: '1', SIANN_TEST_CAPABILITIES: '/tmp/caps.json' }, () => '{"commands": []}'), /SIANN_TEST_CAPABILITIES/);
 });

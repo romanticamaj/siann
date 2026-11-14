@@ -17,7 +17,10 @@ import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
 import { xToFrame } from '../../src/renderer/timeline/geometry';
-import { TimelineCanvas, type PlayheadSource, type LaneHeightSource } from '../../src/renderer/timeline/TimelineCanvas';
+import { TimelineCanvas, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
+import { RULER_UPPER_HEIGHT } from '../../src/renderer/timeline/geometry';
+import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
+import type { LocatorsEntity } from '../../src/renderer/model/document';
 import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
 import { sampleSnapshot, snapshotOf, track } from './support/timeline';
 
@@ -500,4 +503,160 @@ test('a multi-clip selection outlines every selected clip; the snap guide and th
   flushFrames();
   assert.equal(hooks.snapGuide(), null, 'gone after the drop');
   timeline.destroy();
+});
+
+// ---------------------------------------------------------------- m5-ui-loop-click
+
+function bandSource(initial = true) {
+  let cycle = initial;
+  let enabled = true;
+  const listeners = new Set<() => void>();
+  const edits: Array<LocatorRange | null> = [];
+  let toggles = 0;
+  const source: LocatorBandSource = {
+    enabled: () => enabled,
+    cycle: () => cycle,
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => void listeners.delete(fn);
+    },
+    setLocators: (range) => void edits.push(range),
+    toggleCycle: () => {
+      toggles += 1;
+      return true;
+    },
+  };
+  return {
+    source,
+    edits,
+    toggles: () => toggles,
+    setCycle(next: boolean) {
+      cycle = next;
+      for (const fn of [...listeners]) fn();
+    },
+    setEnabled(next: boolean) {
+      enabled = next;
+    },
+  };
+}
+
+function withLocators(snapshot: Snapshot, left: string, right: string): Snapshot {
+  const locators: LocatorsEntity = { schema: 'siann.entity.locators.v1', id: 'locators', left, right };
+  return { ...snapshot, locators };
+}
+
+function bandRig(snapshot: Snapshot, band = bandSource()) {
+  clearFrames();
+  const surface = fakeSurface(800, 300);
+  const m = modelOf(snapshot);
+  const canvas = new TimelineCanvas({
+    content: surface.content,
+    overlay: surface.overlay,
+    container: surface.container,
+    model: m.model,
+    peaks,
+    execute: async () => ({}),
+    framesPerPixel: 100,
+    locators: band.source,
+  });
+  flushFrames();
+  return { surface, m, canvas, band, hooks: canvas.testHooks() };
+}
+
+const UPPER_Y = RULER_UPPER_HEIGHT / 2;
+
+test('the band is drawn light with cycle on and grey with it off, its tint over the lanes only while locators exist', () => {
+  const r = bandRig(withLocators(sampleSnapshot(), '10000', '30000'));
+  const band = r.hooks.locatorBand();
+  assert.ok(band);
+  assert.deepEqual({ x: band.x, y: band.y, width: band.width, height: band.height }, { ...bandRect({ left: 10000n, right: 30000n }, r.hooks.view())! });
+  assert.equal(band.cycle, true);
+  assert.equal(band.tint, true);
+  assert.ok(r.surface.contentCalls.texts.includes('L') && r.surface.contentCalls.texts.includes('R'));
+  r.band.setCycle(false);
+  flushFrames();
+  assert.equal(r.hooks.locatorBand()?.cycle, false);
+  // No locators: no band, no tint.
+  r.m.set(sampleSnapshot());
+  flushFrames();
+  assert.equal(r.hooks.locatorBand(), null);
+  r.canvas.destroy();
+});
+
+test('nothing is drawn and the upper half is inert without the capability', () => {
+  const band = bandSource();
+  band.setEnabled(false);
+  const r = bandRig(withLocators(sampleSnapshot(), '10000', '30000'), band);
+  assert.equal(r.hooks.locatorBand(), null);
+  assert.ok(!r.surface.contentCalls.texts.includes('R'));
+  r.surface.fire('pointerdown', { clientX: 150, clientY: UPPER_Y });
+  r.surface.fire('pointermove', { clientX: 250, clientY: UPPER_Y });
+  r.surface.fire('pointerup', { clientX: 250, clientY: UPPER_Y });
+  r.surface.fire('pointerdown', { clientX: 200, clientY: UPPER_Y });
+  r.surface.fire('pointerup', { clientX: 200, clientY: UPPER_Y });
+  assert.deepEqual(band.edits, []);
+  assert.equal(band.toggles(), 0);
+  // And with no source at all (an engine without E-1) the band is never drawn.
+  const plain = make({ snapshot: withLocators(sampleSnapshot(), '10000', '30000') });
+  assert.equal(plain.hooks.locatorBand(), null);
+  plain.timeline.destroy();
+  r.canvas.destroy();
+});
+
+test('a cycle change redraws the band from the source, not through React', () => {
+  const r = bandRig(withLocators(sampleSnapshot(), '10000', '30000'));
+  const before = r.hooks.contentDraws();
+  r.band.setCycle(false);
+  assert.equal(flushFrames(), 1);
+  assert.equal(r.hooks.contentDraws(), before + 1);
+  r.canvas.destroy();
+});
+
+test('the upper half: draw on release, click the band to toggle, drag the band and an end, Mod-click and Alt-click', () => {
+  const r = bandRig(withLocators(sampleSnapshot(), '10000', '30000'));
+  r.canvas.setSnap({ on: false, grid: 'bar' });
+  const drag = (from: number, to: number, mods: Record<string, unknown> = {}) => {
+    r.surface.fire('pointerdown', { clientX: from, clientY: UPPER_Y, ...mods });
+    if (to !== from) r.surface.fire('pointermove', { clientX: to, clientY: UPPER_Y, ...mods });
+    r.surface.fire('pointerup', { clientX: to, clientY: UPPER_Y, ...mods });
+  };
+  // Draw outside the band (x 400 -> 500): one edit on release, nothing before.
+  r.surface.fire('pointerdown', { clientX: 400, clientY: UPPER_Y });
+  r.surface.fire('pointermove', { clientX: 500, clientY: UPPER_Y });
+  assert.deepEqual(r.band.edits, []);
+  // The preview shows on the band while dragging.
+  flushFrames();
+  assert.equal(r.hooks.locatorBand()?.left, '40000');
+  r.surface.fire('pointerup', { clientX: 500, clientY: UPPER_Y });
+  assert.deepEqual(r.band.edits, [{ left: 40000n, right: 50000n }]);
+  // Click the band (x 200): cycle toggles, nothing is edited.
+  drag(200, 200);
+  assert.equal(r.band.toggles(), 1);
+  assert.equal(r.band.edits.length, 1);
+  // Drag the band by 50 px: moved, the length kept.
+  drag(200, 250);
+  assert.deepEqual(r.band.edits.at(-1), { left: 15000n, right: 35000n });
+  // Drag the right end past the left: stops one pixel (100 frames) before it.
+  drag(300, 20);
+  assert.deepEqual(r.band.edits.at(-1), { left: 10000n, right: 10100n });
+  // Mod-click (Ctrl) sets the left locator, Alt-click the right one.
+  drag(150, 150, { ctrlKey: true });
+  assert.deepEqual(r.band.edits.at(-1), { left: 15000n, right: 30000n });
+  drag(450, 450, { altKey: true });
+  assert.deepEqual(r.band.edits.at(-1), { left: 10000n, right: 45000n });
+  // A zero-length draw hands null (nothing to send).
+  drag(600, 600);
+  assert.equal(r.band.toggles(), 1);
+  r.canvas.destroy();
+});
+
+test('with snap on the drawn range lands on the grid', () => {
+  const r = bandRig(sampleSnapshot());
+  r.canvas.setSnap({ on: true, grid: 'beat' });
+  // A beat at 120 BPM is 24000 frames: x 230 (23000) and 470 (47000) snap to 24000 and 48000.
+  r.surface.fire('pointerdown', { clientX: 230, clientY: UPPER_Y });
+  r.surface.fire('pointermove', { clientX: 470, clientY: UPPER_Y });
+  r.surface.fire('pointerup', { clientX: 470, clientY: UPPER_Y });
+  assert.deepEqual(r.band.edits, [{ left: 24000n, right: 48000n }]);
+  r.canvas.destroy();
 });

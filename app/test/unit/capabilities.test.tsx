@@ -18,6 +18,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { CommandRegistry } from '../../src/renderer/keys/commands';
 import { Strip } from '../../src/renderer/mixer/Strip';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
+import { loopClickGates } from '../../src/renderer/model/loop-click';
+import { TOKENS } from '../../src/renderer/tokens';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import { SessionClient } from '../../src/renderer/model/session-client';
@@ -45,12 +47,14 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
     assert.equal(reduced.has(method), false, method);
   }
   assert.equal(reduced.has('plan.reject'), true);
-  assert.equal(full.has('transport.set_cycle'), false, 'a method no engine lists yet');
+  assert.equal(full.has('transport.punch'), false, 'a method no engine lists yet');
   assert.equal(full.feature('gestures'), true);
   assert.equal(reduced.feature('gestures'), false);
   assert.equal(full.feature('plugins'), false, 'false is absent');
   assert.equal(capabilitySelector({ ...FULL, features: { plugins: { formats: ['clap'], flags: [] } } }).feature('plugins'), true);
-  assert.equal(full.feature('locators'), false);
+  // m5-ui-loop-click: the engine reports locators (and cycle and click with a transport port).
+  assert.equal(full.feature('locators'), true);
+  assert.equal(reduced.feature('locators'), false);
   // m5b-engine-record: recording through the protocol, reported only with a record port.
   assert.equal(full.feature('recording'), true);
   assert.equal(reduced.feature('recording'), false, 'the reduced engine has no features.recording');
@@ -418,4 +422,32 @@ test('the session client asks for engine.capabilities once per connection and ke
   await until(() => sockets[2]!.requests('engine.capabilities').length === 1, 'asked on the third connection');
   for (let i = 0; i < 20; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(client.getState().capabilities, REDUCED);
+});
+
+// m5-ui-loop-click (test-matrix rule 2): the full fixture lists E-1's methods,
+// features and command as the engine does; the reduced one lists none.
+test('locators, cycle and click: the full fixture lists them, the gates follow the capabilities', () => {
+  for (const method of ['transport.set_cycle', 'transport.set_click']) assert.ok(FULL.methods!.includes(method), method);
+  assert.ok(FULL.commands!.includes('session.set_locators'));
+  for (const feature of ['locators', 'cycle', 'click']) assert.equal(FULL.features![feature], true, feature);
+  assert.deepEqual(loopClickGates(capabilitySelector(FULL)), { locators: true, cycle: true, click: true });
+  assert.deepEqual(loopClickGates(capabilitySelector(REDUCED)), { locators: false, cycle: false, click: false });
+  assert.deepEqual(loopClickGates(capabilitySelector(null)), { locators: false, cycle: false, click: false });
+  // Each needs its method (or command) and its feature.
+  const without = (method: string): Capabilities => ({ ...FULL, methods: FULL.methods!.filter((m) => m !== method) });
+  assert.equal(loopClickGates(capabilitySelector(without('transport.set_cycle'))).cycle, false);
+  assert.equal(loopClickGates(capabilitySelector(without('transport.set_click'))).click, false);
+  assert.equal(loopClickGates(capabilitySelector({ ...FULL, commands: FULL.commands!.filter((c) => c !== 'session.set_locators') })).locators, false);
+  assert.equal(loopClickGates(capabilitySelector({ ...FULL, features: { ...FULL.features, cycle: false } })).cycle, false);
+});
+
+// The empty-width token of the locator display (UI redesign 3.0; 10.7, 5) is
+// permanent: not a --hold-* token, which the part's landing would delete.
+test('--display-locators-empty-w is a permanent token, not a hold token', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'tokens.css'), 'utf8');
+  assert.match(css, /--display-locators-empty-w:\s*calc\([\d.]+px \* var\(--scale\)\);/);
+  assert.ok(!/--hold-display-locators/.test(css));
+  assert.ok(!'display-locators-empty-w'.startsWith('hold-'));
+  assert.equal(typeof TOKENS['display-locators-empty-w'], 'string');
+  assert.match(TOKENS['display-locators-empty-w'], /^[\d.]+px$/);
 });

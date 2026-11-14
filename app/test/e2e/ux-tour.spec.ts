@@ -29,6 +29,7 @@ import * as path from 'node:path';
 import type { Locale } from '../../src/renderer/i18n/locale';
 import { formatMilliDb } from '../../src/renderer/format';
 import { translator } from '../../src/renderer/i18n/t';
+import { RULER_UPPER_HEIGHT } from '../../src/renderer/timeline/geometry';
 import { snappedMoveDelta, snapperFor } from '../../src/renderer/timeline/snap';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
@@ -348,7 +349,7 @@ async function stopLatch(p: Page): Promise<void> {
 
 type Rect = { clipId: string; trackId: string; position: string; x: number; y: number; width: number; height: number };
 
-async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX', arg?: string): Promise<T> {
+async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX' | 'locatorBand', arg?: string): Promise<T> {
   return page.evaluate(
     ({ name: called, arg: value }) => {
       const hooks = (window as unknown as { __siannTimeline?: Record<string, (a?: string) => unknown> }).__siannTimeline;
@@ -817,6 +818,37 @@ test('UX screenshot tour', async () => {
     'Clip split and duplicated',
     'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before: the right one continues in the file where the left one ends), then both pieces selected (click, Shift-click) and duplicated with Ctrl+D: the copies land directly after them on the same lane, as one unit. Each edit was one revision. Zoomed full (Shift+F) to show the whole session.',
     { number: 25 },
+  );
+
+  // ---- 23 and 24 (m5-ui-loop-click; numbered explicitly, written after 25).
+  // 23: a locator range drawn in the ruler's upper half over bars 2 to 4 of
+  // the zoomed-full view and cycle turned on with the cycle button.
+  const loopView = await timeline<{ framesPerPixel: number; scrollFrames: string }>('view');
+  const loopBox = await canvasBox();
+  const barX = (bar: number) => (2 * (bar - 1) * RATE - Number(loopView.scrollFrames)) / loopView.framesPerPixel;
+  await page.mouse.move(loopBox.x + barX(2), loopBox.y + RULER_UPPER_HEIGHT / 2);
+  await page.mouse.down();
+  await page.mouse.move(loopBox.x + barX(4), loopBox.y + RULER_UPPER_HEIGHT / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByTestId('display-locators')).toBeVisible();
+  await page.getByTestId('transport-cycle').click();
+  await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(async () => (await timeline<{ cycle: boolean } | null>('locatorBand'))?.cycle).toBe(true);
+  const locatorText = await page.getByTestId('display-locators').textContent();
+  await shoot(
+    page,
+    'Locators set, cycle on',
+    `A locator range drawn by dragging in the ruler's upper half (one session.set_locators on release, snapped to the grid), then cycle turned on with the cycle button between go to start and stop. The band is light with its L and R flags, the lanes under the range are tinted, the cycle button is lit, and the locator display in the top bar reads ${locatorText}.`,
+    { number: 23 },
+  );
+  // 24: the metronome on (its button after the displays).
+  await page.getByTestId('transport-metronome').click();
+  await expect(page.getByTestId('transport-metronome')).toHaveAttribute('aria-pressed', 'true');
+  await shoot(
+    page,
+    'Metronome on',
+    'The metronome turned on with its button (transport.set_click; C does the same, a right-click on it gives its level): the button is lit. The click is generated from the tempo map and added to the device output after the master meter; nothing else in the window changes.',
+    { number: 24 },
   );
 
   // ---- What the window has no surface for (unnumbered).

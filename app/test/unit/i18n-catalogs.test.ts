@@ -19,7 +19,8 @@ type Key = keyof Catalog;
 const KEYS = Object.keys(en) as Key[];
 
 // Values that are the same in every locale on purpose.
-const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>(['app.title']);
+// The click level is a number and dB, the same symbol in every locale (spec 6.2).
+const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>(['app.title', 'transport.clickLevelValue']);
 
 // The parameters each function message is called with. Strings are sentinels
 // that must come back in every locale; numbers must come back as digits.
@@ -133,4 +134,35 @@ test('the pseudo-locale pads every English string by at least 40 % and keeps its
       for (const value of Object.values(SENTINELS[key]!)) assert.ok(padded.includes(String(value)), key);
     }
   }
+});
+
+test('the locator, cycle and metronome words are in every catalog (m5-ui-loop-click)', () => {
+  const keys = [
+    'transport.cycle',
+    'transport.metronome',
+    'transport.click',
+    'transport.clickLevel',
+    'transport.locators',
+    'transport.toLeftLocator',
+    'transport.toRightLocator',
+    'transport.setLeftLocator',
+    'transport.setRightLocator',
+    'transport.noDeviceCycle',
+    'transport.noDeviceClick',
+  ] as const;
+  for (const key of keys) {
+    for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
+      assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+  }
+  // The glossary (UI redesign 6.5): cycle, locator, metronome.
+  assert.equal(zhHant['transport.cycle'], '循環');
+  assert.equal(zhHans['transport.cycle'], '循环');
+  assert.equal(zhHant['transport.metronome'], '節拍器');
+  assert.equal(zhHans['transport.metronome'], '节拍器');
+  assert.match(String(zhHant['transport.toLeftLocator']), /左定位點/);
+  assert.match(String(zhHans['transport.toLeftLocator']), /左定位器/);
+  // The level reads in dB in every locale.
+  for (const catalog of [en, zhHant, zhHans]) assert.equal(catalog['transport.clickLevelValue'], '{db} dB');
 });
