@@ -104,6 +104,10 @@ export function launchApp(options: {
   hook?: boolean;
   // The shell's first restart delay after the engine exits (default 50 ms).
   backoffMs?: number;
+  // Appended to the engine's test arguments (an unknown option fails every launch).
+  extraEngineArgs?: readonly string[];
+  // SIANN_SHELL_MAX_RESTARTS (the shell's default when unset).
+  maxRestarts?: number;
 }): Promise<ElectronApplication> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   return launchElectron({
@@ -118,7 +122,8 @@ export function launchApp(options: {
       SIANN_USER_DATA: options.userData,
       SIANN_SHELL_BACKOFF_MS: String(options.backoffMs ?? 50),
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: '--device fake',
+      SIANN_ENGINE_TEST_ARGS: ['--device', 'fake', ...(options.extraEngineArgs ?? [])].join(' '),
+      ...(options.maxRestarts !== undefined ? { SIANN_SHELL_MAX_RESTARTS: String(options.maxRestarts) } : {}),
     },
   });
 }

@@ -13,6 +13,9 @@
 // (b) With a short restart delay the shell brings the engine back: a toast
 // names the recovered revision, the clip selection is cleared, and the banner
 // and the inert zones are gone.
+// (c) A first launch that fails (an engine that rejects its command line, so
+// every launch exits) shows the same disconnected state: the start is no
+// exception once the shell reports the failed launch.
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
@@ -184,4 +187,38 @@ test('on reconnect a toast names the recovered revision, the selection is cleare
     await expect(page.getByTestId(`zone-${zone}`)).not.toHaveAttribute('inert');
     await expect(page.getByTestId(`zone-${zone}`)).not.toHaveAttribute('data-offline', 'true');
   }
+});
+
+test('a first launch that fails shows the banner and inert, dimmed zones, and no control sends a request', async () => {
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-connection-'));
+  const sessionDir = seedBundle(scratch, [{ id: 'trk_a', name: 'Alpha' }], []);
+  // Every launch exits with a usage error; the shell keeps restarting it (no
+  // gave-up dialog within the test).
+  app = await launchApp({
+    sessionDir,
+    userData: path.join(scratch, 'user-data'),
+    languages: ['en-US'],
+    backoffMs: 200,
+    maxRestarts: 1000,
+    extraEngineArgs: ['--siann-no-such-option'],
+  });
+  page = await app.firstWindow();
+  const sent: string[] = [];
+  page.on('websocket', (socket) => socket.on('framesent', (frame) => sent.push(String(frame.payload))));
+
+  const banner = page.getByTestId('connection-banner');
+  await expect(banner).toBeVisible();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'disconnected');
+  for (const zone of ZONES) {
+    const frame = page.getByTestId(`zone-${zone}`);
+    await expect(frame).toHaveAttribute('inert', '');
+    await expect(frame).toHaveAttribute('data-offline', 'true');
+  }
+  // Nothing was ever loaded, so only the keys can try: a delete and the undo key.
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('Control+z');
+  await frames();
+  expect((await refused()).filter((method) => CONTROL_METHOD.test(method))).toEqual([]);
+  expect(sent).toEqual([]);
+  await expect(page.getByTestId('toast')).toHaveCount(0);
 });
