@@ -2973,8 +2973,15 @@ Protocol v0, recording (decided with m5b-engine-record, M5b; the wire details ar
     - `engine.capabilities` adds `features.recording` (true with a record port) and
       lists `track.set_input` in `commands`. MCP `record_arm` (`record.arm`) and
       `record` (`transport.record`) are trusted-scope tools: recording writes to the
-      user's disk and commits a revision. `transport.stop` stays in the propose
-      scope; stopping a recording someone else started commits it.
+      user's disk and commits a revision. `stop` (`transport.stop`) and `locate`
+      (`transport.locate`) stay in the propose scope, but while a recording runs
+      they end it and commit it, so a propose credential, which cannot start a
+      recording, cannot end one either: they are `scope_denied` for it until the
+      recording ends, and reach no port (decided after the security review of
+      m5b-engine-record). Stopped, they run as before. A trusted credential and the
+      UI's WebSocket token end a recording with them as `transport.record {enabled:
+      false}` does. Every other method that ends a recording (`transport.record`,
+      `engine.select_device`, `session.open`) is trusted-only already.
     - The realtime channel's legend lists `input:<trackId>` after the graph's
       entities for each armed track, published again (same epoch, earlier indexes
       unchanged) when the armed set changes; frames carry their peak and RMS while

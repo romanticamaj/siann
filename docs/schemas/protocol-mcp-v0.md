@@ -135,8 +135,11 @@ command `session.set_locators` through `execute` (trusted) or a plan.
 `record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
 recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted
 scope: recording writes to the user's disk and commits a revision. No tool wraps
-`record.recover_take`. The propose scope's tools are unchanged; `stop` stays in it,
-and a `stop` during a recording commits that recording as the UI's stop does.
+`record.recover_take`. The propose scope's tools are unchanged, but `stop` and
+`locate` end a running recording and commit it, and a propose agent cannot start
+one, so while a recording runs both are `scope_denied` under `propose` and run
+nothing. Stopped, they work as before; under `trusted` (and from the UI) they end
+the recording as the UI's stop does.
 
 `create_session` and `import_media` (m5b-engine-project-media, Protocol v0 item 27)
 wrap `session.create` and `media.import` of [Protocol engine v0](protocol-engine-v0.md).
