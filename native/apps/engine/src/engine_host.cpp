@@ -1,13 +1,17 @@
 #include "siann/engine_app/engine_host.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <exception>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
 
 #include "siann/engine/offline.hpp"
+#include "siann/session/takes.hpp"
 #include "siann/graph/nodes.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
@@ -192,12 +196,25 @@ EngineHost::EngineHost(session::Session& session, EngineHostOptions options)
       diagnostic_(std::move(options.diagnostic)),
       bufferFrames_(options.bufferFrames),
       backoff_(options.backoff),
-      clock_(std::move(options.clock)) {
+      clock_(std::move(options.clock)),
+      actor_(std::move(options.actor)),
+      timestamp_(std::move(options.timestamp)) {
+    if (playbackOptions_.capture.slots == 0) {
+        playbackOptions_.capture.slots = options.recordSlots;
+    }
     fillRegistry(options.pluginDirs);  // before the first load resolves through it
     bind(session);
 }
 
 void EngineHost::bind(session::Session& session) {
+    // A recording ends into the session it was made in, before anything changes;
+    // the armed set is the old session's tracks and goes with it.
+    if (recording_) {
+        finishRecording(realtime::EndedBy::stop);
+    }
+    clearArms();
+    lastTakes_.clear();
+    armHead_ = session.history().head().envelope.id;
     // What refers to the old engine goes first, then the engine, whose driver stops
     // the device. The device object stays: the new driver opens it again.
     publisher_.reset();
@@ -260,6 +277,12 @@ void EngineHost::startDevice() {
     config.deviceId = deviceId_;
     config.bufferFrames = bufferFrames_;
     config.outputChannels = kOutputChannels;
+    if (inputId_) {
+        // The input selected with the device (m5b-engine-record): its own device
+        // where it is another one, which the backend pairs with the output.
+        config.inputChannels = inputRequest_;
+        config.inputDeviceId = *inputId_ != deviceId_ ? *inputId_ : std::string();
+    }
     try {
         device_->close();                 // a no-op unless a run or a failed start left it open
         engine_->start(*device_, config);  // asks the device for the session rate
@@ -300,6 +323,7 @@ void EngineHost::reopenDevice() {
         problem_.reset();
         say("audio device running again");
     }
+    pruneArms();  // the input it opened may hold fewer channels
 }
 
 void EngineHost::say(const std::string& line) const {
@@ -332,8 +356,10 @@ void EngineHost::makePublisher() {
     realtime::Transport& transport = engine_->transport();
     options.playing = [&transport] { return transport.playing(); };
     options.playhead = [&transport] { return transport.position(); };
+    options.inputMeter = [this](const std::string& trackId) { return inputMeter(trackId); };
     publisher_.emplace(engine_->dispatcher(), *channel_, *events_, std::move(options));
     publisher_->graphPublished(engine_->driver().liveEpoch(), engine_->meterSlots());
+    publisher_->setInputs(armedTracks());
 }
 
 void EngineHost::tick() {
@@ -352,15 +378,29 @@ void EngineHost::tick() {
         say("cannot compile the session (" + problem->code + "): " + problem->message);
     }
     if (running_ && engine_->driver().state() != realtime::DriverState::realtime) {
+        if (recording_) {
+            finishRecording(realtime::EndedBy::device);  // what was captured is committed
+        }
         running_ = false;
         engine_->transport().stop();
         report({"device_lost", "the audio device stopped"});
         scheduleReopen();
     }
+    if (recording_) {
+        pollRecording();
+    }
+    // Every new head of main: a removed track, or an input cleared or changed
+    // past the open input, is disarmed (not while recording: its end does it).
+    const std::string& head = session_->history().head().envelope.id;
+    if (head != armHead_ && !recording_) {
+        armHead_ = head;
+        pruneArms();
+    }
     if (reopenAt_ && now() >= *reopenAt_) {
         reopenDevice();
     }
     if (publisher_) {
+        publisher_->setInputs(armedTracks());
         if (publisher_->epoch() != engine_->driver().liveEpoch()) {
             publisher_->graphPublished(engine_->driver().liveEpoch(), engine_->meterSlots());
         }
@@ -369,6 +409,7 @@ void EngineHost::tick() {
 }
 
 void EngineHost::shutdown() {
+    abandonRecording();  // its takes stay pending for record.recover_take
     running_ = false;
     reopenAt_.reset();
     if (engine_) {
@@ -732,6 +773,9 @@ protocol::TransportState EngineHost::play() {
 
 protocol::TransportState EngineHost::stop() {
     requireDevice();
+    if (recording_) {
+        finishRecording(realtime::EndedBy::stop);  // one revision, then stopped
+    }
     engine_->transport().stop();
     return transportState();
 }
@@ -759,7 +803,10 @@ protocol::TransportState EngineHost::setClick(bool enabled, std::optional<std::i
 
 protocol::TransportState EngineHost::transportState() const {
     const realtime::Transport& transport = engine_->transport();
-    return {transport.playing(), transport.position(), session_->cycle(), click_};
+    protocol::TransportState out{transport.playing(), transport.position(), session_->cycle(), click_};
+    out.recording = recording_;
+    out.armed = armedTracks();
+    return out;
 }
 
 protocol::EngineStatus EngineHost::status() const {
@@ -768,11 +815,16 @@ protocol::EngineStatus EngineHost::status() const {
         const host::AudioDeviceStatus& device = engine_->driver().deviceStatus();
         out.device = protocol::DeviceInfo{deviceId_.empty() ? "default" : deviceId_, device.sampleRate,
                                           device.bufferFrames, device.inputLatencyFrames, device.outputLatencyFrames};
+        if (inputId_) {
+            out.device->input = protocol::InputInfo{*inputId_, openInputChannels(), device.inputLatencyFrames};
+        }
     } else {
         out.deviceError = problem_;
     }
     out.cycle = session_->cycle();
     out.click = click_;
+    out.recording = recording_;
+    out.armed = armedTracks();
     if (loaded_) {
         const rt::CallbackTimer& timing = engine_->driver().callbackTiming();
         out.playing = engine_->transport().playing();
@@ -792,16 +844,57 @@ std::vector<protocol::DeviceDescription> EngineHost::devices() const {
     for (protocol::DeviceDescription& one : listed) {
         one.current = !marked && (deviceId_.empty() ? one.isDefault : one.id == deviceId_);
         marked = marked || one.current;
+        if (one.current && running_) {
+            // Counted on the device the engine has open, never by opening another
+            // instance of its driver (ASIO allows one).
+            const host::AudioDeviceStatus& device = engine_->driver().deviceStatus();
+            if (!one.outputChannels && device.outputChannels > 0) {
+                one.outputChannels = device.outputChannels;
+            }
+            if (!one.inputChannels && inputId_ && *inputId_ == one.id && device.inputChannels > 0) {
+                one.inputChannels = device.inputChannels;
+            }
+        }
     }
     return listed;
 }
 
 protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
+    return selectDeviceWithInput(id, std::nullopt);
+}
+
+namespace {
+
+// At most this many input channels are asked of a device that does not say how
+// many it has; the backend opens the ones it has.
+constexpr int kMaxInputChannels = 32;
+
+}  // namespace
+
+protocol::DeviceInfo EngineHost::selectDeviceWithInput(const std::string& id,
+                                                       const std::optional<std::string>& inputId) {
     const std::vector<protocol::DeviceDescription> listed = devices();
-    const bool known = std::any_of(listed.begin(), listed.end(),
-                                   [&](const protocol::DeviceDescription& one) { return one.id == id; });
-    if (!known) {
-        throw protocol::TransportPortError("not_found", "no audio device " + id + "; engine.devices lists them");
+    const auto entry = [&listed](const std::string& wanted) {
+        const auto found = std::find_if(listed.begin(), listed.end(),
+                                        [&](const protocol::DeviceDescription& one) { return one.id == wanted; });
+        return found == listed.end() ? nullptr : &*found;
+    };
+    const protocol::DeviceDescription* output = entry(id);
+    if (output == nullptr || output->outputChannels == 0) {
+        throw protocol::TransportPortError("not_found", "no audio output device " + id + "; engine.devices lists them");
+    }
+    int request = 0;
+    if (inputId) {
+        const protocol::DeviceDescription* input = entry(*inputId);
+        if (input == nullptr || input->inputChannels == 0) {
+            throw protocol::TransportPortError("not_found",
+                                               "no audio input device " + *inputId + "; engine.devices lists them");
+        }
+        if (input->id != output->id && input->type != output->type) {
+            throw protocol::TransportPortError("invalid_params", "the input " + *inputId + " cannot open with " + id +
+                                                                     ": a backend pairs devices of its own type");
+        }
+        request = input->inputChannels.value_or(kMaxInputChannels);
     }
     if (!deviceFactory_) {
         throw protocol::TransportPortError("not_supported", "this engine host cannot select a device");
@@ -811,6 +904,10 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
         chosen = deviceFactory_(id);
     } catch (const host::DeviceError& error) {
         throw protocol::TransportPortError(error.code(), error.what());
+    }
+    // A recording ends on the device it was made on, before that device closes.
+    if (recording_) {
+        finishRecording(realtime::EndedBy::stop);
     }
     // The old device first: stop its callbacks and the transport, then close it.
     if (loaded_) {
@@ -826,6 +923,8 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
     }
     device_ = std::move(chosen);
     deviceId_ = id;
+    inputId_ = inputId;
+    inputRequest_ = request;
     reopenFailures_ = 0;
     if (!loaded_) {
         // Opened once the session's graph can be built.
@@ -833,6 +932,7 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
                                            problem_ ? problem_->message : std::string("the session did not load"));
     }
     startDevice();
+    pruneArms();  // kept where the new input still covers the channels
     if (!running_) {
         throw protocol::TransportPortError(problem_ ? problem_->code : std::string("device_open_failed"),
                                            problem_ ? problem_->message : std::string("the device did not open"));
@@ -842,6 +942,397 @@ protocol::DeviceInfo EngineHost::selectDevice(const std::string& id) {
         say("audio device " + id + " running");
     }
     return *status().device;
+}
+
+// ---- recording (m5b-engine-record, Protocol v0 item 27) -------------------------
+
+namespace fs = std::filesystem;
+
+namespace {
+
+std::string utcNow() {
+    const std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buffer;
+}
+
+protocol::TransportPortError recordError(const std::string& code, const std::string& message) {
+    return protocol::TransportPortError(code, message);
+}
+
+}  // namespace
+
+std::string EngineHost::timestamp() const {
+    return timestamp_ ? timestamp_() : utcNow();
+}
+
+// The channels the open input has: what the device says it opened, or what was
+// asked of a device that does not say; 0 without an input or a running device.
+int EngineHost::openInputChannels() const {
+    if (!inputId_ || !running_) {
+        return 0;
+    }
+    const int opened = engine_->driver().deviceStatus().inputChannels;
+    return opened > 0 ? opened : inputRequest_;
+}
+
+bool EngineHost::covers(const model::TrackInput& input) const {
+    return input.port >= 0 && input.channels >= 1 && input.port + input.channels <= openInputChannels();
+}
+
+std::vector<std::string> EngineHost::armedTracks() const {
+    std::vector<std::string> out;
+    for (const auto& [trackId, slot] : armed_) {
+        (void)slot;
+        out.push_back(trackId);
+    }
+    return out;
+}
+
+void EngineHost::clearArms() {
+    if (engine_) {
+        if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
+            for (const auto& [trackId, slot] : armed_) {
+                (void)trackId;
+                bank->disarm(slot);
+            }
+        }
+    }
+    armed_.clear();
+}
+
+// Every armed track whose input is gone, or past what the open input holds, is
+// disarmed; one whose input changed and still fits is armed with the new map.
+void EngineHost::pruneArms() {
+    if (recording_ || armed_.empty() || !engine_) {
+        return;
+    }
+    realtime::CaptureBank* bank = engine_->driver().captureBank();
+    const model::Document& doc = session_->history().head().document;
+    for (auto it = armed_.begin(); it != armed_.end();) {
+        const model::Track* track = doc.track(it->first);
+        if (track == nullptr || !track->input || !covers(*track->input)) {
+            if (bank != nullptr) {
+                bank->disarm(it->second);
+            }
+            it = armed_.erase(it);
+            continue;
+        }
+        if (bank != nullptr) {
+            bank->arm(it->second, track->input->port, track->input->channels);
+        }
+        ++it;
+    }
+}
+
+protocol::RecordState EngineHost::arm(const std::string& trackId, bool armed) {
+    if (recording_) {
+        throw recordError("invalid_state", "the armed tracks cannot change while recording");
+    }
+    if (!armed) {
+        const auto found = armed_.find(trackId);
+        if (found != armed_.end()) {
+            if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
+                bank->disarm(found->second);
+            }
+            armed_.erase(found);
+        }
+        return recordState();
+    }
+    requireDevice();
+    if (openInputChannels() == 0) {
+        throw recordError("no_input", "no input is open; engine.select_device opens one with inputId");
+    }
+    const model::Track* track = session_->history().head().document.track(trackId);
+    if (track == nullptr) {
+        throw recordError("not_found", "no track with id " + trackId);
+    }
+    if (!track->input) {
+        throw recordError("no_input", "track " + trackId + " has no input; track.set_input sets one");
+    }
+    if (!covers(*track->input)) {
+        throw recordError("no_input", "the open input has " + std::to_string(openInputChannels()) +
+                                          " channels, fewer than track " + trackId + "'s input needs");
+    }
+    realtime::CaptureBank* bank = engine_->driver().captureBank();
+    if (bank == nullptr) {
+        throw recordError("not_supported", "this engine records no input");
+    }
+    auto found = armed_.find(trackId);
+    if (found == armed_.end()) {
+        std::vector<bool> used(bank->size(), false);
+        for (const auto& [id, slot] : armed_) {
+            (void)id;
+            used[slot] = true;
+        }
+        const auto free = std::find(used.begin(), used.end(), false);
+        if (free == used.end()) {
+            throw recordError("invalid_state", "at most " + std::to_string(bank->size()) + " tracks are armed at once");
+        }
+        found = armed_.emplace(trackId, static_cast<std::size_t>(free - used.begin())).first;
+    }
+    bank->arm(found->second, track->input->port, track->input->channels);
+    return recordState();
+}
+
+protocol::TransportState EngineHost::record(bool enabled) {
+    if (!enabled) {
+        if (recording_) {
+            finishRecording(realtime::EndedBy::stop);  // playback goes on
+        }
+        return transportState();
+    }
+    requireDevice();
+    if (openInputChannels() == 0) {
+        throw recordError("no_input", "no input is open; engine.select_device opens one with inputId");
+    }
+    if (armed_.empty()) {
+        throw recordError("nothing_armed", "no track is armed; record.arm arms one");
+    }
+    if (!recording_) {
+        startRecording();
+    }
+    return transportState();
+}
+
+std::string EngineHost::newTakeId() const {
+    const fs::path bundle = session_->bundlePath();
+    for (;;) {
+        std::random_device rd;
+        static constexpr char kHex[] = "0123456789abcdef";
+        std::string id = "take_";
+        for (int i = 0; i < 12; ++i) {
+            id.push_back(kHex[rd() % 16]);
+        }
+        std::error_code ec;
+        if (!fs::exists(session::takeManifestPath(bundle, id), ec) &&
+            !fs::exists(bundle / "trash" / (id + ".json"), ec) &&
+            session_->history().head().document.media("med_" + id) == nullptr) {
+            return id;
+        }
+    }
+}
+
+void EngineHost::startRecording() {
+    realtime::CaptureBank& bank = *engine_->driver().captureBank();
+    const model::Document& doc = session_->history().head().document;
+    const std::int64_t rate = doc.root().sampleRate;
+    const std::int64_t offset = engine_->driver().latency().recordOffsetFrames;
+    const fs::path bundle = session_->bundlePath();
+    std::vector<Take> takes;
+    try {
+        for (const auto& [trackId, slot] : armed_) {
+            const model::TrackInput input = *doc.track(trackId)->input;
+            session::TakeManifest manifest;
+            manifest.takeId = newTakeId();
+            manifest.trackId = trackId;
+            manifest.channels = input.channels;
+            manifest.sampleRate = rate;
+            manifest.recordOffset = offset;
+            const fs::path audio = session::beginTake(*session_, manifest);
+            Take take;
+            take.slot = slot;
+            take.recordOffset = offset;
+            take.state.takeId = manifest.takeId;
+            take.state.trackId = trackId;
+            takes.push_back(take);
+            const std::string takeId = manifest.takeId;
+            // On the writer thread, before the first frame is written: the take's
+            // position is durable before any of its audio.
+            bank.recorder(slot).start(
+                audio, rate, [bundle, takeId](std::int64_t start) { session::markTakeStart(bundle, takeId, start); },
+                {}, input.channels);
+        }
+    } catch (...) {
+        for (const Take& take : takes) {
+            realtime::Recorder& recorder = bank.recorder(take.slot);
+            if (recorder.recording()) {
+                recorder.stop();
+            }
+            try {
+                session::discardTake(*session_, take.state.takeId);
+            } catch (...) {
+            }
+        }
+        throw;
+    }
+    takes_ = std::move(takes);
+    lastTakes_.clear();
+    recording_ = true;
+    engine_->driver().setCaptureActive(true);  // the cycle records straight through
+    engine_->transport().play();
+}
+
+void EngineHost::pollRecording() {
+    realtime::CaptureBank& bank = *engine_->driver().captureBank();
+    bool ended = false;
+    for (Take& take : takes_) {
+        realtime::Recorder& recorder = bank.recorder(take.slot);
+        if (!playbackOptions_.capture.recorder.writerThread) {
+            recorder.drain();  // no writer thread: the tick writes (tests)
+        }
+        const std::int64_t start = recorder.startPosition();
+        if (start != realtime::Recorder::kNoStart) {
+            take.state.startFrame = start - take.recordOffset;
+        }
+        take.state.durableFrames = recorder.durableFrames();
+        ended = ended || recorder.overflowed() || recorder.diskFailed();
+    }
+    if (ended) {
+        finishRecording(std::nullopt);  // each take says how it ended
+    }
+}
+
+void EngineHost::finishRecording(std::optional<realtime::EndedBy> forced) {
+    if (!recording_) {
+        return;
+    }
+    recording_ = false;
+    engine_->driver().setCaptureActive(false);
+    realtime::CaptureBank& bank = *engine_->driver().captureBank();
+    const fs::path bundle = session_->bundlePath();
+    std::vector<std::string> commit;
+    std::vector<protocol::RecordTakeState> ended;
+    for (Take& take : takes_) {
+        const realtime::Recorder::Result result = bank.recorder(take.slot).stop();
+        const realtime::EndedBy endedBy = forced.value_or(result.endedBy) == realtime::EndedBy::device
+                                              ? realtime::EndedBy::device
+                                              : result.endedBy;
+        protocol::RecordTakeState state = take.state;
+        state.endedBy = std::string(realtime::endedByName(endedBy));
+        state.overflows = result.overflows;
+        state.durableFrames = result.frames;
+        if (result.frames > 0) {
+            state.startFrame = result.startPosition - take.recordOffset;
+        }
+        try {
+            session::markTakeEnd(bundle, state.takeId, *state.endedBy, result.overflows);
+        } catch (const std::exception& error) {
+            say("cannot note how take " + state.takeId + " ended: " + error.what());
+        }
+        if (result.frames > 0) {
+            commit.push_back(state.takeId);
+        } else {
+            try {
+                session::discardTake(*session_, state.takeId);  // nothing captured: to trash/
+            } catch (const std::exception& error) {
+                say("cannot move the empty take " + state.takeId + " to trash: " + error.what());
+            }
+        }
+        ended.push_back(std::move(state));
+    }
+    takes_.clear();
+    lastTakes_ = std::move(ended);
+    if (!commit.empty()) {
+        try {
+            session::commitTakes(*session_, commit, actor_, timestamp());
+            audition_.mainCommitted();  // the engine plays the new clips
+        } catch (const std::exception& error) {
+            // The takes stay pending: record.recover_take commits them later.
+            say("cannot commit the recording: " + std::string(error.what()));
+        }
+    }
+    armHead_ = session_->history().head().envelope.id;
+    pruneArms();
+}
+
+void EngineHost::abandonRecording() {
+    if (!recording_ || !engine_) {
+        return;
+    }
+    recording_ = false;
+    engine_->driver().setCaptureActive(false);
+    realtime::CaptureBank& bank = *engine_->driver().captureBank();
+    for (const Take& take : takes_) {
+        bank.recorder(take.slot).stop();  // the file is closed and stays pending
+    }
+    takes_.clear();
+}
+
+protocol::RecordState EngineHost::recordState() const {
+    protocol::RecordState out;
+    out.recording = recording_;
+    out.armed = armedTracks();
+    if (recording_) {
+        for (const Take& take : takes_) {
+            out.takes.push_back(take.state);
+        }
+    } else {
+        out.takes = lastTakes_;
+    }
+    return out;
+}
+
+std::vector<protocol::PendingTake> EngineHost::pendingTakes() const {
+    std::vector<protocol::PendingTake> out;
+    for (const session::TakeManifest& manifest : session::pendingTakes(session_->bundlePath())) {
+        const bool beingRecorded = std::any_of(takes_.begin(), takes_.end(), [&](const Take& take) {
+            return take.state.takeId == manifest.takeId;
+        });
+        if (beingRecorded) {
+            continue;
+        }
+        protocol::PendingTake take;
+        take.takeId = manifest.takeId;
+        take.trackId = manifest.trackId;
+        take.channels = manifest.channels;
+        take.sampleRate = manifest.sampleRate;
+        if (manifest.startPosition) {
+            take.startFrame = *manifest.startPosition - manifest.recordOffset;
+        }
+        take.endedBy = manifest.endedBy;
+        take.overflows = manifest.overflows;
+        out.push_back(std::move(take));
+    }
+    return out;
+}
+
+protocol::RecoverResult EngineHost::recoverTake(const std::string& takeId, bool accept, std::string actor,
+                                                std::string time) {
+    const bool beingRecorded =
+        std::any_of(takes_.begin(), takes_.end(), [&](const Take& take) { return take.state.takeId == takeId; });
+    if (beingRecorded) {
+        throw recordError("invalid_state", "take " + takeId + " is being recorded");
+    }
+    if (!accept) {
+        session::discardTake(*session_, takeId);
+        return {nullptr, true};
+    }
+    const std::string before = session_->history().head().envelope.id;
+    const command::Revision* revision = &session::commitTake(*session_, takeId, std::move(actor), std::move(time));
+    if (session_->history().head().envelope.id != before) {
+        audition_.mainCommitted();
+    }
+    return {revision, false};
+}
+
+std::optional<graph::MeterReading> EngineHost::inputMeter(const std::string& trackId) const {
+    const auto found = armed_.find(trackId);
+    if (found == armed_.end() || !engine_) {
+        return std::nullopt;
+    }
+    const realtime::CaptureBank* bank = engine_->driver().captureBank();
+    if (bank == nullptr) {
+        return std::nullopt;
+    }
+    const realtime::InputMeterReading reading = bank->meter(found->second);
+    if (reading.blocks == 0) {
+        return std::nullopt;
+    }
+    graph::MeterReading out;
+    out.channels = std::min(reading.channels, graph::kMaxMeterChannels);
+    for (int c = 0; c < out.channels; ++c) {
+        out.peak[static_cast<std::size_t>(c)] = reading.peak[static_cast<std::size_t>(c)];
+        out.rms[static_cast<std::size_t>(c)] = reading.rms[static_cast<std::size_t>(c)];
+    }
+    return out;
 }
 
 // ---- fader gestures (Protocol v0 item 24) ---------------------------------------

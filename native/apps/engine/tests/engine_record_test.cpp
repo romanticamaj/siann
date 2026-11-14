@@ -50,8 +50,9 @@ namespace fs = std::filesystem;
 
 constexpr int kBlock = 256;
 constexpr std::int64_t kImpulseAt = 10'000;
-constexpr int kInputLatency = 32;
-constexpr int kOutputLatency = 64;
+// Loopback needs at least one buffer of round trip (as FakeAudioDevice).
+constexpr int kInputLatency = 128;
+constexpr int kOutputLatency = 256;
 
 class TempDir {
 public:

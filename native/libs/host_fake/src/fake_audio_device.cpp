@@ -65,7 +65,8 @@ AudioDeviceStatus FakeAudioDevice::open(const AudioDeviceConfig& config) {
     pacePeriod_ = std::chrono::nanoseconds(static_cast<std::int64_t>(
         1e9 * static_cast<double>(config_.bufferFrames) / (static_cast<double>(config_.sampleRate) * options_.speed)));
     return AudioDeviceStatus{options_.reportNoSampleRate ? 0 : config_.sampleRate, config.bufferFrames,
-                             options_.inputLatencyFrames, options_.outputLatencyFrames};
+                             options_.inputLatencyFrames, options_.outputLatencyFrames, config.inputChannels,
+                             config.outputChannels};
 }
 
 void FakeAudioDevice::setOnStopped(std::function<void(bool lost)> handler) {

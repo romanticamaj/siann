@@ -7,6 +7,7 @@ add_library(siann_protocol
   src/about.cpp
   src/jobs.cpp
   src/mcp_adapter.cpp
+  src/record_port.cpp
 )
 add_library(siann::protocol ALIAS siann_protocol)
 target_include_directories(siann_protocol PUBLIC include)

@@ -32,6 +32,17 @@ struct TransportState {
     std::int64_t position = 0;  // session frames
     bool cycle = false;         // Protocol v0 item 26
     ClickState click;
+    // Protocol v0 item 27 (m5b-engine-record): a recording runs, and the armed tracks.
+    bool recording = false;
+    std::vector<std::string> armed{};
+};
+
+// The open input (m5b-engine-record): the id it was selected by, the channels
+// the device opened and its input latency in device frames.
+struct InputInfo {
+    std::string id;
+    int channels = 0;
+    int latencyFrames = 0;
 };
 
 // The running device, as it reported itself.
@@ -41,6 +52,7 @@ struct DeviceInfo {
     int bufferFrames = 0;
     int inputLatencyFrames = 0;
     int outputLatencyFrames = 0;
+    std::optional<InputInfo> input{};  // none open: no recording
 };
 
 // One entry of engine.devices (Protocol v0 item 22).
@@ -50,6 +62,10 @@ struct DeviceDescription {
     std::string name;
     bool isDefault = false;
     bool current = false;  // the device the engine runs or is trying to open
+    // m5b-engine-record: the channel counts where known (null otherwise); an
+    // input-only device has 0 outputs and serves only as an inputId.
+    std::optional<int> inputChannels{};
+    std::optional<int> outputChannels{};
 };
 
 // Why there is no running device.
@@ -67,6 +83,8 @@ struct EngineStatus {
     bool playing = false;
     bool cycle = false;
     ClickState click;
+    bool recording = false;  // Protocol v0 item 27
+    std::vector<std::string> armed{};
     std::uint64_t xruns = 0;
     double maxCallbackMicros = 0.0;
     std::uint64_t unmeasuredCallbacks = 0;
@@ -111,6 +129,16 @@ public:
     // does not list (the current device keeps running) and device_open_failed
     // when the open fails (the host keeps retrying it under its backoff).
     virtual DeviceInfo selectDevice(const std::string& id) = 0;
+    // engine.select_device with an input (m5b-engine-record): `inputId` names a
+    // listed device with inputs whose input opens with `id`; empty, no input.
+    // Throws not_found (an unlisted inputId) and invalid_params (one the backend
+    // cannot pair with `id`). A port without inputs answers not_supported.
+    virtual DeviceInfo selectDeviceWithInput(const std::string& id, const std::optional<std::string>& inputId) {
+        if (inputId) {
+            throw TransportPortError("not_supported", "this engine host opens no device inputs");
+        }
+        return selectDevice(id);
+    }
 };
 
 }  // namespace siann::protocol
