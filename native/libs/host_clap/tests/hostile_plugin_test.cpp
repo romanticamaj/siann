@@ -539,6 +539,16 @@ TEST_CASE("clap host: hostile crash child", "[.][hostile-crash-child]") {
 #if defined(_WIN32)
     SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#if !defined(_DLL)
+    // A static CRT reaches only its own flags: the plugin aborts through the shared
+    // Universal CRT, so turn them off there too (engine_app::disableCrashDialogs).
+    if (HMODULE crt = LoadLibraryExW(L"ucrtbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {
+        using SetAbortBehavior = unsigned int(__cdecl*)(unsigned int, unsigned int);
+        if (const auto set = reinterpret_cast<SetAbortBehavior>(GetProcAddress(crt, "_set_abort_behavior"))) {
+            set(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+        }
+    }
+#endif
 #endif
     std::fputs("crashing\n", stdout);
     std::fflush(stdout);
@@ -560,14 +570,10 @@ TEST_CASE("clap host: hostile crash ends the process with abort and no dialog", 
         code = child.wait();
         endedBy = child.terminatingSignal();
     }
-#if defined(_WIN32) && defined(_DLL)
-    CHECK(code == 3);  // abort(), with no "abort() has been called" box to wait on
-    CHECK(endedBy == 0);
-#elif defined(_WIN32)
-    // A statically linked CRT (the desktop-release preset): the plugin's abort()
-    // follows its own CRT's flags, which no host reaches, so it may end in a
-    // Windows Error Reporting fast fail; the error mode still keeps any box away.
-    CHECK((code == 3 || static_cast<unsigned int>(code) == 0xC0000409u));
+#if defined(_WIN32)
+    // abort(), with no "abort() has been called" box to wait on and no fast fail,
+    // whether this host links the CRT statically (desktop-release) or not.
+    CHECK(code == 3);
     CHECK(endedBy == 0);
 #else
     CHECK(code == -1);

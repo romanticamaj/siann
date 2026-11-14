@@ -1263,12 +1263,11 @@ void checkCrashed(PipedProcess& child) {
         child.kill();
         FAIL("the engine did not end after the crash: a dialog may hold it");
     }
-#if defined(_WIN32) && defined(_DLL)
-    CHECK(*code == 3);  // abort()
-#elif defined(_WIN32)
-    // A statically linked CRT (the desktop-release preset): the plugin's abort()
-    // follows its own CRT's flags, which the engine cannot reach (a fast fail).
-    CHECK((*code == 3 || static_cast<unsigned int>(*code) == 0xC0000409u));
+#if defined(_WIN32)
+    // abort(), with no "abort() has been called" box and no fast fail: also from the
+    // desktop-release engine (static CRT), whose main() turns the flags off in the
+    // shared Universal CRT the hostile plugin links (disableCrashDialogs).
+    CHECK(*code == 3);
 #else
     CHECK(*code != 0);  // SIGABRT
 #endif
@@ -1291,13 +1290,10 @@ void checkCrashed(PipedProcess& child) {
     const unsigned long abortBehavior = std::stoul(err.substr(modeAt + 8 + abortMarker.size(), 8), nullptr, 16);
     CHECK((errorMode & SEM_FAILCRITICALERRORS) != 0);
     CHECK((errorMode & SEM_NOGPFAULTERRORBOX) != 0);
-#if defined(_DLL)
-    // One CRT for the engine and the plugin: the engine's flags are the plugin's.
+    // The plugin's flags are the shared Universal CRT's: the engine's own with a
+    // shared CRT, set by main() through ucrtbase.dll with a static one.
     CHECK((abortBehavior & _WRITE_ABORT_MSG) == 0);
     CHECK((abortBehavior & _CALL_REPORTFAULT) == 0);
-#else
-    (void)abortBehavior;  // the plugin's own CRT: not the engine's to set
-#endif
 #endif
 }
 

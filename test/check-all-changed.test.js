@@ -9,7 +9,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  ALL_STEPS, cacheRoot, dependencySource, nativeEnv, packageStep, parseArgs, selectSteps, stepsForPath, stepsForPaths,
+  ALL_STEPS, cacheRoot, dependencySource, nativeEnv, PACKAGE_NATIVE, packageStep, parseArgs, selectSteps, stepsForPath,
+  stepsForPaths,
 } = require('../scripts/check-all');
 
 const none = { desktop: false, gcc: false, app: false, json: false, only: null,
@@ -34,6 +35,19 @@ test('what the installer is built from runs the package step', () => {
     'native/libs/host_desktop/src/juce_plugin_host.cpp', 'native/libs/graph/CMakeLists.txt']) {
     assert.ok(stepsForPath(file).includes('package'), file);
   }
+});
+
+// The shipped engine links the CRT statically: its crash tests (no dialog, exit code 3;
+// spec, "Process model", Crash) run in that configuration before the installer is built.
+test('the package step builds the desktop-release engine and runs its crash tests', () => {
+  const commands = PACKAGE_NATIVE.map(([tool, args]) => [tool, ...args].join(' '));
+  assert.equal(commands[0], 'cmake --preset desktop-release');
+  const build = commands.find((c) => c.startsWith('cmake --build --preset desktop-release --target '));
+  assert.ok(build, commands.join('\n'));
+  for (const target of ['siann-engine', 'siann_engine_host_tests', 'siann_engine_launch_tests', 'siann_host_clap_tests']) {
+    assert.ok(build.split(' ').includes(target), target);
+  }
+  assert.ok(commands.indexOf('ctest --preset desktop-release -R crash') > commands.indexOf(build), commands.join('\n'));
 });
 
 test('the package step reports skipped off Windows and runs nothing there', async () => {

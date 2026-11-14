@@ -347,6 +347,9 @@ test('a package job builds the installer on windows-latest, signing nothing and 
   // The desktop-release engine (static CRT) is what the installer ships.
   assert.match(text, /cmake --preset desktop-release/);
   assert.match(text, /cmake --build --preset desktop-release --target siann-engine/);
+  // Its crash tests, in the static-CRT configuration the installer ships.
+  assert.match(text, /--target siann-engine siann_engine_host_tests siann_engine_launch_tests siann_host_clap_tests/);
+  assert.match(text, /ctest --preset desktop-release -R crash/);
   assert.match(text, /npm run dist/);
   assert.match(text, /node --test test\/package\//);
   assert.match(text, /SIANN_PACKAGE_DIR/);
