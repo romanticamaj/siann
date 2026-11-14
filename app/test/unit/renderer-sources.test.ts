@@ -55,3 +55,33 @@ test('only index.tsx references window.siann', () => {
     [],
   );
 });
+
+// m5-ui-loop-click's renderer additions name tokens (docs/harness/agent-rules.md,
+// "UI fidelity": no colour or size literal in renderer CSS or TypeScript).
+// test/ui-tokens.test.js counts px, em, rem and pt only, and in code only px
+// inside strings, so this check covers the units and the forms it does not
+// see, for this feature's rules and for the ruler height its geometry
+// exports: a ch width, a bare number as the canvas's ruler height.
+const SHELL_CSS = path.resolve(RENDERER, '..', '..', 'renderer', 'shell.css');
+const ANY_SIZE = /(?<![\w.-])\d*\.?\d+(?:px|em|rem|pt|ch|ex|vw|vh|vmin|vmax|cm|mm|in|pc)\b/;
+
+function rulesOf(css: string, selector: RegExp): string[] {
+  const body = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out: string[] = [];
+  for (const m of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (selector.test(m[1]!)) out.push(`${m[1]!.trim()} { ${m[2]!.trim()} }`);
+  }
+  return out;
+}
+
+test('the locator display, the holds and the click level name tokens: no size literal of any unit', () => {
+  const rules = rulesOf(fs.readFileSync(SHELL_CSS, 'utf8'), /\.(?:transport-locators|transport-hold|click-level)/);
+  assert.ok(rules.length > 0, 'the rules of m5-ui-loop-click are found in shell.css');
+  assert.deepEqual(rules.filter((rule) => ANY_SIZE.test(rule)), []);
+});
+
+test('the ruler height the timeline exports is the ruler-h token, not a number of its own', () => {
+  const geometry = fs.readFileSync(path.join(RENDERER, 'timeline', 'geometry.ts'), 'utf8');
+  assert.doesNotMatch(geometry, /RULER_HEIGHT\s*=\s*\d/);
+  assert.match(geometry, /TOKENS\['ruler-h'\]/);
+});

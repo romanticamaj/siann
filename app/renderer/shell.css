@@ -145,7 +145,7 @@ code, dd, .mono { font-family: var(--font-mono); }
   border: var(--divider-w) solid var(--line-2);
   border-radius: var(--radius-m);
 }
-.click-level-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); min-width: 7ch; text-align: right; }
+.click-level-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); }
 .position-display {
   position: relative;
   display: grid;
