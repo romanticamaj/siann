@@ -58,6 +58,11 @@ export interface Sequence {
     sync: Sequence['sync'];
     both: { document: Record<string, unknown>; documentHash: string; sync: Sequence['sync'] };
   };
+  // m5b-engine-plan-metadata: plan.changed with metadata and agent.changed after
+  // the base sync, which the read model does not model.
+  unmodelled: {
+    events: Array<{ schema: string; seq: string; sessionId: string; revision: string; type: string } & Record<string, unknown>>;
+  };
 }
 
 export function sequence(): Sequence {

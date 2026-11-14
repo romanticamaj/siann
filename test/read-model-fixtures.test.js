@@ -137,3 +137,30 @@ test('the master steps add, modify and remove master:master and hash with src/ha
   assert.ok('locators' in both.sync[both.sync.length - 2].chunk);
   for (const chunk of both.sync) assert.equal(chunk.documentHash, both.documentHash);
 });
+
+// m5b-engine-plan-metadata: a plan.changed with the plan metadata and the
+// rejection note, and an agent.changed, right after the base sync. The read model
+// does not model either: it advances lastSeq past them (app/test/unit/
+// session-client.test.ts replays them) and nothing else changes.
+test('the unmodelled events follow the base sync and carry the documented payloads', () => {
+  const { events } = fixture.unmodelled;
+  assert.deepEqual(events.map((e) => e.type), ['plan.changed', 'agent.changed']);
+  events.forEach((event, i) => {
+    assert.equal(event.schema, 'siann.event.v1');
+    assert.equal(event.sessionId, fixture.sessionId);
+    assert.equal(event.seq, String(Number(fixture.base.seq) + i + 1));
+    assert.equal(event.revision, fixture.base.revision);
+  });
+  const [plan, agent] = events;
+  assert.match(plan.plan, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(plan.title, 'Lower the drums');
+  assert.ok(Buffer.byteLength(plan.title, 'utf8') <= 200 && !/[\u0000-\u001f\u007f-\u009f]/.test(plan.title));
+  assert.ok(Buffer.byteLength(plan.intent, 'utf8') <= 2000);
+  assert.deepEqual(plan.actor, { kind: 'mcp', name: 'mix-assistant' });
+  assert.equal(plan.rejectionNote, 'Too much; try -3 dB');
+  assert.deepEqual(Object.keys(agent.agent).sort(),
+    ['connected', 'id', 'lastAction', 'lastActionAt', 'name', 'transport']);
+  assert.match(agent.agent.id, /^agt_[0-9a-f]+$/);
+  assert.equal(agent.agent.transport, 'mcp');
+  assert.equal(agent.agent.lastAction, 'submit_plan');
+});

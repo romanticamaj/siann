@@ -74,6 +74,12 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(reduced.feature('masterGain'), false);
   assert.equal(full.command('master.set_gain'), true);
   assert.equal(reduced.command('master.set_gain'), false);
+  // m5b-engine-plan-metadata: plan titles, intents and actors, and the agents in
+  // engine.status (true with a transport port); the reduced engine predates both.
+  assert.equal(full.feature('planMetadata'), true);
+  assert.equal(full.feature('agents'), true);
+  assert.equal(reduced.feature('planMetadata'), false, 'the reduced engine has no features.planMetadata');
+  assert.equal(reduced.feature('agents'), false, 'the reduced engine has no features.agents');
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);
