@@ -170,5 +170,6 @@ TEST_CASE("CLI errors are JSON with stable codes and exit codes", "[cli]") {
 TEST_CASE("The command catalog is listed", "[cli]") {
     const Result r = cli({"commands"});
     REQUIRE(r.exitCode == 0);
-    CHECK(r.json.find("commands")->asArray().size() == 20);  // session.set_locators (m5-ui-engine-loop-click)
+    // session.set_locators (m5-ui-engine-loop-click), track.set_input (m5b-engine-record)
+    CHECK(r.json.find("commands")->asArray().size() == 21);
 }
