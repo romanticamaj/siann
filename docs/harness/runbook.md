@@ -48,6 +48,14 @@ The UI is checked against the mockup (`docs/harness/agent-rules.md`, "UI fidelit
 - **WSL g++.** The gcc step runs its files in parallel, and through ccache when WSL has it (`sudo apt install ccache` in WSL; nothing installs it for you).
 - **Long paths.** Worktrees under `.claude\worktrees` push Git checkouts past `MAX_PATH`. The shared source cache keeps dependency checkouts on a short path, and dr_libs is fetched without its test submodule. Also run `git config --global core.longpaths true` once on Windows.
 
+### The Windows installer
+
+`node scripts/check-all.js --only package` builds and checks the unsigned installer on this machine, as the `package` CI job does up to the install: the `desktop-release` engine (Release, JUCE with ASIO, static MSVC runtime, in `native/build/desktop-release`) and its crash tests (`ctest --preset desktop-release -R crash`: a plugin's `abort()` still ends the static-CRT engine with exit code 3 and no dialog), `npm ci` in `app/` when its dependencies are stale, `npm run dist` (the app build, `app/scripts/collect-licenses.js`, then electron-builder), the package tests (`node --test test/package/*.test.js` with `SIANN_PACKAGE_DIR=app/release/win-unpacked`: licence texts and PE imports) and the packaged e2e (`npx playwright test --project packaged` with `SIANN_PACKAGED_EXE` set to `app/release/win-unpacked/SIANN.exe` and `SIANN_EXPECT_COMMIT` to `git rev-parse HEAD`). The installer lands in `app/release/SIANN-Setup-<version>-x64.exe`. Nothing is signed: `CSC_IDENTITY_AUTO_DISCOVERY=false`, and no certificate variable reaches electron-builder. Off Windows the step reports skipped.
+
+To try the installer by hand: `app\release\SIANN-Setup-<version>-x64.exe /S /D=<empty directory>` installs silently for the current user, and `"<directory>\Uninstall SIANN.exe" /S` removes it. The `installer-hands-on` gate of M5b uses the CI artifact (installer and `.sha256`) on a machine with no build tools.
+
+`npm run app` at the root starts the app from the checkout instead, on the Debug `desktop` engine (`scripts/run-app.js`; `npm run app -- --plan` prints its steps).
+
 ### Mac lane (`siann-macos`)
 
 macOS problems show up before CI when the Mac checks the branch while Windows does. On the Mac, in parallel with the Windows `check-all`:
@@ -61,7 +69,7 @@ Run it in the logged-in Aqua session (Screen Sharing or the Mac's own terminal, 
 
 ### CI
 
-`.github/workflows/ci.yml` starts with a `changes` job that runs `check-all --changed --plan` on the pull request's diff and gates the other jobs: docs-only pull requests run the Node job alone; `native/` changes run the native and RTSan jobs (and desktop for the paths above); `app/` runs the app job and the desktop job, which holds app's editor e2e. Pushes to main, the nightly schedule and manual runs (`workflow_dispatch`) run everything. The native, RTSan, desktop and app jobs keep a compiler cache in `actions/cache` (ccache on Linux and macOS, a pinned sccache on Windows, which builds with Ninja in the MSVC environment). The `CI ok` job passes when every job passed or was skipped for its paths: it is the check to require for merging, as skipped matrix jobs never report their per-OS names.
+`.github/workflows/ci.yml` starts with a `changes` job that runs `check-all --changed --plan` on the pull request's diff and gates the other jobs: docs-only pull requests run the Node job alone; `native/` changes run the native and RTSan jobs (and desktop for the paths above); `app/` runs the app job and the desktop job, which holds app's editor e2e; what goes into the Windows installer (the `package` step's paths) runs the `package` job, which also uploads the installer and its SHA-256. Pushes to main, the nightly schedule and manual runs (`workflow_dispatch`) run everything. The native, RTSan, desktop and app jobs keep a compiler cache in `actions/cache` (ccache on Linux and macOS, a pinned sccache on Windows, which builds with Ninja in the MSVC environment). The `CI ok` job passes when every job passed or was skipped for its paths: it is the check to require for merging, as skipped matrix jobs never report their per-OS names.
 
 ## Recommended order
 

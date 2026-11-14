@@ -1220,6 +1220,24 @@ TEST_CASE("rebind gives the new engine the opened session's cycle flag and keeps
     CHECK_FALSE(wraps(rig));
 }
 
+#if defined(_WIN32) && !defined(_DLL)
+namespace {
+// _set_abort_behavior of the shared Universal CRT (ucrtbase.dll), whose flags a
+// plugin linked against the shared CRT reads; with a statically linked CRT (the
+// desktop-release preset) the engine's own _set_abort_behavior never reaches them.
+unsigned int sharedCrtAbortBehavior(unsigned int flags, unsigned int mask) {
+    HMODULE crt = LoadLibraryExW(L"ucrtbase.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    REQUIRE(crt != nullptr);
+    using SetAbortBehavior = unsigned int(__cdecl*)(unsigned int, unsigned int);
+    const auto set = reinterpret_cast<SetAbortBehavior>(GetProcAddress(crt, "_set_abort_behavior"));
+    REQUIRE(set != nullptr);
+    const unsigned int previous = set(flags, mask);
+    FreeLibrary(crt);
+    return previous;
+}
+}  // namespace
+#endif
+
 // m4-crash-recovery (spec, "Process model", Crash): a plugin crash raises no WER or
 // CRT dialog, so the process ends at once and the shell restarts it.
 TEST_CASE("disableCrashDialogs turns off the crash dialogs and keeps the other error-mode flags",
@@ -1229,6 +1247,10 @@ TEST_CASE("disableCrashDialogs turns off the crash dialogs and keeps the other e
     const unsigned int savedAbort = _set_abort_behavior(0, 0);
     SetErrorMode(SEM_NOOPENFILEERRORBOX);  // what JUCE's VST3 host sets
     _set_abort_behavior(_WRITE_ABORT_MSG | _CALL_REPORTFAULT, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#if !defined(_DLL)
+    const unsigned int savedShared =
+        sharedCrtAbortBehavior(_WRITE_ABORT_MSG | _CALL_REPORTFAULT, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     engine_app::disableCrashDialogs();
     const UINT mode = GetErrorMode();
     CHECK((mode & SEM_FAILCRITICALERRORS) != 0);
@@ -1236,6 +1258,12 @@ TEST_CASE("disableCrashDialogs turns off the crash dialogs and keeps the other e
     CHECK((mode & SEM_NOOPENFILEERRORBOX) != 0);
     const unsigned int abortFlags = _set_abort_behavior(0, 0);  // a read
     CHECK((abortFlags & (_WRITE_ABORT_MSG | _CALL_REPORTFAULT)) == 0);
+#if !defined(_DLL)
+    // A statically linked CRT: the shared one, which a /MD plugin aborts through, too.
+    const unsigned int sharedFlags = sharedCrtAbortBehavior(0, 0);  // a read
+    CHECK((sharedFlags & (_WRITE_ABORT_MSG | _CALL_REPORTFAULT)) == 0);
+    sharedCrtAbortBehavior(savedShared, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     SetErrorMode(savedMode);
     _set_abort_behavior(savedAbort, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #else
