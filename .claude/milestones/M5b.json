@@ -7,7 +7,7 @@
   "status": "not_started",
   "done": [],
   "prerequisites": [
-    "M5: every m5-ui-* feature is merged (phase 1 of the UI redesign). M5's own exit may still wait on the maintainer's reviews; M5b builds on the merged shell, not on the exit.",
+    "M5: every m5-ui-* feature is merged (phase 1 of the UI redesign) before any m5b-ui-* feature or m5b-cubase-walkthrough starts. The packaging and engine features (m5b-package-windows, m5b-engine-*) do not build on the shell and may start once M5's m5-ui-shell is merged. M5's own exit may still wait on the maintainer's reviews; M5b builds on the merged shell, not on the exit.",
     "M2 (write-through recording and crash-safe takes, #21) and M4 (plugin hosting, registry and editors): merged.",
     "docs/harness/follow-ups.md, section Before M6b, items 1 and 2: taken into m5b-engine-record. Items 3 to 6 stay before M6b.",
     "M6a is not a prerequisite: nothing in criteria A to I needs automation."
