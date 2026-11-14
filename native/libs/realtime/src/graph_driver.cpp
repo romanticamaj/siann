@@ -134,14 +134,16 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
         path->fed = lookahead;  // slots[0] (silence) is the primed FIFO block
         latency_.srcOutputLatencyFrames = lookahead + path->block;
 
-        if (config.inputChannels > 0) {
+        // The channels the device opened, which may be fewer than asked (a listing
+        // that counts none asks for up to 32): the callback's input has these.
+        const int inputChannels = std::min(config.inputChannels, deviceStatus_.inputChannels);
+        if (inputChannels > 0) {
             const int maxIn = deviceStatus_.bufferFrames > 0 ? deviceStatus_.bufferFrames : config.bufferFrames;
             path->maxInputFrames = maxIn;
             path->input = std::make_unique<StreamResampler>(static_cast<double>(deviceRate),
-                                                            static_cast<double>(sessionRate), config.inputChannels,
-                                                            maxIn);
-            path->inputPointers.assign(static_cast<std::size_t>(config.inputChannels), nullptr);
-            path->inputScratch.allocate(config.inputChannels, path->input->maxOutputFrames());
+                                                            static_cast<double>(sessionRate), inputChannels, maxIn);
+            path->inputPointers.assign(static_cast<std::size_t>(inputChannels), nullptr);
+            path->inputScratch.allocate(inputChannels, path->input->maxOutputFrames());
             latency_.srcInputLatencyFrames =
                 toSessionFrames(path->input->lookaheadFrames(), sessionRate, deviceRate);
         }

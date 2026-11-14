@@ -389,13 +389,7 @@ void EngineHost::tick() {
     if (recording_) {
         pollRecording();
     }
-    // Every new head of main: a removed track, or an input cleared or changed
-    // past the open input, is disarmed (not while recording: its end does it).
-    const std::string& head = session_->history().head().envelope.id;
-    if (head != armHead_ && !recording_) {
-        armHead_ = head;
-        pruneArms();
-    }
+    followHead();
     if (reopenAt_ && now() >= *reopenAt_) {
         reopenDevice();
     }
@@ -782,6 +776,11 @@ protocol::TransportState EngineHost::stop() {
 
 protocol::TransportState EngineHost::locate(std::int64_t frames) {
     requireDevice();
+    // A take is one contiguous run at one position: a jump ends the recording
+    // and commits it first, then playback goes on from the new position.
+    if (recording_) {
+        finishRecording(realtime::EndedBy::stop);
+    }
     engine_->transport().locate(frames);
     return transportState();
 }
@@ -991,13 +990,37 @@ bool EngineHost::covers(const model::TrackInput& input) const {
     return input.port >= 0 && input.channels >= 1 && input.port + input.channels <= openInputChannels();
 }
 
+// Whether main's head still gives the track an input the open input covers.
+bool EngineHost::armable(const std::string& trackId) const {
+    const model::Track* track = session_->history().head().document.track(trackId);
+    // Without a running device nothing is covered; the reopen prunes.
+    return track != nullptr && track->input && (!running_ || covers(*track->input));
+}
+
+// The armed set as main's head has it: between a commit and the prune that
+// follows it (the next record method or tick), a track the head no longer arms
+// is not reported. While recording, the recording's tracks.
 std::vector<std::string> EngineHost::armedTracks() const {
     std::vector<std::string> out;
     for (const auto& [trackId, slot] : armed_) {
         (void)slot;
-        out.push_back(trackId);
+        if (recording_ || armable(trackId)) {
+            out.push_back(trackId);
+        }
     }
     return out;
+}
+
+// Every new head of main: a removed track, or an input cleared or changed past
+// the open input, is disarmed, and a changed input that still fits is mapped
+// anew (not while recording: its end does it). Called by every record method
+// before it reads the armed set, and by the tick.
+void EngineHost::followHead() {
+    const std::string& head = session_->history().head().envelope.id;
+    if (head != armHead_ && !recording_) {
+        armHead_ = head;
+        pruneArms();
+    }
 }
 
 void EngineHost::clearArms() {
@@ -1040,6 +1063,7 @@ protocol::RecordState EngineHost::arm(const std::string& trackId, bool armed) {
     if (recording_) {
         throw recordError("invalid_state", "the armed tracks cannot change while recording");
     }
+    followHead();  // a commit earlier in this pump may have removed or changed an input
     if (!armed) {
         const auto found = armed_.find(trackId);
         if (found != armed_.end()) {
@@ -1097,6 +1121,7 @@ protocol::TransportState EngineHost::record(bool enabled) {
     if (openInputChannels() == 0) {
         throw recordError("no_input", "no input is open; engine.select_device opens one with inputId");
     }
+    followHead();  // the armed set as main's head has it, not as the last tick left it
     if (armed_.empty()) {
         throw recordError("nothing_armed", "no track is armed; record.arm arms one");
     }
@@ -1133,7 +1158,11 @@ void EngineHost::startRecording() {
     std::vector<Take> takes;
     try {
         for (const auto& [trackId, slot] : armed_) {
-            const model::TrackInput input = *doc.track(trackId)->input;
+            const model::Track* track = doc.track(trackId);
+            if (track == nullptr || !track->input) {  // followHead pruned it; never read through
+                throw recordError("invalid_state", "track " + trackId + " is armed without an input");
+            }
+            const model::TrackInput input = *track->input;
             session::TakeManifest manifest;
             manifest.takeId = newTakeId();
             manifest.trackId = trackId;

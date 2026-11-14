@@ -236,6 +236,8 @@ private:
     int openInputChannels() const;
     bool covers(const model::TrackInput& input) const;
     void pruneArms();
+    void followHead();
+    bool armable(const std::string& trackId) const;
     void clearArms();
     std::vector<std::string> armedTracks() const;
     void startRecording();
