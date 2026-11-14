@@ -963,6 +963,11 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   and what they play reaches the engine after the device input latency (plus input
   SRC latency). A captured block whose audio-thread timeline start is `t` is placed
   at `t - monitoredPathLatency - outputLatency - inputLatency - srcLatency`.
+  `monitoredPathLatency` is the live graph's total latency (its output node's:
+  the master path, latent inserts included), read when a take begins; the graph
+  driver's `latency()` sums it with the device terms into `recordOffsetFrames`.
+  A latency change during a take does not move it (until cue mixes, the master
+  path is the only monitored path).
 - Device latencies are converted from the device rate to the session rate. Because
   backends disagree on whether reported latency includes the buffer, a loopback
   calibration (measured round trip) replaces `outputLatency + inputLatency` when
@@ -1258,7 +1263,8 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
 - A track's input is document data (`Track.input`, "siann-model"); arming is engine
   state, as cycle is. `transport.record {enabled: true}` begins one take per armed
   track (`beginTake` with `recordOffset = recordOffsetFrames` of the running
-  device), starts their recorders, then the transport, so capture starts at the
+  device and the live graph, so a latent insert on the master path counts),
+  starts their recorders, then the transport, so capture starts at the
   playhead with the first playing block. `transport.record {enabled: false}`,
   `transport.stop`, a lost device, an overflow and a write failure end every take
   of the recording at once and commit them as one revision (`commitTakes`: a
@@ -2629,7 +2635,11 @@ is m5-plugin-registry's):
     `not_found`; `id` must have outputs. The host remembers the input across
     reopens, the backoff and `session.open`. The result and `engine.status`'s
     `device` gain `input`: null, or `{id, channels, latencyFrames}`, the channels
-    the device opened and its input latency. Without an input the record methods
+    the device opened and its input latency. Every device reports the channels
+    it opened: an input that opened none (an output-only device named as its own
+    input) is no input, `input` null, and the listing's entry then says 0. A
+    listing that does not count an input's channels has up to 32 asked of it.
+    Without an input the record methods
     (item 27) answer `no_input` and playback is unaffected.
     `session.open {path}` (item 16) works in `siann-engine`: `ServerOptions::
     openSession` opens the new `Session` (taking its lock, so a locked bundle is
