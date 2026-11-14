@@ -171,6 +171,24 @@ test('the ruler, the zone tab rows, the meter slot and the focus frame carry the
   assert.equal(colour(value('focus')), '232,235,241,0.2');
 });
 
+// The zone frame is --focus at 20 %; the 2 px keyboard ring of a control and
+// of a divider keeps its 55 % through an app-only token (UI redesign 2.1:
+// every stop shows a visible focus ring; 10.7, 4a: the 2 px focus ring is an
+// app-only token), so the frame's new value dims nothing else.
+test('the zone frame is --focus and the 2 px ring of a control and a divider is --focus-ring at 55 %', () => {
+  assert.equal(colour(value('focus-ring')), '232,235,241,0.55');
+  const shell = noComments(read('app', 'renderer', 'shell.css'));
+  const rule = (selector) => {
+    const at = shell.indexOf(`${selector} {`);
+    assert.ok(at >= 0, `shell.css has ${selector}`);
+    return shell.slice(at, shell.indexOf('}', at));
+  };
+  assert.match(rule('.zone[data-focused="true"]'), /outline: 1px solid var\(--focus\);/);
+  assert.match(rule(':where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible'), /outline: 2px solid var\(--focus-ring\);/);
+  assert.match(rule('.divider:focus-visible'), /outline: 2px solid var\(--focus-ring\);/);
+  assert.doesNotMatch(rule('.divider:focus-visible'), /var\(--focus\)/);
+});
+
 // ---- the renderer names tokens: no colour or size literal of its own
 
 function stripComments(text) {
@@ -328,7 +346,31 @@ test('the renderer and the mockup hold no colour or size literal beyond the ledg
   }
 });
 
+// A font weight in the shared rules or the mockup is a weight token or the
+// value of one (UI redesign 10.2: layer 1 holds the mockup's weights to
+// tokens): a weight with no token, 800 say, fails here.
+function weightsWithoutToken(text) {
+  const weights = new Set([...tokens.keys()].filter((name) => name.startsWith('fw-')).map(value));
+  const missing = [];
+  for (const m of text.matchAll(/font-weight:\s*([^;}"'`]+)/g)) {
+    const v = m[1].trim();
+    const token = /^var\(--(fw-[\w-]+)\)$/.exec(v);
+    if (token ? !tokens.has(token[1]) : !weights.has(v)) missing.push(v);
+  }
+  return missing;
+}
+
+test('every font weight of the shared rules and the mockup is a weight token or its value', () => {
+  assert.deepEqual(weightsWithoutToken(`${UI_CSS}\n${MOCKUP}`), [], 'font weights with no --fw-* token');
+  const count = [...`${UI_CSS}\n${MOCKUP}`.matchAll(/font-weight:/g)].length;
+  assert.ok(count >= 30, `${count} font-weight declarations`);
+  // The mockup's own font sizes name a type-scale token or carry its value.
+  const sizes = new Set([...tokens.keys()].filter((name) => name.startsWith('fs-')).map(value));
+  for (const m of MOCKUP.matchAll(/font-size:\s*([\d.]+px)/g)) assert.ok(sizes.has(m[1]), `font-size:${m[1]} in the mockup is a --fs-* value`);
+});
+
 test('the literal scanners see what they should', () => {
+  assert.deepEqual(weightsWithoutToken('a{font-weight:800}b{font-weight:600}c{font-weight:var(--fw-heavy)}d{font-weight:var(--fw-strong)}'), ['800', 'var(--fw-heavy)']);
   assert.deepEqual(cssLiterals('a{color:#fff;margin:0 4px;width:50%;transition:120ms}/* #000 9px */'), { colours: 1, sizes: 1 });
   assert.deepEqual(cssLiterals('a{color:var(--tx-1);height:var(--track-h);flex:1 1 0}'), { colours: 0, sizes: 0 });
   // A query's condition is not counted, for @media and @container alike (a
