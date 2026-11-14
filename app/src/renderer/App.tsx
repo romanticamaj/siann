@@ -15,7 +15,8 @@
 // through Capable). The connection phase (m5-ui-connection) decides the
 // shell's disconnected state, and each reconnect clears the clip and plan
 // selections. The selected track (m5-ui-arrange) is the track list's: a
-// header clicked, or the selected clip's track; the Inspector shows it.
+// header clicked, or the selected clip's track; the Inspector shows it, and a
+// reconnect clears it too.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -89,6 +90,7 @@ export function App({
     },
     [client],
   );
+  useEffect(() => setSelectedTrack(null), [reconnects]);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
       <Shell

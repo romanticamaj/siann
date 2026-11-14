@@ -4,9 +4,9 @@
 // toggle) on the same read-model select() of the same track, so the Inspector
 // and the strip always agree, a gesture overlay included. The colour is the
 // renderer's (timeline/track-colour.ts) and cannot be changed here (no command until
-// E-2). The selected track is the selected clip's track until the track list
-// (m5-ui-arrange) selects tracks itself. Sections (inserts, sends) come in
-// phase 3; by the rule of 3.0 nothing stands in for them.
+// E-2). It shows the app's selected track (trackId): a track list header
+// clicked, or the selected clip's track (m5-ui-arrange). Sections (inserts,
+// sends) come in phase 3; by the rule of 3.0 nothing stands in for them.
 
 import { useT } from '../i18n/t';
 import { toggleTrack, useTrack } from '../mixer/Strip';
