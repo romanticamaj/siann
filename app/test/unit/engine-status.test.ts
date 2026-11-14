@@ -87,6 +87,29 @@ test('engine.status is asked once connected, polled on the scheduler, and forgot
   store.destroy();
 });
 
+// m5-ui-mixer (UI redesign spec 5.6): zero React commits while playing with
+// no edits, so a poll whose answer reads the same keeps the snapshot and
+// tells no listener.
+test('a poll that answers the same values keeps the snapshot and notifies nobody', async () => {
+  const { scheduler, sockets, client, store, bump } = setup(WITH_STATUS);
+  client.connect({ port: 1, token: 'tok' });
+  sockets[0]!.onopen?.();
+  await until(() => store.getSnapshot() !== null, 'the first engine.status');
+  const first = store.getSnapshot();
+  let heard = 0;
+  store.subscribe(() => (heard += 1));
+  scheduler.fire(ENGINE_STATUS_POLL_MS);
+  await until(() => sockets[0]!.requests('engine.status').length === 2, 'the second poll');
+  await settle();
+  assert.equal(store.getSnapshot(), first, 'the same object');
+  assert.equal(heard, 0);
+  bump();
+  scheduler.fire(ENGINE_STATUS_POLL_MS);
+  await until(() => store.getSnapshot()?.xruns === '1', 'a changed answer');
+  assert.equal(heard, 1);
+  store.destroy();
+});
+
 test('an engine whose capabilities do not list engine.status is never asked', async () => {
   const { sockets, client, store } = setup(WITHOUT_STATUS);
   client.connect({ port: 1, token: 'tok' });

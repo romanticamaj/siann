@@ -86,6 +86,15 @@ export const en = {
   'strip.pan': 'Pan',
   'strip.gainLabel': '{track} gain',
   'strip.panLabel': '{track} pan',
+  'strip.levelLabel': '{track} level',
+  'strip.gainInput': '{track} gain in dB',
+  'strip.panInput': '{track} pan: L, C or R with a percentage',
+  'strip.peakLabel': '{track} peak; click to reset',
+  'strip.muteLabel': '{track} mute',
+  'strip.soloLabel': '{track} solo',
+  'strip.master': 'Master',
+  'inspector.volume': 'Volume',
+  'inspector.colour': 'Track colour',
 
   // The Plans tab (m5-ui-plan-panel; UI redesign section 4 and P1-5).
   'plans.label': 'Plans',

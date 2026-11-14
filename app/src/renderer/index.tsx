@@ -18,11 +18,17 @@
 // (UI redesign spec 5.8): in a plain browser tab it is absent and the
 // renderer stays disconnected. Under SIANN_SHELL_TEST=1
 // (the preload's window.siannTest) the timeline's test hooks are
-// window.__siannTimeline, the locale store is window.__siannLocale (which
-// accepts the pseudo-locale), and window.siannTest.languages, when the test
-// pinned them, stands in for navigator.languages; window.__siannClient hands
-// the e2e tests the session client's log of requests refused as disconnected.
+// window.__siannTimeline, the mixer's meter canvas is window.__siannMeters,
+// the locale store is window.__siannLocale (which accepts the pseudo-locale),
+// window.siannTest.languages, when the test pinned them, stands in for
+// navigator.languages, window.__siannClient hands the e2e tests the session
+// client's log of requests refused as disconnected, and a <Profiler> at the
+// root counts React commits in window.__siannCommits. Only the profiling
+// bundle (renderer.profiling.js, served under SIANN_SHELL_PROFILING=1) calls
+// onRender; in the production bundle the count stays absent (UI redesign
+// spec 5.6).
 
+import { Profiler } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
@@ -40,6 +46,7 @@ import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { SessionClient, type EngineEndpoint, type SocketLike } from './model/session-client';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
+import type { MeterTestHooks } from './mixer/MixerMeters';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
@@ -60,6 +67,9 @@ declare global {
     // The toast store, for the fit test to raise a toast per locale.
     __siannToasts?: ToastStore;
     __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }> };
+    __siannMeters?: MeterTestHooks;
+    // React commits counted at the root (profiling bundle only).
+    __siannCommits?: number;
   }
 }
 
@@ -140,9 +150,20 @@ const onTimelineHooks = testHooks?.timelineHooks
     }
   : undefined;
 
+const onMeterHooks = testHooks
+  ? (hooks: MeterTestHooks | null) => {
+      if (hooks) window.__siannMeters = hooks;
+      else delete window.__siannMeters;
+    }
+  : undefined;
+
+const countCommit = () => {
+  window.__siannCommits = (window.__siannCommits ?? 0) + 1;
+};
+
 const container = document.getElementById('root');
 if (!container) throw new Error('missing #root');
-createRoot(container).render(
+const app = (
   <App
     client={client}
     gestures={gestures}
@@ -156,7 +177,17 @@ createRoot(container).render(
     connection={connection}
     toasts={toasts}
     onTimelineHooks={onTimelineHooks}
-  />,
+    onMeterHooks={onMeterHooks}
+  />
+);
+createRoot(container).render(
+  testHooks ? (
+    <Profiler id="root" onRender={countCommit}>
+      {app}
+    </Profiler>
+  ) : (
+    app
+  ),
 );
 
 if (bridge) {

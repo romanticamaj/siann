@@ -134,14 +134,18 @@ test('gesture.hold goes out at leaseMs / 2 while the fader is held still', async
   controller.move(-1500);
   client.answer('gesture.update');
   await settle();
+  assert.equal(controller.holdsAnswered, 0);
   scheduler.fire(500);
   assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.hold', { target: TARGET }]]);
   client.answer('gesture.hold');
   await settle();
+  // Counted for the e2e (m5-ui-mixer: a held fader keeps its lease).
+  assert.equal(controller.holdsAnswered, 1);
   scheduler.fire(500);
   assert.deepEqual(client.methods(), ['gesture.hold']);
   client.answer('gesture.hold');
   await settle();
+  assert.equal(controller.holdsAnswered, 2);
   // The end stops the holds.
   controller.end();
   client.answer('gesture.end', { target: TARGET, startValue: 0, value: -1500, revision: { id: 'r9', diff: [REF] } });

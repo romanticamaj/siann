@@ -393,29 +393,172 @@ code, dd, .mono { font-family: var(--font-mono); }
 
 /* ---- the left zone: the selected track */
 .inspector h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-small); color: var(--tx-3); font-weight: 500; }
-.inspector-track { font-size: var(--fs-session); color: var(--tx-1); }
+.inspector-track { margin: 0; font-size: var(--fs-session); color: var(--tx-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-empty { color: var(--tx-3); }
+/* The Track tab (spec 3.4): the strip's own controls, laid out horizontally. */
+.inspector-head { display: flex; align-items: center; gap: calc(var(--space) * 2); min-width: 0; }
+.inspector-colour { flex: 0 0 auto; width: calc(12px * var(--scale)); height: calc(12px * var(--scale)); border-radius: var(--radius-s); }
+.inspector-buttons { display: flex; gap: var(--space); margin: calc(var(--space) * 2) 0; }
+.inspector-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: calc(var(--space) * 2); font-size: var(--fs-small); color: var(--tx-3); }
+.inspector-row .value-readout { color: var(--tx-1); }
+.inspector .value-control { margin-top: var(--space); }
+.inspector .fader.horizontal { height: var(--control-h); }
 
-/* ---- the lower zone: MixConsole */
-.mixer { display: flex; flex-wrap: nowrap; gap: calc(var(--space) * 3); align-items: flex-start; }
+/* ---- the lower zone: MixConsole (spec 3.4, 5.1). One canvas over the
+   strips paints every meter slot; it takes no pointer events. */
+.mixer {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 2px;
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+  min-height: calc(200px * var(--scale));
+}
+.mixer-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
 .strip {
   display: grid;
-  flex: 0 0 auto;
-  gap: 6px;
-  justify-items: center;
-  padding: 8px;
-  width: 160px;
+  grid-template-rows: var(--ms-h) var(--ms-h) minmax(0, 1fr) var(--ms-h) var(--ms-h);
+  flex: 0 0 var(--strip-w);
+  width: var(--strip-w);
+  min-width: 0;
+  gap: var(--space);
+  padding: var(--space);
   background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-s);
 }
-.strip-name { font-weight: 600; }
-.strip-meter { background: var(--bg-0); }
-.strip label { display: grid; gap: 2px; justify-items: center; font-size: var(--fs-body); }
-.strip input[type=range] { width: 140px; }
-.strip-buttons { display: flex; gap: 6px; }
-.strip-buttons button[aria-pressed=true] { background: var(--solo); color: #000; }
-.strip-buttons button[data-testid^="mute-"][aria-pressed=true] { background: var(--mute); }
+.strip-master { margin-left: calc(var(--space) * 2); }
+.strip-master .strip-fader { grid-row: 3; }
+.strip-master .strip-values { grid-row: 4; justify-content: center; }
+.strip-master .strip-name { grid-row: 5; }
+.strip-pan { min-width: 0; }
+.strip-buttons { display: flex; justify-content: center; gap: var(--space); }
+.ms {
+  min-height: 0;
+  height: var(--ms-h);
+  min-width: var(--ms-h);
+  padding: 0 var(--space);
+  border-radius: var(--radius-s);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  line-height: 1;
+}
+.ms.mute[aria-pressed="true"] { background: var(--mute); border-color: var(--mute); color: var(--bg-0); }
+.ms.solo[aria-pressed="true"] { background: var(--solo); border-color: var(--solo); color: var(--bg-0); }
+.strip-fader { display: flex; justify-content: center; gap: var(--space); min-height: 0; }
+.meter-slot { flex: 0 0 var(--meter-w); width: var(--meter-w); height: 100%; }
+.strip-values {
+  display: flex;
+  justify-content: space-between;
+  gap: 2px;
+  min-width: 0;
+  align-items: center;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.value-readout { color: var(--tx-2); white-space: nowrap; cursor: text; font-variant-numeric: tabular-nums; }
+.value-readout.warn { color: var(--warn); }
+.peak-value {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tx-3);
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+}
+.peak-value:hover:not(:disabled) { background: transparent; color: var(--tx-1); }
+.peak-value.clip { color: var(--err); }
+.strip-name {
+  overflow: hidden;
+  padding: 0 var(--space);
+  border-radius: var(--radius-s);
+  color: var(--bg-0);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  line-height: var(--ms-h);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strip-name-master { background: var(--bg-4); color: var(--tx-1); }
+
+/* ---- value controls (faders and pan), in the MixConsole and the Inspector.
+   The cap moves with transform from --pos (0 at the bottom or left, 1 at the
+   top or right), set by the pointer handler during a drag (spec 5.1). */
+.value-control { position: relative; display: flex; min-width: 0; }
+.value-control.vertical { height: 100%; }
+.fader {
+  --cap: var(--fader-cap-h);
+  position: relative;
+  container-type: size;
+  flex: 1 1 auto;
+  touch-action: none;
+  user-select: none;
+}
+.fader::before { content: ""; position: absolute; background: var(--bg-0); border-radius: 1px; }
+.fader.vertical {
+  flex: 0 0 var(--fader-cap-w);
+  width: var(--fader-cap-w);
+  height: 100%;
+  min-height: calc(48px * var(--scale));
+  cursor: ns-resize;
+}
+.fader.vertical::before { left: calc(50% - 1px); width: 2px; top: calc(var(--cap) / 2); bottom: calc(var(--cap) / 2); }
+.fader.horizontal { --cap: var(--fader-cap-w); width: 100%; height: var(--ms-h); cursor: ew-resize; }
+.fader.horizontal::before { top: calc(50% - 1px); height: 2px; left: calc(var(--cap) / 2); right: calc(var(--cap) / 2); }
+.value-control-pan .fader.horizontal { --cap: calc(2px * var(--scale)); background: var(--bg-3); border-radius: var(--radius-s); }
+.value-control-pan .fader.horizontal::before { display: none; }
+.fader-cap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: var(--bg-5);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-s);
+}
+.fader.vertical .fader-cap {
+  width: 100%;
+  height: var(--cap);
+  transform: translateY(calc((1 - var(--pos)) * (100cqh - var(--cap))));
+  box-shadow: inset 0 -1px 0 var(--tx-4);
+}
+.fader.horizontal .fader-cap { width: var(--cap); height: 100%; transform: translateX(calc(var(--pos) * (100cqw - var(--cap)))); }
+.value-control-pan .fader-cap { border: 0; border-radius: 0; background: var(--tx-3); }
+.fader.warn .fader-cap { border-color: var(--warn); }
+.fader-text {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  color: var(--tx-1);
+  text-shadow: 0 0 2px var(--bg-0), 0 0 2px var(--bg-0);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ms-h);
+  text-align: center;
+  pointer-events: none;
+}
+.value-tooltip {
+  position: absolute;
+  z-index: 3;
+  left: calc(100% + var(--space));
+  top: 0;
+  padding: 1px var(--space);
+  background: var(--bg-5);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-s);
+  color: var(--tx-1);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.value-control.horizontal .value-tooltip { left: auto; right: 0; top: auto; bottom: calc(100% + 2px); }
+.value-input { width: 100%; min-width: 0; height: var(--ms-h); padding: 0 2px; font-size: var(--fs-micro); }
 
 /* ---- the right zone: plans (m5-ui-plan-panel; UI redesign 4 and P1-5).
    One filled primary per plan; violet only for what an agent proposes (the

@@ -67,6 +67,11 @@
   --track-11: #9AA3B2;
   /* the focused zone's frame */
   --focus: rgb(232 235 241 / .55);
+  /* meters (1.2): green to -12 dB, yellow to -3 dB, red above, white hold */
+  --meter-green: var(--play);
+  --meter-yellow: var(--solo);
+  --meter-red: var(--rec);
+  --meter-hold: var(--select);
 
   /* type scale (1.3) */
   --fs-micro: 10px;
@@ -90,6 +95,10 @@
   --ms-h: calc(18px * var(--scale));
   --strip-w: calc(88px * var(--scale));
   --strip-w-narrow: calc(56px * var(--scale));
+  --fader-h: calc(140px * var(--scale));
+  --fader-cap-h: calc(24px * var(--scale));
+  --fader-cap-w: calc(20px * var(--scale));
+  --meter-w: calc(10px * var(--scale));
   --track-h: calc(53px * var(--scale));
   /* the ruler: two halves (locators above, cursor and zoom below); the
      canvas's RULER_HEIGHT, and the track list's head beside it */

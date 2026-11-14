@@ -20,7 +20,6 @@ import { Strip } from '../../src/renderer/mixer/Strip';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
-import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import { SessionClient } from '../../src/renderer/model/session-client';
 import { Capable, CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { clipRects } from '../../src/renderer/timeline/geometry';
@@ -130,7 +129,6 @@ test('mixer strip: fader, pan, mute and solo each need their command; the reduce
         trackId="trk_a"
         client={fakeClient()}
         gestures={{} as unknown as GestureController}
-        realtime={{} as unknown as RealtimeClient}
       />,
     );
   const full = strip(FULL);
