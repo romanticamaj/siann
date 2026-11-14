@@ -169,7 +169,10 @@ struct LatencyReport {
     std::int64_t outputLatencyFrames = 0;
     std::int64_t srcOutputLatencyFrames = 0;  // output resampler lookahead plus the primed FIFO block
     std::int64_t srcInputLatencyFrames = 0;   // input resampler lookahead
-    std::int64_t monitoredPathLatencyFrames = 0;  // 0 in M2: the master path has no latency yet
+    // The live graph's total latency (its output node's, the master path the
+    // performer hears), read when the report is taken: it follows latent inserts
+    // and their latency changes.
+    std::int64_t monitoredPathLatencyFrames = 0;
     // A captured block stamped t lands at t - recordOffsetFrames.
     std::int64_t recordOffsetFrames = 0;
 };
@@ -357,7 +360,9 @@ public:
 
     // Set by start() and kept after stop() until the next start().
     const ResamplingState& resampling() const noexcept { return resampling_; }
-    const LatencyReport& latency() const noexcept { return latency_; }
+    // Control side: the device's terms as start() set them, with the live graph's
+    // latency as the monitored path's, both summed into recordOffsetFrames.
+    LatencyReport latency() const noexcept;
 
     // Device frames the SRC path could not fill (output as silence). This is SRC
     // underfill, reported as `srcUnderruns`; it is not an xrun (deadline miss).

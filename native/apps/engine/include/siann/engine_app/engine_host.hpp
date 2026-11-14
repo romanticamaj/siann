@@ -118,7 +118,8 @@ struct PluginHostSet;
 // armed into a capture bank slot with its input's channel map, refused with
 // no_input without an input that covers it, cleared by rebind and pruned at
 // every new head and device selection. record(true) begins a take per armed
-// track (beginTake, recordOffset = the running device's recordOffsetFrames),
+// track (beginTake, recordOffset = the driver's recordOffsetFrames: the running
+// device's terms plus the live graph's latency, read as the take begins),
 // starts their recorders and the transport, and suspends the cycle wrap.
 // record(false), stop(), a lost device, an overflow and a write failure end
 // every take at once and commit them as one revision (commitTakes); a take that

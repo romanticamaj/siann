@@ -50,7 +50,8 @@ struct AudioDeviceStatus {
     int bufferFrames = 0;
     int inputLatencyFrames = 0;
     int outputLatencyFrames = 0;
-    // The channels the device opened (m5b-engine-record); 0 when it does not say.
+    // The channels the device opened (m5b-engine-record); 0 when it opened none,
+    // which may be fewer than asked (an output-only device opens no input).
     int inputChannels = 0;
     int outputChannels = 0;
 };

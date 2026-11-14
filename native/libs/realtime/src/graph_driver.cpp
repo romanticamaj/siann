@@ -149,9 +149,9 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
         src_ = std::move(path);
     }
 
-    latency_.recordOffsetFrames = latency_.monitoredPathLatencyFrames + latency_.outputLatencyFrames +
-                                  latency_.inputLatencyFrames + latency_.srcOutputLatencyFrames +
-                                  latency_.srcInputLatencyFrames;
+    // The device's terms only; latency() adds the monitored path's when asked.
+    latency_.recordOffsetFrames = latency_.outputLatencyFrames + latency_.inputLatencyFrames +
+                                  latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames;
     resampling_ = ResamplingState{src_ != nullptr, deviceRate, sessionRate,
                                   latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames};
 }
@@ -260,6 +260,14 @@ void GraphDriver::poll() {
         ++watchdogTrips_;
         stop();
     }
+}
+
+LatencyReport GraphDriver::latency() const noexcept {
+    LatencyReport report = latency_;
+    const graph::PreparedGraph* live = liveGraph();
+    report.monitoredPathLatencyFrames = live != nullptr ? live->totalLatency() : 0;
+    report.recordOffsetFrames += report.monitoredPathLatencyFrames;
+    return report;
 }
 
 const graph::PreparedGraph* GraphDriver::liveGraph() const noexcept {

@@ -815,7 +815,7 @@ protocol::EngineStatus EngineHost::status() const {
         const host::AudioDeviceStatus& device = engine_->driver().deviceStatus();
         out.device = protocol::DeviceInfo{deviceId_.empty() ? "default" : deviceId_, device.sampleRate,
                                           device.bufferFrames, device.inputLatencyFrames, device.outputLatencyFrames};
-        if (inputId_) {
+        if (openInputChannels() > 0) {  // an input that opened no channels is none
             out.device->input = protocol::InputInfo{*inputId_, openInputChannels(), device.inputLatencyFrames};
         }
     } else {
@@ -851,7 +851,8 @@ std::vector<protocol::DeviceDescription> EngineHost::devices() const {
             if (!one.outputChannels && device.outputChannels > 0) {
                 one.outputChannels = device.outputChannels;
             }
-            if (!one.inputChannels && inputId_ && *inputId_ == one.id && device.inputChannels > 0) {
+            if (!one.inputChannels && inputId_ && *inputId_ == one.id) {
+                // What the device opened of up to kMaxInputChannels: all it has.
                 one.inputChannels = device.inputChannels;
             }
         }
@@ -941,6 +942,9 @@ protocol::DeviceInfo EngineHost::selectDeviceWithInput(const std::string& id,
         problem_.reset();
         say("audio device " + id + " running");
     }
+    if (inputId_ && openInputChannels() == 0) {
+        say("the input " + *inputId_ + " opened no channels; the record methods answer no_input");
+    }
     return *status().device;
 }
 
@@ -973,14 +977,14 @@ std::string EngineHost::timestamp() const {
     return timestamp_ ? timestamp_() : utcNow();
 }
 
-// The channels the open input has: what the device says it opened, or what was
-// asked of a device that does not say; 0 without an input or a running device.
+// The channels the open input has: what the device says it opened (every
+// device reports it), 0 without an input, without a running device or when the
+// device opened none (an output-only device named as its own input).
 int EngineHost::openInputChannels() const {
     if (!inputId_ || !running_) {
         return 0;
     }
-    const int opened = engine_->driver().deviceStatus().inputChannels;
-    return opened > 0 ? opened : inputRequest_;
+    return engine_->driver().deviceStatus().inputChannels;
 }
 
 bool EngineHost::covers(const model::TrackInput& input) const {
