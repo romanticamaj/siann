@@ -309,9 +309,22 @@ code, dd, .mono { font-family: var(--font-mono); }
   font-variant-numeric: tabular-nums;
   color: var(--tx-1);
 }
-.media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; }
+.media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; min-width: 0; overflow: hidden; flex: 0 1 auto; }
 .media-pool button[aria-pressed="true"] { outline: 2px solid var(--select); }
 .timeline-error { color: var(--err); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; }
+/* The tools and snap (m5-ui-edit-basics): a segmented pair, a toggle and the grid type. */
+.tool-buttons, .snap-controls { display: flex; gap: 0; align-items: center; flex: none; }
+.tool-buttons .tool { border-radius: 0; }
+.tool-buttons .tool:first-child { border-radius: var(--radius-s) 0 0 var(--radius-s); }
+.tool-buttons .tool:last-child { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
+.tool-buttons .tool + .tool { margin-left: -1px; }
+.tool-buttons .tool[aria-pressed="true"], .snap-toggle[aria-pressed="true"] { background: var(--bg-5); border-color: var(--select); color: var(--tx-1); }
+.snap-controls { gap: var(--space); }
+.grid-type { font-size: var(--fs-small); color: var(--tx-1); }
+/* Shift+Delete's confirmation: the About panel's dialog chrome (below). */
+.confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
+.confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
+.confirm-dialog .danger { background: var(--err); border-color: var(--err); color: var(--bg-0); }
 
 .arrange {
   display: grid;
@@ -744,7 +757,7 @@ code, dd, .mono { font-family: var(--font-mono); }
 .about:hover:not(:disabled) { background: none; color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-sep, .about-license { flex: none; }
-.about-panel {
+.about-panel, .confirm-dialog {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   overflow: auto;
@@ -756,7 +769,7 @@ code, dd, .mono { font-family: var(--font-mono); }
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop { background: rgb(0 0 0 / .45); }
+.about-panel::backdrop, .confirm-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .about-panel h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
 .about-panel h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }

@@ -272,7 +272,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const withHeights: Layout = { ...changed, stripWidth: 'narrow', trackHeights: { ses_a: { trk_1: 96 } } };
   const text = serializeLayout(withHeights);
   const object = JSON.parse(text) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'sizes', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
+  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
   assert.deepEqual(parseLayout(text), withHeights);
   for (const bad of [null, '', '{', 'null', '42', '[]', '"x"']) assert.deepEqual(parseLayout(bad), DEFAULT_LAYOUT, String(bad));
   // Field by field: a bad field falls back, the rest is kept.
@@ -384,6 +384,40 @@ test('the track list width and heights round-trip through siann.layout.v1; bad v
   assert.equal(parseLayout(JSON.stringify({ trackList: 100 })).trackList, 216, 'below the minimum: the default');
   const heights = parseLayout(JSON.stringify({ trackHeights: { s: { a: 500, b: 10, c: 'x' } } })).trackHeights;
   assert.deepEqual(heights, { s: { a: 240, b: 24 } });
+});
+
+// m5-ui-edit-basics (UI redesign spec 0.5, 4.5 C10 and P1-8): snap is a view
+// setting of the stored layout, on with grid Adapt to Zoom by default, per
+// user and never per session.
+test('snap: on with grid Adapt to Zoom by default; J toggles it and the grid type is set; both round-trip', () => {
+  assert.deepEqual(DEFAULT_LAYOUT.snap, { on: true, grid: 'adapt' });
+  const off = reduce(start(), { type: 'snapToggle' });
+  assert.deepEqual(off.layout.snap, { on: false, grid: 'adapt' });
+  assert.deepEqual(reduce(off, { type: 'snapToggle' }).layout.snap, { on: true, grid: 'adapt' });
+  const bar = reduce(start(), { type: 'setGrid', grid: 'bar' });
+  assert.deepEqual(bar.layout.snap, { on: true, grid: 'bar' });
+  assert.equal(reduce(bar, { type: 'setGrid', grid: 'bar' }), bar, 'unchanged: the same state');
+  assert.equal(reduce(bar, { type: 'setGrid', grid: 'triplet' as never }), bar, 'an unknown grid type is ignored');
+  assert.deepEqual(reduce(bar, { type: 'setGrid', grid: 'beat' }).layout.snap, { on: true, grid: 'beat' });
+  assert.equal(bar.layout.sizes, start().layout.sizes, 'nothing else changes');
+  const layout: Layout = { ...DEFAULT_LAYOUT, snap: { on: false, grid: 'beat' } };
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+});
+
+test('a stored siann.layout.v1 without snap, or with a bad one, loads with the defaults', () => {
+  const stored = JSON.stringify({ sizes: { left: 250, lower: 200, right: 400 }, trackList: 300 });
+  const parsed = parseLayout(stored);
+  assert.deepEqual(parsed.snap, { on: true, grid: 'adapt' });
+  assert.equal(parsed.trackList, 300, 'the rest is kept');
+  assert.deepEqual(parseLayout(JSON.stringify({ snap: { on: 'no', grid: 'triplet' } })).snap, { on: true, grid: 'adapt' });
+  assert.deepEqual(parseLayout(JSON.stringify({ snap: { on: false } })).snap, { on: false, grid: 'adapt' });
+  assert.deepEqual(parseLayout(JSON.stringify({ snap: 'bar' })).snap, { on: true, grid: 'adapt' });
+  // The store applies and saves it.
+  const saved = new Map<string, string>();
+  const store = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => void saved.set(k, v) } });
+  store.dispatch({ type: 'setGrid', grid: 'bar' });
+  store.dispatch({ type: 'snapToggle' });
+  assert.deepEqual((JSON.parse(saved.get(LAYOUT_KEY)!) as { snap: unknown }).snap, { on: false, grid: 'bar' });
 });
 
 test('the zone rule reserves the track list and 360 px for the event display', () => {

@@ -51,6 +51,24 @@ export const COMMAND_IDS = [
   'edit.undo',
   'edit.redo',
   'view.autoScroll',
+  // Editing by Cubase's gestures (m5-ui-edit-basics; spec 3.1, 3.2, 3.3):
+  // the tools, split at the cursor, duplicate, snap, select all, locating
+  // the selection and the clips, zoom to the selection and to the clip, and
+  // M, S and removal of the selected tracks.
+  'tool.select',
+  'tool.split',
+  'edit.splitAtCursor',
+  'edit.duplicate',
+  'edit.snapToggle',
+  'edit.selectAll',
+  'transport.locateSelection',
+  'transport.locateNextClip',
+  'transport.locatePreviousClip',
+  'view.zoomSelection',
+  'view.zoomEvent',
+  'track.muteSelected',
+  'track.soloSelected',
+  'track.removeSelected',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

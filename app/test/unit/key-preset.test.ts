@@ -57,6 +57,29 @@ test('the zone keys of Cubase, the SIANN Plans key and the zone focus keys', () 
   assert.ok(!COMMAND_IDS.some((id) => id.startsWith('zone.project')), 'no project zone command');
 });
 
+test('the editing keys of Cubase (m5-ui-edit-basics; UI redesign spec 3.1, 3.2, 3.3)', () => {
+  const expected: Array<[string, string]> = [
+    ['1', 'tool.select'],
+    ['3', 'tool.split'],
+    ['Alt+X', 'edit.splitAtCursor'],
+    ['Mod+D', 'edit.duplicate'],
+    ['J', 'edit.snapToggle'],
+    ['Mod+A', 'edit.selectAll'],
+    ['L', 'transport.locateSelection'],
+    ['N', 'transport.locateNextClip'],
+    ['B', 'transport.locatePreviousClip'],
+    ['Alt+S', 'view.zoomSelection'],
+    ['Shift+E', 'view.zoomEvent'],
+    ['M', 'track.muteSelected'],
+    ['S', 'track.soloSelected'],
+    ['Shift+Delete', 'track.removeSelected'],
+  ];
+  for (const [chord, commandId] of expected) {
+    const found = CUBASE_PRESET.filter((b) => b.chord === chord);
+    assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['project', commandId]], chord);
+  }
+});
+
 test('the project zone\'s zoom keys of Cubase and T to add a track (m5-ui-arrange)', () => {
   const expected: Array<[string, string]> = [
     ['H', 'view.zoomIn'],

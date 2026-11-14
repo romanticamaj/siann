@@ -108,6 +108,39 @@ test('while the engine is disconnected no zone command runs; the window layout a
   assert.equal(resolveKey(offline({ code: 'F6', key: 'F6' }), CUBASE_PRESET)?.commandId, 'focus.nextZone');
 });
 
+test('the editing keys (m5-ui-edit-basics) never fire while typing; 1 is the number row, not the numpad', () => {
+  const keys: Array<[string, Partial<KeyInput['modifiers']>]> = [
+    ['Digit1', {}],
+    ['Digit3', {}],
+    ['KeyX', { alt: true }],
+    ['KeyD', { ctrl: true }],
+    ['KeyJ', {}],
+    ['KeyA', { ctrl: true }],
+    ['KeyL', {}],
+    ['KeyN', {}],
+    ['KeyB', {}],
+    ['KeyS', { alt: true }],
+    ['KeyE', { shift: true }],
+    ['KeyM', {}],
+    ['KeyS', {}],
+    ['Delete', { shift: true }],
+  ];
+  for (const [code, mods] of keys) {
+    const key = input({ code, key: code, modifiers: { ...NONE, ...mods } });
+    assert.ok(resolveKey(key, CUBASE_PRESET), `${code} is bound`);
+    assert.equal(resolveKey({ ...key, targetIsTextField: true }, CUBASE_PRESET), null, `${code} while typing`);
+  }
+  assert.equal(resolveKey(input({ code: 'Digit1', key: '1' }), CUBASE_PRESET)?.commandId, 'tool.select');
+  assert.equal(resolveKey(input({ code: 'Numpad1', key: '1' }), CUBASE_PRESET)?.commandId, undefined);
+  assert.equal(resolveKey(input({ code: 'Numpad3', key: '3' }), CUBASE_PRESET)?.commandId, undefined);
+  // Cmd+D on macOS, Ctrl+D elsewhere.
+  assert.equal(resolveKey(input({ code: 'KeyD', key: 'd', modifiers: { ...NONE, meta: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'edit.duplicate');
+  assert.equal(resolveKey(input({ code: 'KeyD', key: 'd', modifiers: { ...NONE, ctrl: true } }), CUBASE_PRESET)?.commandId, 'edit.duplicate');
+  // Plain Delete still deletes clips; Shift+Delete removes tracks.
+  assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete' }), CUBASE_PRESET)?.commandId, 'edit.delete');
+  assert.equal(resolveKey(input({ code: 'Delete', key: 'Delete', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET)?.commandId, 'track.removeSelected');
+});
+
 test('Opt+I on macOS toggles the left zone (event.key is a dead character there)', () => {
   const optI = input({ code: 'KeyI', key: 'ˆ', modifiers: { ...NONE, alt: true }, platform: 'mac' });
   assert.equal(resolveKey(optI, CUBASE_PRESET)?.commandId, 'zone.left.toggle');

@@ -44,6 +44,19 @@ export function zoomFull(view: Viewport, endFrame: bigint): Viewport {
   return { ...view, framesPerPixel: fpp, scrollFrames: '0' };
 }
 
+// Zoom to Selection and Zoom to Event (Alt+S, Shift+E; m5-ui-edit-basics):
+// [start, end] and a margin of `margin` of its length either side fit the width.
+export function zoomToRange(view: Viewport, start: bigint, end: bigint, margin = 0.05): Viewport {
+  if (end <= start) return view;
+  const length = end - start;
+  const pad = (length * BigInt(Math.round(margin * 1000))) / 1000n;
+  const width = BigInt(Math.max(1, Math.floor(view.width)));
+  const fpp = clampFpp(Number((length + 2n * pad + width - 1n) / width));
+  const scroll = nonNegative(start - pad);
+  if (fpp === view.framesPerPixel && scroll === view.scrollFrames) return view;
+  return { ...view, framesPerPixel: fpp, scrollFrames: scroll };
+}
+
 // Shift+wheel (and a trackpad's horizontal swipe): scroll by `dx` pixels.
 export function scrollFramesBy(view: Viewport, dx: number): Viewport {
   const delta = BigInt(Math.round(dx * view.framesPerPixel));

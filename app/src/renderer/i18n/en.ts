@@ -70,6 +70,21 @@ export const en = {
   'tracklist.mute': 'Mute {track}',
   'tracklist.solo': 'Solo {track}',
   'tracklist.meter': '{track} meter',
+  // Editing (m5-ui-edit-basics): the tools, snap and grid, the clip volume
+  // control's tooltip and the track removal confirmation.
+  'tool.label': 'Tools',
+  'tool.select': 'Object Selection',
+  'tool.split': 'Split',
+  'snap.toggle': 'Snap',
+  'snap.grid': 'Grid type',
+  'grid.bar': 'Bar',
+  'grid.beat': 'Beat',
+  'grid.adapt': 'Adapt to Zoom',
+  'clip.gainControl': 'Clip volume: drag up or down, Shift for fine steps',
+  'confirm.removeTracks': ({ count }: { count: number }): string =>
+    plural('en', count, { one: 'Remove the selected track and its clips?', other: `Remove the ${count} selected tracks and their clips?` }),
+  'confirm.remove': 'Remove',
+  'confirm.cancel': 'Cancel',
   // A new track's name; {n} is the next free number.
   'track.defaultName': 'Audio {n}',
   // The info line: the selected clip, read-only.

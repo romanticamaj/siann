@@ -14,6 +14,9 @@
 // height, with Ctrl every lane's, kept per session id in siann.layout.v1. A
 // muted track, or one muted by another's solo, is dimmed. Every control that
 // sends a command exists only when engine.capabilities lists it (spec 3.0).
+// A click on a header selects its track, Ctrl-click (Cmd on macOS) adds or
+// removes it, Shift-click selects the range from the primary track
+// (m5-ui-edit-basics); the selection is the app's.
 
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 
@@ -28,6 +31,7 @@ import type { LayoutStore } from '../shell/layout-store';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
 import { DEFAULT_LANE_HEIGHT, clampLaneHeight, laneHeightOf, laneTops } from './geometry';
 import { HeaderMeters, type MeterRow } from './HeaderMeters';
+import type { TrackSelectMode } from './selection';
 import { addTrackCommand, nextTrackName, renameTrackCommand } from './track-commands';
 import { trackColourVar } from './track-colour';
 import type { TimelineCanvas } from './TimelineCanvas';
@@ -49,12 +53,14 @@ export interface TrackListProps {
   // Whose lane heights these are (siann.layout.v1 keeps them per session id).
   readonly sessionId?: string | null;
   readonly selectedTrackId: string | null;
-  readonly onSelectTrack: (trackId: string) => void;
+  // Every selected track (the primary alone when absent).
+  readonly selectedTrackIds?: readonly string[];
+  readonly onSelectTrack: (trackId: string, mode: TrackSelectMode) => void;
 }
 
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
 
-export function TrackList({ client, realtime, timeline, layout, sessionId = null, selectedTrackId, onSelectTrack }: TrackListProps) {
+export function TrackList({ client, realtime, timeline, layout, sessionId = null, selectedTrackId, selectedTrackIds, onSelectTrack }: TrackListProps) {
   const t = useT();
   const can = useCapabilities();
   const snapshot = useSyncExternalStore(
@@ -71,6 +77,7 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
   const meters = useRef<HTMLCanvasElement | null>(null);
   const order = snapshot?.trackOrder ?? [];
   const dimmed = dimmedTracks(snapshot?.tracks ?? []);
+  const selected = new Set(selectedTrackIds ?? (selectedTrackId ? [selectedTrackId] : []));
 
   // The column follows the event display's vertical scroll, in the canvas's frame.
   useEffect(() => {
@@ -152,7 +159,7 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
                 number={index + 1}
                 height={clampLaneHeight(heights[trackId] ?? DEFAULT_LANE_HEIGHT)}
                 dimmed={dimmed.has(trackId)}
-                selected={selectedTrackId === trackId}
+                selected={selected.has(trackId)}
                 canRename={can.command('track.rename')}
                 client={client}
                 onSelect={onSelectTrack}
@@ -175,7 +182,7 @@ interface TrackHeaderProps {
   readonly selected: boolean;
   readonly canRename: boolean;
   readonly client: SessionClient;
-  readonly onSelect: (trackId: string) => void;
+  readonly onSelect: (trackId: string, mode: TrackSelectMode) => void;
   readonly onResize: (trackId: string, all: boolean, height: number) => void;
 }
 
@@ -230,7 +237,7 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
       data-dimmed={dimmed ? 'true' : undefined}
       aria-selected={selected}
       style={{ height: `${height}px`, opacity: dimmed ? DIMMED_ALPHA : undefined }}
-      onPointerDown={() => onSelect(id)}
+      onPointerDown={(e) => onSelect(id, e.shiftKey ? 'range' : e.ctrlKey || e.metaKey ? 'toggle' : 'replace')}
     >
       <span className="track-colour" data-testid={`track-colour-${id}`} data-part-of="colour" style={{ background: `var(${trackColourVar(id)})` }} />
       <span className="track-number" data-testid={`track-number-${id}`} data-part-of="number">
