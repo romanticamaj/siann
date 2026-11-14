@@ -313,6 +313,8 @@ test('the period key exchanges the primary and the secondary format', async () =
   await launch();
   await locate(4 * RATE, '3.1.000');
   await expect(secondary()).toHaveText('0:04.000');
+  // The tempo at the cursor (a new session's 120 BPM).
+  await expect(page.getByTestId('transport-tempo')).toHaveText('120.000');
   await focusProject();
   await page.keyboard.press('Period');
   await expect(primary()).toHaveText('0:04.000');

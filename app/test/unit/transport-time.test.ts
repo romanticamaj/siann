@@ -1,15 +1,15 @@
 // The position display's text (m5-ui-transport; UI redesign spec 3.1): the
 // project cursor's frame in Bars+Beats (bar.beat.tick, 1-based, 4/4 until
 // E-10) through root.tempo, or in Seconds as a fixed m:ss.mmm; a typed
-// position read back in the primary format; and the period key's exchange of
-// primary and secondary. Every expected string here is worked out by hand
+// position read back in the primary format; the period key's exchange of
+// primary and secondary; and the tempo readout at the cursor. Every expected string here is worked out by hand
 // from the tempo map, never by musical-time.ts. Framework-free.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { TempoPoint } from '../../src/renderer/model/document';
-import { exchange, formatPosition, formatSeconds, parsePosition } from '../../src/renderer/timeline/transport-time';
+import { exchange, formatPosition, formatSeconds, formatTempo, parsePosition, tempoAt } from '../../src/renderer/timeline/transport-time';
 
 const RATE = 48000;
 const AT_120: readonly TempoPoint[] = [{ ticks: '0', milliBpm: 120_000 }];
@@ -77,6 +77,16 @@ test('a typed position is read in the primary format; garbage, negatives and bar
   for (const bad of ['', 'x', '-4', '-0:01', '1:60', '4s', '1:2:3']) {
     assert.equal(parsePosition(bad, AT_120, RATE, 'seconds'), null, JSON.stringify(bad));
   }
+});
+
+test('the tempo readout is the tempo in force at the cursor, in BPM with three decimals', () => {
+  assert.equal(formatTempo(tempoAt(0, CHANGE, RATE)), '120.000');
+  // Bar 2 starts at 2 s: 60 BPM from there.
+  assert.equal(formatTempo(tempoAt(95_999, CHANGE, RATE)), '120.000');
+  assert.equal(formatTempo(tempoAt(96_000, CHANGE, RATE)), '60.000');
+  assert.equal(formatTempo(tempoAt(288_000, CHANGE, RATE)), '60.000');
+  assert.equal(formatTempo(tempoAt(0, [], RATE)), '120.000');
+  assert.equal(formatTempo(tempoAt(0, [{ ticks: '0', milliBpm: 96_500 }], RATE)), '96.500');
 });
 
 test('the period key exchanges the primary and the secondary format', () => {
