@@ -10,6 +10,28 @@ checks a feature against (rules at the end, and `agent-rules.md`, "Test matrix")
 Update this file in the same branch as the feature: add or fix its row, move a
 closed gap out of the gap list.
 
+**Where the gaps went.** The gaps of section 6 (and the proposals of sections 5
+and 7) are harness features in `.claude/milestones/M5b.json`; each closes its
+gaps here when it lands.
+
+| Gap (section 6) | Feature | Wave |
+|---|---|---|
+| 0 stale nested CMake cache (section 7) | fixed in #103 | |
+| 1 m5-ui-transport, edit-basics, loop-click untested | the M5 features themselves (in flight) | |
+| 2 method/tool/doc/fixture parity | `m5b-protocol-parity` | 2 |
+| 3 bridge targets the Ardour engine, gated tests dead | `m5b-bridge-native-client` | 2 |
+| 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
+| 5 rollback never deletes media or renders | `m5b-bridge-cli-coverage` | 3 |
+| 6 no ASAN/UBSAN, no fuzzing | `m5b-nightly-quality` | 3 |
+| 7 desktop job skipped on core-library PRs | `m5b-nightly-quality` | 3 |
+| 8 macOS-specific behaviour manual only | not taken: needs the macOS bundle (M0 `m0-macos-bundle`, apple-signing gate) | |
+| 9 UI spec 5.6 performance budgets | `m5b-nightly-quality` | 3 |
+| 10 bridge CLI holes (`reject-plan`, `validate-journal`, `--run`) | `m5b-bridge-cli-coverage` | 3 |
+| 11 `read-model-sequence.json` not checked against the engine | not taken: stays an M5 follow-up | |
+| 12 long tests not on macOS | `m5b-nightly-quality` | 3 |
+| 13 M4 ordering / link assertions | not taken: stays an M4 follow-up | |
+| native coverage (section 5), app unit coverage (section 7 item 7) | `m5b-nightly-quality` | 3 |
+
 ## 1. Layers and where they run
 
 | Code | Layer | Where | Runs in CI on | When |
@@ -227,8 +249,8 @@ error paths of each subcommand (usage errors, `--run`).
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
 | 1 | m5-ui-transport, m5-ui-edit-basics, m5-ui-loop-click: 25 acceptance items, no tests on main | High: M5 exit depends on them | per the manifests: unit (position display, snap maths, split builder) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
-| 2 | No method/tool/doc/fixture parity test (section 4) | High: an agent-facing method can ship without an MCP tool, doc or app capability entry, silently | native test: every `kMethods` entry is an MCP tool or in an explicit `kNotMcp` list with a reason; Node test: every method in a protocol doc table and the reverse (read `kMethods` from source); app unit: `capabilities-full.json` equals `kMethods` | M5 follow-up (new feature `m5-protocol-parity`), before M5b adds methods |
-| 3 | Node bridge's live path targets the superseded Ardour engine; `SIANN_RUN_ENGINE_TESTS` tests never run | High for AI-facing story: the bridge cannot drive the native engine, and its only integration tests are dead | port `src/runtime/client.js` to the native protocol (WebSocket + token, or MCP over HTTP), then a CI job that runs the Node integration tests against the core-only `siann-engine` built in the `app` job; meanwhile mark the two tests as legacy | M5b (`m5b-engine-project-media` or a new bridge feature) |
+| 2 | No method/tool/doc/fixture parity test (section 4) | High: an agent-facing method can ship without an MCP tool, doc or app capability entry, silently | native test: every `kMethods` entry is an MCP tool or in an explicit `kNotMcp` list with a reason; Node test: every method in a protocol doc table and the reverse (read `kMethods` from source); app unit: `capabilities-full.json` equals `kMethods` | `m5b-protocol-parity` (M5b wave 2) |
+| 3 | Node bridge's live path targets the superseded Ardour engine; `SIANN_RUN_ENGINE_TESTS` tests never run | High for AI-facing story: the bridge cannot drive the native engine, and its only integration tests are dead | port `src/runtime/client.js` to the native protocol (WebSocket + token, or MCP over HTTP), then a CI job that runs the Node integration tests against the core-only `siann-engine` built in the `app` job; meanwhile mark the two tests as legacy | `m5b-bridge-native-client` (M5b wave 2) |
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
 | 5 | m3-rollback 2: media/renders never deleted by rollback | Medium: data loss | native: render a file, roll back the plan, assert the file and the media entry's blob remain | M3 follow-up |
 | 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
