@@ -393,7 +393,7 @@ export function TimeFormatMenu({ primary, x, y, onChoose, onClose }: TimeFormatM
 function UndoRedo({ transport }: { transport: TransportController }) {
   const t = useT();
   return (
-    <div className="transport undo-redo" data-testid="undo-redo" data-part="undo-redo" role="group" aria-label={t('transport.undoRedo')}>
+    <div className="transport undo-redo" data-testid="undo-redo" role="group" aria-label={t('transport.undoRedo')}>
       <button
         type="button"
         className="transport-button"
