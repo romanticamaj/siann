@@ -66,9 +66,13 @@ Maintainer rule (2026-11-14): the UI is checked against the mockup, and the fini
 - Reference: `docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html` (`?lang=zh-TW` for Traditional Chinese). Its stylesheet is the app's: `app/renderer/tokens.css` (the one token source) and `app/renderer/ui/*.css` (the component rules). The mockup links those files and has no styles of its own.
 - A UI component takes its DOM structure and class names from the corresponding mockup markup and is styled by the shared rules. Do not restyle from a screenshot, and do not write a second rule for something the shared rules already draw.
 - Canvas code copies the mockup's drawing parameters (row heights, colours, the clip title strip, handles) from `app/src/renderer/tokens.ts`, generated from `tokens.css` by `node scripts/gen-ui-tokens.js`.
-- No colour or size literal in renderer CSS or TypeScript: name a token. `test/ui-tokens.test.js` fails otherwise; `app/test/fidelity/debt.json` is the ledger of what does not hold yet, and it only shrinks.
+- No colour or size literal in renderer CSS or TypeScript: name a token. `test/ui-tokens.test.js` fails otherwise; `app/test/fidelity/debt.json` is the ledger of what does not hold yet, and it only shrinks. Decided by the maintainer, 2026-11-15: every spacing and size literal becomes a named token and there is no allowlist, in the shared rules and in the mockup's script alike (`m5-ui-tokens-spacing`); the ledger ends empty with `m5-ui-mockup-alignment`.
+- Fonts: Inter variable, JetBrains Mono Regular and JetBrains Mono Medium (500) are bundled (decided by the maintainer, 2026-11-15; Medium arrives with `m5-ui-alignment-chrome`). Use 500 where the mockup's rules ask for it, and no weight that is not bundled.
 - Every region and key component carries the mockup's id: `data-region`, `data-part`, or `data-part-item` with `data-part-of` for a repeated component (spec 10.3).
-- **A part whose feature has not landed is absent** (spec 3.0). A placeholder or a disabled control is never a substitute and never passes the gate. The part is `pending` in `app/test/fidelity/manifest.json` under the feature that owns it, and that feature's acceptance includes the gate for it.
+- **A part whose feature has not landed is absent, and it keeps its space empty** (spec 3.0). Decided by the maintainer, 2026-11-15: the part's box stays where the mockup draws it with nothing in it (no control, no label, no placeholder), so every other part lands where the mockup draws it. The 20 px marker track row stays empty until `m5b-ui-markers`; the insert row of a strip stays empty until `m5b-ui-inserts-master`.
+  - A row or column the shared rules fix needs nothing more. A box the mockup sizes by its content takes its size from a `--hold-<part>-w` or `--hold-<part>-h` token in `tokens.css`, carrying the size the gate measures for that part in the mockup; adding one for a pending part is authorised, and the feature that lands the part deletes it (`test/mockup-fidelity.test.js` fails on a hold whose part is no longer pending).
+  - The empty element has no role, is not focusable, is hidden from assistive technology and does not carry the part's `data-part` id. A placeholder or a disabled control is never a substitute and never passes the gate.
+  - The part is `pending` in `app/test/fidelity/manifest.json` under the feature that owns it, and that feature's acceptance includes the gate for it. Every part has an owner (decided by the maintainer, 2026-11-15): the automation parts belong to M6a's `m6a-ui-automation`, every other one to an M5 or M5b feature. There is no unowned part.
 
 **Every UI pull request runs the gate and attaches its report.**
 
@@ -81,9 +85,19 @@ SIANN_FIDELITY=1 SIANN_FIDELITY_OUT=<dir> npx playwright test --project fidelity
 (`SIANN_ENGINE_EXE` and `SIANN_CLI_EXE` as for the other e2e specs; `node scripts/check-all.js --only app` sets them and runs the gate after the app's tests.) The gate compares, per part, the bounding box (within 1 px on x, y, width, height) and the listed computed styles (identical), and per region the chrome's pixels (at most 0.5 % differing; waveform interiors and dynamic content are masked). It forces device scale factor 1, so the display's scaling does not matter. Put `report.md` (with its region images) in the pull request: the parts your feature owns must be clean in both locales.
 
 - A feature that lands sets its gate to `enforce` in the manifest, in the same pull request.
-- Until `m5-ui-mockup-alignment` lands, the gate for the parts M5 already built is `report`: it measures and reports and does not fail CI. From that feature on it fails.
+- The parts M5 built answer to the alignment feature of their region: `m5-ui-alignment-chrome` (top bar, status bar), `m5-ui-alignment-arrange` (project zone), `m5-ui-alignment-mixer-inspector` (left and lower zones), `m5-ui-alignment-plans` (right zone). Until one lands its gate is `report`: measured and reported, never failing. From the first enforced gate on, an enforced mismatch fails check-all and CI. `m5-ui-mockup-alignment` closes the series with all four enforced and the ledger empty.
+- The gate compares absolute boxes against the full mockup, and that does not change (decided by the maintainer, 2026-11-15); it is why an absent part keeps its space.
 
-**Not without the maintainer:** changing `tokens.css`, `app/renderer/ui/*.css`, `mockup.html` or its PNGs; changing the manifest's rules, thresholds, style list or masks; adding to `debt.json`; marking a part unowned. If the mockup is wrong or cannot be built as drawn, that is a stop condition: return `status: blocked` with the part and the reason.
+**Not without the maintainer:** changing `tokens.css`, `app/renderer/ui/*.css`, `mockup.html` or its PNGs; changing the manifest's rules, thresholds, style list or masks; adding to `debt.json`; leaving a part without an owner. If the mockup is wrong or cannot be built as drawn, that is a stop condition: return `status: blocked` with the part and the reason.
+
+What the maintainer has authorised (2026-11-15), each for the feature named and for nothing beyond it:
+
+| Change | Feature |
+|---|---|
+| New tokens in `tokens.css` for every size literal, and the edits to `app/renderer/ui/*.css` and to `mockup.html`'s script that replace the literals with them. Condition: nothing the mockup draws changes, proven by the gate's measurement of the mockup before and after | `m5-ui-tokens-spacing` |
+| The token values `--ruler-h` 40 px, `--zone-tabs` 26 px, `--meter-w` 6 px, `--focus` 20 % (the mockup wins) | `m5-ui-tokens-spacing` |
+| `JetBrainsMono-Medium.woff2`, its `@font-face`, and the mockup's PNGs retaken once | `m5-ui-alignment-chrome` |
+| A `--hold-<part>-w` / `-h` token for a pending part whose box the shared rules do not size, and its removal when the part lands | The feature that leaves the box empty; the feature that lands the part |
 
 ## Windows working tree
 

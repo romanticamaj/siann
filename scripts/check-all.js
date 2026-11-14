@@ -519,7 +519,7 @@ function fidelityGate(APP, env, npx) {
   const report = path.join(out, 'report.md');
   if (step.ok) return { ok: true, output: '', note: `fidelity report: ${report}` };
   if (fidelityEnforced()) return { ...step, failedAt: `the mockup fidelity gate (${report})` };
-  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (report-only until m5-ui-mockup-alignment): ${report}` };
+  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (report-only until the first gate is enforced, m5-ui-alignment-chrome): ${report}` };
 }
 
 const STEPS = {

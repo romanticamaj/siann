@@ -17,7 +17,7 @@ gaps here when it lands.
 | Gap (section 6) | Feature | Wave |
 |---|---|---|
 | 0 stale nested CMake cache (section 7) | fixed in #103 | |
-| 1 m5-ui-loop-click untested (m5-ui-transport closed its 8, m5-ui-edit-basics its 9) | the M5 features themselves (in flight) | |
+| 1 m5-ui-loop-click untested (m5-ui-transport closed its 8, m5-ui-edit-basics its 9); the alignment series (`m5-ui-tokens-spacing`, four `m5-ui-alignment-*`, `m5-ui-mockup-alignment`) not started | the M5 features themselves (in flight) | 8 to 11 |
 | 2 method/tool/doc/fixture parity | `m5b-protocol-parity` | 2 |
 | 3 bridge targets the Ardour engine, gated tests dead | `m5b-bridge-native-client` | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
@@ -126,8 +126,13 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m5-ui-plan-panel | | | Y | Y (`plan-review.spec`) | 8 | 3 | 8: tour only |
 | m5-ui-transport | | | Y (`key-preset`, `key-dispatcher`, `transport-time`, `playhead-clock`, `auto-scroll`, `timeline-layers`, `undo-redo`, `transport-controls`, `layout`, `i18n-describe`) | Y (`transport.spec`, `i18n-fit`; F: report-only, its parts gated by `m5-ui-mockup-alignment`) | 8 | 3 | 8: tour only (state 04 and the top bar in every state); 1, 6: macOS Cmd+Z next to the Edit menu's accelerator is proven by the CI macOS e2e only |
 | m5-ui-edit-basics | | | Y (`edit-commands`, `snap`, `selection`, `tool-modifiers`, `edit-basics-mod-keys`, `timeline-geometry`, `timeline-layers`, `key-preset`, `key-dispatcher`, `capabilities`, `layout`) | Y (`edit-basics.spec`, six paths, one revision and one undo each; toolbar labels in `i18n-fit`) | 9 | 3 | 9: tour only |
-| m5-ui-loop-click (open) | - | | - | - | | - | 1-8: not on main |
-| m5-ui-mockup-alignment (open) | | | - | - (F: report-only baseline, 0 of 282 parts match) | every state | - | 1-8: not on main. Its acceptance is the F layer for every part the M5 features build (`app/test/fidelity/manifest.json`), in en and zh-TW, and an empty `app/test/fidelity/debt.json` |
+| m5-ui-loop-click (open) | - | | - | - | the top bar in every state; 23, 24 | - | 1-11: not on main. The tour line was corrected on 2026-11-15 from "none of 01-22": cycle and metronome join the transport in every state |
+| m5-ui-tokens-spacing (open) | | | - | - (F on the mockup alone: measured on the base commit and on the branch, identical) | every state, by four token values | - | 1-9: not on main. Node (B): `ui-tokens` with no literal left in `app/renderer/ui` or the mockup's script and no token entry in `debt.json` |
+| m5-ui-alignment-chrome (open) | | | - | - (F: top bar and status bar, enforce) | every state | - | 1-8: not on main. Node (B): `mockup-fidelity` (first enforced gate, CI step without `continue-on-error`), `ui-tokens` (no font entry); a font test for JetBrains Mono Medium |
+| m5-ui-alignment-arrange (open) | | | - | - (F: project zone, enforce) | every state | - | 1-6: not on main. Unit tests on canvas geometry and palette from `tokens.ts`; Node (B): no literal in `TimelineCanvas.ts` |
+| m5-ui-alignment-mixer-inspector (open) | | | - | - (F: left and lower zones, enforce) | every state | - | 1-6: not on main. Node (B): no literal in `MixerMeters.ts` |
+| m5-ui-alignment-plans (open) | | | - | - (F: right zone, enforce) | 13-22 | - | 1-5: not on main |
+| m5-ui-mockup-alignment (open) | | | - | - (F: the whole run clean on Windows and Linux; baseline 0 of 282 parts match) | the whole tour retaken | - | 1-7: not on main. Closes the alignment: the app's stylesheet links equal the mockup's, no pending part's id in the DOM, all four gates enforce and an empty `app/test/fidelity/debt.json` (Node, B) |
 
 ### M5b, M6a, M6b, M6c, M7 (not started)
 
@@ -137,6 +142,27 @@ ctest, ...): M5b 59/141 (the nine UI features that own mockup parts each gained 
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
 `m5b-engine-clip-fades` 1/4, `m5b-engine-master` 1/4,
 `m5b-engine-buses-sends` 1/5, `m5b-engine-record` 3/9, `m5b-ui-edit-more` 3/10.
+
+Added on 2026-11-15, with the maintainer's decision that no part of the mockup
+is unowned (UI redesign 10.5); not in the counts above:
+
+| Feature | Wave | After | Owns (layer F) | Tests its acceptance names |
+|---|---|---|---|---|
+| `m5b-engine-plan-metadata` (E-7, E-14) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
+| `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
+| `m5b-engine-load-loudness` (E-13) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
+| `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
+| `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title |
+| `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
+| `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
+| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled |
+| `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |
+| `m5b-ui-editor-channel` | 4 | `m5b-ui-edit-more` | `tab-editor`, `zone-button-channel` | one revision and one undo per edit in the editor |
+| `m6a-ui-automation` (M6a) | 3 | `m6a-lanes`, `m6a-write-passes` | `*-read`, `*-write`, `strip-*-automation`, `inspector-automation` | e2e with a reduced capabilities fixture |
+
+`m5b-ui-keymap` (wave 6) now also waits for `m5b-ui-signature`, `m5b-ui-meter`,
+`m5b-ui-composer`, `m5b-ui-notepad` and `m5b-ui-editor-channel`, and the
+walkthrough's tour states start at 46.
 The plan phase should add the test layer to those items before the build
 agent starts (rule 1 below). M6b's one-hour 16-track criterion and M7's arm64
 board run cannot run on hosted runners and need a named owner (rule 6).
@@ -250,7 +276,7 @@ error paths of each subcommand (usage errors, `--run`).
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
-| 1 | m5-ui-loop-click: 8 acceptance items, no tests on main (m5-ui-transport's 8 and m5-ui-edit-basics' 9 are covered, section 2) | High: M5 exit depends on them | per the manifest: unit (band geometry and snapping) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
+| 1 | m5-ui-loop-click: 11 acceptance items (8 before the corrections of 2026-11-15), no tests on main (m5-ui-transport's 8 and m5-ui-edit-basics' 9 are covered, section 2) | High: M5 exit depends on them | per the manifest: unit (band geometry and snapping) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
 | 2 | No method/tool/doc/fixture parity test (section 4) | High: an agent-facing method can ship without an MCP tool, doc or app capability entry, silently | native test: every `kMethods` entry is an MCP tool or in an explicit `kNotMcp` list with a reason; Node test: every method in a protocol doc table and the reverse (read `kMethods` from source); app unit: `capabilities-full.json` equals `kMethods` | `m5b-protocol-parity` (M5b wave 2) |
 | 3 | Node bridge's live path targets the superseded Ardour engine; `SIANN_RUN_ENGINE_TESTS` tests never run | High for AI-facing story: the bridge cannot drive the native engine, and its only integration tests are dead | port `src/runtime/client.js` to the native protocol (WebSocket + token, or MCP over HTTP), then a CI job that runs the Node integration tests against the core-only `siann-engine` built in the `app` job; meanwhile mark the two tests as legacy | `m5b-bridge-native-client` (M5b wave 2) |
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |

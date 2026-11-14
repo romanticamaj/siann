@@ -3,7 +3,7 @@
   "id": "M6a",
   "title": "Automation",
   "goal": "Automation lanes with Write, Touch, Latch and Trim passes recorded as single revisions, with the documented precision per target.",
-  "specSections": ["Automation", "Gestures", "Two channels into the audio thread", "Milestones"],
+  "specSections": ["Automation", "Gestures", "Two channels into the audio thread", "Milestones", "UI redesign: 3.5", "UI redesign: 10. Mockup fidelity"],
   "status": "not_started",
   "done": [],
   "prerequisites": ["M2; M4 for plugin parameter automation."],
@@ -14,7 +14,16 @@
     {"id": "m6a-write-passes", "title": "Write, Touch, Latch and Trim passes", "wave": 2, "dependsOn": ["m6a-lanes"], "specRefs": ["Automation", "Gestures"],
      "acceptance": ["Captured values go through automationOutbox with an end marker; one automation.write_pass revision per pass after thinning; no tail values lost."]},
     {"id": "m6a-precision", "title": "Precision contract per format", "wave": 2, "dependsOn": ["m6a-lanes"], "specRefs": ["Automation"],
-     "acceptance": ["CLAP sample-accurate, VST3 and AU block-accurate through JUCE, documented and exposed to users and agents; tests measure the actual precision."]}
+     "acceptance": ["CLAP sample-accurate, VST3 and AU block-accurate through JUCE, documented and exposed to users and agents; tests measure the actual precision."]},
+    {"id": "m6a-ui-automation", "title": "Automation in the UI: R and W on headers, strips and the Inspector, and lanes in the event display", "wave": 3, "dependsOn": ["m6a-lanes", "m6a-write-passes"],
+     "specRefs": ["Automation", "UI redesign: 3.5", "UI redesign: 3.3", "UI redesign: 10. Mockup fidelity"],
+     "acceptance": [
+       "R and W on each track header, on each MixConsole strip (the master included) and in the Inspector, with the Inspector's Automation section, show and set the track's automation read and write state from the engine (W red when armed), following other connections, undo and applied plans.",
+       "A lane opens from the arrow at the header's lower-left corner; its points and segments are edited with the Object Selection and Draw tools, each edit one revision restored by one undo, and a write pass appears as one revision when it ends.",
+       "Against capabilities without the automation methods none of these controls is in the DOM and their space stays empty (UI redesign 3.0, decided by the maintainer, 2026-11-15), as it has been since M5 (e2e with a reduced capabilities fixture).",
+       "Every new string is in the three catalogs, and the tour appends its states after the last M5b state.",
+       "Decided by the maintainer, 2026-11-15: the automation parts of the mockup belong to this feature. The mockup fidelity gate (docs/harness/agent-rules.md, \"UI fidelity\") passes for them in en and zh-TW: *-read, *-write, strip-*-automation, inspector-automation (app/test/fidelity/manifest.json, gate m6a-ui-automation); the markup and classes are ported from mockup.html and app/renderer/ui, the manifest's gate is set to enforce in this pull request, and the report is attached."
+     ]}
   ],
   "exit": [
     {"id": "m6a-exit", "text": "Automation passes are recorded as single revisions; precision is documented per format.", "how": "Tests per mode and format."}
