@@ -30,6 +30,7 @@
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
 #include "siann/media/wav_stream_writer.hpp"
+#include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/record_port.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "siann/realtime/recorder.hpp"
@@ -146,6 +147,7 @@ struct RecordRig {
     std::vector<ManualAudioDevice*> made;
     std::unique_ptr<EngineHost> host;
     std::int64_t fixedRate = 0;
+    int maxInputs = -1;  // the input channels the devices it makes open at most
 
     explicit RecordRig(const std::function<void(EngineHostOptions&)>& adjust = {}, std::int64_t rate = 0)
         : fixedRate(rate) {
@@ -164,7 +166,9 @@ struct RecordRig {
         options.playback.capture.recorder.checkpointInterval = std::chrono::milliseconds(0);
         options.listDevices = listed;
         options.deviceFactory = [this](const std::string&) -> std::unique_ptr<host::AudioDevice> {
-            auto one = std::make_unique<ManualAudioDevice>(loopback(fixedRate));
+            ManualAudioDevice::Options deviceOptions = loopback(fixedRate);
+            deviceOptions.maxInputChannels = maxInputs;
+            auto one = std::make_unique<ManualAudioDevice>(deviceOptions);
             made.push_back(one.get());
             return one;
         };
@@ -644,4 +648,97 @@ TEST_CASE("an armed track's input meter is read while stopped", "[engine][record
     REQUIRE(reading.has_value());
     REQUIRE(reading->channels == 1);
     CHECK(reading->peak[0] == 0.5f);
+}
+
+TEST_CASE("an input reports the channels the device opened, and none opened is no input",
+          "[engine][record][input]") {
+    // A listing that does not count inputs (as a JUCE build's): the host asks for
+    // up to 32, and the device opens the ones it has.
+    RecordRig rig([](EngineHostOptions& options) {
+        options.listDevices = [] {
+            std::vector<protocol::DeviceDescription> out = listed();
+            protocol::DeviceDescription unsaid{"unsaid", "test", "unsaid", false, false};
+            unsaid.outputChannels = 2;
+            out.push_back(unsaid);
+            return out;
+        };
+    });
+
+    SECTION("an output-only device named as its own input opens no input") {
+        rig.maxInputs = 0;
+        const protocol::DeviceInfo opened = rig.host->selectDeviceWithInput("unsaid", std::string("unsaid"));
+        rig.device = rig.made.back();
+        CHECK_FALSE(opened.input.has_value());
+        REQUIRE(rig.host->status().device.has_value());
+        CHECK_FALSE(rig.host->status().device->input.has_value());
+        CHECK(rig.host->devices().back().inputChannels == std::optional<int>(0));
+        CHECK(codeOf([&] { rig.host->arm("trk_mono", true); }) == "no_input");
+        CHECK(codeOf([&] { rig.host->record(true); }) == "no_input");
+        CHECK(rig.host->recordState().armed.empty());
+        // Playback is unaffected.
+        CHECK(rig.host->play().playing);
+        rig.settle();
+        rig.pump(2);
+        CHECK(rig.host->transportState().position == 2 * kBlock);
+    }
+    SECTION("a device with one input opens one, whatever was asked") {
+        rig.maxInputs = 1;
+        const protocol::DeviceInfo opened = rig.host->selectDeviceWithInput("unsaid", std::string("unsaid"));
+        rig.device = rig.made.back();
+        REQUIRE(opened.input.has_value());
+        CHECK(opened.input->channels == 1);
+        CHECK(rig.host->status().device->input->channels == 1);
+        CHECK(rig.host->devices().back().inputChannels == std::optional<int>(1));
+        CHECK(codeOf([&] { rig.host->arm("trk_st", true); }) == "no_input");  // needs two
+        CHECK(rig.host->arm("trk_mono", true).armed == std::vector<std::string>{"trk_mono"});
+    }
+}
+
+TEST_CASE("a take recorded through a latent insert on the monitored path lands where it was played",
+          "[engine][record][latency][plugin]") {
+    RecordRig rig([](EngineHostOptions& options) {
+        options.pluginDirs = {fs::path(SIANN_TEST_PLUGIN_CLAP).parent_path().string()};
+    });
+    rig.openInput();
+    // siann_test_plugin reports 64 frames of latency: the impulse's track, and so
+    // the master the performer hears, plays 64 frames late.
+    REQUIRE(rig.host->approve("clap", SIANN_TEST_PLUGIN_CLAP, true).approved);
+    protocol::PluginInstantiateRequest request;
+    request.slotId = "slt_1";
+    request.trackId = "trk_src";
+    request.index = 0;
+    request.descriptor = protocol::PluginDescriptorInfo{"clap", "", "", SIANN_TEST_PLUGIN_CLAP};
+    const protocol::PluginInstantiateResult loaded = rig.host->instantiate(request);
+    REQUIRE(loaded.latencyFrames == 64);
+    json::Object descriptor{{"format", json::Value(loaded.descriptor.format)},
+                            {"uid", json::Value(loaded.descriptor.uid)},
+                            {"name", json::Value(loaded.descriptor.name)},
+                            {"path", json::Value(loaded.descriptor.path)}};
+    const json::Value insert(json::Object{{"op", json::Value("plugin.insert")},
+                                          {"trackId", json::Value("trk_src")},
+                                          {"index", json::Value(0)},
+                                          {"slotId", json::Value("slt_1")},
+                                          {"descriptor", json::Value(std::move(descriptor))},
+                                          {"stateBlob", json::Value(nullptr)}});
+    rig.fixture.session.commit({command::Command::fromJson(insert)}, "test", "t");
+    rig.host->settle(*rig.fixture.doc().pluginSlot("slt_1"), true);
+    rig.host->auditionPort()->mainCommitted();
+    for (int i = 0; i < 200; ++i) {
+        rig.pump(1);
+        const graph::PreparedGraph* live = rig.engine().driver().liveGraph();
+        if (live != nullptr && live->totalLatency() == 64) {
+            break;
+        }
+    }
+    REQUIRE(rig.engine().driver().liveGraph() != nullptr);
+    REQUIRE(rig.engine().driver().liveGraph()->totalLatency() == 64);
+
+    rig.host->arm("trk_mono", true);
+    rig.host->record(true);
+    rig.settle();
+    rig.pumpUntil(kImpulseAt + 4'000);
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.host->record(false);
+    CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
+    rig.host->shutdown();
 }

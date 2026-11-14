@@ -16,7 +16,10 @@ AudioDeviceStatus ManualAudioDevice::open(const AudioDeviceConfig& config) {
         config_.sampleRate = options_.fixedSampleRate;
     }
     const auto frames = static_cast<std::size_t>(config.bufferFrames);
-    input_.assign(static_cast<std::size_t>(config.inputChannels), std::vector<float>(frames, 0.0f));
+    if (options_.maxInputChannels >= 0) {
+        config_.inputChannels = std::min(config_.inputChannels, options_.maxInputChannels);
+    }
+    input_.assign(static_cast<std::size_t>(config_.inputChannels), std::vector<float>(frames, 0.0f));
     output_.assign(static_cast<std::size_t>(config.outputChannels), std::vector<float>(frames, 0.0f));
     inputPointers_.clear();
     outputPointers_.clear();
@@ -35,7 +38,7 @@ AudioDeviceStatus ManualAudioDevice::open(const AudioDeviceConfig& config) {
     loop_.assign(options_.loopback ? output_.size() : 0, std::vector<float>(loopLength, 0.0f));
     loopPosition_ = 0;
     return AudioDeviceStatus{config_.sampleRate,         config.bufferFrames,   options_.inputLatencyFrames,
-                             options_.outputLatencyFrames, config.inputChannels, config.outputChannels};
+                             options_.outputLatencyFrames, config_.inputChannels, config.outputChannels};
 }
 
 void ManualAudioDevice::pump(int blocks, std::vector<float>* capture, int channel) {

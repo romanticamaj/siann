@@ -24,6 +24,10 @@ public:
         // outputs reads the last output), as FakeAudioDevice; an input generator
         // replaces it. The latency must be at least one buffer.
         bool loopback = false;
+        // >= 0: opens at most this many of the input channels asked for and reports
+        // the ones it opened, as a backend without that many inputs does (an
+        // output-only device opens 0).
+        int maxInputChannels = -1;
     };
 
     ManualAudioDevice() = default;

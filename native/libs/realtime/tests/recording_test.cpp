@@ -470,6 +470,54 @@ TEST_CASE("Loopback null test: a recorded take lands where it was played", "[rec
     CHECK(result.startPosition - offset + found == 10'000);
 }
 
+TEST_CASE("Loopback null test: the monitored path's latency is part of the record offset",
+          "[record][latency][pdc]") {
+    TempDir dir;
+    // The impulse at timeline sample 10,000 plays through a latent node on the
+    // master path (100 frames), as through a latent insert: the performer hears it
+    // 100 frames later, and the take must still land at 10,000 (spec, "Latency
+    // model": t - monitoredPathLatency - outputLatency - inputLatency - srcLatency).
+    auto impulse = std::make_shared<graph::PlanarAudio>();
+    impulse->channels = 1;
+    impulse->frames = 1;
+    impulse->data = {{1.0f}};
+    graph::GraphBuilder b;
+    const graph::NodeId clips =
+        b.add(std::make_unique<graph::ClipPlayerNode>(2, std::vector<graph::ClipPlayerNode::Clip>{
+                                                             {10'000, 0, 1, 1.0f, impulse}}),
+              "clips");
+    const graph::NodeId latent = b.add(std::make_unique<graph::FakeLatencyNode>(2, 100), "latent");
+    b.connect(clips, latent);
+    b.setOutput(latent);
+    GraphDriver driver({});
+    driver.publish(std::move(b).compile(kBlock));
+    Recorder recorder(1, Recorder::Options{});
+    driver.attachRecorder(&recorder);
+
+    host::ManualAudioDevice::Options options;
+    options.loopback = true;
+    options.inputLatencyFrames = 48;
+    options.outputLatencyFrames = 80;
+    host::ManualAudioDevice device(options);
+    recorder.start(dir.path() / "take.wav", 48'000);
+    driver.play();
+    driver.start(device, config(1));
+    for (int i = 0; i < 1'000 && driver.playhead() < 20'000; ++i) {
+        device.pump(1);
+    }
+    REQUIRE(driver.playhead() >= 20'000);
+    const realtime::LatencyReport latency = driver.latency();
+    driver.stop();
+    const auto result = recorder.stop();
+
+    CHECK(latency.monitoredPathLatencyFrames == 100);
+    CHECK(latency.recordOffsetFrames == 100 + 80 + 48);
+    const auto take = readWav(result.file);
+    const auto peak = test::peakIndex(std::span<const float>(take.samples.data(), take.samples.size()));
+    REQUIRE(peak >= 0);
+    CHECK(result.startPosition - latency.recordOffsetFrames + peak == 10'000);
+}
+
 TEST_CASE("Loopback null test through input and output SRC", "[record][latency][src]") {
     TempDir dir;
     // A 44.1 kHz session on a device fixed at 48 kHz; the impulse at timeline
