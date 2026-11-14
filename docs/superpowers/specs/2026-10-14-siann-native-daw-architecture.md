@@ -1548,8 +1548,8 @@ Jobs v0, import (m5b-engine-project-media, UI redesign UR-2 and E-5):
 - A failure commits nothing and removes every file the job created; a file the
   bundle held before the job is never removed. Codes: `not_found` (no file at
   `path`), `unsupported_media` (neither WAV nor FLAC), `decode_failed` (a truncated
-  or damaged file), `too_large`, `cancelled`, and the `CommandError` code of a
-  rejected `media.add`. `session.open`, `session.create` and stopping the server
+  or damaged file), `too_large`, `io_error`, `cancelled`, and the `CommandError`
+  code of a rejected `media.add`. `session.open`, `session.create` and stopping the server
   cancel every queued and running import (a running one stops at its next chunk;
   a blocked decoder is interrupted through the seam), which ends `failed` with
   `cancelled`; neither the old nor the new session gets a revision.

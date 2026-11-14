@@ -214,6 +214,10 @@ export function describeStep(
       return t('step.addMedia');
     case 'media.remove':
       return t('step.removeMedia');
+    case 'media.rename':
+      if (typeof step.name === 'string') return t('step.renameMedia', { name: step.name });
+      if (step.name === null) return t('step.unnameMedia');
+      break;
     case 'plugin.insert': {
       const name = str((step.descriptor as Record<string, unknown> | undefined)?.name);
       const trackId = str(step.trackId);

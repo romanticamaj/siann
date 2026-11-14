@@ -31,6 +31,9 @@ export interface MediaEntity {
   readonly channels: number;
   readonly sampleRate: number;
   readonly frames: string;
+  // The imported file's base name (m5b-engine-project-media); absent when the
+  // media has none, and then not in the entity's JSON or its hash.
+  readonly name?: string;
 }
 
 export interface TrackEntity {

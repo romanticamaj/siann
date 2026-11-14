@@ -204,6 +204,8 @@ export const en = {
   'step.setClipGain': 'Set the volume of {clip} to {gain}',
   'step.addMedia': 'Add an audio file to the pool',
   'step.removeMedia': 'Remove an audio file from the pool',
+  'step.renameMedia': 'Rename an audio file in the pool to {name}',
+  'step.unnameMedia': 'Clear the name of an audio file in the pool',
   'step.insertPlugin': 'Insert {plugin}',
   'step.removePlugin': 'Remove {plugin}',
   'step.bypassPlugin': 'Bypass {plugin}',

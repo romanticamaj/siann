@@ -184,6 +184,8 @@ export const zhHans: Catalog = {
   'step.setClipGain': '将{clip}的音量设为 {gain}',
   'step.addMedia': '将一个音频文件加入媒体池',
   'step.removeMedia': '从媒体池移除一个音频文件',
+  'step.renameMedia': '将媒体池中的一个音频文件重命名为 {name}',
+  'step.unnameMedia': '清除媒体池中一个音频文件的名称',
   'step.insertPlugin': '插入插件：{plugin}',
   'step.removePlugin': '移除插件：{plugin}',
   'step.bypassPlugin': '旁通插件：{plugin}',

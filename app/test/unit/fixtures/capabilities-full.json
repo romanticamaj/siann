@@ -9,7 +9,7 @@
   "scopes": ["propose", "trusted"],
   "commands": [
     "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add", "media.remove",
-    "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename", "session.set_tempo", "track.add",
+    "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename", "session.set_tempo", "track.add",
     "track.remove", "track.rename", "track.set_gain", "track.set_mute", "track.set_pan", "track.set_solo"
   ],
   "methods": [
@@ -21,7 +21,7 @@
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin", "gesture.update", "gesture.hold", "gesture.end", "gesture.cancel",
-    "plan.list", "plan.preview"
+    "plan.list", "plan.preview", "session.create", "media.import"
   ],
   "features": {
     "plans": true,
@@ -31,7 +31,8 @@
     "render": true,
     "plugins": false,
     "gestures": true,
-    "peaks": true
+    "peaks": true,
+    "mediaImport": { "formats": ["wav", "flac"] }
   },
   "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024 }
 }
