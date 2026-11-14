@@ -1,9 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <climits>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "siann/engine/offline.hpp"
 #include "siann/hash/jcs.hpp"
@@ -236,4 +240,115 @@ TEST_CASE("FLAC media renders like WAV media", "[engine][flac]") {
     CHECK(left(out, 105) == 0.5f);
     CHECK(right(out, 105) == -0.5f);
     CHECK(nonZero(out) == 2);
+}
+
+// ---- m5b-engine-master: the master gain on the master bus ---------------------
+
+namespace {
+
+// A stereo file whose every sample differs, so a scaled render shows anywhere.
+fs::path writeRamp(const fs::path& file, std::int64_t frames) {
+    AudioBuffer buffer;
+    buffer.info = AudioInfo{2, 48'000, frames};
+    for (std::int64_t i = 0; i < frames; ++i) {
+        buffer.samples.push_back(static_cast<float>(i % 997) / 1'000.0f);
+        buffer.samples.push_back(-static_cast<float>(i % 631) / 700.0f);
+    }
+    siann::io::writeFileAtomic(file, siann::media::encodeWavFloat32(buffer));
+    return file;
+}
+
+// Two gained, panned tracks summing on the master.
+void mixSession(Fixture& f) {
+    siann::session::importMedia(f.session, writeRamp(f.dir.path() / "ramp.wav", 3'000), "med_ramp", "test", "t");
+    f.exec(R"({"op":"clip.place","clipId":"clp_a","trackId":"trk_a","mediaId":"med_ramp",
+        "position":{"domain":"audio","value":"0"},"sourceStart":"0","length":"3000"})");
+    f.exec(R"({"op":"clip.place","clipId":"clp_b","trackId":"trk_b","mediaId":"med_ramp",
+        "position":{"domain":"audio","value":"500"},"sourceStart":"100","length":"2000"})");
+    f.exec(R"({"op":"track.set_gain","trackId":"trk_a","gainMilliDb":-1234})");
+    f.exec(R"({"op":"track.set_pan","trackId":"trk_b","pan":-3333})");
+}
+
+std::string setMaster(std::int32_t milliDb) {
+    return R"({"op":"master.set_gain","gainMilliDb":)" + std::to_string(milliDb) + "}";
+}
+
+// The offline graph as it was before the master gain: per track clips and a
+// fader into the master bus, which is the output.
+AudioBuffer renderWithoutMasterNode(const Document& document, const MediaLibrary& library) {
+    using namespace siann::graph;
+    GraphBuilder builder;
+    const NodeId bus = builder.add(std::make_unique<BusNode>(2), "master");
+    for (const siann::engine::FlatTrack& flat : siann::engine::flattenClips(document)) {
+        std::vector<ClipPlayerNode::Clip> clips;
+        for (const siann::engine::FlatClip& clip : flat.clips) {
+            clips.push_back(ClipPlayerNode::Clip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
+                                                 library.media.at(clip.media->contentHash)});
+        }
+        const NodeId player = builder.add(std::make_unique<ClipPlayerNode>(flat.track->channels, std::move(clips)),
+                                          flat.track->id + ".clips");
+        const NodeId fader = builder.add(std::make_unique<TrackFaderNode>(flat.track->channels, flat.track->gain.milliDb,
+                                                                          flat.track->pan, flat.track->mute,
+                                                                          flat.soloSilenced),
+                                         flat.track->id + ".fader");
+        builder.connect(player, fader);
+        builder.connect(fader, bus);
+    }
+    builder.setOutput(bus);
+    auto graph = std::move(builder).compile(512);
+    return siann::engine::renderGraph(*graph, 0, documentEnd(document), document.root().sampleRate);
+}
+
+}  // namespace
+
+TEST_CASE("A render at master -6 dB is the 0 dB render scaled sample for sample", "[engine][master]") {
+    Fixture f;
+    mixSession(f);
+    const AudioBuffer unity = renderOffline(f.doc(), f.library());
+    REQUIRE(nonZero(unity) > 1'000);
+    f.exec(setMaster(-6'000));
+    REQUIRE(f.doc().master() != nullptr);
+    const AudioBuffer scaled = renderOffline(f.doc(), f.library());
+    REQUIRE(scaled.samples.size() == unity.samples.size());
+    const float g = siann::graph::gainFromMilliDb(-6'000);
+    std::size_t mismatches = 0;
+    for (std::size_t i = 0; i < unity.samples.size(); ++i) {
+        if (scaled.samples[i] != unity.samples[i] * g) {
+            ++mismatches;
+        }
+    }
+    CHECK(mismatches == 0);
+    CHECK(scaled.samples != unity.samples);
+    // Independent of block size, as every render is.
+    CHECK(renderOffline(f.doc(), f.library(), RenderOptions{0, -1, 37}).samples == scaled.samples);
+}
+
+TEST_CASE("A master at minus infinity renders silence", "[engine][master]") {
+    Fixture f;
+    mixSession(f);
+    f.exec(setMaster(INT32_MIN));
+    const AudioBuffer out = renderOffline(f.doc(), f.library());
+    CHECK(out.info.frames == documentEnd(f.doc()));
+    CHECK(nonZero(out) == 0);
+}
+
+TEST_CASE("A document without the master renders bit-identically to the graph without a master gain",
+          "[engine][master]") {
+    Fixture f;
+    mixSession(f);
+    REQUIRE(f.doc().master() == nullptr);
+    const AudioBuffer reference = renderWithoutMasterNode(f.doc(), f.library());
+    CHECK(renderOffline(f.doc(), f.library()).samples == reference.samples);
+    // Set and set back to 0 dB: the same document, the same render.
+    f.exec(setMaster(-6'000));
+    f.exec(setMaster(0));
+    REQUIRE(f.doc().master() == nullptr);
+    CHECK(renderOffline(f.doc(), f.library()).samples == reference.samples);
+    // A master of +24 dB clips nothing in a float render: exactly the scaled sum.
+    f.exec(setMaster(24'000));
+    const AudioBuffer loud = renderOffline(f.doc(), f.library());
+    const float g = siann::graph::gainFromMilliDb(24'000);
+    for (std::size_t i = 0; i < reference.samples.size(); i += 101) {
+        CHECK(loud.samples[i] == reference.samples[i] * g);
+    }
 }

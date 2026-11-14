@@ -137,6 +137,37 @@
         }
       ],
       "documentHash": "sha256:9dc95c683a7ff0f648b1e01b7408872958945de84eba37d6d8929e4418b63d17"
+    },
+    {
+      "name": "master_singleton",
+      "entities": [
+        {
+          "type": "media",
+          "id": "med_1",
+          "entityHash": "sha256:b6d1a9b2fe46675465cdab8f2c0f1b7e624e7afb2e9acc107190221229c0ecb5"
+        },
+        {
+          "type": "master",
+          "id": "master",
+          "entityHash": "sha256:50bda2c62db935c568be2a581a3b7ca78d75e92a4e28b14c6e76affdc01a5ca4"
+        },
+        {
+          "type": "root",
+          "id": "root",
+          "entityHash": "sha256:b07d2897683b06b854e6f1ee8c05ee7856bb41b6f6cc9157d012ac2de409e31a"
+        },
+        {
+          "type": "locators",
+          "id": "locators",
+          "entityHash": "sha256:79765176a919f583d665de09eb6233b6fdd4446a5e95252661ce0c26af29dd63"
+        },
+        {
+          "type": "track",
+          "id": "trk_1",
+          "entityHash": "sha256:856b851e74644e310d44c586d3a71ca7d558457512eb68d0e22a186d823b5054"
+        }
+      ],
+      "documentHash": "sha256:07d19dad7682decb0b77d29ea287fe882cacc5e2238dc9e12c483facf638a26c"
     }
   ],
   "invalid": [

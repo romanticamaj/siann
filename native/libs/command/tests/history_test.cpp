@@ -988,3 +988,59 @@ TEST_CASE("Rolling back a branch-merge revision after main changed one of its en
 
     CHECK(rollbackConflicts(h, mergedId) == std::vector<EntityRef>{EntityRef{EntityType::track, "trk_c"}});
 }
+
+// m5b-engine-master: each master.set_gain is one revision; undo and redo walk the
+// first set, a change and the removal at 0 dB back and forth.
+TEST_CASE("master.set_gain is one revision each; undo and redo restore the first set, a change and the removal",
+          "[history][master]") {
+    History history = fresh();
+    const EntityRef ref{EntityType::master, "master"};
+    auto setMaster = [](int milliDb) {
+        return cmd(R"({"op":"master.set_gain","gainMilliDb":)" + std::to_string(milliDb) + "}");
+    };
+    const auto none = history.head().envelope.documentHash;
+    const Revision& a = history.commit({setMaster(-6000)}, "a", "t");
+    REQUIRE(a.diff.size() == 1);
+    CHECK(a.diff[0].entity == ref);
+    CHECK(a.diff[0].change == DiffEntry::Change::added);
+    const auto withA = a.envelope.documentHash;
+    const Revision& b = history.commit({setMaster(-3000)}, "a", "t");
+    REQUIRE(b.diff.size() == 1);
+    CHECK(b.diff[0].change == DiffEntry::Change::modified);
+    const auto withB = b.envelope.documentHash;
+    const Revision& c = history.commit({setMaster(0)}, "a", "t");
+    REQUIRE(c.diff.size() == 1);
+    CHECK(c.diff[0].change == DiffEntry::Change::removed);
+    CHECK(c.envelope.documentHash == none);
+    CHECK(history.revisions().size() == 4);
+
+    // Undo the removal: the master comes back at -3000.
+    const Revision& u1 = history.undo("a", "t");
+    CHECK(u1.envelope.documentHash == withB);
+    REQUIRE(history.head().document.master() != nullptr);
+    CHECK(history.head().document.master()->gain.milliDb == -3000);
+    REQUIRE(u1.diff.size() == 1);
+    CHECK(u1.diff[0].change == DiffEntry::Change::added);
+    // Undo the change.
+    CHECK(history.undo("a", "t").envelope.documentHash == withA);
+    CHECK(history.head().document.master()->gain.milliDb == -6000);
+    // Undo the first set: no master.
+    const Revision& u3 = history.undo("a", "t");
+    CHECK(u3.envelope.documentHash == none);
+    CHECK(history.head().document.master() == nullptr);
+    REQUIRE(u3.diff.size() == 1);
+    CHECK(u3.diff[0].change == DiffEntry::Change::removed);
+
+    history.redo("a", "t");
+    CHECK(history.head().document.master()->gain.milliDb == -6000);
+    history.redo("a", "t");
+    CHECK(history.head().document.master()->gain.milliDb == -3000);
+    history.redo("a", "t");
+    CHECK(history.head().document.master() == nullptr);
+    CHECK(history.head().envelope.documentHash == none);
+
+    // 0 dB while absent is a revision with an empty diff.
+    const Revision& same = history.commit({setMaster(0)}, "a", "t");
+    CHECK(same.diff.empty());
+    CHECK(same.envelope.documentHash == none);
+}

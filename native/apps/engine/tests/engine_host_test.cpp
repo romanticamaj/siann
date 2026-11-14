@@ -1271,3 +1271,92 @@ TEST_CASE("disableCrashDialogs turns off the crash dialogs and keeps the other e
     SUCCEED();
 #endif
 }
+
+// m5b-engine-master: the master gain target through the host's GesturePort, on the
+// live graph: the start value from the heard side, the sound through the
+// parameter channel, cancel back to the document's value, end one master.set_gain.
+TEST_CASE("a master gesture through the port starts from the heard side and cancel returns the sound",
+          "[engine][host][gesture][master]") {
+    Rig rig;
+    session::Session& session = rig.fixture.session;
+    // trk_b muted: the master sum is trk_a alone, so master / trk_a is the master gain.
+    rig.fixture.exec(R"({"op":"track.set_mute","trackId":"trk_b","mute":true})");
+    rig.host->auditionPort()->mainCommitted();
+    rig.host->play();
+    rig.settle();
+    rig.pump(8);
+    protocol::GesturePort& port = *rig.host;
+    const protocol::GestureTarget target = protocol::GestureTarget::masterGain();
+    CHECK(target.ref() == "master:master");
+    // The master meter's peak over trk_a's, both of the newest block.
+    const auto masterRatio = [&]() {
+        const auto master = rig.engine().dispatcher().meter(playback::masterMeterKey());
+        const auto track = rig.engine().dispatcher().meter("track:trk_a");
+        REQUIRE(master.has_value());
+        REQUIRE(track.has_value());
+        REQUIRE(master->blockStart == track->blockStart);
+        REQUIRE(track->reading.peak[0] > 0.01f);
+        return master->reading.peak[0] / track->reading.peak[0];
+    };
+    const auto near = [](float ratio, std::int32_t milliDb) {
+        return std::abs(ratio - graph::gainFromMilliDb(milliDb)) < 1e-5f;
+    };
+    CHECK(near(masterRatio(), 0));
+
+    // No master entity: the start value is 0, never not_found.
+    CHECK(port.begin(target) == 0.0);
+    port.update(target, -20'000.0);
+    rig.pump(8);
+    CHECK(near(masterRatio(), -20'000));
+    port.cancel(target);
+    rig.pump(8);
+    CHECK(near(masterRatio(), 0));
+
+    // A main revision sets -6 dB; a heard proposal holds -12 dB.
+    rig.fixture.exec(R"({"op":"master.set_gain","gainMilliDb":-6000})");
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(8);
+    CHECK(near(masterRatio(), -6'000));
+    CHECK(port.begin(target) == -6'000.0);
+    port.cancel(target);
+
+    const command::BranchId branch = session.branch(session.history().head().envelope.id);
+    session.commitOn(branch, {live_rig::cmd(R"({"op":"master.set_gain","gainMilliDb":-12000})")}, "test", "t");
+    rig.host->auditionPort()->audition(branch);
+    rig.pump(8);
+    CHECK(near(masterRatio(), -12'000));
+    CHECK(port.begin(target) == -12'000.0);
+    port.update(target, -20'000.0);
+    rig.pump(8);
+    CHECK(near(masterRatio(), -20'000));
+    port.cancel(target);
+    rig.pump(8);
+    CHECK(near(masterRatio(), -12'000));
+
+    // Back on main, an end commits one master.set_gain on main, heard without a compile.
+    rig.host->auditionPort()->hearMain();
+    rig.pump(8);
+    const std::size_t revisions = session.history().revisions().size();
+    const std::size_t compiles = rig.engine().compileCount();
+    CHECK(port.begin(target) == -6'000.0);
+    port.update(target, -3'000.0);
+    rig.pump(4);
+    const protocol::GestureEnd end = port.end(target, "user", "t");
+    REQUIRE(end.revision != nullptr);
+    CHECK(end.startValue == -6'000.0);
+    CHECK(end.value == -3'000.0);
+    CHECK(session.history().revisions().size() == revisions + 1);
+    REQUIRE(end.revision->commands.size() == 1);
+    CHECK(end.revision->commands[0].op() == "master.set_gain");
+    CHECK(session.history().head().document.master()->gain.milliDb == -3'000);
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(8);
+    CHECK(rig.engine().compileCount() == compiles);
+    CHECK(near(masterRatio(), -3'000));
+
+    // A gesture that never moved ends with no revision.
+    CHECK(port.begin(target) == -3'000.0);
+    const protocol::GestureEnd still = port.end(target, "user", "t");
+    CHECK(still.revision == nullptr);
+    CHECK(still.value == -3'000.0);
+}

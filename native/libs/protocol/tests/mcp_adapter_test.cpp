@@ -900,3 +900,28 @@ TEST_CASE("tools/list in the trusted scope describes import_media and create_ses
     CHECK(required == std::vector<std::string>{"create_session.path", "import_media.path",
                                                "import_media.clientImportId"});
 }
+
+// m5b-engine-master: the master gain needs no tool of its own; execute (trusted)
+// and a plan carry master.set_gain, and list_commands names it.
+TEST_CASE("execute and a plan carry master.set_gain; list_commands names it", "[protocol][mcp][master]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value setMaster = Value(Object{{"op", Value("master.set_gain")}, {"gainMilliDb", Value(-6000)}});
+    const Value executed = mcp.ok("execute", Value(Object{{"commands", Value(Array{setMaster})}}));
+    CHECK(at(at(executed, "revision"), "diff").asArray().at(0).asString() == "master:master");
+    REQUIRE(f.head().document.master() != nullptr);
+    CHECK(f.head().document.master()->gain.milliDb == -6000);
+
+    const Value back = Value(Object{{"op", Value("master.set_gain")}, {"gainMilliDb", Value(0)}});
+    const std::string hash = at(mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{back})}})), "hash").asString();
+    mcp.ok("approve_plan", Value(Object{{"plan", Value(hash)}}));
+    CHECK(at(at(mcp.ok("apply_plan", Value(Object{{"plan", Value(hash)}})), "revision"), "cause").asString() == "plan");
+    CHECK(f.head().document.master() == nullptr);
+
+    bool listed = false;
+    for (const Value& name : at(at(mcp.tool("list_commands"), "structuredContent"), "commands").asArray()) {
+        listed = listed || name.asString() == "master.set_gain";
+    }
+    CHECK(listed);
+}

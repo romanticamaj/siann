@@ -69,6 +69,11 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.deepEqual(FULL.features?.mediaImport, { formats: ['wav', 'flac'] });
   assert.equal(reduced.feature('mediaImport'), false);
   assert.equal(full.command('media.rename'), true);
+  // m5b-engine-master: the master gain command and its feature.
+  assert.equal(full.feature('masterGain'), true);
+  assert.equal(reduced.feature('masterGain'), false);
+  assert.equal(full.command('master.set_gain'), true);
+  assert.equal(reduced.command('master.set_gain'), false);
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);

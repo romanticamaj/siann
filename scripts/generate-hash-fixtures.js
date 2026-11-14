@@ -73,6 +73,15 @@ const valid = [
     entity('clip', 'clp_1'),
     entity('plugin_slot', 'slt_1'),
   ]],
+  // m5b-engine-master: the singleton master entity sorts between locators and
+  // media ("loc" < "mas" < "med") like any other leaf.
+  ['master_singleton', [
+    entity('media', 'med_1'),
+    entity('master', 'master'),
+    entity('root', 'root'),
+    entity('locators', 'locators'),
+    entity('track', 'trk_1'),
+  ]],
 ].map(([name, entities]) => ({ name, entities, documentHash: expectedDocumentHash(entities) }));
 
 const valid64 = 'a'.repeat(64);

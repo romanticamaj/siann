@@ -51,6 +51,13 @@ export interface Sequence {
     steps: SequenceStep[];
     sync: Sequence['sync'];
   };
+  // m5b-engine-master: deltas on master:master, a sync that holds it, and a
+  // document holding both singletons.
+  master: {
+    steps: SequenceStep[];
+    sync: Sequence['sync'];
+    both: { document: Record<string, unknown>; documentHash: string; sync: Sequence['sync'] };
+  };
 }
 
 export function sequence(): Sequence {
