@@ -22,9 +22,14 @@
 // follows session.changed (structural edits are never optimistic), and a
 // refusal is shown as the last error and the gesture discarded. A gesture
 // whose commands engine.capabilities does not list (`allows`) does not begin
-// and sends nothing (UI redesign spec 3.0). A vertical drag in the lower half
-// of the ruler zooms about the pointer; the upper half is the locators' (P1-7)
-// and inert until then. The wheel is the surface's (non-passive, default
+// and sends nothing (UI redesign spec 3.0). In the lower half of the ruler a
+// click (a press and release that moved less than DRAG_THRESHOLD_PX) locates
+// the project cursor through onLocate, also while stopped, and a vertical
+// drag zooms about the pointer (m5-ui-transport); the upper half is the
+// locators' (P1-7) and inert until then. With auto-scroll on (F) the overlay
+// frame turns the page when the cursor leaves the view while playing, never
+// while a drag is held (auto-scroll.ts), so the content layer redraws only on
+// a page turn. The wheel is the surface's (non-passive, default
 // prevented): plain scrolls the lanes, Shift scrolls horizontally, Ctrl zooms
 // at the pointer, Ctrl+Shift changes every track's height. Lane heights are
 // the layout store's (per session id); the canvas reads them through
@@ -40,6 +45,7 @@ import type { MeterFrame } from '../model/meter-frames';
 import { chooseLevel, columnRange } from '../model/peaks';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { ReadModel, Snapshot } from '../model/read-model';
+import { nextScroll } from './auto-scroll';
 import { gestureCommand, newClipId, type TimelineCommand, type TimelineGesture } from './commands';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
 import {
@@ -116,6 +122,11 @@ export interface TimelineCanvasOptions {
   readonly laneHeights?: LaneHeightSource;
   // The drag tooltip: shown, worded and placed by the overlay while dragging.
   readonly tooltip?: HTMLElement | null;
+  // A click in the ruler's lower half: locate the project cursor to this
+  // frame (a non-negative decimal string; m5-ui-transport).
+  readonly onLocate?: (frames: string) => void;
+  // Auto-scroll in page mode while playing (off when absent; setAutoScroll).
+  readonly autoScroll?: boolean;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -151,9 +162,12 @@ interface Drag {
 }
 
 interface RulerDrag {
+  readonly startX: number;
   readonly startY: number;
   readonly anchorX: number;
   readonly view: Viewport;
+  // Past DRAG_THRESHOLD_PX: a zoom; until then a release is a click (locate).
+  moved: boolean;
 }
 
 interface Palette {
@@ -210,6 +224,8 @@ export class TimelineCanvas {
   #overlayDraws = 0;
   #cursorX: number | null = null;
   #playhead: string | null = null;
+  #playing = false;
+  #autoScroll: boolean;
   #outline = 0;
   #dimmed: string[] = [];
   #guidance: string | null = null;
@@ -221,6 +237,7 @@ export class TimelineCanvas {
     this.#content = options.content;
     this.#overlay = options.overlay;
     this.#container = options.container;
+    this.#autoScroll = options.autoScroll ?? false;
     this.#view = {
       framesPerPixel: options.framesPerPixel ?? DEFAULT_FRAMES_PER_PIXEL,
       scrollFrames: '0',
@@ -366,6 +383,13 @@ export class TimelineCanvas {
     this.#setView(zoomAbout(this.#view, this.#view.width / 2, framesPerPixel / this.#view.framesPerPixel));
   }
 
+  // F: auto-scroll in page mode while playing (UI redesign spec 3.1).
+  setAutoScroll(enabled: boolean): void {
+    if (enabled === this.#autoScroll) return;
+    this.#autoScroll = enabled;
+    this.#invalidateOverlay();
+  }
+
   // Shift+H and Shift+G: every track one preset taller or shorter.
   tracksTaller(): void {
     this.#stepHeights(1);
@@ -481,6 +505,7 @@ export class TimelineCanvas {
   #playheadChanged(): void {
     const frame = this.#options.playhead?.latest() ?? null;
     const playhead = frame ? frame.playheadSamples : null;
+    this.#playing = frame?.playing ?? false;
     if (playhead === this.#playhead) return;
     this.#playhead = playhead;
     this.#invalidateOverlay();
@@ -538,9 +563,9 @@ export class TimelineCanvas {
     const snapshot = this.#options.model.getSnapshot();
     const { x, y } = this.#point(e);
     if (y < this.#view.rulerHeight) {
-      // The lower half zooms by a vertical drag; the upper half is P1-7's.
+      // The lower half: a click locates, a vertical drag zooms; the upper half is P1-7's.
       if (y >= this.#view.rulerHeight / 2) {
-        this.#rulerDrag = { startY: y, anchorX: x, view: this.#view };
+        this.#rulerDrag = { startX: x, startY: y, anchorX: x, view: this.#view, moved: false };
         this.#capture(e);
       }
       return;
@@ -581,6 +606,8 @@ export class TimelineCanvas {
     this.#lastPointer = { x, y };
     const ruler = this.#rulerDrag;
     if (ruler) {
+      if (!ruler.moved && Math.abs(y - ruler.startY) < DRAG_THRESHOLD_PX && Math.abs(x - ruler.startX) < DRAG_THRESHOLD_PX) return;
+      ruler.moved = true;
       const factor = Math.pow(2, -(y - ruler.startY) / RULER_DRAG_PX_PER_STEP);
       this.#setView(zoomAbout({ ...ruler.view, width: this.#view.width, height: this.#view.height, laneHeights: this.#view.laneHeights }, ruler.anchorX, factor));
       return;
@@ -605,10 +632,16 @@ export class TimelineCanvas {
   }
 
   #pointerUp(e: PointerEvent): void {
-    if (this.#rulerDrag) {
+    const ruler = this.#rulerDrag;
+    if (ruler) {
       this.#pointerMove(e);
       this.#rulerDrag = null;
       this.#release(e);
+      // A click (no movement past the threshold): locate to the pressed frame.
+      if (!ruler.moved) {
+        const frame = xToFrame(ruler.startX, ruler.view);
+        this.#options.onLocate?.((frame < 0n ? 0n : frame).toString());
+      }
       return;
     }
     const drag = this.#drag;
@@ -891,6 +924,20 @@ export class TimelineCanvas {
 
   #drawOverlay(): void {
     this.#overlayDraws += 1;
+    // Auto-scroll (page mode): a cursor that left the view while playing
+    // turns the page here, so the content is redrawn only on a page turn;
+    // never while a clip or ruler drag is held.
+    const page = nextScroll({
+      view: this.#view,
+      cursor: this.#playhead,
+      playing: this.#playing,
+      enabled: this.#autoScroll,
+      dragging: this.#drag !== null || this.#rulerDrag !== null,
+    });
+    if (page !== null) {
+      this.#view = { ...this.#view, scrollFrames: page };
+      this.#invalidateContent();
+    }
     const view = this.#view;
     const snapshot = this.#options.model.getSnapshot();
     const ctx = this.#context(this.#overlay);

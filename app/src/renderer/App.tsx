@@ -16,7 +16,9 @@
 // shell's disconnected state, and each reconnect clears the clip and plan
 // selections. The selected track (m5-ui-arrange) is the track list's: a
 // header clicked, or the selected clip's track; the Inspector shows it, and a
-// reconnect clears it too.
+// reconnect clears it too. The transport bar (m5-ui-transport) sits in the
+// top bar over the TransportController; the position display's primary
+// format, a layout setting, also words positions in the Plans tab.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -29,6 +31,7 @@ import type { PeaksCache } from './model/peaks-cache';
 import type { PlanStore } from './model/plan-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
+import type { TransportController } from './model/transport';
 import { Mixer } from './mixer/Mixer';
 import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
@@ -37,6 +40,7 @@ import { CapabilitiesContext } from './shell/Capable';
 import { Inspector } from './shell/Inspector';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
+import { TimeFormatContext } from './shell/time-format';
 import type { ToastStore } from './shell/toast-store';
 import { Timeline } from './timeline/Timeline';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
@@ -54,6 +58,7 @@ export interface AppProps {
   readonly platform: 'mac' | 'other';
   readonly connection: ConnectionPhaseStore;
   readonly toasts: ToastStore;
+  readonly transport: TransportController;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
 }
@@ -70,6 +75,7 @@ export function App({
   platform,
   connection,
   toasts,
+  transport,
   onTimelineHooks,
   onMeterHooks,
 }: AppProps) {
@@ -91,36 +97,43 @@ export function App({
     [client],
   );
   useEffect(() => setSelectedTrack(null), [reconnects]);
+  const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
+  const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
-      <Shell
-        client={client}
-        plans={plans}
-        engineStatus={engineStatus}
-        store={layout}
-        commands={commands}
-        platform={platform}
-        banner={<AuditionBanner client={client} plans={plans} />}
-        phase={phase}
-        toasts={toasts}
-        left={<Inspector client={client} gestures={gestures} trackId={selectedTrack} />}
-        project={
-          <Timeline
-            client={client}
-            peaks={peaks}
-            commands={commands}
-            layout={layout}
-            realtime={realtime}
-            selectedTrackId={selectedTrack}
-            onSelectTrack={setSelectedTrack}
-            onSelect={selectClip}
-            onHooks={onTimelineHooks}
-            reconnects={reconnects}
-          />
-        }
-        lower={<Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />}
-        right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
-      />
+      <TimeFormatContext.Provider value={timeFormat}>
+        <Shell
+          client={client}
+          plans={plans}
+          engineStatus={engineStatus}
+          store={layout}
+          commands={commands}
+          platform={platform}
+          banner={<AuditionBanner client={client} plans={plans} />}
+          phase={phase}
+          toasts={toasts}
+          realtime={realtime}
+          transport={transport}
+          left={<Inspector client={client} gestures={gestures} trackId={selectedTrack} />}
+          project={
+            <Timeline
+              client={client}
+              peaks={peaks}
+              commands={commands}
+              layout={layout}
+              realtime={realtime}
+              selectedTrackId={selectedTrack}
+              onSelectTrack={setSelectedTrack}
+              onSelect={selectClip}
+              onHooks={onTimelineHooks}
+              onLocate={locate}
+              reconnects={reconnects}
+            />
+          }
+          lower={<Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />}
+          right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
+        />
+      </TimeFormatContext.Provider>
     </CapabilitiesContext.Provider>
   );
 }

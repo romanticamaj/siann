@@ -84,6 +84,17 @@ export const zhHans: Catalog = {
   'inspector.volume': '音量',
   'inspector.colour': '音轨颜色',
 
+  'transport.label': '走带控制',
+  'transport.toStart': '移至工程起点',
+  'transport.startStop': '开始 / 停止',
+  'transport.stop': '停止',
+  'transport.noDevice': '没有运行中的音频设备，无法使用走带控制',
+  'transport.position': '播放光标位置',
+  'transport.fourFour': '小节与拍按 4/4 拍计算',
+  'transport.positionField': '移至位置',
+  'transport.autoScroll': '自动滚动',
+  'transport.tempo': '播放光标处的速度 (BPM)',
+
   'plans.label': '计划',
   'plans.list': '智能体提交的计划',
   'plans.none': '还没有计划',

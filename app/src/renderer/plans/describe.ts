@@ -6,13 +6,16 @@
 // name (the read model's, or the name an earlier step of the same plan gave
 // it), a clip by its track and position, a plugin by its name and track, and
 // an entity none of those know by its kind only. dB values and pan go through
-// format.ts and positions are seconds from the frame string and the root's
-// sample rate (bars and beats arrive with m5-ui-transport). Names an agent or
-// the user wrote are shown as written.
+// format.ts; positions follow the position display's primary format
+// (m5-ui-transport; UI redesign spec 7 P1-5): Bars+Beats through root.tempo
+// by default, or Seconds, from the frame string and the root's sample rate;
+// lengths are seconds. Names an agent or the user wrote are shown as written.
 
 import { formatMilliDb, formatPan, formatSeconds } from '../format';
 import { translator, type T } from '../i18n/t';
+import type { TempoPoint } from '../model/document';
 import type { Snapshot } from '../model/read-model';
+import { formatPosition, type TimeFormat } from '../timeline/transport-time';
 
 const english = translator('en');
 
@@ -33,6 +36,10 @@ export interface StepNames {
   clip(id: string): ClipName | undefined;
   slot(id: string): SlotName | undefined;
   readonly sampleRate: number | undefined;
+  // root.tempo (120 BPM when absent) and the position display's primary
+  // format (Bars+Beats when absent), for positions.
+  readonly tempo?: readonly TempoPoint[];
+  readonly timeFormat?: TimeFormat;
 }
 
 export const NO_NAMES: StepNames = {
@@ -43,8 +50,8 @@ export const NO_NAMES: StepNames = {
 };
 
 // The names of a read-model snapshot (null: nothing known).
-export function namesFromSnapshot(snapshot: Snapshot | null): StepNames {
-  if (!snapshot) return NO_NAMES;
+export function namesFromSnapshot(snapshot: Snapshot | null, timeFormat: TimeFormat = 'bars'): StepNames {
+  if (!snapshot) return { ...NO_NAMES, timeFormat };
   const entity = (ref: string) => snapshot.entities[ref] as unknown as Record<string, unknown> | undefined;
   return {
     track: (id) => {
@@ -63,6 +70,8 @@ export function namesFromSnapshot(snapshot: Snapshot | null): StepNames {
       return { trackId: slot.trackId, name: slot.name };
     },
     sampleRate: snapshot.root?.sampleRate,
+    tempo: snapshot.root?.tempo ?? [],
+    timeFormat,
   };
 }
 
@@ -113,9 +122,20 @@ function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]):
     clip: (id) => clips.get(id) ?? names.clip(id),
     slot: (id) => slots.get(id) ?? names.slot(id),
     sampleRate: names.sampleRate,
+    tempo: names.tempo,
+    timeFormat: names.timeFormat,
   };
 }
 
+// A position as the position display shows it in its primary format: the
+// same bytes in every locale, no catalog word around it.
+function position(frames: string | undefined, names: StepNames): string | undefined {
+  const rate = names.sampleRate;
+  if (frames === undefined || !rate || !/^\d+$/.test(frames)) return undefined;
+  return formatPosition(frames, names.tempo ?? [], rate, names.timeFormat ?? 'bars');
+}
+
+// A length in seconds.
 function seconds(frames: string | undefined, names: StepNames, t: T): string | undefined {
   const rate = names.sampleRate;
   if (frames === undefined || !rate || !/^-?\d+$/.test(frames)) return undefined;
@@ -132,7 +152,7 @@ function clipOf(id: unknown, names: StepNames, t: T, at: boolean): string {
   if (!clip) return t('step.aClip');
   const track = names.track(clip.trackId);
   if (!track) return t('step.aClip');
-  const time = at ? seconds(clip.position, names, t) : undefined;
+  const time = at ? position(clip.position, names) : undefined;
   return time ? t('step.clipOnAt', { track, time }) : t('step.clipOn', { track });
 }
 
@@ -191,10 +211,10 @@ export function describeStep(
     case 'track.explode':
       return t('step.explodeTrack', { track: track() });
     case 'clip.place':
-      return t('step.placeClip', { track: track(), time: seconds(audioFrames(step.position), names, t) ?? t('step.newPosition') });
+      return t('step.placeClip', { track: track(), time: position(audioFrames(step.position), names) ?? t('step.newPosition') });
     case 'clip.move': {
       const clip = clipOf(step.clipId, names, t, false);
-      const time = seconds(audioFrames(step.position), names, t) ?? t('step.newPosition');
+      const time = position(audioFrames(step.position), names) ?? t('step.newPosition');
       if (typeof step.trackId === 'string') return t('step.moveClipTo', { clip, track: track(), time });
       return t('step.moveClip', { clip, time });
     }

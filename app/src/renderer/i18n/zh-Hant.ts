@@ -84,6 +84,17 @@ export const zhHant: Catalog = {
   'inspector.volume': '音量',
   'inspector.colour': '音軌顏色',
 
+  'transport.label': '走帶控制',
+  'transport.toStart': '移至專案起點',
+  'transport.startStop': '開始 / 停止',
+  'transport.stop': '停止',
+  'transport.noDevice': '沒有執行中的音訊裝置，無法使用走帶控制',
+  'transport.position': '播放游標位置',
+  'transport.fourFour': '小節與拍以 4/4 拍計算',
+  'transport.positionField': '移至位置',
+  'transport.autoScroll': '自動捲動',
+  'transport.tempo': '播放游標處的速度 (BPM)',
+
   'plans.label': '計畫',
   'plans.list': '代理提交的計畫',
   'plans.none': '尚無計畫',

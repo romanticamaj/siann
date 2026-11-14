@@ -96,6 +96,20 @@ export const en = {
   'inspector.volume': 'Volume',
   'inspector.colour': 'Track colour',
 
+  // The transport bar (m5-ui-transport; UI redesign spec 3.1).
+  'transport.label': 'Transport',
+  'transport.toStart': 'Go to project start',
+  'transport.startStop': 'Start / stop',
+  'transport.stop': 'Stop',
+  // Why the transport is disabled: the device error's code goes in front.
+  'transport.noDevice': 'No audio device is running, so the transport is unavailable',
+  'transport.position': 'Project cursor position',
+  // The position display's tooltip (spec 3.0: no time signature until E-10).
+  'transport.fourFour': 'Bars and beats are counted in 4/4',
+  'transport.positionField': 'Go to position',
+  'transport.autoScroll': 'Auto-scroll',
+  'transport.tempo': 'Tempo at the project cursor (BPM)',
+
   // The Plans tab (m5-ui-plan-panel; UI redesign section 4 and P1-5).
   'plans.label': 'Plans',
   'plans.list': 'Plans from the agent',
@@ -175,7 +189,8 @@ export const en = {
 
   // Plan step descriptions (plans/describe.ts). {track}, {name} and {plugin}
   // are the session's names (never ids), {gain} a formatted dB value, {pan}
-  // L/C/R, {time} and {length} positions in seconds.
+  // L/C/R, {time} a position as the position display's primary format shows
+  // it, {length} a length in seconds.
   'step.aTrack': 'a track',
   'step.aClip': 'a clip',
   'step.clipOn': 'a clip on {track}',

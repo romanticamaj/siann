@@ -22,7 +22,8 @@
 // the locale store is window.__siannLocale (which accepts the pseudo-locale),
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
-// client's log of requests refused as disconnected, and a <Profiler> at the
+// client's log of requests refused as disconnected and of requests sent, and
+// a <Profiler> at the
 // root counts React commits in window.__siannCommits. Only the profiling
 // bundle (renderer.profiling.js, served under SIANN_SHELL_PROFILING=1) calls
 // onRender; in the production bundle the count stays absent (UI redesign
@@ -43,7 +44,8 @@ import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { PlanStore } from './model/plan-store';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
-import { SessionClient, type EngineEndpoint, type SocketLike } from './model/session-client';
+import { SessionClient, type EngineEndpoint, type SentRequest, type SocketLike } from './model/session-client';
+import { TransportController } from './model/transport';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
 import type { MeterTestHooks } from './mixer/MixerMeters';
@@ -66,7 +68,7 @@ declare global {
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
     __siannToasts?: ToastStore;
-    __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }> };
+    __siannClient?: { refused(): ReadonlyArray<{ readonly method: string }>; sent(): ReadonlyArray<SentRequest> };
     __siannMeters?: MeterTestHooks;
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
@@ -119,12 +121,18 @@ window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
 const engineStatus = new EngineStatusStore({ client, schedule });
-if (testHooks) window.__siannClient = { refused: () => client.refused() };
+if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent() };
 
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
+const transport = new TransportController({
+  client,
+  playing: () => realtime.latest()?.playing ?? false,
+  toasts,
+  locale: () => locales.getSnapshot(),
+});
 
 let endpoint: EngineEndpoint | null = null;
 const peaks = new PeaksCache({
@@ -176,6 +184,7 @@ const app = (
     platform={platformOf(navigator.platform)}
     connection={connection}
     toasts={toasts}
+    transport={transport}
     onTimelineHooks={onTimelineHooks}
     onMeterHooks={onMeterHooks}
   />

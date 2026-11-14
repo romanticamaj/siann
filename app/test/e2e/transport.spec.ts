@@ -391,16 +391,6 @@ test('auto-scroll pages the view while playing, F turns it off, and a held clip 
 test('Ctrl+Z and Ctrl+Shift+Z undo and redo a clip move; nothing to undo is a toast', async () => {
   test.setTimeout(120_000);
   await launch();
-  await focusProject();
-  // Ctrl+Z on a fresh session: the engine refuses, the toast says so.
-  await page.keyboard.press(`${MOD}+KeyZ`);
-  await expect.poll(async () => (await sentOf('session.undo')).length).toBe(1);
-  await expect(page.getByTestId('toast-message')).toContainText('nothing_to_undo');
-  const toasts = await page.evaluate(() =>
-    (window as unknown as { __siannToasts?: { getSnapshot(): Array<{ text: string }> } }).__siannToasts!.getSnapshot().map((t) => t.text),
-  );
-  expect(toasts.filter((text) => text.startsWith('nothing_to_undo: '))).toHaveLength(1);
-
   // A clip move on the canvas.
   const start = await clipPosition();
   const target = await rect(CLIP);
@@ -426,6 +416,25 @@ test('Ctrl+Z and Ctrl+Shift+Z undo and redo a clip move; nothing to undo is a to
   await expect.poll(revisions).toBe(before + 2);
   expect(await clipPosition()).toBe(moved);
   expect(await sentOf('session.redo')).toHaveLength(1);
+  expect(await sentOf('session.undo')).toHaveLength(1);
+  await expect(page.getByTestId('toast')).toHaveCount(0);
+
+  // A fresh session (the engine replays a bundle's commits into its undo
+  // history, so a new, empty one): the engine refuses, the toast says so.
+  engine?.close();
+  engine = undefined;
+  await app!.close();
+  app = await launchApp({ sessionDir: path.join(scratch, 'fresh'), userData: path.join(scratch, 'user-fresh'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await focusProject();
+  await page.keyboard.press(`${MOD}+KeyZ`);
+  await expect.poll(async () => (await sentOf('session.undo')).length).toBe(1);
+  await expect(page.getByTestId('toast-message')).toContainText('nothing_to_undo');
+  const toasts = await page.evaluate(() =>
+    (window as unknown as { __siannToasts?: { getSnapshot(): Array<{ text: string }> } }).__siannToasts!.getSnapshot().map((t) => t.text),
+  );
+  expect(toasts.filter((text) => text.startsWith('nothing_to_undo: '))).toHaveLength(1);
 });
 
 test('with no audio device the transport is disabled, its tooltip gives the reason, and Space sends nothing', async () => {

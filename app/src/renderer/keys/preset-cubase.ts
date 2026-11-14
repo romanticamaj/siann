@@ -45,4 +45,21 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Shift+F', commandId: 'view.zoomFull', scope: 'project' },
   // Add a track (spec 3.3).
   { chord: 'T', commandId: 'track.add', scope: 'project' },
+  // The transport (m5-ui-transport; spec 3.1, research/cubase.md 7.1): Space
+  // starts and stops, numpad Enter starts, Num 0 stops, Num . goes to the
+  // project start and the comma is its laptop fallback (SIANN addition);
+  // the period exchanges the position display's formats, Shift+P types a
+  // position. Numpad keys are their own event.code, never the main block's.
+  { chord: 'Space', commandId: 'transport.toggle', scope: 'window' },
+  { chord: 'NumpadEnter', commandId: 'transport.start', scope: 'window' },
+  { chord: 'Numpad0', commandId: 'transport.stop', scope: 'window' },
+  { chord: 'NumpadDecimal', commandId: 'transport.toStart', scope: 'window' },
+  { chord: 'Comma', commandId: 'transport.toStart', scope: 'window' },
+  { chord: 'Period', commandId: 'transport.exchangeFormats', scope: 'window' },
+  { chord: 'Shift+P', commandId: 'transport.enterPosition', scope: 'window' },
+  // Undo and redo (spec 3.2).
+  { chord: 'Mod+Z', commandId: 'edit.undo', scope: 'window' },
+  { chord: 'Mod+Shift+Z', commandId: 'edit.redo', scope: 'window' },
+  // Auto-scroll (spec 3.1; Cubase's F, page mode).
+  { chord: 'F', commandId: 'view.autoScroll', scope: 'project' },
 ];

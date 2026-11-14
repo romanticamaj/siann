@@ -13,6 +13,9 @@
 // only with clip.remove, T only with track.add, and the canvas sends no
 // gesture whose commands are not listed (it reads the latest capabilities
 // through a ref). Lane heights are the layout store's, per session id.
+// m5-ui-transport: a click in the ruler's lower half locates through
+// onLocate (only when engine.capabilities lists transport.locate), and the
+// canvas follows the layout store's auto-scroll setting.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -49,6 +52,8 @@ export interface TimelineProps {
   readonly reconnects?: number;
   // The selected clip, for the left zone.
   readonly onSelect?: (clipId: string | null) => void;
+  // A click in the ruler's lower half: locate the project cursor (frames).
+  readonly onLocate?: (frames: string) => void;
   // Test-only (SIANN_SHELL_TEST=1): the canvas's hooks once it is mounted.
   readonly onHooks?: (hooks: TimelineTestHooks | null) => void;
 }
@@ -71,6 +76,7 @@ export function Timeline({
   onSelectTrack,
   onSelect,
   onHooks,
+  onLocate,
   reconnects = 0,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
@@ -86,6 +92,8 @@ export function Timeline({
   const can = useCapabilities();
   const canRef = useRef(can);
   canRef.current = can;
+  const locateRef = useRef(onLocate);
+  locateRef.current = onLocate;
   const canRemove = can.command('clip.remove');
   const canPlace = can.command('clip.place');
   const canAdd = can.command('track.add');
@@ -128,7 +136,12 @@ export function Timeline({
         },
       },
       tooltip: tooltipRef.current,
+      onLocate: (frames) => {
+        if (canRef.current.has('transport.locate')) locateRef.current?.(frames);
+      },
+      autoScroll: layout.getSnapshot().layout.autoScroll,
     });
+    const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
     const offHeights = surface.onLaneHeights((trackIds, height) => {
       if (sessionId !== null) layout.dispatch({ type: 'allTrackHeights', sessionId, trackIds, height });
     });
@@ -137,6 +150,7 @@ export function Timeline({
     return () => {
       onHooks?.(null);
       offHeights();
+      offAutoScroll();
       surface.destroy();
       setTimeline(null);
     };

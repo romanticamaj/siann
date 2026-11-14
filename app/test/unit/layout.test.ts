@@ -272,7 +272,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const withHeights: Layout = { ...changed, stripWidth: 'narrow', trackHeights: { ses_a: { trk_1: 96 } } };
   const text = serializeLayout(withHeights);
   const object = JSON.parse(text) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(object).sort(), ['collapsed', 'sizes', 'stripWidth', 'tabs', 'trackHeights', 'trackList']);
+  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'sizes', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
   assert.deepEqual(parseLayout(text), withHeights);
   for (const bad of [null, '', '{', 'null', '42', '[]', '"x"']) assert.deepEqual(parseLayout(bad), DEFAULT_LAYOUT, String(bad));
   // Field by field: a bad field falls back, the rest is kept.

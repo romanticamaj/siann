@@ -38,6 +38,19 @@ export const COMMAND_IDS = [
   'view.zoomFull',
   // The track list (spec 3.3).
   'track.add',
+  // The transport and the position display (m5-ui-transport; spec 3.1):
+  // start/stop, start, stop, go to the project start, exchange the display's
+  // primary and secondary format, type a position; undo and redo (spec 3.2);
+  // auto-scroll on and off.
+  'transport.toggle',
+  'transport.start',
+  'transport.stop',
+  'transport.toStart',
+  'transport.exchangeFormats',
+  'transport.enterPosition',
+  'edit.undo',
+  'edit.redo',
+  'view.autoScroll',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 
