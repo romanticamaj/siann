@@ -113,9 +113,9 @@ Recorder::Result Recorder::stop() {
         } catch (...) {
         }
     }
-    const std::uint64_t overflows = overflows_.load(std::memory_order_relaxed);
-    Result result{file_, writer_->frames(), startPosition_.load(std::memory_order_acquire), overflows,
-                  diskFailed() ? EndedBy::disk : overflows > 0 ? EndedBy::overflow : EndedBy::stop};
+    const std::uint64_t lost = overflows_.load(std::memory_order_relaxed);
+    Result result{file_, writer_->frames(), startPosition_.load(std::memory_order_acquire), lost,
+                  diskFailed() ? EndedBy::disk : lost > 0 ? EndedBy::overflow : EndedBy::stop};
     if (result.startPosition == kNoStart) {
         result.startPosition = 0;
     }

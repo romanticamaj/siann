@@ -249,7 +249,11 @@ EngineHostOptions hostOptions(const Options& options, std::ostream& err) {
     // stays held for N opens in all, whichever handle tries.
     fake.sharedRefusals = std::make_shared<std::atomic<int>>(options.fakeOpenFailures.value_or(0));
     chosen.listDevices = [] {
+        // The fake device loops its two outputs back to two inputs (m5b-engine-record),
+        // so engine.select_device {id: "fake", inputId: "fake"} records on CI.
         std::vector<protocol::DeviceDescription> listed{{kFakeDevice, kFakeDevice, kFakeDevice, false, false}};
+        listed.front().inputChannels = 2;
+        listed.front().outputChannels = 2;
         for (protocol::DeviceDescription& one : listHardwareDevices()) {
             listed.push_back(std::move(one));
         }
@@ -396,6 +400,7 @@ int runEngine(const std::vector<std::string>& args, std::ostream& out, std::ostr
         serverOptions.transportPort = &host;
         serverOptions.pluginPort = &host;
         serverOptions.gesturePort = &host;
+        serverOptions.recordPort = &host;
         serverOptions.auditionPort = host.auditionPort();
         // The new bundle is opened (and locked) first, so a refusal changes nothing;
         // the old one is released once the host plays the new one.

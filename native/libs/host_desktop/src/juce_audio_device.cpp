@@ -93,6 +93,18 @@ std::vector<DeviceDescription> JuceAudioDevice::listOutputDevices() {
     return out;
 }
 
+std::vector<DeviceDescription> JuceAudioDevice::listInputDevices() {
+    std::vector<DeviceDescription> out;
+    for (const auto& type : createTypes()) {
+        const auto names = type->getDeviceNames(true);
+        const int defaultIndex = type->getDefaultDeviceIndex(true);
+        for (int i = 0; i < names.size(); ++i) {
+            out.push_back({type->getTypeName().toStdString(), names[i].toStdString(), i == defaultIndex});
+        }
+    }
+    return out;
+}
+
 bool JuceAudioDevice::convertsSampleRateItself(const std::string& deviceType) {
     return deviceType == "Windows Audio";
 }
@@ -151,7 +163,19 @@ AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
     if (type == nullptr || name.isEmpty()) {
         throw DeviceError("no_device", "no audio output device matches '" + config.deviceId + "'");
     }
-    const juce::String inputName = config.inputChannels > 0 ? name : juce::String();
+    juce::String inputName;
+    if (config.inputChannels > 0) {
+        inputName = name;
+        if (!config.inputDeviceId.empty()) {
+            // Another device's input, of the output's type (a backend pairs its own).
+            const auto slash = config.inputDeviceId.find('/');
+            if (slash == std::string::npos || juce::String(config.inputDeviceId.substr(0, slash)) != type->getTypeName()) {
+                throw DeviceError("no_device", "the input '" + config.inputDeviceId + "' is not a " +
+                                                   type->getTypeName().toStdString() + " device");
+            }
+            inputName = juce::String(config.inputDeviceId.substr(slash + 1));
+        }
+    }
     impl_->device.reset(type->createDevice(name, inputName));
     if (!impl_->device) {
         throw DeviceError("no_device", "cannot create audio device '" + name.toStdString() + "'");
@@ -176,8 +200,14 @@ AudioDeviceStatus JuceAudioDevice::open(const AudioDeviceConfig& config) {
     const double rate = impl_->device->getCurrentSampleRate();
     impl_->inputPointers.assign(static_cast<std::size_t>(std::max(config.inputChannels, 0)), nullptr);
     impl_->outputPointers.assign(static_cast<std::size_t>(config.outputChannels), nullptr);
-    return AudioDeviceStatus{std::lround(rate), impl_->device->getCurrentBufferSizeSamples(),
-                             impl_->device->getInputLatencyInSamples(), impl_->device->getOutputLatencyInSamples()};
+    // The channels the device opened of those asked for (JUCE drops the ones it
+    // does not have), counted on this device: no other instance is created.
+    return AudioDeviceStatus{std::lround(rate),
+                             impl_->device->getCurrentBufferSizeSamples(),
+                             impl_->device->getInputLatencyInSamples(),
+                             impl_->device->getOutputLatencyInSamples(),
+                             impl_->device->getActiveInputChannels().countNumberOfSetBits(),
+                             impl_->device->getActiveOutputChannels().countNumberOfSetBits()};
 }
 
 void JuceAudioDevice::start(AudioCallback callback) {

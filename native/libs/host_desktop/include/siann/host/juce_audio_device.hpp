@@ -29,6 +29,10 @@ public:
 
     // Output devices of every available type, after a fresh scan.
     static std::vector<DeviceDescription> listOutputDevices();
+    // Input devices of every available type, after a fresh scan (m5b-engine-record).
+    // Channel counts are not listed: counting them would create each device's
+    // driver, and ASIO allows one instance (the open device reports its own).
+    static std::vector<DeviceDescription> listInputDevices();
 
     // True for device types whose backend accepts any rate and converts it
     // itself with the OS converter: JUCE's WASAPI shared mode ("Windows
@@ -54,6 +58,11 @@ public:
     // mode) is never asked for the session rate; it opens at the OS mix rate.
     // Either way the graph driver then plays through device-side SRC, so the
     // session is never silently converted.
+    //
+    // With config.inputChannels > 0 an input opens with the output: the device
+    // inputDeviceId names ("<type>/<name>" of the output's type), or the output
+    // device's own input when it is empty. JUCE opens the channels the device has
+    // of those asked for; the status reports the channels it opened.
     AudioDeviceStatus open(const AudioDeviceConfig& config) override;
     void start(AudioCallback callback) override;
     void stop() override;

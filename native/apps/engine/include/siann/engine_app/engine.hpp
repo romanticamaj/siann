@@ -37,7 +37,9 @@
 // transport.play, transport.stop, transport.locate, engine.status, engine.devices
 // and engine.select_device, and session.open, which opens the new bundle (taking
 // its lock), rebinds the host to it with the device kept open, and then releases
-// the old bundle's lock.
+// the old bundle's lock. The host is also the record port (Protocol v0 item 27,
+// m5b-engine-record): record.arm, transport.record and record.recover_take; the
+// fake device lists two inputs that loop its outputs back.
 //
 // `out` must not be the process's fd 1 once a plugin can load: hosted plugins
 // (and JUCE) print to stdout, and a line of theirs before or after the ready
