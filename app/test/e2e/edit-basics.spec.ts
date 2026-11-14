@@ -195,12 +195,11 @@ async function head(): Promise<{ revision: string; documentHash: string }> {
   return { revision: sync.revision as string, documentHash: sync.documentHash as string };
 }
 
+// Every clip of the engine's head (one sync chunk holds this small session).
 async function clips(): Promise<ClipJson[]> {
-  const ids = (await hook<Rect[]>('clips')).map((r) => r.clipId);
-  const { entities } = (await engine!.call('session.fetch', { refs: ids.map((id) => `clip:${id}`) })) as {
-    entities: Array<{ entity?: ClipJson; missing?: boolean }>;
-  };
-  return entities.filter((e) => !e.missing).map((e) => e.entity!);
+  const sync = (await engine!.call('session.sync')) as { chunk: { clips?: ClipJson[] }; next: string | null };
+  expect(sync.next).toBeNull();
+  return sync.chunk.clips ?? [];
 }
 
 async function fetchClip(clipId: string): Promise<ClipJson | null> {
@@ -226,6 +225,13 @@ async function operation(name: string, act: () => Promise<void>, check: () => Pr
   expect(undone.documentHash, `${name}: one undo restores the document`).toBe(before.documentHash);
   await expect(page.getByTestId('revision')).toHaveText(undone.revision);
   await expect(page.getByTestId('timeline-error')).toHaveText('');
+  // The content layer redraws the restored clips on its next frame: wait for
+  // it, so the next gesture reads the clips where they are.
+  await painted();
+}
+
+async function painted(): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
 async function snapState(): Promise<{ on: boolean; grid: string }> {
