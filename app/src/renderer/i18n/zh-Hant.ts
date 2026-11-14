@@ -213,6 +213,8 @@ export const zhHant: Catalog = {
   'step.setClipGain': '將{clip}的音量設為 {gain}',
   'step.addMedia': '將一個音訊檔加入媒體庫',
   'step.removeMedia': '從媒體庫移除一個音訊檔',
+  'step.renameMedia': '將媒體庫中的一個音訊檔重新命名為 {name}',
+  'step.unnameMedia': '清除媒體庫中一個音訊檔的名稱',
   'step.insertPlugin': '插入外掛：{plugin}',
   'step.removePlugin': '移除外掛：{plugin}',
   'step.bypassPlugin': '旁通外掛：{plugin}',

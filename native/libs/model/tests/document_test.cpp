@@ -397,3 +397,101 @@ TEST_CASE("A large document stays consistent across many edits", "[model][scale]
     CHECK(edited.documentHash() != before);
     CHECK(doc.documentHash() == before);
 }
+
+// ---- m5b-engine-project-media: the media entity's optional name -------------
+
+namespace {
+
+EntityType entityTypeOf(const std::string& type) {
+    return type == "root"          ? EntityType::root
+           : type == "media"       ? EntityType::media
+           : type == "track"       ? EntityType::track
+           : type == "plugin_slot" ? EntityType::plugin_slot
+           : type == "locators"    ? EntityType::locators
+                                   : EntityType::clip;
+}
+
+// The v2 fixture's document with med_kick's `name` set to the given value.
+Value kickWithName(const Value& name) {
+    const Value v2 = readFixture("model/session-document-v2.json");
+    siann::json::Object out = v2.find("document")->asObject();
+    for (auto& [key, value] : out) {
+        if (key != "media") {
+            continue;
+        }
+        siann::json::Array media = value.asArray();
+        for (Value& entity : media) {
+            if (entity.find("id")->asString() == "med_kick") {
+                siann::json::Object fields = entity.asObject();
+                fields.emplace_back("name", name);
+                entity = Value(std::move(fields));
+            }
+        }
+        value = Value(std::move(media));
+    }
+    return Value(std::move(out));
+}
+
+}  // namespace
+
+TEST_CASE("The media-name fixture gives the Node bridge's hashes and round-trips under JCS",
+          "[model][fixtures][media]") {
+    const Value fixture = readFixture("model/session-document-v2-media-name.json");
+    const Value& original = *fixture.find("document");
+    const Document doc = Document::fromJson(original);
+    CHECK(doc.validate().empty());
+    REQUIRE(doc.media("med_kick") != nullptr);
+    REQUIRE(doc.media("med_kick")->name.has_value());
+    CHECK(*doc.media("med_kick")->name == "kick.wav");
+    REQUIRE(doc.media("med_loop")->name.has_value());
+    CHECK(*doc.media("med_loop")->name == "Loop \xE8\x81\xB2 44k.flac");
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{entityTypeOf(type), id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+}
+
+TEST_CASE("A media without a name serializes as before and keeps the v1 and v2 hashes", "[model][media]") {
+    for (const char* file : {"model/session-document-v1.json", "model/session-document-v2.json"}) {
+        INFO(file);
+        const Value fixture = readFixture(file);
+        const Document doc = Document::fromJson(*fixture.find("document"));
+        for (const Media* m : doc.allMedia()) {
+            CHECK_FALSE(m->name.has_value());
+            CHECK(siann::model::toJson(*m).find("name") == nullptr);
+        }
+        CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    }
+    // Removing the names gives back the unnamed document's hash.
+    const Document named =
+        Document::fromJson(*readFixture("model/session-document-v2-media-name.json").find("document"));
+    const Document plain = Document::fromJson(*readFixture("model/session-document-v2.json").find("document"));
+    Media kick = *named.media("med_kick");
+    kick.name.reset();
+    Media loop = *named.media("med_loop");
+    loop.name.reset();
+    CHECK(named.withMedia(kick).withMedia(loop).documentHash() == plain.documentHash());
+}
+
+TEST_CASE("A media name must be a string of 1 to 255 UTF-8 bytes", "[model][media]") {
+    CHECK(errorCode(kickWithName(Value(std::string(255, 'a')))) == "no error");
+    // 85 three-byte code points: 255 bytes of multi-byte text.
+    std::string multi;
+    for (int i = 0; i < 85; ++i) {
+        multi += "\xE8\x81\xB2";
+    }
+    REQUIRE(multi.size() == 255);
+    const Document accepted = Document::fromJson(kickWithName(Value(multi)));
+    CHECK(*accepted.media("med_kick")->name == multi);
+
+    CHECK(errorCode(kickWithName(Value(std::string()))) == "invalid_field");
+    CHECK(errorCode(kickWithName(Value(std::string(256, 'a')))) == "invalid_field");
+    CHECK(errorCode(kickWithName(Value(multi + "a"))) == "invalid_field");
+    CHECK(errorCode(kickWithName(Value(std::string("bad \xC3\x28 byte")))) == "invalid_field");
+    CHECK(errorCode(kickWithName(Value(42))) == "invalid_field");
+    CHECK(errorCode(kickWithName(Value(nullptr))) == "invalid_field");
+}

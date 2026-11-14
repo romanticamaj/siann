@@ -14,6 +14,7 @@ siann_apply_compile_options(siann_media)
 if(SIANN_BUILD_TESTS)
   add_executable(siann_media_tests
     tests/audio_test.cpp
+    tests/audio_source_test.cpp
     tests/wav_reader_test.cpp
     tests/wav_writer_test.cpp
     tests/memory_reader_test.cpp

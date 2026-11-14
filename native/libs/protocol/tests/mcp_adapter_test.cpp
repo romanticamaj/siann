@@ -13,6 +13,8 @@
 #include "support/protocol_fixture.hpp"
 #include "siann/command/command.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/io/durable_file.hpp"
+#include "siann/media/audio.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/transport_port.hpp"
 
@@ -32,7 +34,7 @@ const std::vector<std::string> kTools = {
     "audition",       "merge_proposal",        "discard_proposal", "execute",      "job_status",
     "render",         "open_session",          "save_session",    "play",          "stop",
     "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
-    "select_device",
+    "select_device",  "create_session",        "import_media",
 };
 
 // A transport port that records what each tool reached.
@@ -306,7 +308,7 @@ TEST_CASE("plugin.registry and plugin.approve are not MCP tools", "[protocol][mc
     }
 }
 
-TEST_CASE("tools/list returns the 26 tools with input schemas", "[protocol][mcp]") {
+TEST_CASE("tools/list returns the 28 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
@@ -687,4 +689,89 @@ TEST_CASE("without a transport port set_cycle and set_click answer not_supported
     mcp.initialize();
     CHECK(at(mcp.error("set_cycle", Value(Object{{"enabled", Value(true)}})), "code").asString() == "not_supported");
     CHECK(at(mcp.error("set_click", Value(Object{{"enabled", Value(true)}})), "code").asString() == "not_supported");
+}
+
+// m5b-engine-project-media (Protocol v0 item 27): both methods read or write paths
+// on the user's disk, so the propose scope never gets them.
+namespace {
+
+std::string utf8Path(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+}  // namespace
+
+TEST_CASE("import_media and create_session are scope_denied under propose and run under trusted",
+          "[protocol][mcp][media]") {
+    for (const McpScope scope : {McpScope::propose, McpScope::trusted}) {
+        INFO(protocol::mcpScopeName(scope));
+        std::optional<session::Session> created;
+        int createCalls = 0;
+        ServerOptions options = manualOptions();
+        options.mcpScope = scope;
+        options.jobs.workerThread = false;
+        options.createSession = [&](const std::filesystem::path& path, const std::string& name,
+                                    std::int64_t rate) -> session::Session& {
+            ++createCalls;
+            created.emplace(session::Session::create(path, model::Document::create(name, rate), "tester",
+                                                     "2026-11-14T00:00:00Z"));
+            return *created;
+        };
+        Fixture f(std::move(options));
+        Mcp mcp(f);
+        mcp.initialize();
+
+        const std::filesystem::path wav = f.dir.bundle().parent_path() / "tone.wav";
+        media::AudioBuffer tone;
+        tone.info = media::AudioInfo{1, 48'000, 480};
+        tone.samples.assign(480, 0.125f);
+        io::writeFileAtomic(wav, media::encodeWavFloat32(tone));
+        const std::filesystem::path target = f.dir.bundle().parent_path() / "New.siann";
+        const Value importArgs(Object{{"path", Value(utf8Path(wav))}, {"clientImportId", Value("imp-1")}});
+        const Value createArgs(Object{{"path", Value(utf8Path(target))}});
+
+        if (scope == McpScope::propose) {
+            CHECK(at(mcp.error("import_media", importArgs), "code").asString() == "scope_denied");
+            CHECK(at(mcp.error("create_session", createArgs), "code").asString() == "scope_denied");
+            CHECK(f.server.runJobs() == 0);
+            CHECK(createCalls == 0);
+            CHECK_FALSE(std::filesystem::exists(target));
+            CHECK(f.session.history().revisions().size() == 1);
+            continue;
+        }
+        const Value queued = mcp.ok("import_media", importArgs);
+        CHECK(at(queued, "kind").asString() == "media.import");
+        CHECK(at(queued, "state").asString() == "queued");
+        CHECK(f.server.runJobs() == 1);
+        f.server.pump();
+        const Value status = mcp.ok("job_status", Value(Object{{"jobId", at(queued, "jobId")}}));
+        CHECK(at(status, "state").asString() == "done");
+        CHECK(at(at(status, "result"), "mediaId").asString() == "med_1");
+        CHECK(f.session.history().revisions().size() == 2);
+
+        const Value made = mcp.ok("create_session", createArgs);
+        CHECK(at(made, "revision").asString() == "r1");
+        CHECK(createCalls == 1);
+        CHECK(std::filesystem::exists(target / "session.json"));
+    }
+}
+
+TEST_CASE("tools/list in the trusted scope describes import_media and create_session", "[protocol][mcp][media]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    std::vector<std::string> required;
+    for (const Value& tool : tools.asArray()) {
+        const std::string name = at(tool, "name").asString();
+        if (name != "import_media" && name != "create_session") {
+            continue;
+        }
+        for (const Value& key : at(at(tool, "inputSchema"), "required").asArray()) {
+            required.push_back(name + "." + key.asString());
+        }
+    }
+    CHECK(required == std::vector<std::string>{"create_session.path", "import_media.path",
+                                               "import_media.clientImportId"});
 }

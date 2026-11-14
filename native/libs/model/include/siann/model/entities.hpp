@@ -4,9 +4,11 @@
 // immutable value with a stable ID; its JSON form is hashed with RFC 8785.
 
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "siann/hash/sha256.hpp"
@@ -55,9 +57,19 @@ struct Media {
     std::int32_t channels = 1;
     std::int64_t sampleRate = 48'000;
     std::int64_t frames = 0;
+    // Display name, 1 to 255 UTF-8 bytes (m5b-engine-project-media: the imported
+    // file's base name). Omitted from the JSON when absent, so a media entity
+    // without a name keeps the hash it had before the field existed.
+    std::optional<std::string> name;
 
     friend bool operator==(const Media&, const Media&) = default;
 };
+
+// The longest media name, in UTF-8 bytes.
+inline constexpr std::size_t kMaxMediaNameBytes = 255;
+
+// True for well-formed UTF-8 of 1 to kMaxMediaNameBytes bytes.
+bool isValidMediaName(std::string_view name) noexcept;
 
 enum class TrackKind { audio };
 

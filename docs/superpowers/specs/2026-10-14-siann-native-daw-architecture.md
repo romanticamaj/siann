@@ -1447,6 +1447,18 @@ Rules:
   against the recorded document hashes, so an added entity would reject every
   existing bundle. A v1 bundle therefore opens, reports no locators (null), and is
   written as v2 at its next checkpoint.
+- M5b media `name` (m5b-engine-project-media, UI redesign UR-2 and the media half
+  of E-4): the media entity may carry `name`, a display name (the imported file's
+  base name), a string of 1 to 255 UTF-8 bytes; an empty string, a longer one or a
+  non-string is rejected when the entity or a command is read (`invalid_field` in
+  the model, `invalid_params` in a command). It is omitted from the entity's JSON
+  when absent, as `inserts` is (M4), so the schema stays `siann.entity.media.v1`,
+  the document stays `siann.session_document.v2`, and every existing bundle,
+  checkpoint and fixture keeps its entity and document hashes. Commands:
+  `media.add` takes an optional `name`; `media.rename {mediaId, name}` sets it, or
+  removes the field with `name: null` (the entity then hashes as it did before it
+  had a name). `media.rename` declares exactly `{media:<id>}`, is one revision and
+  undoable; an unknown id is `not_found`.
 
 ### siann-command (pure C++) — the core of SIANN
 
@@ -1501,6 +1513,46 @@ Jobs v0 (m3-mcp). The first job is the offline render behind the protocol's
   journaled. A render emits no command (nothing in the document changes), unlike
   `media.import`. A job event (`job.changed`) is deferred; clients poll
   `job.status`.
+
+Jobs v0, import (m5b-engine-project-media, UI redesign UR-2 and E-5):
+
+- `media.import {path, clientImportId}` queues a job of kind `media.import` on the
+  jobs worker (the same one-at-a-time queue as render and peaks jobs). `path` is an
+  absolute path to a WAV or FLAC file (a relative or UNC path is `invalid_params`
+  and no job); `clientImportId` is a string of 1 to 128 bytes the client picks.
+  The answer is `{jobId, kind: "media.import", state: "queued"}`. A request with a
+  `clientImportId` the served session has seen answers that first job's
+  `{jobId, kind, state}` and starts nothing (a new `requestId` too: retries after a
+  lost answer stay single).
+- The worker reads the file, decodes it in chunks through a decoder seam
+  (`media::AudioSource`), converts it to the session rate when it differs (r8brain,
+  in chunks; the output is byte for byte `encodeWavFloat32(resample(decode(x)))`,
+  so the hashes M1 recorded hold), checks a cancel flag between chunks, writes
+  `media/<sha256>.<ext>` and `peaks/<sha256>.peaks` atomically, and records which
+  of those files it created. A file at the session rate is stored byte for byte.
+  The command thread then commits `media.add {mediaId, contentHash, originalHash?,
+  format, channels, sampleRate, frames, name}` as one revision (published as
+  `session.changed`), and only then is the job `done`. The worker never touches
+  the session, and the command thread never decodes or converts: transport and
+  every other request are answered while a long file converts.
+- The server picks `mediaId` as `med_<n>`, `n` one above the highest `med_<n>` any
+  revision of the history holds (as slot ids). `name` is the source file's base
+  name, cut at a code point boundary to 255 UTF-8 bytes.
+- Content the head document already holds (a media entity with the same
+  `contentHash`) commits nothing: the job ends `done` with that entity's
+  `mediaId`, `existing: true` and the head revision.
+- `job.status` of an import adds `progress: {framesDone, framesTotal}` (decimal
+  strings, source frames) while it runs, and its result is `{mediaId, revision,
+  contentHash, name, frames, sampleRate, channels, converted, existing?,
+  originalHash?}` (`originalHash` when it converted).
+- A failure commits nothing and removes every file the job created; a file the
+  bundle held before the job is never removed. Codes: `not_found` (no file at
+  `path`), `unsupported_media` (neither WAV nor FLAC), `decode_failed` (a truncated
+  or damaged file), `too_large`, `io_error`, `cancelled`, and the `CommandError`
+  code of a rejected `media.add`. `session.open`, `session.create` and stopping the server
+  cancel every queued and running import (a running one stops at its next chunk;
+  a blocked decoder is interrupted through the seam), which ends `failed` with
+  `cancelled`; neither the old nor the new session gets a revision.
 
 Jobs v0, plugins (m4-plugin-node; decided by Fable, delegated by the maintainer, 2026-11-08):
 
@@ -2721,6 +2773,28 @@ redesign E-1; the wire details are in `docs/schemas/protocol-engine-v0.md`):
     opens (from its checkpoint, "Session bundle"); the click state is engine state
     only.
 
+Protocol v0, create and import (decided with m5b-engine-project-media, UI redesign
+UR-2; the wire details are in `docs/schemas/protocol-engine-v0.md`):
+
+27. `session.create {path, name?}` creates an empty bundle and serves it, through
+    `ServerOptions::createSession(path, name, sampleRate)`, a callback the launcher
+    supplies (`siann-engine` creates the `Session`, taking its lock, rebinds the
+    engine host as `session.open` does, then destroys the old `Session`, which
+    releases its lock). `path` must be absolute and not exist: a relative or UNC
+    path (`\\server\share\...`, `\\?\UNC\...`) is `invalid_params`, any existing
+    file, directory (empty or not) or bundle is `already_exists`, a missing parent
+    directory is `not_found`; nothing is created then. `root.name` is `name` or
+    the path's stem. The sample rate is the rate the output device runs at
+    (`TransportPort::status().device->sampleRate`), 48000 with no device or no
+    transport port ("Sample rate and media"). Everything after the callback is
+    `session.open`'s (item 16): a new `sessionId`, `session.opened`, the result
+    `{sessionId, revision, documentHash}`. Without a `createSession` callback the
+    method is `not_supported`. `media.import {path, clientImportId}` is a job
+    ("Commands and jobs", Jobs v0, import). Both read or write paths on the user's
+    disk: the MCP tools `create_session` and `import_media` are in the trusted
+    scope only. `engine.capabilities` lists both methods, `media.rename` among the
+    commands, and `features.mediaImport: {formats: ["wav", "flac"]}`.
+
 ## Plugin editor windows
 
 1. Every plugin gets a generic parameter UI in the web frontend; agents use the same
@@ -2843,8 +2917,9 @@ MySong.siann/                    a directory
   decimal strings; a drag snaps to a non-negative position and a trim to
   `[0, media.frames]` with a length of at least one frame.
 - Placing a clip chooses a media entity of the document (the media pool);
-  importing a file from the UI is not part of m5-timeline (no `media.import`
-  protocol method exists yet; follow-ups).
+  importing a file from the UI is not part of m5-timeline. The engine side,
+  `media.import` (Jobs v0, import) and `session.create` (Protocol v0 item 27),
+  exists since m5b-engine-project-media; the UI that drives it is M5b's.
 - The frontend holds a read model keyed by revision; it never owns session truth.
 - Plan review is a first-class UI (m5-plan-review, presented by m5-ui-plan-panel
   as the Plans tab of the right zone; UI redesign spec section 4 and P1-5 give

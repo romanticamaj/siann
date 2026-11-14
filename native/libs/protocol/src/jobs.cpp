@@ -78,7 +78,7 @@ Value computePeaksFile(const PeaksRequest& request) {
 
 }  // namespace
 
-JobRunner::JobRunner(bool workerThread) {
+JobRunner::JobRunner(bool workerThread, std::function<void()> wake) : wake_(std::move(wake)) {
     if (workerThread) {
         worker_ = std::thread([this] { work(); });
     }
@@ -128,6 +128,92 @@ std::string JobRunner::startPeaks(PeaksRequest request) {
     }
     changed_.notify_all();
     return id;
+}
+
+std::string JobRunner::startImport(ImportRequest request) {
+    std::string id;
+    {
+        std::lock_guard lock(mutex_);
+        id = "job_" + std::to_string(next_++);
+        Job job;
+        job.id = id;
+        job.kind = "media.import";
+        job.import = std::move(request);
+        job.progress = std::make_shared<session::ImportProgress>();
+        jobs_.emplace(id, std::move(job));
+        queue_.push_back(id);
+    }
+    changed_.notify_all();
+    return id;
+}
+
+std::vector<FinishedImport> JobRunner::takeFinishedImports() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(finishedImports_, {});
+}
+
+void JobRunner::completeImport(const std::string& jobId, json::Value result) {
+    {
+        std::lock_guard lock(mutex_);
+        auto it = jobs_.find(jobId);
+        if (it == jobs_.end()) {
+            return;
+        }
+        it->second.state = JobState::done;
+        it->second.result = std::move(result);
+    }
+    changed_.notify_all();
+}
+
+void JobRunner::failImport(const std::string& jobId, std::string code, std::string message) {
+    {
+        std::lock_guard lock(mutex_);
+        auto it = jobs_.find(jobId);
+        if (it == jobs_.end()) {
+            return;
+        }
+        fail(it->second, std::move(code), std::move(message));
+    }
+    changed_.notify_all();
+}
+
+void JobRunner::fail(Job& job, std::string code, std::string message) {
+    job.state = JobState::failed;
+    job.errorCode = std::move(code);
+    job.errorMessage = std::move(message);
+}
+
+void JobRunner::cancelImports() {
+    std::vector<FinishedImport> prepared;
+    {
+        std::lock_guard lock(mutex_);
+        for (auto it = queue_.begin(); it != queue_.end();) {
+            Job& job = jobs_.at(*it);
+            if (job.kind != "media.import") {
+                ++it;
+                continue;
+            }
+            job.import.reset();
+            fail(job, "cancelled", "the import was cancelled before it started");
+            it = queue_.erase(it);
+        }
+        for (auto& [id, job] : jobs_) {
+            if (job.kind == "media.import" && job.state == JobState::running && job.progress) {
+                job.progress->cancel = true;
+                if (job.liveSource != nullptr) {
+                    job.liveSource->interrupt();
+                }
+            }
+        }
+        prepared = std::exchange(finishedImports_, {});
+        for (const FinishedImport& finished : prepared) {
+            fail(jobs_.at(finished.jobId), "cancelled", "the import was cancelled before its commit");
+        }
+    }
+    for (const FinishedImport& finished : prepared) {
+        session::discardImport(finished.prepared);
+    }
+    changed_.notify_all();
 }
 
 std::optional<JobState> JobRunner::state(const std::string& jobId) const {
@@ -188,6 +274,11 @@ std::optional<json::Value> JobRunner::status(const std::string& jobId) const {
     Object out{{"jobId", Value(job.id)},
                {"kind", Value(job.kind)},
                {"state", Value(std::string(stateName(job.state)))}};
+    if (job.state == JobState::running && job.progress) {
+        out.emplace_back("progress",
+                         Value(Object{{"framesDone", Value(std::to_string(job.progress->framesDone.load()))},
+                                      {"framesTotal", Value(std::to_string(job.progress->framesTotal.load()))}}));
+    }
     if (job.state == JobState::done) {
         out.emplace_back("result", job.result);
     } else if (job.state == JobState::failed) {
@@ -203,6 +294,12 @@ bool JobRunner::runOne(std::unique_lock<std::mutex>& lock) {
     Job& job = jobs_.at(queue_.front());
     queue_.pop_front();
     job.state = JobState::running;
+    if (job.import) {
+        ImportRequest request = std::move(*job.import);
+        job.import.reset();
+        runImport(lock, job, std::move(request));
+        return true;
+    }
     std::optional<RenderRequest> renderRequest = std::move(job.request);
     std::optional<PeaksRequest> peaksRequest = std::move(job.peaks);
     job.request.reset();
@@ -243,6 +340,65 @@ bool JobRunner::runOne(std::unique_lock<std::mutex>& lock) {
     }
     changed_.notify_all();
     return true;
+}
+
+// Called and returns with the lock held. The Job lives in a std::map, so the
+// reference stays valid while the lock is released.
+void JobRunner::runImport(std::unique_lock<std::mutex>& lock, Job& job, ImportRequest request) {
+    const std::shared_ptr<session::ImportProgress> progress = job.progress;
+    lock.unlock();
+
+    std::optional<session::PreparedImport> prepared;
+    std::string code;
+    std::string message;
+    try {
+        session::ImportSource source =
+            request.open ? request.open(request.path) : session::openImportSource(request.path);
+        {
+            std::lock_guard guard(mutex_);
+            job.liveSource = source.audio.get();
+        }
+        try {
+            prepared = session::prepareImport(request.bundle, request.sessionRate, source, progress.get());
+        } catch (...) {
+            std::lock_guard guard(mutex_);
+            job.liveSource = nullptr;
+            throw;
+        }
+        std::lock_guard guard(mutex_);
+        job.liveSource = nullptr;
+    } catch (const media::MediaError& e) {
+        code = e.code();
+        message = e.what();
+    } catch (const io::IoError& e) {
+        code = "io_error";
+        message = e.what();
+    } catch (const std::exception& e) {
+        code = "internal_error";
+        message = e.what();
+    } catch (...) {
+        code = "internal_error";
+        message = "the import threw a non-standard exception";
+    }
+
+    lock.lock();
+    bool ready = false;
+    if (!code.empty()) {
+        fail(job, std::move(code), std::move(message));
+    } else if (progress->cancel) {
+        // Cancelled after the last block: nothing of it may stay.
+        session::discardImport(*prepared);
+        fail(job, "cancelled", "the import was cancelled");
+    } else {
+        finishedImports_.push_back(FinishedImport{job.id, request.owner, std::move(*prepared)});
+        ready = true;
+    }
+    changed_.notify_all();
+    if (ready && wake_) {
+        lock.unlock();
+        wake_();
+        lock.lock();
+    }
 }
 
 std::size_t JobRunner::runQueued() {

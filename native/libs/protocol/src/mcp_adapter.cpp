@@ -83,6 +83,14 @@ const std::vector<McpTool> kTools = {
     {"select_device", "engine.select_device", McpScope::trusted,
      "Closes the running audio device and opens another one; returns the device engine_status reports.",
      R"({"type":"object","properties":{"id":{"type":"string","description":"a device id from list_devices"}},"required":["id"],"additionalProperties":false})"},
+    // m5b-engine-project-media (Protocol v0 item 27): both touch paths on the user's disk.
+    {"create_session", "session.create", McpScope::trusted,
+     "Creates an empty session bundle at an absolute path that does not exist, at the device's sample rate, and "
+     "serves it.",
+     R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the new bundle directory"},"name":{"type":"string","description":"the session name; default: the path's stem"}},"required":["path"],"additionalProperties":false})"},
+    {"import_media", "media.import", McpScope::trusted,
+     "Imports a WAV or FLAC file into the media pool as a job (converted to the session rate); poll job_status.",
+     R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the audio file"},"clientImportId":{"type":"string","minLength":1,"maxLength":128,"description":"chosen by the client; a repeat answers the first job"}},"required":["path","clientImportId"],"additionalProperties":false})"},
 };
 
 std::string randomHex(std::size_t bytes) {

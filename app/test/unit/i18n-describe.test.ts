@@ -57,6 +57,8 @@ const STEPS = {
   clipGain: { op: 'clip.set_gain', clipId: 'clp_1', gainMilliDb: -3000 },
   mediaAdd: { op: 'media.add', mediaId: 'med_2', contentHash: 'sha256:' + 'a'.repeat(64), format: 'wav', channels: 2, sampleRate: 48000, frames: '480000' },
   mediaRemove: { op: 'media.remove', mediaId: 'med_1' },
+  mediaRename: { op: 'media.rename', mediaId: 'med_1', name: 'Kick Loop.wav' },
+  mediaUnname: { op: 'media.rename', mediaId: 'med_1', name: null },
   insert: {
     op: 'plugin.insert',
     trackId: 'trk_k',
@@ -103,6 +105,8 @@ test('English wording for every op the engine accepts, and a generic line for an
     clipGain: `Set the volume of a clip on Keys to ${formatMilliDb(-3000)}`,
     mediaAdd: 'Add an audio file to the pool',
     mediaRemove: 'Remove an audio file from the pool',
+    mediaRename: 'Rename an audio file in the pool to Kick Loop.wav',
+    mediaUnname: 'Clear the name of an audio file in the pool',
     insert: 'Insert Fine EQ on Keys',
     pluginRemove: 'Remove Pro-Q 3 on Keys',
     bypass: 'Bypass Pro-Q 3 on Keys',
@@ -195,6 +199,7 @@ test('dB, pan values, positions and agent-written names are byte-identical acros
     assert.ok(describe(locale, 'rename').includes('FX Riser'), locale);
     assert.ok(describe(locale, 'add').includes('Bass'), locale);
     assert.ok(describe(locale, 'insert').includes('Fine EQ'), locale);
+    assert.ok(describe(locale, 'mediaRename').includes('Kick Loop.wav'), locale);
   }
 });
 
