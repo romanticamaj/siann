@@ -6,7 +6,8 @@
 // user units, the actions valid in its state with one primary
 // (plans/actions.ts; each only when engine.capabilities lists what it sends;
 // a valid action that cannot run now disabled with its reason), the refusal
-// line, and its diff against the current revision (plan.preview, re-read when
+// line (plans/RefusalLine: no ids, the engine's text behind a disclosure),
+// and its diff against the current revision (plan.preview, re-read when
 // the head or the plan changes). Raw steps, refs and entity JSON are behind
 // per-row disclosures. The list follows plan.changed, never an optimistic
 // state; a chain that stops shows where (the engine's state stays as it
@@ -18,10 +19,9 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { refusalLine } from '../i18n/errors';
 import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
-import { ProtocolError, type SessionClient } from '../model/session-client';
+import type { SessionClient } from '../model/session-client';
 import { useCapabilities } from '../shell/Capable';
 import { actionLabel, actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type ActionId, type PlanAction } from './actions';
 import { cardOf, staleReasons as reasonsOf } from './card';
@@ -31,13 +31,10 @@ import { HearingSwitch } from './HearingSwitch';
 import { usePlanSnapshot, useModelSnapshot, useStepNames } from './hooks';
 import { PlanCard } from './PlanCard';
 import { PlanDiff } from './PlanDiff';
+import { RefusalLine, refusalOf, type Refusal } from './RefusalLine';
 import { StepList } from './StepList';
 
-export interface PanelRefusal {
-  readonly code: string | null;
-  readonly message: string;
-  readonly detail: string;
-}
+export type PanelRefusal = Refusal;
 
 export interface PlanPanelViewProps {
   readonly plans: readonly PlanEntry[];
@@ -63,6 +60,7 @@ export interface PlanPanelViewProps {
   // Disclosures that start open (tests).
   readonly openSteps?: ReadonlySet<number>;
   readonly openRows?: ReadonlySet<number>;
+  readonly openError?: boolean;
 }
 
 const TEST_IDS: Record<ActionId, string> = {
@@ -137,9 +135,16 @@ export function PlanPanelView(props: PlanPanelViewProps) {
               })}
             </div>
           ) : null}
-          <p className="plan-error" data-testid="plan-error" role="status" data-code={error?.code ?? undefined}>
-            {error ? refusalLine(error.code, error.message, locale, error.detail) : ''}
-          </p>
+          <RefusalLine
+            key={error ? `${error.code ?? ''}:${error.message}` : ''}
+            refusal={error}
+            locale={locale}
+            names={names}
+            testId="plan-error"
+            className="plan-error"
+            role="status"
+            open={props.openError}
+          />
           {landed !== null ? (
             <p className="plan-landed" data-testid="plan-landed">
               {landed}
@@ -149,9 +154,7 @@ export function PlanPanelView(props: PlanPanelViewProps) {
             <PlanDiff key={plan.hash} preview={props.preview} stale={plan.stale} names={names} openRows={props.openRows} />
           ) : null}
           {landed === null && props.previewError ? (
-            <p className="plan-preview-error" data-testid="plan-preview-error" data-code={props.previewError.code ?? undefined}>
-              {refusalLine(props.previewError.code, props.previewError.message, locale)}
-            </p>
+            <RefusalLine refusal={props.previewError} locale={locale} names={names} testId="plan-preview-error" className="plan-preview-error" />
           ) : null}
         </div>
       ) : null;
@@ -184,12 +187,6 @@ interface PreviewState {
   readonly error?: PanelRefusal;
   // The stale refs at the plan's base revision; null when that read was refused.
   readonly base?: ReadonlyMap<string, Entity | null> | null;
-}
-
-function refusalOf(error: unknown): PanelRefusal {
-  return error instanceof ProtocolError
-    ? { code: error.code, message: error.message, detail: '' }
-    : { code: null, message: String(error), detail: '' };
 }
 
 // plan.preview of the selected plan (and, for a stale one, its stale entities
@@ -319,7 +316,7 @@ export function PlanPanel({ client, plans }: PlanPanelProps) {
         setSelected(outcome.plan);
         setTicked(null);
       }
-      setError(outcome.ok ? null : { code: outcome.code, message: outcome.engineMessage, detail: outcome.detail });
+      setError(outcome.ok ? null : { code: outcome.code, message: outcome.engineMessage, changedEntities: outcome.changedEntities });
       if (outcome.ok && entry.id === 'reject') setNote('');
     });
   };

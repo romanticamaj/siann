@@ -142,6 +142,19 @@ function pluginOf(slot: SlotName | undefined, names: StepNames, t: T): string {
   return track ? t('step.pluginOn', { plugin: slot.name, track }) : slot.name;
 }
 
+// An entity ref ("<type>:<id>", as plan_stale's changedEntities name them)
+// in user wording: a track by its name, a clip by its track, a plugin by its
+// name and track, anything else by its kind or as "something in the session".
+export function describeRef(ref: string, t: T = english, names: StepNames = NO_NAMES): string {
+  const colon = ref.indexOf(':');
+  const type = colon < 0 ? '' : ref.slice(0, colon);
+  const id = ref.slice(colon + 1);
+  if (type === 'track') return trackOf(id, names, t);
+  if (type === 'clip') return clipOf(id, names, t, false);
+  if (type === 'plugin_slot') return pluginOf(names.slot(id), names, t);
+  return t('step.anEntity');
+}
+
 function bpm(milliBpm: unknown): string {
   return typeof milliBpm === 'number' ? String(Number((milliBpm / 1000).toFixed(3))) : '?';
 }

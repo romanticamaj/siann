@@ -4,12 +4,12 @@
 // names the plan as its card does (first step and step count; titles arrive
 // with E-7), or reads "Hearing a proposal" when no plan the store holds has
 // that branch, and offers Hear main, Merge and Discard, each only when
-// engine.capabilities lists its method. A refusal is shown on the banner.
+// engine.capabilities lists its method. A refusal is shown on the banner as
+// plans/RefusalLine shows it (no ids; the engine's text behind a disclosure).
 // The violet frame, solid ghosts, Shift+A and the branch chip are P2-3.
 
 import { useState } from 'react';
 
-import { refusalLine } from '../i18n/errors';
 import { translator, useLocale } from '../i18n/t';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
@@ -17,6 +17,7 @@ import { Capable } from '../shell/Capable';
 import { runAction, type PlanAction } from './actions';
 import { describeStep } from './describe';
 import { usePlanSnapshot, useStepNames } from './hooks';
+import { RefusalLine, type Refusal } from './RefusalLine';
 
 export interface AuditionBannerProps {
   readonly client: SessionClient;
@@ -29,7 +30,7 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
   const snapshot = usePlanSnapshot(plans);
   const names = useStepNames(client);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ branch: string; line: string } | null>(null);
+  const [error, setError] = useState<{ branch: string; refusal: Refusal } | null>(null);
   const branch = snapshot.heard;
   if (branch === null || branch === 'main') return null;
   const plan = snapshot.plans.find((p) => p.proposalBranch === branch);
@@ -42,7 +43,11 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
     setBusy(true);
     void runAction(client, action).then((outcome) => {
       setBusy(false);
-      setError(outcome.ok ? null : { branch, line: refusalLine(outcome.code, outcome.engineMessage, locale, outcome.detail) });
+      setError(
+        outcome.ok
+          ? null
+          : { branch, refusal: { code: outcome.code, message: outcome.engineMessage, changedEntities: outcome.changedEntities } },
+      );
     });
   };
   return (
@@ -64,9 +69,14 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
         </button>
       </Capable>
       {error && error.branch === branch ? (
-        <span className="audition-banner-error" data-testid="banner-error">
-          {error.line}
-        </span>
+        <RefusalLine
+          key={`${error.refusal.code ?? ''}:${error.refusal.message}`}
+          refusal={error.refusal}
+          locale={locale}
+          names={names}
+          testId="banner-error"
+          className="audition-banner-error"
+        />
       ) : null}
     </div>
   );

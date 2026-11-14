@@ -55,12 +55,12 @@ export type ActionOutcome =
       readonly plan?: string;
       // null for an error without a protocol code.
       readonly code: string | null;
-      // "<code>: <engine message> (<changed entities>)", in the engine's English.
+      // "<code>: <engine message> (<changed refs>)", in the engine's English,
+      // for logs and tests. It names entity ids: the UI shows a refusal through
+      // plans/RefusalLine (user wording, the raw text behind a disclosure).
       readonly message: string;
-      // The engine's message alone, and the " (<changed entities>)" suffix,
-      // for a line built through the catalogs (i18n/errors.ts refusalLine).
+      // The engine's message alone, and plan_stale's changed refs.
       readonly engineMessage: string;
-      readonly detail: string;
       readonly changedEntities: readonly string[];
     };
 
@@ -177,11 +177,10 @@ function refused(error: unknown, failedAt: string, reached: Reached | null, plan
       code: error.code,
       message: `${error.code}: ${error.message}${detail}`,
       engineMessage: error.message,
-      detail,
       changedEntities,
     };
   }
-  return { ok: false, ...at, code: null, message: String(error), engineMessage: String(error), detail: '', changedEntities: [] };
+  return { ok: false, ...at, code: null, message: String(error), engineMessage: String(error), changedEntities: [] };
 }
 
 // One step of a chain: the request, or the refusal that stops it.

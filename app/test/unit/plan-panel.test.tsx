@@ -15,12 +15,14 @@ import * as path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { formatMilliDb } from '../../src/renderer/format';
+import { LOCALES } from '../../src/renderer/i18n/locale';
 import { translator } from '../../src/renderer/i18n/t';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { PlanEntry } from '../../src/renderer/model/plan-store';
 import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import type { PlanPreview } from '../../src/renderer/plans/diff';
 import { PlanPanelView, type PlanPanelViewProps } from '../../src/renderer/plans/PlanPanel';
+import { RefusalLine, refusalSummary, type Refusal } from '../../src/renderer/plans/RefusalLine';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { BRANCH, CLIP, ENTITY_IDS, entry, hashOf, KEYS, MIX_STEPS, PAD, planSnapshot, VOX } from './support/plans';
 
@@ -151,13 +153,41 @@ test('with every disclosure closed no entity id, milli-dB field, raw pan value o
 
 // The engine's refusals name ids: staleMessage() writes "track:<id>
 // (modified)" and already_exists names the id it found.
-const STALE_REFUSAL = {
+const STALE_REFUSAL: Refusal = {
   code: 'plan_stale',
-  message: `the plan is stale: track:${VOX} (modified)`,
-  detail: ` (track:${VOX})`,
-  changedEntities: [`track:${VOX}`],
+  message: `the plan is stale: track:${VOX} (modified), clip:${CLIP} (removed)`,
+  changedEntities: [`track:${VOX}`, `clip:${CLIP}`],
 };
-const EXISTS_REFUSAL = { code: 'already_exists', message: `a track with id ${PAD} already exists`, detail: '', changedEntities: [] };
+const EXISTS_REFUSAL: Refusal = { code: 'already_exists', message: `a track with id ${PAD} already exists`, changedEntities: [] };
+
+test('refusalSummary: the code and the catalog text in every locale, changed entities by name, never an id', () => {
+  for (const locale of LOCALES) {
+    const t = translator(locale);
+    const stale = refusalSummary(STALE_REFUSAL, locale, NAMES);
+    assert.equal(stale, `plan_stale: ${t('error.plan_stale')} (Vox Lead, ${t('step.clipOn', { track: 'Keys' })})`, locale);
+    assert.equal(refusalSummary(EXISTS_REFUSAL, locale, NAMES), `already_exists: ${t('error.already_exists')}`, locale);
+    // An unknown code or none: the generic text, not the engine's message.
+    assert.equal(refusalSummary({ code: 'x_new', message: `x ${PAD}`, changedEntities: [] }, locale, NAMES), `x_new: ${t('plans.refused')}`);
+    assert.equal(refusalSummary({ code: null, message: `Error: ${PAD}`, changedEntities: [] }, locale, NAMES), t('plans.refused'));
+    // Refs nothing names: by kind, never by id.
+    const unnamed = refusalSummary({ code: 'plan_stale', message: '', changedEntities: ['track:trk_gone', 'marker:m1'] }, locale, NAMES);
+    assert.ok(!unnamed.includes('trk_gone') && !unnamed.includes('m1'), unnamed);
+    assert.ok(unnamed.includes(t('step.aTrack')) && unnamed.includes(t('step.anEntity')), unnamed);
+  }
+});
+
+test('the banner refusal line: no id while closed, the engine text and refs once open', () => {
+  const line = (open: boolean) =>
+    renderToStaticMarkup(
+      <RefusalLine refusal={STALE_REFUSAL} locale="en" names={NAMES} testId="banner-error" className="audition-banner-error" open={open} />,
+    );
+  const closed = line(false);
+  for (const id of ENTITY_IDS) assert.ok(!closed.includes(id), id);
+  assert.ok(closed.includes('Vox Lead'));
+  assert.match(closed, /data-testid="banner-error-details"[^>]*aria-expanded="false"/);
+  const open = line(true);
+  assert.ok(open.includes(`track:${VOX}`) && open.includes(`clip:${CLIP}`) && open.includes('the plan is stale'));
+});
 
 test('a refusal names no entity id until its disclosure is opened; plan_stale names the changed entities in user wording', () => {
   for (const selected of [FRESH, CHILD]) {
@@ -173,8 +203,7 @@ test('a refusal names no entity id until its disclosure is opened; plan_stale na
     assert.ok(!markup.includes('data-testid="plan-error-raw"'), 'no raw refusal in the DOM');
   }
   // The disclosure holds the engine's own message and the changed refs.
-  const opened = { openError: true };
-  const open = view({ error: STALE_REFUSAL, ...opened });
+  const open = view({ error: STALE_REFUSAL, openError: true });
   assert.match(open, /data-testid="plan-error-raw"/);
   assert.ok(open.includes(`track:${VOX}`), 'the raw ref');
   assert.ok(open.includes('the plan is stale'), "the engine's message");
