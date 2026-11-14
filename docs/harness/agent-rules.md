@@ -26,13 +26,15 @@ Fixture expectations come from outside the code under test (RFCs, published vect
 ## Checks
 
 ```sh
-node scripts/check-all.js --gcc             # Node tests + native dev build/tests + g++ -Werror syntax check
-node scripts/check-all.js --gcc --desktop   # also the JUCE desktop preset (when touching host_desktop)
-node scripts/check-all.js --gcc --app       # also the Electron shell in app/ (when touching app/ or apps/engine)
-node scripts/check-all.js --only native     # one step
+node scripts/check-all.js --changed         # before every push: the steps your changes need
+node scripts/check-all.js --changed --plan  # which steps those are, without running them
+node scripts/check-all.js --all             # every step: milestone exits, or when the maintainer asks
+node scripts/check-all.js --only native     # one step: node | native | desktop | app | gcc
 ```
 
-On Windows the native step goes through `native/tools/msvc-env.cmd`; the gcc step uses WSL `g++` and needs the dev build's `_deps` (run the native step first). All presets treat warnings as errors.
+`--changed` diffs against the merge-base with `origin/main` (fetch first), uncommitted and untracked files included, and picks steps by path: `app/` runs node and app; `native/` runs native and gcc, plus desktop for `native/libs/host_*`, `native/apps/engine`, `native/cmake`, `CMakePresets.json` and any CMake file; `scripts/pluginval.js` adds desktop, `scripts/check-all.js` runs everything; docs, `*.md`, `.claude/`, `.github/`, `test/` and the bridge run node only; an unknown path runs everything. The table is `stepsForPath` in `scripts/check-all.js`; CI picks its jobs with the same table. `--desktop`, `--app` and `--gcc` still add their step; `-j <n>` limits build parallelism when memory is short.
+
+On Windows the native steps go through `native/tools/msvc-env.cmd`; the gcc step uses WSL `g++` (it configures the dev preset first when that has not run). All presets treat warnings as errors. Builds go through sccache (or ccache) when installed and share third-party sources across worktrees (runbook, "Local caches"), so a fresh worktree does not rebuild or re-download everything.
 
 GCC catches what MSVC does not. Known traps:
 
@@ -63,14 +65,14 @@ Never commit provider keys, signing material, local audio assets or rendered ste
 
 ## Landing (land agents only)
 
-1. `git fetch origin && git rebase origin/main`, rerun `node scripts/check-all.js --gcc`.
+1. `git fetch origin && git rebase origin/main`, rerun `node scripts/check-all.js --changed`.
 2. `gh auth switch -u romanticamaj` (the default account `ulovemusic2023` gets 403 on this repo).
 3. `git push -u origin <branch>`; `gh pr create --base main` with this body:
    - Summary (2 to 4 bullets)
    - Acceptance checklist copied from the manifest, each ticked with the test that covers it
    - Verification: check-all result, reviewer rounds, follow-ups (minor findings)
    - Final lines: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
-4. Wait for CI (`gh pr checks --watch`). macOS runners can queue for 10+ minutes. On red: reproduce, add a failing test where possible, fix, push. A second red run is a stop condition.
+4. Wait for CI (`gh pr checks --watch`). CI runs only the jobs the changed paths need; the `CI ok` check sums them up. macOS runners can queue for 10+ minutes. On red: reproduce, add a failing test where possible, fix, push. A second red run is a stop condition.
 5. `gh pr merge --merge --delete-branch`.
 6. **Always** `gh auth switch -u ulovemusic2023` afterwards, also on failure.
 

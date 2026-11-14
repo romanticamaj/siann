@@ -39,9 +39,16 @@ test('the g++ check reaches the JUCE sources too', () => {
 });
 
 test('check-all parses its flags', () => {
-  assert.deepEqual(parseArgs([]), { desktop: false, gcc: false, app: false, json: false, only: null });
+  const none = { desktop: false, gcc: false, app: false, json: false, only: null,
+    changed: false, all: false, base: null, plan: false, jobs: null };
+  assert.deepEqual(parseArgs([]), none);
   assert.deepEqual(parseArgs(['--gcc', '--desktop', '--json', '--only', 'native']),
-    { desktop: true, gcc: true, app: false, json: true, only: 'native' });
-  assert.deepEqual(parseArgs(['--app', '--gcc']), { desktop: false, gcc: true, app: true, json: false, only: null });
+    { ...none, desktop: true, gcc: true, json: true, only: 'native' });
+  assert.deepEqual(parseArgs(['--app', '--gcc']), { ...none, gcc: true, app: true });
+  assert.deepEqual(parseArgs(['--changed', '--base', 'HEAD^1', '--plan', '-j', '4']),
+    { ...none, changed: true, base: 'HEAD^1', plan: true, jobs: 4 });
+  assert.deepEqual(parseArgs(['--all', '--jobs', '2']), { ...none, all: true, jobs: 2 });
   assert.throws(() => parseArgs(['--nope']), /unknown argument/);
+  assert.throws(() => parseArgs(['-j', '0']), /positive integer/);
+  assert.throws(() => parseArgs(['--only', 'nope']), /unknown step/);
 });

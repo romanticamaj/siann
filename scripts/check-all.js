@@ -1,28 +1,49 @@
 #!/usr/bin/env node
 // One command for every local check the milestone harness relies on.
 //
+//   node scripts/check-all.js --changed       the steps the changes against origin/main
+//                                             need (merge-base, plus uncommitted and
+//                                             untracked files): the default before a push
+//   node scripts/check-all.js --all           every step: milestone exits, or when asked
 //   node scripts/check-all.js                 Node tests + native dev build and tests
 //   node scripts/check-all.js --desktop       also the JUCE desktop preset
 //   node scripts/check-all.js --gcc           also a g++ -Werror syntax check (WSL on Windows),
 //                                             of the JUCE sources too once the desktop preset
-//                                             has fetched JUCE (run --desktop first)
+//                                             has configured (run --desktop first)
 //   node scripts/check-all.js --app           also the Electron shell (app/): npm ci on first
 //                                             use, build, unit and Playwright tests against
-//                                             native/build/dev's siann-engine (after native)
+//                                             native/build/dev's siann-engine
 //   node scripts/check-all.js --only native   one step: node | native | desktop | app | gcc
 //   node scripts/check-all.js --json          machine-readable summary
 //
+//   --base <ref>    with --changed: diff against <ref> itself instead of the merge-base
+//   --plan          print the selected steps (and the changed paths) and run nothing
+//   -j, --jobs <n>  build parallelism (CMAKE_BUILD_PARALLEL_LEVEL) and parallel g++ checks
+//
+// Flags add up: `--changed --desktop` is the changed steps plus desktop.
+//
+// Native builds use a compiler cache (sccache, else ccache) when one is installed and
+// share third-party sources across worktrees (native/cmake/SiannDependencyCache.cmake).
+// The cache root is SIANN_CACHE_DIR, by default <drive>:\siann-cache on Windows and
+// ~/.cache/siann elsewhere; SIANN_NO_COMPILER_CACHE=1 turns the compiler cache off.
+//
 // Exit code 0 when every selected step passes, 1 otherwise.
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 const NATIVE = path.join(ROOT, 'native');
 const isWindows = process.platform === 'win32';
 
+const ALL_STEPS = ['node', 'native', 'desktop', 'app', 'gcc'];
+
 function parseArgs(argv) {
-  const options = { desktop: false, gcc: false, app: false, json: false, only: null };
+  const options = {
+    desktop: false, gcc: false, app: false, json: false, only: null,
+    changed: false, all: false, base: null, plan: false, jobs: null,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--desktop') options.desktop = true;
@@ -30,10 +51,125 @@ function parseArgs(argv) {
     else if (arg === '--app') options.app = true;
     else if (arg === '--json') options.json = true;
     else if (arg === '--only') options.only = argv[++i];
-    else throw new Error(`unknown argument ${arg}`);
+    else if (arg === '--changed') options.changed = true;
+    else if (arg === '--all') options.all = true;
+    else if (arg === '--base') options.base = argv[++i];
+    else if (arg === '--plan') options.plan = true;
+    else if (arg === '-j' || arg === '--jobs') {
+      const jobs = Number(argv[++i]);
+      if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`${arg} needs a positive integer`);
+      options.jobs = jobs;
+    } else throw new Error(`unknown argument ${arg}`);
   }
+  if (options.only && !ALL_STEPS.includes(options.only)) throw new Error(`unknown step ${options.only}`);
+  if (options.base !== null && !options.base) throw new Error('--base needs a ref');
   return options;
 }
+
+// ---- Which steps a change needs ------------------------------------------------
+
+// What the desktop preset (JUCE) compiles differently or only: the JUCE host, the
+// plugin hosting it builds on, siann-engine (which links it in that preset), and the
+// build files that choose all of that.
+const DESKTOP_PATHS = [
+  /^native\/libs\/host_[^/]+\//,
+  /^native\/apps\/engine\//,
+  /^native\/cmake\//,
+  /^native\/CMakePresets\.json$/,
+  /(^|\/)CMakeLists\.txt$/,
+  /\.cmake$/,
+];
+
+// Steps for one changed path (forward slashes, relative to the repository root).
+// The Node tests run for every change; the rest follow the table below.
+function stepsForPath(file) {
+  const p = file.replace(/\\/g, '/');
+  // check-all drives every step; a change to it is checked by running them all.
+  if (p === 'scripts/check-all.js') return [...ALL_STEPS];
+  // pluginval runs against the desktop preset's test plugin.
+  if (p === 'scripts/pluginval.js') return ['node', 'desktop'];
+  // Prose builds nothing, wherever it lives.
+  if (/\.md$/i.test(p)) return ['node'];
+  if (/^native\//.test(p)) {
+    return DESKTOP_PATHS.some((re) => re.test(p)) ? ['node', 'native', 'desktop', 'gcc'] : ['node', 'native', 'gcc'];
+  }
+  if (/^app\//.test(p)) return ['node', 'app'];
+  // The native tests read the shared fixtures too.
+  if (/^fixtures\//.test(p)) return ['node', 'native'];
+  if (/^(docs|\.claude|\.codex|\.github|scripts|test|src|bin|examples)\//.test(p)) return ['node'];
+  if (/^(package\.json|package-lock\.json|LICENSE[^/]*|\.gitignore)$/.test(p)) return ['node'];
+  // Anything else (.gitattributes, a new top-level directory, ...): everything.
+  return [...ALL_STEPS];
+}
+
+// The union over every path, in run order. No change at all still runs the Node tests.
+function stepsForPaths(files) {
+  const wanted = new Set(['node']);
+  for (const file of files) for (const step of stepsForPath(file)) wanted.add(step);
+  return ALL_STEPS.filter((step) => wanted.has(step));
+}
+
+function git(args) {
+  const result = spawnSync('git', args, { cwd: ROOT, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  return result.status === 0 ? result.stdout : null;
+}
+
+// Paths changed since the merge-base with origin/main (or since `base` itself), with
+// staged, unstaged and untracked files. null when git cannot tell.
+function changedPaths(base) {
+  let from = base;
+  if (!from) {
+    const mergeBase = git(['merge-base', 'HEAD', 'origin/main']);
+    if (!mergeBase) return null;
+    from = mergeBase.trim();
+  }
+  const diff = git(['diff', '--name-only', '--no-renames', from]);
+  const untracked = git(['ls-files', '--others', '--exclude-standard']);
+  if (diff === null || untracked === null) return null;
+  const lines = `${diff}\n${untracked}`.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return [...new Set(lines)].sort();
+}
+
+function selectSteps(options, changed) {
+  if (options.only) return [options.only];
+  if (options.all) return [...ALL_STEPS];
+  const wanted = new Set(options.changed ? (changed ? stepsForPaths(changed) : ALL_STEPS) : ['node', 'native']);
+  if (options.desktop) wanted.add('desktop');
+  if (options.app) wanted.add('app');
+  if (options.gcc) wanted.add('gcc');
+  return ALL_STEPS.filter((step) => wanted.has(step));
+}
+
+// ---- Caches ----------------------------------------------------------------------
+
+function cacheRoot(env = process.env) {
+  if (env.SIANN_CACHE_DIR) return env.SIANN_CACHE_DIR;
+  if (isWindows) {
+    // A short path on the repository's drive, outside every worktree: Git checkouts of
+    // the dependencies stay clear of MAX_PATH.
+    const drive = /^([A-Za-z]:)/.exec(ROOT);
+    return path.join(drive ? `${drive[1]}\\` : os.homedir(), 'siann-cache');
+  }
+  return path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'siann');
+}
+
+// The environment every native step runs with.
+function nativeEnv(options, env = process.env) {
+  const root = cacheRoot(env);
+  const out = { ...env };
+  if (!out.SIANN_DEPS_CACHE_DIR) out.SIANN_DEPS_CACHE_DIR = path.join(root, 'fetchcontent');
+  // Read when the sccache server starts; a server that is already running keeps its own.
+  if (!out.SCCACHE_DIR) out.SCCACHE_DIR = path.join(root, 'sccache');
+  if (!out.SCCACHE_CACHE_SIZE) out.SCCACHE_CACHE_SIZE = '20G';
+  if (!out.CCACHE_DIR) out.CCACHE_DIR = path.join(root, 'ccache');
+  // English cl output where the English language pack is installed: sccache mangles a
+  // /showIncludes prefix in another code page (native/cmake/SiannCompilerCache.cmake).
+  if (isWindows && !out.VSLANG) out.VSLANG = '1033';
+  if (options.jobs) out.CMAKE_BUILD_PARALLEL_LEVEL = String(options.jobs);
+  return out;
+}
+
+// ---- Running -------------------------------------------------------------------
 
 function run(command, args, cwd, env = process.env) {
   const started = process.hrtime.bigint();
@@ -50,26 +186,40 @@ function run(command, args, cwd, env = process.env) {
   return { ok: result.status === 0, seconds, output };
 }
 
+function runAsync(command, args, cwd, env = process.env) {
+  return new Promise((resolve) => {
+    let output = '';
+    const child = spawn(command, args, { cwd, env, shell: false, windowsHide: true });
+    child.stdout.on('data', (d) => { output += d; });
+    child.stderr.on('data', (d) => { output += d; });
+    child.on('error', (error) => resolve({ ok: false, output: `${output}${error}` }));
+    child.on('close', (code) => resolve({ ok: code === 0, output }));
+  });
+}
+
 // cmake / ctest with the Visual Studio environment on Windows.
-function native(tool, args) {
+function native(tool, args, options) {
+  const env = nativeEnv(options);
   if (isWindows) {
-    return run('cmd.exe', ['/d', '/c', path.join('tools', 'msvc-env.cmd'), tool, ...args], NATIVE);
+    return run('cmd.exe', ['/d', '/c', path.join('tools', 'msvc-env.cmd'), tool, ...args], NATIVE, env);
   }
-  return run(tool, args, NATIVE);
+  return run(tool, args, NATIVE, env);
+}
+
+function sequence(commands, options) {
+  for (const [tool, args] of commands) {
+    const step = native(tool, args, options);
+    if (!step.ok) return { ...step, failedAt: `${tool} ${args.join(' ')}` };
+  }
+  return { ok: true, output: '' };
 }
 
 function preset(name) {
-  return () => {
-    for (const [tool, args] of [
-      ['cmake', ['--preset', name]],
-      ['cmake', ['--build', '--preset', name]],
-      ['ctest', ['--preset', name]],
-    ]) {
-      const step = native(tool, args);
-      if (!step.ok) return { ...step, failedAt: `${tool} ${args.join(' ')}` };
-    }
-    return { ok: true, output: '' };
-  };
+  return (options) => sequence([
+    ['cmake', ['--preset', name]],
+    ['cmake', ['--build', '--preset', name]],
+    ['ctest', ['--preset', name]],
+  ], options);
 }
 
 function listSources() {
@@ -101,16 +251,41 @@ function desktopSources() {
     path.join(NATIVE, 'apps', 'engine', 'tests', 'engine_launch_test.cpp')];
 }
 
-function gcc() {
-  const deps = path.join(NATIVE, 'build', 'dev', '_deps');
-  if (!fs.existsSync(deps)) {
-    return { ok: false, output: 'run the native step first: third-party sources come from native/build/dev/_deps' };
+// A dependency's source directory in a configured build tree: the shared cache copy
+// when the configure used one (SIANN_DEP_SOURCE_DIR_<NAME> in CMakeCache.txt),
+// otherwise FetchContent's own <build>/_deps/<name>-src.
+function dependencySource(buildDir, name) {
+  const cache = path.join(buildDir, 'CMakeCache.txt');
+  if (fs.existsSync(cache)) {
+    const key = `SIANN_DEP_SOURCE_DIR_${name.toUpperCase()}:INTERNAL=`;
+    const line = fs.readFileSync(cache, 'utf8').split(/\r?\n/).find((l) => l.startsWith(key));
+    const dir = line ? line.slice(key.length).trim() : '';
+    if (dir) return path.normalize(dir);
   }
-  const toPosix = (p) => {
-    if (!isWindows) return p;
-    const m = /^([A-Za-z]):\\(.*)$/.exec(p);
-    return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : p.replace(/\\/g, '/');
-  };
+  return path.join(buildDir, '_deps', `${name.toLowerCase()}-src`);
+}
+
+const toPosix = (p) => {
+  if (!isWindows) return p;
+  const m = /^([A-Za-z]):[\\/](.*)$/.exec(p);
+  return m ? `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}` : p.replace(/\\/g, '/');
+};
+
+function hasCcache() {
+  const probe = isWindows
+    ? run('wsl.exe', ['-e', 'sh', '-c', 'command -v ccache'], ROOT)
+    : run('sh', ['-c', 'command -v ccache'], ROOT);
+  return probe.ok && probe.output.trim() !== '';
+}
+
+async function gcc(options) {
+  const devBuild = path.join(NATIVE, 'build', 'dev');
+  // Only the third-party sources are needed: a configure provides them.
+  if (!fs.existsSync(path.join(devBuild, 'CMakeCache.txt'))) {
+    const configured = native('cmake', ['--preset', 'dev'], options);
+    if (!configured.ok) return { ...configured, failedAt: 'cmake --preset dev' };
+  }
+  const deps = path.join(devBuild, '_deps');
   const includes = [];
   for (const group of ['libs', 'apps']) {
     for (const entry of fs.readdirSync(path.join(NATIVE, group), { withFileTypes: true })) {
@@ -130,25 +305,20 @@ function gcc() {
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'playback', 'tests', 'support'))}`);
   // The siann-engine launch tests reuse the protocol tests' loopback clients.
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'protocol', 'tests'))}`);
-  for (const d of ['dr_libs-src', 'r8brain-src', 'ixwebsocket-src', path.join('clap-src', 'include'), path.join('catch2-src', 'src'), path.join('catch2-build', 'generated-includes')]) {
-    includes.push('-isystem', toPosix(path.join(deps, d)));
+  const dep = (name) => dependencySource(devBuild, name);
+  for (const dir of [dep('dr_libs'), dep('r8brain'), dep('ixwebsocket'), path.join(dep('clap'), 'include'),
+    path.join(dep('Catch2'), 'src'), path.join(deps, 'catch2-build', 'generated-includes')]) {
+    includes.push('-isystem', toPosix(dir));
   }
   const flags = ['-std=c++20', '-Wall', '-Wextra', '-Wpedantic', '-Wshadow', '-Werror', '-fsyntax-only',
     '-DSIANN_FIXTURES_DIR="x"', '-DSIANN_TEST_PLUGIN_CLAP="x"',
     '-DSIANN_HOSTILE_PLUGIN_CLAP="x"', '-DSIANN_HOST_CLAP_TESTS_EXE="x"', ...includes];
-  const failures = [];
-  let output = '';
-  const check = (file, fileFlags) => {
-    const args = [...fileFlags, toPosix(file)];
-    const step = isWindows ? run('wsl.exe', ['-e', 'g++', ...args], ROOT) : run('g++', args, ROOT);
-    if (!step.ok) {
-      failures.push(path.relative(ROOT, file));
-      output += step.output;
-    }
-  };
-  for (const file of listSources()) check(file, flags);
-  // JUCE comes from the desktop preset's own fetch, and its macros as in host_desktop/CMakeLists.txt.
-  const juce = path.join(NATIVE, 'build', 'desktop', '_deps', 'juce-src', 'modules');
+
+  const jobs = [];
+  for (const file of listSources()) jobs.push([file, flags]);
+  // JUCE comes from the desktop preset's own configure, and its macros as in host_desktop/CMakeLists.txt.
+  const desktopBuild = path.join(NATIVE, 'build', 'desktop');
+  const juce = path.join(dependencySource(desktopBuild, 'juce'), 'modules');
   const haveJuce = fs.existsSync(juce);
   if (haveJuce) {
     const desktopFlags = [...flags,
@@ -157,12 +327,39 @@ function gcc() {
       '-isystem', toPosix(path.join(juce, 'juce_audio_processors_headless', 'format_types', 'VST3_SDK')),
       '-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1', '-DJUCE_STANDALONE_APPLICATION=0', '-DJUCE_PLUGINHOST_VST3=1',
       '-DJUCE_MODAL_LOOPS_PERMITTED=1', '-DSIANN_ENGINE_WITH_JUCE=1', '-DSIANN_TEST_PLUGIN_VST3="x"'];
-    for (const file of desktopSources()) check(file, desktopFlags);
+    for (const file of desktopSources()) jobs.push([file, desktopFlags]);
   }
+
+  // ccache, when WSL (or this host) has it, in front of g++.
+  const ccache = hasCcache();
+  const compiler = ccache ? ['ccache', 'g++'] : ['g++'];
+  const failures = [];
+  let output = '';
+  const width = options.jobs || Math.max(1, Math.min(8, Math.floor(os.cpus().length / 2)));
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const [file, fileFlags] = jobs[next];
+      next += 1;
+      const args = [...compiler.slice(1), ...fileFlags, toPosix(file)];
+      // eslint-disable-next-line no-await-in-loop
+      const step = isWindows
+        ? await runAsync('wsl.exe', ['-e', compiler[0], ...args], ROOT)
+        : await runAsync(compiler[0], args, ROOT);
+      if (!step.ok) {
+        failures.push(path.relative(ROOT, file));
+        output += step.output;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: width }, worker));
+  const notes = [];
+  if (!haveJuce) notes.push('the JUCE sources were not checked: run --desktop first');
+  if (!ccache) notes.push(`no ccache${isWindows ? ' in WSL' : ''}: \`sudo apt install ccache\` there to cache it`);
   return {
     ok: failures.length === 0,
-    output: failures.length ? `failed: ${failures.join(', ')}\n${output}` : '',
-    note: haveJuce ? undefined : 'the JUCE sources were not checked: run --desktop first',
+    output: failures.length ? `failed: ${failures.sort().join(', ')}\n${output}` : '',
+    note: notes.length ? notes.join('; ') : undefined,
   };
 }
 
@@ -175,21 +372,29 @@ function nodeTests() {
 
 // The Electron shell: its own npm package with pinned dependencies (the root
 // package stays dependency-free), tested against the dev build's siann-engine.
-function appStep() {
+function appStep(options) {
   const APP = path.join(ROOT, 'app');
   const exe = path.join(NATIVE, 'build', 'dev', 'apps', 'engine', isWindows ? 'siann-engine.exe' : 'siann-engine');
+  // The timeline e2e prepares its bundles with siann-cli create and import.
+  const cli = path.join(NATIVE, 'build', 'dev', 'apps', 'cli', isWindows ? 'siann-cli.exe' : 'siann-cli');
+  // The crash-recovery e2e crashes the engine with the hostile plugin; it skips without one.
+  // (a file, or the bundle directory on macOS)
+  const hostile = path.join(NATIVE, 'build', 'dev', 'libs', 'host_clap', 'hostile_plugin', 'siann_hostile_plugin.clap');
+  // Without the native step in this run, build just what the e2e needs (as CI's app job does).
+  if (!(options.selected || []).includes('native')) {
+    const built = sequence([
+      ['cmake', ['--preset', 'dev']],
+      ['cmake', ['--build', '--preset', 'dev', '--target', 'siann-engine', 'siann-cli', 'siann_hostile_plugin_CLAP']],
+    ], options);
+    if (!built.ok) return built;
+  }
   if (!fs.existsSync(exe)) {
     return { ok: false, output: `run the native step first: ${exe} is missing` };
   }
-  // The timeline e2e prepares its bundles with siann-cli create and import.
-  const cli = path.join(NATIVE, 'build', 'dev', 'apps', 'cli', isWindows ? 'siann-cli.exe' : 'siann-cli');
   if (!fs.existsSync(cli)) {
     return { ok: false, output: `run the native step first: ${cli} is missing` };
   }
   const env = { ...process.env, SIANN_ENGINE_EXE: exe, SIANN_CLI_EXE: cli };
-  // The crash-recovery e2e crashes the engine with the hostile plugin; it skips without one.
-  // (a file, or the bundle directory on macOS)
-  const hostile = path.join(NATIVE, 'build', 'dev', 'libs', 'host_clap', 'hostile_plugin', 'siann_hostile_plugin.clap');
   if (fs.existsSync(hostile)) env.SIANN_HOSTILE_PLUGIN_CLAP = hostile;
   // The editor-ownership test needs an engine that hosts plugins; it skips without one.
   const desktopBuild = path.join(NATIVE, 'build', 'desktop');
@@ -242,31 +447,48 @@ const STEPS = {
   gcc,
 };
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const selected = options.only
-    ? [options.only]
-    : ['node', 'native', ...(options.desktop ? ['desktop'] : []), ...(options.app ? ['app'] : []),
-      ...(options.gcc ? ['gcc'] : [])];
+  const byChanges = options.changed && !options.only && !options.all;
+  const changed = byChanges ? changedPaths(options.base) : null;
+  const selected = selectSteps(options, changed);
+  options.selected = selected;
+  const say = (text) => { if (!options.json) process.stdout.write(text); };
+  if (byChanges) {
+    say(changed
+      ? `[check-all] ${changed.length} changed path(s) since ${options.base || 'the merge-base with origin/main'}: ${selected.join(', ')}\n`
+      : '[check-all] could not list the changes (no origin/main?): running every step\n');
+  }
+  if (options.plan) {
+    if (options.json) process.stdout.write(`${JSON.stringify({ steps: selected, changed }, null, 2)}\n`);
+    else say(`${selected.join('\n')}\n`);
+    return 0;
+  }
   const results = [];
   for (const name of selected) {
-    if (!STEPS[name]) throw new Error(`unknown step ${name}`);
-    if (!options.json) process.stdout.write(`[check-all] ${name} ... `);
-    const result = STEPS[name]();
+    say(`[check-all] ${name} ... `);
+    const started = process.hrtime.bigint();
+    // eslint-disable-next-line no-await-in-loop
+    const result = await STEPS[name](options);
+    const seconds = Math.round(Number(process.hrtime.bigint() - started) / 1e9);
     const tail = result.ok ? '' : result.output.split(/\r?\n/).slice(-60).join('\n');
-    results.push({ step: name, ok: result.ok, seconds: Math.round(result.seconds || 0), failedAt: result.failedAt, note: result.note, tail });
-    if (!options.json) {
-      const passed = `ok${result.note ? ` (${result.note})` : ''}\n`;
-      process.stdout.write(result.ok ? passed : `FAILED${result.failedAt ? ` at ${result.failedAt}` : ''}\n${tail}\n`);
-    }
+    results.push({ step: name, ok: result.ok, seconds, failedAt: result.failedAt, note: result.note, tail });
+    const passed = `ok (${seconds} s)${result.note ? ` (${result.note})` : ''}\n`;
+    say(result.ok ? passed : `FAILED${result.failedAt ? ` at ${result.failedAt}` : ''}\n${tail}\n`);
   }
   const ok = results.every((r) => r.ok);
   if (options.json) process.stdout.write(`${JSON.stringify({ ok, results }, null, 2)}\n`);
-  process.exit(ok ? 0 : 1);
+  return ok ? 0 : 1;
 }
 
 if (require.main === module) {
-  main();
+  main().then((code) => process.exit(code), (error) => {
+    process.stderr.write(`${error.stack || error}\n`);
+    process.exit(1);
+  });
 }
 
-module.exports = { desktopSources, listSources, parseArgs };
+module.exports = {
+  ALL_STEPS, cacheRoot, changedPaths, dependencySource, desktopSources, listSources, nativeEnv, parseArgs,
+  selectSteps, stepsForPath, stepsForPaths,
+};

@@ -4,15 +4,16 @@
 include(FetchContent)
 
 # dr_libs wav-0.14.5 (public domain / MIT-0): WAV decoding.
-FetchContent_Declare(
+siann_declare_dependency(
   dr_libs
+  NO_SUBMODULES  # its tests' miniaudio submodule: 200 MB, and paths past MAX_PATH
   GIT_REPOSITORY https://github.com/mackron/dr_libs.git
   GIT_TAG fa931f3285ced10ace628f7f1ac951e1951e7ea6
   SOURCE_SUBDIR siann-no-cmake
 )
 
 # r8brain-free-src version-6.5 (MIT): offline sample-rate conversion.
-FetchContent_Declare(
+siann_declare_dependency(
   r8brain
   GIT_REPOSITORY https://github.com/avaneev/r8brain-free-src.git
   GIT_TAG 3c930bf6825c0cfea4a813210c83b1a650c820b5
@@ -22,7 +23,7 @@ FetchContent_Declare(
 # IXWebSocket v11.4.6 (BSD-3-Clause): HTTP and WebSocket for siann-protocol.
 # Built without zlib and TLS (IXWEBSOCKET_USE_ZLIB / IXWEBSOCKET_USE_TLS
 # undefined): the server binds 127.0.0.1 only; TLS arrives with LAN mode.
-FetchContent_Declare(
+siann_declare_dependency(
   ixwebsocket
   GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
   GIT_TAG 2efe037c9cc96fd536774f17bdb5215161ee5087
@@ -31,7 +32,7 @@ FetchContent_Declare(
 
 # CLAP SDK 1.2.10 (MIT, header-only): plugin hosting on both host targets, and the
 # test plugin. The commit's LICENSE was read when it was pinned.
-FetchContent_Declare(
+siann_declare_dependency(
   clap
   GIT_REPOSITORY https://github.com/free-audio/clap.git
   GIT_TAG 195b42a004144fab0b3cf95e9c067187d15365b7
