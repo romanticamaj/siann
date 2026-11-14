@@ -7,6 +7,7 @@ add_library(siann_protocol
   src/about.cpp
   src/jobs.cpp
   src/mcp_adapter.cpp
+  src/record_port.cpp
 )
 add_library(siann::protocol ALIAS siann_protocol)
 target_include_directories(siann_protocol PUBLIC include)
@@ -39,6 +40,7 @@ if(SIANN_BUILD_TESTS)
     tests/mcp_adapter_test.cpp
     tests/mcp_e2e_test.cpp
     tests/gesture_methods_test.cpp
+    tests/record_methods_test.cpp
   )
   # The IXWebSocket client drives the loopback tests; the realtime tests run
   # the graph driver on a ManualAudioDevice with the allocation guard. The

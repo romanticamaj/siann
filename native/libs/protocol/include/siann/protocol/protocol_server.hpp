@@ -36,6 +36,13 @@
 // plugins[], and render.start's own plugin instances, through
 // ServerOptions::pluginPort.
 //
+// m5b-engine-record (spec, Protocol v0 items 22 and 27): engine.select_device's
+// inputId, record.arm, transport.record and record.recover_take through
+// ServerOptions::recordPort; record.changed whenever the port's record state
+// differs after a request or a pump (with the session.changed of a commit the
+// engine host made itself), and the pending takes in the auth reply and every
+// session.sync chunk.
+//
 // m5-mixer (spec, Protocol v0 item 24): gesture.begin, gesture.update,
 // gesture.hold, gesture.end and gesture.cancel through ServerOptions::
 // gesturePort, each gesture under a lease of the connection that began it
@@ -63,6 +70,7 @@
 #include "siann/protocol/gesture_port.hpp"
 #include "siann/protocol/plugin_port.hpp"
 #include "siann/protocol/realtime_channel.hpp"
+#include "siann/protocol/record_port.hpp"
 #include "siann/protocol/transport.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "siann/session/session.hpp"
@@ -122,6 +130,10 @@ struct ServerOptions {
     // The engine host's fader gestures (Protocol v0 item 24); nullptr: gesture.*
     // is not_supported. Must outlive the server.
     GesturePort* gesturePort = nullptr;
+    // The engine host's recording (Protocol v0 item 28, m5b-engine-record);
+    // nullptr: record.arm, transport.record and record.recover_take are
+    // not_supported. Must outlive the server.
+    RecordPort* recordPort = nullptr;
     // How long a gesture's lease lasts without a renewal, and the clock it is
     // measured on (empty: the steady clock; tests inject one).
     std::chrono::milliseconds gestureLeaseMs{5'000};

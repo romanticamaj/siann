@@ -389,6 +389,25 @@ Prepared sessionSetLocators(const Document& doc, const Command& command) {
     return {{EntityRef{EntityType::locators, std::string(model::kLocatorsId)}}, doc.withLocators(value)};
 }
 
+// A track's input (m5b-engine-record): {port, channels} or null, as one edit of
+// the track. A negative port, channels other than 1 or 2, a missing or extra
+// field are invalid_params (the field reader's ModelError).
+Prepared trackSetInput(const Document& doc, const Command& command) {
+    return editTrack(doc, command, [](Track& t, FieldReader& r) {
+        const json::Value& input = r.require("input");
+        if (input.isNull()) {
+            t.input.reset();
+            return;
+        }
+        FieldReader in(input, "input");
+        model::TrackInput value;
+        value.port = static_cast<std::int32_t>(in.integer("port", 0, INT32_MAX));
+        value.channels = static_cast<std::int32_t>(in.integer("channels", 1, 2));
+        in.finish();
+        t.input = value;
+    });
+}
+
 using Handler = Prepared (*)(const Document&, const Command&);
 
 const std::map<std::string, Handler, std::less<>>& registry() {
@@ -426,6 +445,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
          [](const Document& d, const Command& c) {
              return editTrack(d, c, [](Track& t, FieldReader& r) { t.gain = gainParam(r, "gainMilliDb"); });
          }},
+        {"track.set_input", &trackSetInput},
         {"track.set_mute",
          [](const Document& d, const Command& c) {
              return editTrack(d, c, [](Track& t, FieldReader& r) { t.mute = r.boolean("mute"); });

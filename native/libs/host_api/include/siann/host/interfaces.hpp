@@ -37,8 +37,12 @@ struct AudioDeviceConfig {
     std::string deviceId;
     std::int64_t sampleRate = 48'000;
     int bufferFrames = 256;
+    // Input channels to open (at most; a device may open fewer, see
+    // AudioDeviceStatus::inputChannels), from `inputDeviceId` when it is set and
+    // the backend pairs it with `deviceId`, else from `deviceId` itself.
     int inputChannels = 0;
     int outputChannels = 2;
+    std::string inputDeviceId{};
 };
 
 struct AudioDeviceStatus {
@@ -46,6 +50,10 @@ struct AudioDeviceStatus {
     int bufferFrames = 0;
     int inputLatencyFrames = 0;
     int outputLatencyFrames = 0;
+    // The channels the device opened (m5b-engine-record); 0 when it opened none,
+    // which may be fewer than asked (an output-only device opens no input).
+    int inputChannels = 0;
+    int outputChannels = 0;
 };
 
 // A device that cannot be had.

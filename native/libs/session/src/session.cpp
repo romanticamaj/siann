@@ -52,12 +52,18 @@ struct Session::State {
     std::int64_t lastSeq = 0;
     command::PlanStore plans;  // in memory only (M3)
     bool cycle = false;        // written with every checkpoint
+    Session::HeadGuard headGuard;  // engine state (setHeadGuard)
 
     State(detail::BundleLock held, fs::path path, History h, std::int64_t seq)
         : lock(std::move(held)), bundle(std::move(path)), history(std::move(h)), lastSeq(seq) {}
 
     void installJournalHook() {
         history.setBeforePublish([this](const Revision& revision) {
+            // A branch commit is not main's head; a merge is.
+            const bool onMain = !revision.branch || revision.envelope.cause == Cause::branchMerge;
+            if (headGuard && onMain) {
+                headGuard(revision);  // a throw refuses it before anything is written
+            }
             const std::int64_t seq = lastSeq + 1;
             io::appendDurable(bundle / kJournalFile, encodeRecord(recordFromRevision(seq, revision)) + "\n");
             lastSeq = seq;
@@ -318,6 +324,10 @@ const Revision& Session::rollbackPlan(std::string_view planHashText, std::string
 
 void Session::checkpoint() {
     state_->writeCheckpoint();
+}
+
+void Session::setHeadGuard(HeadGuard guard) {
+    state_->headGuard = std::move(guard);
 }
 
 command::BranchId Session::branch(std::string_view baseId) {

@@ -124,6 +124,11 @@ std::uint64_t EventStream::publishMeterLegend(json::Object legend) {
     return publishLocked("meters.legend", std::move(legend));
 }
 
+void EventStream::setPendingTakes(json::Value takes) {
+    std::lock_guard lock(mutex_);
+    head_.pendingTakes = std::move(takes);
+}
+
 std::uint64_t EventStream::publishBranchRevision(const command::Revision& revision) {
     json::Object changed = sessionChangedPayload(revision);
     Object payload{{"branch", Value(revision.branch.value_or(std::string()))}};

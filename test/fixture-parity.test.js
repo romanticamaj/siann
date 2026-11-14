@@ -37,6 +37,21 @@ test('the v2 model fixture matches its Node generator', () => {
   assert.deepEqual(committed, buildFixtureV2());
 });
 
+// m5b-engine-record: a track's input changes that track's hash and nothing else.
+test('the input model fixture matches its Node generator and changes one track hash', () => {
+  const { FIXTURE_FILE_INPUT, buildFixtureInput, FIXTURE_FILE_V2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_INPUT, 'utf8'));
+  assert.deepEqual(committed, buildFixtureInput());
+  const v2 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  const vox = committed.document.tracks.find((track) => track.id === 'trk-vox');
+  assert.deepEqual(vox.input, { port: 3, channels: 1 });
+  const changed = committed.entityHashes.filter((leaf, i) => leaf.entityHash !== v2.entityHashes[i].entityHash);
+  assert.deepEqual(changed.map((leaf) => `${leaf.type}:${leaf.id}`), ['track:trk-vox']);
+  assert.equal(changed[0].entityHash, sha256Jcs(vox));
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+  for (const track of committed.document.tracks.filter((t) => t.id !== 'trk-vox')) assert.equal(track.input, undefined);
+});
+
 // m5-ui-engine-loop-click: v2 adds the locators entity and nothing else, so every
 // v1 entity keeps its hash (the schemaVersion string is not hashed).
 test('the v2 model fixture keeps every v1 entity hash and adds locators:locators', () => {

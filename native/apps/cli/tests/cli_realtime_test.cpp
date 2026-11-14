@@ -93,6 +93,8 @@ TEST_CASE("record commits a take on a track", "[cli][realtime][record]") {
     REQUIRE(isDecimalString(recorded.json.find("frames")));
     CHECK(std::stoll(recorded.json.find("frames")->asString()) > 0);
     CHECK(recorded.json.find("overflows")->asString() == "0");
+    REQUIRE(recorded.json.find("endedBy") != nullptr);
+    CHECK(recorded.json.find("endedBy")->asString() == "stop");
     REQUIRE(isDecimalString(recorded.json.find("xruns")));
     REQUIRE(recorded.json.find("maxCallbackMicros") != nullptr);
     CHECK(recorded.json.find("maxCallbackMicros")->kind() == Value::Kind::number);

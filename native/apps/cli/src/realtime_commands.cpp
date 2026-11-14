@@ -500,6 +500,14 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
     const realtime::Recorder::Result result = recorder.stop();
     run.stop();
     run.engine().driver().attachRecorder(nullptr);
+    // How the take ended, in its manifest before the commit (spec, "Recording":
+    // an early end is never silent). A take whose manifest cannot be written
+    // still commits: the result below says how it ended.
+    const std::string endedBy(realtime::endedByName(result.endedBy));
+    try {
+        session::markTakeEnd(bundle, takeId, endedBy, result.overflows);
+    } catch (const std::exception&) {
+    }
     // A pointer, not a reference: GCC flags a reference as dangling (-Wdangling-reference).
     const command::Revision* revision = &session::commitTake(s, takeId, actorOf(args), timeOf(args));
 
@@ -510,7 +518,8 @@ Value cmdRecord(const Args& args, const std::atomic<bool>* interrupt) {
                {"frames", decimal(result.frames)},
                {"startPosition", decimal(result.startPosition)},
                {"recordOffset", decimal(manifest.recordOffset)},
-               {"overflows", decimal(result.overflows)}};
+               {"overflows", decimal(result.overflows)},
+               {"endedBy", Value(endedBy)}};
     run.report(out);
     return ok(std::move(out));
 }

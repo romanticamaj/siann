@@ -25,7 +25,8 @@ siann_apply_compile_options(siann-engine)
 if(SIANN_BUILD_TESTS)
   # In process: EngineHost on ManualAudioDevice and FakeAudioDevice. The callback
   # runs under the device's realtime mark, so the guard sees the audio path.
-  add_executable(siann_engine_host_tests tests/engine_host_test.cpp tests/engine_plugins_test.cpp)
+  add_executable(siann_engine_host_tests tests/engine_host_test.cpp tests/engine_plugins_test.cpp
+    tests/engine_record_test.cpp)
   target_link_libraries(siann_engine_host_tests PRIVATE siann_engine_app siann::host_fake siann_rt_alloc_guard
     Catch2::Catch2WithMain)
   target_include_directories(siann_engine_host_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/protocol/tests"

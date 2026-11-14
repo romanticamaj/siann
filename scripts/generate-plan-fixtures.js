@@ -86,6 +86,15 @@ function buildFixture() {
       readSet: [],
       writeSet: [entry('locators', 'locators', null)],
     }],
+    // m5b-engine-record: a track's input set and cleared (null is hashed as null).
+    ['track_input_steps', {
+      ...minimal,
+      steps: [
+        { op: 'track.set_input', trackId: 'trk_1', input: { port: 2, channels: 2 } },
+        { op: 'track.set_input', trackId: 'trk_1', input: null },
+      ],
+      writeSet: [entry('track', 'trk_1')],
+    }],
     // m5b-engine-project-media: the media entity's optional name, set by media.add
     // and by media.rename (null removes it).
     ['media_add_with_name', {

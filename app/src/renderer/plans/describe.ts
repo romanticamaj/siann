@@ -208,6 +208,16 @@ export function describeStep(
       return t(step.mute ? 'step.mute' : 'step.unmute', { track: track() });
     case 'track.set_solo':
       return t(step.solo ? 'step.solo' : 'step.unsolo', { track: track() });
+    case 'track.set_input': {
+      if (step.input === null) return t('step.clearInput', { track: track() });
+      const input = step.input as Record<string, unknown> | undefined;
+      if (input && typeof input.port === 'number' && typeof input.channels === 'number') {
+        const first = input.port + 1;
+        if (input.channels === 2) return t('step.setInputPair', { track: track(), first, second: first + 1 });
+        return t('step.setInput', { track: track(), input: first });
+      }
+      break;
+    }
     case 'track.explode':
       return t('step.explodeTrack', { track: track() });
     case 'clip.place':

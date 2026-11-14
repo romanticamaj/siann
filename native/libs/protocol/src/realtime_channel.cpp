@@ -218,19 +218,62 @@ MeterPublisher::MeterPublisher(const realtime::ControlDispatcher& dispatcher, Re
     }
 }
 
+namespace {
+
+constexpr std::string_view kInputPrefix = "input:";
+
+MeterFrameEntry entryOf(std::size_t index, const graph::MeterReading& reading) {
+    MeterFrameEntry entry;
+    entry.entityIndex = static_cast<std::uint16_t>(index);
+    const int channels = std::min(reading.channels, graph::kMaxMeterChannels);
+    entry.channels = static_cast<std::uint8_t>(std::max(channels, 0));
+    for (int c = 0; c < channels; ++c) {
+        entry.peak.push_back(reading.peak[static_cast<std::size_t>(c)]);
+        entry.rms.push_back(reading.rms[static_cast<std::size_t>(c)]);
+    }
+    return entry;
+}
+
+}  // namespace
+
 void MeterPublisher::graphPublished(std::uint64_t epoch, const std::map<std::string, graph::NodeId>& meterSlots) {
     epoch_ = epoch;
+    published_ = true;
     legend_.clear();
-    json::Array entities;
     for (const auto& [entity, slot] : meterSlots) {
         (void)slot;
         if (legend_.size() > std::numeric_limits<std::uint16_t>::max()) {
             break;  // entity indexes are u16
         }
         legend_.push_back(entity);
+    }
+    graphEntries_ = legend_.size();
+    publishLegend();
+}
+
+void MeterPublisher::setInputs(std::vector<std::string> trackIds) {
+    if (trackIds == inputs_) {
+        return;
+    }
+    inputs_ = std::move(trackIds);
+    if (published_) {
+        publishLegend();  // the same epoch: the graph's entries keep their indexes
+    }
+}
+
+void MeterPublisher::publishLegend() {
+    legend_.resize(graphEntries_);
+    for (const std::string& trackId : inputs_) {
+        if (legend_.size() > std::numeric_limits<std::uint16_t>::max()) {
+            break;
+        }
+        legend_.push_back(std::string(kInputPrefix) + trackId);
+    }
+    json::Array entities;
+    for (const std::string& entity : legend_) {
         entities.push_back(json::Value(entity));
     }
-    events_.publishMeterLegend(json::Object{{"epoch", json::Value(std::to_string(epoch))},
+    events_.publishMeterLegend(json::Object{{"epoch", json::Value(std::to_string(epoch_))},
                                             {"entities", json::Value(std::move(entities))}});
 }
 
@@ -241,19 +284,20 @@ bool MeterPublisher::tick() {
     MeterFrame frame;
     frame.epoch = epoch_;
     for (std::size_t i = 0; i < legend_.size(); ++i) {
+        if (i >= graphEntries_) {
+            // An armed track's input meter, also while the transport is stopped.
+            if (options_.inputMeter) {
+                if (const auto reading = options_.inputMeter(legend_[i].substr(kInputPrefix.size()))) {
+                    frame.entries.push_back(entryOf(i, *reading));
+                }
+            }
+            continue;
+        }
         const auto sample = dispatcher_.meter(legend_[i]);
         if (!sample || sample->epoch != epoch_) {
             continue;
         }
-        MeterFrameEntry entry;
-        entry.entityIndex = static_cast<std::uint16_t>(i);
-        const int channels = std::min(sample->reading.channels, graph::kMaxMeterChannels);
-        entry.channels = static_cast<std::uint8_t>(std::max(channels, 0));
-        for (int c = 0; c < channels; ++c) {
-            entry.peak.push_back(sample->reading.peak[static_cast<std::size_t>(c)]);
-            entry.rms.push_back(sample->reading.rms[static_cast<std::size_t>(c)]);
-        }
-        frame.entries.push_back(std::move(entry));
+        frame.entries.push_back(entryOf(i, sample->reading));
     }
     if (frame.entries.empty() && !options_.playhead) {
         return false;

@@ -1,5 +1,6 @@
 #include "siann/host/manual_audio_device.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include "siann/rt/realtime_thread.hpp"
@@ -15,7 +16,10 @@ AudioDeviceStatus ManualAudioDevice::open(const AudioDeviceConfig& config) {
         config_.sampleRate = options_.fixedSampleRate;
     }
     const auto frames = static_cast<std::size_t>(config.bufferFrames);
-    input_.assign(static_cast<std::size_t>(config.inputChannels), std::vector<float>(frames, 0.0f));
+    if (options_.maxInputChannels >= 0) {
+        config_.inputChannels = std::min(config_.inputChannels, options_.maxInputChannels);
+    }
+    input_.assign(static_cast<std::size_t>(config_.inputChannels), std::vector<float>(frames, 0.0f));
     output_.assign(static_cast<std::size_t>(config.outputChannels), std::vector<float>(frames, 0.0f));
     inputPointers_.clear();
     outputPointers_.clear();
@@ -25,7 +29,16 @@ AudioDeviceStatus ManualAudioDevice::open(const AudioDeviceConfig& config) {
     for (auto& c : output_) {
         outputPointers_.push_back(c.data());
     }
-    return AudioDeviceStatus{config_.sampleRate, config.bufferFrames, 0, 0};
+    const auto loopLength = static_cast<std::size_t>(std::max(options_.inputLatencyFrames, 0)) +
+                            static_cast<std::size_t>(std::max(options_.outputLatencyFrames, 0));
+    if (options_.loopback && loopLength < frames) {
+        // Input for a block may only depend on output of earlier blocks.
+        throw std::invalid_argument("loopback latency must be at least one buffer");
+    }
+    loop_.assign(options_.loopback ? output_.size() : 0, std::vector<float>(loopLength, 0.0f));
+    loopPosition_ = 0;
+    return AudioDeviceStatus{config_.sampleRate,         config.bufferFrames,   options_.inputLatencyFrames,
+                             options_.outputLatencyFrames, config_.inputChannels, config.outputChannels};
 }
 
 void ManualAudioDevice::pump(int blocks, std::vector<float>* capture, int channel) {
@@ -41,11 +54,29 @@ void ManualAudioDevice::pump(int blocks, std::vector<float>* capture, int channe
                     input_[c][static_cast<std::size_t>(i)] = generator_(static_cast<int>(c), inputFrame_ + i);
                 }
             }
+        } else if (!loop_.empty()) {
+            const std::size_t length = loop_.front().size();
+            for (std::size_t c = 0; c < input_.size(); ++c) {
+                const auto& ring = loop_[std::min(c, loop_.size() - 1)];
+                for (int i = 0; i < config_.bufferFrames; ++i) {
+                    input_[c][static_cast<std::size_t>(i)] = ring[(loopPosition_ + static_cast<std::size_t>(i)) % length];
+                }
+            }
         }
         inputFrame_ += config_.bufferFrames;
         {
             const rt::ScopedRealtimeThread realtime;
             callback_(in, out);
+        }
+        if (!loop_.empty()) {
+            const std::size_t length = loop_.front().size();
+            for (std::size_t c = 0; c < loop_.size(); ++c) {
+                for (int i = 0; i < config_.bufferFrames; ++i) {
+                    loop_[c][(loopPosition_ + static_cast<std::size_t>(i)) % length] =
+                        output_[c][static_cast<std::size_t>(i)];
+                }
+            }
+            loopPosition_ = (loopPosition_ + static_cast<std::size_t>(config_.bufferFrames)) % length;
         }
         if (capture != nullptr) {
             const auto& samples = output_[static_cast<std::size_t>(channel)];

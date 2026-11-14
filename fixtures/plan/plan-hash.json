@@ -246,6 +246,37 @@
       "planHash": "sha256:b6ef4919c63432097f572a57d99708aadf1e16a6d61fe6cc39e3dbadd630d4de"
     },
     {
+      "name": "track_input_steps",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r4",
+        "steps": [
+          {
+            "op": "track.set_input",
+            "trackId": "trk_1",
+            "input": {
+              "port": 2,
+              "channels": 2
+            }
+          },
+          {
+            "op": "track.set_input",
+            "trackId": "trk_1",
+            "input": null
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "track",
+            "id": "trk_1",
+            "hash": "sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90"
+          }
+        ]
+      },
+      "planHash": "sha256:31d33b0c706be088da9dac26474de44c3459dd849952a6d7ce2a6fa4833d1f13"
+    },
+    {
       "name": "media_add_with_name",
       "plan": {
         "schema": "siann.plan.v1",

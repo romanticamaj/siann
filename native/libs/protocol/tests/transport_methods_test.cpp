@@ -194,11 +194,11 @@ TEST_CASE("engine.status carries the device and the driver's timing, counts as d
         port.reported.srcUnderruns = 5;
 
         const Value status = f.ok(c, "engine.status");
-        CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "xruns",
+        CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "recording", "armed", "xruns",
                                                       "maxCallbackMicros", "unmeasuredCallbacks", "underruns",
                                                       "srcUnderruns"});
         const Value& device = at(status, "device");
-        CHECK(keysOf(device) == std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames",
+        CHECK(keysOf(device) == std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames", "input",
                                                       "outputLatencyFrames"});
         CHECK(at(device, "id").asString() == "fake");
         CHECK(at(device, "sampleRate").asNumber() == 48'000);
@@ -306,7 +306,8 @@ TEST_CASE("engine.devices lists the port's devices with the five fields", "[prot
     const auto& devices = at(result, "devices").asArray();
     REQUIRE(devices.size() == 2);
     for (const Value& device : devices) {
-        CHECK(keysOf(device) == std::set<std::string>{"id", "type", "name", "isDefault", "current"});
+        CHECK(keysOf(device) == std::set<std::string>{"id", "type", "name", "isDefault", "current", "inputChannels",
+                                                      "outputChannels"});
         CHECK(at(device, "isDefault").kind() == Value::Kind::boolean);
         CHECK(at(device, "current").kind() == Value::Kind::boolean);
     }
@@ -330,7 +331,7 @@ TEST_CASE("engine.select_device returns the device object engine.status carries"
 
     const Value device = f.ok(c, "engine.select_device", Value(Object{{"id", Value("fake")}}));
     CHECK(keysOf(device) ==
-          std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames", "outputLatencyFrames"});
+          std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames", "outputLatencyFrames", "input"});
     CHECK(at(device, "id").asString() == "fake");
     CHECK(at(device, "sampleRate").asNumber() == 44'100);
     CHECK(at(device, "bufferFrames").asNumber() == 128);
@@ -441,7 +442,7 @@ std::vector<Value> transportEvents(const Harness& f, ConnectionId connection) {
 }
 
 void checkTransportResult(const Value& result, bool cycle, bool clickOn, double gain) {
-    CHECK(keysOf(result) == std::set<std::string>{"playing", "position", "cycle", "click"});
+    CHECK(keysOf(result) == std::set<std::string>{"playing", "position", "cycle", "click", "recording", "armed"});
     CHECK(at(result, "cycle").asBool() == cycle);
     CHECK(keysOf(at(result, "click")) == std::set<std::string>{"enabled", "gainMilliDb"});
     CHECK(at(at(result, "click"), "enabled").asBool() == clickOn);

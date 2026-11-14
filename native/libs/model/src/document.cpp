@@ -190,6 +190,14 @@ Track trackFromJson(const Value& value) {
             t.inserts.push_back(id.asString());
         }
     }
+    if (const Value* input = r.optional("input")) {
+        detail::FieldReader in(*input, "track.input");
+        TrackInput port;
+        port.port = static_cast<std::int32_t>(in.integer("port", 0, INT32_MAX));
+        port.channels = static_cast<std::int32_t>(in.integer("channels", 1, 2));
+        in.finish();
+        t.input = port;
+    }
     r.finish();
     return t;
 }
@@ -440,6 +448,11 @@ Value toJson(const Track& track) {
             inserts.push_back(Value(id));
         }
         out.emplace_back("inserts", Value(std::move(inserts)));
+    }
+    // Omitted while absent: a track without an input keeps its earlier hash.
+    if (track.input) {
+        out.emplace_back("input",
+                         Value(Object{{"port", number(track.input->port)}, {"channels", number(track.input->channels)}}));
     }
     return Value(std::move(out));
 }
@@ -869,6 +882,9 @@ std::vector<ValidationIssue> Document::validate() const {
         }
         if (t.pan < kPanMin || t.pan > kPanMax) {
             issue(out, "invalid_pan", EntityType::track, t.id, "track pan is out of range");
+        }
+        if (t.input && (t.input->port < 0 || t.input->channels < 1 || t.input->channels > 2)) {
+            issue(out, "invalid_input", EntityType::track, t.id, "a track input is a port >= 0 and 1 or 2 channels");
         }
     }
 

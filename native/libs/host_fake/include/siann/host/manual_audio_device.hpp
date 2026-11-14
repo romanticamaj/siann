@@ -17,6 +17,17 @@ public:
     struct Options {
         // Non-zero: open() reports this rate whatever it is asked for.
         std::int64_t fixedSampleRate = 0;
+        // m5b-engine-record: reported, and applied in loopback.
+        int inputLatencyFrames = 0;
+        int outputLatencyFrames = 0;
+        // input[t] = output[t - input - output latency] (an input channel past the
+        // outputs reads the last output), as FakeAudioDevice; an input generator
+        // replaces it. The latency must be at least one buffer.
+        bool loopback = false;
+        // >= 0: opens at most this many of the input channels asked for and reports
+        // the ones it opened, as a backend without that many inputs does (an
+        // output-only device opens 0).
+        int maxInputChannels = -1;
     };
 
     ManualAudioDevice() = default;
@@ -61,6 +72,8 @@ private:
     std::vector<std::vector<float>> output_;
     std::vector<float*> inputPointers_;
     std::vector<float*> outputPointers_;
+    std::vector<std::vector<float>> loop_;  // per output channel, input + output latency long
+    std::size_t loopPosition_ = 0;
 };
 
 }  // namespace siann::host

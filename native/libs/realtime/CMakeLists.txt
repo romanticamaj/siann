@@ -3,6 +3,7 @@ add_library(siann_realtime
   src/control_dispatcher.cpp
   src/disk_stream.cpp
   src/recorder.cpp
+  src/capture_bank.cpp
   src/transport.cpp
   src/stream_resampler.cpp
   src/click.cpp
@@ -25,6 +26,7 @@ if(SIANN_BUILD_TESTS)
     tests/transport_test.cpp
     tests/pdc_realtime_test.cpp
     tests/src_test.cpp
+    tests/capture_bank_test.cpp
   )
   target_link_libraries(siann_realtime_tests PRIVATE siann::realtime siann::host_fake siann::media siann_rt_alloc_guard
                         siann::engine Catch2::Catch2WithMain)

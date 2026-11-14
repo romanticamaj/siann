@@ -31,6 +31,7 @@ additions:
   "sessionId": "ses_...", "revision": "r12", "documentHash": "sha256:...",
   "seq": "41",
   "meters": {"epoch": "3", "entities": ["master", "track:trk_1"]},
+  "pendingTakes": [],
   "about": {
     "name": "siann-engine", "version": "0.1.0",
     "source": {"url": "https://github.com/romanticamaj/siann", "commit": "<40 hex>", "dirty": false},
@@ -48,6 +49,13 @@ that reconnects with a `lastSeq` smaller than `seq` missed events and syncs.
 reply, with or without `events: true`, because a client that opens the realtime
 channel needs it to decode frames; a newer legend arrives as a `meters.legend`
 event with a larger `seq`.
+
+`pendingTakes` (m5b-engine-record) lists the takes in the bundle's
+`media/recording/` that are not being recorded, at the same `seq`:
+`[{takeId, trackId, channels, sampleRate, startFrame, endedBy?, overflows?}]`,
+`startFrame` a decimal string or null (the take never captured a frame). A client
+offers `record.recover_take` for each ([Protocol engine v0](protocol-engine-v0.md),
+Recording).
 
 ## Event envelope
 
@@ -141,6 +149,12 @@ a sync. Frames of an epoch whose legend the client does not hold are ignored
 (between a graph publication and the event, the publisher may already send
 frames of the new epoch).
 
+With m5b-engine-record the entities after the graph's are `input:<trackId>`, one
+per armed track: the input meter of that track's device channels, measured whether
+the transport plays or not. When the armed set changes the legend is published
+again with the same `epoch` and the graph's entities at the same indexes, so a
+frame decoded with the previous legend reads the same values.
+
 ### `proposal.changed` (m3-mcp)
 
 Published after a commit onto a proposal branch through the protocol
@@ -228,6 +242,23 @@ Setting the value already set publishes nothing. Neither change is a revision, s
 no `session.changed` accompanies it; a change of the locators is a revision and is
 announced by `session.changed` with `changedIds [{ref: "locators:locators", change}]`.
 
+### `record.changed` (m5b-engine-record)
+
+Published to every subscribed connection whenever the record state changes:
+arming or disarming, the start of a recording, a take's first frame, each advance
+of a take's `durableFrames` and the end of the recording.
+
+```json
+{"type": "record.changed", "recording": false, "armed": ["trk_1"],
+ "takes": [{"takeId": "take_3f2a...", "trackId": "trk_1", "startFrame": "96000", "durableFrames": "480000",
+            "endedBy": "overflow", "overflows": "12"}]}
+```
+
+The payload is the record state of [Protocol engine v0](protocol-engine-v0.md),
+Recording. `endedBy` and `overflows` are present once the recording ended; an early
+end (`overflow`, `disk`, `device`) is never silent. The commit that follows is
+announced by `session.changed`.
+
 ### `session.opened` (m3-mcp)
 
 Published when `session.open` switched the server to another bundle:
@@ -255,6 +286,7 @@ happen in between.
 {
   "revision": "r13", "seq": "42", "documentHash": "sha256:...", "entities": 32,
   "meters": {"epoch": "3", "entities": ["master", "track:trk_1"]},
+  "pendingTakes": [],
   "chunk": {"root": {...}, "media": [...], "tracks": [...], "clips": [...], "pluginSlots": [...]},
   "next": "sync_1:4"
 }
@@ -278,6 +310,8 @@ happen in between.
 - `seq` is the last published event's `seq` at the time the sync was pinned, and
   `meters` the meter legend at that `seq` (as in the auth reply), so a sync after a
   gap also restores a `meters.legend` event the gap swallowed.
+- `pendingTakes` (m5b-engine-record) is the list of pending takes at that `seq`,
+  as in the auth reply.
 
 ### `session.fetch`
 
