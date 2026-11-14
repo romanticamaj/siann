@@ -1173,6 +1173,7 @@ void EngineHost::startRecording() {
             Take take;
             take.slot = slot;
             take.recordOffset = offset;
+            take.input = input;
             take.state.takeId = manifest.takeId;
             take.state.trackId = trackId;
             takes.push_back(take);
@@ -1199,6 +1200,9 @@ void EngineHost::startRecording() {
     takes_ = std::move(takes);
     lastTakes_.clear();
     recording_ = true;
+    // No new head of main may remove or re-route a track being recorded, whatever
+    // path it comes by (command, plan, merge, undo, redo, rollback).
+    session_->setHeadGuard([this](const command::Revision& next) { guardRecordedTracks(next.document); });
     engine_->driver().setCaptureActive(true);  // the cycle records straight through
     engine_->transport().play();
 }
@@ -1228,9 +1232,11 @@ void EngineHost::finishRecording(std::optional<realtime::EndedBy> forced) {
         return;
     }
     recording_ = false;
+    session_->setHeadGuard({});
     engine_->driver().setCaptureActive(false);
     realtime::CaptureBank& bank = *engine_->driver().captureBank();
     const fs::path bundle = session_->bundlePath();
+    const model::Document& head = session_->history().head().document;
     std::vector<std::string> commit;
     std::vector<protocol::RecordTakeState> ended;
     for (Take& take : takes_) {
@@ -1250,7 +1256,12 @@ void EngineHost::finishRecording(std::optional<realtime::EndedBy> forced) {
         } catch (const std::exception& error) {
             say("cannot note how take " + state.takeId + " ended: " + error.what());
         }
-        if (result.frames > 0) {
+        if (result.frames > 0 && head.track(state.trackId) == nullptr) {
+            // Its track went on a path the guard did not see: the take stays
+            // pending (record.recover_take places it on another or a new track),
+            // and the other takes still commit.
+            say("track " + state.trackId + " is gone: take " + state.takeId + " stays pending");
+        } else if (result.frames > 0) {
             commit.push_back(state.takeId);
         } else {
             try {
@@ -1281,12 +1292,30 @@ void EngineHost::abandonRecording() {
         return;
     }
     recording_ = false;
+    session_->setHeadGuard({});
     engine_->driver().setCaptureActive(false);
     realtime::CaptureBank& bank = *engine_->driver().captureBank();
     for (const Take& take : takes_) {
         bank.recorder(take.slot).stop();  // the file is closed and stays pending
     }
     takes_.clear();
+}
+
+// The head guard while recording: a track being recorded keeps existing and
+// keeps the input its take began with.
+void EngineHost::guardRecordedTracks(const model::Document& next) const {
+    for (const Take& take : takes_) {
+        const std::string& trackId = take.state.trackId;
+        const model::Track* track = next.track(trackId);
+        if (track == nullptr) {
+            throw command::CommandError("track_recording",
+                                        "track " + trackId + " is being recorded; end the recording before removing it");
+        }
+        if (!track->input || !(*track->input == take.input)) {
+            throw command::CommandError("track_recording",
+                                        "track " + trackId + " is being recorded; end the recording before changing its input");
+        }
+    }
 }
 
 protocol::RecordState EngineHost::recordState() const {
@@ -1327,7 +1356,8 @@ std::vector<protocol::PendingTake> EngineHost::pendingTakes() const {
     return out;
 }
 
-protocol::RecoverResult EngineHost::recoverTake(const std::string& takeId, bool accept, std::string actor,
+protocol::RecoverResult EngineHost::recoverTake(const std::string& takeId, bool accept,
+                                                const std::optional<std::string>& trackId, std::string actor,
                                                 std::string time) {
     const bool beingRecorded =
         std::any_of(takes_.begin(), takes_.end(), [&](const Take& take) { return take.state.takeId == takeId; });
@@ -1338,8 +1368,22 @@ protocol::RecoverResult EngineHost::recoverTake(const std::string& takeId, bool 
         session::discardTake(*session_, takeId);
         return {nullptr, true};
     }
+    // On the named track; with none named, on its own track, or on a new one
+    // when its own is gone (removed while it was recorded, on a path that did not
+    // refuse it).
+    session::TakePlacement placement;
+    placement.trackId = trackId;
+    if (!trackId) {
+        // Looked up among the pending takes: the client's takeId never forms a path here.
+        for (const session::TakeManifest& pending : session::pendingTakes(session_->bundlePath())) {
+            if (pending.takeId == takeId) {
+                placement.newTrack = session_->history().head().document.track(pending.trackId) == nullptr;
+            }
+        }
+    }
     const std::string before = session_->history().head().envelope.id;
-    const command::Revision* revision = &session::commitTake(*session_, takeId, std::move(actor), std::move(time));
+    const command::Revision* revision =
+        &session::commitTake(*session_, takeId, std::move(actor), std::move(time), placement);
     if (session_->history().head().envelope.id != before) {
         audition_.mainCommitted();
     }

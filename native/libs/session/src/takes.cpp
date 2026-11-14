@@ -178,8 +178,10 @@ std::vector<TakeManifest> pendingTakes(const fs::path& bundle) {
     return out;
 }
 
-const command::Revision& commitTakes(Session& session, const std::vector<std::string>& takeIds, std::string actor,
-                                     std::string time) {
+namespace {
+
+const command::Revision& commitPlaced(Session& session, const std::vector<std::string>& takeIds,
+                                      const TakePlacement& placement, std::string actor, std::string time) {
     if (takeIds.empty()) {
         throw SessionError("invalid_take", "a recording commits at least one take");
     }
@@ -200,6 +202,13 @@ const command::Revision& commitTakes(Session& session, const std::vector<std::st
             throw SessionError("take_has_no_audio", "take " + takeId + " has no recorded audio");
         }
         manifests.push_back(std::move(m));
+    }
+
+    if (placement.trackId && placement.newTrack) {
+        throw SessionError("invalid_take", "a take goes on a named track or on a new one, not both");
+    }
+    if (placement.trackId && session.history().head().document.track(*placement.trackId) == nullptr) {
+        throw SessionError("not_found", "no track with id " + *placement.trackId);
     }
 
     std::vector<Staged> staged;
@@ -227,6 +236,16 @@ const command::Revision& commitTakes(Session& session, const std::vector<std::st
                 fs::rename(one.audio, one.target);  // durable before the journal record (commit order)
             }
             staged.push_back(one);
+            std::string trackId = placement.trackId.value_or(m.trackId);
+            if (placement.newTrack) {
+                trackId = "trk_" + m.takeId;
+                commands.push_back(command::Command::fromJson(Value(Object{
+                    {"op", Value(std::string("track.add"))},
+                    {"trackId", Value(trackId)},
+                    {"name", Value(m.takeId)},
+                    {"channels", Value(static_cast<double>(m.channels))},
+                })));
+            }
             commands.push_back(command::Command::fromJson(Value(Object{
                 {"op", Value(std::string("media.add"))},
                 {"mediaId", Value(mediaIdOf(m.takeId))},
@@ -239,7 +258,7 @@ const command::Revision& commitTakes(Session& session, const std::vector<std::st
             commands.push_back(command::Command::fromJson(Value(Object{
                 {"op", Value(std::string("clip.place"))},
                 {"clipId", Value(clipIdOf(m.takeId))},
-                {"trackId", Value(m.trackId)},
+                {"trackId", Value(trackId)},
                 {"mediaId", Value(mediaIdOf(m.takeId))},
                 {"position", Value(Object{{"domain", Value(std::string("audio"))},
                                           {"value", Value(std::to_string(*m.startPosition - m.recordOffset))}})},
@@ -264,8 +283,15 @@ const command::Revision& commitTakes(Session& session, const std::vector<std::st
     }
 }
 
+}  // namespace
+
+const command::Revision& commitTakes(Session& session, const std::vector<std::string>& takeIds, std::string actor,
+                                     std::string time) {
+    return commitPlaced(session, takeIds, {}, std::move(actor), std::move(time));
+}
+
 const command::Revision& commitTake(Session& session, const std::string& takeId, std::string actor,
-                                    std::string time) {
+                                    std::string time, const TakePlacement& placement) {
     checkTakeId(takeId);
     if (!fs::exists(takeManifestPath(session.bundlePath(), takeId))) {
         // Committed already: the same answer, nothing committed again.
@@ -274,7 +300,7 @@ const command::Revision& commitTake(Session& session, const std::string& takeId,
         }
         throw SessionError("take_not_found", "no pending take " + takeId);
     }
-    return commitTakes(session, {takeId}, std::move(actor), std::move(time));
+    return commitPlaced(session, {takeId}, placement, std::move(actor), std::move(time));
 }
 
 void discardTake(const Session& session, const std::string& takeId) {

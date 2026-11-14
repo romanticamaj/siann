@@ -1130,14 +1130,16 @@ struct ProtocolServer::Impl {
         return *options.recordPort;
     }
 
-    // record.recover_take {takeId, accept}: the revision that committed the
-    // take, or the take in trash/; a repeat answers the same.
+    // record.recover_take {takeId, accept, trackId?}: the revision that committed
+    // the take (on trackId when given), or the take in trash/; a repeat answers
+    // the same.
     std::string recordRecoverTake(const Pending& request) {
         const std::string_view method = "record.recover_take";
         RecordPort& recordPort = requireRecordPort();
         const std::string& takeId = requireString(request.params, "takeId", method);
         const bool accept = requireBool(request.params, "accept", method);
-        const RecoverResult result = recordPort.recoverTake(takeId, accept, options.actor, options.clock());
+        const std::optional<std::string> trackId = optionalString(request.params, "trackId", method);
+        const RecoverResult result = recordPort.recoverTake(takeId, accept, trackId, options.actor, options.clock());
         refreshPendingTakes();
         if (accept) {
             if (result.revision == nullptr) {

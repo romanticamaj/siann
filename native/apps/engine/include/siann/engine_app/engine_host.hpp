@@ -179,7 +179,8 @@ public:
     protocol::TransportState record(bool enabled) override;
     protocol::RecordState recordState() const override;
     std::vector<protocol::PendingTake> pendingTakes() const override;
-    protocol::RecoverResult recoverTake(const std::string& takeId, bool accept, std::string actor,
+    protocol::RecoverResult recoverTake(const std::string& takeId, bool accept,
+                                        const std::optional<std::string>& trackId, std::string actor,
                                         std::string time) override;
     // The newest input meter of an armed track; empty when it is not armed or
     // no block was metered yet.
@@ -244,6 +245,7 @@ private:
     void pollRecording();
     void finishRecording(std::optional<realtime::EndedBy> forced);
     void abandonRecording();
+    void guardRecordedTracks(const model::Document& next) const;
     std::string newTakeId() const;
     std::string timestamp() const;
 
@@ -299,6 +301,7 @@ private:
     struct Take {
         std::size_t slot = 0;
         std::int64_t recordOffset = 0;
+        model::TrackInput input;  // the track's input when the take began
         protocol::RecordTakeState state;
     };
     bool recording_ = false;

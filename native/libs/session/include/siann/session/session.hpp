@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -75,6 +76,16 @@ public:
 
     // Writes session.json for the current head, with the cycle flag.
     void checkpoint();
+
+    // m5b-engine-record: called with every revision that would become main's
+    // head (commit, plan apply, undo, redo, rollback, merge) before it is
+    // journaled; a branch commit is not main's head and is not shown. If it
+    // throws, the revision is refused and nothing changes (History's
+    // BeforePublish). The engine host sets one while recording so that no head
+    // removes or re-routes a track being recorded; an empty one clears it. Engine
+    // state: not written to the bundle.
+    using HeadGuard = std::function<void(const command::Revision&)>;
+    void setHeadGuard(HeadGuard guard);
 
     // The transport's cycle flag (m5-ui-engine-loop-click): engine state, not a
     // revision. It is written into the checkpoint as transport: {cycle} by every

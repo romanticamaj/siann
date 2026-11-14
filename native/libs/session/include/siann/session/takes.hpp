@@ -12,7 +12,9 @@
 //                   clip.place per take as ONE revision; if the commit fails,
 //                   every file moves back and every take stays pending
 //   commitTake      the same for one take; after a crash it recovers a pending
-//                   take, and a repeat answers the revision that committed it
+//                   take, and a repeat answers the revision that committed it.
+//                   A TakePlacement puts it on another track or on a new one
+//                   (a take whose own track is gone)
 //   discardTake     moves the files to trash/; takes are never deleted, and a
 //                   repeat finds nothing left to move
 //
@@ -69,11 +71,21 @@ std::vector<TakeManifest> pendingTakes(const std::filesystem::path& bundle);
 const command::Revision& commitTakes(Session& session, const std::vector<std::string>& takeIds, std::string actor,
                                      std::string time);
 
+// Where commitTake places a take (m5b-engine-record). By default on the track
+// its manifest names. `trackId`: on that existing track instead. `newTrack`: on
+// a new track trk_<takeId> with the take's channels, named after the take and
+// added last, in the same revision (for a take whose own track was removed).
+struct TakePlacement {
+    std::optional<std::string> trackId;
+    bool newTrack = false;
+};
+
 // Throws SessionError: take_not_found (also for a take that was discarded),
-// take_has_no_audio. A take already committed answers the revision that
-// committed it and commits nothing.
+// take_has_no_audio, not_found (placement.trackId names no track on main's
+// head), invalid_take (trackId and newTrack both given). A take already
+// committed answers the revision that committed it and commits nothing.
 const command::Revision& commitTake(Session& session, const std::string& takeId, std::string actor,
-                                    std::string time);
+                                    std::string time, const TakePlacement& placement = {});
 
 // Throws SessionError take_not_found for a take that is neither pending nor in
 // trash/; a take already in trash/ is left as it is.

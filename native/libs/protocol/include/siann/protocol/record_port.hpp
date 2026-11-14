@@ -5,8 +5,10 @@
 // engine host implements it beside TransportPort and hands it to the server in
 // ServerOptions::recordPort. Every call runs on the command thread. Refusals are
 // TransportPortError (no_device, no_input, not_found, nothing_armed,
-// invalid_state) or session::SessionError (take_not_found, take_has_no_audio),
-// whose codes the server passes through.
+// invalid_state) or session::SessionError (take_not_found, take_has_no_audio,
+// not_found), whose codes the server passes through. While recording, a new head
+// of main that removes or re-routes a track being recorded is refused with
+// track_recording (the engine host's session::Session::setHeadGuard).
 
 #include <cstdint>
 #include <optional>
@@ -73,8 +75,11 @@ public:
     virtual TransportState record(bool enabled) = 0;
     virtual RecordState recordState() const = 0;
     virtual std::vector<PendingTake> pendingTakes() const = 0;
-    // record.recover_take, committed with `actor` and `time` when accepted.
-    virtual RecoverResult recoverTake(const std::string& takeId, bool accept, std::string actor, std::string time) = 0;
+    // record.recover_take, committed with `actor` and `time` when accepted: on
+    // `trackId` when given, else on the take's own track, or on a new track when
+    // its own is gone.
+    virtual RecoverResult recoverTake(const std::string& takeId, bool accept, const std::optional<std::string>& trackId,
+                                      std::string actor, std::string time) = 0;
 };
 
 // The record state as JSON: {recording, armed, takes: [{takeId, trackId,
