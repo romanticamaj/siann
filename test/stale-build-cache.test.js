@@ -74,6 +74,72 @@ test('stale nested caches of a moved dependency source are removed', { skip: cma
   }
 });
 
+// The same temporary directory under a second spelling: a symlink on POSIX (macOS's
+// os.tmpdir() is already one: /var -> /private/var), the 8.3 short name on Windows
+// (C:\Users\RUNNER~1 on GitHub's runners), else a junction. null when neither exists.
+function aliasOf(dir) {
+  if (process.platform === 'win32') {
+    const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `"for %I in ("${dir}") do @echo %~sI"`],
+      { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true });
+    const short = r.status === 0 ? r.stdout.trim() : '';
+    if (short && short.toLowerCase() !== dir.toLowerCase() && fs.existsSync(short)) return short;
+  }
+  const link = `${dir}-alias`;
+  try {
+    fs.symlinkSync(dir, link, process.platform === 'win32' ? 'junction' : 'dir');
+    return link;
+  } catch {
+    return null;
+  }
+}
+
+test('nested caches are judged through symlinked or short-named paths, existing or not', { skip: cmake ? false : 'cmake not found' }, (t) => {
+  const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'siann-stale-alias-')));
+  const alias = aliasOf(tmp);
+  try {
+    if (!alias) {
+      t.skip('no second spelling of the temporary directory');
+      return;
+    }
+    const via = (root, ...parts) => path.join(root, ...parts);
+    const source = via(tmp, 'src');
+    const oldSource = via(tmp, 'old-src');
+    fs.mkdirSync(source, { recursive: true });
+    fs.mkdirSync(oldSource, { recursive: true });
+    const binary = via(alias, 'build'); // the module is handed the alias, as CMake hands it
+    const realBinary = via(tmp, 'build');
+
+    // Kept: sources that do not exist yet, inside the build or the source tree, under either spelling.
+    writeCache(path.join(realBinary, 'gen-alias'), via(alias, 'build', 'gen-alias', 'src'));
+    writeCache(path.join(realBinary, 'gen-real'), via(tmp, 'build', 'gen-real', 'src'));
+    writeCache(path.join(realBinary, 'src-alias'), via(alias, 'src', 'not', 'yet'));
+    // Removed: sources outside both trees, existing or not, under either spelling.
+    writeCache(path.join(realBinary, 'out-missing'), via(alias, 'elsewhere', 'missing'));
+    writeCache(path.join(realBinary, 'out-old'), oldSource);
+
+    const driver = path.join(tmp, 'driver.cmake');
+    fs.writeFileSync(driver, [
+      `include("${cmakePath(MODULE)}")`,
+      `siann_remove_stale_nested_caches("${cmakePath(binary)}" "${cmakePath(via(alias, 'src'))}")`,
+      '',
+    ].join('\n'));
+    const result = cmake(['-P', driver]);
+    const log = `${result.stdout}${result.stderr}`;
+    assert.equal(result.status, 0, log);
+
+    for (const kept of ['gen-alias', 'gen-real', 'src-alias']) {
+      assert.ok(fs.existsSync(path.join(realBinary, kept, 'CMakeCache.txt')), `${kept} survives (alias ${alias})\n${log}`);
+    }
+    for (const removed of ['out-missing', 'out-old']) {
+      assert.ok(!fs.existsSync(path.join(realBinary, removed)), `${removed} is removed (alias ${alias})\n${log}`);
+    }
+    assert.ok(fs.existsSync(oldSource), 'sources are never touched');
+  } finally {
+    if (alias && alias.endsWith('-alias')) fs.rmSync(alias, { recursive: false, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('the shared dependency cache drops stale nested caches before FetchContent', () => {
   const text = fs.readFileSync(path.join(ROOT, 'native', 'cmake', 'SiannDependencyCache.cmake'), 'utf8');
   assert.match(text, /include\("\$\{CMAKE_CURRENT_LIST_DIR\}\/SiannStaleBuildCache\.cmake"\)/);
