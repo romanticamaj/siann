@@ -115,7 +115,7 @@ code, dd, .mono { font-family: var(--font-mono); }
 /* The transport bar (m5-ui-transport; spec 3.1): buttons, the position
    display (primary over secondary, digits written outside React) and
    auto-scroll. */
-.transport { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
+.transport, .transport-buttons { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
 .transport-button {
   display: inline-flex;
   align-items: center;
@@ -151,10 +151,10 @@ code, dd, .mono { font-family: var(--font-mono); }
   font-size: var(--fs-position);
   text-align: right;
   background: var(--bg-0);
-  border: 1px solid var(--select);
+  border: var(--divider-w) solid var(--select);
   color: var(--tx-1);
 }
-.position-field[aria-invalid="true"] { border-color: var(--clip, #ff4d4d); }
+.position-field[aria-invalid="true"] { border-color: var(--err); }
 /* The position display's time format menu (right-click; spec 3.2). */
 .time-format-menu {
   position: fixed;
@@ -162,13 +162,13 @@ code, dd, .mono { font-family: var(--font-mono); }
   display: flex;
   flex-direction: column;
   min-width: 14ch;
-  padding: 2px;
+  padding: calc(var(--space) / 2);
   background: var(--bg-3);
-  border: 1px solid var(--tx-3);
+  border: var(--divider-w) solid var(--tx-3);
 }
 .time-format-item { justify-content: flex-start; text-align: left; white-space: nowrap; border-color: transparent; }
 .time-format-item[aria-checked="true"]::before { content: "\2713"; margin-right: var(--space); }
-.time-format-item[aria-checked="false"]::before { content: ""; display: inline-block; width: 1em; margin-right: var(--space); }
+.time-format-item[aria-checked="false"]::before { content: ""; display: inline-block; width: 1ch; margin-right: var(--space); }
 .plans-button { display: inline-flex; align-items: center; gap: var(--space); }
 .plans-count {
   min-width: 16px;

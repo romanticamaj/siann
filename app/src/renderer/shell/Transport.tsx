@@ -1,6 +1,8 @@
 // The transport bar in the top bar (m5-ui-transport; UI redesign spec 3.1,
-// 5.3): go to the project start, start/stop, stop, the position display and
-// auto-scroll.
+// 5.3): go to the project start, stop, start/stop, the position display and
+// the tempo, then undo and redo; each carries the mockup's data-part id
+// (agent-rules "UI fidelity"). Auto-scroll is the project zone toolbar's
+// (Timeline.tsx), as in the mockup.
 //
 // - The position display shows the project cursor in the primary format over
 //   the secondary one (Bars+Beats and Seconds; the period key exchanges
@@ -144,11 +146,6 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     () => layout.getSnapshot().layout.timeFormat,
     () => layout.getSnapshot().layout.timeFormat,
   );
-  const autoScroll = useSyncExternalStore(
-    (listener) => layout.subscribe(listener),
-    () => layout.getSnapshot().layout.autoScroll,
-    () => layout.getSnapshot().layout.autoScroll,
-  );
   const primaryRef = useRef<HTMLSpanElement | null>(null);
   const secondaryRef = useRef<HTMLSpanElement | null>(null);
   const tempoRef = useRef<HTMLSpanElement | null>(null);
@@ -242,44 +239,51 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
 
   const title = (label: string) => (enabled ? label : (reason ?? label));
   return (
-    <div className="transport" data-testid="transport" role="group" aria-label={t('transport.label')}>
-      <button
-        type="button"
-        className="transport-button"
-        data-testid="transport-to-start"
-        disabled={!enabled}
-        title={title(t('transport.toStart'))}
-        aria-label={t('transport.toStart')}
-        onClick={() => void transport.toStart()}
-      >
-        <Icon path="M3 2h2v12H3zM14 2v12L6 8z" />
-      </button>
-      <button
-        type="button"
-        className="transport-button transport-play"
-        data-testid="transport-play"
-        disabled={!enabled}
-        aria-pressed={playing}
-        title={title(t('transport.startStop'))}
-        aria-label={t('transport.startStop')}
-        onClick={() => void transport.toggle()}
-      >
-        <Icon path="M4 2v12l10-6z" />
-      </button>
-      <button
-        type="button"
-        className="transport-button"
-        data-testid="transport-stop"
-        disabled={!enabled}
-        title={title(t('transport.stop'))}
-        aria-label={t('transport.stop')}
-        onClick={() => void transport.stop()}
-      >
-        <Icon path="M3 3h10v10H3z" />
-      </button>
+    <div className="transport" data-testid="transport" data-part="transport" role="group" aria-label={t('transport.label')}>
+      {/* The mockup's order: go to start, (cycle, P1-7), stop, start. */}
+      <div className="transport-buttons" data-part="transport-buttons">
+        <button
+          type="button"
+          className="transport-button"
+          data-testid="transport-to-start"
+          data-part="transport-start"
+          disabled={!enabled}
+          title={title(t('transport.toStart'))}
+          aria-label={t('transport.toStart')}
+          onClick={() => void transport.toStart()}
+        >
+          <Icon path="M3 2h2v12H3zM14 2v12L6 8z" />
+        </button>
+        <button
+          type="button"
+          className="transport-button"
+          data-testid="transport-stop"
+          data-part="transport-stop"
+          disabled={!enabled}
+          title={title(t('transport.stop'))}
+          aria-label={t('transport.stop')}
+          onClick={() => void transport.stop()}
+        >
+          <Icon path="M3 3h10v10H3z" />
+        </button>
+        <button
+          type="button"
+          className="transport-button transport-play"
+          data-testid="transport-play"
+          data-part="transport-play"
+          disabled={!enabled}
+          aria-pressed={playing}
+          title={title(t('transport.startStop'))}
+          aria-label={t('transport.startStop')}
+          onClick={() => void transport.toggle()}
+        >
+          <Icon path="M4 2v12l10-6z" />
+        </button>
+      </div>
       <div
         className="position-display"
         data-testid="position-display"
+        data-part="display"
         data-primary={primary}
         data-editing={editing ? 'true' : undefined}
         role="group"
@@ -290,8 +294,8 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           setMenu({ x: event.clientX, y: event.clientY });
         }}
       >
-        <span className="position-primary" data-testid="position-primary" ref={primaryRef} />
-        <span className="position-secondary" data-testid="position-secondary" ref={secondaryRef} />
+        <span className="position-primary" data-testid="position-primary" data-part="display-position" ref={primaryRef} />
+        <span className="position-secondary" data-testid="position-secondary" data-part="display-time" ref={secondaryRef} />
         {editing ? (
           <input
             className="position-field"
@@ -320,18 +324,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           onClose={closeMenu}
         />
       ) : null}
-      <span className="transport-tempo" data-testid="transport-tempo" title={t('transport.tempo')} ref={tempoRef} />
-      <button
-        type="button"
-        className="transport-button auto-scroll"
-        data-testid="auto-scroll"
-        aria-pressed={autoScroll}
-        title={t('transport.autoScroll')}
-        aria-label={t('transport.autoScroll')}
-        onClick={() => layout.dispatch({ type: 'autoScroll' })}
-      >
-        <Icon path="M1 7h9V4l5 4-5 4V9H1z" />
-      </button>
+      <span className="transport-tempo" data-testid="transport-tempo" data-part="display-tempo" title={t('transport.tempo')} ref={tempoRef} />
     </div>
   );
 }
@@ -400,11 +393,12 @@ export function TimeFormatMenu({ primary, x, y, onChoose, onClose }: TimeFormatM
 function UndoRedo({ transport }: { transport: TransportController }) {
   const t = useT();
   return (
-    <div className="transport undo-redo" data-testid="undo-redo" role="group" aria-label={t('transport.undoRedo')}>
+    <div className="transport undo-redo" data-testid="undo-redo" data-part="undo-redo" role="group" aria-label={t('transport.undoRedo')}>
       <button
         type="button"
         className="transport-button"
         data-testid="undo"
+        data-part="undo"
         title={t('transport.undo')}
         aria-label={t('transport.undo')}
         onClick={() => void transport.undo()}
@@ -415,6 +409,7 @@ function UndoRedo({ transport }: { transport: TransportController }) {
         type="button"
         className="transport-button"
         data-testid="redo"
+        data-part="redo"
         title={t('transport.redo')}
         aria-label={t('transport.redo')}
         onClick={() => void transport.redo()}

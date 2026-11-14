@@ -103,6 +103,12 @@ export function Timeline({
     () => layout.getSnapshot().layout.trackList,
     () => layout.getSnapshot().layout.trackList,
   );
+  // Auto-scroll (F; m5-ui-transport): a per-viewer setting of the layout store.
+  const autoScroll = useSyncExternalStore(
+    (listener) => layout.subscribe(listener),
+    () => layout.getSnapshot().layout.autoScroll,
+    () => layout.getSnapshot().layout.autoScroll,
+  );
 
   useEffect(() => {
     const content = contentRef.current;
@@ -226,6 +232,22 @@ export function Timeline({
         <Capable command="clip.remove">
           <button type="button" data-testid="delete-clip" disabled={!state.selectedClipId} onClick={() => void timeline?.deleteSelected()}>
             {t('timeline.deleteClip')}
+          </button>
+        </Capable>
+        <Capable method="transport.play">
+          <button
+            type="button"
+            className="auto-scroll"
+            data-testid="auto-scroll"
+            data-part="auto-scroll"
+            aria-pressed={autoScroll}
+            title={t('transport.autoScroll')}
+            aria-label={t('transport.autoScroll')}
+            onClick={() => layout.dispatch({ type: 'autoScroll' })}
+          >
+            <svg className="transport-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+              <path d="M2.5 8h7M7 5l3 3-3 3M13 3v10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </Capable>
         <output className="timeline-error" data-testid="timeline-error" data-code={state.error?.code ?? undefined} title={t('timeline.lastError')}>
