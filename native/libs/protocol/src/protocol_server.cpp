@@ -224,9 +224,9 @@ struct Pending {
     // client's sanitised name (the UI's auth frame client.name, the MCP
     // session's clientInfo.name) for the actor of a plan it submits, and for an
     // MCP tool call its agent and the tool's name (the agent's lastAction).
-    std::string clientName;
-    std::string agentId;
-    std::string tool;
+    std::string clientName{};
+    std::string agentId{};
+    std::string tool{};
 };
 
 // An open fader gesture (Protocol v0 item 24): who holds it and since when it
@@ -299,7 +299,7 @@ bool uncachedMethod(std::string_view method) noexcept {
 struct Connection {
     bool authenticated = false;
     bool realtime = false;  // opened on kRealtimePath: binary frames only
-    std::string clientName;  // the auth frame's client.name, sanitised
+    std::string clientName{};  // the auth frame's client.name, sanitised
 };
 
 // plan.submit's params (spec, "Plans", decisions of 2026-11-15): anything else,
