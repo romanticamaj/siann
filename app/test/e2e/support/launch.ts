@@ -17,6 +17,10 @@
 // would turn the right zone into a closed drawer (UI redesign spec 2.4).
 // `viewport: null` keeps the window as the shell made it.
 //
+// SIANN_E2E_DEVICE_SCALE=<factor> launches with Chromium's
+// --force-device-scale-factor, to run the specs at a display scale other than
+// the machine's (canvas backing stores are CSS px x devicePixelRatio).
+//
 // Specs pass their own args (the main script included) and env as before.
 
 import { _electron as electron, type ElectronApplication } from '@playwright/test';
@@ -43,8 +47,10 @@ export async function launchElectron(options: LaunchOptions): Promise<ElectronAp
   for (const [key, value] of Object.entries(options.env ?? process.env)) if (value !== undefined) env[key] = value;
   if (options.hook === false) delete env.SIANN_TEST_LANGS;
   else env.SIANN_TEST_LANGS = languages.join(',');
+  const factor = process.env.SIANN_E2E_DEVICE_SCALE;
+  const scale = factor ? [`--force-device-scale-factor=${factor}`] : [];
   const app = await electron.launch({
-    args: [`--lang=${languages[0] ?? 'en-US'}`, ...options.args],
+    args: [`--lang=${languages[0] ?? 'en-US'}`, ...scale, ...options.args],
     cwd: options.cwd,
     env,
   });

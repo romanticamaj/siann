@@ -142,7 +142,8 @@ test('an app CI job runs the Electron shell tests on Windows, macOS and Linux', 
   const oses = matrix[1].split(',').map((s) => s.trim()).sort();
   assert.deepEqual(oses, ['macos-latest', 'ubuntu-latest', 'windows-latest']);
   assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
-  assert.match(text, /xvfb-run -a npm test/, 'Linux runs Electron under xvfb-run');
+  assert.match(text, /xvfb-run -a (-s '[^']*' )?npm test/, 'Linux runs Electron under xvfb-run');
+  assert.match(text, /SIANN_E2E_DEVICE_SCALE:\s*'1\.5'/, 'Linux runs the Electron specs at a 150 % display scale');
 });
 
 test('the app job builds only the core-only siann-engine target and points the tests at it', () => {
@@ -276,6 +277,18 @@ test('the build jobs run only when their paths change; Node always runs', () => 
   const node = job('node').text;
   assert.doesNotMatch(node, /\n {4}if:/);
   assert.doesNotMatch(node, /\n {4}needs:/);
+});
+
+// docs/harness/test-matrix.md, "How to keep it complete": the bridge's tests run
+// on the three desktop OSes, not on Linux alone.
+test('the Node job runs npm test on Windows, macOS and Linux', () => {
+  const { text } = job('node');
+  const matrix = /os:\s*\[([^\]]*)\]/.exec(text);
+  assert.ok(matrix, 'the node job has an os matrix');
+  assert.deepEqual(matrix[1].split(',').map((s) => s.trim()).sort(), ['macos-latest', 'ubuntu-latest', 'windows-latest']);
+  assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
+  assert.match(text, /fail-fast:\s*false/);
+  assert.match(text, /run: npm test/);
 });
 
 test('the native, RTSan, desktop and app jobs build through the compiler cache', () => {

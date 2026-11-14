@@ -65,9 +65,16 @@ jobs:
           ' "$RUNNER_TEMP/plan.json" | tee -a "$GITHUB_OUTPUT"
 
   node:
-    name: Node bridge (ubuntu)
-    timeout-minutes: 90
-    runs-on: ubuntu-latest
+    name: Node bridge (${{ matrix.os }})
+    timeout-minutes: 30
+    # The bridge, script and fixture tests on every OS the product ships on
+    # (docs/harness/test-matrix.md): paths, line endings and process spawning
+    # differ between them. Every pull request runs it; it needs no build.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -351,10 +358,14 @@ jobs:
       - name: Build app
         working-directory: app
         run: npm run build
-      - name: Test (Linux, virtual display)
+      # Linux runs the Electron specs at a 150 % display scale (canvas backing
+      # stores at devicePixelRatio 1.5, CSS px unchanged); Windows and macOS at 1.
+      - name: Test (Linux, virtual display, 150 % scale)
         if: runner.os == 'Linux'
         working-directory: app
-        run: xvfb-run -a npm test
+        env:
+          SIANN_E2E_DEVICE_SCALE: '1.5'
+        run: xvfb-run -a -s '-screen 0 2560x1600x24' npm test
       - name: Test
         if: runner.os != 'Linux'
         working-directory: app
