@@ -154,6 +154,37 @@ async function commits(id?: string): Promise<number> {
   }, id ?? null);
 }
 
+// Over `count` animation frames counted in the page: how many of them wrote
+// the position display (window.__siannTransport.displayWrites) and drew the
+// overlay (the timeline's overlayDraws).
+async function perAnimationFrame(count: number): Promise<{ frames: number; writes: number; draws: number }> {
+  return page.evaluate(
+    (wanted) =>
+      new Promise<{ frames: number; writes: number; draws: number }>((resolve, reject) => {
+        const w = window as unknown as {
+          __siannTransport?: { displayWrites(): number };
+          __siannTimeline?: { overlayDraws(): number };
+        };
+        const transport = w.__siannTransport;
+        const timeline = w.__siannTimeline;
+        if (!transport || !timeline) {
+          reject(new Error('window.__siannTransport / __siannTimeline is missing (SIANN_SHELL_TEST=1)'));
+          return;
+        }
+        const writes = transport.displayWrites();
+        const draws = timeline.overlayDraws();
+        let frames = 0;
+        const step = () => {
+          frames += 1;
+          if (frames < wanted) requestAnimationFrame(step);
+          else resolve({ frames, writes: transport.displayWrites() - writes, draws: timeline.overlayDraws() - draws });
+        };
+        requestAnimationFrame(step);
+      }),
+    count,
+  );
+}
+
 async function revisions(): Promise<number> {
   return (await engine!.call('session.inspect')).revisions as number;
 }
@@ -256,6 +287,14 @@ test('the cursor and the position display run at display rate with zero React co
   // The status bar did commit (new xruns); the transport bar and the timeline did not.
   await expect(page.getByTestId('xruns')).not.toHaveText(xruns ?? '');
   expect(await commits()).toBeGreaterThan(before.root);
+  expect(await commits('transport')).toBe(before.transport);
+  expect(await commits('timeline')).toBe(before.timeline);
+  // Display rate: the realtime channel ticks slower than the display, and
+  // the display and the cursor still move on most animation frames (the
+  // extrapolating clock), still without a commit.
+  const rate = await perAnimationFrame(90);
+  expect(rate.writes, JSON.stringify(rate)).toBeGreaterThanOrEqual(rate.frames * 0.75);
+  expect(rate.draws, JSON.stringify(rate)).toBeGreaterThanOrEqual(rate.frames * 0.75);
   expect(await commits('transport')).toBe(before.transport);
   expect(await commits('timeline')).toBe(before.timeline);
   await page.keyboard.press('Space');
@@ -370,6 +409,31 @@ test('the period key exchanges the primary and the secondary format', async () =
   await expect(secondary()).toHaveText('0:02.000');
 });
 
+test('a right-click on the position display opens the time format menu; choosing a format makes it primary', async () => {
+  await launch();
+  await locate(4 * RATE, '3.1.000');
+  await page.getByTestId('position-display').click({ button: 'right' });
+  const menu = page.getByTestId('time-format-menu');
+  await expect(menu).toBeVisible();
+  await expect(page.getByTestId('time-format-bars')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('time-format-seconds')).toHaveAttribute('aria-checked', 'false');
+  await page.getByTestId('time-format-seconds').click();
+  await expect(menu).toBeHidden();
+  await expect(primary()).toHaveText('0:04.000');
+  await expect(secondary()).toHaveText('3.1.000');
+  // Escape closes it without a change.
+  await page.getByTestId('position-display').click({ button: 'right' });
+  await expect(page.getByTestId('time-format-seconds')).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(primary()).toHaveText('0:04.000');
+  // Back to Bars+Beats; nothing was sent for it.
+  await page.getByTestId('position-display').click({ button: 'right' });
+  await page.getByTestId('time-format-bars').click();
+  await expect(primary()).toHaveText('3.1.000');
+  expect(await transportRequests()).toBe(0);
+});
+
 test('auto-scroll pages the view while playing, F turns it off, and a held clip drag suspends it', async () => {
   test.setTimeout(150_000);
   await launch();
@@ -456,6 +520,15 @@ test('Ctrl+Z and Ctrl+Shift+Z undo and redo a clip move; nothing to undo is a to
   expect(await clipPosition()).toBe(moved);
   expect(await sentOf('session.redo')).toHaveLength(1);
   expect(await sentOf('session.undo')).toHaveLength(1);
+  // The top bar's undo and redo buttons do the same.
+  await page.getByTestId('undo').click();
+  await expect.poll(revisions).toBe(before + 3);
+  expect(await clipPosition()).toBe(start);
+  await page.getByTestId('redo').click();
+  await expect.poll(revisions).toBe(before + 4);
+  expect(await clipPosition()).toBe(moved);
+  expect(await sentOf('session.undo')).toHaveLength(2);
+  expect(await sentOf('session.redo')).toHaveLength(2);
   await expect(page.getByTestId('toast')).toHaveCount(0);
 
   // A fresh session (the engine replays a bundle's commits into its undo
@@ -485,6 +558,9 @@ test('with no audio device the transport is disabled, its tooltip gives the reas
     await expect(button).toBeDisabled();
     await expect(button).toHaveAttribute('title', reason);
   }
+  // Undo and redo need no device.
+  await expect(page.getByTestId('undo')).toBeEnabled();
+  await expect(page.getByTestId('redo')).toBeEnabled();
   await focusProject();
   const polls = (await sentOf('engine.status')).length;
   await page.keyboard.press('Space');
@@ -493,5 +569,17 @@ test('with no audio device the transport is disabled, its tooltip gives the reas
   // A key sends at once; the status bar's next engine.status poll comes after.
   await expect.poll(async () => (await sentOf('engine.status')).length).toBeGreaterThan(polls);
   expect(await transportRequests()).toBe(0);
+  await expectPlaying(false);
+});
+
+test('a device that opens after a few failed attempts enables the transport once engine.status reports it', async () => {
+  test.setTimeout(90_000);
+  await launch({ engineArgs: ['--fake-open-failures', '2'] });
+  await expect(playButton()).toBeEnabled({ timeout: 30_000 });
+  await expect(playButton()).toHaveAttribute('title', en['transport.startStop']);
+  await focusProject();
+  await page.keyboard.press('Space');
+  await expectPlaying(true);
+  await page.keyboard.press('Space');
   await expectPlaying(false);
 });

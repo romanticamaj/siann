@@ -23,7 +23,7 @@ import { TransportController } from '../../src/renderer/model/transport';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
-import { Transport, transportAvailability } from '../../src/renderer/shell/Transport';
+import { TimeFormatMenu, Transport, transportAvailability } from '../../src/renderer/shell/Transport';
 
 // dist/test/unit -> app/test/unit/fixtures
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
@@ -127,5 +127,38 @@ test('the capability rule: no transport.* in engine.capabilities, no transport c
     for (const id of [...CONTROLS, 'position-display', 'position-field']) {
       assert.ok(!reduced.includes(`data-testid="${id}"`), `${id} with ${capabilities ? 'the reduced fixture' : 'no capabilities'}`);
     }
+  }
+});
+
+test('undo and redo are buttons in the top bar, labelled per locale, live without a device and absent without session.undo/redo', () => {
+  const t = translator('en');
+  const full = render(FULL, NO_DEVICE);
+  for (const [id, key] of [['undo', 'transport.undo'], ['redo', 'transport.redo']] as const) {
+    const button = tag(full, id);
+    assert.match(button, /^<button/, id);
+    assert.ok(button.includes(`aria-label="${t(key)}"`), button);
+    assert.ok(!/disabled=""/.test(button), `${id} needs no device: ${button}`);
+  }
+  for (const locale of LOCALES) assert.ok(translator(locale)('transport.undo').length > 0);
+  assert.notEqual(translator('zh-Hant')('transport.undo'), t('transport.undo'));
+  // The reduced fixture lists no session.undo / session.redo.
+  for (const capabilities of [REDUCED, null]) {
+    const reduced = render(capabilities, WITH_DEVICE);
+    for (const id of ['undo', 'redo']) assert.ok(!reduced.includes(`data-testid="${id}"`), id);
+  }
+});
+
+test('the time format menu has two items, Bars+Beats and Seconds, the primary one checked', () => {
+  const t = translator('en');
+  for (const primary of ['bars', 'seconds'] as const) {
+    const markup = renderToStaticMarkup(<TimeFormatMenu primary={primary} x={10} y={20} onChoose={() => undefined} onClose={() => undefined} />);
+    assert.match(tag(markup, 'time-format-menu'), /role="menu"/);
+    const bars = tag(markup, 'time-format-bars');
+    const seconds = tag(markup, 'time-format-seconds');
+    assert.match(bars, /role="menuitemradio"/);
+    assert.match(seconds, /role="menuitemradio"/);
+    assert.ok(bars.includes(`aria-checked="${primary === 'bars'}"`), bars);
+    assert.ok(seconds.includes(`aria-checked="${primary === 'seconds'}"`), seconds);
+    assert.ok(markup.includes(t('transport.formatBars')) && markup.includes(t('transport.formatSeconds')));
   }
 });

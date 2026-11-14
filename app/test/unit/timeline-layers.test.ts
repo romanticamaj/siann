@@ -90,6 +90,8 @@ function make(options: { ratio?: number; snapshot?: Snapshot } = {}) {
   const playhead = playheadOf();
   const heights = heightsOf();
   const located: string[] = [];
+  // The cursor's clock (transport/playhead-clock.ts), moved by hand.
+  const clock = { now: 1000, advance(ms: number) { this.now += ms; } };
   const timeline = new TimelineCanvas({
     content: surface.content,
     overlay: surface.overlay,
@@ -100,9 +102,10 @@ function make(options: { ratio?: number; snapshot?: Snapshot } = {}) {
     playhead: playhead.source,
     laneHeights: heights.source,
     onLocate: (frames) => void located.push(frames),
+    now: () => clock.now,
   });
   flushFrames();
-  return { surface, model, playhead, heights, timeline, located, hooks: timeline.testHooks() };
+  return { surface, model, playhead, heights, timeline, located, clock, hooks: timeline.testHooks() };
 }
 
 test('a playhead-only change redraws the overlay and not the content', () => {
@@ -110,20 +113,60 @@ test('a playhead-only change redraws the overlay and not the content', () => {
   const content = hooks.contentDraws();
   const overlay = hooks.overlayDraws();
   assert.equal(content, 1, 'one first content draw');
+  // Locates while stopped: one overlay draw each.
   for (let i = 1; i <= 5; i += 1) {
-    playhead.emit(String(i * 4800));
+    playhead.emit(String(i * 4800), false);
     flushFrames();
   }
   assert.equal(hooks.contentDraws(), content, 'the content layer was not redrawn');
   assert.equal(hooks.overlayDraws(), overlay + 5);
   assert.equal(hooks.cursorX(), 5 * 4800 / hooks.view().framesPerPixel);
   // A frame with the same playhead (meters only) draws nothing.
-  playhead.emit('24000');
+  playhead.emit('24000', false);
   assert.equal(flushFrames(), 0, 'no frame scheduled');
   // Stopped and idle: no animation frame is pending.
   playhead.emit('24000', false);
   flushFrames();
   assert.equal(flushFrames(), 0);
+  timeline.destroy();
+});
+
+test('while playing the cursor follows the clock on every animation frame between realtime frames; the content is not redrawn; stopped, the loop ends', () => {
+  const { hooks, playhead, timeline, clock } = make();
+  const content = hooks.contentDraws();
+  // 100 frames per px at 48 kHz: 1 ms is 48 frames, 0.48 px.
+  playhead.emit('4800', true);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 48);
+  let overlay = hooks.overlayDraws();
+  // No new realtime frame: each animation frame extrapolates (50 ms: 2400 frames).
+  clock.advance(50);
+  assert.equal(flushFrames(), 1, 'the overlay asked for the next animation frame itself');
+  assert.equal(hooks.cursorX(), 72);
+  assert.equal(hooks.overlayDraws(), overlay + 1);
+  clock.advance(25);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 84);
+  overlay = hooks.overlayDraws();
+  for (let i = 0; i < 10; i += 1) {
+    clock.advance(1);
+    flushFrames();
+  }
+  assert.equal(hooks.overlayDraws(), overlay + 10, 'one overlay draw per animation frame');
+  assert.equal(hooks.contentDraws(), content, 'the content layer was not redrawn');
+  // A late realtime frame: the lead is bounded (playhead-clock.ts MAX_LEAD_MS).
+  playhead.emit('9600', true);
+  flushFrames();
+  clock.advance(10_000);
+  flushFrames();
+  assert.ok(hooks.cursorX()! <= 96 + (250 * 48) / 100, `bounded lead: ${hooks.cursorX()}`);
+  // The stop frame shows the engine's position, and no frame is pending after.
+  playhead.emit('12000', false);
+  flushFrames();
+  assert.equal(hooks.cursorX(), 120);
+  clock.advance(100);
+  assert.equal(flushFrames(), 0, 'stopped: the loop ended');
+  assert.equal(hooks.cursorX(), 120);
   timeline.destroy();
 });
 
@@ -322,6 +365,20 @@ test('auto-scroll pages when the cursor leaves the view while playing, once per 
   flushFrames();
   assert.equal(second.hooks.view().scrollFrames, '91000', 'paging resumes after the release');
   second.timeline.destroy();
+});
+
+test('auto-scroll follows the clock: the page turns when the extrapolated cursor leaves the view, between realtime frames', () => {
+  const { hooks, playhead, timeline, clock } = make();
+  timeline.setAutoScroll(true);
+  playhead.emit('79000', true);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '0');
+  // 50 ms later, no new frame: 79000 + 2400 is past the right edge (80000).
+  clock.advance(50);
+  flushFrames();
+  assert.equal(hooks.view().scrollFrames, '81400', 'the cursor lands at the left edge');
+  assert.equal(hooks.cursorX(), 0);
+  timeline.destroy();
 });
 
 test('a press and release in the ruler\'s lower half locates once; a vertical drag zooms instead; the upper half does neither', () => {
