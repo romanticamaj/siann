@@ -206,7 +206,7 @@ Deferred:
 
 ## Before M6b: recording (from PR #46)
 
-Items 1 and 2 are taken by `m5b-engine-record` (M5b, 2026-11-14), where recording reaches the protocol; items 3 to 6 stay before M6b.
+Items 1 and 2 are done by `m5b-engine-record` (M5b, 2026-11-14), where recording reaches the protocol: `endedBy` is `stop`, `overflow`, `disk` or `device` (the names the protocol uses; `--seconds` and an interrupt are both `stop`), in the CLI result, the take manifest and `record.changed`. Items 3 to 6 stay before M6b, with 7 and 8 from `m5b-engine-record`.
 
 1. Make an early end unmissable: add `endedBy: "seconds" | "overflow" | "interrupt"`
    next to `overflows` in the `record` result.
@@ -220,6 +220,14 @@ Items 1 and 2 are taken by `m5b-engine-record` (M5b, 2026-11-14), where recordin
    failing at `REQUIRE(child.running())`.
 6. Stop the writer thread stalling: write the ready file without a flush, and move
    the periodic fsync off the drain loop.
+7. Commit off the command thread: `commitTakes` hashes every take file on the
+   command thread when a recording stops (as `siann-cli record` does), so an hour of
+   16 tracks blocks the command thread for seconds. Hash on the writer thread as the
+   audio is written, or in a job, before M6b's one-hour criterion.
+8. macOS input permission: no entitlement (`com.apple.security.device.audio-input`)
+   or `NSMicrophoneUsageDescription` is tracked in the repository, so opening an
+   input on a real Mac will need them once m0-macos-bundle lands. CI uses the fake
+   device only; this belongs to the audio-hardware and macos-run gates.
 
 ## Where tests run
 
