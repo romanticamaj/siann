@@ -20,7 +20,9 @@ const PLAN_HASH_EXCLUDED = Object.freeze([
 ]);
 const HASHED_FIELDS = Object.freeze(['schema', 'baseRevision', 'steps', 'readSet', 'writeSet', 'parentPlan']);
 const PLAN_STATES = Object.freeze(['draft', 'validated', 'approved', 'rejected', 'applied', 'rolled_back']);
-const ENTITY_TYPES = Object.freeze(['clip', 'media', 'plugin_slot', 'root', 'track']);
+const ENTITY_TYPES = Object.freeze(['clip', 'locators', 'media', 'plugin_slot', 'root', 'track']);
+// Singleton entity types, whose only id is their type name.
+const SINGLETON_TYPES = Object.freeze(['locators', 'root']);
 const ENTITY_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const HASH_RE = /^sha256:[0-9a-f]{64}$/;
 
@@ -47,7 +49,8 @@ function checkEntitySet(name, set) {
     if (!ENTITY_TYPES.includes(entry.type)) {
       throw new PlanHashError('invalid_entity_set', `${where} has unknown type ${JSON.stringify(entry.type)}`);
     }
-    if (typeof entry.id !== 'string' || !ENTITY_ID_RE.test(entry.id) || (entry.type === 'root' && entry.id !== 'root')) {
+    if (typeof entry.id !== 'string' || !ENTITY_ID_RE.test(entry.id)
+        || (SINGLETON_TYPES.includes(entry.type) && entry.id !== entry.type)) {
       throw new PlanHashError('invalid_entity_set', `${where} has invalid id ${JSON.stringify(entry.id)}`);
     }
     if (entry.hash !== null && (typeof entry.hash !== 'string' || !HASH_RE.test(entry.hash))) {

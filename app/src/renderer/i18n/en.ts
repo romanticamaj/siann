@@ -31,6 +31,8 @@ export const en = {
   'connection.connecting': 'connecting',
   'connection.connected': 'connected',
   'connection.disconnected': 'disconnected',
+  // The banner over the zones while the engine is away (m5-ui-connection; glossary 6.5).
+  'connection.banner': 'Engine disconnected. The controls are paused until it reconnects.',
   'about.unknownCommit': 'unknown',
   'about.source': 'source: {url}',
   'about.title': 'About',

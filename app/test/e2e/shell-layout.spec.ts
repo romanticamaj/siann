@@ -456,6 +456,10 @@ test('the keyboard reaches each divider and the controls of a zone from the zone
   test.setTimeout(120_000);
   const sessionDir = seedBundle(scratch, TRACKS);
   await launch(sessionDir);
+  // 'connected' lands at authentication, before the sync that brings the
+  // session's tracks: until their strips are in the lower zone, its Tab order
+  // is only its divider and its tab.
+  for (const track of TRACKS) await expect(page.getByTestId(`mute-${track.id}`)).toBeVisible();
   const ring = async () =>
     page.evaluate(() => {
       const el = document.activeElement as HTMLElement | null;

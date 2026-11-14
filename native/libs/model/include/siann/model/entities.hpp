@@ -92,6 +92,16 @@ struct PluginSlot {
     friend bool operator==(const PluginSlot&, const PluginSlot&) = default;
 };
 
+// The left and right locators (m5-ui-engine-loop-click): a singleton entity with
+// id "locators", audio-domain frames, 0 <= left < right <= kMaxPositionMagnitude.
+// Absent from a document until first set. The M6b punch range reuses it.
+struct Locators {
+    std::int64_t left = 0;
+    std::int64_t right = 0;
+
+    friend bool operator==(const Locators&, const Locators&) = default;
+};
+
 struct Clip {
     std::string id;
     std::string trackId;

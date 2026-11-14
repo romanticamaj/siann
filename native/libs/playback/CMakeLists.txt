@@ -16,6 +16,8 @@ if(SIANN_BUILD_TESTS)
     tests/live_recompile_test.cpp
     tests/audition_test.cpp
     tests/plugin_instances_test.cpp
+    tests/cycle_test.cpp
+    tests/click_test.cpp
   )
   # siann_host_clap and its test plugin are defined later (libs/host_clap); the
   # instance table tests host siann_test_plugin as a CLAP.
@@ -23,6 +25,7 @@ if(SIANN_BUILD_TESTS)
                         siann_rt_alloc_guard Catch2::Catch2WithMain)
   add_dependencies(siann_playback_tests siann_test_plugin_CLAP siann_hostile_plugin_CLAP)
   target_compile_definitions(siann_playback_tests PRIVATE
+    SIANN_FIXTURES_DIR="${SIANN_FIXTURES_DIR}"
     SIANN_TEST_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_test_plugin_CLAP,SIANN_PLUGIN_FILE>>"
     SIANN_HOSTILE_PLUGIN_CLAP="$<GENEX_EVAL:$<TARGET_PROPERTY:siann_hostile_plugin_CLAP,SIANN_PLUGIN_FILE>>")
   target_include_directories(siann_playback_tests PRIVATE "${PROJECT_SOURCE_DIR}/libs/media/tests")

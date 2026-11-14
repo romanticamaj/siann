@@ -205,8 +205,10 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
   await expect(page.getByTestId('status')).toHaveText('connected');
   const statuses = await page.evaluate(() => (window as unknown as { __statuses: string[] }).__statuses);
   expect(statuses.indexOf('disconnected')).toBeLessThan(statuses.lastIndexOf('connected'));
-  // The renderer shows the recovered head: the last durable revision.
+  // The renderer shows the recovered head: the last durable revision, which a
+  // toast names (m5-ui-connection; UI redesign spec 4.5 C8).
   await expect(page.getByTestId('revision')).toHaveText(revision);
+  await expect(page.getByTestId('toast')).toContainText(revision);
 
   const recovered = await engineClient(page);
   try {

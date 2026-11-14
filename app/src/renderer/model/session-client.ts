@@ -97,6 +97,8 @@ export class ProtocolError extends Error {
 export const RECONNECT_MS = 250;
 export const SYNC_RETRY_MS = 250;
 export const SYNC_RETRY_MAX_MS = 8000;
+// The refused requests refused() keeps (background polls add one each).
+export const REFUSED_KEPT = 256;
 
 interface Pending {
   resolve: (result: unknown) => void;
@@ -167,6 +169,7 @@ export class SessionClient {
     capabilities: null,
   };
   #lastSeq: bigint | null = null;
+  readonly #refused: Array<{ readonly method: string }> = [];
   // The session the model's snapshot belongs to.
   #modelSessionId: string | null = null;
 
@@ -289,9 +292,18 @@ export class SessionClient {
   request(method: string, params: Record<string, unknown>, expectedRevision?: string): Promise<unknown> {
     const connection = this.#connection;
     if (!connection || connection.closed || !connection.authenticated || connection.sessionId === null) {
+      if (this.#refused.length >= REFUSED_KEPT) this.#refused.shift();
+      this.#refused.push(Object.freeze({ method }));
       return Promise.reject(new ProtocolError('disconnected', 'not connected to an engine'));
     }
     return this.#send(connection, method, params, expectedRevision);
+  }
+
+  // The requests refused as disconnected before they reached a socket, oldest
+  // first (the last REFUSED_KEPT): what the connection e2e counts to prove
+  // that no control tried to send while the engine was away (m5-ui-connection).
+  refused(): ReadonlyArray<{ readonly method: string }> {
+    return [...this.#refused];
   }
 
   // command.execute. The model changes only when the session.changed of the

@@ -27,6 +27,7 @@ export const zhHant: Catalog = {
   'connection.connecting': '連線中',
   'connection.connected': '已連線',
   'connection.disconnected': '已中斷',
+  'connection.banner': '引擎已中斷。重新連線前，控制項暫停使用。',
   'about.unknownCommit': '未知',
   'about.source': '原始碼：{url}',
   'about.title': '關於',
@@ -182,7 +183,7 @@ export const zhHant: Catalog = {
   'stale.generic': '計畫建立後，它要變更的某個項目已被修改',
 
   'toast.label': '通知',
-  'toast.dismiss': '關閉',
+  'toast.dismiss': '關閉通知',
   'toast.planArrived': ({ steps }) => `收到一份 ${steps} 個步驟的計畫`,
   'toast.reconnected': '已在 {revision} 重新連線',
 

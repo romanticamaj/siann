@@ -28,7 +28,7 @@ test('push, expiry by the injected timer, dismiss, and a cap on the visible toas
   let notified = 0;
   toasts.subscribe(() => (notified += 1));
   const first = toasts.push('one');
-  assert.deepEqual(toasts.getSnapshot().map((t) => t.message), ['one']);
+  assert.deepEqual(toasts.getSnapshot().map((t) => t.text), ['one']);
   assert.equal(notified, 1);
   const snapshot = toasts.getSnapshot();
   assert.equal(toasts.getSnapshot(), snapshot, 'stable identity');
@@ -40,11 +40,11 @@ test('push, expiry by the injected timer, dismiss, and a cap on the visible toas
   const second = toasts.push('two');
   toasts.push('three');
   toasts.dismiss(second);
-  assert.deepEqual(toasts.getSnapshot().map((t) => t.message), ['three']);
+  assert.deepEqual(toasts.getSnapshot().map((t) => t.text), ['three']);
   assert.ok(scheduler.timers.find((t) => t.cancelled), 'a dismissed toast cancels its timer');
 
   for (let i = 0; i < MAX_TOASTS + 2; i += 1) toasts.push(`n${i}`);
-  const shown = toasts.getSnapshot().map((t) => t.message);
+  const shown = toasts.getSnapshot().map((t) => t.text);
   assert.equal(shown.length, MAX_TOASTS);
   assert.equal(shown[shown.length - 1], `n${MAX_TOASTS + 1}`, 'the newest stays');
 });
@@ -62,7 +62,7 @@ test('a plan arrival pushes the planArrived message in the current locale', () =
   const hash = 'sha256:' + '1'.repeat(64);
   plans.applyChanged({ schema: 'siann.event.v1', seq: '1', type: 'plan.changed', plan: hash, state: 'validated' });
   plans.setStatus(planObject(hash, 'validated'));
-  assert.deepEqual(toasts.getSnapshot().map((t) => t.message), [planArrivedMessage('en', { steps: 3 })]);
+  assert.deepEqual(toasts.getSnapshot().map((t) => t.text), [planArrivedMessage('en', { steps: 3 })]);
   // A language switch re-words a toast already shown.
   assert.equal(toasts.getSnapshot()[0]!.reword?.('zh-Hans'), planArrivedMessage('zh-Hans', { steps: 3 }));
 
@@ -70,7 +70,7 @@ test('a plan arrival pushes the planArrived message in the current locale', () =
   const other = 'sha256:' + '2'.repeat(64);
   plans.applyChanged({ schema: 'siann.event.v1', seq: '2', type: 'plan.changed', plan: other, state: 'validated' });
   plans.setStatus(planObject(other, 'validated'));
-  assert.equal(toasts.getSnapshot()[1]!.message, planArrivedMessage('zh-Hant', { steps: 3 }));
+  assert.equal(toasts.getSnapshot()[1]!.text, planArrivedMessage('zh-Hant', { steps: 3 }));
 
   off();
   const third = 'sha256:' + '3'.repeat(64);

@@ -25,6 +25,13 @@
 // are ready, or after 1 s regardless (their underruns are then counted until
 // the butler catches up). A stream is destroyed only after the last graph that
 // used it has retired and the butler has released it.
+//
+// Cycle and click (m5-ui-engine-loop-click): setCycle() and setClick() change
+// engine state only, never a revision, and compile nothing. The cycle range is
+// the heard document's locators, handed over by load() and update() like any
+// other part of the document, so an undo, a plan or an audition moves it; an
+// edit of the locators alone compiles nothing. The click follows the heard
+// document's tempo map.
 
 #include <chrono>
 #include <cstddef>
@@ -220,6 +227,14 @@ public:
     // else changes here.
     void tick();
 
+    // Cycle playback from the right locator to the left (transport state).
+    void setCycle(bool enabled);
+    bool cycle() const;
+    // The metronome: on or off, gain in milli-dB (ClickSettings' range).
+    // Throws std::invalid_argument for a gain out of range.
+    void setClick(bool enabled, std::int32_t gainMilliDb);
+    realtime::ClickSettings click() const noexcept { return click_; }
+
     // Underruns summed over every stream, including destroyed ones.
     std::uint64_t underruns() const noexcept;
 
@@ -261,6 +276,8 @@ private:
     void retired(std::uint64_t epoch);
     bool inUse(const realtime::DiskStream* stream) const;
     void destroyReleased();
+    // The locators and tempo map of a heard document reach the transport and the click.
+    void hearTimeline(const model::Document& document, const model::Document* before);
 
     session::Session& session_;
     PlaybackOptions options_;
@@ -284,6 +301,7 @@ private:
     std::map<std::string, graph::NodeId> meterSlots_;
     bool loaded_ = false;
     std::optional<command::BranchId> gestureBranch_;
+    realtime::ClickSettings click_;
 };
 
 }  // namespace siann::playback

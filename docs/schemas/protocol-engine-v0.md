@@ -1,16 +1,28 @@
 # Protocol engine v0
 
-The transport, status and device methods of the native protocol server, and what `session.open` and the bundle lock do in `siann-engine` (architecture spec, "siann-protocol", Protocol v0 items 16, 17, 18 and 22; "Process model"; "Session bundle"; m4-engine-device and m5-engine-sessions-devices). They reach the engine through `ServerOptions::transportPort` (`protocol::TransportPort`, implemented by `EngineHost` in `native/apps/engine`). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. Each is also an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)): `play`, `stop`, `locate`, `engine_status` and `list_devices` in the propose scope, `select_device` in the trusted scope.
+The transport, status and device methods of the native protocol server, and what `session.open` and the bundle lock do in `siann-engine` (architecture spec, "siann-protocol", Protocol v0 items 16, 17, 18 and 22; "Process model"; "Session bundle"; m4-engine-device and m5-engine-sessions-devices). They reach the engine through `ServerOptions::transportPort` (`protocol::TransportPort`, implemented by `EngineHost` in `native/apps/engine`). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. Each is also an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)): `play`, `stop`, `locate`, `set_cycle`, `set_click`, `engine_status` and `list_devices` in the propose scope, `select_device` in the trusted scope.
 
 ## Transport
 
 | Method | Params | Result |
 |---|---|---|
-| `transport.play` | `{}` | `{playing, position}` |
-| `transport.stop` | `{}` | `{playing, position}` |
-| `transport.locate` | `{frames: "<decimal>"}` | `{playing, position}` |
+| `transport.play` | `{}` | `{playing, position, cycle, click}` |
+| `transport.stop` | `{}` | `{playing, position, cycle, click}` |
+| `transport.locate` | `{frames: "<decimal>"}` | `{playing, position, cycle, click}` |
+| `transport.set_cycle` | `{enabled: bool}` | `{playing, position, cycle, click}` |
+| `transport.set_click` | `{enabled: bool, gainMilliDb?: int}` | `{playing, position, cycle, click}` |
 
-`position` is a decimal string of session frames. A locate reports its target at once; the playhead reaches it when the butler is ready. Without a running device each answers `no_device` with the reason as the message. A `frames` that is missing or not a non-negative decimal string is `invalid_params`.
+`position` is a decimal string of session frames, `cycle` a boolean and `click` `{enabled, gainMilliDb}`. A locate reports its target at once; the playhead reaches it when the butler is ready. Without a running device each answers `no_device` with the reason as the message. A `frames` that is missing or not a non-negative decimal string is `invalid_params`.
+
+### Cycle and click (m5-ui-engine-loop-click, Protocol v0 item 26)
+
+`transport.set_cycle` turns cycle playback on or off: while on and the heard document has a `locators` entity, playback wraps from `right` to `left` sample-accurately (architecture spec, "Realtime data flow", "Cycle"). With no locators it has no effect; a playhead already at or past `right` when cycle is enabled plays on. `transport.set_click` turns the metronome on or off: a click generated from the tempo map, added to the device output after the master meter and never part of a render. `gainMilliDb` is an integer in [-60000, 0] (default -12000); omitted, the current gain is kept. A non-boolean `enabled`, or a `gainMilliDb` that is not an integer in range, is `invalid_params`. Neither creates a revision.
+
+The locators themselves are document data, set with the command `session.set_locators {left: "<decimal>", right: "<decimal>"}` through `command.execute` (or a plan, or MCP `execute`): `0 <= left < right <= 2^42`, otherwise `invalid_locators`; a value that is not a decimal string is `invalid_params`. The entity is `{schema: "siann.entity.locators.v1", id: "locators", left, right}`, ref `locators:locators`, absent until first set.
+
+`transport.changed {cycle, click: {enabled, gainMilliDb}}` is published to every subscribed connection when either value actually changes, whoever asked ([Protocol events v1](protocol-events-v1.md)); repeating the current value publishes nothing.
+
+The engine host keeps both flags across `engine.select_device`. The cycle flag is written into the bundle's checkpoint (`transport: {cycle}`) with every checkpoint write, and `session.open` takes the opened bundle's flag; the click state is not stored. `engine.capabilities` reports `features.locators: true` and `features.cycle`, `features.click` true when a transport port is present.
 
 ## engine.status
 
@@ -18,7 +30,7 @@ Params `{}`. Result:
 
 ```json
 {"device": {"id": "fake", "sampleRate": 48000, "bufferFrames": 256, "inputLatencyFrames": 256, "outputLatencyFrames": 256},
- "playing": false, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
+ "playing": false, "cycle": false, "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
  "plugins": []}
 ```
 
@@ -51,7 +63,7 @@ The host stops the transport and the graph driver, closes the running device and
 
 ## session.open in siann-engine
 
-`session.open {path}` (item 16) opens the bundle as a new `Session`, taking its lock, then rebinds the engine host to it: a new `PlaybackEngine` on the same device object (never recreated, only closed so that the new driver opens it again at the new session's rate, as at launch), a new `Auditioner` behind the same `AuditionPort`, and a new meter publisher, which sends a new `meters.legend`. Instances `plugin.instantiate` made that no `plugin.insert` committed are dropped. Then the old `Session` is destroyed, which releases its lock. The result is `{sessionId, revision, documentHash}`; the next `session.sync` carries them. Errors: `not_found` (no directory at `path`), `session_locked` (another live process holds the bundle, or this engine serves it already), any other `SessionError` code the open throws (`not_a_bundle`, ...); on every error the old session stays served.
+`session.open {path}` (item 16) opens the bundle as a new `Session`, taking its lock, then rebinds the engine host to it: a new `PlaybackEngine` on the same device object (never recreated, only closed so that the new driver opens it again at the new session's rate, as at launch), a new `Auditioner` behind the same `AuditionPort`, and a new meter publisher, which sends a new `meters.legend`. Instances `plugin.instantiate` made that no `plugin.insert` committed are dropped. The cycle flag becomes the new bundle's (from its checkpoint, false when absent); the click state is kept. Then the old `Session` is destroyed, which releases its lock. The result is `{sessionId, revision, documentHash}`; the next `session.sync` carries them. Errors: `not_found` (no directory at `path`), `session_locked` (another live process holds the bundle, or this engine serves it already), any other `SessionError` code the open throws (`not_a_bundle`, ...); on every error the old session stays served.
 
 ## The bundle lock
 

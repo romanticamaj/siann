@@ -693,3 +693,22 @@ test('(18) a session.changed reaches onEvent listeners once the model has applie
   await until(() => revisions.length === 1, 'the listener');
   assert.deepEqual(revisions, [seq.steps[0]!.event.revision]);
 });
+
+test('(19) a request while disconnected is refused before the socket, sends no frame and is recorded', async () => {
+  const r = rig();
+  // Before any connection.
+  await assert.rejects(r.client.execute([{ op: 'track.add', trackId: 'trk_9', name: 'x', channels: 2 }]), (error: unknown) => {
+    assert.ok(error instanceof ProtocolError);
+    assert.equal(error.code, 'disconnected');
+    return true;
+  });
+  const socket = await synced(r);
+  const sentBefore = socket.sent.length;
+  // The engine goes away (the crash scenario): every control's request is refused.
+  socket.serverClose();
+  assert.equal(r.client.getState().status, 'disconnected');
+  await assert.rejects(r.client.request('plan.approve', { plan: 'sha256:aa' }), /not connected/);
+  await assert.rejects(r.client.request('gesture.begin', { target: 'track:trk_1/gain' }), /not connected/);
+  assert.equal(socket.sent.length, sentBefore, 'no frame reached the socket');
+  assert.deepEqual(r.client.refused(), [{ method: 'command.execute' }, { method: 'plan.approve' }, { method: 'gesture.begin' }]);
+});

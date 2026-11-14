@@ -147,6 +147,8 @@ public:
     protocol::TransportState play() override { return {}; }
     protocol::TransportState stop() override { return {}; }
     protocol::TransportState locate(std::int64_t) override { return {}; }
+    protocol::TransportState setCycle(bool) override { return {}; }
+    protocol::TransportState setClick(bool, std::optional<std::int32_t>) override { return {}; }
     protocol::EngineStatus status() const override { return {}; }
     std::vector<protocol::DeviceDescription> devices() const override { return {}; }
     protocol::DeviceInfo selectDevice(const std::string&) override { return {}; }

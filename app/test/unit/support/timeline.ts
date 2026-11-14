@@ -51,6 +51,7 @@ export function snapshotOf(
     tracks: byId(tracks),
     clips: byId(clips),
     pluginSlots: [],
+    locators: null,
     trackOrder,
   });
 }

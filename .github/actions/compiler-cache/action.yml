@@ -1,0 +1,74 @@
+name: Compiler cache
+description: >-
+  ccache (Linux, macOS) or sccache (Windows) as the compiler launcher, kept between runs
+  with actions/cache. native/cmake/SiannCompilerCache.cmake picks the launcher up from
+  PATH. Windows also gets the MSVC developer environment and the Ninja generator: the
+  Visual Studio generator ignores compiler launchers.
+inputs:
+  name:
+    description: The job (and preset) the cache belongs to
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install ccache (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q ccache
+    - name: Install ccache (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      run: brew install ccache
+    - name: ccache settings
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        {
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.compiler-cache"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          echo "CCACHE_NOHASHDIR=true"
+          echo "CCACHE_COMPILERCHECK=content"
+          echo "CCACHE_MAXSIZE=500M"
+        } >> "$GITHUB_ENV"
+    # A pinned release, checked against its published sha256.
+    - name: Install sccache (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        version=v0.19.0
+        zip=sccache-$version-x86_64-pc-windows-msvc.zip
+        sum=28be8c61f6b2c89b9eb2869f6af7f78e6f992e78a8abae0ce855fcc129cbeac1
+        mkdir -p "$RUNNER_TEMP/sccache"
+        curl -fL --retry 6 --retry-all-errors --retry-delay 20 -o "$RUNNER_TEMP/sccache/$zip" "https://github.com/mozilla/sccache/releases/download/$version/$zip"
+        echo "$sum  $RUNNER_TEMP/sccache/$zip" | sha256sum -c -
+        unzip -q "$RUNNER_TEMP/sccache/$zip" -d "$RUNNER_TEMP/sccache"
+        echo "$(cygpath -w "$RUNNER_TEMP/sccache/sccache-$version-x86_64-pc-windows-msvc")" >> "$GITHUB_PATH"
+        {
+          echo "SCCACHE_DIR=$(cygpath -w "$GITHUB_WORKSPACE/.compiler-cache")"
+          echo "SCCACHE_CACHE_SIZE=500M"
+          echo "SCCACHE_IDLE_TIMEOUT=0"
+        } >> "$GITHUB_ENV"
+    # What native/tools/msvc-env.cmd sets up locally, for every later step: the
+    # compiler, SDK and the Visual Studio CMake and Ninja.
+    - name: MSVC developer environment and Ninja (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        call native\tools\msvc-env.cmd set > "%RUNNER_TEMP%\msvc-env.txt" || exit /b 1
+        findstr /b /i /c:"PATH=" /c:"INCLUDE=" /c:"LIB=" /c:"LIBPATH=" /c:"VC" /c:"VS" /c:"Windows" /c:"UCRT" /c:"Universal" /c:"DevEnvDir=" /c:"Platform=" /c:"ExtensionSdkDir=" /c:"Framework" "%RUNNER_TEMP%\msvc-env.txt" >> "%GITHUB_ENV%"
+        >> "%GITHUB_ENV%" echo CMAKE_GENERATOR=Ninja
+        >> "%GITHUB_ENV%" echo CC=cl
+        >> "%GITHUB_ENV%" echo CXX=cl
+    - name: Restore the compiler cache
+      uses: actions/cache@v4
+      with:
+        path: .compiler-cache
+        key: compiler-${{ inputs.name }}-${{ runner.os }}-${{ hashFiles('native/CMakePresets.json', 'native/**/CMakeLists.txt', 'native/cmake/**') }}-${{ github.run_id }}
+        restore-keys: |
+          compiler-${{ inputs.name }}-${{ runner.os }}-${{ hashFiles('native/CMakePresets.json', 'native/**/CMakeLists.txt', 'native/cmake/**') }}-
+          compiler-${{ inputs.name }}-${{ runner.os }}-

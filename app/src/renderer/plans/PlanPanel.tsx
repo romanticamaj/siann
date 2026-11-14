@@ -17,7 +17,7 @@
 // stores, plan.preview and session.fetch at the plan's base revision (for
 // the stale reasons), and runs the actions.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
@@ -250,9 +250,12 @@ function useNow(): number {
 export interface PlanPanelProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // The reconnects so far (model/connection-phase.ts); each one clears the
+  // selected plan and its ticked steps (UI redesign spec 4.5 C8).
+  readonly reconnects?: number;
 }
 
-export function PlanPanel({ client, plans }: PlanPanelProps) {
+export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
@@ -264,6 +267,15 @@ export function PlanPanel({ client, plans }: PlanPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<PanelRefusal | null>(null);
   const plan = selected !== null ? snapshot.byHash.get(selected) : undefined;
+  // A reconnect clears the selection and its ticked steps.
+  const seenReconnects = useRef(reconnects);
+  useEffect(() => {
+    if (reconnects === seenReconnects.current) return;
+    seenReconnects.current = reconnects;
+    setSelected(null);
+    setTicked(null);
+    setError(null);
+  }, [reconnects]);
   const preview = usePreview(client, plan, model?.revision ?? null);
 
   const reasons = useMemo(() => {

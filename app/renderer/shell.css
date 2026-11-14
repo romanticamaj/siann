@@ -49,6 +49,51 @@ code, dd, .mono { font-family: var(--font-mono); }
   height: 100%;
   overflow: hidden;
 }
+/* The banner row under the top bar (shell-banner) holds the connection banner
+   and the audition banner; it is empty, and 0 px tall, when neither shows. */
+
+/* ---- connection banner and toasts (m5-ui-connection) */
+.connection-banner {
+  padding: var(--space) calc(var(--space) * 3);
+  background: var(--warn);
+  color: #000;
+  font-weight: 600;
+  border-bottom: 1px solid var(--divider);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zone[data-offline="true"] { opacity: var(--offline-opacity); }
+.toasts {
+  position: fixed;
+  right: calc(var(--space) * 3);
+  bottom: calc(var(--status-bar) + var(--space) * 3);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(var(--space) * 2);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  max-width: calc(320px * var(--scale));
+  padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 3);
+  background: var(--bg-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-l);
+  box-shadow: 0 6px 18px rgb(0 0 0 / .45);
+  pointer-events: auto;
+  animation: toast-in var(--toast-motion);
+}
+.toast-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.toast-close { min-height: 0; padding: 0 var(--space); background: transparent; border: 0; color: var(--tx-2); }
+@keyframes toast-in {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
 
 /* ---- top bar */
 .top-bar {
@@ -311,31 +356,6 @@ code, dd, .mono { font-family: var(--font-mono); }
 .audition-banner .primary { background: var(--tx-1); border-color: var(--tx-1); color: var(--bg-0); font-weight: 600; }
 .audition-banner-error { flex-basis: 100%; color: var(--err); }
 
-/* ---- toasts: over the zones, above the status bar; they never take the focus */
-.toasts {
-  position: fixed;
-  right: calc(var(--space) * 3);
-  bottom: calc(var(--status-bar) + var(--space) * 3);
-  z-index: 20;
-  display: grid;
-  gap: var(--space);
-  max-width: min(360px, calc(100vw - var(--space) * 6));
-  pointer-events: none;
-}
-.toast {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 2);
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
-  background: var(--bg-3);
-  border: 1px solid var(--line-2);
-  border-left: 3px solid var(--ai);
-  border-radius: var(--radius-m);
-  box-shadow: 0 4px 16px rgb(0 0 0 / .5);
-  pointer-events: auto;
-}
-.toast-message { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.toast-dismiss { min-height: 0; padding: 0 6px; background: transparent; border-color: transparent; }
 .steps { margin: 0; padding-left: 20px; }
 
 /* ---- status bar */

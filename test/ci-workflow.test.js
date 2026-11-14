@@ -232,3 +232,97 @@ test("check-all's app step passes the dev build's siann-cli to the e2e", () => {
   assert.match(text, /SIANN_CLI_EXE/);
   assert.match(text, /'apps', 'cli'/);
 });
+
+// ---- Path-filtered jobs, compiler caches and the aggregate check (issue #88) ----
+
+const ACTION = path.join(__dirname, '..', '.github', 'actions', 'compiler-cache', 'action.yml');
+const workflowText = () => fs.readFileSync(WORKFLOW, 'utf8').replace(/\r\n/g, '\n');
+const job = (id) => {
+  const all = jobs(workflowText());
+  const found = all.find((j) => j.id === id);
+  assert.ok(found, `a ${id} job exists (jobs: ${all.map((j) => j.id).join(', ')})`);
+  return found;
+};
+
+test('CI runs on pull requests, pushes to main, nightly and by hand', () => {
+  const on = workflowText().split(/\njobs:\n/)[0];
+  assert.match(on, /\n {2}push:\n {4}branches: \[main\]/);
+  assert.match(on, /\n {2}pull_request:/);
+  assert.match(on, /\n {2}schedule:\n {4}- cron: '[^']+'/);
+  assert.match(on, /\n {2}workflow_dispatch:/);
+});
+
+test('the changes job picks jobs with check-all --changed and a plain git diff', () => {
+  const { text } = job('changes');
+  const uses = text.match(/uses:\s*\S+/g) || [];
+  assert.deepEqual(uses.map((u) => u.replace(/uses:\s*/, '')), ['actions/checkout@v4'], 'no third-party action');
+  assert.match(text, /fetch-depth: 2/);
+  assert.match(text, /node scripts\/check-all\.js --changed --base HEAD\^1 --plan --json/);
+  // Everything outside a pull request.
+  assert.match(text, /github\.event_name \}\}" = pull_request/);
+  assert.match(text, /"steps":\["node","native","desktop","app","gcc"\]/);
+  for (const output of ['native', 'desktop', 'app']) {
+    assert.ok(text.includes(`\n      ${output}: \${{ steps.pick.outputs.${output} }}`), output);
+  }
+});
+
+test('the build jobs run only when their paths change; Node always runs', () => {
+  const gate = { native: 'native', rtsan: 'native', desktop: 'desktop', app: 'app' };
+  for (const [id, output] of Object.entries(gate)) {
+    const { text } = job(id);
+    assert.match(text, /\n {4}needs: changes\n/, `${id} needs changes`);
+    assert.ok(text.includes(`\n    if: needs.changes.outputs.${output} == 'true'\n`), `${id} is gated on ${output}`);
+  }
+  const node = job('node').text;
+  assert.doesNotMatch(node, /\n {4}if:/);
+  assert.doesNotMatch(node, /\n {4}needs:/);
+});
+
+test('the native, RTSan, desktop and app jobs build through the compiler cache', () => {
+  for (const id of ['native', 'rtsan', 'desktop', 'app']) {
+    const { text } = job(id);
+    const cache = text.indexOf('uses: ./.github/actions/compiler-cache');
+    assert.ok(cache >= 0, `${id} uses the compiler cache`);
+    assert.match(text, new RegExp(`compiler-cache\n {8}with:\n {10}name: ${id}\n`), `${id} keys its own cache`);
+    const configure = text.search(/cmake\s+-S\s+native/);
+    assert.ok(cache < configure, `${id} sets the cache up before it configures`);
+  }
+});
+
+test('the compiler cache: ccache on Linux and macOS, a pinned and checked sccache on Windows', () => {
+  const text = fs.readFileSync(ACTION, 'utf8').replace(/\r\n/g, '\n');
+  assert.match(text, /using: composite/);
+  assert.match(text, /apt-get install -y -q ccache/);
+  assert.match(text, /brew install ccache/);
+  assert.match(text, /mozilla\/sccache\/releases\/download\/\$version\/\$zip/);
+  assert.match(text, /version=v\d+\.\d+\.\d+\n/, 'a pinned sccache release');
+  assert.match(text, /sum=[0-9a-f]{64}\n/);
+  assert.match(text, /sha256sum -c -/);
+  // The Visual Studio generator ignores launchers: Ninja in the MSVC environment.
+  assert.ok(text.includes('call native\\tools\\msvc-env.cmd set'));
+  assert.match(text, /CMAKE_GENERATOR=Ninja/);
+  const cache = text.slice(text.indexOf('uses: actions/cache@v4'));
+  assert.match(cache, /key: compiler-\$\{\{ inputs\.name \}\}-\$\{\{ runner\.os \}\}-\$\{\{ hashFiles\('native\/CMakePresets\.json', 'native\/\*\*\/CMakeLists\.txt', 'native\/cmake\/\*\*'\) \}\}-/);
+  assert.match(cache, /restore-keys:/);
+});
+
+test('every action is GitHub\'s own or this repository\'s', () => {
+  for (const file of [WORKFLOW, ACTION]) {
+    for (const [, ref] of fs.readFileSync(file, 'utf8').matchAll(/uses:\s*(\S+)/g)) {
+      assert.match(ref, /^(actions\/[a-z-]+@v\d+|\.\/\.github\/actions\/[a-z-]+)$/, `${path.basename(file)}: ${ref}`);
+    }
+  }
+});
+
+test('a CI ok job passes only when every job passed or was skipped for its paths', () => {
+  const { text } = job('ci-ok');
+  assert.match(text, /(^|\n) {4}name: CI ok\n/);
+  assert.match(text, /(^|\n) {4}if: always\(\)\n/);
+  const needs = /(?:^|\n) {4}needs: \[([^\]]*)\]/.exec(text);
+  assert.ok(needs, 'ci-ok lists what it needs');
+  const others = jobs(workflowText()).map((j) => j.id).filter((id) => id !== 'ci-ok').sort();
+  assert.deepEqual(needs[1].split(',').map((s) => s.trim()).sort(), others, 'ci-ok needs every other job');
+  assert.match(text, /join\(needs\.\*\.result, ' '\)/);
+  assert.match(text, /success\|skipped\) ;;/);
+  assert.match(text, /exit 1/);
+});

@@ -1,6 +1,6 @@
-// Toast messages built from the catalogs (UI redesign spec 6.2). The toast
-// surface is shell/toast-store.ts and shell/Toasts.tsx (P1-5); a plan's
-// arrival is raised by plans/arrivals.ts, the reconnect by P1-6.
+// Toast messages built from the catalogs (UI redesign spec 6.2), for the
+// toast surface (shell/Toasts.tsx): the reconnect toast of P1-6 and the
+// new-plan toast of P1-5.
 
 import type { Locale } from './locale';
 import { translator } from './t';

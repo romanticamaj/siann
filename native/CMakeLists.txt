@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.25)
 
 project(siann_native VERSION 0.1.0 LANGUAGES CXX)
 
+# sccache or ccache when installed, and a shared third-party source cache when
+# SIANN_DEPS_CACHE_DIR is set (scripts/check-all.js sets both up).
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SiannCompilerCache.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SiannDependencyCache.cmake")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -37,7 +42,7 @@ if(SIANN_BUILD_TESTS)
   enable_testing()
   include(FetchContent)
   # Catch2 v3.7.1, pinned by commit.
-  FetchContent_Declare(
+  siann_declare_dependency(
     Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
     GIT_TAG 9827c148c397289df17d3967692619a198032a24

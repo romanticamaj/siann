@@ -213,6 +213,21 @@ the MCP `audition` tool, `session.open`), whoever sent the request:
 side already heard publishes nothing; an engine without an audition port never
 publishes it.
 
+### `transport.changed` (m5-ui-engine-loop-click)
+
+Published to every subscribed connection when the cycle flag or the click state
+actually changes, whoever asked (`transport.set_cycle`, `transport.set_click`, the
+MCP `set_cycle` and `set_click` tools, or a `session.open` that takes another
+bundle's cycle flag):
+
+```json
+{"type": "transport.changed", "cycle": true, "click": {"enabled": false, "gainMilliDb": -12000}}
+```
+
+Setting the value already set publishes nothing. Neither change is a revision, so
+no `session.changed` accompanies it; a change of the locators is a revision and is
+announced by `session.changed` with `changedIds [{ref: "locators:locators", change}]`.
+
 ### `session.opened` (m3-mcp)
 
 Published when `session.open` switched the server to another bundle:
@@ -245,15 +260,18 @@ happen in between.
 }
 ```
 
-- Entities are listed root, media, tracks, clips, plugin slots, each table in id
-  order, which is the order of `Document::toJson()`. A chunk holds at most
-  `syncChunkEntities` entities (server option, default 500); `entities` is the
+- Entities are listed root, media, tracks, clips, plugin slots, locators, each
+  table in id order, which is the order of `Document::toJson()`. A chunk holds at
+  most `syncChunkEntities` entities (server option, default 500); `entities` is the
   total. `pluginSlots` is present only in a chunk that holds slots (M4, see
   `protocol-plugins-v0.md`), so a document without plugins syncs as in M3.
+  `locators` (m5-ui-engine-loop-click) is a single object, not an array, present
+  only in the chunk that holds it (a document without locators syncs as before);
+  its ref is `locators:locators`.
 - Entity JSON is the hashed form, so a client recomputes entity and document
   hashes from the chunks. Concatenating the chunks gives
-  `{schemaVersion: "siann.session_document.v1", root, media, tracks, clips,
-  pluginSlots?}`.
+  `{schemaVersion: "siann.session_document.v2", root, media, tracks, clips,
+  pluginSlots?, locators?}`.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.

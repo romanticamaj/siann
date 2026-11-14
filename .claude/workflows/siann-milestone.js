@@ -81,7 +81,7 @@ const BUILD = {
     branch: { type: 'string' },
     commits: { type: 'array', items: { type: 'string' } },
     testsAdded: { type: 'array', items: { type: 'string' } },
-    checkAll: { type: 'string', description: 'last lines of node scripts/check-all.js --gcc' },
+    checkAll: { type: 'string', description: 'last lines of node scripts/check-all.js --changed' },
     blocker: { type: 'string' },
   },
   required: ['status', 'branch', 'commits', 'checkAll'],
@@ -147,7 +147,7 @@ const pre = await agent(
   `${common}\n\nPreflight for milestone ${M}. Do not modify any file.\n` +
   `1. Read ${MANIFEST} and return it (id, status, humanGates, features with done=true for features whose work is already merged on main — check git log and the code, exit).\n` +
   `2. Check: the working tree of the main checkout is clean or only has unrelated untracked files; origin/main is fetched; the latest CI run on main is green (gh run list --branch main --limit 1; if it is still running, wait for it with gh run watch <id> --exit-status and do not give up early).\n` +
-  `3. CI on main covers Windows, macOS, Linux and GCC, so a green run for the current origin/main commit is enough. Only if that run is red or missing, run \`node scripts/check-all.js\` on a fresh worktree of origin/main (git worktree add, then remove it) and wait for it to finish (several minutes: run it in the foreground with a long timeout) before reporting.\n` +
+  `3. CI on main covers Windows, macOS, Linux and GCC, so a green run for the current origin/main commit is enough. Only if that run is red or missing, run \`node scripts/check-all.js --all\` on a fresh worktree of origin/main (git worktree add, then remove it) and wait for it to finish (several minutes: run it in the foreground with a long timeout) before reporting.\n` +
   (CHECKED ? `The caller already confirmed that CI on main is green: skip steps 2 and 3 and only do step 1 plus the prerequisite check.\n` : ``) +
   `Set ok=false with problems listed when any check fails or a prerequisite in the manifest is not met.`,
   { label: `preflight ${M}`, schema: PREFLIGHT, effort: 'medium' },
@@ -211,7 +211,7 @@ for (const wave of waves) {
         `Branch: ms/${M}/${f.id} from origin/main. Acceptance criteria are in the manifest; meet every one.\n` +
         `Plan from the spec check:\n${p ? p.plan : '(none)'}\n${specNote}` +
         `Write the failing tests first and commit them, then the implementation. ` +
-        `Run \`node scripts/check-all.js --gcc\` (add --desktop when you touch host_desktop) until it passes. ` +
+        `Run \`node scripts/check-all.js --changed\` (it picks the steps from your paths, desktop included for host_desktop) until it passes. ` +
         `Commit with Conventional Commit subjects and the attribution lines from ${RULES}. Do not push and do not open a PR. ` +
         `Return status=blocked with the reason when you hit a stop condition from ${RULES}.`,
         { label: `build ${f.id}`, phase: 'Build', model: 'opus', isolation: 'worktree', schema: BUILD },
@@ -225,7 +225,7 @@ for (const wave of waves) {
         const [verify, spec] = await parallel([
           () => agent(
             `${common}\n\nIndependent verification of branch ${last.branch} (feature ${f.id} of ${M}). You did not write this code; assume it is wrong until shown otherwise. Do not modify files.\n` +
-            `Check out the branch in a fresh worktree, run \`node scripts/check-all.js --gcc\`, read the diff against origin/main, and check: ` +
+            `Check out the branch in a fresh worktree, run \`node scripts/check-all.js --changed\`, read the diff against origin/main, and check: ` +
             `every acceptance criterion has a test that would fail without the change; tests are deterministic; realtime rules from ${RULES} hold (no allocation, locks or I/O on the audio thread); ` +
             `no behaviour regressions; GCC and MSVC warnings clean. Report findings with evidence (file:line, command output).`,
             { label: `verify ${f.id} r${round}`, phase: 'Build', schema: REVIEW },
@@ -242,7 +242,7 @@ for (const wave of waves) {
         if (round === MAX_ROUNDS) return { f, b: last, ok: false, reason: `findings remain after ${MAX_ROUNDS} fix rounds`, findings: issues }
         const fixed = await agent(
           `${common}\n\nFix round ${round + 1} for branch ${last.branch} (feature ${f.id} of ${M}). Check out the branch in this worktree and address every finding below. ` +
-          `For each: add or adjust a test that exposes it first, then fix. Run \`node scripts/check-all.js --gcc\`. Commit; do not push.\n` +
+          `For each: add or adjust a test that exposes it first, then fix. Run \`node scripts/check-all.js --changed\`. Commit; do not push.\n` +
           `If you believe a finding is wrong, do not change code for it; explain why in a commit-free note in your result.\n\n${fmt(issues)}`,
           { label: `fix ${f.id} r${round + 1}`, phase: 'Build', model: 'opus', isolation: 'worktree', schema: BUILD },
         )
@@ -267,7 +267,7 @@ for (const wave of waves) {
     }
     const landed = await agent(
       `${common}\n\nLand branch ${r.b.branch} (feature ${r.f.id} of ${M}).\n` +
-      `Rebase it on the latest origin/main and rerun \`node scripts/check-all.js --gcc\`. ` +
+      `Rebase it on the latest origin/main and rerun \`node scripts/check-all.js --changed\`. ` +
       `Push and open a PR following the landing steps in ${RULES} (account switching, PR body format with the acceptance checklist and the verification evidence). ` +
       `Wait for CI on all platforms. If CI fails, fix it on the branch (test first) and push again; stop with status=blocked after the second red run. ` +
       `When green, merge with a merge commit and delete the branch, then switch the gh account back. Minor findings to list in the PR body as follow-ups:\n${fmt(r.minor || []) || '(none)'}`,

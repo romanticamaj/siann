@@ -51,6 +51,7 @@ struct Session::State {
     History history;
     std::int64_t lastSeq = 0;
     command::PlanStore plans;  // in memory only (M3)
+    bool cycle = false;        // written with every checkpoint
 
     State(detail::BundleLock held, fs::path path, History h, std::int64_t seq)
         : lock(std::move(held)), bundle(std::move(path)), history(std::move(h)), lastSeq(seq) {}
@@ -70,6 +71,7 @@ struct Session::State {
             {"coversSeq", Value(std::to_string(lastSeq))},
             {"head", envelopeToJson(head.envelope)},
             {"document", head.document.toJson()},
+            {"transport", Value(Object{{"cycle", Value(cycle)}})},
         });
         io::writeFileAtomic(bundle / kCheckpointFile, jcs::canonicalize(checkpoint) + "\n");
     }
@@ -144,6 +146,7 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
         }
     }
     std::int64_t coversSeq = 0;
+    bool checkpointCycle = false;
     if (checkpoint) {
         try {
             model::detail::FieldReader r(*checkpoint, "checkpoint");
@@ -151,6 +154,10 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
                 throw SessionError("unsupported_version", "checkpoint schema is not supported");
             }
             coversSeq = r.int64String("coversSeq");
+            if (const Value* transport = r.optional("transport")) {
+                model::detail::FieldReader t(*transport, "checkpoint.transport");
+                checkpointCycle = t.boolean("cycle");
+            }
         } catch (const model::ModelError& error) {
             throw SessionError("checkpoint_mismatch", error.what());
         }
@@ -253,8 +260,17 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
     }
 
     auto state = std::make_unique<State>(std::move(held), bundle, std::move(history), recordCount);
+    state->cycle = checkpointCycle;
     state->installJournalHook();
     return Session(std::move(state));
+}
+
+bool Session::cycle() const noexcept {
+    return state_->cycle;
+}
+
+void Session::setCycle(bool enabled) noexcept {
+    state_->cycle = enabled;
 }
 
 const fs::path& Session::bundlePath() const noexcept {

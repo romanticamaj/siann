@@ -383,3 +383,86 @@ TEST_CASE("The driver times callbacks with the steady clock by default", "[drive
     CHECK(driver.callbackTiming().maxCallbackNanos() > 0);
     driver.stop();
 }
+
+namespace {
+
+std::unique_ptr<const realtime::ClickTempo> clickAt(std::int32_t milliBpm) {
+    return realtime::ClickTempo::build({time::TempoPoint{time::MusicTime{0}, milliBpm}}, 48'000);
+}
+
+// Each burst's first non-zero sample after at least `gap` zeros.
+std::vector<std::size_t> clickOnsets(const std::vector<float>& samples, std::size_t gap = 2'000) {
+    std::vector<std::size_t> out;
+    std::size_t zeros = gap;
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        if (samples[i] != 0.0f) {
+            if (zeros >= gap) {
+                out.push_back(i);
+            }
+            zeros = 0;
+        } else {
+            ++zeros;
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("Tempo tables past the click inbox never throw: the newest wins on a later poll", "[driver][click]") {
+    // Spec, "Queues": clickInbox is latest-wins with a control-side retry, so
+    // the update of a committed revision never fails because the audio thread
+    // has not run.
+    GraphDriver driver({});
+    driver.publish(constantGraph(0.0f));
+    driver.setClickTempo(clickAt(120'000));  // stopped: installed at once
+    host::ManualAudioDevice device;
+    driver.setClick(true, 1.0f);
+    driver.play();
+    driver.start(device, config(64));
+    // No callback between these: far more tables than the inbox holds.
+    for (int i = 0; i < 20; ++i) {
+        REQUIRE_NOTHROW(driver.setClickTempo(clickAt(240'000)));
+    }
+    REQUIRE_NOTHROW(driver.setClickTempo(clickAt(60'000)));  // the newest: one beat a second
+    // Owned: the live table, the ones handed over and the one waiting.
+    CHECK(driver.clickTempoTables() <= GraphDriver::kClickTempoTables + 1);
+
+    std::vector<std::vector<float>> capture;
+    for (int b = 0; b < 48'000 * 5 / 2 / 64; ++b) {
+        device.pumpAll(1, capture);
+        driver.poll();
+    }
+    driver.stop();
+    // Every superseded table was reclaimed: only the live one is left.
+    CHECK(driver.clickTempoTables() == 1);
+    // After the beat at 0 and the hand-over, the beats are a second apart.
+    const std::vector<std::size_t> found = clickOnsets(capture[0]);
+    REQUIRE(found.size() >= 3);
+    CHECK(found[found.size() - 1] == 96'000);
+    CHECK(found[found.size() - 2] == 48'000);
+}
+
+TEST_CASE("The click tempo hand-over neither allocates on the audio thread nor leaks tables", "[driver][click][alloc]") {
+    GraphDriver driver({});
+    driver.publish(constantGraph(0.0f));
+    host::ManualAudioDevice device;
+    driver.setClick(true, 1.0f);
+    driver.play();
+    driver.start(device, config(64));
+    std::vector<std::vector<float>> capture;
+    device.pumpAll(1, capture);
+    for (int round = 0; round < 4; ++round) {
+        for (int i = 0; i < 12; ++i) {
+            driver.setClickTempo(clickAt(100'000 + round * 1'000 + i));  // control side allocates; fine
+        }
+        const auto before = rt::allocationViolations();
+        device.pumpAll(1, capture);
+        CHECK(rt::allocationViolations() == before);
+        driver.poll();
+    }
+    device.pumpAll(1, capture);
+    driver.poll();
+    driver.stop();
+    CHECK(driver.clickTempoTables() == 1);
+}

@@ -3,7 +3,9 @@
 // platform go in; the binding to run, or null, comes out. The focused zone's
 // binding wins over the window's for the same chord; nothing fires while a
 // text field has focus but the focus keys (Tab, Shift+Tab, F6, Shift+F6,
-// Escape), which leave a field as the platform's own keys do. Keys match on event.code, not event.key, so Opt+I on
+// Escape), which leave a field as the platform's own keys do; and while the
+// engine is disconnected only the window's layout and focus commands run.
+// Keys match on event.code, not event.key, so Opt+I on
 // macOS (event.key is a dead accent there) and other layouts' characters
 // still reach their commands.
 
@@ -24,6 +26,16 @@ export interface KeyInput {
   readonly targetIsTextField: boolean;
   readonly focusedZone: ZoneScope;
   readonly platform: 'mac' | 'other';
+  // The engine is disconnected (m5-ui-connection): only the window's layout
+  // and focus commands run, which send nothing; every zone command, which may,
+  // is refused, and its chord falls through to the window's binding.
+  readonly offline?: boolean;
+}
+
+// What still runs while the engine is disconnected: the window's zone layout
+// and focus commands (UI redesign spec 3.0, "engine disconnected").
+export function runsOffline(binding: Binding): boolean {
+  return binding.scope === 'window' && (binding.commandId.startsWith('zone.') || binding.commandId.startsWith('focus.'));
 }
 
 // "KeyL" -> "L", "Digit1" -> "1", anything else as event.code names it.
@@ -50,7 +62,8 @@ export function resolveKey(input: KeyInput, preset: readonly Binding[]): Binding
   // The Windows key (Meta off macOS) belongs to the OS.
   if (input.platform !== 'mac' && input.modifiers.meta) return null;
   const chord = chordOf(input);
-  const table = input.targetIsTextField ? preset.filter((b) => FOCUS_COMMANDS_IN_FIELDS.has(b.commandId)) : preset;
+  let table = input.targetIsTextField ? preset.filter((b) => FOCUS_COMMANDS_IN_FIELDS.has(b.commandId)) : preset;
+  if (input.offline) table = table.filter(runsOffline);
   return (
     table.find((b) => b.chord === chord && b.scope === input.focusedZone) ??
     table.find((b) => b.chord === chord && b.scope === 'window') ??

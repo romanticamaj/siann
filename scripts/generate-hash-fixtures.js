@@ -64,6 +64,15 @@ const valid = [
     entity('track_lane', 'aaa'),
     entity('tracks', 'mmm'),
   ]],
+  // m5-ui-engine-loop-click: the singleton locators entity sorts between
+  // clip and plugin_slot ("l" < "p") like any other leaf.
+  ['locators_singleton', [
+    entity('track', 'trk_1'),
+    entity('locators', 'locators'),
+    entity('root', 'root'),
+    entity('clip', 'clp_1'),
+    entity('plugin_slot', 'slt_1'),
+  ]],
 ].map(([name, entities]) => ({ name, entities, documentHash: expectedDocumentHash(entities) }));
 
 const valid64 = 'a'.repeat(64);
