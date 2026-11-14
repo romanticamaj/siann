@@ -2,10 +2,11 @@
 // snapshot and the read model's names, through useSyncExternalStore (with
 // the same getter on the server, for the static-markup tests).
 
-import { useMemo, useSyncExternalStore } from 'react';
+import { useContext, useMemo, useSyncExternalStore } from 'react';
 
 import type { PlanSnapshot, PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
+import { TimeFormatContext } from '../shell/time-format';
 import { namesFromSnapshot, type StepNames } from './describe';
 
 export function usePlanSnapshot(plans: PlanStore): PlanSnapshot {
@@ -20,5 +21,6 @@ export function useModelSnapshot(client: SessionClient) {
 
 export function useStepNames(client: SessionClient): StepNames {
   const snapshot = useModelSnapshot(client);
-  return useMemo(() => namesFromSnapshot(snapshot), [snapshot]);
+  const timeFormat = useContext(TimeFormatContext);
+  return useMemo(() => namesFromSnapshot(snapshot, timeFormat), [snapshot, timeFormat]);
 }

@@ -48,6 +48,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { engineArgs, engineTestArgs, pluginRegistryFile } from './engine-args';
+import { focusFirstWindow } from './focus';
 import { rendererRequestPath } from './serve';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
 
@@ -280,11 +281,7 @@ if (!primary) {
   // Another shell holds the lock and has been told (second-instance); no engine here.
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  });
+  app.on('second-instance', () => focusFirstWindow(app, mainWindow, process.platform));
 
   void app.whenReady().then(() => {
     // Before any page loads: the renderer needs no permission, the engine owns audio.

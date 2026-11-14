@@ -31,7 +31,7 @@ const DEFAULTS: Record<Zone, number> = { left: 216, lower: 280, right: 348 };
 const LOWER_MIN = 160;
 const EVENT_MIN_HEIGHT = 320;
 const MOD = 'ControlOrMeta';
-const LAYOUT_FIELDS = ['siann.layout', '"sizes"', '"collapsed"', '"tabs"', 'stripWidth', 'trackHeights', 'mixconsole'];
+const LAYOUT_FIELDS = ['siann.layout', '"sizes"', '"collapsed"', '"tabs"', 'stripWidth', 'trackHeights', 'mixconsole', '"autoScroll"', '"timeFormat"'];
 
 const TRACKS = [
   { id: 'trk_kick', name: 'Kick' },

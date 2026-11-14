@@ -51,6 +51,38 @@ test('the v2 model fixture keeps every v1 entity hash and adds locators:locators
   assert.notEqual(v2.documentHash, v1.documentHash);
 });
 
+test('the media-name model fixture matches its Node generator', () => {
+  const { FIXTURE_FILE_V2_MEDIA_NAME, buildFixtureV2MediaName } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_MEDIA_NAME, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV2MediaName());
+});
+
+// m5b-engine-project-media: the optional media name changes the named media's
+// hashes and nothing else; without it a media entity is the v2 entity.
+test('the media-name fixture changes only the media hashes of the v2 fixture', () => {
+  const v2 = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE_V2, 'utf8'));
+  const named = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE_V2_MEDIA_NAME, 'utf8'));
+  assert.equal(named.document.schemaVersion, 'siann.session_document.v2');
+  assert.equal(named.entityHashes.length, v2.entityHashes.length);
+  named.entityHashes.forEach((leaf, index) => {
+    const before = v2.entityHashes[index];
+    assert.equal(`${leaf.type}:${leaf.id}`, `${before.type}:${before.id}`);
+    if (leaf.type === 'media') {
+      assert.notEqual(leaf.entityHash, before.entityHash, leaf.id);
+      const entity = named.document.media.find((media) => media.id === leaf.id);
+      assert.equal(entity.schema, 'siann.entity.media.v1');
+      assert.equal(typeof entity.name, 'string');
+      assert.equal(leaf.entityHash, sha256Jcs(entity));
+      const { name, ...without } = entity;
+      assert.equal(sha256Jcs(without), before.entityHash, leaf.id);
+    } else {
+      assert.equal(leaf.entityHash, before.entityHash, leaf.id);
+    }
+  });
+  assert.equal(documentHash(named.entityHashes), named.documentHash);
+  assert.notEqual(named.documentHash, v2.documentHash);
+});
+
 test('model fixture hashes are reproduced by the Node hash code', () => {
   const fixture = JSON.parse(fs.readFileSync(generators.model.FIXTURE_FILE, 'utf8'));
   const { document } = fixture;

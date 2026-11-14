@@ -1,0 +1,37 @@
+/* The left zone: Inspector.
+
+   Shared source of the redesign's mockup and the app (docs/harness/agent-rules.md,
+   "UI fidelity"): docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html
+   loads this file, and the React component that draws this part of the window
+   uses the same class names and structure. Colours, font sizes and radii are
+   tokens of ../tokens.css. Changing a rule here changes the reference: that
+   needs the maintainer. */
+
+.z-head{height:32px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--divider);background:var(--bg-2);box-shadow:inset 0 1px 0 var(--line-hi);font-weight:600}
+.z-head .k{margin-left:auto;font:500 9px var(--font-num);color:var(--tx-4);border:1px solid var(--line-2);border-radius:var(--radius-s);padding:1px 4px}
+.i-track{padding:10px 10px 9px;border-bottom:1px solid var(--divider);display:flex;flex-direction:column;gap:8px;background:var(--bg-selected);box-shadow:inset 3px 0 0 var(--track-6)}
+.i-name{display:flex;align-items:center;gap:7px;font-weight:600;font-size:var(--fs-session)}
+.i-name small{margin-left:auto;font-weight:500;font-size:var(--fs-10h);color:var(--tx-3)}
+.i-btns{display:flex;gap:3px}
+.i-row{display:grid;grid-template-columns:44px 1fr 46px;align-items:center;gap:8px;font-size:var(--fs-small);color:var(--tx-3)}
+.i-row b{font-weight:600;color:var(--tx-1);text-align:right}
+.hs{height:4px;border-radius:var(--radius-2);background:var(--bg-slot);border:1px solid var(--divider);position:relative}
+.hs i{position:absolute;left:0;top:0;bottom:0;background:var(--lit-1);border-radius:var(--radius-2)}
+.hs u{position:absolute;top:-5px;width:8px;height:12px;margin-left:-4px;border-radius:var(--radius-2);background:linear-gradient(var(--cap-0),var(--thumb-1));border:1px solid var(--divider)}
+.sec{border-bottom:1px solid var(--divider)}
+.sec-h{height:26px;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--bg-2);color:var(--tx-2);font-size:var(--fs-small);font-weight:600}
+.sec-h svg{color:var(--tx-4)} .sec-h span{margin-left:auto;color:var(--tx-4);font-weight:500}
+.sec.shut .sec-h{color:var(--tx-3)} .sec.shut .sec-h svg{transform:rotate(-90deg)}
+.sec-b{padding:7px 8px 9px;display:flex;flex-direction:column;gap:4px}
+.irow{display:grid;grid-template-columns:40px 1fr;align-items:center;gap:6px;font-size:var(--fs-small);color:var(--tx-3)}
+.pick{height:22px;border-radius:var(--radius-4);background:var(--bg-3);border:1px solid var(--line-2);color:var(--tx-1);padding:0 7px;display:flex;align-items:center;justify-content:space-between;font-size:var(--fs-small)}
+.pick svg{color:var(--tx-4)}
+.islot{height:22px;border-radius:var(--radius-4);background:var(--bg-4);border:1px solid var(--line-2);padding:0 7px;display:flex;align-items:center;gap:6px;font-size:var(--fs-small)}
+.islot::before{content:"";width:6px;height:6px;border-radius:var(--radius-round);background:var(--ok)}
+.islot em{margin-left:auto;font-style:normal;color:var(--tx-3);font-weight:700;font-size:var(--fs-micro)}
+.islot.empty{background:transparent;border-style:dashed;color:var(--tx-4)} .islot.empty::before{display:none}
+.hist{font-size:var(--fs-small);color:var(--tx-2);line-height:1.45;font-weight:400}
+.hist b{color:var(--tx-1);font-weight:600} .hist .mono{font-size:var(--fs-micro);color:var(--tx-3)}
+.z-foot{margin-top:auto;height:26px;display:flex;border-top:1px solid var(--divider);background:var(--bg-2);font-size:var(--fs-small);color:var(--tx-3)}
+.z-foot span{flex:1;display:grid;place-items:center;position:relative}
+.z-foot span.on{color:var(--tx-1)} .z-foot span.on::after{content:"";position:absolute;left:12px;right:12px;top:0;height:2px;background:var(--tx-1)}

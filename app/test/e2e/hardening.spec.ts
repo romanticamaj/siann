@@ -62,9 +62,37 @@ test.afterEach(async () => {
   scratch = '';
 });
 
+// Whether this environment lets the app take window activation at all. A bare
+// Electron app Playwright launches from a launchd Aqua agent on macOS 15 never
+// becomes key, whatever it calls (win.focus(), app.focus({steal: true}),
+// setAlwaysOnTop + moveTop): there no fix can make isFocused() true. The probe is a
+// fresh window the main process creates, asks for focus by every route, and
+// destroys; it is focusable exactly when the environment grants activation.
+async function canFocusAWindow(): Promise<boolean> {
+  return app.evaluate(
+    ({ app: electronApp, BrowserWindow }) =>
+      new Promise<boolean>((resolve) => {
+        const probe = new BrowserWindow({ width: 200, height: 120, show: false });
+        const done = (focused: boolean) => {
+          clearTimeout(timer);
+          if (!probe.isDestroyed()) probe.destroy();
+          resolve(focused);
+        };
+        const timer = setTimeout(() => done(!probe.isDestroyed() && probe.isFocused()), 3_000);
+        probe.once('focus', () => done(true));
+        probe.show();
+        if (process.platform === 'darwin') electronApp.focus({ steal: true });
+        probe.focus();
+      }),
+  );
+}
+
 test('a second launch exits 0 without an engine, and the first window is focused', async () => {
   const pid = await enginePid();
   expect(pid).not.toBeNull();
+  // Probe first, so the probe window is gone before the first window is wrapped.
+  const checksFocus = process.platform === 'win32' || process.platform === 'darwin';
+  const focusable = checksFocus && (await canFocusAWindow());
   // Count the holder's focus() calls and any ready line from here on.
   await app.evaluate(({ BrowserWindow }) => {
     const g = globalThis as unknown as { __focusCalls: number; __readies: number; __siannShell: NodeJS.EventEmitter };
@@ -110,7 +138,13 @@ test('a second launch exits 0 without an engine, and the first window is focused
   expect(await app.evaluate(() => (globalThis as unknown as { __readies: number }).__readies)).toBe(0);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   // Linux CI runs xvfb without a window manager, so focus() is the evidence there.
-  if (process.platform === 'win32' || process.platform === 'darwin') {
+  // Where the probe could not focus a window, neither can the fix: focus() stays the
+  // evidence and the skip is recorded. Wherever the probe succeeds the check is strict.
+  if (checksFocus) {
+    if (!focusable) {
+      test.info().annotations.push({ type: 'skip-reason', description: 'environment cannot grant window activation' });
+      return;
+    }
     await expect
       .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFocused()))
       .toBe(true);

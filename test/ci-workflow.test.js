@@ -279,6 +279,18 @@ test('the build jobs run only when their paths change; Node always runs', () => 
   assert.doesNotMatch(node, /\n {4}needs:/);
 });
 
+// docs/harness/test-matrix.md, "How to keep it complete": the bridge's tests run
+// on the three desktop OSes, not on Linux alone.
+test('the Node job runs npm test on Windows, macOS and Linux', () => {
+  const { text } = job('node');
+  const matrix = /os:\s*\[([^\]]*)\]/.exec(text);
+  assert.ok(matrix, 'the node job has an os matrix');
+  assert.deepEqual(matrix[1].split(',').map((s) => s.trim()).sort(), ['macos-latest', 'ubuntu-latest', 'windows-latest']);
+  assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
+  assert.match(text, /fail-fast:\s*false/);
+  assert.match(text, /run: npm test/);
+});
+
 test('the native, RTSan, desktop and app jobs build through the compiler cache', () => {
   for (const id of ['native', 'rtsan', 'desktop', 'app']) {
     const { text } = job(id);

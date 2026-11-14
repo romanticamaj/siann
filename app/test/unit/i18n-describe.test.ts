@@ -1,8 +1,9 @@
 // Catalog-built wording per locale (m5-ui-i18n, m5-ui-plan-panel; UI redesign
 // spec 6.2 and P1-5): plan step descriptions for every op of the engine's
 // command set, engine error codes, toast messages, plurals and relative times.
-// Steps name tracks by their names, clips by their track and position (seconds
-// from the frame string and the root's sample rate), plugins by their names,
+// Steps name tracks by their names, clips by their track and position (in the
+// position display's primary format, Bars+Beats by default, from the frame
+// string, the root's tempo map and sample rate), plugins by their names,
 // and never by an id; a track or clip made by an earlier step of the same plan
 // is named from that step. dB and pan go through format.ts and are
 // byte-identical across locales; text an agent wrote is passed through.
@@ -56,6 +57,8 @@ const STEPS = {
   clipGain: { op: 'clip.set_gain', clipId: 'clp_1', gainMilliDb: -3000 },
   mediaAdd: { op: 'media.add', mediaId: 'med_2', contentHash: 'sha256:' + 'a'.repeat(64), format: 'wav', channels: 2, sampleRate: 48000, frames: '480000' },
   mediaRemove: { op: 'media.remove', mediaId: 'med_1' },
+  mediaRename: { op: 'media.rename', mediaId: 'med_1', name: 'Kick Loop.wav' },
+  mediaUnname: { op: 'media.rename', mediaId: 'med_1', name: null },
   insert: {
     op: 'plugin.insert',
     trackId: 'trk_k',
@@ -93,15 +96,17 @@ test('English wording for every op the engine accepts, and a generic line for an
     solo: 'Solo Lead',
     unsolo: 'Unsolo Lead',
     explode: 'Split Keys into one track per channel',
-    place: 'Place a clip on Keys at 2 s',
-    move: 'Move a clip on Keys to 0.25 s',
-    moveTrack: 'Move a clip on Keys to Lead at 0.5 s',
+    place: 'Place a clip on Keys at 2.1.000',
+    move: 'Move a clip on Keys to 1.1.960',
+    moveTrack: 'Move a clip on Keys to Lead at 1.2.000',
     trim: 'Trim a clip on Keys to 2.5 s',
-    clipRemove: 'Remove a clip on Keys at 1.5 s',
+    clipRemove: 'Remove a clip on Keys at 1.4.000',
     clipRemoveUnknown: 'Remove a clip',
     clipGain: `Set the volume of a clip on Keys to ${formatMilliDb(-3000)}`,
     mediaAdd: 'Add an audio file to the pool',
     mediaRemove: 'Remove an audio file from the pool',
+    mediaRename: 'Rename an audio file in the pool to Kick Loop.wav',
+    mediaUnname: 'Clear the name of an audio file in the pool',
     insert: 'Insert Fine EQ on Keys',
     pluginRemove: 'Remove Pro-Q 3 on Keys',
     bypass: 'Bypass Pro-Q 3 on Keys',
@@ -127,14 +132,30 @@ test('a track, clip or plugin made by an earlier step of the plan is named from 
   assert.deepEqual(describePlan(plan, t, NAMES), [
     'Add track Pad',
     `Set Pad volume to ${formatMilliDb(-9000)}`,
-    'Place a clip on Pad at 0 s',
-    'Move a clip on Pad to 1 s',
+    'Place a clip on Pad at 1.1.000',
+    'Move a clip on Pad to 1.3.000',
     'Insert Verb on Pad',
     'Bypass Verb on Pad',
   ]);
   // Without a sample rate a position is not invented.
   const noRate: StepNames = { ...NAMES, sampleRate: undefined };
   assert.equal(describeStep(STEPS.move, t, noRate), 'Move a clip on Keys to a new position');
+});
+
+// UI redesign spec 7, P1-5: positions in plan wording follow the position
+// display's primary format (m5-ui-transport): Bars+Beats through root.tempo,
+// or Seconds as the display shows them. Lengths stay in seconds.
+test('positions follow the primary display format and the tempo map', () => {
+  const t = translator('en');
+  const seconds: StepNames = { ...NAMES, timeFormat: 'seconds' };
+  assert.equal(describeStep(STEPS.place, t, seconds), 'Place a clip on Keys at 0:02.000');
+  assert.equal(describeStep(STEPS.move, t, seconds), 'Move a clip on Keys to 0:00.250');
+  assert.equal(describeStep(STEPS.clipRemove, t, seconds), 'Remove a clip on Keys at 0:01.500');
+  assert.equal(describeStep(STEPS.trim, t, seconds), 'Trim a clip on Keys to 2.5 s');
+  // At 60 BPM a quarter is a second: 2 s is beat 3 of bar 1.
+  const slow: StepNames = { ...NAMES, tempo: [{ ticks: '0', milliBpm: 60_000 }] };
+  assert.equal(describeStep(STEPS.place, t, slow), 'Place a clip on Keys at 1.3.000');
+  assert.equal(describeStep(STEPS.place, t, { ...slow, timeFormat: 'bars' }), 'Place a clip on Keys at 1.3.000');
 });
 
 test('no step description shows an entity id, a raw pan value or a milli-dB integer', () => {
@@ -168,16 +189,17 @@ test('Chinese step descriptions use the glossary terms', () => {
   }
 });
 
-test('dB, pan values, seconds and agent-written names are byte-identical across locales', () => {
+test('dB, pan values, positions and agent-written names are byte-identical across locales', () => {
   for (const locale of LOCALES) {
     assert.ok(describe(locale, 'gain').includes(formatMilliDb(-6000)), locale);
     assert.ok(describe(locale, 'gain').includes('Vox BG 主唱'), locale);
     assert.ok(describe(locale, 'pan').includes(formatPan(-2500)), locale);
     assert.ok(describe(locale, 'panRight').includes('R40'), locale);
-    assert.ok(describe(locale, 'move').includes('0.25'), locale);
+    assert.ok(describe(locale, 'move').includes('1.1.960'), locale);
     assert.ok(describe(locale, 'rename').includes('FX Riser'), locale);
     assert.ok(describe(locale, 'add').includes('Bass'), locale);
     assert.ok(describe(locale, 'insert').includes('Fine EQ'), locale);
+    assert.ok(describe(locale, 'mediaRename').includes('Kick Loop.wav'), locale);
   }
 });
 

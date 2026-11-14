@@ -29,6 +29,7 @@ import * as path from 'node:path';
 import type { Locale } from '../../src/renderer/i18n/locale';
 import { formatMilliDb } from '../../src/renderer/format';
 import { translator } from '../../src/renderer/i18n/t';
+import { snappedMoveDelta, snapperFor } from '../../src/renderer/timeline/snap';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
 
@@ -227,10 +228,14 @@ async function painted(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
-async function shoot(page: Page, state: string, notes: string, options: { fullPage?: boolean } = {}): Promise<void> {
+// A state is numbered by its order, or by `number` when a later ticket's
+// state goes after numbers left free for another (UI redesign spec, section 7:
+// new states are appended, never renumbered; 23 and 24 are m5-ui-loop-click's).
+async function shoot(page: Page, state: string, notes: string, options: { fullPage?: boolean; number?: number } = {}): Promise<void> {
   await painted(page);
   const size = await page.evaluate(() => `${window.innerWidth}x${window.innerHeight}`);
-  const file = `${String(shots.filter((s) => s.file !== null).length + 1).padStart(2, '0')}-${slug(state)}.png`;
+  const number = options.number ?? shots.filter((s) => s.file !== null).length + 1;
+  const file = `${String(number).padStart(2, '0')}-${slug(state)}.png`;
   await page.screenshot({ path: path.join(OUT, file), fullPage: options.fullPage === true });
   shots.push({ file, state, notes: `${notes} [viewport ${size}${options.fullPage ? ', full page' : ''}]` });
   fs.writeFileSync(path.join(OUT, 'index.json'), `${JSON.stringify(shots, null, 2)}\n`);
@@ -291,7 +296,57 @@ async function meterPeak(p: Page, ref: string): Promise<number> {
   }, ref);
 }
 
-type Rect = { clipId: string; trackId: string; x: number; y: number; width: number; height: number };
+// The meters.legend epoch the mixer's meter store follows.
+async function meterEpoch(p: Page): Promise<string | null> {
+  return p.evaluate(() => {
+    const hooks = (window as unknown as { __siannMeters?: { epoch(): string | null } }).__siannMeters;
+    return hooks?.epoch() ?? null;
+  });
+}
+
+type PeakLatch = { max: Record<string, number>; on: boolean };
+
+// From now on, the loudest linear peak of each metered entity on every animation
+// frame (the meter store takes the newest realtime frame once a frame). A poll of
+// meterPeak samples one frame a few times a second, and an entity sounds only
+// while the transport is inside one of its clips: a stem with gaps, or one whose
+// clips the transport has passed by the time a slow poll gets to it, can read 0
+// at every sample. The latch sees every frame the meters drew. Stopped frames
+// read as silence (meter-store.ts), so a latched peak above 0 is a playing frame.
+async function latchPeaks(p: Page, refs: readonly string[]): Promise<void> {
+  await p.evaluate((list) => {
+    const w = window as unknown as {
+      __siannMeters?: { read(ref: string): { peak: number } | null };
+      __siannTourPeaks?: PeakLatch;
+    };
+    if (w.__siannTourPeaks) w.__siannTourPeaks.on = false;
+    const latch: PeakLatch = { max: Object.fromEntries(list.map((ref) => [ref, 0])), on: true };
+    w.__siannTourPeaks = latch;
+    const tick = () => {
+      if (!latch.on) return;
+      for (const ref of list) {
+        const peak = w.__siannMeters?.read(ref)?.peak ?? 0;
+        if (peak > latch.max[ref]!) latch.max[ref] = peak;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, refs);
+}
+
+async function latchedPeak(p: Page, ref: string): Promise<number> {
+  return p.evaluate((r) => (window as unknown as { __siannTourPeaks?: PeakLatch }).__siannTourPeaks?.max[r] ?? 0, ref);
+}
+
+async function stopLatch(p: Page): Promise<void> {
+  await p.evaluate(() => {
+    const w = window as unknown as { __siannTourPeaks?: PeakLatch };
+    if (w.__siannTourPeaks) w.__siannTourPeaks.on = false;
+    delete w.__siannTourPeaks;
+  });
+}
+
+type Rect = { clipId: string; trackId: string; position: string; x: number; y: number; width: number; height: number };
 
 async function timeline<T>(name: 'clips' | 'peakColumns' | 'view' | 'cursorX', arg?: string): Promise<T> {
   return page.evaluate(
@@ -474,16 +529,32 @@ test('UX screenshot tour', async () => {
   await shoot(page, 'Session loaded full page', 'The same state as the whole page: since m5-ui-shell the page never scrolls, so this is the window.', { fullPage: true });
 
   // Playing: the meters read (fake device). Vox Lead's solo is clicked off
-  // first, so every unmuted track sounds, and back on after.
+  // first, so every unmuted track sounds, and back on after. The solo
+  // republishes the graph, which brings a new meters.legend epoch; until the
+  // store follows it, every frame of the new epoch is dropped, so the play
+  // waits for it. Vox Lead sounds only from 1.8 s to 2.8 s of the session, the
+  // first second of this play: its meter is latched over every drawn frame
+  // (latchPeaks), not sampled by a poll after the kick's.
   const solo = page.getByTestId('solo-trk_voxlead');
+  const epoch = await meterEpoch(page);
   await solo.click();
   await expect(solo).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => meterEpoch(page)).not.toBe(epoch);
   await watcher.call('transport.locate', { frames: String(Math.round(1.2 * RATE)) });
-  await watcher.call('transport.play');
+  const metered = ['trk_kick', 'trk_voxlead'].map((id) => `track:${id}`);
+  await latchPeaks(page, metered);
+  // Started from the top bar's transport (m5-ui-transport); auto-scroll is
+  // turned off first so the shot keeps the session's first page in view.
+  const autoScroll = page.getByTestId('auto-scroll');
+  if ((await autoScroll.getAttribute('aria-pressed')) === 'true') await autoScroll.click();
+  await expect(autoScroll).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('transport-play').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'true');
   await scrollTo('timeline-canvas');
-  for (const id of ['trk_kick', 'trk_voxlead']) {
-    await expect.poll(() => meterPeak(page, `track:${id}`)).toBeGreaterThan(0.05);
+  for (const ref of metered) {
+    await expect.poll(() => latchedPeak(page, ref), { message: `${ref} metered while playing` }).toBeGreaterThan(0.05);
   }
+  await stopLatch(page);
   await expect.poll(async () => (await timeline<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
   const peaks: string[] = [];
   for (const track of TRACKS) {
@@ -494,9 +565,12 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Playing meters',
-    `Transport playing from 1.2 s on the fake device with Vox Lead's solo clicked off (FX stays muted); the timeline and the mixer are both in view. Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px.`,
+    `Transport playing from 1.2 s on the fake device, started with the top bar's start button (pressed), with Vox Lead's solo clicked off (FX stays muted) and auto-scroll off; the timeline and the mixer are both in view. The position display reads ${await page.getByTestId('position-primary').textContent()} (Bars+Beats) over ${await page.getByTestId('position-secondary').textContent()} (Seconds). Meter peaks (linear) at the shot: ${peaks.join(', ')}. The project cursor is drawn on the overlay layer at x = ${Math.round((await timeline<number | null>('cursorX')) ?? -1)} px.`,
   );
-  await watcher.call('transport.stop');
+  await page.getByTestId('transport-stop').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
+  await autoScroll.click();
+  await expect(autoScroll).toHaveAttribute('aria-pressed', 'true');
   await solo.click();
   await expect(solo).toHaveAttribute('aria-pressed', 'true');
   await scrollTop();
@@ -568,20 +642,25 @@ test('UX screenshot tour', async () => {
   const grab = { x: cbox.x + target.x + target.width / 2, y: cbox.y + target.y + target.height / 2 };
   await page.mouse.click(grab.x, grab.y);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
-  await shoot(page, 'Clip selected', 'The Keys clip clicked: a 2 px outline on the overlay; the info line shows its start, end, length, offset and gain, and the Delete clip button is enabled.');
+  await shoot(page, 'Clip selected', 'The Keys clip clicked: a 2 px outline on the overlay with its handles (the resize squares in the lower corners and the volume control just inside the lower-left one); the info line shows its start, end, length, offset and gain, and the Delete clip button is enabled.');
   await page.mouse.move(grab.x, grab.y);
   await page.mouse.down();
   await page.mouse.move(grab.x + 60, grab.y, { steps: 5 });
   await page.mouse.move(grab.x + 120, grab.y, { steps: 5 });
   await painted(page);
-  await shoot(page, 'Clip drag in progress', 'The Keys clip held mid-drag 120 px to the right: the canvas previews the move; nothing is committed yet.');
+  await shoot(page, 'Clip drag in progress', 'The Keys clip held mid-drag 120 px to the right: the canvas previews the move snapped to the grid (snap on, grid Adapt to Zoom, the defaults), with the snap guide at its new start; nothing is committed yet.');
   const revisionBefore = await page.getByTestId('revision').textContent();
   await page.mouse.up();
   await expect(page.getByTestId('revision')).not.toHaveText(revisionBefore ?? '');
-  await expect.poll(async () => (await clipRect('clp_06_keys')).x).toBe(target.x + 120);
+  // Snapped: the start lands on the grid line nearest to 120 px later.
+  const moveView = await timeline<{ framesPerPixel: number; scrollFrames: string }>('view');
+  const snapToGrid = snapperFor({ on: true, grid: 'adapt' }, moveView.framesPerPixel, [], RATE);
+  const startFrame = BigInt(target.position);
+  const movedFrames = snappedMoveDelta(startFrame, BigInt(120 * moveView.framesPerPixel), snapToGrid);
+  await expect.poll(async () => Math.round((await clipRect('clp_06_keys')).x)).toBe(Math.round(target.x + Number(movedFrames) / moveView.framesPerPixel));
   await waveformsDrawn();
-  const movedSeconds = ((120 * (await timeline<{ framesPerPixel: number }>('view')).framesPerPixel) / RATE).toFixed(2);
-  await shoot(page, 'Clip moved', `Released: one clip.move committed; the Keys clip starts 120 px (${movedSeconds} s) later on its lane and stays selected; the info line shows its new start.`);
+  const movedSeconds = (Number(movedFrames) / RATE).toFixed(2);
+  await shoot(page, 'Clip moved', `Released: one clip.move committed; the Keys clip starts ${movedSeconds} s later on its lane, on the nearest grid line to where it was dropped, and stays selected; the info line shows its new start.`);
 
   // ---- 6. The Plans tab (m5-ui-plan-panel): an agent's plan as a card, in user wording.
   const client = await agent();
@@ -702,7 +781,45 @@ test('UX screenshot tour', async () => {
     `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}").`,
   );
 
-  // ---- What the window has no surface for.
+  // ---- 25 (m5-ui-edit-basics; 23 and 24 are m5-ui-loop-click's): the
+  // Keys clip zoomed to with Shift+E, split at the cursor with Alt+X, both
+  // pieces selected (click, Shift-click) and duplicated with Ctrl+D.
+  await expect(toast).toBeHidden({ timeout: 30_000 });
+  await waveformsDrawn();
+  const editor = await engineClient(page);
+  const keysBox = await canvasBox();
+  const keysAt = await clipRect('clp_06_keys');
+  await page.mouse.click(keysBox.x + Math.max(0, keysAt.x) + 20, keysBox.y + keysAt.y + keysAt.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
+  await page.keyboard.press('Shift+KeyE');
+  const viewWidth = (await timeline<{ width: number }>('view')).width;
+  await expect.poll(async () => (await clipRect('clp_06_keys')).width).toBeLessThan(viewWidth);
+  const keys = await clipRect('clp_06_keys');
+  const keysView = await timeline<{ framesPerPixel: number; scrollFrames: string }>('view');
+  const cut = BigInt(keysView.scrollFrames) + BigInt(Math.round((keys.x + keys.width / 2) * keysView.framesPerPixel));
+  await editor.call('transport.locate', { frames: cut.toString() });
+  await expect.poll(async () => Math.abs(((await timeline<number | null>('cursorX')) ?? -100) - (keys.x + keys.width / 2))).toBeLessThan(2);
+  const clipsBefore = Number(await page.getByTestId('clip-count').textContent());
+  await page.keyboard.press('Alt+KeyX');
+  await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBefore + 1));
+  await expect.poll(async () => (await timeline<Rect[]>('clips')).filter((r) => r.trackId === 'trk_keys').length).toBeGreaterThan(1);
+  const right = (await timeline<Rect[]>('clips')).find((r) => r.trackId === 'trk_keys' && BigInt(r.position) === cut)!;
+  await page.keyboard.down('Shift');
+  await page.mouse.click(keysBox.x + right.x + right.width / 2, keysBox.y + right.y + right.height / 2);
+  await page.keyboard.up('Shift');
+  await page.keyboard.press('ControlOrMeta+KeyD');
+  await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBefore + 3));
+  await page.keyboard.press('Shift+KeyF');
+  await waveformsDrawn();
+  editor.close();
+  await shoot(
+    page,
+    'Clip split and duplicated',
+    'The Keys clip split at the project cursor with Alt+X (its two pieces play the same audio as before: the right one continues in the file where the left one ends), then both pieces selected (click, Shift-click) and duplicated with Ctrl+D: the copies land directly after them on the same lane, as one unit. Each edit was one revision. Zoomed full (Shift+F) to show the whole session.',
+    { number: 25 },
+  );
+
+  // ---- What the window has no surface for (unnumbered).
   shots.push({
     file: null,
     state: 'Plugin insert and editor (not captured)',

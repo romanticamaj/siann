@@ -16,7 +16,9 @@ class MediaError : public std::runtime_error {
 public:
     MediaError(std::string code, const std::string& message);
 
-    // One of: unsupported_media, decode_failed, too_large, invalid_buffer.
+    // One of: unsupported_media, decode_failed, too_large, invalid_buffer, and
+    // cancelled (a conversion asked to stop, audio_source.hpp) and not_found (an
+    // import whose file does not exist, session/media_import.hpp).
     const std::string& code() const noexcept { return code_; }
 
 private:

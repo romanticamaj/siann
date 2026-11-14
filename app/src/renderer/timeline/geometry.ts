@@ -1,7 +1,8 @@
 // The timeline's geometry (spec, "Frontend"): audio-domain sample frames to
 // canvas pixels and back at a zoom (whole frames per pixel) and a scroll,
-// clip rectangles in root.trackOrder lanes, hit testing of a clip's body and
-// trim handles, and the snapping a move or trim ends in. Lanes have their own
+// clip rectangles in root.trackOrder lanes, hit testing of a clip's body, its
+// lower resize corners, its edges and its volume control (m5-ui-edit-basics),
+// and the clamping a move or trim ends in (the grid is snap.ts's). Lanes have their own
 // heights (UI redesign spec 2.3: 53 px by default, 24-240 px, a view setting
 // kept per session id) and scroll vertically under the fixed ruler
 // (m5-ui-arrange). Coordinates are the event display canvas's, which begins
@@ -72,11 +73,40 @@ export interface ClipRect {
   readonly height: number;
 }
 
-export type HitPart = 'body' | 'left' | 'right';
+// A clip's parts (UI redesign spec 3.2, "Clip handles"): the lower corners
+// resize, the rest of each edge is a narrower resize target as well, the
+// volume control sits just inside the lower-left corner, and the body moves.
+export type HitPart = 'body' | 'left' | 'right' | 'cornerLeft' | 'cornerRight' | 'gain';
 export type TrimEdge = 'left' | 'right';
 
-// The width of a trim handle at each end of a clip, in pixels.
-export const HANDLE_PX = 6;
+// The width of the resize target along each edge, in pixels.
+export const HANDLE_PX = 4;
+// The resize squares in the lower corners, in pixels.
+export const CORNER_PX = 8;
+// The volume control: its box right of the lower-left corner, and the
+// smallest clip that has one.
+export const GAIN_W = 14;
+export const GAIN_H = 12;
+export const GAIN_MIN_WIDTH = 48;
+export const GAIN_MIN_HEIGHT = 30;
+
+// The edge a resize part changes, or null for the body and the volume control.
+export function trimEdgeOf(part: HitPart): TrimEdge | null {
+  if (part === 'left' || part === 'cornerLeft') return 'left';
+  if (part === 'right' || part === 'cornerRight') return 'right';
+  return null;
+}
+
+// The size of a clip's corner squares: CORNER_PX, less on a narrow or short clip.
+export function cornerSize(rect: Pick<ClipRect, 'width' | 'height'>): number {
+  return Math.min(CORNER_PX, rect.width / 3, rect.height / 2);
+}
+
+// The volume control's box, or null on a clip too small for one.
+export function gainBox(rect: ClipRect): { x: number; y: number; width: number; height: number } | null {
+  if (rect.width < GAIN_MIN_WIDTH || rect.height < GAIN_MIN_HEIGHT) return null;
+  return { x: rect.x + cornerSize(rect), y: rect.y + rect.height - GAIN_H, width: GAIN_W, height: GAIN_H };
+}
 
 function big(value: string | bigint): bigint {
   return typeof value === 'bigint' ? value : BigInt(value);
@@ -140,14 +170,22 @@ export function clipRects(snapshot: Snapshot, view: Viewport): ClipRect[] {
 }
 
 // The clip under a point, topmost (last drawn) first, and which part of it:
-// a handle is HANDLE_PX wide, or a third of a clip narrower than three handles.
+// the lower corners (cornerSize), then the edges (HANDLE_PX, or a third of a
+// clip narrower than three handles), then the volume control, then the body.
 export function hitTest(rects: readonly ClipRect[], x: number, y: number): { rect: ClipRect; part: HitPart } | null {
   for (let i = rects.length - 1; i >= 0; i -= 1) {
     const rect = rects[i]!;
     if (x < rect.x || x >= rect.x + rect.width || y < rect.y || y >= rect.y + rect.height) continue;
+    const corner = cornerSize(rect);
+    if (y >= rect.y + rect.height - corner) {
+      if (x < rect.x + corner) return { rect, part: 'cornerLeft' };
+      if (x >= rect.x + rect.width - corner) return { rect, part: 'cornerRight' };
+    }
     const handle = Math.min(HANDLE_PX, rect.width / 3);
     if (x < rect.x + handle) return { rect, part: 'left' };
     if (x >= rect.x + rect.width - handle) return { rect, part: 'right' };
+    const gain = gainBox(rect);
+    if (gain && x >= gain.x && x < gain.x + gain.width && y >= gain.y) return { rect, part: 'gain' };
     return { rect, part: 'body' };
   }
   return null;

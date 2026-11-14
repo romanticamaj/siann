@@ -23,7 +23,7 @@ import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import { SessionClient } from '../../src/renderer/model/session-client';
 import { Capable, CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { clipRects } from '../../src/renderer/timeline/geometry';
-import { Timeline } from '../../src/renderer/timeline/Timeline';
+import { Timeline, editGates } from '../../src/renderer/timeline/Timeline';
 import { TimelineCanvas } from '../../src/renderer/timeline/TimelineCanvas';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { TrackList } from '../../src/renderer/timeline/TrackList';
@@ -51,6 +51,15 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.feature('plugins'), false, 'false is absent');
   assert.equal(capabilitySelector({ ...FULL, features: { plugins: { formats: ['clap'], flags: [] } } }).feature('plugins'), true);
   assert.equal(full.feature('locators'), false);
+  // m5b-engine-project-media: create and import, and the media name command.
+  for (const method of ['session.create', 'media.import']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
+  assert.equal(full.feature('mediaImport'), true);
+  assert.deepEqual(FULL.features?.mediaImport, { formats: ['wav', 'flac'] });
+  assert.equal(reduced.feature('mediaImport'), false);
+  assert.equal(full.command('media.rename'), true);
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);
@@ -241,6 +250,101 @@ test('track list: + needs track.add, renaming track.rename, M and S track.set_mu
   assert.ok(!addOnly.includes('data-testid="track-solo-'), 'no S without track.set_solo');
   const unknown = list(null);
   for (const id of ['track-add', 'track-mute-trk_a', 'track-solo-trk_a']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
+});
+
+// m5-ui-edit-basics: the tool buttons, the snap controls, the editing keys
+// and the canvas's gain, split, copy and duplicate follow the same rule.
+test('timeline: the tool buttons and the snap controls need the clip commands they end in', () => {
+  const timeline = (caps: Capabilities | null) =>
+    within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
+  const full = timeline(FULL);
+  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) assert.ok(full.includes(`data-testid="${id}"`), id);
+  // Grid types Bar, Beat and Adapt to Zoom only (no snap type but Grid is rendered).
+  assert.deepEqual([...full.matchAll(/<option value="([a-z]+)"/g)].map((m) => m[1]), ['bar', 'beat', 'adapt']);
+  for (const caps of [REDUCED, null]) {
+    const shown = timeline(caps);
+    for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) assert.ok(!shown.includes(`data-testid="${id}"`), id);
+  }
+  // Moves without splits: the selection tool and snap, no split tool.
+  const moveOnly = timeline({ ...FULL, commands: ['clip.move'] });
+  assert.ok(moveOnly.includes('data-testid="tool-select"'));
+  assert.ok(moveOnly.includes('data-testid="snap-toggle"'));
+  assert.ok(!moveOnly.includes('data-testid="tool-split"'), 'split needs clip.trim and clip.place');
+  const trimOnly = timeline({ ...FULL, commands: ['clip.trim'] });
+  assert.ok(!trimOnly.includes('data-testid="tool-split"'));
+});
+
+test('the editing keys are registered only for what engine.capabilities lists', () => {
+  const full = editGates(capabilitySelector(FULL));
+  for (const id of Object.keys(full)) assert.equal(full[id as keyof typeof full], true, id);
+  const reduced = editGates(capabilitySelector(REDUCED));
+  for (const id of ['tool.split', 'edit.splitAtCursor', 'edit.duplicate', 'edit.delete', 'edit.snapToggle', 'track.removeSelected']) {
+    assert.equal(reduced[id as keyof typeof reduced], false, id);
+  }
+  // The reduced engine lists no transport.locate: no L, N or B.
+  for (const id of ['transport.locateSelection', 'transport.locateNextClip', 'transport.locatePreviousClip']) {
+    assert.equal(reduced[id as keyof typeof reduced], false, id);
+  }
+  // It does list track.set_mute and track.set_solo: M and S stay.
+  assert.equal(reduced['track.muteSelected'], true);
+  assert.equal(reduced['track.soloSelected'], true);
+  // Selecting, zooming and the select tool's key send nothing.
+  for (const id of ['edit.selectAll', 'view.zoomSelection', 'view.zoomEvent']) assert.equal(reduced[id as keyof typeof reduced], true, id);
+  const split = editGates(capabilitySelector({ ...FULL, commands: ['clip.trim'] }));
+  assert.equal(split['tool.split'], false, 'split needs clip.place too');
+  assert.equal(split['edit.splitAtCursor'], false);
+  const none = editGates(capabilitySelector(null));
+  assert.equal(none['track.muteSelected'], false);
+});
+
+test('timeline canvas: split, Alt-drag copy, duplicate, the volume control and delete send only what engine.capabilities lists', async () => {
+  for (const [caps, expected] of [
+    [FULL, ['clip.trim+clip.place', 'clip.place', 'clip.place', 'clip.set_gain', 'clip.remove']],
+    [REDUCED, []],
+  ] as const) {
+    const sent: string[] = [];
+    const snapshot = sampleSnapshot();
+    const { surface, fire } = pointerCanvas();
+    const allows = capabilitySelector(caps);
+    const timeline = new TimelineCanvas({
+      content: surface.content,
+      overlay: surface.overlay,
+      container: surface.container,
+      model: fakeClient(snapshot).model,
+      peaks: { get: () => undefined, subscribe: () => () => undefined } as unknown as PeaksCache,
+      execute: async (commands) => {
+        sent.push(commands.map((c) => (c as { op: string }).op).join('+'));
+      },
+      allows: (op) => allows.command(op),
+    });
+    timeline.setSnap({ on: false, grid: 'bar' });
+    const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const rect = clipRects(snapshot, timeline.testHooks().view()).find((r) => r.clipId === 'clp_1')!;
+    const midY = rect.y + rect.height / 2;
+    const midX = rect.x + rect.width / 2;
+    // The split tool: a click splits the clip there.
+    timeline.setTool('split');
+    fire('pointerdown', midX, midY);
+    fire('pointerup', midX, midY);
+    await settle();
+    timeline.setTool('select');
+    // Alt-drag copies.
+    surface.fire('pointerdown', { clientX: midX, clientY: midY, altKey: true });
+    surface.fire('pointermove', { clientX: midX + 40, clientY: midY, altKey: true });
+    surface.fire('pointerup', { clientX: midX + 40, clientY: midY, altKey: true });
+    await settle();
+    // Ctrl+D duplicates the selection.
+    await timeline.duplicate();
+    // The volume control: drag up 10 px.
+    const gainAt = { x: rect.x + 10, y: rect.y + rect.height - 3 };
+    fire('pointerdown', gainAt.x, gainAt.y);
+    fire('pointermove', gainAt.x, gainAt.y - 10);
+    fire('pointerup', gainAt.x, gainAt.y - 10);
+    await settle();
+    await timeline.deleteSelected();
+    assert.deepEqual(sent, expected, JSON.stringify(sent));
+    timeline.destroy();
+  }
 });
 
 // The Plans tab's controls (note field, step checkboxes, action buttons)

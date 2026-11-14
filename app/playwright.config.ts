@@ -15,6 +15,10 @@ const PLAIN_TAB = '**/plain-tab.spec.ts';
 // scripts/check-all.js and the package CI job run `--project packaged`).
 const PACKAGED = '**/packaged.spec.ts';
 const packaged = process.env.SIANN_PACKAGED_EXE ? [{ name: 'packaged', testMatch: PACKAGED }] : [];
+// The mockup fidelity gate runs only when asked for (SIANN_FIDELITY=1), as its
+// own project: it opens the mockup in Chromium and the app in Electron.
+const FIDELITY = '**/mockup-fidelity.spec.ts';
+const fidelity = process.env.SIANN_FIDELITY === '1' ? [{ name: 'fidelity', testMatch: FIDELITY }] : [];
 
 export default defineConfig({
   testDir: './test/e2e',
@@ -25,8 +29,9 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
   projects: [
-    { name: 'electron', testIgnore: [...tour, PLAIN_TAB, PACKAGED] },
+    { name: 'electron', testIgnore: [...tour, PLAIN_TAB, PACKAGED, FIDELITY] },
     { name: 'chromium', testMatch: PLAIN_TAB, use: { browserName: 'chromium' } },
     ...packaged,
+    ...fidelity,
   ],
 });

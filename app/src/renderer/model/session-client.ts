@@ -99,6 +99,14 @@ export const SYNC_RETRY_MS = 250;
 export const SYNC_RETRY_MAX_MS = 8000;
 // The refused requests refused() keeps (background polls add one each).
 export const REFUSED_KEPT = 256;
+// The requests sent() keeps.
+export const SENT_KEPT = 1024;
+
+// A request that went out on a socket: its method and params.
+export interface SentRequest {
+  readonly method: string;
+  readonly params: Readonly<Record<string, unknown>>;
+}
 
 interface Pending {
   resolve: (result: unknown) => void;
@@ -170,6 +178,7 @@ export class SessionClient {
   };
   #lastSeq: bigint | null = null;
   readonly #refused: Array<{ readonly method: string }> = [];
+  readonly #sent: Array<SentRequest> = [];
   // The session the model's snapshot belongs to.
   #modelSessionId: string | null = null;
 
@@ -306,6 +315,12 @@ export class SessionClient {
     return [...this.#refused];
   }
 
+  // The requests sent on a socket, oldest first (the last SENT_KEPT): what
+  // the transport e2e counts to prove that a key sent nothing (m5-ui-transport).
+  sent(): ReadonlyArray<SentRequest> {
+    return [...this.#sent];
+  }
+
   // command.execute. The model changes only when the session.changed of the
   // commit arrives.
   execute(commands: readonly unknown[], expectedRevision?: string): Promise<unknown> {
@@ -318,6 +333,8 @@ export class SessionClient {
     const requestId = `req_${this.#prefix}_${this.#nextId}`;
     const envelope: Record<string, unknown> = { requestId, sessionId: connection.sessionId, method, params };
     if (expectedRevision !== undefined) envelope.expectedRevision = expectedRevision;
+    if (this.#sent.length >= SENT_KEPT) this.#sent.shift();
+    this.#sent.push(Object.freeze({ method, params }));
     return new Promise((resolve, reject) => {
       connection.pending.set(requestId, { resolve, reject, sessionId: connection.sessionId });
       connection.socket.send(JSON.stringify(envelope));

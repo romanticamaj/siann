@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <random>
@@ -848,4 +849,28 @@ TEST_CASE("engine.capabilities lists the peaks feature", "[protocol][peaks]") {
     const Value* peaks = at(at(response, "result"), "features").find("peaks");
     REQUIRE(peaks != nullptr);
     CHECK(peaks->asBool());
+}
+
+// m5b-engine-project-media (Protocol v0 item 27).
+TEST_CASE("engine.capabilities lists session.create, media.import, media.rename and mediaImport",
+          "[protocol][media]") {
+    PeaksFixture f;
+    const ConnectionId connection = f.authed();
+    f.transport.deliver(connection, f.request("caps", "engine.capabilities"));
+    f.server.pump();
+    const Value response = parse(f.transport.sent(connection).back());
+    const Value& result = at(response, "result");
+    std::vector<std::string> methods;
+    for (const Value& method : at(result, "methods").asArray()) {
+        methods.push_back(method.asString());
+    }
+    CHECK(std::count(methods.begin(), methods.end(), "session.create") == 1);
+    CHECK(std::count(methods.begin(), methods.end(), "media.import") == 1);
+    std::vector<std::string> commands;
+    for (const Value& name : at(result, "commands").asArray()) {
+        commands.push_back(name.asString());
+    }
+    CHECK(std::count(commands.begin(), commands.end(), "media.rename") == 1);
+    const Value& mediaImport = at(at(result, "features"), "mediaImport");
+    CHECK(siann::jcs::canonicalize(mediaImport) == R"({"formats":["wav","flac"]})");
 }

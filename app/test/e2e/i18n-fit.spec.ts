@@ -23,8 +23,8 @@ const SIZES = [
   { width: 1024, height: 700 },
 ];
 const LOCALES = ['en', 'zh-Hant', 'zh-Hans', 'pseudo'] as const;
-const LABELLED = 'button, select, summary, label, th, dt, [role=tab], [role=button]';
-const ONE_LINE = 'button, summary, th, dt, [role=tab]';
+const LABELLED = 'button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo]';
+const ONE_LINE = 'button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo]';
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -124,6 +124,11 @@ test('no labelled control overflows or wraps its label in any locale at either w
   await expect(page.getByTestId('track-add')).toBeVisible();
   await expect(page.getByTestId('track-mute-trk_kick')).toBeVisible();
   await expect(page.getByTestId('info-line').locator('dt').first()).toBeAttached();
+  // The transport bar (m5-ui-transport): its buttons, the position display,
+  // the tempo, undo and redo in the top bar.
+  for (const id of ['transport-to-start', 'transport-play', 'transport-stop', 'position-primary', 'position-secondary', 'transport-tempo', 'auto-scroll', 'undo', 'redo']) {
+    await expect(page.getByTestId(id)).toBeVisible();
+  }
 
   const failures: string[] = [];
   for (const locale of LOCALES) {
@@ -140,11 +145,16 @@ test('no labelled control overflows or wraps its label in any locale at either w
       toasts.push(message);
     }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
     await expect(page.getByTestId('toast').last()).toBeVisible();
+    // The time format menu, open, in this locale.
+    await page.getByTestId('position-display').click({ button: 'right' });
+    await expect(page.getByTestId('time-format-menu')).toBeVisible();
     for (const size of SIZES) {
       await resize(size);
       for (const entry of await overflowing()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
       for (const entry of await wrapped()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
     }
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('time-format-menu')).toBeHidden();
   }
   expect(failures).toEqual([]);
 });

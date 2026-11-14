@@ -29,6 +29,20 @@ const common = `You work on the SIANN repository (D:\\projects\\siann, Windows, 
   `Read ${RULES} first and follow it exactly; it overrides your defaults. ` +
   `The architecture spec is ${SPEC}; the milestone manifest is ${MANIFEST}.`
 
+// UI features (ids with -ui-) answer to the mockup fidelity gate as well.
+const UI_SPEC = 'docs/superpowers/specs/2026-11-13-siann-ui-redesign.md'
+const isUi = (f) => /-ui-/.test(f.id)
+const uiBuild = (f) => (isUi(f)
+  ? `\nThis is a UI feature: the "UI fidelity" section of ${RULES} and section 10 of ${UI_SPEC} apply. The mockup is the reference implementation of styling and markup: port each component's DOM structure and class names from mockup.html and use the shared stylesheets (app/renderer/tokens.css, app/renderer/ui); do not restyle from scratch, and do not change the tokens, the shared rules or the mockup (that needs the maintainer). ` +
+    `Give every region and key component its data-region / data-part id, run the fidelity gate (SIANN_FIDELITY=1, see the runbook) and report where its report.md is; the parts of this feature in app/test/fidelity/manifest.json must pass in en and zh-TW, and a part whose backend does not exist is absent, never a placeholder.\n`
+  : '')
+const uiVerify = (f) => (isUi(f)
+  ? ` This is a UI feature: run the mockup fidelity gate yourself (SIANN_FIDELITY=1, "UI fidelity" in ${RULES}) and read its report.md. Blocking: a geometry, computed-style or pixel mismatch on a part this feature owns in app/test/fidelity/manifest.json, in en or zh-TW; a colour or size literal outside app/renderer/tokens.css (test/ui-tokens.test.js); a change to tokens.css, app/renderer/ui, mockup.html, the manifest's rules or thresholds that the maintainer did not ask for; a placeholder or disabled control standing in for a part that is not built.`
+  : '')
+const uiSpec = (f) => (isUi(f)
+  ? ` This is a UI feature: also compare the rendered window with the mockup (section 10 of ${UI_SPEC}, "Mockup fidelity"): the component's markup and classes are ported from mockup.html, its parts carry the manifest's ids, the fidelity report for its parts is clean in en and zh-TW, and nothing the mockup shows was silently dropped, moved or restyled.`
+  : '')
+
 // ---------------------------------------------------------------- schemas
 const PREFLIGHT = {
   type: 'object',
@@ -209,7 +223,7 @@ for (const wave of waves) {
       return agent(
         `${common}\n\nImplement feature ${f.id} ("${f.title}") of ${M} with TDD in this worktree.\n` +
         `Branch: ms/${M}/${f.id} from origin/main. Acceptance criteria are in the manifest; meet every one.\n` +
-        `Plan from the spec check:\n${p ? p.plan : '(none)'}\n${specNote}` +
+        `Plan from the spec check:\n${p ? p.plan : '(none)'}\n${specNote}${uiBuild(f)}` +
         `Write the failing tests first and commit them, then the implementation. ` +
         `Run \`node scripts/check-all.js --changed\` (it picks the steps from your paths, desktop included for host_desktop) until it passes. ` +
         `Commit with Conventional Commit subjects and the attribution lines from ${RULES}. Do not push and do not open a PR. ` +
@@ -227,13 +241,15 @@ for (const wave of waves) {
             `${common}\n\nIndependent verification of branch ${last.branch} (feature ${f.id} of ${M}). You did not write this code; assume it is wrong until shown otherwise. Do not modify files.\n` +
             `Check out the branch in a fresh worktree, run \`node scripts/check-all.js --changed\`, read the diff against origin/main, and check: ` +
             `every acceptance criterion has a test that would fail without the change; tests are deterministic; realtime rules from ${RULES} hold (no allocation, locks or I/O on the audio thread); ` +
-            `no behaviour regressions; GCC and MSVC warnings clean. Report findings with evidence (file:line, command output).`,
+            `no behaviour regressions; GCC and MSVC warnings clean; ` +
+            `the feature's row in docs/harness/test-matrix.md exists, names only tests that exist on the branch, and lists every platform skip or env gate the branch adds (the rules in its section 8). ` +
+            `Report findings with evidence (file:line, command output).${uiVerify(f)}`,
             { label: `verify ${f.id} r${round}`, phase: 'Build', schema: REVIEW },
           ),
           () => agent(
             `${common}\n\nSpec conformance review of branch ${last.branch} (feature ${f.id} of ${M}). Do not modify files.\n` +
             `Compare the implementation and its tests with the spec sections in the feature's specRefs and with the acceptance criteria. ` +
-            `Report each place where the code contradicts the spec, silently narrows it, or the spec needs an update to match a justified change.`,
+            `Report each place where the code contradicts the spec, silently narrows it, or the spec needs an update to match a justified change.${uiSpec(f)}`,
             { label: `spec review ${f.id} r${round}`, phase: 'Build', model: 'fable', schema: REVIEW },
           ),
         ])

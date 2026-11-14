@@ -18,6 +18,49 @@ using json::Value;
 ModelError::ModelError(std::string code, const std::string& message)
     : std::runtime_error(message), code_(std::move(code)) {}
 
+bool isValidMediaName(std::string_view name) noexcept {
+    if (name.empty() || name.size() > kMaxMediaNameBytes) {
+        return false;
+    }
+    // RFC 3629: no overlong forms, no surrogates, nothing above U+10FFFF.
+    std::size_t pos = 0;
+    while (pos < name.size()) {
+        const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(name[pos + i]); };
+        const unsigned char first = byte(0);
+        std::size_t length = 0;
+        unsigned char low = 0x80;
+        unsigned char high = 0xBF;
+        if (first < 0x80) {
+            length = 1;
+        } else if (first >= 0xC2 && first <= 0xDF) {
+            length = 2;
+        } else if (first >= 0xE0 && first <= 0xEF) {
+            length = 3;
+            low = first == 0xE0 ? 0xA0 : 0x80;
+            high = first == 0xED ? 0x9F : 0xBF;
+        } else if (first >= 0xF0 && first <= 0xF4) {
+            length = 4;
+            low = first == 0xF0 ? 0x90 : 0x80;
+            high = first == 0xF4 ? 0x8F : 0xBF;
+        } else {
+            return false;
+        }
+        if (pos + length > name.size()) {
+            return false;
+        }
+        if (length > 1 && (byte(1) < low || byte(1) > high)) {
+            return false;
+        }
+        for (std::size_t i = 2; i < length; ++i) {
+            if (byte(i) < 0x80 || byte(i) > 0xBF) {
+                return false;
+            }
+        }
+        pos += length;
+    }
+    return true;
+}
+
 std::string_view entityTypeName(EntityType type) noexcept {
     switch (type) {
         case EntityType::root: return "root";
@@ -112,6 +155,12 @@ Media mediaFromJson(const Value& value) {
     m.channels = static_cast<std::int32_t>(r.integer("channels", INT32_MIN, INT32_MAX));
     m.sampleRate = r.integer("sampleRate", 0, INT32_MAX);
     m.frames = r.int64String("frames");
+    if (const Value* name = r.optional("name")) {
+        if (name->kind() != Value::Kind::string || !isValidMediaName(name->asString())) {
+            r.fail("name", "must be a string of 1 to 255 UTF-8 bytes");
+        }
+        m.name = name->asString();
+    }
     r.finish();
     return m;
 }
@@ -364,6 +413,10 @@ Value toJson(const Media& media) {
     };
     if (media.originalHash) {
         out.emplace_back("originalHash", Value(hash::formatHash(*media.originalHash)));
+    }
+    // Omitted when absent: a media entity without a name keeps its M1 hash.
+    if (media.name) {
+        out.emplace_back("name", Value(*media.name));
     }
     return Value(std::move(out));
 }
@@ -797,6 +850,9 @@ std::vector<ValidationIssue> Document::validate() const {
         }
         if (m.frames < 0) {
             issue(out, "invalid_frames", EntityType::media, m.id, "media frames must not be negative");
+        }
+        if (m.name && !isValidMediaName(*m.name)) {
+            issue(out, "invalid_name", EntityType::media, m.id, "a media name is 1 to 255 bytes of UTF-8");
         }
     }
 

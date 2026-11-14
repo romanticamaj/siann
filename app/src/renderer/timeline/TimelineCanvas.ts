@@ -11,42 +11,78 @@
 //   It is redrawn only when the snapshot, the zoom, the scroll, the size, the
 //   lane heights, the peaks or the locale change.
 // - The overlay layer draws the project cursor (the realtime playhead), the
-//   selected clip's 2 px outline and the preview of a drag, and positions the
-//   drag tooltip. It redraws on its own animation frame, scheduled only when
-//   one of those moved, so while stopped and idle nothing runs, and a frame
-//   in which only the cursor moved leaves the content alone.
+//   2 px outline of every selected clip, the handles of the selected and the
+//   hovered clip (the resize squares in the lower corners and the volume
+//   control just inside the lower-left one), the preview of a drag (a move,
+//   an Alt-drag copy, a resize), the snap guide and the Split tool's line,
+//   and positions the drag tooltip. It redraws on its own animation frame,
+//   scheduled only when one of those moved, so while stopped and idle
+//   nothing runs, and a frame in which only the cursor moved leaves the
+//   content alone.
 //
-// Pointer gestures (drag a clip, drag a trim handle, click a lane to place
-// the armed media) end in one command.execute each (timeline/commands.ts),
-// with the revision of the snapshot the gesture began on; the model then
-// follows session.changed (structural edits are never optimistic), and a
-// refusal is shown as the last error and the gesture discarded. A gesture
-// whose commands engine.capabilities does not list (`allows`) does not begin
-// and sends nothing (UI redesign spec 3.0). A vertical drag in the lower half
-// of the ruler zooms about the pointer; the upper half is the locators' (P1-7)
-// and inert until then. The wheel is the surface's (non-passive, default
-// prevented): plain scrolls the lanes, Shift scrolls horizontally, Ctrl zooms
-// at the pointer, Ctrl+Shift changes every track's height. Lane heights are
-// the layout store's (per session id); the canvas reads them through
-// `laneHeights` and asks for changes through onLaneHeights.
+// Pointer gestures end in one command.execute each (timeline/commands.ts and
+// edit-commands.ts), with the revision of the snapshot the gesture began on;
+// the model then follows session.changed (structural edits are never
+// optimistic), and a refusal is shown as the last error and the gesture
+// discarded. With the Object Selection tool (UI redesign spec 3.2, P1-8): a
+// click selects a clip (Shift-click adds or removes one), a drag moves the
+// selection (Ctrl keeps it to one axis), an Alt-drag copies it, an Alt-click
+// splits the clip there, a lower corner (or the 4 px edge) resizes, and the
+// volume control changes the clip's gain by a vertical drag (Shift: fine),
+// sent once on release. With the Split tool a click splits the clip. The
+// modifiers come from keys/tool-modifiers.ts; a pointer that moved less than
+// DRAG_THRESHOLD_PX is a click. Moves, copies, resizes, splits by click and
+// placements land on the grid while snap is on (timeline/snap.ts; Ctrl while
+// resizing ignores it). A gesture whose commands engine.capabilities does not
+// list (`allows`) does not begin and sends nothing (UI redesign spec 3.0). A
+// vertical drag in the lower half of the ruler zooms about the pointer; the
+// upper half is the locators' (P1-7) and inert until then. The wheel is the
+// surface's (non-passive, default prevented): plain scrolls the lanes, Shift
+// scrolls horizontally, Ctrl zooms at the pointer, Ctrl+Shift changes every
+// track's height. Lane heights are the layout store's (per session id); the
+// canvas reads them through `laneHeights` and asks for changes through
+// onLaneHeights. The snap state is the layout store's too, given by setSnap.
+// In the lower half of the ruler a click (a press and release that moved
+// less than DRAG_THRESHOLD_PX) locates the project cursor through onLocate,
+// also while stopped, as a Shift+Alt-click anywhere in the event display
+// locates without selecting, splitting or placing (m5-ui-transport). With
+// auto-scroll on (F) the overlay frame turns the page when the cursor leaves
+// the view while playing, never while a drag is held (auto-scroll.ts), so the
+// content layer redraws only on a page turn.
 //
 // Colours are tokens.css custom properties read from the container; the one
 // sentence the canvas words itself, the empty session's guidance, comes from
 // the catalogs through the `t` it is given and is redrawn on a locale change.
 
+import { formatDb } from '../format';
 import { translator, type T } from '../i18n/t';
-import type { MediaEntity } from '../model/document';
+import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
+import type { ClipEntity, MediaEntity } from '../model/document';
 import type { MeterFrame } from '../model/meter-frames';
 import { chooseLevel, columnRange } from '../model/peaks';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { ReadModel, Snapshot } from '../model/read-model';
-import { gestureCommand, newClipId, type TimelineCommand, type TimelineGesture } from './commands';
+import { PlayheadClock } from '../transport/playhead-clock';
+import { nextScroll } from './auto-scroll';
+import { gestureCommand, newClipId, type TimelineCommand } from './commands';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
+import {
+  clipGainCommand,
+  constrainAxis,
+  copyCommand,
+  duplicateCommand,
+  gainFromDrag,
+  moveSelectionCommand,
+  splitAtCursor as splitAtCursorCommand,
+  splitCommand,
+} from './edit-commands';
 import {
   DEFAULT_LANE_HEIGHT,
   clipRects,
+  cornerSize,
   deltaFrames,
   frameToX,
+  gainBox,
   hitTest,
   laneHeightOf,
   laneTops,
@@ -54,24 +90,51 @@ import {
   snapMove,
   snapTrim,
   trackAt,
+  trimEdgeOf,
   xToFrame,
   type ClipRect,
   type HitPart,
+  type TrimEdge,
   type Viewport,
 } from './geometry';
 import { formatBbt, formatBbtDelta, framesToTicks } from './musical-time';
 import { rulerMarks } from './ruler';
+import {
+  clickSelection,
+  nextClipFrame,
+  previousClipFrame,
+  pruneSelection,
+  selectAllClips,
+  selectionStart,
+  zoomToSelection as fitSelection,
+} from './selection';
+import { DEFAULT_SNAP, snappedMoveDelta, snapperFor, type SnapSettings, type Snapper } from './snap';
 import { clipTones, trackColourVar } from './track-colour';
-import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull } from './zoom';
+import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
+
+// The tools of P1-8: 1 Object Selection, 3 Split (UI redesign spec 3.2).
+export type Tool = 'select' | 'split';
 
 export interface TimelineState {
+  // The primary selected clip (the info line's, the last clicked), or null.
   readonly selectedClipId: string | null;
+  // Every selected clip, the primary included.
+  readonly selectedClipIds: readonly string[];
   // The media a click on a lane places (the media pool's armed entry).
   readonly placingMediaId: string | null;
   // The last refusal (its protocol code, null for none, and the engine's
   // message); null after a command succeeds. The chrome words it.
   readonly error: TimelineRefusal | null;
+  readonly tool: Tool;
 }
+
+export const IDLE_STATE: TimelineState = Object.freeze({
+  selectedClipId: null,
+  selectedClipIds: Object.freeze([]) as readonly string[],
+  placingMediaId: null,
+  error: null,
+  tool: 'select',
+});
 
 export interface TimelineRefusal {
   readonly code: string | null;
@@ -116,6 +179,19 @@ export interface TimelineCanvasOptions {
   readonly laneHeights?: LaneHeightSource;
   // The drag tooltip: shown, worded and placed by the overlay while dragging.
   readonly tooltip?: HTMLElement | null;
+  // Which key is Mod for the tool modifiers ('other' when absent).
+  readonly platform?: 'mac' | 'other';
+  // transport.locate for L, N and B; absent when the engine does not list it.
+  readonly locate?: (frame: bigint) => unknown;
+  // A click in the ruler's lower half or a Shift+Alt-click in the event
+  // display: locate the project cursor to this frame (a non-negative decimal
+  // string; m5-ui-transport).
+  readonly onLocate?: (frames: string) => void;
+  // Auto-scroll in page mode while playing (off when absent; setAutoScroll).
+  readonly autoScroll?: boolean;
+  // The cursor clock's time in milliseconds (performance.now when absent;
+  // the tests move it by hand).
+  readonly now?: () => number;
 }
 
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
@@ -137,23 +213,49 @@ export interface TimelineTestHooks {
   dimmedLanes(): string[];
   // The empty session's guidance as last drawn, or null.
   guidance(): string | null;
+  // Every selected clip (m5-ui-edit-basics).
+  selectedClips(): string[];
+  tool(): Tool;
+  snap(): SnapSettings;
+  // The snap guide's x in the last overlay frame, or null without one.
+  snapGuide(): number | null;
 }
 
 interface Drag {
+  // A clip part (move, copy, resize, Alt-click) or the volume control.
+  readonly kind: 'clip' | 'gain';
   readonly rect: ClipRect;
   readonly part: HitPart;
   readonly startX: number;
   readonly startY: number;
   // The snapshot the gesture began on: its revision is the expectedRevision.
   readonly snapshot: Snapshot;
+  // The clips a move or a copy takes (the selection, or the clip alone).
+  readonly ids: readonly string[];
+  // The selection a click without a move leaves (the clicked clip alone).
+  readonly onClick: readonly string[] | null;
+  // The volume control's starting gain.
+  readonly gain: number;
   dx: number;
   dy: number;
+  // The modifier flags of the latest pointer event.
+  flags: ModifierFlags;
 }
 
+// What a clip drag ends in, as the overlay previews it and the release sends it.
+type Plan =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'split'; readonly frame: bigint }
+  | { readonly kind: 'move' | 'copy'; readonly delta: bigint; readonly lanes: number; readonly guide: bigint | null }
+  | { readonly kind: 'trim'; readonly edge: TrimEdge; readonly delta: bigint; readonly guide: bigint | null };
+
 interface RulerDrag {
+  readonly startX: number;
   readonly startY: number;
   readonly anchorX: number;
   readonly view: Viewport;
+  // Past DRAG_THRESHOLD_PX: a zoom; until then a release is a click (locate).
+  moved: boolean;
 }
 
 interface Palette {
@@ -184,6 +286,8 @@ const WHEEL_PX_PER_STEP = 300;
 const LINE_PX = 16;
 const TITLE_PX = 14;
 export const OUTLINE_PX = 2;
+// A drag's preview (a moved, copied or resized clip) over the lanes.
+const PREVIEW_ALPHA = 0.35;
 
 export class TimelineCanvas {
   readonly #options: TimelineCanvasOptions;
@@ -193,7 +297,10 @@ export class TimelineCanvas {
   readonly #listeners = new Set<() => void>();
   readonly #viewListeners = new Set<() => void>();
   readonly #unsubscribe: Array<() => void> = [];
-  #state: TimelineState = { selectedClipId: null, placingMediaId: null, error: null };
+  #state: TimelineState = IDLE_STATE;
+  #snap: SnapSettings = DEFAULT_SNAP;
+  #hoverClipId: string | null = null;
+  #guideX: number | null = null;
   #view: Viewport;
   #drag: Drag | null = null;
   #rulerDrag: RulerDrag | null = null;
@@ -209,7 +316,13 @@ export class TimelineCanvas {
   #contentDraws = 0;
   #overlayDraws = 0;
   #cursorX: number | null = null;
+  // The cursor's position as last drawn, from the clock.
   #playhead: string | null = null;
+  // The newest realtime frame's playhead, as received.
+  #framePlayhead: string | null = null;
+  #playing = false;
+  readonly #clock: PlayheadClock;
+  #autoScroll: boolean;
   #outline = 0;
   #dimmed: string[] = [];
   #guidance: string | null = null;
@@ -221,6 +334,8 @@ export class TimelineCanvas {
     this.#content = options.content;
     this.#overlay = options.overlay;
     this.#container = options.container;
+    this.#autoScroll = options.autoScroll ?? false;
+    this.#clock = new PlayheadClock({ now: options.now ?? (() => performance.now()) });
     this.#view = {
       framesPerPixel: options.framesPerPixel ?? DEFAULT_FRAMES_PER_PIXEL,
       scrollFrames: '0',
@@ -246,6 +361,10 @@ export class TimelineCanvas {
     const cancel = () => this.#cancelDrag();
     const leave = () => {
       this.#lastPointer = null;
+      if (this.#hoverClipId !== null || this.#state.tool === 'split') {
+        this.#hoverClipId = null;
+        this.#invalidateOverlay();
+      }
     };
     overlay.addEventListener('pointerdown', down);
     overlay.addEventListener('pointermove', move);
@@ -328,15 +447,111 @@ export class TimelineCanvas {
   // redesign spec 4.5 C8), even when the recovered session still has the clip.
   clearSelection(): void {
     this.#drag = null;
-    this.#update({ selectedClipId: null });
+    this.#select([], null);
   }
 
-  // clip.remove of the selected clip.
+  // Delete and Backspace: clip.remove of every selected clip, in one list.
   async deleteSelected(): Promise<void> {
     const snapshot = this.#options.model.getSnapshot();
-    const clipId = this.#state.selectedClipId;
-    if (!snapshot || !clipId) return;
-    await this.#issue(snapshot, { kind: 'delete', clipId });
+    const ids = this.#state.selectedClipIds;
+    if (!snapshot || ids.length === 0) return;
+    await this.#send(() => {
+      const commands = ids.filter((id) => snapshot.entities[`clip:${id}`]).map((clipId) => ({ op: 'clip.remove', clipId }));
+      return commands.length > 0 ? { expectedRevision: snapshot.revision, commands } : null;
+    });
+  }
+
+  // 1 and 3: the Object Selection and Split tools.
+  setTool(tool: Tool): void {
+    if (tool !== 'select' && tool !== 'split') return;
+    this.#update({ tool });
+    this.#overlay.style.cursor = tool === 'split' ? 'crosshair' : 'default';
+  }
+
+  // The snap state (the layout store's): on / off and the grid type.
+  setSnap(snap: SnapSettings): void {
+    if (snap.on === this.#snap.on && snap.grid === this.#snap.grid) return;
+    this.#snap = { on: snap.on, grid: snap.grid };
+    this.#invalidateOverlay();
+  }
+
+  // Alt+X: the selected clips at the project cursor, or every clip under it.
+  async splitAtCursor(): Promise<void> {
+    const snapshot = this.#options.model.getSnapshot();
+    const cursor = this.#cursorNow();
+    if (!snapshot || cursor === null) return;
+    const selection = this.#state.selectedClipIds;
+    await this.#send((clipId) => splitAtCursorCommand(snapshot, selection, BigInt(cursor), clipId), true);
+  }
+
+  // Ctrl+D: a copy of the selection directly after it.
+  async duplicate(): Promise<void> {
+    const snapshot = this.#options.model.getSnapshot();
+    const selection = this.#state.selectedClipIds;
+    if (!snapshot || selection.length === 0) return;
+    await this.#send((clipId) => duplicateCommand(snapshot, selection, clipId), true);
+  }
+
+  // Ctrl+A: every clip.
+  selectAll(): void {
+    const snapshot = this.#options.model.getSnapshot();
+    if (!snapshot) return;
+    const ids = selectAllClips(snapshot);
+    const primary = this.#state.selectedClipId !== null && ids.includes(this.#state.selectedClipId) ? this.#state.selectedClipId : (ids[0] ?? null);
+    this.#select(ids, primary);
+  }
+
+  // L: the cursor to the selection's start.
+  locateSelection(): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    const start = snapshot ? selectionStart(snapshot, this.#state.selectedClipIds) : null;
+    return this.#locate(start);
+  }
+
+  // N and B: the cursor to the next or previous clip start on these tracks (all when none).
+  locateNextClip(trackIds: readonly string[] = []): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    return this.#locate(snapshot ? nextClipFrame(snapshot, this.#cursorFrame(), trackIds) : null);
+  }
+
+  locatePreviousClip(trackIds: readonly string[] = []): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    return this.#locate(snapshot ? previousClipFrame(snapshot, this.#cursorFrame(), trackIds) : null);
+  }
+
+  // Alt+S: the selection fits the view.
+  zoomToSelection(): void {
+    const snapshot = this.#options.model.getSnapshot();
+    if (snapshot) this.#setView(fitSelection(this.#view, snapshot, this.#state.selectedClipIds));
+  }
+
+  // Shift+E: the primary selected clip fits the view.
+  zoomToEvent(): void {
+    const snapshot = this.#options.model.getSnapshot();
+    const id = this.#state.selectedClipId;
+    const clip = id ? (snapshot?.entities[`clip:${id}`] as ClipEntity | undefined) : undefined;
+    if (!clip || clip.position.domain !== 'audio') return;
+    const start = BigInt(clip.position.value);
+    this.#setView(zoomToRange(this.#view, start, start + BigInt(clip.length)));
+  }
+
+  #cursorFrame(): bigint {
+    const cursor = this.#cursorNow();
+    return cursor === null ? 0n : BigInt(cursor);
+  }
+
+  // The project cursor now, from the clock (m5-ui-transport): while playing
+  // the extrapolated position, not the one the last overlay frame drew.
+  #cursorNow(): string | null {
+    this.#clock.observe(this.#options.playhead?.latest() ?? null);
+    return this.#clock.position(this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000);
+  }
+
+  #locate(frame: bigint | null): boolean {
+    const locate = this.#options.locate;
+    if (frame === null || !locate) return false;
+    void Promise.resolve(locate(frame)).catch(() => undefined);
+    return true;
   }
 
   // H and G: about the project cursor when it is in view, else the view's centre.
@@ -366,6 +581,13 @@ export class TimelineCanvas {
     this.#setView(zoomAbout(this.#view, this.#view.width / 2, framesPerPixel / this.#view.framesPerPixel));
   }
 
+  // F: auto-scroll in page mode while playing (UI redesign spec 3.1).
+  setAutoScroll(enabled: boolean): void {
+    if (enabled === this.#autoScroll) return;
+    this.#autoScroll = enabled;
+    this.#invalidateOverlay();
+  }
+
   // Shift+H and Shift+G: every track one preset taller or shorter.
   tracksTaller(): void {
     this.#stepHeights(1);
@@ -388,6 +610,10 @@ export class TimelineCanvas {
       selectionOutline: () => this.#outline,
       dimmedLanes: () => [...this.#dimmed],
       guidance: () => this.#guidance,
+      selectedClips: () => [...this.#state.selectedClipIds],
+      tool: () => this.#state.tool,
+      snap: () => ({ ...this.#snap }),
+      snapGuide: () => this.#guideX,
     };
   }
 
@@ -471,18 +697,27 @@ export class TimelineCanvas {
 
   #modelChanged(): void {
     const snapshot = this.#options.model.getSnapshot();
-    const selected = this.#state.selectedClipId;
-    if (selected && !snapshot?.entities[`clip:${selected}`]) this.#update({ selectedClipId: null });
+    const ids = pruneSelection(this.#state.selectedClipIds, snapshot);
+    const primary = this.#state.selectedClipId;
+    if (ids !== this.#state.selectedClipIds || (primary && !snapshot?.entities[`clip:${primary}`])) {
+      this.#select(ids, primary && ids.includes(primary) ? primary : (ids[ids.length - 1] ?? null));
+    }
     const placing = this.#state.placingMediaId;
     if (placing && !snapshot?.entities[`media:${placing}`]) this.#update({ placingMediaId: null });
     this.invalidate();
   }
 
+  // A realtime frame: the clock restarts from it. While playing the overlay
+  // runs on every animation frame anyway (#drawOverlay asks for the next);
+  // stopped, a frame whose playhead did not move draws nothing.
   #playheadChanged(): void {
     const frame = this.#options.playhead?.latest() ?? null;
+    this.#clock.observe(frame);
     const playhead = frame ? frame.playheadSamples : null;
-    if (playhead === this.#playhead) return;
-    this.#playhead = playhead;
+    const playing = frame?.playing ?? false;
+    if (playhead === this.#framePlayhead && playing === this.#playing) return;
+    this.#framePlayhead = playhead;
+    this.#playing = playing;
     this.#invalidateOverlay();
   }
 
@@ -533,16 +768,42 @@ export class TimelineCanvas {
     this.#setView(scrollYBy(this.#view, dy, content));
   }
 
+  #select(ids: readonly string[], primary: string | null): void {
+    const same = ids.length === this.#state.selectedClipIds.length && ids.every((id, i) => id === this.#state.selectedClipIds[i]);
+    this.#update({ selectedClipIds: same ? this.#state.selectedClipIds : [...ids], selectedClipId: primary });
+  }
+
+  #platform(): 'mac' | 'other' {
+    return this.#options.platform ?? 'other';
+  }
+
+  #flags(e: { ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean; metaKey?: boolean }): ModifierFlags {
+    return { ctrlKey: e.ctrlKey === true, altKey: e.altKey === true, shiftKey: e.shiftKey === true, metaKey: e.metaKey === true };
+  }
+
+  // The snap of a frame at this zoom (the identity with snap off or ignored).
+  #snapper(snapshot: Snapshot, ignore = false): Snapper {
+    const view = this.#view;
+    return snapperFor(this.#snap, view.framesPerPixel, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000, ignore, BigInt(view.scrollFrames));
+  }
+
   #pointerDown(e: PointerEvent): void {
     if (e.button !== 0) return;
     const snapshot = this.#options.model.getSnapshot();
     const { x, y } = this.#point(e);
     if (y < this.#view.rulerHeight) {
-      // The lower half zooms by a vertical drag; the upper half is P1-7's.
+      // The lower half: a click locates, a vertical drag zooms; the upper half is P1-7's.
       if (y >= this.#view.rulerHeight / 2) {
-        this.#rulerDrag = { startY: y, anchorX: x, view: this.#view };
+        this.#rulerDrag = { startX: x, startY: y, anchorX: x, view: this.#view, moved: false };
         this.#capture(e);
       }
+      return;
+    }
+    // Shift+Alt-click in the event display locates too (spec 3.1, "Set the
+    // cursor"), on a clip or not, and neither selects, drags nor places.
+    if (e.shiftKey && e.altKey) {
+      const frame = xToFrame(x, this.#view);
+      this.#options.onLocate?.((frame < 0n ? 0n : frame).toString());
       return;
     }
     if (!snapshot) return;
@@ -551,20 +812,56 @@ export class TimelineCanvas {
       const trackId = trackAt(snapshot, y, this.#view);
       if (trackId) {
         this.#update({ placingMediaId: null });
-        void this.#issue(snapshot, { kind: 'place', mediaId: placing, trackId, position: xToFrame(x, this.#view) });
+        const position = this.#snapper(snapshot)(xToFrame(x, this.#view));
+        void this.#send((clipId) => gestureCommand(snapshot, { kind: 'place', mediaId: placing, trackId, position }, clipId), true);
       }
       return;
     }
+    const flags = this.#flags(e);
+    const mods = toolModifiers(flags, this.#platform());
     const hit = hitTest(clipRects(snapshot, this.#view), x, y);
-    if (!hit) {
-      this.#update({ selectedClipId: null });
+    if (this.#state.tool === 'split') {
+      // The Split tool: a click splits the clip under the pointer there.
+      if (!hit || !this.#allows('clip.trim') || !this.#allows('clip.place')) return;
+      const frame = this.#snapper(snapshot)(xToFrame(x, this.#view));
+      const clipId = hit.rect.clipId;
+      void this.#send((id) => splitCommand(snapshot, [clipId], frame, id), true);
       return;
     }
-    this.#update({ selectedClipId: hit.rect.clipId });
-    // A move sends clip.move; a trim clip.trim (and clip.move for the left edge).
-    const ops = hit.part === 'body' ? ['clip.move'] : hit.part === 'left' ? ['clip.trim', 'clip.move'] : ['clip.trim'];
-    if (!ops.every((op) => this.#allows(op))) return;
-    this.#drag = { rect: hit.rect, part: hit.part, startX: x, startY: y, snapshot, dx: 0, dy: 0 };
+    const selection = this.#state.selectedClipIds;
+    if (!hit) {
+      if (!mods.fine) this.#select([], null);
+      return;
+    }
+    const clipId = hit.rect.clipId;
+    let ids: readonly string[];
+    let onClick: readonly string[] | null = null;
+    if (hit.part === 'gain') {
+      ids = selection.includes(clipId) ? selection : [clipId];
+    } else if (mods.fine) {
+      // Shift-click adds the clip, or takes it out.
+      ids = clickSelection(selection, clipId, true);
+      if (!ids.includes(clipId)) {
+        this.#select(ids, ids[ids.length - 1] ?? null);
+        return;
+      }
+    } else if (selection.includes(clipId)) {
+      // A selected clip drags the whole selection; a click leaves it alone.
+      ids = selection;
+      onClick = [clipId];
+    } else {
+      ids = [clipId];
+    }
+    this.#select(ids, clipId);
+    if (hit.part === 'gain') {
+      if (!this.#allows('clip.set_gain')) return;
+      const clip = snapshot.entities[`clip:${clipId}`] as ClipEntity | undefined;
+      this.#drag = { kind: 'gain', rect: hit.rect, part: hit.part, startX: x, startY: y, snapshot, ids: [clipId], onClick: null, gain: clip?.gainMilliDb ?? 0, dx: 0, dy: 0, flags };
+      this.#capture(e);
+      this.#invalidateOverlay();
+      return;
+    }
+    this.#drag = { kind: 'clip', rect: hit.rect, part: hit.part, startX: x, startY: y, snapshot, ids, onClick, gain: 0, dx: 0, dy: 0, flags };
     this.#capture(e);
   }
 
@@ -581,6 +878,8 @@ export class TimelineCanvas {
     this.#lastPointer = { x, y };
     const ruler = this.#rulerDrag;
     if (ruler) {
+      if (!ruler.moved && Math.abs(y - ruler.startY) < DRAG_THRESHOLD_PX && Math.abs(x - ruler.startX) < DRAG_THRESHOLD_PX) return;
+      ruler.moved = true;
       const factor = Math.pow(2, -(y - ruler.startY) / RULER_DRAG_PX_PER_STEP);
       this.#setView(zoomAbout({ ...ruler.view, width: this.#view.width, height: this.#view.height, laneHeights: this.#view.laneHeights }, ruler.anchorX, factor));
       return;
@@ -589,26 +888,53 @@ export class TimelineCanvas {
     if (drag) {
       drag.dx = x - drag.startX;
       drag.dy = y - drag.startY;
+      drag.flags = this.#flags(e);
       this.#invalidateOverlay();
       return;
     }
     const hit = y >= this.#view.rulerHeight ? hitTest(this.#rects, x, y) : null;
-    this.#overlay.style.cursor = this.#state.placingMediaId
-      ? 'copy'
-      : y < this.#view.rulerHeight && y >= this.#view.rulerHeight / 2
-        ? 'ns-resize'
-        : hit?.part === 'body'
-          ? 'grab'
-          : hit
-            ? 'ew-resize'
-            : 'default';
+    const hover = hit?.rect.clipId ?? null;
+    if (hover !== this.#hoverClipId || this.#state.tool === 'split') {
+      this.#hoverClipId = hover;
+      this.#invalidateOverlay();
+    }
+    const gain = hit?.part === 'gain';
+    const title = gain ? (this.#options.locale?.t() ?? translator('en'))('clip.gainControl') : '';
+    if (this.#overlay.title !== title) this.#overlay.title = title;
+    this.#overlay.style.cursor = this.#cursorFor(hit?.part ?? null, y, e.altKey === true);
+  }
+
+  #cursorFor(part: HitPart | null, y: number, alt: boolean): string {
+    if (this.#state.placingMediaId) return 'copy';
+    if (y < this.#view.rulerHeight) return y >= this.#view.rulerHeight / 2 ? 'ns-resize' : 'default';
+    if (this.#state.tool === 'split') return part ? 'crosshair' : 'default';
+    switch (part) {
+      case null:
+        return 'default';
+      case 'body':
+        return alt ? 'copy' : 'grab';
+      case 'gain':
+        return 'ns-resize';
+      case 'cornerLeft':
+        return 'nesw-resize';
+      case 'cornerRight':
+        return 'nwse-resize';
+      default:
+        return 'ew-resize';
+    }
   }
 
   #pointerUp(e: PointerEvent): void {
-    if (this.#rulerDrag) {
+    const ruler = this.#rulerDrag;
+    if (ruler) {
       this.#pointerMove(e);
       this.#rulerDrag = null;
       this.#release(e);
+      // A click (no movement past the threshold): locate to the pressed frame.
+      if (!ruler.moved) {
+        const frame = xToFrame(ruler.startX, ruler.view);
+        this.#options.onLocate?.((frame < 0n ? 0n : frame).toString());
+      }
       return;
     }
     const drag = this.#drag;
@@ -618,18 +944,74 @@ export class TimelineCanvas {
     this.#release(e);
     this.#hideTooltip();
     this.#invalidateOverlay();
-    if (!this.#moved(drag)) return;
-    const delta = deltaFrames(drag.dx, this.#view);
-    const gesture: TimelineGesture =
-      drag.part === 'body'
-        ? {
-            kind: 'move',
-            clipId: drag.rect.clipId,
-            deltaFrames: delta,
-            trackId: trackAt(drag.snapshot, drag.startY + drag.dy, this.#view) ?? drag.rect.trackId,
-          }
-        : { kind: 'trim', clipId: drag.rect.clipId, edge: drag.part, deltaFrames: delta };
-    void this.#issue(drag.snapshot, gesture);
+    const snapshot = drag.snapshot;
+    if (drag.kind === 'gain') {
+      if (!this.#moved(drag)) return;
+      const gain = gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine);
+      void this.#send(() => clipGainCommand(snapshot, drag.rect.clipId, gain));
+      return;
+    }
+    const plan = this.#plan(drag);
+    switch (plan.kind) {
+      case 'none':
+        if (!this.#moved(drag) && drag.onClick) this.#select(drag.onClick, drag.rect.clipId);
+        return;
+      case 'split':
+        if (!this.#allows('clip.trim') || !this.#allows('clip.place')) return;
+        void this.#send((clipId) => splitCommand(snapshot, [drag.rect.clipId], plan.frame, clipId), true);
+        return;
+      case 'copy':
+        void this.#send((clipId) => copyCommand(snapshot, drag.ids, plan.delta, plan.lanes, clipId), true);
+        return;
+      case 'move':
+        void this.#send(() => moveSelectionCommand(snapshot, drag.ids, plan.delta, plan.lanes));
+        return;
+      case 'trim':
+        void this.#send(() => gestureCommand(snapshot, { kind: 'trim', clipId: drag.rect.clipId, edge: plan.edge, deltaFrames: plan.delta }));
+        return;
+    }
+  }
+
+  // What a clip drag ends in at its current pointer and modifiers.
+  #plan(drag: Drag): Plan {
+    const mods = toolModifiers(drag.flags, this.#platform());
+    const snapshot = drag.snapshot;
+    const view = this.#view;
+    if (!this.#moved(drag)) {
+      // Alt-click splits the clip there.
+      if (mods.splitClick) return { kind: 'split', frame: this.#snapper(snapshot)(xToFrame(drag.startX, view)) };
+      return { kind: 'none' };
+    }
+    const edge = trimEdgeOf(drag.part);
+    if (edge) {
+      if (!this.#allows('clip.trim') || (edge === 'left' && !this.#allows('clip.move'))) return { kind: 'none' };
+      const snap = this.#snapper(snapshot, mods.noSnap);
+      const raw = deltaFrames(drag.dx, view);
+      const start = BigInt(drag.rect.position);
+      const at = edge === 'right' ? start + BigInt(drag.rect.length) : start;
+      const target = snap(at + raw < 0n ? 0n : at + raw);
+      return { kind: 'trim', edge, delta: target - at, guide: this.#snap.on && !mods.noSnap ? target : null };
+    }
+    const copy = mods.copy;
+    if (copy ? !this.#allows('clip.place') : !this.#allows('clip.move')) return { kind: 'none' };
+    let dx = drag.dx;
+    let lanes = this.#lanesMoved(drag);
+    if (mods.constrain) {
+      const axis = constrainAxis(drag.dx, drag.dy);
+      if (axis !== 'y') lanes = 0;
+      if (axis !== 'x') dx = 0;
+    }
+    const start = BigInt(drag.rect.position);
+    const delta = dx === 0 ? 0n : snappedMoveDelta(start, deltaFrames(dx, view), this.#snapper(snapshot));
+    return { kind: copy ? 'copy' : 'move', delta, lanes, guide: this.#snap.on && dx !== 0 ? start + delta : null };
+  }
+
+  // The lanes between the dragged clip's lane and the one under the pointer.
+  #lanesMoved(drag: Drag): number {
+    const order = drag.snapshot.trackOrder;
+    const target = trackAt(drag.snapshot, drag.startY + drag.dy, this.#view);
+    if (!target) return 0;
+    return order.indexOf(target) - order.indexOf(drag.rect.trackId);
   }
 
   #release(e: PointerEvent): void {
@@ -651,12 +1033,14 @@ export class TimelineCanvas {
     this.#invalidateOverlay();
   }
 
-  // One command.execute for a finished gesture. already_exists on a
-  // placement is retried with a new clip id; anything else refused is shown
-  // and the gesture discarded (never retried at a newer revision).
-  async #issue(snapshot: Snapshot, gesture: TimelineGesture): Promise<void> {
+  // One command.execute for a finished gesture or key command. already_exists
+  // where new clip ids are placed is retried with new ids; anything else
+  // refused is shown and the gesture discarded (never retried at a newer
+  // revision). A command naming an op engine.capabilities does not list is
+  // not sent.
+  async #send(build: (clipId: () => string) => TimelineCommand | null, placesClips = false): Promise<void> {
     for (let attempt = 1; ; attempt += 1) {
-      const command = gestureCommand(snapshot, gesture, newClipId);
+      const command = build(newClipId);
       if (!command) return;
       if (!command.commands.every((c) => this.#allows(String((c as { op?: unknown }).op)))) return;
       try {
@@ -665,7 +1049,7 @@ export class TimelineCanvas {
         return;
       } catch (error) {
         const code = (error as { code?: unknown }).code;
-        if (gesture.kind === 'place' && code === 'already_exists' && attempt < PLACE_ATTEMPTS) continue;
+        if (placesClips && code === 'already_exists' && attempt < PLACE_ATTEMPTS) continue;
         const refusal: TimelineRefusal =
           typeof code === 'string' ? { code, message: (error as Error).message } : { code: null, message: String(error) };
         this.#update({ error: refusal });
@@ -678,29 +1062,30 @@ export class TimelineCanvas {
     return this.#options.allows ? this.#options.allows(op) : true;
   }
 
-  // The clip as the open drag shows it (a preview; the document is unchanged).
-  #preview(rect: ClipRect, snapshot: Snapshot): ClipRect {
-    const drag = this.#drag;
-    if (!drag || drag.rect.clipId !== rect.clipId || !this.#moved(drag)) return rect;
+  // A clip as the open drag shows it (a preview; the document is unchanged):
+  // moved or copied by the plan's delta and lanes, or resized.
+  #preview(rect: ClipRect, snapshot: Snapshot, plan: Plan, drag: Drag): ClipRect {
     const view = this.#view;
-    const delta = deltaFrames(drag.dx, view);
-    const clip = snapshot.entities[`clip:${rect.clipId}`];
-    const media = snapshot.entities[`media:${rect.mediaId}`] as MediaEntity | undefined;
-    if (!clip || clip.schema !== 'siann.entity.clip.v1' || !media) return rect;
-    if (drag.part === 'body') {
-      const trackId = trackAt(snapshot, drag.startY + drag.dy, view) ?? rect.trackId;
-      const lane = Math.max(0, snapshot.trackOrder.indexOf(trackId));
-      const position = snapMove(rect.position, delta);
+    if (plan.kind === 'move' || plan.kind === 'copy') {
+      if (!drag.ids.includes(rect.clipId)) return rect;
+      const lane = snapshot.trackOrder.indexOf(rect.trackId);
+      const trackId = snapshot.trackOrder[lane + plan.lanes] ?? rect.trackId;
+      const position = snapMove(rect.position, plan.delta);
+      const laneIndex = Math.max(0, snapshot.trackOrder.indexOf(trackId));
       return {
         ...rect,
         trackId,
         position,
         x: frameToX(position, view),
-        y: laneTops(snapshot.trackOrder, view)[lane] ?? rect.y,
+        y: laneTops(snapshot.trackOrder, view)[laneIndex] ?? rect.y,
         height: laneHeightOf(trackId, view),
       };
     }
-    const trimmed = snapTrim(clip, media.frames, drag.part, delta);
+    if (plan.kind !== 'trim' || rect.clipId !== drag.rect.clipId) return rect;
+    const clip = snapshot.entities[`clip:${rect.clipId}`];
+    const media = snapshot.entities[`media:${rect.mediaId}`] as MediaEntity | undefined;
+    if (!clip || clip.schema !== 'siann.entity.clip.v1' || !media) return rect;
+    const trimmed = snapTrim(clip, media.frames, plan.edge, plan.delta);
     return {
       ...rect,
       position: trimmed.position,
@@ -891,35 +1276,76 @@ export class TimelineCanvas {
 
   #drawOverlay(): void {
     this.#overlayDraws += 1;
+    // The cursor at this animation frame: extrapolated while playing.
+    const rate = this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000;
+    this.#playhead = this.#clock.position(rate);
+    // Auto-scroll (page mode): a cursor that left the view while playing
+    // turns the page here, so the content is redrawn only on a page turn;
+    // never while a clip or ruler drag is held.
+    const page = nextScroll({
+      view: this.#view,
+      cursor: this.#playhead,
+      playing: this.#playing,
+      enabled: this.#autoScroll,
+      dragging: this.#drag !== null || this.#rulerDrag !== null,
+    });
+    if (page !== null) {
+      this.#view = { ...this.#view, scrollFrames: page };
+      this.#invalidateContent();
+    }
     const view = this.#view;
     const snapshot = this.#options.model.getSnapshot();
     const ctx = this.#context(this.#overlay);
     const palette = ctx ? this.#palette() : null;
-    // The selected clip (or the dragged one, previewed): a 2 px outline.
+    const drag = this.#drag;
+    const plan = drag && drag.kind === 'clip' && snapshot ? this.#plan(drag) : null;
     this.#outline = 0;
-    const selected = this.#state.selectedClipId;
-    const base = selected ? this.#rects.find((r) => r.clipId === selected) : undefined;
-    const rect = base && snapshot ? this.#preview(base, snapshot) : undefined;
-    if (rect && rect.x < view.width && rect.x + rect.width > 0) {
-      this.#outline = OUTLINE_PX;
-      if (ctx && palette) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, view.rulerHeight, view.width, (view.height ?? 0) - view.rulerHeight);
-        ctx.clip();
-        if (rect !== base) {
-          ctx.globalAlpha = 0.35;
-          ctx.fillStyle = palette.track(rect.trackId);
-          ctx.fillRect(rect.x, rect.y + 1, rect.width, rect.height - 2);
-          ctx.globalAlpha = 1;
-        }
-        ctx.strokeStyle = palette.select;
-        ctx.lineWidth = OUTLINE_PX;
-        ctx.strokeRect(rect.x + 1, rect.y + 2, Math.max(0, rect.width - 2), Math.max(0, rect.height - 4));
-        ctx.restore();
-      }
+    this.#guideX = null;
+    const inView = (r: ClipRect) => r.x < view.width && r.x + r.width > 0;
+    const selected = new Set(this.#state.selectedClipIds);
+    // Each selected clip's outline, at its preview when the drag moves or resizes it.
+    const outlines: ClipRect[] = [];
+    const previews: ClipRect[] = [];
+    for (const rect of this.#rects) {
+      const preview = plan && drag && snapshot ? this.#preview(rect, snapshot, plan, drag) : rect;
+      if (preview !== rect) previews.push(preview);
+      if (!selected.has(rect.clipId)) continue;
+      outlines.push(preview !== rect && plan?.kind !== 'copy' ? preview : rect);
+      if (plan?.kind === 'copy' && preview !== rect) outlines.push(preview);
     }
-    this.#placeTooltip(snapshot, base, rect);
+    if (outlines.some(inView)) this.#outline = OUTLINE_PX;
+    // The handles: the selected clips and the one under the pointer.
+    const handles = this.#rects.filter((r) => !drag && (selected.has(r.clipId) || r.clipId === this.#hoverClipId));
+    if (plan && (plan.kind === 'move' || plan.kind === 'copy' || plan.kind === 'trim') && plan.guide !== null) {
+      this.#guideX = frameToX(plan.guide, view);
+    }
+    if (ctx && palette) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, view.rulerHeight, view.width, (view.height ?? 0) - view.rulerHeight);
+      ctx.clip();
+      for (const rect of previews) {
+        ctx.globalAlpha = PREVIEW_ALPHA;
+        ctx.fillStyle = palette.track(rect.trackId);
+        ctx.fillRect(rect.x, rect.y + 1, rect.width, rect.height - 2);
+      }
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = palette.select;
+      ctx.lineWidth = OUTLINE_PX;
+      for (const rect of outlines) {
+        if (!inView(rect)) continue;
+        ctx.strokeRect(rect.x + 1, rect.y + 2, Math.max(0, rect.width - 2), Math.max(0, rect.height - 4));
+      }
+      for (const rect of handles) this.#drawHandles(ctx, rect, palette);
+      if (drag?.kind === 'gain') this.#drawHandles(ctx, drag.rect, palette, true);
+      if (this.#guideX !== null) {
+        ctx.fillStyle = palette.select;
+        ctx.fillRect(Math.round(this.#guideX), view.rulerHeight, 1, (view.height ?? 0) - view.rulerHeight);
+      }
+      this.#drawSplitLine(ctx, snapshot, palette);
+      ctx.restore();
+    }
+    this.#placeTooltip(snapshot, plan);
     // The project cursor, from the realtime playhead.
     const playhead = this.#playhead;
     this.#cursorX = playhead === null ? null : frameToX(playhead, view);
@@ -927,26 +1353,77 @@ export class TimelineCanvas {
       ctx.fillStyle = palette.tx1;
       ctx.fillRect(Math.round(this.#cursorX), 0, 1, view.height ?? 0);
     }
+    // Display rate while playing: the next animation frame draws the cursor
+    // again from the clock; stopped, the loop ends here.
+    if (this.#clock.playing()) this.#invalidateOverlay();
   }
 
-  // The drag tooltip: the new position (start, or the trimmed edge) and the
-  // delta, in bars.beats.ticks, the same in every locale.
-  #placeTooltip(snapshot: Snapshot | null, base: ClipRect | undefined, rect: ClipRect | undefined): void {
+  // A clip's resize squares in its lower corners and its volume control (a
+  // box with a level mark), on hover or selection; the control is filled
+  // while it is held.
+  #drawHandles(ctx: CanvasRenderingContext2D, rect: ClipRect, palette: Palette, held = false): void {
+    const corner = cornerSize(rect);
+    const bottom = rect.y + rect.height - 1;
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = palette.tx1;
+    ctx.fillRect(rect.x + 1, bottom - corner, corner, corner);
+    ctx.fillRect(rect.x + rect.width - corner - 1, bottom - corner, corner, corner);
+    const gain = gainBox(rect);
+    if (gain) {
+      ctx.fillStyle = held ? palette.select : palette.bg0;
+      ctx.fillRect(gain.x + 1, gain.y, gain.width - 2, gain.height - 1);
+      ctx.fillStyle = palette.tx1;
+      ctx.fillRect(gain.x + 3, gain.y + gain.height / 2, gain.width - 6, 1);
+      ctx.fillRect(gain.x + gain.width / 2, gain.y + 3, 1, gain.height - 6);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // The Split tool's line: where a click would split the clip under the pointer.
+  #drawSplitLine(ctx: CanvasRenderingContext2D, snapshot: Snapshot | null, palette: Palette): void {
+    const pointer = this.#lastPointer;
+    if (this.#state.tool !== 'split' || !pointer || !snapshot || this.#drag) return;
+    const hit = hitTest(this.#rects, pointer.x, pointer.y);
+    if (!hit) return;
+    const x = frameToX(this.#snapper(snapshot)(xToFrame(pointer.x, this.#view)), this.#view);
+    ctx.fillStyle = palette.tx1;
+    ctx.fillRect(Math.round(x), hit.rect.y + 1, 1, hit.rect.height - 2);
+  }
+
+  // The drag tooltip: for a clip the new position (start, or the resized
+  // edge) and the delta in bars.beats.ticks, the same in every locale; for
+  // the volume control the gain and, in brackets, the change.
+  #placeTooltip(snapshot: Snapshot | null, plan: Plan | null): void {
     const tooltip = this.#options.tooltip;
     const drag = this.#drag;
     if (!tooltip) return;
-    if (!snapshot || !drag || !base || !rect || rect === base || !this.#moved(drag)) {
+    if (!snapshot || !drag || !this.#moved(drag)) {
       this.#hideTooltip();
       return;
     }
-    const tempo = snapshot.root?.tempo ?? [];
-    const rate = snapshot.root?.sampleRate ?? 48000;
-    const ticks = (frames: string) => framesToTicks(Number(frames), tempo, rate);
-    const edge = drag.part === 'right'
-      ? [ticks(String(BigInt(base.position) + BigInt(base.length))), ticks(String(BigInt(rect.position) + BigInt(rect.length)))]
-      : [ticks(base.position), ticks(rect.position)];
-    tooltip.textContent = `${formatBbt(edge[1]!)}  ${formatBbtDelta(edge[1]! - edge[0]!)}`;
-    const pointer = this.#lastPointer ?? { x: rect.x, y: rect.y };
+    let text: string;
+    if (drag.kind === 'gain') {
+      const gain = gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine);
+      text = `${formatDb(gain)}  (${formatDb(gain - drag.gain)})`;
+    } else {
+      if (!plan || (plan.kind !== 'move' && plan.kind !== 'copy' && plan.kind !== 'trim')) {
+        this.#hideTooltip();
+        return;
+      }
+      const tempo = snapshot.root?.tempo ?? [];
+      const rate = snapshot.root?.sampleRate ?? 48000;
+      const ticks = (frames: bigint) => framesToTicks(Number(frames), tempo, rate);
+      const base = drag.rect;
+      const preview = this.#preview(base, snapshot, plan, drag);
+      const end = (r: ClipRect) => BigInt(r.position) + BigInt(r.length);
+      const edge =
+        plan.kind === 'trim' && plan.edge === 'right'
+          ? [ticks(end(base)), ticks(end(preview))]
+          : [ticks(BigInt(base.position)), ticks(BigInt(preview.position))];
+      text = `${formatBbt(edge[1]!)}  ${formatBbtDelta(edge[1]! - edge[0]!)}`;
+    }
+    tooltip.textContent = text;
+    const pointer = this.#lastPointer ?? { x: drag.startX, y: drag.startY };
     tooltip.style.transform = `translate(${Math.round(pointer.x + 12)}px, ${Math.round(pointer.y + 12)}px)`;
     tooltip.hidden = false;
   }
