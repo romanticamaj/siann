@@ -244,6 +244,18 @@ Done in this PR:
 - The `node` job runs `npm test` on ubuntu, windows and macos (`fail-fast: false`),
   pinned by `test/ci-workflow.test.js` "the Node job runs npm test on Windows,
   macOS and Linux".
+- Its first run found a real bug that the ubuntu-only job hid:
+  `test/stale-build-cache.test.js` "stale nested caches of a moved dependency
+  source are removed" fails on windows-latest and macos-latest. The cause is
+  `_siann_normalized_path` in `native/cmake/SiannStaleBuildCache.cmake`. It
+  applies `file(REAL_PATH)` only to paths that exist, so a cache home inside
+  the build tree that does not exist yet keeps its unresolved spelling.
+  Meanwhile the existing binary directory is resolved: `/var` becomes
+  `/private/var` on macOS, and the 8.3 short name `RUNNER~1` is expanded on
+  Windows runners. The home then looks outside the build tree, and a valid
+  nested cache is deleted. The fix is to resolve the longest existing ancestor
+  and append the rest. That is a `native/cmake` change, outside this
+  docs-and-CI pull request, so it is left to a separate fix (gap 0).
 
 Proposed, not done (each needs a decision or touches build config others are editing):
 
