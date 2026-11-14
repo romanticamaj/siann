@@ -3004,6 +3004,20 @@ Not used: Taskflow (allocates at runtime).
   Locally `node scripts/check-all.js --only package` does the same up to the
   installer (the step reports skipped off Windows); the steps run in the order
   node, native, desktop, app, package, gcc.
+- The installer carries the licence text of everything third-party it ships, in
+  `resources/licenses` (gathered by `app/scripts/collect-licenses.js`): AGPL-3.0
+  for the package as a whole (also the installer's licence page) and GPL-2.0 for
+  SIANN's own sources; for the engine, JUCE's licence, the ASIO and VST3 SDK
+  notices, CLAP, IXWebSocket, r8brain and dr_libs; for the renderer, the OFL
+  texts of Inter and JetBrains Mono and the MIT notice of every npm package
+  `app/package-lock.json` installs for run time (React, react-dom, its
+  scheduler, react-resizable-panels; esbuild bundles them into `app.asar`), as
+  `<package>-LICENSE.txt`. Electron's `LICENSE.electron.txt` and
+  `LICENSES.chromium.html` sit beside `SIANN.exe`. electron-builder's
+  `elevate.exe` is not packed (`nsis.packElevateHelper` false: the per-user
+  install has no updater and never elevates), so the package holds no
+  executable but `SIANN.exe` and `siann-engine.exe`. The package tests check the
+  list, the npm part against the lock file.
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
   manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
