@@ -17,7 +17,7 @@ gaps here when it lands.
 | Gap (section 6) | Feature | Wave |
 |---|---|---|
 | 0 stale nested CMake cache (section 7) | fixed in #103 | |
-| 1 m5-ui-transport, edit-basics, loop-click untested | the M5 features themselves (in flight) | |
+| 1 m5-ui-transport, loop-click untested (edit-basics closed its part) | the M5 features themselves (in flight) | |
 | 2 method/tool/doc/fixture parity | `m5b-protocol-parity` | 2 |
 | 3 bridge targets the Ardour engine, gated tests dead | `m5b-bridge-native-client` | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
@@ -125,7 +125,7 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m5-ui-mixer | | | Y | Y (`mixer.spec`) | 8 | 3 | 3: "every value control" proven for fader and pan only; 8: tour only |
 | m5-ui-plan-panel | | | Y | Y (`plan-review.spec`) | 8 | 3 | 8: tour only |
 | m5-ui-transport (open) | - | | - | - | | - | 1-8: not on main |
-| m5-ui-edit-basics (open) | - | | - | - | | - | 1-9: not on main |
+| m5-ui-edit-basics | | | Y (`edit-commands`, `snap`, `selection`, `tool-modifiers`, `edit-basics-mod-keys`, `timeline-geometry`, `timeline-layers`, `key-preset`, `key-dispatcher`, `capabilities`, `layout`) | Y (`edit-basics.spec`, six paths, one revision and one undo each; toolbar labels in `i18n-fit`) | 9 | 3 | 9: tour only |
 | m5-ui-loop-click (open) | - | | - | - | | - | 1-8: not on main |
 | m5-ui-mockup-alignment (open) | | | - | - (F: report-only baseline, 0 of 282 parts match) | every state | - | 1-8: not on main. Its acceptance is the F layer for every part the M5 features build (`app/test/fidelity/manifest.json`), in en and zh-TW, and an empty `app/test/fidelity/debt.json` |
 
@@ -248,7 +248,7 @@ error paths of each subcommand (usage errors, `--run`).
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
-| 1 | m5-ui-transport, m5-ui-edit-basics, m5-ui-loop-click: 25 acceptance items, no tests on main | High: M5 exit depends on them | per the manifests: unit (position display, snap maths, split builder) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
+| 1 | m5-ui-transport, m5-ui-loop-click: 16 acceptance items, no tests on main (m5-ui-edit-basics closed its 9 with unit + `edit-basics.spec`, section 2) | High: M5 exit depends on them | per the manifests: unit (position display, band geometry and snapping) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
 | 2 | No method/tool/doc/fixture parity test (section 4) | High: an agent-facing method can ship without an MCP tool, doc or app capability entry, silently | native test: every `kMethods` entry is an MCP tool or in an explicit `kNotMcp` list with a reason; Node test: every method in a protocol doc table and the reverse (read `kMethods` from source); app unit: `capabilities-full.json` equals `kMethods` | `m5b-protocol-parity` (M5b wave 2) |
 | 3 | Node bridge's live path targets the superseded Ardour engine; `SIANN_RUN_ENGINE_TESTS` tests never run | High for AI-facing story: the bridge cannot drive the native engine, and its only integration tests are dead | port `src/runtime/client.js` to the native protocol (WebSocket + token, or MCP over HTTP), then a CI job that runs the Node integration tests against the core-only `siann-engine` built in the `app` job; meanwhile mark the two tests as legacy | `m5b-bridge-native-client` (M5b wave 2) |
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |

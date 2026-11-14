@@ -1,6 +1,8 @@
 // The zone layout (UI redesign spec 2.3 and 2.4) as pure functions: the
 // stored layout under siann.layout.v1 (sizes, collapsed states, active tabs,
-// strip width, and the per-session track heights reserved for m5-ui-arrange),
+// strip width, the per-session track heights reserved for m5-ui-arrange, and
+// the event display's snap state of m5-ui-edit-basics: on with grid Adapt to
+// Zoom by default, per user like the rest, never sent to the engine),
 // a reducer over it, and the effective layout a window of a given size shows.
 //
 // The track list / event display boundary (m5-ui-arrange) is not a zone: it
@@ -17,6 +19,8 @@
 // key is remembered for this window only (`opened`).
 //
 // The project zone is not a Zone: it has no size, no collapse and no action.
+
+import { DEFAULT_SNAP, isGridType, type GridType, type SnapSettings } from '../timeline/snap';
 
 export type Zone = 'left' | 'lower' | 'right';
 export const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
@@ -44,6 +48,8 @@ export interface Layout {
   readonly trackList: number;
   // Session id -> track id -> px (m5-ui-arrange); the zones are the same for every session.
   readonly trackHeights: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  // Snap on / off (J) and the grid type (m5-ui-edit-basics).
+  readonly snap: SnapSettings;
 }
 
 export interface ShellState {
@@ -90,7 +96,11 @@ export type TrackListAction =
   // A header's lower border dragged: that lane's height in this session.
   | { readonly type: 'trackHeight'; readonly sessionId: string; readonly trackId: string; readonly height: number }
   // Ctrl-drag, Shift+H / Shift+G, Ctrl+Shift+wheel: every listed lane's height.
-  | { readonly type: 'allTrackHeights'; readonly sessionId: string; readonly trackIds: readonly string[]; readonly height: number };
+  | { readonly type: 'allTrackHeights'; readonly sessionId: string; readonly trackIds: readonly string[]; readonly height: number }
+  // J: snap on or off (m5-ui-edit-basics).
+  | { readonly type: 'snapToggle' }
+  // The grid type select: Bar, Beat or Adapt to Zoom.
+  | { readonly type: 'setGrid'; readonly grid: GridType };
 
 export interface ZoneView {
   readonly visible: boolean;
@@ -138,6 +148,7 @@ export const DEFAULT_LAYOUT: Layout = Object.freeze({
   stripWidth: 'normal',
   trackList: TRACK_LIST_DEFAULT,
   trackHeights: Object.freeze({}),
+  snap: DEFAULT_SNAP,
 });
 
 function isZone(zone: unknown): zone is Zone {
@@ -245,6 +256,11 @@ function reduceTrackList(state: ShellState, action: TrackListAction): ShellState
       return setTrackHeights(state, action.sessionId, [action.trackId], action.height);
     case 'allTrackHeights':
       return setTrackHeights(state, action.sessionId, action.trackIds, action.height);
+    case 'snapToggle':
+      return withLayout(state, { snap: { ...state.layout.snap, on: !state.layout.snap.on } });
+    case 'setGrid':
+      if (!isGridType(action.grid) || action.grid === state.layout.snap.grid) return state;
+      return withLayout(state, { snap: { ...state.layout.snap, grid: action.grid } });
   }
 }
 
@@ -347,11 +363,22 @@ export function serializeLayout(layout: Layout): string {
     stripWidth: layout.stripWidth,
     trackList: layout.trackList,
     trackHeights: layout.trackHeights,
+    snap: layout.snap,
   });
 }
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+// The snap state: each field falls back to its default on its own.
+function parseSnap(value: unknown): SnapSettings {
+  const snap = record(value);
+  if (!snap) return DEFAULT_SNAP;
+  return {
+    on: typeof snap.on === 'boolean' ? snap.on : DEFAULT_SNAP.on,
+    grid: isGridType(snap.grid) ? snap.grid : DEFAULT_SNAP.grid,
+  };
 }
 
 // Field by field: whatever is missing, of the wrong type or unknown falls
@@ -396,6 +423,7 @@ export function parseLayout(text: string | null): Layout {
         ? Math.round(Math.min(object.trackList, TRACK_LIST_MAX))
         : TRACK_LIST_DEFAULT,
     trackHeights,
+    snap: parseSnap(object.snap),
   };
 }
 
@@ -410,6 +438,7 @@ export function viewFor(
     tabs: layout.tabs,
     stripWidth: layout.stripWidth,
     trackList: layout.trackList,
+    snap: layout.snap,
     trackHeights: (sessionId !== null ? layout.trackHeights[sessionId] : undefined) ?? {},
   };
 }

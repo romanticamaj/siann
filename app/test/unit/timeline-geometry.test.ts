@@ -7,7 +7,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CORNER_PX,
   DEFAULT_LANE_HEIGHT,
+  GAIN_MIN_HEIGHT,
+  GAIN_MIN_WIDTH,
   HANDLE_PX,
   MAX_LANE_HEIGHT,
   MIN_LANE_HEIGHT,
@@ -178,4 +181,46 @@ test('a clip scrolled to before the left edge has a negative x: the canvas begin
   // clp_1 starts at 4800: 48 px before the canvas's left edge, whatever the list's width.
   assert.equal(clp1.x, -48);
   assert.equal(clp1.width, 240);
+});
+
+// m5-ui-edit-basics (UI redesign spec 3.2, "Clip handles"): resize from the
+// lower corners (8 px squares, smaller on a narrow clip), the edges stay a
+// 4 px target, and the volume control sits just inside the lower-left corner
+// on a clip wide and tall enough for it.
+test('hit testing finds the lower corners, the 4 px edges and the volume control', () => {
+  assert.equal(HANDLE_PX, 4);
+  assert.equal(CORNER_PX, 8);
+  const rects = clipRects(sampleSnapshot(), VIEW);
+  // clp_1: x 48..288, y 20..80; its lower corners are y 72..80.
+  assert.equal(hitTest(rects, 49, 78)?.part, 'cornerLeft');
+  assert.equal(hitTest(rects, 55.5, 72)?.part, 'cornerLeft');
+  assert.equal(hitTest(rects, 287, 79)?.part, 'cornerRight');
+  assert.equal(hitTest(rects, 280.5, 73)?.part, 'cornerRight');
+  // Above the corners, the edges.
+  assert.equal(hitTest(rects, 49, 71)?.part, 'left');
+  assert.equal(hitTest(rects, 51.5, 30)?.part, 'left');
+  assert.equal(hitTest(rects, 52.5, 30)?.part, 'body', 'past the 4 px edge');
+  assert.equal(hitTest(rects, 285, 30)?.part, 'right');
+  // The volume control: right of the lower-left corner.
+  assert.equal(hitTest(rects, 56, 79)?.part, 'gain');
+  assert.equal(hitTest(rects, 69.5, 68)?.part, 'gain');
+  assert.equal(hitTest(rects, 70.5, 75)?.part, 'body');
+  assert.equal(hitTest(rects, 60, 67)?.part, 'body');
+  assert.equal(hitTest(rects, 60, 50)?.part, 'body');
+});
+
+test('a narrow or short clip shrinks its corners and has no volume control', () => {
+  const narrow = clipRects({ ...sampleSnapshot(), clips: [clip('clp_n', 'trk_b', 'med_sq', '1000', '0', '900')] }, VIEW);
+  // 9 px wide (x 10..19): corners of 3 px.
+  assert.equal(hitTest(narrow, 10.5, 78)?.part, 'cornerLeft');
+  assert.equal(hitTest(narrow, 14.5, 78)?.part, 'body');
+  assert.equal(hitTest(narrow, 18.5, 78)?.part, 'cornerRight');
+  const short = clipRects({ ...sampleSnapshot(), clips: [clip('clp_w', 'trk_b', 'med_sq', '0', '0', '20000')] }, { ...VIEW, laneHeight: 24 });
+  // 200 px wide but 24 px high: no volume control.
+  assert.ok(short[0]!.height < GAIN_MIN_HEIGHT);
+  for (let x = 8; x < 40; x += 1) assert.notEqual(hitTest(short, x, 20 + 23)?.part, 'gain', `x ${x}`);
+  const slim = clipRects({ ...sampleSnapshot(), clips: [clip('clp_s', 'trk_b', 'med_sq', '0', '0', '4000')] }, VIEW);
+  // 40 px wide: no volume control either.
+  assert.ok(slim[0]!.width < GAIN_MIN_WIDTH);
+  for (let x = 8; x < 32; x += 1) assert.notEqual(hitTest(slim, x, 78)?.part, 'gain', `x ${x}`);
 });

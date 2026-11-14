@@ -26,6 +26,7 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>(['app.title']);
 const SENTINELS: Partial<Record<Key, Record<string, string | number>>> = {
   'plans.steps': { count: 7 },
   'toast.planArrived': { steps: 7 },
+  'confirm.removeTracks': { count: 7 },
 };
 
 // Simplified / Traditional pairs (spec 6.3 and the glossary of 6.5).

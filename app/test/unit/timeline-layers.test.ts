@@ -254,3 +254,48 @@ test('muted and implicitly muted lanes are dimmed', () => {
   assert.deepEqual(hooks.dimmedLanes(), ['trk_b']);
   timeline.destroy();
 });
+
+// m5-ui-edit-basics: a selection of several clips, each outlined; Shift-click
+// adds; the snap guide and the preview of an Alt-drag copy are drawn on the
+// overlay only, so the content layer is not redrawn while dragging.
+test('a multi-clip selection outlines every selected clip; the snap guide and the copy preview are overlay-only', () => {
+  const { surface, hooks, timeline } = make();
+  const at = (id: string) => {
+    const rect = hooks.clips().find((r) => r.clipId === id)!;
+    return { clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 };
+  };
+  surface.fire('pointerdown', at('clp_1'));
+  surface.fire('pointerup', at('clp_1'));
+  surface.fire('pointerdown', { ...at('clp_3'), shiftKey: true });
+  surface.fire('pointerup', { ...at('clp_3'), shiftKey: true });
+  assert.deepEqual(hooks.selectedClips(), ['clp_1', 'clp_3']);
+  assert.equal(timeline.getState().selectedClipId, 'clp_3', 'the last clicked is the primary');
+  surface.overlayCalls.clear();
+  timeline.invalidate();
+  flushFrames();
+  assert.equal(surface.overlayCalls.strokes.filter((s) => s.lineWidth === 2).length, 2, 'two outlines');
+  timeline.selectAll();
+  surface.overlayCalls.clear();
+  flushFrames();
+  assert.deepEqual([...hooks.selectedClips()].sort(), ['clp_1', 'clp_2', 'clp_3']);
+  assert.equal(surface.overlayCalls.strokes.filter((s) => s.lineWidth === 2).length, 3, 'three outlines');
+
+  // An Alt-drag of clp_1: the copies are previewed and the snap guide shown, on the overlay.
+  flushFrames();
+  const content = hooks.contentDraws();
+  const overlay = hooks.overlayDraws();
+  const from = at('clp_1');
+  surface.fire('pointerdown', { ...from, altKey: true });
+  for (let dx = 10; dx <= 50; dx += 10) {
+    surface.fire('pointermove', { clientX: from.clientX + dx, clientY: from.clientY, altKey: true });
+    flushFrames();
+  }
+  assert.equal(hooks.contentDraws(), content, 'no content redraw during the drag');
+  assert.ok(hooks.overlayDraws() > overlay);
+  assert.notEqual(hooks.snapGuide(), null, 'the snap guide (snap is on by default)');
+  assert.ok(surface.overlayCalls.alphas.some((a) => a > 0 && a < 1), 'a translucent copy preview');
+  surface.fire('pointerup', { clientX: from.clientX + 50, clientY: from.clientY, altKey: true });
+  flushFrames();
+  assert.equal(hooks.snapGuide(), null, 'gone after the drop');
+  timeline.destroy();
+});
