@@ -1,0 +1,27 @@
+{
+  "about": "What layer 1 of the mockup fidelity gate (test/ui-tokens.test.js) does not hold yet. tokens: a token of app/renderer/tokens.css whose value the app uses today and the mockup's shared rules (app/renderer/ui) contradict; the mockup's value is the target. fonts: a face the mockup's rules ask for that is not bundled. literals: colour and size literals per file that should name a token. The test fails on anything beyond this ledger and on an entry that no longer applies, so it only shrinks; the feature named in gate empties it.",
+  "gate": "m5-ui-mockup-alignment",
+  "tokens": [
+    { "token": "ruler-h", "mockup": "40px", "app": "32px", "why": "The mockup's ruler is 40 px (18 px locator half, 22 px cursor half); the app's canvas ruler and the track list's head are 32 px." },
+    { "token": "zone-tabs", "mockup": "26px", "app": "24px", "why": "The mockup's lower-zone tab row is 26 px (and its zone heads 32 px, --zone-head); the app's zone tab rows are 24 px." },
+    { "token": "meter-w", "mockup": "6px", "app": "10px", "why": "A strip meter channel is 6 px in the mockup (9 px on the master); the app draws one 10 px meter slot." },
+    { "token": "focus", "mockup": "rgb(232 235 241 / .20)", "app": "rgb(232 235 241 / .55)", "why": "The focused zone's frame is 20 % in the mockup; the app's is 55 %." }
+  ],
+  "fonts": [
+    { "family": "JetBrains Mono", "weights": [500, 600], "why": "The mockup's rules ask for JetBrains Mono at 500 (display values, key hints) and its original web-font link also loaded 600; only Regular (400) is bundled in app/renderer/fonts, so both the mockup and the app draw those texts in Regular. Bundling Medium is the maintainer's call (a font file, its licence text and one @font-face)." }
+  ],
+  "literals": {
+    "app/renderer/shell.css": { "colours": 5, "sizes": 94 },
+    "app/renderer/ui/base.css": { "colours": 0, "sizes": 8 },
+    "app/renderer/ui/layout.css": { "colours": 0, "sizes": 15 },
+    "app/renderer/ui/left-zone.css": { "colours": 0, "sizes": 49 },
+    "app/renderer/ui/lower-zone.css": { "colours": 0, "sizes": 83 },
+    "app/renderer/ui/project-zone.css": { "colours": 0, "sizes": 99 },
+    "app/renderer/ui/right-zone.css": { "colours": 0, "sizes": 95 },
+    "app/renderer/ui/status-bar.css": { "colours": 0, "sizes": 10 },
+    "app/renderer/ui/top-bar.css": { "colours": 0, "sizes": 64 },
+    "app/src/renderer/mixer/MixerMeters.ts": { "colours": 6, "sizes": 0 },
+    "app/src/renderer/timeline/TimelineCanvas.ts": { "colours": 0, "sizes": 3 },
+    "docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html": { "colours": 74, "sizes": 19 }
+  }
+}

@@ -32,18 +32,18 @@ export function TopBar({ client, plans, zones, onToggle, onPlans }: TopBarProps)
     () => plans.getSnapshot().plans.filter((plan) => plan.state === 'validated').length,
   );
   return (
-    <header className="top-bar" data-testid="top-bar">
+    <header className="top-bar" data-testid="top-bar" data-region="top-bar">
       <h1>{t('app.title')}</h1>
-      <span className="session-name" data-testid="session-name">
+      <span className="session-name" data-testid="session-name" data-part="session-name">
         {snapshot?.root?.name ?? ''}
       </span>
       <span className="spacer" />
-      <div className="zone-buttons" role="group" aria-label={t('zone.buttons')}>
+      <div className="zone-buttons" data-part="zone-buttons" role="group" aria-label={t('zone.buttons')}>
         {ZONE_ORDER.map((zone) => (
           <button
             key={zone}
             type="button"
-            data-testid={`zone-button-${zone}`}
+            data-testid={`zone-button-${zone}`} data-part={`zone-button-${zone}`}
             aria-pressed={zones[zone].visible}
             onClick={() => onToggle(zone)}
           >
@@ -54,13 +54,13 @@ export function TopBar({ client, plans, zones, onToggle, onPlans }: TopBarProps)
       <button
         type="button"
         className="plans-button"
-        data-testid="plans-button"
+        data-testid="plans-button" data-part="plans-button"
         aria-pressed={zones.right.visible}
         onClick={onPlans}
       >
         {t('topbar.plans')}
         {pending > 0 ? (
-          <span className="plans-count" data-testid="plans-count" aria-label={t('topbar.pending', { count: pending })}>
+          <span className="plans-count" data-testid="plans-count" data-part="plans-count" aria-label={t('topbar.pending', { count: pending })}>
             {String(pending)}
           </span>
         ) : null}

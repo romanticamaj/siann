@@ -57,7 +57,7 @@ export function MeterSlot({ meterRef, testId }: { meterRef: string; testId: stri
     if (!meters || !slot.current) return undefined;
     return meters.slot(meterRef, slot.current);
   }, [meters, meterRef]);
-  return <div ref={slot} className="meter-slot" data-testid={testId} />;
+  return <div ref={slot} className="meter-slot" data-testid={testId} data-part-of="meter" />;
 }
 
 // The peak value of `ref`: its text (and clip class) is written by the meter
@@ -81,8 +81,8 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
   const colour = `var(${trackColourVar(trackId)})`;
   const faderListed = can.has('gesture.begin') && can.feature('gestures') && can.command('track.set_gain');
   return (
-    <section className="strip" data-testid={`mixer-strip-${trackId}`} aria-label={track.name}>
-      <div className="strip-pan">
+    <section className="strip" data-testid={`mixer-strip-${trackId}`} data-part-item="strip" aria-label={track.name}>
+      <div className="strip-pan" data-part-of="pan">
         <Capable method="gesture.begin" feature="gestures" command="track.set_pan">
           <ValueControl
             kind="pan"
@@ -97,19 +97,19 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
           />
         </Capable>
       </div>
-      <div className="strip-buttons">
+      <div className="strip-buttons" data-part-of="buttons">
         <Capable command="track.set_mute">
-          <button type="button" className="ms mute" data-testid={`mute-${trackId}`} aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
+          <button type="button" className="ms mute" data-testid={`mute-${trackId}`} data-part-of="mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
             M
           </button>
         </Capable>
         <Capable command="track.set_solo">
-          <button type="button" className="ms solo" data-testid={`solo-${trackId}`} aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
+          <button type="button" className="ms solo" data-testid={`solo-${trackId}`} data-part-of="solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
             S
           </button>
         </Capable>
       </div>
-      <div className="strip-fader">
+      <div className="strip-fader" data-part-of="fader-area">
         <Capable method="gesture.begin" feature="gestures" command="track.set_gain">
           <ValueControl
             kind="gain"
@@ -123,7 +123,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
         </Capable>
         <MeterSlot meterRef={ref} testId={`meter-${trackId}`} />
       </div>
-      <div className="strip-values">
+      <div className="strip-values" data-part-of="readout">
         <ValueReadout
           kind="gain"
           entityRef={ref}
@@ -135,7 +135,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
         />
         <PeakValue meterRef={ref} testId={`peak-value-${trackId}`} label={t('strip.peakLabel', { track: track.name })} />
       </div>
-      <div className="strip-name" data-testid={`strip-name-${trackId}`} style={{ backgroundColor: colour }} title={track.name}>
+      <div className="strip-name" data-testid={`strip-name-${trackId}`} data-part-of="name" style={{ backgroundColor: colour }} title={track.name}>
         {track.name}
       </div>
     </section>
@@ -146,14 +146,14 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
 export function MasterStrip() {
   const t = useT();
   return (
-    <section className="strip strip-master" data-testid="mixer-strip-master" aria-label={t('strip.master')}>
-      <div className="strip-fader">
+    <section className="strip strip-master" data-testid="mixer-strip-master" data-part-item="strip" data-part-key="master" aria-label={t('strip.master')}>
+      <div className="strip-fader" data-part-of="fader-area">
         <MeterSlot meterRef="master" testId="meter-master" />
       </div>
-      <div className="strip-values">
+      <div className="strip-values" data-part-of="readout">
         <PeakValue meterRef="master" testId="peak-value-master" label={t('strip.peakLabel', { track: t('strip.master') })} />
       </div>
-      <div className="strip-name strip-name-master">{t('strip.master')}</div>
+      <div className="strip-name strip-name-master" data-part-of="name">{t('strip.master')}</div>
     </section>
   );
 }

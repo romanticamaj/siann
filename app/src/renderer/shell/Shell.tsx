@@ -165,7 +165,7 @@ function ZoneFrame({ zone, visible, focused, offline, drawer, tabs, onFocus, fra
     <section
       ref={frameRef}
       className={`zone zone-${zone}`}
-      data-testid={`zone-${zone}`}
+      data-testid={`zone-${zone}`} data-region={`${zone}-zone`}
       data-zone={zone}
       data-visible={String(visible)}
       data-focused={String(focused && visible)}
@@ -470,11 +470,11 @@ export function Shell({ client, plans, engineStatus, store, commands, platform, 
     return { now: zones[zone].visible ? zones[zone].size : 0, min, max };
   };
   const tab = (zone: 'lower' | 'right', id: 'mixconsole' | 'plans') => (
-    <div className="zone-tabs" role="tablist">
+    <div className="zone-tabs" role="tablist" data-part={`${zone}-tabs`}>
       <button
         type="button"
         role="tab"
-        data-testid={`tab-${zone}-${id}`}
+        data-testid={`tab-${zone}-${id}`} data-part={`tab-${id}`}
         aria-selected={state.layout.tabs[zone] === id}
         onClick={() => store.dispatch({ type: 'tab', zone, tab: id })}
       >

@@ -43,6 +43,7 @@ gaps here when it lands.
 | **U** | Electron unit tests (`app/test/unit`, `node --test` on `dist/`) | `app` job | ubuntu, windows, macos | PR when `app/` changes; push to main; nightly |
 | **E** | Playwright Electron e2e (`app/test/e2e`) against the core-only `siann-engine` on the fake device | `app` job | ubuntu (xvfb, 150 % scale), windows, macos | as U |
 | **Ew** | `editor.spec.ts` against the JUCE engine (editor owned by the Electron window) | `desktop` job | windows only | as D |
+| **F** | Mockup fidelity gate (`docs/harness/agent-rules.md`, "UI fidelity"). Tokens and the manifest: `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). Geometry within 1 px, identical computed styles and chrome pixels per region: `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **Report-only** (`continue-on-error`, report uploaded as `fidelity-<os>`) until `m5-ui-mockup-alignment` lands; failing from then on |
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
 | **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows | nightly + manual; never on PRs |
 | **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`) | none | never | see 3.3 |
@@ -126,15 +127,16 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m5-ui-transport (open) | - | | - | - | | - | 1-8: not on main |
 | m5-ui-edit-basics | | | Y (`edit-commands`, `snap`, `selection`, `tool-modifiers`, `edit-basics-mod-keys`, `timeline-geometry`, `timeline-layers`, `key-preset`, `key-dispatcher`, `capabilities`, `layout`) | Y (`edit-basics.spec`, six paths, one revision and one undo each; toolbar labels in `i18n-fit`) | 9 | 3 | 9: tour only |
 | m5-ui-loop-click (open) | - | | - | - | | - | 1-8: not on main |
+| m5-ui-mockup-alignment (open) | | | - | - (F: report-only baseline, 0 of 282 parts match) | every state | - | 1-8: not on main. Its acceptance is the F layer for every part the M5 features build (`app/test/fidelity/manifest.json`), in en and zh-TW, and an empty `app/test/fidelity/debt.json` |
 
 ### M5b, M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 50/132, M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 59/141 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
 `m5b-engine-clip-fades` 1/4, `m5b-engine-master` 1/4,
-`m5b-engine-buses-sends` 1/5, `m5b-engine-record` 3/9, `m5b-ui-edit-more` 2/9.
+`m5b-engine-buses-sends` 1/5, `m5b-engine-record` 3/9, `m5b-ui-edit-more` 3/10.
 The plan phase should add the test layer to those items before the build
 agent starts (rule 1 below). M6b's one-hour 16-track criterion and M7's arm64
 board run cannot run on hosted runners and need a named owner (rule 6).
@@ -187,6 +189,7 @@ bridge has **no client for the native protocol**: `src/runtime/client.js` and
 | `juce_device_test` `[hardware]` cases | an output device (SKIP on runners) | maintainer's bench, M2 exit |
 | `node scripts/pluginval.js --compat` | one env var per plugin in `scripts/compat-plugins.json` | maintainer, M4 exit, before a JUCE pin move |
 | `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | the feature's build agent attaches the states; the maintainer reviews at the `ux-review` gate |
+| `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), so this is a gate, not a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `test/runtime-engine.test.js`, `test/live-import-pack.test.js` (engine case) | `SIANN_RUN_ENGINE_TESTS=1` + the legacy Ardour checkout | nobody: the Ardour engine is superseded (architecture spec, "Documents made stale"). Port or delete (gap 3) |
 | `[.][hostile-crash-child]` | hidden helper | run by its parent test; fine |
 | M2 device bench, M0 macOS bundle signing, M4 JUCE `processBlock` audit, DAWproject into Cubase (L4) | human gates | maintainer, per milestone exit / release |
@@ -320,3 +323,9 @@ Proposed, not done (each needs a decision or touches build config others are edi
 8. **This file changes with the feature**: the verifier checks the feature's
    row (section 2) and fails the round when the row is missing or claims a test
    that does not exist.
+9. **Every UI feature answers to the mockup fidelity gate (F)**: its parts are
+   owned by a rule of `app/test/fidelity/manifest.json`, its row in section 2
+   says so, and the pull request that lands it sets its gate to `enforce` and
+   attaches the report. A part skipped as pending or unowned is named in the
+   report, never silently dropped; a colour or size literal outside
+   `app/renderer/tokens.css` fails `test/ui-tokens.test.js` on every OS.

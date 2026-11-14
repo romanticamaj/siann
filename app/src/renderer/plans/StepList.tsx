@@ -56,7 +56,7 @@ export function StepList({ steps, names, ticked, selectable, disabled, onTicked,
           </button>
         </div>
       ) : null}
-      <ol className="plan-steps" data-testid="plan-steps" aria-label={t('plans.stepsLabel')}>
+      <ol className="plan-steps" data-testid="plan-steps" data-part="plan-steps" aria-label={t('plans.stepsLabel')}>
         {steps.map((step, index) => {
           const isOpen = open.has(index);
           const text = (
@@ -65,7 +65,7 @@ export function StepList({ steps, names, ticked, selectable, disabled, onTicked,
             </span>
           );
           return (
-            <li key={index} className="plan-step" data-testid={`step-${index}`}>
+            <li key={index} className="plan-step" data-testid={`step-${index}`} data-part-item="plan-step">
               <span className="step-number" data-testid={`step-number-${index}`}>
                 {String(index + 1)}
               </span>

@@ -154,7 +154,7 @@ export function Mixer({ client, gestures, realtime, onMeterHooks }: MixerProps) 
 
   return (
     <MetersContext.Provider value={board}>
-      <section className="mixer" data-testid="mixer" aria-label={t('mixer.label')} ref={container}>
+      <section className="mixer" data-testid="mixer" data-part="mixer" aria-label={t('mixer.label')} ref={container}>
         <canvas className="mixer-meters" data-testid="mixer-meters" ref={canvas} aria-hidden="true" />
         {(order ?? []).map((trackId) => (
           <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} />

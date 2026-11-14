@@ -88,7 +88,7 @@ export function PlanPanelView(props: PlanPanelViewProps) {
   // The selected plan's detail, directly under its card.
   const detail =
     plan && set ? (
-        <div className="plan-detail" data-testid="plan-detail">
+        <div className="plan-detail" data-testid="plan-detail" data-part="plan-card">
           <StepList
             key={plan.hash}
             steps={plan.steps}
@@ -110,7 +110,7 @@ export function PlanPanelView(props: PlanPanelViewProps) {
             </div>
           ) : null}
           {entries.length > 0 ? (
-            <div className="plan-actions">
+            <div className="plan-actions" data-part="plan-actions">
               {entries.some((e) => e.id === 'reject') ? (
                 <label className="plan-note">
                   {t('plans.reason')}{' '}
@@ -125,6 +125,7 @@ export function PlanPanelView(props: PlanPanelViewProps) {
                     type="button"
                     className={entry === set.primary ? 'plan-action primary' : 'plan-action'}
                     data-testid={TEST_IDS[entry.id]}
+                    data-part={`plan-${entry.id === 'approveApply' ? 'approve' : entry.id}`}
                     disabled={busy || reason !== undefined}
                     title={reason !== undefined ? t(`actionReason.${reason}`) : undefined}
                     onClick={() => props.onRun(entry)}

@@ -1,0 +1,50 @@
+/* The lower zone: MixConsole.
+
+   Shared source of the redesign's mockup and the app (docs/harness/agent-rules.md,
+   "UI fidelity"): docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html
+   loads this file, and the React component that draws this part of the window
+   uses the same class names and structure. Colours, font sizes and radii are
+   tokens of ../tokens.css. Changing a rule here changes the reference: that
+   needs the maintainer. */
+
+.lower{display:grid;grid-template-rows:26px 1fr;border-top:1px solid var(--divider);background:var(--bg-1);min-height:0;box-shadow:0 -1px 0 var(--line-hi)}
+.tabs{display:flex;align-items:center;gap:2px;padding:0 6px;background:var(--bg-2);border-bottom:1px solid var(--divider);color:var(--tx-3);font-size:var(--fs-small);white-space:nowrap}
+.tab{height:26px;padding:0 10px;display:flex;align-items:center;gap:6px;position:relative}
+.tab.on{color:var(--tx-1)} .tab.on::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:2px;background:var(--tx-1);border-radius:var(--radius-1)}
+.tabs kbd{font:500 9px var(--font-num);color:var(--tx-4);border:1px solid var(--line-2);border-radius:var(--radius-s);padding:0 3px}
+.mixer{display:flex;min-width:0;background:var(--bg-0)}
+.strip{width:88px;flex:none;border-right:1px solid var(--divider);display:grid;grid-template-rows:34px 28px 22px 1fr 16px 22px 22px;background:var(--bg-2);position:relative}
+.strip:nth-child(even){background:var(--bg-alt)}
+.strip.master{width:112px;margin-left:auto;border-left:1px solid var(--divider);border-right:0;background:var(--bg-master)}
+.ins{padding:3px 4px 0;display:flex;flex-direction:column;gap:2px}
+.slot{height:14px;border-radius:var(--radius-s);background:var(--bg-4);border:1px solid var(--line-2);font-size:var(--fs-9h);color:var(--tx-2);padding:0 5px;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden}
+.slot::before{content:"";width:5px;height:5px;border-radius:var(--radius-round);background:var(--ok);flex:none}
+.slot.empty{background:transparent;border-style:dashed;color:var(--tx-4);justify-content:center}.slot.empty::before{display:none}
+.panrow{display:flex;align-items:center;justify-content:center;gap:6px;font:500 10px var(--font-ui);color:var(--tx-2);white-space:nowrap}
+.panrow .lab{width:26px}
+.knob{width:24px;height:24px;position:relative}
+.fad{display:grid;grid-template-columns:20px 22px 1fr;gap:2px;padding:4px 6px 2px 4px;min-height:0}
+.strip.master .fad{grid-template-columns:22px 26px 1fr}
+.scale{position:relative;font:500 8px "Inter",sans-serif;color:var(--tx-4)}
+.scale span{position:absolute;right:1px;transform:translateY(50%);line-height:1}
+.ftrack{position:relative}
+.ftrack::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:4px;margin-left:-2px;border-radius:var(--radius-2);background:var(--bg-slot);border:1px solid var(--divider);box-shadow:0 1px 0 var(--line-hi)}
+.ftrack .unity{position:absolute;left:1px;right:1px;height:1px;background:var(--tx-4)}
+.cap{position:absolute;left:1px;right:1px;height:24px;margin-bottom:-12px;border-radius:var(--radius-s);background:linear-gradient(var(--cap-0) 0,var(--cap-1) 46%,var(--cap-notch) 46%,var(--cap-notch) 54%,var(--cap-2) 54%,var(--cap-3) 100%);border:1px solid var(--divider);box-shadow:0 3px 8px var(--black-a600),inset 0 1px 0 var(--white-a700)}
+.cap.ghost{z-index:1;background:repeating-linear-gradient(135deg,var(--ai-a350) 0 3px,var(--ai-a120) 3px 6px);border:1.5px dashed var(--ai);box-shadow:0 0 12px var(--ai-a450)}
+.gline{position:absolute;left:50%;width:2px;margin-left:-1px;background:var(--ai)}
+.meter{display:flex;gap:2px;justify-content:center;position:relative}
+.meter .ch{width:6px;position:relative;background:var(--bg-slot);border:1px solid var(--divider);border-radius:var(--radius-1h);overflow:hidden}
+.strip.master .meter .ch{width:9px}
+.meter .ch i{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(0deg,var(--meter-low) 0,var(--play) 55%,var(--meter-mid) 78%,var(--err) 96%);background-size:100% 104px;background-position:bottom}
+.meter .ch u{position:absolute;left:0;right:0;height:1.5px;background:var(--tx-0)}
+.readout{display:flex;justify-content:center;gap:5px;font:600 10.5px var(--font-ui);color:var(--tx-1);align-items:center;white-space:nowrap}
+.readout .pk{color:var(--tx-4)} .readout .to{color:var(--ai-2)}
+.btns{display:flex;justify-content:center;gap:3px;align-items:center;white-space:nowrap}
+.nametag{margin:0 3px 3px;border-radius:var(--radius-s);background:color-mix(in srgb,var(--c) 88%,var(--divider));color:var(--bg-well);font-weight:700;font-size:var(--fs-10h);display:grid;place-items:center;white-space:nowrap}
+.strip.muted .nametag{background:color-mix(in srgb,var(--c) 34%,var(--bg-3));color:var(--tx-2)}
+.strip.ghost{background:repeating-linear-gradient(135deg,var(--ai-a100) 0 6px,var(--ai-a030) 6px 12px),var(--bg-alt)}
+.strip.ghost::after{content:"";position:absolute;inset:0;border:1px dashed var(--ai-line);pointer-events:none}
+.strip.ghost .nametag{background:var(--ai)}
+.strip.sel{background:var(--bg-selected)}
+.strip>.stepn{position:absolute;z-index:2}

@@ -1,0 +1,62 @@
+/* The right zone: Plans.
+
+   Shared source of the redesign's mockup and the app (docs/harness/agent-rules.md,
+   "UI fidelity"): docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html
+   loads this file, and the React component that draws this part of the window
+   uses the same class names and structure. Colours, font sizes and radii are
+   tokens of ../tokens.css. Changing a rule here changes the reference: that
+   needs the maintainer. */
+
+.p-head{height:32px;flex:none;display:flex;align-items:center;gap:2px;padding:0 8px 0 4px;border-bottom:1px solid var(--divider);background:var(--bg-2);box-shadow:inset 0 1px 0 var(--line-hi);font-size:var(--fs-11h);color:var(--tx-3);white-space:nowrap}
+.p-head .tab{height:32px;padding:0 8px;font-weight:600}
+.p-head .tab.on svg{color:var(--ai)}
+.ab{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--tx-3)}
+.ab .seg .b{min-width:50px;font-weight:600;padding:0 7px}
+.ab .seg .b.on{background:var(--tx-1);color:var(--bg-well)}
+.agent{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);font-size:var(--fs-small);color:var(--tx-3);white-space:nowrap}
+.agent .av{width:22px;height:22px;border-radius:var(--radius-7);background:linear-gradient(135deg,var(--ai),var(--track-7));display:grid;place-items:center;color:var(--select)}
+.agent b{color:var(--tx-1);font-weight:600}
+.agent .live{margin-left:auto;display:flex;align-items:center;gap:5px}
+.agent .live i{width:6px;height:6px;border-radius:var(--radius-round);background:var(--ok);box-shadow:0 0 0 3px var(--play-a180)}
+.p-scroll{flex:1;min-height:0;overflow:hidden;padding:10px;display:flex;flex-direction:column;gap:10px}
+.card{border:1px solid var(--ai-line);border-radius:var(--radius-10);background:linear-gradient(180deg,var(--ai-a100),var(--ai-a020) 90px),var(--bg-2);box-shadow:0 0 0 3px var(--ai-a070),0 10px 30px var(--black-a350)}
+.card-h{padding:11px 12px 9px}
+.badge{display:inline-flex;align-items:center;gap:4px;height:17px;padding:0 7px;border-radius:var(--radius-9);font-size:var(--fs-9h);font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+:lang(zh) .badge{font-size:var(--fs-10h);letter-spacing:.02em}
+.badge.pending{background:var(--ai);color:var(--ai-ink)}
+.badge.applied{background:var(--play-a140);color:var(--ok-2)}
+.badge.rejected{background:var(--err-a140);color:var(--err-2)}
+.badge.stale{background:var(--warn-a160);color:var(--warn-2)}
+.card-h .top{display:flex;align-items:center;gap:8px;color:var(--tx-3);font-size:var(--fs-10h);white-space:nowrap}
+.card-h .top .hash{margin-left:auto;font-size:var(--fs-micro)}
+.card-h h3{margin:8px 0 4px;font-size:var(--fs-plan);line-height:1.3;font-weight:600}
+.card-h p{margin:0;color:var(--tx-2);font-size:var(--fs-11h);line-height:1.45;font-weight:400}
+.sum{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap}
+.sum span{height:19px;padding:0 7px;border-radius:var(--radius-m);background:var(--bg-4);border:1px solid var(--line-2);font-size:var(--fs-10h);color:var(--tx-2);display:flex;align-items:center;gap:4px}
+.sum span b{color:var(--tx-1);font-weight:500}
+.steps{border-top:1px solid var(--line)}
+.steps-h{display:flex;align-items:center;padding:6px 12px}
+.steps-h a{margin-left:auto;color:var(--tx-3);font-weight:500;font-size:var(--fs-10h)}
+.step{display:grid;grid-template-columns:16px 15px 1fr auto;gap:8px;align-items:center;padding:6px 12px;border-top:1px solid var(--line);font-size:var(--fs-11h)}
+.step.hot{background:var(--ai-a130);box-shadow:inset 2px 0 0 var(--ai)}
+.cb{width:14px;height:14px;border-radius:var(--radius-4);background:var(--ai);display:grid;place-items:center;color:var(--ai-ink)}
+.cb svg{width:10px;height:10px;stroke-width:2.6}
+.step .t{min-width:0;line-height:1.35}
+.step .t b{font-weight:600}
+.step .t .d{display:block;font:400 11px var(--font-ui);color:var(--tx-3);margin-top:1px}
+.step .t .d s{text-decoration-color:var(--tx-4)} .step .t .d em{font-style:normal;color:var(--ai-2)}
+.tdot{display:inline-block;width:7px;height:7px;border-radius:var(--radius-2);background:var(--c);margin-right:5px;vertical-align:1px}
+.step .go{color:var(--tx-4)} .step.hot .go{color:var(--ai-2)}
+.acts{display:grid;grid-template-columns:1fr 1.3fr 34px;gap:6px;padding:10px 12px 12px;border-top:1px solid var(--line)}
+.btn{height:30px;border-radius:var(--radius-7);display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:var(--fs-body);border:1px solid var(--line-2);background:var(--bg-4);color:var(--tx-1);white-space:nowrap}
+.btn kbd{font:500 9px var(--font-num);opacity:.55;border:1px solid currentColor;border-radius:var(--radius-s);padding:0 3px}
+.btn.primary{background:linear-gradient(var(--ai-button-0),var(--ai-button-1));border-color:var(--ai-button-line);color:var(--ai-ink);box-shadow:0 4px 16px var(--ai-button-1-a350),inset 0 1px 0 var(--white-a400)}
+.btn.danger{color:var(--err-2)}
+.hist-h{padding:2px 2px 0;display:flex}
+.hist-h span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500}
+.hrow{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 10px;border-radius:var(--radius-l);background:var(--bg-2);border:1px solid var(--line)}
+.hrow b{font-weight:600;font-size:var(--fs-11h)}
+.hrow small{grid-column:1/-1;color:var(--tx-3);font-size:var(--fs-10h);font-weight:400}
+.composer{margin:0 10px 10px;border:1px solid var(--line-2);border-radius:var(--radius-10);background:var(--bg-3);padding:9px 10px;display:flex;align-items:center;gap:8px;color:var(--tx-3);font-size:var(--fs-11h)}
+.composer svg:first-child{color:var(--ai)}
+.composer .send{margin-left:auto;width:24px;height:24px;border-radius:var(--radius-7);background:var(--bg-5);display:grid;place-items:center;color:var(--tx-2)}
