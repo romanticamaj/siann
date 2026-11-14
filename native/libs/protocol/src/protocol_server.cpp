@@ -1896,8 +1896,10 @@ struct ProtocolServer::Impl {
                 continue;
             }
             try {
-                const command::Revision& revision = session::commitImport(
+                // A pointer, not a reference: GCC's -Wdangling-reference.
+                const command::Revision* committed = &session::commitImport(
                     *session, finished.prepared, nextMediaId(session->history()), options.actor, options.clock());
+                const command::Revision& revision = *committed;
                 events.publishRevision(revision);
                 if (options.auditionPort != nullptr) {
                     options.auditionPort->mainCommitted();

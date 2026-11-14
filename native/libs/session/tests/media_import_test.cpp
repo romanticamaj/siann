@@ -298,7 +298,8 @@ TEST_CASE("prepare writes media and peaks off the session; commit adds one media
     CHECK(std::set<fs::path>(prepared.created.begin(), prepared.created.end()) ==
           std::set<fs::path>{prepared.mediaFile, prepared.peaksFile});
 
-    const auto& revision = commitImport(session, prepared, "med_1", "agent", "t1");
+    const auto* committed = &commitImport(session, prepared, "med_1", "agent", "t1");  // GCC -Wdangling-reference
+    const auto& revision = *committed;
     REQUIRE(revision.commands.size() == 1);
     CHECK(revision.commands[0].op() == "media.add");
     const auto* media = revision.document.media("med_1");

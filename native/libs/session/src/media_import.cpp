@@ -198,11 +198,17 @@ void discardImport(const PreparedImport& prepared) noexcept {
 
 ImportResult importMedia(Session& session, const fs::path& source, const std::string& mediaId, std::string actor,
                          std::string time) {
+    std::error_code ec;
+    if (!fs::is_regular_file(source, ec)) {
+        // As before the import job existed: a missing file is the file system's error.
+        throw io::IoError(source, "no file to import at this path");
+    }
     ImportSource input = openImportSource(source);
     const std::int64_t sessionRate = session.history().head().document.root().sampleRate;
     const PreparedImport prepared = prepareImport(session.bundlePath(), sessionRate, input, nullptr, false);
-    const command::Revision& revision = commitImport(session, prepared, mediaId, std::move(actor), std::move(time));
-    return ImportResult{&revision, prepared.mediaFile, prepared.originalHash.has_value()};
+    // A pointer, not a reference: GCC's -Wdangling-reference.
+    const command::Revision* revision = &commitImport(session, prepared, mediaId, std::move(actor), std::move(time));
+    return ImportResult{revision, prepared.mediaFile, prepared.originalHash.has_value()};
 }
 
 }  // namespace siann::session
