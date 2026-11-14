@@ -9,13 +9,20 @@
 // - JUCE's licence, and the notices of the Steinberg SDKs JUCE carries (ASIO,
 //   VST3), from the JUCE source the engine build used;
 // - CLAP, IXWebSocket, r8brain and dr_libs, linked into siann-engine;
-// - the OFL texts of the fonts the renderer ships.
+// - the OFL texts of the fonts the renderer ships;
+// - <package>-LICENSE.txt for every npm package app/package-lock.json installs
+//   for run time (React, react-dom, its scheduler, react-resizable-panels: all
+//   MIT, bundled by esbuild into the renderer inside app.asar), from
+//   app/node_modules. The list follows the lock file, so a new runtime
+//   dependency cannot ship without its notice.
 //
 // The engine build's dependency sources are found as scripts/check-all.js finds
 // them (the shared cache recorded in CMakeCache.txt, else _deps); the build is
 // native/build/desktop-release, or SIANN_LICENSE_BUILD_DIR. A missing text fails.
 // Electron's own LICENSE.electron.txt and LICENSES.chromium.html come with the
-// Electron distribution electron-builder packages.
+// Electron distribution electron-builder packages. electron-builder's own
+// elevate.exe is not packed (nsis.packElevateHelper is false: a per-user
+// install with no updater never elevates).
 'use strict';
 
 const fs = require('node:fs');
@@ -27,9 +34,34 @@ const APP = path.resolve(__dirname, '..');
 const ROOT = path.resolve(APP, '..');
 const OUT = path.join(APP, 'build', 'licenses');
 
+// The packages app/package-lock.json installs that are not devDependencies.
+function runtimePackages(lock = JSON.parse(fs.readFileSync(path.join(APP, 'package-lock.json'), 'utf8'))) {
+  return Object.entries(lock.packages)
+    .filter(([at, entry]) => at.startsWith('node_modules/') && !entry.dev && !entry.devOptional)
+    .map(([at]) => at.slice('node_modules/'.length))
+    .sort();
+}
+
+// The name of an npm package's licence text in build/licenses (a scope's
+// slash becomes a dash).
+function npmLicenceName(name) {
+  return `${name.replace(/^@/, '').replace(/\//g, '-')}-LICENSE.txt`;
+}
+
+// The package's licence file in app/node_modules (LICENSE, LICENSE.md, ...);
+// the plain LICENSE path when there is none, so collect() reports it missing.
+function npmLicenceFile(name, modules = path.join(APP, 'node_modules')) {
+  const dir = path.join(modules, ...name.split('/'));
+  const found = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((file) => /^licen[cs]e(\.(md|txt))?$/i.test(file)).sort()[0]
+    : undefined;
+  return path.join(dir, found || 'LICENSE');
+}
+
 function sources(buildDir) {
   const dep = (name) => dependencySource(buildDir, name);
   const juce = dep('juce');
+  const npm = Object.fromEntries(runtimePackages().map((name) => [npmLicenceName(name), npmLicenceFile(name)]));
   return {
     'GPL-2.0.txt': path.join(ROOT, 'LICENSE'),
     'JUCE-LICENSE.md': path.join(juce, 'LICENSE.md'),
@@ -42,6 +74,7 @@ function sources(buildDir) {
     'dr_libs-LICENSE.txt': path.join(dep('dr_libs'), 'LICENSE'),
     'Inter-OFL.txt': path.join(APP, 'renderer', 'fonts', 'Inter-OFL.txt'),
     'JetBrainsMono-OFL.txt': path.join(APP, 'renderer', 'fonts', 'JetBrainsMono-OFL.txt'),
+    ...npm,
   };
 }
 
@@ -68,4 +101,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { collect, sources };
+module.exports = { collect, npmLicenceName, runtimePackages, sources };
