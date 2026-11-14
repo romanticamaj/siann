@@ -8,10 +8,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include "support/live_rig.hpp"
+#include "siann/realtime/capture_bank.hpp"
+#include "siann/realtime/recorder.hpp"
 #include "siann/realtime/stream_resampler.hpp"
 #include "siann/rt/realtime_thread.hpp"
 
@@ -203,6 +206,80 @@ TEST_CASE("Cycle enabled with the playhead at or past the right locator never wr
         CHECK(mismatches == 0);
         CHECK(live.engine.driver().playhead() >= 100'000);
     }
+}
+
+// m5b-engine-record (spec, "Cycle"): while a recording captures, the wrap is
+// suspended, so the take runs straight through R as one contiguous run of the
+// input; once capture ends, a playhead before R wraps again.
+TEST_CASE("Cycle on while capturing records straight through the right locator", "[playback][cycle][record]") {
+    CycleFixture f;
+    constexpr std::int64_t left = 10'003;
+    constexpr std::int64_t right = 30'007;
+    f.exec(setLocators(left, right));
+    const auto reference = offline(f.doc(), f.bundle(), 120'000);
+
+    PlaybackOptions options = stoppedOptions();
+    options.capture.slots = 1;
+    options.capture.recorder.writerThread = false;
+    PlaybackEngine engine(f.session, options);
+    engine.load();
+    host::ManualAudioDevice device;
+    // A counter on the input: a take that is one contiguous run reads 0, 1, 2, ...
+    device.setInputGenerator([](int, std::int64_t frame) { return static_cast<float>(frame) / 16'777'216.0f; });
+    host::AudioDeviceConfig config = deviceConfig();
+    config.inputChannels = 1;
+    engine.start(device, config);
+    realtime::CaptureBank& bank = *engine.driver().captureBank();
+    bank.arm(0, 0, 1);
+    const fs::path take = f.dir.path() / "take.wav";
+    bank.recorder(0).start(take, 48'000, {}, {}, 1);
+    engine.driver().setCaptureActive(true);
+    engine.setCycle(true);
+    engine.transport().locate(left);
+    engine.transport().play();
+
+    std::vector<std::vector<float>> out{2};
+    const auto step = [&] {
+        device.pumpAll(1, out);
+        engine.tick();
+        engine.butler().runOnce();
+        engine.tick();
+        bank.recorder(0).drain();
+    };
+    for (int i = 0; i < 64 && !engine.driver().playing(); ++i) {
+        step();
+    }
+    REQUIRE(engine.driver().playing());
+    while (engine.driver().playhead() < right + 10'000) {
+        step();
+    }
+    CHECK(engine.driver().cycleWraps() == 0);
+    engine.driver().setCaptureActive(false);
+    const realtime::Recorder::Result result = bank.recorder(0).stop();
+    CHECK(result.endedBy == realtime::EndedBy::stop);
+    CHECK(result.startPosition <= left);
+    CHECK(result.startPosition + result.frames > right + 5'000);
+    const media::AudioBuffer recorded = [&] {
+        std::ifstream in(take, std::ios::binary);
+        return media::decodeWav(std::string(std::istreambuf_iterator<char>(in), {}));
+    }();
+    REQUIRE(recorded.info.frames == result.frames);
+    for (std::int64_t i = 1; i < recorded.info.frames; ++i) {
+        const auto at = static_cast<std::size_t>(i);
+        if (recorded.samples[at] - recorded.samples[at - 1] != 1.0f / 16'777'216.0f) {
+            FAIL("the take is not one contiguous run of the input at frame " << i);
+        }
+    }
+
+    // Capture over: back before R, the cycle wraps again.
+    engine.transport().locate(right - 2'000);
+    for (int i = 0; i < 200 && engine.driver().cycleWraps() == 0; ++i) {
+        step();
+    }
+    CHECK(engine.driver().cycleWraps() >= 1);
+    CHECK(engine.driver().playhead() < right);
+    engine.stop();
+    (void)reference;
 }
 
 TEST_CASE("Cycle without locators has no effect", "[playback][cycle]") {

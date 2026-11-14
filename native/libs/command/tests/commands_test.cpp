@@ -345,5 +345,41 @@ TEST_CASE("The command catalog is listed", "[command]") {
                        "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add",
                        "media.remove", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
-                       "track.rename", "track.set_gain", "track.set_mute", "track.set_pan", "track.set_solo"});
+                       "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_pan",
+                       "track.set_solo"});
+}
+
+// m5b-engine-record: track.set_input {trackId, input: {port, channels} | null}.
+TEST_CASE("track.set_input sets and clears the input and declares only the track", "[command][input]") {
+    const Document doc = base();
+    const auto set = prepare(doc, cmd(R"({"op":"track.set_input","trackId":"trk_1","input":{"port":2,"channels":2}})"));
+    CHECK(set.effects == DeclaredEffects{ref(EntityType::track, "trk_1")});
+    REQUIRE(set.result.track("trk_1")->input.has_value());
+    CHECK(set.result.track("trk_1")->input->port == 2);
+    CHECK(set.result.track("trk_1")->input->channels == 2);
+    CHECK_FALSE(doc.track("trk_1")->input.has_value());
+
+    const auto mono = prepare(set.result, cmd(R"({"op":"track.set_input","trackId":"trk_1","input":{"port":0,"channels":1}})"));
+    CHECK(mono.result.track("trk_1")->input == siann::model::TrackInput{0, 1});
+
+    const auto cleared = prepare(set.result, cmd(R"({"op":"track.set_input","trackId":"trk_1","input":null})"));
+    CHECK(cleared.effects == DeclaredEffects{ref(EntityType::track, "trk_1")});
+    CHECK_FALSE(cleared.result.track("trk_1")->input.has_value());
+    CHECK(cleared.result.documentHash() == doc.documentHash());  // cleared is the track as it was
+}
+
+TEST_CASE("track.set_input refuses a bad input and an unknown track", "[command][input]") {
+    const Document doc = base();
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":{"port":-1,"channels":1}})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":{"port":0,"channels":3}})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":{"port":0,"channels":0}})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":{"port":0}})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":{"port":0,"channels":1,"x":1}})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":"in 1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_9","input":null})") == "not_found");
 }

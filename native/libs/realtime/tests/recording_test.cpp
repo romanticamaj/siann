@@ -120,6 +120,8 @@ TEST_CASE("Recording captures the input from the block where it was armed", "[re
     CHECK(result.startPosition == 10 * kBlock);
     CHECK(reportedStart == 10 * kBlock);
     CHECK(result.overflows == 0);
+    CHECK(result.endedBy == realtime::EndedBy::stop);
+    CHECK(realtime::endedByName(result.endedBy) == "stop");
     const auto take = readWav(result.file);
     REQUIRE(take.info.frames == 50 * kBlock);
     for (std::int64_t i = 0; i < take.info.frames; ++i) {
@@ -291,6 +293,8 @@ TEST_CASE("An overflow ends the take at the last contiguous frame, even after th
     driver.stop();
 
     CHECK(result.overflows == 5);  // the block that did not fit and the four after it
+    CHECK(result.endedBy == realtime::EndedBy::overflow);
+    CHECK(realtime::endedByName(result.endedBy) == "overflow");
     CHECK(result.frames == 2 * kBlock);
     CHECK(result.startPosition == 3 * kBlock);
     const auto take = readWav(result.file);
@@ -302,6 +306,124 @@ TEST_CASE("An overflow ends the take at the last contiguous frame, even after th
             FAIL("the take is not one contiguous run of the input at frame " << i);
         }
     }
+}
+
+namespace {
+
+// A take writer whose disk fills after `limit` frames: appends past it throw, as
+// a full disk or a failed write does. What fitted is written to a real WAV.
+class FullDiskWriter final : public realtime::TakeWriter {
+public:
+    FullDiskWriter(const fs::path& file, int channels, std::int64_t sampleRate, std::int64_t limit)
+        : inner_(file, channels, sampleRate), limit_(limit) {}
+    void append(const host::AudioBufferView& source, int frames) override {
+        if (inner_.frames() + frames > limit_) {
+            throw std::runtime_error("no space left on the device");
+        }
+        inner_.append(source, frames);
+    }
+    void checkpoint() override { inner_.checkpoint(); }
+    void close() override { inner_.close(); }
+    std::int64_t frames() const noexcept override { return inner_.frames(); }
+
+private:
+    media::WavStreamWriter inner_;
+    std::int64_t limit_;
+};
+
+Recorder::Options fullDiskAfter(std::int64_t limit, bool writerThread) {
+    Recorder::Options options;
+    options.writerThread = writerThread;
+    options.writerFactory = [limit](const fs::path& file, int channels, std::int64_t sampleRate) {
+        return std::make_unique<FullDiskWriter>(file, channels, sampleRate, limit);
+    };
+    return options;
+}
+
+}  // namespace
+
+// m5b-engine-record (spec, "Recording": a write failure stops recording, keeps
+// everything written so far, and reports it): the writer catches the failure,
+// the audio thread captures nothing more, and the result says `disk`.
+TEST_CASE("A writer failure ends the take, keeps what was written and reports disk", "[record][disk]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder recorder(2, fullDiskAfter(3 * kBlock, false));
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.play();
+    driver.start(device, config(2));
+
+    recorder.start(dir.path() / "take.wav", 48'000);
+    device.pump(3);
+    CHECK_NOTHROW(recorder.drain());  // three blocks fit
+    CHECK_FALSE(recorder.diskFailed());
+    device.pump(2);
+    CHECK_NOTHROW(recorder.drain());  // the fourth does not
+    CHECK(recorder.diskFailed());
+    CHECK(recorder.captureEnded());
+    const auto before = rt::allocationViolations();
+    device.pump(4);  // nothing more is captured
+    CHECK(rt::allocationViolations() == before);
+    Recorder::Result result;
+    CHECK_NOTHROW(result = recorder.stop());
+    driver.stop();
+
+    CHECK(result.endedBy == realtime::EndedBy::disk);
+    CHECK(realtime::endedByName(result.endedBy) == "disk");
+    CHECK(result.overflows == 0);
+    CHECK(result.frames == 3 * kBlock);
+    const auto take = readWav(result.file);  // readable, with every frame that was written
+    REQUIRE(take.info.frames == 3 * kBlock);
+    for (std::int64_t i = 0; i < take.info.frames; ++i) {
+        if (take.samples[static_cast<std::size_t>(i * 2)] != inputValue(0, i)) {
+            FAIL("kept sample differs at frame " << i);
+        }
+    }
+}
+
+TEST_CASE("No exception escapes the writer thread", "[record][disk]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder recorder(2, fullDiskAfter(0, true));  // the first append fails, on the writer thread
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.play();
+    driver.start(device, config(2));
+    recorder.start(dir.path() / "take.wav", 48'000);
+    device.pump(20);
+    // An escaped exception would have ended the process; stop() joins the thread.
+    const Recorder::Result result = recorder.stop();
+    driver.stop();
+    CHECK(recorder.diskFailed());
+    CHECK(result.endedBy == realtime::EndedBy::disk);
+    CHECK(result.frames == 0);
+}
+
+TEST_CASE("A failing onStart is a disk failure too", "[record][disk]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder::Options options;
+    options.writerThread = false;
+    Recorder recorder(1, options);
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    driver.play();
+    driver.start(device, config(1));
+    recorder.start(dir.path() / "take.wav", 48'000,
+                   [](std::int64_t) { throw std::runtime_error("the manifest cannot be written"); });
+    device.pump(2);
+    CHECK_NOTHROW(recorder.drain());
+    CHECK(recorder.diskFailed());
+    const Recorder::Result result = recorder.stop();
+    driver.stop();
+    CHECK(result.endedBy == realtime::EndedBy::disk);
+    CHECK(result.frames == 0);  // nothing is written without a known position
 }
 
 TEST_CASE("Loopback null test: a recorded take lands where it was played", "[record][latency]") {

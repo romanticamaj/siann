@@ -51,6 +51,15 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.feature('plugins'), false, 'false is absent');
   assert.equal(capabilitySelector({ ...FULL, features: { plugins: { formats: ['clap'], flags: [] } } }).feature('plugins'), true);
   assert.equal(full.feature('locators'), false);
+  // m5b-engine-record: recording through the protocol, reported only with a record port.
+  assert.equal(full.feature('recording'), true);
+  assert.equal(reduced.feature('recording'), false, 'the reduced engine has no features.recording');
+  for (const method of ['record.arm', 'transport.record', 'record.recover_take']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
+  assert.equal(full.command('track.set_input'), true);
+  assert.equal(reduced.command('track.set_input'), false);
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);

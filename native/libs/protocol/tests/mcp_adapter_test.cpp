@@ -11,7 +11,9 @@
 #include <vector>
 
 #include "support/protocol_fixture.hpp"
+#include "../src/mcp_adapter.hpp"  // the tool table with each tool's scope
 #include "siann/command/command.hpp"
+#include "siann/protocol/record_port.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/protocol/about.hpp"
 #include "siann/protocol/transport_port.hpp"
@@ -32,7 +34,15 @@ const std::vector<std::string> kTools = {
     "audition",       "merge_proposal",        "discard_proposal", "execute",      "job_status",
     "render",         "open_session",          "save_session",    "play",          "stop",
     "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
-    "select_device",
+    "select_device",  "record_arm",            "record",
+};
+
+// The propose scope's tools before m5b-engine-record: recording added none.
+const std::vector<std::string> kProposeTools = {
+    "list_commands", "describe_capabilities", "inspect_session", "submit_plan", "plan_status", "reject_plan",
+    "propose_plan",  "audition",              "discard_proposal", "job_status", "render",     "save_session",
+    "play",          "stop",                  "locate",           "set_cycle",  "set_click",  "engine_status",
+    "list_devices",
 };
 
 // A transport port that records what each tool reached.
@@ -306,7 +316,7 @@ TEST_CASE("plugin.registry and plugin.approve are not MCP tools", "[protocol][mc
     }
 }
 
-TEST_CASE("tools/list returns the 26 tools with input schemas", "[protocol][mcp]") {
+TEST_CASE("tools/list returns the 28 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
@@ -623,6 +633,81 @@ TEST_CASE("a propose client's select_device is scope_denied and runs nothing", "
     CHECK(at(mcp.ok("list_devices"), "devices").asArray().size() == 1);
     CHECK(at(at(mcp.ok("engine_status"), "device"), "id").asString() == "fake");
     CHECK(at(mcp.ok("play"), "playing").asBool());
+}
+
+// m5b-engine-record: record_arm and record wrap record.arm and transport.record
+// in the trusted scope only; the propose scope gains no tool.
+namespace {
+
+class ArmingPort final : public protocol::RecordPort {
+public:
+    protocol::RecordState arm(const std::string& trackId, bool armed) override {
+        calls.push_back("arm");
+        if (armed) {
+            state.armed = {trackId};
+        } else {
+            state.armed.clear();
+        }
+        return state;
+    }
+    protocol::TransportState record(bool enabled) override {
+        calls.push_back("record");
+        state.recording = enabled;
+        protocol::TransportState out{enabled, 0, false, {}};
+        out.recording = enabled;
+        out.armed = state.armed;
+        return out;
+    }
+    protocol::RecordState recordState() const override { return state; }
+    std::vector<protocol::PendingTake> pendingTakes() const override { return {}; }
+    protocol::RecoverResult recoverTake(const std::string&, bool, std::string, std::string) override {
+        calls.push_back("recover");
+        return {};
+    }
+    protocol::RecordState state;
+    std::vector<std::string> calls;
+};
+
+ServerOptions withRecorder(protocol::TransportPort& transport, protocol::RecordPort& record, McpScope scope) {
+    ServerOptions options = withTransport(transport, scope);
+    options.recordPort = &record;
+    return options;
+}
+
+}  // namespace
+
+TEST_CASE("record_arm and record need the trusted scope", "[protocol][mcp][record]") {
+    RecordingPort transport;
+    ArmingPort port;
+    SECTION("propose") {
+        Fixture f(withRecorder(transport, port, McpScope::propose));
+        Mcp mcp(f);
+        mcp.initialize();
+        CHECK(at(mcp.error("record_arm", Value(Object{{"trackId", Value("trk_1")}, {"armed", Value(true)}})), "code")
+                  .asString() == "scope_denied");
+        CHECK(at(mcp.error("record", Value(Object{{"enabled", Value(true)}})), "code").asString() == "scope_denied");
+        CHECK(port.calls.empty());
+    }
+    SECTION("trusted") {
+        Fixture f(withRecorder(transport, port, McpScope::trusted));
+        Mcp mcp(f);
+        mcp.initialize();
+        const Value armed = mcp.ok("record_arm", Value(Object{{"trackId", Value("trk_1")}, {"armed", Value(true)}}));
+        CHECK(at(armed, "armed").asArray().size() == 1);
+        const Value recording = mcp.ok("record", Value(Object{{"enabled", Value(true)}}));
+        CHECK(at(recording, "recording").asBool());
+        CHECK(port.calls == std::vector<std::string>{"arm", "record"});
+    }
+}
+
+TEST_CASE("recording adds no tool to the propose scope", "[protocol][mcp][record]") {
+    std::vector<std::string> propose;
+    for (const auto& tool : protocol::detail::mcpTools()) {
+        if (tool.scope == McpScope::propose) {
+            propose.emplace_back(tool.name);
+        }
+    }
+    CHECK(propose == kProposeTools);
 }
 
 // m5-plan-review (Protocol v0 item 25): plan.list and plan.preview serve the

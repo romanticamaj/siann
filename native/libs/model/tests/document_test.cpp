@@ -397,3 +397,74 @@ TEST_CASE("A large document stays consistent across many edits", "[model][scale]
     CHECK(edited.documentHash() != before);
     CHECK(doc.documentHash() == before);
 }
+
+// m5b-engine-record: a track's input ({port, channels}, an IoPort of "Channels
+// and I/O") is part of the track entity, omitted while absent.
+TEST_CASE("A track's input round-trips and is omitted while absent", "[model][input]") {
+    Document doc = addTrack(Document::create("Song", 48'000), track("trk_1"));
+    // The literal JSON of this track before the input existed, and its hash.
+    const std::string before =
+        R"({"channels":2,"gainMilliDb":0,"id":"trk_1","kind":"audio","mute":false,"name":"Track trk_1","pan":0,)"
+        R"("schema":"siann.entity.track.v1","solo":false})";
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(*doc.track("trk_1"))) == before);
+    CHECK(doc.entityHash(EntityRef{EntityType::track, "trk_1"}) == sha256(before));
+
+    Track withInput = *doc.track("trk_1");
+    withInput.input = siann::model::TrackInput{3, 1};
+    const Document recorded = doc.withTrack(withInput);
+    CHECK(recorded.validate().empty());
+    const std::string json = siann::jcs::canonicalize(siann::model::toJson(*recorded.track("trk_1")));
+    CHECK(json.find(R"("input":{"channels":1,"port":3})") != std::string::npos);
+    const Document back = Document::fromJson(recorded.toJson());
+    REQUIRE(back.track("trk_1")->input.has_value());
+    CHECK(*back.track("trk_1")->input == siann::model::TrackInput{3, 1});
+    CHECK(back.documentHash() == recorded.documentHash());
+    CHECK(recorded.documentHash() != doc.documentHash());
+
+    // Cleared again, the track is byte-identical to before.
+    Track cleared = withInput;
+    cleared.input.reset();
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(cleared)) == before);
+}
+
+TEST_CASE("The input fixture gives the Node bridge's hashes and v2 keeps its own", "[model][fixtures][input]") {
+    const Value fixture = readFixture("model/session-document-v2-input.json");
+    const Document doc = Document::fromJson(*fixture.find("document"));
+    CHECK(doc.validate().empty());
+    REQUIRE(doc.track("trk-vox")->input.has_value());
+    CHECK(doc.track("trk-vox")->input->port == 3);
+    CHECK(doc.track("trk-vox")->input->channels == 1);
+    CHECK_FALSE(doc.track("trk_bass")->input.has_value());
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        if (leaf.find("type")->asString() == "track") {
+            const std::string& id = leaf.find("id")->asString();
+            INFO(id);
+            CHECK(formatHash(doc.entityHash(EntityRef{EntityType::track, id})) == leaf.find("entityHash")->asString());
+        }
+    }
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(*fixture.find("document")));
+
+    // The pre-feature document reads and writes exactly as before.
+    const Value v2 = readFixture("model/session-document-v2.json");
+    const Document old = Document::fromJson(*v2.find("document"));
+    CHECK(siann::jcs::canonicalize(old.toJson()) == siann::jcs::canonicalize(*v2.find("document")));
+    CHECK(formatHash(old.documentHash()) == v2.find("documentHash")->asString());
+}
+
+TEST_CASE("A malformed track input is rejected", "[model][input]") {
+    const Value fixture = readFixture("model/session-document-v2-input.json");
+    const std::string text = siann::jcs::canonicalize(*fixture.find("document"));
+    auto mutated = [&](const std::string& from, const std::string& to) {
+        std::string copy = text;
+        const auto pos = copy.find(from);
+        REQUIRE(pos != std::string::npos);
+        copy.replace(pos, from.size(), to);
+        return siann::json::parse(copy);
+    };
+    const std::string input = R"("input":{"channels":1,"port":3})";
+    CHECK(errorCode(mutated(input, R"("input":{"channels":3,"port":3})")) != "no error");
+    CHECK(errorCode(mutated(input, R"("input":{"channels":1,"port":-1})")) != "no error");
+    CHECK(errorCode(mutated(input, R"("input":{"channels":1,"port":3,"x":1})")) == "unknown_field");
+    CHECK(errorCode(mutated(input, R"("input":null)")) != "no error");
+}
