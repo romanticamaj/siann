@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Nightly, everything: a pull request runs only the jobs its paths need.
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,6 +25,45 @@ env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
 
 jobs:
+  # Which jobs a pull request needs, from the paths it changes: the table in
+  # scripts/check-all.js (`--changed`), the same one agents run locally. Pushes to
+  # main, the nightly schedule and manual runs take every job. A plain git diff
+  # in a step: no third-party action.
+  changes:
+    name: Changed paths
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    outputs:
+      native: ${{ steps.pick.outputs.native }}
+      desktop: ${{ steps.pick.outputs.desktop }}
+      app: ${{ steps.pick.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull request's merge commit and its first parent, the base.
+          fetch-depth: 2
+      - name: Pick the jobs
+        id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            node scripts/check-all.js --changed --base HEAD^1 --plan --json > "$RUNNER_TEMP/plan.json"
+          else
+            echo '{"steps":["node","native","desktop","app","gcc"],"changed":null}' > "$RUNNER_TEMP/plan.json"
+          fi
+          cat "$RUNNER_TEMP/plan.json"
+          # gcc's CI counterpart is the Linux native job. The desktop job also runs
+          # app/'s editor e2e against its JUCE engine, so app/ changes run it too.
+          node -e '
+            const steps = new Set(require(process.argv[1]).steps);
+            const out = {
+              native: steps.has("native") || steps.has("gcc"),
+              desktop: steps.has("desktop") || steps.has("app"),
+              app: steps.has("app"),
+            };
+            for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
+          ' "$RUNNER_TEMP/plan.json" | tee -a "$GITHUB_OUTPUT"
+
   node:
     name: Node bridge (ubuntu)
     timeout-minutes: 90
@@ -34,6 +77,8 @@ jobs:
 
   native:
     name: Native core (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -42,12 +87,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: native
       - name: Configure
         run: cmake -S native -B native/build/ci -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
       - name: Build
         run: cmake --build native/build/ci --config Debug
       - name: Test
         run: ctest --test-dir native/build/ci -C Debug --output-on-failure --timeout 300
+      - name: Compiler cache statistics
+        if: always()
+        shell: bash
+        run: ccache -s 2>/dev/null || sccache --show-stats 2>/dev/null || true
 
   # Clang RealtimeSanitizer over the whole native suite (realtime, playback,
   # host_fake, cli and the sanitizer canaries). Every audio callback runs in
@@ -57,6 +109,8 @@ jobs:
   # apt.llvm.org provides it. Apple Clang has no RTSan, so macOS is not covered.
   rtsan:
     name: Native core RTSan (ubuntu, Clang 20)
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     env:
@@ -69,6 +123,9 @@ jobs:
           sudo bash llvm.sh 20
           sudo apt-get install -y libclang-rt-20-dev ninja-build
           clang++-20 --version
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: rtsan
       - name: Configure
         run: cmake -S native -B native/build/rtsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_WERROR=ON -DSIANN_RTSAN=ON
       - name: Build
@@ -77,9 +134,14 @@ jobs:
         run: ctest --test-dir native/build/rtsan --output-on-failure --no-tests=error
       - name: SRC tests through r8brain under RTSan
         run: native/build/rtsan/libs/realtime/siann_realtime_tests "[src]"
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s || true
 
   desktop:
     name: Desktop host with JUCE (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     timeout-minutes: 90
     env:
       electron_config_cache: ${{ github.workspace }}/.electron-cache
@@ -111,6 +173,9 @@ jobs:
           fi
           # Forward slashes on Windows too: CMake reads the path as a URL.
           echo "JUCE_ARCHIVE=$(pwd -W 2>/dev/null || pwd)/.juce-archive/juce.tar.gz" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: desktop
       - name: Configure
         run: cmake -S native -B native/build/desktop -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON -DSIANN_WITH_JUCE=ON -DSIANN_JUCE_ARCHIVE="${{ env.JUCE_ARCHIVE }}"
       - name: Build
@@ -209,12 +274,18 @@ jobs:
           for i in 1 2 3 4 5; do node node_modules/electron/install.js && break; [ $i = 5 ] && exit 1; sleep 30; done
           npm run build
           npx playwright test editor.spec.ts
+      - name: Compiler cache statistics
+        if: always()
+        shell: bash
+        run: ccache -s 2>/dev/null || sccache --show-stats 2>/dev/null || true
 
   # The Electron shell (m0-electron-shell): the core-only siann-engine target
   # and the Playwright Electron tests in app/ against it. Linux runs Electron
   # under a virtual display; the Chromium sandbox helper needs its setuid bit.
   app:
     name: Electron shell (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     timeout-minutes: 90
     env:
       electron_config_cache: ${{ github.workspace }}/.electron-cache
@@ -233,6 +304,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
+      - uses: ./.github/actions/compiler-cache
+        with:
+          name: app
       - name: Configure
         run: cmake -S native -B native/build/app -DCMAKE_BUILD_TYPE=Debug -DSIANN_WERROR=ON
       - name: Build siann-engine, siann-cli and the hostile plugin
@@ -285,3 +359,25 @@ jobs:
         if: runner.os != 'Linux'
         working-directory: app
         run: npm test
+
+  # The one check to require: passes when every job above passed or was skipped
+  # because its paths did not change. A skipped matrix job reports under its
+  # unexpanded name, so the per-OS checks cannot be required on their own.
+  ci-ok:
+    name: CI ok
+    if: always()
+    needs: [changes, node, native, rtsan, desktop, app]
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "a job ended with $result"; exit 1 ;;
+            esac
+          done
