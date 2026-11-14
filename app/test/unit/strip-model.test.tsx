@@ -73,7 +73,7 @@ function mixer(client: SessionClient, caps: Capabilities | null = FULL): string 
 }
 
 function inspector(client: SessionClient, caps: Capabilities | null = FULL): string {
-  return within(caps, <Inspector client={client} gestures={gestures} clipId="clp_1" />);
+  return within(caps, <Inspector client={client} gestures={gestures} trackId="trk_a" />);
 }
 
 // The opening tag carrying data-testid="<id>".
@@ -183,7 +183,7 @@ test('the capability rule: the fader and pan need the gesture methods; M and S t
   for (const id of ['fader-trk_a', 'pan-trk_a', 'mute-trk_a', 'solo-trk_a']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
 });
 
-test('the Inspector\'s Track tab shows the selected clip\'s track: name, colour, M, S, volume and pan', () => {
+test('the Inspector\'s Track tab shows the selected track: name, colour, M, S, volume and pan', () => {
   const tracks = [{ ...track('trk_a'), gainMilliDb: -4000, pan: -3500, mute: true }, track('trk_b')];
   const html = inspector(fakeClient(snapshot(tracks)));
   assert.equal(textOf(html, 'inspector-track'), 'trk_a');
@@ -195,9 +195,16 @@ test('the Inspector\'s Track tab shows the selected clip\'s track: name, colour,
   assert.equal(attr(html, 'inspector-volume', 'aria-valuetext'), '-4.0 dB');
   assert.equal(attr(html, 'inspector-pan', 'aria-valuetext'), 'L35');
   assert.equal(textOf(html, 'inspector-volume-value'), '-4.0 dB');
-  // No clip selected: no track.
-  const none = within(FULL, <Inspector client={fakeClient(snapshot())} gestures={gestures} clipId={null} />);
+  // The selection is a track (m5-ui-arrange's track list selects one), not a
+  // clip: trk_b holds no clip and is still shown.
+  const other = within(FULL, <Inspector client={fakeClient(snapshot(tracks))} gestures={gestures} trackId="trk_b" />);
+  assert.equal(textOf(other, 'inspector-track'), 'trk_b');
+  assert.equal(attr(other, 'inspector-mute', 'aria-pressed'), 'false');
+  // No track selected, or one no longer in the session: no track.
+  const none = within(FULL, <Inspector client={fakeClient(snapshot())} gestures={gestures} trackId={null} />);
   assert.ok(!none.includes('data-testid="inspector-volume"'));
+  const gone = within(FULL, <Inspector client={fakeClient(snapshot())} gestures={gestures} trackId="trk_gone" />);
+  assert.ok(!gone.includes('data-testid="inspector-volume"'));
 });
 
 test('a gesture overlay on the track shows in its strip and in the Inspector alike', () => {

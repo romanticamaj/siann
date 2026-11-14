@@ -67,6 +67,20 @@ test('formatDb prints one decimal with an explicit sign', () => {
   assert.equal(formatDb(-2147483648), '-inf dB');
 });
 
+// One rounding for every dB the user reads (track header, info line,
+// MixConsole, Inspector): half away from zero, so a gain and its negation read
+// as mirror images (+0.65 dB and -0.65 dB as +0.7 and -0.7), never
+// Math.round's half-up (-0.65 dB as -0.6).
+test('formatDb rounds a half away from zero, symmetric about 0 dB', () => {
+  for (const milliDb of [50, 150, 650, 1250, 6050]) {
+    const positive = formatDb(milliDb);
+    assert.equal(formatDb(-milliDb), positive.replace('+', '-'), String(milliDb));
+  }
+  assert.equal(formatDb(650), '+0.7 dB');
+  assert.equal(formatDb(-650), '-0.7 dB');
+  assert.equal(formatDb(-1250), '-1.3 dB');
+});
+
 test('formatPeakDb prints a linear peak in dBFS with one decimal', () => {
   assert.equal(formatPeakDb.length, 1);
   assert.equal(formatPeakDb(1), '0.0');
