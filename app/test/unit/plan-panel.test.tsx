@@ -149,6 +149,37 @@ test('with every disclosure closed no entity id, milli-dB field, raw pan value o
   assert.ok(markup.includes('Pad'), 'the new track by its name');
 });
 
+// The engine's refusals name ids: staleMessage() writes "track:<id>
+// (modified)" and already_exists names the id it found.
+const STALE_REFUSAL = {
+  code: 'plan_stale',
+  message: `the plan is stale: track:${VOX} (modified)`,
+  detail: ` (track:${VOX})`,
+  changedEntities: [`track:${VOX}`],
+};
+const EXISTS_REFUSAL = { code: 'already_exists', message: `a track with id ${PAD} already exists`, detail: '', changedEntities: [] };
+
+test('a refusal names no entity id until its disclosure is opened; plan_stale names the changed entities in user wording', () => {
+  for (const selected of [FRESH, CHILD]) {
+    const markup = view({ selected, error: STALE_REFUSAL, previewError: EXISTS_REFUSAL, preview: null });
+    for (const id of ENTITY_IDS) assert.ok(!markup.includes(id), `${selected}: ${id} is shown`);
+    assert.ok(!markup.includes('track:'), `${selected}: a ref is shown`);
+    assert.match(markup, /data-testid="plan-error"[^>]*data-code="plan_stale"/);
+    assert.ok(markup.includes('plan_stale'), 'the code stays in front');
+    assert.ok(markup.includes('Vox Lead'), 'the changed track by its name');
+    assert.ok(markup.includes(translator('en')('error.plan_stale')), 'the catalog text');
+    assert.ok(markup.includes('already_exists') && markup.includes(translator('en')('error.already_exists')), 'the preview refusal');
+    assert.match(markup, /data-testid="plan-error-details"[^>]*aria-expanded="false"/);
+    assert.ok(!markup.includes('data-testid="plan-error-raw"'), 'no raw refusal in the DOM');
+  }
+  // The disclosure holds the engine's own message and the changed refs.
+  const opened = { openError: true };
+  const open = view({ error: STALE_REFUSAL, ...opened });
+  assert.match(open, /data-testid="plan-error-raw"/);
+  assert.ok(open.includes(`track:${VOX}`), 'the raw ref');
+  assert.ok(open.includes('the plan is stale'), "the engine's message");
+});
+
 test('a disclosure renders its content only while open, for its row only', () => {
   const closed = view();
   assert.ok(!closed.includes('data-testid="step-raw-'), 'no raw step in the DOM');

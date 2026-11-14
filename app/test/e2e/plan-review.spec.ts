@@ -250,6 +250,11 @@ test('a refused apply after the approval leaves the card approved and shows the 
   await page.evaluate(() => (window as unknown as { __releaseApply: () => void }).__releaseApply());
 
   await expect(page.getByTestId('plan-error')).toContainText('plan_stale');
+  // The changed entity by its name; the engine's message and refs only behind the disclosure.
+  await expect(page.getByTestId('plan-error')).toContainText('Keys');
+  expect(await page.getByTestId('zone-right').innerText()).not.toContain('trk_');
+  await page.getByTestId('plan-error-details').click();
+  await expect(page.getByTestId('plan-error-raw')).toContainText('track:trk_a');
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'approved');
   await expect(stateBadge(hash)).toHaveText(t('badge.approved'));
   expect((await status(hash)).state).toBe('approved');
