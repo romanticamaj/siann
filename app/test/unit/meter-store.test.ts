@@ -2,7 +2,8 @@
 // RealtimeClient -> MeterStore, a plain object of Float32Arrays (peak, RMS,
 // hold, clip) per legend index that the meter canvases read from their own
 // animation frame. It emits nothing (no subscribe: React never hears of a
-// meter value). A new legend epoch resizes the arrays; an entity missing from
+// meter value). A new legend epoch resizes the arrays and carries each
+// entity's ballistics by ref; an entity missing from
 // a frame reads as silence.
 
 import { test } from 'node:test';

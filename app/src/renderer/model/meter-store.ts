@@ -3,7 +3,10 @@
 // clip per legend index. The meter canvases call sync() and advance() from
 // their own animation frame and read the arrays; nothing is emitted, so no
 // meter value reaches React (ADR-0019 point 3). Each entry keeps the louder
-// channel. A new legend epoch resizes the arrays and starts from silence; an
+// channel. A new legend epoch (every graph publication) resizes the arrays;
+// an entity still in the legend keeps its bar, hold line, peak value and
+// latched clip (spec 1.6: cleared only by clicking the peak value), a new
+// one starts from silence; an
 // entity missing from the newest frame, and every entity of a frame whose
 // transport is stopped (the engine then repeats its last readings), reads as
 // silence.
@@ -71,11 +74,13 @@ export class MeterStore {
     const epoch = legend?.epoch ?? null;
     if (epoch !== this.#epoch) {
       this.#epoch = epoch;
+      const before = this.#entities;
       this.#entities = legend?.entities ?? [];
       const size = this.#entities.length;
       this.peak = new Float32Array(size);
       this.rms = new Float32Array(size);
-      this.#ballistics.resize(size);
+      // Every graph publication brings an epoch; the ballistics follow the ref.
+      this.#ballistics.remap(this.#entities.map((ref) => before.indexOf(ref)));
       this.#playing = false;
     }
     const count = this.#source.frameCount();
