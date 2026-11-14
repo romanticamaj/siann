@@ -30,7 +30,6 @@ import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { Inspector } from '../../src/renderer/shell/Inspector';
-import { trackColour } from '../../src/renderer/track-colour';
 import { clip, media, snapshotOf, track } from './support/timeline';
 
 // dist/test/unit -> app/test/unit/fixtures
@@ -112,8 +111,8 @@ test('a strip holds pan, M S, the fader with its meter, level and peak values, t
   // Inside its strip: the strip of trk_a opens before them and trk_b's does not sit between.
   const strip = html.indexOf('data-testid="mixer-strip-trk_a"');
   assert.ok(strip >= 0 && strip < at[0]!);
-  // The name carries the track colour.
-  assert.match(tag(html, 'strip-name-trk_a'), new RegExp(trackColour('trk_a'), 'i'));
+  // The name carries the track colour: trk_a hashes to palette entry 8 (FNV-1a, timeline-colour.test.ts).
+  assert.match(tag(html, 'strip-name-trk_a'), /var\(--track-8\)/);
   assert.equal(textOf(html, 'strip-name-trk_a'), 'trk_a');
   // A fader is a slider in milli-dB with its value as text.
   assert.equal(attr(html, 'fader-trk_a', 'role'), 'slider');
@@ -188,7 +187,7 @@ test('the Inspector\'s Track tab shows the selected clip\'s track: name, colour,
   const tracks = [{ ...track('trk_a'), gainMilliDb: -4000, pan: -3500, mute: true }, track('trk_b')];
   const html = inspector(fakeClient(snapshot(tracks)));
   assert.equal(textOf(html, 'inspector-track'), 'trk_a');
-  assert.match(tag(html, 'inspector-colour'), new RegExp(trackColour('trk_a'), 'i'));
+  assert.match(tag(html, 'inspector-colour'), /var\(--track-8\)/);
   assert.equal(attr(html, 'inspector-mute', 'aria-pressed'), 'true');
   assert.equal(attr(html, 'inspector-solo', 'aria-pressed'), 'false');
   assert.equal(attr(html, 'inspector-volume', 'role'), 'slider');

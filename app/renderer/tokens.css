@@ -67,20 +67,6 @@
   --track-11: #9AA3B2;
   /* the focused zone's frame */
   --focus: rgb(232 235 241 / .55);
-  /* track palette (1.2): twelve colours at equal lightness, no violet;
-     renderer/src/track-colour.ts assigns them by a hash of the track id */
-  --track-1: #F0675B;
-  --track-2: #F2994A;
-  --track-3: #E6C547;
-  --track-4: #A8D05A;
-  --track-5: #57C98A;
-  --track-6: #3FC4A8;
-  --track-7: #3FC4DD;
-  --track-8: #5B8FF5;
-  --track-9: #7C7CF0;
-  --track-10: #B57BEA;
-  --track-11: #EC6BB0;
-  --track-12: #9AA3B2;
   /* meters (1.2): green to -12 dB, yellow to -3 dB, red above, white hold */
   --meter-green: var(--play);
   --meter-yellow: var(--solo);

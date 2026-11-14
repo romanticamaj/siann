@@ -21,7 +21,7 @@ import type { TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
 import type { SessionClient } from '../model/session-client';
 import { Capable, useCapabilities } from '../shell/Capable';
-import { trackColour } from '../track-colour';
+import { trackColourVar } from '../timeline/track-colour';
 import { MetersContext } from './meters-context';
 import { ValueControl, ValueReadout } from './ValueControl';
 
@@ -78,7 +78,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
   const track = useTrack(client, trackId);
   if (!track) return null;
   const ref = `track:${trackId}`;
-  const colour = trackColour(trackId);
+  const colour = `var(${trackColourVar(trackId)})`;
   const faderListed = can.has('gesture.begin') && can.feature('gestures') && can.command('track.set_gain');
   return (
     <section className="strip" data-testid={`mixer-strip-${trackId}`} aria-label={track.name}>

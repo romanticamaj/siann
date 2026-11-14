@@ -3,7 +3,7 @@
 // MixConsole strip's own controls (ValueControl, ValueReadout, the same
 // toggle) on the same read-model select() of the same track, so the Inspector
 // and the strip always agree, a gesture overlay included. The colour is the
-// renderer's (track-colour.ts) and cannot be changed here (no command until
+// renderer's (timeline/track-colour.ts) and cannot be changed here (no command until
 // E-2). The selected track is the selected clip's track until the track list
 // (m5-ui-arrange) selects tracks itself. Sections (inserts, sends) come in
 // phase 3; by the rule of 3.0 nothing stands in for them.
@@ -13,7 +13,7 @@ import { toggleTrack, useTrack } from '../mixer/Strip';
 import { ValueControl, ValueReadout } from '../mixer/ValueControl';
 import type { GestureController } from '../model/gesture-controller';
 import type { SessionClient } from '../model/session-client';
-import { trackColour } from '../track-colour';
+import { trackColourVar } from '../timeline/track-colour';
 import { Capable, useCapabilities } from './Capable';
 
 export interface InspectorProps {
@@ -40,7 +40,7 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
     <div className="inspector" data-testid="inspector">
       <h2>{t('inspector.label')}</h2>
       <div className="inspector-head">
-        <span className="inspector-colour" data-testid="inspector-colour" style={{ backgroundColor: trackColour(track.id) }} title={t('inspector.colour')} />
+        <span className="inspector-colour" data-testid="inspector-colour" style={{ backgroundColor: `var(${trackColourVar(track.id)})` }} title={t('inspector.colour')} />
         <p className="inspector-track" data-testid="inspector-track">
           {track.name}
         </p>
