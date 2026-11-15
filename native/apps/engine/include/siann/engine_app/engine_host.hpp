@@ -208,7 +208,8 @@ public:
     // protocol::GesturePort (Protocol v0 item 24), on the command thread, over the
     // engine's fader gestures: the start value from the heard side's document, a
     // short ramp per update, and endGesture's one revision. cancel ends the
-    // dispatcher's gesture and sends the document's value back.
+    // dispatcher's gesture and sends the document's value back. The master target
+    // (m5b-engine-master) starts from the heard document's master, 0 when absent.
     double begin(const protocol::GestureTarget& target) override;
     void update(const protocol::GestureTarget& target, double value) override;
     protocol::GestureEnd end(const protocol::GestureTarget& target, std::string actor, std::string time) override;
@@ -286,7 +287,7 @@ private:
     protocol::RealtimeChannel* channel_ = nullptr;
     protocol::EventStream* events_ = nullptr;
     std::optional<protocol::MeterPublisher> publisher_;
-    // The start value of each open gesture, by "<trackId>/<param>".
+    // The start value of each open gesture, by "<ref>/<param>".
     std::map<std::string, double> gestureStarts_;
     // The metronome, applied to every engine bind() makes.
     protocol::ClickState click_;

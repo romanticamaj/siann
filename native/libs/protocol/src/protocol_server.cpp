@@ -238,7 +238,8 @@ Value targetJson(const GestureTarget& target) {
     return Value(Object{{"ref", Value(target.ref())}, {"param", Value(target.param)}});
 }
 
-// {target: {ref: "track:<id>", param}}. Throws ProtocolError invalid_params.
+// {target: {ref: "track:<id>", param}} or {target: {ref: "master:master",
+// param: "gain"}} (m5b-engine-master). Throws ProtocolError invalid_params.
 GestureTarget requireTarget(const Value& params, std::string_view method) {
     const Value* target = params.find("target");
     if (target == nullptr || target->kind() != Value::Kind::object) {
@@ -246,15 +247,23 @@ GestureTarget requireTarget(const Value& params, std::string_view method) {
     }
     const Value* ref = stringMember(*target, "ref");
     const std::optional<model::EntityRef> parsed = ref != nullptr ? parseRef(ref->asString()) : std::nullopt;
-    if (!parsed || parsed->type != model::EntityType::track) {
-        throw ProtocolError("invalid_params", std::string(method) + ": target.ref must be \"track:<id>\"");
+    const bool isMaster = parsed && parsed->type == model::EntityType::master && parsed->id == model::kMasterId;
+    if (!parsed || (parsed->type != model::EntityType::track && !isMaster)) {
+        throw ProtocolError("invalid_params",
+                            std::string(method) + ": target.ref must be \"track:<id>\" or \"master:master\"");
     }
     const Value* param = stringMember(*target, "param");
+    if (isMaster) {
+        if (param == nullptr || param->asString() != "gain") {
+            throw ProtocolError("invalid_params", std::string(method) + ": the master target's param is gain");
+        }
+        return GestureTarget::masterGain();
+    }
     if (param == nullptr ||
         (param->asString() != "gain" && param->asString() != "pan" && param->asString() != "mute")) {
         throw ProtocolError("invalid_params", std::string(method) + ": target.param must be gain, pan or mute");
     }
-    return GestureTarget{parsed->id, param->asString()};
+    return GestureTarget{parsed->id, param->asString(), false};
 }
 
 // The value in the entity's units: a number, and 0 or 1 for mute.
@@ -1657,6 +1666,7 @@ struct ProtocolServer::Impl {
                                       {"cycle", Value(options.transportPort != nullptr)},
                                       {"click", Value(options.transportPort != nullptr)},
                                       {"recording", Value(options.recordPort != nullptr)},
+                                      {"masterGain", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},

@@ -32,11 +32,16 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 // Commits like PlaybackEngine::endGesture: one track.set_gain, set_pan or
-// set_mute carrying the last value, nothing when the gesture never moved.
+// set_mute carrying the last value (master.set_gain for the master target,
+// m5b-engine-master), nothing when the gesture never moved.
 class FakeGesturePort final : public GesturePort {
 public:
     double begin(const GestureTarget& target) override {
         calls.push_back("begin " + key(target));
+        if (target.ref() == "master:master") {
+            open[key(target)] = std::nullopt;
+            return masterValue();
+        }
         const model::Track* track = session->history().head().document.track(target.trackId);
         if (track == nullptr) {
             throw GesturePortError("not_found", "no track with id " + target.trackId);
@@ -55,6 +60,18 @@ public:
         calls.push_back("end " + key(target));
         const std::optional<double> last = open.at(key(target));
         open.erase(key(target));
+        if (target.ref() == "master:master") {
+            const double start = masterValue();
+            if (!last) {
+                return GestureEnd{start, start, nullptr};
+            }
+            const command::Revision& revision = session->commit(
+                {command::Command::fromJson(json::Value(json::Object{{"op", json::Value("master.set_gain")},
+                                                                     {"gainMilliDb", json::Value(*last)}}))},
+                std::move(actor), std::move(time));
+            lastActor = revision.envelope.actor;
+            return GestureEnd{start, *last, &revision};
+        }
         const model::Track& track = *session->history().head().document.track(target.trackId);
         const double start = documentValue(track, target.param);
         if (!last) {
@@ -100,6 +117,12 @@ public:
 
 private:
     static std::string key(const GestureTarget& target) { return target.ref() + "/" + target.param; }
+
+    // The head document's master gain; 0 while the entity is absent.
+    double masterValue() const {
+        const auto* value = session->history().head().document.master();
+        return value != nullptr ? static_cast<double>(value->gain.milliDb) : 0.0;
+    }
 
     static double documentValue(const model::Track& track, const std::string& param) {
         if (param == "pan") {
@@ -519,4 +542,124 @@ TEST_CASE("engine.capabilities lists the five methods and features.gestures", "[
         }
         CHECK(at(at(capabilities, "features"), "gestures").asBool() == withPort);
     }
+}
+
+// ---- m5b-engine-master: the master gain target {ref: master:master, param: gain}
+
+TEST_CASE("the master target takes gain only; pan, mute and another id are invalid_params", "[protocol][gesture][master]") {
+    GestureFixture g;
+    const ConnectionId c = g.f.authed();
+    for (const std::string& method : kGestureMethods) {
+        for (const Value& params : {onTarget("master:master", "pan"), onTarget("master:master", "mute"),
+                                    onTarget("master:other", "gain"), onTarget("master:", "gain"),
+                                    onTarget("locators:locators", "gain")}) {
+            INFO(method << " " << canonical(params));
+            CHECK(errorCode(g.f.call(c, method, params)) == "invalid_params");
+        }
+    }
+    CHECK(g.port.calls.empty());
+    const Value begun = g.f.ok(c, "gesture.begin", onTarget("master:master", "gain"));
+    CHECK(canonical(at(begun, "target")) == canonical(target("master:master", "gain")));
+    CHECK(at(begun, "leaseMs").asNumber() == 1'000);
+    CHECK(g.port.calls == std::vector<std::string>{"begin master:master/gain"});
+}
+
+TEST_CASE("a master gesture with no entity starts at 0, never not_found, and its end commits one master.set_gain",
+          "[protocol][gesture][master]") {
+    GestureFixture g;
+    const ConnectionId c = g.f.authed();
+    const ConnectionId watcher = g.f.authed(true);
+    const std::size_t before = g.revisions();
+    REQUIRE(g.f.head().document.master() == nullptr);
+
+    const Value begun = g.f.ok(c, "gesture.begin", onTarget("master:master", "gain"));
+    CHECK(at(begun, "startValue").asNumber() == 0.0);
+    g.f.ok(c, "gesture.update", withValue(-2'000, "master:master", "gain"));
+    g.f.ok(c, "gesture.update", withValue(-6'000, "master:master", "gain"));
+    CHECK(g.revisions() == before);
+    const Value ended = g.f.ok(c, "gesture.end", onTarget("master:master", "gain"));
+    CHECK(g.revisions() == before + 1);
+    CHECK(at(ended, "startValue").asNumber() == 0.0);
+    CHECK(at(ended, "value").asNumber() == -6'000);
+    CHECK(canonical(at(at(ended, "revision"), "diff")) == canonical(Value(Array{Value("master:master")})));
+    REQUIRE(g.f.head().document.master() != nullptr);
+    CHECK(g.f.head().document.master()->gain.milliDb == -6'000);
+
+    const std::vector<Value> changed = eventsOfType(g.f, watcher, "session.changed");
+    REQUIRE(changed.size() == 1);
+    CHECK(at(at(changed[0], "changedIds").asArray()[0], "ref").asString() == "master:master");
+    const std::vector<Value> endedEvents = eventsOfType(g.f, watcher, "gesture.ended");
+    REQUIRE(endedEvents.size() == 1);
+    CHECK(at(endedEvents[0], "reason").asString() == "ended");
+    CHECK(canonical(at(endedEvents[0], "target")) == canonical(target("master:master", "gain")));
+    CHECK(at(endedEvents[0], "committed").asString() == g.f.head().envelope.id);
+
+    // The next gesture starts from the committed value; back to 0 removes the entity.
+    CHECK(at(g.f.ok(c, "gesture.begin", onTarget("master:master", "gain")), "startValue").asNumber() == -6'000);
+    const Value back = g.f.ok(c, "gesture.end", withValue(0, "master:master", "gain"));
+    CHECK(at(back, "startValue").asNumber() == -6'000);
+    CHECK(g.f.head().document.master() == nullptr);
+}
+
+TEST_CASE("a master gesture that never moved ends with revision null", "[protocol][gesture][master]") {
+    GestureFixture g;
+    const ConnectionId c = g.f.authed();
+    const std::size_t before = g.revisions();
+    g.f.ok(c, "gesture.begin", onTarget("master:master", "gain"));
+    const Value ended = g.f.ok(c, "gesture.end", onTarget("master:master", "gain"));
+    CHECK(at(ended, "revision").kind() == Value::Kind::null);
+    CHECK(at(ended, "value").asNumber() == 0.0);
+    CHECK(g.revisions() == before);
+}
+
+TEST_CASE("the master target follows a track fader's lease rules", "[protocol][gesture][master][lease]") {
+    GestureFixture g;
+    const ConnectionId owner = g.f.authed();
+    const ConnectionId other = g.f.authed();
+    const ConnectionId watcher = g.f.authed(true);
+
+    // gesture_held for another connection, gesture_open for a second begin.
+    g.f.ok(owner, "gesture.begin", onTarget("master:master", "gain"));
+    CHECK(errorCode(g.f.call(owner, "gesture.begin", onTarget("master:master", "gain"))) == "gesture_open");
+    for (const std::string& method : kGestureMethods) {
+        INFO(method);
+        const Value params =
+            method == "gesture.update" ? withValue(-1'000, "master:master", "gain") : onTarget("master:master", "gain");
+        CHECK(errorCode(g.f.call(other, method, params)) == "gesture_held");
+    }
+    // A track's gain is another target, free for the other connection.
+    g.f.ok(other, "gesture.begin", onTarget("track:trk_1", "gain"));
+    g.f.ok(other, "gesture.cancel", onTarget("track:trk_1", "gain"));
+
+    // Lease expiry commits the last value.
+    g.f.ok(owner, "gesture.update", withValue(-3'000, "master:master", "gain"));
+    g.advance(1'001);
+    g.f.server.pump();
+    CHECK(g.port.count("end master:master/gain") == 1);
+    CHECK(g.f.head().document.master()->gain.milliDb == -3'000);
+    std::vector<Value> endedEvents = eventsOfType(g.f, watcher, "gesture.ended");
+    REQUIRE(endedEvents.size() == 2);  // the track's cancel, then the master's expiry
+    CHECK(at(endedEvents[1], "reason").asString() == "lease_expired");
+    CHECK(at(at(endedEvents[1], "target"), "ref").asString() == "master:master");
+    CHECK(errorCode(g.f.call(owner, "gesture.hold", onTarget("master:master", "gain"))) == "no_gesture");
+
+    // A close ends it as well.
+    g.f.ok(other, "gesture.begin", onTarget("master:master", "gain"));
+    g.f.ok(other, "gesture.update", withValue(-4'500, "master:master", "gain"));
+    g.f.transport.disconnect(other);
+    g.f.server.pump();
+    CHECK(g.port.count("end master:master/gain") == 2);
+    CHECK(g.f.head().document.master()->gain.milliDb == -4'500);
+    endedEvents = eventsOfType(g.f, watcher, "gesture.ended");
+    REQUIRE(endedEvents.size() == 3);
+    CHECK(at(endedEvents[2], "reason").asString() == "disconnected");
+    CHECK(at(at(endedEvents[2], "target"), "ref").asString() == "master:master");
+
+    // Cancel commits nothing.
+    const std::size_t before = g.revisions();
+    g.f.ok(owner, "gesture.begin", onTarget("master:master", "gain"));
+    g.f.ok(owner, "gesture.update", withValue(-9'000, "master:master", "gain"));
+    g.f.ok(owner, "gesture.cancel", onTarget("master:master", "gain"));
+    CHECK(g.revisions() == before);
+    CHECK(g.f.head().document.master()->gain.milliDb == -4'500);
 }

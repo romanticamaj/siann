@@ -22,6 +22,7 @@ function hashDocument(document) {
     for (const entity of document[table] || []) entities.push({ type, id: entity.id, entityHash: sha256Jcs(entity) });
   }
   if (document.locators) entities.push({ type: 'locators', id: 'locators', entityHash: sha256Jcs(document.locators) });
+  if (document.master) entities.push({ type: 'master', id: 'master', entityHash: sha256Jcs(document.master) });
   return documentHash(entities);
 }
 
@@ -101,4 +102,38 @@ test('the locators steps add, modify and remove locators:locators and hash with 
   assert.equal(holding[0], sync[sync.length - 1]);
   assert.deepEqual(holding[0].chunk.locators, steps[0].document.locators);
   assert.equal(sync[0].documentHash, steps[0].documentHash);
+});
+
+// m5b-engine-master: the master part continues the locators steps.
+test('the master steps add, modify and remove master:master and hash with src/hash', () => {
+  const { steps, sync, both } = fixture.master;
+  assert.deepEqual(steps.map((s) => s.event.changedIds), [
+    [{ ref: 'master:master', change: 'added' }],
+    [{ ref: 'master:master', change: 'modified' }],
+    [{ ref: 'master:master', change: 'removed' }],
+  ]);
+  assert.deepEqual(steps.map((s) => s.document.master?.gainMilliDb ?? null), [-6000, -3000, null]);
+  let seq = Number(fixture.locators.steps[fixture.locators.steps.length - 1].event.seq);
+  for (const step of steps) {
+    seq += 1;
+    assert.equal(step.event.seq, String(seq));
+    assert.equal(hashDocument(step.document), step.documentHash);
+    assert.equal(step.event.documentHash, step.documentHash);
+    for (const answer of step.fetch.result.entities) assert.deepEqual(answer.entity, step.document.master);
+  }
+  // Set back to 0 dB, the document hashes as before the first set.
+  assert.equal(steps[2].documentHash, fixture.locators.steps[fixture.locators.steps.length - 1].documentHash);
+  assert.deepEqual(steps[0].document.master, { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -6000 });
+  // The sync: the master once, as an object in the last chunk.
+  const holding = sync.filter((chunk) => 'master' in chunk.chunk);
+  assert.equal(holding.length, 1);
+  assert.equal(holding[0], sync[sync.length - 1]);
+  assert.deepEqual(holding[0].chunk.master, steps[0].document.master);
+  assert.equal(sync[0].documentHash, steps[0].documentHash);
+  // Both singletons: the master after the locators, in a chunk of its own here.
+  assert.equal(hashDocument(both.document), both.documentHash);
+  const last = both.sync[both.sync.length - 1];
+  assert.deepEqual(Object.keys(last.chunk).filter((k) => k === 'locators' || k === 'master'), ['master']);
+  assert.ok('locators' in both.sync[both.sync.length - 2].chunk);
+  for (const chunk of both.sync) assert.equal(chunk.documentHash, both.documentHash);
 });

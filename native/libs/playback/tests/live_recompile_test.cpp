@@ -137,7 +137,7 @@ TEST_CASE("Rapid successive edits coalesce: the next compile uses the latest doc
     p.pump(30);
 
     CHECK(p.engine.compileCount() == compiles + 2);
-    CHECK(p.engine.slots().size() == 2);
+    CHECK(p.engine.slots().size() == 3);  // two faders and the master gain (m5b-engine-master)
     CHECK(p.engine.slots().count(playback::trackSlotKey("trk_c")) == 1);
     CHECK(p.engine.streamCount() == 2);
     CHECK_FALSE(p.engine.driver().transitionInFlight());

@@ -69,6 +69,7 @@ std::string_view entityTypeName(EntityType type) noexcept {
         case EntityType::clip: return "clip";
         case EntityType::plugin_slot: return "plugin_slot";
         case EntityType::locators: return "locators";
+        case EntityType::master: return "master";
     }
     return "unknown";
 }
@@ -78,6 +79,7 @@ namespace {
 constexpr std::string_view kDocumentSchema = "siann.session_document.v2";
 constexpr std::string_view kDocumentSchemaV1 = "siann.session_document.v1";
 constexpr std::string_view kLocatorsSchema = "siann.entity.locators.v1";
+constexpr std::string_view kMasterSchema = "siann.entity.master.v1";
 constexpr std::string_view kRootSchema = "siann.entity.root.v1";
 constexpr std::string_view kMediaSchema = "siann.entity.media.v1";
 constexpr std::string_view kTrackSchema = "siann.entity.track.v1";
@@ -261,6 +263,18 @@ Locators locatorsFromJson(const Value& value) {
     l.right = r.int64String("right");
     r.finish();
     return l;
+}
+
+Master masterFromJson(const Value& value) {
+    detail::FieldReader r(value, "master");
+    r.expectSchema(kMasterSchema);
+    if (r.string("id") != kMasterId) {
+        r.fail("id", "must be \"master\"");
+    }
+    Master m;
+    m.gain = Gain{static_cast<std::int32_t>(r.integer("gainMilliDb", INT32_MIN, INT32_MAX))};
+    r.finish();
+    return m;
 }
 
 // ---- tables ---------------------------------------------------------------
@@ -581,6 +595,14 @@ Value toJson(const Locators& value) {
     });
 }
 
+Value toJson(const Master& value) {
+    return Value(Object{
+        {"schema", str(kMasterSchema)},
+        {"id", str(kMasterId)},
+        {"gainMilliDb", number(value.gain.milliDb)},
+    });
+}
+
 Value toJson(const Clip& clip) {
     return Value(Object{
         {"schema", str(kClipSchema)},
@@ -642,6 +664,7 @@ Document Document::fromJson(const Value& value) {
     r.require("clips");
     (void)r.optional("pluginSlots");
     const Value* locatorsJson = fromV1 ? nullptr : r.optional("locators");
+    const Value* masterJson = fromV1 ? nullptr : r.optional("master");
     r.finish();
 
     Document doc;
@@ -652,6 +675,9 @@ Document Document::fromJson(const Value& value) {
     doc.slots_ = tableFromJson<PluginSlot>(value, "pluginSlots", &pluginSlotFromJson, true);
     if (locatorsJson != nullptr) {
         doc.locators_ = makeStored(locatorsFromJson(*locatorsJson));
+    }
+    if (masterJson != nullptr) {
+        doc.master_ = makeStored(masterFromJson(*masterJson));
     }
     const auto issues = doc.validate();
     if (!issues.empty()) {
@@ -675,6 +701,10 @@ Value Document::toJson() const {
     // Omitted while absent, so a document without locators reads as before.
     if (locators_) {
         out.emplace_back("locators", model::toJson(locators_->value));
+    }
+    // Present only while the master gain is not 0 dB, so existing hashes hold.
+    if (master_) {
+        out.emplace_back("master", model::toJson(master_->value));
     }
     return Value(std::move(out));
 }
@@ -720,6 +750,25 @@ Document Document::withoutLocators() const {
     }
     Document doc = *this;
     doc.locators_.reset();
+    return doc;
+}
+
+const Master* Document::master() const noexcept {
+    return master_ ? &master_->value : nullptr;
+}
+
+Document Document::withMaster(Master value) const {
+    Document doc = *this;
+    doc.master_ = makeStored(value);
+    return doc;
+}
+
+Document Document::withoutMaster() const {
+    if (!master_) {
+        throw ModelError("unknown_entity", "no master is set");
+    }
+    Document doc = *this;
+    doc.master_.reset();
     return doc;
 }
 
@@ -955,6 +1004,16 @@ std::vector<ValidationIssue> Document::validate() const {
                   "locators must satisfy 0 <= left < right <= 2^42");
         }
     }
+    if (master_) {
+        const Gain& gain = master_->value.gain;
+        if (!gain.isValid()) {
+            issue(out, "invalid_gain", EntityType::master, std::string(kMasterId), "master gain is out of range");
+        } else if (gain.milliDb == 0) {
+            // The entity exists only while the gain is not 0 dB.
+            issue(out, "invalid_master", EntityType::master, std::string(kMasterId),
+                  "a master at 0 dB is absent, not stored");
+        }
+    }
     return out;
 }
 
@@ -990,6 +1049,9 @@ std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const
         case EntityType::locators:
             if (locators_ && ref.id == kLocatorsId) found = &locators_->hash;
             break;
+        case EntityType::master:
+            if (master_ && ref.id == kMasterId) found = &master_->hash;
+            break;
     }
     if (found == nullptr) {
         return std::nullopt;
@@ -1007,6 +1069,9 @@ hash::Digest Document::documentHash() const {
     collectLeaves(EntityType::plugin_slot, *slots_, leaves);
     if (locators_) {
         leaves.push_back({"locators", std::string(kLocatorsId), locators_->hash});
+    }
+    if (master_) {
+        leaves.push_back({"master", std::string(kMasterId), master_->hash});
     }
     try {
         return hash::documentHash(std::move(leaves));
@@ -1037,6 +1102,8 @@ bool Document::sharesEntity(const Document& other, const EntityRef& ref) const n
         }
         case EntityType::locators:
             return locators_ != nullptr && ref.id == kLocatorsId && locators_ == other.locators_;
+        case EntityType::master:
+            return master_ != nullptr && ref.id == kMasterId && master_ == other.master_;
     }
     return false;
 }
@@ -1057,6 +1124,16 @@ std::vector<DiffEntry> diff(const Document& before, const Document& after) {
         } else if (!after.locators_) {
             out.push_back({DiffEntry::Change::removed, ref});
         } else if (before.locators_->hash != after.locators_->hash) {
+            out.push_back({DiffEntry::Change::modified, ref});
+        }
+    }
+    if (before.master_ != after.master_) {
+        const EntityRef ref{EntityType::master, std::string(kMasterId)};
+        if (!before.master_) {
+            out.push_back({DiffEntry::Change::added, ref});
+        } else if (!after.master_) {
+            out.push_back({DiffEntry::Change::removed, ref});
+        } else if (before.master_->hash != after.master_->hash) {
             out.push_back({DiffEntry::Change::modified, ref});
         }
     }

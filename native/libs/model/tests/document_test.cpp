@@ -566,3 +566,147 @@ TEST_CASE("A media name must be a string of 1 to 255 UTF-8 bytes", "[model][medi
     CHECK(errorCode(kickWithName(Value(42))) == "invalid_field");
     CHECK(errorCode(kickWithName(Value(nullptr))) == "invalid_field");
 }
+
+// ---- m5b-engine-master: the singleton master entity -------------------------
+
+namespace {
+
+using siann::model::Master;
+
+const EntityRef kMasterRef{EntityType::master, "master"};
+
+EntityType leafType(const std::string& type) {
+    return type == "master" ? EntityType::master : entityTypeOf(type);
+}
+
+// The master fixture's document text, with the first occurrence of `from` at or
+// after the master entity replaced (the schemaVersion precedes it in JCS order,
+// so that one is found from the start).
+Value masterFixtureWith(const std::string& from, const std::string& to) {
+    std::string text = siann::jcs::canonicalize(*readFixture("model/session-document-v2-master.json").find("document"));
+    const auto start = from.rfind("siann.session_document", 0) == 0 ? 0 : text.find(R"("master":{)");
+    REQUIRE(start != std::string::npos);
+    const auto pos = text.find(from, start);
+    REQUIRE(pos != std::string::npos);
+    text.replace(pos, from.size(), to);
+    return siann::json::parse(text);
+}
+
+}  // namespace
+
+TEST_CASE("The master fixture gives the Node bridge's hashes and round-trips under JCS", "[model][fixtures][master]") {
+    const Value fixture = readFixture("model/session-document-v2-master.json");
+    const Value& original = *fixture.find("document");
+    const Document doc = Document::fromJson(original);
+    CHECK(doc.validate().empty());
+    REQUIRE(doc.master() != nullptr);
+    CHECK(doc.master()->gain == Gain{-6000});
+    bool sawMaster = false;
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        sawMaster = sawMaster || type == "master";
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{leafType(type), id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(sawMaster);
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    CHECK(siann::model::entityTypeName(EntityType::master) == "master");
+    CHECK(siann::model::kMasterId == "master");
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(*doc.master())) ==
+          siann::jcs::canonicalize(*original.find("master")));
+    CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
+}
+
+TEST_CASE("A v2 document without the master reads with its hash unchanged and writes no master", "[model][master]") {
+    const Value v2 = readFixture("model/session-document-v2.json");
+    const Document doc = Document::fromJson(*v2.find("document"));
+    CHECK(doc.master() == nullptr);
+    CHECK_FALSE(doc.findEntityHash(kMasterRef).has_value());
+    CHECK(formatHash(doc.documentHash()) == v2.find("documentHash")->asString());
+    CHECK(doc.toJson().find("master") == nullptr);
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(*v2.find("document")));
+    // The master fixture minus its master is the v2 document.
+    const Document withMaster =
+        Document::fromJson(*readFixture("model/session-document-v2-master.json").find("document"));
+    CHECK(withMaster.withoutMaster().documentHash() == doc.documentHash());
+    CHECK(withMaster.withoutMaster().toJson().find("master") == nullptr);
+}
+
+TEST_CASE("The master entity rejects 0 dB, a wrong id or schema and unknown fields in JSON", "[model][master]") {
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":-144000)")) == "no error");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":24000)")) == "no error");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":-2147483648)")) == "no error");
+    // Present only while the gain is not 0 dB.
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":0)")) == "invalid_document");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":24001)")) == "invalid_document");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":-144001)")) == "invalid_document");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":"-6000")")) == "invalid_field");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("gainMilliDb":-6000.5)")) == "invalid_field");
+    CHECK(errorCode(masterFixtureWith(R"("id":"master")", R"("id":"main")")) == "invalid_field");
+    CHECK(errorCode(masterFixtureWith("siann.entity.master.v1", "siann.entity.master.v2")) == "unsupported_version");
+    CHECK(errorCode(masterFixtureWith(R"("gainMilliDb":-6000)", R"("extra":1,"gainMilliDb":-6000)")) ==
+          "unknown_field");
+    // A v1 document has no master.
+    CHECK(errorCode(masterFixtureWith("siann.session_document.v2", "siann.session_document.v1")) == "unknown_field");
+}
+
+TEST_CASE("A master gain out of range is invalid_gain on master:master", "[model][master]") {
+    const Document doc = Document::create("Song", 48'000);
+    CHECK(codes(doc.withMaster(Master{Gain{-144'000}})).empty());
+    CHECK(codes(doc.withMaster(Master{Gain{24'000}})).empty());
+    CHECK(codes(doc.withMaster(Master{Gain::minusInfinity()})).empty());
+    CHECK(codes(doc.withMaster(Master{Gain{24'001}})) == std::vector<std::string>{"invalid_gain"});
+    CHECK(codes(doc.withMaster(Master{Gain{-144'001}})) == std::vector<std::string>{"invalid_gain"});
+    const auto issues = doc.withMaster(Master{Gain{30'000}}).validate();
+    REQUIRE(issues.size() == 1);
+    CHECK(issues.front().entity == kMasterRef);
+    // A stored master at 0 dB is not a valid document.
+    CHECK_FALSE(codes(doc.withMaster(Master{Gain{0}})).empty());
+}
+
+TEST_CASE("The master is added, modified and removed like any entity", "[model][master]") {
+    const Document a = Document::create("Song", 48'000);
+    const Document b = a.withMaster(Master{Gain{-6000}});
+    const Document c = b.withMaster(Master{Gain{-3000}});
+    const Document d = c.withoutMaster();
+
+    REQUIRE(b.master() != nullptr);
+    CHECK(*b.master() == Master{Gain{-6000}});
+    CHECK(a.master() == nullptr);
+    CHECK(d.master() == nullptr);
+
+    auto only = [&](const Document& before, const Document& after, DiffEntry::Change change) {
+        const auto changes = diff(before, after);
+        REQUIRE(changes.size() == 1);
+        CHECK(changes[0].entity == kMasterRef);
+        CHECK(changes[0].change == change);
+    };
+    only(a, b, DiffEntry::Change::added);
+    only(b, c, DiffEntry::Change::modified);
+    only(c, d, DiffEntry::Change::removed);
+    CHECK(diff(b, b.withMaster(Master{Gain{-6000}})).empty());
+
+    CHECK(b.findEntityHash(kMasterRef).has_value());
+    CHECK_FALSE(b.findEntityHash(EntityRef{EntityType::master, "other"}).has_value());
+    CHECK(c.entityHash(kMasterRef) == sha256(siann::jcs::canonicalize(siann::model::toJson(*c.master()))));
+    CHECK_THROWS_AS(a.entityHash(kMasterRef), ModelError);
+    CHECK(c.sharesEntity(c, kMasterRef));
+    CHECK(addTrack(c, track("trk_x")).sharesEntity(c, kMasterRef));
+    CHECK_FALSE(c.sharesEntity(b, kMasterRef));
+    CHECK_FALSE(a.sharesEntity(a, kMasterRef));
+    CHECK_FALSE(c.sharesEntity(c, EntityRef{EntityType::master, "other"}));
+    CHECK(b.documentHash() != a.documentHash());
+    CHECK(d.documentHash() == a.documentHash());
+    CHECK(c.withMaster(Master{Gain{-6000}}).documentHash() == b.documentHash());
+    CHECK_THROWS_AS(a.withoutMaster(), ModelError);
+
+    // The master and the locators are independent singletons, diffed in type order.
+    const Document both = b.withLocators(siann::model::Locators{0, 10});
+    const auto changes = diff(a, both);
+    REQUIRE(changes.size() == 2);
+    CHECK(changes[0].entity == EntityRef{EntityType::locators, "locators"});
+    CHECK(changes[1].entity == kMasterRef);
+    CHECK(Document::fromJson(both.toJson()).documentHash() == both.documentHash());
+}

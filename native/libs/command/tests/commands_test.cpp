@@ -394,7 +394,7 @@ TEST_CASE("media.rename sets or removes the name and declares exactly the media"
 TEST_CASE("The command catalog is listed", "[command]") {
     const auto names = commandNames();
     CHECK(names == std::vector<std::string>{
-                       "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "media.add",
+                       "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "master.set_gain", "media.add",
                        "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
                        "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_pan",
@@ -434,4 +434,69 @@ TEST_CASE("track.set_input refuses a bad input and an unknown track", "[command]
     CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1","input":"in 1"})") == "invalid_params");
     CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_1"})") == "invalid_params");
     CHECK(errorCode(doc, R"({"op":"track.set_input","trackId":"trk_9","input":null})") == "not_found");
+}
+
+// ---- m5b-engine-master: master.set_gain {gainMilliDb} -----------------------
+
+namespace {
+
+Command setMaster(const std::string& gain) {
+    return cmd(R"({"op":"master.set_gain","gainMilliDb":)" + gain + "}");
+}
+
+}  // namespace
+
+TEST_CASE("master.set_gain sets the master and declares exactly master:master", "[command][master]") {
+    const Document doc = base();
+    const auto set = prepare(doc, setMaster("-6000"));
+    CHECK(set.effects == DeclaredEffects{ref(EntityType::master, "master")});
+    REQUIRE(set.result.master() != nullptr);
+    CHECK(set.result.master()->gain.milliDb == -6000);
+    CHECK(doc.master() == nullptr);
+    CHECK(set.result.root() == doc.root());
+    CHECK(set.result.sharesEntity(doc, ref(EntityType::root, "root")));
+
+    // A change replaces it; set back to 0 dB removes it and the document hashes as before.
+    const auto changed = prepare(set.result, setMaster("-3000"));
+    CHECK(changed.effects == DeclaredEffects{ref(EntityType::master, "master")});
+    CHECK(changed.result.master()->gain.milliDb == -3000);
+    const auto removed = prepare(changed.result, setMaster("0"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::master, "master")});
+    CHECK(removed.result.master() == nullptr);
+    CHECK(removed.result.documentHash() == doc.documentHash());
+    CHECK(removed.result.toJson().find("master") == nullptr);
+
+    // 0 while absent changes nothing, as a track.set_gain to its own value does.
+    const auto noop = prepare(doc, setMaster("0"));
+    CHECK(noop.effects == DeclaredEffects{ref(EntityType::master, "master")});
+    CHECK(noop.result.master() == nullptr);
+    CHECK(diff(doc, noop.result).empty());
+    CHECK(noop.result.documentHash() == doc.documentHash());
+
+    // The range ends and minus infinity.
+    CHECK(prepare(doc, setMaster("-144000")).result.master()->gain.milliDb == -144'000);
+    CHECK(prepare(doc, setMaster("24000")).result.master()->gain.milliDb == 24'000);
+    CHECK(prepare(doc, setMaster("-2147483648")).result.master()->gain.isMinusInfinity());
+}
+
+TEST_CASE("master.set_gain refuses a gain out of range and malformed params", "[command][master]") {
+    const Document doc = base();
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":24001})") == "invalid_gain");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":-144001})") == "invalid_gain");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":-2147483647})") == "invalid_gain");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":-6000.5})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":"-6000"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":4294967296})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":-6000,"pan":0})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"master.set_gain","gainMilliDb":0,"extra":1})") == "invalid_params");
+}
+
+TEST_CASE("master.set_gain passes the declared-effects check inside a transaction", "[command][master]") {
+    const Document doc = base();
+    const auto prepared = prepareTransaction(doc, {setMaster("-6000"), setMaster("-1000")});
+    CHECK(prepared.result.master()->gain.milliDb == -1000);
+    CHECK(prepared.effects == DeclaredEffects{ref(EntityType::master, "master")});
+    const auto back = prepareTransaction(doc, {setMaster("-6000"), setMaster("0")});
+    CHECK(back.result.documentHash() == doc.documentHash());
 }

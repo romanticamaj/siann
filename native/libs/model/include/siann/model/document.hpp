@@ -18,7 +18,7 @@
 
 namespace siann::model {
 
-enum class EntityType { root, media, track, clip, plugin_slot, locators };
+enum class EntityType { root, media, track, clip, plugin_slot, locators, master };
 
 std::string_view entityTypeName(EntityType type) noexcept;
 
@@ -65,8 +65,9 @@ public:
     static Document create(std::string name, std::int64_t sampleRate, std::int32_t milliBpm = 120'000);
 
     // Parses and validates a siann.session_document.v2 JSON value, or a v1 one
-    // through a migration that adds nothing (v1 has no locators; a v1 document
-    // that carries them is rejected). Unknown fields and versions are rejected.
+    // through a migration that adds nothing (v1 has no locators and no master; a
+    // v1 document that carries either is rejected). Unknown fields and versions
+    // are rejected.
     // toJson always writes v2.
     static Document fromJson(const json::Value& value);
     json::Value toJson() const;
@@ -78,6 +79,8 @@ public:
     const PluginSlot* pluginSlot(std::string_view id) const noexcept;
     // The singleton locators entity, or null while none is set.
     const Locators* locators() const noexcept;
+    // The singleton master entity, or null while the master gain is 0 dB.
+    const Master* master() const noexcept;
 
     std::vector<const Media*> allMedia() const;
     std::vector<const Track*> tracksInOrder() const;
@@ -100,6 +103,11 @@ public:
     Document withLocators(Locators value) const;
     // Throws ModelError unknown_entity when no locators are set.
     Document withoutLocators() const;
+    // Stores the master as given; a master at 0 dB is not a valid document
+    // (validate), so master.set_gain 0 removes it instead.
+    Document withMaster(Master value) const;
+    // Throws ModelError unknown_entity when no master is set.
+    Document withoutMaster() const;
 
     // Structural and referential checks; empty means valid.
     std::vector<ValidationIssue> validate() const;
@@ -128,6 +136,7 @@ private:
     Table<Clip> clips_;
     Table<PluginSlot> slots_;
     StoredPtr<Locators> locators_;  // null while absent
+    StoredPtr<Master> master_;      // null while absent (0 dB)
 };
 
 std::vector<DiffEntry> diff(const Document& before, const Document& after);
@@ -139,9 +148,12 @@ json::Value toJson(const Track& track);
 json::Value toJson(const Clip& clip);
 json::Value toJson(const PluginSlot& slot);
 json::Value toJson(const Locators& value);
+json::Value toJson(const Master& value);
 
 // The locators entity's id, the only one it has.
 inline constexpr std::string_view kLocatorsId = "locators";
+// The master entity's id, the only one it has (ref master:master).
+inline constexpr std::string_view kMasterId = "master";
 
 // True for "sha256:" followed by 64 lowercase hex digits.
 bool isStateBlobHash(std::string_view text) noexcept;

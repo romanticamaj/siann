@@ -161,14 +161,50 @@ cycle wrap is suspended ...", `engine_record_test` "recording with cycle on
 `mcp_adapter_test`, the alloc guard linked into `siann_engine_host_tests` and
 the realtime tests; 9 none (no UI).
 
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-master | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `master_session_test`, `master_methods_test`, `gesture_methods_test`, `mcp_adapter_test`, `playback_test`, `audition_test`, `click_test`, `offline_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a master gesture) | | Y (`fixture-parity`, `read-model-fixtures`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the master strip stays a meter until `m5b-ui-inserts-master`; tour states changed: none) |
+
+Per acceptance item (`m5b-engine-master`): 1 `document_test` "The master
+fixture gives the Node bridge's hashes ...", "A v2 document without the master
+reads with its hash unchanged ...", "The master entity rejects 0 dB, a wrong id
+or schema ...", "A master gain out of range is invalid_gain ...", "The master is
+added, modified and removed like any entity"; `commands_test` "master.set_gain
+sets the master and declares exactly master:master" (set and set back to 0 give
+the original hash), "... refuses a gain out of range and malformed params";
+`history_test` "master.set_gain is one revision each; undo and redo ...";
+`plan_test` "A plan may set the master gain ...", "A master plan goes stale on a
+master change and not on session.rename", "Rolling back a plan that set the
+master back to 0 dB restores it"; `plan_hash_test` and the fixtures
+`master_write_set` / `master_with_another_id`; `master_session_test` (checkpoint,
+journal replay, journal record, a bundle after set and set back to 0);
+`master_methods_test` (execute, session.changed to a second connection, fetch,
+sync and its chunk boundary, plan.preview `before: null` / `after: null`);
+`mcp_adapter_test` "execute and a plan carry master.set_gain ..."; app unit
+`read-model` "(e) master:master parses ...". 2 `gesture_methods_test` "the
+master target takes gain only ...", "a master gesture with no entity starts at
+0 ...", "a master gesture that never moved ...", "the master target follows a
+track fader's lease rules"; `playback_test` "A master gesture moves the sound
+without a recompile ..."; `audition_test` "A master gesture ended while a
+proposal is heard ..."; `engine_host_test` "a master gesture through the port
+...". 3 `playback_test` "compileForPlayback has a master:master gain slot ...",
+"Realtime at master -6 dB is sample-identical to renderOffline ..." (null test),
+"A master.set_gain revision reaches the audio thread as a parameter set ...",
+"The master meter reads the post-gain level ..."; `offline_test` "A render at
+master -6 dB is the 0 dB render scaled ...", "A master at minus infinity renders
+silence", "A document without the master renders bit-identically ...";
+`click_test` "The click level is unchanged by a master gain of -6 dB". 4
+`master_methods_test` "engine.capabilities lists master.set_gain and
+features.masterGain", plan.preview and the second connection above;
+`mcp_adapter_test`; app unit `capabilities`.
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 60/141 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 58/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-engine-clip-fades` 1/4, `m5b-engine-master` 2/4,
-`m5b-engine-buses-sends` 1/5, `m5b-ui-edit-more` 3/10.
+`m5b-engine-clip-fades` 1/4, `m5b-engine-buses-sends` 1/5, `m5b-ui-edit-more` 3/10.
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:

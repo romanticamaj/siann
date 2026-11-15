@@ -241,6 +241,16 @@ bundle's cycle flag):
 Setting the value already set publishes nothing. Neither change is a revision, so
 no `session.changed` accompanies it; a change of the locators is a revision and is
 announced by `session.changed` with `changedIds [{ref: "locators:locators", change}]`.
+The master gain is document data too (m5b-engine-master): a `master.set_gain`
+revision, from `command.execute`, a plan or a master gesture's end, is announced by
+`session.changed`, `added` on the first set away from 0 dB, `modified` on a change,
+`removed` when it is set back to 0 dB:
+
+```json
+{"type": "session.changed", "revision": "r14", "parents": ["r13"], "cause": "command", "actor": "protocol",
+ "time": "2026-11-15T00:00:00Z", "documentHash": "sha256:...",
+ "changedIds": [{"ref": "master:master", "change": "added"}]}
+```
 
 ### `record.changed` (m5b-engine-record)
 
@@ -292,18 +302,20 @@ happen in between.
 }
 ```
 
-- Entities are listed root, media, tracks, clips, plugin slots, locators, each
+- Entities are listed root, media, tracks, clips, plugin slots, locators, master, each
   table in id order, which is the order of `Document::toJson()`. A chunk holds at
   most `syncChunkEntities` entities (server option, default 500); `entities` is the
   total. `pluginSlots` is present only in a chunk that holds slots (M4, see
   `protocol-plugins-v0.md`), so a document without plugins syncs as in M3.
   `locators` (m5-ui-engine-loop-click) is a single object, not an array, present
   only in the chunk that holds it (a document without locators syncs as before);
-  its ref is `locators:locators`.
+  its ref is `locators:locators`. `master` (m5b-engine-master) is the same: a
+  single object listed after `locators`, present only in the chunk that holds it
+  and only while the master gain is not 0 dB; its ref is `master:master`.
 - Entity JSON is the hashed form, so a client recomputes entity and document
   hashes from the chunks. Concatenating the chunks gives
   `{schemaVersion: "siann.session_document.v2", root, media, tracks, clips,
-  pluginSlots?, locators?}`.
+  pluginSlots?, locators?, master?}`.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.
@@ -317,7 +329,8 @@ happen in between.
 
 Params `{refs: ["<type>:<id>", ...], revision?: "rN"}` (`refs` non-empty; `type`
 is `root`, `media`, `track`, `clip` or `plugin_slot`, the last as
-`plugin_slot:<id>`; the root is `root:root`). Result at
+`plugin_slot:<id>`; the root is `root:root`, and the singletons `locators:locators`
+and `master:master`, m5b-engine-master). Result at
 `revision`, or at the head without it:
 
 ```json

@@ -177,6 +177,11 @@ model::Document restoreEntity(const model::Document& document, const model::Docu
                 return document.withLocators(*value);
             }
             return document.withoutLocators();
+        case EntityType::master:
+            if (const model::Master* value = source.master()) {
+                return document.withMaster(*value);
+            }
+            return document.master() != nullptr ? document.withoutMaster() : document;
     }
     return document;
 }
