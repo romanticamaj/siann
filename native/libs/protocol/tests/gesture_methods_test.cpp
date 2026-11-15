@@ -33,7 +33,8 @@ using Clock = std::chrono::steady_clock;
 
 // Commits like PlaybackEngine::endGesture: one track.set_gain, set_pan or
 // set_mute carrying the last value (master.set_gain for the master target,
-// m5b-engine-master), nothing when the gesture never moved.
+// m5b-engine-master; bus.set_gain and send.set_level for a bus or a send,
+// m5b-engine-buses-sends), nothing when the gesture never moved.
 class FakeGesturePort final : public GesturePort {
 public:
     double begin(const GestureTarget& target) override {
@@ -42,9 +43,17 @@ public:
             open[key(target)] = std::nullopt;
             return masterValue();
         }
-        const model::Track* track = session->history().head().document.track(target.trackId);
+        if (target.kind != GestureTarget::Kind::track) {
+            const std::optional<double> value = mixValue(target);
+            if (!value) {
+                throw GesturePortError("not_found", "no " + target.ref());
+            }
+            open[key(target)] = std::nullopt;
+            return *value;
+        }
+        const model::Track* track = session->history().head().document.track(target.id);
         if (track == nullptr) {
-            throw GesturePortError("not_found", "no track with id " + target.trackId);
+            throw GesturePortError("not_found", "no track with id " + target.id);
         }
         open[key(target)] = std::nullopt;
         return documentValue(*track, target.param);
@@ -72,7 +81,21 @@ public:
             lastActor = revision.envelope.actor;
             return GestureEnd{start, *last, &revision};
         }
-        const model::Track& track = *session->history().head().document.track(target.trackId);
+        if (target.kind != GestureTarget::Kind::track) {
+            const double start = *mixValue(target);
+            if (!last) {
+                return GestureEnd{start, start, nullptr};
+            }
+            const bool isBus = target.kind == GestureTarget::Kind::bus;
+            const json::Object op{{"op", json::Value(isBus ? "bus.set_gain" : "send.set_level")},
+                                  {isBus ? "busId" : "sendId", json::Value(target.id)},
+                                  {isBus ? "gainMilliDb" : "levelMilliDb", json::Value(*last)}};
+            const command::Revision& revision =
+                session->commit({command::Command::fromJson(json::Value(op))}, std::move(actor), std::move(time));
+            lastActor = revision.envelope.actor;
+            return GestureEnd{start, *last, &revision};
+        }
+        const model::Track& track = *session->history().head().document.track(target.id);
         const double start = documentValue(track, target.param);
         if (!last) {
             return GestureEnd{start, start, nullptr};
@@ -80,7 +103,7 @@ public:
         if (refuseEnd) {
             throw command::CommandError(*refuseEnd, "the commit refused the value");
         }
-        json::Object op{{"trackId", json::Value(target.trackId)}};
+        json::Object op{{"trackId", json::Value(target.id)}};
         if (target.param == "gain") {
             op.emplace_back("op", json::Value("track.set_gain"));
             op.emplace_back("gainMilliDb", json::Value(*last));
@@ -117,6 +140,17 @@ public:
 
 private:
     static std::string key(const GestureTarget& target) { return target.ref() + "/" + target.param; }
+
+    // A bus gain or a send level in the head document, or nothing when absent.
+    std::optional<double> mixValue(const GestureTarget& target) const {
+        const model::Document& document = session->history().head().document;
+        if (target.kind == GestureTarget::Kind::bus) {
+            const model::Bus* bus = document.bus(target.id);
+            return bus ? std::optional<double>(bus->gain.milliDb) : std::nullopt;
+        }
+        const model::Send* send = document.send(target.id);
+        return send ? std::optional<double>(send->level.milliDb) : std::nullopt;
+    }
 
     // The head document's master gain; 0 while the entity is absent.
     double masterValue() const {
@@ -662,4 +696,95 @@ TEST_CASE("the master target follows a track fader's lease rules", "[protocol][g
     g.f.ok(owner, "gesture.cancel", onTarget("master:master", "gain"));
     CHECK(g.revisions() == before);
     CHECK(g.f.head().document.master()->gain.milliDb == -4'500);
+}
+
+// ---- m5b-engine-buses-sends: bus gain and send level targets ----------------
+
+namespace {
+
+// The gesture fixture with a bus b1 and a send s1 from trk_1 to it.
+void addBusAndSend(GestureFixture& g) {
+    g.f.commit(g.f.authed(), Array{Value(Object{{"op", Value("bus.add")}, {"busId", Value("b1")}, {"name", Value("B")}}),
+                                   Value(Object{{"op", Value("send.add")},
+                                                {"sendId", Value("s1")},
+                                                {"trackId", Value("trk_1")},
+                                                {"busId", Value("b1")}})});
+}
+
+}  // namespace
+
+TEST_CASE("bus:<id> takes gain and send:<id> takes level; any other param is invalid_params",
+          "[protocol][gesture][buses]") {
+    GestureFixture g;
+    addBusAndSend(g);
+    const ConnectionId c = g.f.authed();
+    for (const std::string& method : kGestureMethods) {
+        for (const Value& params : {onTarget("bus:b1", "pan"), onTarget("bus:b1", "mute"), onTarget("bus:b1", "level"),
+                                    onTarget("send:s1", "gain"), onTarget("send:s1", "enabled"),
+                                    onTarget("bus:", "gain"), onTarget("send:bad id", "level")}) {
+            INFO(method << " " << canonical(params));
+            CHECK(errorCode(g.f.call(c, method, params)) == "invalid_params");
+        }
+    }
+    CHECK(g.port.calls.empty());
+    const Value bus = g.f.ok(c, "gesture.begin", onTarget("bus:b1", "gain"));
+    CHECK(canonical(at(bus, "target")) == canonical(target("bus:b1", "gain")));
+    CHECK(at(bus, "startValue").asNumber() == 0.0);
+    const Value send = g.f.ok(c, "gesture.begin", onTarget("send:s1", "level"));
+    CHECK(canonical(at(send, "target")) == canonical(target("send:s1", "level")));
+    CHECK(g.port.calls == std::vector<std::string>{"begin bus:b1/gain", "begin send:s1/level"});
+    // An unknown bus or send is the port's not_found.
+    CHECK(errorCode(g.f.call(c, "gesture.begin", onTarget("bus:b9", "gain"))) == "not_found");
+    CHECK(errorCode(g.f.call(c, "gesture.begin", onTarget("send:s9", "level"))) == "not_found");
+}
+
+TEST_CASE("a bus gesture commits one bus.set_gain and a send gesture one send.set_level", "[protocol][gesture][buses]") {
+    GestureFixture g;
+    addBusAndSend(g);
+    const ConnectionId c = g.f.authed();
+    const std::size_t before = g.revisions();
+    g.f.ok(c, "gesture.begin", onTarget("bus:b1", "gain"));
+    g.f.ok(c, "gesture.update", withValue(-6'000, "bus:b1", "gain"));
+    const Value ended = g.f.ok(c, "gesture.end", onTarget("bus:b1", "gain"));
+    CHECK(g.revisions() == before + 1);
+    CHECK(at(ended, "value").asNumber() == -6'000);
+    CHECK(canonical(at(at(ended, "revision"), "diff")) == canonical(Value(Array{Value("bus:b1")})));
+    CHECK(g.f.head().document.bus("b1")->gain.milliDb == -6'000);
+
+    g.f.ok(c, "gesture.begin", onTarget("send:s1", "level"));
+    const Value sent = g.f.ok(c, "gesture.end", withValue(-12'000, "send:s1", "level"));
+    CHECK(g.revisions() == before + 2);
+    CHECK(canonical(at(at(sent, "revision"), "diff")) == canonical(Value(Array{Value("send:s1")})));
+    CHECK(g.f.head().document.send("s1")->level.milliDb == -12'000);
+    CHECK(at(g.f.ok(c, "gesture.begin", onTarget("send:s1", "level")), "startValue").asNumber() == -12'000);
+}
+
+TEST_CASE("bus and send targets follow a track fader's lease rules", "[protocol][gesture][buses][lease]") {
+    GestureFixture g;
+    addBusAndSend(g);
+    const ConnectionId owner = g.f.authed();
+    const ConnectionId other = g.f.authed();
+    const ConnectionId watcher = g.f.authed(true);
+    g.f.ok(owner, "gesture.begin", onTarget("bus:b1", "gain"));
+    CHECK(errorCode(g.f.call(other, "gesture.begin", onTarget("bus:b1", "gain"))) == "gesture_held");
+    g.f.ok(owner, "gesture.update", withValue(-3'000, "bus:b1", "gain"));
+    g.advance(1'001);
+    g.f.server.pump();
+    CHECK(g.port.count("end bus:b1/gain") == 1);
+    CHECK(g.f.head().document.bus("b1")->gain.milliDb == -3'000);
+    std::vector<Value> endedEvents = eventsOfType(g.f, watcher, "gesture.ended");
+    REQUIRE(endedEvents.size() == 1);
+    CHECK(at(endedEvents[0], "reason").asString() == "lease_expired");
+    CHECK(at(at(endedEvents[0], "target"), "ref").asString() == "bus:b1");
+
+    g.f.ok(other, "gesture.begin", onTarget("send:s1", "level"));
+    g.f.ok(other, "gesture.update", withValue(-9'000, "send:s1", "level"));
+    g.f.transport.disconnect(other);
+    g.f.server.pump();
+    CHECK(g.port.count("end send:s1/level") == 1);
+    CHECK(g.f.head().document.send("s1")->level.milliDb == -9'000);
+    endedEvents = eventsOfType(g.f, watcher, "gesture.ended");
+    REQUIRE(endedEvents.size() == 2);
+    CHECK(at(endedEvents[1], "reason").asString() == "disconnected");
+    CHECK(at(at(endedEvents[1], "target"), "param").asString() == "level");
 }

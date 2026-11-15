@@ -718,3 +718,66 @@ TEST_CASE("plugin.instantiate refuses a UNC path and a path inside the bundle be
     }
     CHECK(port.instantiated == 0);
 }
+
+// ---- m5b-engine-buses-sends: a bus's plugin slot ------------------------------
+
+TEST_CASE("plugin.instantiate takes exactly one of trackId or busId and inserts on a bus", "[protocol][plugin][buses]") {
+    FakePluginPort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_1"),
+                      Value(Object{{"op", Value("bus.add")}, {"busId", Value("b1")}, {"name", Value("Bus")}})});
+    const Value descriptor(Object{{"format", Value("clap")}, {"path", Value("/plugins/test.clap")}});
+
+    const Value started = f.ok(c, "plugin.instantiate",
+                               Value(Object{{"busId", Value("b1")}, {"index", Value(0)}, {"descriptor", descriptor}}));
+    CHECK(at(started, "state").asString() == "done");
+    const std::string slotId = at(at(started, "result"), "slotId").asString();
+    const model::PluginSlot* slot = f.head().document.pluginSlot(slotId);
+    REQUIRE(slot != nullptr);
+    CHECK(slot->busId == "b1");
+    CHECK(slot->trackId.empty());
+    CHECK(f.head().document.bus("b1")->inserts == std::vector<std::string>{slotId});
+    REQUIRE(port.requests.size() == 1);
+    CHECK(port.requests[0].busId == "b1");
+    CHECK(port.requests[0].trackId.empty());
+    REQUIRE(port.settledSlots.size() == 1);
+    CHECK(port.settledSlots[0] == *slot);
+
+    const auto call = [&](Object params) {
+        params.emplace_back("index", Value(0));
+        params.emplace_back("descriptor", descriptor);
+        return f.call(c, "plugin.instantiate", Value(std::move(params)));
+    };
+    CHECK(errorCode(call(Object{{"trackId", Value("trk_1")}, {"busId", Value("b1")}})) == "invalid_params");
+    CHECK(errorCode(call(Object{})) == "invalid_params");
+    CHECK(errorCode(call(Object{{"busId", Value("b9")}})) == "not_found");
+    CHECK(port.instantiated == 1);
+}
+
+TEST_CASE("engine.status names a bus's slot by busId", "[protocol][plugin][buses]") {
+    FakePluginPort port;
+    StatusPort transport;
+    ServerOptions options = withPort(port);
+    options.transportPort = &transport;
+    Fixture f(options);
+    const ConnectionId c = f.authed();
+    PluginStatus onBus;
+    onBus.slotId = "slt_1";
+    onBus.busId = "b1";
+    onBus.format = "clap";
+    onBus.uid = "org.siann.test-plugin";
+    onBus.running = true;
+    PluginStatus onTrack;
+    onTrack.slotId = "slt_2";
+    onTrack.trackId = "trk_1";
+    onTrack.format = "clap";
+    onTrack.uid = "x";
+    port.reported = {onTrack, onBus};
+    const auto& plugins = at(f.ok(c, "engine.status"), "plugins").asArray();
+    REQUIRE(plugins.size() == 2);
+    CHECK(at(plugins[0], "trackId").asString() == "trk_1");
+    CHECK(plugins[0].find("busId") == nullptr);
+    CHECK(at(plugins[1], "busId").asString() == "b1");
+    CHECK(plugins[1].find("trackId") == nullptr);
+}
