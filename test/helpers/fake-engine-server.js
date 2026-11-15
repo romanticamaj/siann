@@ -43,6 +43,21 @@ function emptyDocument(name, sampleRate) {
   };
 }
 
+// A revision's diff against its parent as the engine sends it ("<type>:<id>" for
+// every entity added, removed or changed, by entity type in the engine's
+// EntityType order, root, media, track, clip, then by id).
+function diffDocuments(before, after) {
+  const refs = [];
+  if (JSON.stringify(before.root) !== JSON.stringify(after.root)) refs.push('root:root');
+  for (const [type, table] of [['media', 'media'], ['track', 'tracks'], ['clip', 'clips']]) {
+    const ids = new Set([...Object.keys(before[table]), ...Object.keys(after[table])]);
+    for (const id of [...ids].sort()) {
+      if (JSON.stringify(before[table][id]) !== JSON.stringify(after[table][id])) refs.push(`${type}:${id}`);
+    }
+  }
+  return refs;
+}
+
 function documentHash(doc) {
   return sha256Jcs(doc);
 }
@@ -119,6 +134,7 @@ class FakeSession {
       parents: [this.head.id],
       cause,
       documentHash: documentHash(doc),
+      diff: diffDocuments(this.head.doc, doc),
       doc,
       ...extra,
     };

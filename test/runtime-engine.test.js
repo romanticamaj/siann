@@ -134,6 +134,11 @@ test('plan intake, validate, approve, apply --run and rollback --run against sia
   assert.equal(journal.bundle, manifest.session.dir);
   const [batch] = journal.batches;
   assert.match(batch.appliedRevision, /^r\d+$/);
+  // The stable IDs the plan touched, as the engine's diff of the applied revision names them.
+  const touchedTracks = batch.entries.filter((e) => e.op === 'track.add').map((e) => `track:${e.command.trackId}`);
+  const touchedClips = batch.entries.filter((e) => e.op === 'clip.place').map((e) => `clip:${e.command.clipId}`);
+  // track.add also changes the root's trackOrder.
+  assert.deepEqual([...batch.touchedIds].sort(), ['root:root', ...touchedTracks, ...touchedClips].sort());
   assert.match(batch.preState.documentHash, /^sha256:[0-9a-f]{64}$/);
   assert.notEqual(batch.postState.documentHash, batch.preState.documentHash);
 

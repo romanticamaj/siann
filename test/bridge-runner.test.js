@@ -155,6 +155,15 @@ test('the journal is siann.command_journal.v1 with the bundle, plan hash, revisi
   assert.equal(batch.status, 'applied');
   assert.equal(batch.baseRevision, plan.baseRevision);
   assert.equal(batch.appliedRevision, plan.appliedRevision);
+  // The engine-assigned stable IDs the plan touched (ADR-0011): the applied
+  // revision's diff as plan.apply returned it.
+  const appliedDiff = engine.session.revision(plan.appliedRevision).diff;
+  assert.deepEqual(batch.touchedIds, appliedDiff);
+  assert.deepEqual(batch.touchedIds, [
+    'root:root', // track.add changes the root's trackOrder
+    ...plan.steps.filter((s) => s.op === 'track.add').map((s) => `track:${s.trackId}`).sort(),
+    ...plan.steps.filter((s) => s.op === 'clip.place').map((s) => `clip:${s.clipId}`).sort(),
+  ]);
   assert.equal(batch.preState.revision, plan.baseRevision);
   // Before plan.apply, after the imports: the hash rollback returns to.
   assert.equal(batch.preState.documentHash, inspected[0]);
@@ -357,6 +366,10 @@ test('validateJournal accepts v1 and refuses the Ardour-era v0 with a clear mess
     /batches must be an array/);
   assert.throws(() => validateJournal({ schemaVersion: 'siann.command_journal.v1', journalId: 'x', bundle: '/b',
     status: 'applied', batches: [{ status: 'applied', risk: 'normal', entries: [], planHash: 'nope' }] }), /planHash/);
+  for (const touchedIds of ['track:trk_1', ['trk_1'], [7], ['track:']]) {
+    assert.throws(() => validateJournal({ schemaVersion: 'siann.command_journal.v1', journalId: 'x', bundle: '/b',
+      status: 'applied', batches: [{ status: 'applied', risk: 'normal', entries: [], touchedIds }] }), /touchedIds/);
+  }
   const ok = { schemaVersion: 'siann.command_journal.v1', journalId: 'x', bundle: '/b', status: 'failed', batches: [] };
   assert.equal(validateJournal(ok), ok);
 });
