@@ -926,3 +926,143 @@ TEST_CASE("execute and a plan carry master.set_gain; list_commands names it", "[
     }
     CHECK(listed);
 }
+
+// m5b-engine-plan-metadata (spec, "Plans", decisions of 2026-11-15; Protocol v0
+// items 15 and 29; docs/schemas/protocol-mcp-v0.md): submit_plan's title and
+// intent, the actor from initialize's clientInfo.name, and DELETE /v0/mcp.
+
+namespace {
+
+// initialize with `clientInfo` (absent when null); returns the session header.
+std::string initializeAs(Mcp& mcp, const Value& clientInfo) {
+    Object params{{"protocolVersion", Value("2025-06-18")}, {"capabilities", Value(Object{})}};
+    if (!clientInfo.isNull()) {
+        params.emplace_back("clientInfo", clientInfo);
+    }
+    const HttpResponse response = mcp.post(Mcp::rpc(Value(0), "initialize", Value(std::move(params))), false);
+    REQUIRE(response.status == 200);
+    mcp.sessionHeader = response.headers.at("Mcp-Session-Id");
+    return mcp.sessionHeader;
+}
+
+Value clientNamed(Value name) {
+    return Value(Object{{"name", std::move(name)}, {"version", Value("1.0")}});
+}
+
+Value gainStep(const std::string& track, int milliDb) {
+    return Value(Object{{"op", Value("track.set_gain")}, {"trackId", Value(track)}, {"gainMilliDb", Value(milliDb)}});
+}
+
+}  // namespace
+
+TEST_CASE("tools/list: submit_plan takes a title of 200 and an intent of 2000 at most", "[protocol][mcp][metadata]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    const Value* schema = nullptr;
+    for (const Value& tool : tools.asArray()) {
+        if (at(tool, "name").asString() == "submit_plan") {
+            schema = &at(tool, "inputSchema");
+        }
+    }
+    REQUIRE(schema != nullptr);
+    const Value& properties = at(*schema, "properties");
+    CHECK(at(at(properties, "title"), "type").asString() == "string");
+    CHECK(at(at(properties, "title"), "minLength").asNumber() == 1);
+    CHECK(at(at(properties, "title"), "maxLength").asNumber() == 200);
+    CHECK(at(at(properties, "intent"), "type").asString() == "string");
+    CHECK(at(at(properties, "intent"), "maxLength").asNumber() == 2000);
+    CHECK(properties.find("actor") == nullptr);
+    CHECK_FALSE(at(*schema, "additionalProperties").asBool());
+}
+
+TEST_CASE("submit_plan stores title, intent and the actor from clientInfo.name", "[protocol][mcp][metadata]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a")});
+    Mcp mcp(f);
+    initializeAs(mcp, clientNamed(Value("mix-assistant")));
+
+    const Value plan = mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{gainStep("trk_a", -600)})},
+                                                          {"title", Value("Lower the drums")},
+                                                          {"intent", Value("They mask the vocal.")}}));
+    CHECK(at(plan, "title").asString() == "Lower the drums");
+    CHECK(at(plan, "intent").asString() == "They mask the vocal.");
+    CHECK(canonical(at(plan, "actor")) == R"({"kind":"mcp","name":"mix-assistant"})");
+    const Value status = mcp.ok("plan_status", Value(Object{{"plan", at(plan, "hash")}}));
+    CHECK(canonical(at(status, "actor")) == R"({"kind":"mcp","name":"mix-assistant"})");
+    CHECK(at(status, "title").asString() == "Lower the drums");
+    // The UI sees the same actor.
+    CHECK(canonical(at(f.ok(c, "plan.status", Value(Object{{"plan", at(plan, "hash")}})), "actor")) ==
+          R"({"kind":"mcp","name":"mix-assistant"})");
+
+    // An actor in the tool arguments is refused and nothing is stored.
+    const Value refused = mcp.error(
+        "submit_plan", Value(Object{{"steps", Value(Array{gainStep("trk_a", -300)})},
+                                    {"actor", Value(Object{{"kind", Value("ui")}, {"name", Value("forged")}})}}));
+    CHECK(at(refused, "code").asString() == "invalid_params");
+    CHECK(at(f.ok(c, "plan.list"), "plans").asArray().size() == 1);
+    // A title over the limit is invalid_plan_metadata.
+    const Value tooLong = mcp.error("submit_plan", Value(Object{{"steps", Value(Array{gainStep("trk_a", -300)})},
+                                                                {"title", Value(std::string(201, 't'))}}));
+    CHECK(at(tooLong, "code").asString() == "invalid_plan_metadata");
+    CHECK(at(f.ok(c, "plan.list"), "plans").asArray().size() == 1);
+}
+
+TEST_CASE("the MCP actor's name: the default without clientInfo, sanitised otherwise", "[protocol][mcp][metadata]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a")});
+    int gain = 0;
+    const auto actorFor = [&](const Value& clientInfo) {
+        Mcp mcp(f);
+        initializeAs(mcp, clientInfo);
+        const Value plan = mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{gainStep("trk_a", --gain)})}}));
+        return canonical(at(plan, "actor"));
+    };
+    CHECK(actorFor(Value(nullptr)) == R"({"kind":"mcp","name":"MCP client"})");
+    CHECK(actorFor(Value(Object{{"version", Value("1")}})) == R"({"kind":"mcp","name":"MCP client"})");
+    CHECK(actorFor(clientNamed(Value(42))) == R"({"kind":"mcp","name":"MCP client"})");
+    CHECK(actorFor(clientNamed(Value(" \t\n"))) == R"({"kind":"mcp","name":"MCP client"})");
+    CHECK(actorFor(clientNamed(Value("  claude\x1b[31m-code\r\n"))) == R"({"kind":"mcp","name":"claude[31m-code"})");
+    // Cut to 64 bytes at a character boundary: 21 three-byte characters are 63 bytes.
+    std::string wide;
+    for (int i = 0; i < 30; ++i) {
+        wide += "\xE9\xBC\x93";
+    }
+    std::string cut;
+    for (int i = 0; i < 21; ++i) {
+        cut += "\xE9\xBC\x93";
+    }
+    CHECK(actorFor(clientNamed(Value(wide))) == R"({"kind":"mcp","name":")" + cut + R"("})");
+}
+
+TEST_CASE("DELETE /v0/mcp ends the session; without the header it is 400", "[protocol][mcp][agents]") {
+    Fixture f;
+    Mcp mcp(f);
+    const std::string session = initializeAs(mcp, clientNamed(Value("mix-assistant")));
+    CHECK(at(mcp.call(Value("p"), "ping"), "result").asObject().empty());
+
+    HttpRequest without = mcp.request("", false);
+    without.method = "DELETE";
+    CHECK(mcp.send(without).status == 400);
+    HttpRequest unknown = mcp.request("", false);
+    unknown.method = "DELETE";
+    unknown.headers["mcp-session-id"] = "mcp_" + std::string(32, '0');
+    CHECK(mcp.send(unknown).status == 404);
+    // The UI token does not end an MCP session.
+    HttpRequest wrongToken = mcp.request("");
+    wrongToken.method = "DELETE";
+    wrongToken.headers["authorization"] = "Bearer " + f.server.token();
+    CHECK(mcp.send(wrongToken).status == 401);
+
+    HttpRequest end = mcp.request("");
+    end.method = "DELETE";
+    const HttpResponse ended = mcp.send(end);
+    CHECK(ended.status == 204);
+    CHECK(ended.body.empty());
+    CHECK(mcp.post(Mcp::rpc(Value("p2"), "ping")).status == 404);
+    CHECK(mcp.send(end).status == 404);
+    CHECK(mcp.sessionHeader == session);
+}

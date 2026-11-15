@@ -18,11 +18,17 @@ the journal's `seq`, because JSON numbers lose precision above 2^53.
 
 ## Handshake additions
 
-The first text frame on the command socket is still `{type: "auth", token}`. Two
-additions:
+The first text frame on the command socket is still `{type: "auth", token}`.
+Three additions:
 
 - `events: true` in the auth frame subscribes the connection to the event stream.
   Without it the connection gets responses only, exactly as in v0.
+- `client: {name}` (m5b-engine-plan-metadata) names the UI client: the `actor`
+  of every plan the connection submits is `{kind: "ui", name}`
+  ([Plan v1](plan-v1.md), "Metadata"), the name sanitised (control characters
+  removed, spaces trimmed, at most 64 UTF-8 bytes). Without it, or with a
+  `client` that is not an object or a `name` that is not a string, the name is
+  `"SIANN"`; a malformed `client` never fails the authentication.
 - The reply carries the stream position and the build:
 
 ```json
@@ -198,8 +204,18 @@ Published once per plan lifecycle transition (spec, Protocol v0 item 25), after 
 response and after any `session.changed` of the same request:
 
 ```json
-{"type": "plan.changed", "plan": "sha256:...", "state": "approved", "proposalBranch": "p1"}
+{"type": "plan.changed", "plan": "sha256:...", "state": "rejected",
+ "title": "Lower the drums", "intent": "The drums mask the vocal.",
+ "actor": {"kind": "mcp", "name": "mix-assistant"}, "rejectionNote": "Too much; try -3 dB"}
 ```
+
+Since m5b-engine-plan-metadata the payload is `{plan, state, proposalBranch?,
+title?, intent?, actor?, rejectionNote?}`, the metadata and the note taken from
+the stored plan ([Plan v1](plan-v1.md)): the submitting agent and every client
+see a rejection's note, or a partial approval's "partially approved as
+sha256:..." on the original, without another request, and a sub-plan's event
+carries its parent's title, intent and actor. Each is absent when the plan has
+none. `approvedAt` and the other lifecycle fields stay in `plan.status`.
 
 `state` is the plan's state after the request (`validated`, `approved`,
 `rejected`, `applied`, `rolled_back`); `proposalBranch` is present while the plan
@@ -268,6 +284,29 @@ The payload is the record state of [Protocol engine v0](protocol-engine-v0.md),
 Recording. `endedBy` and `overflows` are present once the recording ended; an early
 end (`overflow`, `disk`, `device`) is never silent. The commit that follows is
 announced by `session.changed`.
+
+### `agent.changed` (m5b-engine-plan-metadata)
+
+An MCP client (an agent, spec Protocol v0 item 29) connected, disconnected,
+reconnected or acted:
+
+```json
+{"type": "agent.changed",
+ "agent": {"id": "agt_3f2a9c1d0b7e6a54", "name": "mix-assistant", "transport": "mcp",
+           "connected": true, "lastAction": "submit_plan", "lastActionAt": "2026-11-15T10:00:05Z"}}
+```
+
+`agent` is the entry `engine.status` lists in `agents`
+([Protocol engine v0](protocol-engine-v0.md)). `id` is `agt_<hex>`, stable for
+the session, and never its `Mcp-Session-Id`. Published when an agent
+initializes (`connected: true`), when its session ends with `DELETE /v0/mcp` or
+it sent no request for `limits.agentIdleMs` (`connected: false`; the agent stays
+listed), when a request arrives after that idle spell (`connected: true` again),
+and after every tool call the engine executed for it: `lastAction` is the tool's
+name and `lastActionAt` the server's ISO time; a tool's arguments never appear.
+The server compares the agents once per pump, after the requests, so the event
+follows the tool call's response and its `plan.changed`. The read model ignores
+it (it advances `lastSeq` only).
 
 ### `session.opened` (m3-mcp)
 

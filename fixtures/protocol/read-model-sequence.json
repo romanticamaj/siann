@@ -2198,5 +2198,40 @@
         }
       ]
     }
+  },
+  "unmodelled": {
+    "events": [
+      {
+        "schema": "siann.event.v1",
+        "seq": "8",
+        "sessionId": "ses_00c0ffee00c0ffee",
+        "revision": "r3",
+        "type": "plan.changed",
+        "plan": "sha256:0b2f267fe8be8affcff9e0374e546528ff46c9ab0ed7f28a3ec8d052bbfb2ff0",
+        "state": "rejected",
+        "title": "Lower the drums",
+        "intent": "The drums mask the vocal.\nLower them by 6 dB.",
+        "actor": {
+          "kind": "mcp",
+          "name": "mix-assistant"
+        },
+        "rejectionNote": "Too much; try -3 dB"
+      },
+      {
+        "schema": "siann.event.v1",
+        "seq": "9",
+        "sessionId": "ses_00c0ffee00c0ffee",
+        "revision": "r3",
+        "type": "agent.changed",
+        "agent": {
+          "id": "agt_00c0ffee00c0ffee",
+          "name": "mix-assistant",
+          "transport": "mcp",
+          "connected": true,
+          "lastAction": "submit_plan",
+          "lastActionAt": "2026-11-15T10:00:05Z"
+        }
+      }
+    ]
   }
 }

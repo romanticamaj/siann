@@ -38,7 +38,9 @@
     "locators": true,
     "cycle": true,
     "click": true,
-    "masterGain": true
+    "masterGain": true,
+    "planMetadata": true,
+    "agents": true
   },
-  "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024 }
+  "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024, "agentIdleMs": 300000, "agentsRetained": 32 }
 }

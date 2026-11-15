@@ -361,8 +361,9 @@ const command::PlanStore& Session::plans() const noexcept {
 }
 
 const command::Plan& Session::submitPlan(std::vector<command::Command> steps, std::vector<model::EntityRef> readSet,
-                                         const std::string& baseRevision) {
-    return state_->plans.submit(state_->history, std::move(steps), std::move(readSet), baseRevision);
+                                         const std::string& baseRevision, command::PlanMetadata metadata) {
+    return state_->plans.submit(state_->history, std::move(steps), std::move(readSet), baseRevision,
+                                std::move(metadata));
 }
 
 const command::Plan& Session::approvePlan(std::string_view planHashText, std::string approvedBy, std::string time) {

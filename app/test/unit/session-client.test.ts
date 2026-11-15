@@ -694,6 +694,26 @@ test('(18) a session.changed reaches onEvent listeners once the model has applie
   assert.deepEqual(revisions, [seq.steps[0]!.event.revision]);
 });
 
+// m5b-engine-plan-metadata: a plan.changed with the metadata and the note, and an
+// agent.changed, are events the read model does not model. The client advances
+// lastSeq past them, hands them to their listeners, and changes nothing else.
+test('(18b) plan.changed with metadata and agent.changed advance lastSeq and leave the model as it was', async () => {
+  const r = rig();
+  const socket = await synced(r);
+  const before = r.client.model.getSnapshot();
+  const seen: string[] = [];
+  r.client.onEvent('plan.changed', (e) => seen.push(`${e.seq} ${String(e.title)} ${String(e.rejectionNote)}`));
+  r.client.onEvent('agent.changed', (e) => seen.push(`${e.seq} ${(e.agent as { name: string }).name}`));
+  const [plan, agent] = seq.unmodelled.events;
+  socket.deliver(plan);
+  socket.deliver(agent);
+  await until(() => r.client.getState().lastSeq === agent!.seq, 'lastSeq past the agent.changed');
+  assert.deepEqual(seen, ['8 Lower the drums Too much; try -3 dB', '9 mix-assistant']);
+  assert.equal(r.client.model.getSnapshot(), before);
+  assert.equal(socket.requests('session.fetch').length, 0);
+  assert.equal(r.client.getState().syncCount, 1, 'no gap, no sync');
+});
+
 test('(19) a request while disconnected is refused before the socket, sends no frame and is recorded', async () => {
   const r = rig();
   // Before any connection.

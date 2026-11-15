@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "agent_registry.hpp"
 #include "jobs.hpp"
 #include "mcp_adapter.hpp"
 #include "request_inbox.hpp"
@@ -219,6 +220,13 @@ struct Pending {
     // Not a request: the connection closed. The command thread ends its
     // gestures after the requests it queued before the close.
     bool closed = false;
+    // m5b-engine-plan-metadata, set by the server, never from the request: the
+    // client's sanitised name (the UI's auth frame client.name, the MCP
+    // session's clientInfo.name) for the actor of a plan it submits, and for an
+    // MCP tool call its agent and the tool's name (the agent's lastAction).
+    std::string clientName{};
+    std::string agentId{};
+    std::string tool{};
 };
 
 // An open fader gesture (Protocol v0 item 24): who holds it and since when it
@@ -291,7 +299,25 @@ bool uncachedMethod(std::string_view method) noexcept {
 struct Connection {
     bool authenticated = false;
     bool realtime = false;  // opened on kRealtimePath: binary frames only
+    std::string clientName{};  // the auth frame's client.name, sanitised
 };
+
+// plan.submit's params (spec, "Plans", decisions of 2026-11-15): anything else,
+// an actor above all, is invalid_params.
+constexpr std::string_view kPlanSubmitParams[] = {"steps", "readSet", "baseRevision", "title", "intent"};
+
+// The title or intent param: absent, or a string (invalid_plan_metadata otherwise;
+// the limits are command::checkPlanMetadata's).
+std::optional<std::string> planMetadataString(const Value& params, std::string_view key) {
+    const Value* value = params.find(key);
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    if (value->kind() != Value::Kind::string) {
+        throw command::CommandError("invalid_plan_metadata", "plan.submit: " + std::string(key) + " must be a string");
+    }
+    return value->asString();
+}
 
 // The methods engine.capabilities lists, in this order.
 const std::vector<std::string_view> kMethods = {
@@ -637,10 +663,14 @@ struct ProtocolServer::Impl {
           readModel(options.syncChunkEntities),
           realtime(t, options.realtime),
           jobs(options.jobs.workerThread, [this] { inbox.wake(); }),
-          mcp([this](std::string requestId, std::string method, Value params,
+          agents(options.agentsRetained, [this] { return steadyNow(); }, [this] { inbox.wake(); }),
+          mcp(
+              [this](std::string requestId, std::string method, Value params, detail::McpCaller caller,
                      std::function<void(const std::string&)> done) {
-              return submitMcp(std::move(requestId), std::move(method), std::move(params), std::move(done));
-          }) {
+                  return submitMcp(std::move(requestId), std::move(method), std::move(params), std::move(caller),
+                                   std::move(done));
+              },
+              agents) {
         if (!options.clock) {
             options.clock = nowUtc;
         }
@@ -658,6 +688,7 @@ struct ProtocolServer::Impl {
     ReadModel readModel;
     RealtimeChannel realtime;
     detail::JobRunner jobs;
+    detail::AgentRegistry agents;  // Protocol v0 item 29; its own mutex
     detail::McpAdapter mcp;
 
     std::mutex mutex;                              // guards connections and sessionId
@@ -726,8 +757,13 @@ struct ProtocolServer::Impl {
             complete(*rejection);
             return;
         }
+        if (request.method == "DELETE") {
+            mcp.end(request, complete);
+            return;
+        }
         if (request.method != "POST") {
-            complete(jsonResponse(405, httpError("method_not_allowed", "POST /v0/mcp only; no SSE stream in v0")));
+            complete(jsonResponse(405, httpError("method_not_allowed",
+                                                 "POST and DELETE /v0/mcp only; no SSE stream in v0")));
             return;
         }
         mcp.handle(request, complete);
@@ -912,10 +948,14 @@ struct ProtocolServer::Impl {
     }
 
     // Any thread: an MCP tool call into the inbox, under the current session.
-    bool submitMcp(std::string requestId, std::string method, Value params,
+    bool submitMcp(std::string requestId, std::string method, Value params, detail::McpCaller caller,
                    std::function<void(const std::string&)> done) {
-        return inbox.tryPush(Pending{0, std::move(requestId), currentSessionId(), std::move(method), std::move(params),
-                                     std::nullopt, std::move(done), options.mcpScope});
+        Pending pending{0, std::move(requestId), currentSessionId(), std::move(method), std::move(params),
+                        std::nullopt, std::move(done), options.mcpScope};
+        pending.clientName = std::move(caller.name);
+        pending.agentId = std::move(caller.agentId);
+        pending.tool = std::move(caller.tool);
+        return inbox.tryPush(std::move(pending));
     }
 
     void onOpen(ConnectionId connection, const std::string& path) {
@@ -1019,6 +1059,12 @@ struct ProtocolServer::Impl {
             const Value* wantsEvents = parsed->find("events");
             const bool subscribe = wantsEvents != nullptr && wantsEvents->kind() == Value::Kind::boolean &&
                                    wantsEvents->asBool();
+            // m5b-engine-plan-metadata: {client: {name}} names the UI client in
+            // the actor of its plans; a malformed client is ignored.
+            const Value* client = parsed->find("client");
+            std::string name = detail::sanitizeClientName(
+                client != nullptr && client->kind() == Value::Kind::object ? client->find("name") : nullptr,
+                detail::kDefaultUiName);
             // Runs under the connection lock, which also guards sessionId.
             const auto reply = [this](const StreamPosition& current) {
                 return jcs::canonicalize(Value(Object{{"type", Value("auth")},
@@ -1037,6 +1083,7 @@ struct ProtocolServer::Impl {
                 return;
             }
             it->second.authenticated = true;
+            it->second.clientName = std::move(name);
             // Under the connection lock, so a close cannot leave an outbox
             // behind; the stream sends the reply before any event.
             if (subscribe) {
@@ -1085,8 +1132,10 @@ struct ProtocolServer::Impl {
             transport.send(connection, failure(requestId, "session_mismatch", "this server serves session " + served));
             return;
         }
-        if (!inbox.tryPush(Pending{connection, requestIdMember->asString(), served, method->asString(),
-                                   std::move(params), std::move(expectedRevision), {}, std::nullopt})) {
+        Pending pending{connection, requestIdMember->asString(), served, method->asString(),
+                        std::move(params), std::move(expectedRevision), {}, std::nullopt};
+        pending.clientName = state.clientName;
+        if (!inbox.tryPush(std::move(pending))) {
             transport.send(connection, failure(requestId, "queue_full", "the command inbox is full; retry"));
         }
     }
@@ -1270,17 +1319,21 @@ struct ProtocolServer::Impl {
 
     // engine.status, with plugins[] when there is a plugin port.
     Value engineStatus() const {
-        Value status = engineStatusJson(requireTransport().status());
+        Object out = engineStatusJson(requireTransport().status()).asObject();
         if (options.pluginPort != nullptr) {
             Array plugins;
             for (const PluginStatus& plugin : options.pluginPort->plugins()) {
                 plugins.push_back(pluginStatusJson(plugin));
             }
-            Object out = status.asObject();
             out.emplace_back("plugins", Value(std::move(plugins)));
-            status = Value(std::move(out));
         }
-        return status;
+        // Protocol v0 item 29: the MCP sessions' agents.
+        Array agentList;
+        for (const detail::AgentView& agent : agents.snapshot()) {
+            agentList.push_back(detail::agentJson(agent));
+        }
+        out.emplace_back("agents", Value(std::move(agentList)));
+        return Value(std::move(out));
     }
 
     // plugin.instantiate (Jobs v0, plugins): a job that runs inside the request
@@ -1667,15 +1720,40 @@ struct ProtocolServer::Impl {
                                       {"click", Value(options.transportPort != nullptr)},
                                       {"recording", Value(options.recordPort != nullptr)},
                                       {"masterGain", Value(true)},
-                                      {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})}})},
+                                      {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
+                                      {"planMetadata", Value(true)},
+                                      {"agents", Value(options.transportPort != nullptr)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
-                                    {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))}})},
+                                    {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))},
+                                    {"agentIdleMs", Value(static_cast<double>(options.agentIdleMs.count()))},
+                                    {"agentsRetained", Value(static_cast<double>(options.agentsRetained))}})},
         });
     }
 
     std::string planSubmit(const Pending& request) {
         const std::string_view method = "plan.submit";
+        for (const auto& member : request.params.asObject()) {
+            if (std::find(std::begin(kPlanSubmitParams), std::end(kPlanSubmitParams), member.first) ==
+                std::end(kPlanSubmitParams)) {
+                throw ProtocolError("invalid_params",
+                                    member.first == "actor"
+                                        ? std::string("plan.submit: the actor is set by the engine, not the request")
+                                        : "plan.submit: unknown param " + member.first);
+            }
+        }
+        command::PlanMetadata metadata;
+        metadata.title = planMetadataString(request.params, "title");
+        metadata.intent = planMetadataString(request.params, "intent");
+        command::checkPlanMetadata(metadata);
+        // The credential's kind (Pending::scope is set for the MCP token only) and
+        // the client's name; never read from the params.
+        const bool fromMcp = request.scope.has_value();
+        metadata.actor = command::PlanActor{
+            fromMcp ? command::PlanActorKind::mcp : command::PlanActorKind::ui,
+            !request.clientName.empty()
+                ? request.clientName
+                : std::string(fromMcp ? detail::kDefaultMcpName : detail::kDefaultUiName)};
         std::vector<command::Command> steps = commandList(request.params, "steps", method);
         std::vector<model::EntityRef> readSet;
         if (const Value* given = request.params.find("readSet")) {
@@ -1695,7 +1773,7 @@ struct ProtocolServer::Impl {
         }
         const std::string base =
             optionalString(request.params, "baseRevision", method).value_or(session->history().head().envelope.id);
-        const command::Plan& plan = session->submitPlan(std::move(steps), std::move(readSet), base);
+        const command::Plan& plan = session->submitPlan(std::move(steps), std::move(readSet), base, std::move(metadata));
         return success(request.requestId, plan.toJson());
     }
 
@@ -2297,6 +2375,15 @@ struct ProtocolServer::Impl {
                 if (mark.proposalBranch) {
                     payload.emplace_back("proposalBranch", Value(*mark.proposalBranch));
                 }
+                // m5b-engine-plan-metadata: the stored plan's metadata and note.
+                if (const command::Plan* plan = session->plans().find(mark.hash)) {
+                    const Value stored = plan->toJson();
+                    for (const char* key : {"title", "intent", "actor", "rejectionNote"}) {
+                        if (const Value* field = stored.find(key)) {
+                            payload.emplace_back(key, *field);
+                        }
+                    }
+                }
                 events.publish("plan.changed", std::move(payload));
             }
             marks_ = std::move(after);
@@ -2455,8 +2542,27 @@ struct ProtocolServer::Impl {
     }
 
     // Command thread, under pumpMutex.
+    // Command thread: the agents as last published (agent.changed), by id.
+    std::map<std::string, detail::AgentView, std::less<>> agentMarks_;
+
+    // agent.changed for every agent that connected, disconnected, reconnected
+    // or acted since the last call (Protocol v0 item 29), in initialize order.
+    void publishAgents() {
+        std::map<std::string, detail::AgentView, std::less<>> next;
+        for (detail::AgentView& agent : agents.snapshot()) {
+            const auto before = agentMarks_.find(agent.id);
+            if (before == agentMarks_.end() || !(before->second == agent)) {
+                events.publish("agent.changed", Object{{"agent", detail::agentJson(agent)}});
+            }
+            std::string id = agent.id;
+            next.emplace(std::move(id), std::move(agent));
+        }
+        agentMarks_ = std::move(next);
+    }
+
     void handle(std::vector<Pending> requests) {
         expireLeases();
+        agents.expire(options.agentIdleMs);
         for (const auto& request : requests) {
             if (request.closed) {
                 endConnection(request.connection);
@@ -2484,6 +2590,9 @@ struct ProtocolServer::Impl {
                 }
             }
             std::string response = execute(request);
+            if (!request.agentId.empty()) {
+                agents.acted(request.agentId, request.tool, options.clock());
+            }
             if (cached) {
                 remember(request.requestId, response);
             }
@@ -2502,6 +2611,7 @@ struct ProtocolServer::Impl {
         syncRecordState();
         finishImports();
         refreshMediaTable();
+        publishAgents();
         events.flush();
     }
 

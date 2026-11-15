@@ -7,6 +7,7 @@ add_library(siann_protocol
   src/about.cpp
   src/jobs.cpp
   src/mcp_adapter.cpp
+  src/agent_registry.cpp
   src/record_port.cpp
 )
 add_library(siann::protocol ALIAS siann_protocol)
@@ -29,6 +30,7 @@ if(SIANN_BUILD_TESTS)
     tests/realtime_channel_test.cpp
     tests/build_info_test.cpp
     tests/plan_methods_test.cpp
+    tests/agent_methods_test.cpp
     tests/audition_methods_test.cpp
     tests/transport_methods_test.cpp
     tests/locators_methods_test.cpp
