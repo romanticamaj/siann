@@ -1995,11 +1995,20 @@ and C9, E-7 and E-14):
   character (U+0000 to U+001F, U+007F to U+009F); `intent` is a string of 1 to 2,000
   UTF-8 bytes without a control character other than tab, LF and CR. Both are
   measured in bytes, so a title of 67 three-byte characters (201 bytes) is refused.
+  Both also refuse the display-unsafe characters, which could make a plan read
+  as other text in the review (security fix after #121): the bidi formatting
+  characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and
+  U+2028 and U+2029, which the intent refuses too rather than reading as
+  newlines (LF is its line break; renderers disagree on the separators). The
+  check decodes UTF-8 and works by code point; text that is not well-formed
+  UTF-8 is refused. The UI renders agent-supplied text with `dir="auto"` and
+  `unicode-bidi: isolate` as a second line.
 - `actor` is set by the server and never read from the request: `kind` is the
   credential's (`mcp` for the MCP token, `ui` for the UI token), `name` the MCP
   client's `initialize` `clientInfo.name` for its session, or the UI's auth frame
   `client.name` (siann-protocol, items 2 and 15). A name is sanitised: control
-  characters are removed, leading and trailing white space trimmed, and the rest
+  characters and the display-unsafe characters above are removed (bytes that are
+  not well-formed UTF-8 too), leading and trailing white space trimmed, and the rest
   cut to at most 64 UTF-8 bytes at a character boundary; an absent, non-string or
   then empty name is `"MCP client"` or `"SIANN"`. `plan.submit` refuses any param
   other than `steps`, `readSet`, `baseRevision`, `title` and `intent`

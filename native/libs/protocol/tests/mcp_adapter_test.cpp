@@ -1026,6 +1026,16 @@ TEST_CASE("the MCP actor's name: the default without clientInfo, sanitised other
     CHECK(actorFor(clientNamed(Value(42))) == R"({"kind":"mcp","name":"MCP client"})");
     CHECK(actorFor(clientNamed(Value(" \t\n"))) == R"({"kind":"mcp","name":"MCP client"})");
     CHECK(actorFor(clientNamed(Value("  claude\x1b[31m-code\r\n"))) == R"({"kind":"mcp","name":"claude[31m-code"})");
+    // Bidi formatting (U+202E RLO, U+2066 LRI, U+200F RLM, U+061C ALM) and line
+    // separators (U+2028, U+2029) are removed too, so the name cannot reorder
+    // what is shown after it.
+    CHECK(actorFor(clientNamed(Value("evil\xE2\x80\xAE" "doc.exe" "\xE2\x81\xA6" "x" "\xE2\x80\x8F\xD8\x9C"))) ==
+          R"({"kind":"mcp","name":"evildoc.exex"})");
+    CHECK(actorFor(clientNamed(Value("two\xE2\x80\xA8" "lines" "\xE2\x80\xA9"))) == R"({"kind":"mcp","name":"twolines"})");
+    CHECK(actorFor(clientNamed(Value("\xE2\x80\xAE \xE2\x80\xAE"))) == R"({"kind":"mcp","name":"MCP client"})");
+    // CJK and emoji are kept.
+    CHECK(actorFor(clientNamed(Value("\xE9\xBC\x93 \xF0\x9F\xA5\x81"))) ==
+          std::string(R"({"kind":"mcp","name":")") + "\xE9\xBC\x93 \xF0\x9F\xA5\x81" + R"("})");
     // Cut to 64 bytes at a character boundary: 21 three-byte characters are 63 bytes.
     std::string wide;
     for (int i = 0; i < 30; ++i) {

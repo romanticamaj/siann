@@ -1,5 +1,6 @@
 add_library(siann_command
   src/commands.cpp
+  src/display_text.cpp
   src/history.cpp
   src/plan.cpp
 )

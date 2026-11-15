@@ -25,8 +25,8 @@ Three additions:
   Without it the connection gets responses only, exactly as in v0.
 - `client: {name}` (m5b-engine-plan-metadata) names the UI client: the `actor`
   of every plan the connection submits is `{kind: "ui", name}`
-  ([Plan v1](plan-v1.md), "Metadata"), the name sanitised (control characters
-  removed, spaces trimmed, at most 64 UTF-8 bytes). Without it, or with a
+  ([Plan v1](plan-v1.md), "Metadata"), the name sanitised (control and
+  display-unsafe characters removed, spaces trimmed, at most 64 UTF-8 bytes). Without it, or with a
   `client` that is not an object or a `name` that is not a string, the name is
   `"SIANN"`; a malformed `client` never fails the authentication.
 - The reply carries the stream position and the build:

@@ -39,7 +39,8 @@ Every session is an agent (spec, Protocol v0 item 29): `engine.status` lists it
 in `agents` and `agent.changed` announces it ([Protocol events v1](protocol-events-v1.md)).
 
 - `initialize` reads `params.clientInfo.name` as the agent's name, sanitised:
-  control characters removed, leading and trailing spaces trimmed, cut to 64
+  control and display-unsafe characters ([Plan v1](plan-v1.md), "Metadata")
+  removed, leading and trailing spaces trimmed, cut to 64
   UTF-8 bytes at a character boundary. Without `clientInfo`, or with a name that
   is not a string or is empty after that, the name is `"MCP client"`. The name is
   the `actor` of every plan the session submits: `{kind: "mcp", name}`

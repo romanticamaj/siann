@@ -55,8 +55,8 @@ Params `{}`. Result:
 
 | Case | Answer |
 |---|---|
-| `title` not a string, empty, over 200 UTF-8 bytes, or with a control character (LF and CR included) | `invalid_plan_metadata` |
-| `intent` not a string, empty, over 2,000 UTF-8 bytes, or with a control character other than tab, LF and CR | `invalid_plan_metadata` |
+| `title` not a string, empty, over 200 UTF-8 bytes, with a control character (LF and CR included), or with a display-unsafe character ([Plan v1](plan-v1.md), "Metadata": bidi formatting, U+2028, U+2029) | `invalid_plan_metadata` |
+| `intent` not a string, empty, over 2,000 UTF-8 bytes, with a control character other than tab, LF and CR, or with a display-unsafe character | `invalid_plan_metadata` |
 | an `actor`, or any param not listed above | `invalid_params` |
 
 On a refusal nothing is stored and no `plan.changed` goes out. `invalid_plan_metadata` is a new stable code. `plan.status`, `plan.list` and `plan.changed` carry `title`, `intent`, `actor` and `rejectionNote` when the plan has them.
