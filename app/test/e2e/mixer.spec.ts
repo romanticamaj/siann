@@ -523,9 +523,21 @@ test('a latched clip and the peak value survive a solo (a new legend epoch)', as
   await expect(peakValue).toHaveClass(/\bclip\b/);
 });
 
+// The status bar commits whenever engine.status answers differently: the
+// xrun count rises when the fake device misses a deadline, as it does now and
+// then on a loaded runner (the macOS one). So the count is taken under the
+// mixer, the timeline and the transport bar (Counted), which no status answer
+// reaches, not at the root; and every callback misses its deadline here
+// (--fake-callback-nanos 20 ms against a 256-frame buffer), so the status bar
+// does commit about once a second while the count must stay put.
 test('zero React commits while playing (profiling bundle), and the counter does count commits', async () => {
-  await launch({ SIANN_SHELL_PROFILING: '1' });
-  const commits = () => page.evaluate(() => (window as unknown as { __siannCommits?: number }).__siannCommits ?? 0);
+  await launch({ SIANN_SHELL_PROFILING: '1', SIANN_ENGINE_TEST_ARGS: '--device fake --fake-callback-nanos 20000000' });
+  const commits = () =>
+    page.evaluate(() => {
+      const by = (window as unknown as { __siannCommitsBy?: Record<string, number> }).__siannCommitsBy ?? {};
+      return (by.mixer ?? 0) + (by.timeline ?? 0) + (by.transport ?? 0);
+    });
+  const root = () => page.evaluate(() => (window as unknown as { __siannCommits?: number }).__siannCommits ?? 0);
   // The counter moves on a commit: a mute click re-renders the strip.
   const first = await commits();
   await page.getByTestId(`mute-${TRACK}`).click();
@@ -540,11 +552,14 @@ test('zero React commits while playing (profiling bundle), and the counter does 
   const startFrames = await meterFrames();
   await expect.poll(() => meterFrames()).toBeGreaterThan(startFrames + 10);
   const before = await commits();
+  const rootBefore = await root();
   // About three seconds of display frames: longer than the status bar's
-  // engine.status poll (1 s), which must not commit an unchanged answer.
+  // engine.status poll (1 s).
   const frames = await meterFrames();
   await expect.poll(() => meterFrames()).toBeGreaterThan(frames + 180);
   expect(await commits()).toBe(before);
+  // The status bar did commit meanwhile (the rising xrun count), and the count above did not see it.
+  expect(await root()).toBeGreaterThan(rootBefore);
   await client.call('transport.stop');
 });
 
