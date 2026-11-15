@@ -580,3 +580,25 @@ TEST_CASE("armed tracks' input meters join the legend and the frames while stopp
     publisher.setInputs({});
     CHECK(publisher.legend() == graphLegend);
 }
+
+// m5b-engine-buses-sends: a bus meter is legend entry bus:<id>; the graph's keys
+// come in byte order, so the buses precede the master and the tracks.
+TEST_CASE("the meter legend lists every bus as bus:<id> in key order", "[protocol][realtime][buses]") {
+    Rig rig;
+    Fixture f;
+    const ConnectionId listener = f.authed(true);
+    MeterPublisher publisher(rig.dispatcher, f.server.realtime(), f.server.events(), publisherOptions(rig));
+    std::map<std::string, graph::NodeId> slots = rig.meterSlots;
+    slots.emplace("bus:b2", rig.meterSlots.at("track:trk_1"));
+    slots.emplace("bus:b1", rig.meterSlots.at("master"));
+    publisher.graphPublished(rig.epoch, slots);
+    f.server.pump();
+    const auto events = f.events(listener);
+    REQUIRE(events.size() == 1);
+    std::vector<std::string> legend;
+    for (const auto& entity : at(events[0], "entities").asArray()) {
+        legend.push_back(entity.asString());
+    }
+    CHECK(legend == std::vector<std::string>{"bus:b1", "bus:b2", "master", "track:trk_1"});
+    CHECK(publisher.legend() == legend);
+}

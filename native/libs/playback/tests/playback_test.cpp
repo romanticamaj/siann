@@ -1376,3 +1376,29 @@ TEST_CASE("No allocations on the audio thread during bus and send gestures", "[p
     CHECK(p.engine.underruns() == 0);
     CHECK_FALSE(silent(p.out[0]));
 }
+
+TEST_CASE("A bus meter reaches the dispatcher under bus:<id> and reads the bus's post-fader level",
+          "[playback][buses][meters]") {
+    Fixture f;
+    busSession(f);
+    Player p(f.session);
+    p.pump(6);
+    p.engine.dispatcher().tick();
+    const auto bus = p.engine.dispatcher().meter("bus:bus_fx");
+    REQUIRE(bus.has_value());
+    CHECK(bus->reading.channels == 2);
+    CHECK(bus->reading.peak[0] > 0.0f);
+    CHECK(p.engine.dispatcher().meter("bus:bus_grp").has_value());
+    // The meter keys in byte order: buses, then the master, then the tracks.
+    std::vector<std::string> keys;
+    for (const auto& [key, slot] : p.engine.meterSlots()) {
+        keys.push_back(key);
+    }
+    CHECK(keys == std::vector<std::string>{"bus:bus_fx", "bus:bus_grp", "master", "track:trk_a", "track:trk_b"});
+    // A muted bus meters silence; its gain is a parameter set, the meter follows.
+    f.exec(R"({"op":"bus.set_mute","busId":"bus_fx","mute":true})");
+    p.engine.update(f.doc());
+    p.pump(3);
+    p.engine.dispatcher().tick();
+    CHECK(p.engine.dispatcher().meter("bus:bus_fx")->reading.peak[0] == 0.0f);
+}
