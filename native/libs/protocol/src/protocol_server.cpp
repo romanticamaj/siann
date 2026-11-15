@@ -35,6 +35,7 @@
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
 #include "siann/media/peaks.hpp"
+#include "siann/model/display_text.hpp"
 #include "siann/session/journal.hpp"
 #include "siann/session/media_import.hpp"
 #include "siann/session/takes.hpp"
@@ -1451,7 +1452,10 @@ struct ProtocolServer::Impl {
             io::createDirectoriesDurable(directory);
             io::writeFileAtomic(directory / blob->substr(7), bytes);
         }
-        const PluginDescriptorInfo& probed = loaded.descriptor;
+        // The name the plugin reports is the plugin's text, not the agent's:
+        // stripped of control and display-unsafe characters, never refused.
+        PluginDescriptorInfo probed = loaded.descriptor;
+        probed.name = model::withoutUnsafeCharacters(probed.name);
         const Value insert(Object{{"op", Value("plugin.insert")},
                                   {busId ? "busId" : "trackId", Value(busId ? wanted.busId : wanted.trackId)},
                                   {"index", Value(static_cast<double>(wanted.index))},
@@ -2031,6 +2035,14 @@ struct ProtocolServer::Impl {
         if (given && given->empty()) {
             throw ProtocolError("invalid_params", "session.create: name must not be empty");
         }
+        // A name given is refused when it holds a control or display-unsafe
+        // character, as session.rename's (spec "siann-model", names); one taken
+        // from the folder is stripped of them instead.
+        if (given && !model::isDisplaySafeName(*given)) {
+            throw ProtocolError("invalid_name",
+                                "session.create: name must not hold control characters, bidi formatting "
+                                "characters or line separators");
+        }
         std::error_code ec;
         if (std::filesystem::exists(std::filesystem::symlink_status(path, ec))) {
             throw ProtocolError("already_exists", "something already exists at this path");
@@ -2038,7 +2050,7 @@ struct ProtocolServer::Impl {
         if (!std::filesystem::is_directory(path.parent_path(), ec)) {
             throw ProtocolError("not_found", "the parent directory of this path does not exist");
         }
-        std::string rootName = given.value_or(utf8(path.stem()));
+        std::string rootName = given.value_or(model::withoutUnsafeCharacters(utf8(path.stem())));
         if (rootName.empty()) {
             rootName = "Untitled";
         }

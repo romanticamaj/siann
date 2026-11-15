@@ -10,6 +10,7 @@
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
 #include "siann/media/peaks.hpp"
+#include "siann/model/display_text.hpp"
 
 namespace siann::session {
 
@@ -75,6 +76,10 @@ std::string mediaNameFromPath(const fs::path& file) {
     } catch (const std::exception&) {
         name.clear();  // a name the platform cannot express as UTF-8
     }
+    // A file name is the file's, not the caller's: stripped of control and
+    // display-unsafe characters and malformed bytes, never refused (spec
+    // "siann-model", names).
+    name = model::withoutUnsafeCharacters(name);
     if (name.empty()) {
         return "audio";
     }

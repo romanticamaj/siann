@@ -284,6 +284,24 @@ name ..." (bidi formatting and separators stripped, CJK and emoji kept), app
 the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
 has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
 
+Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
+`commands_test` "track.add and track.rename ...", "media.add and media.rename
+...", "session.rename ...", "plugin.insert refuses a display-unsafe descriptor
+name ..." (RLO, LRI, PDI, ALM, LRM, LS, LF, NEL and a malformed byte, each
+`invalid_name`; Hebrew, CJK and emoji pass) and "A transaction stops at the
+step whose name is unsafe"; `document_test` "Validation refuses display-unsafe
+names as invalid_name" (root, track and media) and "Opening a document with a
+display-unsafe name is invalid_document" (a crafted v1 document with the
+character in a track, the session, a plugin slot and a media name);
+`session_create_test` "session.create refuses an unsafe given name and strips
+one taken from the folder"; `media_import_test` "The media name drops control
+and display-unsafe characters from the file name"; Node `display-name` (the
+import-pack manifest refuses them in session, track and region names; the
+DAW-pack intake strips them from names it derives from file names); app
+`plan-bidi` (each name in step text, stale reasons, refusal lines and diff rows
+is wrapped in U+2068 ... U+2069 in every locale; the track list, inspector,
+mixer strip and session name isolate the name they show).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how

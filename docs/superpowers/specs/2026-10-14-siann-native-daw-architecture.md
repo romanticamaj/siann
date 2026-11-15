@@ -1644,6 +1644,31 @@ Rules:
   removes the field with `name: null` (the entity then hashes as it did before it
   had a name). `media.rename` declares exactly `{media:<id>}`, is one revision and
   undoable; an unknown id is `not_found`.
+- Names (follow-up to #123, the plan metadata rule applied to the document): every
+  name the document stores, the session's (`root.name`), a track's, a media's and a
+  plugin slot's (and a bus's and a marker's when they land), is well-formed UTF-8
+  without a control character (U+0000 to U+001F, U+007F to U+009F) and without a
+  display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F,
+  U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029. An RLO or an
+  isolate in a track name would otherwise reorder the plan step, stale reason or
+  diff row it is shown in (Trojan Source). The rule is
+  `siann/model/display_text.hpp`, shared with the plan checks. A name a client
+  supplies is refused with `invalid_name`: `track.add`, `track.rename`,
+  `media.add`, `media.rename`, `session.rename`, `plugin.insert`'s
+  `descriptor.name` and `session.create`'s `name`; nothing is applied. A name the
+  engine derives is stripped of those characters, never refused: a media's from
+  its file name (`media.import`; `"audio"` when nothing is left), the session's
+  from its folder name (`session.create` without `name`; `"Untitled"`), a slot's
+  from the descriptor the plugin reports (`plugin.instantiate`). `validate()`
+  reports a stored unsafe name as `invalid_name`, so a document that holds one is
+  refused on open (`invalid_document`, `"invalid_name: ..."`), not repaired:
+  stripping would change the entity and document hashes the journal and the
+  checkpoint are checked against. No earlier engine wrote such a name through the
+  UI, and JSON text cannot carry malformed UTF-8. The renderer isolates each name
+  it interpolates into a sentence (U+2068 ... U+2069) as a second line, and the
+  bridge (`src/workflows/display-name.js`) refuses the same set in an import-pack
+  manifest's session, track and region names and strips it from the names the
+  DAW-pack intake derives from file names.
 - M5b `master` (m5b-engine-master, UI redesign E-11; singleton entity; decided by
   the main session under the maintainer's delegation (Fable rule), 2026-11-15):
   `{schema: "siann.entity.master.v1", id: "master", gainMilliDb}`, ref

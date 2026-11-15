@@ -1,4 +1,5 @@
 add_library(siann_model
+  src/display_text.cpp
   src/document.cpp
 )
 add_library(siann::model ALIAS siann_model)

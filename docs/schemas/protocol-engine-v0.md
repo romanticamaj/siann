@@ -150,7 +150,7 @@ MCP: `record_arm` and `record` wrap `record.arm` and `transport.record` in the t
 | Field | Rule |
 |---|---|
 | `path` | UTF-8, absolute, must not exist. A relative path or a UNC path (`\\server\share\x`, `\\?\UNC\server\share\x`) is `invalid_params`; an existing file, directory (empty or not) or bundle is `already_exists`; a missing parent directory is `not_found`. Nothing is created on any refusal. |
-| `name` | optional string; `root.name`. Default: the path's stem (`Song` for `.../Song.siann`). |
+| `name` | optional string; `root.name`. Default: the path's stem (`Song` for `.../Song.siann`). A name given with a control or display-unsafe character ("Names" below) is `invalid_name` and nothing is created; the stem is stripped of them instead (`Untitled` when nothing is left). |
 
 The session's sample rate is the rate the output device runs at (`engine.status` `device.sampleRate`), 48000 when no device runs or the server has no transport port. Queued and running `media.import` jobs are cancelled first (they end `failed` with `cancelled`). The result is `{sessionId, revision, documentHash}` (revision `r1`); subscribed connections receive `session.opened`, requests naming the old `sessionId` get `session_mismatch`, as after `session.open`.
 
@@ -163,7 +163,7 @@ The session's sample rate is the rate the output device runs at (`engine.status`
 | `path` | UTF-8, absolute, not UNC (`invalid_params` otherwise, and no job). A WAV (PCM 8 to 32 bit, float 32 or 64 bit, RIFF or RF64) or FLAC file. |
 | `clientImportId` | string, 1 to 128 bytes, chosen by the client (`invalid_params` when missing or not a string). A repeated value for the served session answers the first job's `{jobId, kind, state}` and starts nothing. |
 
-The worker decodes the file, converts it to the session rate when it differs (32-bit float WAV), writes `media/<sha256>.<ext>` and its peak pyramid `peaks/<sha256>.peaks` ([Protocol peaks v0](protocol-peaks-v0.md)), then the command thread commits `media.add` with a server-chosen `mediaId` (`med_<n>`, above every `med_<n>` in the history) and `name` (the file's base name, at most 255 UTF-8 bytes) as one revision, published as `session.changed`. The job is `done` only after that commit.
+The worker decodes the file, converts it to the session rate when it differs (32-bit float WAV), writes `media/<sha256>.<ext>` and its peak pyramid `peaks/<sha256>.peaks` ([Protocol peaks v0](protocol-peaks-v0.md)), then the command thread commits `media.add` with a server-chosen `mediaId` (`med_<n>`, above every `med_<n>` in the history) and `name` (the file's base name without its control and display-unsafe characters, "Names" below, at most 255 UTF-8 bytes; `audio` when nothing is left) as one revision, published as `session.changed`. The job is `done` only after that commit.
 
 `job.status {jobId}` for an import:
 
@@ -177,6 +177,19 @@ The worker decodes the file, converts it to the session rate when it differs (32
 Content the head document already holds (same `contentHash`) ends `done` with the existing entity's `mediaId`, `existing: true`, `revision` the head, and no new revision. Failure codes: `not_found` (no file at `path`), `unsupported_media`, `decode_failed` (truncated or damaged, a WAV data chunk shorter than its header says included), `too_large`, `io_error` (writing the bundle failed), `cancelled` (`session.open`, `session.create` or the server stopping), or the `CommandError` code of a refused `media.add`. A failed or cancelled import commits nothing and removes the files it created; files the bundle held before are kept.
 
 `engine.capabilities` reports `features.mediaImport: {formats: ["wav", "flac"]}`, lists `session.create` and `media.import` in `methods` and `media.rename` in `commands`. MCP: `create_session` and `import_media`, trusted scope only ([Protocol MCP v0](protocol-mcp-v0.md)).
+
+## Names
+
+Every name the document stores, `root.name`, a track's, a media's and a plugin slot's `name` (and a bus's and a marker's when they land), is well-formed UTF-8 without a control character (U+0000 to U+001F, U+007F to U+009F) and without a display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029 (the set [Plan v1](plan-v1.md), "Metadata", refuses in plan titles; architecture spec, "siann-model", names). An RLO or an isolate in a track name could otherwise make a plan step read as other text.
+
+| Where | Answer |
+|---|---|
+| `track.add`, `track.rename`, `media.add`, `media.rename`, `session.rename` `name`; `plugin.insert` `descriptor.name` (through `command.execute`, a plan or MCP `execute`) | `invalid_name`; nothing is applied, and in a transaction or plan the error carries the step |
+| `session.create` `name` | `invalid_name`; nothing is created |
+| a name the engine derives: `media.import` (the file name), `session.create` without `name` (the folder name), `plugin.instantiate` (the name the plugin reports) | stripped of those characters, never refused |
+| a bundle whose checkpoint or journal holds such a name | `session.open` fails with `invalid_document` (`invalid_name: ...`); the document is not repaired, since stripping would change the hashes the journal is checked against |
+
+`invalid_name` is a new stable code. A media name's length (1 to 255 bytes) stays `invalid_params`. The Studio UI also isolates each name it interpolates into a sentence (U+2068 FSI ... U+2069 PDI).
 
 ## The bundle lock
 
