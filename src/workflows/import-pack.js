@@ -94,8 +94,44 @@ function normalizeManifestPaths(manifest, manifestDir) {
   return normalized;
 }
 
+function renderFormatError(message) {
+  const error = new Error(message);
+  error.code = 'render_format_unsupported';
+  return error;
+}
+
+// siann-engine's render.start takes {name, start?, frames?} (architecture spec,
+// Jobs v0) and writes 32-bit float WAV at the session rate, unnormalised. A
+// preview that asks for another format is refused here rather than narrowed
+// when the command file runs; bitDepth "float32" and normalize false state
+// what the engine writes and are accepted.
+function previewSampleRate(manifest) {
+  const sessionRate = manifest.session.sampleRate || 48000;
+  const { preview } = manifest;
+  if (preview.bitDepth !== undefined && preview.bitDepth !== 'float32') {
+    throw renderFormatError(`preview.bitDepth ${JSON.stringify(preview.bitDepth)} is not a format siann-engine `
+      + 'renders: it writes 32-bit float WAV (omit bitDepth, or set "float32")');
+  }
+  if (preview.normalize !== undefined && preview.normalize !== false) {
+    throw renderFormatError('preview.normalize is not supported: siann-engine renders unnormalised (omit it)');
+  }
+  const rate = preview.sampleRate || sessionRate;
+  if (rate !== sessionRate) {
+    throw renderFormatError(`preview.sampleRate ${rate} differs from the session's ${sessionRate}: siann-engine `
+      + 'renders at the session rate (omit preview.sampleRate)');
+  }
+  return rate;
+}
+
+// The command file holds only what siann-engine honours: no track
+// inputChannels (track.add takes channels, from outputChannels), no
+// snapshotRetention (a v1 journal holds no snapshots) and no render bit depth
+// or normalisation (docs/schemas/command-journal-v1.md, "How a command file
+// runs"). A manifest may still carry inputChannels and snapshotRetention, so
+// existing manifests load, but nothing reads them.
 function buildImportPackCommand(manifest) {
   validateManifest(manifest);
+  const previewRate = manifest.preview ? previewSampleRate(manifest) : null;
   const commands = [{
     op: 'create_session',
     sessionDir: manifest.session.dir,
@@ -107,7 +143,6 @@ function buildImportPackCommand(manifest) {
     commands.push({
       op: 'create_audio_track',
       name: track.name,
-      inputChannels: track.inputChannels || 1,
       outputChannels: track.outputChannels || 2,
       count: track.count || 1,
     });
@@ -135,9 +170,7 @@ function buildImportPackCommand(manifest) {
     commands.push({
       op: 'render',
       outputPath: manifest.preview.outputPath,
-      sampleRate: manifest.preview.sampleRate || manifest.session.sampleRate || 48000,
-      bitDepth: manifest.preview.bitDepth || '16',
-      normalize: Boolean(manifest.preview.normalize),
+      sampleRate: previewRate,
     });
   }
   commands.push({ op: 'observe_session' });
@@ -146,7 +179,6 @@ function buildImportPackCommand(manifest) {
     schemaVersion: 'siann.command.v0',
     journalPath: manifest.journalPath || path.join(manifest.session.dir, '..', 'journal.json'),
     batchRisk: manifest.batchRisk || 'normal',
-    snapshotRetention: manifest.snapshotRetention || { maxCount: 3 },
     commands,
   };
 }

@@ -30,8 +30,10 @@ steps, preview render target, review state, command hash, and command batch to
 apply. Pending plans cannot be applied directly; approve the plan first so the
 bridge can verify that the command hash has not changed. Applying the approved
 plan creates a session under `/tmp/siann-import-pack-demo/Session`, places a
-riser and impact on separate tracks, renders `/tmp/siann-import-pack-demo/preview.wav`,
-and records the plan revision in the journal. The rollback command opens the
+riser and impact on separate tracks, renders `/tmp/siann-import-pack-demo/preview.wav`
+(32-bit float WAV at the session rate, unnormalised, as siann-engine renders;
+a manifest preview asking for another `bitDepth`, `normalize` or `sampleRate`
+is refused with `render_format_unsupported`), and records the plan revision in the journal. The rollback command opens the
 bundle again and rolls that revision back (`plan.rollback {revision}`); the
 imported media stays in the bundle.
 
@@ -49,6 +51,7 @@ node scripts/create-daw-manifest.js /tmp/siann-user-daw-source \
 ```
 
 The generated layout creates one track per BGM bed and one track per SFX cue so
-the timeline is easier to inspect visually in the SIANN app or, after DAWproject export, another DAW. BGM
+the timeline is easier to inspect visually in the SIANN app or, after DAWproject
+export, another DAW. BGM
 rows in `placement.md` provide `sourceStart` and `duration`, which the engine
 uses to trim imported regions instead of always placing whole source files.

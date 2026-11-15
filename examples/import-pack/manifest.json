@@ -40,7 +40,6 @@
   ],
   "preview": {
     "outputPath": "/tmp/siann-import-pack-demo/preview.wav",
-    "sampleRate": 48000,
-    "bitDepth": "16"
+    "sampleRate": 48000
   }
 }

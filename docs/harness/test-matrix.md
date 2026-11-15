@@ -148,12 +148,16 @@ envelope, `resolveEngineExe`, the source no longer names the Ardour runtime),
 token, unknown method, error mapping, failed and cancelled jobs, the engine
 exiting mid-request, stop with requests in flight; `client.js` branch coverage
 above 57 %); 3 `bridge-runner` (the method sequence, the Node plan hash, the
-v1 journal, the rate refusal, the render copied out), `rollback-workflow` (a
+v1 journal, the rate refusal, the render copied out, a render format,
+`inputChannels` or `snapshotRetention` the engine cannot honour refused),
+`import-pack-workflow` (the preview format refused when the command file is
+built), `rollback-workflow` (a
 second process rolls back by revision), G: `runtime-engine` "plan intake,
 validate, approve, apply --run and rollback --run against siann-engine"; 4 G:
 `runtime-engine`, `live-import-pack` "creates a native session"; 5
 `ci-workflow` (the `bridge-engine` job), `check-all-changed` (the `bridge`
-step); 6 `skill-docs`, `test-matrix`, and the PR's list of changed mentions; 7
+step); 6 `skill-docs` (the skills, and no doc still names the engine
+checkout or an Ardour session), `test-matrix`, and the PR's list of changed mentions; 7
 `plan_methods_test`, `mcp_adapter_test`.
 
 Per acceptance item: 1 `engine_record_test` "engine.devices carries channel

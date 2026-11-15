@@ -45,6 +45,29 @@ do not hold is `unknown_track`, on a name more than one track has
 `session.inspect`, and `rollback_plan {revision}` is
 `plan.rollback {revision}`.
 
+The file carries only what siann-engine honours; the rest of the Ardour
+runner's v0 fields are refused, never dropped:
+
+- `render` writes what `render.start {name, start?, frames?}` writes (spec,
+  Jobs v0): 32-bit float WAV at the session rate, unnormalised. Its
+  `sampleRate` (optional) must be the session rate, its `bitDepth` (optional)
+  `"float32"` and its `normalize` (optional) `false`; any other value is
+  `render_format_unsupported`, checked before anything runs where the file
+  creates the session and before `render.start` where it opens one.
+  `workflow import-pack` refuses a manifest preview with another `bitDepth`,
+  `normalize` or `sampleRate` the same way and writes only `outputPath` and
+  `sampleRate`.
+- `create_audio_track` takes `name`, `count` and `outputChannels` (or
+  `channels`), which becomes `track.add`'s `channels` (1 for mono, else 2).
+  `inputChannels` is `unsupported_field`: a native track has no input routing
+  in the plan step.
+- `snapshotRetention` on the file is `unsupported_field`: the session history
+  lives in the bundle and v1 holds no snapshots. A manifest's
+  `snapshotRetention` and tracks' `inputChannels` are still accepted in a
+  manifest, so existing manifests load, but nothing reads them: `workflow
+  import-pack` does not write them to the command file and the DAWproject
+  exporter ignores them.
+
 ## Shape
 
 ```json

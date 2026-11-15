@@ -70,7 +70,7 @@ SIANN CLI.
        "sampleRate": 48000
      },
      "tracks": [
-       { "name": "BGM01", "inputChannels": 2, "outputChannels": 2 }
+       { "name": "BGM01", "outputChannels": 2 }
      ],
      "assets": [
        {
@@ -85,14 +85,16 @@ SIANN CLI.
      ],
      "preview": {
        "outputPath": "<workdir>/preview.wav",
-       "sampleRate": 48000,
-       "bitDepth": "16"
+       "sampleRate": 48000
      }
    }
    ```
 
    Use absolute media paths. `start`, `sourceStart`, and `duration` are seconds
-   as strings. Omit `sourceStart` or `duration` only when unknown or not needed.
+   as strings. The native engine renders the preview as 32-bit float WAV at the
+   session rate, unnormalised: leave out `bitDepth` and `normalize` (any other
+   value is refused with `render_format_unsupported`) and keep
+   `preview.sampleRate` equal to `session.sampleRate`. Omit `sourceStart` or `duration` only when unknown or not needed.
 
 5. Write an intake report.
 

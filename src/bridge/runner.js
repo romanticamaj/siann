@@ -15,6 +15,9 @@
 //                    other op (or the end of the file) comes
 //   save_session     session.save
 //   render           render.start + job.status; the render is copied to outputPath
+//                    (32-bit float WAV at the session rate, unnormalised: a
+//                    bitDepth other than "float32", normalize, or a sampleRate
+//                    other than the session's is render_format_unsupported)
 //   observe_session  session.inspect
 //   rollback_plan    plan.rollback {revision} (a plan an earlier run applied)
 //
@@ -168,9 +171,38 @@ class Run {
     return path.isAbsolute(value) ? value : path.resolve(this.baseDir, value);
   }
 
+  // What siann-engine cannot honour is refused before anything runs, never
+  // dropped: the Ardour runner's snapshotRetention (a v1 journal holds no
+  // snapshots), create_audio_track inputChannels (track.add takes channels) and
+  // a render format other than the one render.start writes.
+  checkSupported(commands) {
+    if (this.payload.snapshotRetention !== undefined) {
+      throw new BridgeError('unsupported_field', 'snapshotRetention is not supported: siann-engine keeps the session '
+        + 'history in the bundle and a v1 journal holds no snapshots (remove it)');
+    }
+    const fileRate = (commands.find((c) => c && c.op === 'create_session') || {}).sampleRate;
+    commands.forEach((command, index) => {
+      try {
+        if (command.op === 'create_audio_track' && command.inputChannels !== undefined) {
+          throw new BridgeError('unsupported_field', 'create_audio_track inputChannels is not supported: siann-engine '
+            + 'tracks take channels (outputChannels) and no input routing (remove it)');
+        }
+        if (command.op === 'render') {
+          checkRenderFormat(command);
+          if (fileRate !== undefined) checkRenderRate(command, fileRate);
+        }
+      } catch (error) {
+        error.op = command.op;
+        error.index = index;
+        throw error;
+      }
+    });
+  }
+
   async execute() {
     const commands = this.payload.commands;
     if (!Array.isArray(commands)) throw new BridgeError('invalid_command_file', 'commands must be an array');
+    this.checkSupported(commands);
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index];
       try {
@@ -378,6 +410,10 @@ class Run {
   }
 
   async render(command, index) {
+    if (command.sampleRate !== undefined) {
+      if (this.rate === null) await this.sync();
+      checkRenderRate(command, this.rate);
+    }
     const name = `siann-bridge-${index + 1}`;
     const job = await this.client.request('render.start', { name });
     const done = await this.client.waitJob(job.jobId);
@@ -413,6 +449,26 @@ class Run {
     };
     if (error) journal.error = errorJson(error);
     return journal;
+  }
+}
+
+// render.start {name, start?, frames?} writes 32-bit float WAV, unnormalised
+// (architecture spec, Jobs v0); "float32" and false state that and pass.
+function checkRenderFormat(command) {
+  if (command.bitDepth !== undefined && command.bitDepth !== 'float32') {
+    throw new BridgeError('render_format_unsupported', `render bitDepth ${JSON.stringify(command.bitDepth)} is not `
+      + 'a format siann-engine renders: it writes 32-bit float WAV (omit bitDepth, or set "float32")');
+  }
+  if (command.normalize !== undefined && command.normalize !== false) {
+    throw new BridgeError('render_format_unsupported', 'render normalize is not supported: siann-engine renders '
+      + 'unnormalised (omit normalize)');
+  }
+}
+
+function checkRenderRate(command, rate) {
+  if (command.sampleRate !== undefined && command.sampleRate !== rate) {
+    throw new BridgeError('render_format_unsupported', `render asks for ${command.sampleRate} Hz; siann-engine `
+      + `renders at the session rate, ${rate} Hz (omit sampleRate)`);
   }
 }
 
