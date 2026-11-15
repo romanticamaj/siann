@@ -90,10 +90,10 @@ With a plugin port, `engine.status` adds one entry per slot of the heard documen
 
 Counters run since the instance was created, from its `PluginNode`'s own callback timer; counters are decimal strings and `maxCallbackMicros` a number. `midiOutputOverflows` counts the blocks whose MIDI or note output went past the 2048 events an instance takes in one block (Steinberg's limit, for every format); the events past it are lost. `midiOutputSysex` counts the sysex events in the plugin's output one by one, whether or not the block's list took them (ADR-0018, Amendment 3): for a VST3 or AU, the sysex messages in the `juce::MidiBuffer` after `processBlock`, each of which JUCE's wrapper allocated for on the audio thread (`MidiMessage::createSysExMessage` for a VST3, `MidiDataConcatenator` for an AU), the accepted plugin-caused allocation; for a CLAP plugin, its `CLAP_EVENT_MIDI_SYSEX` pushes, which allocate nothing. A climbing `midiOutputSysex` on a VST3 or AU says that plugin allocates inside its block. Until MIDI tracks exist (M6b) the output is dropped after counting. `error {code, message}` is there when something went wrong: a `missing` plugin's reason, or `state_missing` for a `running` plugin whose blob was not in the bundle (it loaded with its default state). A missing plugin's `capabilities`, `latencyFrames`, `tailFrames` and counters are `null`; it passes audio through and its slot keeps its `stateBlob`.
 
-## engine.capabilities
+## engine.capabilities: the plugins feature
 
-`features.plugins` is `false` without a port, otherwise `{formats: ["clap", ...], flags: ["sampleAccurateParameters", "midiInput", "midiOutput", "sidechain", "variableLatency", "editor"]}`.
+The method's params, result and errors are in [Protocol core v0](protocol-core-v0.md). `features.plugins` is `false` without a port, otherwise `{formats: ["clap", ...], flags: ["sampleAccurateParameters", "midiInput", "midiOutput", "sidechain", "variableLatency", "editor"]}`.
 
-## render.start
+## render.start: a render's own plugin instances
 
-With a port and plugin slots in the document, the request instantiates one instance per slot from its state blob before the job is queued; the offline-render thread drives those, never the live graph's. A slot whose plugin does not load renders dry. After the job ends, the command thread destroys the set on its next pump.
+The method's params, result and errors are in [Protocol core v0](protocol-core-v0.md), Job methods. With a port and plugin slots in the document, the request instantiates one instance per slot from its state blob before the job is queued; the offline-render thread drives those, never the live graph's. A slot whose plugin does not load renders dry. After the job ends, the command thread destroys the set on its next pump.

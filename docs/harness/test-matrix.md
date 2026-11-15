@@ -339,8 +339,11 @@ has a native test. What the parity tests assert:
   `protocol-mcp-v0.md` equals `kTools` row by row in `tools/list` order, with
   method and scope; (f) the native union, disjointness and reason checks; (g)
   the doc's "Methods without a tool" table lists `kNotMcp` in order; (h)
-  `plan.list` and `plan.preview` each have a section whose body gives params,
-  result and errors (acceptance item 3). A failure
+  `plan.list` and `plan.preview` (acceptance item 3), and `engine.capabilities`
+  and `render.start` (the methods behind `describe_capabilities` and `render`,
+  whose other headings only add a plugin detail), each have a contract: a
+  section whose body gives params, result and errors, or a row of their own in
+  a Method, Params, Result, Errors table with those cells filled. A failure
   names the method and the place. A table-driven self-test plants an extra and
   a missing entry for every check and asserts the check names it.
 - `mcp_adapter_test` covers each tool: `list_plans` and `preview_plan` (propose)

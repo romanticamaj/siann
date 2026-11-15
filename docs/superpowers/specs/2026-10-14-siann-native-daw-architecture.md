@@ -2327,8 +2327,10 @@ Every protocol method is an MCP tool or has an entry with its reason in
 methods against the protocol docs and the app's capabilities fixture. A method
 is documented by a section or a table row of its own in a
 `docs/schemas/protocol-*.md`; its row in the MCP tool table does not count, as
-it carries no params, result or errors (the core session, command, plan,
-proposal, audition and job methods are in `docs/schemas/protocol-core-v0.md`).
+it carries no params, result or errors, and neither does a heading that only
+adds a side detail (the core session, command, capability, plan, proposal,
+audition and job methods, `engine.capabilities` and `render.start` among them,
+are in `docs/schemas/protocol-core-v0.md`).
 
 Consistency rules:
 
