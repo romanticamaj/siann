@@ -149,6 +149,11 @@ struct ServerOptions {
     // agents are kept.
     std::chrono::milliseconds agentIdleMs{300'000};
     std::size_t agentsRetained = 32;
+    // Agent requests (Protocol v0 item 30): at most this many open requests
+    // (pending or taken) per agent, and how long next_request waits for one
+    // (on steadyClock), clamped to at most mcpRequestTimeout minus 1 s.
+    std::size_t agentRequestsPerAgent = 16;
+    std::chrono::milliseconds agentRequestWaitMs{25'000};
     // session.open: opens the bundle and returns the session to serve from now
     // on (owned by the launcher, which rebinds its engine inside). Runs on the
     // command thread. Empty: session.open is not_supported.

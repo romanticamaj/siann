@@ -38,14 +38,16 @@ const std::vector<std::string> kTools = {
     "render",         "open_session",          "save_session",    "play",          "stop",
     "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
     "select_device",  "record_arm",            "record",          "create_session", "import_media",
+    "next_request",   "answer_request",
 };
 
-// The propose scope's tools before m5b-engine-record: recording added none.
+// The propose scope's tools: recording (m5b-engine-record) added none, agent
+// requests (m5b-engine-agent-requests) the agent's two.
 const std::vector<std::string> kProposeTools = {
     "list_commands", "describe_capabilities", "inspect_session", "submit_plan", "plan_status", "reject_plan",
     "propose_plan",  "audition",              "discard_proposal", "job_status", "render",     "save_session",
     "play",          "stop",                  "locate",           "set_cycle",  "set_click",  "engine_status",
-    "list_devices",
+    "list_devices",  "next_request",          "answer_request",
 };
 
 // A transport port that records what each tool reached.
@@ -990,6 +992,55 @@ TEST_CASE("tools/list: submit_plan takes a title of 200 and an intent of 2000 at
     CHECK(at(at(properties, "intent"), "maxLength").asNumber() == 2000);
     CHECK(properties.find("actor") == nullptr);
     CHECK_FALSE(at(*schema, "additionalProperties").asBool());
+}
+
+// m5b-engine-agent-requests (Protocol v0 item 30): the agent's side of a request.
+TEST_CASE("tools/list: next_request and answer_request are propose tools; submit_plan takes a request",
+          "[protocol][mcp][requests]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    const auto schemaOf = [&](const std::string& name) -> Value {
+        for (const Value& tool : tools.asArray()) {
+            if (at(tool, "name").asString() == name) {
+                return at(tool, "inputSchema");
+            }
+        }
+        FAIL("no tool " << name);
+        return Value();
+    };
+    for (const auto& tool : protocol::detail::mcpTools()) {
+        if (tool.name == "next_request") {
+            CHECK(tool.method == "agent.next_request");
+            CHECK(tool.scope == McpScope::propose);
+        }
+        if (tool.name == "answer_request") {
+            CHECK(tool.method == "agent.answer_request");
+            CHECK(tool.scope == McpScope::propose);
+        }
+    }
+
+    const Value next = schemaOf("next_request");
+    const Value& wait = at(at(next, "properties"), "waitMs");
+    CHECK(at(wait, "type").asString() == "integer");
+    CHECK(at(wait, "minimum").asNumber() == 0);
+    CHECK(next.find("required") == nullptr);
+    CHECK_FALSE(at(next, "additionalProperties").asBool());
+
+    const Value answer = schemaOf("answer_request");
+    const Value& properties = at(answer, "properties");
+    CHECK(at(at(properties, "request"), "type").asString() == "string");
+    CHECK(at(at(properties, "plan"), "type").asString() == "string");
+    CHECK(at(at(properties, "message"), "type").asString() == "string");
+    CHECK(at(at(properties, "message"), "maxLength").asNumber() == 4000);
+    CHECK(at(at(properties, "decline"), "const").asBool());
+    CHECK(canonical(at(answer, "required")) == R"(["request"])");
+    CHECK_FALSE(at(answer, "additionalProperties").asBool());
+
+    const Value submit = schemaOf("submit_plan");
+    CHECK(at(at(at(submit, "properties"), "request"), "type").asString() == "string");
+    CHECK(canonical(at(submit, "required")) == R"(["steps"])");
 }
 
 TEST_CASE("submit_plan stores title, intent and the actor from clientInfo.name", "[protocol][mcp][metadata]") {

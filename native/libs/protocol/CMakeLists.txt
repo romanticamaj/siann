@@ -31,6 +31,7 @@ if(SIANN_BUILD_TESTS)
     tests/build_info_test.cpp
     tests/plan_methods_test.cpp
     tests/agent_methods_test.cpp
+    tests/agent_requests_test.cpp
     tests/audition_methods_test.cpp
     tests/transport_methods_test.cpp
     tests/locators_methods_test.cpp

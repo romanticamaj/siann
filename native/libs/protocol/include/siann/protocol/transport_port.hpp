@@ -89,6 +89,9 @@ struct EngineStatus {
     std::optional<DeviceInfo> device;
     std::optional<DeviceProblem> deviceError;  // set when device is not
     bool playing = false;
+    // The transport position in session frames: the cursor an agent request's
+    // context carries (Protocol v0 item 30); engine.status does not list it.
+    std::int64_t position = 0;
     bool cycle = false;
     ClickState click;
     bool recording = false;  // Protocol v0 item 28
