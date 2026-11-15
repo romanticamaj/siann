@@ -52,7 +52,6 @@ function manifest(root) {
     preview: {
       outputPath: path.join(root, 'preview.wav'),
       sampleRate: 48000,
-      bitDepth: '16',
     },
   };
 }
@@ -64,7 +63,9 @@ test('buildImportPackCommand turns a manifest into an engine command batch', () 
   assert.equal(command.schemaVersion, 'siann.command.v0');
   assert.equal(command.journalPath, path.join(root, 'journal.json'));
   assert.equal(command.batchRisk, 'normal');
-  assert.deepEqual(command.snapshotRetention, { maxCount: 3 });
+  // The native engine has no snapshot retention, track input channels, render
+  // bit depth or normalisation; the command file does not carry them.
+  assert.equal('snapshotRetention' in command, false);
   assert.deepEqual(command.commands.map((entry) => entry.op), [
     'create_session',
     'create_audio_track',
@@ -80,6 +81,33 @@ test('buildImportPackCommand turns a manifest into an engine command batch', () 
   assert.equal(command.commands[3].sourceStart, '1');
   assert.equal(command.commands[3].duration, '3');
   assert.equal(command.commands[6].outputPath, path.join(root, 'preview.wav'));
+  assert.deepEqual(command.commands[6], { op: 'render', outputPath: path.join(root, 'preview.wav'), sampleRate: 48000 });
+  for (const track of command.commands.filter((entry) => entry.op === 'create_audio_track')) {
+    assert.equal('inputChannels' in track, false);
+  }
+});
+
+// siann-engine renders 32-bit float WAV at the session rate, unnormalised
+// (spec, Jobs v0): a preview asking for another format is refused when the
+// command file is built, not narrowed when it runs.
+for (const [label, preview, pattern] of [
+  ['a 16-bit preview', { bitDepth: '16' }, /bitDepth/],
+  ['a normalised preview', { normalize: true }, /normalize/],
+  ['a preview at another rate than the session', { sampleRate: 44100 }, /44100/],
+]) {
+  test(`buildImportPackCommand refuses ${label} with render_format_unsupported`, () => {
+    const data = manifest('/tmp/siann-import-pack-format');
+    Object.assign(data.preview, preview);
+    assert.throws(() => buildImportPackCommand(data), (error) => error.code === 'render_format_unsupported'
+      && pattern.test(error.message));
+  });
+}
+
+test('buildImportPackCommand accepts a preview that states the engine format', () => {
+  const data = manifest('/tmp/siann-import-pack-format');
+  Object.assign(data.preview, { bitDepth: 'float32', normalize: false });
+  const render = buildImportPackCommand(data).commands.find((entry) => entry.op === 'render');
+  assert.deepEqual(Object.keys(render).sort(), ['op', 'outputPath', 'sampleRate']);
 });
 
 test('loadImportPackManifest rejects assets targeting unknown tracks', () => {

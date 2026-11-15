@@ -203,6 +203,100 @@ test('a create_session at a rate the engine does not run is refused before anyth
   assert.equal(fs.existsSync(path.join(root, 'Session')), false);
 });
 
+// siann-engine's render.start takes {name, start?, frames?} (spec, Jobs v0) and
+// writes 32-bit float WAV at the session rate, unnormalised. A render op asking
+// for anything else is refused before anything is created, never narrowed.
+for (const [label, fields, pattern] of [
+  ['a 16-bit render', { bitDepth: '16' }, /bitDepth/],
+  ['a 24-bit render', { bitDepth: 24 }, /bitDepth/],
+  ['a normalised render', { normalize: true }, /normalize/],
+  ['a render at another rate than the session', { sampleRate: 44100 }, /44100/],
+]) {
+  test(`${label} is refused with render_format_unsupported before anything is created`, async (t) => {
+    const root = tempRoot(t, 'siann-runner-render-format-');
+    const { file, command } = importPack(root);
+    Object.assign(command.commands.find((c) => c.op === 'render'), fields);
+    writeJson(file, command);
+    const { engine, client } = await inProcessClient(t);
+
+    const summary = await runCommandFile(file, { client });
+
+    assert.equal(summary.ok, false);
+    assert.equal(summary.error.code, 'render_format_unsupported');
+    assert.equal(summary.error.op, 'render');
+    assert.match(summary.error.message, pattern);
+    assert.ok(!methods(engine).includes('session.create'), methods(engine).join(','));
+    assert.ok(!methods(engine).includes('render.start'));
+    assert.equal(fs.existsSync(path.join(root, 'Session')), false);
+    assert.equal(fs.existsSync(path.join(root, 'preview.wav')), false);
+  });
+}
+
+test('a render at another rate than an opened session is refused before render.start', async (t) => {
+  const root = tempRoot(t, 'siann-runner-render-open-');
+  const { file, command } = importPack(root);
+  writeJson(file, command);
+  const { client } = await inProcessClient(t);
+  const created = await runCommandFile(file, { client });
+  assert.equal(created.ok, true, JSON.stringify(created.error));
+
+  const reopen = path.join(root, 'render.command.json');
+  writeJson(reopen, {
+    schemaVersion: 'siann.command.v0',
+    commands: [
+      { op: 'open_session', sessionDir: path.join(root, 'Session') },
+      { op: 'render', outputPath: path.join(root, 'again.wav'), sampleRate: 96000 },
+    ],
+  });
+  const { engine, client: second } = await inProcessClient(t);
+  const summary = await runCommandFile(reopen, { client: second });
+
+  assert.equal(summary.ok, false);
+  assert.equal(summary.error.code, 'render_format_unsupported');
+  assert.match(summary.error.message, /96000/);
+  assert.ok(!methods(engine).includes('render.start'));
+  assert.equal(fs.existsSync(path.join(root, 'again.wav')), false);
+});
+
+test('a render that states the engine format (float32, unnormalised, the session rate) runs', async (t) => {
+  const root = tempRoot(t, 'siann-runner-render-float-');
+  const { file, command } = importPack(root);
+  Object.assign(command.commands.find((c) => c.op === 'render'), { bitDepth: 'float32', normalize: false,
+    sampleRate: 48000 });
+  writeJson(file, command);
+  const { client } = await inProcessClient(t);
+
+  const summary = await runCommandFile(file, { client });
+
+  assert.equal(summary.ok, true, JSON.stringify(summary.error));
+  assert.equal(fs.existsSync(path.join(root, 'preview.wav')), true);
+});
+
+// The Ardour runner's create_audio_track inputChannels and the file's
+// snapshotRetention have no native counterpart (track.add takes channels; a v1
+// journal holds no snapshots), so a file that sets them is refused.
+for (const [label, mutate, field] of [
+  ['a track with inputChannels', (command) => { command.commands[1].inputChannels = 1; }, 'inputChannels'],
+  ['a file with snapshotRetention', (command) => { command.snapshotRetention = { maxCount: 3 }; },
+    'snapshotRetention'],
+]) {
+  test(`${label} is refused with unsupported_field before anything is created`, async (t) => {
+    const root = tempRoot(t, 'siann-runner-field-');
+    const { file, command } = importPack(root);
+    mutate(command);
+    writeJson(file, command);
+    const { engine, client } = await inProcessClient(t);
+
+    const summary = await runCommandFile(file, { client });
+
+    assert.equal(summary.ok, false);
+    assert.equal(summary.error.code, 'unsupported_field');
+    assert.match(summary.error.message, new RegExp(field));
+    assert.ok(!methods(engine).includes('session.create'));
+    assert.equal(fs.existsSync(path.join(root, 'Session')), false);
+  });
+}
+
 test('a placement on a track the file does not create is refused before its import', async (t) => {
   const root = tempRoot(t, 'siann-runner-track-');
   const { file, command } = importPack(root);
