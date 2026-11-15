@@ -21,7 +21,8 @@
     "transport.locate", "engine.status", "plugin.instantiate", "plugin.open_editor", "plugin.close_editor",
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin", "gesture.update", "gesture.hold", "gesture.end", "gesture.cancel",
-    "plan.list", "plan.preview", "record.arm", "transport.record", "record.recover_take",
+    "plan.list", "plan.preview", "transport.set_cycle", "transport.set_click", "record.arm", "transport.record",
+    "record.recover_take",
     "session.create", "media.import"
   ],
   "features": {
