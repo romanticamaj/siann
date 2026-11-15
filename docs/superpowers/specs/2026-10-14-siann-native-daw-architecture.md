@@ -1005,6 +1005,32 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   uses a low-latency path that bypasses compensation delays, which changes what the
   performer hears of themselves, not where the take lands. M2 tests this with a fake
   loopback device in each mode.
+- The monitoring path (M5b, m5b-engine-monitoring). A track whose `monitor` is auto
+  or input starts its strip with a `MonitorInputNode`: port 0 is the track's clip
+  source, and each block it outputs either the clips or the device input mapped
+  through `Track.input` (the block's input at the session rate,
+  `ProcessContext::input`), crossfading over `fadeFrames` when it switches. The
+  edge from that strip to the master is marked low-latency: its compensation delay
+  line keeps running, and its output crossfades from the delayed signal to the
+  undelayed one while the node passes input, and back while it plays clips again.
+  The performer hears the input after the device terms, the SRC terms, the track's
+  own inserts and the master path, never after the compensation that lines the
+  other tracks up. The node decides per block on the audio thread (input mode
+  always; auto when the transport is stopped on an armed track, or while the track
+  captures), never through a republish, so a punch switches at the frame it
+  captures from. `engine.status` reports the round trip as
+  `monitorRoundTripFrames = inputLatencyFrames + outputLatencyFrames +
+  srcOutputLatencyFrames + srcInputLatencyFrames + srcMonitorFifoFrames +
+  monitorPathLatency`: `srcMonitorFifoFrames` is the FIFO that carries the
+  resampled input to the graph's fixed blocks while device-side SRC runs (0
+  otherwise), and `monitorPathLatency` the largest over the monitored tracks of
+  the track's own latency plus the master path's (0 with none). It is null while no
+  input is open. The record offset does not change with the mode.
+- A stopped engine (m5b-engine-monitoring): a live graph with a monitoring node is
+  processed while the transport is stopped, with `ProcessContext::rolling` false:
+  players output silence and keep their position, the playhead does not move, the
+  meters publish and the click stays off. A graph without one is not processed
+  while stopped, as before.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
   to the command thread through `pluginEventRt` or `pluginEventAny`, and triggers a recompile with
@@ -1248,6 +1274,20 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
 ## Recording
 
 - Arming: `record.arm(trackId)`; input monitoring modes off / auto / input.
+- Monitoring (M5b, m5b-engine-monitoring): `Track.monitor` is off, auto or input
+  ("siann-model"), set by the command `track.set_monitor`. Input always passes the
+  track's input through its strip (inserts, fader, meter) to the master; auto
+  passes it while the transport is stopped on an armed track and while that track
+  captures (it records and the transport plays), and plays the track's clips
+  otherwise; off never passes it. The playback engine owns one monitor gate
+  `{armed, capturing}` (two atomics) per track for its whole life, so a graph
+  compiled before an arm and an arm made before a graph meet on the same gate. The
+  engine host writes `armed` when it arms and disarms; the capture bank writes
+  `capturing` on the audio thread each block for the slot the gate is bound to.
+  A mode change is structural (duck-and-swap, one transition in flight). Offline
+  rendering (`compileDocument`) ignores `monitor` and renders the clips. The head
+  guard of a recording does not cover `monitor`: only a removal and `input` are
+  refused.
 - During recording the audio thread pushes input blocks into `recordOutbox`; the
   butler thread writes them through to disk in RF64/BWF, rewriting the header
   periodically (default every second) so a crash leaves a readable file.
@@ -1589,6 +1629,12 @@ Rules:
   unknown track `not_found`. The document never names a device: the port indexes
   the input the engine has open, so a session records on another machine's
   interface unchanged.
+- M5b `Track.monitor` (m5b-engine-monitoring): `"off"`, `"auto"` or `"input"`
+  ("Recording"). Off by default and omitted from the track's JSON while off, so
+  every earlier document, checkpoint and fixture keeps its hashes; another value
+  is rejected when a document is read. `track.set_monitor {trackId, monitor}` sets
+  it as one revision declaring `track:<id>` only; another value, a missing or an
+  extra field is `invalid_params`, an unknown track `not_found`.
 - M5 `locators` (m5-ui-engine-loop-click; singleton entity, gate
   locators-entity-shape resolved 2026-11-13): `{id: "locators", left, right}`,
   audio-domain frames as decimal strings, `0 <= left < right <=
@@ -3198,6 +3244,17 @@ redesign E-14; the wire details are in `docs/schemas/protocol-engine-v0.md`,
     - `engine.capabilities` adds `features.planMetadata: true` and
       `features.agents` (true when a transport port is present, the condition of
       `engine.status`), and `limits.agentIdleMs` and `limits.agentsRetained`.
+
+Protocol v0, monitoring (m5b-engine-monitoring; the wire details are in
+`docs/schemas/protocol-engine-v0.md`):
+
+30. `track.set_monitor {trackId, monitor: "off" | "auto" | "input"}` is a command
+    (`command.execute`, a plan, MCP `execute`; no tool of its own, as
+    `track.set_input`), listed in `engine.capabilities`' `commands`.
+    `engine.status` adds `monitorRoundTripFrames` ("Latency model"), a number, or
+    null while no input is open. `engine.capabilities` adds `features.monitoring`,
+    true with a record port whose engine has a capture bank. While the transport is
+    stopped, a monitored track's meter in the realtime channel reads its input.
 
 ## Plugin editor windows
 

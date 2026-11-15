@@ -163,6 +163,7 @@ the realtime tests; 9 none (no UI).
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
+| m5b-engine-monitoring | Y (`document_test`/`commands_test` `track.set_monitor`, `plan_hash_test` set_monitor fixture, `graph_test` `[monitor]`, `monitoring_test`, `recording_test` loopback offset per mode, `live_recompile_test` set_monitor transition, `engine_record_test` round trip and stopped meter, `record_methods_test`, `mcp_adapter_test`) | Y (`monitoring_test` and `live_recompile_test` with `siann_rt_alloc_guard`) | | Y (`plan-hash` fixture parity; app unit `capabilities`, `i18n-describe`) | 3 | - (no UI: the monitor buttons come with `m5b-ui-recording`; tour states changed: none) |
 | m5b-engine-master | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `master_session_test`, `master_methods_test`, `gesture_methods_test`, `mcp_adapter_test`, `playback_test`, `audition_test`, `click_test`, `offline_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a master gesture) | | Y (`fixture-parity`, `read-model-fixtures`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the master strip stays a meter until `m5b-ui-inserts-master`; tour states changed: none) |
 
 Per acceptance item (`m5b-engine-master`): 1 `document_test` "The master
