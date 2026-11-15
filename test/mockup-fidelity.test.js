@@ -307,7 +307,10 @@ test('the decisions of the second round are written where contributors read them
   const closing = FEATURES.get(CLOSING).acceptance.join('\n');
   assert.match(closing, /app-only tokens are added to tokens\.css/);
   assert.match(closing, /conditions of container queries are not counted/);
-  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*\| `m5-ui-mockup-alignment` \|/);
+  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*\| `m5-ui-mockup-alignment`[^|\n]*\|/);
+  // The 2 px focus ring's token was applied early in m5-ui-tokens-spacing (10.7, 4a).
+  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*the 2 px focus ring \(`--focus-ring`, 55 %\) applied early in `m5-ui-tokens-spacing`/);
+  assert.match(spec, /applied early in `m5-ui-tokens-spacing` by the main session under the maintainer's 2026-11-15 authorisation 4a/);
   // A landed part that can be absent at runtime: a permanent width token, not a hold.
   assert.match(FEATURES.get('m5-ui-loop-click').acceptance.join('\n'), /its box keeps the width of --display-locators-empty-w/);
   assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click` \|/);
