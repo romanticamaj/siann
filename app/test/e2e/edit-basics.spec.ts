@@ -155,19 +155,32 @@ const view = () => hook<View>('view');
 const selected = () => hook<string[]>('selectedClips');
 
 // The renderer's state an operation's failure reports (each part null when it
-// cannot be read): its last 4 answered requests as method:code, the cursor's
-// x, the focused element, the timeline error's code and the selection.
+// cannot be read): its last 4 answered requests as method:code (and the last 4
+// other than the engine.status polls), the cursor's x, the focused element,
+// the timeline error's code, the raw keydown each window listener saw and
+// what it ran, the last split's decision with the cursor, clock frame and
+// clips it read, and the selection.
 async function diagnostics(): Promise<Record<string, unknown>> {
   const state = await page
     .evaluate(() => {
       const client = (window as unknown as { __siannClient?: { answered?(): ReadonlyArray<{ method: string; code: string | null }> } }).__siannClient;
-      const timeline = (window as unknown as { __siannTimeline?: { cursorX?(): number | null } }).__siannTimeline;
+      const timeline = (window as unknown as { __siannTimeline?: { cursorX?(): number | null; lastEdit?(): unknown } }).__siannTimeline;
+      const keys = (window as unknown as { __siannKeys?: unknown }).__siannKeys ?? null;
       const active = document.activeElement as HTMLElement | null;
       return {
         answered: client?.answered ? client.answered().slice(-4).map((r) => `${r.method}:${r.code ?? 'ok'}`) : null,
+        answeredOther: client?.answered
+          ? client
+              .answered()
+              .filter((r) => r.method !== 'engine.status')
+              .slice(-4)
+              .map((r) => `${r.method}:${r.code ?? 'ok'}`)
+          : null,
         cursorX: timeline?.cursorX ? timeline.cursorX() : null,
         active: active ? `${active.tagName}${active.dataset.testid ? `[${active.dataset.testid}]` : ''}` : null,
         timelineError: document.querySelector('[data-testid="timeline-error"]')?.getAttribute('data-code') ?? null,
+        keys,
+        lastEdit: timeline?.lastEdit ? timeline.lastEdit() : null,
       };
     })
     .catch((error: Error) => ({ evaluate: error.message }));

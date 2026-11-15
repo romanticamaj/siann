@@ -490,8 +490,32 @@ export function Shell({
   // element's handler (a boundary's, the library's); the rest bubbling, so an
   // element (the About dialog) can keep its keys.
   useEffect(() => {
+    // Diagnostic, under the test hooks only (PR #120's macOS e2e): the raw
+    // keydown each listener saw, what it resolved and whether it ran.
+    const note = (preset: typeof CUBASE_PRESET, event: KeyboardEvent, binding: { scope: string; commandId: string } | null, ran: boolean, prevented: boolean) => {
+      const probe = window as unknown as { siannTest?: unknown; __siannKeys?: Record<string, unknown> };
+      if (!probe.siannTest || ['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return;
+      probe.__siannKeys = {
+        ...(probe.__siannKeys ?? {}),
+        [preset === FOCUS_PRESET ? 'focus' : 'command']: {
+          key: event.key,
+          code: event.code,
+          altKey: event.altKey,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          zone: latest.current.focused,
+          platform,
+          binding: binding ? `${binding.scope}:${binding.commandId}` : null,
+          ran,
+          prevented,
+        },
+      };
+    };
     const listener = (preset: typeof CUBASE_PRESET) => (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented) {
+        note(preset, event, null, false, true);
+        return;
+      }
       const binding = resolveKey(
         {
           code: event.code,
@@ -504,7 +528,9 @@ export function Shell({
         },
         preset,
       );
-      if (binding && commands.run(binding.scope, binding.commandId)) event.preventDefault();
+      const ran = binding ? commands.run(binding.scope, binding.commandId) : false;
+      if (ran) event.preventDefault();
+      note(preset, event, binding, ran, false);
     };
     const onFocusKey = listener(FOCUS_PRESET);
     const onKey = listener(COMMAND_PRESET);

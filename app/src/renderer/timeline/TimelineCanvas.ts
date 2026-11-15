@@ -277,6 +277,20 @@ export interface TimelineTestHooks {
   snapGuide(): number | null;
   // The locator band of the last content frame, or null (m5-ui-loop-click).
   locatorBand(): LocatorBandDrawn | null;
+  // Diagnostic: what the last Alt+X decided and from what (PR #120's macOS e2e).
+  lastEdit(): EditProbe | null;
+}
+
+// Why the last split at the cursor sent nothing, or what it built, with the
+// cursor (frames) and the clock's newest frame it read and the snapshot's
+// clips (id, position, length) at that moment.
+export interface EditProbe {
+  readonly reason: string;
+  readonly cursor: string | null;
+  readonly frame: { readonly playheadSamples: string; readonly playing: boolean } | null;
+  readonly revision: string | null;
+  readonly clips: ReadonlyArray<string>;
+  readonly selection: ReadonlyArray<string>;
 }
 
 interface Drag {
@@ -397,6 +411,8 @@ export class TimelineCanvas {
   #contentDraws = 0;
   #overlayDraws = 0;
   #cursorX: number | null = null;
+  // The last split's diagnostic (testHooks().lastEdit).
+  #lastEdit: EditProbe | null = null;
   // The cursor's position as last drawn, from the clock.
   #playhead: string | null = null;
   // The newest realtime frame's playhead, as received.
@@ -562,9 +578,32 @@ export class TimelineCanvas {
   async splitAtCursor(): Promise<void> {
     const snapshot = this.#options.model.getSnapshot();
     const cursor = this.#cursorNow();
-    if (!snapshot || cursor === null) return;
     const selection = this.#state.selectedClipIds;
+    this.#probeEdit(snapshot, cursor, selection);
+    if (!snapshot || cursor === null) return;
     await this.#send((clipId) => splitAtCursorCommand(snapshot, selection, BigInt(cursor), clipId), true);
+  }
+
+  // Diagnostic, read through testHooks().lastEdit: what this split will do and why.
+  #probeEdit(snapshot: Snapshot | null, cursor: string | null, selection: readonly string[]): void {
+    let reason: string;
+    if (!snapshot) reason = 'no-snapshot';
+    else if (cursor === null) reason = 'no-cursor';
+    else {
+      const built = splitAtCursorCommand(snapshot, selection, BigInt(cursor), () => 'probe');
+      if (!built) reason = 'no-clip-under-cursor';
+      else if (!built.commands.every((c) => this.#allows(String((c as { op?: unknown }).op)))) reason = 'capability';
+      else reason = `built ${built.commands.length}`;
+    }
+    const frame = this.#options.playhead?.latest() ?? null;
+    this.#lastEdit = {
+      reason,
+      cursor,
+      frame: frame ? { playheadSamples: frame.playheadSamples, playing: frame.playing } : null,
+      revision: snapshot?.revision ?? null,
+      clips: (snapshot?.clips ?? []).map((c) => `${c.id}@${c.position.value}+${c.length}`),
+      selection: [...selection],
+    };
   }
 
   // Ctrl+D: a copy of the selection directly after it.
@@ -704,6 +743,7 @@ export class TimelineCanvas {
       snap: () => ({ ...this.#snap }),
       snapGuide: () => this.#guideX,
       locatorBand: () => (this.#band ? { ...this.#band } : null),
+      lastEdit: () => this.#lastEdit,
     };
   }
 
