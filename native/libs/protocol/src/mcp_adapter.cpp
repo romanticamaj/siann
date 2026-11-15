@@ -103,6 +103,40 @@ const std::vector<McpTool> kTools = {
     {"import_media", "media.import", McpScope::trusted,
      "Imports a WAV or FLAC file into the media pool as a job (converted to the session rate); poll job_status.",
      R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the audio file"},"clientImportId":{"type":"string","minLength":1,"maxLength":128,"description":"chosen by the client; a repeat answers the first job"}},"required":["path","clientImportId"],"additionalProperties":false})"},
+    // m5b-protocol-parity: the plan review reads, so an agent previews its plan as
+    // the reviewer will see it; undo and redo move main's head, so they are trusted.
+    {"list_plans", "plan.list", McpScope::propose,
+     "Lists every plan of the session in submission order, each as plan_status returns it.", kEmpty},
+    {"preview_plan", "plan.preview", McpScope::propose,
+     "Returns what apply_plan would produce now at main's head ({revision, documentHash, stale, entities} with "
+     "each entity before and after), committing nothing.",
+     kPlanOnly},
+    {"undo", "session.undo", McpScope::trusted, "Undoes main's last revision with a new undo revision.", kEmpty},
+    {"redo", "session.redo", McpScope::trusted, "Redoes the revision the last undo undid.", kEmpty},
+};
+
+// The methods the engine serves that no tool wraps, each with its reason
+// (m5b-protocol-parity). Every method of kMethods is a tool's method or one of
+// these, never both (protocol_parity_test, test/protocol-parity.test.js);
+// docs/schemas/protocol-mcp-v0.md, "Methods without a tool", lists them in this order.
+const std::vector<McpExclusion> kNotMcp = {
+    {"engine.about", "its content is the about object of describe_capabilities"},
+    {"gesture.begin", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.update", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.hold", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.end", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.cancel", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"plugin.registry", "approving what code loads is the user's decision (Protocol v0 item 21)"},
+    {"plugin.approve", "approving what code loads is the user's decision (Protocol v0 item 21)"},
+    {"plugin.open_editor", "a plugin editor needs a desktop window"},
+    {"plugin.close_editor", "a plugin editor needs a desktop window"},
+    {"plugin.instantiate", "agents reach plugins through plan steps (plugin.insert and the plugin commands)"},
+    {"plugin.set_parameter", "agents reach plugins through plan steps (plugin.insert and the plugin commands)"},
+    {"session.sync", "read-model replication for UI clients; inspect_session serves agents"},
+    {"session.fetch", "read-model replication for UI clients; inspect_session serves agents"},
+    {"record.recover_take",
+     "accepting or trashing a take a crash left is the user's decision about files on their disk; the UI offers "
+     "it from pendingTakes"},
 };
 
 std::string randomHex(std::size_t bytes) {
@@ -163,8 +197,7 @@ const std::vector<McpTool>& mcpTools() {
 }
 
 const std::vector<McpExclusion>& mcpExclusions() {
-    static const std::vector<McpExclusion> kStub;
-    return kStub;
+    return kNotMcp;
 }
 
 McpAdapter::McpAdapter(Submit submit) : submit_(std::move(submit)) {}
