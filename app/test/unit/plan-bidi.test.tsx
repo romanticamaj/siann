@@ -188,12 +188,14 @@ test('stale reasons and the diff table isolate each name', () => {
       { ref: 'track:trk_e', before, after },
       { ref: 'plugin_slot:slt_e', before: null, after: { name: `EQ${RLO}`, trackId: 'trk_e' } },
       { ref: 'clip:clp_e', before: null, after: { trackId: 'trk_e' } },
+      { ref: 'bus:bus_e', before: null, after: { name: `Verb${RLO}` } },
     ],
   });
   const en = translator('en');
   assert.equal(rowLabel(rows[0]!, NAMES, en), `\u2068${EVIL}\u2069`);
   assert.equal(rowLabel(rows[1]!, NAMES, en), `\u2068EQ${RLO}\u2069`);
   assert.equal(outside(rowLabel(rows[2]!, NAMES, en)), 'a clip on <>');
+  assert.equal(rowLabel(rows[3]!, NAMES, en), `\u2068Verb${RLO}\u2069`);
   for (const line of rowChanges(rows[0]!, NAMES, en)) assert.ok(!/[\u202a-\u202e\u2066-\u2069]/.test(outside(line)), JSON.stringify(line));
 });
 

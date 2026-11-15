@@ -830,6 +830,18 @@ TEST_CASE("media.add and media.rename refuse a display-unsafe name with invalid_
     CHECK(errorCode(doc, R"({"op":"media.rename","mediaId":"med_1","name":""})") == "invalid_params");
 }
 
+TEST_CASE("bus.add and bus.rename refuse a display-unsafe name with invalid_name", "[command][names][bus]") {
+    const Document doc = applied(base(), R"({"op":"bus.add","busId":"bus_a","name":"Verb"})");
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("bus.add")}, {"busId", Value("bus_b")}}, name)) ==
+              "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("bus.rename")}, {"busId", Value("bus_a")}}, name)) ==
+              "invalid_name");
+    }
+    CHECK(errorCode(doc, R"({"op":"bus.rename","busId":"bus_a","name":"混響 Verb"})") == "no error");
+}
+
 TEST_CASE("session.rename refuses a display-unsafe name with invalid_name", "[command][names]") {
     const Document doc = base();
     for (const std::string& name : kUnsafeNames) {

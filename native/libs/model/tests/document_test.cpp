@@ -395,6 +395,12 @@ TEST_CASE("Validation refuses display-unsafe names as invalid_name", "[model][na
         m.name = bad;
         CHECK(codes(doc.withMedia(m)) == std::vector<std::string>{"invalid_name"});
         CHECK_THROWS_AS(Document::create(bad, 48'000), ModelError);
+        siann::model::Bus bus;
+        bus.id = "bus_a";
+        bus.name = bad;
+        auto withBus = doc.root();
+        withBus.busOrder.push_back("bus_a");
+        CHECK(codes(doc.withBus(bus).withRoot(withBus)) == std::vector<std::string>{"invalid_name"});
     }
     // Malformed UTF-8 never reaches validate: hashing an entity refuses it
     // first (JCS, invalid_utf8), and the commands refuse it as invalid_name.

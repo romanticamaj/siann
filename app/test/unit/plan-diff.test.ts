@@ -14,6 +14,7 @@ import {
   type PlanPreview,
 } from '../../src/renderer/plans/diff';
 import { NO_NAMES } from '../../src/renderer/plans/describe';
+import { isolateName } from '../../src/renderer/plans/isolate';
 import { translator } from '../../src/renderer/i18n/t';
 
 const track = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -105,7 +106,7 @@ test('bus and send rows are labelled and their fader fields worded', () => {
   });
   const busRow = rows.find((r) => r.ref === 'bus:b1')!;
   const sendRow = rows.find((r) => r.ref === 'send:s1')!;
-  assert.equal(rowLabel(busRow, NO_NAMES, t), 'Reverb');
+  assert.equal(rowLabel(busRow, NO_NAMES, t), isolateName('Reverb'));
   const busLines = rowChanges(busRow, NO_NAMES, t);
   assert.equal(busLines.length, 3);
   assert.ok(!busLines.includes(t('diff.field.other')));

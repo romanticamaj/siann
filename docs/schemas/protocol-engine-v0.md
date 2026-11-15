@@ -180,11 +180,11 @@ Content the head document already holds (same `contentHash`) ends `done` with th
 
 ## Names
 
-Every name the document stores, `root.name`, a track's, a media's and a plugin slot's `name` (and a bus's and a marker's when they land), is well-formed UTF-8 without a control character (U+0000 to U+001F, U+007F to U+009F) and without a display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029 (the set [Plan v1](plan-v1.md), "Metadata", refuses in plan titles; architecture spec, "siann-model", names). An RLO or an isolate in a track name could otherwise make a plan step read as other text.
+Every name the document stores, `root.name`, a track's, a bus's, a media's and a plugin slot's `name` (and a marker's when markers land), is well-formed UTF-8 without a control character (U+0000 to U+001F, U+007F to U+009F) and without a display-unsafe character: the bidi formatting characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and U+2028 and U+2029 (the set [Plan v1](plan-v1.md), "Metadata", refuses in plan titles; architecture spec, "siann-model", names). An RLO or an isolate in a track name could otherwise make a plan step read as other text.
 
 | Where | Answer |
 |---|---|
-| `track.add`, `track.rename`, `media.add`, `media.rename`, `session.rename` `name`; `plugin.insert` `descriptor.name` (through `command.execute`, a plan or MCP `execute`) | `invalid_name`; nothing is applied, and in a transaction or plan the error carries the step |
+| `track.add`, `track.rename`, `bus.add`, `bus.rename`, `media.add`, `media.rename`, `session.rename` `name`; `plugin.insert` `descriptor.name` (through `command.execute`, a plan or MCP `execute`) | `invalid_name`; nothing is applied, and in a transaction or plan the error carries the step |
 | `session.create` `name` | `invalid_name`; nothing is created |
 | a name the engine derives: `media.import` (the file name), `session.create` without `name` (the folder name), `plugin.instantiate` (the name the plugin reports) | stripped of those characters, never refused |
 | a bundle whose checkpoint or journal holds such a name | `session.open` fails with `invalid_document` (`invalid_name: ...`); the document is not repaired, since stripping would change the hashes the journal is checked against |

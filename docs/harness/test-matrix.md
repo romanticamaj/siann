@@ -286,11 +286,11 @@ has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
 
 Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
 `commands_test` "track.add and track.rename ...", "media.add and media.rename
-...", "session.rename ...", "plugin.insert refuses a display-unsafe descriptor
+...", "bus.add and bus.rename ...", "session.rename ...", "plugin.insert refuses a display-unsafe descriptor
 name ..." (RLO, LRI, PDI, ALM, LRM, LS, LF, NEL and a malformed byte, each
 `invalid_name`; Hebrew, CJK and emoji pass) and "A transaction stops at the
 step whose name is unsafe"; `document_test` "Validation refuses display-unsafe
-names as invalid_name" (root, track and media) and "Opening a document with a
+names as invalid_name" (root, track, media and bus) and "Opening a document with a
 display-unsafe name is invalid_document" (a crafted v1 document with the
 character in a track, the session, a plugin slot and a media name);
 `session_create_test` "session.create refuses an unsafe given name and strips
