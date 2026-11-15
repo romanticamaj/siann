@@ -10,8 +10,12 @@ import assert from 'node:assert/strict';
 
 import { RULER_HEIGHT, RULER_UPPER, type Viewport } from '../../src/renderer/timeline/geometry';
 import {
+  BAND_BOTTOM_GAP,
+  BAND_LINE,
   BAND_TOP,
   END_HIT_PX,
+  FLAG_W,
+  LABEL_INSET,
   MAX_LOCATOR,
   bandRect,
   barBeat,
@@ -27,6 +31,7 @@ import {
   type LocatorGrid,
 } from '../../src/renderer/timeline/locators';
 import { snapperFor } from '../../src/renderer/timeline/snap';
+import { TOKENS } from '../../src/renderer/tokens';
 
 const view = (over: Partial<Viewport> = {}): Viewport => ({
   framesPerPixel: 100,
@@ -43,8 +48,30 @@ const OFF: LocatorGrid = { snap: (f) => f, minGap: () => 100n };
 // A 1000-frame grid: frames go to the nearest multiple, the gap is a step.
 const GRID: LocatorGrid = { snap: (f) => ((f + 500n) / 1000n) * 1000n, minGap: () => 1000n };
 
-test('the upper half is the exported constant, derived from the ruler height', () => {
+test('the upper half is the exported constant, the ruler-upper-h token', () => {
+  assert.equal(RULER_UPPER, Number.parseFloat(TOKENS['ruler-upper-h']));
   assert.ok(RULER_UPPER > 0 && RULER_UPPER < RULER_HEIGHT);
+});
+
+// The band's drawing parameters are tokens with the mockup's draw() values
+// (RU=18: the band at y 2, height RU-3, a 2 px line, 8 px flags, labels 10 px
+// in), so the band is the mockup's 15 px tall at y 2.
+test('the band's drawing parameters are the --locator-* tokens, the mockup's values', () => {
+  const token = (name: keyof typeof TOKENS): number => Number.parseFloat(TOKENS[name]);
+  assert.deepEqual(
+    { BAND_TOP, BAND_BOTTOM_GAP, BAND_LINE, FLAG_W, LABEL_INSET, END_HIT_PX },
+    {
+      BAND_TOP: token('locator-band-top'),
+      BAND_BOTTOM_GAP: token('locator-band-gap'),
+      BAND_LINE: token('locator-band-line'),
+      FLAG_W: token('locator-flag-w'),
+      LABEL_INSET: token('locator-label-inset'),
+      END_HIT_PX: token('locator-end-hit'),
+    },
+  );
+  assert.deepEqual([BAND_TOP, BAND_BOTTOM_GAP, BAND_LINE, FLAG_W, LABEL_INSET], [2, 1, 2, 8, 10]);
+  const rect = bandRect({ left: 0n, right: 48000n }, view())!;
+  assert.deepEqual({ y: rect.y, height: rect.height }, { y: 2, height: 15 });
 });
 
 test('the band spans the locators in the upper half, at the view\'s zoom and scroll', () => {

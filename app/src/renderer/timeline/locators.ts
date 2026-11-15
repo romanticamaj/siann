@@ -19,6 +19,7 @@
 
 import type { TempoPoint } from '../model/document';
 import { RULER_UPPER, frameToX, xToFrame, type Viewport } from './geometry';
+import { TOKENS } from '../tokens';
 import { TICKS_PER_BAR, TICKS_PER_QUARTER, framesToTicks } from './musical-time';
 import type { Snapper } from './snap';
 
@@ -31,16 +32,18 @@ export interface LocatorRange {
 export const MAX_LOCATOR = 2n ** 42n;
 
 // The band in the upper half, as the mockup draws it: from the left to the
-// right locator, BAND_TOP below the ruler's top, ending one pixel above the
-// half's bottom edge, with a top line and the L and R flags.
-export const BAND_TOP = 2;
-export const BAND_BOTTOM_GAP = 1;
-export const BAND_LINE = 2;
-export const FLAG_W = 8;
+// right locator, BAND_TOP below the ruler's top, ending BAND_BOTTOM_GAP above
+// the half's bottom edge, with a top line and the L and R flags. The values
+// are the tokens.css --locator-* tokens (tokens.ts), the mockup's draw().
+const px = (name: keyof typeof TOKENS): number => Number.parseFloat(TOKENS[name]);
+export const BAND_TOP = px('locator-band-top');
+export const BAND_BOTTOM_GAP = px('locator-band-gap');
+export const BAND_LINE = px('locator-band-line');
+export const FLAG_W = px('locator-flag-w');
 // The L and R labels: this far inside the band's ends.
-export const LABEL_INSET = 10;
+export const LABEL_INSET = px('locator-label-inset');
 // A press this close to an end (inside the band or out) takes that end.
-export const END_HIT_PX = 5;
+export const END_HIT_PX = px('locator-end-hit');
 
 export interface BandRect {
   readonly x: number;
