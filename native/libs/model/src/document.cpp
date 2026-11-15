@@ -70,14 +70,19 @@ std::string_view entityTypeName(EntityType type) noexcept {
         case EntityType::plugin_slot: return "plugin_slot";
         case EntityType::locators: return "locators";
         case EntityType::master: return "master";
+        case EntityType::bus: return "bus";
+        case EntityType::send: return "send";
     }
     return "unknown";
 }
 
 namespace {
 
-constexpr std::string_view kDocumentSchema = "siann.session_document.v2";
+constexpr std::string_view kDocumentSchema = "siann.session_document.v3";
+constexpr std::string_view kDocumentSchemaV2 = "siann.session_document.v2";
 constexpr std::string_view kDocumentSchemaV1 = "siann.session_document.v1";
+constexpr std::string_view kBusSchema = "siann.entity.bus.v1";
+constexpr std::string_view kSendSchema = "siann.entity.send.v1";
 constexpr std::string_view kLocatorsSchema = "siann.entity.locators.v1";
 constexpr std::string_view kMasterSchema = "siann.entity.master.v1";
 constexpr std::string_view kRootSchema = "siann.entity.root.v1";
@@ -99,9 +104,42 @@ Value number(std::int64_t v) {
     return Value(static_cast<double>(v));
 }
 
+// The format version a document was read in; later fields are unknown in earlier ones.
+enum class Format { v1 = 1, v2 = 2, v3 = 3 };
+
+std::vector<std::string> idList(detail::FieldReader& r, const Value& list, std::string_view key) {
+    if (list.kind() != Value::Kind::array) {
+        r.fail(key, "must be an array");
+    }
+    std::vector<std::string> out;
+    for (const Value& id : list.asArray()) {
+        if (id.kind() != Value::Kind::string) {
+            r.fail(key, "must contain strings");
+        }
+        out.push_back(id.asString());
+    }
+    return out;
+}
+
+Value idArray(const std::vector<std::string>& ids) {
+    Array out;
+    for (const auto& id : ids) {
+        out.push_back(Value(id));
+    }
+    return Value(std::move(out));
+}
+
+// An output route {busId} (m5b-engine-buses-sends); null or another field is invalid.
+std::string outputFromJson(const Value& value, std::string context) {
+    detail::FieldReader r(value, std::move(context));
+    std::string busId = r.string("busId");
+    r.finish();
+    return busId;
+}
+
 // ---- entity JSON ----------------------------------------------------------
 
-Root rootFromJson(const Value& value) {
+Root rootFromJson(const Value& value, Format format) {
     detail::FieldReader r(value, "root");
     r.expectSchema(kRootSchema);
     if (r.string("id") != kRootId) {
@@ -132,6 +170,11 @@ Root rootFromJson(const Value& value) {
             r.fail("trackOrder", "must contain strings");
         }
         root.trackOrder.push_back(id.asString());
+    }
+    if (format >= Format::v3) {
+        if (const Value* buses = r.optional("busOrder")) {
+            root.busOrder = idList(r, *buses, "busOrder");
+        }
     }
     r.finish();
     return root;
@@ -167,7 +210,7 @@ Media mediaFromJson(const Value& value) {
     return m;
 }
 
-Track trackFromJson(const Value& value) {
+Track trackFromJson(const Value& value, Format format) {
     detail::FieldReader r(value, "track");
     r.expectSchema(kTrackSchema);
     Track t;
@@ -200,16 +243,38 @@ Track trackFromJson(const Value& value) {
         in.finish();
         t.input = port;
     }
+    if (format >= Format::v3) {
+        if (const Value* sends = r.optional("sends")) {
+            t.sends = idList(r, *sends, "sends");
+        }
+        if (const Value* output = r.optional("output")) {
+            t.output = outputFromJson(*output, "track.output");
+        }
+    }
     r.finish();
     return t;
 }
 
-PluginSlot pluginSlotFromJson(const Value& value) {
+PluginSlot pluginSlotFromJson(const Value& value, Format format) {
     detail::FieldReader r(value, "plugin_slot");
     r.expectSchema(kPluginSlotSchema);
     PluginSlot p;
     p.id = r.string("id");
-    p.trackId = r.string("trackId");
+    if (format >= Format::v3) {
+        // Exactly one owner (m5b-engine-buses-sends).
+        const bool onTrack = r.optional("trackId") != nullptr;
+        const bool onBus = r.optional("busId") != nullptr;
+        if (onTrack == onBus) {
+            r.fail(onTrack ? "busId" : "trackId", "a slot carries exactly one of trackId or busId");
+        }
+        if (onTrack) {
+            p.trackId = r.string("trackId");
+        } else {
+            p.busId = r.string("busId");
+        }
+    } else {
+        p.trackId = r.string("trackId");
+    }
     p.format = r.string("format");
     p.uid = r.string("uid");
     p.name = r.string("name");
@@ -223,6 +288,41 @@ PluginSlot pluginSlotFromJson(const Value& value) {
     p.bypass = r.boolean("bypass");
     r.finish();
     return p;
+}
+
+Bus busFromJson(const Value& value) {
+    detail::FieldReader r(value, "bus");
+    r.expectSchema(kBusSchema);
+    Bus b;
+    b.id = r.string("id");
+    b.name = r.string("name");
+    b.channels = static_cast<std::int32_t>(r.integer("channels", INT32_MIN, INT32_MAX));
+    b.gain = Gain{static_cast<std::int32_t>(r.integer("gainMilliDb", INT32_MIN, INT32_MAX))};
+    b.pan = static_cast<std::int32_t>(r.integer("pan", INT32_MIN, INT32_MAX));
+    b.mute = r.boolean("mute");
+    b.solo = r.boolean("solo");
+    if (const Value* inserts = r.optional("inserts")) {
+        b.inserts = idList(r, *inserts, "inserts");
+    }
+    if (const Value* output = r.optional("output")) {
+        b.output = outputFromJson(*output, "bus.output");
+    }
+    r.finish();
+    return b;
+}
+
+Send sendFromJson(const Value& value) {
+    detail::FieldReader r(value, "send");
+    r.expectSchema(kSendSchema);
+    Send s;
+    s.id = r.string("id");
+    s.trackId = r.string("trackId");
+    s.busId = r.string("busId");
+    s.level = Gain{static_cast<std::int32_t>(r.integer("levelMilliDb", INT32_MIN, INT32_MAX))};
+    s.pre = r.boolean("pre");
+    s.enabled = r.boolean("enabled");
+    r.finish();
+    return s;
 }
 
 Clip clipFromJson(const Value& value) {
@@ -354,8 +454,8 @@ void collectLeaves(EntityType type, const TableVec<T>& table, std::vector<hash::
     }
 }
 
-template <typename T>
-std::shared_ptr<const TableVec<T>> tableFromJson(const Value& doc, std::string_view key, T (*parse)(const Value&),
+template <typename T, typename Parse>
+std::shared_ptr<const TableVec<T>> tableFromJson(const Value& doc, std::string_view key, Parse parse,
                                                  bool optional = false) {
     const Value* array = doc.find(key);
     if (array == nullptr && optional) {
@@ -413,14 +513,19 @@ Value toJson(const Root& root) {
     for (const auto& id : root.trackOrder) {
         order.push_back(Value(id));
     }
-    return Value(Object{
+    Object out{
         {"schema", str(kRootSchema)},
         {"id", str(kRootId)},
         {"name", Value(root.name)},
         {"sampleRate", number(root.sampleRate)},
         {"tempo", Value(std::move(tempo))},
         {"trackOrder", Value(std::move(order))},
-    });
+    };
+    // Omitted when empty: a root without buses keeps its earlier hash.
+    if (!root.busOrder.empty()) {
+        out.emplace_back("busOrder", idArray(root.busOrder));
+    }
+    return Value(std::move(out));
 }
 
 Value toJson(const Media& media) {
@@ -468,21 +573,67 @@ Value toJson(const Track& track) {
         out.emplace_back("input",
                          Value(Object{{"port", number(track.input->port)}, {"channels", number(track.input->channels)}}));
     }
+    // Omitted when empty or absent (m5b-engine-buses-sends), so earlier hashes hold.
+    if (!track.sends.empty()) {
+        out.emplace_back("sends", idArray(track.sends));
+    }
+    if (track.output) {
+        out.emplace_back("output", Value(Object{{"busId", Value(*track.output)}}));
+    }
     return Value(std::move(out));
 }
 
-Value toJson(const PluginSlot& slot) {
+Value toJson(const Bus& bus) {
+    Object out{
+        {"schema", str(kBusSchema)},
+        {"id", Value(bus.id)},
+        {"name", Value(bus.name)},
+        {"channels", number(bus.channels)},
+        {"gainMilliDb", number(bus.gain.milliDb)},
+        {"pan", number(bus.pan)},
+        {"mute", Value(bus.mute)},
+        {"solo", Value(bus.solo)},
+    };
+    if (!bus.inserts.empty()) {
+        out.emplace_back("inserts", idArray(bus.inserts));
+    }
+    if (bus.output) {
+        out.emplace_back("output", Value(Object{{"busId", Value(*bus.output)}}));
+    }
+    return Value(std::move(out));
+}
+
+Value toJson(const Send& send) {
     return Value(Object{
+        {"schema", str(kSendSchema)},
+        {"id", Value(send.id)},
+        {"trackId", Value(send.trackId)},
+        {"busId", Value(send.busId)},
+        {"levelMilliDb", number(send.level.milliDb)},
+        {"pre", Value(send.pre)},
+        {"enabled", Value(send.enabled)},
+    });
+}
+
+Value toJson(const PluginSlot& slot) {
+    Object out{
         {"schema", str(kPluginSlotSchema)},
         {"id", Value(slot.id)},
-        {"trackId", Value(slot.trackId)},
         {"format", Value(slot.format)},
         {"uid", Value(slot.uid)},
         {"name", Value(slot.name)},
         {"path", Value(slot.path)},
         {"stateBlob", slot.stateBlob ? Value(*slot.stateBlob) : Value()},
         {"bypass", Value(slot.bypass)},
-    });
+    };
+    // The owner: trackId on a track's slot (its M4 hash), busId on a bus's.
+    if (!slot.trackId.empty()) {
+        out.emplace_back("trackId", Value(slot.trackId));
+    }
+    if (!slot.busId.empty()) {
+        out.emplace_back("busId", Value(slot.busId));
+    }
+    return Value(std::move(out));
 }
 
 bool isStateBlobHash(std::string_view text) noexcept {
@@ -630,6 +781,8 @@ Document Document::create(std::string name, std::int64_t sampleRate, std::int32_
     doc.tracks_ = std::make_shared<const TableVec<Track>>();
     doc.clips_ = std::make_shared<const TableVec<Clip>>();
     doc.slots_ = std::make_shared<const TableVec<PluginSlot>>();
+    doc.buses_ = std::make_shared<const TableVec<Bus>>();
+    doc.sends_ = std::make_shared<const TableVec<Send>>();
     const auto issues = doc.validate();
     if (!issues.empty()) {
         throw ModelError("invalid_document", issues.front().message);
@@ -645,8 +798,16 @@ namespace {
 // hashed), which Session::open relies on when it checks replayed revisions and
 // the checkpoint against the journal. A v1 document that carries locators fails
 // the v1 field check below as an unknown field.
-bool migrateV1ToV2(std::string_view version) {
-    return version == kDocumentSchemaV1;
+//
+// v2 to v3 (m5b-engine-buses-sends): v3 only adds the optional buses and sends
+// tables, root.busOrder, Track.sends, Track.output and a slot's busId, all
+// omitted when empty, so a v2 document reads unchanged with no buses. A v2
+// document that carries any of them fails the field checks as unknown_field.
+std::optional<Format> formatOf(std::string_view version) {
+    if (version == kDocumentSchema) return Format::v3;
+    if (version == kDocumentSchemaV2) return Format::v2;
+    if (version == kDocumentSchemaV1) return Format::v1;
+    return std::nullopt;
 }
 
 }  // namespace
@@ -654,10 +815,13 @@ bool migrateV1ToV2(std::string_view version) {
 Document Document::fromJson(const Value& value) {
     detail::FieldReader r(value, "document");
     const std::string version = r.string("schemaVersion");
-    const bool fromV1 = migrateV1ToV2(version);
-    if (version != kDocumentSchema && !fromV1) {
+    const std::optional<Format> read = formatOf(version);
+    if (!read) {
         throw ModelError("unsupported_version", "document schemaVersion " + version + " is not supported");
     }
+    const Format format = *read;
+    const bool fromV1 = format == Format::v1;
+    const bool v3 = format >= Format::v3;
     r.require("root");
     r.require("media");
     r.require("tracks");
@@ -665,14 +829,22 @@ Document Document::fromJson(const Value& value) {
     (void)r.optional("pluginSlots");
     const Value* locatorsJson = fromV1 ? nullptr : r.optional("locators");
     const Value* masterJson = fromV1 ? nullptr : r.optional("master");
+    if (v3) {
+        (void)r.optional("buses");
+        (void)r.optional("sends");
+    }
     r.finish();
 
     Document doc;
-    doc.root_ = makeStored(rootFromJson(*value.find("root")));
+    doc.root_ = makeStored(rootFromJson(*value.find("root"), format));
     doc.media_ = tableFromJson<Media>(value, "media", &mediaFromJson);
-    doc.tracks_ = tableFromJson<Track>(value, "tracks", &trackFromJson);
+    doc.tracks_ =
+        tableFromJson<Track>(value, "tracks", [format](const Value& item) { return trackFromJson(item, format); });
     doc.clips_ = tableFromJson<Clip>(value, "clips", &clipFromJson);
-    doc.slots_ = tableFromJson<PluginSlot>(value, "pluginSlots", &pluginSlotFromJson, true);
+    doc.slots_ = tableFromJson<PluginSlot>(
+        value, "pluginSlots", [format](const Value& item) { return pluginSlotFromJson(item, format); }, true);
+    doc.buses_ = tableFromJson<Bus>(value, "buses", &busFromJson, true);
+    doc.sends_ = tableFromJson<Send>(value, "sends", &sendFromJson, true);
     if (locatorsJson != nullptr) {
         doc.locators_ = makeStored(locatorsFromJson(*locatorsJson));
     }
@@ -706,6 +878,13 @@ Value Document::toJson() const {
     if (master_) {
         out.emplace_back("master", model::toJson(master_->value));
     }
+    // Omitted when empty (m5b-engine-buses-sends), like pluginSlots.
+    if (!buses_->empty()) {
+        out.emplace_back("buses", tableToJson(*buses_));
+    }
+    if (!sends_->empty()) {
+        out.emplace_back("sends", tableToJson(*sends_));
+    }
     return Value(std::move(out));
 }
 
@@ -724,6 +903,90 @@ std::vector<const PluginSlot*> Document::slotsOnTrack(std::string_view trackId) 
         }
     }
     return out;
+}
+
+std::vector<const PluginSlot*> Document::slotsOnBus(std::string_view busId) const {
+    std::vector<const PluginSlot*> out;
+    if (const Bus* b = bus(busId)) {
+        for (const auto& id : b->inserts) {
+            if (const PluginSlot* p = pluginSlot(id)) {
+                out.push_back(p);
+            }
+        }
+    }
+    return out;
+}
+
+const Bus* Document::bus(std::string_view id) const noexcept {
+    const auto* s = findStored(*buses_, id);
+    return s ? &s->value : nullptr;
+}
+
+const Send* Document::send(std::string_view id) const noexcept {
+    const auto* s = findStored(*sends_, id);
+    return s ? &s->value : nullptr;
+}
+
+std::vector<const Bus*> Document::busesInOrder() const {
+    std::vector<const Bus*> out;
+    for (const auto& id : root().busOrder) {
+        if (const Bus* b = bus(id)) {
+            out.push_back(b);
+        }
+    }
+    return out;
+}
+
+std::vector<const Bus*> Document::allBuses() const {
+    std::vector<const Bus*> out;
+    for (const auto& item : *buses_) {
+        out.push_back(&item->value);
+    }
+    return out;
+}
+
+std::vector<const Send*> Document::sendsOnTrack(std::string_view trackId) const {
+    std::vector<const Send*> out;
+    if (const Track* t = track(trackId)) {
+        for (const auto& id : t->sends) {
+            if (const Send* s = send(id)) {
+                out.push_back(s);
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<const Send*> Document::allSends() const {
+    std::vector<const Send*> out;
+    for (const auto& item : *sends_) {
+        out.push_back(&item->value);
+    }
+    return out;
+}
+
+Document Document::withBus(Bus value) const {
+    Document doc = *this;
+    doc.buses_ = upsert(*buses_, std::move(value));
+    return doc;
+}
+
+Document Document::withoutBus(std::string_view id) const {
+    Document doc = *this;
+    doc.buses_ = remove(*buses_, id);
+    return doc;
+}
+
+Document Document::withSend(Send value) const {
+    Document doc = *this;
+    doc.sends_ = upsert(*sends_, std::move(value));
+    return doc;
+}
+
+Document Document::withoutSend(std::string_view id) const {
+    Document doc = *this;
+    doc.sends_ = remove(*sends_, id);
+    return doc;
 }
 
 std::vector<const PluginSlot*> Document::allPluginSlots() const {
@@ -935,6 +1198,19 @@ std::vector<ValidationIssue> Document::validate() const {
         if (t.input && (t.input->port < 0 || t.input->channels < 1 || t.input->channels > 2)) {
             issue(out, "invalid_input", EntityType::track, t.id, "a track input is a port >= 0 and 1 or 2 channels");
         }
+        if (t.output && bus(*t.output) == nullptr) {
+            issue(out, "unknown_bus", EntityType::track, t.id, "the track outputs to a missing bus");
+        }
+        // Every id in a track's sends names a send of that track, once.
+        std::set<std::string_view> seenSends;
+        for (const auto& id : t.sends) {
+            const Send* s = send(id);
+            if (s == nullptr || s->trackId != t.id || !seenSends.insert(id).second) {
+                issue(out, "send_mismatch", EntityType::track, t.id,
+                      "track sends must list each of its sends exactly once");
+                break;
+            }
+        }
     }
 
     for (const auto& item : *clips_) {
@@ -983,8 +1259,17 @@ std::vector<ValidationIssue> Document::validate() const {
         if (!hash::isValidEntityId(p.id)) {
             issue(out, "invalid_id", EntityType::plugin_slot, p.id, "invalid plugin slot id");
         }
-        const Track* owner = track(p.trackId);
-        if (owner == nullptr) {
+        if (p.trackId.empty() == p.busId.empty()) {
+            issue(out, "invalid_field", EntityType::plugin_slot, p.id,
+                  "a plugin slot carries exactly one of trackId or busId");
+        } else if (!p.busId.empty()) {
+            const Bus* owner = bus(p.busId);
+            if (owner == nullptr) {
+                issue(out, "unknown_bus", EntityType::plugin_slot, p.id, "plugin slot references a missing bus");
+            } else if (std::find(owner->inserts.begin(), owner->inserts.end(), p.id) == owner->inserts.end()) {
+                issue(out, "insert_mismatch", EntityType::plugin_slot, p.id, "the slot's bus does not list it in inserts");
+            }
+        } else if (const Track* owner = track(p.trackId); owner == nullptr) {
             issue(out, "unknown_track", EntityType::plugin_slot, p.id, "plugin slot references a missing track");
         } else if (std::find(owner->inserts.begin(), owner->inserts.end(), p.id) == owner->inserts.end()) {
             issue(out, "insert_mismatch", EntityType::plugin_slot, p.id, "the slot's track does not list it in inserts");
@@ -1004,6 +1289,7 @@ std::vector<ValidationIssue> Document::validate() const {
                   "locators must satisfy 0 <= left < right <= 2^42");
         }
     }
+    validateRouting(out);
     if (master_) {
         const Gain& gain = master_->value.gain;
         if (!gain.isValid()) {
@@ -1015,6 +1301,78 @@ std::vector<ValidationIssue> Document::validate() const {
         }
     }
     return out;
+}
+
+// Buses, sends, root.busOrder and the bus output chains (m5b-engine-buses-sends).
+void Document::validateRouting(std::vector<ValidationIssue>& out) const {
+    const std::string rootId(kRootId);
+    {
+        std::set<std::string, std::less<>> listed;
+        bool mismatch = false;
+        for (const auto& id : root().busOrder) {
+            if (!listed.insert(id).second || bus(id) == nullptr) {
+                mismatch = true;
+            }
+        }
+        if (mismatch || listed.size() != buses_->size()) {
+            issue(out, "bus_order_mismatch", EntityType::root, rootId, "busOrder must list every bus exactly once");
+        }
+    }
+    for (const auto& item : *buses_) {
+        const Bus& b = item->value;
+        if (!hash::isValidEntityId(b.id)) {
+            issue(out, "invalid_id", EntityType::bus, b.id, "invalid bus id");
+        }
+        if (b.channels != 2) {
+            issue(out, "invalid_channels", EntityType::bus, b.id, "a bus has 2 channels");
+        }
+        if (!b.gain.isValid()) {
+            issue(out, "invalid_gain", EntityType::bus, b.id, "bus gain is out of range");
+        }
+        if (b.pan < kPanMin || b.pan > kPanMax) {
+            issue(out, "invalid_pan", EntityType::bus, b.id, "bus pan is out of range");
+        }
+        if (b.output && bus(*b.output) == nullptr) {
+            issue(out, "unknown_bus", EntityType::bus, b.id, "the bus outputs to a missing bus");
+        }
+        std::set<std::string_view> seen;
+        for (const auto& id : b.inserts) {
+            const PluginSlot* p = pluginSlot(id);
+            if (p == nullptr || p->busId != b.id || !seen.insert(id).second) {
+                issue(out, "insert_mismatch", EntityType::bus, b.id,
+                      "bus inserts must list each of its plugin slots exactly once");
+                break;
+            }
+        }
+        // A bus whose output chain comes back to it. The walk stops at the
+        // master, at a missing bus, or after as many steps as there are buses.
+        const Bus* next = b.output ? bus(*b.output) : nullptr;
+        for (std::size_t steps = 0; next != nullptr && steps < buses_->size(); ++steps) {
+            if (next->id == b.id) {
+                issue(out, "routing_cycle", EntityType::bus, b.id, "the bus's output chain reaches the bus itself");
+                break;
+            }
+            next = next->output ? bus(*next->output) : nullptr;
+        }
+    }
+    for (const auto& item : *sends_) {
+        const Send& s = item->value;
+        if (!hash::isValidEntityId(s.id)) {
+            issue(out, "invalid_id", EntityType::send, s.id, "invalid send id");
+        }
+        const Track* owner = track(s.trackId);
+        if (owner == nullptr) {
+            issue(out, "unknown_track", EntityType::send, s.id, "send references a missing track");
+        } else if (std::find(owner->sends.begin(), owner->sends.end(), s.id) == owner->sends.end()) {
+            issue(out, "send_mismatch", EntityType::send, s.id, "the send's track does not list it in sends");
+        }
+        if (bus(s.busId) == nullptr) {
+            issue(out, "unknown_bus", EntityType::send, s.id, "send targets a missing bus");
+        }
+        if (!s.level.isValid()) {
+            issue(out, "invalid_gain", EntityType::send, s.id, "send level is out of range");
+        }
+    }
 }
 
 hash::Digest Document::entityHash(const EntityRef& ref) const {
@@ -1052,6 +1410,12 @@ std::optional<hash::Digest> Document::findEntityHash(const EntityRef& ref) const
         case EntityType::master:
             if (master_ && ref.id == kMasterId) found = &master_->hash;
             break;
+        case EntityType::bus:
+            if (const auto* s = findStored(*buses_, ref.id)) found = &s->hash;
+            break;
+        case EntityType::send:
+            if (const auto* s = findStored(*sends_, ref.id)) found = &s->hash;
+            break;
     }
     if (found == nullptr) {
         return std::nullopt;
@@ -1073,6 +1437,8 @@ hash::Digest Document::documentHash() const {
     if (master_) {
         leaves.push_back({"master", std::string(kMasterId), master_->hash});
     }
+    collectLeaves(EntityType::bus, *buses_, leaves);
+    collectLeaves(EntityType::send, *sends_, leaves);
     try {
         return hash::documentHash(std::move(leaves));
     } catch (const hash::DocumentHashError& error) {
@@ -1104,6 +1470,14 @@ bool Document::sharesEntity(const Document& other, const EntityRef& ref) const n
             return locators_ != nullptr && ref.id == kLocatorsId && locators_ == other.locators_;
         case EntityType::master:
             return master_ != nullptr && ref.id == kMasterId && master_ == other.master_;
+        case EntityType::bus: {
+            const auto* a = findStored(*buses_, ref.id);
+            return a != nullptr && a == findStored(*other.buses_, ref.id);
+        }
+        case EntityType::send: {
+            const auto* a = findStored(*sends_, ref.id);
+            return a != nullptr && a == findStored(*other.sends_, ref.id);
+        }
     }
     return false;
 }
@@ -1137,6 +1511,8 @@ std::vector<DiffEntry> diff(const Document& before, const Document& after) {
             out.push_back({DiffEntry::Change::modified, ref});
         }
     }
+    diffTables(EntityType::bus, *before.buses_, *after.buses_, out);
+    diffTables(EntityType::send, *before.sends_, *after.sends_, out);
     return out;
 }
 
