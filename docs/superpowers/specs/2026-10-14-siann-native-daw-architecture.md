@@ -1020,11 +1020,15 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   captures), never through a republish, so a punch switches at the frame it
   captures from. `engine.status` reports the round trip as
   `monitorRoundTripFrames = inputLatencyFrames + outputLatencyFrames +
-  srcOutputLatencyFrames + srcInputLatencyFrames + srcMonitorFifoFrames +
-  monitorPathLatency`: `srcMonitorFifoFrames` is the FIFO that carries the
-  resampled input to the graph's fixed blocks while device-side SRC runs (0
-  otherwise), and `monitorPathLatency` the largest over the monitored tracks of
-  the track's own latency plus the master path's (0 with none). It is null while no
+  srcOutputLatencyFrames + srcMonitorFifoFrames + monitorPathLatency`:
+  `srcMonitorFifoFrames` is the FIFO that carries the resampled input to the
+  graph's fixed blocks while device-side SRC runs (0 otherwise), primed with the
+  input resampler's lookahead, one block and four frames of silence so a step
+  never waits for input; the input resampler itself adds no delay in sample
+  terms (its lookahead is what the FIFO waits for, and the recorder's stamps
+  account for it separately), so `srcInputLatencyFrames` is not a term of its
+  own. `monitorPathLatency` is the largest over the monitored tracks of the
+  track's own latency plus the master path's (0 with none). It is null while no
   input is open. The record offset does not change with the mode.
 - A stopped engine (m5b-engine-monitoring): a live graph with a monitoring node is
   processed while the transport is stopped, with `ProcessContext::rolling` false:
