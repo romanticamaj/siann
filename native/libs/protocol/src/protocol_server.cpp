@@ -2635,4 +2635,8 @@ std::optional<json::Value> ProtocolServer::jobStatus(const std::string& jobId) c
     return impl_->jobs.status(jobId);
 }
 
+const std::vector<std::string_view>& detail::protocolMethods() {
+    return kMethods;
+}
+
 }  // namespace siann::protocol

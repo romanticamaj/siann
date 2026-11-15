@@ -32,6 +32,19 @@ struct McpTool {
 // The tools in tools/list order.
 const std::vector<McpTool>& mcpTools();
 
+// A protocol method with no MCP tool, and why (kNotMcp). Every method of
+// protocolMethods() is a tool's method or one of these (protocol_parity_test).
+struct McpExclusion {
+    std::string_view method;
+    std::string_view reason;
+};
+
+const std::vector<McpExclusion>& mcpExclusions();
+
+// The methods engine.capabilities lists, in its order (kMethods,
+// protocol_server.cpp).
+const std::vector<std::string_view>& protocolMethods();
+
 class McpAdapter {
 public:
     // Queues one protocol request; `done` later receives the response text.

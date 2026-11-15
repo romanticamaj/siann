@@ -162,6 +162,11 @@ const std::vector<McpTool>& mcpTools() {
     return kTools;
 }
 
+const std::vector<McpExclusion>& mcpExclusions() {
+    static const std::vector<McpExclusion> kStub;
+    return kStub;
+}
+
 McpAdapter::McpAdapter(Submit submit) : submit_(std::move(submit)) {}
 
 void McpAdapter::handle(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {

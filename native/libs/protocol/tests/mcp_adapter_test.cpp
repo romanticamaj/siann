@@ -37,14 +37,16 @@ const std::vector<std::string> kTools = {
     "render",         "open_session",          "save_session",    "play",          "stop",
     "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
     "select_device",  "record_arm",            "record",          "create_session", "import_media",
+    "list_plans",     "preview_plan",          "undo",            "redo",
 };
 
-// The propose scope's tools before m5b-engine-record: recording added none.
+// The propose scope's tools: recording (m5b-engine-record) added none;
+// m5b-protocol-parity added list_plans and preview_plan, which only read.
 const std::vector<std::string> kProposeTools = {
     "list_commands", "describe_capabilities", "inspect_session", "submit_plan", "plan_status", "reject_plan",
     "propose_plan",  "audition",              "discard_proposal", "job_status", "render",     "save_session",
     "play",          "stop",                  "locate",           "set_cycle",  "set_click",  "engine_status",
-    "list_devices",
+    "list_devices",  "list_plans",            "preview_plan",
 };
 
 // A transport port that records what each tool reached.
@@ -318,7 +320,7 @@ TEST_CASE("plugin.registry and plugin.approve are not MCP tools", "[protocol][mc
     }
 }
 
-TEST_CASE("tools/list returns the 28 tools with input schemas", "[protocol][mcp]") {
+TEST_CASE("tools/list returns the 34 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
@@ -752,27 +754,88 @@ TEST_CASE("recording adds no tool to the propose scope", "[protocol][mcp][record
     CHECK(propose == kProposeTools);
 }
 
-// m5-plan-review (Protocol v0 item 25): plan.list and plan.preview serve the
-// review UI; an agent knows its plans, so they are no tool in v0.
-TEST_CASE("plan.list and plan.preview are not MCP tools", "[protocol][mcp][plans]") {
+// m5b-protocol-parity: list_plans and preview_plan wrap plan.list and
+// plan.preview one to one in the propose scope (both only read).
+TEST_CASE("list_plans and preview_plan wrap plan.list and plan.preview under propose",
+          "[protocol][mcp][plans][parity]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
-    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
-    for (const Value& tool : tools.asArray()) {
-        const std::string name = at(tool, "name").asString();
+    const ConnectionId ui = f.authed();
+    CHECK(canonical(mcp.ok("list_plans")) == R"({"plans":[]})");
+
+    const std::string hash =
+        at(mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{trackAdd("trk_a")})}})), "hash").asString();
+    const Value listed = mcp.ok("list_plans");
+    REQUIRE(at(listed, "plans").asArray().size() == 1);
+    CHECK(at(at(listed, "plans").asArray()[0], "hash").asString() == hash);
+    CHECK(canonical(listed) == canonical(f.ok(ui, "plan.list")));
+
+    const Value plan = Value(Object{{"plan", Value(hash)}});
+    const Value preview = mcp.ok("preview_plan", plan);
+    CHECK(at(preview, "revision").asString() == "r1");
+    CHECK(canonical(preview) == canonical(f.ok(ui, "plan.preview", plan)));
+    CHECK(f.session.history().revisions().size() == 1);
+
+    // The method's own errors.
+    const std::string none = "sha256:" + std::string(64, '0');
+    CHECK(at(mcp.error("preview_plan", Value(Object{{"plan", Value(none)}})), "code").asString() == "not_found");
+    CHECK(at(mcp.error("preview_plan"), "code").asString() == "invalid_params");
+    // A step that fails at the head answers its error with the step; the plan is unchanged.
+    f.ok(ui, "command.execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}}));
+    const Value failed = mcp.error("preview_plan", plan);
+    CHECK(at(failed, "code").asString() == "already_exists");
+    CHECK(at(failed, "step").asNumber() == 0);
+    CHECK(at(at(mcp.ok("list_plans"), "plans").asArray()[0], "state").asString() == "validated");
+}
+
+// m5b-protocol-parity: undo and redo move main's head, so they need trusted.
+TEST_CASE("undo and redo are scope_denied under propose and run nothing", "[protocol][mcp][parity]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const ConnectionId ui = f.authed();
+    f.ok(ui, "command.execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}}));
+    REQUIRE(f.session.history().revisions().size() == 2);
+    const std::string head = at(mcp.ok("inspect_session"), "revision").asString();
+
+    for (const char* name : {"undo", "redo"}) {
         INFO(name);
-        CHECK(name.find("list_plans") == std::string::npos);
-        CHECK(name.find("plan_list") == std::string::npos);
-        CHECK(name.find("preview") == std::string::npos);
+        CHECK(at(mcp.error(name), "code").asString() == "scope_denied");
+        // Not cached: the same JSON-RPC id answers again from the scope check.
+        const std::string body =
+            Mcp::rpc(Value(7), "tools/call", Value(Object{{"name", Value(name)}, {"arguments", Value(Object{})}}));
+        CHECK(mcp.post(body).body == mcp.post(body).body);
     }
-    for (const char* name : {"plan.list", "plan.preview", "list_plans", "preview_plan"}) {
-        INFO(name);
-        const HttpResponse response =
-            mcp.post(Mcp::rpc(Value(2), "tools/call", Value(Object{{"name", Value(name)}, {"arguments", Value(Object{})}})));
-        REQUIRE(response.status == 200);
-        CHECK(at(at(json::parse(response.body), "error"), "code").asNumber() == -32602);
-    }
+    CHECK(f.session.history().revisions().size() == 2);
+    CHECK(at(mcp.ok("inspect_session"), "revision").asString() == head);
+    // The UI is not scoped: its session.undo still runs.
+    CHECK(at(at(f.ok(ui, "session.undo"), "revision"), "cause").asString() == "undo");
+}
+
+TEST_CASE("under the trusted scope undo and redo move main's head as session.undo and session.redo do",
+          "[protocol][mcp][parity]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const ConnectionId ui = f.authed();
+    CHECK(at(mcp.error("undo"), "code").asString() == "nothing_to_undo");
+    CHECK(at(mcp.error("redo"), "code").asString() == "nothing_to_redo");
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}}));
+    const std::string added = at(mcp.ok("inspect_session"), "revision").asString();
+
+    const Value undone = mcp.ok("undo");
+    CHECK(at(at(undone, "revision"), "cause").asString() == "undo");
+    const std::string afterUndo = at(mcp.ok("inspect_session"), "revision").asString();
+    CHECK(afterUndo != added);
+    CHECK(at(f.ok(ui, "session.inspect"), "revision").asString() == afterUndo);
+    CHECK(at(mcp.error("undo"), "code").asString() == "nothing_to_undo");
+
+    const Value redone = mcp.ok("redo");
+    CHECK(at(at(redone, "revision"), "cause").asString() == "redo");
+    CHECK(at(mcp.ok("inspect_session"), "revision").asString() != afterUndo);
+    CHECK(f.session.history().revisions().size() == 4);
+    CHECK(at(mcp.error("redo"), "code").asString() == "nothing_to_redo");
 }
 
 // m5-ui-engine-loop-click (Protocol v0 item 26): set_cycle and set_click wrap
