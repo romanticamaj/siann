@@ -326,10 +326,31 @@ function checkExclusionDoc(world) {
   return failures;
 }
 
-// (h) acceptance item 3: plan.list and plan.preview each have a section (a
-// heading that names the method) in a protocol doc whose body, up to the next
-// heading, gives the params, the result and the errors.
-const SECTION_METHODS = ['plan.list', 'plan.preview'];
+// (h) acceptance item 3: plan.list and plan.preview each have a contract in a
+// protocol doc: a section (a heading that names the method) whose body, up to
+// the next heading, gives the params, the result and the errors, or a row of
+// its own in a table with Params, Result and Errors columns, each filled. The
+// two agent-facing methods behind describe_capabilities and render are held to
+// the same: check (a) counts any heading, and a heading about a side detail
+// (features.plugins, render's own plugin instances) is not their contract.
+const SECTION_METHODS = ['plan.list', 'plan.preview', 'engine.capabilities', 'render.start'];
+
+// A row whose Method cell starts with the backticked method, in a table whose
+// header has Params, Result and Errors, with those three cells non-empty.
+function hasContractRow(docs, method) {
+  for (const { text } of docs) {
+    for (const table of tables(text)) {
+      const at = ['Method', 'Params', 'Result', 'Errors'].map((name) => table.header.indexOf(name));
+      if (at.some((index) => index < 0)) continue;
+      const [methodAt, ...partsAt] = at;
+      for (const row of table.rows) {
+        if ((backticked(row[methodAt] || '')[0] || '') !== method || !row[methodAt].startsWith('`')) continue;
+        if (partsAt.every((index) => (row[index] || '').length > 0)) return true;
+      }
+    }
+  }
+  return false;
+}
 
 function sectionBodies(docs, method) {
   const bodies = [];
@@ -357,6 +378,7 @@ const SECTION_PARTS = [
 function checkSections(world) {
   const failures = [];
   for (const method of SECTION_METHODS) {
+    if (hasContractRow(world.docs, method)) continue;
     const bodies = sectionBodies(world.docs, method);
     if (bodies.length === 0) {
       failures.push({ name: method, place: `${DOCS_PLACE} (no section)` });
@@ -428,7 +450,11 @@ const CHECKS = {
   e: { title: 'the MCP tools documented in protocol-mcp-v0.md equal the tool table, with their scope', run: checkToolDoc },
   f: { title: 'kMethods is exactly the tool methods and kNotMcp, disjoint, each exclusion with a reason', run: checkUnion },
   g: { title: 'protocol-mcp-v0.md "Methods without a tool" lists kNotMcp', run: checkExclusionDoc },
-  h: { title: 'plan.list and plan.preview have a protocol doc section with params, result and errors', run: checkSections },
+  h: {
+    title:
+      'plan.list, plan.preview, engine.capabilities and render.start have a protocol doc contract: params, result and errors',
+    run: checkSections,
+  },
 };
 
 for (const [key, { title, run }] of Object.entries(CHECKS)) {
@@ -474,6 +500,47 @@ function stripFromSection(world, method, pattern) {
       })
       .join('\n');
   }
+}
+
+// Rows of a Method/Params/Result/Errors table whose Method cell is `method`.
+function isContractRow(line, header, method) {
+  return (
+    header !== null &&
+    ['Method', 'Params', 'Result', 'Errors'].every((name) => header.includes(name)) &&
+    cells(line)[header.indexOf('Method')] === `\`${method}\``
+  );
+}
+
+function editContractRows(world, method, edit) {
+  for (const doc of world.docs) {
+    let header = null;
+    const out = [];
+    for (const line of doc.text.split('\n')) {
+      if (!line.startsWith('|')) {
+        header = null;
+      } else if (header === null) {
+        header = cells(line);
+      } else if (isContractRow(line, header, method)) {
+        const replaced = edit(line, header);
+        if (replaced !== null) out.push(replaced);
+        continue;
+      }
+      out.push(line);
+    }
+    doc.text = out.join('\n');
+  }
+}
+
+function dropContractRow(world, method) {
+  editContractRows(world, method, () => null);
+}
+
+function emptyContractCell(world, method, column) {
+  editContractRows(world, method, (line, header) => {
+    const row = cells(line);
+    row[header.indexOf(column)] = '';
+    return `| ${row.map((cell) => cell.replace(/\|/g, '\\|')).join(' | ')} |`;
+  });
 }
 
 // As undocument, but keeps the MCP tool row (Method in its second cell).
@@ -543,6 +610,20 @@ const PLANTS = [
     name: 'plan.list',
     place: `${DOCS_PLACE} (section without errors)`,
     apply: (w) => stripFromSection(w, 'plan.list', /\b(?:Errors?|error)\b/g),
+  },
+  {
+    check: 'h',
+    plant: 'engine.capabilities whose contract row is removed while its plugins heading stays',
+    name: 'engine.capabilities',
+    place: `${DOCS_PLACE} (section without params)`,
+    apply: (w) => dropContractRow(w, 'engine.capabilities'),
+  },
+  {
+    check: 'h',
+    plant: 'render.start whose contract row gives no errors',
+    name: 'render.start',
+    place: `${DOCS_PLACE} (section without errors)`,
+    apply: (w) => emptyContractCell(w, 'render.start', 'Errors'),
   },
   {
     check: 'b',
