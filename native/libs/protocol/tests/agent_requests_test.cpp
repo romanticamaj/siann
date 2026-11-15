@@ -1,4 +1,4 @@
-// Agent requests (spec, Protocol v0 item 30, m5b-engine-agent-requests, gate
+// Agent requests (spec, Protocol v0 item 32, m5b-engine-agent-requests, gate
 // agent-request-shape; UI redesign UR-16): agent.request and its siblings from
 // the UI, next_request and answer_request for the agent, the request link of
 // plan.submit, the expiry, the list and the capabilities. The MCP side goes

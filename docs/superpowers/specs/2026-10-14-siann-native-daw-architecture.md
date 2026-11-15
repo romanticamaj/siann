@@ -2131,7 +2131,7 @@ and C9, E-7 and E-14):
   Approval, the staleness check, apply, rollback and propose never read them.
 
 Decisions of 2026-11-15 (m5b-engine-agent-requests; human gate
-`agent-request-shape`; siann-protocol item 30):
+`agent-request-shape`; siann-protocol item 32):
 
 - A plan can answer an agent request: `plan.submit {..., request: "arq_<hex>"}`.
   The link is not part of the plan: it is not hashed (the same steps with and
@@ -2570,7 +2570,7 @@ retried with the same id once the scope is granted. Note for the maintainer:
 hears without changing main; if that is unwanted, flip them to `trusted` (one row
 of the tool table in `docs/schemas/protocol-mcp-v0.md`).
 
-Credential-bound methods (m5b-engine-agent-requests, item 30). Two kinds of
+Credential-bound methods (m5b-engine-agent-requests, item 32). Two kinds of
 method belong to one credential whatever the scope: the user's side of an agent
 request, `agent.request`, `agent.cancel_request` and `agent.requests`, is UI-only
 (no MCP tool maps it, so a `tools/call` naming it is the unknown tool `-32602`,
@@ -2755,11 +2755,11 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       peaks: true (item 23), gestures: <a port is present> (item 24),
       locators: true, cycle: <a transport port is present>, click: <a transport
       port is present> (item 26), planMetadata: true, agents: <a transport port is
-      present> (item 29), agentRequests: <as agents> (item 30)},
+      present> (item 29), agentRequests: <as agents> (item 32)},
       limits: {syncChunkEntities,
       inboxCapacity, idempotencyCapacity, agentIdleMs, agentsRetained,
       agentRequestsPerAgent: 16, agentRequestTextChars: 4000, agentRequestWaitMs
-      (default 25000, item 30), agentRequestsClosedRetained: 16}}`.
+      (default 25000, item 32), agentRequestsClosedRetained: 16}}`.
       `scope` is the MCP scope the launcher
       set. `plugins` is `false` until a plugin port is present (item 19), then
       `{formats: ["clap", "vst3", "au"] as this build hosts them, flags:
@@ -2771,7 +2771,7 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       intent?, request?}` (default base: the head) -> the `siann.plan.v1` object with its
       lifecycle fields and the `actor` the server set. A title or intent outside
       the limits is `invalid_plan_metadata`; any other param is `invalid_params`
-      ("Plans", decisions of 2026-11-15). `request` (`arq_<hex>`, item 30) links
+      ("Plans", decisions of 2026-11-15). `request` (`arq_<hex>`, item 32) links
       the plan to an open agent request, unhashed ("Plans").
     - `plan.status {plan}` -> the plan object plus `stale: [{ref, change}]`
       (`PlanStore::validate`) and `proposalBranch` when it is proposed.
@@ -2840,7 +2840,7 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     at least every 250 ms, which is the resolution). The wait is clamped below
     `mcpRequestTimeout` (at most `mcpRequestTimeout` minus 1 s, and never under
     0), so a parked call is answered before the transport gives up. An empty
-    answer is not cached and is not an action (item 30).
+    answer is not cached and is not an action (item 32).
 16. Open and save. `session.save {}` writes the checkpoint (`Session::checkpoint`)
     and returns `{revision, path}` (the `session.json` path). `session.open {path}`
     goes through `ServerOptions::openSession`, a callback the launcher supplies (the

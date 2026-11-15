@@ -715,7 +715,7 @@ test('(18b) plan.changed with metadata and agent.changed advance lastSeq and lea
   assert.equal(r.client.getState().syncCount, 1, 'no gap, no sync');
 });
 
-// m5b-engine-agent-requests (Protocol v0 item 30): the composer's calls and event.
+// m5b-engine-agent-requests (Protocol v0 item 32): the composer's calls and event.
 test('(18c) agent.request, agent.cancel_request and agent.requests go out as typed calls; agent.request_changed reaches a listener', async () => {
   const agentId = 'agt_00c0ffee00c0ffee';
   const request: AgentRequest = {

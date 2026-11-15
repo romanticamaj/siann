@@ -87,7 +87,7 @@ On a refusal nothing is stored and no `plan.changed` goes out. `invalid_plan_met
 
 ## Agent requests (m5b-engine-agent-requests)
 
-A request from the user to an agent that is connected over MCP (spec, Protocol v0 item 30; human gate `agent-request-shape`, decided by the maintainer 2026-11-15). SIANN has no agent runtime: the engine holds the request until the agent takes it with the MCP tool `next_request` and answers it with `answer_request` or `submit_plan {request}` ([Protocol MCP v0](protocol-mcp-v0.md)). A request executes nothing: its text and context are data for the agent, and the only way its outcome reaches the document is a plan the user approves. Requests are engine state on the command thread: not a revision, not in the bundle or the journal, dropped when the engine restarts.
+A request from the user to an agent that is connected over MCP (spec, Protocol v0 item 32; human gate `agent-request-shape`, decided by the maintainer 2026-11-15). SIANN has no agent runtime: the engine holds the request until the agent takes it with the MCP tool `next_request` and answers it with `answer_request` or `submit_plan {request}` ([Protocol MCP v0](protocol-mcp-v0.md)). A request executes nothing: its text and context are data for the agent, and the only way its outcome reaches the document is a plan the user approves. Requests are engine state on the command thread: not a revision, not in the bundle or the journal, dropped when the engine restarts.
 
 The request object:
 

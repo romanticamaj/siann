@@ -1024,7 +1024,7 @@ TEST_CASE("command.execute of an over-long fade answers invalid_fade and commits
 }
 
 // m5b-engine-agent-requests ("Plans", decisions of 2026-11-15; Protocol v0 item
-// 30): the request link is not part of the plan, so it is not hashed.
+// 32): the request link is not part of the plan, so it is not hashed.
 TEST_CASE("a plan submitted with a request has the hash of the same plan without it", "[protocol][plans][metadata]") {
     const Array steps{trackGain("trk_a", -600)};
     std::string without;

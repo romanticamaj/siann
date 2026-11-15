@@ -329,7 +329,7 @@ struct Connection {
 // request (m5b-engine-agent-requests); it is not part of the plan.
 constexpr std::string_view kPlanSubmitParams[] = {"steps", "readSet", "baseRevision", "title", "intent", "request"};
 
-// Protocol v0 item 30 (Scopes v0, credential-bound methods): the user's side of
+// Protocol v0 item 32 (Scopes v0, credential-bound methods): the user's side of
 // an agent request is the UI credential's, the agent's side the MCP credential's.
 bool uiOnlyMethod(std::string_view method) noexcept {
     return method == "agent.request" || method == "agent.cancel_request" || method == "agent.requests";
@@ -779,7 +779,7 @@ struct ProtocolServer::Impl {
     detail::JobRunner jobs;
     detail::AgentRegistry agents;  // Protocol v0 item 29; its own mutex
     detail::McpAdapter mcp;
-    // Protocol v0 item 30: the requests from the user to the agents. Command
+    // Protocol v0 item 32: the requests from the user to the agents. Command
     // thread only, under pumpMutex.
     detail::AgentRequestStore agentRequests;
 
@@ -1891,7 +1891,7 @@ struct ProtocolServer::Impl {
         }
         const std::string base =
             optionalString(request.params, "baseRevision", method).value_or(session->history().head().envelope.id);
-        // Protocol v0 item 30: the request this plan answers, checked before
+        // Protocol v0 item 32: the request this plan answers, checked before
         // anything is stored. Only its addressee links a plan to it.
         std::optional<std::string> linked;
         if (const Value* given = request.params.find("request")) {
@@ -1920,7 +1920,7 @@ struct ProtocolServer::Impl {
         return success(request.requestId, plan.toJson());
     }
 
-    // Protocol v0 item 30, agent requests. Command thread.
+    // Protocol v0 item 32, agent requests. Command thread.
 
     // A parked agent.next_request and when its wait ends (on steadyClock).
     struct Waiter {
@@ -2434,7 +2434,7 @@ struct ProtocolServer::Impl {
         readModel.forgetAll();
         cache.clear();
         cacheOrder.clear();
-        // Protocol v0 item 30: a request's context names the old session's
+        // Protocol v0 item 32: a request's context names the old session's
         // entities, so every open one expires; its plans are gone too.
         for (detail::AgentRequest& expired : agentRequests.expireAll()) {
             requestChanged(std::move(expired));
@@ -2962,7 +2962,7 @@ struct ProtocolServer::Impl {
     // sent; a method no tool maps is denied too.
     std::optional<std::string> scopeDenied(const Pending& request) const {
         const Value id(request.requestId);
-        // Protocol v0 item 30 (Scopes v0, credential-bound methods), whatever
+        // Protocol v0 item 32 (Scopes v0, credential-bound methods), whatever
         // the scope: the agent's side is the MCP credential's, the user's side
         // the UI credential's.
         if (!request.scope) {
@@ -3016,7 +3016,7 @@ struct ProtocolServer::Impl {
 
     void handle(std::vector<Pending> requests) {
         expireLeases();
-        // A parked next_request keeps its agent connected (Protocol v0 item 30).
+        // A parked next_request keeps its agent connected (Protocol v0 item 32).
         for (const auto& [agentId, waiter] : waiters_) {
             (void)waiter;
             agents.touch(agentId);
@@ -3050,7 +3050,7 @@ struct ProtocolServer::Impl {
                 }
             }
             // The long poll answers itself, now or in a later pump; an empty
-            // answer is neither cached nor an action (Protocol v0 item 30).
+            // answer is neither cached nor an action (Protocol v0 item 32).
             if (request.method == "agent.next_request") {
                 nextRequest(request);
                 continue;

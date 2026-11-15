@@ -1,6 +1,6 @@
 #pragma once
 
-// Requests from the user to a connected agent (spec, Protocol v0 item 30,
+// Requests from the user to a connected agent (spec, Protocol v0 item 32,
 // m5b-engine-agent-requests; human gate agent-request-shape). A request is a
 // message: the UI queues it for an agent, the agent takes it with next_request
 // and answers it with a plan, a message or a decline. It executes nothing: its

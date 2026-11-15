@@ -994,7 +994,7 @@ TEST_CASE("tools/list: submit_plan takes a title of 200 and an intent of 2000 at
     CHECK_FALSE(at(*schema, "additionalProperties").asBool());
 }
 
-// m5b-engine-agent-requests (Protocol v0 item 30): the agent's side of a request.
+// m5b-engine-agent-requests (Protocol v0 item 32): the agent's side of a request.
 TEST_CASE("tools/list: next_request and answer_request are propose tools; submit_plan takes a request",
           "[protocol][mcp][requests]") {
     Fixture f;

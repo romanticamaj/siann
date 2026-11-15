@@ -157,7 +157,7 @@ same JSON-RPC `id` runs against the session served now.
 | `answer_request` | `agent.answer_request` | propose | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` |
 
 `next_request` and `answer_request` (m5b-engine-agent-requests, spec Protocol v0
-item 30, human gate `agent-request-shape`) are the agent's side of a request the
+item 32, human gate `agent-request-shape`) are the agent's side of a request the
 user sent it from the UI (`agent.request`, [Protocol engine v0](protocol-engine-v0.md),
 "Agent requests"). A request executes nothing; the agent answers it with a plan
 the user then reviews, with a message, or declines it, so both tools are propose.

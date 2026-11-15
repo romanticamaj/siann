@@ -149,7 +149,7 @@ struct ServerOptions {
     // agents are kept.
     std::chrono::milliseconds agentIdleMs{300'000};
     std::size_t agentsRetained = 32;
-    // Agent requests (Protocol v0 item 30): at most this many open requests
+    // Agent requests (Protocol v0 item 32): at most this many open requests
     // (pending or taken) per agent, and how long next_request waits for one
     // (on steadyClock), clamped to at most mcpRequestTimeout minus 1 s.
     std::size_t agentRequestsPerAgent = 16;

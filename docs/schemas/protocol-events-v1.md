@@ -318,7 +318,7 @@ it (it advances `lastSeq` only).
 
 ### `agent.request_changed` (m5b-engine-agent-requests)
 
-A request from the user to an agent (spec, Protocol v0 item 30) was queued, taken,
+A request from the user to an agent (spec, Protocol v0 item 32) was queued, taken,
 answered, declined, cancelled or expired:
 
 ```json

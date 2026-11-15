@@ -107,7 +107,7 @@ const std::vector<McpTool> kTools = {
     {"import_media", "media.import", McpScope::trusted,
      "Imports a WAV or FLAC file into the media pool as a job (converted to the session rate); poll job_status.",
      R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the audio file"},"clientImportId":{"type":"string","minLength":1,"maxLength":128,"description":"chosen by the client; a repeat answers the first job"}},"required":["path","clientImportId"],"additionalProperties":false})"},
-    // m5b-engine-agent-requests (Protocol v0 item 30): the agent's side of a
+    // m5b-engine-agent-requests (Protocol v0 item 32): the agent's side of a
     // request from the user. A request executes nothing; a plan the user
     // approves stays the only way into the document, so both are propose.
     {"next_request", "agent.next_request", McpScope::propose,
