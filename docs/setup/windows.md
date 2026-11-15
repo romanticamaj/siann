@@ -21,10 +21,10 @@ After cloning only `romanticamaj/siann`, a developer or agent session can:
 
 This path does not compile or launch the SIANN audio engine.
 
-The separate `romanticamaj/siann-engine` checkout is only required for live
-session commands such as `node bin/siann.js live import-pack ...`, preview
-rendering through the engine runtime, Ardour session mutation, and engine
-integration tests.
+The native `siann-engine`, built from `native/` in this repository (see
+"Engine Build" below), is only required for live session commands such as
+`node bin/siann.js live import-pack ...`, `--run` and `run`, preview rendering
+through the engine, and the engine-gated bridge tests.
 
 ## Requirements
 

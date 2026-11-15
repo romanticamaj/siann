@@ -49,6 +49,6 @@ node scripts/create-daw-manifest.js /tmp/siann-user-daw-source \
 ```
 
 The generated layout creates one track per BGM bed and one track per SFX cue so
-the timeline is easier to inspect visually in Ardour or a future SIANN UI. BGM
+the timeline is easier to inspect visually in the SIANN app or, after DAWproject export, another DAW. BGM
 rows in `placement.md` provide `sourceStart` and `duration`, which the engine
 uses to trim imported regions instead of always placing whole source files.

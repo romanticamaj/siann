@@ -110,9 +110,10 @@ The DAWproject smoke test creates demo audio, writes a portable manifest, and
 exports a Cubase-importable project exchange package with copied audio media and
 timeline placement. The live import-pack command starts the local SIANN engine
 runtime, creates a session, imports the manifest assets onto tracks, saves the
-session, and renders a preview file. That live engine path requires the separate
-`siann-engine` checkout. The generated session can be opened in Ardour when you
-want a visual compatibility check.
+session, and renders a preview file. That live engine path needs the native
+`siann-engine` built from `native/` in this repository (see below); the result
+is a SIANN session bundle, and the DAWproject export is the way to inspect it in
+another DAW.
 
 For a review-and-approve workflow before applying changes, generate an import
 plan first:

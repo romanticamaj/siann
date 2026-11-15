@@ -20,7 +20,7 @@ paths, generated artifacts, and local repository references.
 - `.claude/skills/siann-intake/SKILL.md` points Claude-style agents at the same SIANN intake boundary.
 - `src/bridge/` contains the Node-based developer bridge wrapper around the engine command runner.
 - `bin/siann.js` is the CLI entrypoint for bridge workflows.
-- `examples/bridge/` contains command fixtures that developers can run against a local engine checkout.
+- `examples/bridge/` contains command fixtures that developers can run against the native `siann-engine` (`SIANN_ENGINE_EXE`, else the core preset's build under `native/`).
 - `examples/import-pack/` contains the first product workflow fixture: manifest-driven asset placement and preview rendering.
 - `scripts/create-demo-audio.js` writes small WAV fixtures for workflow smoke tests and examples.
 - `scripts/check-all.js` runs every local check (`--changed` picks the steps from the paths changed against `origin/main`, `--all` runs every step, `--gcc` adds a g++ -Werror syntax check through WSL, `--desktop` the JUCE preset, `--app` the Electron shell's unit and Playwright tests against the dev build's `siann-engine`).
@@ -124,7 +124,7 @@ Useful repository checks are:
 - `rg "term" docs/` searches the documentation.
 - `find docs -type f | sort` lists tracked documentation areas.
 - `npm test` runs the bridge wrapper, CLI, and fixture tests with Node's built-in test runner.
-- `npm run smoke:dawproject -- --json` runs the cross-platform DAWproject smoke test without the engine checkout.
+- `npm run smoke:dawproject -- --json` runs the cross-platform DAWproject smoke test without building or starting `siann-engine`.
 - `node scripts/pluginval.js [--pluginval <exe>] <plugin>...` runs pluginval v1.0.4 at strictness 5 on plugins by path; `--compat` runs it on the third-party set in `scripts/compat-plugins.json` (one `SIANN_PLUGIN_*` variable each: unset is SKIP, a missing path or a failure is FAIL); see `native/README.md`, "pluginval".
 - `node scripts/create-demo-import-pack.js --out /tmp/siann-import-pack-demo --json` creates portable demo audio plus a manifest under the chosen output directory.
 - `node bin/siann.js run examples/bridge/create-session.command.json --device fake --json` runs a command fixture against `siann-engine`.
