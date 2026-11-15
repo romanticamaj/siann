@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -131,6 +132,34 @@ bool silent(const std::vector<float>& out, std::size_t from = 0) {
     return true;
 }
 
+// The input track of trackGraph(input) plus a second, unmonitored mono track
+// playing a constant 0.5 from frame 0 (centre pan too), both into the master.
+std::unique_ptr<graph::PreparedGraph> inputAndClipGraph() {
+    graph::GraphBuilder b;
+    const graph::NodeId clips =
+        b.add(std::make_unique<graph::ClipPlayerNode>(1, std::vector<graph::ClipPlayerNode::Clip>{}), "trk.clips");
+    const graph::NodeId monitor = b.add(
+        std::make_unique<graph::MonitorInputNode>(1, MonitorInputMode::input, 1, 1, nullptr, kFade), "trk.monitor");
+    b.connect(clips, monitor);
+    const graph::NodeId fader = b.add(std::make_unique<graph::TrackFaderNode>(1, 0, 0, false), "trk.fader");
+    const graph::NodeId master = b.add(std::make_unique<graph::BusNode>(2), "master");
+    b.connect(monitor, fader);
+    b.connectLowLatency(fader, master, monitor);
+
+    auto media = std::make_shared<graph::PlanarAudio>();
+    media->channels = 1;
+    media->frames = 100'000;
+    media->data.assign(1, std::vector<float>(static_cast<std::size_t>(media->frames), 0.5f));
+    const graph::NodeId tape = b.add(std::make_unique<graph::ClipPlayerNode>(
+                                         1, std::vector<graph::ClipPlayerNode::Clip>{{0, 0, media->frames, 1.0f, media}}),
+                                     "tape.clips");
+    const graph::NodeId tapeFader = b.add(std::make_unique<graph::TrackFaderNode>(1, 0, 0, false), "tape.fader");
+    b.connect(tape, tapeFader);
+    b.connect(tapeFader, master);
+    b.setOutput(master);
+    return std::move(b).compile(kBlock);
+}
+
 }  // namespace
 
 TEST_CASE("Input monitoring reaches the output in the same callback, stopped and playing", "[monitor][rt]") {
@@ -151,6 +180,52 @@ TEST_CASE("Input monitoring reaches the output in the same callback, stopped and
     device.pump(8, &playing);
     CHECK(passesInput(playing, 0, 8 * kBlock));
     CHECK(driver.playhead() == 8 * kBlock);
+    CHECK(rt::allocationViolations() == before);
+    driver.stop();
+}
+
+// Transport::play() starts through pushLocate. A start used to raise the whole
+// driver output from zero ("from silence"), which no longer holds once a graph
+// is audible while stopped: the monitored input dropped to silence and faded
+// back in at every play or record start. Only the sources rise now.
+TEST_CASE("A start through pushLocate keeps monitored input at full level and raises the clips", "[monitor][rt]") {
+    GraphDriver driver(options());
+    driver.publish(inputAndClipGraph());
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.start(device, config());
+
+    const auto before = rt::allocationViolations();
+    std::vector<float> stopped;
+    device.pump(8, &stopped);  // the first block rises from silence; the tape is silent while stopped
+    CHECK(passesInput(stopped, kBlock));
+
+    // A locate while stopped moves nothing audible: the input stays.
+    REQUIRE(driver.pushLocate(realtime::TransportCommand{1, 4'800, false}));
+    std::vector<float> located;
+    device.pump(2, &located);
+    CHECK(passesInput(located, 0, 8 * kBlock));
+
+    // The production start: a locate that carries play.
+    REQUIRE(driver.pushLocate(realtime::TransportCommand{2, 9'600, true}));
+    std::vector<float> playing;
+    device.pump(4, &playing);
+    REQUIRE(playing.size() == 4 * kBlock);
+    const std::int64_t first = 10 * kBlock;
+    // Every frame carries the input at full level; the rest is the tape, rising
+    // linearly from zero over the fade (i / kFade) and at full level after it.
+    const float fullTape = 0.5f * kCentre;
+    int wrong = 0;
+    for (std::size_t i = 0; i < playing.size(); ++i) {
+        const float tape = playing[i] - inputValue(1, first + static_cast<std::int64_t>(i)) * kCentre;
+        const float rise = std::min(static_cast<float>(i) / static_cast<float>(kFade), 1.0f);
+        if (std::fabs(tape - fullTape * rise) > 1e-5f) {
+            ++wrong;
+        }
+    }
+    CHECK(wrong == 0);
+    CHECK(driver.playing());
+    CHECK(driver.playhead() == 9'600 + 4 * kBlock);
     CHECK(rt::allocationViolations() == before);
     driver.stop();
 }
