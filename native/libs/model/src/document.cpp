@@ -1,6 +1,7 @@
 #include "siann/model/document.hpp"
 
 #include <algorithm>
+#include <initializer_list>
 #include <set>
 #include <utility>
 
@@ -18,6 +19,20 @@ using json::Value;
 
 ModelError::ModelError(std::string code, const std::string& message)
     : std::runtime_error(message), code_(std::move(code)) {}
+
+std::string_view fadeCurveName(FadeCurve curve) noexcept {
+    return curve == FadeCurve::equal_power ? "equal_power" : "linear";
+}
+
+std::optional<FadeCurve> fadeCurveFromName(std::string_view name) noexcept {
+    if (name == "linear") {
+        return FadeCurve::linear;
+    }
+    if (name == "equal_power") {
+        return FadeCurve::equal_power;
+    }
+    return std::nullopt;
+}
 
 bool isValidMediaName(std::string_view name) noexcept {
     if (name.empty() || name.size() > kMaxMediaNameBytes) {
@@ -349,6 +364,26 @@ Clip clipFromJson(const Value& value) {
     c.sourceStart = r.int64String("sourceStart");
     c.length = r.int64String("length");
     c.gain = Gain{static_cast<std::int32_t>(r.integer("gainMilliDb", INT32_MIN, INT32_MAX))};
+    // m5b-engine-clip-fades: present only with a length of at least 1.
+    const auto fadeFrom = [&r](std::string_view key, Fade& out) {
+        const Value* found = r.optional(key);
+        if (found == nullptr) {
+            return;
+        }
+        detail::FieldReader f(*found, "clip." + std::string(key));
+        out.length = f.int64String("length");
+        if (out.length <= 0) {
+            f.fail("length", "must be at least 1 (a fade of length 0 is omitted)");
+        }
+        const auto curve = fadeCurveFromName(f.string("curve"));
+        if (!curve) {
+            f.fail("curve", "must be linear or equal_power");
+        }
+        out.curve = *curve;
+        f.finish();
+    };
+    fadeFrom("fadeIn", c.fadeIn);
+    fadeFrom("fadeOut", c.fadeOut);
     r.finish();
     return c;
 }
@@ -756,7 +791,7 @@ Value toJson(const Master& value) {
 }
 
 Value toJson(const Clip& clip) {
-    return Value(Object{
+    Object out{
         {"schema", str(kClipSchema)},
         {"id", Value(clip.id)},
         {"trackId", Value(clip.trackId)},
@@ -766,7 +801,17 @@ Value toJson(const Clip& clip) {
         {"sourceStart", int64String(clip.sourceStart)},
         {"length", int64String(clip.length)},
         {"gainMilliDb", number(clip.gain.milliDb)},
-    });
+    };
+    // Omitted at length 0, so a clip without fades keeps its earlier hash.
+    const auto fade = [&out](const char* key, const Fade& value) {
+        if (value.length != 0) {
+            out.emplace_back(key, Value(Object{{"length", int64String(value.length)},
+                                               {"curve", str(fadeCurveName(value.curve))}}));
+        }
+    };
+    fade("fadeIn", clip.fadeIn);
+    fade("fadeOut", clip.fadeOut);
+    return Value(std::move(out));
 }
 
 // ---- Document -------------------------------------------------------------
@@ -1110,6 +1155,12 @@ Document Document::withTrack(Track track) const {
 }
 
 Document Document::withClip(Clip clip) const {
+    // A fade of length 0 is no fade, whatever its curve (m5b-engine-clip-fades).
+    for (Fade* fade : {&clip.fadeIn, &clip.fadeOut}) {
+        if (fade->length == 0) {
+            *fade = Fade{};
+        }
+    }
     Document doc = *this;
     doc.clips_ = upsert(*clips_, std::move(clip));
     return doc;
@@ -1256,6 +1307,11 @@ std::vector<ValidationIssue> Document::validate() const {
         }
         if (!c.gain.isValid()) {
             issue(out, "invalid_gain", EntityType::clip, c.id, "clip gain is out of range");
+        }
+        if (c.fadeIn.length < 0 || c.fadeOut.length < 0 ||
+            c.fadeIn.length > std::max<std::int64_t>(c.length, 0) - c.fadeOut.length) {
+            issue(out, "invalid_fade", EntityType::clip, c.id,
+                  "clip fades must not be negative, and fadeIn plus fadeOut must not exceed the clip length");
         }
     }
 
