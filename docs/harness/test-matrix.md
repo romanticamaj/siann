@@ -329,6 +329,32 @@ step ...", "command.execute of an over-long fade answers invalid_fade";
 `capabilities`. 4 app unit `edit-commands` "split carries a faded clip's fades ...",
 "duplicate and copy carry both fades ...". 5 none (no UI).
 
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-track-notes (UR-17) | Y (`document_test` `[notes]`, `commands_test` `[notes]`, `history_test` `[notes]`, `plan_hash_test` `[notes]`, `session_test` `[notes]`, `track_notes_test`, `mcp_adapter_test` `[notes]`, `cli_test` catalog) | | Y (`read-model`, `capabilities`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 5: no UI, tour states changed: none) |
+
+Per acceptance item (`m5b-engine-track-notes`): 1 `commands_test` "track.set_notes
+stores the text and declares only the track", "... accepts 16,384 bytes and
+refuses more as invalid_notes", "... refuses malformed UTF-8 as invalid_notes",
+"... refuses malformed params and an unknown track"; `history_test`
+"track.set_notes is one revision; undo restores ..."; `track_notes_test`
+"track.set_notes through command.execute is one revision, published as
+track:<id> to a second connection", "plan.preview of track.set_notes ...",
+"plan.propose of a track.set_notes step ..."; `mcp_adapter_test` "submit_plan
+and execute carry track.set_notes ...". 2 `document_test` "The notes fixture
+gives the Node bridge's hashes ...", "A track without notes serializes as before
+...", "Track notes must be a string of 1 to 16,384 ...", "validate reports
+invalid_notes ..."; `session_test` "A literal bundle from before track notes
+opens with its hashes ...". 3 `session_test` "Track notes survive a checkpoint
+and reopen, and a journal replay without one"; Node `plan-hash` and
+`plan_hash_test` over `track_notes_steps`; Node `read-model-fixtures` and
+`fixture-parity` (the generators); app unit `read-model` "the notes model
+fixture ...", "(g) track notes follow session.changed ...". 4
+`track_notes_test` "engine.capabilities and command.list list
+track.set_notes", "Bad notes answer invalid_notes ..."; app unit
+`capabilities`; `docs/schemas/protocol-engine-v0.md` "Track notes". 5 none (no
+UI).
+
 Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
 `commands_test` "track.add and track.rename ...", "media.add and media.rename
 ...", "bus.add and bus.rename ...", "session.rename ...", "plugin.insert refuses a display-unsafe descriptor
@@ -411,7 +437,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 | `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
 | `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
-| `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
+| `m5b-engine-track-notes` (UR-17; landed, see the table above) | 3 | | | command tests: validation, undo, replay |
 | `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
 | `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled |
 | `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |

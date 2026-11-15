@@ -1409,13 +1409,19 @@ TEST_CASE("validate reports invalid_notes for a track built in code with bad not
     Track t = *doc.track("trk_1");
     t.notes = "fine\nnotes";
     CHECK(codes(doc.withTrack(t)).empty());
-    for (const std::string& bad : {std::string(), std::string(16'385, 'a'), std::string("\xC0\xAF"),
-                                   std::string("\xED\xA0\x80"), std::string("x\xE8\x81")}) {
+    for (const std::string& bad : {std::string(), std::string(16'385, 'a')}) {
         t.notes = bad;
         const auto issues = doc.withTrack(t).validate();
         REQUIRE(issues.size() == 1);
         CHECK(issues[0].code == "invalid_notes");
         CHECK(issues[0].entity == EntityRef{EntityType::track, "trk_1"});
+    }
+    // Malformed UTF-8 never reaches a document: the entity hash (RFC 8785) refuses
+    // it when the track is added, so validate() never sees one.
+    for (const std::string& bad : {std::string("\xC0\xAF"), std::string("\xED\xA0\x80"), std::string("x\xE8\x81")}) {
+        t.notes = bad;
+        CHECK_FALSE(siann::model::isValidTrackNotes(bad));
+        CHECK_THROWS(doc.withTrack(t));
     }
     CHECK(siann::model::isValidTrackNotes(std::string(16'384, 'a')));
     CHECK_FALSE(siann::model::isValidTrackNotes(""));

@@ -184,6 +184,9 @@ from `after`:
     "after": {"length": "48000", "gainMilliDb": 0, "fadeIn": {"length": "480", "curve": "linear"}, ...}}
 ```
 
+A `track.set_notes` step (m5b-engine-track-notes) previews the track without
+`notes` before and with them after; `notes: ""` removes the field from `after`.
+
 ### Events
 
 `plan.changed` and `audition.changed` (`protocol-events-v1.md`) tell a client when

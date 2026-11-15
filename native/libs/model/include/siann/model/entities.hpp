@@ -106,9 +106,20 @@ struct Track {
     // The bus the track outputs to, or none for the master; JSON {busId},
     // omitted while the track feeds the master.
     std::optional<std::string> output;
+    // Plain text, 1 to kMaxTrackNotesBytes of UTF-8 stored byte for byte
+    // (m5b-engine-track-notes, UI redesign UR-17). Omitted from the JSON while
+    // absent, so a track without notes keeps its earlier hash.
+    std::optional<std::string> notes;
 
     friend bool operator==(const Track&, const Track&) = default;
 };
+
+// The longest track notes, in UTF-8 bytes.
+inline constexpr std::size_t kMaxTrackNotesBytes = 16'384;
+
+// True for well-formed UTF-8 of 1 to kMaxTrackNotesBytes bytes; newlines and
+// every other code point are allowed (notes are text, not a name).
+bool isValidTrackNotes(std::string_view notes) noexcept;
 
 // A bus (m5b-engine-buses-sends, spec "siann-model", M5b bus and send): sums the
 // tracks and buses that output to it and the sends that target it, runs its

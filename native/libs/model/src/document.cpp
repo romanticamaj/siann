@@ -35,46 +35,11 @@ std::optional<FadeCurve> fadeCurveFromName(std::string_view name) noexcept {
 }
 
 bool isValidMediaName(std::string_view name) noexcept {
-    if (name.empty() || name.size() > kMaxMediaNameBytes) {
-        return false;
-    }
-    // RFC 3629: no overlong forms, no surrogates, nothing above U+10FFFF.
-    std::size_t pos = 0;
-    while (pos < name.size()) {
-        const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(name[pos + i]); };
-        const unsigned char first = byte(0);
-        std::size_t length = 0;
-        unsigned char low = 0x80;
-        unsigned char high = 0xBF;
-        if (first < 0x80) {
-            length = 1;
-        } else if (first >= 0xC2 && first <= 0xDF) {
-            length = 2;
-        } else if (first >= 0xE0 && first <= 0xEF) {
-            length = 3;
-            low = first == 0xE0 ? 0xA0 : 0x80;
-            high = first == 0xED ? 0x9F : 0xBF;
-        } else if (first >= 0xF0 && first <= 0xF4) {
-            length = 4;
-            low = first == 0xF0 ? 0x90 : 0x80;
-            high = first == 0xF4 ? 0x8F : 0xBF;
-        } else {
-            return false;
-        }
-        if (pos + length > name.size()) {
-            return false;
-        }
-        if (length > 1 && (byte(1) < low || byte(1) > high)) {
-            return false;
-        }
-        for (std::size_t i = 2; i < length; ++i) {
-            if (byte(i) < 0x80 || byte(i) > 0xBF) {
-                return false;
-            }
-        }
-        pos += length;
-    }
-    return true;
+    return !name.empty() && name.size() <= kMaxMediaNameBytes && isWellFormedUtf8(name);
+}
+
+bool isValidTrackNotes(std::string_view notes) noexcept {
+    return !notes.empty() && notes.size() <= kMaxTrackNotesBytes && isWellFormedUtf8(notes);
 }
 
 std::string_view entityTypeName(EntityType type) noexcept {
@@ -258,6 +223,12 @@ Track trackFromJson(const Value& value, Format format) {
         port.channels = static_cast<std::int32_t>(in.integer("channels", 1, 2));
         in.finish();
         t.input = port;
+    }
+    if (const Value* notes = r.optional("notes")) {
+        if (notes->kind() != Value::Kind::string || !isValidTrackNotes(notes->asString())) {
+            r.fail("notes", "must be a string of 1 to 16384 UTF-8 bytes");
+        }
+        t.notes = notes->asString();
     }
     if (format >= Format::v3) {
         if (const Value* sends = r.optional("sends")) {
@@ -608,6 +579,11 @@ Value toJson(const Track& track) {
     if (track.input) {
         out.emplace_back("input",
                          Value(Object{{"port", number(track.input->port)}, {"channels", number(track.input->channels)}}));
+    }
+    // Omitted while absent (m5b-engine-track-notes): a track without notes keeps
+    // its earlier hash.
+    if (track.notes) {
+        out.emplace_back("notes", Value(*track.notes));
     }
     // Omitted when empty or absent (m5b-engine-buses-sends), so earlier hashes hold.
     if (!track.sends.empty()) {
@@ -1266,6 +1242,9 @@ std::vector<ValidationIssue> Document::validate() const {
         }
         if (t.input && (t.input->port < 0 || t.input->channels < 1 || t.input->channels > 2)) {
             issue(out, "invalid_input", EntityType::track, t.id, "a track input is a port >= 0 and 1 or 2 channels");
+        }
+        if (t.notes && !isValidTrackNotes(*t.notes)) {
+            issue(out, "invalid_notes", EntityType::track, t.id, "track notes are 1 to 16384 bytes of UTF-8");
         }
         if (t.output && bus(*t.output) == nullptr) {
             issue(out, "unknown_bus", EntityType::track, t.id, "the track outputs to a missing bus");
