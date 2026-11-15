@@ -13,12 +13,12 @@
 //   with snap off: the grid's `minGap`) before the other end.
 // - P takes the selection's span; no selection gives nothing.
 //
-// The band's height comes from RULER_UPPER_HEIGHT, the one ruler constant
+// The band's height comes from RULER_UPPER, the one ruler constant
 // (geometry.ts), never from a literal. Positions are BigInt frames.
 // Framework-free.
 
 import type { TempoPoint } from '../model/document';
-import { RULER_UPPER_HEIGHT, frameToX, xToFrame, type Viewport } from './geometry';
+import { RULER_UPPER, frameToX, xToFrame, type Viewport } from './geometry';
 import { TICKS_PER_BAR, TICKS_PER_QUARTER, framesToTicks } from './musical-time';
 import type { Snapper } from './snap';
 
@@ -61,7 +61,7 @@ export interface LocatorGrid {
 export function bandRect(range: LocatorRange | null, view: Viewport): BandRect | null {
   if (!range) return null;
   const x = frameToX(range.left, view);
-  return { x, y: BAND_TOP, width: frameToX(range.right, view) - x, height: RULER_UPPER_HEIGHT - BAND_TOP - BAND_BOTTOM_GAP };
+  return { x, y: BAND_TOP, width: frameToX(range.right, view) - x, height: RULER_UPPER - BAND_TOP - BAND_BOTTOM_GAP };
 }
 
 export type LocatorHit = 'left' | 'right' | 'body' | 'outside';
@@ -70,7 +70,7 @@ export type LocatorHit = 'left' | 'right' | 'body' | 'outside';
 // nearer one when the band is narrower than both zones), the band's body, or
 // nothing. Below the upper half, and without locators, it is outside.
 export function locatorHit(range: LocatorRange | null, view: Viewport, x: number, y: number): LocatorHit {
-  if (!range || y < 0 || y >= RULER_UPPER_HEIGHT) return 'outside';
+  if (!range || y < 0 || y >= RULER_UPPER) return 'outside';
   const x0 = frameToX(range.left, view);
   const x1 = frameToX(range.right, view);
   const toLeft = Math.abs(x - x0);

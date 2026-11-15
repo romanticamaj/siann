@@ -300,6 +300,8 @@ test('the track list shows each track, clips are never under it, double-click re
   await expect.poll(async () => (await rect('clp_sq')).x).toBeLessThan(0);
   const list = await box('track-list');
   expect((await box('timeline-canvas')).x).toBeGreaterThanOrEqual(list.x + list.width);
+  // The track list's head is as tall as the 40 px ruler beside it (--ruler-h; m5-ui-tokens-spacing).
+  expect((await page.locator('[data-part="track-list-head"]').boundingBox())!.height).toBe(40);
   await pageStill('Shift+wheel');
 
   // Double-click the name, type, Enter: one track.rename, one revision.

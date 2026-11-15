@@ -50,6 +50,11 @@ const ZH={
 };
 const L=s=>LANG.startsWith('zh')&&ZH[s]!==undefined?ZH[s]:s;
 
+/* ============================== tokens: every colour and size is a custom property of app/renderer/tokens.css,
+   read here (docs/harness/agent-rules.md, "UI fidelity"); a size is calc(Npx * var(--scale)), read as px by tpx */
+const tok=n=>getComputedStyle(document.documentElement).getPropertyValue('--'+n).trim();
+const tpx=n=>{const v=tok(n),m=/^calc\(\s*([\d.]+)px\s*\*\s*([\d.]+)\s*\)$/.exec(v);return m?m[1]*m[2]:parseFloat(v)};
+
 /* ============================== icons (own drawings, 16px grid, stroke) */
 const P={
  rtz:'<path d="M4 3.5v9"/><path d="M12.5 3.5 6.5 8l6 4.5z" fill="currentColor"/>',
@@ -100,15 +105,15 @@ const tk=(t,i)=>t.ghost?'ghost':i+1;
 const ic=(n,c='')=>`<svg class="i ${c}" viewBox="0 0 16 16">${P[n]}</svg>`;
 
 /* ============================== session data */
-const AI='#A78BFF';
+const AI=tok('ai');
 const T=[
- {n:'Kick',     c:'#F0675B', db:0,    pan:0,   m:[.80,.74], pk:-3.1,  ins:['Transient','—']},
- {n:'Snare',    c:'#F2994A', db:-2.5, pan:0,   m:[.66,.62], pk:-6.4,  ins:['Gate','EQ']},
- {n:'Bass',     c:'#E6C547', db:-4,   pan:0,   m:[.72,.70], pk:-5.0,  ins:['Comp','Amp']},
- {n:'Keys',     c:'#57C98A', db:-8,   pan:-35, m:[.58,.47], pk:-10.2, ins:['Chorus','—'], gPan:-20, gStep:4},
- {n:'Vox Lead', c:'#3FC4DD', db:1.5,  pan:0,   m:[.77,.75], pk:-4.2,  ins:['De-ess','Comp'], sel:true},
- {n:'Vox BG',   c:'#5B8FF5', db:-9,   pan:40,  m:[.40,.52], pk:-14.8, ins:['EQ','Verb'], gDb:-6, gStep:3},
- {n:'FX',       c:'#EC6BB0', db:-12,  pan:0,   m:[0,0],     pk:null,  ins:['Delay','—'], mute:true, gUnmute:true, gStep:5},
+ {n:'Kick',     c:tok('track-0'), db:0,    pan:0,   m:[.80,.74], pk:-3.1,  ins:['Transient','—']},
+ {n:'Snare',    c:tok('track-1'), db:-2.5, pan:0,   m:[.66,.62], pk:-6.4,  ins:['Gate','EQ']},
+ {n:'Bass',     c:tok('track-2'), db:-4,   pan:0,   m:[.72,.70], pk:-5.0,  ins:['Comp','Amp']},
+ {n:'Keys',     c:tok('track-4'), db:-8,   pan:-35, m:[.58,.47], pk:-10.2, ins:['Chorus','—'], gPan:-20, gStep:4},
+ {n:'Vox Lead', c:tok('track-6'), db:1.5,  pan:0,   m:[.77,.75], pk:-4.2,  ins:['De-ess','Comp'], sel:true},
+ {n:'Vox BG',   c:tok('track-7'), db:-9,   pan:40,  m:[.40,.52], pk:-14.8, ins:['EQ','Verb'], gDb:-6, gStep:3},
+ {n:'FX',       c:tok('track-10'), db:-12,  pan:0,   m:[0,0],     pk:null,  ins:['Delay','—'], mute:true, gUnmute:true, gStep:5},
  {n:'Pad',      c:AI,        db:0,    pan:0,   m:[0,0],     pk:null,  ins:['—','—'], ghost:true, gStep:1}
 ];
 // clips: [track, name, startBar(1-based), lengthBars, kind, opts]
@@ -125,9 +130,9 @@ const CLIPS=[
 
 /* ============================== helpers */
 const hex=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
-const mix=(a,b,t)=>{const A=hex(a),B=hex(b);return `rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(',')})`};
 const mixHex=(a,b,t)=>{const A=hex(a),B=hex(b);return '#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')};
-const rgba=(h,a)=>`rgba(${hex(h).join(',')},${a})`;
+const mix=mixHex;
+const rgba=(h,a)=>h.slice(0,7)+Math.round(a*255).toString(16).padStart(2,'0');
 const fdb=v=>v===null?'−∞':(v>0?'+':v<0?'−':'')+Math.abs(v).toFixed(1);
 const fpan=p=>p===0?'C':(p<0?'L':'R')+Math.abs(p);
 // audio taper: 0 dB at 75 % of travel, top at +6 dB (Cubase's default Volume Max). The breakpoints are the
@@ -144,9 +149,9 @@ function knob(pan,ghost,id){
   const [bx0,by0]=pt(a(-100),9.5),[bx1,by1]=pt(a(100),9.5);const [nx,ny]=pt(a(pan),6.5),[cx,cy]=pt(a(pan),2.5);
   let g='';
   if(ghost!==undefined){const [gx,gy]=pt(a(ghost),10.5),[hx,hy]=pt(a(ghost),5);g=`<g ${id?dp(id+'-ghost'):''}><path d="M${hx} ${hy}L${gx} ${gy}" stroke="${AI}" stroke-width="2" stroke-linecap="round"/><circle cx="${gx}" cy="${gy}" r="2" fill="${AI}"/></g>`}
-  return `<svg class="knob" ${id?dp(id):''} viewBox="0 0 24 24"><path d="M${bx0} ${by0}A9.5 9.5 0 1 1 ${bx1} ${by1}" stroke="#07080A" stroke-width="2.4" fill="none" stroke-linecap="round"/>
-  ${arc(pan,'#E8EBF1',2)}<circle cx="12" cy="12" r="7" fill="#2A303B" stroke="#000"/><circle cx="12" cy="11.5" r="6.2" fill="url(#kg)"/>
-  <path d="M${cx} ${cy}L${nx} ${ny}" stroke="#F2F4F8" stroke-width="1.6" stroke-linecap="round"/>${g}</svg>`;
+  return `<svg class="knob" ${id?dp(id):''} viewBox="0 0 24 24"><path d="M${bx0} ${by0}A9.5 9.5 0 1 1 ${bx1} ${by1}" stroke="${tok('bg-slot')}" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+  ${arc(pan,tok('tx-1'),2)}<circle cx="12" cy="12" r="7" fill="${tok('button-line')}" stroke="${tok('divider')}"/><circle cx="12" cy="11.5" r="6.2" fill="url(#kg)"/>
+  <path d="M${cx} ${cy}L${nx} ${ny}" stroke="${tok('tx-0')}" stroke-width="1.6" stroke-linecap="round"/>${g}</svg>`;
 }
 
 /* ============================== markup */
@@ -155,8 +160,8 @@ const th=(t,i)=>`
  <div class="th ${t.ghost?'ghost':''} ${t.mute?'muted':''} ${t.sel?'sel':''}" ${dp('track-'+tk(t,i))} style="--c:${t.c}">
   <div class="col" ${dp('track-'+tk(t,i)+'-colour')}></div><div class="idx" ${dp('track-'+tk(t,i)+'-number')}>${t.ghost?'+':i+1}</div>
   <div class="body">
-   <div class="r1">${t.ghost?`<span class="stepn" style="margin-right:3px">1</span>`:''}<span class="name" ${dp('track-'+tk(t,i)+'-name')}>${t.n}</span>
-     ${t.ghost?`<span style="color:var(--ai-2);font-size:10.5px;white-space:nowrap">${L('proposed track')}</span>`:`
+   <div class="r1">${t.ghost?`<span class="stepn" style="margin-right:var(--space-3q)">1</span>`:''}<span class="name" ${dp('track-'+tk(t,i)+'-name')}>${t.n}</span>
+     ${t.ghost?`<span style="color:var(--ai-2);font-size:var(--fs-10h);white-space:nowrap">${L('proposed track')}</span>`:`
      <span class="msr m ${t.mute?'on':''} ${t.gUnmute?'ghost':''}" ${dp('track-'+tk(t,i)+'-mute')}>M</span><span class="msr s" ${dp('track-'+tk(t,i)+'-solo')}>S</span><span class="msr r ${t.sel?'on':''}" ${dp('track-'+tk(t,i)+'-record')}><i></i></span><span class="msr rd on" ${dp('track-'+tk(t,i)+'-read')}>R</span><span class="msr" ${dp('track-'+tk(t,i)+'-write')}>W</span>`}
    </div>
    <div class="r2">${t.ghost?`<span>${L('stereo · 0.0 dB · C · no inserts')}</span>`:`
@@ -176,12 +181,12 @@ function strip(t,i){
   const ghostCap=t.gDb!==undefined?`<div class="gline" ${dp(k+'-gain-line-ghost')} style="bottom:${y(pos(t.db))};height:${((pos(t.gDb)-pos(t.db))*100).toFixed(1)}%"></div><div class="cap ghost" ${dp(k+'-cap-ghost')} style="bottom:${y(pos(t.gDb))}"></div>`:'';
   const m=t.m.map(v=>`<div class="ch"><i style="height:${(v*100).toFixed(0)}%"></i>${v?`<u style="bottom:${Math.min(98,v*100+7).toFixed(0)}%"></u>`:''}</div>`).join('');
   const ro=t.gDb!==undefined?`<span>${fdb(t.db)}</span><span class="to">→ ${fdb(t.gDb)}</span>`:`<span>${fdb(t.db)}</span><span class="pk">${t.pk===null?'':fdb(t.pk)}</span>`;
-  const gainBadge=t.gDb!==undefined?`<span class="stepn" ${dp(k+'-gain-step-ghost')} style="right:4px;top:118px">${t.gStep}</span>`:'';
+  const gainBadge=t.gDb!==undefined?`<span class="stepn" ${dp(k+'-gain-step-ghost')} style="right:var(--space);top:var(--strip-gain-step-top)">${t.gStep}</span>`:'';
   return `<div class="strip ${t.ghost?'ghost':''} ${t.mute?'muted':''} ${t.sel?'sel':''}" ${dp(k)} style="--c:${t.c}">
    ${gainBadge}
    <div class="ins" ${dp(k+'-inserts')}>${t.ins.map(s=>s==='—'?`<div class="slot empty">+</div>`:`<div class="slot">${s}</div>`).join('')}</div>
-   <div class="panrow" ${dp(k+'-pan')}>${t.gPan!==undefined?`<span class="lab" ${dp(k+'-pan-step-ghost')} style="display:flex;justify-content:flex-end"><span class="stepn">${t.gStep}</span></span>`:`<span class="lab" style="text-align:right;color:var(--tx-4);font-size:${LANG==='en'?10:10.5}px">${L('PAN')}</span>`}${knob(t.pan,t.gPan,k+'-pan-knob')}<span class="lab" ${t.gPan!==undefined?dp(k+'-pan-value-ghost'):''} style="${t.gPan!==undefined?'color:var(--ai-2)':''}">${t.gPan!==undefined?fpan(t.gPan):fpan(t.pan)}</span></div>
-   <div class="btns" ${dp(k+'-buttons')}>${t.ghost?`<span style="font-size:9.5px;color:var(--ai-2);font-weight:600;letter-spacing:.04em">${L('NEW · STEP 1')}</span>`:
+   <div class="panrow" ${dp(k+'-pan')}>${t.gPan!==undefined?`<span class="lab" ${dp(k+'-pan-step-ghost')} style="display:flex;justify-content:flex-end"><span class="stepn">${t.gStep}</span></span>`:`<span class="lab" style="text-align:right;color:var(--tx-4);font-size:${LANG==='en'?'var(--fs-micro)':'var(--fs-10h)'}">${L('PAN')}</span>`}${knob(t.pan,t.gPan,k+'-pan-knob')}<span class="lab" ${t.gPan!==undefined?dp(k+'-pan-value-ghost'):''} style="${t.gPan!==undefined?'color:var(--ai-2)':''}">${t.gPan!==undefined?fpan(t.gPan):fpan(t.pan)}</span></div>
+   <div class="btns" ${dp(k+'-buttons')}>${t.ghost?`<span style="font-size:var(--fs-9h);color:var(--ai-2);font-weight:var(--fw-strong);letter-spacing:var(--letter-spacing-04)">${L('NEW · STEP 1')}</span>`:
       `${t.gUnmute?`<span class="stepn" ${dp(k+'-mute-step-ghost')} style="position:absolute;z-index:2;left:0">${t.gStep}</span>`:''}<span class="msr m ${t.mute?'on':''} ${t.gUnmute?'ghost':''}" ${dp(k+'-mute')}>M</span><span class="msr s" ${dp(k+'-solo')}>S</span><span class="msr e" ${dp(k+'-edit')}>e</span>`}</div>
    <div class="fad" ${dp(k+'-fader-area')}><div class="scale" ${dp(k+'-scale')}>${scale}</div>
      <div class="ftrack" ${dp(k+'-fader')}><div class="unity" style="bottom:${y(pos(0))}"></div>${ghostCap}<div class="cap" ${dp(k+'-cap')} style="bottom:${y(pos(t.db))}"></div></div>
@@ -191,7 +196,7 @@ function strip(t,i){
    <div class="nametag" ${dp(k+'-name')}>${t.n}</div>
   </div>`;
 }
-const master=`<div class="strip master" ${dp('strip-master')} style="--c:#C9CED8">
+const master=`<div class="strip master" ${dp('strip-master')} style="--c:${tok('lit-1')}">
    <div class="ins" ${dp('strip-master-inserts')}><div class="slot">Limiter</div><div class="slot empty">+</div></div>
    <div class="panrow" ${dp('strip-master-loudness')}><span style="color:var(--tx-4)">LUFS-S</span><span style="color:var(--tx-1)">−13.8</span></div>
    <div class="btns" ${dp('strip-master-buttons')}><span class="msr m" ${dp('strip-master-mute')}>M</span><span class="msr e" ${dp('strip-master-edit')}>e</span></div>
@@ -210,7 +215,7 @@ const tool=(icon,key,on)=>`<span class="b ${on?'on':''}" ${dp('tool-'+key)}>${ic
 const sec=(title,body,right='')=>`<div class="sec ${body?'':'shut'}" ${dp('inspector-'+title.toLowerCase().replace(/ /g,'-'))}><div class="sec-h">${ic('chev','s')}${L(title)}<span>${right}</span></div>${body?`<div class="sec-b">${body}</div>`:''}</div>`;
 
 app.innerHTML=`
-<svg width="0" height="0" style="position:absolute"><defs><linearGradient id="kg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A5160"/><stop offset="1" stop-color="#22262F"/></linearGradient></defs></svg>
+<svg width="0" height="0" style="position:absolute"><defs><linearGradient id="kg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${tok('knob-0')}"/><stop offset="1" stop-color="${tok('line')}"/></linearGradient></defs></svg>
 
 <header class="topbar" ${dr('top-bar')}>
   <div class="tb-left">
@@ -243,7 +248,7 @@ app.innerHTML=`
 <aside class="leftzone" ${dr('left-zone')}>
   <div class="z-head" ${dp('inspector-head')}>${L('Inspector')}<span class="k">Alt+I</span></div>
   <div class="i-track" ${dp('inspector-track')}>
-    <div class="i-name" ${dp('inspector-name')}><span style="width:10px;height:10px;border-radius:3px;background:#3FC4DD"></span>Vox Lead<small>${L('Mono')}</small></div>
+    <div class="i-name" ${dp('inspector-name')}><span style="width:var(--inspector-swatch);height:var(--inspector-swatch);border-radius:var(--radius-s);background:var(--track-6)"></span>Vox Lead<small>${L('Mono')}</small></div>
     <div class="i-btns" ${dp('inspector-buttons')}><span class="msr m" ${dp('inspector-mute')}>M</span><span class="msr s" ${dp('inspector-solo')}>S</span><span class="msr r on" ${dp('inspector-record')}><i></i></span><span class="msr" ${dp('inspector-monitor')}>${ic('mon','s')}</span><span class="msr rd on" ${dp('inspector-read')}>R</span><span class="msr" ${dp('inspector-write')}>W</span><span class="msr e" ${dp('inspector-edit')} style="margin-left:auto">e</span></div>
     <div class="i-row" ${dp('inspector-volume')}><span>${L('Volume')}</span><span class="hs"><i style="width:81%"></i><u style="left:81%"></u></span><b class="num">+1.5 dB</b></div>
     <div class="i-row" ${dp('inspector-pan')}><span>${L('Pan')}</span><span class="hs"><u style="left:50%"></u></span><b class="num">C</b></div>
@@ -263,7 +268,7 @@ app.innerHTML=`
       <div class="seg" ${dp('tools')}>${tool('ptr',1,true)}${tool('range',2)}${tool('cut',3)}${tool('glue',4)}${tool('erase',5)}${tool('zoom',6)}${tool('mutex',7)}${tool('pen',8)}${tool('mon',9)}</div>
       <span class="field on" ${dp('snap')}>${ic('magnet','s')}${L('Snap')}<em>${L('Grid')}</em>${ic('chev','s')}</span>
       <span class="field" ${dp('grid-type')}>${ic('grid','s')}${L('Adapt to Zoom')}${ic('chev','s')}</span>
-      <span class="field" ${dp('auto-scroll')} title="Auto-Scroll (F)" style="padding:0 6px">${ic('follow','s')}</span>
+      <span class="field" ${dp('auto-scroll')} title="Auto-Scroll (F)" style="padding:0 var(--space-1h)">${ic('follow','s')}</span>
       <span class="spacer"></span>
       <span class="overlaypill" ${dp('proposal-pill')}>${ic('spark','s')}<span><b>${L('Lift the chorus')}</b> · 6 ${L('changes')}</span><span class="tog">${ic('check','s')}${L('Ghosts')}</span></span>
     </div>
@@ -287,7 +292,7 @@ app.innerHTML=`
     <div class="tabs" ${dp('lower-tabs')}>
       <span class="tab on" ${dp('tab-mixconsole')}>${ic('sliders','s')}${L('MixConsole')} <kbd>Alt+F3</kbd></span><span class="tab" ${dp('tab-editor')}>${ic('wave','s')}${L('Editor')}</span>
       <span class="spacer"></span>
-      <span ${dp('mixer-racks')} style="display:flex;gap:10px;align-items:center;padding-right:6px"><span style="color:var(--tx-2)">${L('Routing')}</span><span style="color:var(--tx-1)">${L('Inserts')}</span><span style="color:var(--tx-4)">${L('Sends')}</span><span>${L('Narrow')}</span>${ic('dots','s')}</span>
+      <span ${dp('mixer-racks')} style="display:flex;gap:var(--space-2h);align-items:center;padding-right:var(--space-1h)"><span style="color:var(--tx-2)">${L('Routing')}</span><span style="color:var(--tx-1)">${L('Inserts')}</span><span style="color:var(--tx-4)">${L('Sends')}</span><span>${L('Narrow')}</span>${ic('dots','s')}</span>
     </div>
     <div class="mixer" ${dp('mixer')}>${T.map(strip).join('')}${master}</div>
   </section>
@@ -311,10 +316,10 @@ app.innerHTML=`
         <div class="steps-h up" ${dp('plan-steps-head')}>${L('Steps · 6 of 6 selected')}<a style="text-transform:none;letter-spacing:0">${L('Select none')}</a></div>
         ${step(1,'Add track <b>Pad</b>','stereo · after FX',AI)}
         ${step(2,'Place <b>Pad swell</b> on Pad','bar 9.1 → 17.1 · pad_swell.wav',AI,false,true)}
-        ${step(3,'<b>Vox BG</b> gain','<s>−9.0 dB</s> → <em>−6.0 dB</em>','#5B8FF5',true)}
-        ${step(4,'<b>Keys</b> pan','<s>L35</s> → <em>L20</em>','#57C98A')}
-        ${step(5,'Unmute <b>FX</b>','<s>muted</s> → <em>on</em>','#EC6BB0')}
-        ${step(6,'Move <b>Riser</b> on FX','<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1','#EC6BB0',false,true)}
+        ${step(3,'<b>Vox BG</b> gain','<s>−9.0 dB</s> → <em>−6.0 dB</em>',tok('track-7'),true)}
+        ${step(4,'<b>Keys</b> pan','<s>L35</s> → <em>L20</em>',tok('track-4'))}
+        ${step(5,'Unmute <b>FX</b>','<s>muted</s> → <em>on</em>',tok('track-10'))}
+        ${step(6,'Move <b>Riser</b> on FX','<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1',tok('track-10'),false,true)}
       </div>
       <div class="acts" ${dp('plan-actions')}>
         <span class="btn" ${dp('plan-audition')}>${ic('phones','s')}${L('Audition')}</span>
@@ -335,7 +340,7 @@ app.innerHTML=`
   <span ${dp('status-device')}>ASIO · Scarlett 4i4 · <b class="num">48 kHz</b> / <b class="num">128</b> · <span class="num">5.3 ms</span></span>
   <span ${dp('status-xruns')}><b class="num">0</b> ${L('xruns')}</span>
   <span class="hear" ${dp('status-hearing')}>${ic('phones','s')}${L('Hearing')} <b>${L('main')}</b></span>
-  <span class="right"><span class="loc" ${dp('status-locale')}>${ic('globe','s')}${L('English')}</span><span ${dp('status-saved')}>${L('Saved')} · <b class="num">r39</b></span><span ${dp('status-about')}>siann-engine 0.1.0 (<span class="mono" style="font-size:10px">308d846</span>) · AGPL-3.0-or-later · <a>${L('source')}</a></span></span>
+  <span class="right"><span class="loc" ${dp('status-locale')}>${ic('globe','s')}${L('English')}</span><span ${dp('status-saved')}>${L('Saved')} · <b class="num">r39</b></span><span ${dp('status-about')}>siann-engine 0.1.0 (<span class="mono" style="font-size:var(--fs-micro)">308d846</span>) · AGPL-3.0-or-later · <a>${L('source')}</a></span></span>
 </footer>`;
 
 /* ============================== event display: one surface (ruler + marker track + lanes + events + ghosts + cursor) */
@@ -361,7 +366,7 @@ function amp(kind,beat,p,r){
 function draw(){
   const host=document.getElementById('lanes'),cv=document.getElementById('tl');
   // Ruler as in Cubase: upper half = locators and cycle, lower half = project cursor (and drag-zoom). Marker track below it.
-  const W=host.clientWidth,RU=18,RULER=40,MK=20,TOP=RULER+MK,LANE=53,H=TOP+LANE*T.length,dpr=window.devicePixelRatio||1;
+  const W=host.clientWidth,RU=tpx('ruler-upper-h'),RULER=tpx('ruler-h'),MK=tpx('marker-h'),TOP=RULER+MK,LANE=tpx('track-h'),H=TOP+LANE*T.length,dpr=window.devicePixelRatio||1;
   cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
   const g=cv.getContext('2d');g.scale(dpr,dpr);
   const UI=getComputedStyle(document.body).fontFamily;
@@ -371,83 +376,83 @@ function draw(){
   fp('ruler-upper',0,0,W,RU);fp('ruler-lower',0,RU,W,RULER-RU);fp('marker-track',0,RULER,W,MK);
   T.forEach((t,i)=>fp('lane-'+tk(t,i),0,laneY(i),W,LANE));
 
-  for(let i=0;i<T.length;i++){g.fillStyle=i%2?'#0D0F13':'#0A0B0E';g.fillRect(0,laneY(i),W,LANE)}
+  for(let i=0;i<T.length;i++){g.fillStyle=i%2?tok('lane-odd'):tok('lane-even');g.fillRect(0,laneY(i),W,LANE)}
   const L0=xb(9),L1=xb(13);
-  g.fillStyle='rgba(255,255,255,.028)';g.fillRect(L0,TOP,L1-L0,H-TOP);            // cycle range tint over the lanes
+  g.fillStyle=tok('white-a028');g.fillRect(L0,TOP,L1-L0,H-TOP);            // cycle range tint over the lanes
   for(let b=1;xb(b)<W;b++){
-    for(let q=1;q<4;q++){g.fillStyle='rgba(255,255,255,.026)';g.fillRect(Math.round(xb(b)+q*PXB/4),TOP,1,H-TOP)}
-    g.fillStyle=(b-1)%4===0?'rgba(255,255,255,.11)':'rgba(255,255,255,.06)';g.fillRect(Math.round(xb(b)),TOP,1,H-TOP);
+    for(let q=1;q<4;q++){g.fillStyle=tok('white-a026');g.fillRect(Math.round(xb(b)+q*PXB/4),TOP,1,H-TOP)}
+    g.fillStyle=(b-1)%4===0?tok('white-a110'):tok('white-a060');g.fillRect(Math.round(xb(b)),TOP,1,H-TOP);
   }
-  for(let i=1;i<=T.length;i++){g.fillStyle='#000';g.fillRect(0,laneY(i)-1,W,1)}
-  {const y=laneY(7);g.save();g.beginPath();g.rect(0,y,W,LANE-1);g.clip();g.strokeStyle='rgba(167,139,255,.07)';g.lineWidth=5;
+  for(let i=1;i<=T.length;i++){g.fillStyle=tok('divider');g.fillRect(0,laneY(i)-1,W,1)}
+  {const y=laneY(7);g.save();g.beginPath();g.rect(0,y,W,LANE-1);g.clip();g.strokeStyle=tok('ai-a070');g.lineWidth=5;
    for(let x=-LANE;x<W;x+=14){g.beginPath();g.moveTo(x,y+LANE);g.lineTo(x+LANE,y);g.stroke()}g.restore()}
 
   // ruler, upper half: locator band
-  g.fillStyle='#0E1014';g.fillRect(0,0,W,RU);
-  g.fillStyle='rgba(232,235,241,.20)';g.fillRect(L0,2,L1-L0,RU-3);
-  g.fillStyle='#E8EBF1';g.fillRect(L0,2,L1-L0,2);
+  g.fillStyle=tok('ruler-upper');g.fillRect(0,0,W,RU);
+  g.fillStyle=tok('tx-1-a200');g.fillRect(L0,2,L1-L0,RU-3);
+  g.fillStyle=tok('tx-1');g.fillRect(L0,2,L1-L0,2);
   g.beginPath();g.moveTo(L0,2);g.lineTo(L0+8,2);g.lineTo(L0,RU-1);g.fill();
   g.beginPath();g.moveTo(L1,2);g.lineTo(L1-8,2);g.lineTo(L1,RU-1);g.fill();
-  g.font='700 8.5px Inter, sans-serif';g.textBaseline='middle';g.fillStyle='#0B0C10';
-  g.fillStyle='#C9CED8';g.fillText('L',L0+10,RU/2+2);g.textAlign='right';g.fillText('R',L1-10,RU/2+2);g.textAlign='left';
-  g.fillStyle='rgba(255,255,255,.05)';g.fillRect(0,RU,W,1);
+  g.font=tok('fw-bold')+' '+tok('fs-8h')+' Inter, sans-serif';g.textBaseline='middle';g.fillStyle=tok('bg-well');
+  g.fillStyle=tok('lit-1');g.fillText('L',L0+10,RU/2+2);g.textAlign='right';g.fillText('R',L1-10,RU/2+2);g.textAlign='left';
+  g.fillStyle=tok('white-a050');g.fillRect(0,RU,W,1);
   // ruler, lower half: bars and the cursor
-  g.fillStyle='#14171D';g.fillRect(0,RU+1,W,RULER-RU-1);
-  g.font='500 10px Inter, sans-serif';
+  g.fillStyle=tok('bg-2');g.fillRect(0,RU+1,W,RULER-RU-1);
+  g.font=tok('fw-ui')+' '+tok('fs-micro')+' Inter, sans-serif';
   for(let b=1;xb(b)<W;b++){const x=Math.round(xb(b)),maj=(b-1)%4===0;
-    g.fillStyle=maj?'#8A93A3':'#3A414D';g.fillRect(x,maj?RU+3:RULER-9,1,maj?RULER-RU-3:9);
-    for(let q=1;q<4;q++){g.fillStyle='#2A303B';g.fillRect(Math.round(x+q*PXB/4),RULER-5,1,5)}
-    g.fillStyle=maj?'#C9CED8':'#6C7483';g.fillText(String(b),x+4,RU+10)}
-  g.fillStyle='#000';g.fillRect(0,RULER-1,W,1);
+    g.fillStyle=maj?tok('ruler-major'):tok('ruler-minor');g.fillRect(x,maj?RU+3:RULER-9,1,maj?RULER-RU-3:9);
+    for(let q=1;q<4;q++){g.fillStyle=tok('button-line');g.fillRect(Math.round(x+q*PXB/4),RULER-5,1,5)}
+    g.fillStyle=maj?tok('lit-1'):tok('tx-3');g.fillText(String(b),x+4,RU+10)}
+  g.fillStyle=tok('divider');g.fillRect(0,RULER-1,W,1);
   // marker track
-  g.fillStyle='#101216';g.fillRect(0,RULER,W,MK);g.fillStyle='#000';g.fillRect(0,TOP-1,W,1);
-  const SEC=[[1,'Intro','#6C7483'],[5,'Verse 1','#57C98A'],[9,'Chorus','#E6C547']];
-  g.font='600 10px Inter, sans-serif';
+  g.fillStyle=tok('bg-info');g.fillRect(0,RULER,W,MK);g.fillStyle=tok('divider');g.fillRect(0,TOP-1,W,1);
+  const SEC=[[1,'Intro',tok('tx-3')],[5,'Verse 1',tok('track-4')],[9,'Chorus',tok('track-2')]];
+  g.font=tok('fw-strong')+' '+tok('fs-micro')+' Inter, sans-serif';
   SEC.forEach(([b,name,c],k)=>{const x=xb(b),x2=k+1<SEC.length?xb(SEC[k+1][0]):xb(17);
     g.fillStyle=rgba(c,.14);g.fillRect(x+1,RULER+2,x2-x-2,MK-5);g.fillStyle=c;g.fillRect(x,RULER+2,2,MK-5);
-    g.fillStyle=mix(c,'#FFFFFF',.25);g.fillText((k+1)+'  '+name,x+7,RULER+MK/2)});
+    g.fillStyle=mix(c,tok('select'),.25);g.fillText((k+1)+'  '+name,x+7,RULER+MK/2)});
 
   const rr=(x,y,w,h,r)=>{g.beginPath();g.roundRect(x,y,w,h,r)};
   function clip(ti,name,start,len,kind,o={},asGhostAt){
     const t=T[ti],ghost=o.ghost||asGhostAt!==undefined,st=asGhostAt??start;
-    const x=xb(st)+1,w=len*PXB-2,y=laneY(ti)+3,h=LANE-7,HDR=13,col=ghost?AI:t.c,dim=t.mute&&!ghost,old=o.moved&&asGhostAt===undefined;
+    const x=xb(st)+1,w=len*PXB-2,y=laneY(ti)+3,h=LANE-7,HDR=tpx('clip-title-h'),col=ghost?AI:t.c,dim=t.mute&&!ghost,old=o.moved&&asGhostAt===undefined;
     fp(asGhostAt!==undefined?'clip-ghost-move':o.ghost?'clip-ghost-new':'clip-'+(CLIPS.findIndex(c=>c[0]===ti&&c[2]===start)+1),x,y,w,h);FM.push({x,y:y+HDR,w,h:h-HDR});
     g.save();
     if(old) g.globalAlpha=.38; else if(dim) g.globalAlpha=.5;
-    rr(x,y,w,h,4);g.fillStyle=ghost?'rgba(167,139,255,.10)':mix(col,'#0B0C10',o.sel?.62:.74);g.fill();
+    rr(x,y,w,h,4);g.fillStyle=ghost?tok('ai-a100'):mix(col,tok('bg-well'),o.sel?.62:.74);g.fill();
     g.save();rr(x,y,w,h,4);g.clip();
-    if(ghost){g.strokeStyle='rgba(167,139,255,.16)';g.lineWidth=4;for(let k=-h;k<w;k+=11){g.beginPath();g.moveTo(x+k,y+h);g.lineTo(x+k+h,y);g.stroke()}}
-    g.fillStyle=ghost?'rgba(167,139,255,.30)':(o.sel?mix(col,'#FFFFFF',.12):mix(col,'#0B0C10',.12));g.fillRect(x,y,w,HDR);
+    if(ghost){g.strokeStyle=tok('ai-a160');g.lineWidth=4;for(let k=-h;k<w;k+=11){g.beginPath();g.moveTo(x+k,y+h);g.lineTo(x+k+h,y);g.stroke()}}
+    g.fillStyle=ghost?tok('ai-a300'):(o.sel?mix(col,tok('select'),.12):mix(col,tok('bg-well'),.12));g.fillRect(x,y,w,HDR);
     const r=rng(ti*977+Math.round(start*13)+kind.length),mid=y+HDR+(h-HDR)/2,half=(h-HDR)/2-2,stp=1/dpr;
-    g.fillStyle=ghost?'rgba(196,179,255,.55)':rgba(mixHex(col,'#FFFFFF',o.sel?.28:.12),.5);
+    g.fillStyle=ghost?tok('ai-2-a550'):rgba(mixHex(col,tok('select'),o.sel?.28:.12),.5);
     const cols=[];for(let px=0;px<w;px+=stp){const bars=px/PXB,beat=(start-1+bars)*4;const a=Math.min(1,amp(kind,beat,bars/len,r()));cols.push(a);
       const hh=Math.max(.5,a*half);g.fillRect(x+px,mid-hh,stp,hh*2)}
-    g.fillStyle=ghost?'rgba(214,202,255,.9)':mixHex(col,'#FFFFFF',o.sel?.45:.25);
+    g.fillStyle=ghost?tok('ai-wave-a900'):mixHex(col,tok('select'),o.sel?.45:.25);
     cols.forEach((a,k)=>{const hh=Math.max(.5,a*half*.52);g.fillRect(x+k*stp,mid-hh,stp,hh*2)});
     if(o.sel){const fi=8,fo=22;                                                   // fades, as curves from the upper corners
-      g.fillStyle='rgba(9,10,13,.55)';
+      g.fillStyle=tok('bg-0-a550');
       g.beginPath();g.moveTo(x,y+HDR);g.lineTo(x+fi,y+HDR);g.quadraticCurveTo(x+1,y+HDR+6,x,y+h);g.fill();
       g.beginPath();g.moveTo(x+w,y+HDR);g.lineTo(x+w-fo,y+HDR);g.quadraticCurveTo(x+w-3,y+HDR+8,x+w,y+h);g.fill();
-      g.strokeStyle='#fff';g.lineWidth=1;g.beginPath();g.moveTo(x+fi,y+HDR);g.quadraticCurveTo(x+1,y+HDR+6,x,y+h);g.stroke();
+      g.strokeStyle=tok('select');g.lineWidth=1;g.beginPath();g.moveTo(x+fi,y+HDR);g.quadraticCurveTo(x+1,y+HDR+6,x,y+h);g.stroke();
       g.beginPath();g.moveTo(x+w-fo,y+HDR);g.quadraticCurveTo(x+w-3,y+HDR+8,x+w,y+h);g.stroke()}
-    g.font='600 10px '+UI;g.textBaseline='middle';
+    g.font=tok('fw-strong')+' '+tok('fs-micro')+' '+UI;g.textBaseline='middle';
     let tx=x+6;
-    if(o.step&&ghost){g.fillStyle=AI;g.beginPath();g.arc(x+8.5,y+6.5,5.2,0,7);g.fill();g.fillStyle='#120B2E';g.font='700 8.5px Inter';g.textAlign='center';g.fillText(String(o.step),x+8.5,y+7);g.textAlign='left';g.font='600 10px '+UI;tx=x+18}
-    g.fillStyle=ghost?'#E3DBFF':'#0B0C10';
+    if(o.step&&ghost){g.fillStyle=AI;g.beginPath();g.arc(x+8.5,y+6.5,5.2,0,7);g.fill();g.fillStyle=tok('ai-ink');g.font=tok('fw-bold')+' '+tok('fs-8h')+' Inter';g.textAlign='center';g.fillText(String(o.step),x+8.5,y+7);g.textAlign='left';g.font=tok('fw-strong')+' '+tok('fs-micro')+' '+UI;tx=x+18}
+    g.fillStyle=ghost?tok('ai-title'):tok('bg-well');
     if(w>26)g.fillText(name,tx,y+7,w-(tx-x)-6);
     g.restore();
     if(ghost){g.setLineDash([4,3]);g.strokeStyle=AI;g.lineWidth=1.25;rr(x+.5,y+.5,w-1,h-1,4);g.stroke();g.setLineDash([])}
-    else if(o.sel){g.strokeStyle='#FFFFFF';g.lineWidth=1.5;rr(x+.25,y+.25,w-.5,h-.5,4);g.stroke();
+    else if(o.sel){g.strokeStyle=tok('select');g.lineWidth=1.5;rr(x+.25,y+.25,w-.5,h-.5,4);g.stroke();
       // Cubase event handles: fade triangles in the upper corners, resize squares in the lower corners,
       // the volume control at the bottom left, the repeat handle in the middle of the right border
-      const fi=8,fo=22;g.fillStyle='#fff';
+      const fi=8,fo=22;g.fillStyle=tok('select');
       g.beginPath();g.moveTo(x+fi-4,y+HDR-1);g.lineTo(x+fi+4,y+HDR-1);g.lineTo(x+fi,y+HDR+5);g.fill();
       g.beginPath();g.moveTo(x+w-fo-4,y+HDR-1);g.lineTo(x+w-fo+4,y+HDR-1);g.lineTo(x+w-fo,y+HDR+5);g.fill();
       g.fillRect(x-1,y+h-6,6,6);g.fillRect(x+w-5,y+h-6,6,6);
       g.beginPath();g.arc(x+w,y+HDR+(h-HDR)/2,3.2,0,7);g.fill();
-      g.fillStyle='#0B0C10';rr(x+9,y+h-12,38,10,3);g.fill();g.strokeStyle='rgba(255,255,255,.7)';g.lineWidth=1;rr(x+9.5,y+h-11.5,37,9,3);g.stroke();
-      g.fillStyle='#fff';g.font='600 8px Inter';g.fillText('0.0 dB',x+13,y+h-6.5)}
-    else{g.strokeStyle='rgba(0,0,0,.55)';g.lineWidth=1;rr(x+.5,y+.5,w-1,h-1,4);g.stroke()}
+      g.fillStyle=tok('bg-well');rr(x+9,y+h-12,38,10,3);g.fill();g.strokeStyle=tok('white-a700');g.lineWidth=1;rr(x+9.5,y+h-11.5,37,9,3);g.stroke();
+      g.fillStyle=tok('select');g.font=tok('fw-strong')+' '+tok('fs-8')+' Inter';g.fillText('0.0 dB',x+13,y+h-6.5)}
+    else{g.strokeStyle=tok('black-a550');g.lineWidth=1;rr(x+.5,y+.5,w-1,h-1,4);g.stroke()}
     g.restore();
   }
   CLIPS.forEach(c=>clip(c[0],c[1],c[2],c[3],c[4],c[5]||{}));
@@ -460,9 +465,9 @@ function draw(){
   const px=Math.round(xb(10)+2*PXB/4)+.5;
   fp('locator-band',L0,2,L1-L0,RU-3);fp('cursor',px-.5,RU+2,1,H-RU-2);fp('cursor-head',px-5.5,RU+2,11,11);
   window.__fidelity={parts:FP,masks:FM};
-  g.fillStyle='rgba(255,255,255,.07)';g.fillRect(px-3,TOP,6,H-TOP);
-  g.strokeStyle='#FFFFFF';g.lineWidth=1;g.beginPath();g.moveTo(px,RU+2);g.lineTo(px,H);g.stroke();
-  g.fillStyle='#FFFFFF';g.beginPath();g.moveTo(px-5.5,RU+2);g.lineTo(px+5.5,RU+2);g.lineTo(px+5.5,RU+8);g.lineTo(px,RU+13);g.lineTo(px-5.5,RU+8);g.fill();
+  g.fillStyle=tok('white-a070');g.fillRect(px-3,TOP,6,H-TOP);
+  g.strokeStyle=tok('select');g.lineWidth=1;g.beginPath();g.moveTo(px,RU+2);g.lineTo(px,H);g.stroke();
+  g.fillStyle=tok('select');g.beginPath();g.moveTo(px-5.5,RU+2);g.lineTo(px+5.5,RU+2);g.lineTo(px+5.5,RU+8);g.lineTo(px,RU+13);g.lineTo(px-5.5,RU+8);g.fill();
 }
 
 (document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve()).then(()=>{draw();document.body.dataset.ready='1'});

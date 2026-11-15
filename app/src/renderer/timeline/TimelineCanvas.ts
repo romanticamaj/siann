@@ -89,7 +89,8 @@ import {
 import {
   DEFAULT_LANE_HEIGHT,
   RULER_HEIGHT,
-  RULER_UPPER_HEIGHT,
+  RULER_LOWER,
+  RULER_UPPER,
   clipRects,
   cornerSize,
   deltaFrames,
@@ -350,8 +351,10 @@ interface Palette {
 }
 
 export const DEFAULT_FRAMES_PER_PIXEL = 100;
-// Two halves: the locators' (upper) and the cursor's and zoom's (lower).
-export { RULER_HEIGHT, RULER_UPPER_HEIGHT };
+// The ruler (UI redesign spec 3.2): the locators' half above (RULER_UPPER),
+// the cursor's and zoom's below (RULER_LOWER); geometry.ts reads them from
+// tokens.css --ruler-h, --ruler-upper-h and --ruler-lower-h.
+export { RULER_HEIGHT, RULER_LOWER, RULER_UPPER };
 // A pointer that moved less than this is a click (select), not a drag.
 const DRAG_THRESHOLD_PX = 3;
 const PLACE_ATTEMPTS = 3;
@@ -880,7 +883,7 @@ export class TimelineCanvas {
     const { x, y } = this.#point(e);
     if (y < this.#view.rulerHeight) {
       // The lower half: a click locates, a vertical drag zooms; the upper half is the locators'.
-      if (y >= RULER_UPPER_HEIGHT) {
+      if (y >= RULER_UPPER) {
         this.#rulerDrag = { startX: x, startY: y, anchorX: x, view: this.#view, moved: false };
         this.#capture(e);
       } else if (snapshot && this.#bandEnabled()) {
@@ -1007,7 +1010,7 @@ export class TimelineCanvas {
   #cursorFor(part: HitPart | null, y: number, alt: boolean, x = 0): string {
     if (this.#state.placingMediaId) return 'copy';
     if (y < this.#view.rulerHeight) {
-      if (y >= RULER_UPPER_HEIGHT) return 'ns-resize';
+      if (y >= RULER_UPPER) return 'ns-resize';
       if (!this.#bandEnabled()) return 'default';
       const hit = locatorHit(rangeOf(this.#options.model.getSnapshot()?.locators), this.#view, x, y);
       return hit === 'left' || hit === 'right' ? 'ew-resize' : hit === 'body' ? 'grab' : 'default';
@@ -1375,14 +1378,14 @@ export class TimelineCanvas {
 
   #drawRuler(ctx: CanvasRenderingContext2D, snapshot: Snapshot | null, palette: Palette): void {
     const view = this.#view;
-    const half = RULER_UPPER_HEIGHT;
-    const lower = view.rulerHeight - half;
+    const upper = RULER_UPPER;
+    const lower = view.rulerHeight - upper;
     ctx.globalAlpha = 1;
     // Upper half: the locators'; lower half: bars and beats, cursor and zoom.
     ctx.fillStyle = palette.bg2;
-    ctx.fillRect(0, 0, view.width, half);
+    ctx.fillRect(0, 0, view.width, upper);
     ctx.fillStyle = palette.bg3;
-    ctx.fillRect(0, half, view.width, lower);
+    ctx.fillRect(0, upper, view.width, lower);
     ctx.fillStyle = palette.line2;
     ctx.fillRect(0, view.rulerHeight - 1, view.width, 1);
     this.#band = null;
@@ -1395,11 +1398,11 @@ export class TimelineCanvas {
     ctx.font = `10px ${palette.font}`;
     const labels: string[] = [];
     for (const mark of marks) {
-      const tall = mark.kind === 'bar' ? half : mark.kind === 'beat' ? half / 2 : half / 3;
+      const tall = mark.kind === 'bar' ? lower : mark.kind === 'beat' ? lower / 2 : lower / 3;
       ctx.fillStyle = mark.kind === 'bar' ? palette.tx2 : palette.tx3;
       ctx.fillRect(Math.round(mark.x), view.rulerHeight - tall, 1, tall);
       labels.push(mark.label);
-      ctx.fillText(mark.label, Math.round(mark.x) + 3, half + 10);
+      ctx.fillText(mark.label, Math.round(mark.x) + 3, upper + 10);
     }
     this.#rulerLabels = labels;
   }

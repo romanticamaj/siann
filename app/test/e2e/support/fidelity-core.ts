@@ -402,6 +402,91 @@ export function diffRegion(region: string, mockup: Image, app: Image, rect: Rect
   return { region, compared, masked, mismatched, ratio: compared === 0 ? 0 : mismatched / compared, diff: { width, height, data } };
 }
 
+// ---------------------------------------------------------------- the mockup against itself
+
+// The mockup side of the gate, measured once (mockup-fidelity.spec.ts with
+// SIANN_FIDELITY_MOCKUP_ONLY=1): every part's box and listed computed styles,
+// the canvas parts and masks, and the decoded images ('window' for the whole
+// screenshot, a region's id for its crop). scripts/fidelity-mockup-compare.js
+// measures the base commit and the branch and asks whether they are the same
+// drawing (m5-ui-tokens-spacing: replacing literals with tokens changes
+// nothing the mockup draws).
+export interface MockupMeasurement {
+  readonly parts: readonly Part[];
+  readonly masks: readonly Rect[];
+  readonly images: Readonly<Record<string, Image>>;
+}
+
+export type MeasurementKind = 'part' | 'box' | 'style' | 'mask' | 'image';
+
+export interface MeasurementDifference {
+  readonly kind: MeasurementKind;
+  readonly id: string;
+  readonly detail: string;
+}
+
+// Every way two measurements differ: no tolerance anywhere. Boxes compare to
+// the last fraction of a pixel, styles as strings, images byte for byte after
+// decoding (so two encoders of the same pixels agree).
+export function compareMockupMeasurements(before: MockupMeasurement, after: MockupMeasurement): MeasurementDifference[] {
+  const out: MeasurementDifference[] = [];
+  // A repeated id (none is expected) keeps its occurrences apart: id, id#2, ...
+  const index = (parts: readonly Part[]) => {
+    const map = new Map<string, Part>();
+    const seen = new Map<string, number>();
+    for (const part of parts) {
+      const n = (seen.get(part.id) ?? 0) + 1;
+      seen.set(part.id, n);
+      map.set(n === 1 ? part.id : `${part.id}#${n}`, part);
+    }
+    return map;
+  };
+  const a = index(before.parts);
+  const b = index(after.parts);
+  const missing: MeasurementDifference[] = [];
+  for (const [id, was] of a) {
+    const now = b.get(id);
+    if (!now) {
+      missing.push({ kind: 'part', id, detail: 'only before' });
+      continue;
+    }
+    const moved = (['x', 'y', 'w', 'h'] as const).filter((k) => was[k] !== now[k]);
+    if (moved.length > 0) out.push({ kind: 'box', id, detail: moved.map((k) => `${k} ${was[k]} → ${now[k]}`).join(', ') });
+    const keys = [...new Set([...Object.keys(was.styles ?? {}), ...Object.keys(now.styles ?? {})])];
+    const changed = keys.filter((k) => was.styles?.[k] !== now.styles?.[k]);
+    if (changed.length > 0) out.push({ kind: 'style', id, detail: changed.map((k) => `${k}: ${was.styles?.[k] ?? '(none)'} → ${now.styles?.[k] ?? '(none)'}`).join('; ') });
+  }
+  for (const id of b.keys()) if (!a.has(id)) missing.push({ kind: 'part', id, detail: 'only after' });
+  out.push(...missing);
+  const masks = Math.max(before.masks.length, after.masks.length);
+  for (let i = 0; i < masks; i += 1) {
+    const was = before.masks[i];
+    const now = after.masks[i];
+    if (!was || !now || was.x !== now.x || was.y !== now.y || was.w !== now.w || was.h !== now.h) {
+      out.push({ kind: 'mask', id: String(i), detail: `${JSON.stringify(was ?? null)} → ${JSON.stringify(now ?? null)}` });
+    }
+  }
+  const names = [...new Set([...Object.keys(before.images), ...Object.keys(after.images)])];
+  for (const name of names) {
+    const was = before.images[name];
+    const now = after.images[name];
+    if (!was || !now) {
+      out.push({ kind: 'image', id: name, detail: was ? 'only before' : 'only after' });
+      continue;
+    }
+    if (was.width !== now.width || was.height !== now.height) {
+      out.push({ kind: 'image', id: name, detail: `${was.width}x${was.height} → ${now.width}x${now.height}` });
+      continue;
+    }
+    let differing = 0;
+    for (let p = 0; p < was.data.length; p += 4) {
+      if (was.data[p] !== now.data[p] || was.data[p + 1] !== now.data[p + 1] || was.data[p + 2] !== now.data[p + 2] || was.data[p + 3] !== now.data[p + 3]) differing += 1;
+    }
+    if (differing > 0) out.push({ kind: 'image', id: name, detail: `${differing} of ${was.width * was.height} pixels differ` });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- report
 
 export interface RegionReport {

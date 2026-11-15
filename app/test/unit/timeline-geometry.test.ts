@@ -29,6 +29,7 @@ import {
   type Viewport,
 } from '../../src/renderer/timeline/geometry';
 import { clip, sampleSnapshot } from './support/timeline';
+import { RULER_HEIGHT } from '../../src/renderer/timeline/TimelineCanvas';
 
 const VIEW: Viewport = { framesPerPixel: 100, scrollFrames: '0', rulerHeight: 20, laneHeight: 60, width: 1000 };
 
@@ -136,7 +137,7 @@ test('a trim stays inside [0, media.frames] with at least one frame', () => {
 // m5-ui-arrange: lanes of their own height (53 px by default, 24-240 px), a
 // vertical scroll of the lanes under a fixed ruler, and a canvas that starts
 // right of the track list, so no clip rectangle needs the list's width.
-const ARRANGE: Viewport = { framesPerPixel: 100, scrollFrames: '0', rulerHeight: 32, laneHeight: DEFAULT_LANE_HEIGHT, width: 800, height: 300, scrollY: 0 };
+const ARRANGE: Viewport = { framesPerPixel: 100, scrollFrames: '0', rulerHeight: RULER_HEIGHT, laneHeight: DEFAULT_LANE_HEIGHT, width: 800, height: 300, scrollY: 0 };
 
 test('lanes default to 53 px and take their height from the map, clamped to 24-240', () => {
   assert.equal(DEFAULT_LANE_HEIGHT, 53);
@@ -147,32 +148,32 @@ test('lanes default to 53 px and take their height from the map, clamped to 24-2
   assert.equal(clampLaneHeight(60.4), 60);
   assert.equal(clampLaneHeight(Number.NaN), 53);
   const order = ['trk_b', 'trk_a', 'trk_c'];
-  assert.deepEqual(laneTops(order, ARRANGE), [32, 85, 138]);
+  assert.deepEqual(laneTops(order, ARRANGE), [RULER_HEIGHT, RULER_HEIGHT + 53, RULER_HEIGHT + 106]);
   const sized = { ...ARRANGE, laneHeights: { trk_a: 96, trk_c: 1000 } };
   assert.equal(laneHeightOf('trk_b', sized), 53);
   assert.equal(laneHeightOf('trk_a', sized), 96);
   assert.equal(laneHeightOf('trk_c', sized), 240);
-  assert.deepEqual(laneTops(order, sized), [32, 85, 181]);
+  assert.deepEqual(laneTops(order, sized), [RULER_HEIGHT, RULER_HEIGHT + 53, RULER_HEIGHT + 53 + 96]);
   assert.equal(lanesHeight(order, sized), 53 + 96 + 240);
 });
 
 test('a vertical scroll moves the lanes up under the ruler', () => {
   const order = ['trk_b', 'trk_a'];
   const scrolled = { ...ARRANGE, scrollY: 40, laneHeights: { trk_b: 80 } };
-  assert.deepEqual(laneTops(order, scrolled), [32 - 40, 32 - 40 + 80]);
+  assert.deepEqual(laneTops(order, scrolled), [RULER_HEIGHT - 40, RULER_HEIGHT - 40 + 80]);
   const snapshot = sampleSnapshot();
-  assert.equal(trackAt(snapshot, 31, scrolled), null, 'the ruler stays on top');
-  assert.equal(trackAt(snapshot, 32, scrolled), 'trk_b');
-  assert.equal(trackAt(snapshot, 71.9, scrolled), 'trk_b');
-  assert.equal(trackAt(snapshot, 72, scrolled), 'trk_a');
-  assert.equal(trackAt(snapshot, 72 + 53, scrolled), null, 'below the last lane');
+  assert.equal(trackAt(snapshot, RULER_HEIGHT - 1, scrolled), null, 'the ruler stays on top');
+  assert.equal(trackAt(snapshot, RULER_HEIGHT, scrolled), 'trk_b');
+  assert.equal(trackAt(snapshot, RULER_HEIGHT + 39.9, scrolled), 'trk_b');
+  assert.equal(trackAt(snapshot, RULER_HEIGHT + 40, scrolled), 'trk_a');
+  assert.equal(trackAt(snapshot, RULER_HEIGHT + 40 + 53, scrolled), null, 'below the last lane');
 });
 
 test('clip rectangles take the lane heights and the vertical scroll', () => {
   const view = { ...ARRANGE, scrollY: 10, laneHeights: { trk_b: 120 } };
   const byId = Object.fromEntries(clipRects(sampleSnapshot(), view).map((r) => [r.clipId, r]));
-  assert.deepEqual({ y: byId.clp_1!.y, height: byId.clp_1!.height }, { y: 22, height: 120 });
-  assert.deepEqual({ y: byId.clp_2!.y, height: byId.clp_2!.height }, { y: 142, height: 53 });
+  assert.deepEqual({ y: byId.clp_1!.y, height: byId.clp_1!.height }, { y: RULER_HEIGHT - 10, height: 120 });
+  assert.deepEqual({ y: byId.clp_2!.y, height: byId.clp_2!.height }, { y: RULER_HEIGHT - 10 + 120, height: 53 });
 });
 
 test('a clip scrolled to before the left edge has a negative x: the canvas begins right of the track list', () => {

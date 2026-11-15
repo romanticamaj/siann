@@ -26,7 +26,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { en } from '../../src/renderer/i18n/en';
-import { RULER_UPPER_HEIGHT } from '../../src/renderer/timeline/geometry';
+import { RULER_UPPER } from '../../src/renderer/timeline/geometry';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { agentFor, launchApp, seedBundle } from './support/seed';
 
@@ -214,7 +214,7 @@ async function inStep(): Promise<void> {
 async function upperDrag(from: number, to: number, modifiers: readonly string[] = [], sync = true): Promise<void> {
   if (sync) await inStep();
   const box = await canvasBox();
-  const y = box.y + RULER_UPPER_HEIGHT / 2;
+  const y = box.y + RULER_UPPER / 2;
   for (const key of modifiers) await page.keyboard.down(key);
   await page.mouse.move(box.x + from, y);
   await page.mouse.down();

@@ -288,7 +288,7 @@ test('the chrome takes the mockup\'s text formats, and only the fidelity run tak
   const [type, name] = device.id.split('/');
   const latency = (((device.inputLatencyFrames + device.outputLatencyFrames) * 1000) / device.sampleRate).toFixed(1);
   assert.ok(MOCKUP.includes(`>${type} · ${name} · <b class="num">${device.sampleRate / 1000} kHz</b> / <b class="num">${device.bufferFrames}</b> · <span class="num">${latency} ms</span>`), 'status-device');
-  assert.ok(MOCKUP.includes(`>${engineAbout.name} ${engineAbout.version} (<span class="mono" style="font-size:10px">${engineAbout.source.commit.slice(0, 7)}</span>) · ${engineAbout.license} · `), 'status-about');
+  assert.ok(MOCKUP.includes(`>${engineAbout.name} ${engineAbout.version} (<span class="mono" style="font-size:var(--fs-micro)">${engineAbout.source.commit.slice(0, 7)}</span>) · ${engineAbout.license} · `), 'status-about');
   assert.match(engineAbout.source.commit, /^[0-9a-f]{40}$/);
   // The mockup's own formats.
   assert.match(MOCKUP, /<span class="val sm">00:00:19<em>\.<\/em>000<\/span>/);

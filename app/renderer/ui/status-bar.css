@@ -3,13 +3,13 @@
    Shared source of the redesign's mockup and the app (docs/harness/agent-rules.md,
    "UI fidelity"): docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html
    loads this file, and the React component that draws this part of the window
-   uses the same class names and structure. Colours, font sizes and radii are
-   tokens of ../tokens.css. Changing a rule here changes the reference: that
+   uses the same class names and structure. Colours and every size (font sizes,
+   radii, spacing, the sizes of components) are tokens of ../tokens.css. Changing a rule here changes the reference: that
    needs the maintainer. */
 
 .statusbar b{color:var(--tx-2);font-weight:500}
-.statusbar .ok{width:7px;height:7px;border-radius:var(--radius-round);background:var(--ok);display:inline-block;margin-right:6px}
-.statusbar .right{margin-left:auto;display:flex;gap:14px;align-items:center}
-.statusbar a{color:var(--tx-3);text-decoration:underline;text-decoration-color:var(--tx-4);text-underline-offset:2px}
-.statusbar .hear{display:flex;align-items:center;gap:5px;color:var(--tx-2)}
-.statusbar .loc{display:flex;align-items:center;gap:4px;padding:0 6px;height:16px;border:1px solid var(--line-2);border-radius:var(--radius-4);color:var(--tx-2)}
+.statusbar .ok{width:var(--status-dot);height:var(--status-dot);border-radius:var(--radius-round);background:var(--ok);display:inline-block;margin-right:var(--space-1h)}
+.statusbar .right{margin-left:auto;display:flex;gap:var(--space-3h);align-items:center}
+.statusbar a{color:var(--tx-3);text-decoration:underline;text-decoration-color:var(--tx-4);text-underline-offset:var(--space-half)}
+.statusbar .hear{display:flex;align-items:center;gap:var(--space-5q);color:var(--tx-2)}
+.statusbar .loc{display:flex;align-items:center;gap:var(--space);padding:0 var(--space-1h);height:var(--status-chip-h);border:var(--hairline) solid var(--line-2);border-radius:var(--radius-4);color:var(--tx-2)}

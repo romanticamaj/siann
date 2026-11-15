@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RULER_HEIGHT, RULER_UPPER_HEIGHT, type Viewport } from '../../src/renderer/timeline/geometry';
+import { RULER_HEIGHT, RULER_UPPER, type Viewport } from '../../src/renderer/timeline/geometry';
 import {
   BAND_TOP,
   END_HIT_PX,
@@ -44,29 +44,28 @@ const OFF: LocatorGrid = { snap: (f) => f, minGap: () => 100n };
 const GRID: LocatorGrid = { snap: (f) => ((f + 500n) / 1000n) * 1000n, minGap: () => 1000n };
 
 test('the upper half is the exported constant, derived from the ruler height', () => {
-  assert.ok(RULER_UPPER_HEIGHT > 0 && RULER_UPPER_HEIGHT < RULER_HEIGHT);
-  assert.equal(RULER_UPPER_HEIGHT, RULER_HEIGHT / 2);
+  assert.ok(RULER_UPPER > 0 && RULER_UPPER < RULER_HEIGHT);
 });
 
 test('the band spans the locators in the upper half, at the view\'s zoom and scroll', () => {
   const range = { left: 4800n, right: 24000n };
-  assert.deepEqual(bandRect(range, view()), { x: 48, y: BAND_TOP, width: 192, height: RULER_UPPER_HEIGHT - BAND_TOP - 1 });
+  assert.deepEqual(bandRect(range, view()), { x: 48, y: BAND_TOP, width: 192, height: RULER_UPPER - BAND_TOP - 1 });
   // Scrolled by 1000 frames and zoomed to 50 frames per pixel.
   assert.deepEqual(bandRect(range, view({ scrollFrames: '1000', framesPerPixel: 50 })), {
     x: 76,
     y: BAND_TOP,
     width: 384,
-    height: RULER_UPPER_HEIGHT - BAND_TOP - 1,
+    height: RULER_UPPER - BAND_TOP - 1,
   });
   assert.equal(bandRect(null, view()), null);
   // It never reaches into the lower half.
   const rect = bandRect(range, view())!;
-  assert.ok(rect.y + rect.height < RULER_UPPER_HEIGHT);
+  assert.ok(rect.y + rect.height < RULER_UPPER);
 });
 
 test('hit zones: the left end, the right end, the body, outside', () => {
   const range = { left: 10000n, right: 30000n }; // x 100 .. 300
-  const y = RULER_UPPER_HEIGHT / 2;
+  const y = RULER_UPPER / 2;
   assert.equal(locatorHit(range, view(), 100, y), 'left');
   assert.equal(locatorHit(range, view(), 100 + END_HIT_PX, y), 'left');
   assert.equal(locatorHit(range, view(), 100 - END_HIT_PX, y), 'left');
@@ -76,7 +75,7 @@ test('hit zones: the left end, the right end, the body, outside', () => {
   assert.equal(locatorHit(range, view(), 50, y), 'outside');
   assert.equal(locatorHit(range, view(), 400, y), 'outside');
   // Below the upper half, and without locators, nothing is hit.
-  assert.equal(locatorHit(range, view(), 200, RULER_UPPER_HEIGHT), 'outside');
+  assert.equal(locatorHit(range, view(), 200, RULER_UPPER), 'outside');
   assert.equal(locatorHit(null, view(), 200, y), 'outside');
   // A band narrower than both zones: the nearer end.
   const narrow = { left: 10000n, right: 10600n }; // x 100 .. 106
