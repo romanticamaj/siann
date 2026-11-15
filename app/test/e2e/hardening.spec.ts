@@ -281,7 +281,7 @@ test('window.open is denied, and navigation stays under siann://app/', async () 
     await page.evaluate(() => ({
       marker: (window as unknown as { __marker?: number }).__marker,
       href: location.href,
-      status: document.querySelector('[data-testid="status"]')?.textContent,
+      status: document.querySelector('[data-testid="status"]')?.getAttribute('data-status'),
     })),
   ).toEqual({ marker: 1, href: 'siann://app/index.html', status: 'connected' });
 

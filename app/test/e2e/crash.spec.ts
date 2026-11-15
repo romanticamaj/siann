@@ -150,10 +150,10 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
     const status = document.querySelector('[data-testid="status"]')!;
     const seen: string[] = [];
     (window as unknown as { __statuses: string[] }).__statuses = seen;
-    new MutationObserver(() => seen.push(status.textContent ?? '')).observe(status, {
-      childList: true,
-      characterData: true,
-      subtree: true,
+    // The connection state as the status bar carries it (its words are the mockup's).
+    new MutationObserver(() => seen.push(status.getAttribute('data-status') ?? '')).observe(status, {
+      attributes: true,
+      attributeFilter: ['data-status'],
     });
   });
 
