@@ -185,3 +185,24 @@ Content the head document already holds (same `contentHash`) ends `done` with th
 - `siann-engine --session <bundle>` on a bundle another engine serves exits 1 with `{ok: false, error: {code: "session_locked", ...}}` as the last stderr line and nothing on stdout (item 17).
 - `siann-cli info`, `verify` and every other command that opens a bundle answer `session_locked` while an engine serves it.
 - A crashed engine leaves the file; the next open takes it over because its pid is dead.
+
+### Buses and sends (m5b-engine-buses-sends, UR-10)
+
+Buses and sends are document data, changed with commands through `command.execute`, a plan or MCP `execute`; no method or port is dedicated to them. The entities (architecture spec, "siann-model", M5b bus and send) are `{schema: "siann.entity.bus.v1", id, name, channels: 2, gainMilliDb, pan, mute, solo, inserts?, output?}` (ref `bus:<id>`) and `{schema: "siann.entity.send.v1", id, trackId, busId, levelMilliDb, pre, enabled}` (ref `send:<id>`); the root gains `busOrder` and a track `sends` and `output`, all omitted while empty, so the document format is `siann.session_document.v3` and every earlier bundle reads unchanged.
+
+| Command | Params | Declares |
+|---|---|---|
+| `bus.add` | `{busId, name, index?}` | `root`, the bus |
+| `bus.remove` | `{busId}` | `root`, the bus, its sends and slots, the tracks losing a send, the tracks and buses rerouted to the master |
+| `bus.rename`, `bus.set_gain`, `bus.set_pan`, `bus.set_mute`, `bus.set_solo` | `{busId, name \| gainMilliDb \| pan \| mute \| solo}` | the bus |
+| `bus.set_output` | `{busId, output: {busId} \| null}` | the bus |
+| `send.add` | `{sendId, trackId, busId, levelMilliDb?, pre?, enabled?, index?}` | the send, its track |
+| `send.remove` | `{sendId}` | the send, its track |
+| `send.set_level`, `send.set_pre`, `send.set_enabled` | `{sendId, levelMilliDb \| pre \| enabled}` | the send |
+| `track.set_output` | `{trackId, output: {busId} \| null}` | the track |
+
+An unknown track, bus or send is `not_found`, a used id `already_exists`, another field `invalid_params`, a gain or level out of range `invalid_gain` and a pan `invalid_pan`. A `bus.set_output` that would make a bus reach itself, directly or through a chain of buses, is `routing_cycle` and changes nothing. `plugin.insert` and `plugin.instantiate` take exactly one of `trackId` or `busId` ([Protocol plugins v0](protocol-plugins-v0.md)).
+
+`command.list {}` answers `{commands, cascades}`: `commands` is the sorted string array of `command::commandNames()`, as before, and `cascades` maps a command to the sorted entity types it may remove or change besides its target, `{"bus.remove": ["bus", "plugin_slot", "root", "send", "track"], "track.remove": ["clip", "plugin_slot", "root", "send"]}`; a command without cascades is absent. `engine.capabilities` lists the fourteen commands in `commands` and reports `features.buses: true` and `features.sends: true`.
+
+A bus meters under the key `bus:<id>` ([Protocol events v1](protocol-events-v1.md), `meters.legend`). Bus gain and send level are gesture targets ([Protocol gestures v0](protocol-gestures-v0.md)).

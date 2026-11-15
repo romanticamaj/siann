@@ -1593,8 +1593,8 @@ Rules:
   `plugin.instantiate` takes exactly one of `trackId` or `busId`
   (`invalid_params` otherwise, `not_found` for an unknown one), instantiates a
   bus's plugin with two channels and completes with a `plugin.insert` carrying
-  the same field; a `plugin.list` row carries `busId` in place of `trackId` for
-  a bus's slot. Validation checks the hash's form only: a blob absent from `blobs/` at
+  the same field; an `engine.status` `plugins[]` row carries `busId` in place
+  of `trackId` for a bus's slot. Validation checks the hash's form only: a blob absent from `blobs/` at
   instantiation loads the plugin with its default state and reports it `running`
   with `error {code: "state_missing"}`; rebuilding the document never needs the
   blob or the plugin. `inserts` is omitted from the track's JSON when it is
