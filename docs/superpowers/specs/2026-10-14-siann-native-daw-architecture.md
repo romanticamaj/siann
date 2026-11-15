@@ -2121,14 +2121,33 @@ and C9, E-7 and E-14):
   not well-formed UTF-8 too), leading and trailing white space trimmed, and the rest
   cut to at most 64 UTF-8 bytes at a character boundary; an absent, non-string or
   then empty name is `"MCP client"` or `"SIANN"`. `plan.submit` refuses any param
-  other than `steps`, `readSet`, `baseRevision`, `title` and `intent`
-  (`invalid_params`), so an `actor` (or a `kind` or `name`) in the params never
+  other than `steps`, `readSet`, `baseRevision`, `title` and `intent` (and, since
+  m5b-engine-agent-requests, `request`; see below) (`invalid_params`), so an `actor` (or a `kind` or `name`) in the params never
   reaches the plan.
 - They are metadata beside the plan, fixed at submission: `PlanStore::submit`
   stores them with the plan, and an identical resubmission (the same hash) returns
   the stored plan unchanged whatever title, intent or actor it carries. Partial
   approval copies the parent's `title`, `intent` and `actor` onto the sub-plan.
   Approval, the staleness check, apply, rollback and propose never read them.
+
+Decisions of 2026-11-15 (m5b-engine-agent-requests; human gate
+`agent-request-shape`; siann-protocol item 30):
+
+- A plan can answer an agent request: `plan.submit {..., request: "arq_<hex>"}`.
+  The link is not part of the plan: it is not hashed (the same steps with and
+  without `request` have the same hash), it is not a field of `siann.plan.v1`, and
+  it is stored on the request (`request.plan` = the plan's hash), never in the plan
+  store. It is accepted only from the MCP credential whose agent is the request's
+  addressee, and only while the request is `pending` or `taken`; otherwise the
+  submission is refused before anything is stored (`invalid_params` for the UI
+  credential, `request_not_open` for another agent or a closed request, `not_found`
+  for an unknown id). The request then counts as `answered`, and the plan is
+  `validated` like any other: it waits for the user's approval. An identical
+  resubmission returns the stored plan, as above, and links it.
+- Threat: a request executes nothing. Its text and context are data handed to an
+  agent, and the agent's only way into the document stays a plan the user approves
+  (or a `trusted` tool the user granted); answering a request with a plan changes
+  neither the plan's state nor the head revision.
 
 #### Journal as write-ahead log
 
@@ -2551,6 +2570,15 @@ retried with the same id once the scope is granted. Note for the maintainer:
 hears without changing main; if that is unwanted, flip them to `trusted` (one row
 of the tool table in `docs/schemas/protocol-mcp-v0.md`).
 
+Credential-bound methods (m5b-engine-agent-requests, item 30). Two kinds of
+method belong to one credential whatever the scope: the user's side of an agent
+request, `agent.request`, `agent.cancel_request` and `agent.requests`, is UI-only
+(no MCP tool maps it, so an MCP credential, `propose` or `trusted`, gets
+`scope_denied`), and the agent's side, `agent.next_request` (`next_request`) and
+`agent.answer_request` (`answer_request`), is MCP-only and `propose` (the UI token
+gets `scope_denied`, since only an MCP session is an agent). Both refusals execute
+nothing and are not cached, like every `scope_denied`.
+
 The scope is tied to a credential and enforced by the server, so it cannot be
 side-stepped (m3-mcp, fix round 1). The server holds two per-launch secrets, made
 the same way (item 7) and never equal: the UI token (`ProtocolServer::token()`),
@@ -2726,9 +2754,11 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       peaks: true (item 23), gestures: <a port is present> (item 24),
       locators: true, cycle: <a transport port is present>, click: <a transport
       port is present> (item 26), planMetadata: true, agents: <a transport port is
-      present> (item 29)},
+      present> (item 29), agentRequests: <as agents> (item 30)},
       limits: {syncChunkEntities,
-      inboxCapacity, idempotencyCapacity, agentIdleMs, agentsRetained}}`.
+      inboxCapacity, idempotencyCapacity, agentIdleMs, agentsRetained,
+      agentRequestsPerAgent: 16, agentRequestTextChars: 4000, agentRequestWaitMs
+      (default 25000, item 30), agentRequestsClosedRetained: 16}}`.
       `scope` is the MCP scope the launcher
       set. `plugins` is `false` until a plugin port is present (item 19), then
       `{formats: ["clap", "vst3", "au"] as this build hosts them, flags:
@@ -2737,10 +2767,11 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       (siann-protocol links no JUCE); the per-instance values are in items 18 and
       19 (m4-juce-formats, decided 2026-11-08).
     - `plan.submit {steps, readSet?: ["<type>:<id>"], baseRevision?, title?,
-      intent?}` (default base: the head) -> the `siann.plan.v1` object with its
+      intent?, request?}` (default base: the head) -> the `siann.plan.v1` object with its
       lifecycle fields and the `actor` the server set. A title or intent outside
       the limits is `invalid_plan_metadata`; any other param is `invalid_params`
-      ("Plans", decisions of 2026-11-15).
+      ("Plans", decisions of 2026-11-15). `request` (`arq_<hex>`, item 30) links
+      the plan to an open agent request, unhashed ("Plans").
     - `plan.status {plan}` -> the plan object plus `stale: [{ref, change}]`
       (`PlanStore::validate`) and `proposalBranch` when it is proposed.
     - `plan.approve {plan, steps?}` -> the approved plan, or with `steps` (step
@@ -2800,7 +2831,15 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     JSON-RPC `-32000` with `data.code: "request_timeout"`; a full inbox is
     `queue_full` at once. The command thread never waits on the protocol, so the
     wait graph stays acyclic ("Threads and waiting rules"). A stdio shim is a later
-    item.
+    item. m5b-engine-agent-requests: one tool, `next_request`, is not answered in
+    the pump that runs it when nothing is queued: the command thread parks the
+    call (it never blocks; the transport thread keeps waiting on its answer) and
+    answers it in a later pump, when a request is queued for that agent or once
+    the wait has passed on `ServerOptions::steadyClock` (the command loop wakes
+    at least every 250 ms, which is the resolution). The wait is clamped below
+    `mcpRequestTimeout` (at most `mcpRequestTimeout` minus 1 s, and never under
+    0), so a parked call is answered before the transport gives up. An empty
+    answer is not cached and is not an action (item 30).
 16. Open and save. `session.save {}` writes the checkpoint (`Session::checkpoint`)
     and returns `{revision, path}` (the `session.json` path). `session.open {path}`
     goes through `ServerOptions::openSession`, a callback the launcher supplies (the
@@ -3395,6 +3434,99 @@ UI redesign E-13 and UR-14; the wire details are in `docs/schemas/protocol-engin
     - `engine.capabilities` lists `meter.reset_loudness` and reports
       `features.load` and `features.loudness`, both true when a transport port is
       present (the condition of `engine.status`).
+
+Protocol v0, agent requests (decided by the maintainer 2026-11-15, human gate
+`agent-request-shape`, commit 31a4791; m5b-engine-agent-requests, UI redesign
+UR-16 and 4.4; the wire details are in `docs/schemas/protocol-engine-v0.md`,
+`protocol-events-v1.md` and `protocol-mcp-v0.md`):
+
+32. SIANN gains no agent runtime: a request is a message the engine hands to an
+    agent (item 29) that is already connected over MCP. The threat it must not open:
+    a request executes nothing. Its text and context are data for the agent; a plan
+    and its approval stay the only way into the document ("Plans", decisions of
+    2026-11-15, m5b-engine-agent-requests). Requests are engine state on the
+    command thread (`AgentRequestStore`, no mutex): not a revision, not in the
+    bundle or the journal, not persisted; an engine restart drops every request.
+    - The request object: `{id: "arq_<random hex>", agentId, text, context,
+      state, plan?, message?, createdAt}`. `state` is `pending`, `taken`,
+      `answered`, `declined`, `cancelled` or `expired`; the first two are open,
+      the others closed and final. `plan` (a plan hash) is set when a plan answered
+      it, `message` when the agent answered or declined with one. `createdAt` is the
+      server clock's ISO time. The field is named `request` everywhere (as
+      `plan.status {plan}` names a plan), never `requestId`, which is the envelope's
+      idempotency key (items 2 and 5).
+    - `context` is stamped by the engine when it queues the request: `{selection:
+      {tracks: [id], clips: [id]}, locators, cursor, headRevision}`. Only the
+      selection comes from the UI (the engine does not know it); `locators` is the
+      head document's locators entity as `session.fetch` returns it (null when none
+      is set), `cursor` the transport position as a decimal frame string (null
+      without a transport port) and `headRevision` main's head, so a client cannot
+      forge them. No audio. The context is data for the agent and is never executed.
+    - UI credential only (Scopes v0, credential-bound methods):
+      - `agent.request {agentId, text, selection?: {tracks?: [id], clips?: [id]}}`
+        -> `{request}` (state `pending`). `text` is 1 to 4,000 characters, counted
+        as Unicode code points after decoding well-formed UTF-8 (so at most 16,000
+        bytes), and follows the display-text rules of `siann/model/display_text.hpp`
+        (no control character other than tab, LF and CR, no bidi formatting
+        character, no U+2028/U+2029); otherwise `invalid_request_text` and nothing
+        is queued. This differs from a plan's title and intent, which are measured
+        in bytes ("Plans"): the gate counts characters, so a request in Chinese
+        holds as much as one in English. Selection ids are checked for the ID shape
+        only (ASCII `[A-Za-z0-9_-]`, 1 to 64), at most 256 per list, and any other
+        member of `selection` or of the params is refused: `invalid_params`. An
+        unknown agent, or one that is not connected, is `agent_not_connected`. At
+        most `limits.agentRequestsPerAgent` = 16 open requests (pending or taken)
+        per agent: the 17th is `agent_busy` and nothing is queued (taken ones count,
+        so an agent that takes and never answers cannot grow the table).
+      - `agent.cancel_request {request}` -> `{request}` (state `cancelled`);
+        `not_found` for an unknown id, `request_not_open` for a closed one.
+      - `agent.requests {}` -> `{requests}`: the open requests oldest first, then
+        the last `limits.agentRequestsClosedRetained` = 16 closed ones in the order
+        they closed, so a client that connects later can show them.
+    - MCP credential only, `propose` scope (the UI token gets `scope_denied`):
+      - `agent.next_request {waitMs?}` (tool `next_request`) -> `{request}`: the
+        calling agent's oldest `pending` request, now `taken`, or `{request:
+        null}`. A long poll: with nothing pending the command thread parks the call
+        instead of answering (it never blocks, item 15) and answers it as soon as a
+        request is queued for that agent, in the pump that queues it, or with
+        `{request: null}` once `min(waitMs, limits.agentRequestWaitMs)` has passed
+        on `ServerOptions::steadyClock`. `limits.agentRequestWaitMs` is
+        `ServerOptions::agentRequestWaitMs` (default 25,000 ms) clamped to at most
+        `mcpRequestTimeout` minus 1 s (and at least 0), which satisfies the gate's
+        "empty after at most 30 s" and answers before the transport's
+        `request_timeout`. `waitMs` is a non-negative integer (`invalid_params`
+        otherwise); 0 answers at once. One parked call per agent: a second one
+        answers the first with `{request: null}`. A parked call keeps its agent
+        connected (item 29's idle expiry skips it); `DELETE /v0/mcp` answers it with
+        `{request: null}`. A retry with the same JSON-RPC id returns the same
+        request from the idempotency cache; an empty answer is not cached. An empty
+        poll does not count as an action (no `lastAction`, no `agent.changed`); a
+        delivering one does.
+      - `agent.answer_request` (tool `answer_request`) with exactly one form:
+        `{request, plan}` (a plan this agent submitted; `answered` with `plan`),
+        `{request, message}` (`answered` with `message`) or `{request, decline:
+        true, message?}` (`declined`) -> `{request}`. Two forms, none, or a plan
+        another client submitted are `invalid_params`; an unknown plan or request
+        `not_found`; a request that is closed, or whose addressee is another agent,
+        `request_not_open`. `message` follows the text rule above
+        (`invalid_request_text`).
+      - `plan.submit {..., request}` links the plan it stores to the request, which
+        then counts as `answered` ("Plans", decisions of 2026-11-15,
+        m5b-engine-agent-requests).
+    - Event `agent.request_changed {request}` on every state change (queued, taken,
+      answered, declined, cancelled, expired), to every subscribed connection. The
+      command thread publishes it after the request's response and its
+      `plan.changed`, before the pump's `agent.changed`.
+    - Expiry: open requests expire when their agent disconnects (`DELETE`, or idle
+      past `agentIdleMs`; a later reconnect does not revive them), when the agent is
+      forgotten (`agentsRetained`), and when the served session changes
+      (`session.open`, `session.create`), because their context names entities of
+      the old session. The closed ring keeps them for `agent.requests`.
+    - `engine.capabilities` lists the five methods, `features.agentRequests` (true
+      when `features.agents` is) and `limits.agentRequestsPerAgent`,
+      `agentRequestTextChars`, `agentRequestWaitMs` and
+      `agentRequestsClosedRetained`. New stable codes: `agent_not_connected`,
+      `agent_busy`, `invalid_request_text`, `request_not_open`.
 
 ## Plugin editor windows
 
