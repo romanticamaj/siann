@@ -678,12 +678,16 @@ TEST_CASE("A locate and a transport stop do not restart the integrated value; a 
     driver.start(device, config(kLoudBlock));
     const auto before = rt::allocationViolations();
     pumpSeconds(driver, device, 10.0);
-    const float integrated = driver.loudness().integrated;
-    REQUIRE(std::abs(integrated - -23.0f) <= 0.1f);
+    REQUIRE(std::abs(driver.loudness().integrated - -23.0f) <= 0.1f);
 
-    // Stopped: digital silence. Momentary and short-term fall, integrated holds.
+    // Stopped: digital silence. Momentary and short-term fall; integrated takes
+    // the three gating blocks that overlap the stop, then holds (the absolute
+    // gate drops silent blocks).
     driver.pause();
-    pumpSeconds(driver, device, 4.0);
+    pumpSeconds(driver, device, 0.5);
+    const float integrated = driver.loudness().integrated;
+    CHECK(std::abs(integrated - -23.0f) <= 0.1f);
+    pumpSeconds(driver, device, 3.5);
     CHECK(minusInfinity(driver.loudness().momentary));
     CHECK(minusInfinity(driver.loudness().shortTerm));
     CHECK(driver.loudness().integrated == integrated);

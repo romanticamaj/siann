@@ -176,13 +176,17 @@ TEST_CASE("silence after a signal: momentary and short-term return to minus infi
           "[dsp][loudness]") {
     for (const double rate : kRates) {
         INFO("rate " << rate);
+        // The three gating blocks that overlap the end of the tone count (BS.1770
+        // gates blocks, not sub-blocks); once the silence fills a whole block the
+        // absolute gate drops every further one, and the value holds.
         SECTION("silence through process()") {
             LoudnessMeter meter(rate, 2);
             Tone tone(meter, rate);
-            tone.play(-23.0, 5.0);
+            tone.play(-23.0, 20.0);
+            tone.silence(0.5);
             const double integrated = meter.integrated();
-            REQUIRE(std::abs(integrated - -23.0) <= kTolerance);
-            tone.silence(4.0);
+            CHECK(std::abs(integrated - -23.0) <= kTolerance);
+            tone.silence(3.5);
             CHECK(isMinusInfinity(meter.momentary()));
             CHECK(isMinusInfinity(meter.shortTerm()));
             CHECK(meter.integrated() == integrated);
@@ -190,9 +194,11 @@ TEST_CASE("silence after a signal: momentary and short-term return to minus infi
         SECTION("silence as processSilence()") {
             LoudnessMeter meter(rate, 2);
             Tone tone(meter, rate);
-            tone.play(-23.0, 5.0);
+            tone.play(-23.0, 20.0);
+            meter.processSilence(static_cast<int>(rate) / 2);
             const double integrated = meter.integrated();
-            meter.processSilence(static_cast<int>(rate) * 4);
+            CHECK(std::abs(integrated - -23.0) <= kTolerance);
+            meter.processSilence(static_cast<int>(rate) * 7 / 2);
             CHECK(isMinusInfinity(meter.momentary()));
             CHECK(isMinusInfinity(meter.shortTerm()));
             CHECK(meter.integrated() == integrated);

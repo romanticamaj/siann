@@ -40,7 +40,8 @@
 //
 // Click (spec, "Click"): while playing, a metronome from the tempo table handed
 // over with setClickTempo() is added to each rendered span after the graph's
-// output (after the master meter and the duck) and before device-side SRC.
+// output (after the master meter, the duck and the loudness meter) and before
+// device-side SRC.
 //
 // Device-side SRC (spec, "Device-side SRC (M2)"): when the device opens at a
 // rate other than the session rate (AudioDeviceConfig::sampleRate), the graph
@@ -61,6 +62,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -68,12 +70,14 @@
 #include <string>
 #include <vector>
 
+#include "siann/dsp/loudness.hpp"
 #include "siann/graph/graph.hpp"
 #include "siann/host/interfaces.hpp"
 #include "siann/realtime/capture_bank.hpp"
 #include "siann/realtime/click.hpp"
 #include "siann/rt/callback_timer.hpp"
 #include "siann/rt/latest_mailbox.hpp"
+#include "siann/rt/load_window.hpp"
 #include "siann/rt/spsc_queue.hpp"
 
 namespace siann::realtime {
@@ -119,6 +123,14 @@ struct TransportCommand {
     std::uint64_t generation = 0;
     std::int64_t position = 0;
     bool play = false;
+};
+
+// The master loudness (m5b-engine-load-loudness, Protocol v0 item 30), in LUFS;
+// minus infinity for silence.
+struct LoudnessReading {
+    float momentary = -std::numeric_limits<float>::infinity();
+    float shortTerm = -std::numeric_limits<float>::infinity();
+    float integrated = -std::numeric_limits<float>::infinity();
 };
 
 // A cycle wrap armed for the audio thread (m5-ui-engine-loop-click). Disabled,
@@ -375,6 +387,26 @@ public:
     // processBlock inside this callback (spec, "Realtime rules and enforcement",
     // ADR-0018; M4 plugin node).
     const rt::CallbackTimer& callbackTiming() const noexcept { return timing_; }
+    // DSP load (m5b-engine-load-loudness): fed from the same two clock reads per
+    // callback as callbackTiming(), restarted by start().
+    const rt::LoadWindow& load() const noexcept { return load_; }
+
+    // The loudness meter on the master output (m5b-engine-load-loudness; spec,
+    // "Master path", "Click"): BS.1770-4 at the session rate on each rendered
+    // span after the graph's output and the duck and rise, before the click.
+    // While the transport is stopped the span is fed as digital silence. The
+    // meter is built by start() and rebuilt only when the session rate changes,
+    // so it keeps its history across a graph swap, a stop and a device change;
+    // before the first start every value is minus infinity. Read anywhere.
+    LoudnessReading loudness() const noexcept {
+        return LoudnessReading{loudnessMomentary_.load(std::memory_order_relaxed),
+                               loudnessShortTerm_.load(std::memory_order_relaxed),
+                               loudnessIntegrated_.load(std::memory_order_relaxed)};
+    }
+    // Control side: restarts the integrated value. The audio thread applies it
+    // at its next callback (an atomic generation, no queue); while stopped it is
+    // applied here.
+    void requestLoudnessReset() noexcept;
 
     DriverState state() const noexcept { return state_; }
     std::uint64_t liveEpoch() const noexcept { return liveEpoch_; }
@@ -402,6 +434,9 @@ private:
     void setUpResampling(const host::AudioDeviceConfig& config);
     void drainParams() noexcept;
     void pushMeters(std::int64_t position, int frames) noexcept;
+    void meterLoudness(const host::AudioBufferView& output, int offset, int frames, bool sounding) noexcept;
+    void applyLoudnessReset() noexcept;  // audio thread, or the control side while stopped
+    void publishLoudness() noexcept;
     void applyLocate(const TransportCommand& command) noexcept;
     void replayLocate() noexcept;
     void send(std::uint64_t epoch);
@@ -424,6 +459,16 @@ private:
     std::unique_ptr<SrcPath> src_;  // built by start() when the rates differ
     std::atomic<std::uint64_t> srcUnderruns_{0};
     rt::CallbackTimer timing_;
+    rt::LoadWindow load_;
+    // The master loudness meter: built by start(), audio side while running.
+    static constexpr int kLoudnessChannels = 2;
+    std::unique_ptr<dsp::LoudnessMeter> loudnessMeter_;
+    std::atomic<std::uint64_t> loudnessResetRequested_{0};
+    std::uint64_t loudnessResetApplied_ = 0;
+    // Written by the meter's thread, read anywhere; on their own cache line.
+    alignas(rt::kCacheLine) std::atomic<float> loudnessMomentary_{-std::numeric_limits<float>::infinity()};
+    std::atomic<float> loudnessShortTerm_{-std::numeric_limits<float>::infinity()};
+    std::atomic<float> loudnessIntegrated_{-std::numeric_limits<float>::infinity()};
 
     // Control side: every graph this driver owns, by epoch.
     std::map<std::uint64_t, std::unique_ptr<graph::PreparedGraph>> owned_;
