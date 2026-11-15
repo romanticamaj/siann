@@ -202,9 +202,9 @@ features.masterGain", plan.preview and the second connection above;
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 58/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 61/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-engine-clip-fades` 1/4, `m5b-engine-buses-sends` 1/5, `m5b-ui-edit-more` 3/10.
+`m5b-engine-clip-fades` 1/4, `m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` names a test in 4/5 since its bus-routing decision of 2026-11-15).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:
