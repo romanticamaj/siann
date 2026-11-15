@@ -21,3 +21,13 @@ test('claude skill points to the canonical siann-intake skill', () => {
   assert.match(skill, /AI planner owns arbitrary input/);
 });
 
+// m5b-bridge-native-client: the bridge finds the native siann-engine itself
+// (SIANN_ENGINE_EXE, else the core preset's build); no skill names the removed
+// Ardour-era option or the sibling checkout.
+test('the committed intake skills no longer name --engine-dir or the sibling checkout', () => {
+  for (const dir of ['.codex', '.claude']) {
+    const skill = fs.readFileSync(path.join(__dirname, '..', dir, 'skills', 'siann-intake', 'SKILL.md'), 'utf8');
+    assert.doesNotMatch(skill, /engine-dir|SIANN_ENGINE_DIR|\.\.\/siann-engine/, dir);
+  }
+});
+

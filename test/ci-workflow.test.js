@@ -261,14 +261,15 @@ test('the changes job picks jobs with check-all --changed and a plain git diff',
   assert.match(text, /node scripts\/check-all\.js --changed --base HEAD\^1 --plan --json/);
   // Everything outside a pull request.
   assert.match(text, /github\.event_name \}\}" = pull_request/);
-  assert.match(text, /"steps":\["node","native","desktop","app","package","gcc"\]/);
-  for (const output of ['native', 'desktop', 'app', 'package']) {
+  assert.match(text, /"steps":\["node","native","bridge","desktop","app","package","gcc"\]/);
+  for (const output of ['native', 'bridge', 'desktop', 'app', 'package']) {
     assert.ok(text.includes(`\n      ${output}: \${{ steps.pick.outputs.${output} }}`), output);
   }
 });
 
 test('the build jobs run only when their paths change; Node always runs', () => {
-  const gate = { native: 'native', rtsan: 'native', desktop: 'desktop', app: 'app', package: 'package' };
+  const gate = { native: 'native', rtsan: 'native', 'bridge-engine': 'bridge', desktop: 'desktop', app: 'app',
+    package: 'package' };
   for (const [id, output] of Object.entries(gate)) {
     const { text } = job(id);
     assert.match(text, /\n {4}needs: changes\n/, `${id} needs changes`);
@@ -399,3 +400,33 @@ test('ci-ok waits for the package job', () => {
   const { text } = job('ci-ok');
   assert.match(text, /needs: \[[^\]]*\bpackage\b[^\]]*\]/);
 });
+
+// ---- The bridge against siann-engine (m5b-bridge-native-client, acceptance item 5) ----
+
+test('a bridge-engine job runs the engine-gated Node tests on ubuntu, windows and macos', () => {
+  const { text } = job('bridge-engine');
+  const matrix = /os:\s*\[([^\]]*)\]/.exec(text);
+  assert.ok(matrix, 'the bridge-engine job has an os matrix');
+  assert.deepEqual(matrix[1].split(',').map((s) => s.trim()).sort(), ['macos-latest', 'ubuntu-latest', 'windows-latest']);
+  assert.match(text, /fail-fast:\s*false/);
+  assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
+  assert.match(text, /SIANN_RUN_ENGINE_TESTS:\s*'1'/);
+  assert.match(text, /SIANN_ENGINE_EXE=/);
+  assert.match(text, /run: npm test/);
+});
+
+test('the bridge-engine job builds the core-only siann-engine target the app job builds', () => {
+  const { text } = job('bridge-engine');
+  const configure = text.split('\n').find((line) => /cmake\s+-S\s+native/.test(line));
+  assert.ok(configure, 'the job configures native/');
+  assert.doesNotMatch(configure, /SIANN_WITH_JUCE=ON/, 'core-only: no JUCE');
+  assert.match(configure, /-DSIANN_WERROR=ON/);
+  assert.match(text, /cmake\s+--build\s+\S+[^\n]*--target\s+siann-engine\s*\n/);
+  assert.match(text, /compiler-cache\n {8}with:\n {10}name: bridge-engine\n/);
+});
+
+test('the changes job turns the bridge step into the bridge output, and ci-ok waits for bridge-engine', () => {
+  assert.match(job('changes').text, /bridge: steps\.has\("bridge"\)/);
+  assert.match(job('ci-ok').text, /needs: \[[^\]]*\bbridge-engine\b[^\]]*\]/);
+});
+

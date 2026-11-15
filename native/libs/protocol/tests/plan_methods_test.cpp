@@ -839,3 +839,96 @@ TEST_CASE("plan.changed and plan.status carry the rejection note; a split keeps 
               "partially approved as " + subHash);
     }
 }
+
+// m5b-bridge-native-client (spec, siann-protocol item 14): plan.rollback takes
+// {plan} or {revision}, exactly one. A revision rolls back through the history,
+// so a plan an earlier engine process applied (the plan store is in memory and
+// starts empty on open) can still be rolled back once the bundle is reopened.
+TEST_CASE("plan.rollback {revision} rolls back a plan applied before the bundle was reopened",
+          "[protocol][plans][rollback]") {
+    TempDir dir;
+    std::string planRevision;
+    std::string beforePlan;
+    {
+        session::Session first = session::Session::create(dir.bundle(), model::Document::create("Song", 48'000),
+                                                          "tester", "2026-11-04T00:00:00Z");
+        Harness h(first, manualOptions());
+        const ConnectionId c = h.authed();
+        h.commit(c, Array{trackAdd("trk_a")});
+        beforePlan = hash::formatHash(first.history().head().envelope.documentHash);
+        const std::string plan = at(h.ok(c, "plan.submit", stepsParams(Array{trackGain("trk_a", -600),
+                                                                               trackAdd("trk_b")})),
+                                    "hash")
+                                     .asString();
+        h.ok(c, "plan.approve", planParams(plan));
+        planRevision = at(at(h.ok(c, "plan.apply", planParams(plan)), "revision"), "id").asString();
+    }
+
+    session::Session reopened = session::Session::open(dir.bundle());
+    Harness h(reopened, manualOptions());
+    const ConnectionId c = h.authed();
+    REQUIRE(reopened.plans().size() == 0);
+
+    SECTION("the revision rolls back to the document before the plan") {
+        const Value rolled = h.ok(c, "plan.rollback", Value(Object{{"revision", Value(planRevision)}}));
+        CHECK(at(at(rolled, "revision"), "cause").asString() == "rollback");
+        CHECK(at(at(rolled, "revision"), "target").asString() == planRevision);
+        CHECK(at(at(rolled, "revision"), "documentHash").asString() == beforePlan);
+        CHECK(hash::formatHash(reopened.history().head().envelope.documentHash) == beforePlan);
+        // The rollback is journaled: a second reopen sees it.
+        const std::string head = reopened.history().head().envelope.id;
+        CHECK(at(h.ok(c, "session.inspect"), "revision").asString() == head);
+    }
+    SECTION("both or neither param is invalid_params and changes nothing") {
+        const std::size_t revisions = reopened.history().revisions().size();
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{}))) == "invalid_params");
+        CHECK(errorCode(h.call(c, "plan.rollback",
+                               Value(Object{{"plan", Value("sha256:" + std::string(64, '0'))},
+                                            {"revision", Value(planRevision)}}))) == "invalid_params");
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{{"revision", Value(7)}}))) == "invalid_params");
+        CHECK(reopened.history().revisions().size() == revisions);
+    }
+    SECTION("a command revision is not_a_plan, an unknown one not_found") {
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{{"revision", Value("r2")}}))) == "not_a_plan");
+        CHECK(errorCode(h.call(c, "plan.rollback", Value(Object{{"revision", Value("r99")}}))) == "not_found");
+    }
+    SECTION("a changed entity is rollback_conflict, as with {plan}") {
+        h.commit(c, Array{trackGain("trk_b", -300)});
+        const Value& error = errorOf(h.call(c, "plan.rollback", Value(Object{{"revision", Value(planRevision)}})));
+        CHECK(at(error, "code").asString() == "rollback_conflict");
+        CHECK(at(at(error, "data"), "entities").asArray().at(0).asString() == "track:trk_b");
+    }
+}
+
+TEST_CASE("plan.rollback {revision} marks the stored plan applied at it rolled_back and publishes plan.changed",
+          "[protocol][plans][rollback]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string plan = submitted(f, c, Array{trackGain("trk_a", -600)});
+    f.ok(c, "plan.approve", planParams(plan));
+    const std::string revision = at(at(f.ok(c, "plan.apply", planParams(plan)), "revision"), "id").asString();
+    const std::size_t seen = f.events(watcher).size();
+
+    f.ok(c, "plan.rollback", Value(Object{{"revision", Value(revision)}}));
+
+    CHECK(at(f.ok(c, "plan.status", planParams(plan)), "state").asString() == "rolled_back");
+    std::vector<Value> events = f.events(watcher);
+    events.erase(events.begin(), events.begin() + static_cast<std::ptrdiff_t>(seen));
+    CHECK(types(events) == std::vector<std::string>{"session.changed", "plan.changed"});
+    CHECK(at(events.back(), "state").asString() == "rolled_back");
+    // Rolled back once: the plan cannot be rolled back again by its hash.
+    CHECK(errorCode(f.call(c, "plan.rollback", planParams(plan))) == "plan_not_applied");
+}
+
+TEST_CASE("plan.rollback {revision} refuses a plan revision that is not on main", "[protocol][plans][rollback]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a")});
+    const std::string plan = submitted(f, c, Array{trackGain("trk_a", -600)});
+    f.ok(c, "plan.approve", planParams(plan));
+    const Value proposed = f.ok(c, "plan.propose", planParams(plan));
+    const std::string branchRevision = at(at(proposed, "revision"), "id").asString();
+    CHECK(errorCode(f.call(c, "plan.rollback", Value(Object{{"revision", Value(branchRevision)}}))) == "not_found");
+}

@@ -9,15 +9,15 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  ALL_STEPS, cacheRoot, dependencySource, nativeEnv, PACKAGE_NATIVE, packageStep, parseArgs, selectSteps, stepsForPath,
-  stepsForPaths,
+  ALL_STEPS, BRIDGE_NATIVE, bridgeStep, cacheRoot, dependencySource, engineTestFiles, nativeEnv, PACKAGE_NATIVE,
+  packageStep, parseArgs, selectSteps, stepsForPath, stepsForPaths,
 } = require('../scripts/check-all');
 
 const none = { desktop: false, gcc: false, app: false, json: false, only: null,
   changed: false, all: false, base: null, plan: false, jobs: null };
 
 test('every step, in run order', () => {
-  assert.deepEqual(ALL_STEPS, ['node', 'native', 'desktop', 'app', 'package', 'gcc']);
+  assert.deepEqual(ALL_STEPS, ['node', 'native', 'bridge', 'desktop', 'app', 'package', 'gcc']);
 });
 
 // m5b-package-windows: what goes into the Windows installer runs the package step.
@@ -76,11 +76,54 @@ test('docs, prose and agent files run the Node tests only', () => {
   }
 });
 
-test('the bridge, its scripts, tests and CI files run the Node tests', () => {
-  for (const file of ['src/hash/jcs.js', 'bin/siann.js', 'test/ci-workflow.test.js', 'scripts/create-demo-audio.js',
-    'examples/import-pack.json', 'package.json', 'package-lock.json', '.github/workflows/ci.yml', '.gitignore']) {
+test('the scripts, examples and CI files run the Node tests', () => {
+  for (const file of ['scripts/create-demo-audio.js', 'examples/import-pack.json', 'package.json', 'package-lock.json',
+    '.github/workflows/ci.yml', '.gitignore']) {
     assert.deepEqual(stepsForPaths([file]), ['node'], file);
   }
+});
+
+// m5b-bridge-native-client: the bridge and its tests run against siann-engine too
+// (the engine-gated tests, SIANN_RUN_ENGINE_TESTS=1; CI's bridge-engine job).
+test('the bridge, its CLI and the tests run the Node tests and the engine-gated bridge step', () => {
+  for (const file of ['src/hash/jcs.js', 'src/runtime/client.js', 'bin/siann.js', 'test/ci-workflow.test.js',
+    'test/helpers/fake-engine.js']) {
+    assert.deepEqual(stepsForPaths([file]), ['node', 'bridge'], file);
+  }
+  assert.deepEqual(stepsForPaths(['native/libs/protocol/src/protocol_server.cpp']), ['node', 'native', 'bridge', 'gcc']);
+  assert.deepEqual(stepsForPaths(['native/apps/engine/src/main.cpp']),
+    ['node', 'native', 'bridge', 'desktop', 'package', 'gcc']);
+  for (const file of ['native/libs/graph/src/graph.cpp', 'docs/schemas/command-journal-v1.md', 'app/src/main/main.ts']) {
+    assert.ok(!stepsForPath(file).includes('bridge'), file);
+  }
+});
+
+test('the bridge step builds the core-only siann-engine and runs every engine-gated Node test', async () => {
+  const commands = BRIDGE_NATIVE.map(([tool, args]) => [tool, ...args].join(' '));
+  assert.deepEqual(commands, ['cmake --preset dev', 'cmake --build --preset dev --target siann-engine']);
+  const files = engineTestFiles();
+  assert.ok(files.includes(path.join('test', 'runtime-engine.test.js')), files.join(', '));
+  assert.ok(files.includes(path.join('test', 'live-import-pack.test.js')), files.join(', '));
+  for (const file of files) {
+    assert.match(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), /SIANN_RUN_ENGINE_TESTS/, file);
+  }
+  const ran = [];
+  const result = await bridgeStep({ selected: ['node', 'bridge'], exists: () => true,
+    native: (tool, args) => { ran.push(['native', tool, ...args].join(' ')); return { ok: true, output: '' }; },
+    run: (command, args, cwd, env) => { ran.push({ command, args, env }); return { ok: true, output: '' }; } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(ran.slice(0, 2), ['native cmake --preset dev', 'native cmake --build --preset dev --target siann-engine']);
+  const tests = ran[2];
+  assert.equal(tests.command, process.execPath);
+  assert.deepEqual(tests.args, ['--test', ...files]);
+  assert.equal(tests.env.SIANN_RUN_ENGINE_TESTS, '1');
+  assert.match(tests.env.SIANN_ENGINE_EXE, /build[\\/]dev[\\/]apps[\\/]engine[\\/]siann-engine(\.exe)?$/);
+  // With the native step in the same run, the dev build is already there.
+  const again = [];
+  await bridgeStep({ selected: ['node', 'native', 'bridge'], exists: () => true,
+    native: (tool, args) => { again.push(tool, ...args); return { ok: true, output: '' }; },
+    run: () => ({ ok: true, output: '' }) });
+  assert.deepEqual(again, []);
 });
 
 test('app/ runs node and the Electron shell', () => {
@@ -99,7 +142,7 @@ test('native/ runs native and g++; the core alone leaves the JUCE preset out', (
 test('JUCE, plugin hosting, siann-engine and the build files add the desktop preset and the installer', () => {
   for (const file of ['native/libs/host_desktop/src/juce_plugin_host.cpp', 'native/libs/host_clap/src/clap_host.cpp',
     'native/libs/host_common/include/x.h', 'native/libs/host_api/include/siann/host/plugin.h',
-    'native/apps/engine/src/main.cpp', 'native/cmake/SiannJuce.cmake', 'native/cmake/SiannThirdParty.cmake',
+    'native/cmake/SiannJuce.cmake', 'native/cmake/SiannThirdParty.cmake',
     'native/CMakePresets.json', 'native/CMakeLists.txt', 'native/libs/graph/CMakeLists.txt']) {
     assert.deepEqual(stepsForPaths([file]), ['node', 'native', 'desktop', 'package', 'gcc'], file);
   }

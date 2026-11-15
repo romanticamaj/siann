@@ -1105,3 +1105,38 @@ TEST_CASE("list_commands passes the cascades through", "[protocol][mcp][buses]")
           canonical(Value(Array{Value("clip"), Value("plugin_slot"), Value("root"), Value("send")})));
     CHECK(cascades.asObject().size() == 2);
 }
+
+// m5b-bridge-native-client (spec, siann-protocol item 14): rollback_plan wraps
+// plan.rollback one to one, so it takes the plan hash or the revision id of a
+// plan an earlier engine process applied.
+TEST_CASE("rollback_plan takes a plan hash or a revision id", "[protocol][mcp][plans][rollback]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    bool listed = false;
+    for (const Value& tool : tools.asArray()) {
+        if (at(tool, "name").asString() != "rollback_plan") {
+            continue;
+        }
+        listed = true;
+        const Value& schema = at(tool, "inputSchema");
+        CHECK(at(at(at(schema, "properties"), "plan"), "type").asString() == "string");
+        CHECK(at(at(at(schema, "properties"), "revision"), "type").asString() == "string");
+        CHECK(schema.find("required") == nullptr);
+    }
+    CHECK(listed);
+
+    const Value plan = mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{trackAdd("trk_a")})}}));
+    const std::string hash = at(plan, "hash").asString();
+    mcp.ok("approve_plan", Value(Object{{"plan", Value(hash)}}));
+    const std::string revision =
+        at(at(mcp.ok("apply_plan", Value(Object{{"plan", Value(hash)}})), "revision"), "id").asString();
+
+    CHECK(at(mcp.error("rollback_plan", Value(Object{})), "code").asString() == "invalid_params");
+    CHECK(at(mcp.error("rollback_plan", Value(Object{{"plan", Value(hash)}, {"revision", Value(revision)}})), "code")
+              .asString() == "invalid_params");
+    const Value rolled = mcp.ok("rollback_plan", Value(Object{{"revision", Value(revision)}}));
+    CHECK(at(at(rolled, "revision"), "cause").asString() == "rollback");
+    CHECK(at(mcp.ok("plan_status", Value(Object{{"plan", Value(hash)}})), "state").asString() == "rolled_back");
+}
