@@ -317,12 +317,17 @@ test('the empty boxes take their size from the shell\'s rules: the button\'s rul
   const tbtn = rule(/^\.transport-hold-tbtn \{/);
   assert.match(tbtn.body, /width:\s*var\(--transport-w\)/);
   assert.match(tbtn.body, /height:\s*var\(--transport-h\)/);
-  // A .tgroup's around one .tbtn: its padding and border on each side.
+  // A .tgroup's around one .tbtn: its padding inside, and its border as a
+  // transparent hairline outside the width, so it rounds to device pixels as
+  // the .tgroup's and the .lcd's borders do (at 150 % a 1 px border is 2/3 px).
+  const frame = rule(/^\.transport-hold-tgroup, \.transport-locators-empty \{/);
+  assert.match(frame.body, /box-sizing:\s*content-box/);
+  assert.match(frame.body, /border:\s*var\(--hairline\) solid transparent/);
   const tgroup = rule(/^\.transport-hold-tgroup \{/);
-  assert.match(tgroup.body, /width:\s*calc\(var\(--transport-w\) \+ 2 \* var\(--space-3q\) \+ 2 \* var\(--hairline\)\)/);
-  assert.match(tgroup.body, /height:\s*calc\(var\(--transport-h\) \+ 2 \* var\(--space-3q\) \+ 2 \* var\(--hairline\)\)/);
-  // The locator cell's width, inside its .lcd's border.
-  assert.match(rule(/^\.transport-locators-empty \{/).body, /width:\s*calc\(var\(--display-locators-empty-w\) \+ 2 \* var\(--hairline\)\)/);
+  assert.match(tgroup.body, /width:\s*calc\(var\(--transport-w\) \+ 2 \* var\(--space-3q\)\)/);
+  assert.match(tgroup.body, /height:\s*calc\(var\(--transport-h\) \+ 2 \* var\(--space-3q\)\)/);
+  // The locator cell's width, inside that border.
+  assert.match(rule(/^\.transport-locators-empty \{/).body, /width:\s*var\(--display-locators-empty-w\)/);
   assert.match(rule(/^\.transport-locators \.cell \{/).body, /min-width:\s*var\(--display-locators-empty-w\)/);
 });
 

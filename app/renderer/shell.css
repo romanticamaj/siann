@@ -138,11 +138,14 @@ button.tbtn { padding: 0; min-height: 0; }
 .transport-locators .cell { min-width: var(--display-locators-empty-w); }
 .transport-hold-tbtn, .transport-hold-tgroup, .transport-locators-empty { display: inline-block; flex: 0 0 auto; }
 .transport-hold-tbtn { width: var(--transport-w); height: var(--transport-h); }
+/* The frame's border is a transparent hairline, not added to the width, so
+   it rounds to device pixels as the .tgroup's and the .lcd's do (150 %). */
+.transport-hold-tgroup, .transport-locators-empty { box-sizing: content-box; border: var(--hairline) solid transparent; }
 .transport-hold-tgroup {
-  width: calc(var(--transport-w) + 2 * var(--space-3q) + 2 * var(--hairline));
-  height: calc(var(--transport-h) + 2 * var(--space-3q) + 2 * var(--hairline));
+  width: calc(var(--transport-w) + 2 * var(--space-3q));
+  height: calc(var(--transport-h) + 2 * var(--space-3q));
 }
-.transport-locators-empty { width: calc(var(--display-locators-empty-w) + 2 * var(--hairline)); }
+.transport-locators-empty { width: var(--display-locators-empty-w); }
 /* The metronome's level (right-click on its button). */
 .click-level {
   position: fixed;
