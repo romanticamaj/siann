@@ -271,6 +271,45 @@
       "planHash": "sha256:9cd82c46308b201984a2a469d96face0140713980f4b6dded7ab1ce22aa46aee"
     },
     {
+      "name": "bus_and_send_sets",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r9",
+        "steps": [
+          {
+            "op": "bus.set_gain",
+            "busId": "bus_1",
+            "gainMilliDb": -6000
+          },
+          {
+            "op": "send.add",
+            "sendId": "snd_1",
+            "trackId": "trk_1",
+            "busId": "bus_1"
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "bus",
+            "id": "bus_1",
+            "hash": "sha256:86032703c145fa01d3d8d6dd0c5c35ca4ede21f156d13cdaef7dd64ca646accb"
+          },
+          {
+            "type": "send",
+            "id": "snd_1",
+            "hash": null
+          },
+          {
+            "type": "track",
+            "id": "trk_1",
+            "hash": "sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90"
+          }
+        ]
+      },
+      "planHash": "sha256:c9308aa69c20735d43927076dfa9e8f37e33378e33d41f648fed8103853843b0"
+    },
+    {
       "name": "track_input_steps",
       "plan": {
         "schema": "siann.plan.v1",
@@ -529,7 +568,7 @@
     },
     {
       "name": "unknown_entity_type",
-      "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"readSet\":[{\"type\":\"send\",\"id\":\"snd_1\",\"hash\":\"sha256:626390a78749a294c11d8accac9441a2b1eb1bf52aa73cc16f28de934846a769\"}],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}]}",
+      "planText": "{\"schema\":\"siann.plan.v1\",\"baseRevision\":\"r4\",\"steps\":[{\"op\":\"track.set_gain\",\"trackId\":\"trk_1\",\"gainMilliDb\":-600}],\"readSet\":[{\"type\":\"vca\",\"id\":\"vca_1\",\"hash\":\"sha256:be86d78ea863e3e62259dc99f94f8a849a8fce8dbb89e433cf9e1744a417d797\"}],\"writeSet\":[{\"type\":\"track\",\"id\":\"trk_1\",\"hash\":\"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90\"}]}",
       "error": "invalid_entity_set"
     },
     {
