@@ -169,7 +169,7 @@ Per acceptance item (`m5b-protocol-parity`): 1 `protocol_parity_test` "every
 served method is an MCP tool or a kNotMcp entry ...", "the tool methods and
 kNotMcp are disjoint ...", "every kNotMcp entry carries its reason",
 "engine.capabilities lists kMethods in its order"; 2 `protocol-parity` (a) to
-(g) and its self-test; 3 `protocol-parity` (a) and (c), app unit
+(h) and its self-test; 3 `protocol-parity` (a), (c) and (h), app unit
 `capabilities`; 4 `mcp_adapter_test` "list_plans and preview_plan wrap ...",
 "undo and redo are scope_denied under propose ...", "under the trusted scope
 undo and redo move main's head ...", "tools/list returns the 34 tools ...",
@@ -328,14 +328,19 @@ has a native test. What the parity tests assert:
   `kTools` and `kNotMcp` from the C++ sources (and fails loudly when the parser
   finds none of the known entries) and asserts: (a) every method has a heading
   or a table row whose cell starts with the backticked method in a
-  `docs/schemas/protocol-*.md`; (b) every dotted name those docs use in a
+  `docs/schemas/protocol-*.md`, where the two MCP mapping tables of
+  `protocol-mcp-v0.md` (the tool table and "Methods without a tool") do not
+  count: a tool row carries no params, result or errors (the core methods are
+  in `protocol-core-v0.md`); (b) every dotted name those docs use in a
   heading or a `Method` column is a method or an event (the headings of
   `protocol-events-v1.md` between "Event envelope" and "Methods"); (c)
   `app/test/unit/fixtures/capabilities-full.json` lists exactly `kMethods`; (d)
   `capabilities-reduced.json` is a subset of it; (e) the tool table of
   `protocol-mcp-v0.md` equals `kTools` row by row in `tools/list` order, with
   method and scope; (f) the native union, disjointness and reason checks; (g)
-  the doc's "Methods without a tool" table lists `kNotMcp` in order. A failure
+  the doc's "Methods without a tool" table lists `kNotMcp` in order; (h)
+  `plan.list` and `plan.preview` each have a section whose body gives params,
+  result and errors (acceptance item 3). A failure
   names the method and the place. A table-driven self-test plants an extra and
   a missing entry for every check and asserts the check names it.
 - `mcp_adapter_test` covers each tool: `list_plans` and `preview_plan` (propose)

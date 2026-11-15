@@ -7,6 +7,7 @@ This directory defines internal SIANN command and observation contracts before i
 - [Import pack plan v1](import-pack-plan-v1.md) defines the reviewable import-pack plan, its RFC 8785 (JCS) integrity hash, and the shared JCS fixtures.
 - [Intake plan v0](intake-plan-v0.md) defines the AI-to-deterministic-bridge boundary for loose audio inputs.
 - [Plan v1](plan-v1.md) defines the engine-side plan with per-entity read and write sets, its lifecycle, and the shared plan hash fixtures.
+- [Protocol core v0](protocol-core-v0.md) defines the session, command, plan, proposal, audition and job methods of the native protocol server (session.inspect, session.save, command.execute, command.list, the plan.* lifecycle, proposal.merge, proposal.discard, audition.hear, job.status) with their params, results and errors.
 - [Protocol events v1](protocol-events-v1.md) defines the native engine's protocol event stream, gap detection with `session.sync`, the read-model, undo, about and plan review methods (session.sync, session.fetch, session.undo, session.redo, engine.about, plan.list, plan.preview), the binary meter channel and the build's source location.
 - [Protocol gestures v0](protocol-gestures-v0.md) defines the fader gesture methods (gesture.begin, update, hold, end, cancel), their client lease and the gesture.ended event.
 - [Protocol engine v0](protocol-engine-v0.md) defines the transport, engine.status, the device list and selection, session.open's rebind in siann-engine and the session bundle lock.
