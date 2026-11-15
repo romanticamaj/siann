@@ -63,6 +63,11 @@ export interface Sequence {
   unmodelled: {
     events: Array<{ schema: string; seq: string; sessionId: string; revision: string; type: string } & Record<string, unknown>>;
   };
+  // m5b-engine-buses-sends: deltas on a bus and a send, and a sync that holds them.
+  buses: {
+    steps: SequenceStep[];
+    sync: Sequence['sync'];
+  };
 }
 
 export function sequence(): Sequence {
