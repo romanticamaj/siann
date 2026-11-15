@@ -77,6 +77,15 @@ export interface ClipEntity {
   readonly sourceStart: string;
   readonly length: string;
   readonly gainMilliDb: number;
+  // m5b-engine-clip-fades: present only while the side's length is not 0.
+  readonly fadeIn?: ClipFade;
+  readonly fadeOut?: ClipFade;
+}
+
+// One side of a clip's fades: length in media frames as a decimal string.
+export interface ClipFade {
+  readonly length: string;
+  readonly curve: 'linear' | 'equal_power';
 }
 
 export interface PluginSlotEntity {
