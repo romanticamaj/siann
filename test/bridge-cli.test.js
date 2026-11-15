@@ -12,6 +12,7 @@ const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const { writeWav } = require('../scripts/create-demo-audio');
+const { removeTree } = require('./helpers/fake-child');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'siann.js');
@@ -32,7 +33,7 @@ function siann(args, env = {}) {
 
 function tempRoot(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   return root;
 }
 

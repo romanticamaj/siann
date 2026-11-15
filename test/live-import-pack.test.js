@@ -14,7 +14,7 @@ const test = require('node:test');
 const { runLiveImportPack } = require('../src/workflows/live-import-pack');
 const { resolveEngineExe } = require('../src/runtime/client');
 const { writeDemoImportPack } = require('../scripts/create-demo-import-pack');
-const { inProcessClient } = require('./helpers/fake-child');
+const { inProcessClient, removeTree } = require('./helpers/fake-child');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'siann.js');
@@ -25,7 +25,7 @@ const ENGINE_GATE = process.env.SIANN_RUN_ENGINE_TESTS === '1'
 
 function tempRoot(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   return root;
 }
 

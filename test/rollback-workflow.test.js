@@ -17,6 +17,7 @@ const {
   writeRollbackCommand,
 } = require('../src/workflows/rollback');
 const { writeWav } = require('../scripts/create-demo-audio');
+const { removeTree } = require('./helpers/fake-child');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'siann.js');
@@ -95,7 +96,7 @@ test('writeRollbackCommand writes rollback.command.json next to the journal by d
 
 test('siann run then siann rollback --run, each in its own engine process, restores the pre-apply hash', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-rollback-cli-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   const journalFile = path.join(root, 'journal.json');
   const commandFile = path.join(root, 'import.command.json');
   const callsFile = path.join(root, 'calls.json');
@@ -131,7 +132,7 @@ test('siann run then siann rollback --run, each in its own engine process, resto
 
 test('rollback refuses a session whose head moved away from what the journal applied', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-rollback-moved-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   const journalFile = path.join(root, 'journal.json');
   // The applied revision does not exist in a fresh session: plan.rollback answers not_found.
   writeJson(journalFile, journalV1(root));

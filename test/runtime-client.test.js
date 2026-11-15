@@ -20,7 +20,7 @@ const {
   parseReadyLine,
   resolveEngineExe,
 } = require('../src/runtime/client');
-const { FakeChild, POLL_MS, manualSchedule } = require('./helpers/fake-child');
+const { FakeChild, POLL_MS, manualSchedule, removeTree } = require('./helpers/fake-child');
 const { FakeError, createFakeEngine } = require('./helpers/fake-engine-server');
 
 const HEX = 'a'.repeat(64);
@@ -300,7 +300,7 @@ test('session.create and session.open results are adopted as the served sessionI
   const { client, engine } = await fixture(t);
   await client.start();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-client-create-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeTree(dir));
   const created = await client.request('session.create', { path: path.join(dir, 'Song.siann') });
   assert.equal(client.sessionId, created.sessionId);
   await client.request('session.inspect');

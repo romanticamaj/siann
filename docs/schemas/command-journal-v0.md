@@ -2,7 +2,9 @@
 
 Date: 2026-07-06
 
-Status: Draft contract
+Status: Historical. Superseded by [Command journal v1](command-journal-v1.md)
+(m5b-bridge-native-client): the Ardour engine it describes is gone, and the
+bridge refuses a v0 journal.
 
 ## Purpose
 

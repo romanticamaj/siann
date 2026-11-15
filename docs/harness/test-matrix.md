@@ -19,7 +19,7 @@ gaps here when it lands.
 | 0 stale nested CMake cache (section 7) | fixed in #103 | |
 | 1 m5-ui-loop-click untested (m5-ui-transport closed its 8, m5-ui-edit-basics its 9); the alignment series after `m5-ui-tokens-spacing` (four `m5-ui-alignment-*`, `m5-ui-mockup-alignment`) not started | the M5 features themselves (in flight) | 8 to 11 |
 | 2 method/tool/doc/fixture parity | `m5b-protocol-parity` | 2 |
-| 3 bridge targets the Ardour engine, gated tests dead | `m5b-bridge-native-client` | 2 |
+| 3 bridge targets the Ardour engine, gated tests dead | closed by `m5b-bridge-native-client` (layer G in CI) | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
 | 5 rollback never deletes media or renders | `m5b-bridge-cli-coverage` | 3 |
 | 6 no ASAN/UBSAN, no fuzzing | `m5b-nightly-quality` | 3 |
@@ -46,7 +46,7 @@ gaps here when it lands.
 | **F** | Mockup fidelity gate (`docs/harness/agent-rules.md`, "UI fidelity"). Tokens and the manifest: `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). Geometry within 1 px, identical computed styles and chrome pixels per region: `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **Report-only** (`continue-on-error`, report uploaded as `fidelity-<os>`) until `m5-ui-mockup-alignment` lands; failing from then on |
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
 | **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows | nightly + manual; never on PRs |
-| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`) | none | never | see 3.3 |
+| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
 | **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, `SIANN_UX_TOUR=1`, human gates) | maintainer's machines | never | see 3.2 |
 
 Sizes at the audit: ~1,000 native `TEST_CASE`s (protocol 174, apps/engine 93,
@@ -138,7 +138,23 @@ Platform column: which OSes the automated tests actually execute on in CI.
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
+| m5b-bridge-native-client | Y (`plan_methods_test` plan.rollback {revision} after a reopen, both or neither param, not_a_plan, not on main, the stored plan rolled_back with plan.changed; `mcp_adapter_test` rollback_plan's argument) | | | Y (`ws-codec` RFC 6455 vectors; `runtime-client` against the in-process fake engine; `bridge-runner`, `bridge-cli`, `rollback-workflow`, `live-import-pack` against the fake engine (`test/helpers/fake-engine*.js`); G: `runtime-engine`, `live-import-pack` engine case against siann-engine) | 3 (B and G) | - |
 | m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools and propose stop/locate while recording, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `session_test` head guard, `engine_launch_test` kill-and-recover, wire loopback `track_recording` and a propose agent's stop over the wire) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
+
+Per acceptance item (`m5b-bridge-native-client`): 1 `runtime-client` (start,
+envelope, `resolveEngineExe`, the source no longer names the Ardour runtime),
+`bridge-runner` "runner.js no longer spawns the Ardour command runner",
+`bridge-cli` "--engine-dir is an unknown option"; 2 `runtime-client` (refused
+token, unknown method, error mapping, failed and cancelled jobs, the engine
+exiting mid-request, stop with requests in flight; `client.js` branch coverage
+above 57 %); 3 `bridge-runner` (the method sequence, the Node plan hash, the
+v1 journal, the rate refusal, the render copied out), `rollback-workflow` (a
+second process rolls back by revision), G: `runtime-engine` "plan intake,
+validate, approve, apply --run and rollback --run against siann-engine"; 4 G:
+`runtime-engine`, `live-import-pack` "creates a native session"; 5
+`ci-workflow` (the `bridge-engine` job), `check-all-changed` (the `bridge`
+step); 6 `skill-docs`, `test-matrix`, and the PR's list of changed mentions; 7
+`plan_methods_test`, `mcp_adapter_test`.
 
 Per acceptance item: 1 `engine_record_test` "engine.devices carries channel
 counts ...", "an input reports the channels the device opened ...", "a device
@@ -330,13 +346,15 @@ board run cannot run on hosted runners and need a named owner (rule 6).
 | `live import-pack` | `live-import-pack` (fake runtime) | `live-import-pack.js` 93 % / branch 37 % | real run: G only |
 | `validate-journal` | `validateJournal` unit in `bridge-runner` | | CLI untested |
 | JCS / Merkle / plan hash | `jcs`, `merkle`, `plan-hash`, `fixture-parity` | 100 / 98 / 94 % | |
-| runtime client | `runtime-client` (fake), `runtime-engine` (G) | `client.js` 84 % / branch 57 % | |
+| runtime client | `ws-codec`, `runtime-client` (in-process fake engine), `runtime-engine` (G) | | |
+| command runner | `bridge-runner` (fake engine), `bridge-cli` and `rollback-workflow` (fake engine process), G | | |
 
 There is **no MCP server in Node**: MCP is served by the native engine
-(`native/libs/protocol/src/mcp_adapter.cpp`, `POST /v0/mcp`). And the Node
-bridge has **no client for the native protocol**: `src/runtime/client.js` and
-`src/bridge/runner.js` speak the legacy Ardour runtime
-(`ardour9-siann_runtime`, `ardour9-siann_command`).
+(`native/libs/protocol/src/mcp_adapter.cpp`, `POST /v0/mcp`). The Node bridge
+speaks the native protocol since `m5b-bridge-native-client`:
+`src/runtime/client.js` starts `siann-engine` and talks to its WebSocket with
+the codec in `src/runtime/ws.js`; `src/bridge/runner.js` maps command files
+onto session.create, media.import, plans, session.save and render.start.
 
 ## 3. Platforms and what never runs
 
@@ -366,7 +384,6 @@ bridge has **no client for the native protocol**: `src/runtime/client.js` and
 | `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | the feature's build agent attaches the states; the maintainer reviews at the `ux-review` gate |
 | `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), so this is a gate, not a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `mockup-fidelity.spec.ts` "the mockup's measurement (<locale>)" (F on the mockup alone) | `SIANN_FIDELITY_MOCKUP_ONLY=1` with `SIANN_FIDELITY=1` and `SIANN_FIDELITY_MOCKUP_ROOT` (set by `scripts/fidelity-mockup-compare.js`); with the flag set the spec's app gate test skips, without it this test skips | **Not in CI**: it measures a worktree of the base commit, which the CI checkout does not have. The implementer of a change to `tokens.css`, `app/renderer/ui/*.css` or the mockup's script runs `node scripts/fidelity-mockup-compare.js` before the PR (first `m5-ui-tokens-spacing`) and attaches the result; the reviewer checks it at review |
-| `test/runtime-engine.test.js`, `test/live-import-pack.test.js` (engine case) | `SIANN_RUN_ENGINE_TESTS=1` + the legacy Ardour checkout | nobody: the Ardour engine is superseded (architecture spec, "Documents made stale"). Port or delete (gap 3) |
 | `[.][hostile-crash-child]` | hidden helper | run by its parent test; fine |
 | M2 device bench, M0 macOS bundle signing, M4 JUCE `processBlock` audit, DAWproject into Cubase (L4) | human gates | maintainer, per milestone exit / release |
 
@@ -412,7 +429,7 @@ Taken on Windows, Node 22, 2026-11-14.
 
 | Area | How | Lines | Branches | Functions | Least covered |
 |---|---|---|---|---|---|
-| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 89.2 % | 70.9 % | 96.0 % | `bin/siann.js` 74/37, `import-pack-plan.js` 81/72, `client.js` 84/57, `rollback.js` 87/50, `live-import-pack.js` 93/37 (branch), `import-pack.js` 94/62 (branch) |
+| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 92.7 % | 80.7 % | 97.0 % | Retaken with `m5b-bridge-native-client` (2026-11-15; the audit's figures were 89.2 / 70.9 / 96.0 with `client.js` 84/57): `bin/siann.js` 80/42, `import-pack-plan.js` 81/72, `live-import-pack.js` 100/46 (branch), `import-pack.js` 94/75 (branch), `runner.js` 94/79, `client.js` 95/84, `ws.js` 97/93, `rollback.js` 100/100 |
 | Node, incl. `scripts/` | same, no include filter | 86.5 % | 78.0 % | 91.2 % | `scripts/check-all.js` 53 % (the build steps), `create-daw-manifest.js` 73 % |
 | App, unit tests only | `npm run build` then `node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js` | 89.7 % of loaded files | 88.2 % | 79.7 % | `PlanPanel` 33 %, `TrackListDivider` 32 %, `ValueControl` 37 %, `Mixer` 42 %, `TrackList` 49 %, `Timeline` 51 %, `StepList` 72 %, `plans/diff` 79 %, `keys/commands` 80 %. Never loaded by a unit test: `main.ts`, `preload.ts`, `App.tsx`, `Shell.tsx`, `TopBar.tsx`, `index.tsx` (covered by e2e only) |
 | App e2e | not measured | | | | proposal: `NODE_V8_COVERAGE` for the main process and Playwright's `page.coverage` (Chromium) for the renderer, merged with c8-style tooling in the app job |
@@ -428,7 +445,6 @@ error paths of each subcommand (usage errors, `--run`).
 |---|---|---|---|---|
 | 1 | m5-ui-loop-click: 11 acceptance items (8 before the corrections of 2026-11-15), no tests on main (m5-ui-transport's 8 and m5-ui-edit-basics' 9 are covered, section 2) | High: M5 exit depends on them | per the manifest: unit (band geometry and snapping) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
 | 2 | No method/tool/doc/fixture parity test (section 4) | High: an agent-facing method can ship without an MCP tool, doc or app capability entry, silently | native test: every `kMethods` entry is an MCP tool or in an explicit `kNotMcp` list with a reason; Node test: every method in a protocol doc table and the reverse (read `kMethods` from source); app unit: `capabilities-full.json` equals `kMethods` | `m5b-protocol-parity` (M5b wave 2) |
-| 3 | Node bridge's live path targets the superseded Ardour engine; `SIANN_RUN_ENGINE_TESTS` tests never run | High for AI-facing story: the bridge cannot drive the native engine, and its only integration tests are dead | port `src/runtime/client.js` to the native protocol (WebSocket + token, or MCP over HTTP), then a CI job that runs the Node integration tests against the core-only `siann-engine` built in the `app` job; meanwhile mark the two tests as legacy | `m5b-bridge-native-client` (M5b wave 2) |
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
 | 5 | m3-rollback 2: media/renders never deleted by rollback | Medium: data loss | native: render a file, roll back the plan, assert the file and the media entry's blob remain | M3 follow-up |
 | 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
@@ -465,9 +481,8 @@ Proposed, not done (each needs a decision or touches build config others are edi
 1. Nightly `ux-tour` job with screenshot artifacts (gap 4).
 2. Nightly sanitizer job (ASAN+UBSAN) and a fuzz smoke (gap 6).
 3. Nightly native coverage job with llvm-cov, report-only (section 5).
-4. Engine-gated Node job against the native `siann-engine`, once the bridge
-   speaks the native protocol (gap 3). Running the current gated tests in CI is
-   not possible: they need the Ardour checkout.
+4. Engine-gated Node job against the native `siann-engine`: done by
+   `m5b-bridge-native-client` (the `bridge-engine` job, layer G; gap 3 closed).
 5. `long-tests.yml` on macos-latest (gap 12).
 6. Desktop job on core-library PRs (gap 7).
 7. App unit coverage printed in the app job (`--experimental-test-coverage`), no threshold.
@@ -481,8 +496,8 @@ Proposed, not done (each needs a decision or touches build config others are edi
    idempotency, `expectedRevision`), an entry in `engine.capabilities`, a row
    in its `docs/schemas/protocol-*.md`, an MCP tool with an adapter test **or**
    an explicit, reasoned exclusion, the app's `capabilities-full.json` entry,
-   and an app client unit test when the app calls it. Node client tests follow
-   once the bridge speaks the native protocol.
+   and an app client unit test when the app calls it, and a Node bridge test
+   (fake engine, plus layer G) when the bridge calls it.
 3. **Every UI feature** gets unit tests for its pure logic, a Playwright e2e for
    each user path against the real engine, the i18n fit check covering its new
    controls, and the tour states it changes (until the tour runs in CI, the

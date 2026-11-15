@@ -131,7 +131,7 @@ same JSON-RPC `id` runs against the session served now.
 | `approve_plan` | `plan.approve` | trusted | `{plan, steps?: [index]}` |
 | `reject_plan` | `plan.reject` | propose | `{plan, note?}` |
 | `apply_plan` | `plan.apply` | trusted | `{plan}` |
-| `rollback_plan` | `plan.rollback` | trusted | `{plan}` |
+| `rollback_plan` | `plan.rollback` | trusted | `{plan}` or `{revision}` (exactly one; a revision for a plan an earlier engine process applied) |
 | `propose_plan` | `plan.propose` | propose | `{plan}` |
 | `audition` | `audition.hear` | propose | `{side: "main" \| "<branch>"}` |
 | `merge_proposal` | `proposal.merge` | trusted | `{branch}` |

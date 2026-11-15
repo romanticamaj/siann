@@ -6,6 +6,7 @@
 
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
 const { PassThrough } = require('node:stream');
 
 const { EngineClient } = require('../../src/runtime/client');
@@ -89,4 +90,15 @@ async function inProcessClient(t, engineOptions = {}) {
   return { engine, child, client };
 }
 
-module.exports = { FakeChild, POLL_MS, inProcessClient, manualSchedule };
+// Removes a test's temporary tree and never throws: on Windows an engine that
+// is still stopping can hold a file, and a throwing after-hook would skip the
+// hooks that stop it (a live engine keeps the test process running).
+function removeTree(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  } catch {
+    // left in the temp directory
+  }
+}
+
+module.exports = { FakeChild, POLL_MS, inProcessClient, manualSchedule, removeTree };

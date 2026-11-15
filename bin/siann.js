@@ -33,21 +33,25 @@ function usage(status = 0) {
   const out = status === 0 ? process.stdout : process.stderr;
   out.write([
     'Usage:',
-    '  siann run <command-file.json> [--engine-dir <path>] [--runner <path>] [--json]',
+    '  siann run <command-file.json> [--device <id>] [--runner <path>] [--json]',
     '  siann validate-journal <journal-file.json> [--json]',
     '  siann plan intake <source-dir> --out <intake-plan.json> [--context <file>] [--json]',
     '  siann workflow import-pack <manifest.json> --plan <plan-file.json> [--json]',
-    '  siann workflow import-pack <manifest.json> --out <command-file.json> [--run] [--json]',
+    '  siann workflow import-pack <manifest.json> --out <command-file.json> [--run] [--device <id>] [--json]',
     '  siann workflow validate-plan <plan-file.json> [--json]',
     '  siann workflow approve-plan <plan-file.json> --out <approved-plan-file.json> [--approved-by <name>] [--json]',
     '  siann workflow reject-plan <plan-file.json> --out <rejected-plan-file.json> [--rejected-by <name>] [--reason <text>] [--json]',
-    '  siann workflow apply-plan <plan-file.json> --out <command-file.json> [--run] [--json]',
-    '  siann live import-pack <manifest.json> [--engine-dir <path>] [--runtime <path>] [--json]',
+    '  siann workflow apply-plan <plan-file.json> --out <command-file.json> [--run] [--device <id>] [--json]',
+    '  siann live import-pack <manifest.json> [--device <id>] [--runner <path>] [--json]',
     '  siann export dawproject <manifest.json> --out <file.dawproject> [--copy-media] [--json]',
-    '  siann rollback <journal.json> [--source-command <command-file.json>] [--out <command-file.json>] [--run] [--json]',
+    '  siann rollback <journal.json> [--out <command-file.json>] [--run] [--device <id>] [--json]',
     '',
-    'Environment:',
-    '  SIANN_ENGINE_DIR  Defaults to ../siann-engine when --engine-dir is omitted.',
+    'The engine (run, --run, live): the native siann-engine, started for each command on a',
+    'scratch bundle and stopped when the command ends.',
+    '  SIANN_ENGINE_EXE  the siann-engine executable; default: the core preset build,',
+    '                    native/build/dev/apps/engine/siann-engine (cmake --preset dev)',
+    '  --device <id>     passed to siann-engine (fake: no audio hardware)',
+    '  --runner <path>   a fake engine script instead of siann-engine (tests)',
     '',
   ].join('\n'));
   process.exit(status);
@@ -59,20 +63,16 @@ function parseOptions(args) {
     const arg = args[i];
     if (arg === '--json') {
       options.json = true;
-    } else if (arg === '--engine-dir') {
-      options.engineDir = args[++i];
+    } else if (arg === '--device') {
+      options.device = args[++i];
     } else if (arg === '--runner') {
       options.runner = args[++i];
-    } else if (arg === '--runtime') {
-      options.runtime = args[++i];
     } else if (arg === '--out') {
       options.out = args[++i];
     } else if (arg === '--plan') {
       options.plan = args[++i];
     } else if (arg === '--context') {
       options.context = args[++i];
-    } else if (arg === '--source-command') {
-      options.sourceCommand = args[++i];
     } else if (arg === '--approved-by') {
       options.approvedBy = args[++i];
     } else if (arg === '--rejected-by') {
@@ -85,11 +85,19 @@ function parseOptions(args) {
       options.copyMedia = true;
     } else if (arg === '-h' || arg === '--help') {
       options.help = true;
+    } else if (arg.startsWith('--')) {
+      throw new Error(`unknown option ${arg} (siann --help lists the options)`);
     } else {
       options.positional.push(arg);
     }
   }
   return options;
+}
+
+// How run, --run and live start the engine: SIANN_ENGINE_EXE or the core preset
+// build (src/runtime/client.js), --device for siann-engine, --runner for tests.
+function engineOptions(options) {
+  return { device: options.device, runner: options.runner };
 }
 
 function printSummary(summary, json) {
@@ -102,6 +110,7 @@ function printSummary(summary, json) {
     `status: ${summary.status}`,
     `commandFile: ${summary.commandFile}`,
     summary.journal ? `journal: ${summary.journal.path} (${summary.journal.status}, ${summary.journal.risk}, ${summary.journal.entryCount} entries)` : null,
+    summary.error ? `error: ${summary.error.code}: ${summary.error.message}` : null,
   ].filter(Boolean).join('\n') + '\n');
 }
 
@@ -120,10 +129,7 @@ async function main() {
     if (!commandFile) {
       usage(1);
     }
-    const summary = await runCommandFile(commandFile, {
-      engineDir: options.engineDir,
-      runner: options.runner,
-    });
+    const summary = await runCommandFile(commandFile, engineOptions(options));
     printSummary(summary, options.json);
     process.exit(summary.ok ? 0 : 1);
   }
@@ -147,10 +153,7 @@ async function main() {
     if (workflow !== 'import-pack' || !manifestFile) {
       usage(1);
     }
-    const summary = await runLiveImportPack(manifestFile, {
-      engineDir: options.engineDir,
-      runner: options.runtime,
-    });
+    const summary = await runLiveImportPack(manifestFile, engineOptions(options));
     printSummary(summary, options.json);
     process.exit(summary.ok ? 0 : 1);
   }
@@ -185,14 +188,10 @@ async function main() {
       usage(1);
     }
     const summary = writeRollbackCommand(journalFile, {
-      sourceCommandFile: options.sourceCommand,
       outFile: options.out,
     });
     if (options.run) {
-      summary.run = await runCommandFile(summary.commandFile, {
-        engineDir: options.engineDir,
-        runner: options.runner,
-      });
+      summary.run = await runCommandFile(summary.commandFile, engineOptions(options));
       summary.ok = summary.run.ok;
     }
     printSummary(summary, options.json);
@@ -247,10 +246,7 @@ async function main() {
       }
       const summary = applyImportPackPlan(planFile, options.out);
       if (options.run) {
-        summary.run = await runCommandFile(summary.commandFile, {
-          engineDir: options.engineDir,
-          runner: options.runner,
-        });
+        summary.run = await runCommandFile(summary.commandFile, engineOptions(options));
         summary.ok = summary.run.ok;
       }
       printSummary(summary, options.json);
@@ -268,10 +264,7 @@ async function main() {
       ? writeImportPackPlan(manifestFile, options.plan)
       : writeImportPackCommand(manifestFile, options.out);
     if (options.run) {
-      summary.run = await runCommandFile(summary.commandFile, {
-        engineDir: options.engineDir,
-        runner: options.runner,
-      });
+      summary.run = await runCommandFile(summary.commandFile, engineOptions(options));
       summary.ok = summary.run.ok;
     }
     printSummary(summary, options.json);

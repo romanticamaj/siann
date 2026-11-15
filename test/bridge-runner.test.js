@@ -20,7 +20,7 @@ const {
 const { buildImportPackCommand } = require('../src/workflows/import-pack');
 const { planHash } = require('../src/hash/plan-hash');
 const { writeWav } = require('../scripts/create-demo-audio');
-const { inProcessClient } = require('./helpers/fake-child');
+const { inProcessClient, removeTree } = require('./helpers/fake-child');
 
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -29,7 +29,7 @@ function writeJson(file, value) {
 
 function tempRoot(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   return root;
 }
 
@@ -118,7 +118,7 @@ test('an import-pack command file runs as session.create, imports, one plan, sav
 
   // The preview render is copied out of the bundle to its outputPath.
   assert.equal(fs.existsSync(path.join(root, 'preview.wav')), true);
-  assert.equal(fs.readFileSync(path.join(root, 'preview.wav'), 'ascii', 0, 4), 'RIFF');
+  assert.equal(fs.readFileSync(path.join(root, 'preview.wav')).subarray(0, 4).toString('ascii'), 'RIFF');
 
   assert.deepEqual(summary.result.results.map((r) => r.op), [
     'create_session', 'create_audio_track', 'create_audio_track', 'import_audio', 'import_audio',

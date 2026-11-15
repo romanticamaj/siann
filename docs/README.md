@@ -22,8 +22,7 @@ Key documents:
 SIANN is a local AI-native music production environment:
 
 ```text
-Ardour-derived audio core
-+ SIANN headless engine runtime
+native C++ audio engine (siann-engine)
 + command bridge
 + pluggable AI runtime
 + AI-friendly studio UI
@@ -53,7 +52,7 @@ platform.
 
 SIANN now has two active codebases:
 
-- `/Users/garyhsieh/siann-engine` is the Ardour-derived engine fork. It contains the C++ `session_utils/siann_command.cc` runner that directly opens and mutates Ardour sessions.
+- `native/` is the native C++ engine (architecture spec, `superpowers/specs/2026-10-14-siann-native-daw-architecture.md`); the `siann-engine` executable serves a session bundle over the protocol in `schemas/protocol-*.md`. The Node bridge starts it (`SIANN_ENGINE_EXE`, else the core preset's build) for every live command. The Ardour-derived engine fork it replaces is historical.
 - `/Users/garyhsieh/siann` is the product, docs, and developer bridge repo. It now contains a Node CLI wrapper, workflow generators, approval-gated plan files, example fixtures, and tests. It is not docs-only anymore, but it does not yet contain the future Studio UI or AI runtime.
 
 Current shipped workflow:
@@ -72,8 +71,8 @@ Current engine-backed workflow:
 multi-track manifest
 -> reviewable import plan
 -> explicit approval gate
--> engine command batch
--> Ardour session mutation
+-> engine plan (session.create, media.import, plan.submit, approve, apply)
+-> native session bundle
 -> preview render
 -> journaled rollback
 ```

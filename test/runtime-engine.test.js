@@ -15,6 +15,7 @@ const test = require('node:test');
 const { EngineClient, RuntimeError, resolveEngineExe } = require('../src/runtime/client');
 const { planHash } = require('../src/hash/plan-hash');
 const { writeWav } = require('../scripts/create-demo-audio');
+const { removeTree } = require('./helpers/fake-child');
 
 const ROOT = path.join(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'siann.js');
@@ -24,7 +25,7 @@ const GATE = process.env.SIANN_RUN_ENGINE_TESTS === '1'
 
 function tempRoot(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeTree(root));
   return root;
 }
 
@@ -45,11 +46,17 @@ function siann(args, env) {
   return JSON.parse(result.stdout);
 }
 
+// One engine process for fn, stopped afterwards: it releases the bundle lock, so
+// the next process (the CLI's, or the next withEngine) can open the bundle.
 async function withEngine(t, fn) {
   const client = new EngineClient({ exe: resolveEngineExe(), args: ['--device', 'fake'] });
   t.after(() => client.stop());
-  await client.start();
-  return fn(client);
+  try {
+    await client.start();
+    return await fn(client);
+  } finally {
+    await client.stop();
+  }
 }
 
 // The head document through session.sync, every chunk.

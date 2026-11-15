@@ -3,9 +3,10 @@
 This guide covers the SIANN product/bridge repo on Windows. The DAWproject
 export path is fully Node-based and is the first Windows verification target.
 
-The Ardour-derived engine runtime is a separate checkout and still needs its own
-Windows build story. Use the Windows flow below to verify intake planning,
-manifest generation, and Cubase-compatible `.dawproject` export first.
+The native engine (`native/`, the `siann-engine` executable) builds on Windows
+with MSVC (`native/tools/msvc-env.cmd`, see `native/README.md`). Use the Windows
+flow below to verify intake planning, manifest generation, and
+Cubase-compatible `.dawproject` export first; they need no engine.
 
 ## What This Repo Can Run
 
@@ -127,28 +128,28 @@ Copy-Item ".codex\skills\siann-intake\SKILL.md" "$HOME\.codex\skills\siann-intak
 
 Restart the agent session after installing the skill.
 
-## Engine Checkout
+## Engine Build
 
-The engine is intentionally not a submodule today. Keep it as a sibling checkout
-when you need engine-facing work:
+The engine is part of this repository. Build the core preset when you need
+engine-facing work (`node scripts/check-all.js --only bridge` does it and runs
+the engine-gated bridge tests):
 
 ```powershell
-git clone https://github.com/romanticamaj/siann.git
-git clone https://github.com/romanticamaj/siann-engine.git
+cd native
+tools\msvc-env.cmd cmake --preset dev
+tools\msvc-env.cmd cmake --build --preset dev --target siann-engine
 ```
 
-The bridge defaults to `..\siann-engine` from the product repo. Use
-`--engine-dir <path>` or `SIANN_ENGINE_DIR=<path>` if the engine checkout lives
-somewhere else.
+The bridge starts `native\build\dev\apps\engine\siann-engine.exe`. Set
+`SIANN_ENGINE_EXE=<path>` to use another build, and pass `--device fake` to run
+without audio hardware.
 
 Do not start Windows validation by building the engine. First verify the
-Node-only DAWproject path, then treat native Windows engine support as a
-separate milestone.
+Node-only DAWproject path.
 
 ## Current Limits
 
 - DAWproject export supports WAV media only.
 - DAWproject XML schema validation with `xmllint` is optional on Windows; the
   Node smoke test validates package shape without external tools.
-- `live import-pack` requires the Ardour-derived SIANN engine runtime. Treat it
-  as a separate engine-build milestone on Windows.
+- `live import-pack` and every `--run` need a built `siann-engine` (above).

@@ -3507,6 +3507,14 @@ Not used: Taskflow (allocates at runtime).
   core-only `siann-engine` target, runs `npm ci` and the Playwright Electron tests
   in `app/` with `SIANN_ENGINE_EXE` pointing at the built engine; locally
   `node scripts/check-all.js --app` runs the same after the native step.
+- The Node bridge drives the same core-only `siann-engine` (m5b-bridge-native-client):
+  a `bridge-engine` CI job on the three OSes (`fail-fast: false`) builds that
+  target and runs `npm test` with `SIANN_RUN_ENGINE_TESTS=1` and
+  `SIANN_ENGINE_EXE`, so the engine-gated Node tests run too (the CLI plan
+  workflow end to end, `--device fake`); `stepsForPath` maps `src/`, `bin/`,
+  `test/`, `native/libs/protocol` and `native/apps/engine` to it, and pushes to
+  main and the nightly run take it. Locally `node scripts/check-all.js --only
+  bridge`.
 - `npm run app` at the repository root (`scripts/run-app.js`, Node built-ins only)
   starts the app from a source checkout: `npm ci` in `app/` when its
   dependencies are missing or older than `app/package-lock.json`, `npm run build`,

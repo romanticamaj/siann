@@ -128,12 +128,12 @@ SIANN CLI.
    xmllint --noout --schema "$tmp/MetaData.xsd" "$tmp/pkg/metadata.xml"
    ```
 
-7. Optionally render a SIANN/Ardour-compatible preview.
+7. Optionally render a SIANN preview with the native engine.
 
    If the user wants audio or visual verification, run:
 
    ```sh
-   node bin/siann.js live import-pack <manifest.json> --engine-dir <path-to-siann-engine> --json
+   node bin/siann.js live import-pack <manifest.json> --device fake --json
    ```
 
 8. Report paths and review points.
@@ -146,7 +146,7 @@ SIANN CLI.
 Use these only after AI intake has decided the mapping:
 
 - `node bin/siann.js export dawproject <manifest.json> --out <file.dawproject> --copy-media --json`
-- `node bin/siann.js live import-pack <manifest.json> --engine-dir <path-to-siann-engine> --json`
+- `node bin/siann.js live import-pack <manifest.json> --device fake --json`
 - `node bin/siann.js plan intake <source-dir> --out <intake-plan.json> --json`
 
 `plan intake` is a deterministic helper for known fixtures and regression

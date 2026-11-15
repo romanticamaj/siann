@@ -2244,8 +2244,17 @@ struct ProtocolServer::Impl {
                                                          options.clock()));
         }
         if (method == "plan.rollback") {
-            return published(request, session->rollbackPlan(requireString(request.params, "plan", method),
-                                                            options.actor, options.clock()));
+            // {plan} or {revision}, exactly one (item 14; m5b-bridge-native-client).
+            const bool byPlan = request.params.find("plan") != nullptr;
+            if (byPlan == (request.params.find("revision") != nullptr)) {
+                throw ProtocolError("invalid_params", "plan.rollback: give exactly one of plan and revision");
+            }
+            if (byPlan) {
+                return published(request, session->rollbackPlan(requireString(request.params, "plan", method),
+                                                                options.actor, options.clock()));
+            }
+            return published(request, session->rollbackRevision(requireString(request.params, "revision", method),
+                                                                options.actor, options.clock()));
         }
         if (method == "plan.propose") {
             return planPropose(request);

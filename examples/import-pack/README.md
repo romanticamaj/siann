@@ -20,7 +20,6 @@ node bin/siann.js workflow apply-plan /tmp/siann-import-pack-demo/approved-plan.
   --json
 node bin/siann.js validate-journal /tmp/siann-import-pack-demo/journal.json --json
 node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json \
-  --source-command /tmp/siann-import-pack-demo/import-pack.command.json \
   --out /tmp/siann-import-pack-demo/rollback.command.json \
   --run \
   --json
@@ -32,8 +31,9 @@ apply. Pending plans cannot be applied directly; approve the plan first so the
 bridge can verify that the command hash has not changed. Applying the approved
 plan creates a session under `/tmp/siann-import-pack-demo/Session`, places a
 riser and impact on separate tracks, renders `/tmp/siann-import-pack-demo/preview.wav`,
-and records the snapshot path needed for rollback. The rollback command restores
-the pre-batch snapshot and observes the restored session.
+and records the plan revision in the journal. The rollback command opens the
+bundle again and rolls that revision back (`plan.rollback {revision}`); the
+imported media stays in the bundle.
 
 For extracted DAW test packs with `_DAW/` BGM files, `_DAW/placement.md`, and
 `_SpliceSFX/` sound effects, generate a multi-track manifest before the same

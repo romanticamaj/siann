@@ -122,7 +122,7 @@ node bin/siann.js workflow import-pack examples/import-pack/manifest.json --plan
 node bin/siann.js workflow validate-plan /tmp/siann-import-pack-demo/plan.json --json
 node bin/siann.js workflow approve-plan /tmp/siann-import-pack-demo/plan.json --out /tmp/siann-import-pack-demo/approved-plan.json --approved-by "$USER" --json
 node bin/siann.js workflow apply-plan /tmp/siann-import-pack-demo/approved-plan.json --out /tmp/siann-import-pack-demo/import-pack.command.json --run --json
-node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json --source-command /tmp/siann-import-pack-demo/import-pack.command.json --out /tmp/siann-import-pack-demo/rollback.command.json --run --json
+node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json --out /tmp/siann-import-pack-demo/rollback.command.json --run --json
 ```
 
 For extracted DAW test packs that follow the `_DAW/` and `_SpliceSFX/` layout,
@@ -147,11 +147,18 @@ node bin/siann.js export dawproject \
   --json
 ```
 
-For live engine commands, the CLI expects the local SIANN engine checkout next
-to this repository at `../siann-engine`. Set
-`SIANN_ENGINE_DIR=/path/to/siann-engine` if your checkout lives elsewhere. The
-engine is kept as a sibling project for now so the product/bridge repo remains
-lightweight while the Ardour-derived runtime build is still being stabilized.
+Live engine commands (`run`, `--run`, `live`) start the SIANN engine,
+`siann-engine`, built from `native/` in this repository. The CLI uses
+`SIANN_ENGINE_EXE` when it is set, and otherwise the default build at
+`native/build/dev/apps/engine/siann-engine`:
+
+```sh
+cd native
+cmake --preset dev
+cmake --build --preset dev --target siann-engine
+```
+
+Pass `--device fake` to run without audio hardware.
 
 For Windows setup and Cubase DAWproject testing, see [Windows Setup](docs/setup/windows.md).
 
@@ -159,7 +166,7 @@ For contributor-specific architecture notes, implementation boundaries, and inte
 
 ## License
 
-SIANN is licensed under GPL-2.0-or-later. The engine path is Ardour-derived, so contributors should assume GPL-compatible licensing requirements for engine and bridge work.
+SIANN is licensed under GPL-2.0-or-later. Contributors should assume GPL-compatible licensing requirements for engine and bridge work.
 
 ## Keywords
 
