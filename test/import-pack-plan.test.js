@@ -54,7 +54,6 @@ function manifest(root) {
     preview: {
       outputPath: path.join(root, 'preview.wav'),
       sampleRate: 48000,
-      bitDepth: '16',
     },
   };
 }

@@ -189,6 +189,11 @@ public:
     const Revision& rollback(std::string_view planHashText, std::string actor, std::string time,
                              const Rollback& rollbackRevision);
 
+    // A plan rolled back by its revision instead of its hash (siann-protocol
+    // item 14, plan.rollback {revision}): every applied plan whose
+    // appliedRevision is revisionId becomes rolled_back. No-op when none is.
+    void markRolledBack(std::string_view revisionId);
+
     const Plan* find(std::string_view planHashText) const noexcept;
     std::size_t size() const noexcept { return plans_.size(); }
     // Every plan in the order it was first stored (submission order; a

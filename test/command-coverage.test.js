@@ -4,7 +4,6 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { buildImportPackCommand } = require('../src/workflows/import-pack');
-const { buildLiveImportCommands } = require('../src/workflows/live-import-pack');
 const { buildRollbackCommand } = require('../src/workflows/rollback');
 
 function readJson(file) {
@@ -37,32 +36,15 @@ test('engine command coverage documents every command used by fixtures and workf
   for (const command of buildImportPackCommand(manifest).commands) {
     required.add(command.op);
   }
-  for (const command of buildLiveImportCommands(manifest)) {
-    required.add(command.op);
-  }
+  // `live import-pack` runs the same command list (m5b-bridge-native-client).
   const rollbackJournal = {
-    schemaVersion: 'siann.command_journal.v0',
-    batches: [
-      {
-        preState: {
-          snapshot: {
-            path: '/tmp/siann-command-coverage/snapshot.tar.gz',
-          },
-        },
-      },
-    ],
+    schemaVersion: 'siann.command_journal.v1',
+    journalId: 'coverage',
+    status: 'applied',
+    bundle: '/tmp/siann-command-coverage/Session',
+    batches: [{ status: 'applied', risk: 'normal', appliedRevision: 'r3', entries: [] }],
   };
-  const rollbackSourceCommand = {
-    schemaVersion: 'siann.command.v0',
-    commands: [
-      {
-        op: 'create_session',
-        sessionDir: '/tmp/siann-command-coverage/Session',
-        sessionName: 'CoverageSession',
-      },
-    ],
-  };
-  for (const command of buildRollbackCommand(rollbackJournal, rollbackSourceCommand).commands) {
+  for (const command of buildRollbackCommand(rollbackJournal).commands) {
     required.add(command.op);
   }
 

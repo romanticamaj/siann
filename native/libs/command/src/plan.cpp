@@ -633,6 +633,20 @@ const Revision& PlanStore::rollback(std::string_view planHashText, std::string a
     return revision;
 }
 
+void PlanStore::markRolledBack(std::string_view revisionId) {
+    bool changed = false;
+    for (auto& entry : plans_) {
+        Plan& plan = entry.second;
+        if (plan.state == PlanState::applied && plan.appliedRevision && *plan.appliedRevision == revisionId) {
+            plan.state = PlanState::rolled_back;
+            changed = true;
+        }
+    }
+    if (changed) {
+        touch();
+    }
+}
+
 void PlanStore::requireNotProposed(std::string_view planHashText) const {
     if (const std::optional<BranchId> branchId = proposalBranch(planHashText)) {
         throw CommandError("invalid_state", "the plan is proposed on branch " + *branchId +

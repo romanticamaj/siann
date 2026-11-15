@@ -117,6 +117,16 @@ set entries), `invalid_plan` (anything else malformed, including unknown fields)
 `invalid_plan_metadata`. Plans live in engine
 memory in M3 and are not stored in the session bundle.
 
+A plan applied by an earlier engine process is rolled back by its revision:
+`plan.rollback {revision}` (siann-protocol item 14; m5b-bridge-native-client)
+instead of `{plan}`, exactly one of the two (`invalid_params` otherwise). The
+revision must be a `plan` or `branch-merge` revision on main's first-parent
+chain (`not_found` otherwise, `not_a_plan` for any other cause), and it rolls
+back through the history as `{plan}` does (`rollback_conflict` unchanged). When
+the store holds a plan applied at that revision, that plan becomes `rolled_back`
+and `plan.changed` is published. The Node bridge's `siann rollback` uses it with
+the `appliedRevision` its journal recorded ([Command journal v1](command-journal-v1.md)).
+
 ## Protocol methods (m5-plan-review)
 
 The plan methods of Protocol v0 item 14 (`plan.submit`, `plan.status`,

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository contains planning documents and the first developer-facing command bridge integration layer for SIANN, a local AI-native music production environment. It is not docs-only anymore: the engine fork lives in `/Users/garyhsieh/siann-engine`, while this repo owns the Node bridge wrapper, workflow generators, fixtures, tests, and product documentation.
+This repository contains planning documents and the first developer-facing command bridge integration layer for SIANN, a local AI-native music production environment. It is not docs-only anymore: the native C++ engine lives in `native/` (the `siann-engine` executable; architecture spec `docs/superpowers/specs/2026-10-14-siann-native-daw-architecture.md`), the Electron shell in `app/`, and this repo also owns the Node bridge, workflow generators, fixtures, tests, and product documentation.
 
 Use SIANN/`siann` consistently for public names, CLI names, schemas, fixture
 paths, generated artifacts, and local repository references.
@@ -20,7 +20,7 @@ paths, generated artifacts, and local repository references.
 - `.claude/skills/siann-intake/SKILL.md` points Claude-style agents at the same SIANN intake boundary.
 - `src/bridge/` contains the Node-based developer bridge wrapper around the engine command runner.
 - `bin/siann.js` is the CLI entrypoint for bridge workflows.
-- `examples/bridge/` contains command fixtures that developers can run against a local engine checkout.
+- `examples/bridge/` contains command fixtures that developers can run against the native `siann-engine` (`SIANN_ENGINE_EXE`, else the core preset's build under `native/`).
 - `examples/import-pack/` contains the first product workflow fixture: manifest-driven asset placement and preview rendering.
 - `scripts/create-demo-audio.js` writes small WAV fixtures for workflow smoke tests and examples.
 - `scripts/check-all.js` runs every local check (`--changed` picks the steps from the paths changed against `origin/main`, `--all` runs every step, `--gcc` adds a g++ -Werror syntax check through WSL, `--desktop` the JUCE preset, `--app` the Electron shell's unit and Playwright tests against the dev build's `siann-engine`).
@@ -41,7 +41,7 @@ Key internal documents:
 - [Ardour commandability map](docs/research/ardour-commandability-map.md)
 - [Engine command coverage](docs/research/engine-command-coverage.md)
 - [Engine spike checklist](docs/research/engine-spike-checklist.md)
-- [Command journal v0](docs/schemas/command-journal-v0.md)
+- [Command journal v1](docs/schemas/command-journal-v1.md) (v0, the Ardour engine's, is historical)
 - [DAWproject export v0](docs/schemas/dawproject-export-v0.md)
 - [Import pack plan v1](docs/schemas/import-pack-plan-v1.md)
 - [Intake plan v0](docs/schemas/intake-plan-v0.md)
@@ -66,14 +66,14 @@ SIANN Command Bridge
   Typed commands, validation, snapshots, transactions, undo, event logs, render hooks.
 
 SIANN Engine
-  Ardour-derived session core for tracks, regions, routing, plugins, automation, render.
+  Native C++ session core (native/, siann-engine): tracks, clips, routing, plugins, render.
 ```
 
 The engine is the trust boundary. AI and UI layers must not directly mutate low-level session state; they operate through the command bridge.
 
 Implementation tracks:
 
-- **Engine:** implemented in `/Users/garyhsieh/siann-engine`; owns Ardour-derived session operations for import, trim, placement, save, render, observation, journal snapshots, and rollback.
+- **Engine:** the native `siann-engine` in `native/`; owns the session bundle, its revision history and write-ahead journal, media import, plans, render, and rollback, behind the protocol in `docs/schemas/protocol-*.md`.
 - **Command bridge:** partially implemented in this repo; owns JSON command files, workflow manifests, plan approval, validation, rollback command generation, and Node test coverage.
 - **Agent runtime:** not implemented yet; planned provider adapters, model configuration, tool calling, planning loops, risk policy, and local-only mode.
 - **Studio UI:** not implemented yet; next likely direction is a local web frontend for import-pack workflows, mapping review, plan diffs, preview playback, and apply/rollback controls.
@@ -124,25 +124,25 @@ Useful repository checks are:
 - `rg "term" docs/` searches the documentation.
 - `find docs -type f | sort` lists tracked documentation areas.
 - `npm test` runs the bridge wrapper, CLI, and fixture tests with Node's built-in test runner.
-- `npm run smoke:dawproject -- --json` runs the cross-platform DAWproject smoke test without the engine checkout.
+- `npm run smoke:dawproject -- --json` runs the cross-platform DAWproject smoke test without building or starting `siann-engine`.
 - `node scripts/pluginval.js [--pluginval <exe>] <plugin>...` runs pluginval v1.0.4 at strictness 5 on plugins by path; `--compat` runs it on the third-party set in `scripts/compat-plugins.json` (one `SIANN_PLUGIN_*` variable each: unset is SKIP, a missing path or a failure is FAIL); see `native/README.md`, "pluginval".
 - `node scripts/create-demo-import-pack.js --out /tmp/siann-import-pack-demo --json` creates portable demo audio plus a manifest under the chosen output directory.
-- `node bin/siann.js run examples/bridge/create-session.command.json --json` runs a command fixture against the local engine checkout.
+- `node bin/siann.js run examples/bridge/create-session.command.json --device fake --json` runs a command fixture against `siann-engine`.
 - `node scripts/create-demo-audio.js /tmp/siann-import-pack-demo/audio` creates the WAV files required by `examples/import-pack/manifest.json`.
 - `node bin/siann.js plan intake /tmp/siann-user-daw-source --out /tmp/siann-user-daw-multitrack-demo/intake-plan.json --json` writes an agent-reviewable intake plan from loose source files or known DAW pack layouts.
-- `node bin/siann.js live import-pack examples/import-pack/manifest.json --engine-dir /Users/garyhsieh/siann-engine --json` runs the current live-session smoke path: start runtime, create session, import tracks and regions, render preview, save, close, and stop runtime.
+- `node bin/siann.js live import-pack examples/import-pack/manifest.json --device fake --json` runs the live-session smoke path in one engine process: create the session, import the files, apply the tracks and clips as one plan, save, render the preview, and stop the engine.
 - `node bin/siann.js export dawproject examples/import-pack/manifest.json --out /tmp/siann-import-pack-demo/session.dawproject --copy-media --json` writes the Cubase-compatible DAWproject exchange package.
 - `node --test test/dawproject-export.test.js` runs focused DAWproject exporter coverage.
-- `SIANN_RUN_ENGINE_TESTS=1 SIANN_ENGINE_DIR=/Users/garyhsieh/siann-engine node --test test/live-import-pack.test.js` runs the gated live import-pack integration test against the local engine checkout.
+- `SIANN_RUN_ENGINE_TESTS=1 node --test test/runtime-engine.test.js test/live-import-pack.test.js` runs the engine-gated bridge tests against `siann-engine` (`SIANN_ENGINE_EXE`, else the core preset's build); `node scripts/check-all.js --only bridge` builds the engine and runs them, as CI's `bridge-engine` job does.
 - `node bin/siann.js workflow import-pack examples/import-pack/manifest.json --plan /tmp/siann-import-pack-demo/plan.json --json` generates a reviewable import-pack plan without mutating the engine session.
 - `node bin/siann.js workflow validate-plan /tmp/siann-import-pack-demo/plan.json --json` checks plan integrity and whether it can be approved or applied.
 - `node bin/siann.js workflow approve-plan /tmp/siann-import-pack-demo/plan.json --out /tmp/siann-import-pack-demo/approved-plan.json --approved-by "$USER" --json` records explicit review approval and command integrity.
 - `node bin/siann.js workflow apply-plan /tmp/siann-import-pack-demo/approved-plan.json --out /tmp/siann-import-pack-demo/import-pack.command.json --run --json` applies an approved plan by writing and running the engine command batch.
-- `node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json --source-command /tmp/siann-import-pack-demo/import-pack.command.json --out /tmp/siann-import-pack-demo/rollback.command.json --run --json` restores the import-pack snapshot and observes the rolled-back session.
+- `node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json --out /tmp/siann-import-pack-demo/rollback.command.json --run --json` opens the bundle the journal names and rolls back each plan revision it applied (`plan.rollback {revision}`); the imported media stays in the bundle.
 - `node bin/siann.js validate-journal /tmp/siann-demo/create-session/journal.json --json` validates and summarizes a generated command journal.
 - `node scripts/create-daw-manifest.js /tmp/siann-user-daw-source --out /tmp/siann-user-daw-multitrack-demo/manifest.json --session-dir /tmp/siann-user-daw-multitrack-demo/Session --preview /tmp/siann-user-daw-multitrack-demo/preview.wav --journal /tmp/siann-user-daw-multitrack-demo/journal.json --json` converts an extracted `_DAW/` plus `_SpliceSFX/` test pack into a multi-track import-pack manifest; `_DAW/placement.md` trim fields become `sourceStart` and `duration`.
 
-The bridge CLI defaults to `../siann-engine`. Use `SIANN_ENGINE_DIR=/path/to/siann-engine` or `--engine-dir /path/to/siann-engine` when needed.
+The bridge starts the native `siann-engine` for each `run`, `--run` and `live` command, on a scratch bundle it removes afterwards: `SIANN_ENGINE_EXE=/path/to/siann-engine`, else the core preset's build `native/build/dev/apps/engine/siann-engine` (`cmake --preset dev && cmake --build --preset dev --target siann-engine` in `native/`). `--device <id>` is passed to the engine (`fake` needs no audio hardware).
 
 ## Coding Style & Naming Conventions
 
@@ -176,4 +176,4 @@ Pull requests should include a brief summary, the reason for the change, affecte
 
 Do not commit provider keys, local audio assets, rendered stems, or private project files. Keep AI provider integrations runtime-pluggable and document any data-flow or privacy boundary changes in an ADR.
 
-The repository is GPL-2.0-or-later to stay aligned with the Ardour-derived engine path. Keep licensing and attribution changes explicit in docs and PR descriptions.
+The repository is GPL-2.0-or-later. Keep licensing and attribution changes explicit in docs and PR descriptions.

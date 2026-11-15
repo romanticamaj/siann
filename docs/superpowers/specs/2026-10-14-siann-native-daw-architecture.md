@@ -2020,6 +2020,11 @@ Decisions of 2026-11-04 (m3-plans):
   4. Approve the sub-plan. If that is `plan_stale`, the sub-plan stays `validated`
      and the original stays `rejected`; the error names the sub-plan's hash.
 - Plans are in-memory engine state in M3 and are not persisted in the bundle.
+  A plan applied by an earlier process is rolled back by its revision id
+  (siann-protocol item 14, `plan.rollback {revision}`; m5b-bridge-native-client:
+  the Node bridge runs one engine process per CLI invocation, so `rollback --run`
+  opens the bundle its journal names and rolls back the journal's applied
+  revision).
 
 Decisions of 2026-11-15 (m5b-engine-plan-metadata; UI redesign UR-13, 4.4, 4.5 C1
 and C9, E-7 and E-14):
@@ -2657,7 +2662,14 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
       indexes) the approved sub-plan (partial approval).
     - `plan.reject {plan, note?}` -> the rejected plan.
     - `plan.apply {plan}` -> `{revision}`, published like `command.execute`.
-    - `plan.rollback {plan}` -> `{revision}` (the inverse revision).
+    - `plan.rollback {plan}` or `{revision}` (exactly one, otherwise
+      `invalid_params`) -> `{revision}` (the inverse revision). `revision`
+      (m5b-bridge-native-client) names a `plan` or `branch-merge` revision on
+      main (main's first-parent chain; `not_found` otherwise) and is rolled back
+      through the history without the plan store (`not_found`, `not_a_plan`,
+      `rollback_conflict` unchanged), for a plan applied by an earlier engine
+      process; when the store holds a plan with that `appliedRevision` its state
+      becomes `rolled_back` and `plan.changed` is published.
     - `plan.propose {plan}` -> `{branch, revision}` (the branch's plan revision).
     - `proposal.merge {branch}` -> `{revision}` (the branch-merge revision).
     - `proposal.discard {branch}` -> `{}`.
@@ -3495,6 +3507,14 @@ Not used: Taskflow (allocates at runtime).
   core-only `siann-engine` target, runs `npm ci` and the Playwright Electron tests
   in `app/` with `SIANN_ENGINE_EXE` pointing at the built engine; locally
   `node scripts/check-all.js --app` runs the same after the native step.
+- The Node bridge drives the same core-only `siann-engine` (m5b-bridge-native-client):
+  a `bridge-engine` CI job on the three OSes (`fail-fast: false`) builds that
+  target and runs `npm test` with `SIANN_RUN_ENGINE_TESTS=1` and
+  `SIANN_ENGINE_EXE`, so the engine-gated Node tests run too (the CLI plan
+  workflow end to end, `--device fake`); `stepsForPath` maps `src/`, `bin/`,
+  `test/`, `native/libs/protocol` and `native/apps/engine` to it, and pushes to
+  main and the nightly run take it. Locally `node scripts/check-all.js --only
+  bridge`.
 - `npm run app` at the repository root (`scripts/run-app.js`, Node built-ins only)
   starts the app from a source checkout: `npm ci` in `app/` when its
   dependencies are missing or older than `app/package-lock.json`, `npm run build`,
@@ -3594,7 +3614,11 @@ To be updated together with the superseding ADR:
   `observationHash` at the document hash and keep per-entity plan staleness.
 - `docs/superpowers/specs/2026-07-07-siann-headless-engine-runtime-v0.md`: historical.
 - `docs/schemas/command-journal-v0.md`: v1 for the native engine (revision DAG,
-  WAL, diff-based touched IDs).
+  WAL, diff-based touched IDs). Done with m5b-bridge-native-client:
+  `docs/schemas/command-journal-v1.md` records the bundle, the plan hash, its base
+  and applied revisions, the touched IDs (`touchedIds`, the applied revision's
+  diff as `plan.apply` returns it) and the document hashes before and after; v0 is
+  historical and the bridge refuses it.
 - Naming: the existing Ardour checkout directory `siann-engine` collides with the
   new engine name. Rename or archive the checkout (for example
   `siann-engine-ardour-archive`) before new engine code lands.

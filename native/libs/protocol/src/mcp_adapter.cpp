@@ -49,7 +49,9 @@ const std::vector<McpTool> kTools = {
      R"({"type":"object","properties":{"plan":{"type":"string"},"note":{"type":"string"}},"required":["plan"],"additionalProperties":false})"},
     {"apply_plan", "plan.apply", McpScope::trusted, "Applies an approved plan to main as one revision.", kPlanOnly},
     {"rollback_plan", "plan.rollback", McpScope::trusted,
-     "Rolls back an applied plan with an inverse revision (rollback_conflict lists changed entities).", kPlanOnly},
+     "Rolls back an applied plan with an inverse revision, by its hash or by the revision it was applied at "
+     "(exactly one; rollback_conflict lists changed entities).",
+     R"({"type":"object","properties":{"plan":{"type":"string","description":"the plan hash, sha256:<hex>"},"revision":{"type":"string","description":"the plan or branch-merge revision on main, r<n>, for a plan an earlier engine process applied"}},"additionalProperties":false})"},
     {"propose_plan", "plan.propose", McpScope::propose,
      "Applies an approved plan onto a new proposal branch instead of main.", kPlanOnly},
     {"audition", "audition.hear", McpScope::propose, "Hears main or an open proposal branch.",

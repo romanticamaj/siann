@@ -13,15 +13,18 @@ npm test
 npm run smoke:dawproject -- --json
 ```
 
-Clone the engine only when you are working on live session commands, preview
-rendering, Ardour session mutation, or engine integration tests:
+Build the native engine only when you are working on live session commands,
+preview rendering or the engine-gated bridge tests. It lives in `native/` in
+this repository (see `native/README.md`):
 
 ```sh
-git clone https://github.com/romanticamaj/siann-engine.git
+cd native
+cmake --preset dev
+cmake --build --preset dev --target siann-engine
 ```
 
-The bridge defaults to `../siann-engine`. Set
-`SIANN_ENGINE_DIR=/path/to/siann-engine` if your checkout lives elsewhere.
+The bridge starts `native/build/dev/apps/engine/siann-engine` (the core preset's
+build). Set `SIANN_ENGINE_EXE=/path/to/siann-engine` to use another build.
 
 On Windows, start with the Node-only DAWproject path before engine runtime
 testing:
@@ -44,7 +47,8 @@ testing and skill installation notes.
 
 ```sh
 rm -rf /tmp/siann-demo/create-session
-node bin/siann.js run examples/bridge/create-session.command.json --json
+node bin/siann.js run examples/bridge/create-session.command.json --device fake --json
+SIANN_RUN_ENGINE_TESTS=1 node --test test/runtime-engine.test.js test/live-import-pack.test.js
 ```
 
 - Keep README public-facing. Put implementation details, ADR links, and internal workflow notes in `AGENTS.md` or `docs/`.

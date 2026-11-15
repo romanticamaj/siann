@@ -167,7 +167,6 @@ function buildDawZipManifest(sourceRoot, options = {}) {
     preview: {
       outputPath: previewPath,
       sampleRate: options.sampleRate || 48000,
-      bitDepth: options.bitDepth || '16',
     },
   };
 }

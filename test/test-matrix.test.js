@@ -43,3 +43,29 @@ test('every flag that gates an app e2e test has a row in section 3.2 of the test
     assert.ok(row.split('|')[1].includes(spec), `the 3.2 row for ${flag} names ${spec}`);
   }
 });
+
+// m5b-bridge-native-client (acceptance item 6): layer G, the engine-gated Node
+// tests, runs in CI (the bridge-engine job) on the three OSes; its section 3.2
+// row and gap 3 are closed.
+function matrixText() {
+  return fs.readFileSync(MATRIX, 'utf8').replace(/\r\n/g, '\n');
+}
+
+test('layer G runs in the bridge-engine CI job on ubuntu, windows and macos', () => {
+  const row = matrixText().split('\n').find((line) => line.startsWith('| **G** |'));
+  assert.ok(row, 'the matrix has a layer G row');
+  const cells = row.split('|').map((cell) => cell.trim());
+  assert.match(cells[3], /bridge-engine/, 'the CI job column names bridge-engine');
+  for (const os of ['ubuntu', 'windows', 'macos']) assert.match(cells[4], new RegExp(os), os);
+  assert.doesNotMatch(row, /\bnever\b/);
+});
+
+test('the Ardour-era rows are gone: section 3.2 has no engine-gated row and section 6 no gap 3', () => {
+  assert.doesNotMatch(section32(), /runtime-engine\.test\.js/);
+  const text = matrixText();
+  const start = text.indexOf('## 6. ');
+  assert.ok(start >= 0, 'the matrix has a section 6');
+  const section6 = text.slice(start, text.indexOf('\n## ', start + 1));
+  assert.ok(!section6.split('\n').some((line) => /^\| 3 \|/.test(line)), 'gap 3 is closed');
+  assert.doesNotMatch(text, /legacy Ardour checkout/);
+});

@@ -2,7 +2,8 @@
 
 This directory defines internal SIANN command and observation contracts before implementation code is added.
 
-- [Command journal v0](command-journal-v0.md) records command execution, rollback metadata, and replay evidence for the Ardour-derived engine bridge.
+- [Command journal v1](command-journal-v1.md) records what a bridge run applied to a native session bundle: per plan its hash, base and applied revisions and the document hashes before and after, which `siann rollback` rolls back by revision.
+- [Command journal v0](command-journal-v0.md) (historical) was the Ardour engine bridge's journal with session tar snapshots; the bridge no longer reads it.
 - [DAWproject export v0](dawproject-export-v0.md) defines the first Cubase-compatible session exchange package.
 - [Import pack plan v1](import-pack-plan-v1.md) defines the reviewable import-pack plan, its RFC 8785 (JCS) integrity hash, and the shared JCS fixtures.
 - [Intake plan v0](intake-plan-v0.md) defines the AI-to-deterministic-bridge boundary for loose audio inputs.
