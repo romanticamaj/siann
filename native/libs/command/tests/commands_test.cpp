@@ -400,7 +400,8 @@ TEST_CASE("The command catalog is listed", "[command]") {
     CHECK(names == std::vector<std::string>{
                        "bus.add", "bus.remove", "bus.rename", "bus.set_gain", "bus.set_mute", "bus.set_output",
                        "bus.set_pan", "bus.set_solo",
-                       "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "master.set_gain", "media.add",
+                       "clip.move", "clip.place", "clip.remove", "clip.set_fade", "clip.set_gain", "clip.trim", "master.set_gain",
+                       "media.add",
                        "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass",
                        "send.add", "send.remove", "send.set_enabled", "send.set_level", "send.set_pre", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
