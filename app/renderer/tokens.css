@@ -275,6 +275,26 @@
   --clip-title-h: calc(13px * var(--scale));
   --icon: calc(16px * var(--scale));
   --icon-s: calc(14px * var(--scale));
+
+  /* The empty box of a part that has landed but can be absent at runtime
+     (UI redesign 3.0; 10.7, 5): permanent, not a hold token. The locator
+     display is absent while the session has no locators; its cell keeps the
+     width the fidelity gate measures for display-locators in the mockup,
+     the same in en and zh-TW (m5-ui-loop-click). */
+  --display-locators-empty-w: calc(101.7px * var(--scale));
+
+  /* The locator band in the ruler's upper half (m5-ui-loop-click; UI
+     redesign 3.2), the mockup's draw() values: the band starts 2 px below
+     the ruler's top and ends 1 px above the upper half's bottom (y 2, height
+     RU-3), with a 2 px top line, 8 px flags and the L and R labels 10 px
+     inside its ends. The end hit distance is the app's (the mockup draws no
+     gesture). Canvas code reads them through tokens.ts. */
+  --locator-band-top: calc(2px * var(--scale));
+  --locator-band-gap: calc(1px * var(--scale));
+  --locator-band-line: calc(2px * var(--scale));
+  --locator-flag-w: calc(8px * var(--scale));
+  --locator-label-inset: calc(10px * var(--scale));
+  --locator-end-hit: calc(5px * var(--scale));
 }
 
 /* Every other size of the mockup (m5-ui-tokens-spacing; decided by the

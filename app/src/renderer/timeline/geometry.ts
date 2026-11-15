@@ -12,6 +12,7 @@
 
 import type { ClipEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
+import { TOKENS } from '../tokens';
 
 export interface Viewport {
   // Whole sample frames per CSS pixel (the zoom), at least 1.
@@ -29,6 +30,16 @@ export interface Viewport {
   readonly width: number;
   readonly height?: number;
 }
+
+// The ruler above the lanes, in two halves (UI redesign spec 3.2): the upper
+// one is the locators' (m5-ui-loop-click), the lower one the cursor's and the
+// zoom's. RULER_UPPER is the one constant the upper half's geometry (the
+// locator band, the hit test, the half boundary of the ruler's gestures) and
+// its tests take its height from. The heights are the tokens.css --ruler-h,
+// --ruler-upper-h and --ruler-lower-h (tokens.ts), as the track list's head.
+export const RULER_HEIGHT = Number.parseFloat(TOKENS['ruler-h']);
+export const RULER_UPPER = Number.parseFloat(TOKENS['ruler-upper-h']);
+export const RULER_LOWER = Number.parseFloat(TOKENS['ruler-lower-h']);
 
 export const DEFAULT_LANE_HEIGHT = 53;
 export const MIN_LANE_HEIGHT = 24;

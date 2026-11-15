@@ -416,6 +416,15 @@ jobs:
         if: runner.os != 'Linux'
         working-directory: app
         run: npm test
+      # A failed e2e run keeps Playwright's results (error contexts, traces),
+      # on every OS: macOS has no other artifact to read a failure from.
+      - name: Upload the e2e results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-${{ runner.os }}
+          path: app/test-results
+          if-no-files-found: ignore
       # The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the
       # window against the mockup at 1440x900 and device scale factor 1, in en and
       # zh-TW, on Windows and Linux. Report-only until the first gate is enforced:

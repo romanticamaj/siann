@@ -219,6 +219,18 @@ test("the desktop job keeps pluginval's logs when it fails", () => {
   assert.match(upload, /pluginval-logs/);
 });
 
+test("the app job keeps Playwright's results when its e2e fails, on every OS", () => {
+  const job = jobs(fs.readFileSync(WORKFLOW, 'utf8')).find((j) => j.id === 'app');
+  assert.ok(job, 'an app job exists');
+  const upload = steps(job).find((step) => /name: Upload the e2e results/.test(step));
+  assert.ok(upload, 'an e2e results upload step');
+  assert.match(upload, /if: failure\(\)/);
+  assert.doesNotMatch(upload, /if:[^\n]*runner\.os/);
+  assert.match(upload, /actions\/upload-artifact@v4/);
+  assert.match(upload, /name: e2e-results-\$\{\{ runner\.os \}\}/);
+  assert.match(upload, /path: app\/test-results/);
+});
+
 test('the app job builds siann-cli and hands it to the timeline e2e as SIANN_CLI_EXE', () => {
   const job = jobs(fs.readFileSync(WORKFLOW, 'utf8')).find((j) => j.id === 'app');
   assert.ok(job, 'an app job exists');

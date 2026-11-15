@@ -126,6 +126,39 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 .transport-icon { display: block; }
 .transport-play[aria-pressed="true"] { color: var(--play); border-color: var(--play); }
+/* Cycle, the click group and the metronome, and the locator display
+   (m5-ui-loop-click) are the mockup's .tbtn, .tgroup and .lcd .cell, drawn
+   by ui/top-bar.css. What stays here is what the mockup does not draw: the
+   app's button rule's padding taken off a .tbtn (the mockup's is a span),
+   the locator cell's least width while its text is shorter, and the boxes an
+   absent part keeps (spec 3.0): a .tbtn's, a .tgroup holding one, and the
+   locator cell's --display-locators-empty-w inside its .lcd's border. */
+button.tbtn { padding: 0; min-height: 0; }
+.transport-locators { flex: 0 0 auto; }
+.transport-locators .cell { min-width: var(--display-locators-empty-w); }
+.transport-hold-tbtn, .transport-hold-tgroup, .transport-locators-empty { display: inline-block; flex: 0 0 auto; }
+.transport-hold-tbtn { width: var(--transport-w); height: var(--transport-h); }
+/* The frame's border is a transparent hairline, not added to the width, so
+   it rounds to device pixels as the .tgroup's and the .lcd's do (150 %). */
+.transport-hold-tgroup, .transport-locators-empty { box-sizing: content-box; border: var(--hairline) solid transparent; }
+.transport-hold-tgroup {
+  width: calc(var(--transport-w) + 2 * var(--space-3q));
+  height: calc(var(--transport-h) + 2 * var(--space-3q));
+}
+.transport-locators-empty { width: var(--display-locators-empty-w); }
+/* The metronome's level (right-click on its button). */
+.click-level {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 2);
+  background: var(--bg-3);
+  border: var(--divider-w) solid var(--line-2);
+  border-radius: var(--radius-m);
+}
+.click-level-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); }
 .position-display {
   position: relative;
   display: grid;
@@ -181,7 +214,7 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 
 /* ---- zones */
-.zones { min-height: 0; }
+.zone-groups { min-height: 0; }
 /* The library's inner element of each panel: the zone fills it. */
 .panel-inner { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden !important; }
 .zones-center { flex: 1 1 0; }
@@ -246,8 +279,8 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 
 /* Panels animate their size when a zone opens or closes (not while dragging). */
-.zones[data-animate="true"] [data-panel] { transition: flex-grow var(--panel-motion); }
-.zones:has([data-separator="active"]) [data-panel] { transition: none; }
+.zone-groups[data-animate="true"] [data-panel] { transition: flex-grow var(--panel-motion); }
+.zone-groups:has([data-separator="active"]) [data-panel] { transition: none; }
 
 /* ---- dividers: a 1 px line, a 7 px hit area */
 .divider {

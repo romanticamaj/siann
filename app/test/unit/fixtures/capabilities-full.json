@@ -11,7 +11,7 @@
     "bus.add", "bus.remove", "bus.rename", "bus.set_gain", "bus.set_mute", "bus.set_output", "bus.set_pan", "bus.set_solo",
     "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "master.set_gain", "media.add", "media.remove",
     "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass", "send.add", "send.remove",
-    "send.set_enabled", "send.set_level", "send.set_pre", "session.rename", "session.set_tempo", "track.add",
+    "send.set_enabled", "send.set_level", "send.set_pre", "session.rename", "session.set_locators", "session.set_tempo", "track.add",
     "track.remove", "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_output", "track.set_pan", "track.set_solo"
   ],
   "methods": [
@@ -24,7 +24,7 @@
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin", "gesture.update", "gesture.hold", "gesture.end", "gesture.cancel",
     "plan.list", "plan.preview", "record.arm", "transport.record", "record.recover_take",
-    "session.create", "media.import"
+    "session.create", "media.import", "transport.set_cycle", "transport.set_click"
   ],
   "features": {
     "plans": true,
@@ -37,6 +37,9 @@
     "peaks": true,
     "recording": true,
     "mediaImport": { "formats": ["wav", "flac"] },
+    "locators": true,
+    "cycle": true,
+    "click": true,
     "masterGain": true,
     "planMetadata": true,
     "agents": true,

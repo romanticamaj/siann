@@ -154,6 +154,40 @@ async function hook<T>(name: string, arg?: string): Promise<T> {
 const view = () => hook<View>('view');
 const selected = () => hook<string[]>('selectedClips');
 
+// The renderer's state an operation's failure reports (each part null when it
+// cannot be read): its last 4 answered requests as method:code (and the last 4
+// other than the engine.status polls), the cursor's x, the focused element,
+// the timeline error's code, the raw keydown each window listener saw and
+// what it ran, the last split's decision with the cursor, clock frame and
+// clips it read, and the selection.
+async function diagnostics(): Promise<Record<string, unknown>> {
+  const state = await page
+    .evaluate(() => {
+      const client = (window as unknown as { __siannClient?: { answered?(): ReadonlyArray<{ method: string; code: string | null }> } }).__siannClient;
+      const timeline = (window as unknown as { __siannTimeline?: { cursorX?(): number | null; lastEdit?(): unknown } }).__siannTimeline;
+      const keys = (window as unknown as { __siannKeys?: unknown }).__siannKeys ?? null;
+      const active = document.activeElement as HTMLElement | null;
+      return {
+        answered: client?.answered ? client.answered().slice(-4).map((r) => `${r.method}:${r.code ?? 'ok'}`) : null,
+        answeredOther: client?.answered
+          ? client
+              .answered()
+              .filter((r) => r.method !== 'engine.status')
+              .slice(-4)
+              .map((r) => `${r.method}:${r.code ?? 'ok'}`)
+          : null,
+        cursorX: timeline?.cursorX ? timeline.cursorX() : null,
+        active: active ? `${active.tagName}${active.dataset.testid ? `[${active.dataset.testid}]` : ''}` : null,
+        timelineError: document.querySelector('[data-testid="timeline-error"]')?.getAttribute('data-code') ?? null,
+        keys,
+        lastEdit: timeline?.lastEdit ? timeline.lastEdit() : null,
+      };
+    })
+    .catch((error: Error) => ({ evaluate: error.message }));
+  const selection = await selected().catch(() => null);
+  return { ...state, selection };
+}
+
 async function rect(clipId: string): Promise<Rect> {
   await expect.poll(async () => (await hook<Rect[]>('clips')).some((r) => r.clipId === clipId)).toBe(true);
   return (await hook<Rect[]>('clips')).find((r) => r.clipId === clipId)!;
@@ -227,7 +261,14 @@ async function operation(name: string, act: () => Promise<void>, check: () => Pr
   const before = await head();
   const next = `r${number(before.revision) + 1}`;
   await act();
-  await expect(page.getByTestId('revision'), name).toHaveText(next);
+  try {
+    await expect(page.getByTestId('revision'), name).toHaveText(next);
+  } catch (error) {
+    // Diagnostic (macOS flake of the Alt+X step, PR #120): what the renderer
+    // last heard from the engine, where its cursor and focus were, the
+    // timeline's error code and the selection when no revision came.
+    throw new Error(`${name}: no revision ${next}; ${JSON.stringify(await diagnostics())}\n${(error as Error).message}`);
+  }
   expect((await head()).revision, `${name}: exactly one revision`).toBe(next);
   await check();
   await engine!.call('session.undo');

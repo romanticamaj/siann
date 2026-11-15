@@ -21,7 +21,10 @@
 // m5-ui-transport: a click in the ruler's lower half or a Shift+Alt-click in
 // the event display locates through onLocate (only when engine.capabilities
 // lists transport.locate), and the canvas follows the layout store's
-// auto-scroll setting.
+// auto-scroll setting. m5-ui-loop-click: the canvas's upper ruler half edits
+// the locators through the LoopClickController (only when the engine lists
+// session.set_locators and the locators feature), and P and Alt+P take the
+// canvas's selection from here.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -29,6 +32,7 @@ import { refusalLine } from '../i18n/errors';
 import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
 import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { CapabilitySelector } from '../model/capabilities';
+import { loopClickGates, type LoopClickController } from '../model/loop-click';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
@@ -120,6 +124,8 @@ export interface TimelineProps {
   readonly onLocate?: (frames: string) => void;
   // Test-only (SIANN_SHELL_TEST=1): the canvas's hooks once it is mounted.
   readonly onHooks?: (hooks: TimelineTestHooks | null) => void;
+  // Locators, cycle and metronome (m5-ui-loop-click); no band when absent.
+  readonly loopClick?: LoopClickController;
 }
 
 function useSessionId(client: SessionClient): string | null {
@@ -149,6 +155,7 @@ export function Timeline({
   onSelect,
   onHooks,
   onLocate,
+  loopClick,
   reconnects = 0,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
@@ -232,6 +239,15 @@ export function Timeline({
         if (canRef.current.has('transport.locate')) locateRef.current?.(frames);
       },
       autoScroll: layout.getSnapshot().layout.autoScroll,
+      locators: loopClick
+        ? {
+            enabled: () => loopClickGates(canRef.current).locators,
+            cycle: () => loopClick.state.getSnapshot()?.cycle ?? false,
+            subscribe: (listener) => loopClick.state.subscribe(listener),
+            setLocators: (range) => void loopClick.setLocators(range),
+            toggleCycle: () => loopClick.toggleCycle(),
+          }
+        : undefined,
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
     const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
@@ -247,11 +263,18 @@ export function Timeline({
       surface.destroy();
       setTimeline(null);
     };
-  }, [client, peaks, realtime, layout, sessionId, onHooks, platform]);
+  }, [client, peaks, realtime, layout, sessionId, onHooks, platform, loopClick]);
 
   useEffect(() => {
     timeline?.setSnap(snap);
   }, [timeline, snap]);
+
+  // The band follows the capabilities; P and Alt+P take this canvas's selection.
+  const bandGate = loopClickGates(can).locators;
+  useEffect(() => {
+    timeline?.invalidate();
+  }, [timeline, bandGate]);
+  useEffect(() => (timeline && loopClick ? loopClick.useSelection(() => timeline.selectionSpan()) : undefined), [timeline, loopClick]);
 
   const state = useSyncExternalStore(
     (listener) => (timeline ? timeline.subscribe(listener) : () => {}),

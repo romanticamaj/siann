@@ -27,6 +27,10 @@
 //   SIANN_TEST_LANGS          under SIANN_SHELL_TEST only: comma-separated system
 //                             languages the renderer's locale detection reads
 //                             instead of navigator.languages (e2e pin)
+//   SIANN_TEST_CAPABILITIES   under SIANN_SHELL_TEST only: a JSON file whose
+//                             object the renderer's session client uses in
+//                             place of the engine's engine.capabilities answer
+//                             (an engine that lacks methods; m5-ui-loop-click)
 //   SIANN_SHELL_PROFILING=1   under SIANN_SHELL_TEST only: serves the profiling
 //                             bundle (react-dom/profiling) as renderer.js, so the
 //                             renderer's root <Profiler> counts React commits
@@ -47,7 +51,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { engineArgs, engineTestArgs, pluginRegistryFile } from './engine-args';
+import { engineArgs, engineTestArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
 import { focusFirstWindow } from './focus';
 import { rendererRequestPath } from './serve';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
@@ -245,7 +249,11 @@ function createWindow(): void {
       // The renderer's test hooks (window.__siannTimeline, window.__siannLocale)
       // and the pinned system languages, under SIANN_SHELL_TEST=1 only.
       additionalArguments: underTest
-        ? ['--siann-test-hooks', ...(process.env.SIANN_TEST_LANGS ? [`--siann-test-langs=${process.env.SIANN_TEST_LANGS}`] : [])]
+        ? [
+            '--siann-test-hooks',
+            ...(process.env.SIANN_TEST_LANGS ? [`--siann-test-langs=${process.env.SIANN_TEST_LANGS}`] : []),
+            ...testCapabilitiesArgs(process.env, (file) => fs.readFileSync(file, 'utf8')),
+          ]
         : [],
     },
   });

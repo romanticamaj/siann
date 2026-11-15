@@ -7,6 +7,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 // The renderer arguments main.ts adds under SIANN_SHELL_TEST=1.
 const TEST_HOOKS_ARG = '--siann-test-hooks';
 const TEST_LANGS_ARG = '--siann-test-langs=';
+const TEST_CAPABILITIES_ARG = '--siann-test-capabilities=';
 
 interface EngineEndpoint {
   port: number;
@@ -22,11 +23,19 @@ function endpoint(value: unknown): EngineEndpoint | null {
 // Under SIANN_SHELL_TEST=1 the main process adds the argument, and the renderer
 // exposes its test hooks (window.__siannTimeline, window.__siannLocale);
 // window.siann stays as it is. SIANN_TEST_LANGS, when set, is the system
-// language list the test pins (the renderer's locale detection reads it first).
+// language list the test pins (the renderer's locale detection reads it first);
+// SIANN_TEST_CAPABILITIES, when set, is the engine.capabilities answer the
+// session client uses instead of the engine's.
 if (process.argv.includes(TEST_HOOKS_ARG)) {
   const langs = process.argv.find((arg) => arg.startsWith(TEST_LANGS_ARG));
   const languages = langs ? langs.slice(TEST_LANGS_ARG.length).split(',').filter(Boolean) : undefined;
-  contextBridge.exposeInMainWorld('siannTest', { timelineHooks: true, ...(languages ? { languages } : {}) });
+  const caps = process.argv.find((arg) => arg.startsWith(TEST_CAPABILITIES_ARG));
+  const capabilities: unknown = caps ? JSON.parse(decodeURIComponent(caps.slice(TEST_CAPABILITIES_ARG.length))) : undefined;
+  contextBridge.exposeInMainWorld('siannTest', {
+    timelineHooks: true,
+    ...(languages ? { languages } : {}),
+    ...(capabilities !== undefined ? { capabilities } : {}),
+  });
 }
 
 contextBridge.exposeInMainWorld('siann', {

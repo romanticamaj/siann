@@ -34,7 +34,10 @@
 // the transport, while a device runs; the period key exchanges the position
 // display's formats and F (project zone) toggles auto-scroll, both view
 // settings of the layout store. Shift+P belongs to the transport bar, which
-// owns the position field.
+// owns the position field. The locator, cycle and metronome keys
+// (m5-ui-loop-click: Num / and /, C, P, Alt+P, Num 1 / 2, Shift+1 / 2,
+// Ctrl+Num 1 / 2) are registered here over the LoopClickController, which
+// declines what would send nothing (no device, no locators, no capability).
 
 import {
   useCallback,
@@ -60,6 +63,7 @@ import type { Phase } from '../model/connection-phase';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
+import { bindLoopClickCommands, type LoopClickController } from '../model/loop-click';
 import { bindTransportCommands, type TransportController } from '../model/transport';
 import {
   effectiveLayout,
@@ -156,6 +160,8 @@ export interface ShellProps {
   // The realtime playhead and the transport (m5-ui-transport).
   readonly realtime: TransportPlayhead | null;
   readonly transport: TransportController;
+  // Locators, cycle and metronome (m5-ui-loop-click).
+  readonly loopClick: LoopClickController;
   readonly left: ReactNode;
   readonly project: ReactNode;
   readonly lower: ReactNode;
@@ -305,6 +311,7 @@ export function Shell({
   toasts,
   realtime,
   transport,
+  loopClick,
   left,
   project,
   lower,
@@ -473,17 +480,42 @@ export function Shell({
         return true;
       }),
       commands.register('project', 'view.autoScroll', () => store.dispatch({ type: 'autoScroll' })),
+      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.latest()?.playheadSamples ?? null }),
     ];
     return () => offs.forEach((off) => off());
-  }, [client, commands, engineStatus, store, transport]);
+  }, [client, commands, engineStatus, store, transport, loopClick, realtime]);
 
   // The keydown listeners: preset table -> dispatcher -> the focused zone
   // first, then the window. The focus keys in the capture phase, before any
   // element's handler (a boundary's, the library's); the rest bubbling, so an
   // element (the About dialog) can keep its keys.
   useEffect(() => {
+    // Diagnostic, under the test hooks only (PR #120's macOS e2e): the raw
+    // keydown each listener saw, what it resolved and whether it ran.
+    const note = (preset: typeof CUBASE_PRESET, event: KeyboardEvent, binding: { scope: string; commandId: string } | null, ran: boolean, prevented: boolean) => {
+      const probe = window as unknown as { siannTest?: unknown; __siannKeys?: Record<string, unknown> };
+      if (!probe.siannTest || ['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return;
+      probe.__siannKeys = {
+        ...(probe.__siannKeys ?? {}),
+        [preset === FOCUS_PRESET ? 'focus' : 'command']: {
+          key: event.key,
+          code: event.code,
+          altKey: event.altKey,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          zone: latest.current.focused,
+          platform,
+          binding: binding ? `${binding.scope}:${binding.commandId}` : null,
+          ran,
+          prevented,
+        },
+      };
+    };
     const listener = (preset: typeof CUBASE_PRESET) => (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented) {
+        note(preset, event, null, false, true);
+        return;
+      }
       const binding = resolveKey(
         {
           code: event.code,
@@ -496,7 +528,9 @@ export function Shell({
         },
         preset,
       );
-      if (binding && commands.run(binding.scope, binding.commandId)) event.preventDefault();
+      const ran = binding ? commands.run(binding.scope, binding.commandId) : false;
+      if (ran) event.preventDefault();
+      note(preset, event, binding, ran, false);
     };
     const onFocusKey = listener(FOCUS_PRESET);
     const onKey = listener(COMMAND_PRESET);
@@ -546,6 +580,7 @@ export function Shell({
         layout={store}
         commands={commands}
         transport={transport}
+        loopClick={loopClick}
       />
       <div className="shell-banner">
         {offline ? (
@@ -555,7 +590,7 @@ export function Shell({
         ) : null}
         {banner}
       </div>
-      <Group orientation="horizontal" id="zones" className="zones" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
+      <Group orientation="horizontal" id="zones" className="zone-groups" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
         <Panel
           id="panel-left"
           panelRef={panels.left}

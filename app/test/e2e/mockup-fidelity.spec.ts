@@ -177,6 +177,8 @@ function prepareBundle(scratch: string): string {
     if (track.pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan: track.pan });
     if (track.mute) exec({ op: 'track.set_mute', trackId: id, mute: true });
   });
+  // The mockup's locators: bars 9.1 to 13.1 (cycle is turned on once the app runs; UI redesign 10.7).
+  exec({ op: 'session.set_locators', left: String(8 * BAR), right: String(12 * BAR) });
   CLIPS.forEach(([track, bar, bars], index) => {
     exec({
       op: 'clip.place',
@@ -325,6 +327,9 @@ async function collectApp(page: Page): Promise<Collected> {
     masks.push(at({ x: box.x, y: box.y + CLIP_TITLE, w: box.w, h: Math.max(0, box.h - CLIP_TITLE) }));
   }
   if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: RULER_UPPER, w: 1, h: (view.height ?? display.h) - RULER_UPPER }) });
+  // The locator band (m5-ui-loop-click), as the last content frame drew it.
+  const band = await hook<{ x: number; y: number; width: number; height: number } | null>(page, 'locatorBand');
+  if (band) parts.push({ id: 'locator-band', ...at({ x: band.x, y: band.y, w: band.width, h: band.height }) });
   return { parts, masks };
 }
 
@@ -414,6 +419,9 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
   else notes.push(`Clip ${clipId(SELECTED_CLIP)} is not in view: nothing is selected.`);
   // The mockup's project cursor: 10.3.1, which is 19 s at 120 BPM.
   const engine = await engineClient(page, { events: false });
+  // The mockup's cycle: on (the locators came with the bundle).
+  await engine.call('transport.set_cycle', { enabled: true });
+  await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
   await engine.call('transport.locate', { frames: String(19 * RATE) });
   await expect.poll(async () => Math.round((await hook<number | null>(page, 'cursorX')) ?? -1)).toBe(Math.round((19 * RATE) / FRAMES_PER_PIXEL));
   // Toasts are transient (the plan's arrival): dismissed, they are not chrome.

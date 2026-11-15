@@ -7,6 +7,10 @@ export interface Recorded {
   readonly texts: string[];
   readonly strokes: Array<{ lineWidth: number; rect: [number, number, number, number] }>;
   readonly alphas: number[];
+  // Every fillRect, fill() and fillText with the fillStyle it drew in.
+  readonly fills: Array<{ style: string; rect: [number, number, number, number] }>;
+  readonly paths: Array<{ style: string }>;
+  readonly labels: Array<{ text: string; style: string }>;
   clear(): void;
 }
 
@@ -14,9 +18,17 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; recorded: Recorded
   const texts: string[] = [];
   const strokes: Recorded['strokes'] = [];
   const alphas: number[] = [];
-  const state: Record<string | symbol, unknown> = { lineWidth: 1, globalAlpha: 1 };
+  const fills: Recorded['fills'] = [];
+  const paths: Recorded['paths'] = [];
+  const labels: Recorded['labels'] = [];
+  const state: Record<string | symbol, unknown> = { lineWidth: 1, globalAlpha: 1, fillStyle: '' };
   const target: Record<string | symbol, unknown> = {
-    fillText: (text: string) => void texts.push(text),
+    fillText: (text: string) => {
+      texts.push(text);
+      labels.push({ text, style: String(state.fillStyle) });
+    },
+    fillRect: (x: number, y: number, w: number, h: number) => void fills.push({ style: String(state.fillStyle), rect: [x, y, w, h] }),
+    fill: () => void paths.push({ style: String(state.fillStyle) }),
     strokeRect: (x: number, y: number, w: number, h: number) => void strokes.push({ lineWidth: Number(state.lineWidth), rect: [x, y, w, h] }),
     measureText: (text: string) => ({ width: text.length * 6 }),
   };
@@ -32,10 +44,16 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; recorded: Recorded
     texts,
     strokes,
     alphas,
+    fills,
+    paths,
+    labels,
     clear: () => {
       texts.length = 0;
       strokes.length = 0;
       alphas.length = 0;
+      fills.length = 0;
+      paths.length = 0;
+      labels.length = 0;
     },
   };
   return { ctx: ctx as unknown as CanvasRenderingContext2D, recorded };
