@@ -816,3 +816,23 @@ TEST_CASE("A stopped context silences the clip player", "[graph][monitor][nodes]
     graph->process(ProcessContext{0, 8});
     CHECK(graph->output().channel(0)[0] == 1.0f);
 }
+
+TEST_CASE("startEdges marks the edges leaving a source, in compile and recompile", "[graph][monitor]") {
+    GraphBuilder b;
+    const NodeId clips = b.add(std::make_unique<ClipPlayerNode>(1, std::vector<ClipPlayerNode::Clip>{}), "clips");
+    const NodeId monitor =
+        b.add(std::make_unique<MonitorInputNode>(1, MonitorInputMode::input, 0, 1, nullptr, 4), "monitor");
+    const NodeId tape = b.add(std::make_unique<ClipPlayerNode>(1, std::vector<ClipPlayerNode::Clip>{}), "tape");
+    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
+    b.connect(clips, monitor);   // edge 0: a source
+    b.connect(monitor, master);  // edge 1: carries the monitored input
+    b.connect(tape, master);     // edge 2: a source
+    b.setOutput(master);
+    auto graph = std::move(b).compile(8);
+    const std::vector<std::uint8_t> expected{1, 0, 1};
+    const auto edges = graph->startEdges();
+    CHECK(std::vector<std::uint8_t>(edges.begin(), edges.end()) == expected);
+    auto again = graph->recompile();
+    const auto recompiled = again->startEdges();
+    CHECK(std::vector<std::uint8_t>(recompiled.begin(), recompiled.end()) == expected);
+}

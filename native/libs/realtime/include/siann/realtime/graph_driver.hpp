@@ -67,7 +67,10 @@
 // recorder's stamps. A live graph that monitors (PreparedGraph::monitors()) is
 // processed while the transport is stopped too, with rolling false: the
 // playhead does not move, its meters publish and the click stays off. A graph
-// without one is not processed while stopped.
+// without one is not processed while stopped. Because such a graph is audible
+// while stopped, a transport start raises only its sources' edges
+// (PreparedGraph::startEdges()), not the whole output: the monitored input
+// keeps its level across a play or record start.
 
 #include <array>
 #include <atomic>
@@ -494,8 +497,12 @@ private:
     // After a recompile's swap: frames until the held edges are fully up
     // (the hold while rebuilt delay lines fill, then the rise), and which
     // edges (the live graph's holdEdges()).
+    // Also a transport start of a graph that monitors: then pathEdges_ are its
+    // startEdges() and startRise_ is set (nothing is held, nothing carries over
+    // to a recompile's hold).
     int pathRise_ = 0;
     std::span<const std::uint8_t> pathEdges_;
+    bool startRise_ = false;
     int duckRemaining_ = 0;
     int riseRemaining_ = 0;
     std::atomic<std::int64_t> playhead_{0};

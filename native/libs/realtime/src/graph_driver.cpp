@@ -442,6 +442,13 @@ void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
         playing_.store(true);
         if (command.generation <= pausedThrough_.load()) {
             playing_.store(false);
+        } else if (current_ != nullptr && current_->monitors() && pathRise_ == 0 && !pathDuck_) {
+            // A graph that monitors was audible while stopped (its monitored
+            // input): raise only the sources, which were silent, so the input
+            // keeps its level across the start.
+            pathEdges_ = current_->startEdges();
+            pathRise_ = options_.fadeFrames;
+            startRise_ = true;
         } else {
             riseRemaining_ = options_.fadeFrames;  // from silence: fade in
         }
@@ -474,6 +481,7 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
     riseRemaining_ = options_.fadeFrames;
     pathRise_ = 0;
     pathEdges_ = {};
+    startRise_ = false;
     if (old != 0 && old != epoch) {
         retire(old);
     }
@@ -535,6 +543,7 @@ void GraphDriver::finishStop() {
     pathDuck_ = false;
     pathRise_ = 0;
     pathEdges_ = {};
+    startRise_ = false;
     if (locatePending_) {
         applyLocate(pendingLocate_);
         locatePending_ = false;
@@ -600,7 +609,11 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
         TransportCommand command;
         if (transportInbox_.pop(command)) {
             if (current_ == nullptr || !playing_.load(std::memory_order_acquire)) {
-                applyLocate(command);  // nothing audible to fade
+                // Stopped, nothing to duck: the players are silent and keep no
+                // position a listener hears, and a locate does not move the
+                // monitored input of a graph that monitors. A start raises the
+                // sources only in such a graph (applyLocate).
+                applyLocate(command);
             } else {
                 pendingLocate_ = command;
                 locatePending_ = true;
@@ -655,14 +668,18 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
                 // with this graph and may still be filling. Merged before the
                 // old graph (which owns pathEdges_) goes to the butler.
                 const std::int64_t settle = std::min<std::int64_t>(current_->settleFrames(), INT_MAX / 2);
+                // A start's rise holds no delay line: it does not carry over
+                // (the whole output rises after this duck anyway).
                 const std::span<const std::uint8_t> carried =
-                    pathRise_ > 0 ? pathEdges_ : std::span<const std::uint8_t>{};
+                    pathRise_ > 0 && !startRise_ ? pathEdges_ : std::span<const std::uint8_t>{};
+                const int carriedRise = startRise_ ? 0 : pathRise_;
                 pathEdges_ = current_->holdEdges(carried);
-                pathRise_ = std::max(static_cast<int>(settle) + options_.fadeFrames, pathRise_);
+                pathRise_ = std::max(static_cast<int>(settle) + options_.fadeFrames, carriedRise);
             } else {
                 pathEdges_ = {};
                 pathRise_ = 0;  // a new graph rises as a whole
             }
+            startRise_ = false;
             if (!retireOutbox_.push(old)) {
                 unsentRetire_ = old;
                 retirePending_ = true;
@@ -970,6 +987,7 @@ void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, in
         duckRemaining_ = std::max(duckRemaining_ - frames, 0);
     } else if (pathRise_ > 0) {
         pathRise_ = std::max(pathRise_ - frames, 0);
+        startRise_ = startRise_ && pathRise_ > 0;
     }
     const float fade = static_cast<float>(options_.fadeFrames);
     for (int i = 0; i < frames; ++i) {

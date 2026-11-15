@@ -1034,7 +1034,13 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   processed while the transport is stopped, with `ProcessContext::rolling` false:
   players output silence and keep their position, the playhead does not move, the
   meters publish and the click stays off. A graph without one is not processed
-  while stopped, as before.
+  while stopped, as before. Because a graph that monitors is audible while
+  stopped, a transport start (a locate that carries play, the production path)
+  does not raise its whole output from zero: it raises only the edges leaving its
+  sources (`PreparedGraph::startEdges()`, clip players and disk streams) over
+  `fadeFrames`, so the monitored input keeps its level across a play or record
+  start. A graph without one still rises as a whole. A locate while stopped
+  ducks nothing in either case.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
   to the command thread through `pluginEventRt` or `pluginEventAny`, and triggers a recompile with

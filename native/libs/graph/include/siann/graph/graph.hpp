@@ -213,6 +213,12 @@ public:
     // m5b-engine-monitoring: true when a node is a MonitorInputNode (the driver
     // then runs the graph while the transport is stopped).
     bool monitors() const noexcept;
+    // Per edge, 1 when it leaves a source (a node without input ports: a clip
+    // player, a disk stream). A transport start of a graph that monitors raises
+    // only these edges, since such a graph is audible while stopped: the
+    // timeline fades in and the monitored input (which enters through a
+    // MonitorInputNode, never a source) keeps its level.
+    std::span<const std::uint8_t> startEdges() const noexcept;
     // The latency of the slowest low-latency monitoring path: the output latency
     // of its edge's source (the strip's own inserts) plus what the graph adds
     // after the edge's destination (the master path). 0 without one.

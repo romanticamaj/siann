@@ -91,6 +91,7 @@ struct PreparedGraph::Impl {
     std::vector<std::uint8_t> ramped;
     std::vector<std::uint8_t> held;  // holdEdges() output, preallocated
     std::int64_t settle = 0;
+    std::vector<std::uint8_t> start;  // startEdges(): edges leaving a source
     // Audio thread -> control side. latencyQueued[n] is set while node n has
     // a change in the outbox, so the outbox holds at most one per node and
     // never fills.
@@ -140,7 +141,8 @@ struct PreparedGraph::Impl {
         latencyQueued = std::make_unique<std::atomic<bool>[]>(nodes.size());
     }
 
-    // Lists every MeterNode in schedule order, and whether the graph monitors.
+    // Lists every MeterNode in schedule order, whether the graph monitors and
+    // the edges leaving a source.
     void listMeters() {
         meters.clear();
         monitoring = false;
@@ -151,6 +153,10 @@ struct PreparedGraph::Impl {
                 meters.push_back(n);
             }
             monitoring = monitoring || dynamic_cast<const MonitorInputNode*>(state.node.get()) != nullptr;
+        }
+        start.assign(edges.size(), 0);
+        for (std::size_t e = 0; e < edges.size(); ++e) {
+            start[e] = nodes[edges[e].from].node->inputPorts().empty() ? 1 : 0;
         }
     }
 
@@ -412,6 +418,10 @@ std::int64_t PreparedGraph::totalLatency() const noexcept {
 
 bool PreparedGraph::monitors() const noexcept {
     return impl_->monitoring;
+}
+
+std::span<const std::uint8_t> PreparedGraph::startEdges() const noexcept {
+    return impl_->start;
 }
 
 std::int64_t PreparedGraph::monitorPathLatency() const noexcept {
