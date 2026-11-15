@@ -702,7 +702,7 @@ records who that is:
 ### Master path
 
 - Signal order (m5b-engine-master): each track's fader feeds its own meter
-  (meter key `<track id>`), and the track meters sum into the `master` bus. The
+  (meter key `track:<id>`), and the track meters sum into the `master` bus. The
   master gain is applied to that sum, after every track and before the master
   meter (`master.meter`, meter key `master`), which is the realtime graph's
   output; the loudness meter of m5b-engine-load-loudness also sits after the
@@ -712,10 +712,23 @@ records who that is:
   meter and no click, so offline and realtime renders agree.
 - Buses (m5b-engine-buses-sends): a bus sums the tracks and buses that output to
   it and the sends that target it, then runs its inserts and its fader (gain, pan,
-  mute) and feeds its meter (meter key `bus:<id>`, listed in the meter legend
-  after the tracks). It outputs to the master sum or to another bus ("Channels and
+  mute) and feeds its meter (meter key `bus:<id>`). The meter legend lists the
+  graph's meter keys in byte order, so `bus:<id>` entries come before `master`
+  and the `track:<id>` entries (the `input:<trackId>` entries of armed tracks
+  follow the graph's, as before); a client finds a meter by its key, never by
+  its position. It outputs to the master sum or to another bus ("Channels and
   I/O"), so the master sums the tracks and buses that still output to it. The
-  offline graph has the same buses without the meters.
+  offline graph has the same buses without the meters. A bus is stereo: its
+  sum, inserts and fader run on two channels (`TrackFaderNode(2, ...)`, linear
+  balance pan).
+- Sends (m5b-engine-buses-sends): a `SendNode` per send scales its source by
+  the send level (ramped, like a fader) and feeds the target bus's input. A
+  post-fader send taps the track's fader output (stereo); a pre-fader send taps
+  the track's last insert (the player when it has none), so a mono track's
+  pre-fader send is mono and the send node copies that channel to both
+  channels of the bus at unity (send pan is not in M5b). The send node's
+  parameters are its level, its enabled flag and its source's mute; a disabled
+  send outputs silence.
 
 ### Click
 
@@ -1462,7 +1475,14 @@ Every command prints one JSON object; exit codes stay 0, 1 (error with a code) a
   inserts and before the fader, so it ignores the track's gain and pan; a
   post-fader send is tapped after the fader (gain and pan). A disabled send
   contributes nothing and stays in the graph, so enabling it is a parameter
-  change, not a recompile.
+  change, not a recompile, as long as the solo-silence set stays the same.
+  Because only enabled sends make a channel reach a bus, `send.set_enabled`
+  (or a `send.add` or `send.remove`) while a solo exists can change which
+  channels are solo-silenced; when the set changes the edit is structural and
+  recompiles, like `track.set_solo`. `send.set_pre` moves the send's tap and is
+  always structural. The solo-silence set is computed from the document alone
+  (offline and realtime agree): a solo exists when any track or bus has `solo`,
+  a muted channel still counts for reach, and the master is never in the set.
 
 ## Modules
 
@@ -1565,10 +1585,16 @@ Rules:
   `plugin.set_bypass {slotId, bypass}`; `track.remove` declares its slots as
   cascades. M5b (m5b-engine-buses-sends): a slot carries exactly one of
   `trackId` or `busId` (`busId` is omitted on a track's slot, so every existing
-  slot hash holds; both or neither is `invalid_field`), `plugin.insert` takes
+  slot hash holds, and `trackId` on a bus's slot; both or neither is
+  `invalid_field`), `plugin.insert` takes
   exactly one of `trackId` or `busId` (`invalid_params` otherwise),
   `plugin.remove` and `plugin.set_bypass` are unchanged, and `bus.remove`
-  declares the bus's slots as cascades. Validation checks the hash's form only: a blob absent from `blobs/` at
+  declares the bus's slots as cascades. The job behind it follows:
+  `plugin.instantiate` takes exactly one of `trackId` or `busId`
+  (`invalid_params` otherwise, `not_found` for an unknown one), instantiates a
+  bus's plugin with two channels and completes with a `plugin.insert` carrying
+  the same field; an `engine.status` `plugins[]` row carries `busId` in place
+  of `trackId` for a bus's slot. Validation checks the hash's form only: a blob absent from `blobs/` at
   instantiation loads the plugin with its default state and reports it `running`
   with `error {code: "state_missing"}`; rebuilding the document never needs the
   blob or the plugin. `inserts` is omitted from the track's JSON when it is
@@ -1657,6 +1683,23 @@ Rules:
   `bus.rename`, `bus.set_gain`, `bus.set_pan`, `bus.set_mute`, `bus.set_solo`,
   `bus.set_output`, `send.add`, `send.remove`, `send.set_level`,
   `send.set_pre`, `send.set_enabled`, `track.set_output`; each is one revision.
+  Their parameters (any other field is `invalid_params`, an unknown track, bus
+  or send `not_found`, a used id `already_exists`):
+  `bus.add {busId, name, index?}` (a bus at 0 dB, centre, unmuted, unsoloed,
+  feeding the master; `index` into `busOrder`, default the end, out of range
+  `invalid_params`; declares `root` and the bus),
+  `bus.remove {busId}`, `bus.rename {busId, name}`,
+  `bus.set_gain {busId, gainMilliDb}`, `bus.set_pan {busId, pan}`,
+  `bus.set_mute {busId, mute}`, `bus.set_solo {busId, solo}`,
+  `bus.set_output {busId, output: {busId} | null}`,
+  `send.add {sendId, trackId, busId, levelMilliDb?, pre?, enabled?, index?}`
+  (defaults 0 dB, post-fader, enabled; `index` into the track's `sends`, default
+  the end, out of range `invalid_params`; declares the send and the track),
+  `send.remove {sendId}` (declares the send and its track),
+  `send.set_level {sendId, levelMilliDb}`, `send.set_pre {sendId, pre}`,
+  `send.set_enabled {sendId, enabled}` (each declares the send only) and
+  `track.set_output {trackId, output: {busId} | null}`. The bus edits declare
+  the bus only.
   `bus.remove` removes the bus's sends and slots, routes the tracks and buses
   that output to it to the master in the same revision, and declares all of them
   as cascades; `track.remove` cascades the track's sends. `validate()` rejects a
@@ -1995,11 +2038,20 @@ and C9, E-7 and E-14):
   character (U+0000 to U+001F, U+007F to U+009F); `intent` is a string of 1 to 2,000
   UTF-8 bytes without a control character other than tab, LF and CR. Both are
   measured in bytes, so a title of 67 three-byte characters (201 bytes) is refused.
+  Both also refuse the display-unsafe characters, which could make a plan read
+  as other text in the review (security fix after #121): the bidi formatting
+  characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, and
+  U+2028 and U+2029, which the intent refuses too rather than reading as
+  newlines (LF is its line break; renderers disagree on the separators). The
+  check decodes UTF-8 and works by code point; text that is not well-formed
+  UTF-8 is refused. The UI renders agent-supplied text with `dir="auto"` and
+  `unicode-bidi: isolate` as a second line.
 - `actor` is set by the server and never read from the request: `kind` is the
   credential's (`mcp` for the MCP token, `ui` for the UI token), `name` the MCP
   client's `initialize` `clientInfo.name` for its session, or the UI's auth frame
   `client.name` (siann-protocol, items 2 and 15). A name is sanitised: control
-  characters are removed, leading and trailing white space trimmed, and the rest
+  characters and the display-unsafe characters above are removed (bytes that are
+  not well-formed UTF-8 too), leading and trailing white space trimmed, and the rest
   cut to at most 64 UTF-8 bytes at a character boundary; an absent, non-string or
   then empty name is `"MCP client"` or `"SIANN"`. `plan.submit` refuses any param
   other than `steps`, `readSet`, `baseRevision`, `title` and `intent`

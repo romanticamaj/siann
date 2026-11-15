@@ -23,6 +23,8 @@ function hashDocument(document) {
   }
   if (document.locators) entities.push({ type: 'locators', id: 'locators', entityHash: sha256Jcs(document.locators) });
   if (document.master) entities.push({ type: 'master', id: 'master', entityHash: sha256Jcs(document.master) });
+  for (const entity of document.buses || []) entities.push({ type: 'bus', id: entity.id, entityHash: sha256Jcs(entity) });
+  for (const entity of document.sends || []) entities.push({ type: 'send', id: entity.id, entityHash: sha256Jcs(entity) });
   return documentHash(entities);
 }
 
@@ -163,4 +165,31 @@ test('the unmodelled events follow the base sync and carry the documented payloa
   assert.match(agent.agent.id, /^agt_[0-9a-f]+$/);
   assert.equal(agent.agent.transport, 'mcp');
   assert.equal(agent.agent.lastAction, 'submit_plan');
+});
+
+// m5b-engine-buses-sends: the buses part continues the master steps in format v3.
+test('the bus steps add, modify and remove bus:b1 and send:s1 and hash with src/hash', () => {
+  const { steps, sync } = fixture.buses;
+  assert.deepEqual(steps.map((s) => s.event.changedIds.map((c) => `${c.ref}/${c.change}`)), [
+    ['root:root/modified', 'track:trk_1/modified', 'bus:b1/added', 'send:s1/added'],
+    ['bus:b1/modified'],
+    ['root:root/modified', 'track:trk_1/modified', 'bus:b1/removed', 'send:s1/removed'],
+  ]);
+  for (const step of steps) {
+    assert.equal(step.document.schemaVersion, 'siann.session_document.v3');
+    assert.equal(hashDocument(step.document), step.documentHash);
+  }
+  // Removed again, the document hashes as before the bus.
+  const master = fixture.master.steps;
+  assert.equal(steps[2].documentHash, master[master.length - 1].documentHash);
+  assert.equal(steps[1].document.buses[0].gainMilliDb, -6000);
+  // The sync: each table once, buses before sends, after every other entity.
+  const buses = sync.filter((chunk) => 'buses' in chunk.chunk);
+  const sends = sync.filter((chunk) => 'sends' in chunk.chunk);
+  assert.equal(buses.length, 1);
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0], sync[sync.length - 1]);
+  assert.deepEqual(buses[0].chunk.buses, steps[0].document.buses);
+  assert.deepEqual(sends[0].chunk.sends, steps[0].document.sends);
+  for (const chunk of sync) assert.equal(chunk.documentHash, steps[0].documentHash);
 });

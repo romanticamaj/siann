@@ -30,6 +30,7 @@
 #include "siann/command/plan.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/json.hpp"
+#include "siann/hash/merkle.hpp"
 #include "siann/hash/sha256.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/media/audio.hpp"
@@ -246,8 +247,10 @@ Value targetJson(const GestureTarget& target) {
     return Value(Object{{"ref", Value(target.ref())}, {"param", Value(target.param)}});
 }
 
-// {target: {ref: "track:<id>", param}} or {target: {ref: "master:master",
-// param: "gain"}} (m5b-engine-master). Throws ProtocolError invalid_params.
+// {target: {ref: "track:<id>", param}}, {target: {ref: "master:master",
+// param: "gain"}} (m5b-engine-master), {target: {ref: "bus:<id>", param:
+// "gain"}} or {target: {ref: "send:<id>", param: "level"}}
+// (m5b-engine-buses-sends). Throws ProtocolError invalid_params.
 GestureTarget requireTarget(const Value& params, std::string_view method) {
     const Value* target = params.find("target");
     if (target == nullptr || target->kind() != Value::Kind::object) {
@@ -256,9 +259,12 @@ GestureTarget requireTarget(const Value& params, std::string_view method) {
     const Value* ref = stringMember(*target, "ref");
     const std::optional<model::EntityRef> parsed = ref != nullptr ? parseRef(ref->asString()) : std::nullopt;
     const bool isMaster = parsed && parsed->type == model::EntityType::master && parsed->id == model::kMasterId;
-    if (!parsed || (parsed->type != model::EntityType::track && !isMaster)) {
-        throw ProtocolError("invalid_params",
-                            std::string(method) + ": target.ref must be \"track:<id>\" or \"master:master\"");
+    const bool isMix = parsed && (parsed->type == model::EntityType::bus || parsed->type == model::EntityType::send) &&
+                       hash::isValidEntityId(parsed->id);
+    if (!parsed || (parsed->type != model::EntityType::track && !isMaster && !isMix)) {
+        throw ProtocolError("invalid_params", std::string(method) +
+                                                  ": target.ref must be \"track:<id>\", \"master:master\", "
+                                                  "\"bus:<id>\" or \"send:<id>\"");
     }
     const Value* param = stringMember(*target, "param");
     if (isMaster) {
@@ -267,11 +273,23 @@ GestureTarget requireTarget(const Value& params, std::string_view method) {
         }
         return GestureTarget::masterGain();
     }
+    if (parsed->type == model::EntityType::bus) {
+        if (param == nullptr || param->asString() != "gain") {
+            throw ProtocolError("invalid_params", std::string(method) + ": a bus target's param is gain");
+        }
+        return GestureTarget::busGain(parsed->id);
+    }
+    if (parsed->type == model::EntityType::send) {
+        if (param == nullptr || param->asString() != "level") {
+            throw ProtocolError("invalid_params", std::string(method) + ": a send target's param is level");
+        }
+        return GestureTarget::sendLevel(parsed->id);
+    }
     if (param == nullptr ||
         (param->asString() != "gain" && param->asString() != "pan" && param->asString() != "mute")) {
         throw ProtocolError("invalid_params", std::string(method) + ": target.param must be gain, pan or mute");
     }
-    return GestureTarget{parsed->id, param->asString(), false};
+    return GestureTarget::track(parsed->id, param->asString());
 }
 
 // The value in the entity's units: a number, and 0 or 1 for mute.
@@ -367,6 +385,16 @@ Value stringArray(const std::vector<std::string>& items) {
 
 Value commandNamesJson() {
     return stringArray(command::commandNames());
+}
+
+// command.list's cascades (m5b-engine-buses-sends): command name -> the sorted
+// entity types it may remove or change besides its target.
+Value commandCascadesJson() {
+    Object out;
+    for (const auto& [name, types] : command::commandCascades()) {
+        out.emplace_back(name, stringArray(types));
+    }
+    return Value(std::move(out));
 }
 
 // Params. Each throws ProtocolError invalid_params.
@@ -534,7 +562,6 @@ Value decimalOrNull(const std::optional<T>& value) {
 
 Value pluginStatusJson(const PluginStatus& plugin) {
     Object out{{"slotId", Value(plugin.slotId)},
-               {"trackId", Value(plugin.trackId)},
                {"format", Value(plugin.format)},
                {"uid", Value(plugin.uid)},
                {"state", Value(plugin.running ? "running" : "missing")},
@@ -547,6 +574,12 @@ Value pluginStatusJson(const PluginStatus& plugin) {
                {"unmeasuredCallbacks", decimalOrNull(plugin.unmeasuredCallbacks)},
                {"midiOutputOverflows", decimalOrNull(plugin.midiOutputOverflows)},
                {"midiOutputSysex", decimalOrNull(plugin.midiOutputSysex)}};
+    // The owner: trackId for a track's slot, busId for a bus's (m5b-engine-buses-sends).
+    if (!plugin.busId.empty()) {
+        out.emplace_back("busId", Value(plugin.busId));
+    } else {
+        out.emplace_back("trackId", Value(plugin.trackId));
+    }
     if (plugin.error) {
         out.emplace_back("error", errorValue(plugin.error->first, plugin.error->second));
     }
@@ -1344,7 +1377,14 @@ struct ProtocolServer::Impl {
         const std::string kind(method);
         PluginPort& plugins = requirePluginPort();
         PluginInstantiateRequest wanted;
-        wanted.trackId = requireString(request.params, "trackId", method);
+        // Exactly one owner, a track or a bus (m5b-engine-buses-sends).
+        const std::optional<std::string> trackId = optionalString(request.params, "trackId", method);
+        const std::optional<std::string> busId = optionalString(request.params, "busId", method);
+        if (trackId.has_value() == busId.has_value()) {
+            throw ProtocolError("invalid_params", "plugin.instantiate takes exactly one of trackId or busId");
+        }
+        wanted.trackId = trackId.value_or("");
+        wanted.busId = busId.value_or("");
         const Value* index = request.params.find("index");
         if (index == nullptr || index->kind() != Value::Kind::number || index->asNumber() < 0 ||
             index->asNumber() > 1e9 || index->asNumber() != static_cast<double>(static_cast<std::int64_t>(index->asNumber()))) {
@@ -1382,8 +1422,11 @@ struct ProtocolServer::Impl {
             throw ProtocolError("invalid_params", "plugin.instantiate: stateBlob must be sha256:<64 lowercase hex>");
         }
         const model::Document& head = session->history().head().document;
-        if (head.track(wanted.trackId) == nullptr) {
+        if (trackId && head.track(wanted.trackId) == nullptr) {
             throw command::CommandError("not_found", "no track with id " + wanted.trackId);
+        }
+        if (busId && head.bus(wanted.busId) == nullptr) {
+            throw command::CommandError("not_found", "no bus with id " + wanted.busId);
         }
         wanted.slotId = nextSlotId(session->history());
 
@@ -1410,7 +1453,7 @@ struct ProtocolServer::Impl {
         }
         const PluginDescriptorInfo& probed = loaded.descriptor;
         const Value insert(Object{{"op", Value("plugin.insert")},
-                                  {"trackId", Value(wanted.trackId)},
+                                  {busId ? "busId" : "trackId", Value(busId ? wanted.busId : wanted.trackId)},
                                   {"index", Value(static_cast<double>(wanted.index))},
                                   {"slotId", Value(wanted.slotId)},
                                   {"descriptor", descriptorJson(probed)},
@@ -1418,6 +1461,7 @@ struct ProtocolServer::Impl {
         model::PluginSlot slot;
         slot.id = wanted.slotId;
         slot.trackId = wanted.trackId;
+        slot.busId = wanted.busId;
         slot.format = probed.format;
         slot.uid = probed.uid;
         slot.name = probed.name;
@@ -1720,6 +1764,8 @@ struct ProtocolServer::Impl {
                                       {"click", Value(options.transportPort != nullptr)},
                                       {"recording", Value(options.recordPort != nullptr)},
                                       {"masterGain", Value(true)},
+                                      {"buses", Value(true)},
+                                      {"sends", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
                                       {"agents", Value(options.transportPort != nullptr)}})},
@@ -2166,7 +2212,8 @@ struct ProtocolServer::Impl {
             return success(request.requestId, aboutJson());
         }
         if (method == "command.list") {
-            return success(request.requestId, Value(Object{{"commands", commandNamesJson()}}));
+            return success(request.requestId,
+                           Value(Object{{"commands", commandNamesJson()}, {"cascades", commandCascadesJson()}}));
         }
         if (method == "engine.capabilities") {
             return success(request.requestId, capabilitiesJson());

@@ -90,6 +90,46 @@ private:
     int remaining_ = 0;
 };
 
+// A send (m5b-engine-buses-sends): scales its source by the send level, ramped
+// like a fader, into a stereo bus input. A mono source (a mono track's
+// pre-fader tap) is copied to both channels at unity; send pan is not in M5b.
+// It outputs silence while disabled, while its source track is muted (the
+// parameter a mute gesture writes), or while the track is solo-silenced (fixed
+// at compile time, so no parameter lifts it).
+class SendNode final : public Node {
+public:
+    static constexpr std::uint32_t kLevelMilliDb = 1;  // INT32_MIN is minus infinity
+    static constexpr std::uint32_t kEnabled = 2;       // 0 or 1
+    static constexpr std::uint32_t kSourceMute = 3;    // 0 or 1: the source track's mute
+    // The level range of the send entity (the track gain's, model::Gain).
+    static constexpr std::int32_t kMinLevelMilliDb = -144'000;
+    static constexpr std::int32_t kMaxLevelMilliDb = 24'000;
+
+    SendNode(int inputChannels, std::int32_t levelMilliDb, bool enabled, bool sourceMute,
+             bool soloSilenced = false);
+    std::vector<int> inputPorts() const override { return {inputChannels_}; }
+    int outputChannels() const override { return 2; }
+    void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                 const AudioBufferView& output) noexcept override;
+    void setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept override;
+
+    // The current (ramping) gain.
+    float gain() const noexcept { return gain_; }
+
+private:
+    void retarget(int rampFrames) noexcept;
+
+    int inputChannels_;
+    std::int32_t levelMilliDb_;
+    bool enabled_;
+    bool sourceMute_;
+    bool soloSilenced_;
+    float gain_ = 0.0f;
+    float step_ = 0.0f;
+    float target_ = 0.0f;
+    int remaining_ = 0;
+};
+
 // A summing bus with a fixed gain.
 class BusNode final : public Node {
 public:

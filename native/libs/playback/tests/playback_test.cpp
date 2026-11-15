@@ -1086,3 +1086,319 @@ TEST_CASE("The master meter reads the post-gain level while the track meters do 
     CHECK(engine.driver().meterDrops() == 0);
     engine.stop();
 }
+
+// ---- m5b-engine-buses-sends: buses and sends in the realtime graph ------------
+
+namespace {
+
+using graph::SendNode;
+
+std::string addBus(const std::string& id) {
+    return R"({"op":"bus.add","busId":")" + id + R"(","name":")" + id + R"("})";
+}
+
+std::string routeTrack(const std::string& trackId, const std::string& busId) {
+    return R"({"op":"track.set_output","trackId":")" + trackId + R"(","output":{"busId":")" + busId + R"("}})";
+}
+
+std::string routeBus(const std::string& busId, const std::string& to) {
+    return R"({"op":"bus.set_output","busId":")" + busId + R"(","output":{"busId":")" + to + R"("}})";
+}
+
+std::string addSend(const std::string& id, const std::string& trackId, const std::string& busId, bool pre) {
+    return R"({"op":"send.add","sendId":")" + id + R"(","trackId":")" + trackId + R"(","busId":")" + busId +
+           R"(","pre":)" + (pre ? "true" : "false") + "}";
+}
+
+// twoTrackSession with a post-fader send from the stereo track and a pre-fader
+// send from the mono track to bus_fx, and the mono track routed through
+// bus_grp, which outputs to bus_fx.
+void busSession(Fixture& f) {
+    twoTrackSession(f);
+    f.exec(addBus("bus_fx"));
+    f.exec(addBus("bus_grp"));
+    f.exec(addSend("snd_a", "trk_a", "bus_fx", false));
+    f.exec(addSend("snd_b", "trk_b", "bus_fx", true));
+    f.exec(R"({"op":"send.set_level","sendId":"snd_a","levelMilliDb":-6000})");
+    f.exec(routeTrack("trk_b", "bus_grp"));
+    f.exec(routeBus("bus_grp", "bus_fx"));
+    f.exec(R"({"op":"bus.set_gain","busId":"bus_fx","gainMilliDb":-2000})");
+    f.exec(R"({"op":"bus.set_pan","busId":"bus_grp","pan":-3000})");
+}
+
+// Realtime against renderOffline of the same document, after the fade-in.
+void checkSampleIdentical(Fixture& f) {
+    const std::int64_t end = engine::documentEnd(f.doc());
+    const int n = blocksFor(end);
+    Player p(f.session);
+    p.pump(n);
+    const auto reference = offline(f.doc(), f.bundle(), static_cast<std::int64_t>(n) * kBlock);
+    CHECK(blocks(p.out[0], 1, n) == blocks(reference[0], 1, n));
+    CHECK(blocks(p.out[1], 1, n) == blocks(reference[1], 1, n));
+    CHECK_FALSE(silent(blocks(p.out[0], 1, n)));
+    CHECK(p.engine.underruns() == 0);
+}
+
+}  // namespace
+
+TEST_CASE("Realtime with buses and sends is sample-identical to renderOffline after the fade-in",
+          "[playback][buses]") {
+    Fixture f;
+    busSession(f);
+    checkSampleIdentical(f);
+}
+
+TEST_CASE("Realtime through a three-level bus chain is sample-identical to renderOffline after the fade-in",
+          "[playback][buses]") {
+    Fixture f;
+    twoTrackSession(f);
+    for (const char* id : {"bus_1", "bus_2", "bus_3"}) {
+        f.exec(addBus(id));
+    }
+    f.exec(routeTrack("trk_a", "bus_1"));
+    f.exec(routeBus("bus_1", "bus_2"));
+    f.exec(routeBus("bus_2", "bus_3"));
+    f.exec(R"({"op":"bus.set_gain","busId":"bus_2","gainMilliDb":-1500})");
+    checkSampleIdentical(f);
+}
+
+TEST_CASE("compileForPlayback has bus and send slots and a meter per bus", "[playback][buses]") {
+    Fixture f;
+    busSession(f);
+    const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
+    CHECK(playback::busSlotKey("bus_fx") == "bus:bus_fx");
+    CHECK(playback::sendSlotKey("snd_a") == "send:snd_a");
+    for (const char* bus : {"bus_fx", "bus_grp"}) {
+        INFO(bus);
+        REQUIRE(compiled.slots.count(playback::busSlotKey(bus)) == 1);
+        REQUIRE(compiled.meterSlots.count(playback::busSlotKey(bus)) == 1);
+        CHECK(compiled.slots.at(playback::busSlotKey(bus)) != compiled.meterSlots.at(playback::busSlotKey(bus)));
+    }
+    CHECK(compiled.slots.count(playback::sendSlotKey("snd_a")) == 1);
+    CHECK(compiled.slots.count(playback::sendSlotKey("snd_b")) == 1);
+    CHECK(compiled.meterSlots.count(playback::sendSlotKey("snd_a")) == 0);
+    // Two tracks, two buses and the master are metered; the master meter is the output.
+    const auto metered = compiled.graph->meteredNodes();
+    CHECK(metered.size() == 5);
+    CHECK(metered.back() == compiled.meterSlots.at(playback::masterMeterKey()));
+    // The cost estimate counts the bus and send nodes as compileWith adds them.
+    Player p(f.session);
+    CHECK(p.engine.estimateCost(f.doc()).nodes == compiled.graph->nodeCount());
+}
+
+TEST_CASE("Bus gain and send level gestures move the sound with no recompile and commit one revision",
+          "[playback][buses][gesture]") {
+    Fixture f;
+    busSession(f);
+    const fs::path bundle = f.bundle();
+    const auto frames = static_cast<std::int64_t>(40) * kBlock;
+    const std::string bus = playback::busSlotKey("bus_fx");
+    const std::string send = playback::sendSlotKey("snd_a");
+    const auto busAt6 = offline(withCommand(f.doc(), R"({"op":"bus.set_gain","busId":"bus_fx","gainMilliDb":-6000})"),
+                                bundle, frames);
+    const auto sendAt12 =
+        offline(withCommand(f.doc(), R"({"op":"send.set_level","sendId":"snd_a","levelMilliDb":-12000})"), bundle,
+                frames);
+    const std::size_t before = f.session.history().revisions().size();
+
+    Player p(f.session);
+    p.pump(2);
+    const std::size_t compiles = p.engine.compileCount();
+    const std::uint64_t epoch = p.engine.driver().liveEpoch();
+
+    SECTION("pan and mute are not gesture parameters of a bus or a send") {
+        CHECK_THROWS_AS(p.engine.beginGesture(bus, TrackFaderNode::kPan), std::invalid_argument);
+        CHECK_THROWS_AS(p.engine.beginGesture(bus, TrackFaderNode::kMute), std::invalid_argument);
+        CHECK_THROWS_AS(p.engine.beginGesture(send, SendNode::kEnabled), std::invalid_argument);
+    }
+
+    SECTION("a bus gain gesture commits one bus.set_gain") {
+        p.engine.beginGesture(bus, kGain);
+        p.engine.updateGesture(bus, kGain, -6'000.0, 0);
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 2, 4) == blocks(busAt6[0], 2, 4));
+        CHECK(blocks(p.out[1], 2, 4) == blocks(busAt6[1], 2, 4));
+        CHECK(f.session.history().revisions().size() == before);
+        const command::Revision* revision = p.engine.endGesture(bus, kGain, "user", "t9");
+        REQUIRE(revision != nullptr);
+        CHECK(f.session.history().revisions().size() == before + 1);
+        REQUIRE(revision->commands.size() == 1);
+        CHECK(revision->commands[0].op() == "bus.set_gain");
+        CHECK(revision->document.bus("bus_fx")->gain.milliDb == -6'000);
+        REQUIRE(revision->diff.size() == 1);
+        CHECK(revision->diff[0].entity == model::EntityRef{model::EntityType::bus, "bus_fx"});
+        p.engine.update(f.doc());
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 4, 6) == blocks(busAt6[0], 4, 6));
+    }
+
+    SECTION("a send level gesture commits one send.set_level") {
+        p.engine.beginGesture(send, SendNode::kLevelMilliDb);
+        p.engine.updateGesture(send, SendNode::kLevelMilliDb, -12'000.0, 0);
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 2, 4) == blocks(sendAt12[0], 2, 4));
+        const command::Revision* revision = p.engine.endGesture(send, SendNode::kLevelMilliDb, "user", "t9");
+        REQUIRE(revision != nullptr);
+        REQUIRE(revision->commands.size() == 1);
+        CHECK(revision->commands[0].op() == "send.set_level");
+        CHECK(revision->document.send("snd_a")->level.milliDb == -12'000);
+        REQUIRE(revision->diff.size() == 1);
+        CHECK(revision->diff[0].entity == model::EntityRef{model::EntityType::send, "snd_a"});
+        p.engine.update(f.doc());
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 4, 6) == blocks(sendAt12[0], 4, 6));
+    }
+
+    SECTION("a gesture that never moved commits nothing") {
+        p.engine.beginGesture(send, SendNode::kLevelMilliDb);
+        CHECK(p.engine.endGesture(send, SendNode::kLevelMilliDb, "user", "t9") == nullptr);
+        CHECK(f.session.history().revisions().size() == before);
+    }
+    CHECK(p.engine.compileCount() == compiles);
+    CHECK(p.engine.driver().liveEpoch() == epoch);
+    CHECK(p.engine.underruns() == 0);
+}
+
+TEST_CASE("Bus and send revisions reach the audio thread as parameter sets; a mute gesture silences a pre-fader send",
+          "[playback][buses]") {
+    Fixture f;
+    busSession(f);
+    const fs::path bundle = f.bundle();
+    const auto frames = static_cast<std::int64_t>(60) * kBlock;
+    Player p(f.session);
+    p.pump(2);
+    const std::size_t compiles = p.engine.compileCount();
+    const std::uint64_t epoch = p.engine.driver().liveEpoch();
+    int at = 2;
+    auto step = [&](const std::string& json) {
+        INFO(json);
+        f.exec(json);
+        p.engine.update(f.doc());
+        p.engine.tick();
+        p.pump(2);
+        const auto reference = offline(f.doc(), bundle, frames);
+        CHECK(blocks(p.out[0], at + 1, at + 2) == blocks(reference[0], at + 1, at + 2));
+        CHECK(blocks(p.out[1], at + 1, at + 2) == blocks(reference[1], at + 1, at + 2));
+        at += 2;
+    };
+    step(R"({"op":"send.set_enabled","sendId":"snd_a","enabled":false})");
+    step(R"({"op":"send.set_enabled","sendId":"snd_a","enabled":true})");
+    step(R"({"op":"send.set_level","sendId":"snd_b","levelMilliDb":-9000})");
+    step(R"({"op":"bus.set_gain","busId":"bus_grp","gainMilliDb":-4000})");
+    step(R"({"op":"bus.set_pan","busId":"bus_fx","pan":4000})");
+    step(R"({"op":"bus.set_mute","busId":"bus_grp","mute":true})");
+    step(R"({"op":"bus.set_mute","busId":"bus_grp","mute":false})");
+    // A track mute silences its pre-fader send too (a parameter set on the send).
+    step(R"({"op":"track.set_mute","trackId":"trk_b","mute":true})");
+    step(R"({"op":"track.set_mute","trackId":"trk_b","mute":false})");
+    CHECK(p.engine.compileCount() == compiles);
+    CHECK(p.engine.driver().liveEpoch() == epoch);
+
+    // And a mute gesture on the track does the same while it is held.
+    const auto muted = offline(withCommand(f.doc(), R"({"op":"track.set_mute","trackId":"trk_b","mute":true})"),
+                               bundle, frames);
+    p.engine.beginGesture("trk_b", TrackFaderNode::kMute);
+    p.engine.updateGesture("trk_b", TrackFaderNode::kMute, 1.0, 0);
+    p.engine.tick();
+    p.pump(2);
+    CHECK(blocks(p.out[0], at + 1, at + 2) == blocks(muted[0], at + 1, at + 2));
+    CHECK(blocks(p.out[1], at + 1, at + 2) == blocks(muted[1], at + 1, at + 2));
+    p.engine.endGesture("trk_b", TrackFaderNode::kMute, "user", "t");
+    CHECK(p.engine.compileCount() == compiles);
+    CHECK(p.engine.underruns() == 0);
+}
+
+TEST_CASE("send.set_pre and a send.set_enabled that changes the solo-silence set recompile", "[playback][buses]") {
+    Fixture f;
+    busSession(f);
+    Player p(f.session);
+    p.pump(2);
+    std::size_t compiles = p.engine.compileCount();
+    auto edit = [&](const std::string& json) {
+        f.exec(json);
+        p.engine.update(f.doc());
+        p.pump(4);
+    };
+    edit(R"({"op":"send.set_pre","sendId":"snd_a","pre":true})");
+    CHECK(p.engine.compileCount() == compiles + 1);
+    compiles = p.engine.compileCount();
+    // A soloed bus_grp: trk_a's send goes to bus_fx, which is not soloed, so
+    // disabling it leaves the solo-silence set as it is: a parameter set.
+    edit(R"({"op":"bus.set_solo","busId":"bus_grp","solo":true})");
+    CHECK(p.engine.compileCount() == compiles + 1);
+    compiles = p.engine.compileCount();
+    edit(R"({"op":"send.set_enabled","sendId":"snd_a","enabled":false})");
+    CHECK(p.engine.compileCount() == compiles);
+    // Soloing bus_fx instead: trk_a reaches it only through snd_a, so toggling
+    // the send changes the set.
+    edit(R"({"op":"bus.set_solo","busId":"bus_grp","solo":false})");
+    edit(R"({"op":"bus.set_solo","busId":"bus_fx","solo":true})");
+    compiles = p.engine.compileCount();
+    edit(R"({"op":"send.set_enabled","sendId":"snd_a","enabled":true})");
+    CHECK(p.engine.compileCount() == compiles + 1);
+    const std::int64_t frames = static_cast<std::int64_t>(p.out[0].size());
+    const auto reference = offline(f.doc(), f.bundle(), frames);
+    const int n = static_cast<int>(frames / kBlock);
+    CHECK(blocks(p.out[0], n - 1, n) == blocks(reference[0], n - 1, n));
+}
+
+TEST_CASE("No allocations on the audio thread during bus and send gestures", "[playback][rt][buses]") {
+    Fixture f;
+    busSession(f);
+    Player p(f.session);
+    p.pump(2);
+    const auto before = rt::allocationViolations();
+    const std::string bus = playback::busSlotKey("bus_fx");
+    const std::string send = playback::sendSlotKey("snd_b");
+    p.engine.beginGesture(bus, kGain);
+    p.engine.beginGesture(send, SendNode::kLevelMilliDb);
+    p.engine.beginGesture("trk_b", TrackFaderNode::kMute);
+    for (int b = 0; b < 200; ++b) {
+        p.engine.updateGesture(bus, kGain, -100.0 * (b % 60), 64);
+        p.engine.updateGesture(send, SendNode::kLevelMilliDb, -200.0 * (b % 30), 32);
+        p.engine.updateGesture("trk_b", TrackFaderNode::kMute, (b / 20) % 2 == 0 ? 0.0 : 1.0, 0);
+        p.engine.tick();
+        p.pump(1);
+        if (b == 100) {
+            CHECK(p.engine.endGesture(bus, kGain, "user", "t") != nullptr);
+            p.engine.update(f.doc());
+            p.engine.beginGesture(bus, kGain);
+        }
+    }
+    CHECK(rt::allocationViolations() == before);
+    CHECK(p.engine.endGesture(bus, kGain, "user", "t") != nullptr);
+    CHECK(p.engine.endGesture(send, SendNode::kLevelMilliDb, "user", "t") != nullptr);
+    p.engine.endGesture("trk_b", TrackFaderNode::kMute, "user", "t");
+    CHECK(p.engine.underruns() == 0);
+    CHECK_FALSE(silent(p.out[0]));
+}
+
+TEST_CASE("A bus meter reaches the dispatcher under bus:<id> and reads the bus's post-fader level",
+          "[playback][buses][meters]") {
+    Fixture f;
+    busSession(f);
+    Player p(f.session);
+    p.pump(6);
+    p.engine.dispatcher().tick();
+    const auto bus = p.engine.dispatcher().meter("bus:bus_fx");
+    REQUIRE(bus.has_value());
+    CHECK(bus->reading.channels == 2);
+    CHECK(bus->reading.peak[0] > 0.0f);
+    CHECK(p.engine.dispatcher().meter("bus:bus_grp").has_value());
+    // The meter keys in byte order: buses, then the master, then the tracks.
+    std::vector<std::string> keys;
+    for (const auto& [key, slot] : p.engine.meterSlots()) {
+        keys.push_back(key);
+    }
+    CHECK(keys == std::vector<std::string>{"bus:bus_fx", "bus:bus_grp", "master", "track:trk_a", "track:trk_b"});
+    // A muted bus meters silence; its gain is a parameter set, the meter follows.
+    f.exec(R"({"op":"bus.set_mute","busId":"bus_fx","mute":true})");
+    p.engine.update(f.doc());
+    p.pump(3);
+    p.engine.dispatcher().tick();
+    CHECK(p.engine.dispatcher().meter("bus:bus_fx")->reading.peak[0] == 0.0f);
+}

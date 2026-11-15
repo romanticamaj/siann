@@ -28,7 +28,8 @@ namespace siann::protocol::detail {
 
 // The names a client gives itself (MCP clientInfo.name, the UI's auth frame
 // client.name), as the actor of its plans and an agent's name: control
-// characters (C0, DEL, C1) removed, leading and trailing white space trimmed,
+// characters (C0, DEL, C1), bidi formatting and line separators
+// (command::withoutUnsafeCharacters) and bytes that are not UTF-8 removed, leading and trailing white space trimmed,
 // cut to kClientNameMaxBytes UTF-8 bytes at a character boundary. `fallback`
 // when the name is absent, not a string or empty after that.
 inline constexpr std::size_t kClientNameMaxBytes = 64;

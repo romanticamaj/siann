@@ -12,11 +12,11 @@ A plugin insert is a `plugin_slot` entity (`siann.entity.plugin_slot.v1`):
  "stateBlob": "sha256:<64 hex>", "bypass": false}
 ```
 
-`stateBlob` is `null` or the hash of a file in `<bundle>/blobs/<hex>`. A track lists its slots in order in `inserts`; the field (and the document's `pluginSlots` table) is omitted when empty, so documents without plugins keep their hashes. Commands: `plugin.insert {trackId, index, slotId, descriptor: {format, uid, name?, path?}, stateBlob}` (index clamps to the end), `plugin.remove {slotId}`, `plugin.set_bypass {slotId, bypass}`; `track.remove` removes the track's slots.
+`stateBlob` is `null` or the hash of a file in `<bundle>/blobs/<hex>`. A bus's slot (m5b-engine-buses-sends) carries `busId` in place of `trackId`, and the bus lists it in its `inserts`; `plugin.insert` takes exactly one of `trackId` or `busId` (`invalid_params` otherwise), and `bus.remove` removes the bus's slots. A track lists its slots in order in `inserts`; the field (and the document's `pluginSlots` table) is omitted when empty, so documents without plugins keep their hashes. Commands: `plugin.insert {trackId, index, slotId, descriptor: {format, uid, name?, path?}, stateBlob}` (index clamps to the end), `plugin.remove {slotId}`, `plugin.set_bypass {slotId, bypass}`; `track.remove` removes the track's slots.
 
 ## plugin.instantiate
 
-Params `{trackId, index, descriptor: {format, path?, uid?, name?}, stateBlob?}`. `index` is a non-negative integer, `format` one of `clap`, `vst3`, `au`, `lv2`, and the descriptor needs a `path` or a `uid`; anything else is `invalid_params`, and so is a UNC `path` (`\\server\share`, `//server/share`) or one inside the session bundle, refused before any plugin host is reached. An unknown track is `not_found`. The plugin comes from the registry (below): with a `path`, the registered install at that path, which must be approved; with a `uid` and no path, its one approved install.
+Params `{trackId, index, descriptor: {format, path?, uid?, name?}, stateBlob?}`. `index` is a non-negative integer, `format` one of `clap`, `vst3`, `au`, `lv2`, and the descriptor needs a `path` or a `uid`; anything else is `invalid_params`, and so is a UNC `path` (`\\server\share`, `//server/share`) or one inside the session bundle, refused before any plugin host is reached. An unknown track is `not_found`. In place of `trackId` the params may carry `busId` (m5b-engine-buses-sends): exactly one of the two, `invalid_params` otherwise, an unknown bus `not_found`; a bus's plugin runs on two channels and the job completes with a `plugin.insert` carrying `busId`. The plugin comes from the registry (below): with a `path`, the registered install at that path, which must be approved; with a `uid` and no path, its one approved install.
 
 A job that runs inside the request: the engine instantiates the plugin, the server writes its default state durably to `<bundle>/blobs/<sha256 hex>` (or keeps the `stateBlob` it was given, which must already be in the bundle), and commits `plugin.insert` with the next free slot id `slt_<n>`; `session.changed` follows the response. The instance enters the engine's instance table, so the next compile reuses it.
 
@@ -97,3 +97,5 @@ Counters run since the instance was created, from its `PluginNode`'s own callbac
 ## render.start
 
 With a port and plugin slots in the document, the request instantiates one instance per slot from its state blob before the job is queued; the offline-render thread drives those, never the live graph's. A slot whose plugin does not load renders dry. After the job ends, the command thread destroys the set on its next pump.
+
+A bus's slot in `engine.status plugins[]` carries `busId` in place of `trackId` (m5b-engine-buses-sends); the rows list the tracks' slots in track order, then the buses' in bus order.

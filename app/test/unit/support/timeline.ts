@@ -53,6 +53,9 @@ export function snapshotOf(
     pluginSlots: [],
     locators: null,
     master: null,
+    buses: [],
+    sends: [],
+    busOrder: [],
     trackOrder,
   });
 }

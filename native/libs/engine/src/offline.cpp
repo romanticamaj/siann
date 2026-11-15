@@ -1,6 +1,10 @@
 #include "siann/engine/offline.hpp"
 
 #include <algorithm>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -71,17 +75,175 @@ MediaLibrary loadMedia(const model::Document& document, const std::filesystem::p
     return library;
 }
 
+std::set<std::string> soloSilencedRefs(const model::Document& document) {
+    const auto tracks = document.tracksInOrder();
+    const auto buses = document.allBuses();
+    const bool anySolo = std::any_of(tracks.begin(), tracks.end(), [](const model::Track* t) { return t->solo; }) ||
+                         std::any_of(buses.begin(), buses.end(), [](const model::Bus* b) { return b->solo; });
+    std::set<std::string> silenced;
+    if (!anySolo) {
+        return silenced;
+    }
+    // Direct successors: the output bus and, for a track, its enabled sends' buses.
+    std::map<std::string, std::vector<std::string>> next;
+    std::map<std::string, bool> soloed;
+    for (const model::Track* t : tracks) {
+        const std::string ref = "track:" + t->id;
+        soloed[ref] = t->solo;
+        auto& out = next[ref];
+        if (t->output) {
+            out.push_back("bus:" + *t->output);
+        }
+        for (const model::Send* s : document.sendsOnTrack(t->id)) {
+            if (s->enabled) {
+                out.push_back("bus:" + s->busId);
+            }
+        }
+    }
+    for (const model::Bus* b : buses) {
+        const std::string ref = "bus:" + b->id;
+        soloed[ref] = b->solo;
+        auto& out = next[ref];
+        if (b->output) {
+            out.push_back("bus:" + *b->output);
+        }
+    }
+    // Everything each channel reaches (bus chains are acyclic in a valid document).
+    std::map<std::string, std::set<std::string>> reach;
+    for (const auto& [ref, ignored] : next) {
+        std::set<std::string>& reached = reach[ref];
+        std::vector<std::string> stack = next[ref];
+        while (!stack.empty()) {
+            const std::string at = std::move(stack.back());
+            stack.pop_back();
+            if (!reached.insert(at).second) {
+                continue;
+            }
+            const auto found = next.find(at);
+            if (found != next.end()) {
+                stack.insert(stack.end(), found->second.begin(), found->second.end());
+            }
+        }
+    }
+    std::set<std::string> audible;  // soloed, reaching a soloed channel, or reached by one
+    for (const auto& [ref, reached] : reach) {
+        const bool isSoloed = soloed[ref];
+        if (isSoloed) {
+            audible.insert(ref);
+            audible.insert(reached.begin(), reached.end());
+        }
+        if (std::any_of(reached.begin(), reached.end(), [&](const std::string& r) { return soloed[r]; })) {
+            audible.insert(ref);
+        }
+    }
+    for (const auto& [ref, ignored] : next) {
+        if (audible.count(ref) == 0) {
+            silenced.insert(ref);
+        }
+    }
+    return silenced;
+}
+
+std::vector<FlatBus> flattenBuses(const model::Document& document) {
+    const auto silenced = soloSilencedRefs(document);
+    const std::vector<const model::Bus*> order = document.busesInOrder();
+    // Kahn over output edges: a bus is ready once every bus feeding it is placed.
+    std::map<std::string, int> feeding;
+    for (const model::Bus* b : order) {
+        feeding.emplace(b->id, 0);
+    }
+    for (const model::Bus* b : order) {
+        if (b->output && feeding.count(*b->output) != 0) {
+            ++feeding[*b->output];
+        }
+    }
+    std::vector<FlatBus> out;
+    std::set<std::string> placed;
+    while (out.size() < order.size()) {
+        bool progressed = false;
+        for (const model::Bus* b : order) {
+            if (placed.count(b->id) != 0 || feeding[b->id] != 0) {
+                continue;
+            }
+            placed.insert(b->id);
+            out.push_back(FlatBus{b, silenced.count("bus:" + b->id) != 0});
+            if (b->output && feeding.count(*b->output) != 0) {
+                --feeding[*b->output];
+            }
+            progressed = true;
+            break;  // restart, so ties keep busOrder
+        }
+        if (!progressed) {
+            throw EngineError("routing_cycle", "the document's bus outputs form a cycle");
+        }
+    }
+    return out;
+}
+
+MixWiring wireMix(GraphBuilder& builder, const model::Document& document, NodeId master,
+                  const std::vector<FlatTrack>& flat, const std::map<std::string, TrackTaps>& tracks,
+                  const PluginNodeSource* plugins, const MixHooks& hooks) {
+    MixWiring wiring;
+    const std::vector<FlatBus> buses = flattenBuses(document);
+    std::map<std::string, NodeId> sums;
+    for (const FlatBus& entry : buses) {
+        sums.emplace(entry.bus->id, builder.add(std::make_unique<BusNode>(2), "bus." + entry.bus->id));
+    }
+    auto destination = [&](const std::optional<std::string>& output) {
+        return output ? sums.at(*output) : master;
+    };
+    for (const FlatBus& entry : buses) {
+        const model::Bus& bus = *entry.bus;
+        NodeId previous = sums.at(bus.id);
+        if (plugins != nullptr) {
+            for (const model::PluginSlot* slot : document.slotsOnBus(bus.id)) {
+                if (auto node = plugins->pluginNode(*slot, 2)) {
+                    const NodeId insert = builder.add(std::move(node), "bus." + bus.id + ".insert." + slot->id);
+                    if (hooks.insert) {
+                        hooks.insert(*slot, insert);
+                    }
+                    builder.connect(previous, insert);
+                    previous = insert;
+                }
+            }
+        }
+        const NodeId fader = builder.add(
+            std::make_unique<TrackFaderNode>(2, bus.gain.milliDb, bus.pan, bus.mute, entry.soloSilenced),
+            "bus." + bus.id + ".fader");
+        builder.connect(previous, fader);
+        wiring.busFaders.emplace(bus.id, fader);
+        const NodeId out = hooks.afterFader ? hooks.afterFader(bus, fader) : fader;
+        builder.connect(out, destination(bus.output));
+    }
+    for (const FlatTrack& entry : flat) {
+        const model::Track& track = *entry.track;
+        const TrackTaps& taps = tracks.at(track.id);
+        builder.connect(taps.postFader, destination(track.output));
+        for (const model::Send* send : document.sendsOnTrack(track.id)) {
+            const int channels = send->pre ? track.channels : 2;
+            const NodeId node = builder.add(std::make_unique<graph::SendNode>(channels, send->level.milliDb,
+                                                                              send->enabled, track.mute,
+                                                                              entry.soloSilenced),
+                                            "send." + send->id);
+            builder.connect(send->pre ? taps.preFader : taps.postFader, node);
+            builder.connect(node, sums.at(send->busId));
+            wiring.sends.emplace(send->id, node);
+        }
+    }
+    return wiring;
+}
+
 std::vector<FlatTrack> flattenClips(const model::Document& document) {
     const auto& root = document.root();
     const time::TempoMap tempo(root.tempo);
     const auto tracks = document.tracksInOrder();
-    const bool anySolo = std::any_of(tracks.begin(), tracks.end(), [](const model::Track* t) { return t->solo; });
+    const std::set<std::string> silencedBySolo = soloSilencedRefs(document);
     std::vector<FlatTrack> flat;
     flat.reserve(tracks.size());
     for (const model::Track* track : tracks) {
         FlatTrack& entry = flat.emplace_back();
         entry.track = track;
-        entry.soloSilenced = anySolo && !track->solo;
+        entry.soloSilenced = silencedBySolo.count("track:" + track->id) != 0;
         entry.silenced = track->mute || entry.soloSilenced;
         for (const model::Clip* clip : document.clipsOnTrack(track->id)) {
             entry.clips.push_back(FlatClip{timelineStart(*clip, tempo, root.sampleRate), clip->sourceStart,
@@ -106,7 +268,9 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
                                                       int maxBlockFrames, const PluginNodeSource* plugins) {
     GraphBuilder builder;
     const NodeId master = builder.add(std::make_unique<BusNode>(2), "master");
-    for (const FlatTrack& flat : flattenClips(document)) {
+    const std::vector<FlatTrack> flatTracks = flattenClips(document);
+    std::map<std::string, TrackTaps> taps;
+    for (const FlatTrack& flat : flatTracks) {
         const model::Track& track = *flat.track;
         std::vector<ClipPlayerNode::Clip> clips;
         for (const FlatClip& clip : flat.clips) {
@@ -135,8 +299,11 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
             }
         }
         builder.connect(previous, fader);
-        builder.connect(fader, master);
+        taps.emplace(track.id, TrackTaps{previous, fader});
     }
+    // Buses, sends and each track's output (m5b-engine-buses-sends); a document
+    // without buses connects every fader to the master, as before.
+    wireMix(builder, document, master, flatTracks, taps, plugins);
     // The master gain on the sum (m5b-engine-master; spec, "Master path"): the
     // realtime graph's node, a stereo fader at pan centre, exactly 1.0f at 0 dB,
     // so a document without the entity renders as before.

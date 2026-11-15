@@ -1360,3 +1360,75 @@ TEST_CASE("a master gesture through the port starts from the heard side and canc
     CHECK(still.revision == nullptr);
     CHECK(still.value == -3'000.0);
 }
+
+// m5b-engine-buses-sends: bus gain and send level targets through the host's
+// GesturePort on the live graph: not_found for an unknown id, the start value
+// from the document, cancel back to it, end one bus.set_gain / send.set_level.
+TEST_CASE("bus and send gestures through the port", "[engine][host][gesture][buses]") {
+    Rig rig;
+    session::Session& session = rig.fixture.session;
+    rig.fixture.exec(R"({"op":"bus.add","busId":"b1","name":"Bus"})");
+    rig.fixture.exec(R"({"op":"track.set_output","trackId":"trk_a","output":{"busId":"b1"}})");
+    rig.fixture.exec(R"({"op":"send.add","sendId":"s1","trackId":"trk_b","busId":"b1","levelMilliDb":-6000})");
+    rig.host->auditionPort()->mainCommitted();
+    rig.host->play();
+    rig.settle();
+    rig.pump(8);
+    protocol::GesturePort& port = *rig.host;
+    const protocol::GestureTarget bus = protocol::GestureTarget::busGain("b1");
+    const protocol::GestureTarget send = protocol::GestureTarget::sendLevel("s1");
+    CHECK(bus.ref() == "bus:b1");
+    CHECK(send.ref() == "send:s1");
+    CHECK(send.param == "level");
+    // The bus meter peak over the trk_a meter peak, both of the newest block: trk_a
+    // and trk_b's send sum on b1, so mute trk_b's send to read the bus gain alone.
+    try {
+        (void)port.begin(protocol::GestureTarget::busGain("b9"));
+        FAIL("expected not_found");
+    } catch (const protocol::GesturePortError& error) {
+        CHECK(error.code() == "not_found");
+    }
+    try {
+        (void)port.begin(protocol::GestureTarget::sendLevel("s9"));
+        FAIL("expected not_found");
+    } catch (const protocol::GesturePortError& error) {
+        CHECK(error.code() == "not_found");
+    }
+
+    CHECK(port.begin(bus) == 0.0);
+    port.update(bus, -20'000.0);
+    rig.pump(8);
+    port.cancel(bus);
+    rig.pump(8);
+    CHECK(port.begin(send) == -6'000.0);
+    port.cancel(send);
+
+    const std::size_t revisions = session.history().revisions().size();
+    const std::size_t compiles = rig.engine().compileCount();
+    CHECK(port.begin(bus) == 0.0);
+    port.update(bus, -3'000.0);
+    rig.pump(4);
+    const protocol::GestureEnd ended = port.end(bus, "user", "t");
+    REQUIRE(ended.revision != nullptr);
+    CHECK(ended.value == -3'000.0);
+    REQUIRE(ended.revision->commands.size() == 1);
+    CHECK(ended.revision->commands[0].op() == "bus.set_gain");
+    CHECK(session.history().head().document.bus("b1")->gain.milliDb == -3'000);
+
+    CHECK(port.begin(send) == -6'000.0);
+    port.update(send, -12'000.0);
+    rig.pump(4);
+    const protocol::GestureEnd sent = port.end(send, "user", "t");
+    REQUIRE(sent.revision != nullptr);
+    CHECK(sent.startValue == -6'000.0);
+    CHECK(sent.value == -12'000.0);
+    CHECK(sent.revision->commands[0].op() == "send.set_level");
+    CHECK(session.history().head().document.send("s1")->level.milliDb == -12'000);
+    CHECK(session.history().revisions().size() == revisions + 2);
+    rig.host->auditionPort()->mainCommitted();
+    rig.pump(8);
+    CHECK(rig.engine().compileCount() == compiles);
+    const auto meter = rig.engine().dispatcher().meter("bus:b1");
+    REQUIRE(meter.has_value());
+    CHECK(meter->reading.peak[0] > 0.0f);
+}

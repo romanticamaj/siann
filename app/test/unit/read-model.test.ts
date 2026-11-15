@@ -286,7 +286,7 @@ test('parseRef reads "<type>:<id>" for every entity type and rejects anything el
   assert.deepEqual(parseRef('root:root'), { type: 'root', id: 'root' });
   assert.deepEqual(parseRef('plugin_slot:slt_1'), { type: 'plugin_slot', id: 'slt_1' });
   assert.deepEqual(parseRef('clip:clp-1'), { type: 'clip', id: 'clp-1' });
-  for (const bad of ['track', 'track:', ':x', 'bus:b1', 'track:a b', 'Track:t1']) assert.equal(parseRef(bad), null, bad);
+  for (const bad of ['track', 'track:', ':x', 'vca:v1', 'track:a b', 'Track:t1']) assert.equal(parseRef(bad), null, bad);
 });
 
 // The document hash of a snapshot with one entity replaced, through the
@@ -484,4 +484,70 @@ test('the master model fixture syncs with its document hash', async () => {
   const snapshot = await new ReadModel().fromSync([chunk]);
   assert.equal(snapshot.documentHash, fixture.documentHash);
   assert.equal(snapshot.master?.gainMilliDb, -6000);
+});
+
+// m5b-engine-buses-sends: bus:<id> and send:<id> refs, the buses and sends tables
+// of a sync chunk, and their deltas. Without them parseRef refused the refs
+// (invalid_ref) and a sync of a document with a bus failed its hash check.
+test('(f) bus and send refs parse, sync as tables and follow session.changed', async () => {
+  assert.deepEqual(parseRef('bus:b1'), { type: 'bus', id: 'b1' });
+  assert.deepEqual(parseRef('send:s1'), { type: 'send', id: 's1' });
+
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  for (let i = 0; i < seq.steps.length; i += 1) await model.applyChanged(step(i).event, step(i).fetched);
+  for (const s of [...seq.locators.steps, ...seq.master.steps]) {
+    await model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  }
+  assert.deepEqual(model.getSnapshot()!.buses, []);
+  assert.deepEqual(model.getSnapshot()!.sends, []);
+  const gains = [0, -6000, null];
+  for (let i = 0; i < seq.buses.steps.length; i += 1) {
+    const s = seq.buses.steps[i]!;
+    const snapshot = await model.applyChanged(
+      s.event as unknown as SessionChanged,
+      s.fetch.result.entities as unknown as FetchedEntity[],
+    );
+    assert.equal(snapshot.documentHash, s.documentHash, `step ${i}`);
+    const want = gains[i];
+    if (want === null || want === undefined) {
+      assert.deepEqual(snapshot.buses, [], `step ${i}`);
+      assert.deepEqual(snapshot.sends, [], `step ${i}`);
+      assert.deepEqual(snapshot.busOrder, []);
+    } else {
+      assert.equal(snapshot.buses.length, 1);
+      assert.equal(snapshot.buses[0]!.gainMilliDb, want, `step ${i}`);
+      assert.equal(snapshot.sends[0]!.busId, 'b1');
+      assert.deepEqual(snapshot.busOrder, ['b1']);
+      assert.equal(snapshot.entities['bus:b1'], snapshot.buses[0]);
+    }
+  }
+
+  const synced = await new ReadModel().fromSync(seq.buses.sync as unknown as SyncChunk[]);
+  assert.equal(synced.documentHash, seq.buses.steps[0]!.documentHash);
+  assert.equal(synced.buses[0]!.id, 'b1');
+  assert.equal(synced.sends[0]!.trackId, 'trk_1');
+});
+
+// The v3 model fixture with buses, sends and a bus's slot hashes as the bridge says.
+test('the buses model fixture syncs with its document hash', async () => {
+  const fixture = readFixture<{ document: Record<string, unknown>; entityHashes: readonly unknown[]; documentHash: string }>(
+    'model',
+    'session-document-v3-buses.json',
+  );
+  const chunk = {
+    revision: 'r7',
+    seq: '0',
+    documentHash: fixture.documentHash,
+    entities: fixture.entityHashes.length,
+    meters: null,
+    chunk: fixture.document as unknown as SyncChunk['chunk'],
+    next: null,
+  } as unknown as SyncChunk;
+  const snapshot = await new ReadModel().fromSync([chunk]);
+  assert.equal(snapshot.documentHash, fixture.documentHash);
+  assert.deepEqual(snapshot.buses.map((b) => b.id), ['bus-drums', 'bus_fx']);
+  assert.deepEqual(snapshot.busOrder, ['bus_fx', 'bus-drums']);
+  assert.equal(snapshot.buses[0]!.output?.busId, 'bus_fx');
+  assert.equal(snapshot.pluginSlots.find((s) => s.id === 'slt_comp')!.busId, 'bus-drums');
 });

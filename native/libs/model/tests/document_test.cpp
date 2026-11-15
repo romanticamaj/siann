@@ -74,6 +74,17 @@ std::vector<std::string> codes(const Document& doc) {
     return out;
 }
 
+// A v2 fixture as the engine writes it: format v3 (m5b-engine-buses-sends),
+// otherwise the same JCS text, since every v3 field is omitted when empty.
+std::string writtenAsV3(const Value& document) {
+    std::string text = siann::jcs::canonicalize(document);
+    const std::string from = "siann.session_document.v2";
+    if (const auto pos = text.find(from); pos != std::string::npos) {
+        text.replace(pos, from.size(), "siann.session_document.v3");
+    }
+    return text;
+}
+
 std::string errorCode(const Value& json) {
     try {
         (void)Document::fromJson(json);
@@ -120,7 +131,7 @@ TEST_CASE("JSON round trip is byte-identical under JCS", "[model]") {
     const Value fixture = readFixture("model/session-document-v2.json");
     const Value& original = *fixture.find("document");
     const Document doc = Document::fromJson(original);
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
 }
 
@@ -160,13 +171,13 @@ TEST_CASE("A v1 document reads through the migration with no locators and its v1
     CHECK_FALSE(doc.findEntityHash(EntityRef{EntityType::locators, "locators"}).has_value());
     CHECK(formatHash(doc.documentHash()) == v1.find("documentHash")->asString());
 
-    // Written as v2, with locators omitted while absent; otherwise the same JSON.
+    // Written as v3 (m5b-engine-buses-sends), with locators omitted while absent; otherwise the same JSON.
     const Value written = doc.toJson();
-    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v2");
+    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v3");
     CHECK(written.find("locators") == nullptr);
     std::string expected = siann::jcs::canonicalize(*v1.find("document"));
     const std::string from = "siann.session_document.v1";
-    expected.replace(expected.find(from), from.size(), "siann.session_document.v2");
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
     CHECK(siann::jcs::canonicalize(written) == expected);
     CHECK(Document::fromJson(written).documentHash() == doc.documentHash());
 
@@ -443,12 +454,12 @@ TEST_CASE("The input fixture gives the Node bridge's hashes and v2 keeps its own
         }
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(*fixture.find("document")));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(*fixture.find("document")));
 
     // The pre-feature document reads and writes exactly as before.
     const Value v2 = readFixture("model/session-document-v2.json");
     const Document old = Document::fromJson(*v2.find("document"));
-    CHECK(siann::jcs::canonicalize(old.toJson()) == siann::jcs::canonicalize(*v2.find("document")));
+    CHECK(siann::jcs::canonicalize(old.toJson()) == writtenAsV3(*v2.find("document")));
     CHECK(formatHash(old.documentHash()) == v2.find("documentHash")->asString());
 }
 
@@ -523,7 +534,7 @@ TEST_CASE("The media-name fixture gives the Node bridge's hashes and round-trips
         CHECK(formatHash(doc.entityHash(EntityRef{entityTypeOf(type), id})) == leaf.find("entityHash")->asString());
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
 }
 
 TEST_CASE("A media without a name serializes as before and keeps the v1 and v2 hashes", "[model][media]") {
@@ -613,7 +624,7 @@ TEST_CASE("The master fixture gives the Node bridge's hashes and round-trips und
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
     CHECK(siann::model::entityTypeName(EntityType::master) == "master");
     CHECK(siann::model::kMasterId == "master");
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
     CHECK(siann::jcs::canonicalize(siann::model::toJson(*doc.master())) ==
           siann::jcs::canonicalize(*original.find("master")));
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
@@ -626,7 +637,7 @@ TEST_CASE("A v2 document without the master reads with its hash unchanged and wr
     CHECK_FALSE(doc.findEntityHash(kMasterRef).has_value());
     CHECK(formatHash(doc.documentHash()) == v2.find("documentHash")->asString());
     CHECK(doc.toJson().find("master") == nullptr);
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(*v2.find("document")));
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(*v2.find("document")));
     // The master fixture minus its master is the v2 document.
     const Document withMaster =
         Document::fromJson(*readFixture("model/session-document-v2-master.json").find("document"));
@@ -709,4 +720,371 @@ TEST_CASE("The master is added, modified and removed like any entity", "[model][
     CHECK(changes[0].entity == EntityRef{EntityType::locators, "locators"});
     CHECK(changes[1].entity == kMasterRef);
     CHECK(Document::fromJson(both.toJson()).documentHash() == both.documentHash());
+}
+
+// ---- m5b-engine-buses-sends: buses, sends and format v3 ----------------------
+
+namespace {
+
+using siann::model::Bus;
+using siann::model::PluginSlot;
+using siann::model::Send;
+
+EntityType anyType(const std::string& type) {
+    if (type == "bus") return EntityType::bus;
+    if (type == "send") return EntityType::send;
+    if (type == "locators") return EntityType::locators;
+    return leafType(type);
+}
+
+Value busesFixture() {
+    return readFixture("model/session-document-v3-buses.json");
+}
+
+// The buses fixture's document text with the first `from` replaced by `to`.
+Value busesFixtureWith(const std::string& from, const std::string& to) {
+    std::string text = siann::jcs::canonicalize(*busesFixture().find("document"));
+    const auto pos = text.find(from);
+    REQUIRE(pos != std::string::npos);
+    text.replace(pos, from.size(), to);
+    return siann::json::parse(text);
+}
+
+// The v2 fixture's document text with the first `from` replaced by `to`.
+Value v2With(const std::string& from, const std::string& to) {
+    std::string text = siann::jcs::canonicalize(*readFixture("model/session-document-v2.json").find("document"));
+    const auto pos = text.find(from);
+    REQUIRE(pos != std::string::npos);
+    text.replace(pos, from.size(), to);
+    return siann::json::parse(text);
+}
+
+Bus bus(std::string id) {
+    Bus b;
+    b.id = id;
+    b.name = "Bus " + id;
+    return b;
+}
+
+Send send(std::string id, std::string trackId, std::string busId) {
+    Send s;
+    s.id = std::move(id);
+    s.trackId = std::move(trackId);
+    s.busId = std::move(busId);
+    return s;
+}
+
+// A bus must also be listed in root.busOrder.
+Document addBus(const Document& doc, Bus b) {
+    auto root = doc.root();
+    root.busOrder.push_back(b.id);
+    return doc.withBus(std::move(b)).withRoot(std::move(root));
+}
+
+// A send must also be listed in its track's sends.
+Document addSend(const Document& doc, Send s) {
+    Track t = *doc.track(s.trackId);
+    t.sends.push_back(s.id);
+    return doc.withSend(std::move(s)).withTrack(std::move(t));
+}
+
+Document routed() {
+    Document doc = Document::create("Song", 48'000);
+    doc = addTrack(doc, track("trk_1"));
+    doc = addTrack(doc, track("trk_2"));
+    doc = addBus(doc, bus("bus_a"));
+    doc = addBus(doc, bus("bus_b"));
+    doc = addBus(doc, bus("bus_c"));
+    return doc;
+}
+
+Document withBusOutput(const Document& doc, const std::string& busId, std::optional<std::string> output) {
+    Bus b = *doc.bus(busId);
+    b.output = std::move(output);
+    return doc.withBus(std::move(b));
+}
+
+bool allAre(const std::vector<std::string>& found, const std::string& code) {
+    return !found.empty() && std::all_of(found.begin(), found.end(), [&](const std::string& c) { return c == code; });
+}
+
+}  // namespace
+
+TEST_CASE("The buses fixture gives the Node bridge's hashes and round-trips under JCS", "[model][fixtures][buses]") {
+    const Value fixture = busesFixture();
+    const Value& original = *fixture.find("document");
+    const Document doc = Document::fromJson(original);
+    CHECK(doc.validate().empty());
+    bool sawBus = false;
+    bool sawSend = false;
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        sawBus = sawBus || type == "bus";
+        sawSend = sawSend || type == "send";
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{anyType(type), id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(sawBus);
+    CHECK(sawSend);
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    CHECK(siann::model::entityTypeName(EntityType::bus) == "bus");
+    CHECK(siann::model::entityTypeName(EntityType::send) == "send");
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
+
+    // The shapes, entity by entity.
+    const Bus* drums = doc.bus("bus-drums");
+    REQUIRE(drums != nullptr);
+    CHECK(drums->name == "Drum Bus");
+    CHECK(drums->channels == 2);
+    CHECK(drums->gain == Gain{-3000});
+    CHECK(drums->inserts == std::vector<std::string>{"slt_comp"});
+    CHECK(drums->output == std::optional<std::string>("bus_fx"));
+    const Bus* fx = doc.bus("bus_fx");
+    REQUIRE(fx != nullptr);
+    CHECK(fx->pan == -1000);
+    CHECK_FALSE(fx->output.has_value());
+    CHECK(fx->inserts.empty());
+    const Send* pre = doc.send("snd_drums");
+    REQUIRE(pre != nullptr);
+    CHECK(pre->trackId == "trk_drums");
+    CHECK(pre->busId == "bus_fx");
+    CHECK(pre->level == Gain{-12000});
+    CHECK(pre->pre);
+    CHECK_FALSE(pre->enabled);
+    CHECK(doc.track("trk_drums")->output == std::optional<std::string>("bus-drums"));
+    CHECK(doc.track("trk_drums")->sends == std::vector<std::string>{"snd_drums"});
+    CHECK_FALSE(doc.track("trk_bass")->output.has_value());
+    CHECK(doc.root().busOrder == std::vector<std::string>{"bus_fx", "bus-drums"});
+    const PluginSlot* comp = doc.pluginSlot("slt_comp");
+    REQUIRE(comp != nullptr);
+    CHECK(comp->busId == "bus-drums");
+    CHECK(comp->trackId.empty());
+
+    // The helpers.
+    const auto order = doc.busesInOrder();
+    REQUIRE(order.size() == 2);
+    CHECK(order[0]->id == "bus_fx");
+    CHECK(order[1]->id == "bus-drums");
+    const auto onVox = doc.sendsOnTrack("trk-vox");
+    REQUIRE(onVox.size() == 1);
+    CHECK(onVox[0]->id == "snd_vox");
+    CHECK(doc.sendsOnTrack("trk_bass").empty());
+    const auto onBus = doc.slotsOnBus("bus-drums");
+    REQUIRE(onBus.size() == 1);
+    CHECK(onBus[0]->id == "slt_comp");
+    CHECK(doc.slotsOnTrack("trk_bass").size() == 1);
+    CHECK(doc.allBuses().size() == 2);
+    CHECK(doc.allSends().size() == 2);
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(*drums)) ==
+          siann::jcs::canonicalize(original.find("buses")->asArray()[0]));
+}
+
+TEST_CASE("Empty bus and send fields are omitted, so a v2 document keeps every hash", "[model][buses]") {
+    const Value v2 = readFixture("model/session-document-v2.json");
+    const Document doc = Document::fromJson(*v2.find("document"));
+    for (const Value& leaf : v2.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{anyType(type), id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(formatHash(doc.documentHash()) == v2.find("documentHash")->asString());
+    const Value written = doc.toJson();
+    CHECK(written.find("schemaVersion")->asString() == "siann.session_document.v3");
+    CHECK(written.find("buses") == nullptr);
+    CHECK(written.find("sends") == nullptr);
+    CHECK(written.find("root")->find("busOrder") == nullptr);
+    for (const Value& t : written.find("tracks")->asArray()) {
+        CHECK(t.find("sends") == nullptr);
+        CHECK(t.find("output") == nullptr);
+    }
+    for (const Value& s : written.find("pluginSlots")->asArray()) {
+        CHECK(s.find("busId") == nullptr);
+        CHECK(s.find("trackId") != nullptr);
+    }
+    // Otherwise the same JSON as the v2 input.
+    std::string expected = siann::jcs::canonicalize(*v2.find("document"));
+    const std::string from = "siann.session_document.v2";
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
+    CHECK(siann::jcs::canonicalize(written) == expected);
+    CHECK(Document::fromJson(written).documentHash() == doc.documentHash());
+    // v1 reads too, with its hash.
+    const Value v1 = readFixture("model/session-document-v1.json");
+    CHECK(formatHash(Document::fromJson(*v1.find("document")).documentHash()) == v1.find("documentHash")->asString());
+}
+
+TEST_CASE("A v1 or v2 document that carries a v3 field is rejected", "[model][buses]") {
+    // The buses fixture read as v2 or v1 carries buses, sends and their fields.
+    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v2")) == "unknown_field");
+    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v1")) == "unknown_field");
+    // One field at a time on the v2 fixture.
+    CHECK(errorCode(v2With(R"("clips":[)", R"("buses":[],"clips":[)")) == "unknown_field");
+    CHECK(errorCode(v2With(R"("tracks":[)", R"("sends":[],"tracks":[)")) == "unknown_field");
+    CHECK(errorCode(v2With(R"("trackOrder":[)", R"("busOrder":[],"trackOrder":[)")) == "unknown_field");
+    CHECK(errorCode(v2With(R"("solo":false)", R"("sends":[],"solo":false)")) == "unknown_field");
+    CHECK(errorCode(v2With(R"("solo":false)", R"("output":{"busId":"bus_x"},"solo":false)")) == "unknown_field");
+    CHECK(errorCode(v2With(R"("bypass":false)", R"("busId":"bus_x","bypass":false)")) == "unknown_field");
+    // A newer version is unsupported.
+    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v4")) ==
+          "unsupported_version");
+    // The same fields are accepted in v3.
+    CHECK(errorCode(busesFixtureWith("siann.session_document.v3", "siann.session_document.v3")) == "no error");
+}
+
+TEST_CASE("Bus, send and slot JSON reject malformed fields", "[model][buses]") {
+    CHECK(errorCode(busesFixtureWith("siann.entity.bus.v1", "siann.entity.bus.v2")) == "unsupported_version");
+    CHECK(errorCode(busesFixtureWith("siann.entity.send.v1", "siann.entity.send.v2")) == "unsupported_version");
+    CHECK(errorCode(busesFixtureWith(R"("channels":2,"gainMilliDb":0)", R"("channels":2,"extra":1,"gainMilliDb":0)")) ==
+          "unknown_field");
+    CHECK(errorCode(busesFixtureWith(R"("output":{"busId":"bus_fx"})", R"("output":{"busId":"bus_fx","x":1})")) ==
+          "unknown_field");
+    CHECK(errorCode(busesFixtureWith(R"("output":{"busId":"bus_fx"})", R"("output":null)")) == "invalid_field");
+    CHECK(errorCode(busesFixtureWith(R"("pre":true)", R"("pre":1)")) == "invalid_field");
+    CHECK(errorCode(busesFixtureWith(R"("levelMilliDb":-12000)", R"("levelMilliDb":"-12000")")) == "invalid_field");
+    // A slot carries exactly one of trackId or busId.
+    CHECK(errorCode(busesFixtureWith(R"("busId":"bus-drums","bypass":true)",
+                                     R"("busId":"bus-drums","bypass":true,"trackId":"trk_bass")")) == "invalid_field");
+    CHECK(errorCode(busesFixtureWith(R"("busId":"bus-drums","bypass":true)", R"("bypass":true)")) == "invalid_field");
+    // Ranges are the document's.
+    CHECK(errorCode(busesFixtureWith(R"("gainMilliDb":-3000)", R"("gainMilliDb":24001)")) == "invalid_document");
+    CHECK(errorCode(busesFixtureWith(R"("pan":-1000)", R"("pan":10001)")) == "invalid_document");
+    CHECK(errorCode(busesFixtureWith(R"("levelMilliDb":-12000)", R"("levelMilliDb":-144001)")) == "invalid_document");
+}
+
+TEST_CASE("validate() checks bus and send references, order and ranges", "[model][buses]") {
+    const Document doc = routed();
+    CHECK(codes(doc).empty());
+    CHECK(codes(addSend(doc, send("snd_1", "trk_1", "bus_a"))).empty());
+
+    // A send naming an unknown bus or track.
+    CHECK(codes(addSend(doc, send("snd_1", "trk_1", "bus_x"))) == std::vector<std::string>{"unknown_bus"});
+    CHECK(codes(doc.withSend(send("snd_1", "trk_x", "bus_a"))) == std::vector<std::string>{"unknown_track"});
+    // A send its track does not list, and a track listing a send twice or one it does not own.
+    CHECK(codes(doc.withSend(send("snd_1", "trk_1", "bus_a"))) == std::vector<std::string>{"send_mismatch"});
+    {
+        const Document twice = addSend(doc, send("snd_1", "trk_1", "bus_a"));
+        Track t = *twice.track("trk_1");
+        t.sends.push_back("snd_1");
+        CHECK(codes(twice.withTrack(t)) == std::vector<std::string>{"send_mismatch"});
+        Track other = *twice.track("trk_2");
+        other.sends.push_back("snd_1");
+        CHECK(codes(twice.withTrack(other)) == std::vector<std::string>{"send_mismatch"});
+    }
+    // Outputs naming an unknown bus.
+    {
+        Track t = *doc.track("trk_1");
+        t.output = "bus_x";
+        CHECK(codes(doc.withTrack(t)) == std::vector<std::string>{"unknown_bus"});
+        t.output = "bus_a";
+        CHECK(codes(doc.withTrack(t)).empty());
+        CHECK(codes(withBusOutput(doc, "bus_a", "bus_x")) == std::vector<std::string>{"unknown_bus"});
+    }
+    // busOrder: a duplicate, a missing bus, an unknown id.
+    {
+        auto root = doc.root();
+        root.busOrder.push_back("bus_a");
+        CHECK(codes(doc.withRoot(root)) == std::vector<std::string>{"bus_order_mismatch"});
+        root = doc.root();
+        root.busOrder.pop_back();
+        CHECK(codes(doc.withRoot(root)) == std::vector<std::string>{"bus_order_mismatch"});
+        root = doc.root();
+        root.busOrder.back() = "bus_x";
+        CHECK(codes(doc.withRoot(root)) == std::vector<std::string>{"bus_order_mismatch"});
+    }
+    // Ranges.
+    {
+        Bus b = *doc.bus("bus_a");
+        b.gain = Gain{24'001};
+        CHECK(codes(doc.withBus(b)) == std::vector<std::string>{"invalid_gain"});
+        b.gain = Gain::minusInfinity();
+        CHECK(codes(doc.withBus(b)).empty());
+        b.pan = -10'001;
+        CHECK(codes(doc.withBus(b)) == std::vector<std::string>{"invalid_pan"});
+        b.pan = 0;
+        b.channels = 1;
+        CHECK(codes(doc.withBus(b)) == std::vector<std::string>{"invalid_channels"});
+        Send s = send("snd_1", "trk_1", "bus_a");
+        s.level = Gain{-144'001};
+        CHECK(codes(addSend(doc, s)) == std::vector<std::string>{"invalid_gain"});
+        s.level = Gain::minusInfinity();
+        CHECK(codes(addSend(doc, s)).empty());
+    }
+    // A slot carries exactly one owner.
+    {
+        PluginSlot slot;
+        slot.id = "slt_1";
+        slot.format = "clap";
+        slot.uid = "x";
+        slot.busId = "bus_a";
+        Bus b = *doc.bus("bus_a");
+        b.inserts.push_back("slt_1");
+        const Document onBus = doc.withPluginSlot(slot).withBus(b);
+        CHECK(codes(onBus).empty());
+        slot.trackId = "trk_1";
+        CHECK(codes(onBus.withPluginSlot(slot)) == std::vector<std::string>{"invalid_field"});
+        slot.trackId.clear();
+        slot.busId.clear();
+        const auto neither = codes(onBus.withPluginSlot(slot));
+        CHECK(std::find(neither.begin(), neither.end(), "invalid_field") != neither.end());
+        // A bus listing a slot it does not own, a slot on an unknown bus.
+        slot.busId = "bus_b";
+        CHECK_FALSE(codes(onBus.withPluginSlot(slot)).empty());
+        slot.busId = "bus_x";
+        CHECK_FALSE(codes(doc.withPluginSlot(slot)).empty());
+    }
+}
+
+TEST_CASE("A cyclic bus output chain is routing_cycle", "[model][buses]") {
+    const Document doc = routed();
+    // A chain is fine.
+    CHECK(codes(withBusOutput(withBusOutput(doc, "bus_a", "bus_b"), "bus_b", "bus_c")).empty());
+    // Self, a 2-cycle and a 3-cycle.
+    CHECK(allAre(codes(withBusOutput(doc, "bus_a", "bus_a")), "routing_cycle"));
+    CHECK(allAre(codes(withBusOutput(withBusOutput(doc, "bus_a", "bus_b"), "bus_b", "bus_a")), "routing_cycle"));
+    CHECK(allAre(codes(withBusOutput(withBusOutput(withBusOutput(doc, "bus_a", "bus_b"), "bus_b", "bus_c"), "bus_c",
+                                     "bus_a")),
+                 "routing_cycle"));
+    // A bus feeding into a cycle is not itself flagged as the cycle's member, but the document is invalid.
+    CHECK_FALSE(codes(withBusOutput(withBusOutput(withBusOutput(doc, "bus_a", "bus_b"), "bus_b", "bus_c"), "bus_c",
+                                    "bus_b"))
+                    .empty());
+    // And the JSON reader rejects it.
+    CHECK(errorCode(withBusOutput(doc, "bus_a", "bus_a").toJson()) == "invalid_document");
+}
+
+TEST_CASE("Buses and sends are added, modified and removed like any entity", "[model][buses]") {
+    const Document a = routed();
+    const Document b = addSend(a, send("snd_1", "trk_1", "bus_a"));
+    const auto changes = diff(a, b);
+    REQUIRE(changes.size() == 2);
+    CHECK(changes[0].entity == EntityRef{EntityType::track, "trk_1"});
+    CHECK(changes[1].entity == EntityRef{EntityType::send, "snd_1"});
+    CHECK(changes[1].change == DiffEntry::Change::added);
+    const EntityRef busRef{EntityType::bus, "bus_a"};
+    const Document c = withBusOutput(b, "bus_a", "bus_b");
+    const auto modified = diff(b, c);
+    REQUIRE(modified.size() == 1);
+    CHECK(modified[0].entity == busRef);
+    CHECK(modified[0].change == DiffEntry::Change::modified);
+    CHECK(c.entityHash(busRef) == sha256(siann::jcs::canonicalize(siann::model::toJson(*c.bus("bus_a")))));
+    CHECK(c.sharesEntity(b, EntityRef{EntityType::send, "snd_1"}));
+    CHECK_FALSE(c.sharesEntity(b, busRef));
+    CHECK(c.sharesEntity(b, EntityRef{EntityType::bus, "bus_b"}));
+    const Document d = c.withoutSend("snd_1");
+    CHECK(d.send("snd_1") == nullptr);
+    CHECK(diff(c, d).back().change == DiffEntry::Change::removed);
+    CHECK_THROWS_AS(d.withoutSend("snd_1"), ModelError);
+    auto root = a.root();
+    root.busOrder.erase(root.busOrder.begin());
+    const Document e = a.withoutBus("bus_a").withRoot(root);
+    CHECK(codes(e).empty());
+    CHECK(e.bus("bus_a") == nullptr);
+    CHECK_THROWS_AS(e.withoutBus("bus_a"), ModelError);
+    CHECK(Document::fromJson(c.toJson()).documentHash() == c.documentHash());
+    // Removing what was added gives the same document hash.
+    Track t = *b.track("trk_1");
+    t.sends.clear();
+    CHECK(b.withoutSend("snd_1").withTrack(t).documentHash() == a.documentHash());
 }

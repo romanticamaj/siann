@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "siann/command/display_text.hpp"
 #include "siann/command/history.hpp"
 #include "siann/command/plan.hpp"
 
@@ -22,6 +23,9 @@ using siann::command::PlanState;
 using siann::command::PlanStore;
 using siann::command::Revision;
 using siann::command::RollbackError;
+using siann::command::TextFault;
+using siann::command::textFault;
+using siann::command::withoutUnsafeCharacters;
 using siann::command::planHash;
 using siann::hash::formatHash;
 using siann::model::DiffEntry;
@@ -210,6 +214,62 @@ TEST_CASE("Submit refuses a title or intent outside the limits with invalid_plan
     CHECK(store.size() == 0);
     CHECK(codeOf(std::string(200, 'a'), std::string(2000, 'a')) == "no error");
     CHECK(store.size() == 1);
+}
+
+TEST_CASE("Submit refuses bidi formatting, line separators and invalid UTF-8 in a title or intent",
+          "[plan][metadata][bidi]") {
+    History history = base();
+    PlanStore store;
+    const auto codeOf = [&](std::optional<std::string> title, std::optional<std::string> intent) {
+        PlanMetadata metadata;
+        metadata.title = std::move(title);
+        metadata.intent = std::move(intent);
+        return errorCode([&] { store.submit(history, {setGain("t1", -600)}, {}, "r2", metadata); });
+    };
+    // U+061C ALM, U+200E LRM, U+200F RLM, U+202A..U+202E embeddings and
+    // overrides, U+2066..U+2069 isolates, U+2028 LS and U+2029 PS.
+    const std::vector<std::string> rejected{
+        "\xD8\x9C",     "\xE2\x80\x8E", "\xE2\x80\x8F", "\xE2\x80\xAA", "\xE2\x80\xAB",
+        "\xE2\x80\xAC", "\xE2\x80\xAD", "\xE2\x80\xAE", "\xE2\x81\xA6", "\xE2\x81\xA7",
+        "\xE2\x81\xA8", "\xE2\x81\xA9", "\xE2\x80\xA8", "\xE2\x80\xA9"};
+    for (const std::string& character : rejected) {
+        INFO("the character ending in byte " << static_cast<int>(static_cast<unsigned char>(character.back())));
+        CHECK(codeOf("Lower the " + character + "drums", std::nullopt) == "invalid_plan_metadata");
+        CHECK(codeOf(std::nullopt, "Lower\nthe " + character + "drums") == "invalid_plan_metadata");
+        CHECK(codeOf(character, std::nullopt) == "invalid_plan_metadata");
+        CHECK(codeOf(std::nullopt, character) == "invalid_plan_metadata");
+    }
+    // Invalid UTF-8: a lone continuation byte, a truncated sequence, an
+    // overlong encoding, a surrogate, past U+10FFFF, and 0xFF.
+    const std::vector<std::string> malformed{"\x80", "\xE2\x80", "\xC0\xAF", "\xED\xA0\x80", "\xF4\x90\x80\x80", "\xFF"};
+    for (const std::string& bytes : malformed) {
+        INFO("malformed sequence of " << bytes.size() << " bytes");
+        CHECK(codeOf("bad " + bytes + " text", std::nullopt) == "invalid_plan_metadata");
+        CHECK(codeOf(std::nullopt, "bad " + bytes + " text") == "invalid_plan_metadata");
+        CHECK(codeOf("truncated at the end " + bytes, std::nullopt) == "invalid_plan_metadata");
+    }
+    CHECK(store.size() == 0);
+
+    // CJK, Hebrew and Arabic letters, emoji (with a ZWJ sequence) and a
+    // multi-line intent pass.
+    const std::string title = "\xE9\x99\x8D\xE4\xBD\x8E\xE9\xBC\x93\xE8\x81\xB2 \xF0\x9F\xA5\x81";
+    const std::string intent = "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D \xD8\xB3\xD9\x84\xD8\xA7\xD9\x85\n\t"
+                               "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x8E\xA4\r\n";
+    CHECK(codeOf(title, intent) == "no error");
+    CHECK(store.size() == 1);
+}
+
+TEST_CASE("withoutUnsafeCharacters drops controls, bidi formatting, separators and malformed bytes",
+          "[plan][metadata][bidi]") {
+    CHECK(withoutUnsafeCharacters("evil\xE2\x80\xAE" "cod.exe") == "evilcod.exe");
+    CHECK(withoutUnsafeCharacters("a\x1B" "b\xC2\x85" "c\xE2\x80\xA8" "d\xD8\x9C" "e") == "abcde");
+    CHECK(withoutUnsafeCharacters("x\xFF" "y\xE2\x80" "z\xED\xA0\x80" "w") == "xyzw");
+    CHECK(withoutUnsafeCharacters("\xE9\xBC\x93 \xF0\x9F\xA5\x81") == "\xE9\xBC\x93 \xF0\x9F\xA5\x81");
+    CHECK(textFault("\xE9\xBC\x93 \xF0\x9F\xA5\x81") == TextFault::none);
+    CHECK(textFault("tab\there", "\t") == TextFault::none);
+    CHECK(textFault("tab\there") == TextFault::control);
+    CHECK(textFault("\xE2\x81\xA6") == TextFault::display_unsafe);
+    CHECK(textFault("\xC0\xAF") == TextFault::invalid_utf8);
 }
 
 TEST_CASE("A sub-plan keeps its parent's title, intent and actor; approve and apply ignore them",
@@ -741,4 +801,65 @@ TEST_CASE("Rolling back a plan that set the master back to 0 dB restores it", "[
     CHECK(inverse.envelope.documentHash == withMaster);
     REQUIRE(history.head().document.master() != nullptr);
     CHECK(history.head().document.master()->gain.milliDb == -4500);
+}
+
+// m5b-engine-buses-sends: plans read and write bus:<id> and send:<id>.
+TEST_CASE("Plan entity sets accept bus and send refs", "[plan][buses]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"bus.add","busId":"b1","name":"Reverb"})")}, "user", "t");
+    PlanStore store;
+    const Plan& plan = store.submit(history,
+                                    {cmd(R"({"op":"bus.set_gain","busId":"b1","gainMilliDb":-6000})"),
+                                     cmd(R"({"op":"send.add","sendId":"s1","trackId":"t1","busId":"b1"})")},
+                                    {}, history.head().envelope.id);
+    std::vector<std::string> keys;
+    for (const auto& snapshot : plan.writeSet) {
+        keys.push_back(std::string(siann::model::entityTypeName(snapshot.ref.type)) + ":" + snapshot.ref.id);
+    }
+    CHECK(keys == std::vector<std::string>{"bus:b1", "send:s1", "track:t1"});
+    const std::string hash = *plan.hashText;
+    // The JSON form round-trips with the new types and keeps its hash.
+    const Plan reread = Plan::fromJson(plan.toJson());
+    CHECK(formatHash(planHash(reread)) == hash);
+    REQUIRE(reread.writeSet.size() == 3);
+    CHECK(reread.writeSet[0].ref == EntityRef{EntityType::bus, "b1"});
+    CHECK(reread.writeSet[1].ref == EntityRef{EntityType::send, "s1"});
+    CHECK_FALSE(reread.writeSet[1].entityHash.has_value());  // absent at the base
+
+    store.approve(history, hash, "user", "t1");
+    const Revision& applied = store.apply(history, hash, "agent", "t2");
+    CHECK(applied.diff.size() == 3);
+    CHECK(history.head().document.send("s1") != nullptr);
+    const Revision& inverse = store.rollback(history, hash, "user", "t3");
+    CHECK(history.head().document.send("s1") == nullptr);
+    CHECK(history.head().document.bus("b1")->gain.milliDb == 0);
+    CHECK(inverse.envelope.documentHash != applied.envelope.documentHash);
+}
+
+TEST_CASE("A bus plan goes stale when the bus changes", "[plan][buses]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"bus.add","busId":"b1","name":"Reverb"})")}, "user", "t");
+    PlanStore store;
+    const std::string hash = *store.submit(history, {cmd(R"({"op":"bus.set_mute","busId":"b1","mute":true})")}, {},
+                                           history.head().envelope.id)
+                                  .hashText;
+    history.commit({cmd(R"({"op":"session.rename","name":"Renamed"})")}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+    history.commit({cmd(R"({"op":"bus.set_gain","busId":"b1","gainMilliDb":-1000})")}, "user", "t");
+    const auto error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"bus:b1"});
+}
+
+TEST_CASE("Rolling back a plan that added a bus restores the bus order after another bus was added",
+          "[plan][buses]") {
+    History history = base();
+    PlanStore store;
+    const auto before = history.head().document.root().busOrder;
+    const std::string hash = appliedPlan(history, store, {cmd(R"({"op":"bus.add","busId":"b1","name":"A"})")});
+    history.commit({cmd(R"({"op":"bus.add","busId":"b2","name":"B"})")}, "user", "t");
+    store.rollback(history, hash, "user", "t");
+    CHECK(history.head().document.bus("b1") == nullptr);
+    CHECK(history.head().document.root().busOrder == std::vector<std::string>{"b2"});
+    CHECK(before.empty());
 }

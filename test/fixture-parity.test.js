@@ -165,3 +165,29 @@ test('time conversions agree with hand-checked values', () => {
   assert.equal(toAudio(steps, 5760, 48000), 96000n);
   assert.equal(toMusic(steps, 72000, 48000), 4800n);
 });
+
+// m5b-engine-buses-sends: format v3 with buses and sends; the entities without a
+// new field keep their v2 hashes.
+test('the buses model fixture matches its Node generator and keeps the untouched v2 hashes', () => {
+  const { FIXTURE_FILE_V3_BUSES, buildFixtureV3Buses, FIXTURE_FILE_V2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V3_BUSES, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV3Buses());
+  assert.equal(committed.document.schemaVersion, 'siann.session_document.v3');
+  const v2 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  const v2Hashes = new Map(v2.entityHashes.map((leaf) => [`${leaf.type}:${leaf.id}`, leaf.entityHash]));
+  const changed = committed.entityHashes
+    .filter((leaf) => v2Hashes.get(`${leaf.type}:${leaf.id}`) !== leaf.entityHash)
+    .map((leaf) => `${leaf.type}:${leaf.id}`);
+  assert.deepEqual(changed.sort(), [
+    'bus:bus-drums', 'bus:bus_fx', 'plugin_slot:slt_comp', 'root:root', 'send:snd_drums', 'send:snd_vox',
+    'track:trk-vox', 'track:trk_drums',
+  ]);
+  for (const leaf of committed.entityHashes.filter((l) => l.type === 'bus' || l.type === 'send')) {
+    const table = leaf.type === 'bus' ? committed.document.buses : committed.document.sends;
+    assert.equal(leaf.entityHash, sha256Jcs(table.find((e) => e.id === leaf.id)));
+  }
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+  const slot = committed.document.pluginSlots.find((s) => s.id === 'slt_comp');
+  assert.equal(slot.busId, 'bus-drums');
+  assert.equal(slot.trackId, undefined);
+});

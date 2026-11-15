@@ -11,6 +11,7 @@ import { useState } from 'react';
 
 import { useT } from '../i18n/t';
 import { describePlan, type StepNames } from './describe';
+import { ISOLATE } from './isolate';
 import { selection } from './diff';
 
 export interface StepListProps {
@@ -60,7 +61,7 @@ export function StepList({ steps, names, ticked, selectable, disabled, onTicked,
         {steps.map((step, index) => {
           const isOpen = open.has(index);
           const text = (
-            <span className="step-text" data-testid={`step-text-${index}`}>
+            <span className="step-text" data-testid={`step-text-${index}`} {...ISOLATE}>
               {texts[index]}
             </span>
           );

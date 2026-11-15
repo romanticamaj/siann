@@ -29,6 +29,7 @@ import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
 import { HearingSwitch } from './HearingSwitch';
 import { usePlanSnapshot, useModelSnapshot, useStepNames } from './hooks';
+import { ISOLATE } from './isolate';
 import { PlanCard } from './PlanCard';
 import { PlanDiff } from './PlanDiff';
 import { RefusalLine, refusalOf, type Refusal } from './RefusalLine';
@@ -104,7 +105,9 @@ export function PlanPanelView(props: PlanPanelViewProps) {
               <h3>{t('plans.staleTitle')}</h3>
               <ul>
                 {props.staleReasons.map((reason, index) => (
-                  <li key={index}>{reason}</li>
+                  <li key={index} className="plan-stale-reason" {...ISOLATE}>
+                    {reason}
+                  </li>
                 ))}
               </ul>
             </div>

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <utility>
 
+#include "siann/command/display_text.hpp"
 #include "siann/hash/jcs.hpp"
 
 namespace siann::command {
@@ -38,7 +39,7 @@ bool setLess(const EntityRef& a, const EntityRef& b) noexcept {
 std::optional<EntityType> entityTypeFromName(std::string_view name) noexcept {
     for (const EntityType type :
          {EntityType::root, EntityType::media, EntityType::track, EntityType::clip, EntityType::plugin_slot,
-          EntityType::locators, EntityType::master}) {
+          EntityType::locators, EntityType::master, EntityType::bus, EntityType::send}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -153,26 +154,24 @@ std::optional<PlanActor> optionalActor(const Value& plan) {
     return PlanActor{kind->asString() == "mcp" ? PlanActorKind::mcp : PlanActorKind::ui, name->asString()};
 }
 
-// The first control character of UTF-8 text (C0, DEL, or C1, which UTF-8
-// writes as 0xC2 0x80..0x9F), skipping the ASCII ones `allowed` lists.
-bool hasControl(std::string_view text, std::string_view allowed) noexcept {
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const auto byte = static_cast<unsigned char>(text[i]);
-        if ((byte < 0x20 || byte == 0x7F) && allowed.find(text[i]) == std::string_view::npos) {
-            return true;
-        }
-        if (byte == 0xC2 && i + 1 < text.size()) {
-            const auto next = static_cast<unsigned char>(text[i + 1]);
-            if (next >= 0x80 && next <= 0x9F) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 [[noreturn]] void invalidMetadata(const std::string& message) {
     throw CommandError("invalid_plan_metadata", message);
+}
+
+// Refuses `text` (the field `what`) unless it is well-formed UTF-8 without a
+// control character other than the `allowedControls` (`controlRule` says
+// which) and without a display-unsafe character (display_text.hpp).
+void checkDisplayText(const std::string& what, std::string_view text, std::string_view allowedControls,
+                      const std::string& controlRule) {
+    switch (textFault(text, allowedControls)) {
+        case TextFault::none: return;
+        case TextFault::invalid_utf8: invalidMetadata(what + " is not well-formed UTF-8");
+        case TextFault::control: invalidMetadata(what + " " + controlRule);
+        case TextFault::display_unsafe:
+            invalidMetadata(what +
+                            " has a bidi formatting character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 "
+                            "to U+2069) or a line or paragraph separator (U+2028, U+2029)");
+    }
 }
 
 std::optional<PlanState> planStateFromName(std::string_view name) noexcept {
@@ -273,18 +272,14 @@ void checkPlanMetadata(const PlanMetadata& metadata) {
             invalidMetadata("a plan title is 1 to " + std::to_string(kPlanTitleMaxBytes) + " UTF-8 bytes; this one is " +
                             std::to_string(title->size()));
         }
-        if (hasControl(*title, {})) {
-            invalidMetadata("a plan title is one line without control characters");
-        }
+        checkDisplayText("a plan title", *title, {}, "is one line without control characters");
     }
     if (const auto& intent = metadata.intent) {
         if (intent->empty() || intent->size() > kPlanIntentMaxBytes) {
             invalidMetadata("a plan intent is 1 to " + std::to_string(kPlanIntentMaxBytes) +
                             " UTF-8 bytes; this one is " + std::to_string(intent->size()));
         }
-        if (hasControl(*intent, "\t\n\r")) {
-            invalidMetadata("a plan intent has no control characters other than tab, LF and CR");
-        }
+        checkDisplayText("a plan intent", *intent, "\t\n\r", "has no control characters other than tab, LF and CR");
     }
 }
 

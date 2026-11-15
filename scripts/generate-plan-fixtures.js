@@ -95,6 +95,17 @@ function buildFixture() {
       readSet: [],
       writeSet: [entry('master', 'master', null)],
     }],
+    // m5b-engine-buses-sends: bus and send refs in the read and write sets.
+    ['bus_and_send_sets', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r9',
+      steps: [
+        { op: 'bus.set_gain', busId: 'bus_1', gainMilliDb: -6000 },
+        { op: 'send.add', sendId: 'snd_1', trackId: 'trk_1', busId: 'bus_1' },
+      ],
+      readSet: [],
+      writeSet: [entry('bus', 'bus_1'), entry('send', 'snd_1', null), entry('track', 'trk_1')],
+    }],
     // m5b-engine-record: a track's input set and cleared (null is hashed as null).
     ['track_input_steps', {
       ...minimal,
@@ -167,7 +178,7 @@ function buildFixture() {
       'invalid_entity_set'],
     ['duplicate_write_set_entry', text({ ...minimal, writeSet: [entry('track', 'trk_1'), entry('track', 'trk_1')] }),
       'invalid_entity_set'],
-    ['unknown_entity_type', text({ ...minimal, readSet: [entry('send', 'snd_1')] }), 'invalid_entity_set'],
+    ['unknown_entity_type', text({ ...minimal, readSet: [entry('vca', 'vca_1')] }), 'invalid_entity_set'],
     ['invalid_entity_id', text({ ...minimal, readSet: [entry('track', 'trk 1')] }), 'invalid_entity_set'],
     ['locators_with_another_id', text({ ...minimal, readSet: [entry('locators', 'loc_1')] }), 'invalid_entity_set'],
     ['master_with_another_id', text({ ...minimal, writeSet: [entry('master', 'main')] }), 'invalid_entity_set'],

@@ -84,6 +84,13 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.feature('agents'), true);
   assert.equal(reduced.feature('planMetadata'), false, 'the reduced engine has no features.planMetadata');
   assert.equal(reduced.feature('agents'), false, 'the reduced engine has no features.agents');
+  // m5b-engine-buses-sends: the bus and send features and commands.
+  assert.equal(full.feature('buses'), true);
+  assert.equal(full.feature('sends'), true);
+  assert.equal(reduced.feature('buses'), false);
+  assert.equal(full.command('bus.add'), true);
+  assert.equal(full.command('send.set_level'), true);
+  assert.equal(full.command('track.set_output'), true);
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);
