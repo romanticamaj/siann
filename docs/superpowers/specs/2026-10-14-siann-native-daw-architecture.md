@@ -710,6 +710,12 @@ records who that is:
   ("Click"). The offline graph (`engine::compileDocument`) is the same up to the
   master bus, which is its output: the master gain applies there too, with no
   meter and no click, so offline and realtime renders agree.
+- Buses (m5b-engine-buses-sends): a bus sums the tracks and buses that output to
+  it and the sends that target it, then runs its inserts and its fader (gain, pan,
+  mute) and feeds its meter (meter key `bus:<id>`, listed in the meter legend
+  after the tracks). It outputs to the master sum or to another bus ("Channels and
+  I/O"), so the master sums the tracks and buses that still output to it. The
+  offline graph has the same buses without the meters.
 
 ### Click
 
@@ -1008,7 +1014,10 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
 - A global compensation limit (configurable) bounds delay line memory. Paths above
   the limit are flagged to the user and agents; they are not silently misaligned.
 - Tests: a built-in `FakeLatency` node with settable and changeable latency; null
-  tests across direct, send, aux and sidechain paths.
+  tests across direct, send, aux and sidechain paths. Because a bus may output to
+  another bus (m5b-engine-buses-sends), alignment happens at each bus input of a
+  chain in turn: a three-level chain (track -> bus -> bus -> bus -> master) with a
+  latent insert on each level nulls against a direct copy offline and in realtime.
 
 ## Automation
 
@@ -1078,6 +1087,11 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
   lease rules; `gesture.end` commits one `master.set_gain`. The master has no pan
   or mute target. It always exists as a target: while the `master` entity is
   absent its start value is 0, so `not_found` does not apply to it.
+- M5b (m5b-engine-buses-sends): the target `{ref: "bus:<id>", param: "gain"}` is
+  a bus fader and `gesture.end` commits one `bus.set_gain`; the target
+  `{ref: "send:<id>", param: "level"}` is a send level and commits one
+  `send.set_level`. Both follow the track fader's lease rules; an unknown id is
+  `not_found`, and any other `param` on them is `invalid_params`.
 - Plugin editors have no socket. Their gestures are owned by the plugin instance and
   end on the plugin's end event, on editor close, or on instance destruction. If the
   engine crashes mid-gesture, the session returns to the last durable revision.
@@ -1423,6 +1437,32 @@ Every command prints one JSON object; exit codes stay 0, 1 (error with a code) a
 - M1 plays overlapping clips on one track by summing them; comping and
   take-on-top rules come with playlists.
 - Plugin slots store their negotiated bus layout and sidechain configuration.
+- M5b routing (m5b-engine-buses-sends; decided by the main session under the maintainer's Cubase-reference ruling, 2026-11-15: Cubase is the reference, and
+  Cubase routes a Group channel to another Group). A track outputs to the master
+  or to one bus, `track.set_output {trackId, output: {busId} | null}` (null the
+  master); a bus outputs to the master or to another bus, `bus.set_output {busId,
+  output: {busId} | null}` (null the master); a send goes from a track to a bus.
+  Each is one revision declaring only the routed track or bus; an unknown track or
+  bus is `not_found`, another field `invalid_params`. Tracks are leaves: nothing
+  outputs or sends to a track, so a loop can only close through bus outputs. A
+  `bus.set_output` whose target is the bus itself, or a bus whose output chain
+  reaches it, is refused with `routing_cycle` and nothing changes; `validate()`
+  rejects a document whose bus outputs form a cycle (`routing_cycle`). A track's
+  output or send can never form one. The graph compiles nested buses in output
+  order, and PDC aligns at every bus input ("Latency model"). The alternative,
+  buses that always feed the master in M5b with `routing_cycle` moved to M6c, was
+  not taken.
+- M5b solo and mute with buses and sends (m5b-engine-buses-sends). A solo exists
+  when any track or bus is soloed. A channel X reaches Y when Y is X's output, the
+  target bus of one of X's enabled sends, or reached by either. While a solo
+  exists, a track or bus that is not soloed, reaches no soloed channel and is
+  reached by none is solo-silenced; the master is never silenced. A track's mute
+  or solo-silence silences its post-fader and its pre-fader sends (Cubase's
+  default, mute pre-sends when muted). A pre-fader send is tapped after the
+  inserts and before the fader, so it ignores the track's gain and pan; a
+  post-fader send is tapped after the fader (gain and pan). A disabled send
+  contributes nothing and stays in the graph, so enabling it is a parameter
+  change, not a recompile.
 
 ## Modules
 
@@ -1494,7 +1534,10 @@ Clip            id, source MediaId, position (Position), sourceStart, length,
                 gain, fades
 MidiClip        id, position (MusicTime), events
 PluginSlot      id, descriptor (format, uid), stateBlob (BlobId), busLayout, bypass
-Send            id, target, level, pan, pre/post
+Bus             id, name, fader (gain, pan, mute, solo), inserts, output (a bus
+                or the master)
+Send            id, source track, target bus, level, pre/post, enabled (send pan
+                is not in M5b)
 AutomationLane  target ParamRef, points, mode
 ```
 
@@ -1520,7 +1563,12 @@ Rules:
   `plugin.insert {trackId, index, slotId, descriptor, stateBlob}` (`index` clamps
   to the end; `already_exists` on a used id), `plugin.remove {slotId}`,
   `plugin.set_bypass {slotId, bypass}`; `track.remove` declares its slots as
-  cascades. Validation checks the hash's form only: a blob absent from `blobs/` at
+  cascades. M5b (m5b-engine-buses-sends): a slot carries exactly one of
+  `trackId` or `busId` (`busId` is omitted on a track's slot, so every existing
+  slot hash holds; both or neither is `invalid_field`), `plugin.insert` takes
+  exactly one of `trackId` or `busId` (`invalid_params` otherwise),
+  `plugin.remove` and `plugin.set_bypass` are unchanged, and `bus.remove`
+  declares the bus's slots as cascades. Validation checks the hash's form only: a blob absent from `blobs/` at
   instantiation loads the plugin with its default state and reports it `running`
   with `error {code: "state_missing"}`; rebuilding the document never needs the
   blob or the plugin. `inserts` is omitted from the track's JSON when it is
@@ -1585,14 +1633,42 @@ Rules:
   `{master:master}`, is one revision and undoable; `master.set_gain 0` removes
   the entity, so the document hashes as it did before the first set, and
   `plan.preview` shows `before: null` (or `after: null`) for the 0 dB side. The
-  document stays `siann.session_document.v2`; m5b-engine-buses-sends raises it
-  later. Why an entity and not a `masterGainMilliDb` field on the root: the root
+  document stays `siann.session_document.v2`; the features that add entity
+  types raise it (the version rule after the bus and send bullet). Why an entity and not a `masterGainMilliDb` field on the root: the root
   is `root:root`, which `session.rename` and `session.set_tempo` declare, so every
   master fader move would make rename and tempo plans stale and the reverse; the
   gesture target `{ref: "master:master", param: "gain"}` fits the leases unchanged;
   the playback engine's entity diff picks a parameter set rather than a recompile
   without a field-level root comparison; the master will grow mute and inserts;
   and `locators` (E-1) set the precedent.
+- M5b `bus` and `send` (m5b-engine-buses-sends, UR-10; shapes from its plan
+  phase, 2026-11-15; routing decided by the main session under the maintainer's Cubase-reference ruling, 2026-11-15, "Channels and I/O"): `bus` is
+  `{schema: "siann.entity.bus.v1", id, name, channels: 2, gainMilliDb, pan, mute,
+  solo, inserts?, output?}`, ref `bus:<id>`; `gainMilliDb` and `pan` have the
+  track's ranges and errors (`invalid_gain`, `invalid_pan`), `inserts` is its
+  ordered slot ids (omitted when empty), `output` is `{busId}` (omitted while
+  the bus feeds the master). The order of buses is `root.busOrder`, omitted when
+  empty so every existing root hash holds. `send` is `{schema:
+  "siann.entity.send.v1", id, trackId, busId, levelMilliDb, pre, enabled}`, ref
+  `send:<id>`; `levelMilliDb` has the track gain's range (`invalid_gain`),
+  `pre` and `enabled` are booleans; send pan is not in M5b. A track gains
+  `sends`, its ordered send ids (omitted when empty), and `output` `{busId}`
+  (omitted while the track feeds the master). Commands: `bus.add`, `bus.remove`,
+  `bus.rename`, `bus.set_gain`, `bus.set_pan`, `bus.set_mute`, `bus.set_solo`,
+  `bus.set_output`, `send.add`, `send.remove`, `send.set_level`,
+  `send.set_pre`, `send.set_enabled`, `track.set_output`; each is one revision.
+  `bus.remove` removes the bus's sends and slots, routes the tracks and buses
+  that output to it to the master in the same revision, and declares all of them
+  as cascades; `track.remove` cascades the track's sends. `validate()` rejects a
+  send or an output naming an unknown track or bus, a duplicate id in
+  `Track.sends` or `root.busOrder`, a `busOrder` that differs from the bus
+  table, and a cyclic bus output chain (`routing_cycle`).
+- Document version rule (from m5b-engine-buses-sends and m5b-engine-markers,
+  which both add entity types in wave 3): each feature that adds an entity type
+  raises `siann.session_document` by one from origin/main when it lands (v3, then
+  v4); every earlier version is read through a migration that adds nothing, and a
+  document of an earlier version that carries a later version's entity type or
+  field is rejected. The second of two parallel features renumbers on rebase.
 
 ### siann-command (pure C++) — the core of SIANN
 
@@ -2454,6 +2530,15 @@ Protocol v0, agent methods (decided with m3-mcp; the MCP mapping is in
     idempotency cache like every method):
     - `command.list {}` -> `{commands}` (`command::commandNames()`; per-command
       parameter schemas are a follow-up, the registry has none yet).
+      m5b-engine-buses-sends makes it `{commands, cascades}`, additively, so
+      `commands` stays a string array for the app, MCP `list_commands` and
+      `capabilities-full.json`: `cascades` maps a command name to the sorted
+      entity types it may remove or change besides its target, for example
+      `{"bus.remove": ["bus", "plugin_slot", "root", "send", "track"],
+      "track.remove": ["clip", "plugin_slot", "root", "send"]}` (a bus that output
+      to the removed bus is changed); a command without cascades is
+      absent. The same feature adds `features.buses` and `features.sends` (both
+      true) to `engine.capabilities`.
     - `engine.capabilities {}` -> `{about, scope, scopes: ["propose", "trusted"],
       commands, methods, features: {plans: true, proposals: true, audition: <a port
       is present>, transport: <a port is present>, render: true, plugins,
