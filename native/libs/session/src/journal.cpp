@@ -57,6 +57,8 @@ EntityType typeFromName(const std::string& name) {
     if (name == "plugin_slot") return EntityType::plugin_slot;
     if (name == "locators") return EntityType::locators;
     if (name == "master") return EntityType::master;
+    if (name == "bus") return EntityType::bus;
+    if (name == "send") return EntityType::send;
     throw SessionError("corrupt_record", "unknown entity type " + name);
 }
 
