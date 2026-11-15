@@ -3616,7 +3616,8 @@ To be updated together with the superseding ADR:
 - `docs/schemas/command-journal-v0.md`: v1 for the native engine (revision DAG,
   WAL, diff-based touched IDs). Done with m5b-bridge-native-client:
   `docs/schemas/command-journal-v1.md` records the bundle, the plan hash, its base
-  and applied revisions and the document hashes before and after; v0 is
+  and applied revisions, the touched IDs (`touchedIds`, the applied revision's
+  diff as `plan.apply` returns it) and the document hashes before and after; v0 is
   historical and the bridge refuses it.
 - Naming: the existing Ardour checkout directory `siann-engine` collides with the
   new engine name. Rename or archive the checkout (for example

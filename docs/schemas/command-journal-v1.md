@@ -13,7 +13,8 @@ journal, which is historical. The bridge refuses a v0 journal
 `siann.command_journal.v1` is what the Node bridge (`src/bridge/runner.js`)
 writes after it runs a `siann.command.v0` file against the native
 `siann-engine`: which session bundle it changed, and for every plan it applied
-the plan hash, the revisions and the document hashes before and after. It is the
+the plan hash, the revisions, the stable IDs the plan touched (the applied
+revision's diff) and the document hashes before and after. It is the
 bridge's record, not the engine's history. The engine keeps its own
 write-ahead journal in the bundle (`journal.ndjson`, `siann.journal_record.v1`;
 architecture spec, "Journal as write-ahead log"), so v1 holds no snapshots: a
@@ -86,6 +87,7 @@ runner's v0 fields are refused, never dropped:
       "planHash": "sha256:...",
       "baseRevision": "r3",
       "appliedRevision": "r4",
+      "touchedIds": ["root:root", "track:trk_1", "clip:clp_1"],
       "preState": { "revision": "r3", "documentHash": "sha256:..." },
       "postState": { "revision": "r4", "documentHash": "sha256:..." },
       "entries": [
@@ -125,6 +127,14 @@ runner's v0 fields are refused, never dropped:
   - `baseRevision`: the plan's base, the head when it was submitted.
   - `appliedRevision`: the plan revision `plan.apply` committed; what a rollback
     names.
+  - `touchedIds`: the engine-assigned stable IDs the plan touched (ADR-0011),
+    the `diff` of the revision `plan.apply` returned (siann-protocol item 8,
+    published like `command.execute`), kept as the engine sent it:
+    `"<entityType>:<id>"` for every entity the revision added, removed or
+    changed against its parent, sorted by entity type and id. A `track.add`
+    also names `root:root`, whose `trackOrder` it changes. It covers the plan's
+    revision only, not the run's `media.add` revisions (`media`). `null` on a
+    batch that failed before `plan.apply` answered.
   - `preState`, `postState`: `session.inspect` before `plan.submit` and after
     `plan.apply`: `{revision, documentHash}`. `preState.documentHash` is the
     hash after the run's media imports, which commit outside the plan; it is the

@@ -25,7 +25,8 @@
 // (src/hash/plan-hash.js) before it is approved. The run writes a
 // siann.command_journal.v1 (docs/schemas/command-journal-v1.md) to the
 // command file's journalPath: the bundle, and per plan its hash, base and
-// applied revisions and the document hashes before and after.
+// applied revisions, the stable IDs it touched (the applied revision's diff)
+// and the document hashes before and after.
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -81,6 +82,14 @@ function framesOf(text, rate) {
 
 // ---- Journal ----------------------------------------------------------------
 
+const ENTITY_REF_RE = /^[a-z_]+:[^\s:][^\s]*$/;
+
+function validateTouchedIds(touchedIds) {
+  if (!Array.isArray(touchedIds) || !touchedIds.every((ref) => typeof ref === 'string' && ENTITY_REF_RE.test(ref))) {
+    throw new Error(`invalid touchedIds (an array of "<entityType>:<id>" refs): ${JSON.stringify(touchedIds)}`);
+  }
+}
+
 function validateJournal(journal) {
   if (journal && journal.schemaVersion === JOURNAL_V0) {
     throw new Error(`${JOURNAL_V0} is the Ardour engine's journal (session tar snapshots); it cannot be rolled back `
@@ -112,6 +121,7 @@ function validateJournal(journal) {
     if (batch.planHash !== undefined && batch.planHash !== null && !HASH_RE.test(batch.planHash)) {
       throw new Error(`invalid planHash: ${batch.planHash}`);
     }
+    if (batch.touchedIds !== undefined && batch.touchedIds !== null) validateTouchedIds(batch.touchedIds);
     for (const state of [batch.preState, batch.postState]) {
       const hash = state && state.documentHash;
       if (hash && !HASH_RE.test(hash)) throw new Error(`invalid documentHash: ${hash}`);
@@ -375,6 +385,7 @@ class Run {
       planHash: null,
       baseRevision: null,
       appliedRevision: null,
+      touchedIds: null,
       preState: null,
       postState: null,
       entries: planned.map(({ step, meta }, k) => ({
@@ -400,6 +411,9 @@ class Run {
     await this.client.request('plan.approve', { plan: plan.hash });
     const applied = await this.client.request('plan.apply', { plan: plan.hash });
     batch.appliedRevision = applied.revision.id;
+    // The engine-assigned stable IDs the plan touched (ADR-0011): the applied
+    // revision's diff against its parent, "<entityType>:<id>" as the engine sent it.
+    batch.touchedIds = applied.revision.diff;
     const post = await this.client.request('session.inspect');
     batch.postState = { revision: post.revision, documentHash: post.documentHash };
     batch.status = 'applied';
