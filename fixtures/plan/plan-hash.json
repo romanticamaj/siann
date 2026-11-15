@@ -302,6 +302,39 @@
       "planHash": "sha256:31d33b0c706be088da9dac26474de44c3459dd849952a6d7ce2a6fa4833d1f13"
     },
     {
+      "name": "track_monitor_steps",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r4",
+        "steps": [
+          {
+            "op": "track.set_monitor",
+            "trackId": "trk_1",
+            "monitor": "auto"
+          },
+          {
+            "op": "track.set_monitor",
+            "trackId": "trk_1",
+            "monitor": "input"
+          },
+          {
+            "op": "track.set_monitor",
+            "trackId": "trk_1",
+            "monitor": "off"
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "track",
+            "id": "trk_1",
+            "hash": "sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90"
+          }
+        ]
+      },
+      "planHash": "sha256:f05098e4e5e5ac319c87fe183c24fa34a248911538d2e555193d261af17d8802"
+    },
+    {
       "name": "media_add_with_name",
       "plan": {
         "schema": "siann.plan.v1",

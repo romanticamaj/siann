@@ -7,6 +7,7 @@
 // siann_rt_alloc_guard: the capture path is checked for allocations.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -79,6 +80,10 @@ command::Command cmd(const std::string& json) {
 std::string addTrack(const std::string& id, int channels) {
     return R"({"op":"track.add","trackId":")" + id + R"(","name":")" + id + R"(","channels":)" +
            std::to_string(channels) + "}";
+}
+
+std::string setMonitor(const std::string& id, const std::string& mode) {
+    return R"({"op":"track.set_monitor","trackId":")" + id + R"(","monitor":")" + mode + R"("})";
 }
 
 std::string setInput(const std::string& id, int port, int channels) {
@@ -467,6 +472,85 @@ TEST_CASE("a recorded impulse lands within one sample of where it was played", "
     }
 }
 
+// m5b-engine-monitoring: the latency model's formula is the same in every mode.
+// The recorded track monitors its own input below unity (loopback plus
+// monitoring is a decaying echo train), so its loudest sample is the impulse.
+TEST_CASE("a take recorded while monitoring lands within one sample in every mode",
+          "[engine][record][latency][monitor]") {
+    const std::string mode = GENERATE(std::string("off"), std::string("auto"), std::string("input"));
+    INFO("monitor " << mode);
+    RecordRig rig;
+    rig.openInput();
+    rig.exec(setMonitor("trk_mono", mode));
+    rig.exec(R"({"op":"track.set_gain","trackId":"trk_mono","gainMilliDb":-12000})");
+    rig.host->arm("trk_mono", true);
+    rig.host->record(true);
+    rig.settle();
+    rig.pumpUntil(kImpulseAt + 4'000);
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.host->record(false);
+    CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
+}
+
+TEST_CASE("engine.status reports the monitored round trip, null without an input", "[engine][monitor][latency]") {
+    SECTION("the device terms, and nothing without an input") {
+        RecordRig rig;
+        REQUIRE(rig.host->status().device.has_value());
+        CHECK_FALSE(rig.host->status().monitorRoundTripFrames.has_value());
+        rig.openInput();
+        CHECK(rig.host->status().monitorRoundTripFrames == std::optional<std::int64_t>(kInputLatency + kOutputLatency));
+        rig.exec(setMonitor("trk_mono", "input"));
+        CHECK(rig.host->status().monitorRoundTripFrames == std::optional<std::int64_t>(kInputLatency + kOutputLatency));
+    }
+    SECTION("plus the SRC terms through device-side SRC") {
+        RecordRig rig({}, 44'100);
+        rig.openInput();
+        rig.exec(setMonitor("trk_mono", "input"));
+        const realtime::LatencyReport report = rig.engine().driver().latency();
+        CHECK(report.srcMonitorFifoFrames > 0);
+        CHECK(rig.host->status().monitorRoundTripFrames ==
+              std::optional<std::int64_t>(report.inputLatencyFrames + report.outputLatencyFrames +
+                                          report.srcOutputLatencyFrames + report.srcInputLatencyFrames +
+                                          report.srcMonitorFifoFrames));
+    }
+}
+
+// Closes follow-up "Before M6a: fader gestures" 4: a stopped engine meters a
+// monitored input.
+TEST_CASE("a monitored track's meter shows its input while the transport is stopped", "[engine][monitor][meter]") {
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator([](int, std::int64_t) { return 0.5f; });
+    rig.pump(4);
+    CHECK_FALSE(rig.engine().dispatcher().meter("track:trk_mono").has_value());  // off: no graph runs
+    rig.exec(setMonitor("trk_mono", "input"));
+    rig.pump(8);
+    CHECK_FALSE(rig.host->transportState().playing);
+    const auto meter = rig.engine().dispatcher().meter("track:trk_mono");
+    REQUIRE(meter.has_value());
+    CHECK(meter->reading.peak[0] > 0.3f);  // 0.5 at the mono strip's centre pan
+    CHECK(rig.host->transportState().position == 0);
+}
+
+TEST_CASE("auto monitoring follows arming: the input while stopped and armed", "[engine][monitor]") {
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator([](int, std::int64_t) { return 0.5f; });
+    rig.exec(setMonitor("trk_mono", "auto"));
+    rig.pump(8);
+    auto meter = rig.engine().dispatcher().meter("track:trk_mono");
+    REQUIRE(meter.has_value());
+    CHECK(meter->reading.peak[0] == 0.0f);  // unarmed
+    rig.host->arm("trk_mono", true);
+    rig.pump(8);
+    meter = rig.engine().dispatcher().meter("track:trk_mono");
+    REQUIRE(meter.has_value());
+    CHECK(meter->reading.peak[0] > 0.3f);
+    rig.host->arm("trk_mono", false);
+    rig.pump(8);
+    CHECK(rig.engine().dispatcher().meter("track:trk_mono")->reading.peak[0] == 0.0f);
+}
+
 TEST_CASE("two armed tracks commit one revision with a media.add and a clip.place each", "[engine][record]") {
     RecordRig rig;
     rig.openInput();
@@ -698,6 +782,10 @@ TEST_CASE("an input reports the channels the device opened, and none opened is n
 
 TEST_CASE("a take recorded through a latent insert on the monitored path lands where it was played",
           "[engine][record][latency][plugin]") {
+    // m5b-engine-monitoring: in every mode, the recorded track monitoring itself
+    // below unity while the latent insert sits on another track.
+    const std::string mode = GENERATE(std::string("off"), std::string("auto"), std::string("input"));
+    INFO("monitor " << mode);
     RecordRig rig([](EngineHostOptions& options) {
         options.pluginDirs = {fs::path(SIANN_TEST_PLUGIN_CLAP).parent_path().string()};
     });
@@ -734,6 +822,10 @@ TEST_CASE("a take recorded through a latent insert on the monitored path lands w
     }
     REQUIRE(rig.engine().driver().liveGraph() != nullptr);
     REQUIRE(rig.engine().driver().liveGraph()->totalLatency() == 64);
+    rig.exec(setMonitor("trk_mono", mode));
+    rig.exec(R"({"op":"track.set_gain","trackId":"trk_mono","gainMilliDb":-12000})");
+    // The monitored round trip leaves the other track's insert out.
+    CHECK(rig.host->status().monitorRoundTripFrames == std::optional<std::int64_t>(kInputLatency + kOutputLatency));
 
     rig.host->arm("trk_mono", true);
     rig.host->record(true);

@@ -194,6 +194,60 @@ TEST_CASE("A locate that lands between the compile and the publish reaches the n
     CHECK(p.engine.underruns() == 0);
 }
 
+// m5b-engine-monitoring: a monitoring mode change is structural. It goes through
+// duck-and-swap (one new epoch, one transition), allocates nothing on the audio
+// thread and leaves no step in the output; a fader edit afterwards still
+// compiles nothing.
+TEST_CASE("track.set_monitor while playing goes through the structural transition without a step",
+          "[playback][live][monitor]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(40);  // frames 10,240 on: no ramp of the test media wraps for a while
+    const std::uint64_t epoch = p.engine.driver().liveEpoch();
+    const std::size_t compiles = p.engine.compileCount();
+    const std::size_t blocksBefore = p.inFlightBefore.size();
+
+    // Input monitoring on trk_b: with no device input, the track's clips give way
+    // to silence, which only the duck and rise keep from being a step.
+    f.exec(R"({"op":"track.set_monitor","trackId":"trk_b","monitor":"input"})");
+    const auto allocations = rt::allocationViolations();
+    p.engine.update(f.doc());
+    p.pump(6);
+    CHECK(p.engine.compileCount() == compiles + 1);
+    CHECK(p.engine.driver().liveEpoch() == epoch + 1);
+    CHECK(std::count(p.inFlightBefore.begin() + static_cast<std::ptrdiff_t>(blocksBefore), p.inFlightBefore.end(),
+                     true) >= 1);
+    CHECK_FALSE(p.engine.driver().transitionInFlight());
+    CHECK(rt::allocationViolations() == allocations);
+    float step = 0.0f;
+    for (int c = 0; c < 2; ++c) {
+        const auto& o = p.out[static_cast<std::size_t>(c)];
+        for (std::size_t i = 38 * kBlock; i < o.size(); ++i) {
+            step = std::max(step, std::abs(o[i] - o[i - 1]));
+        }
+    }
+    INFO("largest step " << step);
+    CHECK(step < 0.01f);  // the media's own steps here are ~1e-4, a cut would be ~0.5
+
+    // A fader edit on the monitored track compiles nothing.
+    f.exec(R"({"op":"track.set_gain","trackId":"trk_b","gainMilliDb":-6000})");
+    p.engine.update(f.doc());
+    p.pump(2);
+    CHECK(p.engine.compileCount() == compiles + 1);
+
+    // Auto, unarmed and playing: the clips again, as the offline render (which
+    // ignores monitor) has them.
+    f.exec(R"({"op":"track.set_monitor","trackId":"trk_b","monitor":"auto"})");
+    p.engine.update(f.doc());
+    p.pump(6);
+    CHECK(p.engine.compileCount() == compiles + 2);
+    const auto reference = offline(f.doc(), f.bundle(), framesOf(p));
+    const int duck = p.lastDuckBlock();
+    REQUIRE(duck > 40);
+    CHECK(matches(p, reference, duck + 2, p.blockCount()));
+    CHECK(p.engine.underruns() == 0);
+}
+
 TEST_CASE("An edit that only changes fader parameters does not recompile", "[playback][live]") {
     Fixture f;
     Live p(f.session);
