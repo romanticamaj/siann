@@ -121,7 +121,7 @@ The record state:
 
 `takes` are the takes of the current recording, or of the last one once it ended, when each also has `endedBy` (`stop`, `overflow`, `disk` or `device`) and `overflows` (a decimal string). `startFrame` is the timeline frame the take lands on (its first captured frame's position minus the record offset), null until that frame; `durableFrames` counts the frames the WAV header made durable (the writer checkpoints about once a second). `record.changed` carries the same object whenever it changes ([Protocol events v1](protocol-events-v1.md)); `session.sync` and the auth reply list the pending takes as `pendingTakes`.
 
-MCP: `record_arm` and `record` wrap `record.arm` and `transport.record` in the trusted scope ([Protocol MCP v0](protocol-mcp-v0.md)); `record.recover_take` has no tool. `transport.stop` and `transport.locate` end a running recording, so while one runs an MCP request with the propose scope for either (`stop`, `locate`) is `scope_denied` and reaches no port; stopped, they run as before. The UI's token and a trusted MCP credential are not limited.
+MCP: `record_arm` and `record` wrap `record.arm` and `transport.record` in the trusted scope ([Protocol MCP v0](protocol-mcp-v0.md)); `record.recover_take` has no tool: accepting or trashing a take is the user's decision about files on their disk (Protocol MCP v0, "Methods without a tool"). `transport.stop` and `transport.locate` end a running recording, so while one runs an MCP request with the propose scope for either (`stop`, `locate`) is `scope_denied` and reaches no port; stopped, they run as before. The UI's token and a trusted MCP credential are not limited.
 
 ## session.open in siann-engine
 

@@ -351,6 +351,31 @@ Params `{}`. Result `{revision: {...}}` as for `command.execute`. Both publish
 
 Params `{}`. Result: the `about` object of the handshake reply.
 
+### `plan.list`
+
+Params `{}`. Result `{plans: [...]}`: every plan of the session in submission
+order (a partial approval's sub-plan after the plans before it), each entry the
+object `plan.status` returns for that plan (the plan with its lifecycle fields,
+`stale` as `[{ref, change}]`, `proposalBranch` while proposed). Read only; it
+honours `expectedRevision` (`revision_mismatch` when main's head differs). No
+other error. Wire example: [plan-v1.md](plan-v1.md), "Protocol methods". MCP tool
+`list_plans` (propose).
+
+### `plan.preview`
+
+Params `{plan: "sha256:..."}`. Result `{revision, documentHash, stale, entities}`:
+what `plan.apply` would produce now, the plan's steps prepared at main's head and
+never committed. `revision` and `documentHash` name the head, `stale` is as
+`plan.status` reports it, and `entities` is the union of the writeSet refs and the
+refs that differ between the head and the prepared document, sorted by
+`(type, id)`, each `{ref, before, after}` (`null` where the entity is absent). Any
+state previews, always against the head; the plan's state never changes. Errors:
+`not_found` (no such plan), `invalid_params` (no `plan`), the error of a step that
+fails at the head (`already_exists`, `not_found`, `invalid_gain`, ...) with its
+`step` index as `command.execute` reports it, and `revision_mismatch` for an
+`expectedRevision` that is not main's head. Wire example: [plan-v1.md](plan-v1.md),
+"Protocol methods". MCP tool `preview_plan` (propose).
+
 ## Build and source (ADR-0017, point 4)
 
 `native/cmake/SiannBuildInfo.cmake` writes a header at build time (not configure
