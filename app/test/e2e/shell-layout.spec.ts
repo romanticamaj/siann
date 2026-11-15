@@ -430,6 +430,12 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
   expect(await focused()).toEqual(['project']);
   expect(await frame('project')).toBe(true);
+  // The focus frame is --focus, the primary text at 20 % (m5-ui-tokens-spacing).
+  expect(await page.locator('[data-zone="project"]').evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(232, 235, 241, 0.2)');
+  // Every zone's tab row is --zone-tabs, 26 px.
+  const tabRows = await page.locator('.zone-tabs').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height).filter((height) => height > 0));
+  expect(tabRows.length).toBeGreaterThan(0);
+  for (const height of tabRows) expect(height).toBe(26);
   expect(await frame('lower')).toBe(false);
   for (const zone of ['lower', 'right', 'left', 'project']) {
     await page.keyboard.press('Tab');
@@ -484,6 +490,11 @@ test('the keyboard reaches each divider and the controls of a zone from the zone
       const style = getComputedStyle(el);
       return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
     });
+  // The 2 px ring of a control and of a divider is --focus-ring, the primary
+  // text at 55 %: it stays visible when the zone frame (--focus) is 20 %
+  // (UI redesign 2.1, every stop shows a visible focus ring; 10.7, 4a).
+  const RING = 'rgba(232, 235, 241, 0.55)';
+  const ringColour = async () => page.evaluate(() => getComputedStyle(document.activeElement as HTMLElement).outlineColor);
 
   // From the page, Tab and Shift+Tab move between the zones themselves.
   expect(await active()).toBe('BODY');
@@ -503,6 +514,7 @@ test('the keyboard reaches each divider and the controls of a zone from the zone
     const id = (await active()) ?? '';
     expect(await focusInside('lower'), `${id} is in the lower zone`).toBe(true);
     expect(await ring(), `${id} shows its focus`).toBe(true);
+    if (id !== 'zone-lower') expect(await ringColour(), `${id}'s ring is --focus-ring`).toBe(RING);
     if (seen.includes(id)) break;
     seen.push(id);
     await page.keyboard.press('Tab');
@@ -529,6 +541,7 @@ test('the keyboard reaches each divider and the controls of a zone from the zone
   for (const zone of ZONES) {
     await tabInZoneTo(zone, `separator-${zone}`);
     expect(await ring(), `separator-${zone} shows its focus`).toBe(true);
+    expect(await ringColour(), `separator-${zone}'s ring is --focus-ring`).toBe(RING);
     await expect(page.getByTestId(`zone-${zone}`)).toHaveAttribute('data-focused', 'true');
   }
 });

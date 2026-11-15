@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  compareMockupMeasurements,
   compareParts,
   crop,
   decodePng,
@@ -20,6 +21,7 @@ import {
   type GateReport,
   type Image,
   type Manifest,
+  type MockupMeasurement,
   type Part,
 } from '../e2e/support/fidelity-core';
 
@@ -167,4 +169,51 @@ test('only enforced mismatches and unruled parts fail the gate; the report lists
   assert.match(text, /\| top-bar \| 50\.00 % \|/);
   assert.match(text, /`strip-1` \| missing \| m5-ui-mixer/);
   assert.match(text, /1 enforced mismatches/);
+});
+
+// m5-ui-tokens-spacing: the mockup measured on the base commit and on the
+// branch (mockup-fidelity.spec.ts with SIANN_FIDELITY_MOCKUP_ONLY=1, compared
+// by scripts/fidelity-mockup-compare.js) must be identical: equal boxes to
+// the last fraction of a pixel, equal style strings, byte-equal images.
+test('two measurements of the mockup compare exactly: boxes, styles, masks and images', () => {
+  const image = solid(4, 2, [10, 20, 30]);
+  const base: MockupMeasurement = {
+    parts: [part('top-bar', 0, 0, 100, 48, STYLE), part('ruler-upper', 0, 100, 800, 18)],
+    masks: [{ x: 1, y: 2, w: 3, h: 4 }],
+    images: { window: image, 'top-bar': image },
+  };
+  assert.deepEqual(compareMockupMeasurements(base, base), []);
+  const copy: MockupMeasurement = {
+    parts: base.parts.map((p) => ({ ...p, styles: p.styles ? { ...p.styles } : undefined })),
+    masks: [{ x: 1, y: 2, w: 3, h: 4 }],
+    images: { window: solid(4, 2, [10, 20, 30]), 'top-bar': solid(4, 2, [10, 20, 30]) },
+  };
+  assert.deepEqual(compareMockupMeasurements(base, copy), [], 'equal values in other objects are equal');
+
+  const moved = solid(4, 2, [10, 20, 30]);
+  paint(moved, 3, 1, 1, 1, [10, 20, 31]);
+  const after: MockupMeasurement = {
+    parts: [
+      part('top-bar', 0, 0, 100, 48.25, { ...STYLE, color: 'rgb(1, 2, 4)' }),
+      part('extra', 0, 0, 1, 1),
+    ],
+    masks: [{ x: 1, y: 2, w: 3, h: 5 }],
+    images: { window: moved, 'top-bar': solid(4, 3, [10, 20, 30]) },
+  };
+  const found = compareMockupMeasurements(base, after);
+  assert.deepEqual(
+    found.map((d) => `${d.kind} ${d.id}`),
+    ['box top-bar', 'style top-bar', 'part ruler-upper', 'part extra', 'mask 0', 'image window', 'image top-bar'],
+  );
+  assert.match(found[0]!.detail, /h 48 → 48\.25/);
+  assert.match(found[1]!.detail, /color: rgb\(1, 2, 3\) → rgb\(1, 2, 4\)/);
+  assert.match(found[2]!.detail, /only before/);
+  assert.match(found[3]!.detail, /only after/);
+  assert.match(found[5]!.detail, /1 of 8 pixels differ/);
+  assert.match(found[6]!.detail, /4x2 → 4x3/);
+  // A style present on one side only is a difference too.
+  const fewer = { ...base, parts: [part('top-bar', 0, 0, 100, 48, { color: STYLE.color }), base.parts[1]!] };
+  assert.deepEqual(compareMockupMeasurements(base, fewer).map((d) => d.kind), ['style']);
+  // An image on one side only.
+  assert.deepEqual(compareMockupMeasurements(base, { ...base, images: { window: image } }).map((d) => `${d.kind} ${d.id}`), ['image top-bar']);
 });

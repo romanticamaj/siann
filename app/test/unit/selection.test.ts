@@ -25,6 +25,7 @@ import {
   type TrackSelection,
 } from '../../src/renderer/timeline/selection';
 import { clip, sampleSnapshot, snapshotOf } from './support/timeline';
+import { RULER_HEIGHT } from '../../src/renderer/timeline/TimelineCanvas';
 
 // clp_1 on trk_b 4800-28800; clp_2 on trk_a 0-9600; clp_3 on trk_a 48000-72000.
 const snapshot = sampleSnapshot();
@@ -68,7 +69,7 @@ test('N and B: the next and previous clip start, on the selected tracks or on ev
 });
 
 test('zoom to selection fits the selection\'s span with a margin', () => {
-  const view: Viewport = { framesPerPixel: 1000, scrollFrames: '500000', rulerHeight: 32, laneHeight: 53, width: 1000, height: 400 };
+  const view: Viewport = { framesPerPixel: 1000, scrollFrames: '500000', rulerHeight: RULER_HEIGHT, laneHeight: 53, width: 1000, height: 400 };
   const fitted = zoomToSelection(view, snapshot, ['clp_1', 'clp_3']);
   // 4800-72000 with 5 % of the span either side.
   assert.equal(fitted.framesPerPixel, 74);

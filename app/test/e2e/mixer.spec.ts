@@ -215,6 +215,10 @@ test('strips in track order, a master strip, values in dB and L/C/R', async () =
   ]);
   const master = page.getByTestId('mixer-strip-master');
   await expect(master.getByTestId('meter-master')).toBeVisible();
+  // The meter slot is --meter-w, 6 px (UI redesign spec 1.4; m5-ui-tokens-spacing).
+  for (const meter of [page.getByTestId(`meter-${TRACK}`), master.getByTestId('meter-master')]) {
+    expect((await meter.boundingBox())!.width).toBe(6);
+  }
   await expect(master.getByTestId('peak-value-master')).toBeVisible();
   await expect(master.locator('[role="slider"]')).toHaveCount(0);
   await expect(master.locator('button[aria-pressed]')).toHaveCount(0);

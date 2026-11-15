@@ -28,6 +28,21 @@
 // app/renderer/ui) and so loads the fonts the app bundles: the run needs no
 // network and both sides rasterise the same font files. The audio is
 // generated into the scratch directory.
+//
+// A second mode measures the mockup alone, with no engine and no Electron
+// (m5-ui-tokens-spacing: a change of the shared stylesheets or of the
+// mockup's script that must not move anything the mockup draws):
+//
+//   SIANN_FIDELITY=1 SIANN_FIDELITY_MOCKUP_ONLY=1 SIANN_FIDELITY_MOCKUP_ROOT=<checkout> \
+//     SIANN_FIDELITY_OUT=<dir> npx playwright test --project fidelity
+//
+// opens <checkout>/<manifest.mockup> (this checkout by default) and writes,
+// per locale, <dir>/<locale>/mockup-parts.json (every part's box and listed
+// computed styles, the canvas parts and the waveform masks), mockup.png (the
+// window) and <region>.mockup.png (each region's crop), measured with this
+// branch's manifest. scripts/fidelity-mockup-compare.js runs it on the base
+// commit and on the branch and compares the two
+// (compareMockupMeasurements in support/fidelity-core.ts).
 
 import { chromium, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
@@ -37,6 +52,7 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { laneHeightOf, laneTops, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
+import { RULER_LOWER, RULER_UPPER } from '../../src/renderer/timeline/TimelineCanvas';
 import { trackColourIndex } from '../../src/renderer/timeline/track-colour';
 import {
   compareParts,
@@ -65,6 +81,9 @@ const REPO = path.resolve(APP_DIR, '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
 const MANIFEST: Manifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'test', 'fidelity', 'manifest.json'), 'utf8'));
 const VIEW = { width: MANIFEST.viewport.width, height: MANIFEST.viewport.height };
+// The mockup-only measurement, and the checkout whose mockup it opens.
+const MOCKUP_ONLY = process.env.SIANN_FIDELITY_MOCKUP_ONLY === '1';
+const MOCKUP_ROOT = process.env.SIANN_FIDELITY_MOCKUP_ROOT ? path.resolve(process.env.SIANN_FIDELITY_MOCKUP_ROOT) : REPO;
 const OUT = process.env.SIANN_FIDELITY_OUT ? path.resolve(process.env.SIANN_FIDELITY_OUT) : fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fidelity-'));
 const RATE = 48000;
 // The mockup draws 40 px per bar at 120 BPM: 20 px per second.
@@ -292,9 +311,8 @@ async function collectApp(page: Page): Promise<Collected> {
     };
   };
   // The ruler's two halves (TimelineCanvas.ts: locators above, cursor below).
-  const half = view.rulerHeight / 2;
-  parts.push({ id: 'ruler-upper', ...at({ x: 0, y: 0, w: view.width, h: half }) });
-  parts.push({ id: 'ruler-lower', ...at({ x: 0, y: half, w: view.width, h: view.rulerHeight - half }) });
+  parts.push({ id: 'ruler-upper', ...at({ x: 0, y: 0, w: view.width, h: RULER_UPPER }) });
+  parts.push({ id: 'ruler-lower', ...at({ x: 0, y: RULER_UPPER, w: view.width, h: RULER_LOWER }) });
   const tops = laneTops(lanes, view);
   lanes.forEach((id, index) => {
     const n = TRACK_IDS.indexOf(id);
@@ -306,20 +324,20 @@ async function collectApp(page: Page): Promise<Collected> {
     if (match) parts.push({ id: `clip-${Number(match[1])}`, ...at(box) });
     masks.push(at({ x: box.x, y: box.y + CLIP_TITLE, w: box.w, h: Math.max(0, box.h - CLIP_TITLE) }));
   }
-  if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: half, w: 1, h: (view.height ?? display.h) - half }) });
+  if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: RULER_UPPER, w: 1, h: (view.height ?? display.h) - RULER_UPPER }) });
   return { parts, masks };
 }
 
 // ---------------------------------------------------------------- the two windows
 
-async function openMockup(query: string): Promise<{ page: Page; close: () => Promise<void> }> {
+async function openMockup(root: string, query: string): Promise<{ page: Page; close: () => Promise<void> }> {
   const browser = await chromium.launch({ args: ['--force-device-scale-factor=1'] });
   const context = await browser.newContext({ viewport: VIEW, deviceScaleFactor: MANIFEST.viewport.deviceScaleFactor });
   // The mockup loads the app's stylesheets and fonts from the checkout; nothing
   // may leave the machine.
   await context.route(/^https?:\/\//, (route) => route.abort());
   const page = await context.newPage();
-  await page.goto(`${pathToFileURL(path.join(REPO, MANIFEST.mockup)).href}${query}`);
+  await page.goto(`${pathToFileURL(path.join(root, MANIFEST.mockup)).href}${query}`);
   await page.waitForSelector('body[data-ready="1"]');
   await page.evaluate(() => document.fonts.ready);
   return { page, close: () => browser.close() };
@@ -441,13 +459,36 @@ function writeReport(): void {
 }
 
 for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
+  test(`the mockup's measurement (${locale})`, async () => {
+    test.skip(!MOCKUP_ONLY, 'set SIANN_FIDELITY_MOCKUP_ONLY=1 to measure the mockup alone');
+    const dir = path.join(OUT, locale);
+    fs.mkdirSync(dir, { recursive: true });
+    const mockup = await openMockup(MOCKUP_ROOT, setting.query);
+    try {
+      const measured = await collectMockup(mockup.page);
+      const shot = await mockup.page.screenshot();
+      fs.writeFileSync(path.join(dir, 'mockup-parts.json'), `${JSON.stringify({ root: MOCKUP_ROOT, locale, parts: measured.parts, masks: measured.masks }, null, 1)}\n`);
+      fs.writeFileSync(path.join(dir, 'mockup.png'), shot);
+      const image = decodePng(shot);
+      for (const region of MANIFEST.regions) {
+        const rect = measured.parts.find((part) => part.id === region);
+        if (!rect) throw new Error(`the mockup has no region ${region}`);
+        fs.writeFileSync(path.join(dir, `${region}.mockup.png`), encodePng(crop(image, rect)));
+      }
+      console.log(`fidelity [${locale}]: the mockup measured in ${dir}`);
+    } finally {
+      await mockup.close();
+    }
+  });
+
   test(`the app matches the mockup (${locale})`, async () => {
+    test.skip(MOCKUP_ONLY, 'SIANN_FIDELITY_MOCKUP_ONLY=1 measures the mockup alone');
     test.setTimeout(240_000);
     const dir = path.join(OUT, locale);
     fs.mkdirSync(dir, { recursive: true });
     const notes: string[] = [];
 
-    const mockup = await openMockup(setting.query);
+    const mockup = await openMockup(REPO, setting.query);
     let mockupParts: Collected;
     let mockupShot: Buffer;
     try {

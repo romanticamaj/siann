@@ -66,7 +66,10 @@
   --track-10: #EC6BB0;
   --track-11: #9AA3B2;
   /* the focused zone's frame */
-  --focus: rgb(232 235 241 / .55);
+  --focus: rgb(232 235 241 / .20);
+  /* app-only (spec 10.7, 4a): the 2 px ring of a control or a divider reached
+     from the keyboard; the mockup draws none */
+  --focus-ring: rgb(232 235 241 / .55);
   /* meters (1.2): green to -12 dB, yellow to -3 dB, red above, white hold */
   --meter-green: var(--play);
   --meter-yellow: var(--solo);
@@ -89,7 +92,7 @@
   --status-bar: calc(24px * var(--scale));
   --toolbar: calc(32px * var(--scale));
   --info-line: calc(24px * var(--scale));
-  --zone-tabs: calc(24px * var(--scale));
+  --zone-tabs: calc(26px * var(--scale));
   --control-h: calc(22px * var(--scale));
   --transport-h: calc(28px * var(--scale));
   --ms-h: calc(18px * var(--scale));
@@ -98,11 +101,14 @@
   --fader-h: calc(140px * var(--scale));
   --fader-cap-h: calc(24px * var(--scale));
   --fader-cap-w: calc(20px * var(--scale));
-  --meter-w: calc(10px * var(--scale));
+  --meter-w: calc(6px * var(--scale));
   --track-h: calc(53px * var(--scale));
   /* the ruler: two halves (locators above, cursor and zoom below); the
-     canvas's RULER_HEIGHT, and the track list's head beside it */
-  --ruler-h: 32px;
+     canvas's RULER_HEIGHT, RULER_UPPER and RULER_LOWER, and the track list's
+     head beside it (3.2) */
+  --ruler-h: calc(40px * var(--scale));
+  --ruler-upper-h: calc(18px * var(--scale));
+  --ruler-lower-h: calc(22px * var(--scale));
   --radius-s: 3px;
   --radius-m: 5px;
   --radius-l: 8px;
@@ -269,6 +275,133 @@
   --clip-title-h: calc(13px * var(--scale));
   --icon: calc(16px * var(--scale));
   --icon-s: calc(14px * var(--scale));
+}
+
+/* Every other size of the mockup (m5-ui-tokens-spacing; decided by the
+   maintainer, 2026-11-15: every size literal becomes a token, no allowlist).
+   The shared rules and the mockup's script name these and hold no literal
+   (test/ui-tokens.test.js). A step of the 4 px grid has one spacing token,
+   --space-N being N steps; the off-grid values the rules use are named in
+   quarter steps of 1 px (--space-3q is 3 px) or half steps (--space-1h is
+   6 px). A size that belongs to one component is named for it. Like the
+   sizes above, each is a length times the UI scale. */
+:root {
+  /* lines */
+  --hairline: calc(1px * var(--scale));
+  --hairline-1h: calc(1.5px * var(--scale));
+
+  /* spacing: --space (4 px) is one step */
+  --space-half: calc(2px * var(--scale));
+  --space-3q: calc(3px * var(--scale));
+  --space-5q: calc(5px * var(--scale));
+  --space-1h: calc(6px * var(--scale));
+  --space-7q: calc(7px * var(--scale));
+  --space-2: calc(8px * var(--scale));
+  --space-9q: calc(9px * var(--scale));
+  --space-2h: calc(10px * var(--scale));
+  --space-11q: calc(11px * var(--scale));
+  --space-3: calc(12px * var(--scale));
+  --space-3h: calc(14px * var(--scale));
+  --space-4: calc(16px * var(--scale));
+
+  /* letter spacing, in em of the text's own size */
+  --letter-spacing-02: .02em;
+  --letter-spacing-04: .04em;
+  --letter-spacing-06: .06em;
+  --letter-spacing-10: .1em;
+  --letter-spacing-12: .12em;
+
+  /* the window */
+  --app-w: calc(1440px * var(--scale));
+  --app-h: calc(900px * var(--scale));
+
+  /* top bar */
+  --brand-w: calc(44px * var(--scale));
+  --brand-logo: calc(22px * var(--scale));
+  --brand-logo-inner: calc(16px * var(--scale));
+  --brand-mark-w: calc(2px * var(--scale));
+  --brand-mark-h: calc(8px * var(--scale));
+  --icon-button: calc(28px * var(--scale));
+  --separator-h: calc(20px * var(--scale));
+  --transport-w: calc(32px * var(--scale));
+  --dsp-bar-w: calc(40px * var(--scale));
+  --dsp-bar-h: calc(4px * var(--scale));
+  --zone-button-w: calc(26px * var(--scale));
+  --zone-button-h: calc(24px * var(--scale));
+  --plans-button-h: calc(28px * var(--scale));
+  --plans-count: calc(16px * var(--scale));
+
+  /* left zone: the Inspector */
+  --inspector-label-w: calc(44px * var(--scale));
+  --inspector-value-w: calc(46px * var(--scale));
+  --inspector-routing-label-w: calc(40px * var(--scale));
+  --inspector-swatch: calc(10px * var(--scale));
+  --slider-h: calc(4px * var(--scale));
+  --slider-thumb-w: calc(8px * var(--scale));
+  --slider-thumb-h: calc(12px * var(--scale));
+  --section-head-h: calc(26px * var(--scale));
+  --insert-dot: calc(6px * var(--scale));
+  --zone-foot-h: calc(26px * var(--scale));
+  --tab-underline-h: calc(2px * var(--scale));
+
+  /* project zone: toolbar, track list, scroll and zoom */
+  --tool-w: calc(24px * var(--scale));
+  --field-h: calc(24px * var(--scale));
+  --pill-toggle-h: calc(18px * var(--scale));
+  --info-swatch: calc(8px * var(--scale));
+  --marker-icon: calc(11px * var(--scale));
+  --track-colour-w: calc(4px * var(--scale));
+  --track-number-w: calc(20px * var(--scale));
+  --track-gain-w: calc(50px * var(--scale));
+  --track-pan-w: calc(24px * var(--scale));
+  --ms-w: calc(20px * var(--scale));
+  --record-dot: calc(7px * var(--scale));
+  --header-meter-h: calc(4px * var(--scale));
+  --header-meter-scale-w: calc(96px * var(--scale));
+  --step-badge: calc(15px * var(--scale));
+  --scrollbar-h: calc(8px * var(--scale));
+  --scrollbar-thumb-h: calc(4px * var(--scale));
+  --zoom-thumb-w: calc(56px * var(--scale));
+  --zoom-handle: calc(8px * var(--scale));
+
+  /* lower zone: MixConsole strips */
+  --strip-inserts-h: calc(34px * var(--scale));
+  --strip-pan-h: calc(28px * var(--scale));
+  --strip-row-h: calc(22px * var(--scale));
+  --strip-readout-h: calc(16px * var(--scale));
+  --strip-gain-step-top: calc(118px * var(--scale));
+  --insert-slot-h: calc(14px * var(--scale));
+  --insert-slot-dot: calc(5px * var(--scale));
+  --pan-label-w: calc(26px * var(--scale));
+  --knob: calc(24px * var(--scale));
+  --fader-scale-w: calc(20px * var(--scale));
+  --fader-track-w: calc(22px * var(--scale));
+  --master-scale-w: calc(22px * var(--scale));
+  --master-fader-w: calc(26px * var(--scale));
+  --fader-groove-w: calc(4px * var(--scale));
+  --gain-line-w: calc(2px * var(--scale));
+  --meter-master-w: calc(9px * var(--scale));
+  --meter-scale-h: calc(104px * var(--scale));
+
+  /* right zone: Plans */
+  --hearing-segment-w: calc(50px * var(--scale));
+  --agent-avatar: calc(22px * var(--scale));
+  --live-dot: calc(6px * var(--scale));
+  --plan-card-glow-h: calc(90px * var(--scale));
+  --plan-card-shadow-blur: calc(30px * var(--scale));
+  --badge-h: calc(17px * var(--scale));
+  --summary-chip-h: calc(19px * var(--scale));
+  --step-check-w: calc(16px * var(--scale));
+  --step-check: calc(14px * var(--scale));
+  --step-check-icon: calc(10px * var(--scale));
+  --track-dot: calc(7px * var(--scale));
+  --plan-reject-w: calc(34px * var(--scale));
+  --plan-button-h: calc(30px * var(--scale));
+  --composer-send: calc(24px * var(--scale));
+
+  /* status bar */
+  --status-dot: calc(7px * var(--scale));
+  --status-chip-h: calc(16px * var(--scale));
 }
 
 @media (prefers-reduced-motion: reduce) {

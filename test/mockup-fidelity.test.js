@@ -288,7 +288,7 @@ test('the chrome takes the mockup\'s text formats, and only the fidelity run tak
   const [type, name] = device.id.split('/');
   const latency = (((device.inputLatencyFrames + device.outputLatencyFrames) * 1000) / device.sampleRate).toFixed(1);
   assert.ok(MOCKUP.includes(`>${type} · ${name} · <b class="num">${device.sampleRate / 1000} kHz</b> / <b class="num">${device.bufferFrames}</b> · <span class="num">${latency} ms</span>`), 'status-device');
-  assert.ok(MOCKUP.includes(`>${engineAbout.name} ${engineAbout.version} (<span class="mono" style="font-size:10px">${engineAbout.source.commit.slice(0, 7)}</span>) · ${engineAbout.license} · `), 'status-about');
+  assert.ok(MOCKUP.includes(`>${engineAbout.name} ${engineAbout.version} (<span class="mono" style="font-size:var(--fs-micro)">${engineAbout.source.commit.slice(0, 7)}</span>) · ${engineAbout.license} · `), 'status-about');
   assert.match(engineAbout.source.commit, /^[0-9a-f]{40}$/);
   // The mockup's own formats.
   assert.match(MOCKUP, /<span class="val sm">00:00:19<em>\.<\/em>000<\/span>/);
@@ -307,7 +307,10 @@ test('the decisions of the second round are written where contributors read them
   const closing = FEATURES.get(CLOSING).acceptance.join('\n');
   assert.match(closing, /app-only tokens are added to tokens\.css/);
   assert.match(closing, /conditions of container queries are not counted/);
-  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*\| `m5-ui-mockup-alignment` \|/);
+  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*\| `m5-ui-mockup-alignment`[^|\n]*\|/);
+  // The 2 px focus ring's token was applied early in m5-ui-tokens-spacing (10.7, 4a).
+  assert.match(rules, /App-only tokens in `tokens\.css`[^\n]*the 2 px focus ring \(`--focus-ring`, 55 %\) applied early in `m5-ui-tokens-spacing`/);
+  assert.match(spec, /applied early in `m5-ui-tokens-spacing` by the main session under the maintainer's 2026-11-15 authorisation 4a/);
   // A landed part that can be absent at runtime: a permanent width token, not a hold.
   assert.match(FEATURES.get('m5-ui-loop-click').acceptance.join('\n'), /its box keeps the width of --display-locators-empty-w/);
   assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click` \|/);

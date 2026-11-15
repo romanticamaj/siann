@@ -19,8 +19,9 @@ import {
   zoomAbout,
   zoomFull,
 } from '../../src/renderer/timeline/zoom';
+import { RULER_HEIGHT } from '../../src/renderer/timeline/TimelineCanvas';
 
-const VIEW: Viewport = { framesPerPixel: 100, scrollFrames: '4800000', rulerHeight: 32, laneHeight: 53, width: 800, height: 400, scrollY: 0 };
+const VIEW: Viewport = { framesPerPixel: 100, scrollFrames: '4800000', rulerHeight: RULER_HEIGHT, laneHeight: 53, width: 800, height: 400, scrollY: 0 };
 
 function frameAt(x: number, view: Viewport): bigint {
   return xToFrame(x, view);
@@ -87,9 +88,9 @@ test('Shift+wheel scrolls horizontally by the wheel delta in pixels, not before 
 });
 
 test('the wheel scrolls the lanes vertically within their height', () => {
-  // 400 high with a 32 px ruler: 368 px of lanes visible; 10 lanes of 53 px are 530.
+  // 400 high with the 40 px ruler: 360 px of lanes visible; 10 lanes of 53 px are 530.
   assert.equal(scrollYBy(VIEW, 40, 530).scrollY, 40);
-  assert.equal(scrollYBy(VIEW, 1000, 530).scrollY, 530 - 368);
+  assert.equal(scrollYBy(VIEW, 1000, 530).scrollY, 530 - (400 - RULER_HEIGHT));
   assert.equal(scrollYBy({ ...VIEW, scrollY: 20 }, -100, 530).scrollY, 0);
   // Lanes that fit do not scroll.
   assert.equal(scrollYBy(VIEW, 40, 200).scrollY, 0);
