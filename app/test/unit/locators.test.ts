@@ -56,7 +56,7 @@ test('the upper half is the exported constant, the ruler-upper-h token', () => {
 // The band's drawing parameters are tokens with the mockup's draw() values
 // (RU=18: the band at y 2, height RU-3, a 2 px line, 8 px flags, labels 10 px
 // in), so the band is the mockup's 15 px tall at y 2.
-test('the band's drawing parameters are the --locator-* tokens, the mockup's values', () => {
+test('the band\'s drawing parameters are the --locator-* tokens, the mockup\'s values', () => {
   const token = (name: keyof typeof TOKENS): number => Number.parseFloat(TOKENS[name]);
   assert.deepEqual(
     { BAND_TOP, BAND_BOTTOM_GAP, BAND_LINE, FLAG_W, LABEL_INSET, END_HIT_PX },
