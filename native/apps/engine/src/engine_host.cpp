@@ -711,6 +711,7 @@ std::vector<protocol::PluginStatus> EngineHost::plugins() const {
         protocol::PluginStatus status;
         status.slotId = one.slotId;
         status.trackId = one.trackId;
+        status.busId = one.busId;
         status.format = one.format;
         status.uid = one.uid;
         status.running = one.running;
@@ -1421,6 +1422,9 @@ namespace {
 constexpr int kGestureRampFrames = 64;
 
 std::uint32_t faderParam(const std::string& param) {
+    if (param == "level") {
+        return graph::SendNode::kLevelMilliDb;
+    }
     if (param == "pan") {
         return graph::TrackFaderNode::kPan;
     }
@@ -1444,9 +1448,27 @@ std::string gestureKey(const protocol::GestureTarget& target) {
     return target.ref() + "/" + target.param;
 }
 
-// The playback engine's name of a target: a track id, or the master's slot key.
+// The playback engine's name of a target: a track id, or the master's, a bus's or
+// a send's slot key.
 std::string engineTarget(const protocol::GestureTarget& target) {
-    return target.isMaster ? playback::masterSlotKey() : target.trackId;
+    switch (target.kind) {
+        case protocol::GestureTarget::Kind::master: return playback::masterSlotKey();
+        case protocol::GestureTarget::Kind::bus: return playback::busSlotKey(target.id);
+        case protocol::GestureTarget::Kind::send: return playback::sendSlotKey(target.id);
+        case protocol::GestureTarget::Kind::track: break;
+    }
+    return target.id;
+}
+
+// A bus gain or a send level as the heard document holds it, or nothing when
+// the bus or send is absent (m5b-engine-buses-sends).
+std::optional<double> mixValue(const model::Document& document, const protocol::GestureTarget& target) {
+    if (target.kind == protocol::GestureTarget::Kind::bus) {
+        const model::Bus* bus = document.bus(target.id);
+        return bus != nullptr ? std::optional<double>(bus->gain.milliDb) : std::nullopt;
+    }
+    const model::Send* send = document.send(target.id);
+    return send != nullptr ? std::optional<double>(send->level.milliDb) : std::nullopt;
 }
 
 // The document of the side a gesture commits on: the heard proposal, or main.
@@ -1471,19 +1493,28 @@ double masterGainValue(const model::Document& document) {
 }  // namespace
 
 double EngineHost::begin(const protocol::GestureTarget& target) {
-    if (target.isMaster) {
+    if (target.kind == protocol::GestureTarget::Kind::bus || target.kind == protocol::GestureTarget::Kind::send) {
+        const std::optional<double> start = mixValue(heardDocument(*engine_, *session_), target);
+        if (!start) {
+            throw protocol::GesturePortError("not_found", "no " + target.ref());
+        }
+        engine_->beginGesture(engineTarget(target), faderParam(target.param));
+        gestureStarts_[gestureKey(target)] = *start;
+        return *start;
+    }
+    if (target.isMaster()) {
         // Always a target (m5b-engine-master): never not_found.
         const double start = masterGainValue(heardDocument(*engine_, *session_));
         engine_->beginGesture(playback::masterSlotKey(), graph::TrackFaderNode::kGainMilliDb);
         gestureStarts_[gestureKey(target)] = start;
         return start;
     }
-    const model::Track* track = heardTrack(*engine_, *session_, target.trackId);
+    const model::Track* track = heardTrack(*engine_, *session_, target.id);
     if (track == nullptr) {
-        throw protocol::GesturePortError("not_found", "no track with id " + target.trackId);
+        throw protocol::GesturePortError("not_found", "no track with id " + target.id);
     }
     const double start = faderValue(*track, target.param);
-    engine_->beginGesture(target.trackId, faderParam(target.param));
+    engine_->beginGesture(target.id, faderParam(target.param));
     gestureStarts_[gestureKey(target)] = start;
     return start;
 }
@@ -1508,26 +1539,21 @@ protocol::GestureEnd EngineHost::end(const protocol::GestureTarget& target, std:
     if (revision == nullptr) {
         return {start, start, nullptr};
     }
-    if (target.isMaster) {
+    if (target.isMaster()) {
         return {start, masterGainValue(revision->document), revision};
     }
-    const model::Track* committed = revision->document.track(target.trackId);
+    if (target.kind == protocol::GestureTarget::Kind::bus || target.kind == protocol::GestureTarget::Kind::send) {
+        return {start, mixValue(revision->document, target).value_or(start), revision};
+    }
+    const model::Track* committed = revision->document.track(target.id);
     return {start, committed != nullptr ? faderValue(*committed, target.param) : start, revision};
 }
 
 void EngineHost::cancel(const protocol::GestureTarget& target) {
     gestureStarts_.erase(gestureKey(target));
-    if (target.isMaster) {
-        const realtime::ParamKey key{playback::masterSlotKey(), graph::TrackFaderNode::kGainMilliDb};
-        engine_->dispatcher().endGesture(key);  // the value is dropped
-        engine_->dispatcher().setParameter(key, masterGainValue(heardDocument(*engine_, *session_)), 0);
-        return;
-    }
-    const realtime::ParamKey key{playback::trackSlotKey(target.trackId), faderParam(target.param)};
-    engine_->dispatcher().endGesture(key);  // the value is dropped
-    if (const model::Track* track = heardTrack(*engine_, *session_, target.trackId)) {
-        engine_->dispatcher().setParameter(key, faderValue(*track, target.param), 0);
-    }
+    // The value is dropped and the sound returns to the heard document's value
+    // (a track mute's sends included).
+    engine_->cancelGesture(engineTarget(target), faderParam(target.param));
 }
 
 }  // namespace siann::engine_app

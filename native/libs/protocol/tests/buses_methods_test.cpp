@@ -114,8 +114,8 @@ TEST_CASE("bus and send commands through command.execute reach a second connecti
 
     f.commit(c, Array{op("bus.remove", {{"busId", Value("b1")}})});
     const std::vector<Value> removed = eventsOfType(f, watcher, "session.changed");
-    REQUIRE(removed.size() == 1);
-    CHECK(refsOf(removed[0]) == std::vector<std::string>{"root:root/modified", "track:trk_1/modified",
+    REQUIRE(removed.size() == 3);  // every event since the watcher connected
+    CHECK(refsOf(removed[2]) == std::vector<std::string>{"root:root/modified", "track:trk_1/modified",
                                                          "bus:b1/removed", "send:s1/removed"});
     // A cycle is refused with its own code and changes nothing.
     f.commit(c, Array{busAdd("b1"), busAdd("b2"), op("bus.set_output", {{"busId", Value("b1")},

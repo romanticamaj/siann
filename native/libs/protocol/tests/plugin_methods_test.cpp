@@ -774,7 +774,8 @@ TEST_CASE("engine.status names a bus's slot by busId", "[protocol][plugin][buses
     onTrack.format = "clap";
     onTrack.uid = "x";
     port.reported = {onTrack, onBus};
-    const auto& plugins = at(f.ok(c, "engine.status"), "plugins").asArray();
+    const Value status = f.ok(c, "engine.status");
+    const auto& plugins = at(status, "plugins").asArray();
     REQUIRE(plugins.size() == 2);
     CHECK(at(plugins[0], "trackId").asString() == "trk_1");
     CHECK(plugins[0].find("busId") == nullptr);
