@@ -30,7 +30,7 @@ import { TransportController } from '../../src/renderer/model/transport';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
-import { ClickLevel, TimeFormatMenu, Transport, transportAvailability } from '../../src/renderer/shell/Transport';
+import { ClickLevel, TimeFormatMenu, Transport, transportAvailability, UndoRedo } from '../../src/renderer/shell/Transport';
 import { sampleSnapshot } from './support/timeline';
 
 // dist/test/unit -> app/test/unit/fixtures
@@ -102,6 +102,7 @@ function render(capabilities: Capabilities | null, status: EngineStatus | null, 
   });
   return renderToStaticMarkup(
     <CapabilitiesContext.Provider value={capabilities}>
+      <UndoRedo transport={controller} history={{ getSnapshot: () => ({ undo: 'yes', redo: 'no' }), subscribe: () => () => undefined }} />
       <Transport
         client={session}
         realtime={null}
@@ -168,13 +169,18 @@ test('the transport parts carry the mockup ids in the mockup order', () => {
     ['transport-stop', 'transport-stop'],
     ['transport-play', 'transport-play'],
     ['position-display', 'display'],
-    ['position-primary', 'display-position'],
-    ['position-secondary', 'display-time'],
-    ['transport-tempo', 'display-tempo'],
     ['undo', 'undo'],
     ['redo', 'redo'],
   ];
   for (const [id, part] of parts) assert.ok(tag(markup, id).includes(`data-part="${part}"`), `${id}: data-part="${part}"`);
+  // The values sit in the mockup's cells, which carry the ids: .cell > .lbl + .val.
+  for (const [id, part] of [
+    ['position-primary', 'display-position'],
+    ['position-secondary', 'display-time'],
+    ['transport-tempo', 'display-tempo'],
+  ] as const) {
+    assert.match(markup, new RegExp(`<div class="cell" data-part="${part}"[^>]*><span class="lbl" aria-hidden="true">[^<]+</span><span class="val[^"]*" data-testid="${id}">`), id);
+  }
   assert.ok(markup.includes('data-part="transport-buttons"'));
   const order = ['transport-start', 'transport-stop', 'transport-play'].map((part) => markup.indexOf(`data-part="${part}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'go to start, stop, start');

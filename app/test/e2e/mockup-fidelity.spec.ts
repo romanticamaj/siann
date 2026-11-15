@@ -177,8 +177,8 @@ function prepareBundle(scratch: string): string {
     if (track.pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan: track.pan });
     if (track.mute) exec({ op: 'track.set_mute', trackId: id, mute: true });
   });
-  // The mockup's locators: bars 9.1 to 13.1 (cycle is turned on once the app runs; UI redesign 10.7).
-  exec({ op: 'session.set_locators', left: String(8 * BAR), right: String(12 * BAR) });
+  // The mockup's locators (bars 9.1 to 13.1) are set once the app runs: they are
+  // the one undoable command of UI redesign 10.7, so undo is lit and redo dim.
   CLIPS.forEach(([track, bar, bars], index) => {
     exec({
       op: 'clip.place',
@@ -372,6 +372,8 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
       SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      // The mockup's device and build in the status bar (UI redesign 10.2).
+      SIANN_FIDELITY_ENVIRONMENT: JSON.stringify(MANIFEST.environment),
     },
   });
   const page = await app.firstWindow();
@@ -420,6 +422,11 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
   // The mockup's project cursor: 10.3.1, which is 19 s at 120 BPM.
   const engine = await engineClient(page, { events: false });
   // The mockup's cycle: on (the locators came with the bundle).
+  // One undoable command that draws only what the mockup draws: the locators.
+  await engine.call('command.execute', { commands: [{ op: 'session.set_locators', left: String(8 * BAR), right: String(12 * BAR) }] });
+  await expect(page.getByTestId('display-locators')).toBeVisible();
+  await expect(page.getByTestId('undo')).not.toHaveClass(/\bdim\b/);
+  await expect(page.getByTestId('redo')).toHaveClass(/\bdim\b/);
   await engine.call('transport.set_cycle', { enabled: true });
   await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
   await engine.call('transport.locate', { frames: String(19 * RATE) });
@@ -430,6 +437,11 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
     for (const toast of toasts?.getSnapshot() ?? []) toasts!.dismiss(toast.id);
   });
   await expect(page.getByTestId('toast')).toHaveCount(0);
+  // Live values inside enforced boxes, masked in pixels only: the widths of the
+  // mockup's "0 xruns" and "r39" need one xrun digit and two revision digits.
+  await expect(page.getByTestId('xruns')).toHaveText('0');
+  await expect(page.getByTestId('revision')).toHaveText(/^r\d\d$/);
+  await expect(page.getByTestId('device')).toHaveText('ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms');
   // The pointer leaves the window's content, so nothing is drawn hovered.
   await page.mouse.move(VIEW.width - 2, 1);
   // Every clip in view has its peaks.

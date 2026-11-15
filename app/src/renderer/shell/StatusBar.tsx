@@ -1,10 +1,22 @@
-// The status bar (UI redesign spec 2.1): engine connection, device and
-// latency and xruns (engine.status, only when engine.capabilities lists it),
-// the side heard (only when it lists audition.hear), the language switch
-// (m5-ui-i18n), the saved revision, and the about line built only from engine.about and the auth reply (ADR-0017 point
-// 4, the source offer of the engine's licence): name, version, commit,
-// licence and source, exactly as the engine reports them. No licence is ever
-// named in the renderer's source.
+// The status bar (UI redesign spec 2.1), ported from the mockup
+// (m5-ui-alignment-chrome; mockup.html, footer.statusbar; docs/harness/
+// agent-rules.md, "UI fidelity"): its DOM structure and class names are the
+// mockup's, so ui/status-bar.css draws it, in the mockup's words (10.7, 1).
+//
+//   the engine's connection (i.ok, b), the device segment "type · name · kHz
+//   / buffer · latency ms" and the xruns (engine.status, only when
+//   engine.capabilities lists it), the side heard (.hear, only when it lists
+//   audition.hear), and on the right (.right) the language (.loc, with the
+//   language <select> laid over it), the saved revision, and the about line
+//   "name version (commit) · licence · source"
+//
+// The about line is built only from engine.about and the auth reply
+// (ADR-0017 point 4, the source offer of the engine's licence), exactly as
+// the engine reports them, with the first 7 characters of the commit; the
+// whole commit and the mark of a modified tree are the About panel's. No
+// licence is ever named in the renderer's source. It is a button (its
+// "source" an <a> without href inside it) that opens the About panel; when
+// the bar is short the start of its line clips and the licence stays.
 // Reads the session client and the read model through useSyncExternalStore;
 // no meter or playhead value passes through React state (ADR-0019 point 3).
 // The session id and what the read model holds (tracks, clips, syncs,
@@ -19,12 +31,22 @@ import { localeStore, translator, useLocale, type T } from '../i18n/t';
 import { statusFields, type EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { ReadModel } from '../model/read-model';
-import type { AboutInfo, SessionClient } from '../model/session-client';
+import type { AboutInfo, ConnectionStatus, SessionClient } from '../model/session-client';
 import { useCapabilities } from './Capable';
+import { Icon } from './icons';
 
+const SHORT_COMMIT = 7;
+
+// The bar's commit: its first 7 characters.
 function shortCommit(about: AboutInfo, t: T): string {
+  const commit = about.source?.commit;
+  return commit ? commit.slice(0, SHORT_COMMIT) : t('about.unknownCommit');
+}
+
+// The About panel's: the whole commit, and +dirty for a modified tree.
+function wholeCommit(about: AboutInfo, t: T): string {
   const source = about.source ?? {};
-  return source.commit ? source.commit.slice(0, 12) + (source.dirty ? '+dirty' : '') : t('about.unknownCommit');
+  return source.commit ? source.commit + (source.dirty ? '+dirty' : '') : t('about.unknownCommit');
 }
 
 // The whole line as one string, for the about button's title.
@@ -34,15 +56,15 @@ function aboutText(about: AboutInfo, t: T): string {
   return url ? `${head} · ${t('about.source', { url })}` : head;
 }
 
+// The About panel's line: name, version, the whole commit, licence, source URL.
 export function AboutLine({ about }: { about: AboutInfo | null }) {
   const t = translator(useLocale());
   if (!about) return null;
   const source = about.source ?? {};
-  const commit = shortCommit(about, t);
   return (
     <>
       <span className="about-name">{about.name ?? ''}</span> <span className="about-version">{about.version ?? ''}</span>{' '}
-      (<code className="about-commit">{commit}</code>) · <span className="about-license">{about.license ?? ''}</span>
+      (<code className="about-commit">{wholeCommit(about, t)}</code>) · <span className="about-license">{about.license ?? ''}</span>
       {source.url ? (
         <>
           {' · '}
@@ -53,32 +75,34 @@ export function AboutLine({ about }: { about: AboutInfo | null }) {
   );
 }
 
-// The licence line in the status bar (spec 2.1: it stays visible or one click
-// away, for the source offer of section 13). The licence is its own span at the end and never
-// shrinks, so when the bar is short only the rest of the line is cut; the
-// button's title is the whole line, and a click opens the About panel.
+// The licence line in the status bar (spec 2.1: it stays visible or one
+// click away, for the source offer of section 13), as the mockup writes it:
+// "siann-engine 0.1.0 (<span class="mono">308d846</span>) · licence · <a>source</a>".
+// The licence and the source come after the rest of the line, which alone
+// clips when the bar is short; the button's title is the whole line, and a
+// click opens the About panel.
 export function AboutButton({ about, onOpen }: { about: AboutInfo | null; onOpen: () => void }) {
   const t = translator(useLocale());
   if (!about) return <button type="button" className="about" data-testid="about" aria-haspopup="dialog" disabled />;
   const url = about.source?.url;
   return (
-    <button
-      type="button"
-      className="about"
-      data-testid="about"
-      data-part="status-about"
-      aria-haspopup="dialog"
-      title={aboutText(about, t)}
-      onClick={onOpen}
-    >
+    <button type="button" className="about" data-testid="about" data-part="status-about" aria-haspopup="dialog" title={aboutText(about, t)} onClick={onOpen}>
       <span className="about-summary">
-        {`${about.name ?? ''} ${about.version ?? ''} (${shortCommit(about, t)})`}
-        {url ? ` · ${t('about.source', { url })}` : ''}
+        {`${about.name ?? ''} ${about.version ?? ''} (`}
+        <span className="mono" style={{ fontSize: 'var(--fs-micro)' }}>
+          {shortCommit(about, t)}
+        </span>
       </span>
-      <span className="about-sep" aria-hidden="true">
-        ·
+      <span className="about-tail">
+        {') · '}
+        <span className="about-license">{about.license ?? ''}</span>
+        {url ? (
+          <>
+            {' · '}
+            <a>{t('status.source')}</a>
+          </>
+        ) : null}
       </span>
-      <span className="about-license">{about.license ?? ''}</span>
     </button>
   );
 }
@@ -138,21 +162,25 @@ export function AboutPanel({
   );
 }
 
+// The language: the mockup's .loc (the globe and the language's own name),
+// with the <select> laid over it, transparent, so the box is the mockup's.
 function LocaleSwitch() {
   const locale = useLocale();
   const t = translator(locale);
   const change = (event: ChangeEvent<HTMLSelectElement>) => localeStore().setLocale(event.target.value as UserLocale);
+  const shown = (LOCALES as readonly string[]).includes(locale) ? LOCALE_NAMES[locale as UserLocale] : LOCALE_NAMES.en;
   return (
-    <label className="locale-switch" data-part="status-locale">
-      {t('locale.label')}{' '}
-      <select data-testid="locale-switch" value={locale} onChange={change}>
+    <span className="loc" data-part="status-locale">
+      <Icon name="globe" small />
+      {shown}
+      <select data-testid="locale-switch" aria-label={t('locale.label')} value={locale} onChange={change}>
         {LOCALES.map((option) => (
           <option key={option} value={option} lang={htmlLang(option)}>
             {LOCALE_NAMES[option]}
           </option>
         ))}
       </select>
-    </label>
+    </span>
   );
 }
 
@@ -171,6 +199,12 @@ function useStore<S>(store: { getSnapshot(): S; subscribe(listener: () => void):
   return useSyncExternalStore((listener) => store.subscribe(listener), get, get);
 }
 
+const ENGINE_WORDS: Readonly<Record<ConnectionStatus, 'status.engineConnecting' | 'status.engineConnected' | 'status.engineDisconnected'>> = {
+  connecting: 'status.engineConnecting',
+  connected: 'status.engineConnected',
+  disconnected: 'status.engineDisconnected',
+};
+
 export interface StatusBarProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
@@ -188,43 +222,53 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
   const revision = snapshot?.revision ?? state.revision ?? '';
   const fields = status ? statusFields(status, t) : null;
   return (
-    <footer className="status-bar" data-testid="status-bar" data-region="status-bar" aria-label={t('status.label')}>
-      <dl data-part="status-engine">
-        <dt>{t('status.engine')}</dt>
-        <dd data-testid="status" data-status={state.status}>
-          {t(`connection.${state.status}`)}
-        </dd>
-      </dl>
+    <footer className="statusbar" data-region="status-bar" data-testid="status-bar" aria-label={t('status.label')}>
+      <span data-part="status-engine" data-testid="status" data-status={state.status}>
+        <i className="ok" />
+        <b>{t(ENGINE_WORDS[state.status])}</b>
+      </span>
       {fields && can.has('engine.status') ? (
-        <dl className="status-engine" data-part="status-device">
-          <dt>{t('status.device')}</dt>
-          <dd data-testid="device" className="status-device" title={fields.device}>
-            {fields.device}
-          </dd>
-          {fields.latency ? (
-            <>
-              <dt>{t('status.latency')}</dt>
-              <dd data-testid="latency">{fields.latency}</dd>
-            </>
-          ) : null}
-          <dt>{t('status.xruns')}</dt>
-          <dd data-testid="xruns" data-part="status-xruns">{fields.xruns}</dd>
-        </dl>
+        <>
+          <span data-part="status-device" data-testid="device" title={fields.type ? `${fields.type}/${fields.name}` : fields.name}>
+            {/* One text node, as the mockup's, so the run shapes the same. */}
+            {`${fields.type ? `${fields.type} · ` : ''}${fields.name}${fields.rate ? ' · ' : ''}`}
+            {fields.rate ? (
+              <>
+                <b className="num">{fields.rate}</b>
+                {' / '}
+                <b className="num">{fields.buffer}</b>
+                {' · '}
+                <span className="num" data-testid="latency">
+                  {fields.latency}
+                </span>
+              </>
+            ) : null}
+          </span>
+          <span data-part="status-xruns">
+            <b className="num" data-testid="xruns">
+              {fields.xruns}
+            </b>{' '}
+            {t('status.xrunsUnit')}
+          </span>
+        </>
       ) : null}
       {heard !== null && can.has('audition.hear') ? (
-        <dl data-part="status-hearing">
-          <dt>{t('status.heard')}</dt>
-          <dd data-testid="status-heard" data-heard={heard === 'main' ? 'main' : 'proposal'}>
-            {t(heard === 'main' ? 'hearing.main' : 'hearing.proposal')}
-          </dd>
-        </dl>
+        <span className="hear" data-part="status-hearing">
+          <Icon name="phones" small />
+          {t('status.hearing')}{' '}
+          <b data-testid="status-heard" data-heard={heard === 'main' ? 'main' : 'proposal'}>
+            {t(heard === 'main' ? 'status.hearMain' : 'status.hearProposal')}
+          </b>
+        </span>
       ) : null}
-      <LocaleSwitch />
-      <dl data-part="status-saved">
-        <dt>{t('status.revision')}</dt>
-        <dd data-testid="revision">{revision}</dd>
-      </dl>
-      <AboutButton about={state.about} onOpen={() => setAboutOpen(true)} />
+      <span className="right">
+        <LocaleSwitch />
+        <span data-part="status-saved">
+          {`${t('status.saved')} · `}
+          <b className="num" data-testid="revision">{revision}</b>
+        </span>
+        <AboutButton about={state.about} onOpen={() => setAboutOpen(true)} />
+      </span>
       <AboutPanel about={state.about} open={aboutOpen && state.about !== null} onClose={() => setAboutOpen(false)}>
         <h3>{t('about.diagnostics')}</h3>
         <dl className="about-diagnostics">

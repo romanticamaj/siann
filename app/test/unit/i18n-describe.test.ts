@@ -155,9 +155,9 @@ test('a track, clip or plugin made by an earlier step of the plan is named from 
 test('positions follow the primary display format and the tempo map', () => {
   const t = translator('en');
   const seconds: StepNames = { ...NAMES, timeFormat: 'seconds' };
-  assert.equal(describeStep(STEPS.place, t, seconds), `Place a clip on ${n('Keys')} at 0:02.000`);
-  assert.equal(describeStep(STEPS.move, t, seconds), `Move a clip on ${n('Keys')} to 0:00.250`);
-  assert.equal(describeStep(STEPS.clipRemove, t, seconds), `Remove a clip on ${n('Keys')} at 0:01.500`);
+  assert.equal(describeStep(STEPS.place, t, seconds), `Place a clip on ${n('Keys')} at 00:00:02.000`);
+  assert.equal(describeStep(STEPS.move, t, seconds), `Move a clip on ${n('Keys')} to 00:00:00.250`);
+  assert.equal(describeStep(STEPS.clipRemove, t, seconds), `Remove a clip on ${n('Keys')} at 00:00:01.500`);
   assert.equal(describeStep(STEPS.trim, t, seconds), `Trim a clip on ${n('Keys')} to 2.5 s`);
   // At 60 BPM a quarter is a second: 2 s is beat 3 of bar 1.
   const slow: StepNames = { ...NAMES, tempo: [{ ticks: '0', milliBpm: 60_000 }] };

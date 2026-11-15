@@ -34,7 +34,7 @@
     "dynamic": ["display-*", "dsp-load", "strip-master-loudness", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head", "plan-history-1", "plan-history-2", "plan-history-3", "plan-step-*-title"]
   },
   "gates": {
-    "m5-ui-alignment-chrome": "report",
+    "m5-ui-alignment-chrome": "enforce",
     "m5-ui-alignment-arrange": "report",
     "m5-ui-alignment-mixer-inspector": "report",
     "m5-ui-alignment-plans": "report",

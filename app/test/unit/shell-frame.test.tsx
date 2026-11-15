@@ -75,7 +75,7 @@ function children(markup: string, open: RegExp): string[] {
   re.lastIndex = at;
   for (let m = re.exec(markup); m; m = re.exec(markup)) {
     const [whole, close, tag, attrs] = m;
-    const voidTag = /^(input|br|img|path|rect|circle)$/.test(tag!) || whole.endsWith('/>');
+    const voidTag = /^(input|br|img|meta|link)$/.test(tag!) || whole.endsWith('/>');
     if (close) {
       depth -= 1;
       if (depth === 0) break;
@@ -113,7 +113,7 @@ test('Shell renders the mockup\'s .app grid with the six regions in its order', 
     ['project-zone', 'lower-zone'],
   );
   // Nothing else takes a grid cell: every other child of .app is out of the flow.
-  for (const child of children(markup, /<div class="app"/).filter((c) => !c.includes('['))) {
+  for (const child of children(markup, /<div class="app"/).filter((c) => !c.includes('[') && c !== 'main.center')) {
     assert.match(child, /\.(divider|shell-banner|toasts)\b/, child);
   }
   // No panel library's wrappers.

@@ -1,28 +1,37 @@
-/* The window (UI redesign spec 2): a top bar, the zones and a status bar on a
-   grid that fills the window. The page never scrolls; each zone body
-   scrolls inside. Dividers are 1 px lines with a 7 px hit area. The focused
-   zone has a light frame. Panels open and close in 120 ms, not at all under
+/* The app's own rules (UI redesign spec 2). The window, the top bar and the
+   status bar are the mockup's (m5-ui-alignment-chrome): the page, the .app
+   grid and the bars are drawn by ui/base.css, ui/layout.css, ui/top-bar.css
+   and ui/status-bar.css, linked before this file (docs/harness/agent-rules.md,
+   "UI fidelity"). What stays here is what the mockup does not draw: the
+   window's fill, the banner row, hidden and drawer zones, the dividers and
+   the focus frame, the boxes of absent parts, the reset of the buttons that
+   are spans in the mockup, the controls laid over a part (the position
+   field, the language select), the small window rules, and the zones not
+   ported yet, which keep the text styles they had until their alignment
+   feature ports them. Panels open and close in 120 ms, not at all under
    prefers-reduced-motion (the token is 0s there). */
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html, body {
-  margin: 0;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg-1);
-  color: var(--tx-1);
-  font-family: var(--font-ui);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-ui);
+/* The mockup's window is 1440x900; the app's is the window. */
+#root { height: 100%; }
+.app { --app-w: 100%; --app-h: 100%; position: relative; }
+
+/* The zones not ported yet look as they did (m5-ui-alignment-chrome): the
+   text styles they inherited from the old page rule, pinned. Each region's
+   alignment feature deletes its part of this rule. */
+.zone, .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
   line-height: var(--line-height);
+  letter-spacing: normal;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: normal;
 }
 
-#root { height: 100%; }
-
+/* The app's controls, outside what the mockup ports. A button the mockup
+   draws as a span (.tbtn, .iconbtn, .aibtn, the about line) takes none of
+   these: the shared rules draw it, over the reset below. */
 button, select, input { font: inherit; color: inherit; }
-button {
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about)) {
   white-space: nowrap;
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
@@ -31,26 +40,59 @@ button {
   border-radius: var(--radius-m);
   cursor: pointer;
 }
-button:hover:not(:disabled) { background: var(--bg-5); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
-button[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+/* A ported button: Chromium's button rules undone (padding, border,
+   background, and the letter spacing and case it resets, both compared
+   styles), at no specificity, so every shared rule wins. */
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about):disabled { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-s);
 }
-code, dd, .mono { font-family: var(--font-mono); }
-
-.shell {
-  display: grid;
-  /* top bar, the banner row (empty unless a proposal is heard), zones, status bar */
-  grid-template-rows: var(--top-bar) auto minmax(0, 1fr) var(--status-bar);
-  height: 100%;
+code, dd { font-family: var(--font-mono); }
+.visually-hidden {
+  position: absolute;
+  width: var(--hairline);
+  height: var(--hairline);
+  margin: 0;
+  padding: 0;
   overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
-/* The banner row under the top bar (shell-banner) holds the connection banner
-   and the audition banner; it is empty, and 0 px tall, when neither shows. */
+
+/* ---- the frame: the .app grid of ui/layout.css. The zones sit in the row
+   between the bars whatever the banner row does, each in its column even
+   when another is hidden. */
+.app > .topbar { grid-row: 1; }
+.app > .statusbar { grid-row: -2 / -1; }
+.app > .leftzone { grid-column: 1; grid-row: -3 / -2; }
+.app > .center { grid-column: 2; grid-row: -3 / -2; position: relative; }
+.app > .plans { grid-column: 3; grid-row: -3 / -2; }
+.center > .zone-project { grid-row: 1; }
+.center > .zone-lower { grid-row: 2; border-top: var(--hairline) solid var(--divider); }
+/* The banner row under the top bar (shell-banner): the connection banner and
+   the audition banner; no row at all when neither shows. */
+.app:has(> .shell-banner:not(:empty)) { grid-template-rows: var(--top-bar) auto minmax(0, 1fr) var(--status-bar); }
+.shell-banner { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+.shell-banner:empty { display: none; }
+/* Zones that open or close by a button or key animate (spec 1.6); drags and arrow steps do not. */
+.app[data-animate="true"], .app[data-animate="true"] > .center { transition: grid-template-columns var(--panel-motion), grid-template-rows var(--panel-motion); }
+.app:has(.divider[data-active="true"]), .app:has(.divider[data-active="true"]) > .center { transition: none; }
 
 /* ---- connection banner and toasts (m5-ui-connection) */
 .connection-banner {
@@ -95,57 +137,56 @@ code, dd, .mono { font-family: var(--font-mono); }
   to { transform: none; opacity: 1; }
 }
 
-/* ---- top bar */
-.top-bar {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 3);
-  padding: 0 calc(var(--space) * 3);
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--divider);
-  overflow: hidden;
-  white-space: nowrap;
-  container-type: inline-size;
-}
-.top-bar h1 { margin: 0; font-size: var(--fs-session); font-weight: 600; letter-spacing: .02em; }
-.top-bar .session-name { font-size: var(--fs-session); color: var(--tx-2); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.top-bar .spacer { flex: 1; }
-.zone-buttons { display: flex; gap: var(--space); }
-
-/* The transport bar (m5-ui-transport; spec 3.1): buttons, the position
-   display (primary over secondary, digits written outside React) and
-   auto-scroll. */
-.transport, .transport-buttons { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
-.transport-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--transport-h);
-  height: var(--transport-h);
-  padding: 0;
-}
+/* ---- the top bar (ui/top-bar.css draws it) */
+.topbar { white-space: nowrap; }
+.session { min-width: 0; }
+.session > span { overflow: hidden; text-overflow: ellipsis; }
 .transport-icon { display: block; }
-.transport-play[aria-pressed="true"] { color: var(--play); border-color: var(--play); }
-/* Cycle, the click group and the metronome, and the locator display
-   (m5-ui-loop-click) are the mockup's .tbtn, .tgroup and .lcd .cell, drawn
-   by ui/top-bar.css. What stays here is what the mockup does not draw: the
-   app's button rule's padding taken off a .tbtn (the mockup's is a span),
-   the locator cell's least width while its text is shorter, and the boxes an
-   absent part keeps (spec 3.0): a .tbtn's, a .tgroup holding one, and the
-   locator cell's --display-locators-empty-w inside its .lcd's border. */
-button.tbtn { padding: 0; min-height: 0; }
-.transport-locators { flex: 0 0 auto; }
-.transport-locators .cell { min-width: var(--display-locators-empty-w); }
-.transport-hold-tbtn, .transport-hold-tgroup, .transport-locators-empty { display: inline-block; flex: 0 0 auto; }
+/* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
+   branch chip, the Record button, the signature display, DSP load (with the
+   margin the mockup's .dsp has) and the Channel zone button. */
+.hold-branch-chip, .hold-transport-record, .hold-display-signature, .hold-dsp-load, .hold-zone-button-channel { display: block; flex: none; }
+.hold-branch-chip { width: var(--hold-branch-chip-w); height: var(--control-h); }
+.hold-transport-record { width: var(--hold-transport-record-w); height: var(--hold-transport-record-h); }
+.hold-display-signature { width: var(--hold-display-signature-w); }
+.hold-dsp-load { width: var(--hold-dsp-load-w); height: var(--icon-s); margin-right: var(--space-half); }
+.hold-zone-button-channel { width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
+/* The boxes of parts that have landed but are absent here: cycle and the
+   click group on an engine without them (a .tbtn's and a .tgroup's size),
+   the locator cell of a session without locators (an empty .cell of the
+   display, --display-locators-empty-w wide), undo and redo on an engine
+   without them (an icon button's). */
+.transport-hold-tbtn, .transport-hold-tgroup, .undo-empty { display: block; flex: none; }
 .transport-hold-tbtn { width: var(--transport-w); height: var(--transport-h); }
-/* The frame's border is a transparent hairline, not added to the width, so
-   it rounds to device pixels as the .tgroup's and the .lcd's do (150 %). */
-.transport-hold-tgroup, .transport-locators-empty { box-sizing: content-box; border: var(--hairline) solid transparent; }
 .transport-hold-tgroup {
+  box-sizing: content-box;
+  border: var(--hairline) solid transparent;
   width: calc(var(--transport-w) + 2 * var(--space-3q));
   height: calc(var(--transport-h) + 2 * var(--space-3q));
 }
-.transport-locators-empty { width: var(--display-locators-empty-w); }
+.display-locators-empty { width: var(--display-locators-empty-w); }
+.lcd .cell[data-part="display-locators"] { min-width: var(--display-locators-empty-w); }
+.undo-empty { width: var(--icon-button); height: var(--icon-button); }
+.transport-hold, .undo-empty, [class^="hold-"] { pointer-events: none; }
+/* Playing: the start button pressed. */
+.tbtn.play[aria-pressed="true"] { box-shadow: 0 0 var(--space-3h) var(--play-a350), inset 0 var(--hairline) 0 var(--white-a350), 0 0 0 var(--hairline) var(--play-line); }
+/* The position field over the position cell (Shift+P). */
+.lcd .cell[data-part="display-position"] { position: relative; }
+.lcd[data-editing="true"] [data-testid="position-primary"] { visibility: hidden; }
+.position-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 0 var(--space-11q);
+  font: var(--fw-ui) var(--fs-position) var(--font-num);
+  text-align: left;
+  background: var(--bg-slot);
+  border: var(--divider-w) solid var(--select);
+  border-radius: 0;
+  color: var(--tx-0);
+}
+.position-field[aria-invalid="true"] { border-color: var(--err); }
 /* The metronome's level (right-click on its button). */
 .click-level {
   position: fixed;
@@ -159,35 +200,6 @@ button.tbtn { padding: 0; min-height: 0; }
   border-radius: var(--radius-m);
 }
 .click-level-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); }
-.position-display {
-  position: relative;
-  display: grid;
-  grid-template-rows: auto auto;
-  justify-items: end;
-  min-width: 11ch;
-  padding: 0 calc(var(--space) * 2);
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  cursor: default;
-}
-.position-primary { font-size: var(--fs-position); color: var(--tx-1); }
-.position-secondary { font-size: var(--fs-small); color: var(--tx-3); }
-.position-display[data-editing="true"] .position-primary { visibility: hidden; }
-.transport-tempo { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); min-width: 7ch; text-align: right; }
-.position-field {
-  position: absolute;
-  top: 0;
-  right: calc(var(--space) * 2);
-  width: 11ch;
-  font: inherit;
-  font-size: var(--fs-position);
-  text-align: right;
-  background: var(--bg-0);
-  border: var(--divider-w) solid var(--select);
-  color: var(--tx-1);
-}
-.position-field[aria-invalid="true"] { border-color: var(--err); }
 /* The position display's time format menu (right-click; spec 3.2). */
 .time-format-menu {
   position: fixed;
@@ -202,29 +214,15 @@ button.tbtn { padding: 0; min-height: 0; }
 .time-format-item { justify-content: flex-start; text-align: left; white-space: nowrap; border-color: transparent; }
 .time-format-item[aria-checked="true"]::before { content: "\2713"; margin-right: var(--space); }
 .time-format-item[aria-checked="false"]::before { content: ""; display: inline-block; width: 1ch; margin-right: var(--space); }
-.plans-button { display: inline-flex; align-items: center; gap: var(--space); }
-.plans-count {
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--ai);
-  color: #000;
-  font-size: var(--fs-small);
-  text-align: center;
-}
 
 /* ---- zones */
-.zone-groups { min-height: 0; }
-/* The library's inner element of each panel: the zone fills it. */
-.panel-inner { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden !important; }
-.zones-center { flex: 1 1 0; }
 .zone {
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg-1);
   outline: 0 solid transparent;
   outline-offset: -1px;
@@ -278,19 +276,19 @@ button.tbtn { padding: 0; min-height: 0; }
   box-shadow: -8px 0 24px rgb(0 0 0 / .45);
 }
 
-/* Panels animate their size when a zone opens or closes (not while dragging). */
-.zone-groups[data-animate="true"] [data-panel] { transition: flex-grow var(--panel-motion); }
-.zone-groups:has([data-separator="active"]) [data-panel] { transition: none; }
-
-/* ---- dividers: a 1 px line, a 7 px hit area */
+/* ---- dividers: a 1 px line over the edge of its zone's cell, a 7 px hit
+   area; positioned in the grid, so they add no grid item. */
 .divider {
-  position: relative;
+  position: absolute;
   background: var(--divider);
   outline: none;
   z-index: 2;
+  touch-action: none;
 }
-.divider-left, .divider-right { width: var(--divider-w); }
-.divider-lower { height: var(--divider-w); }
+.divider-left { grid-column: 1; grid-row: -3 / -2; top: 0; bottom: 0; right: 0; width: var(--divider-w); cursor: ew-resize; }
+.divider-right { grid-column: 3; grid-row: -3 / -2; top: 0; bottom: 0; left: 0; width: var(--divider-w); cursor: ew-resize; }
+.divider-lower { grid-row: 2; grid-column: 1; top: 0; left: 0; right: 0; height: var(--divider-w); cursor: ns-resize; }
+.divider[aria-disabled="true"] { cursor: default; }
 .divider::before {
   content: "";
   position: absolute;
@@ -299,7 +297,7 @@ button.tbtn { padding: 0; min-height: 0; }
 .divider-lower::before {
   inset: calc((var(--divider-hit) - var(--divider-w)) / -2) 0;
 }
-.divider:hover, .divider:focus-visible, .divider[data-separator="active"] { background: var(--tx-3); }
+.divider:hover, .divider:focus-visible, .divider[data-active="true"] { background: var(--tx-3); }
 /* A divider reached from the keyboard: a 2 px ring around its line. */
 .divider:focus-visible { background: var(--focus-ring); outline: 2px solid var(--focus-ring); outline-offset: 0; }
 
@@ -748,48 +746,31 @@ button.tbtn { padding: 0; min-height: 0; }
 
 .steps { margin: 0; padding-left: 20px; }
 
-/* ---- status bar */
-.status-bar {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 3);
-  padding: 0 calc(var(--space) * 3);
-  background: var(--bg-2);
-  border-top: 1px solid var(--divider);
-  font-size: var(--fs-small);
-  color: var(--tx-2);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.status-bar dl { display: flex; gap: var(--space); margin: 0; }
-.status-bar dt { color: var(--tx-3); }
-.status-bar dd { margin: 0 calc(var(--space) * 2) 0 0; }
-.status-bar [data-status="connected"] { color: var(--ok); }
-.status-bar [data-status="disconnected"] { color: var(--err); }
-.status-bar select { min-height: 18px; font-size: var(--fs-small); }
-/* A JUCE device id can be long ("<type>/<name>"); the title holds it whole. */
-.status-device { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-.locale-switch { display: flex; gap: 6px; align-items: center; }
-/* The licence line (2.1): the button takes what the bar has left; the rest of
-   the line clips before the licence, which never shrinks. */
-.about {
-  flex: 1 1 0;
-  min-width: 0;
+/* ---- the status bar (ui/status-bar.css draws it) */
+.statusbar { white-space: nowrap; min-width: 0; }
+.statusbar [data-status="connecting"] .ok { background: var(--warn); }
+.statusbar [data-status="disconnected"] .ok { background: var(--err); }
+/* The language: the <select> laid over the mockup's .loc, transparent. */
+.statusbar .loc { position: relative; }
+.statusbar .loc select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   min-height: 0;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: .4em;
-  padding: 0 var(--space);
-  background: none;
-  border: 0;
-  color: var(--tx-3);
-  font-size: var(--fs-small);
-  overflow: hidden;
+  opacity: 0;
+  cursor: pointer;
 }
-.about:hover:not(:disabled) { background: none; color: var(--tx-2); }
+.statusbar .loc:has(select:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+/* The licence line (2.1): the right-hand group and the about button give
+   way when the bar is short, and then only the start of the line clips:
+   the licence and the source never shrink. Laid out on one baseline, it
+   draws as the mockup's inline line does. */
+.statusbar .right { min-width: 0; }
+.statusbar .about { display: flex; align-items: baseline; min-width: 0; color: inherit; }
+.statusbar .about:hover:not(:disabled) { color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.about-sep, .about-license { flex: none; }
+.about-tail { flex: none; white-space: pre; }
 .about-panel, .confirm-dialog {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
@@ -816,7 +797,17 @@ button.tbtn { padding: 0; min-height: 0; }
 .about-diagnostics dt { color: var(--tx-3); }
 .about-diagnostics dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
 
-/* Small windows (2.4): the top bar drops what does not fit. */
-@container (max-width: 700px) {
-  .top-bar .session-name { display: none; }
+/* Small windows (2.4). Under 1100 px the top bar drops the locator, tempo
+   and signature displays, and the boxes of the parts not built yet; under
+   1300 px the bars give their side groups only what they hold, the left one
+   first. */
+@media (max-width: 1300px) {
+  .topbar { grid-template-columns: auto auto minmax(0, 1fr); }
+  .hold-branch-chip, .hold-dsp-load, .hold-transport-record { display: none; }
+}
+@media (max-width: 1100px) {
+  .lcd .cell[data-part="display-locators"], .lcd .display-locators-empty, .lcd .cell[data-part="display-tempo"], .hold-display-signature { display: none; }
+  .lcd .cell[data-part="display-time"] { border-right: 0; }
+  .brand { display: none; }
+  .statusbar [data-part="status-device"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 }

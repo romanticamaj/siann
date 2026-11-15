@@ -122,7 +122,7 @@ function children(markup: string, open: RegExp): string[] {
   re.lastIndex = at;
   for (let m = re.exec(markup); m; m = re.exec(markup)) {
     const [whole, close, tag] = m;
-    const voidTag = /^(input|br|img|path|rect|circle)$/.test(tag!) || whole.endsWith('/>');
+    const voidTag = /^(input|br|img|meta|link)$/.test(tag!) || whole.endsWith('/>');
     if (close) {
       depth -= 1;
       if (depth === 0) break;
@@ -171,7 +171,7 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
   for (const part of ['display-position', 'display-time', 'display-tempo']) {
     assert.deepEqual(children(markup, new RegExp(`<div class="cell" data-part="${part}"`)).map((c) => c.split('[')[0]), ['span.lbl', part === 'display-position' ? 'span.val' : 'span.val.sm'], part);
   }
-  assert.deepEqual(children(markup, /<div class="tgroup" data-part="transport-click"/), ['button.tbtn[transport-metronome]']);
+  assert.deepEqual(children(markup, /<div class="tgroup" data-testid="transport-click" data-part="transport-click"/), ['button.tbtn[transport-metronome]']);
   assert.deepEqual(children(markup, /<div class="tb-right">/), ['span.hold-dsp-load', 'span.zones[zone-buttons]', 'button.aibtn[plans-button]']);
   assert.deepEqual(children(markup, /<span class="zones" /), [
     'span.hold-zone-button-channel',
@@ -180,11 +180,11 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
     'button.iconbtn.on[zone-button-right]',
   ]);
   // The icons are the mockup's: svg.i in the buttons, svg.i.s by the session name and in the Plans button.
-  // undo, redo, start, cycle, stop, play, the metronome and three zone buttons
-  assert.equal((markup.match(/<svg class="i" viewBox="0 0 16 16"/g) ?? []).length, 10);
-  // the session's chevron and the Plans button's spark
-  assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 2);
-  assert.match(markup, /<button[^>]*class="aibtn"[^>]*data-part="plans-button"[^>]*><svg class="i s" viewBox="0 0 16 16"/);
+  // undo, redo, start, cycle, stop, play, the metronome, three zone buttons and the Plans button's spark
+  assert.equal((markup.match(/<svg class="i" viewBox="0 0 16 16"/g) ?? []).length, 11);
+  // the session's chevron
+  assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 1);
+  assert.match(markup, /<button[^>]*class="aibtn"[^>]*data-part="plans-button"[^>]*><svg class="i" viewBox="0 0 16 16"/);
   // The old wrappers are gone.
   for (const gone of ['transport-locators', 'position-display"', 'top-bar"', 'zone-buttons"', 'transport-buttons"']) {
     assert.ok(!new RegExp(`class="[^"]*\\b${gone}`).test(markup), gone);

@@ -574,8 +574,9 @@ function appStep(options) {
 
 // The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the window
 // against the mockup, geometry, computed styles and pixels, in en and zh-TW. The
-// report goes to app/test-results/fidelity. While no gate of the manifest is
-// `enforce` the gate only reports: a failed run is noted, not a failed step.
+// report goes to app/test-results/fidelity. A mismatch on an enforced part fails
+// the step (m5-ui-alignment-chrome enforced the first gate); with no gate
+// enforced a failed run would only be noted.
 function fidelityEnforced() {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'test', 'fidelity', 'manifest.json'), 'utf8'));
   return Object.values(manifest.gates).includes('enforce');
@@ -587,7 +588,7 @@ function fidelityGate(APP, env, npx) {
   const report = path.join(out, 'report.md');
   if (step.ok) return { ok: true, output: '', note: `fidelity report: ${report}` };
   if (fidelityEnforced()) return { ...step, failedAt: `the mockup fidelity gate (${report})` };
-  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (report-only until the first gate is enforced, m5-ui-alignment-chrome): ${report}` };
+  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (no gate is enforced): ${report}` };
 }
 
 // app/'s locked dependencies are installed and current: npm's own record of the

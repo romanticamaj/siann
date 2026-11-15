@@ -86,6 +86,27 @@ export interface SessionClientOptions {
   // Test only (index.tsx passes it under SIANN_SHELL_TEST=1 alone): the
   // engine.capabilities answer to use in place of the engine's.
   capabilities?: Capabilities;
+  // Test only, the same way (the fidelity run's SIANN_FIDELITY_ENVIRONMENT;
+  // UI redesign 10.2): the device of engine.status and the about's name,
+  // version, licence and commit, answered in place of the engine's, field by
+  // field. The source URL stays the engine's.
+  environment?: TestEnvironment;
+}
+
+export interface TestEnvironment {
+  readonly device?: Record<string, unknown>;
+  readonly engineAbout?: AboutInfo;
+}
+
+// The about with the environment's fields over the engine's.
+function aboutWith(about: AboutInfo | null, environment: TestEnvironment | undefined): AboutInfo | null {
+  const over = environment?.engineAbout;
+  if (!over) return about;
+  const base = about ?? {};
+  const source = { ...(base.source ?? {}), ...(over.source ?? {}) };
+  if (base.source?.url !== undefined) source.url = base.source.url;
+  else delete (source as { url?: string }).url;
+  return { ...base, ...over, source };
 }
 
 export class ProtocolError extends Error {
@@ -318,6 +339,14 @@ export class SessionClient {
       this.#refused.push(Object.freeze({ method }));
       return Promise.reject(new ProtocolError('disconnected', 'not connected to an engine'));
     }
+    const device = this.#options.environment?.device;
+    if (method === 'engine.status' && device) {
+      return this.#send(connection, method, params, expectedRevision).then((result) =>
+        result !== null && typeof result === 'object' && (result as { device?: unknown }).device !== null
+          ? { ...(result as Record<string, unknown>), device: { ...device } }
+          : result,
+      );
+    }
     return this.#send(connection, method, params, expectedRevision);
   }
 
@@ -404,7 +433,7 @@ export class SessionClient {
       status: 'connected',
       sessionId: reply.sessionId,
       revision: typeof reply.revision === 'string' ? reply.revision : null,
-      about: (reply.about as AboutInfo | undefined) ?? null,
+      about: aboutWith((reply.about as AboutInfo | undefined) ?? null, this.#options.environment),
       legend: isMeterLegend(reply.meters) ? reply.meters : null,
     });
     // What this engine can do, once per connection; a failure keeps the last answer.

@@ -427,11 +427,11 @@ jobs:
           if-no-files-found: ignore
       # The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the
       # window against the mockup at 1440x900 and device scale factor 1, in en and
-      # zh-TW, on Windows and Linux. Report-only until the first gate is enforced:
-      # m5-ui-alignment-chrome sets its gate to enforce and removes continue-on-error.
+      # zh-TW, on Windows and Linux. A mismatch on a part whose gate is enforce fails
+      # the job (m5-ui-alignment-chrome enforced the first); a gate in report mode is
+      # measured and reported only.
       - name: Mockup fidelity gate
         if: runner.os != 'macOS'
-        continue-on-error: true
         working-directory: app
         env:
           SIANN_FIDELITY: '1'
