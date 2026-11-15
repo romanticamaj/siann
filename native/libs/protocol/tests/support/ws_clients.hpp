@@ -225,16 +225,29 @@ public:
         return true;
     }
 
-    // The next frame, or nullopt when none comes in time or the socket closed.
+    // The next meter frame, or nullopt when none comes in time, the socket closed
+    // or a frame is malformed. Loudness frames (m5b-engine-load-loudness) are set
+    // aside as they arrive: lastLoudness() is the newest.
     std::optional<MeterFrame> next() {
         std::unique_lock lock(mutex_);
-        changed_.wait_for(lock, kClientTimeout, [this] { return !frames_.empty() || closed_; });
-        if (frames_.empty()) {
-            return std::nullopt;
+        for (;;) {
+            changed_.wait_for(lock, kClientTimeout, [this] { return !frames_.empty() || closed_; });
+            if (frames_.empty()) {
+                return std::nullopt;
+            }
+            const std::string bytes = std::move(frames_.front());
+            frames_.pop_front();
+            if (auto loudness = decodeLoudnessFrame(bytes)) {
+                lastLoudness_ = loudness;
+                continue;
+            }
+            return decodeMeterFrame(bytes);
         }
-        const std::string bytes = std::move(frames_.front());
-        frames_.pop_front();
-        return decodeMeterFrame(bytes);
+    }
+
+    std::optional<LoudnessFrame> lastLoudness() {
+        std::lock_guard lock(mutex_);
+        return lastLoudness_;
     }
 
 private:
@@ -242,6 +255,7 @@ private:
     std::mutex mutex_;
     std::condition_variable changed_;
     std::deque<std::string> frames_;
+    std::optional<LoudnessFrame> lastLoudness_;
     bool open_ = false;
     bool closed_ = false;
 };

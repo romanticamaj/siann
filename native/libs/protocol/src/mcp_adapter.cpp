@@ -79,7 +79,9 @@ const std::vector<McpTool> kTools = {
      "Turns the metronome on or off, optionally with its gain; returns {playing, position, cycle, click}.",
      R"({"type":"object","properties":{"enabled":{"type":"boolean"},"gainMilliDb":{"type":"integer","minimum":-60000,"maximum":0,"description":"default -12000; omitted keeps the current gain"}},"required":["enabled"],"additionalProperties":false})"},
     {"engine_status", "engine.status", McpScope::propose,
-     "Returns the device (or deviceError), playing, the driver's timing counters and the plugin instances.", kEmpty},
+     "Returns the device (or deviceError), playing, the driver's timing counters, the DSP load and the plugin "
+     "instances.",
+     kEmpty},
     {"list_devices", "engine.devices", McpScope::propose,
      "Lists the audio devices the engine can open: {id, type, name, isDefault, current, inputChannels, "
      "outputChannels}.",
@@ -149,6 +151,16 @@ Value toolResult(const std::string& responseText) {
 
 const std::vector<McpTool>& mcpTools() {
     return kTools;
+}
+
+const std::vector<McpExclusion>& mcpExclusions() {
+    static const std::vector<McpExclusion> exclusions = {
+        // m5b-engine-load-loudness (Protocol v0 item 30, docs/schemas/protocol-mcp-v0.md).
+        {"meter.reset_loudness",
+         "restarts the integrated value of the user's loudness meter: a display aid, not session state, and "
+         "nothing a plan needs; an agent measures loudness from a render"},
+    };
+    return exclusions;
 }
 
 McpAdapter::McpAdapter(Submit submit, AgentRegistry& agents) : submit_(std::move(submit)), agents_(agents) {}

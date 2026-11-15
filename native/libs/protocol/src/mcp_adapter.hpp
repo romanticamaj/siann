@@ -33,6 +33,15 @@ struct McpTool {
 // The tools in tools/list order.
 const std::vector<McpTool>& mcpTools();
 
+// A protocol method that is deliberately no tool, with the reason on record
+// (test matrix 8.2: an MCP tool or an explicit reasoned exclusion).
+struct McpExclusion {
+    std::string_view method;
+    std::string_view reason;
+};
+
+const std::vector<McpExclusion>& mcpExclusions();
+
 // Who a tool call came from: the session's agent and the tool's name, for the
 // plan's actor and the agent's lastAction (never the arguments).
 struct McpCaller {

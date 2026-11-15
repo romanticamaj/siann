@@ -754,17 +754,24 @@ TEST_CASE("the host publishes the meter legend after each graph, and frames carr
 
     // A frame before any meter reading: the transport is what a client needs.
     rig.host->tick();
-    auto frames = harness.transport.binary(realtimeConnection);
-    REQUIRE_FALSE(frames.empty());
-    auto frame = protocol::decodeMeterFrame(frames.back());
+    // Each tick sends the meter frame, then the loudness frame (m5b-engine-load-loudness).
+    const auto newestMeterFrame = [&] {
+        const auto frames = harness.transport.binary(realtimeConnection);
+        for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
+            if (auto decoded = protocol::decodeMeterFrame(*it)) {
+                return decoded;
+            }
+        }
+        return std::optional<protocol::MeterFrame>{};
+    };
+    auto frame = newestMeterFrame();
     REQUIRE(frame.has_value());
     CHECK_FALSE(frame->playing);
     CHECK(frame->playheadSamples == 0);
 
     rig.host->locate(4'800);
     rig.host->tick();
-    frames = harness.transport.binary(realtimeConnection);
-    frame = protocol::decodeMeterFrame(frames.back());
+    frame = newestMeterFrame();
     REQUIRE(frame.has_value());
     CHECK(frame->playheadSamples == 4'800);
 
@@ -1531,8 +1538,13 @@ TEST_CASE("engine.select_device keeps the integrated value; meter.reset_loudness
     rig.host->selectDevice("b");
     rig.useMade();
     CHECK(rig.engine().driver().loudness().integrated == integrated);
-    rig.pump(4);  // stopped on the new device: silence, which the gate leaves out
-    CHECK(rig.engine().driver().loudness().integrated == integrated);
+    // Stopped on the new device: silence. The gating blocks that overlap the
+    // stop still count, then the absolute gate leaves the silence out.
+    rig.pump(blocksOf(0.5));
+    const float held = rig.engine().driver().loudness().integrated;
+    CHECK(held > -24.0f);  // three partial blocks against about 27 at -23, not a restart
+    rig.pump(blocksOf(1.0));
+    CHECK(rig.engine().driver().loudness().integrated == held);
 
     rig.host->resetLoudness();
     rig.pump(1);

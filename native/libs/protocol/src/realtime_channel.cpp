@@ -144,6 +144,35 @@ std::optional<MeterFrame> decodeMeterFrame(std::string_view bytes) {
     return frame;
 }
 
+std::string encodeLoudnessFrame(const LoudnessFrame& frame) {
+    std::string out;
+    out.reserve(kLoudnessFrameBytes);
+    out.append(kLoudnessFrameMagic);
+    putUnsigned(out, kLoudnessFrameVersion, 1);
+    putUnsigned(out, static_cast<std::uint64_t>(frame.engineTimestampMicros), 8);
+    putFloat(out, frame.momentary);
+    putFloat(out, frame.shortTerm);
+    putFloat(out, frame.integrated);
+    return out;
+}
+
+std::optional<LoudnessFrame> decodeLoudnessFrame(std::string_view bytes) {
+    if (bytes.size() != kLoudnessFrameBytes || bytes.substr(0, 4) != kLoudnessFrameMagic) {
+        return std::nullopt;
+    }
+    Reader r(bytes.substr(4));
+    std::uint64_t version = 0;
+    std::uint64_t timestamp = 0;
+    LoudnessFrame frame;
+    if (!r.take(1, version) || version != kLoudnessFrameVersion || !r.take(8, timestamp) ||
+        !r.takeFloat(frame.momentary) || !r.takeFloat(frame.shortTerm) || !r.takeFloat(frame.integrated) ||
+        !r.done()) {
+        return std::nullopt;
+    }
+    frame.engineTimestampMicros = static_cast<std::int64_t>(timestamp);
+    return frame;
+}
+
 RealtimeChannel::RealtimeChannel(Transport& transport, RealtimeOptions options)
     : transport_(transport), options_(options) {}
 
@@ -306,6 +335,13 @@ bool MeterPublisher::tick() {
     frame.playheadSamples = options_.playhead ? options_.playhead() : dispatcher_.meterPlayhead();
     frame.playing = options_.playing ? options_.playing() : false;
     channel_.send(encodeMeterFrame(frame));
+    // The loudness frame follows with the same timestamp, only for a listener:
+    // nobody subscribed, the meter is not read and nothing is built.
+    if (options_.loudness && channel_.connections() > 0) {
+        const LoudnessReading reading = options_.loudness();
+        channel_.send(encodeLoudnessFrame(
+            LoudnessFrame{frame.engineTimestampMicros, reading.momentary, reading.shortTerm, reading.integrated}));
+    }
     return true;
 }
 

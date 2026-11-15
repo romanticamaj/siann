@@ -352,30 +352,46 @@ mixer strip and session name isolate the name they show).
 | m5b-engine-load-loudness (E-13, UR-14) | Y (`loudness_test` (new `siann_dsp_tests`), `load_window_test`, `graph_driver_test` `[loudness]` `[load]`, `realtime_channel_test` `[loudness]`, `transport_methods_test` `[loudness]` `[load]`, `mcp_adapter_test` `[loudness]`, `engine_host_test` `[loudness]` `[load]`) | Y (`loudness_test`, `load_window_test`, `graph_driver_test` alloc guard under `ScopedRealtimeThread`; RTSan build) | Y (`capabilities`, `meter-frames` "a SLUD frame is not an SMTR frame") | Y (`protocol-fixtures` loudness frames) | 3 + RTSan | - (6: no UI, no tour state) |
 
 Per acceptance item (`m5b-engine-load-loudness`): 1 `load_window_test` "LoadWindow
-publishes the average and the peak of a full second ...", "nothing before the
-first full window", "unmeasured callbacks contribute nothing", "reset", "record
-does not allocate"; `graph_driver_test` "The driver reports DSP load from the
-callback clock"; `transport_methods_test` "engine.status carries load
-{average, peak} as numbers"; `engine_host_test` "engine.status load is the
-driver's and 0 once the device is gone"; 2 `loudness_test` "reset restarts the
-integrated value ...", "silence after a signal ..."; `graph_driver_test` "The
-loudness meter reads the master output before the click", "a locate and a
-transport stop do not restart the integrated value; a reset request does", "the
-master gain at -6 dB lowers the reading by 6 LU"; `realtime_channel_test` "the
-publisher sends SMTR then SLUD per tick ..."; `transport_methods_test`
-"meter.reset_loudness calls the port once ..."; `engine_host_test` "a realtime
-client receives loudness frames while the session plays", "meter.reset_loudness
-returns the integrated value to -inf"; 3 `loudness_test` "EBU Tech 3341 case 1 ...",
-"... cases 3 to 5 ..." at 44.1, 48 and 96 kHz, "the 48 kHz K-weighting equals
-BS.1770-4 Annex 1", "silence reads minus infinity"; `realtime_channel_test` "loudness
-frames match the shared fixture byte for byte" (a negative-infinity frame);
-`engine_host_test` "a -23 dBFS 1 kHz tone through the engine reads -23 LUFS"; 4
-`realtime_channel_test` "with no subscriber the publisher never reads the
-loudness"; `graph_driver_test` "the loudness history survives a graph swap and a
-device change"; `engine_host_test` "engine.select_device keeps the integrated
-value"; 5 `transport_methods_test` "engine.capabilities lists meter.reset_loudness
-with features load and loudness", `mcp_adapter_test` "meter.reset_loudness is
-no MCP tool ...", app unit `capabilities`, Node `protocol-fixtures`; 6 none (no UI).
+publishes the average and the peak of a full second of device frames", "LoadWindow
+reports nothing before the first full window", "LoadWindow: unmeasured callbacks
+contribute nothing", "LoadWindow: blocks of different sizes weigh by their period",
+"LoadWindow: reset clears ...", "LoadWindow: record does not allocate on a realtime
+thread"; `graph_driver_test` "The driver reports DSP load from the callback clock"
+(alloc guard, restart on start); `transport_methods_test` "engine.status carries
+load {average, peak} as numbers from the port"; `mcp_adapter_test` "engine_status
+passes the DSP load through"; `engine_host_test` "engine.status load is the
+driver's and 0 once the device is gone"; 2 `graph_driver_test` "The loudness meter
+reads the master output before the click" (equal readings with the click on, equal
+to a reference meter over the device output), "The master gain at -6 dB lowers the
+loudness by 6 LU", "A locate and a transport stop do not restart the integrated
+value; a reset request does"; `loudness_test` "reset restarts the integrated value
+and leaves momentary and short-term"; `realtime_channel_test` "the publisher sends
+SMTR then SLUD per tick with a subscriber"; `transport_methods_test`
+"meter.reset_loudness calls the port once and answers {}", "meter.reset_loudness: a
+duplicate requestId is cached ...", "meter.reset_loudness is not_supported without
+a transport port ..."; `engine_host_test` "a -23 dBFS 1 kHz tone through the engine
+reads -23 LUFS, and -6 dB of master gain 6 LU less", "a realtime client receives
+loudness frames while the session plays", "engine.select_device keeps the
+integrated value; meter.reset_loudness returns it to -inf"; `engine_launch_test` "a
+client on the fake device plays ..." (the loudness frame over the wire); 3
+`loudness_test` "EBU Tech 3341 case 1: ...", "EBU Tech 3341 case 2: ...", "EBU Tech
+3341 gating cases 3 to 5 read -23.0 LUFS integrated" (each at 44.1, 48 and 96 kHz),
+"the 48 kHz K-weighting equals the table of BS.1770-4 Annex 1", "silence reads minus
+infinity on all three values", "silence after a signal: ...", "the readings do not
+depend on the size of the process() calls"; `graph_driver_test` "The loudness meter
+runs at the session rate behind device-side SRC"; `realtime_channel_test` "loudness
+frames match the shared fixture byte for byte" (negative infinity as `00 00 80 ff`);
+the engine-level reading in `engine_host_test` above; 4 `realtime_channel_test`
+"with no subscriber the publisher never reads the loudness and sends no frame";
+`graph_driver_test` "The loudness history survives a graph swap and a device
+change", "Before the first start the loudness reads minus infinity"; `loudness_test`
+"process, processSilence and reset do not allocate on a realtime thread"; 5
+`transport_methods_test` "engine.capabilities lists meter.reset_loudness with
+features load and loudness", `mcp_adapter_test` "meter.reset_loudness is no MCP tool
+and the adapter lists its exclusion", app unit `capabilities` (`capabilities-full.json`
+with the method and both features) and `meter-frames` "a SLUD frame is not an SMTR
+frame and is ignored", Node `protocol-fixtures` (fixture, layout, doc rows); the
+schema docs; 6 none (no UI).
 
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 

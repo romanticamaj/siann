@@ -357,6 +357,12 @@ void EngineHost::makePublisher() {
     options.playing = [&transport] { return transport.playing(); };
     options.playhead = [&transport] { return transport.position(); };
     options.inputMeter = [this](const std::string& trackId) { return inputMeter(trackId); };
+    // Protocol v0 item 30: read only while a realtime client listens.
+    const realtime::GraphDriver& driver = engine_->driver();
+    options.loudness = [&driver] {
+        const realtime::LoudnessReading reading = driver.loudness();
+        return protocol::LoudnessReading{reading.momentary, reading.shortTerm, reading.integrated};
+    };
     publisher_.emplace(engine_->dispatcher(), *channel_, *events_, std::move(options));
     publisher_->graphPublished(engine_->driver().liveEpoch(), engine_->meterSlots());
     publisher_->setInputs(armedTracks());
@@ -834,7 +840,17 @@ protocol::EngineStatus EngineHost::status() const {
         out.underruns = engine_->underruns();
         out.srcUnderruns = engine_->driver().srcUnderruns();
     }
+    if (loaded_ && running_) {
+        // Protocol v0 item 30: 0 while no device runs.
+        const rt::LoadWindow& load = engine_->driver().load();
+        out.load = protocol::DspLoad{load.average(), load.peak()};
+    }
     return out;
+}
+
+void EngineHost::resetLoudness() {
+    // The meter is the driver's, kept across devices: no device is no error.
+    engine_->driver().requestLoudnessReset();
 }
 
 std::vector<protocol::DeviceDescription> EngineHost::devices() const {

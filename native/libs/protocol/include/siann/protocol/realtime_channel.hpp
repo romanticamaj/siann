@@ -55,6 +55,30 @@ std::string encodeMeterFrame(const MeterFrame& frame);
 // nullopt for a frame that is malformed (magic, version or length).
 std::optional<MeterFrame> decodeMeterFrame(std::string_view bytes);
 
+// The loudness frame (m5b-engine-load-loudness, Protocol v0 item 30): the master's
+// BS.1770 loudness in LUFS, minus infinity for silence. Sent after the meter
+// frame on the same tick, with its timestamp; 25 bytes, little-endian.
+inline constexpr std::string_view kLoudnessFrameMagic = "SLUD";
+inline constexpr std::uint8_t kLoudnessFrameVersion = 1;
+inline constexpr std::size_t kLoudnessFrameBytes = 25;
+
+struct LoudnessReading {
+    float momentary = 0.0f;
+    float shortTerm = 0.0f;
+    float integrated = 0.0f;
+};
+
+struct LoudnessFrame {
+    std::int64_t engineTimestampMicros = 0;
+    float momentary = 0.0f;
+    float shortTerm = 0.0f;
+    float integrated = 0.0f;
+};
+
+std::string encodeLoudnessFrame(const LoudnessFrame& frame);
+// nullopt for a frame that is malformed (magic, version or length).
+std::optional<LoudnessFrame> decodeLoudnessFrame(std::string_view bytes);
+
 struct RealtimeOptions {
     // A frame is dropped for a connection whose socket buffers more than this.
     std::size_t congestionBytes = 64 * 1024;
@@ -112,6 +136,11 @@ public:
         // m5b-engine-record: an armed track's newest input meter, or nothing yet.
         // Read for every input entity of the legend on each tick.
         std::function<std::optional<graph::MeterReading>(const std::string& trackId)> inputMeter;
+        // m5b-engine-load-loudness: the master's loudness. Set, every tick that
+        // sends a meter frame while a realtime connection is authenticated reads
+        // it once and sends a loudness frame after the meter frame; with no
+        // connection it is not read and nothing is built.
+        std::function<LoudnessReading()> loudness;
     };
 
     MeterPublisher(const realtime::ControlDispatcher& dispatcher, RealtimeChannel& channel, EventStream& events,
