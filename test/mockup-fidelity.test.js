@@ -156,6 +156,53 @@ test('an absent part keeps its space empty: a hold token names a part that is st
   }
 });
 
+// ---- m5-ui-alignment-chrome: the shared stylesheets linked, the first enforced gate
+
+test('the app links tokens.css and the chrome\'s shared stylesheets in the mockup\'s order, then shell.css', () => {
+  const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  const app = linked(read('app', 'renderer', 'index.html'));
+  const chrome = ['tokens.css', 'ui/base.css', 'ui/layout.css', 'ui/top-bar.css', 'ui/status-bar.css'];
+  // The mockup's own order, filtered to these five.
+  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', '')).filter((href) => chrome.includes(href));
+  assert.deepEqual(mockup, chrome);
+  assert.deepEqual(app, [...mockup, 'shell.css']);
+});
+
+test('the chrome\'s gate is enforced, and the boxes of its absent parts are held by tokens applied in shell.css only', () => {
+  assert.equal(MANIFEST.gates['m5-ui-alignment-chrome'], 'enforce');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const holds = {
+    'branch-chip': ['w'],
+    'transport-record': ['w', 'h'],
+    'display-signature': ['w'],
+    'dsp-load': ['w'],
+    'zone-button-channel': ['w', 'h'],
+  };
+  for (const [part, sides] of Object.entries(holds)) {
+    assert.equal(MANIFEST.gates[ruleOf(part).gate], 'pending', `${part} is pending`);
+    for (const side of sides) assert.match(tokens, new RegExp(`--hold-${part}-${side}:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${part}-${side}`);
+  }
+  // Applied by shell.css, and by no rule of the shared stylesheets.
+  const ui = fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui')).map((file) => read('app', 'renderer', 'ui', file)).join('\n');
+  assert.doesNotMatch(ui, /var\(--hold-/);
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const [part, sides] of Object.entries(holds)) for (const side of sides) assert.ok(shell.includes(`var(--hold-${part}-${side})`), `shell.css applies --hold-${part}-${side}`);
+});
+
+test('the fidelity run passes the manifest\'s environment as SIANN_FIDELITY_ENVIRONMENT', () => {
+  const spec = read('app', 'test', 'e2e', 'mockup-fidelity.spec.ts');
+  assert.match(spec, /SIANN_FIDELITY_ENVIRONMENT: JSON\.stringify\(MANIFEST\.environment\)/);
+  const main = read('app', 'src', 'main', 'main.ts');
+  assert.match(main, /fidelityEnvironmentArgs\(process\.env\)/);
+});
+
+test('the rules and the runbook say the gate fails on an enforced mismatch, no longer "report-only until the first gate"', () => {
+  for (const file of [['docs', 'harness', 'agent-rules.md'], ['docs', 'harness', 'runbook.md'], ['scripts', 'check-all.js'], ['.github', 'workflows', 'ci.yml']]) {
+    assert.doesNotMatch(read(...file), /[Rr]eport-only until the first gate is enforced/, file.join('/'));
+  }
+  assert.match(read('docs', 'harness', 'runbook.md'), /an enforced mismatch fails/);
+});
+
 test('check-all runs the app step, and with it the gate, when app/ or the mockup changes', () => {
   assert.deepEqual(stepsForPaths([MANIFEST.mockup]), ['node', 'app']);
   assert.deepEqual(stepsForPaths(['docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.png']), ['node', 'app']);

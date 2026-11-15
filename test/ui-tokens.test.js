@@ -402,7 +402,59 @@ test('the ledger holds no token entry and nothing of the shared rules or the moc
   assert.ok(!files.includes(MOCKUP_FILE), 'the mockup\'s script has no literal debt');
   const left = ['app/renderer/shell.css', 'app/src/renderer/mixer/MixerMeters.ts', 'app/src/renderer/timeline/TimelineCanvas.ts'];
   assert.deepEqual(files.filter((file) => !left.includes(file)), [], 'what is left belongs to the alignment features');
-  assert.equal(DEBT.fonts.length, 1, 'the JetBrains Mono Medium entry stays until m5-ui-alignment-chrome');
+  assert.equal(DEBT.fonts.length, 0, 'm5-ui-alignment-chrome bundles JetBrains Mono Medium: no font entry is left');
+});
+
+// m5-ui-alignment-chrome (decided by the maintainer, 2026-11-15): JetBrains
+// Mono Medium (500) is bundled beside Regular, from the same release, and has
+// its own @font-face.
+test('tokens.css has an @font-face for JetBrains Mono 500 naming fonts/JetBrainsMono-Medium.woff2', () => {
+  const faces = TOKENS_CSS.match(/@font-face\s*{[^}]*}/g) || [];
+  const mono = faces.filter((face) => /font-family:\s*["']?JetBrains Mono["']?\s*;/.test(face));
+  const weightOf = (face) => /font-weight:\s*(\d+)\s*;/.exec(face)?.[1];
+  assert.deepEqual(mono.map(weightOf).sort(), ['400', '500'], 'Regular and Medium');
+  const medium = mono.find((face) => weightOf(face) === '500');
+  assert.match(medium, /src:\s*url\(["']?fonts\/JetBrainsMono-Medium\.woff2["']?\)\s*format\(["']?woff2["']?\)/);
+  assert.match(medium, /font-style:\s*normal/);
+  assert.ok(fs.existsSync(path.join(ROOT, 'app', 'renderer', 'fonts', 'JetBrainsMono-Medium.woff2')), 'the file is bundled');
+});
+
+// No rule asks JetBrains Mono for a weight that is not bundled: a rule that
+// names --font-num or --font-mono, or styles .mono, sets no weight, or 400 or
+// 500 (600 of JetBrains Mono is not bundled; Inter is variable and carries the
+// rest). The runtime sweep of app/test/e2e/fonts.spec.ts covers inherited weights.
+function monoWeights(css, where) {
+  const weights = new Set(['400', '500']);
+  const found = [];
+  for (const m of noComments(css).matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    const [, selector, body] = m;
+    const mono = /--font-(num|mono)\b/.test(body) || /\.mono\b/.test(selector);
+    if (!mono) continue;
+    for (const decl of body.matchAll(/(?:^|;)\s*(font-weight|font)\s*:\s*([^;]+)/g)) {
+      const first = decl[2].trim().split(/\s+/)[0];
+      const token = /^var\(--(fw-[\w-]+)\)$/.exec(first);
+      const weight = token ? value(token[1]) : first;
+      // A font shorthand without a weight starts with a size or a style.
+      if (decl[1] === 'font' && !token && !/^\d{3}$/.test(first)) continue;
+      if (!weights.has(String(weight))) found.push(`${where}: ${selector.trim()} { ${decl[0].replace(/^;/, '').trim()} }`);
+    }
+  }
+  return found;
+}
+
+test('no rule of tokens.css, ui/*.css, shell.css or mockup.html that names --font-num, --font-mono or .mono asks for a weight other than 400 or 500', () => {
+  const found = [
+    ...monoWeights(TOKENS_CSS, 'tokens.css'),
+    ...UI_FILES.flatMap((f) => monoWeights(read('app', 'renderer', 'ui', f), `ui/${f}`)),
+    ...monoWeights(read('app', 'renderer', 'shell.css'), 'shell.css'),
+    // The mockup's inline styles, as one rule each.
+    ...[...MOCKUP.matchAll(/class="([^"]*)"[^>]*style="([^"]*)"/g)].flatMap((m) => monoWeights(`.${m[1].trim().split(/\s+/).join('.')}{${m[2]}}`, 'mockup.html')),
+  ];
+  assert.deepEqual(found, []);
+  // The scanner sees a 600 asked of the mono family.
+  assert.equal(monoWeights('.x{font:var(--fw-strong) var(--fs-small) var(--font-num)}', 't').length, 1);
+  assert.equal(monoWeights('.mono{font-weight:600}', 't').length, 1);
+  assert.equal(monoWeights('.mono{font-weight:var(--fw-ui)}.y{font-weight:700}', 't').length, 0);
 });
 
 test('tokens.ts is the generated mirror of tokens.css', () => {
