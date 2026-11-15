@@ -305,7 +305,7 @@ the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
 has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
-| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `protocol_server_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
+| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `plan_methods_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
 
 Per acceptance item (`m5b-engine-clip-fades`): 1 `document_test` "A clip
 without fades keeps its literal pre-fade JSON and hash", "The fades fixture
@@ -313,14 +313,14 @@ round-trips with the Node bridge's hashes", "A malformed fade is rejected when
 the clip is read", "validate reports invalid_fade ..."; `session_test` "A bundle
 whose journal and checkpoint are literal pre-fade text opens ..."; `commands_test`
 "clip.set_fade sets either side ...", "clip.set_fade refuses ...", "clip.trim
-shortens the fades ..."; `history_test` "clip.set_fade is one revision ...". 2
-`graph_test` "ClipPlayerNode applies the fade formula ...", "... independent of
-the block size"; `offline_test` "The offline render of a faded clip equals the
+shortens fades that no longer fit ..."; `history_test` "clip.set_fade is one revision ...". 2
+`graph_test` "ClipPlayerNode applies the fade formula ...", "A faded clip renders
+the same for any block size"; `offline_test` "The offline render of a faded clip equals the
 curve's formula within one LSB at 24 bit"; `playback_test` "Realtime output of
 faded clips is sample-identical to renderOffline ..."; `cycle_test` "A locate
 into the middle of a fade ...", "A cycle that starts inside a fade in and ends
 inside a fade out ...", the alloc guard; `live_recompile_test` "A fade-only edit
-replaces the track's stream ...". 3 `protocol_server_test` "engine.capabilities
+replaces the track's stream ...". 3 `plan_methods_test` "engine.capabilities
 lists clip.set_fade and features.clipFades ...", "plan.preview of a clip.set_fade
 step ...", "command.execute of an over-long fade answers invalid_fade";
 `mcp_adapter_test`; `plan_hash_test` and Node `plan-hash` over
