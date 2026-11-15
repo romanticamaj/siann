@@ -279,4 +279,5 @@ export const zhHant: Catalog = {
   'error.gesture_open': '另一個手勢尚未結束',
   'error.queue_full': '引擎忙碌中，請再試一次',
   'error.lease_expired': '租約已過期',
+  'error.invalid_name': '名稱不能包含控制字元、文字方向控制字元或分行符號',
 };

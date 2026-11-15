@@ -2,6 +2,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include "siann/command/command.hpp"
 
@@ -757,4 +758,122 @@ TEST_CASE("commandCascades lists what a command may remove or change besides its
         {"track.remove", {"clip", "plugin_slot", "root", "send"}},
     };
     CHECK(cascades == expected);
+}
+
+// ---- display-safe names (follow-up to #123) ---------------------------------
+
+namespace {
+
+using siann::json::Object;
+using siann::json::Value;
+
+// A command whose "name" (or descriptor name) is `name`, built as a value so
+// it can carry bytes that JSON text could not (a name from the C++ API).
+Command withName(Object fields, const std::string& name) {
+    fields.emplace_back("name", Value(name));
+    return Command::fromJson(Value(std::move(fields)));
+}
+
+std::string errorCodeOf(const Document& doc, const Command& command) {
+    try {
+        (void)prepare(doc, command);
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "no error";
+}
+
+// RLO, LRI, PDI, ALM, LRM, a line separator, a C0 and a C1 control, and a
+// malformed byte: each refused anywhere in a name.
+const std::vector<std::string> kUnsafeNames = {
+    "Vox \xE2\x80\xAE" "6- ot",   // U+202E RLO
+    "Vox \xE2\x81\xA6" "x",       // U+2066 LRI, unclosed
+    "Vox \xE2\x81\xA9",           // U+2069 PDI
+    "\xD8\x9C" "Vox",             // U+061C ALM
+    "Vox\xE2\x80\x8E",            // U+200E LRM
+    "Vox\xE2\x80\xA8" "Bass",     // U+2028 line separator
+    "Vox\nBass",                  // LF
+    "Vox\xC2\x85",                // U+0085 NEL (C1)
+    "Vox \xC3\x28",               // malformed UTF-8
+};
+
+}  // namespace
+
+TEST_CASE("track.add and track.rename refuse a display-unsafe name with invalid_name", "[command][names]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("track.add")}, {"trackId", Value("trk_2")},
+                                               {"channels", Value(2.0)}},
+                                        name)) == "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("track.rename")}, {"trackId", Value("trk_1")}}, name)) ==
+              "invalid_name");
+    }
+    // Text in any script, with its own direction, is a name.
+    CHECK(errorCode(doc, R"({"op":"track.rename","trackId":"trk_1","name":"שירה 主唱 Vox"})") == "no error");
+    CHECK(errorCode(doc, R"({"op":"track.add","trackId":"trk_2","name":"Ünïcødé 🎸","channels":2})") == "no error");
+}
+
+TEST_CASE("media.add and media.rename refuse a display-unsafe name with invalid_name", "[command][names][media]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("media.add")}, {"mediaId", Value("med_2")},
+                                               {"contentHash", Value(kHash)}, {"format", Value("wav")},
+                                               {"channels", Value(2.0)}, {"sampleRate", Value(48000.0)},
+                                               {"frames", Value("48000")}},
+                                        name)) == "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("media.rename")}, {"mediaId", Value("med_1")}}, name)) ==
+              "invalid_name");
+    }
+    // The length rule stays invalid_params.
+    CHECK(errorCode(doc, R"({"op":"media.rename","mediaId":"med_1","name":""})") == "invalid_params");
+}
+
+TEST_CASE("bus.add and bus.rename refuse a display-unsafe name with invalid_name", "[command][names][bus]") {
+    const Document doc = applied(base(), R"({"op":"bus.add","busId":"bus_a","name":"Verb"})");
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("bus.add")}, {"busId", Value("bus_b")}}, name)) ==
+              "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("bus.rename")}, {"busId", Value("bus_a")}}, name)) ==
+              "invalid_name");
+    }
+    CHECK(errorCode(doc, R"({"op":"bus.rename","busId":"bus_a","name":"混響 Verb"})") == "no error");
+}
+
+TEST_CASE("session.rename refuses a display-unsafe name with invalid_name", "[command][names]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("session.rename")}}, name)) == "invalid_name");
+    }
+    CHECK(errorCode(doc, R"({"op":"session.rename","name":"夜 Drive"})") == "no error");
+}
+
+TEST_CASE("plugin.insert refuses a display-unsafe descriptor name with invalid_name", "[command][names][plugin]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        Object descriptor{{"format", Value("clap")}, {"uid", Value("u")}, {"name", Value(name)}};
+        const Command insert = Command::fromJson(Value(Object{{"op", Value("plugin.insert")},
+                                                              {"trackId", Value("trk_1")},
+                                                              {"index", Value(0.0)},
+                                                              {"slotId", Value("slt_2")},
+                                                              {"descriptor", Value(std::move(descriptor))},
+                                                              {"stateBlob", Value(nullptr)}}));
+        CHECK(errorCodeOf(doc, insert) == "invalid_name");
+    }
+}
+
+TEST_CASE("A transaction stops at the step whose name is unsafe", "[command][names]") {
+    const Document doc = base();
+    try {
+        (void)prepareTransaction(doc, {cmd(R"({"op":"track.rename","trackId":"trk_1","name":"Kit"})"),
+                                       cmd(R"({"op":"track.rename","trackId":"trk_1","name":"Kit \u202e"})")});
+        FAIL("the transaction was not refused");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "invalid_name");
+        CHECK(error.step() == 1);
+    }
 }

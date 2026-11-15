@@ -32,6 +32,7 @@ const ERROR_KEYS = {
   gesture_open: 'error.gesture_open',
   queue_full: 'error.queue_full',
   lease_expired: 'error.lease_expired',
+  invalid_name: 'error.invalid_name',
 } as const satisfies Record<string, MessageKey>;
 
 type KnownCode = keyof typeof ERROR_KEYS;

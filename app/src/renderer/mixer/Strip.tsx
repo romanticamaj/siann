@@ -20,6 +20,7 @@ import { useT } from '../i18n/t';
 import type { TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
 import type { SessionClient } from '../model/session-client';
+import { ISOLATE } from '../plans/isolate';
 import { Capable, useCapabilities } from '../shell/Capable';
 import { trackColourVar } from '../timeline/track-colour';
 import { MetersContext } from './meters-context';
@@ -135,7 +136,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures }: StripPro
         />
         <PeakValue meterRef={ref} testId={`peak-value-${trackId}`} label={t('strip.peakLabel', { track: track.name })} />
       </div>
-      <div className="strip-name" data-testid={`strip-name-${trackId}`} data-part-of="name" style={{ backgroundColor: colour }} title={track.name}>
+      <div className="strip-name" data-testid={`strip-name-${trackId}`} data-part-of="name" dir={ISOLATE.dir} style={{ backgroundColor: colour, ...ISOLATE.style }} title={track.name}>
         {track.name}
       </div>
     </section>

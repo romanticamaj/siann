@@ -6,6 +6,7 @@
 #include <optional>
 #include <utility>
 
+#include "siann/model/display_text.hpp"
 #include "siann/model/field_reader.hpp"
 
 namespace siann::command {
@@ -92,10 +93,26 @@ time::Position positionParam(FieldReader& r, std::string_view key) {
     r.fail(key, "domain must be audio or music");
 }
 
-// The media name (m5b-engine-project-media): 1 to 255 bytes of UTF-8.
+// A name the document stores (spec "siann-model", names; follow-up to #123):
+// well-formed UTF-8 without a control character, a bidi formatting character
+// or U+2028/U+2029, else invalid_name. Checked here, before the entity is
+// hashed (JCS refuses malformed UTF-8 with an error of its own), and again by
+// Document::validate for every name of the result.
+std::string nameParam(FieldReader& r) {
+    std::string name = r.string("name");
+    if (!model::isDisplaySafeName(name)) {
+        throw CommandError("invalid_name",
+                           "name must be well-formed UTF-8 without control characters, bidi formatting "
+                           "characters or line separators");
+    }
+    return name;
+}
+
+// The media name (m5b-engine-project-media): 1 to 255 bytes, invalid_params
+// otherwise; what it may hold is nameParam's rule.
 std::string mediaNameParam(FieldReader& r) {
-    const std::string name = r.string("name");
-    if (!model::isValidMediaName(name)) {
+    std::string name = nameParam(r);
+    if (name.empty() || name.size() > model::kMaxMediaNameBytes) {
         r.fail("name", "must be 1 to 255 bytes of UTF-8");
     }
     return name;
@@ -140,7 +157,7 @@ Prepared trackAdd(const Document& doc, const Command& command) {
     Params p(command);
     Track t;
     t.id = p->string("trackId");
-    t.name = p->string("name");
+    t.name = nameParam(*p);
     t.channels = static_cast<std::int32_t>(p->integer("channels", INT32_MIN, INT32_MAX));
     auto root = doc.root();
     std::size_t index = root.trackOrder.size();
@@ -349,7 +366,7 @@ Prepared pluginInsert(const Document& doc, const Command& command) {
         s.format = d.string("format");
         s.uid = d.string("uid");
         if (d.optional("name") != nullptr) {
-            s.name = d.string("name");
+            s.name = nameParam(d);
         }
         if (d.optional("path") != nullptr) {
             s.path = d.string("path");
@@ -416,7 +433,7 @@ Prepared pluginSetBypass(const Document& doc, const Command& command) {
 Prepared sessionRename(const Document& doc, const Command& command) {
     Params p(command);
     auto root = doc.root();
-    root.name = p->string("name");
+    root.name = nameParam(*p);
     p.finish();
     return {{kRoot}, doc.withRoot(std::move(root))};
 }
@@ -516,7 +533,7 @@ Prepared busAdd(const Document& doc, const Command& command) {
     Params p(command);
     model::Bus b;
     b.id = p->string("busId");
-    b.name = p->string("name");
+    b.name = nameParam(*p);
     auto root = doc.root();
     std::size_t index = root.busOrder.size();
     if (p->optional("index") != nullptr) {
@@ -643,7 +660,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
         {"bus.remove", &busRemove},
         {"bus.rename",
          [](const Document& d, const Command& c) {
-             return editBus(d, c, [](model::Bus& b, FieldReader& r) { b.name = r.string("name"); });
+             return editBus(d, c, [](model::Bus& b, FieldReader& r) { b.name = nameParam(r); });
          }},
         {"bus.set_gain",
          [](const Document& d, const Command& c) {
@@ -706,7 +723,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
         {"track.remove", &trackRemove},
         {"track.rename",
          [](const Document& d, const Command& c) {
-             return editTrack(d, c, [](Track& t, FieldReader& r) { t.name = r.string("name"); });
+             return editTrack(d, c, [](Track& t, FieldReader& r) { t.name = nameParam(r); });
          }},
         {"track.set_gain",
          [](const Document& d, const Command& c) {

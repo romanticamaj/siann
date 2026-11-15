@@ -4,6 +4,7 @@
 #include <set>
 #include <utility>
 
+#include "siann/model/display_text.hpp"
 #include "siann/model/field_reader.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/hash/merkle.hpp"
@@ -1132,6 +1133,15 @@ Document Document::withoutClip(std::string_view id) const {
     return doc;
 }
 
+namespace {
+
+// Follow-up to #123 (spec "siann-model", names): what a stored name may not hold.
+constexpr const char* kUnsafeNameMessage =
+    "a name must be well-formed UTF-8 without control characters, bidi formatting characters "
+    "(U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) or U+2028 and U+2029";
+
+}  // namespace
+
 std::vector<ValidationIssue> Document::validate() const {
     std::vector<ValidationIssue> out;
     const Root& r = root();
@@ -1139,6 +1149,9 @@ std::vector<ValidationIssue> Document::validate() const {
 
     if (!validRate(r.sampleRate)) {
         issue(out, "invalid_sample_rate", EntityType::root, rootId, "session sample rate is out of range");
+    }
+    if (!isDisplaySafeName(r.name)) {
+        issue(out, "invalid_name", EntityType::root, rootId, kUnsafeNameMessage);
     }
     try {
         time::TempoMap map(r.tempo);
@@ -1178,6 +1191,8 @@ std::vector<ValidationIssue> Document::validate() const {
         }
         if (m.name && !isValidMediaName(*m.name)) {
             issue(out, "invalid_name", EntityType::media, m.id, "a media name is 1 to 255 bytes of UTF-8");
+        } else if (m.name && !isDisplaySafeName(*m.name)) {
+            issue(out, "invalid_name", EntityType::media, m.id, kUnsafeNameMessage);
         }
     }
 
@@ -1185,6 +1200,9 @@ std::vector<ValidationIssue> Document::validate() const {
         const Track& t = item->value;
         if (!hash::isValidEntityId(t.id)) {
             issue(out, "invalid_id", EntityType::track, t.id, "invalid track id");
+        }
+        if (!isDisplaySafeName(t.name)) {
+            issue(out, "invalid_name", EntityType::track, t.id, kUnsafeNameMessage);
         }
         if (t.channels < 1 || t.channels > 2) {
             issue(out, "invalid_channels", EntityType::track, t.id, "track channels must be 1 or 2");
@@ -1274,6 +1292,9 @@ std::vector<ValidationIssue> Document::validate() const {
         } else if (std::find(owner->inserts.begin(), owner->inserts.end(), p.id) == owner->inserts.end()) {
             issue(out, "insert_mismatch", EntityType::plugin_slot, p.id, "the slot's track does not list it in inserts");
         }
+        if (!isDisplaySafeName(p.name)) {
+            issue(out, "invalid_name", EntityType::plugin_slot, p.id, kUnsafeNameMessage);
+        }
         if (p.format != "clap" && p.format != "vst3" && p.format != "au" && p.format != "lv2") {
             issue(out, "invalid_format", EntityType::plugin_slot, p.id, "plugin format must be clap, vst3, au or lv2");
         }
@@ -1322,6 +1343,9 @@ void Document::validateRouting(std::vector<ValidationIssue>& out) const {
         const Bus& b = item->value;
         if (!hash::isValidEntityId(b.id)) {
             issue(out, "invalid_id", EntityType::bus, b.id, "invalid bus id");
+        }
+        if (!isDisplaySafeName(b.name)) {
+            issue(out, "invalid_name", EntityType::bus, b.id, kUnsafeNameMessage);
         }
         if (b.channels != 2) {
             issue(out, "invalid_channels", EntityType::bus, b.id, "a bus has 2 channels");

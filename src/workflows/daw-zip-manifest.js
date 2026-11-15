@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { withoutUnsafeCharacters } = require('./display-name');
+
 function assertDirectory(dir, name) {
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     throw new Error(`${name} must be an existing directory`);
@@ -56,8 +58,10 @@ function stripVariant(value) {
   return value.replace(/_([a-z])$/i, '');
 }
 
+// Track and region names come from file names: stripped of control and
+// display-unsafe characters (display-name.js), never refused.
 function bgmNames(fileName) {
-  const base = path.basename(fileName, '.wav').replace(/^\d{2}m\d{2}s_/, '');
+  const base = withoutUnsafeCharacters(path.basename(fileName, '.wav')).replace(/^\d{2}m\d{2}s_/, '');
   const parts = base.split('_');
   const cue = parts[0] || 'BGM';
   const title = stripVariant(parts.slice(1).join('_') || cue).replace(/_/g, ' ');
@@ -69,7 +73,7 @@ function bgmNames(fileName) {
 }
 
 function sfxNames(fileName) {
-  const base = path.basename(fileName, '.wav').replace(/^SFX_/, '');
+  const base = withoutUnsafeCharacters(path.basename(fileName, '.wav')).replace(/^SFX_/, '');
   const withoutTime = base.replace(/_\d{2}m\d{2}s_/, '_');
   const parts = withoutTime.split('_');
   const cue = parts[0] ? `SFX ${parts[0]}` : 'SFX';

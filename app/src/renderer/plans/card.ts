@@ -14,13 +14,15 @@
 //
 // Stale reasons compare an entity at the head (plan.preview's `before`) with
 // the same entity at the plan's baseRevision (session.fetch {refs, revision});
-// without the base (the fetch was refused) they give the current value.
+// without the base (the fetch was refused) they give the current value. Each
+// name in a reason is its own bidi isolate (isolate.ts, isolateName).
 
 import { formatMilliDb, formatPan } from '../format';
 import type { Locale } from '../i18n/locale';
 import { relativeTime, translator, type T } from '../i18n/t';
 import type { PlanEntry, PlanState } from '../model/plan-store';
 import { describeStep, type StepNames } from './describe';
+import { isolateName } from './isolate';
 
 export type BadgeKey = 'draft' | 'needsReview' | 'approved' | 'approvedForAudition' | 'rejected' | 'applied' | 'rolledBack';
 
@@ -117,7 +119,7 @@ function trackChanges(name: string, base: Entity, head: Entity, t: T): string[] 
   if (base.mute !== head.mute) out.push(t('stale.mute', { name, before: onOff(base.mute), after: onOff(head.mute) }));
   if (base.solo !== head.solo) out.push(t('stale.solo', { name, before: onOff(base.solo), after: onOff(head.solo) }));
   if (base.name !== head.name && typeof base.name === 'string' && typeof head.name === 'string') {
-    out.push(t('stale.name', { name, before: base.name, after: head.name }));
+    out.push(t('stale.name', { name, before: isolateName(base.name), after: isolateName(head.name) }));
   }
   return out.length > 0 ? out : [t('stale.trackChanged', { name })];
 }
@@ -140,7 +142,8 @@ export function staleReasons(
     const now = head.get(ref) ?? null;
     const then = base?.get(ref) ?? null;
     if (type === 'track') {
-      const name = nameOf(now) ?? nameOf(then) ?? names.track(id) ?? t('step.aTrack');
+      const known = nameOf(now) ?? nameOf(then) ?? names.track(id);
+      const name = known !== undefined ? isolateName(known) : t('step.aTrack');
       if (change === 'removed') out.push(t('stale.removed', { name }));
       else if (change === 'added') out.push(t('stale.added', { name }));
       else if (now && then) out.push(...trackChanges(name, then, now, t));
@@ -153,7 +156,7 @@ export function staleReasons(
       const clip = now ?? then;
       const trackId = typeof clip?.trackId === 'string' ? clip.trackId : names.clip(id)?.trackId;
       const track = trackId !== undefined ? names.track(trackId) : undefined;
-      out.push(track ? t('stale.clip', { track }) : t('stale.clipAny'));
+      out.push(track ? t('stale.clip', { track: isolateName(track) }) : t('stale.clipAny'));
       continue;
     }
     out.push(t('stale.generic'));

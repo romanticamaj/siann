@@ -192,3 +192,34 @@ TEST_CASE("without a createSession callback session.create is not_supported", "[
     CHECK(errorCode(f.call(c, "session.create", Value(Object{{"path", Value(utf8(target))}}))) == "not_supported");
     CHECK_FALSE(fs::exists(target));
 }
+
+// Follow-up to #123 (spec "siann-model", names): a name given is refused when it
+// holds a control or display-unsafe character; one taken from the folder name
+// is stripped of them.
+TEST_CASE("session.create refuses an unsafe given name and strips one taken from the folder",
+          "[protocol][session][create][names]") {
+    TempDir dir;
+    Creator creator;
+    creator.served.emplace(session::Session::create(dir.bundle(), model::Document::create("Song", 48'000), "tester",
+                                                    "2026-11-14T00:00:00Z"));
+    RatePort port(48'000);
+    Harness h(*creator.served, withCreator(creator, &port));
+    const ConnectionId c = h.authed();
+    const fs::path root = dir.bundle().parent_path();
+
+    for (const std::string& name : {std::string("Mix \xE2\x80\xAE" "fdp.exe"), std::string("a\xE2\x81\xA6" "b"),
+                                   std::string("line\nbreak"), std::string("sep\xE2\x80\xA8" "x")}) {
+        INFO(name);
+        const fs::path target = root / "Named.siann";
+        CHECK(errorCode(h.call(c, "session.create", Value(Object{{"path", Value(utf8(target))}, {"name", Value(name)}}))) ==
+              "invalid_name");
+        CHECK_FALSE(fs::exists(target));
+    }
+    CHECK(creator.calls.empty());
+
+    const fs::path spoofed = root / fs::path(u8"Mix\u202Eexe.siann");
+    h.ok(c, "session.create", Value(Object{{"path", Value(utf8(spoofed))}}));
+    REQUIRE(creator.calls.size() == 1);
+    CHECK(creator.calls[0].second == "Mixexe");
+    CHECK(h.server.session().history().head().document.root().name == "Mixexe");
+}

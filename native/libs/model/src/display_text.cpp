@@ -1,8 +1,8 @@
-#include "siann/command/display_text.hpp"
+#include "siann/model/display_text.hpp"
 
 #include <cstddef>
 
-namespace siann::command {
+namespace siann::model {
 
 namespace {
 
@@ -114,4 +114,8 @@ std::string withoutUnsafeCharacters(std::string_view text) {
     return out;
 }
 
-}  // namespace siann::command
+bool isDisplaySafeName(std::string_view name) noexcept {
+    return textFault(name) == TextFault::none;
+}
+
+}  // namespace siann::model

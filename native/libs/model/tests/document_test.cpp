@@ -370,6 +370,85 @@ TEST_CASE("fromJson rejects unknown versions, unknown fields and bad values", "[
                             "\"sampleRate\":7,\"schema\":\"siann.entity.root.v1\"")) == "invalid_document");
 }
 
+// Follow-up to #123: a name the document stores (the session's, a track's, a
+// media's, a plugin slot's) is well-formed UTF-8 without a control character,
+// a bidi formatting character or a line or paragraph separator. A document
+// that holds one is refused on open (invalid_document, "invalid_name: ..."),
+// not repaired: stripping would change the recorded hashes the journal and
+// the checkpoint are checked against.
+TEST_CASE("Validation refuses display-unsafe names as invalid_name", "[model][names]") {
+    Document doc = Document::create("Song", 48'000);
+    doc = addTrack(doc, track("trk_1"));
+    doc = doc.withMedia(media("med_1"));
+    CHECK(codes(doc).empty());
+
+    for (const std::string& bad : {std::string("Vox \xE2\x80\xAE" "6-"), std::string("a\xE2\x81\xA7" "b"),
+                                  std::string("a\xE2\x80\xA9" "b"), std::string("a\tb"), std::string("a\xC2\x9B" "b")}) {
+        INFO(bad);
+        Track t = *doc.track("trk_1");
+        t.name = bad;
+        CHECK(codes(doc.withTrack(t)) == std::vector<std::string>{"invalid_name"});
+        auto root = doc.root();
+        root.name = bad;
+        CHECK(codes(doc.withRoot(root)) == std::vector<std::string>{"invalid_name"});
+        Media m = *doc.media("med_1");
+        m.name = bad;
+        CHECK(codes(doc.withMedia(m)) == std::vector<std::string>{"invalid_name"});
+        CHECK_THROWS_AS(Document::create(bad, 48'000), ModelError);
+        siann::model::Bus bus;
+        bus.id = "bus_a";
+        bus.name = bad;
+        auto withBus = doc.root();
+        withBus.busOrder.push_back("bus_a");
+        CHECK(codes(doc.withBus(bus).withRoot(withBus)) == std::vector<std::string>{"invalid_name"});
+    }
+    // Malformed UTF-8 never reaches validate: hashing an entity refuses it
+    // first (JCS, invalid_utf8), and the commands refuse it as invalid_name.
+    Track world = *doc.track("trk_1");
+    world.name = "שירה 主唱 🎸";
+    CHECK(codes(doc.withTrack(world)).empty());
+}
+
+TEST_CASE("Opening a document with a display-unsafe name is invalid_document", "[model][names]") {
+    const Value fixture = readFixture("model/session-document-v1.json");
+    const std::string text = siann::jcs::canonicalize(*fixture.find("document"));
+    auto mutated = [&](const std::string& from, const std::string& to) {
+        std::string copy = text;
+        const auto pos = copy.find(from);
+        REQUIRE(pos != std::string::npos);
+        copy.replace(pos, from.size(), to);
+        return siann::json::parse(copy);
+    };
+    auto openMessage = [](const Value& json) -> std::string {
+        try {
+            (void)Document::fromJson(json);
+        } catch (const ModelError& error) {
+            return error.code() + " " + error.what();
+        }
+        return "no error";
+    };
+    const std::string rlo = "\u202e";
+    // A track, the session, a plugin slot and a media name (the v1 fixture's media has none; v2's media-name does).
+    for (const auto& [from, to] : std::vector<std::pair<std::string, std::string>>{
+             {"\"name\":\"Vox\"", "\"name\":\"Vox" + rlo + "\""},
+             {"\"name\":\"Fixture Song", "\"name\":\"" + rlo + "Fixture Song"},
+             {"\"name\":\"SIANN Test Plugin\"", "\"name\":\"SIANN \u2066Test Plugin\""},
+             {"\"name\":\"Bass\"", "\"name\":\"Bass\u0085\""},
+         }) {
+        INFO(to);
+        const std::string message = openMessage(mutated(from, to));
+        CHECK(message.rfind("invalid_document invalid_name: ", 0) == 0);
+    }
+    const Value named = readFixture("model/session-document-v2-media-name.json");
+    std::string mediaText = siann::jcs::canonicalize(*named.find("document"));
+    const auto at = mediaText.find("\"format\":\"wav\",\"frames\"");
+    REQUIRE(at != std::string::npos);
+    const auto nameAt = mediaText.find("\"name\":\"", at);
+    REQUIRE(nameAt != std::string::npos);
+    mediaText.insert(nameAt + 8, "\u2028");
+    CHECK(openMessage(siann::json::parse(mediaText)).rfind("invalid_document invalid_name: ", 0) == 0);
+}
+
 TEST_CASE("Entities with the same id cannot be duplicated in JSON", "[model]") {
     const Value fixture = readFixture("model/session-document-v1.json");
     std::string text = siann::jcs::canonicalize(*fixture.find("document"));

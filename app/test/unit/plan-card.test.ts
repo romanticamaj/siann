@@ -16,6 +16,7 @@ import { LOCALES } from '../../src/renderer/i18n/locale';
 import { planEntry, type PlanEntry } from '../../src/renderer/model/plan-store';
 import { cardOf, staleReasons } from '../../src/renderer/plans/card';
 import type { StepNames } from '../../src/renderer/plans/describe';
+import { isolateName as n } from '../../src/renderer/plans/isolate';
 
 const H = (digit: string) => 'sha256:' + digit.repeat(64);
 const NOW = Date.UTC(2026, 10, 14, 12, 0, 0);
@@ -50,7 +51,7 @@ function plan(hash: string, state: string, extra: Record<string, unknown> = {}):
 test('a card leads with its first step, counts the steps, and shows the time, badge and short hash', () => {
   const fresh = plan(H('1'), 'validated');
   const card = cardOf(fresh, [fresh], 'main', NOW, NOW - 5 * 60_000, 'en', NAMES);
-  assert.equal(card.lead, `Set Keys volume to ${formatMilliDb(-3000)}`);
+  assert.equal(card.lead, `Set ${n('Keys')} volume to ${formatMilliDb(-3000)}`);
   assert.equal(card.stepCount, 5);
   assert.equal(card.steps, '5 steps');
   assert.equal(card.time, relativeTime(NOW - 5 * 60_000, NOW, 'en'));
@@ -165,17 +166,17 @@ test('stale reasons are in user units', () => {
   ]);
   const reasons = staleReasons(stalePlan, head, base, 'en', NAMES);
   assert.deepEqual(reasons, [
-    `Vox Lead: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}`,
-    'Vox Lead: pan was L20, now C',
-    'Vox Lead: mute was off, now on',
-    'Keys was removed',
-    'Pad was added',
-    'A clip on Keys changed since the plan was made',
+    `${n('Vox Lead')}: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}`,
+    `${n('Vox Lead')}: pan was L20, now C`,
+    `${n('Vox Lead')}: mute was off, now on`,
+    `${n('Keys')} was removed`,
+    `${n('Pad')} was added`,
+    `A clip on ${n('Keys')} changed since the plan was made`,
     'Something this plan changes was changed since the plan was made',
   ]);
   // session.fetch at the base revision refused: the current value, no "was".
   const fallback = staleReasons(stalePlan, head, null, 'en', NAMES);
-  assert.equal(fallback[0], `Vox Lead changed since the plan was made: now volume ${formatMilliDb(500)}, pan C`);
+  assert.equal(fallback[0], `${n('Vox Lead')} changed since the plan was made: now volume ${formatMilliDb(500)}, pan C`);
   for (const locale of LOCALES) {
     for (const text of [...staleReasons(stalePlan, head, base, locale, NAMES), ...staleReasons(stalePlan, head, null, locale, NAMES)]) {
       assert.ok(!/trk_|clp_|med_|slt_|\d{4,}/.test(text), `${locale}: ${text}`);

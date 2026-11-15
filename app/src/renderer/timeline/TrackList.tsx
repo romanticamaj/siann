@@ -26,6 +26,7 @@ import type { TrackEntity } from '../model/document';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { Snapshot } from '../model/read-model';
 import type { SessionClient } from '../model/session-client';
+import { ISOLATE } from '../plans/isolate';
 import { Capable, useCapabilities } from '../shell/Capable';
 import type { LayoutStore } from '../shell/layout-store';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
@@ -264,6 +265,7 @@ const TrackHeader = memo(function TrackHeader({ track, number, height, dimmed, s
       ) : (
         <span
           className="track-name"
+          {...ISOLATE}
           data-testid={`track-name-${id}`} data-part-of="name"
           data-renamable={canRename ? 'true' : undefined}
           title={track.name}

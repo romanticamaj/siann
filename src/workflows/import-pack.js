@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { assertDisplaySafeName } = require('./display-name');
+
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
@@ -25,6 +27,7 @@ function validateManifest(manifest) {
   assertObject(manifest.session, 'session');
   assertString(manifest.session.dir, 'session.dir');
   assertString(manifest.session.name, 'session.name');
+  assertDisplaySafeName(manifest.session.name, 'session.name');
   if (!Array.isArray(manifest.tracks) || manifest.tracks.length === 0) {
     throw new Error('tracks must be a non-empty array');
   }
@@ -35,6 +38,7 @@ function validateManifest(manifest) {
   const trackNames = new Set();
   for (const track of manifest.tracks) {
     assertString(track.name, 'track.name');
+    assertDisplaySafeName(track.name, 'track.name');
     trackNames.add(track.name);
   }
   for (const asset of manifest.assets) {
@@ -42,6 +46,7 @@ function validateManifest(manifest) {
     assertString(asset.path, `asset ${asset.id}.path`);
     assertString(asset.trackName, `asset ${asset.id}.trackName`);
     assertString(asset.regionName, `asset ${asset.id}.regionName`);
+    assertDisplaySafeName(asset.regionName, `asset ${asset.id}.regionName`);
     assertString(asset.start, `asset ${asset.id}.start`);
     if (asset.sourceStart !== undefined) {
       assertString(asset.sourceStart, `asset ${asset.id}.sourceStart`);
