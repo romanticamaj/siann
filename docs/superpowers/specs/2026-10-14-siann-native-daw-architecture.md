@@ -2301,7 +2301,9 @@ McpAdapter       MCP (JSON-RPC) tools mapped onto the command registry and the
                  submit_plan, plan_status, approve_plan, reject_plan,
                  apply_plan, rollback_plan, propose_plan, audition,
                  merge_proposal, discard_proposal, execute, job_status, render,
-                 open_session, save_session
+                 open_session, save_session, the transport, device, recording
+                 and project tools, list_plans, preview_plan, undo, redo
+                 (docs/schemas/protocol-mcp-v0.md has the table)
 AuditionPort     the server's way to the auditioner (below)
 ```
 
@@ -2317,6 +2319,12 @@ directly otherwise. Without a port `audition.hear` is `audition_unavailable`.
 Branch commits and merges publish `proposal.changed {branch, revision, changedIds}`
 and `proposal.closed {branch, merged, revision?}` events; main's `session.changed`
 is unchanged (`docs/schemas/protocol-events-v1.md`).
+
+Every protocol method is an MCP tool or has an entry with its reason in
+`kNotMcp`, the table beside the tool table in `mcp_adapter.cpp`
+(m5b-protocol-parity); the native `protocol_parity_test` and the Node
+`test/protocol-parity.test.js` enforce it, and the Node test also holds the
+methods against the protocol docs and the app's capabilities fixture.
 
 Consistency rules:
 
@@ -2359,10 +2367,11 @@ Security rules:
 Scopes v0 (decided with m3-mcp). v0 has two MCP scopes: `propose` (the MCP
 default) and `trusted` (the "approve" scope above; read-only and operate stay with
 LAN mode). A tool that changes main's document or the served session needs
-`trusted`: `approve_plan`, `apply_plan`, `execute` (`command.execute`; undo and
-redo are not tools in v0 and would be `trusted`), `merge_proposal`,
+`trusted`: `approve_plan`, `apply_plan`, `execute` (`command.execute`), `undo` and
+`redo` (`session.undo`, `session.redo`, m5b-protocol-parity), `merge_proposal`,
 `rollback_plan`, `open_session`. Everything else is `propose`: `list_commands`,
 `describe_capabilities`, `inspect_session`, `submit_plan`, `plan_status`,
+`list_plans`, `preview_plan` (both read only, m5b-protocol-parity),
 `reject_plan`, `propose_plan` (a branch; main is unchanged), `audition`,
 `discard_proposal`, `render`, `job_status`, `save_session`. In M3 the scope is set
 by the launcher (`ServerOptions::mcpScope`; the `siann-engine` executable
@@ -2715,7 +2724,9 @@ with the M4 wave 2 and 3 plans):
     (m5-clap-editor-window). `--open-editor` and
     `SIANN_OPEN_EDITOR` are removed ("Process model"). All of them go through the
     command thread, honour `expectedRevision` and the idempotency cache, and are
-    in `engine.capabilities`' `methods`; none is an MCP tool yet.
+    in `engine.capabilities`' `methods`; none is an MCP tool (`kNotMcp` gives
+    the reasons: an editor needs a desktop window, and agents reach plugins
+    through plan steps).
 20. `plugin.set_parameter {slotId, paramId, value}` (m4-crash-recovery): the live
     parameter path for a hosted plugin. `paramId` is a string, the id the
     instance's parameter list reports (`PluginParameterInfo::id`; a CLAP plugin's
@@ -2991,8 +3002,10 @@ Protocol v0, plans in the UI (decided with m5-plan-review; the wire details are 
       `session.open` (which hears main of the new session). Hearing the side
       already heard publishes nothing. Without an audition port it never fires.
     - Both methods run on the command thread, honour `expectedRevision`, are
-      listed in `engine.capabilities` `methods`, and are not MCP tools in v0 (an
-      agent knows the plans it submitted). Plans stay in engine memory, not in
+      listed in `engine.capabilities` `methods`, and are the MCP tools
+      `list_plans` and `preview_plan` in the propose scope (m5b-protocol-parity:
+      read only, and an agent previewing its own plan sees what the reviewer
+      sees). Plans stay in engine memory, not in
       the bundle.
 
 Protocol v0, locators, cycle and click (decided with m5-ui-engine-loop-click, UI
@@ -3401,6 +3414,11 @@ Not used: Taskflow (allocates at runtime).
   install has no updater and never elevates), so the package holds no
   executable but `SIANN.exe` and `siann-engine.exe`. The package tests check the
   list, the npm part against the lock file.
+- The protocol parity tests run in `npm test` (`test/protocol-parity.test.js`, no
+  build: `kMethods`, the MCP tool table and `kNotMcp` read from the C++ sources
+  against the protocol docs, the MCP doc's tool table and the app's capabilities
+  fixtures) and in ctest (`protocol_parity_test`: `kMethods` is the union of the
+  tool methods and `kNotMcp`, disjoint, every exclusion with a reason).
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
   manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
