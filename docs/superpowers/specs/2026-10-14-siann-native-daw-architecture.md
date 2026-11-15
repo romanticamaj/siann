@@ -1669,6 +1669,28 @@ Rules:
   bridge (`src/workflows/display-name.js`) refuses the same set in an import-pack
   manifest's session, track and region names and strips it from the names the
   DAW-pack intake derives from file names.
+- M5b clip fades (m5b-engine-clip-fades, UI redesign UR-6, the fade half of
+  E-9; decided by the main session under the maintainer's delegation, 2026-11-15):
+  a clip may carry `fadeIn` and `fadeOut`, each `{length, curve}`: `length` in
+  media frames as a canonical decimal string, at least 1; `curve` `"linear"` or
+  `"equal_power"`; no other field. A side whose length is 0 has no fade and is
+  omitted from the clip's JSON (a fade object with `length: "0"`, a negative or
+  non-string length or an unknown curve is `invalid_field`, an extra field
+  `unknown_field`, when the entity is read), so the schema stays `siann.entity.clip.v1`, the document
+  stays `siann.session_document.v2`, and every existing bundle, checkpoint and
+  fixture keeps its hashes. `validate()` reports `invalid_fade` when a length is
+  negative or `fadeIn.length + fadeOut.length > length` (the two may meet, not
+  overlap). Command `clip.set_fade {clipId, fadeIn?, fadeOut?}` takes at least
+  one side, each `{length, curve}` with `length >= 0` (`"0"` removes that side;
+  the curve is still checked); an omitted side is unchanged; a missing side,
+  bad curve, bad length form or extra field is `invalid_params`, an over-long
+  fade `invalid_fade`, an unknown clip `not_found`. It declares exactly
+  `{clip:<id>}` and is one undoable revision; removing both sides gives the clip
+  its pre-fade hash. `clip.trim` keeps the fades when they fit the new length
+  `L`; otherwise, in the same revision, `fadeIn.length` becomes `min(fadeIn, L)`
+  and `fadeOut.length` `min(fadeOut, L - fadeIn')` (the fade in keeps its length
+  first, the fade out takes what is left), and a side shortened to 0 is removed.
+  Crossfades and `clip.set_mute` (the rest of E-9) are not part of it.
 - M5b `master` (m5b-engine-master, UI redesign E-11; singleton entity; decided by
   the main session under the maintainer's delegation (Fable rule), 2026-11-15):
   `{schema: "siann.entity.master.v1", id: "master", gainMilliDb}`, ref
@@ -2210,6 +2232,19 @@ Engine
 Transport       play, stop, locate, loop, punch; engine state, not document
 Butler          disk read-ahead, record write-through, peak pyramid
 ```
+
+Clip fades (m5b-engine-clip-fades): for a clip of length `C` frames and the
+clip offset `n = t - timelineStart` in `[0, C)`, the sample is `media *
+(clipGain * g(n))` with `g(n) = in(n) * out(n)`, both in double and cast to float
+once. `in(n) = curve(n / Lin)` for `n < Lin`, else 1; `out(n) = curve(m / Lout)`
+with `m = C - 1 - n` for `m < Lout`, else 1; `curve(x) = x` for `linear` and
+`sin(x * pi / 2)` for `equal_power`. So a fade in starts at silence and reaches
+`curve((Lin - 1) / Lin)` on its last frame, a fade out mirrors it and ends on a
+silent last frame, and outside both fades `g = 1` exactly, so those samples are
+bit-identical to the unfaded render. One function (`graph::fadeGain`) computes it
+for `ClipPlayerNode` (offline) and the butler (realtime), so both produce the
+same float; it depends only on the clip offset, so locate and cycle wraps need no
+state. A fade-only edit changes the track's stream key, so the stream is rebuilt.
 
 ### siann-dsp (pure C++)
 
@@ -3287,6 +3322,18 @@ redesign E-14; the wire details are in `docs/schemas/protocol-engine-v0.md`,
     - `engine.capabilities` adds `features.planMetadata: true` and
       `features.agents` (true when a transport port is present, the condition of
       `engine.status`), and `limits.agentIdleMs` and `limits.agentsRetained`.
+
+Protocol v0, clip fades (decided 2026-11-15 with m5b-engine-clip-fades, UI
+redesign UR-6, the fade half of E-9; the wire details are in
+`docs/schemas/protocol-engine-v0.md`):
+
+30. Fades are document data and need no method of their own: the command
+    `clip.set_fade` goes through `command.execute`, a plan step or MCP `execute`,
+    so no MCP tool is added. `engine.capabilities` adds `features.clipFades: true`
+    and lists `clip.set_fade` in `commands`; `command.list` lists it. `plan.preview`
+    shows the clip with `fadeIn`/`fadeOut` absent on the side where the length is
+    0. An over-long fade answers `invalid_fade` with the step index, as any
+    validation error does.
 
 ## Plugin editor windows
 

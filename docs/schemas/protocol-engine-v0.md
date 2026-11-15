@@ -32,6 +32,17 @@ The master gain is document data, set with the command `master.set_gain {gainMil
 
 The gain applies to the sum of the tracks, before the master meter (meter key `master`), the click and device-side SRC (architecture spec, "Master path"); an offline render applies the same gain, so offline and realtime renders agree. The master gain is also a gesture target, `{ref: "master:master", param: "gain"}` ([Protocol gestures v0](protocol-gestures-v0.md)). `engine.capabilities` lists `master.set_gain` in `commands` and reports `features.masterGain: true`.
 
+### Clip fades (m5b-engine-clip-fades, UI redesign UR-6, Protocol v0 item 30)
+
+Fades are document data, set with the command `clip.set_fade {clipId, fadeIn?, fadeOut?}` through `command.execute`, a plan or MCP `execute`; there is no method and no MCP tool of its own. Each side is `{length, curve}`: `length` in media frames as a decimal string, `"0"` removing the side; `curve` `"linear"` or `"equal_power"`. At least one side is given; an omitted side is unchanged. A missing side, a bad curve, a length that is not a non-negative decimal string, or an extra field is `invalid_params`; `fadeIn.length + fadeOut.length` above the clip's `length` is `invalid_fade`; an unknown clip `not_found`. The command declares exactly `{clip:<id>}` and is one revision.
+
+```json
+{"method": "command.execute", "params": {"command": {"op": "clip.set_fade", "clipId": "clp_1",
+  "fadeIn": {"length": "480", "curve": "linear"}, "fadeOut": {"length": "960", "curve": "equal_power"}}}}
+```
+
+The clip entity carries `fadeIn` and `fadeOut` only while their length is not 0, so a clip without fades hashes as before. `clip.trim` to a length shorter than the two fades shortens them in the same revision (the fade in keeps its length first, the fade out takes the rest; a side shortened to 0 is removed). Offline and realtime renders apply the same gain curve (architecture spec, "siann-graph and siann-engine"). `engine.capabilities` lists `clip.set_fade` in `commands` and reports `features.clipFades: true`.
+
 ## engine.status
 
 Params `{}`. Result:

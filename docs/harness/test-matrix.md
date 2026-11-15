@@ -303,6 +303,29 @@ name ..." (bidi formatting and separators stripped, CJK and emoji kept), app
 `plan-bidi` (the card's lead and rejection note, step text, stale reasons and
 the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
 has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `protocol_server_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
+
+Per acceptance item (`m5b-engine-clip-fades`): 1 `document_test` "A clip
+without fades keeps its literal pre-fade JSON and hash", "The fades fixture
+round-trips with the Node bridge's hashes", "A malformed fade is rejected when
+the clip is read", "validate reports invalid_fade ..."; `session_test` "A bundle
+whose journal and checkpoint are literal pre-fade text opens ..."; `commands_test`
+"clip.set_fade sets either side ...", "clip.set_fade refuses ...", "clip.trim
+shortens the fades ..."; `history_test` "clip.set_fade is one revision ...". 2
+`graph_test` "ClipPlayerNode applies the fade formula ...", "... independent of
+the block size"; `offline_test` "The offline render of a faded clip equals the
+curve's formula within one LSB at 24 bit"; `playback_test` "Realtime output of
+faded clips is sample-identical to renderOffline ..."; `cycle_test` "A locate
+into the middle of a fade ...", "A cycle that starts inside a fade in and ends
+inside a fade out ...", the alloc guard; `live_recompile_test` "A fade-only edit
+replaces the track's stream ...". 3 `protocol_server_test` "engine.capabilities
+lists clip.set_fade and features.clipFades ...", "plan.preview of a clip.set_fade
+step ...", "command.execute of an over-long fade answers invalid_fade";
+`mcp_adapter_test`; `plan_hash_test` and Node `plan-hash` over
+`clip_set_fade_step`; Node `read-model-fixtures`; app unit `read-model`,
+`capabilities`. 4 none (no UI).
 
 Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
 `commands_test` "track.add and track.rename ...", "media.add and media.rename
@@ -326,9 +349,9 @@ mixer strip and session name isolate the name they show).
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 61/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 60/133 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-engine-clip-fades` 1/4, `m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
+`m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:
