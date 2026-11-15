@@ -405,8 +405,110 @@ TEST_CASE("The command catalog is listed", "[command]") {
                        "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass",
                        "send.add", "send.remove", "send.set_enabled", "send.set_level", "send.set_pre", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
-                       "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_output",
-                       "track.set_pan", "track.set_solo"});
+                       "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_notes",
+                       "track.set_output", "track.set_pan", "track.set_solo"});
+}
+
+// ---- m5b-engine-track-notes: track.set_notes {trackId, notes} ---------------
+
+namespace {
+
+// A track.set_notes command built as a Value, so `notes` can carry any bytes.
+Command setNotes(const std::string& trackId, siann::json::Value notes) {
+    return Command::fromJson(siann::json::Value(siann::json::Object{
+        {"op", siann::json::Value("track.set_notes")},
+        {"trackId", siann::json::Value(trackId)},
+        {"notes", std::move(notes)},
+    }));
+}
+
+std::string notesErrorCode(const Document& doc, const Command& command) {
+    try {
+        (void)prepare(doc, command);
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "no error";
+}
+
+}  // namespace
+
+TEST_CASE("track.set_notes stores the text and declares only the track", "[command][notes]") {
+    const Document doc = base();
+    const std::string text = "Verse: double it.\r\n\xE5\x89\xAF\xE6\xAD\x8C louder\tnow";
+    const auto set = prepare(doc, setNotes("trk_1", siann::json::Value(text)));
+    CHECK(set.effects == DeclaredEffects{ref(EntityType::track, "trk_1")});
+    REQUIRE(set.result.track("trk_1")->notes.has_value());
+    CHECK(*set.result.track("trk_1")->notes == text);  // byte for byte
+    CHECK_FALSE(doc.track("trk_1")->notes.has_value());
+    CHECK(set.result.entityHash(ref(EntityType::track, "trk_1")) != doc.entityHash(ref(EntityType::track, "trk_1")));
+    CHECK(siann::model::toJson(*set.result.track("trk_1")).find("notes")->asString() == text);
+
+    const auto replaced = prepare(set.result, cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":"other"})"));
+    CHECK(*replaced.result.track("trk_1")->notes == "other");
+
+    // "" removes the field: the track hashes as it did before it had notes.
+    const auto removed = prepare(set.result, cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":""})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::track, "trk_1")});
+    CHECK_FALSE(removed.result.track("trk_1")->notes.has_value());
+    CHECK(siann::model::toJson(*removed.result.track("trk_1")).find("notes") == nullptr);
+    CHECK(removed.result.entityHash(ref(EntityType::track, "trk_1")) == doc.entityHash(ref(EntityType::track, "trk_1")));
+    CHECK(removed.result.documentHash() == doc.documentHash());
+
+    // "" on a track without notes is a no-op on the document.
+    CHECK(prepare(doc, setNotes("trk_1", siann::json::Value(std::string()))).result.documentHash() ==
+          doc.documentHash());
+}
+
+TEST_CASE("track.set_notes accepts 16,384 bytes and refuses more as invalid_notes", "[command][notes]") {
+    const Document doc = base();
+    CHECK(prepare(doc, setNotes("trk_1", siann::json::Value(std::string(16'384, 'a'))))
+              .result.track("trk_1")
+              ->notes->size() == 16'384);
+    std::string multi;
+    while (multi.size() + 3 <= 16'384) {
+        multi += "\xE8\x81\xB2";
+    }
+    multi += "a";  // 16,384 bytes of multi-byte text
+    REQUIRE(multi.size() == 16'384);
+    CHECK(notesErrorCode(doc, setNotes("trk_1", siann::json::Value(multi))) == "no error");
+    CHECK(notesErrorCode(doc, setNotes("trk_1", siann::json::Value(std::string(16'385, 'a')))) == "invalid_notes");
+    CHECK(notesErrorCode(doc, setNotes("trk_1", siann::json::Value(multi + "a"))) == "invalid_notes");
+}
+
+TEST_CASE("track.set_notes refuses malformed UTF-8 as invalid_notes", "[command][notes]") {
+    const Document doc = base();
+    for (const std::string& bad : {
+             std::string("overlong \xC0\xAF"),         // overlong '/'
+             std::string("overlong \xE0\x80\xAF"),     // three-byte overlong
+             std::string("lone surrogate \xED\xA0\x80"),  // U+D800
+             std::string("truncated \xE8\x81"),        // a three-byte sequence cut short
+             std::string("stray \x80 continuation"),
+             std::string("past U+10FFFF \xF4\x90\x80\x80"),
+         }) {
+        INFO(bad);
+        CHECK(notesErrorCode(doc, setNotes("trk_1", siann::json::Value(bad))) == "invalid_notes");
+    }
+}
+
+TEST_CASE("track.set_notes refuses malformed params and an unknown track", "[command][notes]") {
+    const Document doc = base();
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_1","notes":42})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_1","notes":null})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_1","notes":["a"]})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","notes":"a"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_1","notes":"a","x":1})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_9","notes":"a"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"track.set_notes","trackId":"trk_9","notes":""})") == "not_found");
+}
+
+TEST_CASE("track.set_notes passes the declared-effects check inside a transaction", "[command][notes]") {
+    const Document doc = base();
+    const auto applied = prepareTransaction(doc, {cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":"a"})"),
+                                                  cmd(R"({"op":"track.set_gain","trackId":"trk_1","gainMilliDb":-3000})")});
+    CHECK(*applied.result.track("trk_1")->notes == "a");
+    CHECK(applied.result.track("trk_1")->gain.milliDb == -3'000);
 }
 
 // m5b-engine-record: track.set_input {trackId, input: {port, channels} | null}.

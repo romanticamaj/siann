@@ -1312,3 +1312,111 @@ TEST_CASE("validate reports invalid_fade for a negative fade or fades longer tha
     REQUIRE(issues.size() == 1);
     CHECK(issues[0].entity == kOldClip);
 }
+
+// ---- m5b-engine-track-notes: the track's optional notes ---------------------
+
+namespace {
+
+const std::string kFixtureNotes = "Lead vocal: comp takes 2 and 5.\nDouble the chorus\t(\xE8\x81\xB2\xE9\x83\xA8 B), keep the breaths.\n";
+
+// The v2 fixture's document with trk-vox's `notes` set to the given value (built
+// as a Value, so it can carry bytes JSON text cannot).
+Value voxWithNotes(const Value& notes) {
+    const Value v2 = readFixture("model/session-document-v2.json");
+    siann::json::Object out = v2.find("document")->asObject();
+    for (auto& [key, value] : out) {
+        if (key != "tracks") {
+            continue;
+        }
+        siann::json::Array tracks = value.asArray();
+        for (Value& entity : tracks) {
+            if (entity.find("id")->asString() == "trk-vox") {
+                siann::json::Object fields = entity.asObject();
+                fields.emplace_back("notes", notes);
+                entity = Value(std::move(fields));
+            }
+        }
+        value = Value(std::move(tracks));
+    }
+    return Value(std::move(out));
+}
+
+}  // namespace
+
+TEST_CASE("The notes fixture gives the Node bridge's hashes and round-trips under JCS", "[model][fixtures][notes]") {
+    const Value fixture = readFixture("model/session-document-v2-notes.json");
+    const Value& original = *fixture.find("document");
+    const Document doc = Document::fromJson(original);
+    CHECK(doc.validate().empty());
+    REQUIRE(doc.track("trk-vox")->notes.has_value());
+    CHECK(*doc.track("trk-vox")->notes == kFixtureNotes);
+    CHECK_FALSE(doc.track("trk_bass")->notes.has_value());
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{entityTypeOf(type), id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == writtenAsV3(original));
+}
+
+TEST_CASE("A track without notes serializes as before and every earlier fixture keeps its hashes", "[model][notes]") {
+    for (const char* file : {"model/session-document-v1.json", "model/session-document-v2.json",
+                             "model/session-document-v2-input.json", "model/session-document-v2-media-name.json"}) {
+        INFO(file);
+        const Value fixture = readFixture(file);
+        const Document doc = Document::fromJson(*fixture.find("document"));
+        for (const Track* t : doc.tracksInOrder()) {
+            CHECK_FALSE(t->notes.has_value());
+            CHECK(siann::model::toJson(*t).find("notes") == nullptr);
+        }
+        CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    }
+    // Removing the notes gives back the v2 document's hash.
+    const Document noted = Document::fromJson(*readFixture("model/session-document-v2-notes.json").find("document"));
+    const Document plain = Document::fromJson(*readFixture("model/session-document-v2.json").find("document"));
+    Track vox = *noted.track("trk-vox");
+    vox.notes.reset();
+    CHECK(noted.withTrack(vox).documentHash() == plain.documentHash());
+    CHECK(noted.documentHash() != plain.documentHash());
+}
+
+TEST_CASE("Track notes must be a string of 1 to 16,384 well-formed UTF-8 bytes", "[model][notes]") {
+    REQUIRE(siann::model::kMaxTrackNotesBytes == 16'384);
+    const Document atLimit = Document::fromJson(voxWithNotes(Value(std::string(16'384, 'a'))));
+    CHECK(atLimit.track("trk-vox")->notes->size() == 16'384);
+    // Multi-byte text up to the limit, newlines and tabs kept byte for byte.
+    std::string multi = "a\r\n\t";
+    while (multi.size() + 3 <= 16'384) {
+        multi += "\xE8\x81\xB2";
+    }
+    CHECK(*Document::fromJson(voxWithNotes(Value(multi))).track("trk-vox")->notes == multi);
+
+    CHECK(errorCode(voxWithNotes(Value(std::string()))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(std::string(16'385, 'a')))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(std::string("bad \xC3\x28 byte")))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(std::string("overlong \xC0\xAF")))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(std::string("surrogate \xED\xA0\x80")))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(std::string("truncated \xE8\x81")))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(42))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(nullptr))) == "invalid_field");
+    CHECK(errorCode(voxWithNotes(Value(siann::json::Array{}))) == "invalid_field");
+}
+
+TEST_CASE("validate reports invalid_notes for a track built in code with bad notes", "[model][notes]") {
+    const Document doc = addTrack(Document::create("Song", 48'000), track("trk_1"));
+    Track t = *doc.track("trk_1");
+    t.notes = "fine\nnotes";
+    CHECK(codes(doc.withTrack(t)).empty());
+    for (const std::string& bad : {std::string(), std::string(16'385, 'a'), std::string("\xC0\xAF"),
+                                   std::string("\xED\xA0\x80"), std::string("x\xE8\x81")}) {
+        t.notes = bad;
+        const auto issues = doc.withTrack(t).validate();
+        REQUIRE(issues.size() == 1);
+        CHECK(issues[0].code == "invalid_notes");
+        CHECK(issues[0].entity == EntityRef{EntityType::track, "trk_1"});
+    }
+    CHECK(siann::model::isValidTrackNotes(std::string(16'384, 'a')));
+    CHECK_FALSE(siann::model::isValidTrackNotes(""));
+}

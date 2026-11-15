@@ -20,7 +20,9 @@
 // (m5b-engine-clip-fades), also after the master steps and independent of the
 // fifth, sets both fades on clp_1 and then removes them (clip.set_fade with
 // length "0"), so its hash and the document hash return to the values before
-// the first step. Hashes come from the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
+// the first step. A seventh part (m5b-engine-track-notes), also after the master
+// steps, sets notes on trk_1 and removes them with "", so the track and document
+// hashes return to their values before. Hashes come from the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -322,6 +324,21 @@ function buildFadeSteps(after) {
   });
 }
 
+// After the master steps: track.set_notes on trk_1 (multi-line, non-ASCII), then
+// notes "", which removes the field (m5b-engine-track-notes).
+const TRACK_NOTES = 'Verse: double it.\n副歌 louder, keep the breaths.';
+
+function buildNotesSteps(after) {
+  return recordSteps(clone(after.document), Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      d.tracks.find((x) => x.id === 'trk_1').notes = TRACK_NOTES;
+    }, [{ ref: 'track:trk_1', change: 'modified' }]);
+    commit((d) => {
+      delete d.tracks.find((x) => x.id === 'trk_1').notes;
+    }, [{ ref: 'track:trk_1', change: 'modified' }]);
+  });
+}
+
 function recordSteps(initial, firstSeq, firstRevision, run) {
   const steps = [];
   let document = initial;
@@ -418,6 +435,7 @@ function buildFixture() {
   const busSteps = buildBusSteps(masterEnd);
   const withBus = busSteps[0];
   const fadeSteps = buildFadeSteps(masterEnd);
+  const notesSteps = buildNotesSteps(masterEnd);
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -450,6 +468,12 @@ function buildFixture() {
       // The document hash before the first fade step; the last step returns to it.
       before: { revision: masterEnd.event.revision, documentHash: masterEnd.documentHash },
       steps: fadeSteps,
+    },
+    notes: {
+      // The document hash before the notes are set; the removal returns to it.
+      before: { revision: masterEnd.event.revision, documentHash: masterEnd.documentHash },
+      text: TRACK_NOTES,
+      steps: notesSteps,
     },
   };
 }

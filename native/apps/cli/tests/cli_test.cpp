@@ -172,6 +172,7 @@ TEST_CASE("The command catalog is listed", "[cli]") {
     REQUIRE(r.exitCode == 0);
     // session.set_locators (m5-ui-engine-loop-click), track.set_input (m5b-engine-record),
     // media.rename (m5b-engine-project-media), master.set_gain (m5b-engine-master),
-    // the 14 bus, send and routing commands (m5b-engine-buses-sends), clip.set_fade (m5b-engine-clip-fades)
-    CHECK(r.json.find("commands")->asArray().size() == 38);
+    // the 14 bus, send and routing commands (m5b-engine-buses-sends), clip.set_fade (m5b-engine-clip-fades),
+    // track.set_notes (m5b-engine-track-notes)
+    CHECK(r.json.find("commands")->asArray().size() == 39);
 }

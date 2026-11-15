@@ -257,6 +257,42 @@ TEST_CASE("media.rename is one revision declaring the media; undo restores the o
                     CommandError);
 }
 
+// m5b-engine-track-notes: track.set_notes is one revision declaring the track.
+TEST_CASE("track.set_notes is one revision; undo restores the previous notes and removes the first", "[history][notes]") {
+    History history = fresh();
+    history.commit({addTrack("trk_1")}, "a", "t");
+    const auto plain = history.head().envelope.documentHash;
+    const Revision& first =
+        history.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":"first\nline"})")}, "a", "t");
+    REQUIRE(first.diff.size() == 1);
+    CHECK(first.diff[0].entity == EntityRef{EntityType::track, "trk_1"});
+    CHECK(first.diff[0].change == DiffEntry::Change::modified);
+    const auto withFirst = first.envelope.documentHash;
+    CHECK(withFirst != plain);
+    const auto revisions = history.revisions().size();
+    history.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":"second"})")}, "a", "t");
+    CHECK(history.revisions().size() == revisions + 1);
+    CHECK(*history.head().document.track("trk_1")->notes == "second");
+
+    history.undo("a", "t");
+    CHECK(*history.head().document.track("trk_1")->notes == "first\nline");
+    CHECK(history.head().envelope.documentHash == withFirst);
+    history.undo("a", "t");  // undo of the first set removes the field
+    CHECK_FALSE(history.head().document.track("trk_1")->notes.has_value());
+    CHECK(history.head().envelope.documentHash == plain);
+    history.redo("a", "t");
+    CHECK(*history.head().document.track("trk_1")->notes == "first\nline");
+    CHECK(history.head().envelope.documentHash == withFirst);
+    history.redo("a", "t");
+    CHECK(*history.head().document.track("trk_1")->notes == "second");
+
+    // "" is a revision back to the hash without notes.
+    const Revision& cleared = history.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":""})")}, "a", "t");
+    CHECK(cleared.envelope.documentHash == plain);
+    CHECK_THROWS_AS(history.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_9","notes":"x"})")}, "a", "t"),
+                    CommandError);
+}
+
 TEST_CASE("A new commit after undo clears redo", "[history]") {
     History history = fresh();
     history.commit({addTrack("trk_1")}, "a", "t");

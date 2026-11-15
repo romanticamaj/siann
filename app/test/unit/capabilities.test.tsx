@@ -83,6 +83,9 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(reduced.feature('clipFades'), false);
   assert.equal(full.command('clip.set_fade'), true);
   assert.equal(reduced.command('clip.set_fade'), false);
+  // m5b-engine-track-notes: the notes command, listed in commands (no feature flag).
+  assert.equal(full.command('track.set_notes'), true);
+  assert.equal(reduced.command('track.set_notes'), false);
   // m5b-engine-plan-metadata: plan titles, intents and actors, and the agents in
   // engine.status (true with a transport port); the reduced engine predates both.
   assert.equal(full.feature('planMetadata'), true);

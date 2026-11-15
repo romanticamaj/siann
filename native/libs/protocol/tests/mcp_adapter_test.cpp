@@ -1166,6 +1166,48 @@ TEST_CASE("execute carries clip.set_fade and list_commands names it", "[protocol
     CHECK(listed);
 }
 
+// m5b-engine-track-notes: no new method, so no new tool. Under the propose scope
+// submit_plan takes a track.set_notes step; under the trusted scope execute
+// carries it; list_commands names it.
+TEST_CASE("submit_plan and execute carry track.set_notes and list_commands names it", "[protocol][mcp][notes]") {
+    const std::string notes = "Verse: double it.\n\xE5\x89\xAF\xE6\xAD\x8C louder";
+    const Value step = Value(Object{{"op", Value("track.set_notes")}, {"trackId", Value("trk_a")}, {"notes", Value(notes)}});
+    {
+        Fixture f;
+        const ConnectionId user = f.authed();
+        f.commit(user, Array{trackAdd("trk_a")});
+        Mcp mcp(f);
+        mcp.initialize();
+        const Value plan = mcp.ok("submit_plan", Value(Object{{"steps", Value(Array{step})}}));
+        CHECK(at(plan, "state").asString() == "validated");
+        REQUIRE(at(plan, "writeSet").asArray().size() == 1);
+        CHECK(at(at(plan, "writeSet").asArray()[0], "id").asString() == "trk_a");
+        // The user approves over the protocol; the agent proposes it as a branch.
+        f.ok(user, "plan.approve", Value(Object{{"plan", at(plan, "hash")}}));
+        const Value proposed = mcp.ok("propose_plan", Value(Object{{"plan", at(plan, "hash")}}));
+        CHECK(at(proposed, "branch").kind() == Value::Kind::string);
+        CHECK_FALSE(f.head().document.track("trk_a")->notes.has_value());  // main did not move
+        bool listed = false;
+        const Value commands = mcp.tool("list_commands");  // kept: the loop reads into it
+        for (const Value& name : at(at(commands, "structuredContent"), "commands").asArray()) {
+            listed = listed || name.asString() == "track.set_notes";
+        }
+        CHECK(listed);
+    }
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}}));
+    const Value executed = mcp.ok("execute", Value(Object{{"commands", Value(Array{step})}}));
+    CHECK(at(at(executed, "revision"), "diff").asArray().at(0).asString() == "track:trk_a");
+    CHECK(*f.head().document.track("trk_a")->notes == notes);
+    const Value refused = mcp.error(
+        "execute", Value(Object{{"commands", Value(Array{Value(Object{{"op", Value("track.set_notes")},
+                                                                      {"trackId", Value("trk_a")},
+                                                                      {"notes", Value(std::string(16'385, 'a'))}})})}}));
+    CHECK(at(refused, "code").asString() == "invalid_notes");
+}
+
 // m5b-engine-load-loudness (Protocol v0 item 31): resetting the user's loudness
 // meter is a display aid, not session state and nothing a plan needs, so no tool
 // maps to it; the adapter lists the exclusion with its reason.

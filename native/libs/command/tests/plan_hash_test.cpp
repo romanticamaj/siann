@@ -125,6 +125,27 @@ TEST_CASE("Plans with a media name hash as in Node and their steps apply", "[pla
     }
 }
 
+// m5b-engine-track-notes: track.set_notes steps hash as in Node, and the plan sets
+// the notes and removes them again, so the document returns to its hash.
+TEST_CASE("A plan with track.set_notes steps hashes as in Node and its steps apply", "[plan][fixtures][notes]") {
+    const Value* c = &validCase("track_notes_steps");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
+    CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == c->find("planHash")->asString());
+    REQUIRE(plan.steps.size() == 2);
+    CHECK(plan.steps[0].op() == "track.set_notes");
+
+    siann::model::Document doc = siann::model::Document::create("Song", 48'000);
+    doc = siann::command::prepare(doc, siann::command::Command::fromJson(siann::json::parse(
+                                           R"({"op":"track.add","trackId":"trk_1","name":"Drums","channels":2})")))
+              .result;
+    const auto first = siann::command::prepare(doc, plan.steps[0]);
+    CHECK(*first.result.track("trk_1")->notes == "Verse: double it.\n\xE5\x89\xAF\xE6\xAD\x8C louder");
+    const auto applied = siann::command::prepareTransaction(doc, plan.steps);
+    CHECK_FALSE(applied.result.track("trk_1")->notes.has_value());
+    CHECK(applied.result.documentHash() == doc.documentHash());
+}
+
 TEST_CASE("Invalid plans are rejected with the fixture's code", "[plan][fixtures]") {
     for (const Value& c : fixture().find("invalid")->asArray()) {
         INFO(c.find("name")->asString());

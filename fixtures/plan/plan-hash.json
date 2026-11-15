@@ -341,6 +341,34 @@
       "planHash": "sha256:31d33b0c706be088da9dac26474de44c3459dd849952a6d7ce2a6fa4833d1f13"
     },
     {
+      "name": "track_notes_steps",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r4",
+        "steps": [
+          {
+            "op": "track.set_notes",
+            "trackId": "trk_1",
+            "notes": "Verse: double it.\n副歌 louder"
+          },
+          {
+            "op": "track.set_notes",
+            "trackId": "trk_1",
+            "notes": ""
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "track",
+            "id": "trk_1",
+            "hash": "sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90"
+          }
+        ]
+      },
+      "planHash": "sha256:348ce9cc7e8eb8d22dc6cd987d2b57466525af94d168c706b6b8fb4487fb780e"
+    },
+    {
       "name": "clip_set_fade_step",
       "plan": {
         "schema": "siann.plan.v1",

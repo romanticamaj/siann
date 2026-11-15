@@ -1026,3 +1026,90 @@ TEST_CASE("A bundle whose journal and checkpoint are literal pre-fade text opens
         CHECK(siann::io::readFile(dir.bundle() / "session.json").find("fade") == std::string::npos);
     }
 }
+
+// ---- m5b-engine-track-notes: notes survive save, reopen and replay ----------
+
+namespace {
+
+Command setNotes(const std::string& trackId, const std::string& notes) {
+    return Command::fromJson(siann::json::Value(siann::json::Object{
+        {"op", siann::json::Value("track.set_notes")},
+        {"trackId", siann::json::Value(trackId)},
+        {"notes", siann::json::Value(notes)},
+    }));
+}
+
+const std::string kSessionNotes = "Verse: double it.\n\xE5\x89\xAF\xE6\xAD\x8C louder\tkeep the breaths.";
+
+}  // namespace
+
+TEST_CASE("Track notes survive a checkpoint and reopen, and a journal replay without one", "[session][notes]") {
+    for (const bool withCheckpoint : {true, false}) {
+        INFO("checkpoint " << withCheckpoint);
+        TempDir dir;
+        std::vector<siann::command::Revision> before;
+        {
+            Session session = newSession(dir.bundle());
+            session.commit({addTrack("trk_1"), addTrack("trk_2")}, "a", "t1");
+            session.commit({setNotes("trk_1", "first")}, "a", "t2");
+            session.commit({setNotes("trk_1", kSessionNotes)}, "a", "t3");
+            session.commit({setNotes("trk_2", "gone soon")}, "a", "t4");
+            session.commit({setNotes("trk_2", "")}, "a", "t5");
+            session.commit({setNotes("trk_1", "undone")}, "a", "t6");
+            session.undo("a", "t7");
+            if (withCheckpoint) {
+                session.checkpoint();
+            }
+            before = session.history().revisions();
+        }
+        if (!withCheckpoint) {
+            // Only the journal: every document is rebuilt by replay and checked
+            // against the recorded hashes.
+            fs::remove(dir.bundle() / "session.json");
+        }
+        OpenReport report;
+        Session reopened = Session::open(dir.bundle(), &report);
+        CHECK(report.checkpointVerified == withCheckpoint);
+        CHECK_FALSE(report.quarantinedTail.has_value());
+        expectSameHistory(before, reopened);
+        const Document& head = reopened.history().head().document;
+        REQUIRE(head.track("trk_1")->notes.has_value());
+        CHECK(*head.track("trk_1")->notes == kSessionNotes);
+        CHECK_FALSE(head.track("trk_2")->notes.has_value());
+        // Redo still reaches the undone notes after the reopen.
+        CHECK(*reopened.redo("a", "t8").document.track("trk_1")->notes == "undone");
+        if (withCheckpoint) {
+            CHECK(siann::io::readFile(dir.bundle() / "session.json").find(R"("notes":"Verse: double it.\n)") !=
+                  std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("A literal bundle from before track notes opens with its hashes, and notes \"\" returns to them",
+          "[session][notes]") {
+    for (const bool withCheckpoint : {true, false}) {
+        INFO("checkpoint " << withCheckpoint);
+        TempDir dir;
+        writePreFadeBundle(dir.bundle(), withCheckpoint);
+        {
+            OpenReport report;
+            Session session = Session::open(dir.bundle(), &report);
+            CHECK(report.checkpointVerified == withCheckpoint);
+            CHECK(report.recordsReplayed == 3);
+            const auto& head = session.history().head();
+            CHECK(siann::hash::formatHash(head.document.documentHash()) == kPreFadeHash);
+            CHECK_FALSE(head.document.track("trk_1")->notes.has_value());
+
+            session.commit({setNotes("trk_1", kSessionNotes)}, "t", "t4");
+            CHECK(siann::hash::formatHash(session.history().head().document.documentHash()) != kPreFadeHash);
+            session.commit({setNotes("trk_1", "")}, "t", "t5");
+            CHECK(siann::hash::formatHash(session.history().head().document.documentHash()) == kPreFadeHash);
+            session.checkpoint();
+        }
+        OpenReport report;
+        const Session reopened = Session::open(dir.bundle(), &report);
+        CHECK(report.checkpointVerified);
+        CHECK(siann::hash::formatHash(reopened.history().head().document.documentHash()) == kPreFadeHash);
+        CHECK(siann::io::readFile(dir.bundle() / "session.json").find("notes") == std::string::npos);
+    }
+}
