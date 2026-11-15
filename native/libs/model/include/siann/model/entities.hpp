@@ -83,6 +83,16 @@ struct TrackInput {
     friend bool operator==(const TrackInput&, const TrackInput&) = default;
 };
 
+// A track's monitoring mode (m5b-engine-monitoring; spec, "Recording"): off
+// never passes the track's input, input always does, automatic ("auto") does
+// while the transport is stopped on an armed track and while the track captures.
+enum class MonitorMode { off, automatic, input };
+
+// "off", "auto" or "input".
+std::string_view monitorModeName(MonitorMode mode) noexcept;
+// The mode a name stands for; empty for any other text.
+std::optional<MonitorMode> monitorModeFromName(std::string_view name) noexcept;
+
 struct Track {
     std::string id;
     std::string name;
@@ -98,6 +108,9 @@ struct Track {
     // Omitted from the JSON while absent, so a track without an input keeps its
     // earlier hash (m5b-engine-record).
     std::optional<TrackInput> input;
+    // Omitted from the JSON while off, so a track that never monitored keeps its
+    // earlier hash (m5b-engine-monitoring).
+    MonitorMode monitor = MonitorMode::off;
 
     friend bool operator==(const Track&, const Track&) = default;
 };

@@ -18,6 +18,27 @@ using json::Value;
 ModelError::ModelError(std::string code, const std::string& message)
     : std::runtime_error(message), code_(std::move(code)) {}
 
+std::string_view monitorModeName(MonitorMode mode) noexcept {
+    switch (mode) {
+        case MonitorMode::automatic:
+            return "auto";
+        case MonitorMode::input:
+            return "input";
+        case MonitorMode::off:
+            break;
+    }
+    return "off";
+}
+
+std::optional<MonitorMode> monitorModeFromName(std::string_view name) noexcept {
+    for (const MonitorMode mode : {MonitorMode::off, MonitorMode::automatic, MonitorMode::input}) {
+        if (monitorModeName(mode) == name) {
+            return mode;
+        }
+    }
+    return std::nullopt;
+}
+
 bool isValidMediaName(std::string_view name) noexcept {
     if (name.empty() || name.size() > kMaxMediaNameBytes) {
         return false;
@@ -199,6 +220,15 @@ Track trackFromJson(const Value& value) {
         port.channels = static_cast<std::int32_t>(in.integer("channels", 1, 2));
         in.finish();
         t.input = port;
+    }
+    // m5b-engine-monitoring: absent is off; a stored "off" reads as off.
+    if (const Value* monitor = r.optional("monitor")) {
+        const std::optional<MonitorMode> mode =
+            monitor->kind() == Value::Kind::string ? monitorModeFromName(monitor->asString()) : std::nullopt;
+        if (!mode) {
+            r.fail("monitor", "must be off, auto or input");
+        }
+        t.monitor = *mode;
     }
     r.finish();
     return t;
@@ -467,6 +497,10 @@ Value toJson(const Track& track) {
     if (track.input) {
         out.emplace_back("input",
                          Value(Object{{"port", number(track.input->port)}, {"channels", number(track.input->channels)}}));
+    }
+    // Omitted while off: a track that never monitored keeps its earlier hash.
+    if (track.monitor != MonitorMode::off) {
+        out.emplace_back("monitor", str(monitorModeName(track.monitor)));
     }
     return Value(std::move(out));
 }

@@ -424,6 +424,19 @@ Prepared trackSetInput(const Document& doc, const Command& command) {
     });
 }
 
+// A track's monitoring mode (m5b-engine-monitoring): {trackId, monitor: "off" |
+// "auto" | "input"}, one edit of the track. Any other value, a missing or an
+// extra field is invalid_params (the field reader's ModelError).
+Prepared trackSetMonitor(const Document& doc, const Command& command) {
+    return editTrack(doc, command, [](Track& t, FieldReader& r) {
+        const std::optional<model::MonitorMode> mode = model::monitorModeFromName(r.string("monitor"));
+        if (!mode) {
+            r.fail("monitor", "must be off, auto or input");
+        }
+        t.monitor = *mode;
+    });
+}
+
 using Handler = Prepared (*)(const Document&, const Command&);
 
 const std::map<std::string, Handler, std::less<>>& registry() {
@@ -463,6 +476,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
              return editTrack(d, c, [](Track& t, FieldReader& r) { t.gain = gainParam(r, "gainMilliDb"); });
          }},
         {"track.set_input", &trackSetInput},
+        {"track.set_monitor", &trackSetMonitor},
         {"track.set_mute",
          [](const Document& d, const Command& c) {
              return editTrack(d, c, [](Track& t, FieldReader& r) { t.mute = r.boolean("mute"); });
