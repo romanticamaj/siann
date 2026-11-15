@@ -84,6 +84,28 @@ test('the master model fixture matches its Node generator and adds master:master
   assert.equal(v2.document.master, undefined);
 });
 
+// m5b-engine-clip-fades: only the faded clips hash differently; a clip without
+// fades omits the fields and every other entity keeps its v2 hash.
+test('the fades model fixture matches its Node generator and changes the faded clips only', () => {
+  const { FIXTURE_FILE_V2_FADES, buildFixtureV2Fades, FIXTURE_FILE_V2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_FADES, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV2Fades());
+  const v2 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  const byRef = (leaves) => new Map(leaves.map((leaf) => [`${leaf.type}:${leaf.id}`, leaf.entityHash]));
+  const before = byRef(v2.entityHashes);
+  const after = byRef(committed.entityHashes);
+  const changed = [...after.keys()].filter((ref) => before.get(ref) !== after.get(ref));
+  assert.deepEqual(changed, ['clip:clp_1', 'clip:clp_2', 'clip:clp_3']);
+  assert.equal(before.has('clip:clp_3'), false);
+  const clp1 = committed.document.clips.find((clip) => clip.id === 'clp_1');
+  assert.deepEqual(clp1.fadeIn, { length: '480', curve: 'linear' });
+  assert.deepEqual(clp1.fadeOut, { length: '960', curve: 'equal_power' });
+  const clp3 = committed.document.clips.find((clip) => clip.id === 'clp_3');
+  assert.equal('fadeIn' in clp3 || 'fadeOut' in clp3, false);
+  assert.equal(after.get('clip:clp_3'), sha256Jcs(clp3));
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+});
+
 test('the media-name model fixture matches its Node generator', () => {
   const { FIXTURE_FILE_V2_MEDIA_NAME, buildFixtureV2MediaName } = generators.model;
   const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_MEDIA_NAME, 'utf8'));

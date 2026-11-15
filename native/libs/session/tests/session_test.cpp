@@ -931,3 +931,98 @@ TEST_CASE("A head guard refuses a new head of main before it is journaled", "[se
     session.undo("t", "t12");
     CHECK(session.history().head().document.track("trk_a") == nullptr);
 }
+
+// ---- m5b-engine-clip-fades: a bundle written before fades existed -----------
+
+namespace {
+
+// A bundle siann-cli wrote before clip fades existed (origin/main at the start
+// of m5b-engine-clip-fades): `create`, a plan with media.add, track.add and
+// clip.place, then clip.set_gain. The journal is the literal text it wrote; the
+// checkpoint is that document at r3, with the hash the Node bridge computes.
+constexpr const char* kPreFadeJournal =
+    R"({"checksum":"sha256:ab65ac2dba9c08a12240328f96344815fc8a4fe2a95f449a6a84722cb35ee174","commands")"
+    R"(:[],"diff":[],"document":{"clips":[],"media":[],"root":{"id":"root","name":"Old","sampleRate":48)"
+    R"(000,"schema":"siann.entity.root.v1","tempo":[{"milliBpm":120000,"ticks":"0"}],"trackOrder":[]},")"
+    R"(schemaVersion":"siann.session_document.v2","tracks":[]},"revision":{"actor":"old-engine","cause")"
+    R"(:"create","documentHash":"sha256:f1167836d0358b52011ea28f7ca94ffaad99995dcbb183cc50ee9b1610776a8)"
+    R"(c","id":"r1","parents":[],"time":"2026-11-01T00:00:00Z"},"schema":"siann.journal_record.v1","seq)"
+    R"(":"1"})" "\n"
+    R"({"checksum":"sha256:5171a467d7647998a3fe3dae5b61ec3c5391602184ec8502317754bff7d441a1","commands")"
+    R"(:[{"channels":2,"contentHash":"sha256:ababababababababababababababababababababababababababababab)"
+    R"(ababab","format":"wav","frames":"48000","mediaId":"med_1","op":"media.add","sampleRate":48000},{)"
+    R"("channels":2,"name":"Drums","op":"track.add","trackId":"trk_1"},{"clipId":"clp_old","length":"24)"
+    R"(000","mediaId":"med_1","op":"clip.place","position":{"domain":"audio","value":"1000"},"sourceSta)"
+    R"(rt":"0","trackId":"trk_1"}],"diff":[{"change":"modified","id":"root","type":"root"},{"change":"a)"
+    R"(dded","id":"med_1","type":"media"},{"change":"added","id":"trk_1","type":"track"},{"change":"add)"
+    R"(ed","id":"clp_old","type":"clip"}],"revision":{"actor":"old-engine","cause":"plan","documentHash)"
+    R"(":"sha256:c4aeecff750eaeaf58611dfcf8af80f56cd41a33dfaf57d2856159756241f7bf","id":"r2","parents":)"
+    R"(["r1"],"time":"2026-11-01T00:00:00Z"},"schema":"siann.journal_record.v1","seq":"2"})" "\n"
+    R"({"checksum":"sha256:0ba68f7d4ac13b37af2122bd3ee264e09e7c2ba3298dffa8968900c9584b1340","commands")"
+    R"(:[{"clipId":"clp_old","gainMilliDb":-3000,"op":"clip.set_gain"}],"diff":[{"change":"modified","i)"
+    R"(d":"clp_old","type":"clip"}],"revision":{"actor":"old-engine","cause":"command","documentHash":")"
+    R"(sha256:be8f0096dba523f6a66c79e771dbddaa390faf5f351f57a5d965c3df51811bbc","id":"r3","parents":["r)"
+    R"(2"],"time":"2026-11-01T00:00:00Z"},"schema":"siann.journal_record.v1","seq":"3"})" "\n";
+constexpr const char* kPreFadeCheckpoint =
+    R"({"coversSeq":"3","document":{"clips":[{"gainMilliDb":-3000,"id":"clp_old","length":"24000","medi)"
+    R"(aId":"med_1","position":{"domain":"audio","value":"1000"},"schema":"siann.entity.clip.v1","sourc)"
+    R"(eStart":"0","trackId":"trk_1"}],"media":[{"channels":2,"contentHash":"sha256:abababababababababa)"
+    R"(babababababababababababababababababababababab","format":"wav","frames":"48000","id":"med_1","sam)"
+    R"(pleRate":48000,"schema":"siann.entity.media.v1"}],"root":{"id":"root","name":"Old","sampleRate":)"
+    R"(48000,"schema":"siann.entity.root.v1","tempo":[{"milliBpm":120000,"ticks":"0"}],"trackOrder":["t)"
+    R"(rk_1"]},"schemaVersion":"siann.session_document.v2","tracks":[{"channels":2,"gainMilliDb":0,"id")"
+    R"(:"trk_1","kind":"audio","mute":false,"name":"Drums","pan":0,"schema":"siann.entity.track.v1","so)"
+    R"(lo":false}]},"head":{"actor":"old-engine","cause":"command","documentHash":"sha256:be8f0096dba52)"
+    R"(3f6a66c79e771dbddaa390faf5f351f57a5d965c3df51811bbc","id":"r3","parents":["r2"],"time":"2026-11-)"
+    R"(01T00:00:00Z"},"schemaVersion":"siann.checkpoint.v1","transport":{"cycle":false}})" "\n";
+constexpr const char* kPreFadeHash = "sha256:be8f0096dba523f6a66c79e771dbddaa390faf5f351f57a5d965c3df51811bbc";
+
+void writePreFadeBundle(const fs::path& bundle, bool withCheckpoint) {
+    fs::create_directories(bundle / "media");
+    fs::create_directories(bundle / "blobs");
+    siann::io::writeFileAtomic(bundle / "journal.ndjson", kPreFadeJournal);
+    if (withCheckpoint) {
+        siann::io::writeFileAtomic(bundle / "session.json", kPreFadeCheckpoint);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("A bundle whose journal and checkpoint are literal pre-fade text opens with its recorded hash",
+          "[session][fades]") {
+    for (const bool withCheckpoint : {true, false}) {
+        INFO("checkpoint " << withCheckpoint);
+        TempDir dir;
+        writePreFadeBundle(dir.bundle(), withCheckpoint);
+        {
+            OpenReport report;
+            Session session = Session::open(dir.bundle(), &report);
+            CHECK(report.checkpointVerified == withCheckpoint);
+            CHECK(report.recordsReplayed == (withCheckpoint ? 0 : 3));
+            const auto& head = session.history().head();
+            CHECK(head.envelope.id == "r3");
+            CHECK(siann::hash::formatHash(head.document.documentHash()) == kPreFadeHash);
+            const auto* clip = head.document.clip("clp_old");
+            REQUIRE(clip != nullptr);
+            CHECK(clip->fadeIn.length == 0);
+            CHECK(clip->fadeOut.length == 0);
+
+            // A fade is a new revision; setting it back to 0 returns to the old hash.
+            session.commit({Command::fromJson(siann::json::parse(
+                               R"({"op":"clip.set_fade","clipId":"clp_old","fadeIn":{"length":"480","curve":"linear"}})"))},
+                           "t", "t4");
+            CHECK(siann::hash::formatHash(session.history().head().document.documentHash()) != kPreFadeHash);
+            session.commit({Command::fromJson(siann::json::parse(
+                               R"({"op":"clip.set_fade","clipId":"clp_old","fadeIn":{"length":"0","curve":"linear"}})"))},
+                           "t", "t5");
+            CHECK(siann::hash::formatHash(session.history().head().document.documentHash()) == kPreFadeHash);
+            session.checkpoint();
+        }
+        OpenReport report;
+        const Session reopened = Session::open(dir.bundle(), &report);
+        CHECK(report.checkpointVerified);
+        CHECK(siann::hash::formatHash(reopened.history().head().document.documentHash()) == kPreFadeHash);
+        // The new checkpoint writes no fade field.
+        CHECK(siann::io::readFile(dir.bundle() / "session.json").find("fade") == std::string::npos);
+    }
+}

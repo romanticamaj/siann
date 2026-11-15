@@ -1140,3 +1140,26 @@ TEST_CASE("rollback_plan takes a plan hash or a revision id", "[protocol][mcp][p
     CHECK(at(at(rolled, "revision"), "cause").asString() == "rollback");
     CHECK(at(mcp.ok("plan_status", Value(Object{{"plan", Value(hash)}})), "state").asString() == "rolled_back");
 }
+
+// m5b-engine-clip-fades: no new method, so no new tool; execute carries
+// clip.set_fade and list_commands names it.
+TEST_CASE("execute carries clip.set_fade and list_commands names it", "[protocol][mcp][fades]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a"), mediaAdd("med_a"),
+                                                            clipPlace("clp_a", "trk_a", "med_a", 0)})}}));
+    const Value fade = Value(Object{{"op", Value("clip.set_fade")},
+                                    {"clipId", Value("clp_a")},
+                                    {"fadeIn", Value(Object{{"length", Value("480")}, {"curve", Value("linear")}})}});
+    const Value executed = mcp.ok("execute", Value(Object{{"commands", Value(Array{fade})}}));
+    CHECK(at(at(executed, "revision"), "diff").asArray().at(0).asString() == "clip:clp_a");
+    CHECK(f.head().document.clip("clp_a")->fadeIn.length == 480);
+
+    bool listed = false;
+    const Value commands = mcp.tool("list_commands");  // kept: the loop reads into it
+    for (const Value& name : at(at(commands, "structuredContent"), "commands").asArray()) {
+        listed = listed || name.asString() == "clip.set_fade";
+    }
+    CHECK(listed);
+}

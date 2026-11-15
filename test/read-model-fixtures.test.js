@@ -140,6 +140,33 @@ test('the master steps add, modify and remove master:master and hash with src/ha
   for (const chunk of both.sync) assert.equal(chunk.documentHash, both.documentHash);
 });
 
+// m5b-engine-clip-fades: the fade part continues the master steps; removing the
+// fades returns the clip and the document to their earlier hashes.
+test('the fade steps set and remove the fades of clp_1 and hash with src/hash', () => {
+  const { steps, before } = fixture.fades;
+  const masterEnd = fixture.master.steps[fixture.master.steps.length - 1];
+  assert.equal(before.documentHash, masterEnd.documentHash);
+  assert.deepEqual(steps.map((s) => s.event.changedIds), [
+    [{ ref: 'clip:clp_1', change: 'modified' }],
+    [{ ref: 'clip:clp_1', change: 'modified' }],
+  ]);
+  const clp1 = (step) => step.document.clips.find((c) => c.id === 'clp_1');
+  assert.deepEqual(clp1(steps[0]).fadeIn, { length: '480', curve: 'linear' });
+  assert.deepEqual(clp1(steps[0]).fadeOut, { length: '960', curve: 'equal_power' });
+  assert.equal('fadeIn' in clp1(steps[1]) || 'fadeOut' in clp1(steps[1]), false);
+  let seq = Number(masterEnd.event.seq);
+  for (const step of steps) {
+    seq += 1;
+    assert.equal(step.event.seq, String(seq));
+    assert.equal(hashDocument(step.document), step.documentHash);
+    assert.equal(step.event.documentHash, step.documentHash);
+    assert.deepEqual(step.fetch.result.entities, [{ ref: 'clip:clp_1', entity: clp1(step) }]);
+  }
+  assert.notEqual(steps[0].documentHash, before.documentHash);
+  assert.equal(steps[1].documentHash, before.documentHash);
+  assert.equal(sha256Jcs(clp1(steps[1])), sha256Jcs(masterEnd.document.clips.find((c) => c.id === 'clp_1')));
+});
+
 // m5b-engine-plan-metadata: a plan.changed with the plan metadata and the
 // rejection note, and an agent.changed, right after the base sync. The read model
 // does not model either: it advances lastSeq past them (app/test/unit/

@@ -341,6 +341,36 @@
       "planHash": "sha256:31d33b0c706be088da9dac26474de44c3459dd849952a6d7ce2a6fa4833d1f13"
     },
     {
+      "name": "clip_set_fade_step",
+      "plan": {
+        "schema": "siann.plan.v1",
+        "baseRevision": "r5",
+        "steps": [
+          {
+            "op": "clip.set_fade",
+            "clipId": "clp_1",
+            "fadeIn": {
+              "length": "480",
+              "curve": "linear"
+            },
+            "fadeOut": {
+              "length": "960",
+              "curve": "equal_power"
+            }
+          }
+        ],
+        "readSet": [],
+        "writeSet": [
+          {
+            "type": "clip",
+            "id": "clp_1",
+            "hash": "sha256:24a521fb7080efa962df9ac17e0a3b16b07312df12208cff9fb5f223f47aa3ef"
+          }
+        ]
+      },
+      "planHash": "sha256:5acdafc6797c9d08b87a68992f9d7f19fe3f6126ce8bf5948fab26ce78ea1761"
+    },
+    {
       "name": "media_add_with_name",
       "plan": {
         "schema": "siann.plan.v1",

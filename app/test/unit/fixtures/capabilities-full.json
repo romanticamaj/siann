@@ -9,7 +9,7 @@
   "scopes": ["propose", "trusted"],
   "commands": [
     "bus.add", "bus.remove", "bus.rename", "bus.set_gain", "bus.set_mute", "bus.set_output", "bus.set_pan", "bus.set_solo",
-    "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "master.set_gain", "media.add", "media.remove",
+    "clip.move", "clip.place", "clip.remove", "clip.set_fade", "clip.set_gain", "clip.trim", "master.set_gain", "media.add", "media.remove",
     "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass", "send.add", "send.remove",
     "send.set_enabled", "send.set_level", "send.set_pre", "session.rename", "session.set_locators", "session.set_tempo", "track.add",
     "track.remove", "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_output", "track.set_pan", "track.set_solo"
@@ -41,6 +41,7 @@
     "cycle": true,
     "click": true,
     "masterGain": true,
+    "clipFades": true,
     "planMetadata": true,
     "agents": true,
     "buses": true,

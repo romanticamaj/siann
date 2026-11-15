@@ -633,3 +633,95 @@ TEST_CASE("A document without buses renders bit-identically to the graph before 
     f.exec(R"({"op":"bus.remove","busId":"bus_y"})");
     CHECK(renderOffline(f.doc(), f.library()).samples == renderWithoutMasterNode(f.doc(), f.library()).samples);
 }
+
+// ---- m5b-engine-clip-fades: the offline render of faded clips ----------------
+
+namespace {
+
+constexpr double kFadeHalfPi = 1.57079632679489661923;
+
+// A stereo file: DC (0.75 left, -0.5 right) or a sine of period 97 frames.
+fs::path writeSignal(const fs::path& file, std::int64_t frames, bool sine) {
+    AudioBuffer buffer;
+    buffer.info = AudioInfo{2, 48'000, frames};
+    for (std::int64_t i = 0; i < frames; ++i) {
+        const double phase = 2.0 * 3.14159265358979323846 * static_cast<double>(i % 97) / 97.0;
+        buffer.samples.push_back(sine ? static_cast<float>(0.9 * std::sin(phase)) : 0.75f);
+        buffer.samples.push_back(sine ? static_cast<float>(-0.6 * std::cos(phase)) : -0.5f);
+    }
+    siann::io::writeFileAtomic(file, siann::media::encodeWavFloat32(buffer));
+    return file;
+}
+
+// The spec's curve in double ("siann-graph and siann-engine", clip fades).
+double curveOf(const std::string& curve, double x) {
+    return curve == "linear" ? x : std::sin(x * kFadeHalfPi);
+}
+
+}  // namespace
+
+TEST_CASE("The offline render of a faded clip equals the curve's formula within one LSB at 24 bit",
+          "[engine][fades]") {
+    constexpr std::int64_t kFrames = 6'000;
+    constexpr std::int64_t kAt = 700;
+    constexpr std::int64_t kFrom = 250;  // sourceStart
+    constexpr std::int64_t kLength = 5'000;
+    constexpr std::int64_t kIn = 1'201;
+    constexpr std::int64_t kOut = 1'700;
+    const double lsb = 1.0 / 8'388'608.0;  // 2^-23
+    for (const bool sine : {false, true}) {
+        for (const std::string inCurve : {"linear", "equal_power"}) {
+            for (const std::string outCurve : {"linear", "equal_power"}) {
+                INFO((sine ? "sine " : "dc ") << inCurve << " / " << outCurve);
+                Fixture f;
+                const fs::path file = writeSignal(f.dir.path() / "signal.wav", kFrames, sine);
+                siann::session::importMedia(f.session, file, "med_sig", "test", "t");
+                f.exec(R"({"op":"clip.place","clipId":"clp_f","trackId":"trk_a","mediaId":"med_sig",)"
+                       R"("position":{"domain":"audio","value":")" + std::to_string(kAt) +
+                       R"("},"sourceStart":")" + std::to_string(kFrom) + R"(","length":")" + std::to_string(kLength) +
+                       R"("})");
+                f.exec(R"({"op":"clip.set_gain","clipId":"clp_f","gainMilliDb":-3000})");
+                const AudioBuffer plain = renderOffline(f.doc(), f.library());
+                f.exec(R"({"op":"clip.set_fade","clipId":"clp_f","fadeIn":{"length":")" + std::to_string(kIn) +
+                       R"(","curve":")" + inCurve + R"("},"fadeOut":{"length":")" + std::to_string(kOut) +
+                       R"(","curve":")" + outCurve + R"("}})");
+                const AudioBuffer out = renderOffline(f.doc(), f.library());
+                REQUIRE(out.info.frames == kAt + kLength);
+
+                const AudioBuffer media = siann::media::decodeWav(siann::io::readFile(file));
+                const double gain = std::pow(10.0, -3'000.0 / 20'000.0);
+                std::int64_t outsideMismatches = 0;
+                double worst = 0.0;
+                for (std::int64_t t = 0; t < out.info.frames; ++t) {
+                    const std::int64_t n = t - kAt;
+                    for (int c = 0; c < 2; ++c) {
+                        const auto i = static_cast<std::size_t>(t * 2 + c);
+                        double ref = 0.0;
+                        if (n >= 0) {
+                            double g = 1.0;
+                            if (n < kIn) {
+                                g *= curveOf(inCurve, static_cast<double>(n) / static_cast<double>(kIn));
+                            }
+                            const std::int64_t m = kLength - 1 - n;
+                            if (m < kOut) {
+                                g *= curveOf(outCurve, static_cast<double>(m) / static_cast<double>(kOut));
+                            }
+                            ref = static_cast<double>(media.samples[static_cast<std::size_t>((kFrom + n) * 2 + c)]) *
+                                  gain * g;
+                        }
+                        worst = std::max(worst, std::abs(static_cast<double>(out.samples[i]) - ref));
+                        if ((n < kIn || n >= kLength - kOut) == false && out.samples[i] != plain.samples[i]) {
+                            ++outsideMismatches;
+                        }
+                    }
+                }
+                CHECK(worst <= lsb);
+                CHECK(outsideMismatches == 0);
+                // The fade changed something, and silences the clip's first and last frames.
+                CHECK(out.samples != plain.samples);
+                CHECK(left(out, kAt) == 0.0f);
+                CHECK(right(out, kAt + kLength - 1) == 0.0f);
+            }
+        }
+    }
+}
