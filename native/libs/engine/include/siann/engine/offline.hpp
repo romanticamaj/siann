@@ -59,7 +59,11 @@ struct FlatClip {
     std::int64_t length = 0;         // frames
     float gain = 1.0f;
     const model::Media* media = nullptr;
+    graph::ClipFade fade{};  // m5b-engine-clip-fades
 };
+
+// The graph's form of a clip's fades.
+graph::ClipFade clipFade(const model::Clip& clip) noexcept;
 
 struct FlatTrack {
     const model::Track* track = nullptr;

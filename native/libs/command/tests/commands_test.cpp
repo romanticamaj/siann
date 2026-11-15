@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -398,7 +400,8 @@ TEST_CASE("The command catalog is listed", "[command]") {
     CHECK(names == std::vector<std::string>{
                        "bus.add", "bus.remove", "bus.rename", "bus.set_gain", "bus.set_mute", "bus.set_output",
                        "bus.set_pan", "bus.set_solo",
-                       "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "master.set_gain", "media.add",
+                       "clip.move", "clip.place", "clip.remove", "clip.set_fade", "clip.set_gain", "clip.trim", "master.set_gain",
+                       "media.add",
                        "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass",
                        "send.add", "send.remove", "send.set_enabled", "send.set_level", "send.set_pre", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
@@ -876,4 +879,129 @@ TEST_CASE("A transaction stops at the step whose name is unsafe", "[command][nam
         CHECK(error.code() == "invalid_name");
         CHECK(error.step() == 1);
     }
+}
+
+// ---- m5b-engine-clip-fades: clip.set_fade and clip.trim's shortening ---------
+
+namespace {
+
+using siann::model::Fade;
+using siann::model::FadeCurve;
+
+// base() with clp_1: 24000 frames of med_1 at 0.
+Document faded() {
+    return prepare(base(), cmd(R"({"op":"clip.place","clipId":"clp_1","trackId":"trk_1","mediaId":"med_1",)"
+                               R"("position":{"domain":"audio","value":"0"},"sourceStart":"0","length":"24000"})"))
+        .result;
+}
+
+std::string setFade(const std::string& sides) {
+    return R"({"op":"clip.set_fade","clipId":"clp_1")" + sides + "}";
+}
+
+std::string trim(std::int64_t sourceStart, std::int64_t length) {
+    return R"({"op":"clip.trim","clipId":"clp_1","sourceStart":")" + std::to_string(sourceStart) +
+           R"(","length":")" + std::to_string(length) + R"("})";
+}
+
+const EntityRef kClip1{EntityType::clip, "clp_1"};
+
+}  // namespace
+
+TEST_CASE("clip.set_fade sets either side or both and declares exactly clip:<id>", "[command][fades]") {
+    const Document doc = faded();
+    const auto plainHash = doc.entityHash(kClip1);
+
+    const auto in = prepare(doc, cmd(setFade(R"(,"fadeIn":{"length":"480","curve":"linear"})")));
+    CHECK(in.effects == DeclaredEffects{kClip1});
+    CHECK(in.result.clip("clp_1")->fadeIn == Fade{480, FadeCurve::linear});
+    CHECK(in.result.clip("clp_1")->fadeOut == Fade{});
+    CHECK(in.result.entityHash(kClip1) != plainHash);
+    // Only the clip changes.
+    const auto changes = siann::model::diff(doc, in.result);
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0].entity == kClip1);
+
+    const auto out = prepare(doc, cmd(setFade(R"(,"fadeOut":{"length":"960","curve":"equal_power"})")));
+    CHECK(out.effects == DeclaredEffects{kClip1});
+    CHECK(out.result.clip("clp_1")->fadeIn == Fade{});
+    CHECK(out.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+
+    const auto both = prepare(doc, cmd(setFade(R"(,"fadeIn":{"length":"480","curve":"linear"},)"
+                                               R"("fadeOut":{"length":"960","curve":"equal_power"})")));
+    CHECK(both.result.clip("clp_1")->fadeIn == Fade{480, FadeCurve::linear});
+    CHECK(both.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+
+    // An omitted side is unchanged.
+    const auto later = prepare(both.result, cmd(setFade(R"(,"fadeIn":{"length":"100","curve":"equal_power"})")));
+    CHECK(later.result.clip("clp_1")->fadeIn == Fade{100, FadeCurve::equal_power});
+    CHECK(later.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+
+    // Length "0" removes the side; both removed is the pre-fade hash.
+    const auto noIn = prepare(both.result, cmd(setFade(R"(,"fadeIn":{"length":"0","curve":"equal_power"})")));
+    CHECK(noIn.result.clip("clp_1")->fadeIn == Fade{});
+    CHECK(noIn.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+    const auto none = prepare(noIn.result, cmd(setFade(R"(,"fadeOut":{"length":"0","curve":"linear"})")));
+    CHECK(none.result.entityHash(kClip1) == plainHash);
+    CHECK(none.result.documentHash() == doc.documentHash());
+
+    // The two fades may meet but not overlap.
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"12000","curve":"linear"},)"
+                                 R"("fadeOut":{"length":"12000","curve":"linear"})")) == "no error");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"24000","curve":"linear"})")) == "no error");
+    CHECK(errorCode(both.result, setFade(R"(,"fadeIn":{"length":"23041","curve":"linear"})")) == "invalid_fade");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"24001","curve":"linear"})")) == "invalid_fade");
+}
+
+TEST_CASE("clip.set_fade refuses a missing clip, a missing side and malformed fades", "[command][fades]") {
+    const Document doc = faded();
+    CHECK(errorCode(doc, R"({"op":"clip.set_fade","clipId":"clp_9","fadeIn":{"length":"1","curve":"linear"}})") ==
+          "not_found");
+    CHECK(errorCode(doc, setFade("")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480","curve":"log"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":480,"curve":"linear"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"-480","curve":"linear"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"0480","curve":"linear"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480","curve":"linear","x":1})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":null)")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480","curve":"linear"},"extra":1)")) == "invalid_params");
+}
+
+TEST_CASE("clip.trim shortens fades that no longer fit, in the same revision", "[command][fades]") {
+    const Document doc =
+        prepare(faded(), cmd(setFade(R"(,"fadeIn":{"length":"6000","curve":"linear"},)"
+                                     R"("fadeOut":{"length":"8000","curve":"equal_power"})")))
+            .result;
+
+    // Still fits (14000 <= 20000): unchanged.
+    const auto fits = prepare(doc, cmd(trim(0, 20'000)));
+    CHECK(fits.result.clip("clp_1")->fadeIn == Fade{6'000, FadeCurve::linear});
+    CHECK(fits.result.clip("clp_1")->fadeOut == Fade{8'000, FadeCurve::equal_power});
+
+    // 10000 frames: the fade in keeps 6000, the fade out takes the 4000 left.
+    const auto shorter = prepare(doc, cmd(trim(0, 10'000)));
+    CHECK(shorter.effects == DeclaredEffects{kClip1});
+    CHECK(shorter.result.clip("clp_1")->length == 10'000);
+    CHECK(shorter.result.clip("clp_1")->fadeIn == Fade{6'000, FadeCurve::linear});
+    CHECK(shorter.result.clip("clp_1")->fadeOut == Fade{4'000, FadeCurve::equal_power});
+    const auto changes = siann::model::diff(doc, shorter.result);
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0].entity == kClip1);
+
+    // 5000 frames: the fade in is cut to the clip, the fade out is dropped.
+    const auto cut = prepare(doc, cmd(trim(1'000, 5'000)));
+    CHECK(cut.result.clip("clp_1")->fadeIn == Fade{5'000, FadeCurve::linear});
+    CHECK(cut.result.clip("clp_1")->fadeOut == Fade{});
+    CHECK(siann::model::toJson(*cut.result.clip("clp_1")).find("fadeOut") == nullptr);
+
+    // A fade out only shortens to the clip.
+    const Document outOnly =
+        prepare(faded(), cmd(setFade(R"(,"fadeOut":{"length":"8000","curve":"linear"})"))).result;
+    CHECK(prepare(outOnly, cmd(trim(0, 3'000))).result.clip("clp_1")->fadeOut == Fade{3'000, FadeCurve::linear});
+}
+
+TEST_CASE("commandNames lists clip.set_fade", "[command][fades]") {
+    const auto names = commandNames();
+    CHECK(std::find(names.begin(), names.end(), "clip.set_fade") != names.end());
 }

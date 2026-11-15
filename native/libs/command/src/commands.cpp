@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <utility>
@@ -652,6 +653,58 @@ Prepared sendRemove(const Document& doc, const Command& command) {
     return {{trackRef(trackId), sendRef(id)}, doc.withoutSend(id).withTrack(std::move(t))};
 }
 
+// Clip fades (m5b-engine-clip-fades): {clipId, fadeIn?, fadeOut?}, at least one
+// side, each {length, curve} with a decimal length >= 0 ("0" removes the side).
+// A malformed side or a missing one is invalid_params; an over-long fade is the
+// document's invalid_fade. One edit of the clip, so it declares clip:<id> only.
+Prepared clipSetFade(const Document& doc, const Command& command) {
+    return editClip(doc, command, [](Clip& c, FieldReader& r) {
+        bool any = false;
+        const auto side = [&r, &any](std::string_view key, model::Fade& out) {
+            const json::Value* found = r.optional(key);
+            if (found == nullptr) {
+                return;
+            }
+            any = true;
+            FieldReader f(*found, std::string(key));
+            const std::int64_t frames = f.int64String("length");
+            if (frames < 0) {
+                f.fail("length", "must not be negative");
+            }
+            const auto curve = model::fadeCurveFromName(f.string("curve"));
+            if (!curve) {
+                f.fail("curve", "must be linear or equal_power");
+            }
+            f.finish();
+            out = frames == 0 ? model::Fade{} : model::Fade{frames, *curve};
+        };
+        side("fadeIn", c.fadeIn);
+        side("fadeOut", c.fadeOut);
+        if (!any) {
+            throw CommandError("invalid_params", "clip.set_fade needs fadeIn, fadeOut or both");
+        }
+    });
+}
+
+// clip.trim (sourceStart, length). Fades that no longer fit the new length are
+// shortened in the same edit: the fade in keeps min(fadeIn, length), the fade
+// out takes min(fadeOut, length - fadeIn); a side shortened to 0 is removed.
+Prepared clipTrim(const Document& doc, const Command& command) {
+    return editClip(doc, command, [](Clip& c, FieldReader& r) {
+        c.sourceStart = r.int64String("sourceStart");
+        c.length = r.int64String("length");
+        if (c.length > 0 && c.fadeIn.length + c.fadeOut.length > c.length) {
+            c.fadeIn.length = std::min(c.fadeIn.length, c.length);
+            c.fadeOut.length = std::min(c.fadeOut.length, c.length - c.fadeIn.length);
+            for (model::Fade* fade : {&c.fadeIn, &c.fadeOut}) {
+                if (fade->length == 0) {
+                    *fade = model::Fade{};
+                }
+            }
+        }
+    });
+}
+
 using Handler = Prepared (*)(const Document&, const Command&);
 
 const std::map<std::string, Handler, std::less<>>& registry() {
@@ -684,17 +737,12 @@ const std::map<std::string, Handler, std::less<>>& registry() {
         {"clip.move", &clipMove},
         {"clip.place", &clipPlace},
         {"clip.remove", &clipRemove},
+        {"clip.set_fade", &clipSetFade},
         {"clip.set_gain",
          [](const Document& d, const Command& c) {
              return editClip(d, c, [](Clip& clip, FieldReader& r) { clip.gain = gainParam(r, "gainMilliDb"); });
          }},
-        {"clip.trim",
-         [](const Document& d, const Command& c) {
-             return editClip(d, c, [](Clip& clip, FieldReader& r) {
-                 clip.sourceStart = r.int64String("sourceStart");
-                 clip.length = r.int64String("length");
-             });
-         }},
+        {"clip.trim", &clipTrim},
         {"master.set_gain", &masterSetGain},
         {"media.add", &mediaAdd},
         {"media.remove", &mediaRemove},

@@ -8,6 +8,9 @@
 // - split: clip.trim of the left piece and clip.place of the right one, which
 //   starts in the media where the left one ends (the audio is continuous);
 // - duplicate and copy: clip.place of new clp_ ids, the originals untouched;
+// - fades (m5b-engine-clip-fades): clip.place takes none, so split, duplicate
+//   and copy append clip.set_fade to the same list: split keeps the fade in on
+//   the left piece and moves the fade out to the right one, a copy keeps both;
 // - a selection move: clip.move per clip, trackId only where the lane changed;
 // - the clip volume control: clip.set_gain;
 // - M, S and Shift+Delete: track.set_mute, track.set_solo, track.remove per
@@ -56,8 +59,9 @@ function audio(value: bigint): { domain: 'audio'; value: string } {
   return { domain: 'audio', value: value.toString() };
 }
 
-function placeCopy(clip: ClipEntity, clipId: string, trackId: string, position: bigint): Command {
-  return {
+// A copy of the clip under a new id, with its fades.
+function placeCopy(clip: ClipEntity, clipId: string, trackId: string, position: bigint): Command[] {
+  const place: Command = {
     op: 'clip.place',
     clipId,
     trackId,
@@ -67,27 +71,42 @@ function placeCopy(clip: ClipEntity, clipId: string, trackId: string, position: 
     length: clip.length,
     gainMilliDb: clip.gainMilliDb,
   };
+  if (!clip.fadeIn && !clip.fadeOut) return [place];
+  const fade: Command = { op: 'clip.set_fade', clipId };
+  if (clip.fadeIn) fade.fadeIn = { ...clip.fadeIn };
+  if (clip.fadeOut) fade.fadeOut = { ...clip.fadeOut };
+  return [place, fade];
 }
 
 // The trim and place that split one clip at `frame`, or nothing when the
-// frame is not strictly inside it.
+// frame is not strictly inside it. The left piece keeps its fade in (the
+// trim shortens it to fit) and loses its fade out; the right piece gets the
+// fade out, shortened to its length, and no fade in.
 function splitOne(clip: ClipEntity, frame: bigint, clipId: () => string): Command[] {
   const start = BigInt(clip.position.value);
   const length = BigInt(clip.length);
   if (frame <= start || frame >= start + length) return [];
   const left = frame - start;
+  const right = length - left;
+  const rightId = clipId();
+  const out = clip.fadeOut;
+  const outLength = out ? BigInt(out.length) : 0n;
   return [
     { op: 'clip.trim', clipId: clip.id, sourceStart: clip.sourceStart, length: left.toString() },
+    ...(out ? [{ op: 'clip.set_fade', clipId: clip.id, fadeOut: { length: '0', curve: out.curve } }] : []),
     {
       op: 'clip.place',
-      clipId: clipId(),
+      clipId: rightId,
       trackId: clip.trackId,
       mediaId: clip.mediaId,
       position: audio(frame),
       sourceStart: (BigInt(clip.sourceStart) + left).toString(),
-      length: (length - left).toString(),
+      length: right.toString(),
       gainMilliDb: clip.gainMilliDb,
     },
+    ...(out
+      ? [{ op: 'clip.set_fade', clipId: rightId, fadeOut: { length: (outLength < right ? outLength : right).toString(), curve: out.curve } }]
+      : []),
   ];
 }
 
@@ -134,7 +153,7 @@ export function duplicateCommand(snapshot: Snapshot, clipIds: readonly string[],
   const by = range.end - range.start;
   return issue(
     snapshot,
-    clips.map((clip) => placeCopy(clip, clipId(), clip.trackId, BigInt(clip.position.value) + by)),
+    clips.flatMap((clip) => placeCopy(clip, clipId(), clip.trackId, BigInt(clip.position.value) + by)),
   );
 }
 
@@ -180,7 +199,7 @@ export function copyCommand(
   const delta = frameShift(clips, deltaFrames);
   return issue(
     snapshot,
-    clips.map((clip) => placeCopy(clip, clipId(), shiftedTrack(snapshot, clip.trackId, lanes), BigInt(clip.position.value) + delta)),
+    clips.flatMap((clip) => placeCopy(clip, clipId(), shiftedTrack(snapshot, clip.trackId, lanes), BigInt(clip.position.value) + delta)),
   );
 }
 

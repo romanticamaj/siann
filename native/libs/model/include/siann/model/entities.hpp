@@ -180,6 +180,24 @@ struct Master {
     friend bool operator==(const Master&, const Master&) = default;
 };
 
+// A clip fade's gain curve (m5b-engine-clip-fades): x for linear,
+// sin(x * pi / 2) for equal power ("siann-graph and siann-engine").
+enum class FadeCurve { linear, equal_power };
+
+// One side of a clip's fades, in media frames. Length 0 is no fade; the
+// document normalises its curve to linear (withClip), so operator== and the
+// hash agree. Omitted from the JSON at length 0.
+struct Fade {
+    std::int64_t length = 0;
+    FadeCurve curve = FadeCurve::linear;
+
+    friend bool operator==(const Fade&, const Fade&) = default;
+};
+
+// "linear" or "equal_power", the JSON names of the curves.
+std::string_view fadeCurveName(FadeCurve curve) noexcept;
+std::optional<FadeCurve> fadeCurveFromName(std::string_view name) noexcept;
+
 struct Clip {
     std::string id;
     std::string trackId;
@@ -188,6 +206,9 @@ struct Clip {
     std::int64_t sourceStart = 0;  // media frames
     std::int64_t length = 0;       // media frames
     Gain gain;
+    // m5b-engine-clip-fades: fadeIn.length + fadeOut.length <= length.
+    Fade fadeIn;
+    Fade fadeOut;
 
     friend bool operator==(const Clip&, const Clip&) = default;
 };

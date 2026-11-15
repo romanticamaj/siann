@@ -1770,6 +1770,7 @@ struct ProtocolServer::Impl {
                                       {"masterGain", Value(true)},
                                       {"buses", Value(true)},
                                       {"sends", Value(true)},
+                                      {"clipFades", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
                                       {"agents", Value(options.transportPort != nullptr)}})},

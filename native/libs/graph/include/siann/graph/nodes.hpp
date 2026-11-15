@@ -21,6 +21,25 @@ struct PlanarAudio {
 // Linear gain for an integer milli-dB value; INT32_MIN (minus infinity) is 0.
 float gainFromMilliDb(std::int32_t milliDb) noexcept;
 
+// A clip's fades (m5b-engine-clip-fades), in frames; a length of 0 is no fade.
+enum class FadeCurve : std::uint8_t { linear, equal_power };
+
+struct ClipFade {
+    std::int64_t inLength = 0;
+    FadeCurve inCurve = FadeCurve::linear;
+    std::int64_t outLength = 0;
+    FadeCurve outCurve = FadeCurve::linear;
+
+    friend bool operator==(const ClipFade&, const ClipFade&) = default;
+};
+
+// The fade gain at clip offset `offset` (0-based) of a clip `length` frames
+// long: in(n) * out(n), computed in double and cast to float once (architecture
+// spec, "siann-graph and siann-engine", clip fades). Exactly 1 outside both
+// fades. The offline clip player and the realtime butler both call it, so they
+// produce the same float.
+float fadeGain(const ClipFade& fade, std::int64_t offset, std::int64_t length) noexcept;
+
 // Plays scheduled regions of media on the timeline. Overlapping clips sum.
 // Media channels map to the output: equal counts copy, mono feeds every
 // output channel, stereo into mono averages, otherwise the first channels.
@@ -32,6 +51,7 @@ public:
         std::int64_t length = 0;         // frames
         float gain = 1.0f;
         std::shared_ptr<const PlanarAudio> media;
+        ClipFade fade{};
     };
 
     ClipPlayerNode(int channels, std::vector<Clip> clips);

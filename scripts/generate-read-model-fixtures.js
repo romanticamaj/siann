@@ -16,8 +16,11 @@
 // agent.changed; a client advances lastSeq past them and changes nothing else.
 // A fifth part (m5b-engine-buses-sends) adds a bus and a send, changes the bus and removes it
 // with its send, and syncs a document holding them (buses and sends after the
-// master, each table only in a chunk that holds rows). Hashes come from
-// the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
+// master, each table only in a chunk that holds rows). A sixth part
+// (m5b-engine-clip-fades), also after the master steps and independent of the
+// fifth, sets both fades on clp_1 and then removes them (clip.set_fade with
+// length "0"), so its hash and the document hash return to the values before
+// the first step. Hashes come from the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -301,6 +304,24 @@ function buildBusSteps(after) {
   });
 }
 
+// After the master steps: clip.set_fade on clp_1 (fadeIn linear 480, fadeOut
+// equal_power 960), then both sides set to length "0", which removes the fields
+// (m5b-engine-clip-fades).
+function buildFadeSteps(after) {
+  return recordSteps(clone(after.document), Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      const c = d.clips.find((x) => x.id === 'clp_1');
+      c.fadeIn = { length: '480', curve: 'linear' };
+      c.fadeOut = { length: '960', curve: 'equal_power' };
+    }, [{ ref: 'clip:clp_1', change: 'modified' }]);
+    commit((d) => {
+      const c = d.clips.find((x) => x.id === 'clp_1');
+      delete c.fadeIn;
+      delete c.fadeOut;
+    }, [{ ref: 'clip:clp_1', change: 'modified' }]);
+  });
+}
+
 function recordSteps(initial, firstSeq, firstRevision, run) {
   const steps = [];
   let document = initial;
@@ -393,8 +414,10 @@ function buildFixture() {
   const masterSteps = buildMasterSteps(locatorSteps[locatorSteps.length - 1]);
   const withMaster = masterSteps[0];
   const withBoth = { ...clone(withMaster.document), locators: locators('96000', '480000') };
-  const busSteps = buildBusSteps(masterSteps[masterSteps.length - 1]);
+  const masterEnd = masterSteps[masterSteps.length - 1];
+  const busSteps = buildBusSteps(masterEnd);
   const withBus = busSteps[0];
+  const fadeSteps = buildFadeSteps(masterEnd);
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -422,6 +445,11 @@ function buildFixture() {
       steps: busSteps,
       // A sync pinned at the revision that added the bus and the send.
       sync: syncChunks(withBus.document, withBus.event.revision, withBus.event.seq),
+    },
+    fades: {
+      // The document hash before the first fade step; the last step returns to it.
+      before: { revision: masterEnd.event.revision, documentHash: masterEnd.documentHash },
+      steps: fadeSteps,
     },
   };
 }

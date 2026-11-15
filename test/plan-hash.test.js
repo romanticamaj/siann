@@ -61,6 +61,21 @@ test('a media name in a step is part of the plan hash', () => {
   assert.equal(planHash(rename), byName.media_rename.planHash);
 });
 
+// m5b-engine-clip-fades: clip.set_fade is an ordinary step; its fade fields are
+// part of the hash.
+test('a clip.set_fade step and its fade fields are part of the plan hash', () => {
+  const c = byName.clip_set_fade_step;
+  assert.ok(c, 'the fixture has clip_set_fade_step');
+  const step = c.plan.steps[0];
+  assert.equal(step.op, 'clip.set_fade');
+  assert.deepEqual(step.fadeIn, { length: '480', curve: 'linear' });
+  assert.equal(planHash(c.plan), c.planHash);
+  const linearOut = { ...step, fadeOut: { length: '960', curve: 'linear' } };
+  assert.notEqual(planHash({ ...c.plan, steps: [linearOut] }), c.planHash);
+  const { fadeOut, ...inOnly } = step;
+  assert.notEqual(planHash({ ...c.plan, steps: [inOnly] }), c.planHash);
+});
+
 test('planHash does not modify its input', () => {
   const plan = structuredClone(byName.lifecycle_fields_ignored.plan);
   const before = JSON.stringify(plan);

@@ -932,3 +932,92 @@ TEST_CASE("plan.rollback {revision} refuses a plan revision that is not on main"
     const std::string branchRevision = at(at(proposed, "revision"), "id").asString();
     CHECK(errorCode(f.call(c, "plan.rollback", Value(Object{{"revision", Value(branchRevision)}}))) == "not_found");
 }
+
+// ---- m5b-engine-clip-fades: clip.set_fade through the protocol --------------
+
+namespace {
+
+Value clipFade(const std::string& clipId, std::optional<std::pair<std::string, std::string>> in,
+               std::optional<std::pair<std::string, std::string>> out) {
+    Object step{{"op", Value("clip.set_fade")}, {"clipId", Value(clipId)}};
+    if (in) {
+        step.emplace_back("fadeIn", Value(Object{{"length", Value(in->first)}, {"curve", Value(in->second)}}));
+    }
+    if (out) {
+        step.emplace_back("fadeOut", Value(Object{{"length", Value(out->first)}, {"curve", Value(out->second)}}));
+    }
+    return Value(std::move(step));
+}
+
+}  // namespace
+
+TEST_CASE("engine.capabilities lists clip.set_fade and features.clipFades; command.list lists it",
+          "[protocol][fades]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const Value capabilities = f.ok(c, "engine.capabilities");
+    const Value* clipFades = at(capabilities, "features").find("clipFades");
+    REQUIRE(clipFades != nullptr);
+    CHECK(clipFades->asBool());
+    const auto lists = [](const Value& names) {
+        bool found = false;
+        for (const Value& name : names.asArray()) {
+            found = found || name.asString() == "clip.set_fade";
+        }
+        return found;
+    };
+    CHECK(lists(at(capabilities, "commands")));
+    CHECK(lists(at(f.ok(c, "command.list"), "commands")));
+}
+
+TEST_CASE("plan.preview of a clip.set_fade step shows the clip without fades before and with them after",
+          "[protocol][fades][plans]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a"), mediaAdd("med_a"), clipPlace("clp_a", "trk_a", "med_a", 0)});
+    const Value plan = f.ok(c, "plan.submit",
+                            stepsParams(Array{clipFade("clp_a", std::pair<std::string, std::string>{"480", "linear"},
+                                                       std::pair<std::string, std::string>{"960", "equal_power"})}));
+    const std::string hash = at(plan, "hash").asString();
+    const Value row = entityRow(f.ok(c, "plan.preview", planParams(hash)), "clip:clp_a");
+    CHECK(at(row, "before").find("fadeIn") == nullptr);
+    CHECK(at(row, "before").find("fadeOut") == nullptr);
+    CHECK(canonical(at(at(row, "after"), "fadeIn")) == R"({"curve":"linear","length":"480"})");
+    CHECK(canonical(at(at(row, "after"), "fadeOut")) == R"({"curve":"equal_power","length":"960"})");
+
+    const std::size_t revisions = f.session.history().revisions().size();
+    f.ok(c, "plan.approve", planParams(hash));
+    f.ok(c, "plan.apply", planParams(hash));
+    CHECK(f.session.history().revisions().size() == revisions + 1);
+    CHECK(f.head().document.clip("clp_a")->fadeIn.length == 480);
+    CHECK(f.head().document.clip("clp_a")->fadeOut.length == 960);
+
+    // Removing the fade in: the preview's after has no fadeIn.
+    const Value removal = f.ok(c, "plan.submit",
+                               stepsParams(Array{clipFade("clp_a", std::pair<std::string, std::string>{"0", "linear"},
+                                                          std::nullopt)}));
+    const Value row2 = entityRow(f.ok(c, "plan.preview", planParams(at(removal, "hash").asString())), "clip:clp_a");
+    CHECK(at(at(row2, "before"), "fadeIn").kind() == Value::Kind::object);
+    CHECK(at(row2, "after").find("fadeIn") == nullptr);
+    CHECK(at(at(row2, "after"), "fadeOut").kind() == Value::Kind::object);
+}
+
+TEST_CASE("command.execute of an over-long fade answers invalid_fade and commits nothing", "[protocol][fades]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_a"), mediaAdd("med_a"), clipPlace("clp_a", "trk_a", "med_a", 0)});
+    const std::string head = f.head().envelope.id;
+    const auto execute = [&](Value command) {
+        return f.call(c, "command.execute", Value(Object{{"commands", Value(Array{std::move(command)})}}));
+    };
+    CHECK(errorCode(execute(clipFade("clp_a", std::pair<std::string, std::string>{"30000", "linear"},
+                                     std::pair<std::string, std::string>{"18001", "linear"}))) == "invalid_fade");
+    CHECK(errorCode(execute(clipFade("clp_a", std::pair<std::string, std::string>{"480", "cubic"}, std::nullopt))) ==
+          "invalid_params");
+    CHECK(errorCode(execute(clipFade("clp_x", std::pair<std::string, std::string>{"480", "linear"}, std::nullopt))) ==
+          "not_found");
+    CHECK(f.head().envelope.id == head);
+    execute(clipFade("clp_a", std::pair<std::string, std::string>{"30000", "linear"},
+                     std::pair<std::string, std::string>{"18000", "linear"}));
+    CHECK(f.head().envelope.id != head);
+}
