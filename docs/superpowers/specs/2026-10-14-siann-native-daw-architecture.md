@@ -1647,6 +1647,29 @@ Rules:
   removes the field with `name: null` (the entity then hashes as it did before it
   had a name). `media.rename` declares exactly `{media:<id>}`, is one revision and
   undoable; an unknown id is `not_found`.
+- M5b `Track.notes` (m5b-engine-track-notes, UI redesign UR-17): the track may
+  carry `notes`, plain text of 1 to 16,384 UTF-8 bytes (`kMaxTrackNotesBytes`,
+  well-formed per RFC 3629: no overlong form, no surrogate, nothing above
+  U+10FFFF). It is stored byte for byte, with no normalisation; newlines and tabs
+  are allowed, because notes are text, not a name (the names rule below does not
+  apply; the renderer shows them in their own text area, isolated like a name
+  wherever a sentence quotes them). It is omitted from the track's JSON while
+  absent, as `input` is, so the schema stays `siann.entity.track.v1`, the document
+  stays `siann.session_document.v2`, and every existing bundle, checkpoint and
+  fixture keeps its entity and document hashes. Reading a track whose `notes` is
+  empty, longer than 16,384 bytes, malformed or not a string is `invalid_field`;
+  `validate()` reports stored notes outside the rule as `invalid_notes`. Command
+  `track.set_notes {trackId, notes}` declares exactly `{track:<id>}`, is one
+  revision and undoable. Two interpretations pinned here (2026-11-15): `notes: ""`
+  removes the field, so the track hashes as it did before it had notes (the media
+  name removes with `null`, but an emptied text area is the Notepad's natural
+  clear, and `""` is not a value the field can store); and the codes split by
+  what is wrong: a string longer than 16,384 bytes or not well-formed UTF-8 (which
+  only a `json::Value` built in code can carry: the JSON parser refuses a lone
+  surrogate escape and malformed bytes) is
+  `invalid_notes`, while a non-string `notes` (`null` included), a missing
+  `notes` or `trackId`, or another field is `invalid_params`. An unknown track is
+  `not_found`.
 - Names (follow-up to #123, the plan metadata rule applied to the document): every
   name the document stores, the session's (`root.name`), a track's, a bus's, a
   media's and a plugin slot's (and a marker's when markers land), is well-formed UTF-8
