@@ -197,7 +197,8 @@ TEST_CASE("compileForPlayback builds one streaming player and fader per track pl
 
     const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
     REQUIRE(compiled.graph);
-    CHECK(compiled.graph->nodeCount() == 8);  // per track player, fader, meter; master bus and meter
+    // Per track player, fader, meter; the master bus, gain and meter (m5b-engine-master).
+    CHECK(compiled.graph->nodeCount() == 9);
     REQUIRE(compiled.meterSlots.size() == 3);
     CHECK(compiled.meterSlots.count("track:trk_a") == 1);
     CHECK(compiled.meterSlots.count("track:trk_b") == 1);
@@ -206,7 +207,8 @@ TEST_CASE("compileForPlayback builds one streaming player and fader per track pl
     CHECK(metered.size() == 3);
     CHECK(metered.back() == compiled.meterSlots.at("master"));  // the master meter runs last
     CHECK(compiled.streams.size() == 2);
-    REQUIRE(compiled.slots.size() == 2);
+    REQUIRE(compiled.slots.size() == 3);
+    CHECK(compiled.slots.count(playback::masterSlotKey()) == 1);
     CHECK(compiled.slots.count("track:trk_a") == 1);
     CHECK(compiled.slots.count("track:trk_b") == 1);
     CHECK(compiled.slots.at("track:trk_a") != compiled.slots.at("track:trk_b"));
@@ -585,18 +587,25 @@ TEST_CASE("No allocations on the audio thread during playback and gestures", "[p
     Player p(f.session);
     p.pump(2);
     const auto before = rt::allocationViolations();
+    const std::string master = playback::masterSlotKey();
     p.engine.beginGesture("trk_a", kGain);
+    p.engine.beginGesture(master, kGain);  // m5b-engine-master
     for (int b = 0; b < 300; ++b) {
         p.engine.updateGesture("trk_a", kGain, -100.0 * (b % 60), 64);
         p.engine.updateGesture("trk_b", TrackFaderNode::kPan, 100.0 * (b % 50), 32);
+        p.engine.updateGesture(master, kGain, -50.0 * (b % 40), 48);
         p.engine.tick();
         p.pump(1);
         if (b == 150) {
             CHECK(p.engine.endGesture("trk_a", kGain, "user", "t") != nullptr);
             p.engine.beginGesture("trk_a", kGain);
+            CHECK(p.engine.endGesture(master, kGain, "user", "t") != nullptr);
+            p.engine.update(f.doc());  // the master revision reaches the audio thread as a parameter set
+            p.engine.beginGesture(master, kGain);
         }
     }
     CHECK(rt::allocationViolations() == before);
+    CHECK(p.engine.endGesture(master, kGain, "user", "t") != nullptr);
     CHECK(p.engine.endGesture("trk_b", TrackFaderNode::kPan, "user", "t") != nullptr);
     CHECK_FALSE(p.engine.dispatcher().gestureOpen({playback::trackSlotKey("trk_b"), TrackFaderNode::kPan}));
     CHECK(p.engine.underruns() == 0);
@@ -737,9 +746,10 @@ TEST_CASE("An empty document plays silence with no underruns", "[playback]") {
     Fixture f;
     const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
     REQUIRE(compiled.graph);
-    CHECK(compiled.graph->nodeCount() == 2);  // the master bus and its meter
+    CHECK(compiled.graph->nodeCount() == 3);  // the master bus, its gain and its meter
     CHECK(compiled.streams.empty());
-    CHECK(compiled.slots.empty());
+    CHECK(compiled.slots.size() == 1);
+    CHECK(compiled.slots.count(playback::masterSlotKey()) == 1);
     CHECK(compiled.meterSlots.size() == 1);
     CHECK(compiled.meterSlots.count(playback::masterMeterKey()) == 1);
 
@@ -836,5 +846,243 @@ TEST_CASE("Meter values match values computed offline from the rendered output",
     CHECK(engine.driver().meterDrops() == 0);
     CHECK(engine.underruns() == 0);
     CHECK(reference[0].peak[0] > 0.0f);
+    engine.stop();
+}
+
+// ---- m5b-engine-master: the master gain after the track sum, before the master meter
+
+namespace {
+
+std::string setMaster(std::int32_t milliDb) {
+    return R"({"op":"master.set_gain","gainMilliDb":)" + std::to_string(milliDb) + "}";
+}
+
+// Two tracks, a stereo and a mono clip, a gained track: enough that the sum matters.
+void twoTrackSession(Fixture& f) {
+    f.importWav("med_st", 2, 30'000);
+    f.importWav("med_mono", 1, 20'000);
+    f.exec(addTrack("trk_a"));
+    f.exec(addTrack("trk_b"));
+    f.exec(place("clp_a", "trk_a", "med_st", 0, 0, 30'000));
+    f.exec(place("clp_b", "trk_b", "med_mono", 1'000, 100, 19'000));
+    f.exec(setGain("trk_b", -3'000));
+}
+
+}  // namespace
+
+TEST_CASE("compileForPlayback has a master:master gain slot between the master bus and the master meter",
+          "[playback][master]") {
+    Fixture f;
+    twoTrackSession(f);
+    f.exec(setMaster(-6'000));
+    const auto compiled = playback::compileForPlayback(f.doc(), f.bundle(), testOptions());
+    REQUIRE(compiled.graph);
+    CHECK(playback::masterSlotKey() == "master:master");
+    REQUIRE(compiled.slots.count(playback::masterSlotKey()) == 1);
+    CHECK(compiled.slots.at(playback::masterSlotKey()) != compiled.meterSlots.at(playback::masterMeterKey()));
+    // The master meter still runs last: it is the output.
+    const auto metered = compiled.graph->meteredNodes();
+    REQUIRE(metered.size() == 3);
+    CHECK(metered.back() == compiled.meterSlots.at(playback::masterMeterKey()));
+}
+
+TEST_CASE("Realtime at master -6 dB is sample-identical to renderOffline of the same document after the fade-in",
+          "[playback][master]") {
+    Fixture f;
+    twoTrackSession(f);
+    f.exec(setMaster(-6'000));
+    REQUIRE(f.doc().master() != nullptr);
+    const std::int64_t end = engine::documentEnd(f.doc());
+    const int n = blocksFor(end);
+    Player p(f.session);
+    p.pump(n);
+    const auto reference = offline(f.doc(), f.bundle(), static_cast<std::int64_t>(n) * kBlock);
+    CHECK(blocks(p.out[0], 1, n) == blocks(reference[0], 1, n));
+    CHECK(blocks(p.out[1], 1, n) == blocks(reference[1], 1, n));
+    CHECK_FALSE(silent(blocks(p.out[0], 1, n)));
+    // And it is not the 0 dB render.
+    const auto unity = offline(withCommand(f.doc(), setMaster(0)), f.bundle(), static_cast<std::int64_t>(n) * kBlock);
+    CHECK(blocks(p.out[0], 1, n) != blocks(unity[0], 1, n));
+    CHECK(p.engine.underruns() == 0);
+}
+
+TEST_CASE("A master gesture moves the sound without a recompile and its end commits exactly one master.set_gain",
+          "[playback][master][gesture]") {
+    Fixture f;
+    twoTrackSession(f);
+    const fs::path bundle = f.bundle();
+    const auto frames = static_cast<std::int64_t>(40) * kBlock;
+    const auto at6 = offline(withCommand(f.doc(), setMaster(-6'000)), bundle, frames);
+    const auto at3 = offline(withCommand(f.doc(), setMaster(-3'000)), bundle, frames);
+    const auto atMax = offline(withCommand(f.doc(), setMaster(24'000)), bundle, frames);
+    const std::size_t before = f.session.history().revisions().size();
+    const std::string master = playback::masterSlotKey();
+
+    Player p(f.session);
+    p.pump(2);
+    const std::size_t compiles = p.engine.compileCount();
+    const std::uint64_t epoch = p.engine.driver().liveEpoch();
+
+    SECTION("pan and mute are not master parameters") {
+        CHECK_THROWS_AS(p.engine.beginGesture(master, TrackFaderNode::kPan), std::invalid_argument);
+        CHECK_THROWS_AS(p.engine.beginGesture(master, TrackFaderNode::kMute), std::invalid_argument);
+        CHECK_THROWS_AS(p.engine.updateGesture(master, TrackFaderNode::kPan, 1.0, 0), std::invalid_argument);
+    }
+
+    SECTION("a master gesture that never moved commits nothing") {
+        p.engine.beginGesture(master, kGain);
+        CHECK(p.engine.endGesture(master, kGain, "user", "t9") == nullptr);
+        CHECK(f.session.history().revisions().size() == before);
+    }
+
+    SECTION("an invalid final value commits nothing and the sound returns to 0 dB") {
+        p.engine.beginGesture(master, kGain);
+        p.engine.updateGesture(master, kGain, 30'000.0, 0);
+        p.engine.tick();
+        p.pump(1);
+        CHECK(blocks(p.out[0], 2, 3) == blocks(atMax[0], 2, 3));  // clamped as a track fader clamps
+        try {
+            p.engine.endGesture(master, kGain, "user", "t9");
+            FAIL("expected invalid_gain");
+        } catch (const command::CommandError& error) {
+            CHECK(error.code() == "invalid_gain");
+        }
+        CHECK(f.session.history().revisions().size() == before);
+        p.engine.tick();
+        p.pump(1);
+        const auto reference = offline(f.doc(), bundle, frames);
+        CHECK(blocks(p.out[0], 3, 4) == blocks(reference[0], 3, 4));
+    }
+
+    SECTION("moving and ending commits one master.set_gain") {
+        p.engine.beginGesture(master, kGain);
+        p.engine.updateGesture(master, kGain, -6'000.0, 0);
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 2, 4) == blocks(at6[0], 2, 4));
+        CHECK(blocks(p.out[1], 2, 4) == blocks(at6[1], 2, 4));
+        p.engine.updateGesture(master, kGain, -3'000.0, 0);
+        p.engine.tick();
+        p.pump(1);
+        CHECK(blocks(p.out[0], 4, 5) == blocks(at3[0], 4, 5));
+        CHECK(f.session.history().revisions().size() == before);  // nothing mid-gesture
+
+        const command::Revision* revision = p.engine.endGesture(master, kGain, "user", "t9");
+        REQUIRE(revision != nullptr);
+        CHECK(f.session.history().revisions().size() == before + 1);
+        REQUIRE(revision->commands.size() == 1);
+        CHECK(revision->commands[0].op() == "master.set_gain");
+        REQUIRE(revision->document.master() != nullptr);
+        CHECK(revision->document.master()->gain.milliDb == -3'000);
+        REQUIRE(revision->diff.size() == 1);
+        CHECK(revision->diff[0].entity == model::EntityRef{model::EntityType::master, "master"});
+
+        // The engine host hands the head to update(): a parameter set, no graph transition.
+        p.engine.update(f.doc());
+        p.engine.tick();
+        p.pump(2);
+        CHECK(blocks(p.out[0], 5, 7) == blocks(at3[0], 5, 7));
+        CHECK(p.engine.compileCount() == compiles);
+        CHECK(p.engine.driver().liveEpoch() == epoch);
+        CHECK(p.engine.underruns() == 0);
+    }
+    CHECK(p.engine.compileCount() == compiles);
+    CHECK(p.engine.driver().liveEpoch() == epoch);
+}
+
+TEST_CASE("A master.set_gain revision reaches the audio thread as a parameter set, its removal too",
+          "[playback][master]") {
+    Fixture f;
+    twoTrackSession(f);
+    const fs::path bundle = f.bundle();
+    const auto frames = static_cast<std::int64_t>(40) * kBlock;
+    const auto unity = offline(f.doc(), bundle, frames);
+    const auto at6 = offline(withCommand(f.doc(), setMaster(-6'000)), bundle, frames);
+    const auto silence = offline(withCommand(f.doc(), setMaster(INT32_MIN)), bundle, frames);
+
+    Player p(f.session);
+    p.pump(2);
+    const std::size_t compiles = p.engine.compileCount();
+    const std::uint64_t epoch = p.engine.driver().liveEpoch();
+
+    f.exec(setMaster(-6'000));  // added
+    p.engine.update(f.doc());
+    p.engine.tick();
+    p.pump(2);
+    CHECK(blocks(p.out[0], 2, 4) == blocks(at6[0], 2, 4));
+    CHECK(blocks(p.out[1], 2, 4) == blocks(at6[1], 2, 4));
+
+    f.exec(setMaster(INT32_MIN));  // modified: minus infinity
+    p.engine.update(f.doc());
+    p.engine.tick();
+    p.pump(2);
+    CHECK(blocks(p.out[0], 4, 6) == blocks(silence[0], 4, 6));
+    CHECK(silent(blocks(p.out[0], 4, 6)));
+
+    f.exec(setMaster(0));  // removed: back to 0 dB
+    REQUIRE(f.doc().master() == nullptr);
+    p.engine.update(f.doc());
+    p.engine.tick();
+    p.pump(2);
+    CHECK(blocks(p.out[0], 6, 8) == blocks(unity[0], 6, 8));
+    CHECK(blocks(p.out[1], 6, 8) == blocks(unity[1], 6, 8));
+
+    // Undo walks back through the same parameter channel.
+    f.session.undo("test", "t");
+    p.engine.update(f.doc());
+    p.engine.tick();
+    p.pump(2);
+    CHECK(silent(blocks(p.out[0], 8, 10)));
+
+    CHECK(p.engine.compileCount() == compiles);
+    CHECK(p.engine.driver().liveEpoch() == epoch);
+    CHECK(p.engine.underruns() == 0);
+}
+
+TEST_CASE("The master meter reads the post-gain level while the track meters do not change", "[playback][master][meters]") {
+    constexpr int kMeterBlock = 64;
+    Fixture f;
+    f.importWav("med_st", 2, 40 * kMeterBlock);
+    f.exec(addTrack("trk_a"));
+    f.exec(place("clp_a", "trk_a", "med_st", 0, 0, 40 * kMeterBlock));
+    f.exec(setMaster(-6'000));
+    const float g = graph::gainFromMilliDb(-6'000);
+
+    PlaybackOptions options = testOptions();
+    options.maxBlockFrames = kMeterBlock;
+    options.fadeFrames = kMeterBlock;
+    host::AudioDeviceConfig config = deviceConfig();
+    config.bufferFrames = kMeterBlock;
+    host::ManualAudioDevice device;
+    PlaybackEngine engine(f.session, options);
+    engine.load();
+    engine.start(device, config);
+    std::vector<std::vector<float>> out{2};
+    // Block 0 fades in; from block 1 on the meters read the steady mix.
+    device.pumpAll(1, out);
+    engine.butler().runOnce();
+    engine.tick();
+    for (int b = 1; b < 30; ++b) {
+        INFO("block " << b);
+        device.pumpAll(1, out);
+        engine.butler().runOnce();
+        engine.tick();
+        const auto master = engine.dispatcher().meter(playback::masterMeterKey());
+        const auto track = engine.dispatcher().meter("track:trk_a");
+        REQUIRE(master.has_value());
+        REQUIRE(track.has_value());
+        for (std::size_t c = 0; c < 2; ++c) {
+            // One track: the master sum is the track, then the master gain.
+            CHECK(master->reading.peak[c] == track->reading.peak[c] * g);
+            CHECK(track->reading.peak[c] > master->reading.peak[c]);
+        }
+        // The output is what the master meter measured.
+        float peak = 0.0f;
+        for (int i = 0; i < kMeterBlock; ++i) {
+            peak = std::max(peak, std::abs(out[0][static_cast<std::size_t>(b * kMeterBlock + i)]));
+        }
+        CHECK(master->reading.peak[0] == peak);
+    }
+    CHECK(engine.driver().meterDrops() == 0);
     engine.stop();
 }

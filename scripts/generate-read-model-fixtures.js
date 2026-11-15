@@ -8,7 +8,9 @@
 // revision and the document and documentHash after each step. A second part
 // (m5-ui-engine-loop-click) continues the session with the singleton locators
 // entity: deltas that add, modify and remove locators:locators, and a sync of a
-// document that holds it (a single object after pluginSlots). Hashes come from
+// document that holds it (a single object after pluginSlots). A third part
+// (m5b-engine-master) does the same for the singleton master entity, and syncs a
+// document holding both singletons (master after locators). Hashes come from
 // the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
@@ -110,11 +112,16 @@ function entitiesOf(document) {
     for (const entity of rows) out.push({ type, entity });
   }
   if (document.locators) out.push({ type: 'locators', entity: document.locators });
+  if (document.master) out.push({ type: 'master', entity: document.master });
   return out;
 }
 
 function locators(left, right) {
   return { schema: 'siann.entity.locators.v1', id: 'locators', left, right };
+}
+
+function master(gainMilliDb) {
+  return { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb };
 }
 
 function hashDocument(document) {
@@ -143,6 +150,9 @@ function syncChunks(document, revision, seq) {
     // The locators as one object, only in the chunk that holds them.
     const locatorsEntry = slice.find((e) => e.type === 'locators');
     if (locatorsEntry) chunk.locators = locatorsEntry.entity;
+    // The master likewise (m5b-engine-master), after the locators.
+    const masterEntry = slice.find((e) => e.type === 'master');
+    if (masterEntry) chunk.master = masterEntry.entity;
     const end = offset + slice.length;
     chunks.push({
       revision,
@@ -208,6 +218,22 @@ function buildLocatorSteps(after) {
   });
 }
 
+// After the locators steps: master.set_gain -6000, then -3000, then 0, which
+// removes the entity (m5b-engine-master).
+function buildMasterSteps(after) {
+  return recordSteps(clone(after.document), Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      d.master = master(-6000);
+    }, [{ ref: 'master:master', change: 'added' }]);
+    commit((d) => {
+      d.master = master(-3000);
+    }, [{ ref: 'master:master', change: 'modified' }]);
+    commit((d) => {
+      delete d.master;
+    }, [{ ref: 'master:master', change: 'removed' }]);
+  });
+}
+
 function recordSteps(initial, firstSeq, firstRevision, run) {
   const steps = [];
   let document = initial;
@@ -261,6 +287,9 @@ function buildFixture() {
   const steps = buildSteps();
   const locatorSteps = buildLocatorSteps(steps[steps.length - 1]);
   const withLocators = locatorSteps[0];
+  const masterSteps = buildMasterSteps(locatorSteps[locatorSteps.length - 1]);
+  const withMaster = masterSteps[0];
+  const withBoth = { ...clone(withMaster.document), locators: locators('96000', '480000') };
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -274,6 +303,14 @@ function buildFixture() {
       steps: locatorSteps,
       // A sync pinned at the revision that added the locators.
       sync: syncChunks(withLocators.document, withLocators.event.revision, withLocators.event.seq),
+    },
+    master: {
+      steps: masterSteps,
+      // A sync pinned at the revision that added the master.
+      sync: syncChunks(withMaster.document, withMaster.event.revision, withMaster.event.seq),
+      // A document holding the locators and the master: the master is listed
+      // after the locators, here across a chunk boundary.
+      both: { document: withBoth, documentHash: hashDocument(withBoth), sync: syncChunks(withBoth, 'r20', '30') },
     },
   };
 }

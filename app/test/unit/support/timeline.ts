@@ -52,6 +52,7 @@ export function snapshotOf(
     clips: byId(clips),
     pluginSlots: [],
     locators: null,
+    master: null,
     trackOrder,
   });
 }

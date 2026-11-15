@@ -389,6 +389,22 @@ Prepared sessionSetLocators(const Document& doc, const Command& command) {
     return {{EntityRef{EntityType::locators, std::string(model::kLocatorsId)}}, doc.withLocators(value)};
 }
 
+// The master gain (m5b-engine-master): {gainMilliDb}, the track gain's range and
+// error. The entity exists only while the gain is not 0 dB, so 0 removes it, or
+// leaves the document as it is when there is none (a revision with an empty
+// diff, as track.set_gain to the value already set). Always declares exactly
+// master:master, so a master change never touches root:root.
+Prepared masterSetGain(const Document& doc, const Command& command) {
+    Params p(command);
+    const Gain gain = gainParam(*p, "gainMilliDb");
+    p.finish();
+    const EntityRef ref{EntityType::master, std::string(model::kMasterId)};
+    if (gain.milliDb == 0) {
+        return {{ref}, doc.master() != nullptr ? doc.withoutMaster() : doc};
+    }
+    return {{ref}, doc.withMaster(model::Master{gain})};
+}
+
 // A track's input (m5b-engine-record): {port, channels} or null, as one edit of
 // the track. A negative port, channels other than 1 or 2, a missing or extra
 // field are invalid_params (the field reader's ModelError).
@@ -426,6 +442,7 @@ const std::map<std::string, Handler, std::less<>>& registry() {
                  clip.length = r.int64String("length");
              });
          }},
+        {"master.set_gain", &masterSetGain},
         {"media.add", &mediaAdd},
         {"media.remove", &mediaRemove},
         {"media.rename", &mediaRename},

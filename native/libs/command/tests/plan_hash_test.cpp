@@ -129,3 +129,16 @@ TEST_CASE("Invalid plans are rejected with the fixture's code", "[plan][fixtures
         CHECK(errorCode(c.find("planText")->asString()) == c.find("error")->asString());
     }
 }
+
+// m5b-engine-master: master is a singleton entity type of the plan entity sets.
+TEST_CASE("A writeSet may name the master entity, and only by the id master", "[plan][fixtures][master]") {
+    const Value* c = &validCase("master_write_set");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    REQUIRE(plan.writeSet.size() == 1);
+    CHECK(plan.writeSet[0].ref == siann::model::EntityRef{siann::model::EntityType::master, "master"});
+    CHECK_FALSE(plan.writeSet[0].entityHash.has_value());
+    REQUIRE(plan.steps.size() == 1);
+    CHECK(plan.steps[0].op() == "master.set_gain");
+    CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
+    CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == c->find("planHash")->asString());
+}

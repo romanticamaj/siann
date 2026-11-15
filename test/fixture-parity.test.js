@@ -66,6 +66,24 @@ test('the v2 model fixture keeps every v1 entity hash and adds locators:locators
   assert.notEqual(v2.documentHash, v1.documentHash);
 });
 
+// m5b-engine-master: the master entity adds the leaf master:master and changes no
+// other entity hash, so the v2 document without it keeps its hash.
+test('the master model fixture matches its Node generator and adds master:master only', () => {
+  const { FIXTURE_FILE_V2_MASTER, buildFixtureV2Master, FIXTURE_FILE_V2 } = generators.model;
+  const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_MASTER, 'utf8'));
+  assert.deepEqual(committed, buildFixtureV2Master());
+  const v2 = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2, 'utf8'));
+  assert.equal(committed.document.schemaVersion, 'siann.session_document.v2');
+  assert.deepEqual(committed.document.master, { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -6000 });
+  assert.deepEqual(committed.entityHashes.slice(0, v2.entityHashes.length), v2.entityHashes);
+  const extra = committed.entityHashes.slice(v2.entityHashes.length);
+  assert.deepEqual(extra.map((leaf) => `${leaf.type}:${leaf.id}`), ['master:master']);
+  assert.equal(extra[0].entityHash, sha256Jcs(committed.document.master));
+  assert.equal(documentHash(committed.entityHashes), committed.documentHash);
+  assert.notEqual(committed.documentHash, v2.documentHash);
+  assert.equal(v2.document.master, undefined);
+});
+
 test('the media-name model fixture matches its Node generator', () => {
   const { FIXTURE_FILE_V2_MEDIA_NAME, buildFixtureV2MediaName } = generators.model;
   const committed = JSON.parse(fs.readFileSync(FIXTURE_FILE_V2_MEDIA_NAME, 'utf8'));

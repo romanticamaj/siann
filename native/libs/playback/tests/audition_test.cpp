@@ -490,3 +490,43 @@ TEST_CASE("An approved plan proposed onto a branch can be auditioned end to end"
     CHECK(f.session.plans().find(hash)->state == command::PlanState::applied);
     CHECK(f.session.plans().find(hash)->appliedRevision == std::optional<std::string>{mergedId});
 }
+
+// m5b-engine-master: a master gesture ended while a proposal is heard commits one
+// master.set_gain onto that branch, and main keeps no master.
+TEST_CASE("A master gesture ended while a proposal is heard commits one master.set_gain onto that branch",
+          "[playback][audition][master]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(20);
+    const command::BranchId b = proposeTrackC(f);
+    const std::string branchTip = f.session.history().branchHead(b).envelope.id;
+    const std::string mainHead = f.session.history().head().envelope.id;
+    Auditioner a(p.engine, f.session);
+    a.audition(b);
+    p.pump(30);
+    const std::size_t compiles = p.engine.compileCount();
+
+    constexpr auto kGain = graph::TrackFaderNode::kGainMilliDb;
+    const std::string master = playback::masterSlotKey();
+    p.engine.beginGesture(master, kGain);
+    p.engine.updateGesture(master, kGain, -6'000, 0);
+    p.pump(2);
+    const command::Revision* revision = p.engine.endGesture(master, kGain, "user", "t");
+    REQUIRE(revision != nullptr);
+    REQUIRE(revision->commands.size() == 1);
+    CHECK(revision->commands[0].op() == "master.set_gain");
+    CHECK(revision->envelope.parents == std::vector<std::string>{branchTip});
+    CHECK(revision->branch == std::optional<command::BranchId>{b});
+    CHECK(f.session.history().head().envelope.id == mainHead);
+    CHECK(f.doc().master() == nullptr);
+    REQUIRE(branchDoc(f, b).master() != nullptr);
+    CHECK(branchDoc(f, b).master()->gain.milliDb == -6'000);
+    a.onBranchCommitted(b);
+
+    const int from = p.blockCount() + 1;
+    p.pump(10);
+    CHECK(p.engine.compileCount() == compiles);  // a parameter set, no recompile
+    const auto ref = offline(branchDoc(f, b), f.bundle(), framesOf(p));
+    CHECK(matches(p, ref, from, p.blockCount()));
+    CHECK(p.engine.underruns() == 0);
+}

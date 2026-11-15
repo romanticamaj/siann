@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-Status: Implemented in `native/libs/protocol` and `native/apps/engine` (m5-mixer)
+Status: Implemented in `native/libs/protocol` and `native/apps/engine` (m5-mixer; the master target in m5b-engine-master)
 
 ## Purpose
 
@@ -26,9 +26,9 @@ those of Protocol v0; events are those of `protocol-events-v1.md`.
   `not_found`.
 - `param` is `"gain"`, `"pan"` or `"mute"`, the three track fader parameters. The
   master target takes `"gain"` only; `"pan"` or `"mute"` on it is `invalid_params`.
-- The master target (`{"ref": "master:master", "param": "gain"}`; specified for
-  m5b-engine-master, not implemented yet; decided by the main session under the
-  maintainer's delegation (Fable rule), 2026-11-15) is the master gain of the
+- The master target (`{"ref": "master:master", "param": "gain"}`; m5b-engine-master;
+  decided by the main session under the maintainer's delegation (Fable rule),
+  2026-11-15) is the master gain of the
   `master` singleton entity. It always exists: while the entity is absent (the
   gain is 0 dB) its start value is 0, so `not_found` does not apply. Its value and
   range are those of a track's `gain`, its leases are a track fader's, and

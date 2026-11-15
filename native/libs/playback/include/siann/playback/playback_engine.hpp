@@ -8,8 +8,14 @@
 // engine::compileDocument(): per track a streaming player over a disk stream
 // and a track fader, all into the master bus, plus the entity-to-slot map the
 // control dispatcher addresses parameters with ("track:<trackId>" -> fader).
-// A MeterNode follows each fader and the master bus; their slots go to the
+// A MeterNode follows each fader and the master gain; their slots go to the
 // dispatcher too, which collects the meters from the driver's meterOutbox.
+//
+// Master path (m5b-engine-master; spec, "Master path"): the track meters sum
+// into the master bus, the master gain (a stereo TrackFaderNode at pan centre,
+// unity at 0 dB, slot masterSlotKey()) follows it, and the master meter is the
+// output; the driver adds the click after it. A master.set_gain revision, like a
+// track fader edit, goes through the parameter channel and compiles nothing.
 //
 // PlaybackEngine owns the graph driver, the control dispatcher, the transport,
 // the butler and the disk streams. Its methods run on one non-realtime control thread; the
@@ -117,6 +123,9 @@ std::string trackSlotKey(const std::string& trackId);
 std::string pluginSlotKey(const std::string& slotId);
 // Meter key of the master bus in the dispatcher's meter map.
 std::string masterMeterKey();
+// Slot key of the master gain node ("master:master", the master entity's ref),
+// and the gesture target that names it: a track id never holds a ':'.
+std::string masterSlotKey();
 
 namespace detail {
 
@@ -188,18 +197,20 @@ public:
     void stop();
 
     // Parameter gestures on a track fader: gain, pan or mute (TrackFaderNode
-    // parameter ids). Any other id throws std::invalid_argument before a
-    // gesture opens, so every open gesture can be ended.
-    void beginGesture(const std::string& trackId, std::uint32_t paramId);
-    void updateGesture(const std::string& trackId, std::uint32_t paramId, double value, int rampFrames);
+    // parameter ids), or on the master gain when `target` is masterSlotKey()
+    // (gain only). Any other id throws std::invalid_argument before a gesture
+    // opens, so every open gesture can be ended.
+    void beginGesture(const std::string& target, std::uint32_t paramId);
+    void updateGesture(const std::string& target, std::uint32_t paramId, double value, int rampFrames);
     // Commits the gesture's last value as one revision (track.set_gain,
-    // track.set_pan or track.set_mute) and sends the committed value to the
-    // audio thread. Returns nullptr when the gesture never moved.
+    // track.set_pan, track.set_mute, or master.set_gain for the master) and
+    // sends the committed value to the audio thread. Returns nullptr when the
+    // gesture never moved.
     // A command::CommandError propagates and commits nothing; the sound then
     // returns to the document's value. So does AuditionError
     // audition_not_found when the gesture branch was closed (merged or
     // discarded on the session, not through the Auditioner).
-    const command::Revision* endGesture(const std::string& trackId, std::uint32_t paramId, std::string actor,
+    const command::Revision* endGesture(const std::string& target, std::uint32_t paramId, std::string actor,
                                         std::string time);
 
     // Where endGesture commits: main (nothing, the default) or the proposal
@@ -215,7 +226,8 @@ public:
     const PlaybackOptions& options() const noexcept { return options_; }
 
     // Control thread: a newer document, normally the session's head after a
-    // commit. An edit that only changes track gain, pan or mute goes through
+    // commit. An edit that only changes track gain, pan or mute, or the master
+    // gain (added, modified or removed: absent is 0 dB), goes through
     // the parameter channel; anything else is structural and is compiled by
     // the next tick(). Only the latest document is kept, so rapid edits
     // coalesce into one compile.

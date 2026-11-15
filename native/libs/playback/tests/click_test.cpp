@@ -237,3 +237,28 @@ TEST_CASE("No audio-thread allocation while the click sounds", "[playback][click
     CHECK(rt::allocationViolations() == before);
     CHECK(onsets(live.out[0]).size() >= 4);
 }
+
+// m5b-engine-master: the master gain applies before the click, so a master at
+// -6 dB leaves the click's level as it was (architecture spec, "Master path").
+TEST_CASE("The click level is unchanged by a master gain of -6 dB", "[playback][click][master]") {
+    const json::Value fixture = clickFixture();
+    const std::vector<Beat> beats = fixtureBeats(fixture);
+    const int blocks = static_cast<int>((beats[5].frame + 2'000) / kBlock) + 1;
+    std::vector<std::vector<float>> outputs;
+    for (const std::int32_t master : {0, -6'000}) {
+        EmptyFixture f(fixture);
+        if (master != 0) {
+            f.session.commit({Command::fromJson(json::Value(json::Object{{"op", json::Value("master.set_gain")},
+                                                                         {"gainMilliDb", json::Value(master)}}))},
+                             "test", "t");
+            REQUIRE(f.session.history().head().document.master() != nullptr);
+        }
+        Live live(f.session);
+        live.engine.setClick(true, 0);
+        live.pump(blocks);
+        outputs.push_back(live.out[0]);
+    }
+    REQUIRE(burstPeak(outputs[0], beats[1].frame) > 0.0f);
+    CHECK(burstPeak(outputs[1], beats[1].frame) == burstPeak(outputs[0], beats[1].frame));
+    CHECK(outputs[1] == outputs[0]);
+}

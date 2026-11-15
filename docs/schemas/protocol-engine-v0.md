@@ -26,6 +26,12 @@ The locators themselves are document data, set with the command `session.set_loc
 
 The engine host keeps both flags across `engine.select_device`. The cycle flag is written into the bundle's checkpoint (`transport: {cycle}`) with every checkpoint write, and `session.open` takes the opened bundle's flag; the click state is not stored. `engine.capabilities` reports `features.locators: true` and `features.cycle`, `features.click` true when a transport port is present.
 
+### Master gain (m5b-engine-master, UI redesign E-11)
+
+The master gain is document data, set with the command `master.set_gain {gainMilliDb}` through `command.execute` (or a plan, or MCP `execute`); it is not a transport method and needs no port. `gainMilliDb` is an integer in the track gain's range, `-144000..24000`, or `-2147483648` (minus infinity), otherwise `invalid_gain`; a value that is not an integer, or an extra field, is `invalid_params`. The entity is `{schema: "siann.entity.master.v1", id: "master", gainMilliDb}`, ref `master:master`, present only while the gain is not 0 dB: `master.set_gain 0` removes it, so the document hashes as it did before the first set, and `plan.preview` shows `before: null` on the first set and `after: null` on the set back to 0. The command declares exactly `{master:master}`, so it never makes a rename or tempo plan stale. Setting 0 while the entity is absent is a revision with an empty diff, as `track.set_gain` to the value already set is.
+
+The gain applies to the sum of the tracks, before the master meter (meter key `master`), the click and device-side SRC (architecture spec, "Master path"); an offline render applies the same gain, so offline and realtime renders agree. The master gain is also a gesture target, `{ref: "master:master", param: "gain"}` ([Protocol gestures v0](protocol-gestures-v0.md)). `engine.capabilities` lists `master.set_gain` in `commands` and reports `features.masterGain: true`.
+
 ## engine.status
 
 Params `{}`. Result:

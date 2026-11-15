@@ -591,3 +591,69 @@ TEST_CASE("generation changes with every lifecycle or proposal change and only t
     const std::string two = *store.submit(history, {setGain("t2", -300), setPan("t3", 100)}, {}, history.head().envelope.id).hashText;
     CHECK(changes([&] { store.reject(two, "user", "t", "no"); }));
 }
+
+// m5b-engine-master: a plan's master step writes master:master only, so a rename
+// does not make it stale and a master change does; rollback restores the master.
+TEST_CASE("A plan may set the master gain; it writes master:master, applies and rolls back", "[plan][master]") {
+    History history = base();
+    PlanStore store;
+    const EntityRef ref{EntityType::master, "master"};
+    const auto before = history.head().envelope.documentHash;
+    const Plan& plan = store.submit(history, {cmd(R"({"op":"master.set_gain","gainMilliDb":-6000})")}, {},
+                                    history.head().envelope.id);
+    REQUIRE(plan.writeSet.size() == 1);
+    CHECK(plan.writeSet[0].ref == ref);
+    CHECK_FALSE(plan.writeSet[0].entityHash.has_value());  // absent at the base
+    const std::string hash = *plan.hashText;
+    CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == hash);
+
+    store.approve(history, hash, "user", "t1");
+    const Revision& applied = store.apply(history, hash, "agent", "t2");
+    REQUIRE(applied.diff.size() == 1);
+    CHECK(applied.diff[0].entity == ref);
+    REQUIRE(history.head().document.master() != nullptr);
+    CHECK(history.head().document.master()->gain.milliDb == -6000);
+
+    const Revision& inverse = store.rollback(history, hash, "user", "t3");
+    CHECK(inverse.envelope.documentHash == before);
+    CHECK(history.head().document.master() == nullptr);
+    CHECK(store.find(hash)->state == PlanState::rolled_back);
+}
+
+TEST_CASE("A master plan goes stale on a master change and not on session.rename", "[plan][master]") {
+    History history = base();
+    PlanStore store;
+    const std::string hash =
+        *store.submit(history, {cmd(R"({"op":"master.set_gain","gainMilliDb":-6000})")}, {}, "r2").hashText;
+
+    history.commit({cmd(R"({"op":"session.rename","name":"Renamed"})")}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+
+    history.commit({cmd(R"({"op":"master.set_gain","gainMilliDb":-1000})")}, "user", "t");
+    const auto error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"master:master"});
+    REQUIRE(error->changedEntities().size() == 1);
+    CHECK(error->changedEntities()[0].change == DiffEntry::Change::added);
+
+    // A rename plan is not made stale by a master change either.
+    const std::string rename =
+        *store.submit(history, {cmd(R"({"op":"session.rename","name":"Again"})")}, {}, history.head().envelope.id)
+             .hashText;
+    history.commit({cmd(R"({"op":"master.set_gain","gainMilliDb":0})")}, "user", "t");
+    CHECK(store.validate(history, rename).empty());
+}
+
+// The rollback of a plan that removed the master puts it back (restoreEntity).
+TEST_CASE("Rolling back a plan that set the master back to 0 dB restores it", "[plan][master]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"master.set_gain","gainMilliDb":-4500})")}, "user", "t");
+    const auto withMaster = history.head().envelope.documentHash;
+    PlanStore store;
+    const std::string hash = appliedPlan(history, store, {cmd(R"({"op":"master.set_gain","gainMilliDb":0})")});
+    CHECK(history.head().document.master() == nullptr);
+    const Revision& inverse = store.rollback(history, hash, "user", "t");
+    CHECK(inverse.envelope.documentHash == withMaster);
+    REQUIRE(history.head().document.master() != nullptr);
+    CHECK(history.head().document.master()->gain.milliDb == -4500);
+}

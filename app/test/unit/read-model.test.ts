@@ -417,3 +417,71 @@ test('a media entity with or without a name is accepted and hashes as the fixtur
   assert.deepEqual(without.media.map((m) => m.name), [undefined, undefined]);
   assert.ok(without.media.every((m) => !Object.prototype.hasOwnProperty.call(m, 'name')));
 });
+
+// m5b-engine-master: the singleton master entity (present only while the master
+// gain is not 0 dB). Without it in the model, parseRef refused master:master
+// (invalid_ref) and the shell broke as soon as an agent set the master gain, as
+// it did for the locators.
+test('(e) master:master parses, syncs as one object and follows session.changed', async () => {
+  assert.deepEqual(parseRef('master:master'), { type: 'master', id: 'master' });
+
+  // The base session, its steps, the locators steps, then set, change and remove the master.
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  for (let i = 0; i < seq.steps.length; i += 1) await model.applyChanged(step(i).event, step(i).fetched);
+  for (const s of seq.locators.steps) {
+    await model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  }
+  assert.equal(model.getSnapshot()!.master, null);
+  const expected = [-6000, -3000, null];
+  seq.master.steps.forEach((s, i) => assert.equal(s.event.changedIds[0]!.ref, 'master:master', `step ${i}`));
+  for (let i = 0; i < seq.master.steps.length; i += 1) {
+    const s = seq.master.steps[i]!;
+    const snapshot = await model.applyChanged(
+      s.event as unknown as SessionChanged,
+      s.fetch.result.entities as unknown as FetchedEntity[],
+    );
+    assert.equal(snapshot.documentHash, s.documentHash, `step ${i}`);
+    const want = expected[i];
+    if (want !== null && want !== undefined) {
+      assert.equal(snapshot.master?.gainMilliDb, want, `step ${i}`);
+      assert.equal(snapshot.entities['master:master'], snapshot.master);
+    } else {
+      assert.equal(snapshot.master, null, `step ${i}`);
+      assert.equal(snapshot.entities['master:master'], undefined);
+    }
+  }
+
+  // A sync that holds the master, as the last chunk's single object.
+  const synced = await new ReadModel().fromSync(seq.master.sync as unknown as SyncChunk[]);
+  assert.equal(synced.documentHash, seq.master.steps[0]!.documentHash);
+  assert.deepEqual(synced.master, { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -6000 });
+  assert.ok(Object.keys(synced.entities).includes('master:master'));
+
+  // Both singletons, the master in a chunk after the locators.
+  const both = await new ReadModel().fromSync(seq.master.both.sync as unknown as SyncChunk[]);
+  assert.equal(both.documentHash, seq.master.both.documentHash);
+  assert.equal(both.master?.gainMilliDb, -6000);
+  assert.equal(both.locators?.left, '96000');
+});
+
+// The model fixture with the master hashes as the bridge says.
+test('the master model fixture syncs with its document hash', async () => {
+  const fixture = readFixture<{ document: Record<string, unknown>; entityHashes: readonly unknown[]; documentHash: string }>(
+    'model',
+    'session-document-v2-master.json',
+  );
+  const doc = fixture.document as unknown as SyncChunk['chunk'];
+  const chunk = {
+    revision: 'r7',
+    seq: '0',
+    documentHash: fixture.documentHash,
+    entities: fixture.entityHashes.length,
+    meters: null,
+    chunk: doc,
+    next: null,
+  } as unknown as SyncChunk;
+  const snapshot = await new ReadModel().fromSync([chunk]);
+  assert.equal(snapshot.documentHash, fixture.documentHash);
+  assert.equal(snapshot.master?.gainMilliDb, -6000);
+});
