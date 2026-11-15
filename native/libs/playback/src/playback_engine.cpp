@@ -206,8 +206,8 @@ detail::StreamKey streamKey(const engine::FlatTrack& flat) {
     detail::StreamKey key;
     key.channels = flat.track->channels;
     for (const engine::FlatClip& clip : flat.clips) {
-        key.clips.push_back(
-            detail::StreamClipKey{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, clip.media->contentHash});
+        key.clips.push_back(detail::StreamClipKey{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
+                                                  clip.media->contentHash, clip.fade});
     }
     return key;
 }
@@ -241,7 +241,7 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
                     found = readers.emplace(clip.media->contentHash, openReader(*clip.media, bundle)).first;
                 }
                 clips.push_back(realtime::StreamClip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
-                                                     found->second});
+                                                     found->second, clip.fade});
             }
             compiled.streams.push_back(
                 std::make_unique<realtime::DiskStream>(track.channels, std::move(clips), options.ringFrames));
