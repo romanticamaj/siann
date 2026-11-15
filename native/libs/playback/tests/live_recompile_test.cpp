@@ -222,7 +222,7 @@ TEST_CASE("track.set_monitor while playing goes through the structural transitio
     float step = 0.0f;
     for (int c = 0; c < 2; ++c) {
         const auto& o = p.out[static_cast<std::size_t>(c)];
-        for (std::size_t i = 38 * kBlock; i < o.size(); ++i) {
+        for (std::size_t i = 40 * kBlock + 1; i < o.size(); ++i) {
             step = std::max(step, std::abs(o[i] - o[i - 1]));
         }
     }

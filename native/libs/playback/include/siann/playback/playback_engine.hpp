@@ -51,6 +51,7 @@
 
 #include "siann/command/history.hpp"
 #include "siann/graph/graph.hpp"
+#include "siann/graph/nodes.hpp"
 #include "siann/host/interfaces.hpp"
 #include "siann/model/document.hpp"
 #include "siann/playback/plugin_instances.hpp"
@@ -174,6 +175,11 @@ struct OwnedStream {
 // synced with the document and each track's inserts go between its player and
 // its fader (a missing plugin passes through); the nodes' slots are pinned for
 // this graph (PluginInstanceTable::pinCompiled).
+//
+// m5b-engine-monitoring: a track whose monitor is not off starts its strip with
+// a MonitorInputNode (its mode, Track.input's channel map, options.fadeFrames)
+// and reaches the master over a low-latency edge. compileForPlayback gives it no
+// gate (auto never sees an arm); the PlaybackEngine gives it the track's gate.
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
                                     const PlaybackOptions& options, PluginInstanceTable* plugins = nullptr);
 
@@ -260,6 +266,11 @@ public:
 
     // Graphs compiled so far, the one load() publishes included.
     std::size_t compileCount() const noexcept { return compileCount_; }
+    // m5b-engine-monitoring, control side: the track's monitor gate, made on first
+    // use and kept for the engine's life. Every graph compiled here hands it to
+    // the track's MonitorInputNode; the engine host arms it and binds it to the
+    // track's capture bank slot.
+    graph::MonitorGate& monitorGate(const std::string& trackId);
     // The stream of a track in the most recently published graph, or nullptr.
     const realtime::DiskStream* streamFor(const std::string& trackId) const noexcept;
 
@@ -295,6 +306,9 @@ private:
 
     session::Session& session_;
     PlaybackOptions options_;
+    // m5b-engine-monitoring: one monitor gate per track, kept for the engine's
+    // life (graphs and the capture bank point at them). Before the driver.
+    std::map<std::string, std::unique_ptr<graph::MonitorGate>> gates_;
     // Before the driver, whose retire callback releases its pins.
     PluginInstanceTable plugins_;
     // Declared before the butler and the driver: both refer to the streams,
