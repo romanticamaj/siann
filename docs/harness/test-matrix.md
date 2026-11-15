@@ -163,7 +163,47 @@ the realtime tests; 9 none (no UI).
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
-| m5b-engine-monitoring | Y (`document_test`/`commands_test` `track.set_monitor`, `plan_hash_test` set_monitor fixture, `graph_test` `[monitor]`, `monitoring_test`, `recording_test` loopback offset per mode, `live_recompile_test` set_monitor transition, `engine_record_test` round trip and stopped meter, `record_methods_test`, `mcp_adapter_test`) | Y (`monitoring_test` and `live_recompile_test` with `siann_rt_alloc_guard`) | | Y (`plan-hash` fixture parity; app unit `capabilities`, `i18n-describe`) | 3 | - (no UI: the monitor buttons come with `m5b-ui-recording`; tour states changed: none) |
+| m5b-engine-monitoring | Y (`document_test`/`commands_test`/`history_test` `track.set_monitor`, `plan_hash_test` set_monitor fixture, `graph_test` `[monitor]`, `monitoring_test`, `engine_record_test` loopback offset per mode (plain and latent insert), round trip and stopped meter, `live_recompile_test` set_monitor transition, `record_methods_test`, `transport_methods_test` engine.status keys, `mcp_adapter_test`) | Y (`monitoring_test` and `live_recompile_test` with `siann_rt_alloc_guard`) | | Y (`plan-hash` fixture parity; app unit `capabilities`, `i18n-describe`) | 3 | - (no UI: the monitor buttons come with `m5b-ui-recording`; tour states changed: none) |
+
+Per acceptance item (`m5b-engine-monitoring`): 1 `document_test` "A track's
+monitor round-trips and is omitted while off"; `commands_test` "track.set_monitor
+sets each mode and declares only the track", "track.set_monitor refuses another
+value, a bad field and an unknown track"; `history_test` "track.set_monitor is
+one revision each; undo restores the mode before it"; `plan_hash_test` "The
+track_monitor_steps fixture prepares as track.set_monitor" and Node `plan-hash`
+fixture parity over `fixtures/plan/plan-hash.json` (`track_monitor_steps`);
+`graph_test` "MonitorInputNode passes the mapped input when open and its port 0
+when closed", "A stopped context silences the clip player"; `monitoring_test`
+"Input monitoring reaches the output in the same callback, stopped and playing",
+"Auto monitoring follows the bank's gate: stopped and armed, or capturing", "A
+start through pushLocate keeps monitored input at full level and raises the
+clips", "A stopped monitoring graph publishes its meters; a graph without one
+stays idle"; `engine_record_test` "auto monitoring follows arming: the input
+while stopped and armed", "a monitored track's meter shows its input while the
+transport is stopped"; `mcp_adapter_test` "execute carries track.set_monitor;
+list_commands names it and no tool is added"; app unit `i18n-describe` (the plan
+card wording in en, zh-Hant and zh-Hans). 2 `graph_test` "Monitored input
+bypasses compensation; the same track's clips stay aligned", "startEdges marks
+the edges leaving a source, in compile and recompile"; `monitoring_test` "The
+monitored round trip is the device terms plus the monitored path", "Through
+device-side SRC the monitored input arrives after exactly the reported terms";
+`engine_record_test` "engine.status reports the monitored round trip, null
+without an input"; `record_methods_test` "engine.status carries
+monitorRoundTripFrames, null without an input"; `transport_methods_test` (the
+engine.status keys). 3 `engine_record_test` "a take recorded while monitoring
+lands within one sample in every mode" (GENERATE over off, auto and input) and
+"a take recorded through a latent insert on the monitored path lands where it
+was played" (the same GENERATE over off, auto and input; the monitored round trip
+leaves the other track's insert out). 4 `live_recompile_test` "track.set_monitor
+while playing goes through the structural transition without a step"; `graph_test`
+"Flipping the monitor gate mid-run crossfades without a step"; `monitoring_test`
+"Gate flips and a publish while monitoring allocate nothing on the audio thread"
+(with `siann_rt_alloc_guard`); `record_methods_test` "engine.capabilities lists
+track.set_monitor and features.monitoring"; app unit `capabilities`
+(`capabilities-full.json`); tour states changed: none (no UI).
+
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
 | m5b-engine-master | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `master_session_test`, `master_methods_test`, `gesture_methods_test`, `mcp_adapter_test`, `playback_test`, `audition_test`, `click_test`, `offline_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a master gesture) | | Y (`fixture-parity`, `read-model-fixtures`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the master strip stays a meter until `m5b-ui-inserts-master`; tour states changed: none) |
 
 Per acceptance item (`m5b-engine-master`): 1 `document_test` "The master
