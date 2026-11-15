@@ -998,7 +998,7 @@ TEST_CASE("A bundle whose journal and checkpoint are literal pre-fade text opens
             OpenReport report;
             Session session = Session::open(dir.bundle(), &report);
             CHECK(report.checkpointVerified == withCheckpoint);
-            CHECK(report.recordsReplayed == (withCheckpoint ? 0 : 3));
+            CHECK(report.recordsReplayed == 3);  // the journal is replayed and checked either way
             const auto& head = session.history().head();
             CHECK(head.envelope.id == "r3");
             CHECK(siann::hash::formatHash(head.document.documentHash()) == kPreFadeHash);
