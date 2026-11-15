@@ -53,7 +53,7 @@ async function facesOf(cdp: CDPSession, selector: string): Promise<PlatformFont[
 // The PostScript names of the bundled faces used for the node's digits.
 async function monoFaces(cdp: CDPSession, selector: string): Promise<string[]> {
   const fonts = await facesOf(cdp, selector);
-  return fonts.filter((font) => font.familyName === 'JetBrains Mono').map((font) => font.postScriptName ?? font.familyName);
+  return fonts.filter((font) => font.familyName.startsWith('JetBrains Mono')).map((font) => font.postScriptName ?? font.familyName);
 }
 
 async function cdpFor(page: Page): Promise<CDPSession> {
@@ -105,7 +105,7 @@ test('in the app, weight 500 of JetBrains Mono is the Medium face, 400 the Regul
   expect(await monoFaces(cdp, '.lcd .val')).toEqual(['JetBrainsMono-Medium']);
   expect(await monoFaces(cdp, '.statusbar [data-part="status-about"] .mono')).toEqual(['JetBrainsMono-Medium']);
   expect(await monoFaces(cdp, '#font-probe-400')).toEqual(['JetBrainsMono-Regular']);
-  for (const font of await facesOf(cdp, '.lcd .val')) if (font.familyName === 'JetBrains Mono') expect(font.isCustomFont).toBe(true);
+  for (const font of await facesOf(cdp, '.lcd .val')) if (font.familyName.startsWith('JetBrains Mono')) expect(font.isCustomFont).toBe(true);
   expect(await monoWeights(page)).toEqual([]);
 });
 

@@ -53,7 +53,7 @@ test.beforeEach(async () => {
   // NotFoundError before any permission is asked (CI runners have none).
   app = await launchElectron({ args: ['--use-fake-device-for-media-stream', MAIN], cwd: APP_DIR, env });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
 });
 
 test.afterEach(async () => {
@@ -246,7 +246,7 @@ test('no devtools and no reload: the menu, the preference and the keys', async (
   await press('R', ['control', 'shift']);
   await expect.poll(keys).toEqual(expect.arrayContaining(['F12', 'I', 'F5']));
   await expect.poll(async () => (await keys()).filter((key) => key.toLowerCase() === 'r').length).toBe(2);
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   expect(await page.evaluate(() => (window as unknown as { __marker?: number }).__marker)).toBe(1);
   await expect(page.getByTestId('connections')).toHaveText(connections ?? '');
   expect(
@@ -288,7 +288,7 @@ test('window.open is denied, and navigation stays under siann://app/', async () 
   await page.evaluate(() => location.assign('siann://app/index.html?nav=1')).catch(() => undefined);
   await page.waitForURL('siann://app/index.html?nav=1');
   expect(await navigations()).toContain('siann://app/index.html?nav=1');
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
 });
 
 test("the CSP lets the renderer reach only 127.0.0.1: another origin's fetch is blocked", async () => {

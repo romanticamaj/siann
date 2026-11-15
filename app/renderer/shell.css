@@ -279,12 +279,13 @@ code, dd { font-family: var(--font-mono); }
 /* ---- dividers: a 1 px line over the edge of its zone's cell, a 7 px hit
    area; positioned in the grid, so they add no grid item. */
 .divider {
-  position: absolute;
+  position: relative;
   background: var(--divider);
   outline: none;
   z-index: 2;
   touch-action: none;
 }
+.divider-left, .divider-right, .divider-lower { position: absolute; }
 .divider-left { grid-column: 1; grid-row: -3 / -2; top: 0; bottom: 0; right: 0; width: var(--divider-w); cursor: ew-resize; }
 .divider-right { grid-column: 3; grid-row: -3 / -2; top: 0; bottom: 0; left: 0; width: var(--divider-w); cursor: ew-resize; }
 .divider-lower { grid-row: 2; grid-column: 1; top: 0; left: 0; right: 0; height: var(--divider-w); cursor: ns-resize; }

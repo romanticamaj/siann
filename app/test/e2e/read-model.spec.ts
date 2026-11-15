@@ -125,7 +125,7 @@ async function execute(command: Record<string, unknown>): Promise<string> {
 }
 
 async function synced(): Promise<void> {
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('revision')).toHaveText(/^r\d+$/);
   await expect(page.getByTestId('sync-count')).toHaveText('1');
   await expect(page.getByTestId('track-count')).toHaveText('0');
@@ -166,7 +166,7 @@ test('a restarted engine is recovered through session.sync against the durable j
   await expect.poll(async () => isAlive(firstPid!)).toBe(false);
   await expect.poll(enginePid).not.toBe(firstPid);
   await expect.poll(enginePid).not.toBeNull();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('session-id')).toHaveText(/^ses_[0-9a-f]+$/);
   await expect(page.getByTestId('session-id')).not.toHaveText(firstSession);
   await expect.poll(async () => Number(await page.getByTestId('sync-count').textContent())).toBeGreaterThan(syncsBefore);

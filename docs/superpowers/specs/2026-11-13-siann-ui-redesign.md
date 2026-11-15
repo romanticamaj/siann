@@ -1107,7 +1107,7 @@ Every region and key component has a stable id, the same in the mockup and in th
 
 | Gate | Mode today | Parts |
 |---|---|---|
-| `m5-ui-alignment-chrome` | report | Top bar and status bar: session name, undo and redo, transport and displays (position, time, locators, tempo), cycle and metronome, the left, lower and right zone buttons, Plans button, every status bar item |
+| `m5-ui-alignment-chrome` | enforce | Top bar and status bar: session name, undo and redo, transport and displays (position, time, locators, tempo), cycle and metronome, the left, lower and right zone buttons, Plans button, every status bar item |
 | `m5-ui-alignment-arrange` | report | Project zone: tools 1 and 3, snap, grid type, auto-scroll, info line, track list and headers, ruler, lanes, clips, locator band, cursor |
 | `m5-ui-alignment-mixer-inspector` | report | Left and lower zones: Inspector basics, MixConsole strips and the master meter |
 | `m5-ui-alignment-plans` | report | Right zone: the Plans tab and its card |

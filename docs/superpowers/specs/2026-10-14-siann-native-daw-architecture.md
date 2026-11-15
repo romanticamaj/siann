@@ -3497,7 +3497,7 @@ before adoption, including transitive dependencies.
 | Electron shell tests | Playwright (`@playwright/test`, Electron driver), pinned | Apache-2.0 |
 | Frontend language | TypeScript, pinned | Apache-2.0 |
 | Frontend framework and bundler | React 19 with react-dom, esbuild, pinned by `m5-read-model` (ADR-0019) | MIT |
-| Resizable zones | react-resizable-panels 4.x, pinned by `m5-ui-shell` (ADR-0019 point 5) | MIT, no runtime dependencies |
+| Resizable zones | the app's own: the zones are the mockup's CSS grid (`app/renderer/ui/layout.css`), sized from the layout store, with SIANN's dividers; react-resizable-panels (pinned by `m5-ui-shell`) left with `m5-ui-alignment-chrome`, because its wrappers cannot sit between the grid and its regions | none |
 | UI fonts | Inter, JetBrains Mono (`.woff2` in `app/renderer/fonts`, licence texts beside them), pinned releases | OFL-1.1; bundling allowed, the fonts stay under OFL |
 
 Not used: Taskflow (allocates at runtime).
@@ -3576,7 +3576,7 @@ Not used: Taskflow (allocates at runtime).
   notices, CLAP, IXWebSocket, r8brain and dr_libs; for the renderer, the OFL
   texts of Inter and JetBrains Mono and the MIT notice of every npm package
   `app/package-lock.json` installs for run time (React, react-dom, its
-  scheduler, react-resizable-panels; esbuild bundles them into `app.asar`), as
+  scheduler; esbuild bundles them into `app.asar`), as
   `<package>-LICENSE.txt`. Electron's `LICENSE.electron.txt` and
   `LICENSES.chromium.html` sit beside `SIANN.exe`. electron-builder's
   `elevate.exe` is not packed (`nsis.packElevateHelper` false: the per-user

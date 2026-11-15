@@ -72,7 +72,7 @@ test.afterEach(async () => {
 
 test('the renderer connects with the token handshake', async () => {
   expect(page.url()).toMatch(/^siann:\/\/app\//);
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('session-id')).toHaveText(/^ses_[0-9a-f]+$/);
   await expect(page.getByTestId('revision')).toHaveText(/^r\d+$/);
   await expect(page.getByTestId('about')).toContainText('siann-engine');
@@ -105,7 +105,7 @@ test('the renderer connects with the token handshake', async () => {
 });
 
 async function killEngineAndExpectReconnect(): Promise<void> {
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const firstSession = await page.getByTestId('session-id').textContent();
   const firstPid = await enginePid();
   expect(firstPid).not.toBeNull();
@@ -116,10 +116,10 @@ async function killEngineAndExpectReconnect(): Promise<void> {
     const status = document.querySelector('[data-testid="status"]')!;
     const seen: string[] = [];
     (window as unknown as { __statuses: string[] }).__statuses = seen;
-    new MutationObserver(() => seen.push(status.textContent ?? '')).observe(status, {
-      childList: true,
-      characterData: true,
-      subtree: true,
+    // The connection state as the status bar carries it (its words are the mockup's).
+    new MutationObserver(() => seen.push(status.getAttribute('data-status') ?? '')).observe(status, {
+      attributes: true,
+      attributeFilter: ['data-status'],
     });
   });
 
@@ -131,7 +131,7 @@ async function killEngineAndExpectReconnect(): Promise<void> {
     .toContain('disconnected');
   await expect.poll(enginePid).not.toBe(firstPid);
   await expect.poll(enginePid).not.toBeNull();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   // A new engine with a new per-launch token was accepted: the shell handed
   // the renderer the new pair.
   await expect(page.getByTestId('session-id')).toHaveText(/^ses_[0-9a-f]+$/);
@@ -139,6 +139,52 @@ async function killEngineAndExpectReconnect(): Promise<void> {
   const statuses = await page.evaluate(() => (window as unknown as { __statuses: string[] }).__statuses);
   expect(statuses.indexOf('disconnected')).toBeLessThan(statuses.lastIndexOf('connected'));
 }
+
+// m5-ui-alignment-chrome: the page takes ui/base.css's text styles, and the
+// zones not ported yet keep the ones they had (the old page rule: line height
+// --line-height, no letter spacing, tabular numerals, no font features), so
+// the regions look as they did until their alignment features port them. An
+// element of a zone that sets one of these itself keeps its own value; every
+// other inherits the zone's. The zone buttons are the mockup's icon buttons,
+// named by their aria-label.
+test('the zones not ported yet keep their text styles; the chrome takes the mockup\'s', async () => {
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const styles = await page.evaluate(() => {
+    const pick = (el: Element) => {
+      const s = getComputedStyle(el);
+      return { ls: s.letterSpacing, lh: s.lineHeight, fs: parseFloat(s.fontSize), fvn: s.fontVariantNumeric, ffs: s.fontFeatureSettings };
+    };
+    const lineHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--line-height'));
+    const zones = ['left', 'project', 'lower', 'right'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
+    // Inherited values: the zone's own, through every element that does not set them.
+    const offenders: string[] = [];
+    for (const zone of document.querySelectorAll('[data-zone]')) {
+      for (const el of zone.querySelectorAll('*')) {
+        const s = pick(el);
+        if (s.ls !== 'normal' && s.ls !== '0px') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} letter-spacing ${s.ls}`);
+        if (s.ffs !== 'normal') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} font-feature-settings ${s.ffs}`);
+      }
+    }
+    return { zones, lineHeight, offenders, body: pick(document.body) };
+  });
+  for (const zone of styles.zones) {
+    expect(zone.ls, zone.zone).toBe('normal');
+    expect(zone.ffs, zone.zone).toBe('normal');
+    expect(zone.fvn, zone.zone).toBe('tabular-nums');
+    expect(parseFloat(zone.lh), zone.zone).toBeCloseTo(zone.fs * styles.lineHeight, 1);
+  }
+  expect(styles.offenders).toEqual([]);
+  // The chrome: ui/base.css's page.
+  expect(styles.body.ffs).not.toBe('normal');
+  expect(styles.body.ls).not.toBe('normal');
+  // The zone buttons: icon buttons with names.
+  for (const zone of ['left', 'lower', 'right']) {
+    const button = page.getByTestId(`zone-button-${zone}`);
+    await expect(button).toHaveClass(/\biconbtn\b/);
+    await expect(button).toHaveAttribute('aria-label', /\S/);
+    await expect(button).toHaveText('');
+  }
+});
 
 test('a killed engine is restarted and the renderer reconnects', async () => {
   await killEngineAndExpectReconnect();
@@ -203,7 +249,7 @@ test('an engine relaunched after a crash reopens a device that was still held', 
 });
 
 test('quitting the app ends the engine', async () => {
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const pid = await enginePid();
   expect(pid).not.toBeNull();
   expect(isAlive(pid!)).toBe(true);
@@ -216,7 +262,7 @@ test('quitting the app ends the engine', async () => {
 // The engine's death alone cannot show that quit stopped it: children die with
 // Electron on Windows, and stdin EOF ends the engine on POSIX. The order can.
 test('quitting stops the engine first and only then quits', async () => {
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const orderFile = path.join(sessionDir, 'quit-order.log');
   await app.evaluate(({ app: electronApp }, file) => {
     const write = (line: string) => process.getBuiltinModule('node:fs').appendFileSync(file, `${line}\n`);

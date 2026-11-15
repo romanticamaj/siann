@@ -148,7 +148,7 @@ test('the zones keep their ids, focus attributes and dividers, positioned out of
     assert.match(divider, /aria-valuenow="\d+"/);
   }
   const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');
-  assert.match(css, /\.divider\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /\.divider-left, \.divider-right, \.divider-lower \{ position: absolute; \}/);
   // The dependency is gone.
   const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { dependencies: Record<string, string> };
   assert.ok(!('react-resizable-panels' in pkg.dependencies));
