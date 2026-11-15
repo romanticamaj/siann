@@ -13,6 +13,12 @@
 // its recorder is handed the slot's channels (it keeps them only while it
 // records and the transport plays). A map that reaches past the device's input
 // channels is skipped.
+//
+// Monitoring (m5b-engine-monitoring): a slot can be bound to a track's monitor
+// gate; every block the bank writes the gate's `capturing` (the slot's recorder
+// records, the transport plays and the map reaches the input), so auto
+// monitoring follows the capture at the block it starts. The gate's `armed` is
+// the engine host's.
 
 #include <array>
 #include <atomic>
@@ -21,6 +27,7 @@
 #include <memory>
 #include <vector>
 
+#include "siann/graph/nodes.hpp"
 #include "siann/host/buffer.hpp"
 #include "siann/realtime/recorder.hpp"
 
@@ -58,6 +65,9 @@ public:
     bool armed(std::size_t slot) const noexcept;
     Recorder& recorder(std::size_t slot) noexcept { return slots_[slot]->recorder; }
     InputMeterReading meter(std::size_t slot) const noexcept;
+    // Control side, any time: the gate this slot writes `capturing` into (nullptr:
+    // none). The gate must outlive the binding.
+    void bindMonitorGate(std::size_t slot, graph::MonitorGate* gate) noexcept;
 
     // Audio thread: one input block stamped with its timeline position.
     void process(const host::AudioBufferView& input, std::int64_t timelinePosition, bool playing) noexcept;
@@ -72,6 +82,7 @@ private:
         std::array<std::atomic<float>, kMaxChannels> peak{};
         std::array<std::atomic<float>, kMaxChannels> rms{};
         std::atomic<std::uint64_t> blocks{0};
+        std::atomic<graph::MonitorGate*> gate{nullptr};
     };
 
     std::vector<std::unique_ptr<Slot>> slots_;

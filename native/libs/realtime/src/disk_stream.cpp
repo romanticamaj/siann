@@ -120,6 +120,12 @@ bool StreamingPlayerNode::follow() noexcept {
 void StreamingPlayerNode::process(const graph::ProcessContext& context, std::span<const graph::AudioBufferView>,
                                   const graph::AudioBufferView& output) noexcept {
     const auto frames = static_cast<std::size_t>(context.frames);
+    if (!context.rolling) {
+        // Stopped (a monitoring graph runs): silence, and the stream keeps its
+        // position, so the next rolling block continues where playback stopped.
+        output.clear();
+        return;
+    }
     // A graph published on the prefill timeout may reach a stream the butler
     // has not taken yet; its audio-side fields belong to the butler until then.
     if (!stream_.ready()) {

@@ -55,7 +55,21 @@
 // input is stamped with the playhead-equivalent position (the timeline
 // position the output path reached for the matching device sample plus the
 // reported SRC latency), which keeps the record offset exact.
+//
+// Monitoring (m5b-engine-monitoring; spec, "Latency model" and "Recording"):
+// each callback's input reaches the graph in ProcessContext::input, aligned
+// with the block it renders. On the direct path that is the callback's own
+// input, so a monitored input leaves in the same callback. Through SRC the
+// resampled input goes through a FIFO primed with srcMonitorFifoFrames of
+// silence (enough for the steps to run ahead of the input resampler by up to
+// one block and its lookahead) and each step takes one block from it; the
+// FIFO's frames are part of the monitored round trip and nothing of the
+// recorder's stamps. A live graph that monitors (PreparedGraph::monitors()) is
+// processed while the transport is stopped too, with rolling false: the
+// playhead does not move, its meters publish and the click stays off. A graph
+// without one is not processed while stopped.
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <chrono>
@@ -175,6 +189,14 @@ struct LatencyReport {
     std::int64_t monitoredPathLatencyFrames = 0;
     // A captured block stamped t lands at t - recordOffsetFrames.
     std::int64_t recordOffsetFrames = 0;
+    // m5b-engine-monitoring. The FIFO carrying the resampled input to the
+    // graph's blocks through SRC (0 on the direct path or without an input).
+    std::int64_t srcMonitorFifoFrames = 0;
+    // The live graph's slowest monitoring path (PreparedGraph::monitorPathLatency).
+    std::int64_t monitorInputPathFrames = 0;
+    // What a monitored input takes from the device input to the device output:
+    // the device terms, the SRC terms with the FIFO, and monitorInputPathFrames.
+    std::int64_t monitorRoundTripFrames = 0;
 };
 
 // One parameter change for the audio thread (revision 3.1, "Two channels into
@@ -367,6 +389,8 @@ public:
     // Device frames the SRC path could not fill (output as silence). This is SRC
     // underfill, reported as `srcUnderruns`; it is not an xrun (deadline miss).
     std::uint64_t srcUnderruns() const noexcept { return srcUnderruns_.load(std::memory_order_acquire); }
+    // Session frames the monitoring FIFO could not give a step (fed as silence).
+    std::uint64_t srcMonitorUnderruns() const noexcept { return srcMonitorUnderruns_.load(std::memory_order_acquire); }
 
     // Every device callback since start(), timed around process(): callbacks,
     // deadline misses (the spec's xruns, reported as `xruns`) and the longest
@@ -399,6 +423,8 @@ private:
     void processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
                           bool playing) noexcept;
     void srcStep(bool playing) noexcept;
+    void pushMonitor(const host::AudioBufferView& resampled) noexcept;
+    host::AudioBufferView takeMonitorBlock() noexcept;
     void setUpResampling(const host::AudioDeviceConfig& config);
     void drainParams() noexcept;
     void pushMeters(std::int64_t position, int frames) noexcept;
@@ -423,6 +449,12 @@ private:
     LatencyReport latency_{};
     std::unique_ptr<SrcPath> src_;  // built by start() when the rates differ
     std::atomic<std::uint64_t> srcUnderruns_{0};
+    std::atomic<std::uint64_t> srcMonitorUnderruns_{0};
+    // Audio side: the input aligned with the buffer renderBlock() fills (no
+    // channels without one), and the per-span view of it.
+    static constexpr int kMaxRenderInputChannels = 64;
+    host::AudioBufferView renderInput_{};
+    std::array<float*, kMaxRenderInputChannels> renderInputPointers_{};
     rt::CallbackTimer timing_;
 
     // Control side: every graph this driver owns, by epoch.

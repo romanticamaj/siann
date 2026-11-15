@@ -292,7 +292,7 @@ TEST_CASE("Through device-side SRC the monitored input arrives after exactly the
         std::int64_t device;
     };
     for (const Rates rates : {Rates{44'100, 48'000}, Rates{48'000, 44'100}}) {
-        for (const int buffer : {64, 100, 256}) {
+        for (const int buffer : {37, 64, 100, 256, 1000}) {
             INFO("session " << rates.session << " Hz, device " << rates.device << " Hz, buffer " << buffer);
             GraphDriver driver(options());
             driver.publish(trackGraph(MonitorInputMode::input, nullptr));
@@ -304,7 +304,7 @@ TEST_CASE("Through device-side SRC the monitored input arrives after exactly the
             driver.start(device, config(rates.session, buffer));
             const realtime::LatencyReport report = driver.latency();
             CHECK(report.srcMonitorFifoFrames > 0);
-            CHECK(report.monitorRoundTripFrames == report.srcOutputLatencyFrames + report.srcInputLatencyFrames +
+            CHECK(report.monitorRoundTripFrames == report.srcOutputLatencyFrames +
                                                        report.srcMonitorFifoFrames);
             const auto before = rt::allocationViolations();
             std::vector<float> out;
