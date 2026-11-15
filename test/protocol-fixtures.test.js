@@ -38,6 +38,60 @@ test('the schema doc states the layout the fixture uses', () => {
   }
 });
 
+// m5b-engine-load-loudness (Protocol v0 item 30): the loudness frame "SLUD".
+const loudness = JSON.parse(fs.readFileSync(generator.LOUDNESS_FIXTURE_FILE, 'utf8'));
+
+test('the loudness-frame fixture matches its Node generator', () => {
+  assert.deepEqual(loudness, generator.buildLoudnessFixture());
+});
+
+test('every loudness frame is 25 bytes per the documented layout, one of them minus infinity', () => {
+  assert.equal(loudness.frameBytes, 25);
+  assert.ok(loudness.loudnessFrames.length >= 3);
+  const value = (v) => (v === '-Infinity' ? -Infinity : v);
+  let infinity = false;
+  for (const { name, frame, hex } of loudness.loudnessFrames) {
+    const bytes = Buffer.from(hex, 'hex');
+    assert.equal(bytes.length, 25, `${name}: length`);
+    assert.equal(bytes.toString('ascii', 0, 4), 'SLUD', name);
+    assert.equal(bytes[4], 1, `${name}: version`);
+    assert.equal(bytes.readBigInt64LE(5).toString(), frame.engineTimestampMicros, `${name}: timestamp`);
+    assert.equal(bytes.readFloatLE(13), value(frame.momentary), `${name}: momentary`);
+    assert.equal(bytes.readFloatLE(17), value(frame.shortTerm), `${name}: shortTerm`);
+    assert.equal(bytes.readFloatLE(21), value(frame.integrated), `${name}: integrated`);
+    for (const v of [frame.momentary, frame.shortTerm, frame.integrated]) {
+      if (v === '-Infinity') {
+        infinity = true;
+      }
+    }
+    assert.deepEqual(generator.decodeLoudnessFrame(bytes), frame, name);
+  }
+  assert.ok(infinity, 'a frame carries minus infinity');
+  const silent = loudness.loudnessFrames.find((f) => f.frame.integrated === '-Infinity');
+  assert.equal(silent.hex.slice(42), '000080ff', 'minus infinity is the f32 bytes 00 00 80 ff');
+});
+
+test('the loudness frame is not a meter frame, and malformed loudness frames are rejected', () => {
+  const good = Buffer.from(loudness.loudnessFrames[0].hex, 'hex');
+  assert.throws(() => generator.decodeFrame(good));
+  assert.throws(() => generator.decodeLoudnessFrame(good.subarray(0, 24)));
+  assert.throws(() => generator.decodeLoudnessFrame(Buffer.concat([good, Buffer.from([0])])));
+  const badMagic = Buffer.from(good);
+  badMagic[0] = 0x58;
+  assert.throws(() => generator.decodeLoudnessFrame(badMagic));
+  const badVersion = Buffer.from(good);
+  badVersion[4] = 2;
+  assert.throws(() => generator.decodeLoudnessFrame(badVersion));
+});
+
+test('the schema doc states the loudness layout the fixture uses', () => {
+  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'schemas', 'protocol-events-v1.md'), 'utf8');
+  for (const row of ['| 0 | 4 | magic `"SLUD"` |', '| 5 | 8 | i64 engineTimestampMicros (the meter frame\'s) |',
+    '| 13 | 4 | f32 momentary (LUFS, 400 ms) |', '| 17 | 4 | f32 shortTerm (LUFS, 3 s) |']) {
+    assert.ok(doc.includes(row), `doc row ${row}`);
+  }
+});
+
 test('malformed frames are rejected by the reference decoder', () => {
   const good = Buffer.from(fixture.meterFrames[0].hex, 'hex');
   assert.throws(() => generator.decodeFrame(good.subarray(0, good.length - 1)));

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -601,4 +602,139 @@ TEST_CASE("the meter legend lists every bus as bus:<id> in key order", "[protoco
     }
     CHECK(legend == std::vector<std::string>{"bus:b1", "bus:b2", "master", "track:trk_1"});
     CHECK(publisher.legend() == legend);
+}
+
+// ---- the loudness frame (m5b-engine-load-loudness, Protocol v0 item 30) ---------
+
+namespace {
+
+float fixtureValue(const Value& value) {
+    if (value.kind() == Value::Kind::string) {
+        REQUIRE(value.asString() == "-Infinity");
+        return -std::numeric_limits<float>::infinity();
+    }
+    return static_cast<float>(value.asNumber());
+}
+
+bool sameFloat(float a, float b) {
+    return a == b || (std::isinf(a) && std::isinf(b) && (a < 0) == (b < 0));
+}
+
+}  // namespace
+
+TEST_CASE("loudness frames match the shared fixture byte for byte", "[protocol][realtime][loudness]") {
+    std::ifstream in(std::string(SIANN_FIXTURES_DIR) + "/protocol/loudness-frames.json", std::ios::binary);
+    REQUIRE(in.good());
+    std::stringstream text;
+    text << in.rdbuf();
+    const Value fixture = json::parse(text.str());
+    CHECK(at(fixture, "frameBytes").asNumber() == static_cast<double>(protocol::kLoudnessFrameBytes));
+    const auto& frames = at(fixture, "loudnessFrames").asArray();
+    REQUIRE(frames.size() >= 3);
+    bool sawInfinity = false;
+    for (const auto& item : frames) {
+        INFO(at(item, "name").asString());
+        const Value& spec = at(item, "frame");
+        protocol::LoudnessFrame frame;
+        frame.engineTimestampMicros = std::stoll(at(spec, "engineTimestampMicros").asString());
+        frame.momentary = fixtureValue(at(spec, "momentary"));
+        frame.shortTerm = fixtureValue(at(spec, "shortTerm"));
+        frame.integrated = fixtureValue(at(spec, "integrated"));
+        sawInfinity = sawInfinity || std::isinf(frame.integrated) || std::isinf(frame.momentary);
+        const std::string bytes = fromHex(at(item, "hex").asString());
+        REQUIRE(bytes.size() == protocol::kLoudnessFrameBytes);
+        CHECK(protocol::encodeLoudnessFrame(frame) == bytes);
+        const auto decoded = protocol::decodeLoudnessFrame(bytes);
+        REQUIRE(decoded.has_value());
+        CHECK(decoded->engineTimestampMicros == frame.engineTimestampMicros);
+        CHECK(sameFloat(decoded->momentary, frame.momentary));
+        CHECK(sameFloat(decoded->shortTerm, frame.shortTerm));
+        CHECK(sameFloat(decoded->integrated, frame.integrated));
+        CHECK(protocol::encodeLoudnessFrame(*decoded) == bytes);
+
+        // Malformed: length, magic, version. Neither decoder takes the other's frame.
+        CHECK_FALSE(protocol::decodeLoudnessFrame(bytes.substr(0, bytes.size() - 1)).has_value());
+        CHECK_FALSE(protocol::decodeLoudnessFrame(bytes + std::string(1, '\0')).has_value());
+        std::string badMagic = bytes;
+        badMagic[0] = 'X';
+        CHECK_FALSE(protocol::decodeLoudnessFrame(badMagic).has_value());
+        std::string badVersion = bytes;
+        badVersion[4] = 2;
+        CHECK_FALSE(protocol::decodeLoudnessFrame(badVersion).has_value());
+        CHECK_FALSE(protocol::decodeMeterFrame(bytes).has_value());
+    }
+    CHECK(sawInfinity);
+    // A meter frame is not a loudness frame.
+    CHECK_FALSE(protocol::decodeLoudnessFrame(protocol::encodeMeterFrame(MeterFrame{})).has_value());
+}
+
+TEST_CASE("the publisher sends SMTR then SLUD per tick with a subscriber", "[protocol][realtime][loudness]") {
+    Rig rig;
+    Fixture f;
+    const ConnectionId rt = f.realtimeAuthed();
+    int reads = 0;
+    MeterPublisher::Options options = publisherOptions(rig);
+    options.loudness = [&reads] {
+        ++reads;
+        return protocol::LoudnessReading{-23.5f, -24.25f, -std::numeric_limits<float>::infinity()};
+    };
+    MeterPublisher publisher(rig.dispatcher, f.server.realtime(), f.server.events(), options);
+    publisher.graphPublished(rig.epoch, rig.meterSlots);
+    rig.pump(2);
+
+    // The SMTR frame is the one a publisher without loudness sends.
+    MeterPublisher plain(rig.dispatcher, f.server.realtime(), f.server.events(), publisherOptions(rig));
+    plain.graphPublished(rig.epoch, rig.meterSlots);
+    REQUIRE(plain.tick());
+    REQUIRE(f.transport.binary(rt).size() == 1);
+    const std::string meterOnly = f.transport.binary(rt)[0];
+
+    REQUIRE(publisher.tick());
+    const auto frames = f.transport.binary(rt);
+    REQUIRE(frames.size() == 3);
+    CHECK(frames[1] == meterOnly);
+    CHECK(frames[1].substr(0, 4) == "SMTR");
+    REQUIRE(frames[2].size() == 25);
+    CHECK(frames[2].substr(0, 4) == "SLUD");
+    // The documented layout, read byte by byte.
+    Reader r{frames[2], 4};
+    CHECK(r.unsignedValue(1) == 1);
+    CHECK(r.signed64() == kNow);
+    CHECK(r.f32() == -23.5f);
+    CHECK(r.f32() == -24.25f);
+    const float integrated = r.f32();
+    CHECK((std::isinf(integrated) && integrated < 0));
+    CHECK(frames[2].substr(21) == std::string("\x00\x00\x80\xff", 4));
+    CHECK(reads == 1);
+
+    REQUIRE(publisher.tick());
+    CHECK(f.transport.binary(rt).size() == 5);
+    CHECK(reads == 2);
+}
+
+TEST_CASE("with no subscriber the publisher never reads the loudness and sends no frame",
+          "[protocol][realtime][loudness]") {
+    Rig rig;
+    Fixture f;
+    int reads = 0;
+    MeterPublisher::Options options = publisherOptions(rig);
+    options.loudness = [&reads] {
+        ++reads;
+        return protocol::LoudnessReading{-20.0f, -20.0f, -20.0f};
+    };
+    MeterPublisher publisher(rig.dispatcher, f.server.realtime(), f.server.events(), options);
+    publisher.graphPublished(rig.epoch, rig.meterSlots);
+    rig.pump(2);
+    for (int i = 0; i < 5; ++i) {
+        publisher.tick();
+    }
+    CHECK(reads == 0);
+
+    // A subscriber arrives: from the next tick on it gets both frames.
+    const ConnectionId rt = f.realtimeAuthed();
+    REQUIRE(publisher.tick());
+    CHECK(reads == 1);
+    const auto frames = f.transport.binary(rt);
+    REQUIRE(frames.size() == 2);
+    CHECK(frames[1].substr(0, 4) == "SLUD");
 }

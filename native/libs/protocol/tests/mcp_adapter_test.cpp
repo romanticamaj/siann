@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -72,6 +73,7 @@ public:
         out.device = protocol::DeviceInfo{"fake", 48'000, 256, 256, 256};
         out.cycle = cycle;
         out.click = click;
+        out.load = protocol::DspLoad{0.125, 0.5};
         return out;
     }
     protocol::TransportState current() const { return {false, position, cycle, click}; }
@@ -1162,4 +1164,43 @@ TEST_CASE("execute carries clip.set_fade and list_commands names it", "[protocol
         listed = listed || name.asString() == "clip.set_fade";
     }
     CHECK(listed);
+}
+
+// m5b-engine-load-loudness (Protocol v0 item 30): resetting the user's loudness
+// meter is a display aid, not session state and nothing a plan needs, so no tool
+// maps to it; the adapter lists the exclusion with its reason.
+TEST_CASE("meter.reset_loudness is no MCP tool and the adapter lists its exclusion", "[protocol][mcp][loudness]") {
+    for (const protocol::detail::McpTool& tool : protocol::detail::mcpTools()) {
+        INFO(tool.name);
+        CHECK(tool.method != "meter.reset_loudness");
+        CHECK(std::string(tool.name).find("loudness") == std::string::npos);
+    }
+    const auto& exclusions = protocol::detail::mcpExclusions();
+    const auto excluded = std::find_if(exclusions.begin(), exclusions.end(), [](const auto& exclusion) {
+        return exclusion.method == "meter.reset_loudness";
+    });
+    REQUIRE(excluded != exclusions.end());
+    CHECK_FALSE(excluded->reason.empty());
+
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::trusted));
+    Mcp mcp(f);
+    mcp.initialize();
+    for (const char* name : {"meter.reset_loudness", "reset_loudness", "meter_reset_loudness"}) {
+        INFO(name);
+        const HttpResponse response =
+            mcp.post(Mcp::rpc(Value(2), "tools/call", Value(Object{{"name", Value(name)}, {"arguments", Value(Object{})}})));
+        REQUIRE(response.status == 200);
+        CHECK(at(at(json::parse(response.body), "error"), "code").asNumber() == -32602);
+    }
+}
+
+TEST_CASE("engine_status passes the DSP load through", "[protocol][mcp][load]") {
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::propose));
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value status = mcp.ok("engine_status");
+    CHECK(at(at(status, "load"), "average").asNumber() == 0.125);
+    CHECK(at(at(status, "load"), "peak").asNumber() == 0.5);
 }

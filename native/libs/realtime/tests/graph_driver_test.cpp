@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 
+#include "siann/dsp/loudness.hpp"
 #include "siann/graph/graph.hpp"
 #include "siann/graph/nodes.hpp"
 #include "siann/host/fake_audio_device.hpp"
@@ -465,4 +466,269 @@ TEST_CASE("The click tempo hand-over neither allocates on the audio thread nor l
     driver.poll();
     driver.stop();
     CHECK(driver.clickTempoTables() == 1);
+}
+
+// ---- DSP load and the master loudness meter (m5b-engine-load-loudness) ----------
+
+namespace {
+
+constexpr int kLoudBlock = 480;  // 10 ms at 48 kHz
+
+bool minusInfinity(float value) {
+    return std::isinf(value) && value < 0.0f;
+}
+
+// A 1 kHz sine on both channels at `dbfs` peak, phase-locked to the timeline.
+class SineNode final : public graph::Node {
+public:
+    explicit SineNode(double dbfs, double rate) : amplitude_(std::pow(10.0, dbfs / 20.0)), rate_(rate) {}
+    int outputChannels() const override { return 2; }
+    void process(const graph::ProcessContext& context, std::span<const graph::AudioBufferView>,
+                 const graph::AudioBufferView& output) noexcept override {
+        for (int i = 0; i < context.frames; ++i) {
+            const double phase =
+                2.0 * 3.14159265358979323846 * 1'000.0 * static_cast<double>(context.blockStart + i) / rate_;
+            const auto v = static_cast<float>(amplitude_ * std::sin(phase));
+            output.channel(0)[i] = v;
+            output.channel(1)[i] = v;
+        }
+    }
+
+private:
+    double amplitude_;
+    double rate_;
+};
+
+// sine -> fader at `gainMilliDb` (the master gain node of the playback graph).
+std::unique_ptr<graph::PreparedGraph> sineGraph(double dbfs, std::int32_t gainMilliDb = 0, double rate = 48'000.0) {
+    graph::GraphBuilder b;
+    const auto sine = b.add(std::make_unique<SineNode>(dbfs, rate), "sine");
+    const auto gain = b.add(std::make_unique<graph::TrackFaderNode>(2, gainMilliDb, 0, false), "master.gain");
+    b.connect(sine, gain);
+    b.setOutput(gain);
+    return std::move(b).compile(kLoudBlock);
+}
+
+// Pumps `seconds` of callbacks of kLoudBlock device frames, polling between them.
+void pumpSeconds(GraphDriver& driver, host::ManualAudioDevice& device, double seconds,
+                 std::vector<std::vector<float>>* capture = nullptr, int deviceRate = 48'000) {
+    const int blocks = static_cast<int>(std::lround(seconds * deviceRate / kLoudBlock));
+    std::vector<std::vector<float>> scratch;
+    for (int b = 0; b < blocks; ++b) {
+        device.pumpAll(1, capture != nullptr ? *capture : scratch);
+        driver.poll();
+        if (capture == nullptr) {
+            scratch.clear();
+        }
+    }
+}
+
+}  // namespace
+
+TEST_CASE("The driver reports DSP load from the callback clock", "[driver][load][alloc]") {
+    GraphDriver::Options options;
+    options.nowNanos = &fakeClock;
+    GraphDriver driver(options);
+    driver.publish(constantGraph(1.0f));
+    host::ManualAudioDevice device;
+    driver.play();
+    driver.start(device, config(kLoudBlock));
+    const auto before = rt::allocationViolations();
+    fakeStepNanos = 2'500'000;  // a quarter of the 10 ms period
+    device.pump(99);
+    CHECK(driver.load().average() == 0.0);  // not a full second yet
+    CHECK(driver.load().peak() == 0.0);
+    device.pump(1);
+    CHECK(std::abs(driver.load().average() - 0.25) <= 1e-9);
+    CHECK(std::abs(driver.load().peak() - 0.25) <= 1e-9);
+    fakeStepNanos = 1'000'000;
+    device.pump(99);
+    fakeStepNanos = 9'000'000;
+    device.pump(1);
+    CHECK(std::abs(driver.load().average() - (99.0 * 1.0 + 9.0) / 1'000.0) <= 1e-9);
+    CHECK(std::abs(driver.load().peak() - 0.9) <= 1e-9);
+    CHECK(rt::allocationViolations() == before);
+    driver.stop();
+
+    // A device's start restarts the window, as it restarts the CallbackTimer.
+    driver.start(device, config(kLoudBlock));
+    CHECK(driver.load().average() == 0.0);
+    CHECK(driver.load().peak() == 0.0);
+    driver.stop();
+}
+
+TEST_CASE("Before the first start the loudness reads minus infinity", "[driver][loudness]") {
+    GraphDriver driver({});
+    driver.publish(sineGraph(-23.0));
+    const realtime::LoudnessReading reading = driver.loudness();
+    CHECK(minusInfinity(reading.momentary));
+    CHECK(minusInfinity(reading.shortTerm));
+    CHECK(minusInfinity(reading.integrated));
+    driver.requestLoudnessReset();  // stopped, nothing to restart: fine
+    CHECK(minusInfinity(driver.loudness().integrated));
+}
+
+TEST_CASE("The loudness meter reads the master output before the click", "[driver][loudness][click][alloc]") {
+    const auto run = [](bool click, std::vector<std::vector<float>>& capture) {
+        GraphDriver driver({});
+        driver.publish(sineGraph(-23.0));
+        driver.setClickTempo(clickAt(120'000));
+        driver.setClick(click, 1.0f);
+        host::ManualAudioDevice device;
+        driver.play();
+        driver.start(device, config(kLoudBlock));
+        const auto before = rt::allocationViolations();
+        pumpSeconds(driver, device, 10.0, &capture);
+        CHECK(rt::allocationViolations() == before);
+        const realtime::LoudnessReading reading = driver.loudness();
+        driver.stop();
+        return reading;
+    };
+    std::vector<std::vector<float>> plain;
+    std::vector<std::vector<float>> clicked;
+    const realtime::LoudnessReading quiet = run(false, plain);
+    const realtime::LoudnessReading loud = run(true, clicked);
+    CHECK(plain != clicked);                   // the click is in the output...
+    CHECK(loud.momentary == quiet.momentary);  // ...and in none of the readings
+    CHECK(loud.shortTerm == quiet.shortTerm);
+    CHECK(loud.integrated == quiet.integrated);
+    CHECK(std::abs(quiet.integrated - -23.0f) <= 0.1f);
+    CHECK(std::abs(quiet.momentary - -23.0f) <= 0.1f);
+
+    // The driver's reading is the meter's over exactly what the device played.
+    dsp::LoudnessMeter reference(48'000.0, 2);
+    const float* channels[] = {plain[0].data(), plain[1].data()};
+    reference.process(channels, 2, static_cast<int>(plain[0].size()));
+    CHECK(quiet.momentary == static_cast<float>(reference.momentary()));
+    CHECK(quiet.shortTerm == static_cast<float>(reference.shortTerm()));
+    CHECK(quiet.integrated == static_cast<float>(reference.integrated()));
+}
+
+TEST_CASE("The master gain at -6 dB lowers the loudness by 6 LU", "[driver][loudness]") {
+    const auto integrated = [](std::int32_t gainMilliDb) {
+        GraphDriver driver({});
+        driver.publish(sineGraph(-20.0, gainMilliDb));
+        host::ManualAudioDevice device;
+        driver.play();
+        driver.start(device, config(kLoudBlock));
+        pumpSeconds(driver, device, 5.0);
+        const float value = driver.loudness().integrated;
+        driver.stop();
+        return value;
+    };
+    const float unity = integrated(0);
+    const float lowered = integrated(-6'000);
+    CHECK(std::abs(unity - -20.0f) <= 0.1f);
+    CHECK(std::abs((unity - lowered) - 6.0f) <= 0.01f);
+}
+
+TEST_CASE("The loudness history survives a graph swap and a device change", "[driver][loudness][alloc]") {
+    GraphDriver driver({});
+    driver.publish(sineGraph(-23.0));
+    host::ManualAudioDevice device;
+    driver.play();
+    driver.start(device, config(kLoudBlock));
+    const auto before = rt::allocationViolations();
+    pumpSeconds(driver, device, 10.0);
+    REQUIRE(std::abs(driver.loudness().integrated - -23.0f) <= 0.1f);
+
+    // A structural publish: duck, swap, rise. The new graph is 7 LU quieter; a
+    // meter that restarted would read about -30 after two seconds.
+    driver.publish(sineGraph(-30.0));
+    pumpSeconds(driver, device, 2.0);
+    REQUIRE_FALSE(driver.transitionInFlight());
+    const float afterSwap = driver.loudness().integrated;
+    CHECK(afterSwap > -25.0f);
+    CHECK(afterSwap < -23.0f);
+    CHECK(std::abs(driver.loudness().momentary - -30.0f) <= 0.1f);
+    CHECK(rt::allocationViolations() == before);
+
+    // Another device configuration at the same session rate: the meter is kept.
+    driver.stop();
+    const realtime::LoudnessReading stopped = driver.loudness();
+    host::ManualAudioDevice other;
+    driver.start(other, config(256));
+    CHECK(driver.loudness().integrated == stopped.integrated);
+    CHECK(driver.loudness().momentary == stopped.momentary);
+    const auto during = rt::allocationViolations();
+    for (int i = 0; i < 48'000 * 2 / 256; ++i) {
+        other.pump(1);
+        driver.poll();
+    }
+    CHECK(rt::allocationViolations() == during);
+    CHECK(driver.loudness().integrated > -25.0f);
+    CHECK(driver.loudness().integrated < afterSwap);  // more of the quieter tone, still one history
+    driver.stop();
+
+    // Another session rate is another meter.
+    host::AudioDeviceConfig rate44 = config(kLoudBlock);
+    rate44.sampleRate = 44'100;
+    driver.start(other, rate44);
+    CHECK(minusInfinity(driver.loudness().integrated));
+    CHECK(minusInfinity(driver.loudness().momentary));
+    driver.stop();
+}
+
+TEST_CASE("A locate and a transport stop do not restart the integrated value; a reset request does",
+          "[driver][loudness][alloc]") {
+    GraphDriver driver({});
+    driver.publish(sineGraph(-23.0));
+    host::ManualAudioDevice device;
+    driver.play();
+    driver.start(device, config(kLoudBlock));
+    const auto before = rt::allocationViolations();
+    pumpSeconds(driver, device, 10.0);
+    const float integrated = driver.loudness().integrated;
+    REQUIRE(std::abs(integrated - -23.0f) <= 0.1f);
+
+    // Stopped: digital silence. Momentary and short-term fall, integrated holds.
+    driver.pause();
+    pumpSeconds(driver, device, 4.0);
+    CHECK(minusInfinity(driver.loudness().momentary));
+    CHECK(minusInfinity(driver.loudness().shortTerm));
+    CHECK(driver.loudness().integrated == integrated);
+
+    // A locate that starts the transport again, on a quieter graph: one history.
+    driver.publish(sineGraph(-30.0));
+    pumpSeconds(driver, device, 0.1);
+    REQUIRE(driver.pushLocate(realtime::TransportCommand{1, 480'000, true}));
+    pumpSeconds(driver, device, 2.0);
+    REQUIRE(driver.playing());
+    REQUIRE(driver.appliedLocate() == 1);
+    const float afterLocate = driver.loudness().integrated;
+    CHECK(afterLocate > -25.0f);
+    CHECK(afterLocate < integrated);
+    // A locate while playing: still one history.
+    REQUIRE(driver.pushLocate(realtime::TransportCommand{2, 0, true}));
+    pumpSeconds(driver, device, 0.5);
+    REQUIRE(driver.appliedLocate() == 2);
+    CHECK(driver.loudness().integrated > -25.0f);
+
+    // The reset: integrated restarts; what follows is the -30 dBFS tone alone.
+    driver.requestLoudnessReset();
+    device.pump(1);
+    CHECK(minusInfinity(driver.loudness().integrated));
+    CHECK(std::abs(driver.loudness().momentary - -30.0f) <= 0.1f);  // momentary is not restarted
+    pumpSeconds(driver, device, 5.0);
+    CHECK(std::abs(driver.loudness().integrated - -30.0f) <= 0.1f);
+    CHECK(rt::allocationViolations() == before);
+
+    // While stopped the control side applies a reset itself.
+    driver.stop();
+    driver.requestLoudnessReset();
+    CHECK(minusInfinity(driver.loudness().integrated));
+}
+
+TEST_CASE("The loudness meter runs at the session rate behind device-side SRC", "[driver][loudness][src]") {
+    GraphDriver driver({});
+    driver.publish(sineGraph(-23.0));
+    host::ManualAudioDevice::Options deviceOptions;
+    deviceOptions.fixedSampleRate = 44'100;  // the device runs at another rate
+    host::ManualAudioDevice device(deviceOptions);
+    driver.play();
+    driver.start(device, config(kLoudBlock));
+    REQUIRE(driver.resampling().active);
+    pumpSeconds(driver, device, 6.0, nullptr, 44'100);
+    CHECK(std::abs(driver.loudness().integrated - -23.0f) <= 0.1f);
+    driver.stop();
 }
