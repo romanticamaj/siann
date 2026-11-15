@@ -114,10 +114,9 @@ code, dd, .mono { font-family: var(--font-mono); }
 
 /* The transport bar (m5-ui-transport; spec 3.1): buttons, the position
    display (primary over secondary, digits written outside React) and
-   auto-scroll. The box of a button an engine does not list (.transport-hold,
-   m5-ui-loop-click; spec 3.0) takes the button's size from the same rule. */
-.transport, .transport-buttons, .transport-click { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
-.transport-button, .transport-hold {
+   auto-scroll. */
+.transport, .transport-buttons { display: flex; align-items: center; gap: var(--space); flex: 0 0 auto; }
+.transport-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -127,12 +126,23 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 .transport-icon { display: block; }
 .transport-play[aria-pressed="true"] { color: var(--play); border-color: var(--play); }
-/* Cycle and the metronome while on: lit, as the mockup's .tbtn.lit (m5-ui-loop-click). */
-.transport-button.lit { color: var(--bg-well); background: linear-gradient(var(--lit-0), var(--lit-1)); border-color: var(--lit-line); }
-/* The locator display, and its empty cell while the session has no locators. */
-.transport-locators, .transport-locators-empty { display: inline-block; flex: 0 0 auto; min-width: var(--display-locators-empty-w); }
-.transport-locators-empty { width: var(--display-locators-empty-w); }
-.transport-locators { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--fs-session); color: var(--tx-2); text-align: center; }
+/* Cycle, the click group and the metronome, and the locator display
+   (m5-ui-loop-click) are the mockup's .tbtn, .tgroup and .lcd .cell, drawn
+   by ui/top-bar.css. What stays here is what the mockup does not draw: the
+   app's button rule's padding taken off a .tbtn (the mockup's is a span),
+   the locator cell's least width while its text is shorter, and the boxes an
+   absent part keeps (spec 3.0): a .tbtn's, a .tgroup holding one, and the
+   locator cell's --display-locators-empty-w inside its .lcd's border. */
+button.tbtn { padding: 0; min-height: 0; }
+.transport-locators { flex: 0 0 auto; }
+.transport-locators .cell { min-width: var(--display-locators-empty-w); }
+.transport-hold-tbtn, .transport-hold-tgroup, .transport-locators-empty { display: inline-block; flex: 0 0 auto; }
+.transport-hold-tbtn { width: var(--transport-w); height: var(--transport-h); }
+.transport-hold-tgroup {
+  width: calc(var(--transport-w) + 2 * var(--space-3q) + 2 * var(--hairline));
+  height: calc(var(--transport-h) + 2 * var(--space-3q) + 2 * var(--hairline));
+}
+.transport-locators-empty { width: calc(var(--display-locators-empty-w) + 2 * var(--hairline)); }
 /* The metronome's level (right-click on its button). */
 .click-level {
   position: fixed;
@@ -201,7 +211,7 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 
 /* ---- zones */
-.zones { min-height: 0; }
+.zone-groups { min-height: 0; }
 /* The library's inner element of each panel: the zone fills it. */
 .panel-inner { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden !important; }
 .zones-center { flex: 1 1 0; }
@@ -266,8 +276,8 @@ code, dd, .mono { font-family: var(--font-mono); }
 }
 
 /* Panels animate their size when a zone opens or closes (not while dragging). */
-.zones[data-animate="true"] [data-panel] { transition: flex-grow var(--panel-motion); }
-.zones:has([data-separator="active"]) [data-panel] { transition: none; }
+.zone-groups[data-animate="true"] [data-panel] { transition: flex-grow var(--panel-motion); }
+.zone-groups:has([data-separator="active"]) [data-panel] { transition: none; }
 
 /* ---- dividers: a 1 px line, a 7 px hit area */
 .divider {

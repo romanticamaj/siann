@@ -834,7 +834,7 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('transport-cycle').click();
   await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(async () => (await timeline<{ cycle: boolean } | null>('locatorBand'))?.cycle).toBe(true);
-  const locatorText = await page.getByTestId('display-locators').textContent();
+  const locatorText = await page.getByTestId('display-locators-value').textContent();
   await shoot(
     page,
     'Locators set, cycle on',

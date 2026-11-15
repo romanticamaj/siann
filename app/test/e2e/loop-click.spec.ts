@@ -313,7 +313,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   await cursorAt(3 * RATE);
   await page.keyboard.press(`${MOD}+Numpad1`);
   await expect.poll(async () => (await locators())?.left).toBe(String(3 * RATE));
-  await expect(page.getByTestId('display-locators')).toHaveText('2.3 – 3.1');
+  await expect(page.getByTestId('display-locators-value')).toHaveText('2.3 – 3.1');
 
   // Ctrl+Z restores the previous range, and undoing the first one removes the locators.
   const edits = (await revisions()) - start;
@@ -430,7 +430,7 @@ test('the band and both buttons follow another connection, an undo and an applie
   try {
     await other.call('command.execute', { commands: [{ op: 'session.set_locators', left: String(RATE), right: String(5 * RATE) }] });
     await expect.poll(async () => (await band())?.right).toBe(String(5 * RATE));
-    await expect(page.getByTestId('display-locators')).toHaveText('1.3 – 3.3');
+    await expect(page.getByTestId('display-locators-value')).toHaveText('1.3 – 3.3');
     await other.call('transport.set_cycle', { enabled: true });
     await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
     await expect.poll(async () => (await band())?.cycle).toBe(true);
@@ -452,7 +452,7 @@ test('the band and both buttons follow another connection, an undo and an applie
     await other.call('plan.approve', { plan: plan.hash as string });
     await other.call('plan.apply', { plan: plan.hash as string });
     await expect.poll(async () => (await band())?.left).toBe(String(4 * RATE));
-    await expect(page.getByTestId('display-locators')).toHaveText('3.1 – 5.1');
+    await expect(page.getByTestId('display-locators-value')).toHaveText('3.1 – 5.1');
   } finally {
     other.close();
   }

@@ -25,7 +25,7 @@ const SIZES = [
 ];
 const LOCALES = ['en', 'zh-Hant', 'zh-Hans', 'pseudo'] as const;
 const LABELLED = 'button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators]';
-const ONE_LINE = 'button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators]';
+const ONE_LINE = 'button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value]';
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [

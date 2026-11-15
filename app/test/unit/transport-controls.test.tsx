@@ -274,7 +274,7 @@ test('without a device cycle and the metronome are disabled with the reason, in 
   }
 });
 
-const HOLDS = /<span class="(transport-hold|transport-locators-empty)"[^>]*><\/span>/g;
+const HOLDS = /<span class="(transport-hold [\w-]+|transport-locators-empty)"[^>]*><\/span>/g;
 
 test('without the E-1 methods none of the controls is in the DOM and their boxes stay empty', () => {
   for (const capabilities of [REDUCED, WITHOUT_E1, null]) {
@@ -288,7 +288,7 @@ test('without the E-1 methods none of the controls is in the DOM and their boxes
   const holds = [...markup.matchAll(HOLDS)].map((m) => m[0]);
   assert.deepEqual(
     holds.map((h) => /class="([^"]+)"/.exec(h)![1]),
-    ['transport-hold', 'transport-locators-empty', 'transport-hold'],
+    ['transport-hold transport-hold-tbtn', 'transport-locators-empty', 'transport-hold transport-hold-tgroup'],
   );
   for (const hold of holds) {
     assert.match(hold, /aria-hidden="true"/, hold);
@@ -313,11 +313,17 @@ test('the empty boxes take their size from the shell\'s rules: the button\'s rul
     const rest = lines.slice(at).join('\n');
     return { selector: rest.slice(0, rest.indexOf('{')), body: rest.slice(rest.indexOf('{') + 1, rest.indexOf('}')) };
   };
-  const button = rule(/\.transport-hold/);
-  assert.match(button.selector, /\.transport-button\b/, 'the hold shares the button\'s size rule');
-  assert.match(button.body, /width:\s*var\(--transport-h\)/);
-  assert.match(button.body, /height:\s*var\(--transport-h\)/);
-  assert.match(rule(/\.transport-locators-empty /).body, /width:\s*var\(--display-locators-empty-w\)/);
+  // A .tbtn's box (ui/top-bar.css: --transport-w by --transport-h).
+  const tbtn = rule(/^\.transport-hold-tbtn \{/);
+  assert.match(tbtn.body, /width:\s*var\(--transport-w\)/);
+  assert.match(tbtn.body, /height:\s*var\(--transport-h\)/);
+  // A .tgroup's around one .tbtn: its padding and border on each side.
+  const tgroup = rule(/^\.transport-hold-tgroup \{/);
+  assert.match(tgroup.body, /width:\s*calc\(var\(--transport-w\) \+ 2 \* var\(--space-3q\) \+ 2 \* var\(--hairline\)\)/);
+  assert.match(tgroup.body, /height:\s*calc\(var\(--transport-h\) \+ 2 \* var\(--space-3q\) \+ 2 \* var\(--hairline\)\)/);
+  // The locator cell's width, inside its .lcd's border.
+  assert.match(rule(/^\.transport-locators-empty \{/).body, /width:\s*calc\(var\(--display-locators-empty-w\) \+ 2 \* var\(--hairline\)\)/);
+  assert.match(rule(/^\.transport-locators \.cell \{/).body, /min-width:\s*var\(--display-locators-empty-w\)/);
 });
 
 test('with full capabilities and no locators the locator cell is the empty box; with locators it reads bars and beats', () => {
@@ -328,7 +334,11 @@ test('with full capabilities and no locators the locator cell is the empty box; 
   const set = render(FULL, WITH_DEVICE, { state: OFF, snapshot: withLocators(String(8 * 96000), String(12 * 96000)) });
   const cell = tag(set, 'display-locators');
   assert.ok(cell.includes('data-part="display-locators"'));
-  assert.ok(set.includes('>9.1 \u2013 13.1<'), set);
+  assert.ok(set.includes('>9<em>.</em>1 <em>\u2013</em> 13<em>.</em>1<'), set);
+  // The mockup's markup: an .lcd .cell with a .lbl over a .val.sm.
+  assert.match(cell, /^<div class="cell"/);
+  assert.ok(set.includes('<div class="lcd transport-locators"><div class="cell"'), set);
+  assert.ok(set.includes('<span class="lbl" aria-hidden="true">Locators</span><span class="val sm" data-testid="display-locators-value">'), set);
   assert.ok(!set.includes('transport-locators-empty'));
   // Across a tempo change: 60 BPM from bar 3, a beat is 1 s.
   const base = sampleSnapshot();
@@ -338,7 +348,7 @@ test('with full capabilities and no locators the locator cell is the empty box; 
   ];
   const slow = { ...base, root: { ...base.root!, tempo } };
   const changed = render(FULL, WITH_DEVICE, { state: OFF, snapshot: withLocators('192000', String(192000 + 5 * 48000), slow) });
-  assert.ok(changed.includes('>3.1 \u2013 4.2<'), changed);
+  assert.ok(changed.includes('>3<em>.</em>1 <em>\u2013</em> 4<em>.</em>2<'), changed);
 });
 
 test('the metronome\'s level control: a fader from -60 to 0 dB showing the engine\'s level', () => {

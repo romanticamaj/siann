@@ -41,6 +41,12 @@
 //   (spec 3.0): an element of the part's size with no role, no focus, no
 //   data-part, hidden from assistive technology; the locator display's empty
 //   box is --display-locators-empty-w wide.
+// - Their markup is the mockup's (agent-rules "UI fidelity"), styled by the
+//   shared ui/top-bar.css: cycle and the metronome are `.tbtn` buttons (`.lit`
+//   while on), the click group is a `.tgroup`, and the locator display is an
+//   `.lcd .cell` with a `.lbl` over a `.val.sm` whose separators are `<em>`.
+//   Until m5-ui-alignment-chrome ports the position display into one `.lcd`,
+//   the locator cell has an `.lcd` of its own.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
 
@@ -183,6 +189,12 @@ function useLocatorText(client: SessionClient): string | null {
   return useSyncExternalStore((listener) => client.model.subscribe(listener), read, read);
 }
 
+// A display value as the mockup writes it: the digits, and each separator
+// ("." and "–") in an <em> that `.lcd .val em` dims.
+function lcdDigits(text: string) {
+  return text.split(/([^\d\s]+)/).map((piece, index) => (index % 2 === 1 ? <em key={index}>{piece}</em> : piece));
+}
+
 // The box an absent part keeps (spec 3.0): nothing in it, no role, no focus,
 // no data-part, hidden from assistive technology.
 function Hold({ className }: { className: string }) {
@@ -322,7 +334,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         {gates.cycle ? (
           <button
             type="button"
-            className={`transport-button transport-cycle${cycle ? ' lit' : ''}`}
+            className={`tbtn${cycle ? ' lit' : ''}`}
             data-testid="transport-cycle"
             data-part="transport-cycle"
             disabled={!enabled}
@@ -334,7 +346,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
             <Icon path="M3 5h8V3l3 3-3 3V7H5v2H3zm10 6H5v2l-3-3 3-3v2h6V7h2z" />
           </button>
         ) : (
-          <Hold className="transport-hold" />
+          <Hold className="transport-hold transport-hold-tbtn" />
         )}
         <button
           type="button"
@@ -407,24 +419,31 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         />
       ) : null}
       {gates.locators && locatorText !== null ? (
-        <span
-          className="transport-locators"
-          data-testid="display-locators"
-          data-part="display-locators"
-          title={t('transport.locators')}
-          aria-label={`${t('transport.locators')} ${locatorText}`}
-        >
-          {locatorText}
-        </span>
+        <div className="lcd transport-locators">
+          <div
+            className="cell"
+            data-testid="display-locators"
+            data-part="display-locators"
+            title={t('transport.locators')}
+            aria-label={`${t('transport.locators')} ${locatorText}`}
+          >
+            <span className="lbl" aria-hidden="true">
+              {t('transport.locators')}
+            </span>
+            <span className="val sm" data-testid="display-locators-value">
+              {lcdDigits(locatorText)}
+            </span>
+          </div>
+        </div>
       ) : (
         <Hold className="transport-locators-empty" />
       )}
       <span className="transport-tempo" data-testid="transport-tempo" data-part="display-tempo" title={t('transport.tempo')} ref={tempoRef} />
       {gates.click ? (
-        <div className="transport-click" data-testid="transport-click" data-part="transport-click" role="group" aria-label={t('transport.click')}>
+        <div className="tgroup" data-testid="transport-click" data-part="transport-click" role="group" aria-label={t('transport.click')}>
           <button
             type="button"
-            className={`transport-button transport-metronome${click ? ' lit' : ''}`}
+            className={`tbtn${click ? ' lit' : ''}`}
             data-testid="transport-metronome"
             data-part="transport-metronome"
             disabled={!enabled}
@@ -441,7 +460,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           </button>
         </div>
       ) : (
-        <Hold className="transport-hold" />
+        <Hold className="transport-hold transport-hold-tgroup" />
       )}
       {level && gates.click ? (
         <ClickLevel gainMilliDb={gain} x={level.x} y={level.y} onChoose={(value) => void loopClick.setClickLevel(value)} onClose={closeLevel} />

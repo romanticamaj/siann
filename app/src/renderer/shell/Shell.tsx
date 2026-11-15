@@ -564,7 +564,7 @@ export function Shell({
         ) : null}
         {banner}
       </div>
-      <Group orientation="horizontal" id="zones" className="zones" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
+      <Group orientation="horizontal" id="zones" className="zone-groups" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
         <Panel
           id="panel-left"
           panelRef={panels.left}
