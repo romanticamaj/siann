@@ -131,9 +131,17 @@ function isExclusionTable(table) {
   return table.header.length === 2 && table.header[0] === 'Method' && table.header[1] === 'Reason';
 }
 
+// The MCP tool table of protocol-mcp-v0.md (Tool, Method, Scope, ...) maps a tool
+// to its method and carries none of the method's params, result or errors, so it
+// is left out of "documented" too: a tool row alone documents nothing.
+function isToolTable(table) {
+  return table.header[0] === 'Tool' && table.header[1] === 'Method' && table.header[2] === 'Scope';
+}
+
 // docs: [{file, text}]. documented: method -> file, for a heading that names it
-// or a table row with a cell that starts with it backticked. named: every
-// dotted name in a heading or in a column whose header is Method.
+// or a table row with a cell that starts with it backticked, in any table but
+// the two MCP mapping tables above. named: every dotted name in a heading or in
+// a column whose header is Method.
 function scanDocs(docs) {
   const headings = []; // {file, names}
   const rowStarts = []; // {file, name}
@@ -148,7 +156,7 @@ function scanDocs(docs) {
     for (const table of tables(text)) {
       const methodColumn = table.header.indexOf('Method');
       for (const row of table.rows) {
-        if (!isExclusionTable(table)) {
+        if (!isExclusionTable(table) && !isToolTable(table)) {
           for (const cell of row) {
             const first = /^`([^`]+)`/.exec(cell);
             if (first) rowStarts.push({ file, name: first[1] });
@@ -184,7 +192,7 @@ function extractEvents(eventsText) {
 
 // The tool table of protocol-mcp-v0.md (columns Tool, Method, Scope).
 function extractDocTools(mcpText) {
-  const table = tables(mcpText).find((t) => t.header[0] === 'Tool' && t.header[1] === 'Method' && t.header[2] === 'Scope');
+  const table = tables(mcpText).find(isToolTable);
   if (!table) return null;
   return table.rows.map((row) => ({
     name: (backticked(row[0])[0] || row[0]).trim(),
@@ -318,6 +326,51 @@ function checkExclusionDoc(world) {
   return failures;
 }
 
+// (h) acceptance item 3: plan.list and plan.preview each have a section (a
+// heading that names the method) in a protocol doc whose body, up to the next
+// heading, gives the params, the result and the errors.
+const SECTION_METHODS = ['plan.list', 'plan.preview'];
+
+function sectionBodies(docs, method) {
+  const bodies = [];
+  for (const { text } of docs) {
+    let body = null;
+    for (const line of proseLines(text)) {
+      if (isHeading(line)) {
+        if (body !== null) bodies.push(body.join('\n'));
+        body = headingNames(line).includes(method) ? [] : null;
+      } else if (body !== null) {
+        body.push(line);
+      }
+    }
+    if (body !== null) bodies.push(body.join('\n'));
+  }
+  return bodies;
+}
+
+const SECTION_PARTS = [
+  ['params', /\bParams\b/],
+  ['result', /\bResult\b/],
+  ['errors', /\b(?:Errors?|error)\b/],
+];
+
+function checkSections(world) {
+  const failures = [];
+  for (const method of SECTION_METHODS) {
+    const bodies = sectionBodies(world.docs, method);
+    if (bodies.length === 0) {
+      failures.push({ name: method, place: `${DOCS_PLACE} (no section)` });
+      continue;
+    }
+    for (const [part, pattern] of SECTION_PARTS) {
+      if (!bodies.some((body) => pattern.test(body))) {
+        failures.push({ name: method, place: `${DOCS_PLACE} (section without ${part})` });
+      }
+    }
+  }
+  return failures;
+}
+
 // ---- The real data ---------------------------------------------------------
 
 function protocolDocs() {
@@ -375,6 +428,7 @@ const CHECKS = {
   e: { title: 'the MCP tools documented in protocol-mcp-v0.md equal the tool table, with their scope', run: checkToolDoc },
   f: { title: 'kMethods is exactly the tool methods and kNotMcp, disjoint, each exclusion with a reason', run: checkUnion },
   g: { title: 'protocol-mcp-v0.md "Methods without a tool" lists kNotMcp', run: checkExclusionDoc },
+  h: { title: 'plan.list and plan.preview have a protocol doc section with params, result and errors', run: checkSections },
 };
 
 for (const [key, { title, run }] of Object.entries(CHECKS)) {
@@ -391,6 +445,51 @@ function clone(world) {
 }
 
 // Drops every heading and table row of the protocol docs that names `method`.
+// Drops the sections (heading and body, up to the next heading) whose heading
+// names `method`; every table row stays, the MCP tool row included.
+function dropSection(world, method) {
+  for (const doc of world.docs) {
+    const out = [];
+    let dropping = false;
+    for (const line of doc.text.split('\n')) {
+      if (isHeading(line)) dropping = headingNames(line).includes(method);
+      if (!dropping) out.push(line);
+    }
+    doc.text = out.join('\n');
+  }
+}
+
+// Deletes what `pattern` matches from the bodies of the sections naming `method`.
+function stripFromSection(world, method, pattern) {
+  for (const doc of world.docs) {
+    let inside = false;
+    doc.text = doc.text
+      .split('\n')
+      .map((line) => {
+        if (isHeading(line)) {
+          inside = headingNames(line).includes(method);
+          return line;
+        }
+        return inside ? line.replace(pattern, '') : line;
+      })
+      .join('\n');
+  }
+}
+
+// As undocument, but keeps the MCP tool row (Method in its second cell).
+function undocumentButTool(world, method) {
+  const toolRow = (line) => line.startsWith('|') && cells(line)[1] === `\`${method}\``;
+  for (const doc of world.docs) {
+    doc.text = doc.text
+      .split('\n')
+      .filter((line) => {
+        if (isHeading(line)) return !headingNames(line).includes(method);
+        return !(line.startsWith('|') && line.includes(`\`${method}\``)) || toolRow(line);
+      })
+      .join('\n');
+  }
+}
+
 function undocument(world, method) {
   const mentions = (line) =>
     (isHeading(line) && headingNames(line).includes(method)) || (line.startsWith('|') && line.includes(`\`${method}\``));
@@ -416,6 +515,34 @@ const PLANTS = [
     name: 'session.inspect',
     place: DOCS_PLACE,
     apply: (w) => undocument(w, 'session.inspect'),
+  },
+  {
+    check: 'a',
+    plant: 'a method whose section is removed while its MCP tool row stays',
+    name: 'plan.list',
+    place: DOCS_PLACE,
+    apply: (w) => dropSection(w, 'plan.list'),
+  },
+  {
+    check: 'a',
+    plant: 'a method whose only row left is its MCP tool row',
+    name: 'command.list',
+    place: DOCS_PLACE,
+    apply: (w) => undocumentButTool(w, 'command.list'),
+  },
+  {
+    check: 'h',
+    plant: 'plan.preview without its section',
+    name: 'plan.preview',
+    place: `${DOCS_PLACE} (no section)`,
+    apply: (w) => dropSection(w, 'plan.preview'),
+  },
+  {
+    check: 'h',
+    plant: 'plan.list whose section gives no errors',
+    name: 'plan.list',
+    place: `${DOCS_PLACE} (section without errors)`,
+    apply: (w) => stripFromSection(w, 'plan.list', /\b(?:Errors?|error)\b/g),
   },
   {
     check: 'b',
