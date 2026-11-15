@@ -22,6 +22,7 @@ import * as path from 'node:path';
 import { formatMilliDb } from '../../src/renderer/format';
 import { planArrivedMessage } from '../../src/renderer/i18n/messages';
 import { translator } from '../../src/renderer/i18n/t';
+import { isolateName } from '../../src/renderer/plans/isolate';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
 
@@ -195,14 +196,14 @@ test('a new plan raises a toast and the count without taking the focus; a collap
   // The card in user wording: no ids, no milli-dB, no raw pan.
   await showPlans();
   const hash = plan.hash as string;
-  await expect(card(hash)).toContainText('Add track Pad');
+  await expect(card(hash)).toContainText(`Add track ${isolateName('Pad')}`);
   await expect(card(hash)).toContainText(t('plans.steps', { count: 5 }));
   await expect(card(hash)).toContainText(hash8(hash));
   await expect(stateBadge(hash)).toHaveText(t('badge.needsReview'));
   await card(hash).click();
   await expect(page.getByTestId('step-number-0')).toHaveText('1');
-  await expect(page.getByTestId('step-text-1')).toHaveText(`Set Keys volume to ${formatMilliDb(-600)}`);
-  await expect(page.getByTestId('step-text-2')).toHaveText('Pan Keys to L20');
+  await expect(page.getByTestId('step-text-1')).toHaveText(`Set ${isolateName('Keys')} volume to ${formatMilliDb(-600)}`);
+  await expect(page.getByTestId('step-text-2')).toHaveText(`Pan ${isolateName('Keys')} to L20`);
   await expect(page.getByTestId('plan-diff')).toContainText('Pad');
   const shown = await page.getByTestId('zone-right').innerText();
   for (const raw of ['trk_', 'gainMilliDb', '-600', '-2000', 'root:root']) expect(shown).not.toContain(raw);
@@ -295,7 +296,7 @@ test('Audition from a validated plan: approved for audition, a banner from every
   // The banner: with the lower zone on the MixConsole, and with it collapsed.
   const banner = page.getByTestId('audition-banner');
   await expect(banner).toBeVisible();
-  await expect(banner).toContainText('Add track Pad');
+  await expect(banner).toContainText(`Add track ${isolateName('Pad')}`);
   if ((await page.getByTestId('zone-lower').getAttribute('data-visible')) !== 'true') await page.getByTestId('zone-button-lower').click();
   await page.getByTestId('tab-lower-mixconsole').click();
   await expect(page.getByTestId('mixer')).toBeVisible();
@@ -337,7 +338,7 @@ test('a stale plan shows the stale badge, the reason in user units and a disable
   await expect(page.getByTestId(`plan-stale-${hash8(hash)}`)).toHaveCount(0);
   await watcher.call('command.execute', { commands: [{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -300 }] });
   await expect(page.getByTestId(`plan-stale-${hash8(hash)}`)).toHaveText(t('badge.stale'));
-  await expect(page.getByTestId('plan-stale-reasons')).toContainText(`Keys: volume was ${formatMilliDb(0)}, now ${formatMilliDb(-300)}`);
+  await expect(page.getByTestId('plan-stale-reasons')).toContainText(`${isolateName('Keys')}: volume was ${formatMilliDb(0)}, now ${formatMilliDb(-300)}`);
   const primary = page.getByTestId('plan-approve-apply');
   await expect(primary).toBeDisabled();
   await expect(primary).toHaveAttribute('title', t('actionReason.stale'));

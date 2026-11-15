@@ -300,6 +300,7 @@ export const en = {
   'error.gesture_open': 'Another gesture is still held',
   'error.queue_full': 'The engine is busy; try again',
   'error.lease_expired': 'The lease expired',
+  'error.invalid_name': 'A name cannot contain control characters, text-direction controls or line separators',
 };
 
 export type Catalog = typeof en;

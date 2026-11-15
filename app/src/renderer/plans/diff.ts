@@ -4,13 +4,15 @@
 // comes from plan.preview, never from the renderer running commands itself.
 // Step wording is plans/describe.ts; dB formatting is format.ts. A row is
 // worded in user units (rowLabel, rowChanges: names, dB, L/C/R, seconds); the
-// ref and the raw entities are for the row's disclosure only.
+// ref and the raw entities are for the row's disclosure only. Each name in a
+// label or a change line is its own bidi isolate (isolate.ts, isolateName).
 
 import { formatMilliDb, formatPan, formatSeconds } from '../format';
 import type { MessageKey } from '../i18n/en';
 import type { T } from '../i18n/t';
 import type { StaleRef } from '../model/plan-store';
 import type { StepNames } from './describe';
+import { isolateName } from './isolate';
 
 export interface PreviewEntity {
   readonly ref: string;
@@ -120,13 +122,13 @@ export function selection(ticked: ReadonlySet<number> | null, stepCount: number)
 export function rowLabel(row: DiffRow, names: StepNames, t: T): string {
   const entity = row.after ?? row.before;
   const type = row.ref.slice(0, row.ref.indexOf(':'));
-  const name = typeof entity?.name === 'string' && entity.name !== '' ? entity.name : undefined;
+  const name = typeof entity?.name === 'string' && entity.name !== '' ? isolateName(entity.name) : undefined;
   switch (type) {
     case 'track':
       return name ?? t('step.aTrack');
     case 'clip': {
       const track = typeof entity?.trackId === 'string' ? names.track(entity.trackId) : undefined;
-      return track ? t('step.clipOn', { track }) : t('step.aClip');
+      return track ? t('step.clipOn', { track: isolateName(track) }) : t('step.aClip');
     }
     case 'root':
       return t('diff.session');
@@ -155,7 +157,7 @@ type FieldWording = { key: MessageKey; value?: (v: unknown) => string };
 function fieldWording(type: string, field: string, names: StepNames, t: T): FieldWording | null {
   const db = (v: unknown) => (typeof v === 'number' ? formatMilliDb(v) : '—');
   const pan = (v: unknown) => (typeof v === 'number' ? formatPan(v) : '—');
-  const text = (v: unknown) => (typeof v === 'string' ? v : '—');
+  const text = (v: unknown) => (typeof v === 'string' ? isolateName(v) : '—');
   const toggle = (v: unknown) => onOff(v, t);
   const time = (v: unknown) => framesText(v, names, t);
   if (field === 'gainMilliDb') return { key: 'diff.field.volume', value: db };

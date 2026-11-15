@@ -13,6 +13,7 @@ import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
+import { ISOLATE } from '../plans/isolate';
 import type { EffectiveLayout, Zone } from './layout';
 import type { LayoutStore } from './layout-store';
 import { Transport, type TransportPlayhead } from './Transport';
@@ -46,7 +47,7 @@ export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engi
   return (
     <header className="top-bar" data-testid="top-bar" data-region="top-bar">
       <h1>{t('app.title')}</h1>
-      <span className="session-name" data-testid="session-name" data-part="session-name">
+      <span className="session-name" data-testid="session-name" data-part="session-name" {...ISOLATE}>
         {snapshot?.root?.name ?? ''}
       </span>
       <Transport client={client} realtime={realtime} engineStatus={engineStatus} layout={layout} commands={commands} transport={transport} />

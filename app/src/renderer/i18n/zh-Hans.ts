@@ -267,4 +267,5 @@ export const zhHans: Catalog = {
   'error.gesture_open': '另一个手势尚未结束',
   'error.queue_full': '引擎繁忙，请重试',
   'error.lease_expired': '租约已过期',
+  'error.invalid_name': '名称不能包含控制字符、文字方向控制字符或分行符',
 };

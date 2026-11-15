@@ -21,6 +21,7 @@ import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { PlanEntry } from '../../src/renderer/model/plan-store';
 import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import type { PlanPreview } from '../../src/renderer/plans/diff';
+import { isolateName as n } from '../../src/renderer/plans/isolate';
 import { PlanPanelView, type PlanPanelViewProps } from '../../src/renderer/plans/PlanPanel';
 import { RefusalLine, refusalSummary, type Refusal } from '../../src/renderer/plans/RefusalLine';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
@@ -164,7 +165,7 @@ test('refusalSummary: the code and the catalog text in every locale, changed ent
   for (const locale of LOCALES) {
     const t = translator(locale);
     const stale = refusalSummary(STALE_REFUSAL, locale, NAMES);
-    assert.equal(stale, `plan_stale: ${t('error.plan_stale')} (Vox Lead, ${t('step.clipOn', { track: 'Keys' })})`, locale);
+    assert.equal(stale, `plan_stale: ${t('error.plan_stale')} (${n('Vox Lead')}, ${t('step.clipOn', { track: n('Keys') })})`, locale);
     assert.equal(refusalSummary(EXISTS_REFUSAL, locale, NAMES), `already_exists: ${t('error.already_exists')}`, locale);
     // An unknown code or none: the generic text, not the engine's message.
     assert.equal(refusalSummary({ code: 'x_new', message: `x ${PAD}`, changedEntities: [] }, locale, NAMES), `x_new: ${t('plans.refused')}`);
