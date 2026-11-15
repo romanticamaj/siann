@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "siann/command/display_text.hpp"
 #include "siann/command/history.hpp"
 #include "siann/command/plan.hpp"
 
@@ -22,6 +23,9 @@ using siann::command::PlanState;
 using siann::command::PlanStore;
 using siann::command::Revision;
 using siann::command::RollbackError;
+using siann::command::TextFault;
+using siann::command::textFault;
+using siann::command::withoutUnsafeCharacters;
 using siann::command::planHash;
 using siann::hash::formatHash;
 using siann::model::DiffEntry;
@@ -210,6 +214,62 @@ TEST_CASE("Submit refuses a title or intent outside the limits with invalid_plan
     CHECK(store.size() == 0);
     CHECK(codeOf(std::string(200, 'a'), std::string(2000, 'a')) == "no error");
     CHECK(store.size() == 1);
+}
+
+TEST_CASE("Submit refuses bidi formatting, line separators and invalid UTF-8 in a title or intent",
+          "[plan][metadata][bidi]") {
+    History history = base();
+    PlanStore store;
+    const auto codeOf = [&](std::optional<std::string> title, std::optional<std::string> intent) {
+        PlanMetadata metadata;
+        metadata.title = std::move(title);
+        metadata.intent = std::move(intent);
+        return errorCode([&] { store.submit(history, {setGain("t1", -600)}, {}, "r2", metadata); });
+    };
+    // U+061C ALM, U+200E LRM, U+200F RLM, U+202A..U+202E embeddings and
+    // overrides, U+2066..U+2069 isolates, U+2028 LS and U+2029 PS.
+    const std::vector<std::string> rejected{
+        "\xD8\x9C",     "\xE2\x80\x8E", "\xE2\x80\x8F", "\xE2\x80\xAA", "\xE2\x80\xAB",
+        "\xE2\x80\xAC", "\xE2\x80\xAD", "\xE2\x80\xAE", "\xE2\x81\xA6", "\xE2\x81\xA7",
+        "\xE2\x81\xA8", "\xE2\x81\xA9", "\xE2\x80\xA8", "\xE2\x80\xA9"};
+    for (const std::string& character : rejected) {
+        INFO("the character ending in byte " << static_cast<int>(static_cast<unsigned char>(character.back())));
+        CHECK(codeOf("Lower the " + character + "drums", std::nullopt) == "invalid_plan_metadata");
+        CHECK(codeOf(std::nullopt, "Lower\nthe " + character + "drums") == "invalid_plan_metadata");
+        CHECK(codeOf(character, std::nullopt) == "invalid_plan_metadata");
+        CHECK(codeOf(std::nullopt, character) == "invalid_plan_metadata");
+    }
+    // Invalid UTF-8: a lone continuation byte, a truncated sequence, an
+    // overlong encoding, a surrogate, past U+10FFFF, and 0xFF.
+    const std::vector<std::string> malformed{"\x80", "\xE2\x80", "\xC0\xAF", "\xED\xA0\x80", "\xF4\x90\x80\x80", "\xFF"};
+    for (const std::string& bytes : malformed) {
+        INFO("malformed sequence of " << bytes.size() << " bytes");
+        CHECK(codeOf("bad " + bytes + " text", std::nullopt) == "invalid_plan_metadata");
+        CHECK(codeOf(std::nullopt, "bad " + bytes + " text") == "invalid_plan_metadata");
+        CHECK(codeOf("truncated at the end " + bytes, std::nullopt) == "invalid_plan_metadata");
+    }
+    CHECK(store.size() == 0);
+
+    // CJK, Hebrew and Arabic letters, emoji (with a ZWJ sequence) and a
+    // multi-line intent pass.
+    const std::string title = "\xE9\x99\x8D\xE4\xBD\x8E\xE9\xBC\x93\xE8\x81\xB2 \xF0\x9F\xA5\x81";
+    const std::string intent = "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D \xD8\xB3\xD9\x84\xD8\xA7\xD9\x85\n\t"
+                               "\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x8E\xA4\r\n";
+    CHECK(codeOf(title, intent) == "no error");
+    CHECK(store.size() == 1);
+}
+
+TEST_CASE("withoutUnsafeCharacters drops controls, bidi formatting, separators and malformed bytes",
+          "[plan][metadata][bidi]") {
+    CHECK(withoutUnsafeCharacters("evil\xE2\x80\xAE" "cod.exe") == "evilcod.exe");
+    CHECK(withoutUnsafeCharacters("a\x1B" "b\xC2\x85" "c\xE2\x80\xA8" "d\xD8\x9C" "e") == "abcde");
+    CHECK(withoutUnsafeCharacters("x\xFF" "y\xE2\x80" "z\xED\xA0\x80" "w") == "xyzw");
+    CHECK(withoutUnsafeCharacters("\xE9\xBC\x93 \xF0\x9F\xA5\x81") == "\xE9\xBC\x93 \xF0\x9F\xA5\x81");
+    CHECK(textFault("\xE9\xBC\x93 \xF0\x9F\xA5\x81") == TextFault::none);
+    CHECK(textFault("tab\there", "\t") == TextFault::none);
+    CHECK(textFault("tab\there") == TextFault::control);
+    CHECK(textFault("\xE2\x81\xA6") == TextFault::display_unsafe);
+    CHECK(textFault("\xC0\xAF") == TextFault::invalid_utf8);
 }
 
 TEST_CASE("A sub-plan keeps its parent's title, intent and actor; approve and apply ignore them",

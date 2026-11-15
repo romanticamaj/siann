@@ -7,6 +7,7 @@
 import { useT } from '../i18n/t';
 import type { PlanEntry } from '../model/plan-store';
 import type { PlanCardData } from './card';
+import { ISOLATE } from './isolate';
 
 export interface PlanCardProps {
   readonly plan: PlanEntry;
@@ -20,7 +21,7 @@ export function PlanCard({ plan, card, selected, onSelect }: PlanCardProps) {
   const id = card.shortHash;
   return (
     <button type="button" className="plan-card" data-testid={`plan-${id}`} aria-pressed={selected} onClick={onSelect}>
-      <span className="plan-card-lead">{card.lead}</span>
+      <span className="plan-card-lead" {...ISOLATE}>{card.lead}</span>
       <span className="plan-card-meta">
         <span>{card.steps}</span>
         {card.time !== null ? <span>{card.time}</span> : null}
@@ -42,7 +43,7 @@ export function PlanCard({ plan, card, selected, onSelect }: PlanCardProps) {
         </span>
       ) : null}
       {card.reason !== null ? (
-        <span className="plan-card-reason" data-testid={`plan-reason-${id}`}>
+        <span className="plan-card-reason" data-testid={`plan-reason-${id}`} {...ISOLATE}>
           {card.reason}
         </span>
       ) : null}

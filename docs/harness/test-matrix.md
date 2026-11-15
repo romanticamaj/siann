@@ -234,6 +234,18 @@ events ...", app `session-client` (18b) and `capabilities` (`capabilities-full.j
 with both features, `capabilities-reduced.json` without); 6 the tests above;
 7 none (no UI).
 
+Display-unsafe metadata (security fix after #121; `plan-v1.md`, "Metadata"):
+`plan_test` "Submit refuses bidi formatting, line separators and invalid UTF-8
+in a title or intent" (each of U+061C, U+200E, U+200F, U+202A to U+202E, U+2066
+to U+2069, U+2028 and U+2029 in a title and an intent; six malformed UTF-8
+sequences; CJK, Hebrew, Arabic and emoji with a ZWJ pass), `plan_methods_test`
+"plan.submit refuses a title or intent outside the limits ..." (RLO, RLI, RLM,
+ALM, LS, LRO and PS through the protocol), `mcp_adapter_test` "the MCP actor's
+name ..." (bidi formatting and separators stripped, CJK and emoji kept), app
+`plan-bidi` (the card's lead and rejection note, step text, stale reasons and
+the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
+has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how

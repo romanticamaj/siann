@@ -674,6 +674,13 @@ TEST_CASE("plan.submit refuses a title or intent outside the limits with invalid
     refused(Value(std::string("tab\there")), std::nullopt);
     refused(Value(std::string("nul\x01")), std::nullopt);
     refused(Value("\xC2\x85next line"), std::nullopt);  // U+0085, a C1 control
+    refused(Value("Lower \xE2\x80\xAE" "smurd"), std::nullopt);                  // U+202E RLO
+    refused(Value("Lower \xE2\x81\xA7" "drums" "\xE2\x81\xA9"), std::nullopt);  // U+2067 RLI, U+2069 PDI
+    refused(Value("Lower \xE2\x80\x8F" "drums"), std::nullopt);                  // U+200F RLM
+    refused(Value("Lower \xD8\x9C" "drums"), std::nullopt);                      // U+061C ALM
+    refused(Value("two\xE2\x80\xA8" "lines"), std::nullopt);                     // U+2028 LS
+    refused(std::nullopt, Value("why\n\xE2\x80\xAD" "forced LTR"));              // U+202D LRO
+    refused(std::nullopt, Value("para\xE2\x80\xA9" "graph"));                    // U+2029 PS
     refused(Value(""), std::nullopt);
     refused(Value(7), std::nullopt);
     refused(Value(nullptr), std::nullopt);
