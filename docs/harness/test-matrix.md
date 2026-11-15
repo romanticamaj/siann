@@ -303,6 +303,7 @@ name ..." (bidi formatting and separators stripped, CJK and emoji kept), app
 `plan-bidi` (the card's lead and rejection note, step text, stale reasons and
 the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
 has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
+
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
 | m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `plan_methods_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`, `edit-commands` fades) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
