@@ -1690,6 +1690,18 @@ Rules:
   `L`; otherwise, in the same revision, `fadeIn.length` becomes `min(fadeIn, L)`
   and `fadeOut.length` `min(fadeOut, L - fadeIn')` (the fade in keeps its length
   first, the fade out takes what is left), and a side shortened to 0 is removed.
+  `clip.place` takes no fade fields, so a new clip has none; the app's
+  compositions that copy or cut a clip (UI redesign 3.2: split is `clip.trim`
+  plus `clip.place`, duplicate, Ctrl+D and the Alt-drag copy are `clip.place`)
+  carry the fades by appending `clip.set_fade` to the same `command.execute`
+  list, so the edit stays one revision and one undo. Split: the left piece keeps
+  its fade in (the trim's rule shortens it to the piece) and loses its fade out
+  (`fadeOut.length "0"`, after the trim); the right piece gets the original fade
+  out, shortened to `min(fadeOut, its length)`, and no fade in. A copy gets both
+  sides unchanged (same length, so they fit). A clip without fades gets no
+  `clip.set_fade`. Owned by this feature (`app/src/renderer/timeline/edit-commands.ts`,
+  unit test `edit-commands`), because `features.clipFades` lets an agent or a plan
+  set a fade before m5b-ui-fades draws one.
   Crossfades and `clip.set_mute` (the rest of E-9) are not part of it.
 - M5b `master` (m5b-engine-master, UI redesign E-11; singleton entity; decided by
   the main session under the maintainer's delegation (Fable rule), 2026-11-15):

@@ -305,7 +305,7 @@ the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
 has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
-| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `plan_methods_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
+| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `plan_methods_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`, `edit-commands` fades) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
 
 Per acceptance item (`m5b-engine-clip-fades`): 1 `document_test` "A clip
 without fades keeps its literal pre-fade JSON and hash", "The fades fixture
@@ -325,7 +325,8 @@ lists clip.set_fade and features.clipFades ...", "plan.preview of a clip.set_fad
 step ...", "command.execute of an over-long fade answers invalid_fade";
 `mcp_adapter_test`; `plan_hash_test` and Node `plan-hash` over
 `clip_set_fade_step`; Node `read-model-fixtures`; app unit `read-model`,
-`capabilities`. 4 none (no UI).
+`capabilities`. 4 app unit `edit-commands` "split carries a faded clip's fades ...",
+"duplicate and copy carry both fades ...". 5 none (no UI).
 
 Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
 `commands_test` "track.add and track.rename ...", "media.add and media.rename
