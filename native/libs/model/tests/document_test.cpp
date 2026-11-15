@@ -1253,7 +1253,12 @@ TEST_CASE("The fades fixture round-trips with the Node bridge's hashes", "[model
         CHECK(formatHash(doc.entityHash(EntityRef{leafType(type), id})) == leaf.find("entityHash")->asString());
     }
     CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
-    CHECK(siann::jcs::canonicalize(doc.toJson()) == siann::jcs::canonicalize(original));
+    // Written as v3 (m5b-engine-buses-sends writes every document in format v3);
+    // otherwise the same JSON, fades included.
+    std::string expected = siann::jcs::canonicalize(original);
+    const std::string from = "siann.session_document.v2";
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == expected);
     CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
 
     REQUIRE(doc.clip("clp_1") != nullptr);
