@@ -347,6 +347,36 @@ DAW-pack intake strips them from names it derives from file names); app
 is wrapped in U+2068 ... U+2069 in every locale; the track list, inspector,
 mixer strip and session name isolate the name they show).
 
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-load-loudness (E-13, UR-14) | Y (`loudness_test` (new `siann_dsp_tests`), `load_window_test`, `graph_driver_test` `[loudness]` `[load]`, `realtime_channel_test` `[loudness]`, `transport_methods_test` `[loudness]` `[load]`, `mcp_adapter_test` `[loudness]`, `engine_host_test` `[loudness]` `[load]`) | Y (`loudness_test`, `load_window_test`, `graph_driver_test` alloc guard under `ScopedRealtimeThread`; RTSan build) | Y (`capabilities`, `meter-frames` "a SLUD frame is not an SMTR frame") | Y (`protocol-fixtures` loudness frames) | 3 + RTSan | - (6: no UI, no tour state) |
+
+Per acceptance item (`m5b-engine-load-loudness`): 1 `load_window_test` "LoadWindow
+publishes the average and the peak of a full second ...", "nothing before the
+first full window", "unmeasured callbacks contribute nothing", "reset", "record
+does not allocate"; `graph_driver_test` "The driver reports DSP load from the
+callback clock"; `transport_methods_test` "engine.status carries load
+{average, peak} as numbers"; `engine_host_test` "engine.status load is the
+driver's and 0 once the device is gone"; 2 `loudness_test` "reset restarts the
+integrated value ...", "silence after a signal ..."; `graph_driver_test` "The
+loudness meter reads the master output before the click", "a locate and a
+transport stop do not restart the integrated value; a reset request does", "the
+master gain at -6 dB lowers the reading by 6 LU"; `realtime_channel_test` "the
+publisher sends SMTR then SLUD per tick ..."; `transport_methods_test`
+"meter.reset_loudness calls the port once ..."; `engine_host_test` "a realtime
+client receives loudness frames while the session plays", "meter.reset_loudness
+returns the integrated value to -inf"; 3 `loudness_test` "EBU Tech 3341 case 1 ...",
+"... cases 3 to 5 ..." at 44.1, 48 and 96 kHz, "the 48 kHz K-weighting equals
+BS.1770-4 Annex 1", "silence reads minus infinity"; `realtime_channel_test` "loudness
+frames match the shared fixture byte for byte" (a negative-infinity frame);
+`engine_host_test` "a -23 dBFS 1 kHz tone through the engine reads -23 LUFS"; 4
+`realtime_channel_test` "with no subscriber the publisher never reads the
+loudness"; `graph_driver_test` "the loudness history survives a graph swap and a
+device change"; `engine_host_test` "engine.select_device keeps the integrated
+value"; 5 `transport_methods_test` "engine.capabilities lists meter.reset_loudness
+with features load and loudness", `mcp_adapter_test` "meter.reset_loudness is
+no MCP tool ...", app unit `capabilities`, Node `protocol-fixtures`; 6 none (no UI).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -362,7 +392,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 |---|---|---|---|---|
 | `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
 | `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
-| `m5b-engine-load-loudness` (E-13) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
+| `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
 | `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
 | `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
