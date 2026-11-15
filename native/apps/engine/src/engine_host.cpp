@@ -834,6 +834,7 @@ protocol::EngineStatus EngineHost::status() const {
     if (loaded_) {
         const rt::CallbackTimer& timing = engine_->driver().callbackTiming();
         out.playing = engine_->transport().playing();
+        out.position = engine_->transport().position();
         out.xruns = timing.misses();
         out.maxCallbackMicros = static_cast<double>(timing.maxCallbackNanos()) / 1'000.0;
         out.unmeasuredCallbacks = timing.unmeasured();

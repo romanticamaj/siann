@@ -648,7 +648,7 @@ TEST_CASE("answer_request: a message, a decline, a plan the agent submitted; the
     mark = f.events(watcher).size();
     CHECK(other.error("answer_request", answer(r5, {{"message", Value("not mine")}})) == "request_not_open");
     CHECK(agent.error("answer_request", answer(r1, {{"message", Value("again")}})) == "request_not_open");
-    CHECK(agent.error("answer_request", answer(r5, {{"message", Value("a")}, {"decline", Value(true)}})) ==
+    CHECK(agent.error("answer_request", answer(r5, {{"plan", Value(hash)}, {"decline", Value(true)}})) ==
           "invalid_params");
     CHECK(agent.error("answer_request", answer(r5, {{"message", Value("a")}, {"plan", Value(hash)}})) ==
           "invalid_params");
@@ -738,7 +738,8 @@ TEST_CASE("plan.submit {request} links the plan and answers the request; the hea
     CHECK(agent.error("submit_plan", Value(Object{{"steps", steps}, {"request", Value("arq_0000")}})) == "not_found");
     CHECK(agent.error("submit_plan", Value(Object{{"steps", steps}, {"request", Value(7)}})) == "invalid_params");
     CHECK(at(f.ok(c, "plan.list"), "plans").asArray().size() == plansBefore);
-    CHECK(f.events(watcher).size() == mark);
+    CHECK(countOfType(f, watcher, "plan.changed", mark) == 0);
+    CHECK(requestEvents(f, watcher, mark).empty());
     CHECK(stateOf(listed(f, c).at(0)) == "pending");  // r2
 }
 

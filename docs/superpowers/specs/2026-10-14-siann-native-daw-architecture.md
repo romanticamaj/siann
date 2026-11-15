@@ -2573,8 +2573,9 @@ of the tool table in `docs/schemas/protocol-mcp-v0.md`).
 Credential-bound methods (m5b-engine-agent-requests, item 30). Two kinds of
 method belong to one credential whatever the scope: the user's side of an agent
 request, `agent.request`, `agent.cancel_request` and `agent.requests`, is UI-only
-(no MCP tool maps it, so an MCP credential, `propose` or `trusted`, gets
-`scope_denied`), and the agent's side, `agent.next_request` (`next_request`) and
+(no MCP tool maps it, so a `tools/call` naming it is the unknown tool `-32602`,
+and the server answers `scope_denied` to an MCP credential, `propose` or
+`trusted`, should one reach it), and the agent's side, `agent.next_request` (`next_request`) and
 `agent.answer_request` (`answer_request`), is MCP-only and `propose` (the UI token
 gets `scope_denied`, since only an MCP session is an agent). Both refusals execute
 nothing and are not cached, like every `scope_denied`.

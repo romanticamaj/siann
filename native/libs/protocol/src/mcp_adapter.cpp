@@ -39,7 +39,7 @@ const std::vector<McpTool> kTools = {
     {"submit_plan", "plan.submit", McpScope::propose,
      "Submits commands as a plan for review, optionally with a title and an intent shown to the user; returns the "
      "validated siann.plan.v1 with its hash and the actor the engine recorded.",
-     R"({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object"},"minItems":1,"description":"commands {op, ...}"},"readSet":{"type":"array","items":{"type":"string"},"description":"entities read, <type>:<id>"},"baseRevision":{"type":"string","description":"defaults to main's head"},"title":{"type":"string","minLength":1,"maxLength":200,"description":"one line, at most 200 UTF-8 bytes, no control, bidi formatting or line separator characters; not part of the plan hash"},"intent":{"type":"string","minLength":1,"maxLength":2000,"description":"why, at most 2000 UTF-8 bytes; tab, LF and CR are the only control characters allowed, no bidi formatting or line separator characters; not part of the plan hash"}},"required":["steps"],"additionalProperties":false})"},
+     R"({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object"},"minItems":1,"description":"commands {op, ...}"},"readSet":{"type":"array","items":{"type":"string"},"description":"entities read, <type>:<id>"},"baseRevision":{"type":"string","description":"defaults to main's head"},"title":{"type":"string","minLength":1,"maxLength":200,"description":"one line, at most 200 UTF-8 bytes, no control, bidi formatting or line separator characters; not part of the plan hash"},"intent":{"type":"string","minLength":1,"maxLength":2000,"description":"why, at most 2000 UTF-8 bytes; tab, LF and CR are the only control characters allowed, no bidi formatting or line separator characters; not part of the plan hash"},"request":{"type":"string","description":"an open request from next_request (arq_<hex>) this plan answers; not part of the plan hash"}},"required":["steps"],"additionalProperties":false})"},
     {"plan_status", "plan.status", McpScope::propose,
      "Returns a plan with the entities that changed since its base (stale) and its proposal branch.", kPlanOnly},
     {"approve_plan", "plan.approve", McpScope::trusted,
@@ -107,6 +107,18 @@ const std::vector<McpTool> kTools = {
     {"import_media", "media.import", McpScope::trusted,
      "Imports a WAV or FLAC file into the media pool as a job (converted to the session rate); poll job_status.",
      R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the audio file"},"clientImportId":{"type":"string","minLength":1,"maxLength":128,"description":"chosen by the client; a repeat answers the first job"}},"required":["path","clientImportId"],"additionalProperties":false})"},
+    // m5b-engine-agent-requests (Protocol v0 item 30): the agent's side of a
+    // request from the user. A request executes nothing; a plan the user
+    // approves stays the only way into the document, so both are propose.
+    {"next_request", "agent.next_request", McpScope::propose,
+     "Waits for the next request the user sent this agent and returns it, now taken: {request: {id, text, context: "
+     "{selection, locators, cursor, headRevision}, ...}}, or {request: null} when none arrived within waitMs "
+     "(at most the engine's agentRequestWaitMs). Call it again to keep listening.",
+     R"({"type":"object","properties":{"waitMs":{"type":"integer","minimum":0,"description":"how long to wait for a request, in ms; 0 answers at once; capped at limits.agentRequestWaitMs"}},"additionalProperties":false})"},
+    {"answer_request", "agent.answer_request", McpScope::propose,
+     "Answers a request with a plan this agent submitted, or with a message, or declines it (exactly one form); "
+     "submit_plan with request answers it too.",
+     R"({"type":"object","properties":{"request":{"type":"string","description":"the request id, arq_<hex>"},"plan":{"type":"string","description":"the hash of a plan this agent submitted"},"message":{"type":"string","minLength":1,"maxLength":4000,"description":"1 to 4000 characters; tab, LF and CR are the only control characters allowed, no bidi formatting or line separator characters"},"decline":{"const":true,"description":"declines the request, with an optional message"}},"required":["request"],"additionalProperties":false})"},
 };
 
 HttpResponse reply(int status, std::string body, Headers headers = {}) {

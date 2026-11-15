@@ -142,6 +142,16 @@ void AgentRegistry::acted(const std::string& agentId, std::string tool, std::str
     }
 }
 
+void AgentRegistry::touch(const std::string& agentId) {
+    std::lock_guard lock(mutex_);
+    for (Entry& entry : agents_) {
+        if (entry.view.id == agentId && entry.session && entry.view.connected) {
+            entry.lastSeen = clock_();
+            return;
+        }
+    }
+}
+
 void AgentRegistry::expire(std::chrono::milliseconds idle) {
     std::lock_guard lock(mutex_);
     const auto now = clock_();

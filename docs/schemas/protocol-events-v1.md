@@ -316,6 +316,28 @@ The server compares the agents once per pump, after the requests, so the event
 follows the tool call's response and its `plan.changed`. The read model ignores
 it (it advances `lastSeq` only).
 
+### `agent.request_changed` (m5b-engine-agent-requests)
+
+A request from the user to an agent (spec, Protocol v0 item 30) was queued, taken,
+answered, declined, cancelled or expired:
+
+```json
+{"type": "agent.request_changed",
+ "request": {"id": "arq_5c1e9a0b3d2f4e67", "agentId": "agt_3f2a9c1d0b7e6a54", "text": "Lower the drums",
+             "context": {"selection": {"tracks": ["trk_1"], "clips": []},
+                         "locators": null, "cursor": "96000", "headRevision": "r3"},
+             "state": "answered", "plan": "sha256:...", "createdAt": "2026-11-15T10:01:00Z"}}
+```
+
+`request` is the object `agent.request` and `agent.requests` return
+([Protocol engine v0](protocol-engine-v0.md), "Agent requests"); `plan` and
+`message` appear once an answer set them. Published on every state change, to
+every subscribed connection, after the response and the `plan.changed` of the
+request that changed it and before the pump's `agent.changed`; an expiry (its
+agent disconnected or was forgotten, or `session.open`/`session.create` served
+another session) goes out in the pump that noticed it. A request is engine state,
+never a revision: the read model ignores the event (it advances `lastSeq` only).
+
 ### `session.opened` (m3-mcp)
 
 Published when `session.open` switched the server to another bundle:

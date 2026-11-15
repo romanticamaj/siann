@@ -77,6 +77,9 @@ public:
 
     // Command thread.
     void acted(const std::string& agentId, std::string tool, std::string time);
+    // A parked next_request (Protocol v0 item 30) keeps its agent connected: the
+    // agent counts as seen now. Does nothing for an ended or unknown session.
+    void touch(const std::string& agentId);
     // Disconnects every connected agent not seen for `idle` or longer.
     void expire(std::chrono::milliseconds idle);
     // In the order the agents initialized.

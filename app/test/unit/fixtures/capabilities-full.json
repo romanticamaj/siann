@@ -24,7 +24,8 @@
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin", "gesture.update", "gesture.hold", "gesture.end", "gesture.cancel",
     "plan.list", "plan.preview", "record.arm", "transport.record", "record.recover_take",
-    "session.create", "media.import", "transport.set_cycle", "transport.set_click", "meter.reset_loudness"
+    "session.create", "media.import", "transport.set_cycle", "transport.set_click", "meter.reset_loudness",
+    "agent.request", "agent.cancel_request", "agent.requests", "agent.next_request", "agent.answer_request"
   ],
   "features": {
     "plans": true,
@@ -44,10 +45,12 @@
     "clipFades": true,
     "planMetadata": true,
     "agents": true,
+    "agentRequests": true,
     "buses": true,
     "sends": true,
     "load": true,
     "loudness": true
   },
-  "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024, "agentIdleMs": 300000, "agentsRetained": 32 }
+  "limits": { "syncChunkEntities": 256, "inboxCapacity": 256, "idempotencyCapacity": 1024, "agentIdleMs": 300000, "agentsRetained": 32,
+    "agentRequestsPerAgent": 16, "agentRequestTextChars": 4000, "agentRequestWaitMs": 25000, "agentRequestsClosedRetained": 16 }
 }

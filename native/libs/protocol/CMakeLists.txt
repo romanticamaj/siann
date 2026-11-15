@@ -8,6 +8,7 @@ add_library(siann_protocol
   src/jobs.cpp
   src/mcp_adapter.cpp
   src/agent_registry.cpp
+  src/agent_requests.cpp
   src/record_port.cpp
 )
 add_library(siann::protocol ALIAS siann_protocol)
