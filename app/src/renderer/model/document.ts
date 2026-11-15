@@ -4,9 +4,11 @@
 // 64-bit fields (ticks, frames, sample positions, seq) stay decimal strings,
 // because JSON numbers lose precision above 2^53. Framework-free.
 
-export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot' | 'locators' | 'master';
+export type EntityType = 'root' | 'media' | 'track' | 'clip' | 'plugin_slot' | 'locators' | 'master' | 'bus' | 'send';
 
-export const ENTITY_TYPES: readonly EntityType[] = ['root', 'media', 'track', 'clip', 'plugin_slot', 'locators', 'master'];
+export const ENTITY_TYPES: readonly EntityType[] = [
+  'root', 'media', 'track', 'clip', 'plugin_slot', 'locators', 'master', 'bus', 'send',
+];
 
 export interface TempoPoint {
   readonly ticks: string;
@@ -20,6 +22,8 @@ export interface RootEntity {
   readonly sampleRate: number;
   readonly tempo: readonly TempoPoint[];
   readonly trackOrder: readonly string[];
+  // The mixer's bus order (m5b-engine-buses-sends); absent while there are no buses.
+  readonly busOrder?: readonly string[];
 }
 
 export interface MediaEntity {
@@ -53,6 +57,10 @@ export interface TrackEntity {
   // The input it records from (m5b-engine-record): the first device input channel
   // (0-based) and 1 or 2 channels; absent while none is set.
   readonly input?: { readonly port: number; readonly channels: number };
+  // Send ids in order and the bus it outputs to (m5b-engine-buses-sends); both
+  // absent while empty, the output while the track feeds the master.
+  readonly sends?: readonly string[];
+  readonly output?: { readonly busId: string };
 }
 
 export interface ClipPosition {
@@ -74,7 +82,10 @@ export interface ClipEntity {
 export interface PluginSlotEntity {
   readonly schema: 'siann.entity.plugin_slot.v1';
   readonly id: string;
-  readonly trackId: string;
+  // Exactly one of trackId or busId (m5b-engine-buses-sends): a bus's slot has
+  // busId and no trackId.
+  readonly trackId?: string;
+  readonly busId?: string;
   readonly format: string;
   readonly uid: string;
   readonly name: string;
@@ -101,7 +112,35 @@ export interface MasterEntity {
   readonly gainMilliDb: number;
 }
 
+// A bus (m5b-engine-buses-sends): always stereo, a fader like a track's, its
+// inserts and its output (absent while it feeds the master).
+export interface BusEntity {
+  readonly schema: 'siann.entity.bus.v1';
+  readonly id: string;
+  readonly name: string;
+  readonly channels: 2;
+  readonly gainMilliDb: number;
+  readonly pan: number;
+  readonly mute: boolean;
+  readonly solo: boolean;
+  readonly inserts?: readonly string[];
+  readonly output?: { readonly busId: string };
+}
+
+// A send from a track to a bus (m5b-engine-buses-sends).
+export interface SendEntity {
+  readonly schema: 'siann.entity.send.v1';
+  readonly id: string;
+  readonly trackId: string;
+  readonly busId: string;
+  readonly levelMilliDb: number;
+  readonly pre: boolean;
+  readonly enabled: boolean;
+}
+
 export type Entity =
+  | BusEntity
+  | SendEntity
   | RootEntity
   | MediaEntity
   | TrackEntity
@@ -115,7 +154,7 @@ export interface EntityRef {
   readonly id: string;
 }
 
-const REF_RE = /^(root|media|track|clip|plugin_slot|locators|master):([A-Za-z0-9_-]{1,64})$/;
+const REF_RE = /^(root|media|track|clip|plugin_slot|locators|master|bus|send):([A-Za-z0-9_-]{1,64})$/;
 
 // "<type>:<id>" as session.fetch and changedIds name an entity; null for
 // anything else.
@@ -131,6 +170,9 @@ export const TABLES = [
   ['tracks', 'track'],
   ['clips', 'clip'],
   ['pluginSlots', 'plugin_slot'],
+  // After the master (m5b-engine-buses-sends); each only in a chunk that holds rows.
+  ['buses', 'bus'],
+  ['sends', 'send'],
 ] as const;
 
 export interface SyncChunk {
@@ -150,6 +192,8 @@ export interface SyncChunk {
     readonly locators?: LocatorsEntity;
     // Likewise, after the locators, and only while the master gain is not 0 dB.
     readonly master?: MasterEntity;
+    readonly buses?: readonly BusEntity[];
+    readonly sends?: readonly SendEntity[];
   };
   readonly next: string | null;
 }
