@@ -69,16 +69,66 @@ std::string joined(const std::vector<std::string>& items) {
     return out;
 }
 
+// What a plan changed in one ordered id list of root (trackOrder, busOrder).
+struct OrderChange {
+    bool order = false;               // the plan reordered ids it neither added nor removed
+    std::vector<std::string> added;   // in the plan's order, not before it
+    std::vector<std::string> removed; // in the order before the plan, not after it
+};
+
+OrderChange orderChange(const std::vector<std::string>& before, const std::vector<std::string>& after) {
+    OrderChange change;
+    for (const std::string& id : after) {
+        if (!containsId(before, id)) {
+            change.added.push_back(id);
+        }
+    }
+    for (const std::string& id : before) {
+        if (!containsId(after, id)) {
+            change.removed.push_back(id);
+        }
+    }
+    change.order = without(before, change.removed) != without(after, change.added);
+    return change;
+}
+
+// The current order with the plan's change undone: plan-added ids leave it; a
+// plan-removed id goes back right after its nearest earlier neighbour in the
+// old order that is still present, or first.
+std::vector<std::string> restoreOrder(const OrderChange& change, const std::vector<std::string>& before,
+                                      std::vector<std::string> current) {
+    if (change.order) {
+        return before;
+    }
+    current = without(current, change.added);
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        const std::string& id = before[i];
+        if (!containsId(change.removed, id)) {
+            continue;
+        }
+        auto at = current.begin();
+        for (std::size_t j = i; j-- > 0;) {
+            auto found = std::find(current.begin(), current.end(), before[j]);
+            if (found != current.end()) {
+                at = found + 1;
+                break;
+            }
+        }
+        current.insert(at, id);
+    }
+    return current;
+}
+
 // What a plan changed in root, field by field. Root is shared session state
-// (name, sample rate, tempo, track order): the plan owns only the fields it
-// changed and the order slots of the tracks it added or removed.
+// (name, sample rate, tempo, track and bus order): the plan owns only the
+// fields it changed and the order slots of the tracks and buses it added or
+// removed.
 struct RootChange {
     bool name = false;
     bool sampleRate = false;
     bool tempo = false;
-    bool order = false;               // the plan reordered tracks it neither added nor removed
-    std::vector<std::string> added;   // in the plan's order, not before it
-    std::vector<std::string> removed; // in the order before the plan, not after it
+    OrderChange tracks;
+    OrderChange buses;  // m5b-engine-buses-sends
 };
 
 RootChange rootChange(const model::Root& before, const model::Root& after) {
@@ -86,17 +136,8 @@ RootChange rootChange(const model::Root& before, const model::Root& after) {
     change.name = before.name != after.name;
     change.sampleRate = before.sampleRate != after.sampleRate;
     change.tempo = before.tempo != after.tempo;
-    for (const std::string& id : after.trackOrder) {
-        if (!containsId(before.trackOrder, id)) {
-            change.added.push_back(id);
-        }
-    }
-    for (const std::string& id : before.trackOrder) {
-        if (!containsId(after.trackOrder, id)) {
-            change.removed.push_back(id);
-        }
-    }
-    change.order = without(before.trackOrder, change.removed) != without(after.trackOrder, change.added);
+    change.tracks = orderChange(before.trackOrder, after.trackOrder);
+    change.buses = orderChange(before.busOrder, after.busOrder);
     return change;
 }
 
@@ -106,7 +147,8 @@ bool rootConflicts(const RootChange& change, const model::Root& planned, const m
     return (change.name && current.name != planned.name) ||
            (change.sampleRate && current.sampleRate != planned.sampleRate) ||
            (change.tempo && current.tempo != planned.tempo) ||
-           (change.order && current.trackOrder != planned.trackOrder);
+           (change.tracks.order && current.trackOrder != planned.trackOrder) ||
+           (change.buses.order && current.busOrder != planned.busOrder);
 }
 
 // The current root with the plan's fields set back to before. Plan-added
@@ -122,26 +164,8 @@ model::Root restoreRoot(const RootChange& change, const model::Root& before, mod
     if (change.tempo) {
         current.tempo = before.tempo;
     }
-    if (change.order) {
-        current.trackOrder = before.trackOrder;
-        return current;
-    }
-    current.trackOrder = without(current.trackOrder, change.added);
-    for (std::size_t i = 0; i < before.trackOrder.size(); ++i) {
-        const std::string& id = before.trackOrder[i];
-        if (!containsId(change.removed, id)) {
-            continue;
-        }
-        auto at = current.trackOrder.begin();
-        for (std::size_t j = i; j-- > 0;) {
-            auto found = std::find(current.trackOrder.begin(), current.trackOrder.end(), before.trackOrder[j]);
-            if (found != current.trackOrder.end()) {
-                at = found + 1;
-                break;
-            }
-        }
-        current.trackOrder.insert(at, id);
-    }
+    current.trackOrder = restoreOrder(change.tracks, before.trackOrder, std::move(current.trackOrder));
+    current.busOrder = restoreOrder(change.buses, before.busOrder, std::move(current.busOrder));
     return current;
 }
 
@@ -182,6 +206,16 @@ model::Document restoreEntity(const model::Document& document, const model::Docu
                 return document.withMaster(*value);
             }
             return document.master() != nullptr ? document.withoutMaster() : document;
+        case EntityType::bus:
+            if (const model::Bus* value = source.bus(ref.id)) {
+                return document.withBus(*value);
+            }
+            return document.withoutBus(ref.id);
+        case EntityType::send:
+            if (const model::Send* value = source.send(ref.id)) {
+                return document.withSend(*value);
+            }
+            return document.withoutSend(ref.id);
     }
     return document;
 }

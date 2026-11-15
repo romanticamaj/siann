@@ -35,6 +35,7 @@ if(SIANN_BUILD_TESTS)
     tests/transport_methods_test.cpp
     tests/locators_methods_test.cpp
     tests/master_methods_test.cpp
+    tests/buses_methods_test.cpp
     tests/plugin_methods_test.cpp
     tests/jobs_test.cpp
     tests/session_open_test.cpp

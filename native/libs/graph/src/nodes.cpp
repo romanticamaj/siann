@@ -140,6 +140,69 @@ void TrackFaderNode::process(const ProcessContext& context, std::span<const Audi
     }
 }
 
+SendNode::SendNode(int inputChannels, std::int32_t levelMilliDb, bool enabled, bool sourceMute, bool soloSilenced)
+    : inputChannels_(inputChannels),
+      levelMilliDb_(levelMilliDb),
+      enabled_(enabled),
+      sourceMute_(sourceMute),
+      soloSilenced_(soloSilenced) {
+    retarget(0);
+}
+
+void SendNode::retarget(int rampFrames) noexcept {
+    const float target = enabled_ && !sourceMute_ && !soloSilenced_ ? gainFromMilliDb(levelMilliDb_) : 0.0f;
+    target_ = target;
+    if (rampFrames <= 0) {
+        gain_ = target;
+        remaining_ = 0;
+        return;
+    }
+    remaining_ = rampFrames;
+    step_ = (target - gain_) / static_cast<float>(rampFrames);
+}
+
+void SendNode::setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept {
+    if (std::isnan(value)) {
+        return;
+    }
+    switch (paramId) {
+        case kLevelMilliDb:
+            levelMilliDb_ = value <= static_cast<double>(INT32_MIN)
+                                ? INT32_MIN
+                                : static_cast<std::int32_t>(std::lround(std::clamp(
+                                      value, static_cast<double>(kMinLevelMilliDb), static_cast<double>(kMaxLevelMilliDb))));
+            break;
+        case kEnabled:
+            enabled_ = value != 0.0;
+            break;
+        case kSourceMute:
+            sourceMute_ = value != 0.0;
+            break;
+        default:
+            return;
+    }
+    retarget(rampFrames);
+}
+
+void SendNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                       const AudioBufferView& output) noexcept {
+    const AudioBufferView& in = inputs[0];
+    const float* l = in.channel(0);
+    const float* r = inputChannels_ >= 2 ? in.channel(1) : in.channel(0);
+    for (int i = 0; i < context.frames; ++i) {
+        if (remaining_ > 0) {
+            remaining_ -= 1;
+            if (remaining_ == 0) {
+                gain_ = target_;  // land exactly on the target
+            } else {
+                gain_ += step_;
+            }
+        }
+        output.channel(0)[i] = l[i] * gain_;
+        output.channel(1)[i] = r[i] * gain_;
+    }
+}
+
 void BusNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                       const AudioBufferView& output) noexcept {
     for (int c = 0; c < channels_; ++c) {

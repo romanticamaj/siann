@@ -146,6 +146,14 @@ Published when the engine publishes a graph with meters:
 {"type": "meters.legend", "epoch": "3", "entities": ["master", "track:trk_1"]}
 ```
 
+With buses (m5b-engine-buses-sends) each bus meters under `bus:<id>`. The graph's
+keys are listed in byte order, so buses come first, and the input meters of
+armed tracks (`input:<trackId>`) follow them; a client finds a meter by its key:
+
+```json
+{"type": "meters.legend", "epoch": "4", "entities": ["bus:b1", "master", "track:trk_1"]}
+```
+
 `entities[i]` is the entity behind `entityIndex == i` in meter frames of that
 `epoch`. The engine keeps the newest legend as part of the stream position, so a
 client never depends on having been connected when it was published: the auth
@@ -341,7 +349,7 @@ happen in between.
 }
 ```
 
-- Entities are listed root, media, tracks, clips, plugin slots, locators, master, each
+- Entities are listed root, media, tracks, clips, plugin slots, locators, master, buses, sends, each
   table in id order, which is the order of `Document::toJson()`. A chunk holds at
   most `syncChunkEntities` entities (server option, default 500); `entities` is the
   total. `pluginSlots` is present only in a chunk that holds slots (M4, see
@@ -350,11 +358,14 @@ happen in between.
   only in the chunk that holds it (a document without locators syncs as before);
   its ref is `locators:locators`. `master` (m5b-engine-master) is the same: a
   single object listed after `locators`, present only in the chunk that holds it
-  and only while the master gain is not 0 dB; its ref is `master:master`.
+  and only while the master gain is not 0 dB; its ref is `master:master`. `buses`
+  and `sends` (m5b-engine-buses-sends) are tables listed after the master, each
+  present only in a chunk that holds rows; their refs are `bus:<id>` and
+  `send:<id>`.
 - Entity JSON is the hashed form, so a client recomputes entity and document
   hashes from the chunks. Concatenating the chunks gives
-  `{schemaVersion: "siann.session_document.v2", root, media, tracks, clips,
-  pluginSlots?, locators?, master?}`.
+  `{schemaVersion: "siann.session_document.v3", root, media, tracks, clips,
+  pluginSlots?, locators?, master?, buses?, sends?}`.
 - `next` is `null` on the last chunk. A cursor that does not belong to the
   connection's current sync (stale, forged, or after a newer sync started) is
   `sync_cursor_invalid`; a cursor that is not a string is `invalid_params`.

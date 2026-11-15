@@ -14,7 +14,9 @@
 // (m5b-engine-plan-metadata) is two events the read model does not model, right
 // after the base sync: a plan.changed with the plan metadata and an
 // agent.changed; a client advances lastSeq past them and changes nothing else.
-// Hashes come from
+// A fifth part (m5b-engine-buses-sends) adds a bus and a send, changes the bus and removes it
+// with its send, and syncs a document holding them (buses and sends after the
+// master, each table only in a chunk that holds rows). Hashes come from
 // the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
@@ -117,7 +119,20 @@ function entitiesOf(document) {
   }
   if (document.locators) out.push({ type: 'locators', entity: document.locators });
   if (document.master) out.push({ type: 'master', entity: document.master });
+  // Buses and sends after the master, each in id order (m5b-engine-buses-sends).
+  for (const [table, type] of [['buses', 'bus'], ['sends', 'send']]) {
+    const rows = [...(document[table] || [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (const entity of rows) out.push({ type, entity });
+  }
   return out;
+}
+
+function bus(id, overrides = {}) {
+  return { schema: 'siann.entity.bus.v1', id, name: `Bus ${id}`, channels: 2, gainMilliDb: 0, pan: 0, mute: false, solo: false, ...overrides };
+}
+
+function send(id, trackId, busId) {
+  return { schema: 'siann.entity.send.v1', id, trackId, busId, levelMilliDb: 0, pre: false, enabled: true };
 }
 
 function locators(left, right) {
@@ -157,6 +172,11 @@ function syncChunks(document, revision, seq) {
     // The master likewise (m5b-engine-master), after the locators.
     const masterEntry = slice.find((e) => e.type === 'master');
     if (masterEntry) chunk.master = masterEntry.entity;
+    // Buses and sends only in a chunk that holds rows (m5b-engine-buses-sends).
+    for (const [table, type] of [['buses', 'bus'], ['sends', 'send']]) {
+      const rows = slice.filter((e) => e.type === type).map((e) => e.entity);
+      if (rows.length > 0) chunk[table] = rows;
+    }
     const end = offset + slice.length;
     chunks.push({
       revision,
@@ -235,6 +255,49 @@ function buildMasterSteps(after) {
     commit((d) => {
       delete d.master;
     }, [{ ref: 'master:master', change: 'removed' }]);
+  });
+}
+
+// After the master steps, in format v3: bus.add b1 with send.add s1 from trk_1,
+// bus.set_gain b1 -6000, then bus.remove b1, which removes the send too
+// (m5b-engine-buses-sends). changedIds come in the engine's diff order.
+function buildBusSteps(after) {
+  const start = clone(after.document);
+  start.schemaVersion = 'siann.session_document.v3';
+  const dropEmpty = (d) => {
+    if (d.buses.length === 0) delete d.buses;
+    if (d.sends.length === 0) delete d.sends;
+    if (d.root.busOrder.length === 0) delete d.root.busOrder;
+    const t = d.tracks.find((x) => x.id === 'trk_1');
+    if (t.sends.length === 0) delete t.sends;
+  };
+  return recordSteps(start, Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      d.buses = [bus('b1')];
+      d.sends = [send('s1', 'trk_1', 'b1')];
+      d.root.busOrder = ['b1'];
+      d.tracks.find((x) => x.id === 'trk_1').sends = ['s1'];
+    }, [
+      { ref: 'root:root', change: 'modified' },
+      { ref: 'track:trk_1', change: 'modified' },
+      { ref: 'bus:b1', change: 'added' },
+      { ref: 'send:s1', change: 'added' },
+    ]);
+    commit((d) => {
+      d.buses[0].gainMilliDb = -6000;
+    }, [{ ref: 'bus:b1', change: 'modified' }]);
+    commit((d) => {
+      d.buses = [];
+      d.sends = [];
+      d.root.busOrder = [];
+      d.tracks.find((x) => x.id === 'trk_1').sends = [];
+      dropEmpty(d);
+    }, [
+      { ref: 'root:root', change: 'modified' },
+      { ref: 'track:trk_1', change: 'modified' },
+      { ref: 'bus:b1', change: 'removed' },
+      { ref: 'send:s1', change: 'removed' },
+    ]);
   });
 }
 
@@ -330,6 +393,8 @@ function buildFixture() {
   const masterSteps = buildMasterSteps(locatorSteps[locatorSteps.length - 1]);
   const withMaster = masterSteps[0];
   const withBoth = { ...clone(withMaster.document), locators: locators('96000', '480000') };
+  const busSteps = buildBusSteps(masterSteps[masterSteps.length - 1]);
+  const withBus = busSteps[0];
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -353,6 +418,11 @@ function buildFixture() {
       both: { document: withBoth, documentHash: hashDocument(withBoth), sync: syncChunks(withBoth, 'r20', '30') },
     },
     unmodelled: buildUnmodelled(base),
+    buses: {
+      steps: busSteps,
+      // A sync pinned at the revision that added the bus and the send.
+      sync: syncChunks(withBus.document, withBus.event.revision, withBus.event.seq),
+    },
   };
 }
 

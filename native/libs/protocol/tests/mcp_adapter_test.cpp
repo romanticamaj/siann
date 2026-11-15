@@ -211,6 +211,19 @@ Value commandsArray() {
     return Value(std::move(out));
 }
 
+// command::commandCascades() as command.list returns it (m5b-engine-buses-sends).
+Value cascadesObject() {
+    Object out;
+    for (const auto& [name, types] : command::commandCascades()) {
+        Array list;
+        for (const std::string& type : types) {
+            list.push_back(Value(type));
+        }
+        out.emplace_back(name, Value(std::move(list)));
+    }
+    return Value(std::move(out));
+}
+
 }  // namespace
 
 TEST_CASE("initialize assigns an Mcp-Session-Id and reports the build", "[protocol][mcp]") {
@@ -340,7 +353,7 @@ TEST_CASE("list_commands returns the registry as text and structured content", "
     mcp.initialize();
     const Value result = mcp.tool("list_commands");
     CHECK_FALSE(at(result, "isError").asBool());
-    const Value expected = Value(Object{{"commands", commandsArray()}});
+    const Value expected = Value(Object{{"commands", commandsArray()}, {"cascades", cascadesObject()}});
     const Value& content = at(result, "content").asArray().at(0);
     CHECK(at(content, "type").asString() == "text");
     CHECK(at(content, "text").asString() == canonical(expected));
@@ -1075,4 +1088,20 @@ TEST_CASE("DELETE /v0/mcp ends the session; without the header it is 400", "[pro
     CHECK(mcp.post(Mcp::rpc(Value("p2"), "ping")).status == 404);
     CHECK(mcp.send(end).status == 404);
     CHECK(mcp.sessionHeader == session);
+}
+
+// m5b-engine-buses-sends: list_commands passes command.list's cascades through.
+TEST_CASE("list_commands passes the cascades through", "[protocol][mcp][buses]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value listed = mcp.ok("list_commands");
+    CHECK(at(listed, "commands").kind() == Value::Kind::array);
+    const Value& cascades = at(listed, "cascades");
+    REQUIRE(cascades.find("bus.remove") != nullptr);
+    CHECK(canonical(at(cascades, "bus.remove")) ==
+          canonical(Value(Array{Value("bus"), Value("plugin_slot"), Value("root"), Value("send"), Value("track")})));
+    CHECK(canonical(at(cascades, "track.remove")) ==
+          canonical(Value(Array{Value("clip"), Value("plugin_slot"), Value("root"), Value("send")})));
+    CHECK(cascades.asObject().size() == 2);
 }

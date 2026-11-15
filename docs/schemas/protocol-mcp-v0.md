@@ -161,7 +161,9 @@ codes (`no_device` included). `select_device` is trusted because it changes the
 device the served session plays on for every client. The locators are set with the
 command `session.set_locators` through `execute` (trusted) or a plan, and the
 master gain (m5b-engine-master) with the command `master.set_gain` the same way; no
-tool is dedicated to either.
+tool is dedicated to either. Buses and sends (m5b-engine-buses-sends) likewise go
+through `execute` or a plan with their commands, and `list_commands` returns
+`command.list`'s `{commands, cascades}` unchanged.
 
 `record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
 recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted

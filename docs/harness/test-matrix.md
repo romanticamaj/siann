@@ -164,6 +164,7 @@ the realtime tests; 9 none (no UI).
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
 | m5b-engine-master | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `master_session_test`, `master_methods_test`, `gesture_methods_test`, `mcp_adapter_test`, `playback_test`, `audition_test`, `click_test`, `offline_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a master gesture) | | Y (`fixture-parity`, `read-model-fixtures`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the master strip stays a meter until `m5b-ui-inserts-master`; tour states changed: none) |
+| m5b-engine-buses-sends | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `buses_session_test`, `graph_test`, `offline_test`, `playback_test`, `plugin_instances_test`, `realtime_channel_test`, `buses_methods_test`, `gesture_methods_test`, `plugin_methods_test`, `mcp_adapter_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a bus and a send gesture) | | Y (`fixture-parity`, `read-model-fixtures`, `plan-hash`; app unit `read-model`, `plan-diff`, `capabilities`) | 3 | - (no UI: buses reach the mixer in a later UI feature; tour states changed: none) |
 
 Per acceptance item (`m5b-engine-master`): 1 `document_test` "The master
 fixture gives the Node bridge's hashes ...", "A v2 document without the master
@@ -197,6 +198,43 @@ silence", "A document without the master renders bit-identically ...";
 `master_methods_test` "engine.capabilities lists master.set_gain and
 features.masterGain", plan.preview and the second connection above;
 `mcp_adapter_test`; app unit `capabilities`.
+
+Per acceptance item (`m5b-engine-buses-sends`): 1 `document_test` "The buses
+fixture gives the Node bridge's hashes ...", "Empty bus and send fields are
+omitted ...", "validate() checks bus and send references, order and ranges", "A
+cyclic bus output chain is routing_cycle"; `commands_test` "bus.add adds a stereo
+bus ...", "The bus edits change one field ...", "bus.set_output refuses a route
+that reaches the bus itself ...", "track.set_output routes a track ...",
+"send.add and the send edits declare exactly their entities", "bus.remove removes
+its sends and slots and routes its inputs to the master in one revision",
+"track.remove cascades the track's sends", "commandCascades lists ...";
+`history_test` "One undo of bus.remove restores ..."; `plan_test` "Plan entity
+sets accept bus and send refs", "A bus plan goes stale when the bus changes",
+"Rolling back a plan that added a bus restores the bus order ...";
+`buses_methods_test` command.list cascades and routing_cycle. 2 `offline_test`
+"PDC null: a latent track insert and a send to a bus with a latent insert", "PDC
+null: a three-level bus chain ...", "A post-fader send follows the track's gain
+and pan; a pre-fader send does not", "Track mute silences both kinds of send
+...", "Solo with buses and sends follows the Channels and I/O rules";
+`plugin_instances_test` "PDC nulls in realtime across a send and a three-level bus
+chain with latent inserts"; `playback_test` "Realtime with buses and sends is
+sample-identical ...", "Realtime through a three-level bus chain ...";
+`graph_test` SendNode cases. 3 `gesture_methods_test` "bus:<id> takes gain and
+send:<id> takes level ...", "a bus gesture commits one bus.set_gain ...", "bus
+and send targets follow a track fader's lease rules"; `playback_test` "Bus gain
+and send level gestures move the sound with no recompile ...", "No allocations on
+the audio thread during bus and send gestures"; `engine_host_test` "bus and send
+gestures through the port"; `playback_test` "A bus meter reaches the dispatcher
+under bus:<id> ..." and `realtime_channel_test` "the meter legend lists every bus
+as bus:<id> ..."; `document_test` (slot with both or neither owner),
+`commands_test` "plugin.insert takes exactly one of trackId or busId";
+`plugin_methods_test` "plugin.instantiate takes exactly one of trackId or busId
+...". 4 `buses_session_test` "A v2 bundle opens with every recorded hash ...", "A
+bundle with buses and sends replays to identical hashes"; `buses_methods_test`
+"plan.preview shows buses and sends with before and after", "engine.capabilities
+lists features.buses and features.sends ...", sync chunks; `fixture-parity`,
+`read-model-fixtures`, `plan-hash`; app unit `read-model` "(f) bus and send refs
+parse ...", "the buses model fixture syncs ...". 5 none (no UI).
 
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
@@ -252,7 +290,7 @@ No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
 ctest, ...): M5b 61/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-engine-clip-fades` 1/4, `m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` names a test in 4/5 since its bus-routing decision of 2026-11-15).
+`m5b-engine-clip-fades` 1/4, `m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:

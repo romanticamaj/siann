@@ -7,8 +7,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -61,12 +63,30 @@ struct FlatClip {
 
 struct FlatTrack {
     const model::Track* track = nullptr;
-    bool silenced = false;      // muted, or not soloed while another track is
-    bool soloSilenced = false;  // not soloed while another track is
+    bool silenced = false;      // muted or solo-silenced
+    bool soloSilenced = false;  // in soloSilencedRefs (a solo exists and it neither is one nor reaches or is reached by one)
     std::vector<FlatClip> clips;
 };
 
 std::vector<FlatTrack> flattenClips(const model::Document& document);
+
+// The solo-silence set of "Channels and I/O" (m5b-engine-buses-sends), as refs
+// "track:<id>" and "bus:<id>". A solo exists when any track or bus is soloed. X
+// reaches Y when Y is X's output bus, the target bus of one of X's enabled
+// sends, or reached by either. While a solo exists, a track or bus that is not
+// soloed, reaches no soloed channel and is reached by none is in the set; the
+// master never is. Empty while nothing is soloed. Mute plays no part.
+std::set<std::string> soloSilencedRefs(const model::Document& document);
+
+struct FlatBus {
+    const model::Bus* bus = nullptr;
+    bool soloSilenced = false;
+};
+
+// The document's buses in compile order (topological over output): each bus
+// after every bus that outputs to it, ties in root.busOrder. Pointers refer into
+// the document, which must be valid (no routing cycle).
+std::vector<FlatBus> flattenBuses(const model::Document& document);
 
 // The nodes for a document's plugin slots (m4-plugin-node): the live instance
 // table (siann-playback) and a render's own instance set implement it. A slot
@@ -78,8 +98,37 @@ public:
     virtual std::unique_ptr<graph::Node> pluginNode(const model::PluginSlot& slot, int channels) const = 0;
 };
 
+// The two taps of a track the mix wiring needs (graph nodes of the caller's builder).
+struct TrackTaps {
+    graph::NodeId preFader = 0;   // the last insert, or the player without inserts (the track's channels)
+    graph::NodeId postFader = 0;  // the fader's output, or a node passing it through (stereo)
+};
+
+// What compileForPlayback adds to the mix wiring: a callback per bus insert node
+// (its slot map) and the node a bus fader feeds its destination through (its meter).
+struct MixHooks {
+    std::function<void(const model::PluginSlot&, graph::NodeId)> insert;
+    std::function<graph::NodeId(const model::Bus&, graph::NodeId fader)> afterFader;
+};
+
+struct MixWiring {
+    std::map<std::string, graph::NodeId> busFaders;  // by bus id
+    std::map<std::string, graph::NodeId> sends;      // SendNode by send id
+};
+
+// The buses and sends of a document (m5b-engine-buses-sends), shared by the
+// offline and the realtime graph: per bus (flattenBuses order) a BusNode sum,
+// its inserts (stereo, with a source), a TrackFaderNode(2, ...) and its
+// destination (another bus's sum or `master`); per track its postFader tap to
+// its output; per send a SendNode from the track's preFader or postFader tap to
+// the bus's sum. `tracks` maps every flat track's id to its taps.
+MixWiring wireMix(graph::GraphBuilder& builder, const model::Document& document, graph::NodeId master,
+                  const std::vector<FlatTrack>& flat, const std::map<std::string, TrackTaps>& tracks,
+                  const PluginNodeSource* plugins, const MixHooks& hooks = {});
+
 // Per track: clip player, the track's inserts in order (with a source), fader,
-// into the master bus. Without a source every slot passes audio through.
+// into its output (the master bus or a bus, see wireMix). Without a source every
+// slot passes audio through.
 std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& document, const MediaLibrary& library,
                                                       int maxBlockFrames, const PluginNodeSource* plugins = nullptr);
 

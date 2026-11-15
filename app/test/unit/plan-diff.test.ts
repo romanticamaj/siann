@@ -8,9 +8,13 @@ import assert from 'node:assert/strict';
 
 import {
   diffRows,
+  rowChanges,
+  rowLabel,
   selection,
   type PlanPreview,
 } from '../../src/renderer/plans/diff';
+import { NO_NAMES } from '../../src/renderer/plans/describe';
+import { translator } from '../../src/renderer/i18n/t';
 
 const track = (id: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -81,4 +85,30 @@ test('Approve selected is enabled only for a non-empty proper subset and yields 
   assert.deepEqual(selection(new Set([0]), 1), { canApproveSelected: false, steps: [0] });
   // Indexes outside the plan are ignored.
   assert.deepEqual(selection(new Set([1, 5]), 2), { canApproveSelected: true, steps: [1] });
+});
+
+// m5b-engine-buses-sends: plan.preview rows for a bus and a send are labelled and
+// worded with the fields a user knows (a bus by its name, its fader like a
+// track's; a send's level as a volume).
+test('bus and send rows are labelled and their fader fields worded', () => {
+  const t = translator('en');
+  const bus = { id: 'b1', name: 'Reverb', channels: 2, gainMilliDb: 0, pan: 0, mute: false, solo: false };
+  const send = { id: 's1', trackId: 'trk_a', busId: 'b1', levelMilliDb: 0, pre: false, enabled: true };
+  const rows = diffRows({
+    revision: 'r4',
+    documentHash: 'sha256:' + 'e'.repeat(64),
+    stale: [],
+    entities: [
+      { ref: 'bus:b1', before: bus, after: { ...bus, gainMilliDb: -6000, mute: true, pan: 2500 } },
+      { ref: 'send:s1', before: send, after: { ...send, levelMilliDb: -3000 } },
+    ],
+  });
+  const busRow = rows.find((r) => r.ref === 'bus:b1')!;
+  const sendRow = rows.find((r) => r.ref === 'send:s1')!;
+  assert.equal(rowLabel(busRow, NO_NAMES, t), 'Reverb');
+  const busLines = rowChanges(busRow, NO_NAMES, t);
+  assert.equal(busLines.length, 3);
+  assert.ok(!busLines.includes(t('diff.field.other')));
+  const sendLines = rowChanges(sendRow, NO_NAMES, t);
+  assert.deepEqual(sendLines, [t('diff.field.volume', { before: '0.00 dB', after: '-3.00 dB' })]);
 });

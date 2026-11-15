@@ -134,6 +134,8 @@ export function rowLabel(row: DiffRow, names: StepNames, t: T): string {
       return t('diff.audioFile');
     case 'plugin_slot':
       return name ?? t('step.aPlugin');
+    case 'bus':
+      return name ?? t('diff.other');
     default:
       return t('diff.other');
   }
@@ -158,7 +160,8 @@ function fieldWording(type: string, field: string, names: StepNames, t: T): Fiel
   const time = (v: unknown) => framesText(v, names, t);
   if (field === 'gainMilliDb') return { key: 'diff.field.volume', value: db };
   if (field === 'name') return { key: 'diff.field.name', value: text };
-  if (type === 'track') {
+  if (type === 'send' && field === 'levelMilliDb') return { key: 'diff.field.volume', value: db };
+  if (type === 'track' || type === 'bus') {
     if (field === 'pan') return { key: 'diff.field.pan', value: pan };
     if (field === 'mute') return { key: 'diff.field.mute', value: toggle };
     if (field === 'solo') return { key: 'diff.field.solo', value: toggle };

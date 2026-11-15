@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -518,4 +520,87 @@ TEST_CASE("compile() lists metered nodes with their NodeIds in schedule order", 
     const NodeId only = plain.add(std::make_unique<BusNode>(1), "bus");
     plain.setOutput(only);
     CHECK(std::move(plain).compile(64)->meteredNodes().empty());
+}
+
+// ---- m5b-engine-buses-sends: SendNode ----------------------------------------
+
+namespace {
+
+// One block of a SendNode on a constant input; returns {left, right} per frame.
+std::vector<std::array<float, 2>> sendBlock(SendNode& node, int inputChannels, int frames, float left, float right) {
+    std::vector<std::vector<float>> in(static_cast<std::size_t>(inputChannels), std::vector<float>(static_cast<std::size_t>(frames)));
+    for (int i = 0; i < frames; ++i) {
+        in[0][static_cast<std::size_t>(i)] = left;
+        if (inputChannels > 1) {
+            in[1][static_cast<std::size_t>(i)] = right;
+        }
+    }
+    std::vector<float*> inPtrs;
+    for (auto& channel : in) {
+        inPtrs.push_back(channel.data());
+    }
+    std::vector<std::vector<float>> out(2, std::vector<float>(static_cast<std::size_t>(frames)));
+    std::vector<float*> outPtrs{out[0].data(), out[1].data()};
+    const AudioBufferView input{inPtrs.data(), inputChannels, frames};
+    const AudioBufferView output{outPtrs.data(), 2, frames};
+    node.process(ProcessContext{0, frames}, std::span<const AudioBufferView>(&input, 1), output);
+    std::vector<std::array<float, 2>> frames2;
+    for (int i = 0; i < frames; ++i) {
+        frames2.push_back({out[0][static_cast<std::size_t>(i)], out[1][static_cast<std::size_t>(i)]});
+    }
+    return frames2;
+}
+
+}  // namespace
+
+TEST_CASE("SendNode scales by its level and upmixes a mono source to both channels at unity", "[nodes][send]") {
+    SendNode stereo(2, -6000, true, false);
+    CHECK(stereo.inputPorts() == std::vector<int>{2});
+    CHECK(stereo.outputChannels() == 2);
+    CHECK(stereo.gain() == gainFromMilliDb(-6000));
+    const auto s = sendBlock(stereo, 2, 4, 1.0f, -0.5f);
+    CHECK(s[3][0] == gainFromMilliDb(-6000));
+    CHECK(s[3][1] == -0.5f * gainFromMilliDb(-6000));
+
+    SendNode mono(1, 0, true, false);
+    CHECK(mono.inputPorts() == std::vector<int>{1});
+    const auto m = sendBlock(mono, 1, 4, 0.25f, 0.0f);
+    CHECK(m[0][0] == 0.25f);
+    CHECK(m[0][1] == 0.25f);
+}
+
+TEST_CASE("SendNode is silent while disabled, while its source is muted or solo-silenced", "[nodes][send]") {
+    SendNode disabled(2, 0, false, false);
+    CHECK(disabled.gain() == 0.0f);
+    disabled.setParameter(SendNode::kEnabled, 1.0, 0);
+    CHECK(disabled.gain() == 1.0f);
+    disabled.setParameter(SendNode::kSourceMute, 1.0, 0);
+    CHECK(disabled.gain() == 0.0f);
+    disabled.setParameter(SendNode::kSourceMute, 0.0, 0);
+    CHECK(disabled.gain() == 1.0f);
+
+    // Solo silence is not a parameter: neither enabling nor unmuting lifts it.
+    SendNode soloSilenced(2, 0, true, false, true);
+    CHECK(soloSilenced.gain() == 0.0f);
+    soloSilenced.setParameter(SendNode::kSourceMute, 0.0, 0);
+    soloSilenced.setParameter(SendNode::kEnabled, 1.0, 0);
+    CHECK(soloSilenced.gain() == 0.0f);
+    CHECK(sendBlock(soloSilenced, 2, 2, 1.0f, 1.0f)[1][0] == 0.0f);
+}
+
+TEST_CASE("SendNode ramps a level change and clamps it into the gain range", "[nodes][send]") {
+    SendNode node(2, 0, true, false);
+    node.setParameter(SendNode::kLevelMilliDb, static_cast<double>(INT32_MIN), 4);
+    const auto ramp = sendBlock(node, 2, 4, 1.0f, 1.0f);
+    CHECK(ramp[0][0] == 0.75f);
+    CHECK(ramp[1][0] == 0.5f);
+    CHECK(ramp[3][0] == 0.0f);  // lands exactly on the target
+    node.setParameter(SendNode::kLevelMilliDb, 99'000.0, 0);
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMaxLevelMilliDb));
+    node.setParameter(SendNode::kLevelMilliDb, -200'000.0, 0);
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMinLevelMilliDb));
+    node.setParameter(SendNode::kLevelMilliDb, std::nan(""), 0);
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMinLevelMilliDb));
+    node.setParameter(99, 0.0, 0);  // an unknown parameter changes nothing
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMinLevelMilliDb));
 }

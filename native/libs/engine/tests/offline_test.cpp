@@ -1,15 +1,20 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "plugin_double.hpp"
 #include "siann/engine/offline.hpp"
+#include "siann/graph/plugin_node.hpp"
 #include "siann/hash/jcs.hpp"
 #include "siann/io/durable_file.hpp"
 #include "siann/session/media_import.hpp"
@@ -351,4 +356,280 @@ TEST_CASE("A document without the master renders bit-identically to the graph wi
     for (std::size_t i = 0; i < reference.samples.size(); i += 101) {
         CHECK(loud.samples[i] == reference.samples[i] * g);
     }
+}
+
+// ---- m5b-engine-buses-sends: buses, sends, PDC, mute and solo ----------------
+
+namespace {
+
+using siann::test::DoublePlugin;
+
+// Stereo noise, so a misaligned sum cannot pass for an aligned one.
+fs::path writeNoise(const fs::path& file, std::int64_t frames) {
+    AudioBuffer buffer;
+    buffer.info = AudioInfo{2, 48'000, frames};
+    buffer.samples.resize(static_cast<std::size_t>(frames * 2));
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+    for (float& s : buffer.samples) {
+        s = dist(rng);
+    }
+    siann::io::writeFileAtomic(file, siann::media::encodeWavFloat32(buffer));
+    return file;
+}
+
+// The slots' nodes: a DoublePlugin per slot id (latency, gain); others pass through.
+class Plugins final : public siann::engine::PluginNodeSource {
+public:
+    std::unique_ptr<siann::graph::Node> pluginNode(const siann::model::PluginSlot& slot, int channels) const override {
+        const auto it = plugins.find(slot.id);
+        if (it == plugins.end()) {
+            return nullptr;
+        }
+        return std::make_unique<siann::graph::PluginNode>(*it->second, channels, 48'000, false);
+    }
+    std::map<std::string, DoublePlugin*> plugins;
+};
+
+std::string busInsert(const std::string& slotId, const std::string& busId) {
+    return R"({"op":"plugin.insert","busId":")" + busId + R"(","index":9,"slotId":")" + slotId +
+           R"(","descriptor":{"format":"clap","uid":"double"},"stateBlob":null})";
+}
+
+std::string trackInsert(const std::string& slotId, const std::string& trackId) {
+    return R"({"op":"plugin.insert","trackId":")" + trackId + R"(","index":9,"slotId":")" + slotId +
+           R"(","descriptor":{"format":"clap","uid":"double"},"stateBlob":null})";
+}
+
+std::string addBus(const std::string& id) {
+    return R"({"op":"bus.add","busId":")" + id + R"(","name":")" + id + R"("})";
+}
+
+std::string routeTrack(const std::string& trackId, const std::string& busId) {
+    return R"({"op":"track.set_output","trackId":")" + trackId + R"(","output":{"busId":")" + busId + R"("}})";
+}
+
+std::string routeBus(const std::string& busId, const std::string& to) {
+    return R"({"op":"bus.set_output","busId":")" + busId + R"(","output":{"busId":")" + to + R"("}})";
+}
+
+std::string addSend(const std::string& id, const std::string& trackId, const std::string& busId, bool pre,
+                    bool enabled = true) {
+    return R"({"op":"send.add","sendId":")" + id + R"(","trackId":")" + trackId + R"(","busId":")" + busId +
+           R"(","pre":)" + (pre ? "true" : "false") + R"(,"enabled":)" + (enabled ? "true" : "false") + "}";
+}
+
+// Noise on trk_a from frame 100 (trk_b stays empty unless a test places a clip).
+void noiseSession(Fixture& f) {
+    siann::session::importMedia(f.session, writeNoise(f.dir.path() / "noise.wav", 4'000), "med_n", "test", "t");
+    f.exec(R"({"op":"clip.place","clipId":"clp_n","trackId":"trk_a","mediaId":"med_n",
+        "position":{"domain":"audio","value":"100"},"sourceStart":"0","length":"4000"})");
+}
+
+AudioBuffer renderWith(const Document& doc, const MediaLibrary& library, const Plugins* plugins,
+                       std::int64_t frames = 5'000) {
+    auto graph = siann::engine::compileDocument(doc, library, 128, plugins);
+    return siann::engine::renderGraph(*graph, 0, frames, 48'000);
+}
+
+float worstDifference(const AudioBuffer& a, const AudioBuffer& b) {
+    REQUIRE(a.samples.size() == b.samples.size());
+    float worst = 0.0f;
+    for (std::size_t i = 0; i < a.samples.size(); ++i) {
+        worst = std::max(worst, std::abs(a.samples[i] - b.samples[i]));
+    }
+    return worst;
+}
+
+}  // namespace
+
+TEST_CASE("PDC null: a latent track insert and a send to a bus with a latent insert", "[engine][buses][pdc]") {
+    for (const bool pre : {false, true}) {
+        INFO("pre-fader " << pre);
+        Fixture f;
+        noiseSession(f);
+        f.exec(addBus("bus_fx"));
+        f.exec(addSend("snd_1", "trk_a", "bus_fx", pre));
+        f.exec(trackInsert("slt_t", "trk_a"));
+        f.exec(busInsert("slt_b", "bus_fx"));
+        const AudioBuffer reference = renderWith(f.doc(), f.library(), nullptr);
+        REQUIRE(nonZero(reference) > 1'000);
+        DoublePlugin onTrack(333);
+        DoublePlugin onBus(200);
+        Plugins plugins;
+        plugins.plugins = {{"slt_t", &onTrack}, {"slt_b", &onBus}};
+        auto graph = siann::engine::compileDocument(f.doc(), f.library(), 128, &plugins);
+        CHECK(graph->totalLatency() == 533);
+        const AudioBuffer latent = siann::engine::renderGraph(*graph, 0, 5'000, 48'000);
+        CHECK(worstDifference(latent, reference) == 0.0f);
+        CHECK(onBus.calls.load() > 0);
+    }
+}
+
+TEST_CASE("PDC null: a three-level bus chain with a latent insert on each level nulls against a direct copy",
+          "[engine][buses][pdc]") {
+    Fixture f;
+    noiseSession(f);
+    const AudioBuffer direct = renderOffline(f.doc(), f.library(), RenderOptions{0, 5'000, 128});
+    for (const char* id : {"bus_1", "bus_2", "bus_3"}) {
+        f.exec(addBus(id));
+    }
+    f.exec(routeTrack("trk_a", "bus_1"));
+    f.exec(routeBus("bus_1", "bus_2"));
+    f.exec(routeBus("bus_2", "bus_3"));
+    f.exec(trackInsert("slt_0", "trk_a"));
+    f.exec(busInsert("slt_1", "bus_1"));
+    f.exec(busInsert("slt_2", "bus_2"));
+    f.exec(busInsert("slt_3", "bus_3"));
+    DoublePlugin l0(100);
+    DoublePlugin l1(150);
+    DoublePlugin l2(200);
+    DoublePlugin l3(250);
+    Plugins plugins;
+    plugins.plugins = {{"slt_0", &l0}, {"slt_1", &l1}, {"slt_2", &l2}, {"slt_3", &l3}};
+    auto graph = siann::engine::compileDocument(f.doc(), f.library(), 128, &plugins);
+    CHECK(graph->totalLatency() == 700);
+    const AudioBuffer chained = siann::engine::renderGraph(*graph, 0, 5'000, 48'000);
+    CHECK(nonZero(chained) > 1'000);
+    CHECK(worstDifference(chained, direct) <= 1e-6f);
+    // Without plugins the chain is the direct copy too.
+    CHECK(worstDifference(renderWith(f.doc(), f.library(), nullptr), direct) <= 1e-6f);
+}
+
+TEST_CASE("A post-fader send follows the track's gain and pan; a pre-fader send does not", "[engine][buses]") {
+    for (const bool pre : {false, true}) {
+        INFO("pre-fader " << pre);
+        Fixture f;
+        f.exec(kPlaceA);
+        // Only the send reaches the master: the track's own output goes to a muted bus.
+        f.exec(addBus("bus_dry"));
+        f.exec(R"({"op":"bus.set_mute","busId":"bus_dry","mute":true})");
+        f.exec(routeTrack("trk_a", "bus_dry"));
+        f.exec(addBus("bus_fx"));
+        f.exec(addSend("snd_1", "trk_a", "bus_fx", pre));
+        f.exec(R"({"op":"track.set_gain","trackId":"trk_a","gainMilliDb":-6000})");
+        f.exec(R"({"op":"track.set_pan","trackId":"trk_a","pan":5000})");
+        const AudioBuffer out = renderOffline(f.doc(), f.library());
+        if (pre) {
+            CHECK(left(out, 1'010) == 1.0f);
+            CHECK(right(out, 1'010) == 1.0f);
+        } else {
+            CHECK(std::abs(left(out, 1'010) - 0.5f * 0.501187f) < 1e-5f);
+            CHECK(std::abs(right(out, 1'010) - 0.501187f) < 1e-5f);
+        }
+        CHECK(nonZero(out) == 2);
+        // The send level and the bus fader scale it.
+        f.exec(R"({"op":"send.set_level","sendId":"snd_1","levelMilliDb":-6000})");
+        f.exec(R"({"op":"bus.set_gain","busId":"bus_fx","gainMilliDb":-6000})");
+        const AudioBuffer quieter = renderOffline(f.doc(), f.library());
+        const float g = siann::graph::gainFromMilliDb(-6000);
+        CHECK(std::abs(right(quieter, 1'010) - right(out, 1'010) * g * g) < 1e-6f);
+    }
+}
+
+TEST_CASE("Track mute silences both kinds of send; a disabled send and a muted bus contribute nothing",
+          "[engine][buses]") {
+    Fixture f;
+    f.exec(kPlaceA);
+    f.exec(addBus("bus_fx"));
+    f.exec(addSend("snd_pre", "trk_a", "bus_fx", true));
+    f.exec(addSend("snd_post", "trk_a", "bus_fx", false));
+    const AudioBuffer both = renderOffline(f.doc(), f.library());
+    CHECK(left(both, 1'010) == 3.0f);  // the direct path and two sends at unity
+    f.exec(R"({"op":"track.set_mute","trackId":"trk_a","mute":true})");
+    CHECK(nonZero(renderOffline(f.doc(), f.library())) == 0);
+    f.exec(R"({"op":"track.set_mute","trackId":"trk_a","mute":false})");
+
+    f.exec(R"({"op":"send.set_enabled","sendId":"snd_pre","enabled":false})");
+    CHECK(left(renderOffline(f.doc(), f.library()), 1'010) == 2.0f);
+    f.exec(R"({"op":"send.set_enabled","sendId":"snd_post","enabled":false})");
+    CHECK(left(renderOffline(f.doc(), f.library()), 1'010) == 1.0f);
+    f.exec(R"({"op":"send.set_enabled","sendId":"snd_pre","enabled":true})");
+    f.exec(R"({"op":"bus.set_mute","busId":"bus_fx","mute":true})");
+    CHECK(left(renderOffline(f.doc(), f.library()), 1'010) == 1.0f);
+    // A track routed to a muted bus is silent at the master.
+    f.exec(routeTrack("trk_a", "bus_fx"));
+    CHECK(nonZero(renderOffline(f.doc(), f.library())) == 0);
+}
+
+TEST_CASE("Solo with buses and sends follows the Channels and I/O rules", "[engine][buses][solo]") {
+    // trk_a at 1000 and trk_b at 2000, the same impulse.
+    auto fixture = [](Fixture& f) {
+        f.exec(kPlaceA);
+        f.exec(R"({"op":"clip.place","clipId":"clp_b","trackId":"trk_b","mediaId":"med_imp",
+            "position":{"domain":"audio","value":"2000"},"sourceStart":"0","length":"100"})");
+        f.exec(addBus("bus_g"));
+        f.exec(addBus("bus_fx"));
+    };
+    auto heard = [](const AudioBuffer& out, std::int64_t frame) { return left(out, frame) != 0.0f; };
+
+    SECTION("a soloed bus keeps the channels that reach it; one that reaches none is silenced") {
+        Fixture f;
+        fixture(f);
+        f.exec(routeTrack("trk_a", "bus_g"));
+        f.exec(R"({"op":"bus.set_solo","busId":"bus_g","solo":true})");
+        const AudioBuffer out = renderOffline(f.doc(), f.library());
+        CHECK(heard(out, 1'010));
+        CHECK_FALSE(heard(out, 2'010));
+    }
+    SECTION("a bus reached by a soloed track is not silenced") {
+        Fixture f;
+        fixture(f);
+        f.exec(routeTrack("trk_a", "bus_g"));
+        f.exec(routeBus("bus_g", "bus_fx"));
+        f.exec(R"({"op":"track.set_solo","trackId":"trk_a","solo":true})");
+        const AudioBuffer out = renderOffline(f.doc(), f.library());
+        CHECK(left(out, 1'010) == 1.0f);
+        CHECK_FALSE(heard(out, 2'010));
+    }
+    SECTION("an enabled send to a soloed bus keeps its track, direct path included; a disabled one does not") {
+        Fixture f;
+        fixture(f);
+        f.exec(addSend("snd_b", "trk_b", "bus_fx", false));
+        f.exec(R"({"op":"bus.set_solo","busId":"bus_fx","solo":true})");
+        const AudioBuffer out = renderOffline(f.doc(), f.library());
+        CHECK_FALSE(heard(out, 1'010));
+        CHECK(left(out, 2'010) == 2.0f);  // direct and through the send
+        f.exec(R"({"op":"send.set_enabled","sendId":"snd_b","enabled":false})");
+        CHECK(nonZero(renderOffline(f.doc(), f.library())) == 0);
+    }
+    SECTION("a solo-silenced track silences its pre-fader send") {
+        Fixture f;
+        fixture(f);
+        f.exec(addSend("snd_a", "trk_a", "bus_fx", true));
+        f.exec(R"({"op":"track.set_solo","trackId":"trk_b","solo":true})");
+        const AudioBuffer out = renderOffline(f.doc(), f.library());
+        CHECK_FALSE(heard(out, 1'010));
+        CHECK(heard(out, 2'010));
+    }
+    SECTION("the flatten step names the solo-silenced tracks and buses") {
+        Fixture f;
+        fixture(f);
+        f.exec(routeTrack("trk_a", "bus_g"));
+        f.exec(R"({"op":"bus.set_solo","busId":"bus_g","solo":true})");
+        const auto silenced = siann::engine::soloSilencedRefs(f.doc());
+        CHECK(silenced == std::set<std::string>{"bus:bus_fx", "track:trk_b"});
+        f.exec(R"({"op":"bus.set_solo","busId":"bus_g","solo":false})");
+        CHECK(siann::engine::soloSilencedRefs(f.doc()).empty());
+    }
+}
+
+TEST_CASE("A document without buses renders bit-identically to the graph before buses", "[engine][buses]") {
+    Fixture f;
+    mixSession(f);
+    f.exec(setMaster(-1500));
+    const AudioBuffer before = renderOffline(f.doc(), f.library());
+    // A bus added and removed leaves the same document and the same render.
+    const auto hash = f.doc().documentHash();
+    f.exec(addBus("bus_x"));
+    f.exec(R"({"op":"bus.remove","busId":"bus_x"})");
+    REQUIRE(f.doc().documentHash() == hash);
+    CHECK(renderOffline(f.doc(), f.library()).samples == before.samples);
+    // An unused bus adds nothing either.
+    f.exec(addBus("bus_y"));
+    CHECK(renderOffline(f.doc(), f.library()).samples == before.samples);
+    // And the render matches the graph without buses at all (as before this feature).
+    f.exec(setMaster(0));
+    f.exec(R"({"op":"bus.remove","busId":"bus_y"})");
+    CHECK(renderOffline(f.doc(), f.library()).samples == renderWithoutMasterNode(f.doc(), f.library()).samples);
 }

@@ -16,6 +16,7 @@ if(SIANN_BUILD_TESTS)
     tests/session_test.cpp
     tests/locators_session_test.cpp
     tests/master_session_test.cpp
+    tests/buses_session_test.cpp
     tests/session_lock_test.cpp
     tests/media_import_test.cpp
     tests/takes_test.cpp

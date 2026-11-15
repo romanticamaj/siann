@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-Status: Implemented in `native/libs/protocol` and `native/apps/engine` (m5-mixer; the master target in m5b-engine-master)
+Status: Implemented in `native/libs/protocol` and `native/apps/engine` (m5-mixer; the master target in m5b-engine-master; the bus and send targets in m5b-engine-buses-sends)
 
 ## Purpose
 
@@ -21,8 +21,9 @@ those of Protocol v0; events are those of `protocol-events-v1.md`.
 {"ref": "track:trk_1", "param": "gain"}
 ```
 
-- `ref` is `"track:<id>"`, or `"master:master"` from m5b-engine-master. Any other
-  entity type is `invalid_params`; a track the document does not hold is
+- `ref` is `"track:<id>"`, `"master:master"` from m5b-engine-master, or
+  `"bus:<id>"` and `"send:<id>"` from m5b-engine-buses-sends. Any other entity
+  type is `invalid_params`; a track, bus or send the document does not hold is
   `not_found`.
 - `param` is `"gain"`, `"pan"` or `"mute"`, the three track fader parameters. The
   master target takes `"gain"` only; `"pan"` or `"mute"` on it is `invalid_params`.
@@ -33,6 +34,12 @@ those of Protocol v0; events are those of `protocol-events-v1.md`.
   gain is 0 dB) its start value is 0, so `not_found` does not apply. Its value and
   range are those of a track's `gain`, its leases are a track fader's, and
   `gesture.end` commits one `master.set_gain`.
+- The bus target `{"ref": "bus:<id>", "param": "gain"}` is a bus fader's gain and
+  the send target `{"ref": "send:<id>", "param": "level"}` a send's level
+  (m5b-engine-buses-sends), both in milli-dB with a track gain's range. Any
+  other `param` on them is `invalid_params`. Their leases are a track fader's;
+  `gesture.end` commits one `bus.set_gain` or one `send.set_level`. Neither
+  recompiles the graph while it moves.
 - `value` is a number in the track entity's own units: `gain` in milli-dB (the
   entity's `gainMilliDb`; `-2147483648` is minus infinity, the fader minimum),
   `pan` from `-10000` to `10000`, `mute` `0` or `1`. A value that is not a number,
@@ -65,7 +72,8 @@ not MCP tools: an agent changes a fader through commands and plans.
   because the newest value wins.
 - `gesture.hold` only renews the lease: the client holds the fader still.
 - `gesture.end` commits the last accepted value as one `track.set_gain`,
-  `track.set_pan`, `track.set_mute` or (on the master target) `master.set_gain`
+  `track.set_pan`, `track.set_mute`, `master.set_gain` (master target),
+  `bus.set_gain` (bus target) or `send.set_level` (send target)
   revision on the side heard (main, or the
   auditioned proposal) and publishes its `session.changed` (or `proposal.changed`),
   then `gesture.ended`. A given `value` is one last update first. `revision` is the
