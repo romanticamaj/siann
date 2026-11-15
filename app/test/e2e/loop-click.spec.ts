@@ -267,7 +267,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   const start = await revisions();
 
   // With none set, Ctrl-click (the left locator) sends nothing.
-  await upperDrag(150, 150, ['Control']);
+  await upperDrag(150, 150, [MOD]);
   // Draw from x 100 to x 300: one session.set_locators on release, one revision.
   await upperDrag(100, 300);
   await expect.poll(setLocatorsSent).toBe(1);
@@ -279,14 +279,14 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   await expect(page.locator('.transport-locators-empty')).toHaveCount(0);
 
   // Ctrl-click sets the left locator, Alt-click the right one.
-  await upperDrag(150, 150, ['Control']);
+  await upperDrag(150, 150, [MOD]);
   await expect.poll(async () => (await locators())?.left).toBe((await frameAt(150)).toString());
   await upperDrag(350, 350, ['Alt']);
   await expect.poll(async () => (await locators())?.right).toBe((await frameAt(350)).toString());
   // An Alt-click before the left locator, a Ctrl-click after the right one: nothing.
   const count = await setLocatorsSent();
   await upperDrag(120, 120, ['Alt']);
-  await upperDrag(400, 400, ['Control']);
+  await upperDrag(400, 400, [MOD]);
   expect(await setLocatorsSent()).toBe(count);
 
   // Drag the range by 50 px: moved, its length kept.
