@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "fixture_util.hpp"
 #include "siann/command/plan.hpp"
@@ -141,4 +143,47 @@ TEST_CASE("A writeSet may name the master entity, and only by the id master", "[
     CHECK(plan.steps[0].op() == "master.set_gain");
     CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
     CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == c->find("planHash")->asString());
+}
+
+// m5b-engine-plan-metadata: title, intent and actor are metadata beside the plan.
+// Each fixture case hashes as its untitled twin, round-trips through JSON, and
+// the fields are in the excluded list.
+TEST_CASE("A plan with and without title, intent and actor has the same planHash", "[plan][fixtures][metadata]") {
+    const auto& excluded = siann::command::planHashExcludedFields();
+    for (const std::string_view key : {"title", "intent", "actor"}) {
+        INFO(key);
+        CHECK(std::find(excluded.begin(), excluded.end(), key) != excluded.end());
+    }
+    const auto hashOf = [](const std::string& name) { return planHash(Plan::fromJson(*validCase(name).find("plan"))); };
+    for (const char* name : {"titled_plan", "plan_with_intent", "plan_with_actor"}) {
+        INFO(name);
+        CHECK(hashOf(name) == hashOf("minimal_plan"));
+    }
+    CHECK(hashOf("non_ascii_title") == hashOf("two_steps"));
+
+    const Value* c = &validCase("non_ascii_title");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    CHECK(plan.title ==
+          std::optional<std::string>{"\xE9\xBC\x93\xE8\x81\xB2\xE9\x99\x8D\xE4\xBD\x8E \xF0\x9F\xA5\x81"});
+    CHECK(plan.intent ==
+          std::optional<std::string>{"\xE8\xAE\x93\xE4\xBA\xBA\xE8\x81\xB2\xE6\x9B\xB4\xE6\xB8\x85\xE6\xA5\x9A"});
+    REQUIRE(plan.actor.has_value());
+    CHECK(plan.actor->kind == siann::command::PlanActorKind::ui);
+    CHECK(plan.actor->name == "SIANN");
+    // toJson writes them back; fromJson reads the same plan again.
+    const Value json = plan.toJson();
+    CHECK(json.find("title")->asString() == *plan.title);
+    CHECK(json.find("intent")->asString() == *plan.intent);
+    CHECK(siann::jcs::canonicalize(*json.find("actor")) == R"({"kind":"ui","name":"SIANN"})");
+    const Plan again = Plan::fromJson(json);
+    CHECK(again.title == plan.title);
+    CHECK(again.intent == plan.intent);
+    CHECK(again.actor == plan.actor);
+    CHECK(formatHash(planHash(again)) == c->find("planHash")->asString());
+
+    // Without them nothing is written.
+    const Value bare = Plan::fromJson(*validCase("minimal_plan").find("plan")).toJson();
+    CHECK(bare.find("title") == nullptr);
+    CHECK(bare.find("intent") == nullptr);
+    CHECK(bare.find("actor") == nullptr);
 }

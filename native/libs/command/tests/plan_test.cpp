@@ -14,6 +14,9 @@ using siann::command::CommandError;
 using siann::command::EntitySnapshot;
 using siann::command::History;
 using siann::command::Plan;
+using siann::command::PlanActor;
+using siann::command::PlanActorKind;
+using siann::command::PlanMetadata;
 using siann::command::PlanStaleError;
 using siann::command::PlanState;
 using siann::command::PlanStore;
@@ -157,6 +160,88 @@ TEST_CASE("Submitting the same plan twice returns the stored plan", "[plan]") {
     const Plan& b = store.submit(history, {setGain("t1", -600)}, {}, "r2");
     CHECK(&a == &b);
     CHECK(store.size() == 1);
+}
+
+// m5b-engine-plan-metadata: title, intent and actor are stored with the plan, are
+// outside its hash and are fixed at submission.
+TEST_CASE("Submit stores the title, intent and actor; a resubmission keeps the first", "[plan][metadata]") {
+    History history = base();
+    PlanStore store;
+    PlanMetadata metadata;
+    metadata.title = "Lower the drums";
+    metadata.intent = "They mask the vocal.";
+    metadata.actor = PlanActor{PlanActorKind::mcp, "mix-assistant"};
+    const Plan& titled = store.submit(history, {setGain("t1", -600)}, {}, "r2", metadata);
+    CHECK(titled.title == std::optional<std::string>{"Lower the drums"});
+    CHECK(titled.intent == std::optional<std::string>{"They mask the vocal."});
+    CHECK(titled.actor == std::optional{PlanActor{PlanActorKind::mcp, "mix-assistant"}});
+
+    PlanStore bare;
+    const Plan& untitled = bare.submit(history, {setGain("t1", -600)}, {}, "r2");
+    CHECK(*untitled.hashText == *titled.hashText);
+    CHECK_FALSE(untitled.title.has_value());
+    CHECK_FALSE(untitled.intent.has_value());
+    CHECK_FALSE(untitled.actor.has_value());
+
+    PlanMetadata other;
+    other.title = "Another title";
+    other.actor = PlanActor{PlanActorKind::ui, "SIANN"};
+    const Plan& again = store.submit(history, {setGain("t1", -600)}, {}, "r2", other);
+    CHECK(&again == &titled);
+    CHECK(store.size() == 1);
+    CHECK(again.title == std::optional<std::string>{"Lower the drums"});
+    CHECK(again.actor == std::optional{PlanActor{PlanActorKind::mcp, "mix-assistant"}});
+}
+
+TEST_CASE("Submit refuses a title or intent outside the limits with invalid_plan_metadata", "[plan][metadata]") {
+    History history = base();
+    PlanStore store;
+    const auto codeOf = [&](std::optional<std::string> title, std::optional<std::string> intent) {
+        PlanMetadata metadata;
+        metadata.title = std::move(title);
+        metadata.intent = std::move(intent);
+        return errorCode([&] { store.submit(history, {setGain("t1", -600)}, {}, "r2", metadata); });
+    };
+    CHECK(codeOf(std::string(201, 'a'), std::nullopt) == "invalid_plan_metadata");
+    CHECK(codeOf(std::string(), std::nullopt) == "invalid_plan_metadata");
+    CHECK(codeOf("two\nlines", std::nullopt) == "invalid_plan_metadata");
+    CHECK(codeOf(std::nullopt, std::string(2001, 'a')) == "invalid_plan_metadata");
+    CHECK(codeOf(std::nullopt, std::string()) == "invalid_plan_metadata");
+    CHECK(store.size() == 0);
+    CHECK(codeOf(std::string(200, 'a'), std::string(2000, 'a')) == "no error");
+    CHECK(store.size() == 1);
+}
+
+TEST_CASE("A sub-plan keeps its parent's title, intent and actor; approve and apply ignore them",
+          "[plan][partial][metadata]") {
+    History history = base();
+    PlanStore store;
+    PlanMetadata metadata;
+    metadata.title = "Mix pass";
+    metadata.intent = "Gain, pan and a name.";
+    metadata.actor = PlanActor{PlanActorKind::mcp, "mix-assistant"};
+    const std::vector<Command> steps{setGain("t1", -600), setPan("t2", 300), renameTrack("t3", "Keys")};
+    const std::string original = *store.submit(history, steps, {}, "r2", metadata).hashText;
+    const Plan& sub = store.approvePartial(history, original, {0, 2}, "user", "t");
+    CHECK(sub.title == metadata.title);
+    CHECK(sub.intent == metadata.intent);
+    CHECK(sub.actor == metadata.actor);
+    CHECK(sub.state == PlanState::approved);
+    CHECK(store.find(original)->title == metadata.title);
+
+    // The same lifecycle without metadata reaches the same states and document.
+    History plain = base();
+    PlanStore plainStore;
+    const std::string plainOriginal = *plainStore.submit(plain, steps, {}, "r2").hashText;
+    CHECK(plainOriginal == original);
+    const Plan& plainSub = plainStore.approvePartial(plain, plainOriginal, {0, 2}, "user", "t");
+    CHECK(*plainSub.hashText == *sub.hashText);
+    CHECK_FALSE(plainSub.title.has_value());
+    const Revision& withMetadata = store.apply(history, *sub.hashText, "agent", "t");
+    const Revision& without = plainStore.apply(plain, *plainSub.hashText, "agent", "t");
+    CHECK(withMetadata.envelope.documentHash == without.envelope.documentHash);
+    CHECK(store.find(*sub.hashText)->state == PlanState::applied);
+    CHECK(plainStore.find(*plainSub.hashText)->state == PlanState::applied);
 }
 
 TEST_CASE("Steps that fail at baseRevision are refused at submit", "[plan]") {

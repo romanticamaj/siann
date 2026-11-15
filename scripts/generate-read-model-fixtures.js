@@ -10,7 +10,11 @@
 // entity: deltas that add, modify and remove locators:locators, and a sync of a
 // document that holds it (a single object after pluginSlots). A third part
 // (m5b-engine-master) does the same for the singleton master entity, and syncs a
-// document holding both singletons (master after locators). Hashes come from
+// document holding both singletons (master after locators). A fourth part
+// (m5b-engine-plan-metadata) is two events the read model does not model, right
+// after the base sync: a plan.changed with the plan metadata and an
+// agent.changed; a client advances lastSeq past them and changes nothing else.
+// Hashes come from
 // the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
@@ -282,6 +286,42 @@ function recordSteps(initial, firstSeq, firstRevision, run) {
   return steps;
 }
 
+// m5b-engine-plan-metadata (docs/schemas/protocol-events-v1.md, plan.changed and
+// agent.changed): the events that follow the base sync, at the base revision.
+function buildUnmodelled(base) {
+  const envelope = (offset, type) => ({
+    schema: 'siann.event.v1',
+    seq: String(Number(base.seq) + offset),
+    sessionId: SESSION_ID,
+    revision: base.revision,
+    type,
+  });
+  return {
+    events: [
+      {
+        ...envelope(1, 'plan.changed'),
+        plan: hashOf('a plan with metadata'),
+        state: 'rejected',
+        title: 'Lower the drums',
+        intent: 'The drums mask the vocal.\nLower them by 6 dB.',
+        actor: { kind: 'mcp', name: 'mix-assistant' },
+        rejectionNote: 'Too much; try -3 dB',
+      },
+      {
+        ...envelope(2, 'agent.changed'),
+        agent: {
+          id: 'agt_00c0ffee00c0ffee',
+          name: 'mix-assistant',
+          transport: 'mcp',
+          connected: true,
+          lastAction: 'submit_plan',
+          lastActionAt: '2026-11-15T10:00:05Z',
+        },
+      },
+    ],
+  };
+}
+
 function buildFixture() {
   const base = { revision: 'r3', seq: '7', document: BASE, documentHash: hashDocument(BASE) };
   const steps = buildSteps();
@@ -312,6 +352,7 @@ function buildFixture() {
       // after the locators, here across a chunk boundary.
       both: { document: withBoth, documentHash: hashDocument(withBoth), sync: syncChunks(withBoth, 'r20', '30') },
     },
+    unmodelled: buildUnmodelled(base),
   };
 }
 

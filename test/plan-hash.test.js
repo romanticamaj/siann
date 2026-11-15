@@ -21,10 +21,27 @@ for (const c of fixture.valid) {
 test('lifecycle fields do not change the hash', () => {
   assert.equal(byName.lifecycle_fields_ignored.planHash, byName.minimal_plan.planHash);
   const plan = structuredClone(byName.minimal_plan.plan);
+  const values = { state: 'rejected', actor: { kind: 'ui', name: 'someone' } };
   for (const key of PLAN_HASH_EXCLUDED) {
-    const changed = { ...plan, [key]: key === 'state' ? 'rejected' : 'something else' };
+    const changed = { ...plan, [key]: values[key] ?? 'something else' };
     assert.equal(planHash(changed), byName.minimal_plan.planHash, key);
   }
+});
+
+// m5b-engine-plan-metadata: title, intent and actor are accepted and outside the
+// hash; each fixture case has the hash of its untitled twin.
+test('a plan hashed with and without a title, an intent or an actor has the same hash', () => {
+  for (const key of ['title', 'intent', 'actor']) assert.ok(PLAN_HASH_EXCLUDED.includes(key), key);
+  assert.equal(byName.titled_plan.plan.title, 'Lower the drums');
+  for (const name of ['titled_plan', 'plan_with_intent', 'plan_with_actor']) {
+    assert.equal(byName[name].planHash, byName.minimal_plan.planHash, name);
+  }
+  assert.equal(byName.non_ascii_title.planHash, byName.two_steps.planHash);
+  assert.equal(byName.non_ascii_title.plan.title, '鼓聲降低 \u{1F941}');
+  const { title, intent, actor, ...untitled } = byName.non_ascii_title.plan;
+  assert.deepEqual(actor, { kind: 'ui', name: 'SIANN' });
+  assert.equal(planHash(untitled), planHash(byName.non_ascii_title.plan));
+  assert.equal(planHash({ ...byName.minimal_plan.plan, title: 'x'.repeat(500) }), byName.minimal_plan.planHash);
 });
 
 test('parentPlan and step order change the hash', () => {

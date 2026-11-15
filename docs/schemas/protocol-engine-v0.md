@@ -40,10 +40,26 @@ Params `{}`. Result:
 {"device": {"id": "fake", "sampleRate": 48000, "bufferFrames": 256, "inputLatencyFrames": 256, "outputLatencyFrames": 256,
             "input": {"id": "fake", "channels": 2, "latencyFrames": 256}},
  "playing": false, "cycle": false, "recording": false, "armed": [], "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
- "plugins": []}
+ "plugins": [],
+ "agents": [{"id": "agt_3f2a9c1d0b7e6a54", "name": "mix-assistant", "transport": "mcp", "connected": true,
+             "lastAction": "submit_plan", "lastActionAt": "2026-11-15T10:00:05Z"}]}
 ```
 
 `device` is null when no device runs, and `deviceError {code, message}` then says why: `no_device`, `device_open_failed`, `device_lost`, `no_audio_backend` (a core-only build without `--device fake`), or a media code when the session's first graph could not be built (`media_missing`, `media_hash_mismatch`, `media_mismatch`, `unsupported_media`, `decode_failed`, `too_large`, `load_failed`). While that first graph could not be built the other methods still run: `proposal.merge` and `proposal.discard` act on the session directly, and only `audition.hear` answers `audition_unavailable`. `id` is `fake`, `<type>/<name>` or `default` (launched without `--device` and nothing selected since). The counters run from the device's start. `plugins` is in [Protocol plugins v0](protocol-plugins-v0.md). `device.input` (m5b-engine-record) is null while no input is open, otherwise the input's `id`, the channels the device opened and its input latency in frames; `recording` and `armed` are the record state's ([Recording](#recording)).
+
+`agents` (m5b-engine-plan-metadata, Protocol v0 item 29) lists the MCP sessions in the order they initialized, each `{id, name, transport: "mcp", connected, lastAction, lastActionAt}`: `id` is `agt_<hex>`, never the `Mcp-Session-Id`; `name` the sanitised `clientInfo.name` (`"MCP client"` without one); `connected` is true from `initialize` until `DELETE /v0/mcp` or `limits.agentIdleMs` without a request (the next request connects it again); `lastAction` is the name of the tool last executed for it and `lastActionAt` the server's ISO time then, both null before its first tool call. Arguments are never recorded. At most `limits.agentsRetained` (32) are kept ([Protocol MCP v0](protocol-mcp-v0.md), Agents). Every change is announced by `agent.changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` reports `features.agents` true when a transport port is present (the condition of `engine.status`), and `features.planMetadata: true`.
+
+## Plans: title, intent and actor (m5b-engine-plan-metadata)
+
+`plan.submit {steps, readSet?, baseRevision?, title?, intent?}` (spec, Protocol v0 item 14; [Plan v1](plan-v1.md), "Metadata"). Any other param is `invalid_params`, an `actor` too: the engine sets the plan's `actor` `{kind, name}` from the credential (`mcp` for the MCP token, `ui` for the UI token) and the client's name (`clientInfo.name`, or the auth frame's `client.name`, default `"SIANN"`).
+
+| Case | Answer |
+|---|---|
+| `title` not a string, empty, over 200 UTF-8 bytes, or with a control character (LF and CR included) | `invalid_plan_metadata` |
+| `intent` not a string, empty, over 2,000 UTF-8 bytes, or with a control character other than tab, LF and CR | `invalid_plan_metadata` |
+| an `actor`, or any param not listed above | `invalid_params` |
+
+On a refusal nothing is stored and no `plan.changed` goes out. `invalid_plan_metadata` is a new stable code. `plan.status`, `plan.list` and `plan.changed` carry `title`, `intent`, `actor` and `rejectionNote` when the plan has them.
 
 ## engine.devices
 

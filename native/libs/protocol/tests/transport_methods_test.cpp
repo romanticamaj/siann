@@ -196,7 +196,8 @@ TEST_CASE("engine.status carries the device and the driver's timing, counts as d
         const Value status = f.ok(c, "engine.status");
         CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "recording", "armed", "xruns",
                                                       "maxCallbackMicros", "unmeasuredCallbacks", "underruns",
-                                                      "srcUnderruns"});
+                                                      "srcUnderruns", "agents"});
+        CHECK(at(status, "agents").asArray().empty());  // m5b-engine-plan-metadata: no MCP session yet
         const Value& device = at(status, "device");
         CHECK(keysOf(device) == std::set<std::string>{"id", "sampleRate", "bufferFrames", "inputLatencyFrames", "input",
                                                       "outputLatencyFrames"});
