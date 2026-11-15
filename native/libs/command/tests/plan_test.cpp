@@ -742,3 +742,64 @@ TEST_CASE("Rolling back a plan that set the master back to 0 dB restores it", "[
     REQUIRE(history.head().document.master() != nullptr);
     CHECK(history.head().document.master()->gain.milliDb == -4500);
 }
+
+// m5b-engine-buses-sends: plans read and write bus:<id> and send:<id>.
+TEST_CASE("Plan entity sets accept bus and send refs", "[plan][buses]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"bus.add","busId":"b1","name":"Reverb"})")}, "user", "t");
+    PlanStore store;
+    const Plan& plan = store.submit(history,
+                                    {cmd(R"({"op":"bus.set_gain","busId":"b1","gainMilliDb":-6000})"),
+                                     cmd(R"({"op":"send.add","sendId":"s1","trackId":"t1","busId":"b1"})")},
+                                    {}, history.head().envelope.id);
+    std::vector<std::string> keys;
+    for (const auto& snapshot : plan.writeSet) {
+        keys.push_back(std::string(siann::model::entityTypeName(snapshot.ref.type)) + ":" + snapshot.ref.id);
+    }
+    CHECK(keys == std::vector<std::string>{"bus:b1", "send:s1", "track:t1"});
+    const std::string hash = *plan.hashText;
+    // The JSON form round-trips with the new types and keeps its hash.
+    const Plan reread = Plan::fromJson(plan.toJson());
+    CHECK(formatHash(planHash(reread)) == hash);
+    REQUIRE(reread.writeSet.size() == 3);
+    CHECK(reread.writeSet[0].ref == EntityRef{EntityType::bus, "b1"});
+    CHECK(reread.writeSet[1].ref == EntityRef{EntityType::send, "s1"});
+    CHECK_FALSE(reread.writeSet[1].entityHash.has_value());  // absent at the base
+
+    store.approve(history, hash, "user", "t1");
+    const Revision& applied = store.apply(history, hash, "agent", "t2");
+    CHECK(applied.diff.size() == 3);
+    CHECK(history.head().document.send("s1") != nullptr);
+    const Revision& inverse = store.rollback(history, hash, "user", "t3");
+    CHECK(history.head().document.send("s1") == nullptr);
+    CHECK(history.head().document.bus("b1")->gain.milliDb == 0);
+    CHECK(inverse.envelope.documentHash != applied.envelope.documentHash);
+}
+
+TEST_CASE("A bus plan goes stale when the bus changes", "[plan][buses]") {
+    History history = base();
+    history.commit({cmd(R"({"op":"bus.add","busId":"b1","name":"Reverb"})")}, "user", "t");
+    PlanStore store;
+    const std::string hash = *store.submit(history, {cmd(R"({"op":"bus.set_mute","busId":"b1","mute":true})")}, {},
+                                           history.head().envelope.id)
+                                  .hashText;
+    history.commit({cmd(R"({"op":"session.rename","name":"Renamed"})")}, "user", "t");
+    CHECK(store.validate(history, hash).empty());
+    history.commit({cmd(R"({"op":"bus.set_gain","busId":"b1","gainMilliDb":-1000})")}, "user", "t");
+    const auto error = staleError([&] { store.approve(history, hash, "user", "t"); });
+    REQUIRE(error.has_value());
+    CHECK(error->changedEntityKeys() == std::vector<std::string>{"bus:b1"});
+}
+
+TEST_CASE("Rolling back a plan that added a bus restores the bus order after another bus was added",
+          "[plan][buses]") {
+    History history = base();
+    PlanStore store;
+    const auto before = history.head().document.root().busOrder;
+    const std::string hash = appliedPlan(history, store, {cmd(R"({"op":"bus.add","busId":"b1","name":"A"})")});
+    history.commit({cmd(R"({"op":"bus.add","busId":"b2","name":"B"})")}, "user", "t");
+    store.rollback(history, hash, "user", "t");
+    CHECK(history.head().document.bus("b1") == nullptr);
+    CHECK(history.head().document.root().busOrder == std::vector<std::string>{"b2"});
+    CHECK(before.empty());
+}
