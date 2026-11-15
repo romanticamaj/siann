@@ -51,6 +51,7 @@ Params `{}`. Result:
 {"device": {"id": "fake", "sampleRate": 48000, "bufferFrames": 256, "inputLatencyFrames": 256, "outputLatencyFrames": 256,
             "input": {"id": "fake", "channels": 2, "latencyFrames": 256}},
  "playing": false, "cycle": false, "recording": false, "armed": [], "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
+ "load": {"average": 0.12, "peak": 0.31},
  "plugins": [],
  "agents": [{"id": "agt_3f2a9c1d0b7e6a54", "name": "mix-assistant", "transport": "mcp", "connected": true,
              "lastAction": "submit_plan", "lastActionAt": "2026-11-15T10:00:05Z"}]}
@@ -59,6 +60,16 @@ Params `{}`. Result:
 `device` is null when no device runs, and `deviceError {code, message}` then says why: `no_device`, `device_open_failed`, `device_lost`, `no_audio_backend` (a core-only build without `--device fake`), or a media code when the session's first graph could not be built (`media_missing`, `media_hash_mismatch`, `media_mismatch`, `unsupported_media`, `decode_failed`, `too_large`, `load_failed`). While that first graph could not be built the other methods still run: `proposal.merge` and `proposal.discard` act on the session directly, and only `audition.hear` answers `audition_unavailable`. `id` is `fake`, `<type>/<name>` or `default` (launched without `--device` and nothing selected since). The counters run from the device's start. `plugins` is in [Protocol plugins v0](protocol-plugins-v0.md). `device.input` (m5b-engine-record) is null while no input is open, otherwise the input's `id`, the channels the device opened and its input latency in frames; `recording` and `armed` are the record state's ([Recording](#recording)).
 
 `agents` (m5b-engine-plan-metadata, Protocol v0 item 29) lists the MCP sessions in the order they initialized, each `{id, name, transport: "mcp", connected, lastAction, lastActionAt}`: `id` is `agt_<hex>`, never the `Mcp-Session-Id`; `name` the sanitised `clientInfo.name` (`"MCP client"` without one); `connected` is true from `initialize` until `DELETE /v0/mcp` or `limits.agentIdleMs` without a request (the next request connects it again); `lastAction` is the name of the tool last executed for it and `lastActionAt` the server's ISO time then, both null before its first tool call. Arguments are never recorded. At most `limits.agentsRetained` (32) are kept ([Protocol MCP v0](protocol-mcp-v0.md), Agents). Every change is announced by `agent.changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` reports `features.agents` true when a transport port is present (the condition of `engine.status`), and `features.planMetadata: true`.
+
+`load` (m5b-engine-load-loudness, Protocol v0 item 31) is `{average, peak}`, JSON numbers: `average` is the fraction of the device period the audio callback used over the last full window of one second of device frames (the sum of the callbacks' durations over the sum of their periods), `peak` the largest single callback's fraction in that window. Both can exceed 1 when callbacks miss their deadline. They are measured on the audio thread with the two steady-clock reads that time `xruns`, restart with the device's start, and are `0` while no device runs and before the first window is full. `engine.capabilities` reports `features.load` true when a transport port is present.
+
+## Loudness (m5b-engine-load-loudness, Protocol v0 item 31)
+
+| Method | Params | Result |
+|---|---|---|
+| `meter.reset_loudness` | `{}` | `{}` |
+
+The engine meters the master output per ITU-R BS.1770-4 (gating as in EBU R128): momentary (400 ms), short-term (3 s) and integrated loudness in LUFS, after the master gain and before the click (architecture spec, "Master path"). The values travel on the realtime socket as the `"SLUD"` frame ([Protocol events v1](protocol-events-v1.md), "Loudness frame"). `meter.reset_loudness` restarts the integrated value; a locate or a stop does not, and the meter keeps its state across a graph swap and `engine.select_device`. It is engine state: no revision, no event, honours `expectedRevision` and the idempotency cache, and runs without a device (it is not `no_device`). Without a transport port it is `not_supported`. It is not an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)). `engine.capabilities` lists it in `methods` and reports `features.loudness` true when a transport port is present.
 
 ## Plans: title, intent and actor (m5b-engine-plan-metadata)
 

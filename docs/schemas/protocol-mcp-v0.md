@@ -165,6 +165,13 @@ tool is dedicated to either. Buses and sends (m5b-engine-buses-sends) likewise g
 through `execute` or a plan with their commands, and `list_commands` returns
 `command.list`'s `{commands, cascades}` unchanged.
 
+`engine_status` carries `load {average, peak}` (m5b-engine-load-loudness, Protocol
+v0 item 31) like the method it wraps. No tool wraps `meter.reset_loudness`, by
+decision: it restarts the integrated value of the user's loudness meter, a display
+aid, not session state, and nothing a plan needs; an agent reads loudness from a
+render, not from the live meter. The adapter lists the method in its exclusions
+(`mcpExclusions()`), and a tool call naming it is refused like any unknown tool.
+
 `record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
 recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted
 scope: recording writes to the user's disk and commits a revision. No tool wraps

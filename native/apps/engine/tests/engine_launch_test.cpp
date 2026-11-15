@@ -326,6 +326,9 @@ public:
         return *next;
     }
 
+    // The newest loudness frame read past so far (m5b-engine-load-loudness).
+    std::optional<protocol::LoudnessFrame> loudness() { return realtime_.lastLoudness(); }
+
     // The first of the next frames that `wanted` accepts; at most kFrameBound read.
     template <class Predicate>
     MeterFrame frameWhere(Predicate wanted) {
@@ -621,6 +624,12 @@ TEST_CASE("a client on the fake device plays, sees an advancing playhead in bina
             return f.playing && f.entries.size() == 3 && f.entries[0].peak[0] > 0.0f;
         });
         CHECK(metered.epoch != 0);
+        // The loudness frame travels beside the meter frame over the wire.
+        client.frameWhere([&client](const MeterFrame&) {
+            const auto loudness = client.loudness();
+            return loudness && loudness->momentary > -70.0f;
+        });
+        CHECK(at(at(client.ok("engine.status"), "load"), "average").asNumber() >= 0.0);
 
         const Value located = client.ok("transport.locate", Value(Object{{"frames", Value("96000")}}));
         CHECK(at(located, "position").asString() == "96000");

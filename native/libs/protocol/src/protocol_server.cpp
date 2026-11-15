@@ -350,7 +350,7 @@ const std::vector<std::string_view> kMethods = {
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
     "plan.list",       "plan.preview",    "transport.set_cycle", "transport.set_click",
     "record.arm",      "transport.record", "record.recover_take",
-    "session.create",  "media.import",
+    "session.create",  "media.import",    "meter.reset_loudness",
 };
 
 // PluginHost's capability flags, in the order engine.capabilities lists them.
@@ -540,7 +540,9 @@ Value engineStatusJson(const EngineStatus& status) {
                {"maxCallbackMicros", Value(status.maxCallbackMicros)},
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
                {"underruns", decimal(status.underruns)},
-               {"srcUnderruns", decimal(status.srcUnderruns)}};
+               {"srcUnderruns", decimal(status.srcUnderruns)},
+               // Protocol v0 item 31: fractions of the device period, JSON numbers.
+               {"load", Value(Object{{"average", Value(status.load.average)}, {"peak", Value(status.load.peak)}})}};
     if (status.deviceError) {
         out.emplace_back("deviceError", errorValue(status.deviceError->code, status.deviceError->message));
     }
@@ -1773,7 +1775,10 @@ struct ProtocolServer::Impl {
                                       {"clipFades", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
-                                      {"agents", Value(options.transportPort != nullptr)}})},
+                                      {"agents", Value(options.transportPort != nullptr)},
+                                      // Protocol v0 item 31: engine.status load, the SLUD frame and its reset.
+                                      {"load", Value(options.transportPort != nullptr)},
+                                      {"loudness", Value(options.transportPort != nullptr)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
                                     {"inboxCapacity", Value(static_cast<double>(options.inboxCapacity))},
                                     {"idempotencyCapacity", Value(static_cast<double>(options.idempotencyCapacity))},
@@ -2323,6 +2328,11 @@ struct ProtocolServer::Impl {
         }
         if (method == "engine.status") {
             return success(request.requestId, engineStatus());
+        }
+        if (method == "meter.reset_loudness") {
+            // Protocol v0 item 31: engine state, no revision, no event, no device needed.
+            requireTransport().resetLoudness();
+            return success(request.requestId, Value(Object{}));
         }
         if (method == "engine.devices") {
             return success(request.requestId, devicesJson(requireTransport().devices()));

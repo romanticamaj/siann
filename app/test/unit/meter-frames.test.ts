@@ -42,6 +42,24 @@ for (const fixture of fixtures.meterFrames) {
   });
 }
 
+// m5b-engine-load-loudness: the engine sends a "SLUD" loudness frame after each
+// meter frame on the same socket. This decoder knows only "SMTR" and must ignore
+// it, so the meters keep working until the app decodes loudness (m5b-ui-meter).
+interface LoudnessFixtures {
+  frameBytes: number;
+  loudnessFrames: Array<{ name: string; hex: string }>;
+}
+
+test('a SLUD frame is not an SMTR frame and is ignored', () => {
+  const loudness = readFixture<LoudnessFixtures>('protocol', 'loudness-frames.json');
+  assert.ok(loudness.loudnessFrames.length >= 1);
+  for (const frame of loudness.loudnessFrames) {
+    const slud = bytes(frame.hex);
+    assert.equal(slud.length, loudness.frameBytes, frame.name);
+    assert.equal(decodeMeterFrame(slud), null, frame.name);
+  }
+});
+
 test('malformed frames decode to null', () => {
   const good = bytes(fixtures.meterFrames[0]!.hex);
   const badMagic = good.slice();

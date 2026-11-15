@@ -74,6 +74,14 @@ struct DeviceProblem {
     std::string message;
 };
 
+// Protocol v0 item 31 (m5b-engine-load-loudness): the fraction of the device
+// period the audio callback used over the last full second of device frames,
+// and the largest single callback's fraction in it; both 0 without a device.
+struct DspLoad {
+    double average = 0.0;
+    double peak = 0.0;
+};
+
 // Counters run from the device's start. xruns are callbacks the driver timed
 // over their period, unmeasuredCallbacks those it could not check (no device
 // rate), underruns the disk streams' and srcUnderruns the SRC path's.
@@ -90,6 +98,7 @@ struct EngineStatus {
     std::uint64_t unmeasuredCallbacks = 0;
     std::uint64_t underruns = 0;
     std::uint64_t srcUnderruns = 0;
+    DspLoad load{};
 };
 
 // Thrown by a port. Codes: no_device; selectDevice's not_found and
@@ -138,6 +147,13 @@ public:
             throw TransportPortError("not_supported", "this engine host opens no device inputs");
         }
         return selectDevice(id);
+    }
+    // meter.reset_loudness (Protocol v0 item 31): restarts the integrated value of
+    // the master loudness meter. Engine state, no revision; it never answers
+    // no_device (the meter is the engine's). A port without a meter answers
+    // not_supported.
+    virtual void resetLoudness() {
+        throw TransportPortError("not_supported", "this engine host has no loudness meter");
     }
 };
 

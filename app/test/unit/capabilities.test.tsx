@@ -96,6 +96,14 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.command('bus.add'), true);
   assert.equal(full.command('send.set_level'), true);
   assert.equal(full.command('track.set_output'), true);
+  // m5b-engine-load-loudness: DSP load in engine.status, the loudness frame and
+  // its reset (true with a transport port); the reduced engine predates them.
+  assert.equal(full.has('meter.reset_loudness'), true);
+  assert.equal(reduced.has('meter.reset_loudness'), false);
+  assert.equal(full.feature('load'), true);
+  assert.equal(full.feature('loudness'), true);
+  assert.equal(reduced.feature('load'), false, 'the reduced engine has no features.load');
+  assert.equal(reduced.feature('loudness'), false, 'the reduced engine has no features.loudness');
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);
