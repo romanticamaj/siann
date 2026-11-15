@@ -74,7 +74,7 @@ struct DeviceProblem {
     std::string message;
 };
 
-// Protocol v0 item 30 (m5b-engine-load-loudness): the fraction of the device
+// Protocol v0 item 31 (m5b-engine-load-loudness): the fraction of the device
 // period the audio callback used over the last full second of device frames,
 // and the largest single callback's fraction in it; both 0 without a device.
 struct DspLoad {
@@ -148,7 +148,7 @@ public:
         }
         return selectDevice(id);
     }
-    // meter.reset_loudness (Protocol v0 item 30): restarts the integrated value of
+    // meter.reset_loudness (Protocol v0 item 31): restarts the integrated value of
     // the master loudness meter. Engine state, no revision; it never answers
     // no_device (the meter is the engine's). A port without a meter answers
     // not_supported.

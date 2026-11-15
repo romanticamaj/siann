@@ -125,7 +125,7 @@ struct TransportCommand {
     bool play = false;
 };
 
-// The master loudness (m5b-engine-load-loudness, Protocol v0 item 30), in LUFS;
+// The master loudness (m5b-engine-load-loudness, Protocol v0 item 31), in LUFS;
 // minus infinity for silence.
 struct LoudnessReading {
     float momentary = -std::numeric_limits<float>::infinity();

@@ -166,7 +166,7 @@ through `execute` or a plan with their commands, and `list_commands` returns
 `command.list`'s `{commands, cascades}` unchanged.
 
 `engine_status` carries `load {average, peak}` (m5b-engine-load-loudness, Protocol
-v0 item 30) like the method it wraps. No tool wraps `meter.reset_loudness`, by
+v0 item 31) like the method it wraps. No tool wraps `meter.reset_loudness`, by
 decision: it restarts the integrated value of the user's loudness meter, a display
 aid, not session state, and nothing a plan needs; an agent reads loudness from a
 render, not from the live meter. The adapter lists the method in its exclusions

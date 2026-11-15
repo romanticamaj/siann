@@ -449,7 +449,7 @@ values, then `channels` f32 RMS values (linear gain). An entry is
 `fixtures/protocol/meter-frames.json` holds byte-exact frames generated from this
 table by `scripts/generate-protocol-fixtures.js`, independent of the C++ encoder.
 
-### Loudness frame (m5b-engine-load-loudness, Protocol v0 item 30)
+### Loudness frame (m5b-engine-load-loudness, Protocol v0 item 31)
 
 A second frame kind on the same socket carries the master's loudness
 ([Protocol engine v0](protocol-engine-v0.md), "Loudness"). On every publisher tick

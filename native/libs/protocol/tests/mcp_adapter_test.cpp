@@ -1166,7 +1166,7 @@ TEST_CASE("execute carries clip.set_fade and list_commands names it", "[protocol
     CHECK(listed);
 }
 
-// m5b-engine-load-loudness (Protocol v0 item 30): resetting the user's loudness
+// m5b-engine-load-loudness (Protocol v0 item 31): resetting the user's loudness
 // meter is a display aid, not session state and nothing a plan needs, so no tool
 // maps to it; the adapter lists the exclusion with its reason.
 TEST_CASE("meter.reset_loudness is no MCP tool and the adapter lists its exclusion", "[protocol][mcp][loudness]") {

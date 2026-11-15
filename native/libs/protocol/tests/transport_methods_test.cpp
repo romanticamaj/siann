@@ -641,7 +641,7 @@ TEST_CASE("engine.capabilities lists set_cycle and set_click with features cycle
     }
 }
 
-// ---- DSP load and loudness (m5b-engine-load-loudness, Protocol v0 item 30) ------
+// ---- DSP load and loudness (m5b-engine-load-loudness, Protocol v0 item 31) ------
 
 TEST_CASE("engine.status carries load {average, peak} as numbers from the port", "[protocol][transport][load]") {
     FakePort port;

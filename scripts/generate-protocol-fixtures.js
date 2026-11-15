@@ -121,7 +121,7 @@ function buildFixture() {
 
 const FIXTURE_FILE = path.join(__dirname, '..', 'fixtures', 'protocol', 'meter-frames.json');
 
-// The loudness frame (m5b-engine-load-loudness, Protocol v0 item 30), 25 bytes:
+// The loudness frame (m5b-engine-load-loudness, Protocol v0 item 31), 25 bytes:
 //   0  "SLUD"            4 bytes
 //   4  u8  version (1)
 //   5  i64 engineTimestampMicros

@@ -1,6 +1,6 @@
 #pragma once
 
-// DSP load (m5b-engine-load-loudness, Protocol v0 item 30): the fraction of the
+// DSP load (m5b-engine-load-loudness, Protocol v0 item 31): the fraction of the
 // device period the audio callback used. The graph driver feeds every callback's
 // duration, from the same two clock reads as its CallbackTimer, into a
 // LoadWindow. A tumbling window that has covered at least one second of device

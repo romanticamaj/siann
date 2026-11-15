@@ -1441,7 +1441,7 @@ TEST_CASE("bus and send gestures through the port", "[engine][host][gesture][bus
     CHECK(meter->reading.peak[0] > 0.0f);
 }
 
-// ---- DSP load and loudness (m5b-engine-load-loudness, Protocol v0 item 30) ---------
+// ---- DSP load and loudness (m5b-engine-load-loudness, Protocol v0 item 31) ---------
 
 namespace {
 

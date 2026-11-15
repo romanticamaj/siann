@@ -55,7 +55,7 @@ std::string encodeMeterFrame(const MeterFrame& frame);
 // nullopt for a frame that is malformed (magic, version or length).
 std::optional<MeterFrame> decodeMeterFrame(std::string_view bytes);
 
-// The loudness frame (m5b-engine-load-loudness, Protocol v0 item 30): the master's
+// The loudness frame (m5b-engine-load-loudness, Protocol v0 item 31): the master's
 // BS.1770 loudness in LUFS, minus infinity for silence. Sent after the meter
 // frame on the same tick, with its timestamp; 25 bytes, little-endian.
 inline constexpr std::string_view kLoudnessFrameMagic = "SLUD";

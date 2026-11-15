@@ -155,7 +155,7 @@ const std::vector<McpTool>& mcpTools() {
 
 const std::vector<McpExclusion>& mcpExclusions() {
     static const std::vector<McpExclusion> exclusions = {
-        // m5b-engine-load-loudness (Protocol v0 item 30, docs/schemas/protocol-mcp-v0.md).
+        // m5b-engine-load-loudness (Protocol v0 item 31, docs/schemas/protocol-mcp-v0.md).
         {"meter.reset_loudness",
          "restarts the integrated value of the user's loudness meter: a display aid, not session state, and "
          "nothing a plan needs; an agent measures loudness from a render"},

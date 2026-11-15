@@ -258,7 +258,7 @@ void GraphDriver::meterLoudness(const host::AudioBufferView& output, int offset,
         }
         loudnessMeter_->process(channels, count, frames);
     } else {
-        // Stopped: the span is digital silence (spec, Protocol v0 item 30).
+        // Stopped: the span is digital silence (spec, Protocol v0 item 31).
         loudnessMeter_->processSilence(frames);
     }
     publishLoudness();

@@ -38,7 +38,7 @@ test('the schema doc states the layout the fixture uses', () => {
   }
 });
 
-// m5b-engine-load-loudness (Protocol v0 item 30): the loudness frame "SLUD".
+// m5b-engine-load-loudness (Protocol v0 item 31): the loudness frame "SLUD".
 const loudness = JSON.parse(fs.readFileSync(generator.LOUDNESS_FIXTURE_FILE, 'utf8'));
 
 test('the loudness-frame fixture matches its Node generator', () => {

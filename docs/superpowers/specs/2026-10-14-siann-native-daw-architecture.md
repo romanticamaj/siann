@@ -709,7 +709,7 @@ records who that is:
   master gain. The graph driver then adds the click and device-side SRC follows
   ("Click"). The tap order on the device path is: master gain, master meter (both
   in the graph), the driver's duck and rise, the loudness meter (on the driver's
-  output span, Protocol v0 item 30), the click, device-side SRC. The loudness
+  output span, Protocol v0 item 31), the click, device-side SRC. The loudness
   meter therefore reads what the listener hears from the session, never the click. The offline graph (`engine::compileDocument`) is the same up to the
   master bus, which is its output: the master gain applies there too, with no
   meter and no click, so offline and realtime renders agree.

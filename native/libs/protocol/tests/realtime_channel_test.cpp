@@ -604,7 +604,7 @@ TEST_CASE("the meter legend lists every bus as bus:<id> in key order", "[protoco
     CHECK(publisher.legend() == legend);
 }
 
-// ---- the loudness frame (m5b-engine-load-loudness, Protocol v0 item 30) ---------
+// ---- the loudness frame (m5b-engine-load-loudness, Protocol v0 item 31) ---------
 
 namespace {
 

@@ -357,7 +357,7 @@ void EngineHost::makePublisher() {
     options.playing = [&transport] { return transport.playing(); };
     options.playhead = [&transport] { return transport.position(); };
     options.inputMeter = [this](const std::string& trackId) { return inputMeter(trackId); };
-    // Protocol v0 item 30: read only while a realtime client listens.
+    // Protocol v0 item 31: read only while a realtime client listens.
     const realtime::GraphDriver& driver = engine_->driver();
     options.loudness = [&driver] {
         const realtime::LoudnessReading reading = driver.loudness();
@@ -841,7 +841,7 @@ protocol::EngineStatus EngineHost::status() const {
         out.srcUnderruns = engine_->driver().srcUnderruns();
     }
     if (loaded_ && running_) {
-        // Protocol v0 item 30: 0 while no device runs.
+        // Protocol v0 item 31: 0 while no device runs.
         const rt::LoadWindow& load = engine_->driver().load();
         out.load = protocol::DspLoad{load.average(), load.peak()};
     }

@@ -541,7 +541,7 @@ Value engineStatusJson(const EngineStatus& status) {
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
                {"underruns", decimal(status.underruns)},
                {"srcUnderruns", decimal(status.srcUnderruns)},
-               // Protocol v0 item 30: fractions of the device period, JSON numbers.
+               // Protocol v0 item 31: fractions of the device period, JSON numbers.
                {"load", Value(Object{{"average", Value(status.load.average)}, {"peak", Value(status.load.peak)}})}};
     if (status.deviceError) {
         out.emplace_back("deviceError", errorValue(status.deviceError->code, status.deviceError->message));
@@ -1776,7 +1776,7 @@ struct ProtocolServer::Impl {
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
                                       {"agents", Value(options.transportPort != nullptr)},
-                                      // Protocol v0 item 30: engine.status load, the SLUD frame and its reset.
+                                      // Protocol v0 item 31: engine.status load, the SLUD frame and its reset.
                                       {"load", Value(options.transportPort != nullptr)},
                                       {"loudness", Value(options.transportPort != nullptr)}})},
             {"limits", Value(Object{{"syncChunkEntities", Value(static_cast<double>(options.syncChunkEntities))},
@@ -2330,7 +2330,7 @@ struct ProtocolServer::Impl {
             return success(request.requestId, engineStatus());
         }
         if (method == "meter.reset_loudness") {
-            // Protocol v0 item 30: engine state, no revision, no event, no device needed.
+            // Protocol v0 item 31: engine state, no revision, no event, no device needed.
             requireTransport().resetLoudness();
             return success(request.requestId, Value(Object{}));
         }

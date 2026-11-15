@@ -173,7 +173,7 @@ public:
     protocol::DeviceInfo selectDevice(const std::string& id) override;
     protocol::DeviceInfo selectDeviceWithInput(const std::string& id,
                                                const std::optional<std::string>& inputId) override;
-    // meter.reset_loudness (Protocol v0 item 30): restarts the integrated value of
+    // meter.reset_loudness (Protocol v0 item 31): restarts the integrated value of
     // the engine's master loudness meter, with or without a device.
     void resetLoudness() override;
 
