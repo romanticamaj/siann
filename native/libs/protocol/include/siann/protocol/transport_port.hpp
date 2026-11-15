@@ -90,6 +90,10 @@ struct EngineStatus {
     std::uint64_t unmeasuredCallbacks = 0;
     std::uint64_t underruns = 0;
     std::uint64_t srcUnderruns = 0;
+    // m5b-engine-monitoring (Protocol v0 item 30): what a monitored input takes
+    // from the device input to the device output, in session frames; empty
+    // while no input is open.
+    std::optional<std::int64_t> monitorRoundTripFrames{};
 };
 
 // Thrown by a port. Codes: no_device; selectDevice's not_found and

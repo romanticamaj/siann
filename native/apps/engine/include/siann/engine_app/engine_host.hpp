@@ -178,6 +178,8 @@ public:
     protocol::RecordState arm(const std::string& trackId, bool armed) override;
     protocol::TransportState record(bool enabled) override;
     protocol::RecordState recordState() const override;
+    // m5b-engine-monitoring: true while the engine has a capture bank.
+    bool monitoringAvailable() const override;
     std::vector<protocol::PendingTake> pendingTakes() const override;
     protocol::RecoverResult recoverTake(const std::string& takeId, bool accept,
                                         const std::optional<std::string>& trackId, std::string actor,
@@ -241,6 +243,8 @@ private:
     void followHead();
     bool armable(const std::string& trackId) const;
     void clearArms();
+    void bindMonitor(const std::string& trackId, std::size_t slot);
+    void unbindMonitor(const std::string& trackId, std::size_t slot);
     std::vector<std::string> armedTracks() const;
     void startRecording();
     void pollRecording();

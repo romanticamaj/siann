@@ -833,7 +833,15 @@ protocol::EngineStatus EngineHost::status() const {
         out.underruns = engine_->underruns();
         out.srcUnderruns = engine_->driver().srcUnderruns();
     }
+    // m5b-engine-monitoring: what a monitored input takes, while an input is open.
+    if (running_ && loaded_ && openInputChannels() > 0) {
+        out.monitorRoundTripFrames = engine_->driver().latency().monitorRoundTripFrames;
+    }
     return out;
+}
+
+bool EngineHost::monitoringAvailable() const {
+    return engine_ ? engine_->driver().captureBank() != nullptr : playbackOptions_.capture.slots > 0;
 }
 
 std::vector<protocol::DeviceDescription> EngineHost::devices() const {
@@ -1025,14 +1033,32 @@ void EngineHost::followHead() {
 
 void EngineHost::clearArms() {
     if (engine_) {
-        if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
-            for (const auto& [trackId, slot] : armed_) {
-                (void)trackId;
-                bank->disarm(slot);
-            }
+        for (const auto& [trackId, slot] : armed_) {
+            unbindMonitor(trackId, slot);
         }
     }
     armed_.clear();
+}
+
+// m5b-engine-monitoring: the track's gate (the playback engine's, which every
+// graph's monitor node of that track reads) follows the arm, and the slot writes
+// its capturing.
+void EngineHost::bindMonitor(const std::string& trackId, std::size_t slot) {
+    graph::MonitorGate& gate = engine_->monitorGate(trackId);
+    gate.armed.store(true, std::memory_order_release);
+    if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
+        bank->bindMonitorGate(slot, &gate);
+    }
+}
+
+void EngineHost::unbindMonitor(const std::string& trackId, std::size_t slot) {
+    graph::MonitorGate& gate = engine_->monitorGate(trackId);
+    if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
+        bank->bindMonitorGate(slot, nullptr);
+        bank->disarm(slot);
+    }
+    gate.armed.store(false, std::memory_order_release);
+    gate.capturing.store(false, std::memory_order_release);
 }
 
 // Every armed track whose input is gone, or past what the open input holds, is
@@ -1046,9 +1072,7 @@ void EngineHost::pruneArms() {
     for (auto it = armed_.begin(); it != armed_.end();) {
         const model::Track* track = doc.track(it->first);
         if (track == nullptr || !track->input || !covers(*track->input)) {
-            if (bank != nullptr) {
-                bank->disarm(it->second);
-            }
+            unbindMonitor(it->first, it->second);
             it = armed_.erase(it);
             continue;
         }
@@ -1067,9 +1091,7 @@ protocol::RecordState EngineHost::arm(const std::string& trackId, bool armed) {
     if (!armed) {
         const auto found = armed_.find(trackId);
         if (found != armed_.end()) {
-            if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
-                bank->disarm(found->second);
-            }
+            unbindMonitor(found->first, found->second);
             armed_.erase(found);
         }
         return recordState();
@@ -1107,6 +1129,7 @@ protocol::RecordState EngineHost::arm(const std::string& trackId, bool armed) {
         found = armed_.emplace(trackId, static_cast<std::size_t>(free - used.begin())).first;
     }
     bank->arm(found->second, track->input->port, track->input->channels);
+    bindMonitor(trackId, found->second);
     return recordState();
 }
 

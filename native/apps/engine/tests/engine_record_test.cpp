@@ -510,7 +510,7 @@ TEST_CASE("engine.status reports the monitored round trip, null without an input
         CHECK(report.srcMonitorFifoFrames > 0);
         CHECK(rig.host->status().monitorRoundTripFrames ==
               std::optional<std::int64_t>(report.inputLatencyFrames + report.outputLatencyFrames +
-                                          report.srcOutputLatencyFrames + report.srcInputLatencyFrames +
+                                          report.srcOutputLatencyFrames +
                                           report.srcMonitorFifoFrames));
     }
 }

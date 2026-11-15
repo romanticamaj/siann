@@ -511,7 +511,10 @@ Value engineStatusJson(const EngineStatus& status) {
                {"maxCallbackMicros", Value(status.maxCallbackMicros)},
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
                {"underruns", decimal(status.underruns)},
-               {"srcUnderruns", decimal(status.srcUnderruns)}};
+               {"srcUnderruns", decimal(status.srcUnderruns)},
+               {"monitorRoundTripFrames", status.monitorRoundTripFrames
+                                              ? Value(static_cast<double>(*status.monitorRoundTripFrames))
+                                              : Value(nullptr)}};
     if (status.deviceError) {
         out.emplace_back("deviceError", errorValue(status.deviceError->code, status.deviceError->message));
     }
@@ -1719,6 +1722,8 @@ struct ProtocolServer::Impl {
                                       {"cycle", Value(options.transportPort != nullptr)},
                                       {"click", Value(options.transportPort != nullptr)},
                                       {"recording", Value(options.recordPort != nullptr)},
+                                      {"monitoring", Value(options.recordPort != nullptr &&
+                                                           options.recordPort->monitoringAvailable())},
                                       {"masterGain", Value(true)},
                                       {"mediaImport", Value(Object{{"formats", Value(Array{Value("wav"), Value("flac")})}})},
                                       {"planMetadata", Value(true)},
