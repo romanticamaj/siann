@@ -30,7 +30,7 @@ import { ISOLATE } from '../plans/isolate';
 import { Capable, useCapabilities } from '../shell/Capable';
 import type { LayoutStore } from '../shell/layout-store';
 import { DIMMED_ALPHA, dimmedTracks } from './dimming';
-import { DEFAULT_LANE_HEIGHT, clampLaneHeight, laneHeightOf, laneTops } from './geometry';
+import { DEFAULT_LANE_HEIGHT, clampLaneHeight, laneHeightOf, laneTops, lanesTopOf } from './geometry';
 import { HeaderMeters, type MeterRow } from './HeaderMeters';
 import type { TrackSelectMode } from './selection';
 import { addTrackCommand, nextTrackName, renameTrackCommand } from './track-commands';
@@ -102,7 +102,7 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
       const view = timeline.getView();
       const trackOrder = current?.trackOrder ?? [];
       const tops = laneTops(trackOrder, view);
-      return trackOrder.map((id, index) => ({ ref: `track:${id}`, top: tops[index]! - view.rulerHeight, height: laneHeightOf(id, view) }));
+      return trackOrder.map((id, index) => ({ ref: `track:${id}`, top: tops[index]! - lanesTopOf(view), height: laneHeightOf(id, view) }));
     };
     const surface = new HeaderMeters(canvas, realtime, rows);
     surface.start();
@@ -143,6 +143,9 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
           />
         </Capable>
       </div>
+      {/* The marker track row beside the event display's (--marker-h): empty
+          until m5b-ui-markers, so headers and lanes stay level (UI redesign 3.0). */}
+      <div aria-hidden="true" />
       <div
         className="track-list-body"
         data-testid="track-list-body"

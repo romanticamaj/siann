@@ -396,7 +396,8 @@ test('timeline canvas: split, Alt-drag copy, duplicate, the volume control and d
     // Ctrl+D duplicates the selection.
     await timeline.duplicate();
     // The volume control: drag up 10 px.
-    const gainAt = { x: rect.x + 10, y: rect.y + rect.height - 3 };
+    // draw()'s volume box in the clip's inset box (m5-ui-port-arrange-canvas).
+    const gainAt = { x: rect.x + 20, y: rect.y + rect.height - 10 };
     fire('pointerdown', gainAt.x, gainAt.y);
     fire('pointermove', gainAt.x, gainAt.y - 10);
     fire('pointerup', gainAt.x, gainAt.y - 10);

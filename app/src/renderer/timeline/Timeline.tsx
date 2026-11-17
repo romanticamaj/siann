@@ -34,6 +34,7 @@ import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { CapabilitySelector } from '../model/capabilities';
 import { loopClickGates, type LoopClickController } from '../model/loop-click';
 import type { PeaksCache } from '../model/peaks-cache';
+import type { Snapshot } from '../model/read-model';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
 import { Capable, useCapabilities } from '../shell/Capable';
@@ -134,6 +135,20 @@ function useSessionId(client: SessionClient): string | null {
     () => client.getState().sessionId,
     () => client.getState().sessionId,
   );
+}
+
+// The scroll-zoom bar's thumb (`<i>`): left and width in percent of the
+// session's extent, from the view key "scrollFrames:framesPerPixel:width".
+export function scrollThumb(viewKey: string, snapshot: Snapshot | null): { left: string; width: string } | null {
+  const [scroll, fpp, width] = viewKey.split(':').map(Number);
+  if (!viewKey || !(fpp! > 0) || !(width! > 0)) return null;
+  const visible = fpp! * width!;
+  let end = scroll! + visible;
+  for (const clip of snapshot?.clips ?? []) {
+    if (clip.position.domain === 'audio') end = Math.max(end, Number(clip.position.value) + Number(clip.length));
+  }
+  const percent = (frames: number) => `${Math.min(100, Math.max(0, (frames / end) * 100))}%`;
+  return { left: percent(scroll!), width: percent(visible) };
 }
 
 function send(client: SessionClient, command: TimelineCommand | null): boolean {
@@ -291,6 +306,18 @@ export function Timeline({
     () => (timeline ? timeline.getView().framesPerPixel : 0),
     () => 0,
   );
+
+  // The scroll thumb: the view's frames over the session's extent (the last
+  // clip's end, or the view's end when that is further), in percent.
+  const viewKey = useSyncExternalStore(
+    (listener) => (timeline ? timeline.subscribeView(listener) : () => {}),
+    () => {
+      const v = timeline?.getView();
+      return v ? `${v.scrollFrames}:${v.framesPerPixel}:${v.width}` : '';
+    },
+    () => '',
+  );
+  const thumb = scrollThumb(viewKey, snapshot);
 
   const gateKey = JSON.stringify(gates);
   useEffect(() => {
@@ -469,7 +496,7 @@ export function Timeline({
         </output>
       </div>
       <InfoLine client={client} clipId={state.selectedClipId} />
-      <div className="arrange" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
+      <div className="arr-body" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
         <TrackList
           client={client}
           realtime={realtime}
@@ -481,23 +508,30 @@ export function Timeline({
           onSelectTrack={selectTrack}
         />
         <TrackListDivider layout={layout} />
-        <div className="event-display" data-testid="event-display" data-part="event-display" ref={displayRef}>
-          <canvas ref={contentRef} data-testid="timeline-content" className="timeline-layer" />
-          <canvas ref={overlayRef} data-testid="timeline-canvas" className="timeline-layer timeline-overlay" />
+        {/* The mockup's event display (mockup.html line 287): .lanes with the
+            canvas #tl and the scroll-zoom bar. The overlay canvas, the drag
+            tooltip and the zoom's range input are the app's own. */}
+        <div className="lanes" data-testid="event-display" data-part="event-display" ref={displayRef}>
+          <canvas ref={contentRef} id="tl" data-testid="timeline-content" />
+          <canvas ref={overlayRef} className="timeline-layer timeline-overlay" data-testid="timeline-canvas" />
           <div ref={tooltipRef} className="drag-tooltip" data-testid="drag-tooltip" role="status" hidden />
-          {timeline ? (
-            <input
-              type="range"
-              className="zoom-slider"
-              data-testid="zoom-slider" data-part="scroll-zoom"
-              aria-label={t('timeline.zoom')}
-              min={0}
-              max={ZOOM_MAX}
-              step={0.25}
-              value={ZOOM_MAX - Math.log2(Math.max(1, framesPerPixel))}
-              onChange={(e) => timeline.setFramesPerPixel(Math.round(Math.pow(2, ZOOM_MAX - Number(e.target.value))))}
-            />
-          ) : null}
+          <div className="hscroll" data-part="scroll-zoom">
+            <i style={thumb ?? undefined} />
+            <u>
+              {timeline ? (
+                <input
+                  type="range"
+                  data-testid="zoom-slider"
+                  aria-label={t('timeline.zoom')}
+                  min={0}
+                  max={ZOOM_MAX}
+                  step={0.25}
+                  value={ZOOM_MAX - Math.log2(Math.max(1, framesPerPixel))}
+                  onChange={(e) => timeline.setFramesPerPixel(Math.round(Math.pow(2, ZOOM_MAX - Number(e.target.value))))}
+                />
+              ) : null}
+            </u>
+          </div>
         </div>
       </div>
       <ConfirmDialog
