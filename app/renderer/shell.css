@@ -403,9 +403,11 @@ code, dd { font-family: var(--font-mono); }
    (m5-ui-port-track-list); these are the app's own pieces around them. The
    list is a grid of the head beside the ruler, the empty marker track row
    (until m5b-ui-markers) and the headers, which a transform scrolls with the
-   lanes. */
+   lanes. Its one column is the list's width, never its head's content, so
+   nothing in the list is wider than the list (spec 2.3). */
 .arr-body > .headers {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--ruler-h) var(--marker-h) minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
@@ -422,9 +424,10 @@ code, dd { font-family: var(--font-mono); }
 /* At the narrow end the header keeps colour, name, M and S (spec 2.3). The
    empty boxes of record, read and write (.r1's fourth child on) go with the
    number and the second row, as small windows take a held box away (spec
-   3.0); M and S keep theirs. */
+   3.0); M and S keep theirs. The head keeps the add button and drops the
+   count, which needs about 175 px. */
 @container (max-width: 200px) {
-  .th .idx, .th .r2, .th .r1 > .msr-box:nth-child(n+4) { display: none; }
+  .th .idx, .th .r2, .th .r1 > .msr-box:nth-child(n+4), .corner .cnt { display: none; }
   .th { grid-template-columns: var(--track-colour-w) minmax(0, 1fr); }
 }
 .divider-tracklist { width: var(--divider-w); cursor: ew-resize; }
