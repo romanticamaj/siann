@@ -183,6 +183,7 @@ export const en = {
   'plans.refused': 'The engine refused the request',
   'plans.stepsLabel': 'Steps',
   'plans.staleTitle': 'Changed since the plan was made',
+  'plans.otherChanges': 'Other changes ({count})',
   'plans.applied': 'applied',
   'plans.appliedAt': 'applied at {revision}',
   'plans.rolledBack': 'rolled back',

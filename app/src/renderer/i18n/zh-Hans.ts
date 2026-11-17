@@ -158,6 +158,7 @@ export const zhHans: Catalog = {
   'plans.refused': '引擎拒绝了这个请求',
   'plans.stepsLabel': '步骤',
   'plans.staleTitle': '计划创建后已有变化',
+  'plans.otherChanges': '其他变更（{count}）',
   'plans.applied': '已应用',
   'plans.appliedAt': '已于 {revision} 应用',
   'plans.rolledBack': '已回滚',

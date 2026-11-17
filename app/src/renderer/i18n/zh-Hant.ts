@@ -158,6 +158,7 @@ export const zhHant: Catalog = {
   'plans.refused': '引擎拒絕了這個請求',
   'plans.stepsLabel': '步驟',
   'plans.staleTitle': '計畫建立後已有變更',
+  'plans.otherChanges': '其他變更（{count}）',
   'plans.applied': '已套用',
   'plans.appliedAt': '已於 {revision} 套用',
   'plans.rolledBack': '已還原',

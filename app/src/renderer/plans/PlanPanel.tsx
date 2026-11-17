@@ -68,6 +68,7 @@ export interface PlanPanelViewProps {
   // Disclosures that start open (tests).
   readonly openSteps?: ReadonlySet<number>;
   readonly openError?: boolean;
+  readonly openOther?: boolean;
 }
 
 // The plan on the card: the selected one while the store holds it, else the default.
@@ -112,6 +113,7 @@ export function PlanPanelView(props: PlanPanelViewProps) {
             staleReasons={props.staleReasons}
             openSteps={props.openSteps}
             openError={props.openError}
+            openOther={props.openOther}
             onTicked={props.onTicked}
             onNote={props.onNote}
             onRun={props.onRun}

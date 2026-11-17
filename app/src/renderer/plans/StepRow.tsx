@@ -5,7 +5,8 @@
 // otherwise; the number is 1-based (protocol indexes stay 0-based in the test
 // ids). The row under the pointer is .hot. .t is the row's disclosure: open,
 // a row under the step holds the raw step and the plan.preview entities it
-// touches (ref, before, after, the stale mark), in the DOM only while open.
+// touches or causes (ref, before, after, the stale mark; entity-homes.ts), in
+// the DOM only while open.
 // .go stays empty until m5b-ui-ghosts lands the locate action (3.0).
 
 import type { CSSProperties, ReactNode } from 'react';
@@ -32,21 +33,27 @@ export function segmentNodes(segments: readonly Segment[]): ReactNode[] {
   });
 }
 
-// The refs a step changes, as plan.preview names its entities.
-export function refsOf(step: Record<string, unknown>): string[] {
-  const id = (field: string) => (typeof step[field] === 'string' ? (step[field] as string) : undefined);
-  const out: string[] = [];
-  const op = typeof step.op === 'string' ? step.op : '';
-  if (op.startsWith('track.') && id('trackId')) out.push(`track:${id('trackId')}`);
-  if (op === 'track.add' || op === 'track.remove' || op.startsWith('session.')) out.push('root:root');
-  if (op.startsWith('clip.') && id('clipId')) out.push(`clip:${id('clipId')}`);
-  if (op.startsWith('media.') && id('mediaId')) out.push(`media:${id('mediaId')}`);
-  if (op.startsWith('plugin.') && id('slotId')) out.push(`plugin_slot:${id('slotId')}`);
-  if (op === 'plugin.insert' && id('trackId')) out.push(`track:${id('trackId')}`);
-  return out;
-}
-
 const entityText = (entity: Record<string, unknown> | null) => (entity === null ? '—' : JSON.stringify(entity));
+
+// The preview rows of a disclosure: each row's label and changes in user
+// units, the stale mark, and the raw ref with its entities before and after.
+export function EntityRows({ entities, names }: { readonly entities: ReadonlyArray<{ readonly index: number; readonly row: DiffRow }>; readonly names: StepNames }) {
+  const t = useT();
+  return (
+    <>
+      {entities.map(({ index: at, row: entity }) => (
+        <div key={entity.ref} className="step-entity" data-testid={`diff-${at}`} data-kind={entity.kind} data-stale={entity.stale ? 'true' : 'false'}>
+          <span className="step-entity-label">{rowLabel(entity, names, t)}</span>
+          <span>{rowChanges(entity, names, t).join('; ')}</span>
+          {entity.stale ? <span className="step-entity-stale">{t('diff.staleMark', { change: t(`diff.kind.${entity.staleChange ?? 'modified'}`) })}</span> : null}
+          <code data-testid={`diff-raw-${at}`}>
+            {entity.ref} {t('diff.before')} {entityText(entity.before)} {t('diff.after')} {entityText(entity.after)}
+          </code>
+        </div>
+      ))}
+    </>
+  );
+}
 
 export interface StepRowProps {
   readonly index: number;
@@ -115,16 +122,7 @@ export function StepRow({ index, step, row, names, ticked, disabled, hot, open, 
           <pre className="step-raw" data-testid={`step-raw-${index}`}>
             {JSON.stringify(step)}
           </pre>
-          {entities.map(({ index: at, row: entity }) => (
-            <div key={entity.ref} className="step-entity" data-testid={`diff-${at}`} data-kind={entity.kind} data-stale={entity.stale ? 'true' : 'false'}>
-              <span className="step-entity-label">{rowLabel(entity, names, t)}</span>
-              <span>{rowChanges(entity, names, t).join('; ')}</span>
-              {entity.stale ? <span className="step-entity-stale">{t('diff.staleMark', { change: t(`diff.kind.${entity.staleChange ?? 'modified'}`) })}</span> : null}
-              <code data-testid={`diff-raw-${at}`}>
-                {entity.ref} {t('diff.before')} {entityText(entity.before)} {t('diff.after')} {entityText(entity.after)}
-              </code>
-            </div>
-          ))}
+          <EntityRows entities={entities} names={names} />
         </div>
       ) : null}
     </>

@@ -9,8 +9,10 @@
 //                         .sum[plan-summary], the count chips
 //     .steps[plan-steps]  .steps-h with one link (Select none, or Select all
 //                         while some step is unticked), a StepRow per step
-//     the app-only rows   the stale reasons, the refusal lines, the reason
-//                         field (opened by the first press of Reject)
+//     the app-only rows   the stale reasons, the refusal lines, "Other
+//                         changes" (the preview entities no step names or
+//                         causes, behind a disclosure; entity-homes.ts), the
+//                         reason field (opened by the first press of Reject)
 //     .acts[plan-actions] three cells: the secondary action, the primary, the
 //                         icon-only danger button (Reject or Discard)
 //
@@ -27,11 +29,12 @@ import { badgeClass, badgeText, type PlanCardData } from './card';
 import { chipsOf } from './chips';
 import type { StepNames } from './describe';
 import { diffRows, selection, type DiffRow, type PlanPreview } from './diff';
+import { entityHomes } from './entity-homes';
 import { rejectionLine } from './history';
 import { ISOLATE } from './isolate';
 import { RefusalLine, type Refusal } from './RefusalLine';
 import { stepRows } from './step-rows';
-import { refsOf, StepRow } from './StepRow';
+import { EntityRows, StepRow } from './StepRow';
 
 export const ACTION_TEST_IDS: Record<ActionId, string> = {
   approveApply: 'plan-approve-apply',
@@ -78,6 +81,7 @@ export interface PlanCardProps {
   readonly staleReasons: readonly string[];
   readonly openSteps?: ReadonlySet<number>;
   readonly openError?: boolean;
+  readonly openOther?: boolean;
   readonly onTicked: (ticked: ReadonlySet<number>) => void;
   readonly onNote: (note: string) => void;
   readonly onRun: (entry: ActionEntry) => void;
@@ -90,6 +94,7 @@ export function PlanCard(props: PlanCardProps) {
   const locale = useLocale();
   const t = translator(locale);
   const [open, setOpen] = useState<ReadonlySet<number>>(() => props.openSteps ?? new Set());
+  const [otherOpen, setOtherOpen] = useState(props.openOther ?? false);
   const noteRef = useRef<HTMLInputElement | null>(null);
   const id = card.shortHash;
   const total = plan.steps.length;
@@ -97,6 +102,9 @@ export function PlanCard(props: PlanCardProps) {
   const tickedSet = new Set(chosen.steps);
   const rows = stepRows(plan.steps, props.preview, names, t);
   const diff: DiffRow[] = props.preview ? diffRows(props.preview, plan.stale) : [];
+  // Every row of the diff has a home: the disclosures of steps, or the other row.
+  const homes = entityHomes(plan.steps, diff);
+  const rowsAt = (indexes: readonly number[]) => indexes.map((at) => ({ index: at, row: diff[at]! }));
   const cells = actionCells({ ...set, primary: set.primary && props.allowed(set.primary) ? set.primary : null, secondary: set.secondary.filter(props.allowed) });
   const reject = cells[2]?.id === 'reject' ? cells[2] : null;
   const noting = props.rejecting && reject !== null;
@@ -219,27 +227,32 @@ export function PlanCard(props: PlanCardProps) {
           {props.selectable ? t('plans.stepsHead', { count: chosen.steps.length, total }) : t('plans.stepsLabel')}
           {link}
         </div>
-        {plan.steps.map((step, index) => {
-          const refs = refsOf(step);
-          return (
-            <StepRow
-              key={index}
-              index={index}
-              step={step}
-              row={rows[index]!}
-              names={names}
-              ticked={props.selectable ? tickedSet.has(index) : null}
-              disabled={busy}
-              hot={props.hotStep === index}
-              open={open.has(index)}
-              entities={diff.map((row, at) => ({ index: at, row })).filter(({ row }) => refs.includes(row.ref))}
-              onTick={() => tick(index)}
-              onOpen={() => disclose(index)}
-              onHot={(hot) => props.onHotStep(hot ? index : null)}
-            />
-          );
-        })}
+        {plan.steps.map((step, index) => (
+          <StepRow
+            key={index}
+            index={index}
+            step={step}
+            row={rows[index]!}
+            names={names}
+            ticked={props.selectable ? tickedSet.has(index) : null}
+            disabled={busy}
+            hot={props.hotStep === index}
+            open={open.has(index)}
+            entities={rowsAt(homes.steps[index] ?? [])}
+            onTick={() => tick(index)}
+            onOpen={() => disclose(index)}
+            onHot={(hot) => props.onHotStep(hot ? index : null)}
+          />
+        ))}
       </div>
+      {homes.rest.length > 0 ? (
+        <div className="card-row plan-other" data-testid="plan-other">
+          <button type="button" className="disclosure" data-testid="plan-other-toggle" aria-expanded={otherOpen} onClick={() => setOtherOpen(!otherOpen)}>
+            {t('plans.otherChanges', { count: homes.rest.length })}
+          </button>
+          {otherOpen ? <EntityRows entities={rowsAt(homes.rest)} names={names} /> : null}
+        </div>
+      ) : null}
       {props.staleReasons.length > 0 ? (
         <div className="card-row plan-stale-reasons" data-testid="plan-stale-reasons">
           <b>{t('plans.staleTitle')}</b>

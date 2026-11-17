@@ -19,8 +19,9 @@
 
 /* The zones not ported yet look as they did (m5-ui-alignment-chrome): the
    text styles they inherited from the old page rule, pinned. Each region's
-   alignment feature deletes its part of this rule. */
-.zone, .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
+   alignment feature deletes its part of this rule: the right zone (.plans,
+   m5-ui-port-plans) is ported and inherits ui/base.css's page. */
+.zone:not(.plans), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -681,16 +682,21 @@ code, dd { font-family: var(--font-mono); }
 .hold-composer { height: var(--hold-composer-h); }
 .hold-tab-media { width: var(--hold-tab-media-w); height: var(--zone-head); }
 .hold-tab-meter { width: var(--hold-tab-meter-w); height: var(--zone-head); }
-/* Until lower-zone.css and project-zone.css are linked (P1-11, P1-12), the
-   declarations of their .tab, .seg and .stepn rules the tab row and the step
-   rows need, scoped to the right zone; m5-ui-port-cleanup deletes them. */
-.plans .p-head .tab { display: flex; align-items: center; gap: var(--space-1h); position: relative; }
-.plans .p-head .tab.on { color: var(--tx-1); }
-.plans .p-head .tab.on::after { content: ""; position: absolute; left: var(--space-2); right: var(--space-2); bottom: 0; height: var(--tab-underline-h); background: var(--tx-1); border-radius: var(--radius-1); }
-.plans .seg { display: flex; background: var(--bg-well); border: var(--hairline) solid var(--divider); border-radius: var(--radius-6); padding: var(--hairline); gap: var(--hairline); }
-.plans .seg .b { height: var(--control-h); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; gap: var(--space-half); color: var(--tx-3); font-size: var(--fs-small); }
-.plans .seg .b.on { box-shadow: inset 0 var(--hairline) 0 var(--white-a060); }
-.plans .stepn { display: inline-grid; place-items: center; width: var(--step-badge); height: var(--step-badge); border-radius: var(--radius-round); background: var(--ai); color: var(--ai-ink); font: var(--fw-bold) var(--fs-9h) "Inter", sans-serif; flex: none; }
+/* Until lower-zone.css and project-zone.css are linked (P1-11, P1-12; linking
+   them now would restyle the mixer and the arrange area, which share class
+   names with them), their .tab, .seg and .stepn rules for the right zone:
+   each the shared rule verbatim, its selector under :where(.plans), so it has
+   the shared rule's specificity and ui/right-zone.css's .p-head .tab and
+   .ab .seg .b override it as in the mockup. test/ui-shared-copies.test.js
+   fails when one differs from its source by a declaration; m5-ui-port-cleanup
+   deletes them. */
+:where(.plans) .tab{height:var(--zone-tabs);padding:0 var(--space-2h);display:flex;align-items:center;gap:var(--space-1h);position:relative}
+:where(.plans) .tab.on{color:var(--tx-1)}
+:where(.plans) .tab.on::after{content:"";position:absolute;left:var(--space-2);right:var(--space-2);bottom:0;height:var(--tab-underline-h);background:var(--tx-1);border-radius:var(--radius-1)}
+:where(.plans) .seg{display:flex;background:var(--bg-well);border:var(--hairline) solid var(--divider);border-radius:var(--radius-6);padding:var(--hairline);gap:var(--hairline)}
+:where(.plans) .seg .b{height:var(--control-h);min-width:var(--tool-w);padding:0 var(--space-3q);border-radius:var(--radius-4);display:flex;align-items:center;justify-content:center;gap:var(--space-half);color:var(--tx-3);font-size:var(--fs-small)}
+:where(.plans) .seg .b.on{background:var(--bg-5);color:var(--tx-1);box-shadow:inset 0 var(--hairline) 0 var(--white-a060)}
+:where(.plans) .stepn{display:inline-grid;place-items:center;width:var(--step-badge);height:var(--step-badge);border-radius:var(--radius-round);background:var(--ai);color:var(--ai-ink);font:var(--fw-bold) var(--fs-9h) "Inter",sans-serif;flex:none}
 /* The steps head's link, as the mockup's inline style sets it. */
 .plans .steps-h a { text-transform: none; letter-spacing: 0; cursor: pointer; }
 .plans .step .t { padding: 0; text-align: start; cursor: pointer; }
