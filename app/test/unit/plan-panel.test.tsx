@@ -272,6 +272,44 @@ test("a step's disclosure holds its raw step and the preview entities it touches
   assert.match(add, /data-testid="diff-2"[^>]*data-kind="added"/);
 });
 
+test('every preview entity stays on the card: a cascade under the step that causes it, the rest in an "Other changes" row', () => {
+  const REMOVE = hashOf('7');
+  const plans = [entry(REMOVE, 'validated', [{ op: 'track.remove', trackId: VOX }], { stale: [{ ref: 'tempo:tempo', change: 'modified' }] })];
+  const preview: PlanPreview = {
+    revision: 'r5',
+    documentHash: 'sha256:' + 'e'.repeat(64),
+    stale: [],
+    entities: [
+      { ref: `track:${VOX}`, before: track(VOX, 'Vox Lead'), after: null },
+      { ref: 'root:root', before: { id: 'root', name: 'Song', trackOrder: [KEYS, VOX] }, after: { id: 'root', name: 'Song', trackOrder: [KEYS] } },
+      // Removed by track.remove's cascade (command.list cascades): named by no step.
+      { ref: `clip:${CLIP}`, before: { id: CLIP, trackId: VOX, mediaId: 'med_keys' }, after: null },
+      // Changed by nothing a step names.
+      { ref: 'tempo:tempo', before: { id: 'tempo', bpm: 120 }, after: { id: 'tempo', bpm: 128 } },
+    ],
+  };
+  const base = { plans, selected: REMOVE, preview };
+  // Closed, nothing of the diff is in the DOM, but the other row is there to open.
+  const closed = view(base);
+  assert.ok(!closed.includes('data-testid="diff-'), 'no entity row while closed');
+  assert.match(closed, /data-testid="plan-other"/);
+  assert.match(closed, /<button[^>]*data-testid="plan-other-toggle"[^>]*aria-expanded="false"[^>]*>Other changes \(1\)</);
+  // The step's disclosure: its own entity, the root and the cascaded clip.
+  const step = view({ ...base, openSteps: new Set([0]) });
+  for (const at of [0, 1, 2]) assert.match(step, new RegExp(`data-testid="diff-${at}"`));
+  assert.match(step, /data-testid="diff-2"[^>]*data-kind="removed"/);
+  assert.ok(step.includes(`clip:${CLIP}`), 'the cascaded clip under the step');
+  assert.ok(!step.includes('data-testid="diff-3"'), 'the tempo is not the step\'s');
+  // The other row holds the rest, with its stale mark.
+  const other = view({ ...base, openOther: true });
+  assert.match(other, /data-testid="plan-other-toggle"[^>]*aria-expanded="true"/);
+  assert.match(other, /data-testid="diff-3"[^>]*data-stale="true"/);
+  assert.ok(other.includes('tempo:tempo'));
+  assert.ok(other.indexOf('data-testid="plan-other"') < other.indexOf('data-part="plan-actions"'), 'before the actions');
+  // Every entity named by a step: no other row (the resting card keeps the mockup's height).
+  assert.ok(!view().includes('data-testid="plan-other"'));
+});
+
 const ACTION_IDS = ['approve-apply', 'apply', 'audition', 'reject', 'merge', 'hear-main', 'hear-proposal', 'discard'];
 
 function buttons(markup: string): string[] {

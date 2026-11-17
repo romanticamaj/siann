@@ -145,9 +145,11 @@ async function killEngineAndExpectReconnect(): Promise<void> {
 // --line-height, no letter spacing, tabular numerals, no font features), so
 // the regions look as they did until their alignment features port them. An
 // element of a zone that sets one of these itself keeps its own value; every
-// other inherits the zone's. The zone buttons are the mockup's icon buttons,
-// named by their aria-label.
-test('the zones not ported yet keep their text styles; the chrome takes the mockup\'s', async () => {
+// other inherits the zone's. A ported zone is out of that rule: the right
+// zone (m5-ui-port-plans, the Plans tab) inherits ui/base.css's page, as the
+// mockup's does. The zone buttons are the mockup's icon buttons, named by
+// their aria-label.
+test('the zones not ported yet keep their text styles; the chrome and the ported right zone take the mockup\'s', async () => {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const styles = await page.evaluate(() => {
     const pick = (el: Element) => {
@@ -155,17 +157,22 @@ test('the zones not ported yet keep their text styles; the chrome takes the mock
       return { ls: s.letterSpacing, lh: s.lineHeight, fs: parseFloat(s.fontSize), fvn: s.fontVariantNumeric, ffs: s.fontFeatureSettings };
     };
     const lineHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--line-height'));
-    const zones = ['left', 'project', 'lower', 'right'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
+    const zones = ['left', 'project', 'lower'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
+    const right = pick(document.querySelector('[data-zone="right"]')!);
+    // ui/base.css's body: the line height as a factor, the letter spacing in em.
+    const body = getComputedStyle(document.body);
+    const bodyLh = parseFloat(body.lineHeight) / parseFloat(body.fontSize);
+    const bodyLs = parseFloat(body.letterSpacing) / parseFloat(body.fontSize);
     // Inherited values: the zone's own, through every element that does not set them.
     const offenders: string[] = [];
-    for (const zone of document.querySelectorAll('[data-zone]')) {
+    for (const zone of document.querySelectorAll('[data-zone]:not([data-zone="right"])')) {
       for (const el of zone.querySelectorAll('*')) {
         const s = pick(el);
         if (s.ls !== 'normal' && s.ls !== '0px') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} letter-spacing ${s.ls}`);
         if (s.ffs !== 'normal') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} font-feature-settings ${s.ffs}`);
       }
     }
-    return { zones, lineHeight, offenders, body: pick(document.body) };
+    return { zones, right, bodyLh, bodyLs, lineHeight, offenders, body: pick(document.body) };
   });
   for (const zone of styles.zones) {
     expect(zone.ls, zone.zone).toBe('normal');
@@ -174,6 +181,12 @@ test('the zones not ported yet keep their text styles; the chrome takes the mock
     expect(parseFloat(zone.lh), zone.zone).toBeCloseTo(zone.fs * styles.lineHeight, 1);
   }
   expect(styles.offenders).toEqual([]);
+  // The right zone: the page's text styles, not the pinned ones.
+  expect(styles.right.ffs).toBe(styles.body.ffs);
+  expect(styles.right.fvn).toBe(styles.body.fvn);
+  expect(styles.right.ls).not.toBe('normal');
+  expect(parseFloat(styles.right.ls)).toBeCloseTo(styles.right.fs * styles.bodyLs, 2);
+  expect(parseFloat(styles.right.lh)).toBeCloseTo(styles.right.fs * styles.bodyLh, 1);
   // The chrome: ui/base.css's page.
   expect(styles.body.ffs).not.toBe('normal');
   expect(styles.body.ls).not.toBe('normal');
