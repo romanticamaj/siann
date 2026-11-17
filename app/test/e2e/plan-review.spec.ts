@@ -209,7 +209,7 @@ test('a new plan raises a toast and the count without taking the focus; a collap
   await expect(stateBadge(hash)).toHaveText(t('badge.needsReview'));
   await expect(page.getByTestId('step-number-0')).toHaveText('1');
   await expect(page.getByTestId('step-text-0')).toContainText(`Add track ${isolateName('Pad')}`);
-  await expect(page.getByTestId('step-text-1')).toHaveText(`${isolateName('Keys')} gain${formatDb(0)} → ${formatDb(-600)}`);
+  await expect(page.getByTestId('step-text-1')).toHaveText(`${isolateName('Keys')} gain${formatDb(0)} → ${formatDb(-600).replace('-', '−')}`);
   await expect(page.getByTestId('step-text-2')).toHaveText(`${isolateName('Keys')} pan` + 'C → L20');
   await expect(page.locator('[data-part="plan-steps-head"]')).toContainText('Steps · 5 of 5 selected');
   const shown = await page.getByTestId('zone-right').innerText();

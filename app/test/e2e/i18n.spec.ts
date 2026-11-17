@@ -133,7 +133,7 @@ async function expectLocale(locale: Locale): Promise<void> {
   // The letters stay M and S, and the dB value is the same bytes.
   await expect(page.getByTestId('mute-trk_a')).toHaveText('M');
   await expect(page.getByTestId('solo-trk_a')).toHaveText('S');
-  await expect(page.getByTestId('step-1')).toContainText(formatDb(-600));
+  await expect(page.getByTestId('step-1')).toContainText(formatDb(-600).replace('-', '−'));
   // The canvas ruler is bars and beats, the same bytes in every locale (spec
   // 6.2): its first label is bar 1.
   await expect
