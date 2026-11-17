@@ -419,9 +419,12 @@ code, dd { font-family: var(--font-mono); }
 .track-resize { position: absolute; left: 0; right: 0; bottom: 0; height: var(--space-5q); cursor: ns-resize; }
 /* The mini meters: one canvas over the column, painting only inside the wells. */
 .track-meters { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
-/* At the narrow end the header keeps colour, name, M and S (spec 2.3). */
+/* At the narrow end the header keeps colour, name, M and S (spec 2.3). The
+   empty boxes of record, read and write (.r1's fourth child on) go with the
+   number and the second row, as small windows take a held box away (spec
+   3.0); M and S keep theirs. */
 @container (max-width: 200px) {
-  .th .idx, .th .r2 { display: none; }
+  .th .idx, .th .r2, .th .r1 > .msr-box:nth-child(n+4) { display: none; }
   .th { grid-template-columns: var(--track-colour-w) minmax(0, 1fr); }
 }
 .divider-tracklist { width: var(--divider-w); cursor: ew-resize; }
