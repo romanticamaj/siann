@@ -549,7 +549,7 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 
 Layers:
 
-1. **Content layer**: grid, clips, waveforms, ghosts. Redrawn only when the snapshot, zoom, scroll, size or the selected plan changes.
+1. **Content layer**: grid, clips, waveforms, ghosts. Redrawn only when the snapshot, zoom, scroll, size, the selection or the selected plan changes (a selected clip is drawn in its selected palette, with its outline and corner handles, as the mockup's `draw()` draws it; m5-ui-port-arrange-canvas).
 2. **Overlay layer**: playhead, loop brace, selection, drag preview, snap guides. Redrawn every frame only while playing or during a gesture; otherwise the `requestAnimationFrame` loop is stopped and an idle window does no work.
 
 **Phase 1 keeps Canvas2D for both layers.** It is the code that exists, and it is fast enough for the M5 scenario: at most one min/max column per device pixel, taken from the pyramid level whose bins are the widest that still fit a pixel (the rule the spec already states).
