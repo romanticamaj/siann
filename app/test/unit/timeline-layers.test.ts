@@ -302,7 +302,11 @@ test("the selected clip has draw()'s 1.5 px outline on the content layer; an emp
   empty.timeline.destroy();
 });
 
-test('muted and implicitly muted lanes are dimmed', () => {
+// UI redesign spec 1.2: a muted or implicitly muted track's clips are drawn
+// at 50 % (draw()'s clip()) and its lane is not dimmed; dimmedLanes() names
+// those tracks (the clip alpha and the undimmed lane are held in the
+// draw()-port tests below).
+test('muted and implicitly muted tracks are dimmed: dimmedLanes() names them', () => {
   const base = sampleSnapshot();
   const soloed = { ...base, entities: { ...base.entities, 'track:trk_a': { ...track('trk_a'), solo: true } } };
   const solo = { ...soloed, tracks: [soloed.entities['track:trk_a'] as ReturnType<typeof track>, track('trk_b')] };
@@ -823,7 +827,9 @@ test("the content frame draws draw()'s lanes, tint, grid, dividers and ruler, in
     assert.deepEqual([...order].sort((a, b) => a - b), order, `the order: ${order}`);
     // Bar numbers at RU + 10 in --fw-ui --fs-micro, lit every fourth bar.
     const labels = calls.filter((c) => c.kind === 'fillText' && c.args[1] === RU + 10);
-    assert.deepEqual(labels.slice(0, 3).map((c) => [c.text, c.args[0], c.style]), [['1', 4, '--lit-1'], ['3', 84, '--tx-3'], ['5', 164, '--lit-1']]);
+    // draw() labels every bar at its 40 px per bar: 1 to 20 across 800 px.
+    assert.deepEqual(labels.slice(0, 5).map((c) => [c.text, c.args[0], c.style]), [['1', 4, '--lit-1'], ['2', 44, '--tx-3'], ['3', 84, '--tx-3'], ['4', 124, '--tx-3'], ['5', 164, '--lit-1']]);
+    assert.deepEqual(labels.map((c) => c.text), Array.from({ length: 20 }, (_, i) => String(i + 1)));
     for (const label of labels) assert.ok(label.font.startsWith(`${TOKENS['fw-ui']} ${TOKENS['fs-micro']} `), label.font);
     // The marker row (RULER_HEIGHT to LANES_TOP) is empty: nothing is drawn in it.
     const inRow = calls.filter((c) => (c.kind === 'fillRect' || c.kind === 'strokeRect') && c.args[1]! < LANES_TOP && c.args[1]! + c.args[3]! > RULER_HEIGHT);
