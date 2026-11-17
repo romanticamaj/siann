@@ -649,6 +649,30 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       notes.push(`The resting state (no clip selected) is ${locale}/project-zone.resting.app.png, the app's alone: the mockup shows a selected clip.`);
     }
 
+    // A strip with its fader held (m5-ui-port-mixer-strip, acceptance 9):
+    // Bass's cap pressed and moved up, the screenshot taken before the
+    // release, so the cap, the readout and the tooltip show the gesture's
+    // value and nothing is committed. The muted strip is the mockup's FX, in
+    // both images above. The mockup draws no held fader: the app's alone.
+    const lowerZone = mockupParts.parts.find((part) => part.id === 'lower-zone');
+    if (lowerZone) {
+      const fader = page.getByTestId(`fader-${TRACK_IDS[2]!}`);
+      const capBox = await fader.locator('.cap').boundingBox();
+      if (!capBox) throw new Error('the Bass fader has no cap');
+      const grab = { x: capBox.x + capBox.width / 2, y: capBox.y + capBox.height / 2 };
+      const before = (await fader.getAttribute('aria-valuetext')) ?? '';
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      for (const dy of [-6, -12, -18]) await page.mouse.move(grab.x, grab.y + dy, { steps: 3 });
+      await expect(fader).not.toHaveAttribute('aria-valuetext', before);
+      await expect(page.getByTestId(`fader-${TRACK_IDS[2]!}-tooltip`)).toBeVisible();
+      await painted(page);
+      const heldValue = (await fader.getAttribute('aria-valuetext')) ?? '';
+      fs.writeFileSync(path.join(dir, 'lower-zone.fader-held.app.png'), encodePng(crop(decodePng(await page.screenshot()), lowerZone)));
+      notes.push(`The held-fader state (Bass held at ${heldValue} from ${before}, before the release; FX muted) is ${locale}/lower-zone.fader-held.app.png, the app's alone: the mockup draws no held fader. Compare it with ${locale}/lower-zone.mockup.png.`);
+      await page.mouse.up();
+    }
+
     const entry: LocaleReport = { locale, comparison, regions, extra, notes };
     report.locales.push(entry);
     writeReport();

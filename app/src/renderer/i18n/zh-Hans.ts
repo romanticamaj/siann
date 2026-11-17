@@ -94,6 +94,7 @@ export const zhHans: Catalog = {
   'mixer.label': '调音台',
   'strip.gain': '音量',
   'strip.pan': '声像',
+  'strip.panRow': '声像',
   'strip.gainLabel': '{track} 音量',
   'strip.panLabel': '{track} 声像',
   'strip.levelLabel': '{track} 音量',

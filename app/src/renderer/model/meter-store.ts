@@ -3,7 +3,10 @@
 // clip per legend index. The meter canvases call sync() and advance() from
 // their own animation frame and read the arrays; nothing is emitted, so no
 // meter value reaches React (ADR-0019 point 3). Each entry keeps the louder
-// channel. A new legend epoch (every graph publication) resizes the arrays;
+// channel; a strip meter draws two channels as the mockup does
+// (m5-ui-port-mixer-strip), so the store also keeps the level and hold of each
+// channel, at 2 * index + channel (a mono entity shows the same value in
+// both; the peak value and the clip stay the entity's). A new legend epoch (every graph publication) resizes the arrays;
 // an entity still in the legend keeps its bar, hold line, peak value and
 // latched clip (spec 1.6: cleared only by clicking the peak value), a new
 // one starts from silence; an
@@ -28,14 +31,33 @@ export interface MeterReading {
   // The bar and the hold line in dB (the ballistics).
   readonly level: number;
   readonly hold: number;
+  // The same per channel, left and right.
+  readonly channels: readonly [MeterChannelReading, MeterChannelReading];
   // The loudest peak since the last reset (linear), and the latched clip.
   readonly max: number;
   readonly clip: boolean;
 }
 
+export interface MeterChannelReading {
+  readonly level: number;
+  readonly hold: number;
+}
+
+// The two channels a meter draws of an entry: its first two, a mono entry in both.
+function channelPeak(peaks: readonly number[], channel: 0 | 1): number {
+  if (peaks.length === 0) return 0;
+  if (channel === 0 || peaks.length === 1) return peaks[0]!;
+  let peak = 0;
+  for (let i = 1; i < peaks.length; i += 1) if (peaks[i]! > peak) peak = peaks[i]!;
+  return peak;
+}
+
 export class MeterStore {
   readonly #source: MeterSource;
   readonly #ballistics = new PeakHold(0);
+  // Per channel: index 2 * entity + channel.
+  readonly #channels = new PeakHold(0);
+  #channelPeak = new Float32Array(0);
   #epoch: string | null = null;
   #entities: readonly string[] = [];
   #frames = 0;
@@ -68,6 +90,15 @@ export class MeterStore {
     return this.#ballistics.clip;
   }
 
+  // The bar and the hold line of each channel, in dB: 2 * index + channel.
+  get channelLevel(): Float32Array {
+    return this.#channels.level;
+  }
+
+  get channelHold(): Float32Array {
+    return this.#channels.hold;
+  }
+
   // Follows the legend and takes the newest frame; true when it was new.
   sync(): boolean {
     const legend = this.#source.legend();
@@ -80,7 +111,10 @@ export class MeterStore {
       this.peak = new Float32Array(size);
       this.rms = new Float32Array(size);
       // Every graph publication brings an epoch; the ballistics follow the ref.
-      this.#ballistics.remap(this.#entities.map((ref) => before.indexOf(ref)));
+      const from = this.#entities.map((ref) => before.indexOf(ref));
+      this.#ballistics.remap(from);
+      this.#channels.remap(from.flatMap((j) => (j < 0 ? [-1, -1] : [2 * j, 2 * j + 1])));
+      this.#channelPeak = new Float32Array(2 * size);
       this.#playing = false;
     }
     const count = this.#source.frameCount();
@@ -89,6 +123,7 @@ export class MeterStore {
     const frame = this.#source.latest();
     this.peak.fill(0);
     this.rms.fill(0);
+    this.#channelPeak.fill(0);
     this.#playing = frame?.playing === true;
     // Stopped, the engine repeats its last readings; nothing is metered then.
     if (!frame || frame.epoch !== this.#epoch || !frame.playing) return true;
@@ -101,6 +136,8 @@ export class MeterStore {
       for (const value of entry.rms) if (value > rms) rms = value;
       this.peak[index] = peak;
       this.rms[index] = rms;
+      this.#channelPeak[2 * index] = channelPeak(entry.peak, 0);
+      this.#channelPeak[2 * index + 1] = channelPeak(entry.peak, 1);
     }
     return true;
   }
@@ -108,6 +145,7 @@ export class MeterStore {
   // Applies the ballistics to every meter with the frame's time delta.
   advance(dtSeconds: number): void {
     for (let i = 0; i < this.peak.length; i += 1) this.#ballistics.step(i, this.peak[i]!, dtSeconds);
+    for (let i = 0; i < this.#channelPeak.length; i += 1) this.#channels.step(i, this.#channelPeak[i]!, dtSeconds);
   }
 
   indexOf(ref: string): number {
@@ -122,6 +160,10 @@ export class MeterStore {
       rms: this.rms[i]!,
       level: this.#ballistics.level[i]!,
       hold: this.#ballistics.hold[i]!,
+      channels: [
+        { level: this.#channels.level[2 * i]!, hold: this.#channels.hold[2 * i]! },
+        { level: this.#channels.level[2 * i + 1]!, hold: this.#channels.hold[2 * i + 1]! },
+      ],
       max: this.#ballistics.max[i]!,
       clip: this.#ballistics.clip[i] === 1,
     };
@@ -129,7 +171,12 @@ export class MeterStore {
 
   // Clears the hold line, the peak value and the clip of one meter.
   reset(ref: string): void {
-    this.#ballistics.reset(this.indexOf(ref));
+    const i = this.indexOf(ref);
+    this.#ballistics.reset(i);
+    if (i >= 0) {
+      this.#channels.reset(2 * i);
+      this.#channels.reset(2 * i + 1);
+    }
   }
 
   // The newest frame says the transport plays.
@@ -142,6 +189,7 @@ export class MeterStore {
     for (let i = 0; i < this.peak.length; i += 1) {
       if (this.peak[i]! > 0 || !this.#ballistics.decayed(i)) return false;
     }
+    for (let i = 0; i < this.#channelPeak.length; i += 1) if (!this.#channels.decayed(i)) return false;
     return true;
   }
 }

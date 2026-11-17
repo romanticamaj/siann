@@ -146,8 +146,9 @@ async function killEngineAndExpectReconnect(): Promise<void> {
 // the regions look as they did until their alignment features port them. An
 // element of a zone that sets one of these itself keeps its own value; every
 // other inherits the zone's. The zone buttons are the mockup's icon buttons,
-// named by their aria-label.
-test('the zones not ported yet keep their text styles; the chrome takes the mockup\'s', async () => {
+// named by their aria-label. The lower zone is ported (m5-ui-port-mixer-strip,
+// UI redesign 10.9 (1)): it takes the page's text styles, as the mockup does.
+test('the zones not ported yet keep their text styles; the chrome and the lower zone take the mockup\'s', async () => {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const styles = await page.evaluate(() => {
     const pick = (el: Element) => {
@@ -155,17 +156,17 @@ test('the zones not ported yet keep their text styles; the chrome takes the mock
       return { ls: s.letterSpacing, lh: s.lineHeight, fs: parseFloat(s.fontSize), fvn: s.fontVariantNumeric, ffs: s.fontFeatureSettings };
     };
     const lineHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--line-height'));
-    const zones = ['left', 'project', 'lower', 'right'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
+    const zones = ['left', 'project', 'right'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
     // Inherited values: the zone's own, through every element that does not set them.
     const offenders: string[] = [];
-    for (const zone of document.querySelectorAll('[data-zone]')) {
+    for (const zone of document.querySelectorAll('[data-zone]:not([data-zone="lower"])')) {
       for (const el of zone.querySelectorAll('*')) {
         const s = pick(el);
         if (s.ls !== 'normal' && s.ls !== '0px') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} letter-spacing ${s.ls}`);
         if (s.ffs !== 'normal') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} font-feature-settings ${s.ffs}`);
       }
     }
-    return { zones, lineHeight, offenders, body: pick(document.body) };
+    return { zones, lineHeight, offenders, body: pick(document.body), lower: pick(document.querySelector('[data-zone="lower"]')!) };
   });
   for (const zone of styles.zones) {
     expect(zone.ls, zone.zone).toBe('normal');
@@ -177,6 +178,12 @@ test('the zones not ported yet keep their text styles; the chrome takes the mock
   // The chrome: ui/base.css's page.
   expect(styles.body.ffs).not.toBe('normal');
   expect(styles.body.ls).not.toBe('normal');
+  // The lower zone: the page's letter spacing, font features, numerals and
+  // line height (base.css's body), none of the pinned pre-port ones.
+  expect(styles.lower.ls).toBe(styles.body.ls);
+  expect(styles.lower.ffs).toBe(styles.body.ffs);
+  expect(styles.lower.fvn).toBe(styles.body.fvn);
+  expect(parseFloat(styles.lower.lh) / styles.lower.fs).toBeCloseTo(parseFloat(styles.body.lh) / styles.body.fs, 2);
   // The zone buttons: icon buttons with names.
   for (const zone of ['left', 'lower', 'right']) {
     const button = page.getByTestId(`zone-button-${zone}`);

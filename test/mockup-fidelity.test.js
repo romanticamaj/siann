@@ -192,14 +192,16 @@ test('the port is split by component after the chrome, in parallel where the com
     assert.ok(feature.specRefs.includes('UI redesign: 10.9') && feature.specRefs.some((ref) => /^UI redesign: 10\.10 \(P1-1[1-6]\)$/.test(ref)), `${id}: specRefs`);
   }
   // Wave 10: the first component of each zone, side by side; each depends on the chrome only among the ports.
-  const first = ['m5-ui-port-arrange-canvas', 'm5-ui-port-mixer-strip', 'm5-ui-port-plans', 'm5-ui-port-inspector'];
+  // The MixConsole is the exception: its M and S take .msr from project-zone.css, which the canvas links.
+  const first = ['m5-ui-port-arrange-canvas', 'm5-ui-port-plans', 'm5-ui-port-inspector'];
   for (const id of first) {
     assert.equal(wave(id), wave(CHROME) + 1, id);
     assert.ok(FEATURES.get(id).dependsOn.includes(CHROME), `${id} depends on the chrome`);
     assert.deepEqual(FEATURES.get(id).dependsOn.filter((dep) => PORTS.includes(dep)), [], `${id} waits for no other port`);
   }
-  // The track list and the toolbar share the project zone's stylesheet, row geometry and clip title with the canvas.
-  for (const id of ['m5-ui-port-track-list', 'm5-ui-port-toolbar']) {
+  // The track list and the toolbar share the project zone's stylesheet, row geometry and clip title with the
+  // canvas; the MixConsole shares its stylesheet (.msr).
+  for (const id of ['m5-ui-port-track-list', 'm5-ui-port-toolbar', 'm5-ui-port-mixer-strip']) {
     assert.equal(wave(id), wave('m5-ui-port-arrange-canvas') + 1, id);
     assert.deepEqual(FEATURES.get(id).dependsOn.filter((dep) => PORTS.includes(dep)), ['m5-ui-port-arrange-canvas'], id);
   }
@@ -211,6 +213,7 @@ test('the port is split by component after the chrome, in parallel where the com
   assert.match(canvasText, /TimelineCanvas\.ts holds no size literal/);
   assert.match(FEATURES.get('m5-ui-port-mixer-strip').acceptance.join('\n'), /the mockup's knob\(\)/);
   assert.match(FEATURES.get('m5-ui-port-mixer-strip').acceptance.join('\n'), /MixerMeters\.ts holds no colour literal/);
+  assert.match(FEATURES.get('m5-ui-port-mixer-strip').acceptance.join('\n'), /M and S take \.msr, whose rules are in ui\/project-zone\.css, linked by m5-ui-port-arrange-canvas, which lands first/);
   assert.match(FEATURES.get('m5-ui-port-plans').acceptance.join('\n'), /as step\(\) returns it/);
   assert.match(FEATURES.get('m5-ui-port-track-list').acceptance.join('\n'), /as th\(\) returns it/);
   const toolbar = FEATURES.get('m5-ui-port-toolbar').acceptance.join('\n');
@@ -249,14 +252,106 @@ test('an absent part keeps its space empty: a hold token names a part that is st
 test('the app links tokens.css and the shared stylesheets of the landed ports in the mockup\'s order, then shell.css', () => {
   const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
   const app = linked(read('app', 'renderer', 'index.html'));
-  // The chrome's five, and ui/project-zone.css since m5-ui-port-arrange-canvas;
-  // each later wave-10 port adds its stylesheet to this set.
-  const set = new Set(['tokens.css', 'ui/base.css', 'ui/layout.css', 'ui/top-bar.css', 'ui/project-zone.css', 'ui/status-bar.css']);
-  // The mockup's own order, filtered to the linked set.
-  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', '')).filter((href) => set.has(href));
-  assert.equal(mockup.length, set.size, 'every linked stylesheet is one the mockup links');
-  assert.ok(mockup.indexOf('ui/top-bar.css') < mockup.indexOf('ui/project-zone.css') && mockup.indexOf('ui/project-zone.css') < mockup.indexOf('ui/status-bar.css'));
-  assert.deepEqual(app, [...mockup, 'shell.css']);
+  const chrome = ['tokens.css', 'ui/base.css', 'ui/layout.css', 'ui/top-bar.css', 'ui/status-bar.css'];
+  // The mockup's own order, filtered to these five.
+  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', '')).filter((href) => chrome.includes(href));
+  assert.deepEqual(mockup, chrome);
+  // Each component port links its zone's file (UI redesign 10.10): the app's
+  // links are the mockup's, in its order, for the files linked so far, then shell.css.
+  const all = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', ''));
+  for (const href of chrome) assert.ok(app.includes(href), href);
+  assert.deepEqual(app, [...all.filter((href) => app.includes(href)), 'shell.css']);
+});
+
+// ---- m5-ui-port-mixer-strip (UI redesign 10.10, P1-12): the MixConsole ported from strip(), knob() and the master
+
+test('the MixConsole port links ui/lower-zone.css in the mockup\'s order, its gate is report and it holds no part', () => {
+  const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  const app = linked(read('app', 'renderer', 'index.html'));
+  assert.ok(app.includes('ui/lower-zone.css'), 'index.html links ui/lower-zone.css');
+  assert.ok(app.indexOf('ui/lower-zone.css') < app.indexOf('shell.css'), 'before shell.css');
+  assert.ok(app.indexOf('ui/layout.css') < app.indexOf('ui/lower-zone.css') && app.indexOf('ui/lower-zone.css') < app.indexOf('ui/status-bar.css'), 'in the mockup\'s order');
+  assert.equal(MANIFEST.gates['m5-ui-port-mixer-strip'], 'report');
+  // No hold token for a part this feature landed: its boxes are sized by the shared rules or existing tokens.
+  const tokens = read('app', 'renderer', 'tokens.css');
+  for (const m of tokens.matchAll(/--hold-([a-z0-9-]+)-[wh]\s*:/g)) assert.notEqual(ruleOf(m[1]).gate, 'm5-ui-port-mixer-strip', `--hold-${m[1]}`);
+  // The ledger no longer names the meter surface.
+  assert.ok(!('app/src/renderer/mixer/MixerMeters.ts' in JSON.parse(read('app', 'test', 'fidelity', 'debt.json')).literals));
+});
+
+test('every shared stylesheet that draws a MixConsole class is linked: M and S take .msr from ui/project-zone.css', () => {
+  const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  const app = linked(read('app', 'renderer', 'index.html'));
+  const strip = read('app', 'src', 'renderer', 'mixer', 'Strip.tsx');
+  // The class names the strip renders, from its className literals.
+  const classes = new Set();
+  for (const m of strip.matchAll(/className=(?:"([^"]+)"|\{`([^`]+)`\})/g)) {
+    for (const name of (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) if (/^[a-z][\w-]*$/.test(name)) classes.add(name);
+  }
+  assert.ok(classes.has('msr'), 'the strip renders .msr');
+  const dir = path.join(ROOT, 'app', 'renderer', 'ui');
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.css'))) {
+    const css = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const drawn = [...classes].filter((name) => new RegExp(`\\.${name}(?![\\w-])`).test(css));
+    if (drawn.includes('msr')) assert.ok(app.includes(`ui/${file}`), `index.html links ui/${file}, which draws .msr`);
+  }
+  // shell.css draws no second .msr rule: outside the button reset's
+  // :where()/:not() lists (which only exclude .msr from the app's own button
+  // look), no selector names .msr (the empty .msr-box hold is another class).
+  let shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  while (/\([^()]*\)/.test(shell)) shell = shell.replace(/\([^()]*\)/g, '');
+  const selectors = [...shell.matchAll(/([^{}]+)\{/g)].map((m) => m[1]);
+  assert.deepEqual(selectors.filter((s) => /\.msr(?![\w-])/.test(s)), [], 'no .msr rule in shell.css');
+});
+
+// UI redesign 10.9 (1) and 10.10: a ported component is styled by the shared
+// rules and nothing else. The lower zone holds nothing unported after this
+// feature (tab row, strips, master), so shell.css's pinned pre-port text
+// styles (line height, letter spacing, tabular figures, no font features)
+// no longer reach it: it inherits base.css's body text as the mockup does.
+test('shell.css\'s pinned pre-port text styles do not reach the ported lower zone', () => {
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => /letter-spacing:\s*normal/.test(m[2]) || /font-feature-settings:\s*normal/.test(m[2]))
+    .map((m) => m[1].trim());
+  assert.ok(rules.length > 0, 'the pinned rule is found (other zones are not ported yet)');
+  // The lower zone's element: section.lower.zone.zone-lower (Shell.tsx, ZoneFrame).
+  const lower = new Set(['lower', 'zone', 'zone-lower']);
+  // Whether one compound selector (classes, :not() and :where() of classes) matches it.
+  const matchesLower = (compound) => {
+    const excluded = [...compound.matchAll(/:not\(\s*\.([\w-]+)\s*\)/g)].map((m) => m[1]);
+    const required = [...compound.replace(/:(?:not|where|is)\((?:[^()]|\([^()]*\))*\)/g, '').matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+    if (/[\s>+~]/.test(compound.trim())) return true; // a descendant selector: treated as reaching it
+    return required.every((c) => lower.has(c)) && excluded.every((c) => !lower.has(c));
+  };
+  for (const list of rules) {
+    for (const selector of list.split(/,(?![^()]*\))/).map((s) => s.trim())) {
+      assert.ok(!matchesLower(selector), `"${selector}" in shell.css pins pre-port text styles on the lower zone`);
+    }
+  }
+  // Nor does any rule of shell.css set them on a part of the lower zone.
+  for (const name of ['lower', 'zone-lower', 'tabs', 'tab', 'mixer', 'strip', 'master']) {
+    const pinned = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => new RegExp(`\\.${name}(?![\\w-])`).test(m[1].replace(/:(?:not|where)\((?:[^()]|\([^()]*\))*\)/g, '')))
+      .filter((m) => /letter-spacing|font-variant-numeric|font-feature-settings|line-height/.test(m[2]));
+    assert.deepEqual(pinned.map((m) => m[1].trim()), [], `no text-style rule for .${name} in shell.css`);
+  }
+});
+
+// Acceptance 9: one strip muted (the mockup's FX, in both images) and one
+// with its fader held, side by side, in en and zh-TW, written by the
+// fidelity run. The mockup draws no held fader, so the run writes the app's
+// lower zone alone in that state and says so in the report's notes.
+test('the fidelity run writes the lower zone with a strip\'s fader held, in every locale', () => {
+  const spec = read('app', 'test', 'e2e', 'mockup-fidelity.spec.ts');
+  assert.match(spec, /path\.join\(dir, 'lower-zone\.fader-held\.app\.png'\)/);
+  assert.match(spec, /notes\.push\(`The held-fader state[^`]*lower-zone\.fader-held\.app\.png/);
+  // Pointer down on a fader's cap, moved, screenshot taken before the release.
+  const held = spec.slice(spec.indexOf("'lower-zone.fader-held.app.png'") - 1500, spec.indexOf("'lower-zone.fader-held.app.png'"));
+  assert.match(held, /page\.mouse\.down\(\)/);
+  assert.match(held, /\.locator\('\.cap'\)/);
+  assert.doesNotMatch(held, /page\.mouse\.up\(\)/);
+  assert.match(read('docs', 'harness', 'test-matrix.md'), /\| m5-ui-port-mixer-strip \|[^\n]*lower-zone\.fader-held\.app\.png/);
 });
 
 // ---- m5-ui-port-arrange-canvas: the event display ported from draw(); its gate stays report

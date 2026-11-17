@@ -579,7 +579,7 @@ test('UX screenshot tour', async () => {
   // The smaller window.
   await resize(SMALL);
   await waveformsDrawn();
-  await shoot(page, 'Session loaded small window', 'The loaded session at 1024x700.');
+  await shoot(page, 'Session loaded small window', 'The loaded session at 1024x700; the MixConsole keeps the strip width of the mockup and scrolls sideways, the master strip at the end.');
   await resize(WIDE);
   await waveformsDrawn();
 
@@ -621,7 +621,7 @@ test('UX screenshot tour', async () => {
   await scrollTo('mixer');
   // The fader is vertical (UI redesign spec 3.4): the drag starts on its cap
   // and moves up, toward 0 dB at three quarters of the travel.
-  const capBox = (await fader.locator('.fader-cap').boundingBox())!;
+  const capBox = (await fader.locator('.cap').boundingBox())!;
   const grabCap = { x: capBox.x + capBox.width / 2, y: capBox.y + capBox.height / 2 };
   const startValue = (await fader.getAttribute('aria-valuetext')) ?? '';
   await page.mouse.move(grabCap.x, grabCap.y);
@@ -631,10 +631,10 @@ test('UX screenshot tour', async () => {
   }
   await gestureSettled();
   const held = (await fader.getAttribute('aria-valuetext')) ?? '';
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release.`);
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the insert and automation rows are empty boxes.`);
   await page.mouse.up();
   await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
-  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}.`);
+  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it, the master strip shows its meter, peak value and name only.`);
   await scrollTop();
 
   // ---- 5. A clip selected, mid-move, and moved.

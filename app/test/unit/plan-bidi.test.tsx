@@ -204,7 +204,7 @@ test('the track list, inspector, mixer strip and session name isolate the names 
   const classes: Record<string, string> = {
     'timeline/TrackList.tsx': 'track-name',
     'shell/Inspector.tsx': 'inspector-track',
-    'mixer/Strip.tsx': 'strip-name',
+    'mixer/Strip.tsx': 'nametag',
     'shell/TopBar.tsx': 'session',
   };
   for (const source of sources) {

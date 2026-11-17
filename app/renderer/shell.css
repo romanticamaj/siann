@@ -19,8 +19,10 @@
 
 /* The zones not ported yet look as they did (m5-ui-alignment-chrome): the
    text styles they inherited from the old page rule, pinned. Each region's
-   alignment feature deletes its part of this rule. */
-.zone, .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
+   alignment feature deletes its part of this rule. The lower zone is ported
+   (m5-ui-port-mixer-strip): it takes base.css's body text, as the mockup
+   does; :where() keeps the rule's specificity that of .zone. */
+.zone:where(:not(.zone-lower)), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -28,10 +30,11 @@
 }
 
 /* The app's controls, outside what the mockup ports. A button the mockup
-   draws as a span (.tbtn, .iconbtn, .aibtn, the about line) takes none of
+   draws as a span (.tbtn, .iconbtn, .aibtn, the about line, the lower zone's
+   .tab, a strip's .msr and .pk) takes none of
    these: the shared rules draw it, over the reset below. */
 button, select, input { font: inherit; color: inherit; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about)) {
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk)) {
   white-space: nowrap;
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
@@ -40,13 +43,13 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about)) {
   border-radius: var(--radius-m);
   cursor: pointer;
 }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about)):hover:not(:disabled) { background: var(--bg-5); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
    styles), at no specificity, so every shared rule wins. */
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about) {
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk) {
   margin: 0;
   padding: 0;
   border: 0;
@@ -56,7 +59,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about))[aria-pressed="true"] { backg
   text-align: inherit;
   cursor: pointer;
 }
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about):disabled { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk):disabled { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
@@ -84,7 +87,7 @@ code, dd { font-family: var(--font-mono); }
 .app > .center { grid-column: 2; grid-row: -3 / -2; position: relative; }
 .app > .plans { grid-column: 3; grid-row: -3 / -2; }
 .center > .zone-project { grid-row: 1; }
-.center > .zone-lower { grid-row: 2; border-top: var(--hairline) solid var(--divider); }
+.center > .zone-lower { grid-row: 2; }
 /* The banner row under the top bar (shell-banner): the connection banner and
    the audition banner; no row at all when neither shows. */
 .app:has(> .shell-banner:not(:empty)) { grid-template-rows: var(--top-bar) auto minmax(0, 1fr) var(--status-bar); }
@@ -506,43 +509,10 @@ code, dd { font-family: var(--font-mono); }
 .inspector-colour { flex: 0 0 auto; width: calc(12px * var(--scale)); height: calc(12px * var(--scale)); border-radius: var(--radius-s); }
 .inspector-buttons { display: flex; gap: var(--space); margin: calc(var(--space) * 2) 0; }
 .inspector-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: calc(var(--space) * 2); font-size: var(--fs-small); color: var(--tx-3); }
-.inspector-row .value-readout { color: var(--tx-1); }
-.inspector .value-control { margin-top: var(--space); }
-.inspector .fader.horizontal { height: var(--control-h); }
-
-/* ---- the lower zone: MixConsole (spec 3.4, 5.1). One canvas over the
-   strips paints every meter slot; it takes no pointer events. */
-.mixer {
-  position: relative;
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 2px;
-  width: max-content;
-  min-width: 100%;
-  height: 100%;
-  min-height: calc(200px * var(--scale));
-}
-.mixer-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
-.strip {
-  display: grid;
-  grid-template-rows: var(--ms-h) var(--ms-h) minmax(0, 1fr) var(--ms-h) var(--ms-h);
-  flex: 0 0 var(--strip-w);
-  width: var(--strip-w);
-  min-width: 0;
-  gap: var(--space);
-  padding: var(--space);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-s);
-}
-.strip-master { margin-left: calc(var(--space) * 2); }
-.strip-master .strip-fader { grid-row: 3; }
-.strip-master .strip-values { grid-row: 4; justify-content: center; }
-.strip-master .strip-name { grid-row: 5; }
-.strip-pan { min-width: 0; }
-.strip-buttons { display: flex; justify-content: center; gap: var(--space); }
-.ms {
+/* The pre-port M and S and level readout, kept for the Inspector alone until
+   m5-ui-port-inspector deletes them: a component not ported yet looks as it
+   did (UI redesign 10.10). The MixConsole's strips draw .msr and a bare span. */
+.inspector .ms {
   min-height: 0;
   height: var(--ms-h);
   min-width: var(--ms-h);
@@ -552,52 +522,45 @@ code, dd { font-family: var(--font-mono); }
   font-weight: 600;
   line-height: 1;
 }
-.ms.mute[aria-pressed="true"] { background: var(--mute); border-color: var(--mute); color: var(--bg-0); }
-.ms.solo[aria-pressed="true"] { background: var(--solo); border-color: var(--solo); color: var(--bg-0); }
-.strip-fader { display: flex; justify-content: center; gap: var(--space); min-height: 0; }
-.meter-slot { flex: 0 0 var(--meter-w); width: var(--meter-w); height: 100%; }
-.strip-values {
-  display: flex;
-  justify-content: space-between;
-  gap: 2px;
-  min-width: 0;
-  align-items: center;
-  font-size: var(--fs-micro);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.value-readout { color: var(--tx-2); white-space: nowrap; cursor: text; font-variant-numeric: tabular-nums; }
-.value-readout.warn { color: var(--warn); }
-.peak-value {
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--tx-3);
-  font-variant-numeric: tabular-nums;
-  line-height: inherit;
-}
-.peak-value:hover:not(:disabled) { background: transparent; color: var(--tx-1); }
-.peak-value.clip { color: var(--err); }
-.strip-name {
-  overflow: hidden;
-  padding: 0 var(--space);
-  border-radius: var(--radius-s);
-  color: var(--bg-0);
-  font-size: var(--fs-small);
-  font-weight: 600;
-  line-height: var(--ms-h);
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.strip-name-master { background: var(--bg-4); color: var(--tx-1); }
+.inspector .ms.mute[aria-pressed="true"] { background: var(--mute); border-color: var(--mute); color: var(--bg-0); }
+.inspector .ms.solo[aria-pressed="true"] { background: var(--solo); border-color: var(--solo); color: var(--bg-0); }
+.inspector .value-readout { color: var(--tx-2); white-space: nowrap; cursor: text; font-variant-numeric: tabular-nums; }
+.inspector .value-readout.warn { color: var(--warn); }
+.inspector-row .value-readout { color: var(--tx-1); }
+.inspector .value-control { margin-top: var(--space); }
+.inspector .fader.horizontal { height: var(--control-h); }
 
-/* ---- value controls (faders and pan), in the MixConsole and the Inspector.
-   The cap moves with transform from --pos (0 at the bottom or left, 1 at the
-   top or right), set by the pointer handler during a drag (spec 5.1). */
+/* ---- the lower zone: MixConsole (spec 3.4, 5.1). ui/lower-zone.css draws the
+   mockup's .lower, .tabs, .mixer and .strip (m5-ui-port-mixer-strip); these
+   are the app's own pieces around them. The zone body holds the mixer edge to
+   edge and scrolls it sideways; one canvas over the strips paints every meter
+   channel and takes no pointer events. */
+/* The mockup's .lower is a grid of --zone-tabs and the mixer; .zone makes it a
+   column, so the tab row takes that row's height. */
+.zone-lower > .tabs { flex: 0 0 var(--zone-tabs); min-height: 0; }
+.zone-lower > .zone-body { padding: 0; }
+.zone-lower .mixer { position: relative; height: 100%; }
+.mixer-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
+.knob-defs { position: absolute; }
+/* The box of a button that is absent (spec 3.0): e until m5b-ui-inserts-master,
+   or M and S when the engine does not list their commands. */
+.btns > .msr-box { flex: none; width: var(--ms-w); height: var(--ms-h); }
+/* The fader and the knob take a drag; the states the mockup does not show. */
+.strip .ftrack { cursor: ns-resize; touch-action: none; user-select: none; }
+.strip .knob { cursor: ew-resize; touch-action: none; user-select: none; }
+.ftrack.warn .cap { border-color: var(--warn); }
+.readout .warn { color: var(--warn); }
+.readout > span { cursor: text; }
+.readout .pk { cursor: pointer; }
+.readout .pk.clip { color: var(--err); }
+/* The drag tooltips: beside the fader's track, under the pan row. */
+.strip .panrow { position: relative; }
+.panrow > .value-tooltip { left: 50%; top: 100%; transform: translateX(-50%); }
+
+/* ---- value controls (faders and pan) in the Inspector, until
+   m5-ui-port-inspector. The cap moves with transform from --pos (0 at the
+   left, 1 at the right), set by the pointer handler during a drag (spec 5.1). */
 .value-control { position: relative; display: flex; min-width: 0; }
-.value-control.vertical { height: 100%; }
 .fader {
   --cap: var(--fader-cap-h);
   position: relative;
@@ -607,14 +570,6 @@ code, dd { font-family: var(--font-mono); }
   user-select: none;
 }
 .fader::before { content: ""; position: absolute; background: var(--bg-0); border-radius: 1px; }
-.fader.vertical {
-  flex: 0 0 var(--fader-cap-w);
-  width: var(--fader-cap-w);
-  height: 100%;
-  min-height: calc(48px * var(--scale));
-  cursor: ns-resize;
-}
-.fader.vertical::before { left: calc(50% - 1px); width: 2px; top: calc(var(--cap) / 2); bottom: calc(var(--cap) / 2); }
 .fader.horizontal { --cap: var(--fader-cap-w); width: 100%; height: var(--ms-h); cursor: ew-resize; }
 .fader.horizontal::before { top: calc(50% - 1px); height: 2px; left: calc(var(--cap) / 2); right: calc(var(--cap) / 2); }
 .value-control-pan .fader.horizontal { --cap: calc(2px * var(--scale)); background: var(--bg-3); border-radius: var(--radius-s); }
@@ -626,12 +581,6 @@ code, dd { font-family: var(--font-mono); }
   background: var(--bg-5);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-s);
-}
-.fader.vertical .fader-cap {
-  width: 100%;
-  height: var(--cap);
-  transform: translateY(calc((1 - var(--pos)) * (100cqh - var(--cap))));
-  box-shadow: inset 0 -1px 0 var(--tx-4);
 }
 .fader.horizontal .fader-cap { width: var(--cap); height: 100%; transform: translateX(calc(var(--pos) * (100cqw - var(--cap)))); }
 .value-control-pan .fader-cap { border: 0; border-radius: 0; background: var(--tx-3); }
