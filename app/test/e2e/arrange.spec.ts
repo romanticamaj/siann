@@ -534,6 +534,64 @@ test('H, G, Ctrl+wheel and a drag in the ruler\'s lower half zoom about the poin
   await pageStill('Shift+wheel');
 });
 
+// The zoom's visible handle is the mockup's u::after; the range input over u
+// has a transparent thumb. The handle must sit where that thumb is, follow the
+// zoom whichever way it changes, and a click on the bar must move both there.
+test('the scroll-zoom bar\'s handle shows the zoom: it follows H and G, and a click on the zoom moves it under the pointer', async () => {
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_1', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await focusProject();
+  await rect('clp_1');
+  const slider = page.getByTestId('zoom-slider');
+  // The handle's centre (u::after) and the thumb's centre for the slider's value, in window x.
+  const geometry = () =>
+    slider.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      const u = input.parentElement!;
+      const box = u.getBoundingClientRect();
+      const after = getComputedStyle(u, '::after');
+      const handle = parseFloat(after.width);
+      const inputBox = input.getBoundingClientRect();
+      const fraction = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
+      const bar = u.parentElement!.getBoundingClientRect();
+      return {
+        handle: box.left + parseFloat(after.left) + handle / 2,
+        thumb: inputBox.left + handle / 2 + fraction * (inputBox.width - handle),
+        uWidth: box.width,
+        target: { width: inputBox.width, height: inputBox.height, top: inputBox.top, bottom: inputBox.bottom },
+        bar: { top: bar.top, bottom: bar.bottom },
+        handleSize: handle,
+      };
+    });
+  let g = await geometry();
+  expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+  // The pointer target: u's width and half a handle past each end, the bar's height, inside the bar.
+  expect(g.target.width).toBeCloseTo(g.uWidth + g.handleSize, 0);
+  expect(g.target.height).toBeGreaterThanOrEqual(g.handleSize);
+  expect(g.target.top).toBeGreaterThanOrEqual(g.bar.top - 0.5);
+  expect(g.target.bottom).toBeLessThanOrEqual(g.bar.bottom + 0.5);
+
+  for (const [key, direction] of [['KeyH', 1], ['KeyG', -1]] as const) {
+    const before = g.handle;
+    const fpp = (await view()).framesPerPixel;
+    await page.keyboard.press(key);
+    await expect.poll(async () => (await view()).framesPerPixel).not.toBe(fpp);
+    await expect.poll(async () => Math.sign((await geometry()).handle - before)).toBe(direction);
+    g = await geometry();
+    expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+  }
+
+  // A click at a quarter of u: the zoom changes and the handle lands under the pointer.
+  const u = (await page.locator('.hscroll u').boundingBox())!;
+  const x = u.x + u.width / 4;
+  const fpp = (await view()).framesPerPixel;
+  await page.mouse.click(x, u.y + u.height / 2);
+  await expect.poll(async () => (await view()).framesPerPixel).not.toBe(fpp);
+  g = await geometry();
+  expect(Math.abs(g.handle - x)).toBeLessThan(g.handleSize / 2 + 1);
+  expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+});
+
 // Heights are kept per session id (spec 2.3). The engine names a session
 // anew each time it opens a bundle (protocol_server.cpp: "ses_" + random
 // hex), so they survive a reload of the window on the same engine, and a

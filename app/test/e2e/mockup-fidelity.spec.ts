@@ -94,25 +94,40 @@ test.skip(process.env.SIANN_FIDELITY !== '1', 'set SIANN_FIDELITY=1 to run the m
 // ---------------------------------------------------------------- the mockup's session
 
 // The palette entry (tokens.css --track-<n>) of each mockup track's colour.
-const TRACKS: ReadonlyArray<{ name: string; palette: number; gain: number; pan?: number; mute?: boolean; kind: string }> = [
-  { name: 'Kick', palette: 0, gain: 0, kind: 'kick' },
-  { name: 'Snare', palette: 1, gain: -2500, kind: 'snare' },
-  { name: 'Bass', palette: 2, gain: -4000, kind: 'bass' },
-  { name: 'Keys', palette: 4, gain: -8000, pan: -3500, kind: 'keys' },
-  { name: 'Vox Lead', palette: 6, gain: 1500, kind: 'vox' },
-  { name: 'Vox BG', palette: 7, gain: -9000, pan: 4000, kind: 'bgv' },
-  { name: 'FX', palette: 10, gain: -12000, mute: true, kind: 'fx' },
+const TRACKS: ReadonlyArray<{ name: string; palette: number; gain: number; pan?: number; mute?: boolean }> = [
+  { name: 'Kick', palette: 0, gain: 0 },
+  { name: 'Snare', palette: 1, gain: -2500 },
+  { name: 'Bass', palette: 2, gain: -4000 },
+  { name: 'Keys', palette: 4, gain: -8000, pan: -3500 },
+  { name: 'Vox Lead', palette: 6, gain: 1500 },
+  { name: 'Vox BG', palette: 7, gain: -9000, pan: 4000 },
+  { name: 'FX', palette: 10, gain: -12000, mute: true },
 ];
-// [track, start bar (1-based), length in bars], in the mockup's order: clip-1 to clip-17.
-const CLIPS: ReadonlyArray<readonly [number, number, number]> = [
-  [0, 1, 4], [0, 5, 4], [0, 9, 4], [0, 13, 4],
-  [1, 5, 4], [1, 9, 4], [1, 13, 4],
-  [2, 3, 6], [2, 9, 8],
-  [3, 1, 8], [3, 9, 8],
-  [4, 5, 3.5], [4, 9, 3.75], [4, 13, 3.5],
-  [5, 9, 8],
-  [6, 6, 2], [6, 9, 1.5],
+// [track, start bar (1-based), length in bars, name], in the mockup's order:
+// clip-1 to clip-17. A clip's title is its media's name (UI redesign 10.7), so
+// each of the mockup's clip names is one media of that name.
+const CLIPS: ReadonlyArray<readonly [number, number, number, string]> = [
+  [0, 1, 4, 'Kick 909'], [0, 5, 4, 'Kick 909'], [0, 9, 4, 'Kick 909'], [0, 13, 4, 'Kick 909'],
+  [1, 5, 4, 'Snare'], [1, 9, 4, 'Snare'], [1, 13, 4, 'Snare'],
+  [2, 3, 6, 'Bass DI'], [2, 9, 8, 'Bass DI · chorus'],
+  [3, 1, 8, 'Rhodes · verse'], [3, 9, 8, 'Rhodes · chorus'],
+  [4, 5, 3.5, 'Verse 1'], [4, 9, 3.75, 'Chorus A · take 3'], [4, 13, 3.5, 'Chorus B'],
+  [5, 9, 8, 'BGV stack'],
+  [6, 6, 2, 'Riser'], [6, 9, 1.5, 'Impact'],
 ];
+// The pending plan's ghost clip, the mockup's eighteenth.
+const PAD_SWELL = 'Pad swell';
+// The media of a clip name.
+const mediaId = (name: string): string => `med_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`;
+
+// The clip names of mockup.html's own CLIPS table, in its order: what the
+// session above has to follow.
+function mockupClipNames(): string[] {
+  const html = fs.readFileSync(path.join(REPO, 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'), 'utf8');
+  const table = /const CLIPS=\[([\s\S]*?)\r?\n\];/.exec(html);
+  if (!table) throw new Error('mockup.html has no CLIPS table');
+  return [...table[1]!.matchAll(/\[\d+,'([^']*)',/g)].map((m) => m[1]!);
+}
 // The mockup's selection: "Chorus A · take 3" on Vox Lead.
 const SELECTED_CLIP = 13;
 const RISER_CLIP = 16;
@@ -166,11 +181,19 @@ function prepareBundle(scratch: string): string {
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'Night Drive', '--rate', String(RATE));
   const exec = (command: Record<string, unknown>) => cli('exec', bundle, JSON.stringify(command));
+  // One media per clip name (and the plan's Pad swell, on Keys' tone), renamed
+  // to the mockup's clip name, with the tone of its track.
+  const named = new Map<string, number>();
+  for (const [track, , , name] of CLIPS) if (!named.has(name)) named.set(name, track);
+  named.set(PAD_SWELL, 3);
+  for (const [name, track] of named) {
+    const wav = path.join(scratch, `${mediaId(name)}.wav`);
+    writeWav(wav, 55 * (track + 1));
+    cli('import', bundle, wav, '--media-id', mediaId(name));
+    exec({ op: 'media.rename', mediaId: mediaId(name), name });
+  }
   TRACKS.forEach((track, index) => {
     const id = TRACK_IDS[index]!;
-    const wav = path.join(scratch, `${track.kind}.wav`);
-    writeWav(wav, 55 * (index + 1));
-    cli('import', bundle, wav, '--media-id', `med_${track.kind}`);
     exec({ op: 'track.add', trackId: id, name: track.name, channels: 1 });
     if (track.gain !== 0) exec({ op: 'track.set_gain', trackId: id, gainMilliDb: track.gain });
     if (track.pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan: track.pan });
@@ -178,12 +201,12 @@ function prepareBundle(scratch: string): string {
   });
   // The mockup's locators (bars 9.1 to 13.1) are set once the app runs: they are
   // the one undoable command of UI redesign 10.7, so undo is lit and redo dim.
-  CLIPS.forEach(([track, bar, bars], index) => {
+  CLIPS.forEach(([track, bar, bars, name], index) => {
     exec({
       op: 'clip.place',
       clipId: clipId(index + 1),
       trackId: TRACK_IDS[track]!,
-      mediaId: `med_${TRACKS[track]!.kind}`,
+      mediaId: mediaId(name),
       position: { domain: 'audio', value: String((bar - 1) * BAR) },
       sourceStart: '0',
       length: String(Math.round(bars * BAR)),
@@ -200,7 +223,7 @@ function planSteps(): Array<Record<string, unknown>> {
       op: 'clip.place',
       clipId: 'clp_pad_swell',
       trackId: 'trk_pad',
-      mediaId: 'med_keys',
+      mediaId: mediaId(PAD_SWELL),
       position: { domain: 'audio', value: String(8 * BAR) },
       sourceStart: '0',
       length: String(8 * BAR),
@@ -420,6 +443,14 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText(String(CLIPS.length));
+  // The session names each clip's media as the mockup names the clip (UI
+  // redesign 10.7), so every clip title of the side-by-side is the mockup's.
+  const names = mockupClipNames();
+  expect(CLIPS.map((clip) => clip[3])).toEqual(names.slice(0, CLIPS.length));
+  expect(names[CLIPS.length]).toBe(PAD_SWELL);
+  await expect
+    .poll(async () => (await hook<Array<{ clipId: string; title: string }>>(page, 'clips')).map((clip) => `${clip.clipId} ${clip.title}`).sort())
+    .toEqual(CLIPS.map((clip, index) => `${clipId(index + 1)} ${clip[3]}`).sort());
 
   // The mockup's zoom: 20 px per second. The slider moves in quarter octaves,
   // so its step is lifted for this one value (a test-side change of the

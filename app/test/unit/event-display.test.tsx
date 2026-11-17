@@ -25,7 +25,8 @@ import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
-import { Timeline } from '../../src/renderer/timeline/Timeline';
+import { Timeline, zoomAt, zoomValue } from '../../src/renderer/timeline/Timeline';
+import { MAX_FRAMES_PER_PIXEL } from '../../src/renderer/timeline/zoom';
 import { sampleSnapshot } from './support/timeline';
 
 const ROOT = path.resolve(__dirname, '..', '..', '..', '..');
@@ -149,4 +150,22 @@ test('the track list has one empty, hidden element in the marker row, between it
   const at = list.indexOf(row[0]![0]);
   assert.ok(at > list.indexOf('track-list-head') && at < list.indexOf('track-list-body'));
   assert.doesNotMatch(row[0]![0], /role=|tabindex=|data-part|class=/);
+});
+
+// The zoom's visible handle is the mockup's u::after; the range input's thumb
+// is transparent, so the handle has to follow the value (shell.css places it
+// from --zoom-at on u). Review finding: it sat at the mockup's 40 % whatever
+// the zoom.
+test('the zoom handle follows the zoom: --zoom-at on u is the slider value as a fraction', () => {
+  assert.equal(zoomAt(MAX_FRAMES_PER_PIXEL), 0, 'all the way out: the left end');
+  assert.equal(zoomAt(1), 1, 'one frame per pixel: the right end');
+  assert.equal(zoomAt(2 ** 10), 0.5, 'half the octaves');
+  assert.ok(zoomAt(256) > zoomAt(512), 'zooming in moves the handle right');
+  assert.equal(zoomValue(2 ** 10), 10);
+  assert.equal(zoomAt(0), 1, 'clamped');
+  assert.equal(zoomAt(2 ** 30), 0, 'clamped');
+  const u = element(element(render(), /<div class="hscroll"/), /<u/);
+  assert.match(u, /^<u style="--zoom-at:[0-9.]+">/);
+  const css = fs.readFileSync(path.join(ROOT, 'app', 'renderer', 'shell.css'), 'utf8');
+  assert.match(css, /\.hscroll u::after \{ left: calc\(100% \* var\(--zoom-at\) - var\(--zoom-handle\) \/ 2\); \}/, 'shell.css places the handle from --zoom-at');
 });

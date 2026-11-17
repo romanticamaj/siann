@@ -1023,3 +1023,32 @@ test('the waveform: two tones per device-pixel column from the peaks, the outer 
     r.canvas.destroy();
   });
 });
+
+test('the waveform fills between the min and the max: a one-sided signal is drawn above the middle only', () => {
+  withNamedTokens(() => {
+    // med_sq: 0 to +30000 throughout (never below zero).
+    const levelOf = (k: number) => {
+      const binFrames = 256 * 4 ** k;
+      const binCount = Math.ceil(48000 / binFrames);
+      return { binFrames, binCount, values: Int16Array.from(Array.from({ length: binCount }, () => [0, 30000]).flat()) };
+    };
+    const pyramid: PeakPyramid = { channels: 1, frames: 48000, sampleRate: 48000, levels: [0, 1, 2, 3, 4].map(levelOf) };
+    const r = drawRig(sampleSnapshot(), { pyramid });
+    const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_1')!);
+    const half = (box.height - 13) / 2 - 2;
+    const mid = box.y + 13 + (box.height - 13) / 2;
+    const rects = r.surface.contentCalls.calls.filter((c) => c.kind === 'fillRect' && c.args[2] === 1 && c.args[0]! >= box.x && c.args[0]! < box.x + box.width && c.args[1]! > box.y + 13 - 1 && c.args[1]! < box.y + box.height);
+    const outer = rects.filter((c) => c.alpha === 0.5);
+    const inner = rects.filter((c) => c.alpha === 1);
+    assert.ok(outer.length >= 230 && inner.length === outer.length, `${outer.length} outer, ${inner.length} inner columns`);
+    for (const c of outer) {
+      assert.ok(Math.abs(c.args[1]! - (mid - (30000 / 32767) * half)) < 1e-9, `outer top ${c.args[1]}`);
+      assert.ok(Math.abs(c.args[1]! + c.args[3]! - mid) < 1e-9, `outer ends at the middle: ${c.args[1]! + c.args[3]!}`);
+    }
+    for (const c of inner) {
+      assert.ok(Math.abs(c.args[1]! - (mid - (30000 / 32767) * half * 0.52)) < 1e-9, `inner top ${c.args[1]}`);
+      assert.ok(Math.abs(c.args[1]! + c.args[3]! - mid) < 1e-9, `inner ends at the middle`);
+    }
+    r.canvas.destroy();
+  });
+});
