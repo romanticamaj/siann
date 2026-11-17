@@ -386,12 +386,16 @@ code, dd { font-family: var(--font-mono); }
 }
 .drag-tooltip[hidden] { display: none; }
 /* The zoom: a range input over the mockup's u (its handle is u::after), with
-   a transparent track and thumb, so its keys, pointer and focus ring stay. */
+   a transparent track and thumb, so its keys, pointer and focus ring stay.
+   The input reaches half a handle past each end of u and spans the bar's
+   height, so its thumb's centre travels u's width and the handle is the thumb:
+   u::after follows the value (--zoom-at, 0 to 1, set on u by Timeline.tsx). */
 .hscroll u > input[type="range"] {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: calc(var(--space-half) * -1);
+  left: calc(var(--zoom-handle) / -2);
+  width: calc(100% + var(--zoom-handle));
+  height: var(--scrollbar-h);
   margin: 0;
   padding: 0;
   background: transparent;
@@ -400,6 +404,7 @@ code, dd { font-family: var(--font-mono); }
 }
 .hscroll u > input[type="range"]::-webkit-slider-runnable-track { height: 100%; background: transparent; border: 0; }
 .hscroll u > input[type="range"]::-webkit-slider-thumb { appearance: none; width: var(--zoom-handle); height: 100%; background: transparent; border: 0; }
+.zone-project .hscroll u::after { left: calc(100% * var(--zoom-at) - var(--zoom-handle) / 2); }
 
 /* The track list (spec 3.3): headers beside the lanes, translated with them. */
 .track-list {

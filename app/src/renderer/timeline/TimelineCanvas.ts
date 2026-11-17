@@ -1701,9 +1701,10 @@ export class TimelineCanvas {
     return columns;
   }
 
-  // The waveform from the clip's media's peak pyramid, one column per device
-  // pixel (waveform.ts): the outer layer at half the clip's alpha, the inner
-  // layer at 52 % of its height. Nothing before the peaks arrive.
+  // The waveform from the clip's media's peak pyramid, one min/max column per
+  // device pixel (waveform.ts): the outer layer fills between the min and the
+  // max at half the clip's alpha, the inner layer the same range at 52 %.
+  // Nothing before the peaks arrive.
   #drawWaveform(ctx: CanvasRenderingContext2D, snapshot: Snapshot, rect: ClipRect, box: Box, tones: ClipPalette, alpha: number): WaveColumn[] {
     const media = snapshot.entities[`media:${rect.mediaId}`] as MediaEntity | undefined;
     if (!media) return [];
@@ -1725,10 +1726,10 @@ export class TimelineCanvas {
     });
     ctx.globalAlpha = alpha * tones.waveOuterAlpha;
     ctx.fillStyle = tones.waveOuter;
-    for (const c of columns) ctx.fillRect(c.x, mid - c.outer, c.w, c.outer * 2);
+    for (const c of columns) ctx.fillRect(c.x, mid - c.outerSpan.up, c.w, c.outerSpan.up + c.outerSpan.down);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = tones.waveInner;
-    for (const c of columns) ctx.fillRect(c.x, mid - c.inner, c.w, c.inner * 2);
+    for (const c of columns) ctx.fillRect(c.x, mid - c.innerSpan.up, c.w, c.innerSpan.up + c.innerSpan.down);
     return columns;
   }
 

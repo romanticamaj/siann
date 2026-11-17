@@ -26,7 +26,7 @@
 // session.set_locators and the locators feature), and P and Alt+P take the
 // canvas's selection from here.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
 import { refusalLine } from '../i18n/errors';
 import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
@@ -59,6 +59,19 @@ const GRID_LABELS: Readonly<Record<GridType, MessageKey>> = { bar: 'grid.bar', b
 
 // The zoom slider's scale: log2 of the frames per pixel.
 const ZOOM_MAX = Math.log2(MAX_FRAMES_PER_PIXEL);
+
+// The zoom slider's value for a zoom: 0 all the way out, ZOOM_MAX at one frame per pixel.
+export function zoomValue(framesPerPixel: number): number {
+  return ZOOM_MAX - Math.log2(Math.min(MAX_FRAMES_PER_PIXEL, Math.max(1, framesPerPixel)));
+}
+
+// Where the zoom's visible handle (the mockup's u::after) sits: the slider's
+// value as a fraction, 0 to 1, set on u as --zoom-at. shell.css places the
+// handle where the range input's (transparent) thumb is, so what is shown is
+// what a drag moves.
+export function zoomAt(framesPerPixel: number): number {
+  return zoomValue(framesPerPixel) / ZOOM_MAX;
+}
 
 export type EditCommand = Extract<
   CommandId,
@@ -523,7 +536,7 @@ export function Timeline({
           <div ref={tooltipRef} className="drag-tooltip" data-testid="drag-tooltip" role="status" hidden />
           <div className="hscroll" data-part="scroll-zoom">
             <i ref={thumbRef} />
-            <u>
+            <u style={{ '--zoom-at': String(zoomAt(framesPerPixel)) } as CSSProperties}>
               {timeline ? (
                 <input
                   type="range"
@@ -532,7 +545,7 @@ export function Timeline({
                   min={0}
                   max={ZOOM_MAX}
                   step={0.25}
-                  value={ZOOM_MAX - Math.log2(Math.max(1, framesPerPixel))}
+                  value={zoomValue(framesPerPixel)}
                   onChange={(e) => timeline.setFramesPerPixel(Math.round(Math.pow(2, ZOOM_MAX - Number(e.target.value))))}
                 />
               ) : null}
