@@ -268,7 +268,7 @@ test('the old Plans markup is gone', () => {
   const zone = appRightZone(markup);
   assert.equal(findAll(zone, (n) => n.classes.includes('zone-tabs')).length, 0, 'no .zone-tabs in the right zone');
   assert.equal(findAll(zone, (n) => n.tag === 'table').length, 0, 'no diff table');
-  // The lower zone keeps its tab row until m5-ui-port-mixer-strip.
+  // The lower zone's tab row is its own (.tabs, m5-ui-port-mixer-strip).
   assert.ok(markup.includes('data-part="lower-tabs"'));
 });
 

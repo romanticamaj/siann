@@ -153,3 +153,33 @@ test('the zones keep their ids, focus attributes and dividers, positioned out of
   const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { dependencies: Record<string, string> };
   assert.ok(!('react-resizable-panels' in pkg.dependencies));
 });
+
+// m5-ui-port-mixer-strip (UI redesign 10.10, P1-12): the lower zone is the
+// mockup's section.lower, and its tab row is the mockup's .tabs with the
+// MixConsole tab (icon, label, the key); the Editor tab and the rack
+// switches are pending (m5b-ui-editor-channel, m5b-ui-inserts-master) and
+// absent. The right zone's row waits for m5-ui-port-plans.
+test('the lower zone takes the mockup\'s .lower and .tabs with the MixConsole tab; the right zone\'s row is unchanged', () => {
+  const markup = render();
+  const lower = /<section class="([^"]*)"[^>]*data-region="lower-zone"[^>]*>/.exec(markup);
+  assert.ok(lower, 'the lower zone');
+  assert.ok(lower[1]!.split(/\s+/).includes('lower'), lower[1]);
+  const row = children(markup, /<section class="[^"]*"[^>]*data-region="lower-zone"/)[0]!;
+  assert.equal(row, 'div.tabs');
+  const tabs = /<div class="tabs"[^>]*>([\s\S]*?)<\/div>/.exec(markup)!;
+  assert.match(tabs[0], /data-part="lower-tabs"/);
+  assert.match(tabs[0], /role="tablist"/);
+  const tab = /<button[^>]*data-part="tab-mixconsole"[^>]*>([\s\S]*?)<\/button>/.exec(tabs[1]!)!;
+  assert.ok(tab, 'the MixConsole tab');
+  assert.match(tab[0], /class="tab on"/);
+  assert.match(tab[0], /role="tab"/);
+  assert.match(tab[0], /aria-selected="true"/);
+  assert.match(tab[0], /data-testid="tab-lower-mixconsole"/);
+  // The mockup's ic('sliders','s'), the label, then the key in a kbd.
+  assert.match(tab[1]!, /^<svg class="i s" viewBox="0 0 16 16"[^>]*>[\s\S]*<\/svg>MixConsole <kbd>Alt\+F3<\/kbd>$/);
+  for (const id of ['tab-editor', 'mixer-racks']) assert.ok(!markup.includes(`data-part="${id}"`), `${id} is pending`);
+  assert.doesNotMatch(tabs[1]!, /class="spacer"/);
+  // The right zone's row is the mockup's .p-head since m5-ui-port-plans.
+  assert.match(markup, /<div class="p-head" role="tablist" data-part="right-tabs">/);
+  assert.ok(!markup.includes('class="zone-tabs"'), 'no .zone-tabs row is left');
+});

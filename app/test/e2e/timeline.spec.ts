@@ -129,7 +129,7 @@ interface Rect {
 interface TimelineHooks {
   clips(): Rect[];
   peakColumns(clipId: string): { drawn: number; nonZero: number };
-  view(): { framesPerPixel: number; scrollFrames: string; rulerHeight: number; laneHeight: number };
+  view(): { framesPerPixel: number; scrollFrames: string; rulerHeight: number; lanesTop: number; laneHeight: number };
   lanes(): string[];
 }
 
@@ -261,7 +261,7 @@ test('placing a clip from the media pool issues clip.place', async () => {
   const view = await hooks.view();
   const box = await canvasBox();
   // The second lane (trk_b), 150 px in.
-  const y = view.rulerHeight + view.laneHeight * 1.5;
+  const y = view.lanesTop + view.laneHeight * 1.5;
   await page.mouse.click(box.x + 150, box.y + y);
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);

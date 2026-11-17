@@ -162,7 +162,7 @@ export function App({
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
             </Counted>
           }
           right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}

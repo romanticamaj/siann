@@ -1,8 +1,8 @@
 // The MixConsole's meters (UI redesign spec 5.1, 5.3): one Canvas2D over the
-// strips (pointer-events off; it paints only inside the meter slots), one
+// strips (pointer-events off; it paints only inside the meter channels), one
 // requestAnimationFrame callback that takes the newest frame into the
 // MeterStore, applies the ballistics with the frame's time delta and draws
-// every slot, tracks and master, in one pass. The strips' peak values are
+// every channel, tracks and master, in one pass. The strips' peak values are
 // written here with textContent; no meter value passes through React
 // (ADR-0019 point 3).
 //
@@ -12,12 +12,18 @@
 // measured when one is added or removed and when the owner reports a resize
 // (ResizeObserver in Mixer.tsx), not every frame.
 //
-// Colours by threshold (spec 1.2): green to -12 dB, yellow to -3 dB, red
-// above, a white 1.5 px hold line and a latching clip indicator. The bars use
-// the fader's taper, so a meter and its fader read alike.
+// What it draws is the mockup's strip() meter (m5-ui-port-mixer-strip; spec
+// 1.2: the mockup's parameters win): each strip has two channel wells (.ch,
+// drawn by ui/lower-zone.css), and in each the bar is one gradient over
+// --meter-scale-h from the channel's bottom (--meter-low, --play at 55 %,
+// --meter-mid at 78 %, --err at 96 %) as tall as the level on the fader's
+// taper, with a --hairline-1h --tx-0 hold line whose bottom edge is the hold
+// level. The latched clip is a --space-3q band in --err at the top of both
+// channels. Every colour and size is a token of tokens.ts.
 
 import { formatPeakDb } from '../format';
 import type { MeterStore } from '../model/meter-store';
+import { TOKENS } from '../tokens';
 import { FLOOR_DB } from './peak-hold';
 import { milliDbToPosition } from './taper';
 
@@ -26,11 +32,17 @@ export interface AnimationFrames {
   cancel(handle: number): void;
 }
 
+export interface GradientLike {
+  addColorStop(offset: number, colour: string): void;
+}
+
 export interface Context2DLike {
-  fillStyle: string | CanvasGradient | CanvasPattern;
+  // A colour or a gradient this context made.
+  fillStyle: unknown;
   fillRect(x: number, y: number, width: number, height: number): void;
   clearRect(x: number, y: number, width: number, height: number): void;
   setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void;
+  createLinearGradient(x0: number, y0: number, x1: number, y1: number): GradientLike;
 }
 
 export interface CanvasLike {
@@ -55,18 +67,11 @@ export interface PeakText {
 export interface MeterSlot {
   // "master" or "track:<id>".
   readonly ref: string;
-  // The slot in canvas CSS pixels, or null when it is not laid out.
+  // 0 left, 1 right.
+  readonly channel: number;
+  // The channel's inside (within its well's border) in canvas CSS pixels, or
+  // null when it is not laid out.
   measure(): SlotRect | null;
-  readonly peakText?: PeakText | null;
-}
-
-export interface MeterPalette {
-  readonly well: string;
-  readonly green: string;
-  readonly yellow: string;
-  readonly red: string;
-  readonly hold: string;
-  readonly clip: string;
 }
 
 export interface MixerMetersOptions {
@@ -76,7 +81,6 @@ export interface MixerMetersOptions {
   // Milliseconds, monotonic.
   readonly clock?: () => number;
   readonly hidden?: () => boolean;
-  readonly palette?: MeterPalette;
   readonly pixelRatio?: () => number;
   // The canvas's CSS size.
   readonly size?: () => { width: number; height: number };
@@ -96,20 +100,17 @@ const browserFrames: AnimationFrames = {
   cancel: (handle) => cancelAnimationFrame(handle),
 };
 
-export const DEFAULT_PALETTE: MeterPalette = {
-  well: '#090A0D',
-  green: '#3DDC84',
-  yellow: '#FFD23F',
-  red: '#FF4D57',
-  hold: '#FFFFFF',
-  clip: '#FF4D57',
-};
-
-// The bars' thresholds on the taper (spec 1.2).
-const GREEN_TOP = milliDbToPosition(-12_000);
-const YELLOW_TOP = milliDbToPosition(-3_000);
-const HOLD_PX = 1.5;
-const CLIP_PX = 3;
+const size = (name: keyof typeof TOKENS) => parseFloat(TOKENS[name]);
+// The mockup's .meter .ch i: linear-gradient(0deg, ...) over --meter-scale-h from the bottom.
+const STOPS: ReadonlyArray<readonly [number, string]> = [
+  [0, TOKENS['meter-low']],
+  [0.55, TOKENS.play],
+  [0.78, TOKENS['meter-mid']],
+  [0.96, TOKENS.err],
+];
+const SCALE_PX = size('meter-scale-h');
+const HOLD_PX = size('hairline-1h');
+const CLIP_PX = size('space-3q');
 // A frame delta longer than this (a stall) counts as this.
 const MAX_DT_SECONDS = 0.25;
 
@@ -121,6 +122,13 @@ function fraction(db: number): number {
 interface Entry {
   readonly slot: MeterSlot;
   rect: SlotRect | null;
+  // The bar's gradient for this rect, made when it is measured.
+  gradient: GradientLike | null;
+}
+
+interface Peak {
+  readonly ref: string;
+  readonly target: PeakText;
   shown: string;
   clipShown: boolean;
 }
@@ -130,11 +138,11 @@ export class MixerMeters {
   readonly #frames: AnimationFrames;
   readonly #clock: () => number;
   readonly #hidden: () => boolean;
-  #palette: MeterPalette;
   readonly #pixelRatio: () => number;
   readonly #size: () => { width: number; height: number };
   #canvas: CanvasLike | null;
   readonly #entries = new Set<Entry>();
+  readonly #peaks = new Set<Peak>();
   #handle: number | null = null;
   #last: number | null = null;
   #dirty = true;
@@ -147,7 +155,6 @@ export class MixerMeters {
     this.#frames = options.frames ?? browserFrames;
     this.#clock = options.clock ?? (() => performance.now());
     this.#hidden = options.hidden ?? (() => document.hidden);
-    this.#palette = options.palette ?? DEFAULT_PALETTE;
     this.#pixelRatio = options.pixelRatio ?? (() => window.devicePixelRatio || 1);
     this.#size = options.size ?? (() => ({ width: 0, height: 0 }));
   }
@@ -169,22 +176,27 @@ export class MixerMeters {
     }
   }
 
-  // The colours, read from the design tokens by the owner.
-  setPalette(palette: MeterPalette): void {
-    this.#palette = palette;
-    this.wake();
-  }
-
+  // A meter channel to paint while mounted.
   addSlot(slot: MeterSlot): () => void {
-    const entry: Entry = { slot, rect: null, shown: '', clipShown: false };
+    const entry: Entry = { slot, rect: null, gradient: null };
     this.#entries.add(entry);
-    this.#writePeak(entry);
     this.#dirty = true;
     this.wake();
     return () => {
       this.#entries.delete(entry);
       this.#dirty = true;
       this.wake();
+    };
+  }
+
+  // A peak value to write while mounted (its text and its clip class).
+  addPeak(ref: string, target: PeakText): () => void {
+    const peak: Peak = { ref, target, shown: '', clipShown: false };
+    this.#peaks.add(peak);
+    this.#writePeak(peak);
+    this.wake();
+    return () => {
+      this.#peaks.delete(peak);
     };
   }
 
@@ -199,6 +211,7 @@ export class MixerMeters {
   measure(): void {
     this.#dirty = false;
     const canvas = this.#canvas;
+    const context = canvas?.getContext('2d') ?? null;
     if (canvas) {
       const { width, height } = this.#size();
       const ratio = this.#pixelRatio();
@@ -211,7 +224,17 @@ export class MixerMeters {
         canvas.style.height = `${height}px`;
       }
     }
-    for (const entry of this.#entries) entry.rect = entry.slot.measure();
+    for (const entry of this.#entries) {
+      entry.rect = entry.slot.measure();
+      entry.gradient = null;
+      if (context && entry.rect) {
+        const { x, y, height } = entry.rect;
+        const bottom = y + height;
+        const gradient = context.createLinearGradient(x, bottom, x, bottom - SCALE_PX);
+        for (const [offset, colour] of STOPS) gradient.addColorStop(offset, colour);
+        entry.gradient = gradient;
+      }
+    }
   }
 
   // A realtime frame arrived: run the loop when there is something to show.
@@ -227,10 +250,10 @@ export class MixerMeters {
     this.#request();
   }
 
-  // Clears a meter's hold line, peak value and clip (a click on the peak value).
+  // Clears a meter's hold lines, peak value and clip (a click on the peak value).
   reset(ref: string): void {
     this.#store.reset(ref);
-    for (const entry of this.#entries) if (entry.slot.ref === ref) entry.shown = '';
+    for (const peak of this.#peaks) if (peak.ref === ref) peak.shown = '';
     this.wake();
   }
 
@@ -239,6 +262,7 @@ export class MixerMeters {
     if (this.#handle !== null) this.#frames.cancel(this.#handle);
     this.#handle = null;
     this.#entries.clear();
+    this.#peaks.clear();
   }
 
   testHooks(): MeterTestHooks {
@@ -280,53 +304,44 @@ export class MixerMeters {
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       const { width, height } = this.#size();
       context.clearRect(0, 0, width, height);
+      for (const entry of this.#entries) if (entry.rect) this.#drawChannel(context, entry, entry.rect);
     }
-    for (const entry of this.#entries) {
-      if (context && entry.rect) this.#drawSlot(context, entry.slot.ref, entry.rect);
-      this.#writePeak(entry);
-    }
+    for (const peak of this.#peaks) this.#writePeak(peak);
   }
 
-  #drawSlot(context: Context2DLike, ref: string, rect: SlotRect): void {
-    const palette = this.#palette;
-    context.fillStyle = palette.well;
-    context.fillRect(rect.x, rect.y, rect.width, rect.height);
-    const index = this.#store.indexOf(ref);
+  #drawChannel(context: Context2DLike, entry: Entry, rect: SlotRect): void {
+    const store = this.#store;
+    const index = store.indexOf(entry.slot.ref);
     if (index < 0) return;
+    const at = 2 * index + (entry.slot.channel === 1 ? 1 : 0);
     const bottom = rect.y + rect.height;
-    const level = fraction(this.#store.level[index]!);
-    const segment = (from: number, to: number, style: string) => {
-      if (to <= from) return;
-      context.fillStyle = style;
-      context.fillRect(rect.x, bottom - to * rect.height, rect.width, (to - from) * rect.height);
-    };
-    segment(0, Math.min(level, GREEN_TOP), palette.green);
-    segment(GREEN_TOP, Math.min(level, YELLOW_TOP), palette.yellow);
-    segment(YELLOW_TOP, level, palette.red);
-    const hold = fraction(this.#store.hold[index]!);
-    if (hold > 0) {
-      context.fillStyle = palette.hold;
-      context.fillRect(rect.x, Math.max(rect.y, bottom - hold * rect.height), rect.width, HOLD_PX);
+    const level = fraction(store.channelLevel[at]!) * rect.height;
+    if (level > 0 && entry.gradient) {
+      context.fillStyle = entry.gradient;
+      context.fillRect(rect.x, bottom - level, rect.width, level);
     }
-    if (this.#store.clip[index] === 1) {
-      context.fillStyle = palette.clip;
+    const hold = fraction(store.channelHold[at]!);
+    if (hold > 0) {
+      context.fillStyle = TOKENS['tx-0'];
+      context.fillRect(rect.x, Math.max(rect.y, bottom - hold * rect.height - HOLD_PX), rect.width, HOLD_PX);
+    }
+    if (store.clip[index] === 1) {
+      context.fillStyle = TOKENS.err;
       context.fillRect(rect.x, rect.y, rect.width, CLIP_PX);
     }
   }
 
-  #writePeak(entry: Entry): void {
-    const target = entry.slot.peakText;
-    if (!target) return;
-    const index = this.#store.indexOf(entry.slot.ref);
+  #writePeak(peak: Peak): void {
+    const index = this.#store.indexOf(peak.ref);
     const text = formatPeakDb(index < 0 ? 0 : this.#store.max[index]!);
-    if (text !== entry.shown) {
-      entry.shown = text;
-      target.textContent = text;
+    if (text !== peak.shown) {
+      peak.shown = text;
+      peak.target.textContent = text;
     }
     const clip = index >= 0 && this.#store.clip[index] === 1;
-    if (clip !== entry.clipShown) {
-      entry.clipShown = clip;
-      target.classList?.toggle('clip', clip);
+    if (clip !== peak.clipShown) {
+      peak.clipShown = clip;
+      peak.target.classList?.toggle('clip', clip);
     }
   }
 }

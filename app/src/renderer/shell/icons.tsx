@@ -85,6 +85,15 @@ const PATHS = {
       <rect x="10.1" y="3.8" width="2.6" height="8.4" fill="currentColor" stroke="none" opacity=".55" />
     </>
   ),
+  // The MixConsole tab (m5-ui-port-mixer-strip).
+  sliders: (
+    <>
+      <path d="M4 2.5v11M8 2.5v11M12 2.5v11" />
+      <rect x="2.6" y="8.5" width="2.8" height="2.4" rx=".6" fill="currentColor" />
+      <rect x="6.6" y="4" width="2.8" height="2.4" rx=".6" fill="currentColor" />
+      <rect x="10.6" y="7" width="2.8" height="2.4" rx=".6" fill="currentColor" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

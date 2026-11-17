@@ -111,6 +111,8 @@ export const en = {
   'mixer.label': 'Mixer',
   'strip.gain': 'Gain',
   'strip.pan': 'Pan',
+  // The label of a MixConsole strip's pan row (the mockup's PAN).
+  'strip.panRow': 'PAN',
   'strip.gainLabel': '{track} gain',
   'strip.panLabel': '{track} pan',
   'strip.levelLabel': '{track} level',

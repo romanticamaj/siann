@@ -489,8 +489,9 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
   await expect.poll(async () => (await rect('clp_r')).width).toBe(90);
 
   const r = await rect('clp_r');
-  const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 3);
-  const lowerLeft = await at(r.x + 2, r.y + r.height - 3);
+  // The box is draw()'s clip(): inset 1 px from the bars, 3 px from the lane's top and 4 px from its bottom.
+  const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 6);
+  const lowerLeft = await at(r.x + 2.5, r.y + r.height - 6);
   await operation(
     'lower-right corner',
     () => drag(lowerRight, 100, 0),
@@ -526,8 +527,8 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
     },
   );
 
-  // The volume control just inside the lower-left corner: nothing is sent while held.
-  const gainAt = await at(r.x + 12, r.y + r.height - 4);
+  // The volume control, draw()'s box right of the lower-left corner: nothing is sent while held.
+  const gainAt = await at(r.x + 20, r.y + r.height - 10);
   const tip = page.getByTestId('drag-tooltip');
   await operation(
     'clip volume',
