@@ -647,7 +647,16 @@ test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
       const transport = r('[data-testid=transport]');
       const left = r('.topbar .tb-left');
       return {
-        centre: Math.abs((transport.left + transport.right) / 2 - bar.getBoundingClientRect().width / 2),
+        // Centred in the grid's content box: the mockup's .topbar pads its right
+        // side only (ui/layout.css), so the content box's centre is half that
+        // padding left of the bar's.
+        centre: (() => {
+          const box = bar.getBoundingClientRect();
+          const style = getComputedStyle(bar);
+          const contentLeft = box.left + parseFloat(style.paddingLeft);
+          const contentRight = box.right - parseFloat(style.paddingRight);
+          return Math.abs((transport.left + transport.right) / 2 - (contentLeft + contentRight) / 2);
+        })(),
         gapAfterLeft: transport.left - left.right,
         holds: holds.map(shown),
         brand: shown('[data-part=brand]'),
