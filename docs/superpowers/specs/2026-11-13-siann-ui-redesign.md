@@ -569,7 +569,7 @@ Layers:
 
 ### 5.3 Meters at display rate without React
 
-`SMTR` frame → `RealtimeClient` → `MeterStore`, a plain object holding `Float32Array`s for peak, RMS, hold and clip per legend index. No event is emitted to React. The mixer's meter canvas and the header meter canvas each run one `requestAnimationFrame` callback that reads the arrays, applies ballistics (`peak-hold.ts`) with the frame's time delta, and draws rectangles. The same store gives the playhead position to the arrange overlay and to the transport display, which writes its digits with `textContent` on a ref. React hears about transport only when `playing` flips.
+`SMTR` frame → `RealtimeClient` → `MeterStore`, a plain object holding `Float32Array`s for peak, RMS, hold and clip per legend index. No event is emitted to React. The mixer's meter canvas and the header meter canvas each run one `requestAnimationFrame` callback that reads the arrays, applies ballistics (`peak-hold.ts`) with the frame's time delta, and draws rectangles. A strip meter draws two channels as the mockup does, so the store keeps the level and hold of each channel too (a mono entity shows the same value in both), while the peak value and the clip stay per entity, the louder channel. The same store gives the playhead position to the arrange overlay and to the transport display, which writes its digits with `textContent` on a ref. React hears about transport only when `playing` flips.
 
 The engine sends one frame per tick and drops frames for a congested socket; the display interpolates nothing and simply draws the newest values. When the window is hidden the loops stop.
 
@@ -1295,12 +1295,12 @@ Decided by the author, as the maintainer left the split open (Fable, 2026-11-17)
 
 ### 10.10 The component port tickets (P1-11 to P1-17)
 
-The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side; the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the closing ticket is last.
+The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side, except the MixConsole, which runs in wave 11 after the canvas: its M and S take `.msr`, whose rules are in `project-zone.css`, which the canvas links (linking that file earlier would restyle the unported arrange area); the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the closing ticket is last.
 
 | Ticket | Feature | Wave | After | Ports | On real data |
 |---|---|---|---|---|---|
 | P1-11 | `m5-ui-port-arrange-canvas` | 10 | P1-10, `m5-ui-edit-basics`, `m5-ui-loop-click` | `draw()`: the ruler's two halves, the marker row (empty), lanes, clips with title strips and handles, the locator band, the cursor. Links `project-zone.css` | Real waveforms from the peak pyramids, in the mockup's two tones; clip titles from the media's name |
-| P1-12 | `m5-ui-port-mixer-strip` | 10 | P1-10 | `strip()`, `knob()`, the master strip and the lower zone's tab row. Links `lower-zone.css` | Gain, pan, mute and solo from the read model; meters from the meter frames, outside React; the taper of 4.5 C7 |
+| P1-12 | `m5-ui-port-mixer-strip` | 11 | P1-10, P1-11 | `strip()`, `knob()`, the master strip and the lower zone's tab row. Links `lower-zone.css` (`.msr` comes with P1-11's `project-zone.css`) | Gain, pan, mute and solo from the read model; meters from the meter frames, outside React; the taper of 4.5 C7 |
 | P1-13 | `m5-ui-port-plans` | 10 | P1-10 | The Plans tab: tab row, hearing switch, the card, `step()`, the actions, the history rows. Links `right-zone.css` | The plan store; the text M5 can derive (10.7, 3) |
 | P1-14 | `m5-ui-port-inspector` | 10 | P1-10 | The left zone: head, track block, volume and pan rows, the empty rows of `sec()`, the foot. Links `left-zone.css` | The selected track; the same commands as the strip |
 | P1-15 | `m5-ui-port-track-list` | 11 | P1-11 | The list head and `th()` | Tracks in document order; the count of tracks and clips (10.8, 4) |
