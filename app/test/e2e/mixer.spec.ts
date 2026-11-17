@@ -148,8 +148,8 @@ async function valueNow(control: Locator): Promise<number> {
 // The centre of a fader's cap, where a drag starts.
 async function capCentre(fader: Locator): Promise<{ x: number; y: number }> {
   await fader.scrollIntoViewIfNeeded();
-  // The strip's cap is the mockup's .cap; the Inspector's (not ported yet) a .fader-cap.
-  const box = await fader.locator('.cap, .fader-cap').boundingBox();
+  // The strip's cap is the mockup's .cap; the Inspector's slider thumb its .hs u.
+  const box = await fader.locator('.cap, u').boundingBox();
   if (!box) throw new Error('the fader cap has no box');
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
@@ -526,6 +526,91 @@ test('the Inspector agrees with the strip, during a held drag and after the comm
   expect((await fetchedTrack()).gainMilliDb).toBe(await valueNow(fader));
 });
 
+// The Inspector port (m5-ui-port-inspector): volume, pan, M and S from the
+// Inspector issue the strip's commands, one revision each, and the strip and
+// the track header follow; the zone carries the mockup's ids of its landed
+// parts and none of a pending one; with no track selected it shows its head
+// and foot only.
+test('volume, pan, mute and solo from the Inspector make one revision each, and the strip and the header follow', async () => {
+  await launch();
+  // No track selected: the head and the foot, nothing between them.
+  const zone = page.getByTestId('zone-left-body');
+  expect(await zone.evaluate((el) => Array.from(el.children).map((c) => c.className))).toEqual(['z-head', 'z-foot']);
+  await selectClip();
+  expect(await zone.evaluate((el) => Array.from(el.children).map((c) => c.className.split(' ')[0]))).toEqual([
+    'z-head', 'i-track', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'z-foot',
+  ]);
+  await expect(page.locator('[data-part="inspector-name"] small')).toHaveText('Stereo');
+
+  // The ids: every landed one of the left zone, no pending one.
+  const manifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'test', 'fidelity', 'manifest.json'), 'utf8')) as {
+    gates: Record<string, string>;
+    rules: Array<{ match: string[]; gate: string }>;
+  };
+  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\]/g, '\$&').replace(/\*/g, '.*')}$`);
+  const gateOf = (id: string) => manifest.gates[manifest.rules.find((rule) => rule.match.some((p) => glob(p).test(id)))!.gate];
+  // The ids of the mockup's left zone.
+  const ids = ['left-zone', 'inspector-head', 'inspector-track', 'inspector-name', 'inspector-buttons', 'inspector-mute', 'inspector-solo', 'inspector-record', 'inspector-monitor', 'inspector-read', 'inspector-write', 'inspector-edit', 'inspector-volume', 'inspector-pan', 'inspector-routing', 'inspector-inserts', 'inspector-sends', 'inspector-automation', 'inspector-agent-changes', 'inspector-notepad', 'inspector-tabs'];
+  const shown = await page.evaluate(() => [
+    ...Array.from(document.querySelectorAll('[data-region]')).map((el) => el.getAttribute('data-region')!),
+    ...Array.from(document.querySelectorAll('[data-part]')).map((el) => el.getAttribute('data-part')!),
+  ]);
+  const landed = ids.filter((id) => gateOf(id) === 'report');
+  const pending = ids.filter((id) => gateOf(id) === 'pending');
+  expect(pending.sort()).toEqual(['inspector-agent-changes', 'inspector-automation', 'inspector-edit', 'inspector-inserts', 'inspector-monitor', 'inspector-notepad', 'inspector-read', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
+  expect(pending.filter((id) => shown.includes(id))).toEqual([]);
+
+  // Volume: a drag to the left lowers it, one revision at release.
+  const volume = page.getByTestId('inspector-volume');
+  let before = await revisions();
+  await dragWithoutRelease(volume, -40, 0);
+  await gestureSettled();
+  expect(await revisions()).toBe(before);
+  await page.mouse.up();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await gestureIdle();
+  expect(await revisions()).toBe(before + 1);
+  const gain = (await fetchedTrack()).gainMilliDb as number;
+  expect(gain).toBeLessThan(0);
+  const gainText = (await page.getByTestId('inspector-volume-value').innerText()).trim();
+  await expect(page.getByTestId(`fader-value-${TRACK}`)).toHaveText(gainText);
+  await expect(page.getByTestId(`fader-${TRACK}`)).toHaveAttribute('aria-valuenow', String(gain));
+  await expect(page.getByTestId(`track-gain-${TRACK}`)).toHaveText(gainText);
+
+  // Pan: a drag to the right, one revision.
+  const pan = page.getByTestId('inspector-pan');
+  before = await revisions();
+  await dragWithoutRelease(pan, 30, 0);
+  await page.mouse.up();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await gestureIdle();
+  expect(await revisions()).toBe(before + 1);
+  const panValue = (await fetchedTrack()).pan as number;
+  expect(panValue).toBeGreaterThan(0);
+  const panText = (await page.getByTestId('inspector-pan-value').innerText()).trim();
+  expect(panText).toMatch(/^R\d+$/);
+  await expect(page.getByTestId(`pan-value-${TRACK}`)).toHaveText(panText);
+  await expect(page.getByTestId(`track-pan-${TRACK}`)).toHaveText(panText);
+
+  // M and S: one revision each, the strip's and the header's buttons follow.
+  for (const [what, field] of [['mute', 'mute'], ['solo', 'solo']] as const) {
+    before = await revisions();
+    await page.getByTestId(`inspector-${what}`).click();
+    await expect.poll(() => revisions()).toBe(before + 1);
+    expect((await fetchedTrack())[field]).toBe(true);
+    await expect(page.getByTestId(`inspector-${what}`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId(`inspector-${what}`)).toHaveClass(/\bon\b/);
+    await expect(page.getByTestId(`${what}-${TRACK}`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId(`track-${what}-${TRACK}`)).toHaveAttribute('aria-pressed', 'true');
+  }
+
+  // A change made elsewhere (another client) shows in the Inspector without a reload.
+  await client.call('command.execute', { commands: [{ op: 'track.set_gain', trackId: TRACK, gainMilliDb: -6500 }, { op: 'track.set_pan', trackId: TRACK, pan: -3500 }] });
+  await expect(page.getByTestId('inspector-volume-value')).toHaveText('-6.5 dB');
+  await expect(page.getByTestId('inspector-pan-value')).toHaveText('L35');
+});
+
 test('one meter canvas draws every strip from the realtime frames while playing', async () => {
   await launch();
   await expect(page.getByTestId('mixer').locator('canvas')).toHaveCount(1);
@@ -682,17 +767,12 @@ test('mute and solo commit one revision each and the buttons show the commit', a
   expect((await fetchedTrack()).solo).toBe(true);
   await expect.poll(async () => (await chip(`solo-${TRACK}`)).background).toBe(soloOn);
 
-  // The Inspector is not ported yet (m5-ui-port-inspector): its M and S keep
-  // the pre-port .ms rules, scoped to .inspector, so they are 18 px high
-  // (--ms-h) and lit with --mute and --solo, not the generic button's 22 px
-  // and grey pressed state (UI redesign 10.10).
+  // The Inspector's M and S are the same .msr chips (m5-ui-port-inspector):
+  // --ms-w by --ms-h with a hairline border, lit with --mute and --solo.
   await selectClip();
   for (const [id, on] of [['inspector-mute', muteOn], ['inspector-solo', soloOn]] as const) {
     await expect(page.getByTestId(id)).toHaveAttribute('aria-pressed', 'true');
-    const drawn = await chip(id);
-    expect(drawn.height).toBe(18);
-    expect(drawn.height).toBe(size.height);
-    expect(drawn.background).toBe(on);
+    expect(await chip(id)).toEqual({ background: on, ...size });
   }
 });
 
