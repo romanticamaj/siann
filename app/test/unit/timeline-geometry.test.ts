@@ -7,15 +7,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CLIP_RADIUS,
+  CLIP_TITLE_HEIGHT,
   CORNER_PX,
   DEFAULT_LANE_HEIGHT,
   GAIN_MIN_HEIGHT,
   GAIN_MIN_WIDTH,
   HANDLE_PX,
+  LANES_TOP,
+  MARKER_HEIGHT,
   MAX_LANE_HEIGHT,
   MIN_LANE_HEIGHT,
   clampLaneHeight,
+  clipBox,
   clipRects,
+  cornerHandles,
+  gainBox,
   laneHeightOf,
   laneTops,
   lanesHeight,
@@ -24,11 +31,13 @@ import {
   hitTest,
   snapMove,
   snapTrim,
+  titleStrip,
   trackAt,
   xToFrame,
   type Viewport,
 } from '../../src/renderer/timeline/geometry';
-import { clip, sampleSnapshot } from './support/timeline';
+import { TOKENS } from '../../src/renderer/tokens';
+import { clip, media, sampleSnapshot, snapshotOf, track } from './support/timeline';
 import { RULER_HEIGHT } from '../../src/renderer/timeline/TimelineCanvas';
 
 const VIEW: Viewport = { framesPerPixel: 100, scrollFrames: '0', rulerHeight: 20, laneHeight: 60, width: 1000 };
@@ -87,15 +96,18 @@ test('the lane under a point names its track', () => {
   assert.equal(trackAt(snapshot, 140, VIEW), null, 'below the last lane');
 });
 
-test('hit testing finds a clip body and its left and right trim handles', () => {
+test('hit testing finds a clip body and its left and right trim handles, over the inset box', () => {
   const rects = clipRects(sampleSnapshot(), VIEW);
-  // clp_1: x 48..288, y 20..80.
+  // clp_1: lane rect x 48..288, y 20..80; its box (draw()'s clip()) x 49..287, y 23..76.
   assert.equal(hitTest(rects, 100, 50)?.rect.clipId, 'clp_1');
   assert.equal(hitTest(rects, 100, 50)?.part, 'body');
-  assert.equal(hitTest(rects, 48, 50)?.part, 'left');
-  assert.equal(hitTest(rects, 48 + HANDLE_PX - 0.5, 50)?.part, 'left');
-  assert.equal(hitTest(rects, 287, 50)?.part, 'right');
-  assert.equal(hitTest(rects, 288 - HANDLE_PX + 0.5, 50)?.part, 'right');
+  assert.equal(hitTest(rects, 49, 50)?.part, 'left');
+  assert.equal(hitTest(rects, 49 + HANDLE_PX - 0.5, 50)?.part, 'left');
+  assert.equal(hitTest(rects, 286.5, 50)?.part, 'right');
+  assert.equal(hitTest(rects, 287 - HANDLE_PX + 0.5, 50)?.part, 'right');
+  assert.equal(hitTest(rects, 48.5, 50), null, 'the 1 px inset left of the box');
+  assert.equal(hitTest(rects, 100, 22), null, 'the 3 px above the box');
+  assert.equal(hitTest(rects, 100, 77), null, 'the 4 px below the box');
   assert.equal(hitTest(rects, 300, 50), null, 'past the clip');
   assert.equal(hitTest(rects, 100, 90), null, 'the other lane has no clip there');
   assert.equal(hitTest(rects, 50, 90)?.rect.clipId, 'clp_2');
@@ -106,10 +118,10 @@ test('a narrow clip keeps a body between its handles', () => {
     { ...sampleSnapshot(), clips: [clip('clp_n', 'trk_b', 'med_sq', '1000', '0', '900')] },
     VIEW,
   );
-  // 9 px wide: each handle a third.
-  assert.equal(hitTest(narrow, 10.5, 50)?.part, 'left');
+  // 9 px of lane, a 7 px box (x 11..18): each handle a third.
+  assert.equal(hitTest(narrow, 11.5, 50)?.part, 'left');
   assert.equal(hitTest(narrow, 14.5, 50)?.part, 'body');
-  assert.equal(hitTest(narrow, 18.5, 50)?.part, 'right');
+  assert.equal(hitTest(narrow, 17.5, 50)?.part, 'right');
 });
 
 test('a drag snaps to a non-negative position', () => {
@@ -137,7 +149,7 @@ test('a trim stays inside [0, media.frames] with at least one frame', () => {
 // m5-ui-arrange: lanes of their own height (53 px by default, 24-240 px), a
 // vertical scroll of the lanes under a fixed ruler, and a canvas that starts
 // right of the track list, so no clip rectangle needs the list's width.
-const ARRANGE: Viewport = { framesPerPixel: 100, scrollFrames: '0', rulerHeight: RULER_HEIGHT, laneHeight: DEFAULT_LANE_HEIGHT, width: 800, height: 300, scrollY: 0 };
+const ARRANGE: Viewport = { framesPerPixel: 100, scrollFrames: '0', rulerHeight: RULER_HEIGHT, lanesTop: LANES_TOP, laneHeight: DEFAULT_LANE_HEIGHT, width: 800, height: 300, scrollY: 0 };
 
 test('lanes default to 53 px and take their height from the map, clamped to 24-240', () => {
   assert.equal(DEFAULT_LANE_HEIGHT, 53);
@@ -148,32 +160,32 @@ test('lanes default to 53 px and take their height from the map, clamped to 24-2
   assert.equal(clampLaneHeight(60.4), 60);
   assert.equal(clampLaneHeight(Number.NaN), 53);
   const order = ['trk_b', 'trk_a', 'trk_c'];
-  assert.deepEqual(laneTops(order, ARRANGE), [RULER_HEIGHT, RULER_HEIGHT + 53, RULER_HEIGHT + 106]);
+  assert.deepEqual(laneTops(order, ARRANGE), [LANES_TOP, LANES_TOP + 53, LANES_TOP + 106]);
   const sized = { ...ARRANGE, laneHeights: { trk_a: 96, trk_c: 1000 } };
   assert.equal(laneHeightOf('trk_b', sized), 53);
   assert.equal(laneHeightOf('trk_a', sized), 96);
   assert.equal(laneHeightOf('trk_c', sized), 240);
-  assert.deepEqual(laneTops(order, sized), [RULER_HEIGHT, RULER_HEIGHT + 53, RULER_HEIGHT + 53 + 96]);
+  assert.deepEqual(laneTops(order, sized), [LANES_TOP, LANES_TOP + 53, LANES_TOP + 53 + 96]);
   assert.equal(lanesHeight(order, sized), 53 + 96 + 240);
 });
 
 test('a vertical scroll moves the lanes up under the ruler', () => {
   const order = ['trk_b', 'trk_a'];
   const scrolled = { ...ARRANGE, scrollY: 40, laneHeights: { trk_b: 80 } };
-  assert.deepEqual(laneTops(order, scrolled), [RULER_HEIGHT - 40, RULER_HEIGHT - 40 + 80]);
+  assert.deepEqual(laneTops(order, scrolled), [LANES_TOP - 40, LANES_TOP - 40 + 80]);
   const snapshot = sampleSnapshot();
-  assert.equal(trackAt(snapshot, RULER_HEIGHT - 1, scrolled), null, 'the ruler stays on top');
-  assert.equal(trackAt(snapshot, RULER_HEIGHT, scrolled), 'trk_b');
-  assert.equal(trackAt(snapshot, RULER_HEIGHT + 39.9, scrolled), 'trk_b');
-  assert.equal(trackAt(snapshot, RULER_HEIGHT + 40, scrolled), 'trk_a');
-  assert.equal(trackAt(snapshot, RULER_HEIGHT + 40 + 53, scrolled), null, 'below the last lane');
+  assert.equal(trackAt(snapshot, LANES_TOP - 1, scrolled), null, 'the ruler and the marker row stay on top');
+  assert.equal(trackAt(snapshot, LANES_TOP, scrolled), 'trk_b');
+  assert.equal(trackAt(snapshot, LANES_TOP + 39.9, scrolled), 'trk_b');
+  assert.equal(trackAt(snapshot, LANES_TOP + 40, scrolled), 'trk_a');
+  assert.equal(trackAt(snapshot, LANES_TOP + 40 + 53, scrolled), null, 'below the last lane');
 });
 
 test('clip rectangles take the lane heights and the vertical scroll', () => {
   const view = { ...ARRANGE, scrollY: 10, laneHeights: { trk_b: 120 } };
   const byId = Object.fromEntries(clipRects(sampleSnapshot(), view).map((r) => [r.clipId, r]));
-  assert.deepEqual({ y: byId.clp_1!.y, height: byId.clp_1!.height }, { y: RULER_HEIGHT - 10, height: 120 });
-  assert.deepEqual({ y: byId.clp_2!.y, height: byId.clp_2!.height }, { y: RULER_HEIGHT - 10 + 120, height: 53 });
+  assert.deepEqual({ y: byId.clp_1!.y, height: byId.clp_1!.height }, { y: LANES_TOP - 10, height: 120 });
+  assert.deepEqual({ y: byId.clp_2!.y, height: byId.clp_2!.height }, { y: LANES_TOP - 10 + 120, height: 53 });
 });
 
 test('a clip scrolled to before the left edge has a negative x: the canvas begins right of the track list', () => {
@@ -192,36 +204,101 @@ test('hit testing finds the lower corners, the 4 px edges and the volume control
   assert.equal(HANDLE_PX, 4);
   assert.equal(CORNER_PX, 8);
   const rects = clipRects(sampleSnapshot(), VIEW);
-  // clp_1: x 48..288, y 20..80; its lower corners are y 72..80.
-  assert.equal(hitTest(rects, 49, 78)?.part, 'cornerLeft');
-  assert.equal(hitTest(rects, 55.5, 72)?.part, 'cornerLeft');
-  assert.equal(hitTest(rects, 287, 79)?.part, 'cornerRight');
-  assert.equal(hitTest(rects, 280.5, 73)?.part, 'cornerRight');
+  // clp_1's box: x 49..287, y 23..76; its lower corners are y 68..76.
+  assert.equal(hitTest(rects, 50, 75)?.part, 'cornerLeft');
+  assert.equal(hitTest(rects, 56.5, 68)?.part, 'cornerLeft');
+  assert.equal(hitTest(rects, 286, 75.5)?.part, 'cornerRight');
+  assert.equal(hitTest(rects, 279.5, 69)?.part, 'cornerRight');
   // Above the corners, the edges.
-  assert.equal(hitTest(rects, 49, 71)?.part, 'left');
-  assert.equal(hitTest(rects, 51.5, 30)?.part, 'left');
-  assert.equal(hitTest(rects, 52.5, 30)?.part, 'body', 'past the 4 px edge');
-  assert.equal(hitTest(rects, 285, 30)?.part, 'right');
-  // The volume control: right of the lower-left corner.
-  assert.equal(hitTest(rects, 56, 79)?.part, 'gain');
-  assert.equal(hitTest(rects, 69.5, 68)?.part, 'gain');
-  assert.equal(hitTest(rects, 70.5, 75)?.part, 'body');
-  assert.equal(hitTest(rects, 60, 67)?.part, 'body');
+  assert.equal(hitTest(rects, 50, 67)?.part, 'left');
+  assert.equal(hitTest(rects, 52.5, 30)?.part, 'left');
+  assert.equal(hitTest(rects, 53.5, 30)?.part, 'body', 'past the 4 px edge');
+  assert.equal(hitTest(rects, 284, 30)?.part, 'right');
+  // The volume control: draw()'s box rr(x+9, y+h-12, 38, 10), x 58..96, y 64..74.
+  assert.equal(hitTest(rects, 58, 73)?.part, 'gain');
+  assert.equal(hitTest(rects, 95.5, 64)?.part, 'gain');
+  assert.equal(hitTest(rects, 96.5, 70)?.part, 'body');
+  assert.equal(hitTest(rects, 70, 63)?.part, 'body');
+  assert.equal(hitTest(rects, 70, 74.5)?.part, 'body');
   assert.equal(hitTest(rects, 60, 50)?.part, 'body');
+  const gain = gainBox(rects.find((r) => r.clipId === 'clp_1')!);
+  assert.deepEqual(gain, { x: 58, y: 64, width: 38, height: 10 });
 });
 
 test('a narrow or short clip shrinks its corners and has no volume control', () => {
   const narrow = clipRects({ ...sampleSnapshot(), clips: [clip('clp_n', 'trk_b', 'med_sq', '1000', '0', '900')] }, VIEW);
-  // 9 px wide (x 10..19): corners of 3 px.
-  assert.equal(hitTest(narrow, 10.5, 78)?.part, 'cornerLeft');
-  assert.equal(hitTest(narrow, 14.5, 78)?.part, 'body');
-  assert.equal(hitTest(narrow, 18.5, 78)?.part, 'cornerRight');
+  // A 7 px box (x 11..18): corners of a third.
+  assert.equal(hitTest(narrow, 11.5, 75)?.part, 'cornerLeft');
+  assert.equal(hitTest(narrow, 14.5, 75)?.part, 'body');
+  assert.equal(hitTest(narrow, 17.5, 75)?.part, 'cornerRight');
   const short = clipRects({ ...sampleSnapshot(), clips: [clip('clp_w', 'trk_b', 'med_sq', '0', '0', '20000')] }, { ...VIEW, laneHeight: 24 });
-  // 200 px wide but 24 px high: no volume control.
-  assert.ok(short[0]!.height < GAIN_MIN_HEIGHT);
-  for (let x = 8; x < 40; x += 1) assert.notEqual(hitTest(short, x, 20 + 23)?.part, 'gain', `x ${x}`);
+  // 200 px wide but a 17 px box: no volume control.
+  assert.ok(clipBox(short[0]!).height < GAIN_MIN_HEIGHT);
+  for (let x = 8; x < 50; x += 1) assert.notEqual(hitTest(short, x, 20 + 15)?.part, 'gain', `x ${x}`);
   const slim = clipRects({ ...sampleSnapshot(), clips: [clip('clp_s', 'trk_b', 'med_sq', '0', '0', '4000')] }, VIEW);
   // 40 px wide: no volume control either.
-  assert.ok(slim[0]!.width < GAIN_MIN_WIDTH);
-  for (let x = 8; x < 32; x += 1) assert.notEqual(hitTest(slim, x, 78)?.part, 'gain', `x ${x}`);
+  assert.ok(clipBox(slim[0]!).width < GAIN_MIN_WIDTH);
+  assert.equal(gainBox(slim[0]!), null);
+  for (let x = 8; x < 40; x += 1) assert.notEqual(hitTest(slim, x, 72)?.part, 'gain', `x ${x}`);
+});
+
+// m5-ui-port-arrange-canvas (UI redesign 10.9, 10.10): the event display is
+// draw()'s. Below the 40 px ruler, the --marker-h (20 px) marker track row,
+// empty until m5b-ui-markers, and the lanes from LANES_TOP. A clip is
+// draw()'s clip(): x = xb(start)+1, w = len*PXB-2, y = laneY+3, h = LANE-7
+// with a 4 px radius, the --clip-title-h title strip, the lower corner squares
+// fillRect(x-1, y+h-6, 6, 6) and fillRect(x+w-5, y+h-6, 6, 6). The numbers
+// below are written by hand from mockup.html's draw() (lines 416-456).
+test('the marker row and the lanes below it come from the tokens', () => {
+  assert.equal(MARKER_HEIGHT, 20);
+  assert.equal(MARKER_HEIGHT, Number.parseFloat(TOKENS['marker-h']));
+  assert.equal(LANES_TOP, RULER_HEIGHT + MARKER_HEIGHT);
+  assert.equal(LANES_TOP, 60);
+  assert.equal(DEFAULT_LANE_HEIGHT, Number.parseFloat(TOKENS['track-h']));
+  assert.equal(CLIP_TITLE_HEIGHT, Number.parseFloat(TOKENS['clip-title-h']));
+  const snapshot = sampleSnapshot();
+  assert.deepEqual(laneTops(snapshot.trackOrder, ARRANGE), [LANES_TOP, LANES_TOP + 53]);
+  for (const y of [0, RULER_HEIGHT - 1, RULER_HEIGHT, RULER_HEIGHT + 10, LANES_TOP - 0.5]) assert.equal(trackAt(snapshot, y, ARRANGE), null, `y ${y}: the ruler and the marker row`);
+  assert.equal(trackAt(snapshot, LANES_TOP, ARRANGE), 'trk_b');
+  // Scrolled, the lanes pass under the marker row and the ruler.
+  const scrolled = { ...ARRANGE, scrollY: 30 };
+  assert.equal(trackAt(snapshot, LANES_TOP - 1, scrolled), null);
+  assert.equal(trackAt(snapshot, LANES_TOP, scrolled), 'trk_b');
+  assert.equal(trackAt(snapshot, LANES_TOP + 23, scrolled), 'trk_a');
+});
+
+test("a clip's box, title strip and corner handles are draw()'s, from its bars, its lane and the zoom", () => {
+  // The mockup's "Chorus A · take 3": lane 5 (index 4), bar 9, 3.75 bars, at
+  // 120 BPM and 48 kHz (a bar is 96000 frames).
+  const order = ['t0', 't1', 't2', 't3', 't4'];
+  const snapshot = snapshotOf(order, order.map(track), [media('med_v', String(96000 * 8))], [clip('clp_c', 't4', 'med_v', String(8 * 96000), '0', String(3.75 * 96000))]);
+  // 40 px per bar, the mockup's zoom: xb(9) = 320, laneY(4) = 60 + 4 * 53 = 272.
+  const mockupZoom = { ...ARRANGE, framesPerPixel: 2400, width: 1200 };
+  const rect = clipRects(snapshot, mockupZoom)[0]!;
+  assert.deepEqual({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }, { x: 320, y: 272, width: 150, height: 53 });
+  const box = clipBox(rect);
+  assert.deepEqual(box, { x: 321, y: 275, width: 148, height: 46, radius: 4 });
+  assert.equal(CLIP_RADIUS, 4);
+  assert.deepEqual(titleStrip(box), { x: 321, y: 275, width: 148, height: 13 });
+  assert.deepEqual(cornerHandles(box), [
+    { x: 320, y: 315, width: 6, height: 6 },
+    { x: 464, y: 315, width: 6, height: 6 },
+  ]);
+  // 80 px per bar: xb(9) = 640, the box 298 px wide.
+  const closer = clipBox(clipRects(snapshot, { ...mockupZoom, framesPerPixel: 1200 })[0]!);
+  assert.deepEqual(closer, { x: 641, y: 275, width: 298, height: 46, radius: 4 });
+  assert.deepEqual(cornerHandles(closer), [
+    { x: 640, y: 315, width: 6, height: 6 },
+    { x: 934, y: 315, width: 6, height: 6 },
+  ]);
+  // The hit parts follow the box: its lower corners, its edges, the body and draw()'s volume box.
+  const rects = clipRects(snapshot, mockupZoom);
+  assert.equal(hitTest(rects, 322, 320)?.part, 'cornerLeft');
+  assert.equal(hitTest(rects, 468, 320)?.part, 'cornerRight');
+  assert.equal(hitTest(rects, 322, 290)?.part, 'left');
+  assert.equal(hitTest(rects, 468, 290)?.part, 'right');
+  assert.equal(hitTest(rects, 340, 312)?.part, 'gain');
+  assert.equal(hitTest(rects, 400, 290)?.part, 'body');
+  assert.equal(hitTest(rects, 400, 273), null, 'the inset above the box');
+  assert.equal(hitTest(rects, 400, 322), null, 'the gap below the box');
 });

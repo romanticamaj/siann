@@ -358,21 +358,11 @@ code, dd { font-family: var(--font-mono); }
 .confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
 .confirm-dialog .danger { background: var(--err); border-color: var(--err); color: var(--bg-0); }
 
-.arrange {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-.event-display {
-  position: relative;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  background: var(--bg-1);
-  overscroll-behavior: contain;
-}
+/* The arrange body and the event display are ui/project-zone.css's .arr-body
+   and .lanes (m5-ui-port-arrange-canvas): the app adds the one row the body
+   fills, clipping, and no scroll chaining from the display's wheel. */
+.zone-project .arr-body { grid-template-rows: minmax(0, 1fr); min-width: 0; overflow: hidden; }
+.zone-project .lanes { overscroll-behavior: contain; }
 .timeline-layer {
   position: absolute;
   inset: 0;
@@ -385,7 +375,7 @@ code, dd { font-family: var(--font-mono); }
   top: 0;
   left: 0;
   z-index: 3;
-  padding: 2px 6px;
+  padding: var(--space-half) var(--space-1h);
   border-radius: var(--radius-s);
   background: var(--bg-4);
   color: var(--tx-1);
@@ -395,22 +385,35 @@ code, dd { font-family: var(--font-mono); }
   pointer-events: none;
 }
 .drag-tooltip[hidden] { display: none; }
-.zoom-slider {
+/* The zoom: a range input over the mockup's u (its handle is u::after), with
+   a transparent track and thumb, so its keys, pointer and focus ring stay.
+   The input reaches half a handle past each end of u and is as tall as
+   the handle, so its thumb's centre travels u's width and the handle is the thumb:
+   u::after follows the value (--zoom-at, 0 to 1, set on u by Timeline.tsx). */
+.hscroll u > input[type="range"] {
   position: absolute;
-  right: calc(var(--space) * 2);
-  bottom: calc(var(--space) * 2);
-  z-index: 2;
-  width: 96px;
-  height: 14px;
+  top: calc(var(--space-half) * -1);
+  left: calc(var(--zoom-handle) / -2);
+  width: calc(100% + var(--zoom-handle));
+  height: var(--zoom-handle);
+  /* Above the lower divider's grab margin (.divider-lower::before, z-index 2),
+     which reaches up into the bar: the visible handle wins. */
+  z-index: 3;
   margin: 0;
-  opacity: .7;
+  padding: 0;
+  background: transparent;
+  appearance: none;
+  cursor: ew-resize;
 }
-.zoom-slider:hover, .zoom-slider:focus-visible { opacity: 1; }
+.hscroll u > input[type="range"]::-webkit-slider-runnable-track { height: 100%; background: transparent; border: 0; }
+.hscroll u > input[type="range"]::-webkit-slider-thumb { appearance: none; width: var(--zoom-handle); height: 100%; background: transparent; border: 0; }
+.zone-project .hscroll u::after { left: calc(100% * var(--zoom-at) - var(--zoom-handle) / 2); pointer-events: none; }
 
 /* The track list (spec 3.3): headers beside the lanes, translated with them. */
 .track-list {
   display: grid;
-  grid-template-rows: var(--ruler-h) minmax(0, 1fr);
+  /* The head beside the ruler, the empty marker track row (until m5b-ui-markers), the headers. */
+  grid-template-rows: var(--ruler-h) var(--marker-h) minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   background: var(--bg-2);

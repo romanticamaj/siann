@@ -199,14 +199,21 @@ async function frameAt(x: number): Promise<bigint> {
 }
 
 // The band shows what the engine holds: a gesture starts on the committed
-// range, not on one whose session.changed has not arrived yet.
+// range, not on one whose session.changed has not arrived yet. Checked again
+// two animation frames later: right after a release the last frame can still
+// show the drag's preview (equal to what was sent) while the model holds the
+// old range, until the next content frame draws the document's.
 async function inStep(): Promise<void> {
-  await expect
-    .poll(async () => {
-      const [drawn, held] = [await band(), await locators()];
-      return drawn === null ? held === null : held !== null && drawn.left === held.left && drawn.right === held.right;
-    })
-    .toBe(true);
+  const check = () =>
+    expect
+      .poll(async () => {
+        const [drawn, held] = [await band(), await locators()];
+        return drawn === null ? held === null : held !== null && drawn.left === held.left && drawn.right === held.right;
+      })
+      .toBe(true);
+  await check();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await check();
 }
 
 // A press, a move and a release in the ruler's upper half, canvas x; with
@@ -478,6 +485,7 @@ test('without a device cycle and the metronome are disabled with the reason and 
   // is gone until session.changed brings the commit: never optimistic).
   const committed = (await locators())!;
   await expect.poll(async () => (await band())?.left).toBe(committed.left);
+  await inStep();
   const drawn = (await band())!;
   // A click on the range, the keys and Alt+P send nothing.
   const polls = (await sent()).filter((r) => r.method === 'engine.status').length;
