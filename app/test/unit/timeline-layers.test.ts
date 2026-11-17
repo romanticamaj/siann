@@ -16,14 +16,19 @@ import assert from 'node:assert/strict';
 import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
-import { xToFrame } from '../../src/renderer/timeline/geometry';
+import { LANES_TOP, clipBox, cornerHandles, xToFrame } from '../../src/renderer/timeline/geometry';
+import type { PeakPyramid } from '../../src/renderer/model/peaks';
+import { TOKENS } from '../../src/renderer/tokens';
 import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
 import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
 import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
-import { sampleSnapshot, snapshotOf, track } from './support/timeline';
+import { media, sampleSnapshot, snapshotOf, track } from './support/timeline';
 
 installSurfaceGlobals();
+
+// The scroll-zoom bar under the canvases (--scrollbar-h).
+const SCROLLBAR = Number.parseFloat(TOKENS['scrollbar-h']);
 
 function modelOf(initial: Snapshot) {
   let snapshot = initial;
@@ -198,28 +203,31 @@ test('a snapshot, a zoom, a scroll, a lane height or a size change redraws the c
   timeline.destroy();
 });
 
-test('the canvases are the container size in device pixels and follow a resize and a ratio change', () => {
+// The canvases end at the top of the scroll-zoom bar (--scrollbar-h, 8 px),
+// where the mockup's canvas ends (m5-ui-port-arrange-canvas).
+test('the canvases are the container size less the scroll-zoom bar, in device pixels, and follow a resize and a ratio change', () => {
   const { surface, hooks, timeline } = make({ ratio: 2 });
+  assert.equal(SCROLLBAR, 8);
   for (const canvas of [surface.content, surface.overlay]) {
     assert.equal(canvas.width, 1600);
-    assert.equal(canvas.height, 600);
+    assert.equal(canvas.height, 2 * (300 - SCROLLBAR));
     assert.equal(canvas.style.width, '800px');
-    assert.equal(canvas.style.height, '300px');
+    assert.equal(canvas.style.height, `${300 - SCROLLBAR}px`);
   }
   assert.equal(hooks.view().width, 800);
-  assert.equal(hooks.view().height, 300);
+  assert.equal(hooks.view().height, 300 - SCROLLBAR);
   surface.resize(1000, 420);
   flushFrames();
   for (const canvas of [surface.content, surface.overlay]) {
     assert.equal(canvas.width, 2000);
-    assert.equal(canvas.height, 840);
+    assert.equal(canvas.height, 2 * (420 - SCROLLBAR));
   }
   assert.equal(hooks.view().width, 1000);
   setDevicePixelRatio(1.5);
   flushFrames();
   for (const canvas of [surface.content, surface.overlay]) {
     assert.equal(canvas.width, 1500);
-    assert.equal(canvas.height, 630);
+    assert.equal(canvas.height, 1.5 * (420 - SCROLLBAR));
   }
   timeline.destroy();
 });
@@ -275,15 +283,16 @@ test('the wheel: Ctrl zooms at the pointer, Shift scrolls horizontally, Ctrl+Shi
   timeline.destroy();
 });
 
-test('the selected clip has a 2 px outline on the overlay; an empty session shows the guidance', () => {
+test("the selected clip has draw()'s 1.5 px outline on the content layer; an empty session shows the guidance", () => {
   const { surface, hooks, timeline } = make();
   const rect = hooks.clips().find((r) => r.clipId === 'clp_1')!;
   surface.fire('pointerdown', { clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 });
   surface.fire('pointerup', { clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 });
+  surface.contentCalls.clear();
   flushFrames();
   assert.equal(timeline.getState().selectedClipId, 'clp_1');
-  assert.equal(hooks.selectionOutline(), 2);
-  assert.ok(surface.overlayCalls.strokes.some((s) => s.lineWidth === 2), 'a 2 px stroke on the overlay');
+  assert.equal(hooks.selectionOutline(), 1.5);
+  assert.equal(surface.contentCalls.calls.filter((c) => c.kind === 'stroke' && c.lineWidth === 1.5).length, 1, 'one 1.5 px outline');
   assert.equal(hooks.guidance(), null);
   timeline.destroy();
 
@@ -498,15 +507,16 @@ test('a multi-clip selection outlines every selected clip; the snap guide and th
   surface.fire('pointerup', { ...at('clp_3'), shiftKey: true });
   assert.deepEqual(hooks.selectedClips(), ['clp_1', 'clp_3']);
   assert.equal(timeline.getState().selectedClipId, 'clp_3', 'the last clicked is the primary');
-  surface.overlayCalls.clear();
+  const outlines = () => surface.contentCalls.calls.filter((c) => c.kind === 'stroke' && c.lineWidth === 1.5).length;
+  surface.contentCalls.clear();
   timeline.invalidate();
   flushFrames();
-  assert.equal(surface.overlayCalls.strokes.filter((s) => s.lineWidth === 2).length, 2, 'two outlines');
+  assert.equal(outlines(), 2, 'two outlines');
   timeline.selectAll();
-  surface.overlayCalls.clear();
+  surface.contentCalls.clear();
   flushFrames();
   assert.deepEqual([...hooks.selectedClips()].sort(), ['clp_1', 'clp_2', 'clp_3']);
-  assert.equal(surface.overlayCalls.strokes.filter((s) => s.lineWidth === 2).length, 3, 'three outlines');
+  assert.equal(outlines(), 3, 'three outlines');
 
   // An Alt-drag of clp_1: the copies are previewed and the snap guide shown, on the overlay.
   flushFrames();
@@ -615,9 +625,11 @@ test('the band fills, lines and labels in the light palette with cycle on and th
     const view = r.hooks.view();
     const rect = bandRect({ left: 10000n, right: 30000n }, view)!;
     const calls = r.surface.contentCalls;
-    const fillAt = (style: string) => calls.fills.filter((f) => f.style === style).map((f) => f.rect);
+    // The band's own fills are in the ruler's upper half (the grid's bar lines share --white-a060).
+    const fillAt = (style: string) => calls.fills.filter((f) => f.style === style && f.rect[1] < RULER_UPPER).map((f) => f.rect);
+    const tintAt = () => calls.fills.filter((f) => f.style === '--white-a028').map((f) => f.rect);
     const labelStyle = (text: string) => calls.labels.filter((l) => l.text === text).map((l) => l.style);
-    const tint: [number, number, number, number] = [rect.x, view.rulerHeight, rect.width, 300 - view.rulerHeight];
+    const tint: [number, number, number, number] = [rect.x, LANES_TOP, rect.width, 300 - SCROLLBAR - LANES_TOP];
     const assertDrawn = (on: boolean) => {
       const fill = on ? '--tx-1-a200' : '--white-a060';
       const line = on ? '--tx-1' : '--tx-3';
@@ -628,8 +640,8 @@ test('the band fills, lines and labels in the light palette with cycle on and th
       assert.deepEqual(labelStyle('L'), [label]);
       assert.deepEqual(labelStyle('R'), [label]);
       assert.deepEqual(fillAt(on ? '--white-a060' : '--tx-1-a200'), [], 'not the other palette');
-      // The tint: the range, from the ruler's bottom to the display's.
-      assert.deepEqual(fillAt('--white-a028'), [tint], 'the tint over the lanes');
+      // The tint: the range, from the lanes' top to the display's bottom.
+      assert.deepEqual(tintAt(), [tint], 'the tint over the lanes');
     };
     assertDrawn(true);
     calls.clear();
@@ -640,7 +652,7 @@ test('the band fills, lines and labels in the light palette with cycle on and th
     calls.clear();
     r.m.set(sampleSnapshot());
     flushFrames();
-    assert.deepEqual(fillAt('--white-a028'), []);
+    assert.deepEqual(tintAt(), []);
     assert.deepEqual(fillAt('--white-a060'), []);
     r.canvas.destroy();
   } finally {
@@ -724,4 +736,290 @@ test('with snap on the drawn range lands on the grid', () => {
   r.surface.fire('pointerup', { clientX: 470, clientY: UPPER_Y });
   assert.deepEqual(r.band.edits, [{ left: 24000n, right: 48000n }]);
   r.canvas.destroy();
+});
+
+// ---------------------------------------------------------------- m5-ui-port-arrange-canvas
+//
+// The content layer is the mockup's draw() (mockup.html lines 376-472), its
+// parameters from tokens.ts and its colours from tokens.css; each custom
+// property reads as its own name here, so a call names the token it drew in.
+
+const RU = RULER_UPPER;
+
+function withNamedTokens<T>(fn: () => T): T {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = g.getComputedStyle;
+  g.getComputedStyle = () => ({ getPropertyValue: (name: string) => name });
+  try {
+    return fn();
+  } finally {
+    g.getComputedStyle = saved;
+  }
+}
+
+function drawRig(snapshot: Snapshot, options: { framesPerPixel?: number; band?: boolean; pyramid?: PeakPyramid } = {}) {
+  clearFrames();
+  setDevicePixelRatio(1);
+  const surface = fakeSurface(800, 300);
+  const m = modelOf(snapshot);
+  const playhead = playheadOf();
+  const band = bandSource();
+  const pyramid = options.pyramid;
+  const cache = { get: () => pyramid, subscribe: () => () => undefined } as unknown as PeaksCache;
+  const canvas = new TimelineCanvas({
+    content: surface.content,
+    overlay: surface.overlay,
+    container: surface.container,
+    model: m.model,
+    peaks: cache,
+    execute: async () => ({}),
+    framesPerPixel: options.framesPerPixel ?? 100,
+    playhead: playhead.source,
+    locators: options.band ? band.source : undefined,
+  });
+  flushFrames();
+  return { surface, m, canvas, playhead, hooks: canvas.testHooks() };
+}
+
+const H = 300 - SCROLLBAR;
+const BAR = 96000;
+
+test("the content frame draws draw()'s lanes, tint, grid, dividers and ruler, in its order, and leaves the marker row empty", () => {
+  withNamedTokens(() => {
+    const three = withLocators(snapshotOf(['t0', 't1', 't2'], ['t0', 't1', 't2'].map((id) => track(id)), [], []), String(8 * BAR), String(12 * BAR));
+    // 40 px per bar (the mockup's PXB): a beat is 10 px.
+    const r = drawRig(three, { framesPerPixel: 2400, band: true });
+    const calls = r.surface.contentCalls.calls;
+    const at = (style: string, rect: readonly number[]) => calls.findIndex((c) => c.kind === 'fillRect' && c.style === style && rect.every((v, i) => c.args[i] === v));
+    // Lanes in --lane-even and --lane-odd, from LANES_TOP.
+    const lanes = [at('--lane-even', [0, LANES_TOP, 800, 53]), at('--lane-odd', [0, LANES_TOP + 53, 800, 53]), at('--lane-even', [0, LANES_TOP + 106, 800, 53])];
+    for (const index of lanes) assert.ok(index >= 0, `lanes ${lanes}`);
+    // The cycle range's tint over the lanes: bars 9 to 13.
+    const tint = at('--white-a028', [320, LANES_TOP, 160, H - LANES_TOP]);
+    // Beat lines, and bar lines: --white-a110 every fourth bar, --white-a060 between.
+    const beat = at('--white-a026', [10, LANES_TOP, 1, H - LANES_TOP]);
+    const bar1 = at('--white-a110', [0, LANES_TOP, 1, H - LANES_TOP]);
+    const bar2 = at('--white-a060', [40, LANES_TOP, 1, H - LANES_TOP]);
+    const bar5 = at('--white-a110', [160, LANES_TOP, 1, H - LANES_TOP]);
+    for (const [name, index] of Object.entries({ tint, beat, bar1, bar2, bar5 })) assert.ok(index >= 0, name);
+    assert.ok(at('--white-a026', [20, LANES_TOP, 1, H - LANES_TOP]) >= 0 && at('--white-a026', [30, LANES_TOP, 1, H - LANES_TOP]) >= 0);
+    // Lane dividers at each lane's last row.
+    const dividers = [1, 2, 3].map((i) => at('--divider', [0, LANES_TOP + i * 53 - 1, 800, 1]));
+    for (const index of dividers) assert.ok(index >= 0, `dividers ${dividers}`);
+    // The ruler: the upper half, the band, the line under it, the lower half.
+    const upper = at('--ruler-upper', [0, 0, 800, RU]);
+    const band = calls.findIndex((c) => c.kind === 'fillRect' && c.style === '--tx-1-a200');
+    const line = at('--white-a050', [0, RU, 800, 1]);
+    const lower = at('--bg-2', [0, RU + 1, 800, RULER_HEIGHT - RU - 1]);
+    // Ticks: a major tick every fourth bar, minor ones, the quarters in --button-line.
+    const major = at('--ruler-major', [0, RU + 3, 1, RULER_HEIGHT - RU - 3]);
+    const minor = at('--ruler-minor', [40, RULER_HEIGHT - 9, 1, 9]);
+    const quarter = at('--button-line', [10, RULER_HEIGHT - 5, 1, 5]);
+    assert.ok(at('--ruler-major', [160, RU + 3, 1, RULER_HEIGHT - RU - 3]) >= 0, 'bar 5 is major');
+    const bottom = at('--divider', [0, RULER_HEIGHT - 1, 800, 1]);
+    for (const [name, index] of Object.entries({ upper, band, line, lower, major, minor, quarter, bottom })) assert.ok(index >= 0, name);
+    // In draw()'s order.
+    const order = [Math.max(...lanes), tint, beat, bar1, Math.max(...dividers), upper, band, line, lower, major, bottom];
+    assert.deepEqual([...order].sort((a, b) => a - b), order, `the order: ${order}`);
+    // Bar numbers at RU + 10 in --fw-ui --fs-micro, lit every fourth bar.
+    const labels = calls.filter((c) => c.kind === 'fillText' && c.args[1] === RU + 10);
+    assert.deepEqual(labels.slice(0, 3).map((c) => [c.text, c.args[0], c.style]), [['1', 4, '--lit-1'], ['3', 84, '--tx-3'], ['5', 164, '--lit-1']]);
+    for (const label of labels) assert.ok(label.font.startsWith(`${TOKENS['fw-ui']} ${TOKENS['fs-micro']} `), label.font);
+    // The marker row (RULER_HEIGHT to LANES_TOP) is empty: nothing is drawn in it.
+    const inRow = calls.filter((c) => (c.kind === 'fillRect' || c.kind === 'strokeRect') && c.args[1]! < LANES_TOP && c.args[1]! + c.args[3]! > RULER_HEIGHT);
+    assert.deepEqual(inRow, [], 'the marker track row is empty');
+    assert.ok(!calls.some((c) => c.kind === 'fillText' && c.args[1]! >= RULER_HEIGHT && c.args[1]! < LANES_TOP), 'no text in the marker row');
+    // Lanes are not dimmed (draw() does not dim them).
+    for (const index of lanes) assert.equal(calls[index]!.alpha, 1);
+    r.canvas.destroy();
+  });
+});
+
+test("a clip is draw()'s clip(): body, title strip, title, outline; a muted track's clip at 50 %", () => {
+  withNamedTokens(() => {
+    const base = sampleSnapshot();
+    const muted = { ...track('trk_b'), mute: true };
+    const snapshot = { ...base, tracks: [track('trk_a'), muted], entities: { ...base.entities, 'track:trk_b': muted } };
+    const r = drawRig(snapshot);
+    const calls = r.surface.contentCalls.calls;
+    const rects = r.hooks.clips();
+    const bodyOf = (id: string) => {
+      const box = clipBox(rects.find((c) => c.clipId === id)!);
+      return calls.find((c) => c.kind === 'fill' && c.path?.some((s) => s.op === 'roundRect' && s.args.join() === [box.x, box.y, box.width, box.height, 4].join()));
+    };
+    // clp_1 is on the muted trk_b, clp_2 on trk_a.
+    assert.equal(bodyOf('clp_1')?.alpha, 0.5, "the muted track's clip at 50 %");
+    assert.equal(bodyOf('clp_2')?.alpha, 1);
+    assert.deepEqual(r.hooks.dimmedLanes(), ['trk_b'], 'dimmedLanes still reports');
+    // The title strip --clip-title-h high at the box's top, then the title in --bg-well.
+    const box = clipBox(rects.find((c) => c.clipId === 'clp_2')!);
+    const strip = calls.findIndex((c) => c.kind === 'fillRect' && c.args.join() === [box.x, box.y, box.width, Number.parseFloat(TOKENS['clip-title-h'])].join());
+    assert.ok(strip >= 0, 'the title strip');
+    const title = calls.findIndex((c) => c.kind === 'fillText' && c.text === 'med_si');
+    assert.ok(title > strip);
+    assert.deepEqual(calls[title]!.args.slice(0, 2), [box.x + 6, box.y + 7]);
+    assert.equal(calls[title]!.style, '--bg-well');
+    // The unselected outline: --black-a550 at 1 px, half a pixel inside the box.
+    const outline = calls.find((c) => c.kind === 'stroke' && c.style === '--black-a550' && c.path?.some((s) => s.op === 'roundRect' && s.args.join() === [box.x + 0.5, box.y + 0.5, box.width - 1, box.height - 1, 4].join()));
+    assert.ok(outline, 'the outline');
+    assert.equal(outline.lineWidth, 1);
+    r.canvas.destroy();
+  });
+});
+
+test('the title is clipTitle() in --fw-strong --fs-micro, follows a media rename in the next snapshot, and needs a box wider than 26 px', () => {
+  withNamedTokens(() => {
+    const base = sampleSnapshot();
+    const tiny = { schema: 'siann.entity.clip.v1' as const, id: 'clp_t', trackId: 'trk_a', mediaId: 'med_si', position: { domain: 'audio' as const, value: '30000' }, sourceStart: '0', length: '2000', gainMilliDb: 0 };
+    const snapshot = { ...base, clips: [...base.clips, tiny], entities: { ...base.entities, 'clip:clp_t': tiny } };
+    const r = drawRig(snapshot);
+    const content = r.surface.content;
+    const texts = () => r.surface.contentCalls.calls.filter((c) => c.kind === 'fillText' && c.font.startsWith(`${TOKENS['fw-strong']} ${TOKENS['fs-micro']} `)).map((c) => c.text);
+    assert.deepEqual(texts().sort(), ['med_si', 'med_sq', 'med_sq'], 'the media id while the media has no name; nothing on an 18 px box');
+    assert.deepEqual(r.hooks.clips().map((c) => [c.clipId, c.title]), [['clp_1', 'med_sq'], ['clp_2', 'med_si'], ['clp_t', 'med_si'], ['clp_3', 'med_sq']]);
+    // media.rename: the next snapshot carries the name.
+    const named = { ...(base.entities['media:med_sq'] as ReturnType<typeof media>), name: 'Kick 909' };
+    r.surface.contentCalls.clear();
+    r.m.set({ ...snapshot, revision: 'r8', media: [snapshot.media[0]!, named], entities: { ...snapshot.entities, 'media:med_sq': named } });
+    flushFrames();
+    assert.deepEqual(texts().sort(), ['Kick 909', 'Kick 909', 'med_si']);
+    assert.equal(r.hooks.clips().find((c) => c.clipId === 'clp_1')!.title, 'Kick 909');
+    assert.equal(r.surface.content, content, 'the same canvas');
+    r.canvas.destroy();
+  });
+});
+
+test('a selected clip has the selected outline and the two corner squares; no fade, repeat handle or ghost is drawn; a selection redraws the content', () => {
+  withNamedTokens(() => {
+    const r = drawRig(sampleSnapshot());
+    const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
+    const box = clipBox(rect);
+    const draws = r.hooks.contentDraws();
+    const overlays = r.hooks.overlayDraws();
+    r.surface.contentCalls.clear();
+    r.surface.overlayCalls.clear();
+    r.surface.fire('pointerdown', { clientX: box.x + 100, clientY: box.y + 20 });
+    r.surface.fire('pointerup', { clientX: box.x + 100, clientY: box.y + 20 });
+    flushFrames();
+    assert.deepEqual(r.hooks.selectedClips(), ['clp_1']);
+    assert.equal(r.hooks.contentDraws(), draws + 1, 'a selection change redraws the content layer');
+    assert.ok(r.hooks.overlayDraws() > overlays);
+    const calls = r.surface.contentCalls.calls;
+    const outline = calls.find((c) => c.kind === 'stroke' && c.style === '--select' && c.lineWidth === 1.5);
+    assert.ok(outline?.path?.some((s) => s.op === 'roundRect' && s.args.join() === [box.x + 0.25, box.y + 0.25, box.width - 0.5, box.height - 0.5, 4].join()), 'the outline 0.25 px inside the box');
+    for (const corner of cornerHandles(box)) {
+      assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--select' && c.args.join() === [corner.x, corner.y, corner.width, corner.height].join()), `the corner at ${corner.x}`);
+    }
+    // Pending parts (m5b-ui-fades, m5b-ui-ghosts, the repeat handle): not drawn, on either layer.
+    for (const call of [...calls, ...r.surface.overlayCalls.calls]) {
+      assert.ok(!call.path?.some((s) => s.op === 'quadraticCurveTo' || s.op === 'arc'), 'no fade curve and no repeat handle');
+      assert.notEqual(call.style, '--bg-0-a550', 'no fade shade');
+      assert.ok(!/^--ai/.test(call.style), 'no ghost');
+      if (call.kind === 'fill' && call.path && call.path.length === 3 && call.path[0]!.args[1]! > RULER_HEIGHT) assert.fail(`a triangle at ${JSON.stringify(call.path)}: no fade triangle`);
+    }
+    r.canvas.destroy();
+  });
+});
+
+test("the project cursor: a 1 px line from RU + 2 to the surface's height, the glow from LANES_TOP, and draw()'s five-point head", () => {
+  withNamedTokens(() => {
+    const r = drawRig(sampleSnapshot());
+    r.surface.overlayCalls.clear();
+    r.playhead.emit('4800', false);
+    flushFrames();
+    const px = 48.5;
+    const calls = r.surface.overlayCalls.calls;
+    const line = calls.find((c) => c.kind === 'stroke' && c.style === '--select');
+    assert.deepEqual(line?.path, [{ op: 'moveTo', args: [px, RU + 2] }, { op: 'lineTo', args: [px, H] }]);
+    assert.equal(line?.lineWidth, 1);
+    assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--white-a070' && c.args.join() === [px - 3, LANES_TOP, 6, H - LANES_TOP].join()), 'the glow');
+    const head = calls.find((c) => c.kind === 'fill' && c.style === '--select');
+    assert.deepEqual(head?.path?.map((s) => [s.op, ...s.args]), [
+      ['moveTo', px - 5.5, RU + 2],
+      ['lineTo', px + 5.5, RU + 2],
+      ['lineTo', px + 5.5, RU + 8],
+      ['lineTo', px, RU + 13],
+      ['lineTo', px - 5.5, RU + 8],
+    ]);
+    r.canvas.destroy();
+  });
+});
+
+test("parts() names the surface's parts with their boxes and no pending part", () => {
+  const r = drawRig(withLocators(sampleSnapshot(), '10000', '30000'), { band: true });
+  r.playhead.emit('4800', false);
+  flushFrames();
+  const parts = r.hooks.parts();
+  const byId = Object.fromEntries(parts.map((p) => [p.id, p]));
+  assert.deepEqual(parts.map((p) => p.id), ['ruler-upper', 'ruler-lower', 'lane-1', 'lane-2', 'clip-1', 'clip-2', 'clip-3', 'locator-band', 'cursor', 'cursor-head']);
+  assert.deepEqual(byId['ruler-upper'], { id: 'ruler-upper', x: 0, y: 0, w: 800, h: RU });
+  assert.deepEqual(byId['ruler-lower'], { id: 'ruler-lower', x: 0, y: RU, w: 800, h: RULER_HEIGHT - RU });
+  assert.deepEqual(byId['lane-2'], { id: 'lane-2', x: 0, y: LANES_TOP + 53, w: 800, h: 53 });
+  const box = clipBox(r.hooks.clips()[0]!);
+  assert.deepEqual(byId['clip-1'], { id: 'clip-1', x: box.x, y: box.y, w: box.width, h: box.height });
+  const band = r.hooks.locatorBand()!;
+  assert.deepEqual(byId['locator-band'], { id: 'locator-band', x: band.x, y: band.y, w: band.width, h: band.height });
+  assert.deepEqual(byId.cursor, { id: 'cursor', x: 48, y: RU + 2, w: 1, h: H - RU - 2 });
+  assert.deepEqual(byId['cursor-head'], { id: 'cursor-head', x: 43, y: RU + 2, w: 11, h: 11 });
+  for (const id of parts.map((p) => p.id)) assert.doesNotMatch(id, /^(marker-track|marker-head|clip-ghost-|lane-ghost)/);
+  // The waveform interiors (the fidelity run masks them): each clip's box below its title strip.
+  assert.deepEqual(r.hooks.masks()[0], { x: box.x, y: box.y + 13, w: box.width, h: box.height - 13 });
+  // Without locators and without a playhead: neither part.
+  const bare = drawRig(sampleSnapshot());
+  assert.deepEqual(bare.hooks.parts().map((p) => p.id), ['ruler-upper', 'ruler-lower', 'lane-1', 'lane-2', 'clip-1', 'clip-2', 'clip-3']);
+  bare.canvas.destroy();
+  r.canvas.destroy();
+});
+
+test('a press in the marker row does nothing', () => {
+  const executed: unknown[] = [];
+  clearFrames();
+  const surface = fakeSurface(800, 300);
+  const m = modelOf(sampleSnapshot());
+  const located: string[] = [];
+  const canvas = new TimelineCanvas({ content: surface.content, overlay: surface.overlay, container: surface.container, model: m.model, peaks, execute: async (c) => void executed.push(c), onLocate: (f) => void located.push(f) });
+  flushFrames();
+  const hooks = canvas.testHooks();
+  const view = hooks.view();
+  canvas.setPlacing('med_sq');
+  surface.fire('pointerdown', { clientX: 100, clientY: RULER_HEIGHT + 5 });
+  surface.fire('pointermove', { clientX: 100, clientY: RULER_HEIGHT + 30 });
+  surface.fire('pointerup', { clientX: 100, clientY: RULER_HEIGHT + 30 });
+  assert.deepEqual(executed, [], 'no placement');
+  assert.deepEqual(located, [], 'no locate');
+  assert.deepEqual(hooks.view(), view, 'no zoom');
+  assert.equal(canvas.getState().placingMediaId, 'med_sq', 'still armed');
+  canvas.destroy();
+});
+
+test('the waveform: two tones per device-pixel column from the peaks, the outer one at 50 % alpha by globalAlpha; waveColumns() holds the outer heights', () => {
+  withNamedTokens(() => {
+    // med_sq is 48000 frames: loud for the first 24000, silent after.
+    const levelOf = (k: number) => {
+      const binFrames = 256 * 4 ** k;
+      const binCount = Math.ceil(48000 / binFrames);
+      const values = Int16Array.from(Array.from({ length: binCount }, (_, i) => (i * binFrames < 24000 ? [-30000, 30000] : [0, 0])).flat());
+      return { binFrames, binCount, values };
+    };
+    const pyramid: PeakPyramid = { channels: 1, frames: 48000, sampleRate: 48000, levels: [0, 1, 2, 3, 4].map(levelOf) };
+    const base = sampleSnapshot();
+    const muted = { ...track('trk_a'), mute: true };
+    const snapshot = { ...base, tracks: [muted, track('trk_b')], entities: { ...base.entities, 'track:trk_a': muted } };
+    const r = drawRig(snapshot, { pyramid });
+    // clp_1 (trk_b): frames 0..24000 of med_sq, all loud; clp_3 (trk_a, muted): 24000..48000, silent.
+    const loud = r.hooks.waveColumns('clp_1');
+    assert.ok(loud.length >= 230, `${loud.length} columns`);
+    const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_1')!);
+    const half = (box.height - 13) / 2 - 2;
+    for (const h of loud) assert.ok(Math.abs(h - (30000 / 32767) * half) < 1e-9, `outer ${h}`);
+    assert.ok(r.hooks.waveColumns('clp_3').every((h) => h === 0.5), 'silence is half a pixel');
+    assert.deepEqual(r.hooks.peakColumns('clp_1'), { drawn: loud.length, nonZero: loud.length });
+    const inside = (b: ReturnType<typeof clipBox>) =>
+      r.surface.contentCalls.calls.filter((c) => c.kind === 'fillRect' && c.args[2] === 1 && c.args[0]! >= b.x && c.args[0]! < b.x + b.width && c.args[1]! > b.y + 13 - 1 && c.args[1]! < b.y + b.height);
+    assert.deepEqual([...new Set(inside(box).map((c) => c.alpha))].sort(), [0.5, 1], 'the outer layer at .5, the inner at 1');
+    // The muted track's clip: .5 of each.
+    const box3 = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_3')!);
+    assert.deepEqual([...new Set(inside(box3).map((c) => c.alpha))].sort(), [0.25, 0.5]);
+    r.canvas.destroy();
+  });
 });

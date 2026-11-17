@@ -151,6 +151,8 @@ interface View {
   readonly framesPerPixel: number;
   readonly scrollFrames: string;
   readonly rulerHeight: number;
+  // The lanes' top: the ruler and the empty marker track row above (m5-ui-port-arrange-canvas).
+  readonly lanesTop: number;
   readonly laneHeight: number;
   readonly laneHeights?: Record<string, number>;
   readonly scrollY?: number;
@@ -169,7 +171,9 @@ type HookName =
   | 'selectionOutline'
   | 'dimmedLanes'
   | 'guidance'
-  | 'peakColumns';
+  | 'peakColumns'
+  | 'parts'
+  | 'waveColumns';
 
 // The test hooks, read with page.evaluate (the CSP allows no eval in the page).
 async function hook<T>(name: HookName, arg?: string): Promise<T> {
@@ -355,7 +359,10 @@ test('the track list shows each track, clips are never under it, double-click re
   expect(ops(frames, 'track.add')).toHaveLength(3);
 });
 
-test('the canvas is the event display\'s box in device pixels after a resize and a boundary drag; the ruler is bars, then beats zoomed in', async () => {
+// The canvases end at the top of the scroll-zoom bar (--scrollbar-h), as the mockup's #tl does.
+const SCROLLBAR = 8;
+
+test('the canvas is the event display\'s box above the scroll-zoom bar in device pixels after a resize and a boundary drag; the ruler is bars, then beats zoomed in', async () => {
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
   await launch();
   const check = async (what: string) => {
@@ -364,8 +371,14 @@ test('the canvas is the event display\'s box in device pixels after a resize and
         const display = await box('event-display');
         const canvas = await box('timeline-canvas');
         const content = await box('timeline-content');
+        const bar = (await page.locator('[data-part="scroll-zoom"]').boundingBox())!;
         return [canvas, content].every(
-          (b) => Math.abs(b.x - display.x) < 1 && Math.abs(b.y - display.y) < 1 && Math.abs(b.width - display.width) < 1 && Math.abs(b.height - display.height) < 1,
+          (b) =>
+            Math.abs(b.x - display.x) < 1 &&
+            Math.abs(b.y - display.y) < 1 &&
+            Math.abs(b.width - display.width) < 1 &&
+            Math.abs(b.height - (display.height - SCROLLBAR)) < 1 &&
+            Math.abs(b.y + b.height - bar.y) < 1,
         );
       }, { message: what })
       .toBe(true);
@@ -642,7 +655,7 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   await expect(line).toHaveAttribute('data-clip', '');
 });
 
-test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim, place and delete commit one revision each', async () => {
+test('a selected clip has the 1.5 px outline of draw(), a drag shows a tooltip, and move, trim, place and delete commit one revision each', async () => {
   test.setTimeout(120_000);
   prepare(
     [
@@ -657,7 +670,7 @@ test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim
   const mid = { x: canvas.x + start.x + start.width / 2, y: canvas.y + start.y + start.height / 2 };
   await page.mouse.click(mid.x, mid.y);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
-  await expect.poll(() => hook<number>('selectionOutline')).toBe(2);
+  await expect.poll(() => hook<number>('selectionOutline')).toBe(1.5);
 
   // Move, with the tooltip mid-drag.
   let before = await revision();
@@ -697,7 +710,7 @@ test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim
   before = await revision();
   await page.getByTestId('pool-med_sq').click();
   const v = await view();
-  await page.mouse.click(canvas.x + 300, canvas.y + v.rulerHeight + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
+  await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
   await expect(page.getByTestId('clip-count')).toHaveText('2');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 
@@ -810,4 +823,174 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   app = undefined;
   await launch({ userData });
   await expect.poll(width).toBe(232);
+});
+
+// ---------------------------------------------------------------- m5-ui-port-arrange-canvas
+//
+// The event display is the mockup's draw() (UI redesign 10.9, 10.10): real
+// waveforms from the engine's peaks, the clip title from media.name, the
+// mockup's ids on the DOM and on the surface's parts, no part of a pending
+// feature, and the track list's rows level with the lanes under the empty
+// marker track row.
+
+// A mono 16-bit WAV of 1 s: a square wave at half scale for the first half,
+// silence for the second (written here, outside the code under test).
+function halfLoudWav(file: string): void {
+  const data = Buffer.alloc(FRAMES * 2);
+  for (let i = 0; i < FRAMES / 2; i += 1) data.writeInt16LE(Math.floor(i / 120) % 2 === 0 ? 16384 : -16384, i * 2);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVEfmt ', 8, 'latin1');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(RATE, 24);
+  header.writeUInt32LE(RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(data.length, 40);
+  fs.writeFileSync(file, Buffer.concat([header, data]));
+}
+
+// Two tracks with a clip each of the half-loud file (med_half, 1 s at frame 0).
+function prepareHalf(): void {
+  sessionDir = path.join(scratch, 'sessions');
+  const bundle = path.join(sessionDir, 'Untitled.siann');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  cli('create', bundle, '--name', 'Waves', '--rate', String(RATE));
+  const exec = (command: Record<string, unknown>) => cli('exec', bundle, JSON.stringify(command));
+  halfLoudWav(path.join(scratch, 'half.wav'));
+  cli('import', bundle, path.join(scratch, 'half.wav'), '--media-id', 'med_half');
+  for (const [trackId, clipId] of [['trk_a', 'clp_r'], ['trk_b', 'clp_l']] as const) {
+    exec({ op: 'track.add', trackId, name: trackId, channels: 1 });
+    exec({ op: 'clip.place', clipId, trackId, mediaId: 'med_half', position: { domain: 'audio', value: '0' }, sourceStart: '0', length: String(FRAMES) });
+  }
+}
+
+async function columns(clipId: string): Promise<number[]> {
+  return page.evaluate((id) => {
+    const hooks = (window as unknown as { __siannTimeline: { waveColumns(id: string): number[] } }).__siannTimeline;
+    return hooks.waveColumns(id);
+  }, clipId);
+}
+
+interface CanvasPart {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+async function parts(): Promise<CanvasPart[]> {
+  return page.evaluate(() => (window as unknown as { __siannTimeline: { parts(): CanvasPart[] } }).__siannTimeline.parts());
+}
+
+const mean = (values: readonly number[]) => values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+
+test('a placed clip of the demo audio draws its waveform from the peaks: a loud half and a silent half, following a right and a left trim', async () => {
+  test.setTimeout(120_000);
+  prepareHalf();
+  await launch();
+  // The default zoom draws 1 s in 480 px: 240 loud columns, then 240 silent ones.
+  await expect.poll(async () => (await columns('clp_r')).length).toBeGreaterThan(400);
+  const all = await columns('clp_r');
+  const half = Math.floor(all.length / 2);
+  const loud = all.slice(0, half - 2);
+  const quiet = all.slice(half + 2);
+  expect(mean(loud)).toBeGreaterThan(4);
+  expect(Math.min(...loud)).toBeGreaterThan(0.5);
+  expect(quiet.every((h) => h === 0.5)).toBe(true);
+  // The same file on the other lane draws the same columns.
+  expect(await columns('clp_l')).toEqual(all);
+
+  // Snap off, so a trim ends where it is dropped.
+  await page.getByTestId('snap-toggle').click();
+  await expect(page.getByTestId('snap-toggle')).toHaveAttribute('aria-pressed', 'false');
+  const canvas = await box('timeline-canvas');
+  const fpp = (await view()).framesPerPixel;
+
+  // Trim clp_r's right edge to the loud half: every column is loud.
+  let before = await revision();
+  const r = await rect('clp_r');
+  const right = { x: canvas.x + r.x + r.width - 2, y: canvas.y + r.y + r.height / 2 };
+  await page.mouse.move(right.x, right.y);
+  await page.mouse.down();
+  await page.mouse.move(right.x - Math.round(FRAMES / 2 / fpp) - 20, right.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect.poll(async () => (await rect('clp_r')).width).toBeLessThan(r.width / 2);
+  const trimmed = await columns('clp_r');
+  expect(trimmed.length).toBeLessThan(half);
+  expect(trimmed.every((h) => h > 0.5)).toBe(true);
+
+  // Trim clp_l's left edge past the loud half: the columns follow sourceStart, all silent.
+  before = await revision();
+  const l = await rect('clp_l');
+  const left = { x: canvas.x + l.x + 2.5, y: canvas.y + l.y + l.height / 2 };
+  await page.mouse.move(left.x, left.y);
+  await page.mouse.down();
+  await page.mouse.move(left.x + Math.round(FRAMES / 2 / fpp) + 20, left.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect.poll(async () => (await rect('clp_l')).x).toBeGreaterThan(l.x + FRAMES / 2 / fpp);
+  await expect.poll(async () => (await columns('clp_l')).every((h) => h === 0.5)).toBe(true);
+  expect((await columns('clp_l')).length).toBeGreaterThan(100);
+});
+
+test('the clip title is the media name and follows media.rename without a reload', async () => {
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  const title = async () => (await hook<Array<{ clipId: string; title: string }>>('clips')).find((c) => c.clipId === 'clp_sq')?.title;
+  await expect.poll(title).toBeTruthy();
+  // cli import names the media after the file (m5b-engine-project-media), or the id stands in.
+  expect(['square', 'square.wav', 'med_sq']).toContain(await title());
+  await page.evaluate(() => {
+    (window as unknown as { __noReload: boolean }).__noReload = true;
+  });
+  const engine = await engineClient(page);
+  await engine.call('command.execute', { commands: [{ op: 'media.rename', mediaId: 'med_sq', name: 'Square lead' }] });
+  await expect.poll(title).toBe('Square lead');
+  await engine.call('command.execute', { commands: [{ op: 'media.rename', mediaId: 'med_sq', name: null }] });
+  await expect.poll(title).toBe('med_sq');
+  engine.close();
+  expect(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload)).toBe(true);
+});
+
+test("every id of the event display is found, no pending part's id is, and the headers are level with the lanes", async () => {
+  prepare(
+    [
+      { id: 'trk_a', name: 'Alpha' },
+      { id: 'trk_b', name: 'Beta' },
+      { id: 'trk_c', name: 'Gamma' },
+    ],
+    [{ clipId: 'clp_sq', trackId: 'trk_b', position: 0 }],
+  );
+  await launch();
+  await rect('clp_sq');
+  for (const id of ['event-display', 'scroll-zoom', 'arrange']) await expect(page.locator(`[data-part="${id}"]`)).toBeVisible();
+  await expect(page.locator('.arr-body[data-part="arrange"] > .lanes[data-part="event-display"] > canvas#tl')).toHaveCount(1);
+  await expect(page.locator('.lanes > .hscroll[data-part="scroll-zoom"] > u [data-testid="zoom-slider"]')).toHaveCount(1);
+  const engine = await engineClient(page);
+  await engine.call('transport.locate', { frames: '4800' });
+  engine.close();
+  await expect.poll(async () => (await parts()).map((p) => p.id)).toEqual(['ruler-upper', 'ruler-lower', 'lane-1', 'lane-2', 'lane-3', 'clip-1', 'cursor', 'cursor-head']);
+  // No part of a pending feature: not in the DOM, not on the surface.
+  for (const pending of ['marker-track', 'marker-head', 'lane-ghost']) await expect(page.locator(`[data-part="${pending}"]`)).toHaveCount(0);
+  await expect(page.locator('[data-part^="clip-ghost-"]')).toHaveCount(0);
+  for (const id of (await parts()).map((p) => p.id)) expect(id).not.toMatch(/^(marker-track|marker-head|clip-ghost-|lane-ghost)/);
+  // Headers and lanes are level: the marker track row sits in both columns.
+  const display = await box('event-display');
+  const lanes = (await parts()).filter((p) => p.id.startsWith('lane-'));
+  for (const [index, trackId] of ['trk_a', 'trk_b', 'trk_c'].entries()) {
+    const header = await box(`track-header-${trackId}`);
+    expect(Math.abs(header.y - (display.y + lanes[index]!.y))).toBeLessThan(1);
+    expect(Math.abs(header.height - lanes[index]!.h)).toBeLessThan(1);
+  }
+  // The cursor ends at the top of the scroll-zoom bar.
+  const cursor = (await parts()).find((p) => p.id === 'cursor')!;
+  const bar = (await page.locator('[data-part="scroll-zoom"]').boundingBox())!;
+  expect(Math.abs(display.y + cursor.y + cursor.h - bar.y)).toBeLessThan(1);
 });

@@ -51,8 +51,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { laneHeightOf, laneTops, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
-import { RULER_LOWER, RULER_UPPER } from '../../src/renderer/timeline/TimelineCanvas';
+import { LANES_TOP, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
 import { trackColourIndex } from '../../src/renderer/timeline/track-colour';
 import {
   compareParts,
@@ -290,18 +289,17 @@ async function hook<T>(page: Page, name: string, arg?: string): Promise<T> {
   ) as Promise<T>;
 }
 
-// The title strip of a clip in the mockup; below it is the waveform.
-const CLIP_TITLE = 13;
-
+// The surface's parts and waveform masks as its last frames drew them
+// (TimelineCanvas.ts, testHooks().parts() and masks(); m5-ui-port-arrange-canvas),
+// in the event display's coordinates, as the mockup's draw() records them
+// in window.__fidelity: the canvas begins at the event display's corner.
 async function collectApp(page: Page): Promise<Collected> {
   const parts = await page.evaluate(collectDom, MANIFEST.styles);
   const masks: Rect[] = [];
   const display = parts.find((part) => part.id === 'event-display');
   if (!display) return { parts, masks };
-  const view = await hook<Viewport>(page, 'view');
-  const lanes = await hook<string[]>(page, 'lanes');
-  const rects = await hook<ClipRect[]>(page, 'clips');
-  const cursorX = await hook<number | null>(page, 'cursorX');
+  const drawn = await hook<Array<{ id: string } & Rect>>(page, 'parts');
+  const waves = await hook<Rect[]>(page, 'masks');
   const at = (rect: Rect): Rect => {
     const x = Math.max(display.x, display.x + rect.x);
     const y = Math.max(display.y, display.y + rect.y);
@@ -312,24 +310,10 @@ async function collectApp(page: Page): Promise<Collected> {
       h: Math.max(0, Math.min(display.y + display.h, display.y + rect.y + rect.h) - y),
     };
   };
-  // The ruler's two halves (TimelineCanvas.ts: locators above, cursor below).
-  parts.push({ id: 'ruler-upper', ...at({ x: 0, y: 0, w: view.width, h: RULER_UPPER }) });
-  parts.push({ id: 'ruler-lower', ...at({ x: 0, y: RULER_UPPER, w: view.width, h: RULER_LOWER }) });
-  const tops = laneTops(lanes, view);
-  lanes.forEach((id, index) => {
-    const n = TRACK_IDS.indexOf(id);
-    if (n >= 0) parts.push({ id: `lane-${n + 1}`, ...at({ x: 0, y: tops[index]!, w: view.width, h: laneHeightOf(id, view) }) });
-  });
-  for (const rect of rects) {
-    const match = /^clp_(\d\d)$/.exec(rect.clipId);
-    const box = { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
-    if (match) parts.push({ id: `clip-${Number(match[1])}`, ...at(box) });
-    masks.push(at({ x: box.x, y: box.y + CLIP_TITLE, w: box.w, h: Math.max(0, box.h - CLIP_TITLE) }));
-  }
-  if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: RULER_UPPER, w: 1, h: (view.height ?? display.h) - RULER_UPPER }) });
-  // The locator band (m5-ui-loop-click), as the last content frame drew it.
-  const band = await hook<{ x: number; y: number; width: number; height: number } | null>(page, 'locatorBand');
-  if (band) parts.push({ id: 'locator-band', ...at({ x: band.x, y: band.y, w: band.width, h: band.height }) });
+  // ruler-upper, ruler-lower, lane-N, clip-N (in lane order, as the mockup's
+  // CLIPS), locator-band, cursor and cursor-head.
+  for (const part of drawn) parts.push({ id: part.id, ...at(part) });
+  for (const wave of waves) masks.push(at(wave));
   return { parts, masks };
 }
 
@@ -617,6 +601,21 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
         over: result.ratio > MANIFEST.pixels.maxMismatch,
         files,
       });
+    }
+
+    // The resting state (m5-ui-port-arrange-canvas): no clip selected. The
+    // mockup draws its clip selected, so this is the app's project zone alone,
+    // beside the selected-clip pair above. An empty spot of lane 3 (Bass,
+    // bars 1 and 2) takes the selection away.
+    const zone = mockupParts.parts.find((part) => part.id === 'project-zone');
+    const display = appParts.parts.find((part) => part.id === 'event-display');
+    if (zone && display) {
+      await page.mouse.click(display.x + 20, display.y + LANES_TOP + 2 * 53 + 25);
+      await expect.poll(() => hook<string[]>(page, 'selectedClips')).toEqual([]);
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'project-zone.resting.app.png'), encodePng(crop(decodePng(await page.screenshot()), zone)));
+      notes.push(`The resting state (no clip selected) is ${locale}/project-zone.resting.app.png, the app's alone: the mockup shows a selected clip.`);
     }
 
     const entry: LocaleReport = { locale, comparison, regions, extra, notes };

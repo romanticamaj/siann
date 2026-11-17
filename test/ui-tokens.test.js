@@ -400,7 +400,8 @@ test('the ledger holds no token entry and nothing of the shared rules or the moc
   const files = Object.keys(DEBT.literals);
   assert.deepEqual(files.filter((file) => file.startsWith('app/renderer/ui/')), []);
   assert.ok(!files.includes(MOCKUP_FILE), 'the mockup\'s script has no literal debt');
-  const left = ['app/renderer/shell.css', 'app/src/renderer/mixer/MixerMeters.ts', 'app/src/renderer/timeline/TimelineCanvas.ts'];
+  // m5-ui-port-arrange-canvas took TimelineCanvas.ts off the ledger.
+  const left = ['app/renderer/shell.css', 'app/src/renderer/mixer/MixerMeters.ts'];
   assert.deepEqual(files.filter((file) => !left.includes(file)), [], 'what is left belongs to the alignment features');
   assert.equal(DEBT.fonts.length, 0, 'm5-ui-alignment-chrome bundles JetBrains Mono Medium: no font entry is left');
 });

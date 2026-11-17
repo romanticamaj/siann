@@ -246,14 +246,32 @@ test('an absent part keeps its space empty: a hold token names a part that is st
 // ---- m5-ui-alignment-chrome: the shared stylesheets linked; its gate stays report
 // (decided by the maintainer, 2026-11-17: the fidelity run is a visual aid and never blocks)
 
-test('the app links tokens.css and the chrome\'s shared stylesheets in the mockup\'s order, then shell.css', () => {
+test('the app links tokens.css and the shared stylesheets of the landed ports in the mockup\'s order, then shell.css', () => {
   const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
   const app = linked(read('app', 'renderer', 'index.html'));
-  const chrome = ['tokens.css', 'ui/base.css', 'ui/layout.css', 'ui/top-bar.css', 'ui/status-bar.css'];
-  // The mockup's own order, filtered to these five.
-  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', '')).filter((href) => chrome.includes(href));
-  assert.deepEqual(mockup, chrome);
+  // The chrome's five, and ui/project-zone.css since m5-ui-port-arrange-canvas;
+  // each later wave-10 port adds its stylesheet to this set.
+  const set = new Set(['tokens.css', 'ui/base.css', 'ui/layout.css', 'ui/top-bar.css', 'ui/project-zone.css', 'ui/status-bar.css']);
+  // The mockup's own order, filtered to the linked set.
+  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', '')).filter((href) => set.has(href));
+  assert.equal(mockup.length, set.size, 'every linked stylesheet is one the mockup links');
+  assert.ok(mockup.indexOf('ui/top-bar.css') < mockup.indexOf('ui/project-zone.css') && mockup.indexOf('ui/project-zone.css') < mockup.indexOf('ui/status-bar.css'));
   assert.deepEqual(app, [...mockup, 'shell.css']);
+});
+
+// ---- m5-ui-port-arrange-canvas: the event display ported from draw(); its gate stays report
+
+test('the event display\'s gate is report, shell.css leaves .arrange to the shared rules, and no marker row is held by a token', () => {
+  assert.equal(MANIFEST.gates['m5-ui-port-arrange-canvas'], 'report');
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  // ui/project-zone.css's .arrange is the mockup's whole section; the app's
+  // arrange body is .arr-body, and shell.css no longer styles .arrange, the
+  // old .event-display or the old .zoom-slider.
+  for (const selector of ['arrange', 'event-display', 'zoom-slider']) {
+    assert.doesNotMatch(shell, new RegExp(`\\.${selector}(?![\\w-])`), `shell.css has no .${selector} rule`);
+  }
+  // The marker track row is a row the shared rules fix (--marker-h): no hold token.
+  assert.doesNotMatch(read('app', 'renderer', 'tokens.css'), /--hold-marker-/);
 });
 
 test('the chrome\'s gate is report, and the boxes of its absent parts are held by tokens applied in shell.css only', () => {
