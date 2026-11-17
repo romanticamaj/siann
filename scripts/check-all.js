@@ -572,23 +572,16 @@ function appStep(options) {
   return fidelityGate(APP, env, npx);
 }
 
-// The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the window
+// The mockup fidelity run (docs/harness/agent-rules.md, "UI fidelity"): the window
 // against the mockup, geometry, computed styles and pixels, in en and zh-TW. The
-// report goes to app/test-results/fidelity. A mismatch on an enforced part fails
-// the step (m5-ui-alignment-chrome enforced the first gate); with no gate
-// enforced a failed run would only be noted.
-function fidelityEnforced() {
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'test', 'fidelity', 'manifest.json'), 'utf8'));
-  return Object.values(manifest.gates).includes('enforce');
-}
-
+// report goes to app/test-results/fidelity. It is a visual aid (decided by the
+// maintainer, 2026-11-17): a run that did not pass is noted, never a failed step.
 function fidelityGate(APP, env, npx) {
   const out = path.join(APP, 'test-results', 'fidelity');
   const step = npx(['playwright', 'test', '--project', 'fidelity'], { ...env, SIANN_FIDELITY: '1', SIANN_FIDELITY_OUT: out });
   const report = path.join(out, 'report.md');
   if (step.ok) return { ok: true, output: '', note: `fidelity report: ${report}` };
-  if (fidelityEnforced()) return { ...step, failedAt: `the mockup fidelity gate (${report})` };
-  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (no gate is enforced): ${report}` };
+  return { ok: true, output: '', note: `the mockup fidelity run did not pass (a report, never blocking): ${report}` };
 }
 
 // app/'s locked dependencies are installed and current: npm's own record of the
@@ -713,7 +706,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ALL_STEPS, appDepsFresh, BRIDGE_NATIVE, bridgeStep, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, fidelityEnforced,
+  ALL_STEPS, appDepsFresh, BRIDGE_NATIVE, bridgeStep, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources,
   engineTestFiles, listSources, nativeEnv, needsInstall, PACKAGE_NATIVE, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps,
   stepsForPath, stepsForPaths,
 };

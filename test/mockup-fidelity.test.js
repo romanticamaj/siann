@@ -12,7 +12,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { stepsForPaths, fidelityEnforced } = require('../scripts/check-all');
+const checkAll = require('../scripts/check-all');
+
+const { stepsForPaths } = checkAll;
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
@@ -156,7 +158,8 @@ test('an absent part keeps its space empty: a hold token names a part that is st
   }
 });
 
-// ---- m5-ui-alignment-chrome: the shared stylesheets linked, the first enforced gate
+// ---- m5-ui-alignment-chrome: the shared stylesheets linked; its gate stays report
+// (decided by the maintainer, 2026-11-17: the fidelity run is a visual aid and never blocks)
 
 test('the app links tokens.css and the chrome\'s shared stylesheets in the mockup\'s order, then shell.css', () => {
   const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
@@ -168,8 +171,9 @@ test('the app links tokens.css and the chrome\'s shared stylesheets in the mocku
   assert.deepEqual(app, [...mockup, 'shell.css']);
 });
 
-test('the chrome\'s gate is enforced, and the boxes of its absent parts are held by tokens applied in shell.css only', () => {
-  assert.equal(MANIFEST.gates['m5-ui-alignment-chrome'], 'enforce');
+test('the chrome\'s gate is report, and the boxes of its absent parts are held by tokens applied in shell.css only', () => {
+  assert.equal(MANIFEST.gates['m5-ui-alignment-chrome'], 'report');
+  assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
     'branch-chip': ['w'],
@@ -196,11 +200,12 @@ test('the fidelity run passes the manifest\'s environment as SIANN_FIDELITY_ENVI
   assert.match(main, /fidelityEnvironmentArgs\(process\.env\)/);
 });
 
-test('the rules and the runbook say the gate fails on an enforced mismatch, no longer "report-only until the first gate"', () => {
-  for (const file of [['docs', 'harness', 'agent-rules.md'], ['docs', 'harness', 'runbook.md'], ['scripts', 'check-all.js'], ['.github', 'workflows', 'ci.yml']]) {
-    assert.doesNotMatch(read(...file), /[Rr]eport-only until the first gate is enforced/, file.join('/'));
+test('the runbook, check-all and CI say the fidelity run is a report that never blocks', () => {
+  for (const file of [['docs', 'harness', 'runbook.md'], ['scripts', 'check-all.js'], ['.github', 'workflows', 'ci.yml']]) {
+    assert.doesNotMatch(read(...file), /[Rr]eport-only until the first gate is enforced|an enforced mismatch fails/, file.join('/'));
+    assert.match(read(...file), /decided by the\s+(\/\/ |# )?maintainer,\s+(# )?2026-11-17/, file.join('/'));
   }
-  assert.match(read('docs', 'harness', 'runbook.md'), /an enforced mismatch fails/);
+  assert.match(read('docs', 'harness', 'runbook.md'), /never fails check-all or CI/);
 });
 
 test('check-all runs the app step, and with it the gate, when app/ or the mockup changes', () => {
@@ -211,10 +216,13 @@ test('check-all runs the app step, and with it the gate, when app/ or the mockup
   const text = read('scripts', 'check-all.js');
   assert.match(text, /'playwright', 'test', '--project', 'fidelity'/);
   assert.match(text, /SIANN_FIDELITY: '1'/);
-  assert.equal(fidelityEnforced(), Object.values(MANIFEST.gates).includes('enforce'));
+  // A visual aid: a failed run is a note, never a failed step, and nothing reads a gate's mode to decide.
+  assert.equal(checkAll.fidelityEnforced, undefined, 'check-all has no enforce switch');
+  assert.doesNotMatch(text, /failedAt: `the mockup fidelity gate/);
+  assert.match(text, /the mockup fidelity run did not pass \(a report, never blocking\)/);
 });
 
-test('CI runs the gate on Windows and Linux and keeps the report; it is report-only until a gate is enforced', () => {
+test('CI runs the fidelity run on Windows and Linux as a report and keeps its artifact', () => {
   const ci = read('.github', 'workflows', 'ci.yml');
   const at = ci.indexOf('      - name: Mockup fidelity gate\n');
   assert.ok(at > ci.indexOf('\n  app:\n'), 'the app job has the step');
@@ -223,7 +231,8 @@ test('CI runs the gate on Windows and Linux and keeps the report; it is report-o
   assert.match(step, /SIANN_FIDELITY: '1'/);
   assert.match(step, /xvfb-run -a npx playwright test --project fidelity/);
   assert.match(ci, /uses: actions\/upload-artifact@v4\n {8}with:\n {10}name: fidelity-\$\{\{ runner\.os \}\}/);
-  assert.equal(/continue-on-error: true/.test(step), !fidelityEnforced(), 'continue-on-error goes when a gate is enforced');
+  // Decided by the maintainer, 2026-11-17: the step never fails the job.
+  assert.match(step, /continue-on-error: true/, 'the fidelity step never fails the job');
 });
 
 test('the spec runs only when asked, in its own Playwright project, at device scale factor 1', () => {
