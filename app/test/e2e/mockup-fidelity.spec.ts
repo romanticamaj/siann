@@ -714,6 +714,20 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       await page.mouse.up();
     }
 
+    // The left zone with no track selected (m5-ui-port-inspector, acceptance
+    // 7): Ctrl-click on Vox Lead's header takes it out of the track selection,
+    // and the Inspector shows its head and foot only. The mockup always shows
+    // a selected track: the app's alone.
+    const leftZone = mockupParts.parts.find((part) => part.id === 'left-zone');
+    if (leftZone) {
+      await page.getByTestId(`track-header-${TRACK_IDS[4]!}`).click({ modifiers: ['ControlOrMeta'], position: { x: 4, y: 4 } });
+      await expect(page.locator('[data-part="inspector-track"]')).toHaveCount(0);
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'left-zone.empty.app.png'), encodePng(crop(decodePng(await page.screenshot()), leftZone)));
+      notes.push(`The left zone with no track selected is ${locale}/left-zone.empty.app.png, the app's alone: the mockup always shows a selected track.`);
+    }
+
     const entry: LocaleReport = { locale, comparison, regions, extra, notes };
     report.locales.push(entry);
     writeReport();

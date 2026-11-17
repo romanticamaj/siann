@@ -299,7 +299,11 @@
      only; the feature that lands the part deletes its hold. The branch chip
      (m5b-ui-audition), the Record button (m5b-ui-recording), the signature
      display (m5b-ui-signature), DSP load (m5b-ui-meter), the Channel zone
-     button (m5b-ui-editor-channel). */
+     button (m5b-ui-editor-channel). The Inspector's three open sections
+     (m5-ui-port-inspector): Routing (m5b-ui-sends-buses), Inserts
+     (m5b-ui-inserts-master) and Agent changes (m5b-ui-ghosts), their whole
+     box with its hairline; Agent changes in en (its text wraps to one line
+     less in zh-TW, 78.891 px). */
   --hold-branch-chip-w: calc(86.719px * var(--scale));
   --hold-transport-record-w: calc(32px * var(--scale));
   --hold-transport-record-h: calc(28px * var(--scale));
@@ -319,6 +323,9 @@
   --hold-composer-h: calc(54px * var(--scale));
   --hold-tab-media-w: calc(71.078px * var(--scale));
   --hold-tab-meter-w: calc(69.031px * var(--scale));
+  --hold-inspector-routing-h: calc(91px * var(--scale));
+  --hold-inspector-inserts-h: calc(117px * var(--scale));
+  --hold-inspector-agent-changes-h: calc(94.836px * var(--scale));
 
   /* The locator band in the ruler's upper half (m5-ui-loop-click; UI
      redesign 3.2), the mockup's draw() values: the band starts 2 px below

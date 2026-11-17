@@ -55,7 +55,6 @@ export const zhHans: Catalog = {
   'topbar.plans': '计划',
   'topbar.pending': '待审核的计划：{count}',
   'inspector.label': '检查器',
-  'inspector.noTrack': '未选择音轨',
   'status.label': '状态',
 
   'timeline.mediaPool': '媒体库',
@@ -105,7 +104,8 @@ export const zhHans: Catalog = {
   'strip.soloLabel': '{track} 独奏',
   'strip.master': '主输出',
   'inspector.volume': '音量',
-  'inspector.colour': '音轨颜色',
+  'inspector.mono': '单声道',
+  'inspector.stereo': '立体声',
 
   'transport.label': '走带控制',
   'transport.toStart': '移至工程起点',

@@ -4,6 +4,6 @@
   "tokens": [],
   "fonts": [],
   "literals": {
-    "app/renderer/shell.css": { "colours": 4, "sizes": 52 }
+    "app/renderer/shell.css": { "colours": 4, "sizes": 42 }
   }
 }

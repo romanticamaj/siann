@@ -63,7 +63,6 @@ export const en = {
   'topbar.plans': 'Plans',
   'topbar.pending': 'Plans waiting for review: {count}',
   'inspector.label': 'Inspector',
-  'inspector.noTrack': 'No track selected',
   'status.label': 'Status',
 
   // Timeline.
@@ -123,7 +122,8 @@ export const en = {
   'strip.soloLabel': '{track} solo',
   'strip.master': 'Master',
   'inspector.volume': 'Volume',
-  'inspector.colour': 'Track colour',
+  'inspector.mono': 'Mono',
+  'inspector.stereo': 'Stereo',
 
   // The transport bar (m5-ui-transport; UI redesign spec 3.1).
   'transport.label': 'Transport',

@@ -192,16 +192,16 @@ test('the port is split by component after the chrome, in parallel where the com
     assert.ok(feature.specRefs.includes('UI redesign: 10.9') && feature.specRefs.some((ref) => /^UI redesign: 10\.10 \(P1-1[1-6]\)$/.test(ref)), `${id}: specRefs`);
   }
   // Wave 10: the first component of each zone, side by side; each depends on the chrome only among the ports.
-  // The MixConsole is the exception: its M and S take .msr from project-zone.css, which the canvas links.
-  const first = ['m5-ui-port-arrange-canvas', 'm5-ui-port-plans', 'm5-ui-port-inspector'];
+  // The MixConsole and the Inspector are the exceptions: their M and S take .msr from project-zone.css, which the canvas links.
+  const first = ['m5-ui-port-arrange-canvas', 'm5-ui-port-plans'];
   for (const id of first) {
     assert.equal(wave(id), wave(CHROME) + 1, id);
     assert.ok(FEATURES.get(id).dependsOn.includes(CHROME), `${id} depends on the chrome`);
     assert.deepEqual(FEATURES.get(id).dependsOn.filter((dep) => PORTS.includes(dep)), [], `${id} waits for no other port`);
   }
   // The track list and the toolbar share the project zone's stylesheet, row geometry and clip title with the
-  // canvas; the MixConsole shares its stylesheet (.msr).
-  for (const id of ['m5-ui-port-track-list', 'm5-ui-port-toolbar', 'm5-ui-port-mixer-strip']) {
+  // canvas; the MixConsole and the Inspector take M and S (.msr) from it.
+  for (const id of ['m5-ui-port-track-list', 'm5-ui-port-toolbar', 'm5-ui-port-mixer-strip', 'm5-ui-port-inspector']) {
     assert.equal(wave(id), wave('m5-ui-port-arrange-canvas') + 1, id);
     assert.deepEqual(FEATURES.get(id).dependsOn.filter((dep) => PORTS.includes(dep)), ['m5-ui-port-arrange-canvas'], id);
   }
@@ -216,6 +216,7 @@ test('the port is split by component after the chrome, in parallel where the com
   assert.match(FEATURES.get('m5-ui-port-mixer-strip').acceptance.join('\n'), /M and S take \.msr, whose rules are in ui\/project-zone\.css, linked by m5-ui-port-arrange-canvas, which lands first/);
   assert.match(FEATURES.get('m5-ui-port-plans').acceptance.join('\n'), /as step\(\) returns it/);
   assert.match(FEATURES.get('m5-ui-port-track-list').acceptance.join('\n'), /as th\(\) returns it/);
+  assert.match(FEATURES.get('m5-ui-port-inspector').acceptance.join('\n'), /ui\/project-zone\.css is already linked by m5-ui-port-arrange-canvas, and M and S take \.msr from it/);
   const toolbar = FEATURES.get('m5-ui-port-toolbar').acceptance.join('\n');
   assert.match(toolbar, /as tool\(\) returns it/);
   assert.match(toolbar, /opened with Ctrl\+P/);
@@ -730,4 +731,22 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
   assert.match(block(1300), /\.hold-branch-chip, \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.hold-display-signature/);
+});
+
+// ---- m5-ui-port-inspector (UI redesign 10.10, P1-14): the left zone ported from the mockup's template
+
+test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate is report, and its holds name pending parts', () => {
+  const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  const app = linked(read('app', 'renderer', 'index.html'));
+  assert.ok(app.includes('ui/left-zone.css'), 'index.html links ui/left-zone.css');
+  assert.ok(app.indexOf('ui/top-bar.css') < app.indexOf('ui/left-zone.css') && app.indexOf('ui/left-zone.css') < app.indexOf('ui/project-zone.css'), 'in the mockup\'s order');
+  assert.equal(MANIFEST.gates['m5-ui-port-inspector'], 'report');
+  // The three open sections are held by tokens until their features land; each names a pending part.
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const holds = [...tokens.matchAll(/--hold-(inspector-[a-z0-9-]+)-h\s*:/g)].map((m) => m[1]).sort();
+  assert.deepEqual(holds, ['inspector-agent-changes', 'inspector-inserts', 'inspector-routing']);
+  for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
+  // The temporary pre-port rules #136 kept for the Inspector are gone.
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(shell, /\.inspector \.ms\b|\.inspector \.value-readout|\.inspector-row|\.value-control|\.fader-cap/);
 });
