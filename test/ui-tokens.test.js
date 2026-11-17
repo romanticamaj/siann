@@ -26,7 +26,7 @@
 //     copy of tokens.css.
 //
 // What does not hold yet is written down in app/test/fidelity/debt.json, the
-// debt m5-ui-mockup-alignment pays: the test fails on anything not in it, and
+// debt m5-ui-port-cleanup pays: the test fails on anything not in it, and
 // on an entry that no longer applies, so the ledger only shrinks.
 
 const test = require('node:test');
