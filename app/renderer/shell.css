@@ -19,8 +19,10 @@
 
 /* The zones not ported yet look as they did (m5-ui-alignment-chrome): the
    text styles they inherited from the old page rule, pinned. Each region's
-   alignment feature deletes its part of this rule. */
-.zone, .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
+   alignment feature deletes its part of this rule. The lower zone is ported
+   (m5-ui-port-mixer-strip): it takes base.css's body text, as the mockup
+   does; :where() keeps the rule's specificity that of .zone. */
+.zone:where(:not(.zone-lower)), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
