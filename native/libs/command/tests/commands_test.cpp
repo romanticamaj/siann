@@ -511,6 +511,32 @@ TEST_CASE("track.set_notes passes the declared-effects check inside a transactio
     CHECK(applied.result.track("trk_1")->gain.milliDb == -3'000);
 }
 
+TEST_CASE("track.set_notes keeps tab, LF and CR and refuses other controls and bidi characters", "[command][notes]") {
+    const Document doc = base();
+    CHECK(*prepare(doc, setNotes("trk_1", siann::json::Value(std::string("a\tb\nc\rd")))).result.track("trk_1")->notes ==
+          "a\tb\nc\rd");
+    for (const std::string& bad : {std::string("bell \x07"), std::string("esc \x1B[2J"), std::string("del \x7F"),
+                                   std::string("c1 \xC2\x85"), std::string("rlo \xE2\x80\xAE"),
+                                   std::string("fsi \xE2\x81\xA8"), std::string("rlm \xE2\x80\x8F")}) {
+        INFO(bad);
+        CHECK(notesErrorCode(doc, setNotes("trk_1", siann::json::Value(bad))) == "invalid_notes");
+    }
+}
+
+TEST_CASE("A bad track.set_notes step in a transaction names the step and applies nothing", "[command][notes]") {
+    const Document doc = base();
+    try {
+        (void)prepareTransaction(doc, {cmd(R"({"op":"track.set_gain","trackId":"trk_1","gainMilliDb":-3000})"),
+                                       setNotes("trk_1", siann::json::Value(std::string("rlo \xE2\x80\xAE")))});
+        FAIL("the transaction was accepted");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "invalid_notes");
+        CHECK(error.step() == 1);
+    }
+    CHECK(doc.track("trk_1")->gain.milliDb == 0);
+    CHECK_FALSE(doc.track("trk_1")->notes.has_value());
+}
+
 // m5b-engine-record: track.set_input {trackId, input: {port, channels} | null}.
 TEST_CASE("track.set_input sets and clears the input and declares only the track", "[command][input]") {
     const Document doc = base();

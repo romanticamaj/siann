@@ -124,6 +124,25 @@ TEST_CASE("Bad notes answer invalid_notes, malformed params invalid_params, and 
     CHECK(f.head().envelope.id != head);
 }
 
+TEST_CASE("A plan step with a bidi character in its notes answers invalid_notes with the step index",
+          "[protocol][notes][plans]") {
+    Fixture f;
+    const ConnectionId c = f.authed();
+    f.commit(c, Array{trackAdd("trk_1")});
+    const std::string head = f.head().envelope.id;
+    const Value refused = f.call(
+        c, "plan.submit",
+        Value(Object{{"steps", Value(Array{setNotes("trk_1", Value("fine")),
+                                           setNotes("trk_1", Value(std::string("rlo \xE2\x80\xAE txt")))})}}));
+    CHECK(errorCode(refused) == "invalid_notes");
+    CHECK(at(at(refused, "error"), "step").asNumber() == 1);
+    // A control character other than tab, LF and CR through command.execute.
+    const Value bell = f.call(c, "command.execute",
+                              Value(Object{{"commands", Value(Array{setNotes("trk_1", Value(std::string("x\x07")))})}}));
+    CHECK(errorCode(bell) == "invalid_notes");
+    CHECK(f.head().envelope.id == head);
+}
+
 TEST_CASE("engine.capabilities and command.list list track.set_notes", "[protocol][notes]") {
     Fixture f;
     const ConnectionId c = f.authed();

@@ -1426,3 +1426,26 @@ TEST_CASE("validate reports invalid_notes for a track built in code with bad not
     CHECK(siann::model::isValidTrackNotes(std::string(16'384, 'a')));
     CHECK_FALSE(siann::model::isValidTrackNotes(""));
 }
+
+// Notes are shown as text (the Notepad, a plan's preview): tab, LF and CR are
+// allowed, another control character or a bidi formatting character is not
+// (textFault with "\t\n\r", the rule of a plan's intent).
+TEST_CASE("Track notes refuse control and bidi formatting characters but keep tab, LF and CR", "[model][notes]") {
+    const Document doc = addTrack(Document::create("Song", 48'000), track("trk_1"));
+    Track t = *doc.track("trk_1");
+    t.notes = "line one\r\nline two\tend";
+    CHECK(codes(doc.withTrack(t)).empty());
+    CHECK(siann::model::isValidTrackNotes("a\tb\nc\rd"));
+    for (const std::string& bad : {std::string("bell \x07"), std::string("nul ") + '\0' + "x", std::string("esc \x1B[2J"),
+                                   std::string("del \x7F"), std::string("c1 \xC2\x85"), std::string("rlo \xE2\x80\xAE"),
+                                   std::string("lri \xE2\x81\xA6"), std::string("line separator \xE2\x80\xA8")}) {
+        INFO(bad);
+        CHECK_FALSE(siann::model::isValidTrackNotes(bad));
+        t.notes = bad;
+        const auto issues = doc.withTrack(t).validate();
+        REQUIRE(issues.size() == 1);
+        CHECK(issues[0].code == "invalid_notes");
+        // Stored in a document, such notes are refused on open.
+        CHECK(errorCode(voxWithNotes(Value(bad))) == "invalid_document");
+    }
+}

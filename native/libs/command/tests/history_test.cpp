@@ -293,6 +293,20 @@ TEST_CASE("track.set_notes is one revision; undo restores the previous notes and
                     CommandError);
 }
 
+TEST_CASE("Undoing a track.remove brings the track's notes back", "[history][notes]") {
+    History history = fresh();
+    history.commit({addTrack("trk_1")}, "a", "t");
+    history.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_1","notes":"keep\nme"})")}, "a", "t");
+    const auto noted = history.head().envelope.documentHash;
+    history.commit({removeTrack("trk_1")}, "a", "t");
+    CHECK(history.head().document.track("trk_1") == nullptr);
+    history.undo("a", "t");
+    REQUIRE(history.head().document.track("trk_1") != nullptr);
+    REQUIRE(history.head().document.track("trk_1")->notes.has_value());
+    CHECK(*history.head().document.track("trk_1")->notes == "keep\nme");
+    CHECK(history.head().envelope.documentHash == noted);
+}
+
 TEST_CASE("A new commit after undo clears redo", "[history]") {
     History history = fresh();
     history.commit({addTrack("trk_1")}, "a", "t");

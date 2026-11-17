@@ -216,6 +216,32 @@ TEST_CASE("An edit that only changes fader parameters does not recompile", "[pla
     CHECK(p.engine.underruns() == 0);
 }
 
+// m5b-engine-track-notes: notes are text, not sound, so writing or clearing them
+// during playback neither compiles a graph nor changes what is heard.
+TEST_CASE("A notes edit during playback does not recompile and sets no parameter", "[playback][live][notes]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(10);
+    const std::size_t compiles = p.engine.compileCount();
+    const std::uint64_t epoch = p.engine.driver().liveEpoch();
+
+    f.session.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_a","notes":"double the chorus\nkeep breaths"})")},
+                     "test", "t");
+    p.engine.update(f.doc());
+    p.pump(4);
+    f.session.commit({cmd(R"({"op":"track.set_notes","trackId":"trk_a","notes":""})")}, "test", "t");
+    p.engine.update(f.doc());
+    p.pump(4);
+
+    CHECK(p.engine.compileCount() == compiles);
+    CHECK(p.engine.driver().liveEpoch() == epoch);
+    CHECK(p.inFlightBefore == std::vector<bool>(p.inFlightBefore.size(), false));
+    // The output is the offline render of the document from the first block on.
+    const auto reference = offline(f.doc(), f.bundle(), framesOf(p));
+    CHECK(matches(p, reference, 0, p.blockCount()));
+    CHECK(p.engine.underruns() == 0);
+}
+
 // m5b-engine-clip-fades: the fades are part of the stream key, so a fade-only
 // edit replaces the track's stream and the heard sound follows the new fade.
 TEST_CASE("A fade-only edit replaces the track's stream and the output follows the fade", "[playback][live][fades]") {
