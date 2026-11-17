@@ -110,7 +110,7 @@ test.beforeEach(async () => {
     },
   });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText('2');
   watcher = await engineClient(page, { events: true });
 });
@@ -290,7 +290,7 @@ test('Audition from a validated plan: approved for audition, a banner from every
   expect((await watcher.call('session.inspect')).heard).toBe(branch);
   await expect(page.getByTestId('hear-proposal')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.getByTestId('status-heard')).toHaveText(t('hearing.proposal'));
+  await expect(page.getByTestId('status-heard')).toHaveText(t('status.hearProposal'));
   await expect(page.getByTestId('track-count')).toHaveText('2');
 
   // The banner: with the lower zone on the MixConsole, and with it collapsed.
@@ -307,7 +307,7 @@ test('Audition from a validated plan: approved for audition, a banner from every
 
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('status-heard')).toHaveText(t('hearing.main'));
+  await expect(page.getByTestId('status-heard')).toHaveText(t('status.hearMain'));
   await expect(banner).toHaveCount(0);
 
   // An agent's audition flips the switch without a UI action.

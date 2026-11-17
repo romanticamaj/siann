@@ -177,8 +177,8 @@ function prepareBundle(scratch: string): string {
     if (track.pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan: track.pan });
     if (track.mute) exec({ op: 'track.set_mute', trackId: id, mute: true });
   });
-  // The mockup's locators: bars 9.1 to 13.1 (cycle is turned on once the app runs; UI redesign 10.7).
-  exec({ op: 'session.set_locators', left: String(8 * BAR), right: String(12 * BAR) });
+  // The mockup's locators (bars 9.1 to 13.1) are set once the app runs: they are
+  // the one undoable command of UI redesign 10.7, so undo is lit and redo dim.
   CLIPS.forEach(([track, bar, bars], index) => {
     exec({
       op: 'clip.place',
@@ -348,6 +348,53 @@ async function openMockup(root: string, query: string): Promise<{ page: Page; cl
   return { page, close: () => browser.close() };
 }
 
+// The mockup in a window of the app's own Electron (the gate's comparison):
+// the same Chromium, the same font configuration and the same text rendering
+// as the app, so a box differs only when the app's markup or styles do. On
+// Linux, Playwright's Chromium and Electron's lay text out with different
+// glyph advances (hinting and subpixel positioning come from different
+// defaults), which moved every text-sized box by a few pixels while the fonts
+// were the same bundled files. The window has a session of its own, which
+// lets nothing leave the machine and shares no state with the app's.
+async function openMockupInApp(electronApp: ElectronApplication, root: string, query: string): Promise<{ page: Page; close: () => Promise<void> }> {
+  const url = `${pathToFileURL(path.join(root, MANIFEST.mockup)).href}${query}`;
+  const [page] = await Promise.all([
+    electronApp.waitForEvent('window'),
+    electronApp.evaluate(({ BrowserWindow, session }, { url, width, height }) => {
+      const partition = 'siann-fidelity-mockup';
+      session.fromPartition(partition).webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));
+      const win = new BrowserWindow({
+        width,
+        height,
+        useContentSize: true,
+        title: 'SIANN mockup',
+        webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+      });
+      (globalThis as unknown as { __siannMockupWindow?: number }).__siannMockupWindow = win.id;
+      void win.loadURL(url);
+    }, { url, ...VIEW }),
+  ]);
+  await electronApp.evaluate(({ BrowserWindow }, { width, height }) => {
+    const id = (globalThis as unknown as { __siannMockupWindow?: number }).__siannMockupWindow!;
+    BrowserWindow.fromId(id)!.setContentSize(width, height);
+  }, VIEW);
+  await page.setViewportSize(VIEW);
+  await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight, window.devicePixelRatio])).toEqual([VIEW.width, VIEW.height, 1]);
+  await page.waitForSelector('body[data-ready="1"]');
+  await page.evaluate(() => document.fonts.ready);
+  await painted(page);
+  return {
+    page,
+    close: async () => {
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        const id = (globalThis as unknown as { __siannMockupWindow?: number }).__siannMockupWindow;
+        if (id !== undefined) BrowserWindow.fromId(id)?.destroy();
+      });
+      await page.waitForEvent('close').catch(() => undefined);
+    },
+  };
+}
+
 async function painted(page: Page): Promise<void> {
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
@@ -355,7 +402,9 @@ async function painted(page: Page): Promise<void> {
 let app: ElectronApplication | undefined;
 let scratch = '';
 
-async function openApp(languages: readonly string[], notes: string[]): Promise<Page> {
+// `beforeSetup` runs once the app's window is up and sized, before the spec
+// touches it (the gate measures the mockup there, in the same Electron).
+async function openApp(languages: readonly string[], notes: string[], beforeSetup?: (electronApp: ElectronApplication) => Promise<void>): Promise<Page> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fidelity-run-'));
   const sessionDir = prepareBundle(scratch);
@@ -372,12 +421,18 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
       SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      // The mockup's device and build in the status bar (UI redesign 10.2).
+      SIANN_FIDELITY_ENVIRONMENT: JSON.stringify(MANIFEST.environment),
     },
   });
   const page = await app.firstWindow();
   await app.evaluate(({ BrowserWindow }, { width, height }) => BrowserWindow.getAllWindows()[0]!.setContentSize(width, height), VIEW);
   await page.setViewportSize(VIEW);
   await expect.poll(() => page.evaluate(() => [window.innerWidth, window.innerHeight, window.devicePixelRatio])).toEqual([VIEW.width, VIEW.height, 1]);
+  if (beforeSetup) {
+    await beforeSetup(app);
+    await page.bringToFront();
+  }
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText(String(CLIPS.length));
@@ -420,6 +475,11 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
   // The mockup's project cursor: 10.3.1, which is 19 s at 120 BPM.
   const engine = await engineClient(page, { events: false });
   // The mockup's cycle: on (the locators came with the bundle).
+  // One undoable command that draws only what the mockup draws: the locators.
+  await engine.call('command.execute', { commands: [{ op: 'session.set_locators', left: String(8 * BAR), right: String(12 * BAR) }] });
+  await expect(page.getByTestId('display-locators')).toBeVisible();
+  await expect(page.getByTestId('undo')).not.toHaveClass(/\bdim\b/);
+  await expect(page.getByTestId('redo')).toHaveClass(/\bdim\b/);
   await engine.call('transport.set_cycle', { enabled: true });
   await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
   await engine.call('transport.locate', { frames: String(19 * RATE) });
@@ -430,6 +490,11 @@ async function openApp(languages: readonly string[], notes: string[]): Promise<P
     for (const toast of toasts?.getSnapshot() ?? []) toasts!.dismiss(toast.id);
   });
   await expect(page.getByTestId('toast')).toHaveCount(0);
+  // Live values inside enforced boxes, masked in pixels only: the widths of the
+  // mockup's "0 xruns" and "r39" need one xrun digit and two revision digits.
+  await expect(page.getByTestId('xruns')).toHaveText('0');
+  await expect(page.getByTestId('revision')).toHaveText(/^r\d\d$/);
+  await expect(page.getByTestId('device')).toHaveText('ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms');
   // The pointer leaves the window's content, so nothing is drawn hovered.
   await page.mouse.move(VIEW.width - 2, 1);
   // Every clip in view has its peaks.
@@ -496,16 +561,19 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
     fs.mkdirSync(dir, { recursive: true });
     const notes: string[] = [];
 
-    const mockup = await openMockup(REPO, setting.query);
-    let mockupParts: Collected;
-    let mockupShot: Buffer;
-    try {
-      mockupParts = await collectMockup(mockup.page);
-      mockupShot = await mockup.page.screenshot();
-    } finally {
-      await mockup.close();
-    }
-    const page = await openApp(setting.languages, notes);
+    const measured: { parts?: Collected; shot?: Buffer } = {};
+    const page = await openApp(setting.languages, notes, async (electronApp) => {
+      const mockup = await openMockupInApp(electronApp, REPO, setting.query);
+      try {
+        measured.parts = await collectMockup(mockup.page);
+        measured.shot = await mockup.page.screenshot();
+      } finally {
+        await mockup.close();
+      }
+    });
+    const mockupParts = measured.parts;
+    const mockupShot = measured.shot;
+    if (!mockupParts || !mockupShot) throw new Error('the mockup was not measured');
     const appParts = await collectApp(page);
     const appShot = await page.screenshot();
     fs.writeFileSync(path.join(dir, 'mockup.png'), mockupShot);

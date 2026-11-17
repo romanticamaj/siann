@@ -41,7 +41,7 @@ The UI is ported from the mockup, component by component, and compared with it (
 - After changing `app/renderer/tokens.css`, run `node scripts/gen-ui-tokens.js` (the mirror for canvas code). Changing the tokens, `app/renderer/ui`, the mockup or the manifest's rules needs the maintainer.
 - The baseline of 2026-11-14 (before any alignment work) is in `D:\siann-ui-proposal\fidelity\baseline\` on this PC.
 - Retaking the mockup's PNGs (only when the maintainer has asked for a change of the mockup): a gate run writes the mockup's own screenshot per locale, `<out>/en/mockup.png` and `<out>/zh-TW/mockup.png`, at 1440x900 and scale 1 with the bundled fonts; those two files are `mockup.png` and `mockup-zh-TW.png` (checked pixel for pixel against the committed ones on 2026-11-15). Prove what moved by measuring the mockup before and after: every part's box and styles, and the pixels that differ. The repository holds no `@2x` copies; the ones of 2026-11-15 are in `D:\siann-ui-proposal\fidelity\2026-11-15-mockup\` on this PC, with the measurements before and after and the measuring scripts.
-- The device and the build in the status bar are the mockup's in a gate run only: the spec hands the manifest's `environment` to the shell (`SIANN_FIDELITY_ENVIRONMENT`, read under `SIANN_SHELL_TEST=1` alone; lands with `m5-ui-alignment-chrome`).
+- The device and the build in the status bar are the mockup's in a gate run only: the spec hands the manifest's `environment` to the shell (`SIANN_FIDELITY_ENVIRONMENT`, read under `SIANN_SHELL_TEST=1` alone, since `m5-ui-alignment-chrome`).
 
 ### Local caches
 

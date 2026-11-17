@@ -625,3 +625,74 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
     }
   }
 });
+
+// The top bar in small windows (UI redesign spec 2.4 and 3.0). From 1440 down
+// to 1301 px the transport is centred and the boxes of the pending branch
+// chip, DSP load and Record button keep their space; from 1300 px down the
+// transport follows the left group and those three boxes go; from 1100 px
+// down the brand and the locator, tempo and signature displays go too, and
+// the session name shortens instead of going. The bar never overflows.
+test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
+  const sessionDir = seedBundle(scratch, TRACKS);
+  await launch(sessionDir);
+  const HOLDS = ['.hold-branch-chip', '.hold-dsp-load', '.hold-transport-record'];
+  const measure = () =>
+    page.evaluate((holds) => {
+      const bar = document.querySelector<HTMLElement>('[data-testid=top-bar]')!;
+      const shown = (selector: string) => {
+        const el = document.querySelector<HTMLElement>(selector);
+        return !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
+      };
+      const r = (selector: string) => document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+      const transport = r('[data-testid=transport]');
+      const left = r('.topbar .tb-left');
+      return {
+        // Centred in the grid's content box: the mockup's .topbar pads its right
+        // side only (ui/layout.css), so the content box's centre is half that
+        // padding left of the bar's.
+        centre: (() => {
+          const box = bar.getBoundingClientRect();
+          const style = getComputedStyle(bar);
+          const contentLeft = box.left + parseFloat(style.paddingLeft);
+          const contentRight = box.right - parseFloat(style.paddingRight);
+          return Math.abs((transport.left + transport.right) / 2 - (contentLeft + contentRight) / 2);
+        })(),
+        gapAfterLeft: transport.left - left.right,
+        holds: holds.map(shown),
+        brand: shown('[data-part=brand]'),
+        signature: shown('.hold-display-signature'),
+        tempo: shown('[data-part=display-tempo]'),
+        time: shown('[data-part=display-time]'),
+        position: shown('[data-part=display-position]'),
+        session: shown('[data-testid=session-name]'),
+        overflow: bar.scrollWidth - bar.clientWidth,
+      };
+    }, HOLDS);
+
+  await resize({ width: 1440, height: 900 });
+  let m = await measure();
+  expect(m.centre, '1440: centred').toBeLessThanOrEqual(1);
+  expect(m.holds, '1440: holds keep their space').toEqual([true, true, true]);
+  expect([m.brand, m.signature, m.tempo], '1440').toEqual([true, true, true]);
+
+  await resize({ width: 1301, height: 800 });
+  m = await measure();
+  expect(m.holds, '1301: holds keep their space').toEqual([true, true, true]);
+  expect(m.centre, '1301: centred').toBeLessThanOrEqual(1);
+
+  await resize({ width: 1280, height: 800 });
+  m = await measure();
+  expect(m.holds, '1280: holds gone').toEqual([false, false, false]);
+  expect(m.brand, '1280: brand stays').toBe(true);
+  expect([m.signature, m.tempo], '1280: displays stay').toEqual([true, true]);
+  // The transport follows the left group (the grid's gap only), not the centre.
+  expect(m.gapAfterLeft, '1280: transport follows the left group').toBeLessThanOrEqual(24);
+  expect(m.overflow, '1280').toBeLessThanOrEqual(0);
+
+  await resize({ width: 1080, height: 700 });
+  m = await measure();
+  expect(m.holds, '1080').toEqual([false, false, false]);
+  expect([m.brand, m.signature, m.tempo], '1080: brand and displays gone').toEqual([false, false, false]);
+  expect([m.position, m.time, m.session], '1080: position, time and session name stay').toEqual([true, true, true]);
+  expect(m.overflow, '1080').toBeLessThanOrEqual(0);
+});

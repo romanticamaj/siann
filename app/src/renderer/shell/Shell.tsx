@@ -1,13 +1,15 @@
 // The window's zones (UI redesign spec 2.1-2.4; Cubase's project window): a
 // top bar, the left zone, the project zone with the lower zone under it, the
-// right zone, and the status bar. react-resizable-panels draws the boundaries
-// and turns pointer drags into sizes; the reducer of layout.ts owns the
-// layout. A drag that ends reports the zone's size to the reducer (below the
-// minimum: collapsed), and every render brings the panels to the effective
-// layout. A focused boundary's keys (arrows 8 px, Shift+arrows 32 px, Home
-// and End the minimum and maximum, Enter the default) and double-click go to
-// the reducer too; the library's own keyboard steps, double-click and
-// persistence are not used, so the layout lives under one key
+// right zone, and the status bar, on the mockup's .app grid (ui/layout.css;
+// m5-ui-alignment-chrome): the regions are the grid's children, and the zone
+// sizes reach it as custom properties from the layout store (--left-zone-w,
+// --right-zone-w, --lower-zone-h; 0 for a hidden zone or the drawer). The
+// reducer of layout.ts owns the layout. A boundary is an absolutely placed
+// line over its zone's edge (it adds no grid item): a pointer drag reports
+// the zone's size to the reducer as it moves (past the minimum by
+// COLLAPSE_THRESHOLD: collapsed), and its keys (arrows 8 px, Shift+arrows
+// 32 px, Home and End the minimum and maximum, Enter the default) and
+// double-click go to the reducer too, so the layout lives under one key
 // (siann.layout.v1) and nowhere else. A boundary is a role="separator" whose
 // aria values are its zone's size, minimum and maximum in px.
 //
@@ -42,16 +44,15 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent,
   type ReactNode,
-  type RefObject,
 } from 'react';
-import { Group, Panel, Separator, usePanelRef, type LayoutChangedMeta, type PanelImperativeHandle } from 'react-resizable-panels';
 
 import { useT } from '../i18n/t';
 import type { CommandId, CommandRegistry, ZoneScope } from '../keys/commands';
@@ -65,13 +66,10 @@ import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { bindLoopClickCommands, type LoopClickController } from '../model/loop-click';
 import { bindTransportCommands, type TransportController } from '../model/transport';
+import type { UndoHistory } from '../model/undo-history';
 import {
   effectiveLayout,
-  EVENT_MIN_HEIGHT,
   limits,
-  PROJECT_CHROME,
-  projectMinWidth,
-  ZONES,
   type EffectiveLayout,
   type ShellAction,
   type Viewport,
@@ -126,6 +124,8 @@ function zoneRing(section: HTMLElement | null | undefined, zone: ZoneScope): HTM
   return items.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
 }
 
+// Where there is no window (a static render): the mockup's window.
+const SERVER_VIEWPORT: Viewport = { width: 1440, height: 900 };
 let viewportCache: Viewport = { width: 0, height: 0 };
 function readViewport(): Viewport {
   const width = window.innerWidth;
@@ -139,7 +139,7 @@ function subscribeViewport(listener: () => void): () => void {
 }
 
 export function useViewport(): Viewport {
-  return useSyncExternalStore(subscribeViewport, readViewport);
+  return useSyncExternalStore(subscribeViewport, readViewport, () => SERVER_VIEWPORT);
 }
 
 export interface ShellProps {
@@ -162,6 +162,8 @@ export interface ShellProps {
   readonly transport: TransportController;
   // Locators, cycle and metronome (m5-ui-loop-click).
   readonly loopClick: LoopClickController;
+  // What undo and redo can do now (the top bar).
+  readonly history: Pick<UndoHistory, 'getSnapshot' | 'subscribe'>;
   readonly left: ReactNode;
   readonly project: ReactNode;
   readonly lower: ReactNode;
@@ -170,6 +172,9 @@ export interface ShellProps {
 
 interface ZoneFrameProps {
   readonly zone: ZoneScope;
+  // The element and the mockup's class (aside.leftzone, aside.plans), or a section.
+  readonly as?: 'aside' | 'section';
+  readonly region?: string;
   readonly visible: boolean;
   readonly focused: boolean;
   readonly offline: boolean;
@@ -180,13 +185,15 @@ interface ZoneFrameProps {
   readonly children: ReactNode;
 }
 
-function ZoneFrame({ zone, visible, focused, offline, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
+function ZoneFrame({ zone, as = 'section', region, visible, focused, offline, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
   const t = useT();
+  const Tag = as;
   return (
-    <section
+    <Tag
       ref={frameRef}
-      className={`zone zone-${zone}`}
-      data-testid={`zone-${zone}`} data-region={`${zone}-zone`}
+      className={`${region ? `${region} ` : ''}zone zone-${zone}`}
+      data-testid={`zone-${zone}`}
+      data-region={`${zone}-zone`}
       data-zone={zone}
       data-visible={String(visible)}
       data-focused={String(focused && visible)}
@@ -203,21 +210,24 @@ function ZoneFrame({ zone, visible, focused, offline, drawer, tabs, onFocus, fra
       <div className="zone-body" data-testid={`zone-${zone}-body`}>
         {children}
       </div>
-    </section>
+    </Tag>
   );
 }
 
 interface SeparatorValues {
+  // The zone's size as shown (0 while hidden), its minimum and maximum, in px.
   readonly now: number;
   readonly min: number;
   readonly max: number;
 }
 
-// A boundary: the library's separator (pointer drags) with SIANN's keys: the
-// arrows step 8 px (Shift: 32 px), Home and End go to the minimum and the
-// maximum, Enter and double-click restore the default. Its aria values are
-// the zone's size and range in px; the library writes its own (percentages
-// of the panel before it) on every layout, so they are put back.
+// A boundary: a 1 px line with a 7 px hit area, positioned over the edge of
+// its zone's grid cell (shell.css), so it adds no grid item. A pointer drag
+// sizes the zone live: past the minimum by COLLAPSE_THRESHOLD it collapses,
+// and dragged back out it shows again at its minimum or more. The arrows
+// step 8 px (Shift: 32 px), Home and End go to the minimum and the maximum,
+// Enter and double-click restore the default. Its aria values are the zone's
+// size and range in px.
 function ZoneSeparator({
   zone,
   disabled,
@@ -230,71 +240,76 @@ function ZoneSeparator({
   dispatch: (action: (viewport: Viewport) => ShellAction) => void;
 }) {
   const t = useT();
-  const element = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = element.current;
-    if (!el) return undefined;
+  const drag = useRef<{ readonly pointer: number; readonly at: number; readonly size: number } | null>(null);
+  const [active, setActive] = useState(false);
+  const axis = (event: { clientX: number; clientY: number }) => (zone === 'lower' ? event.clientY : event.clientX);
+  // The left zone grows to the right, the right zone to the left, the lower zone upwards.
+  const sign = zone === 'left' ? 1 : -1;
+  const onKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
     const grow = zone === 'left' ? 'ArrowRight' : zone === 'right' ? 'ArrowLeft' : 'ArrowUp';
     const shrink = zone === 'left' ? 'ArrowLeft' : zone === 'right' ? 'ArrowRight' : 'ArrowDown';
-    // Capture, so the library's own 5 % steps, Home, End and Enter never run.
-    const onKey = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.altKey || event.metaKey) return;
-      let make: ((viewport: Viewport) => ShellAction) | null = null;
-      if (event.key === grow || event.key === shrink) {
-        const direction = event.key === grow ? 1 : -1;
-        const large = event.shiftKey;
-        make = (viewport) => ({ type: 'step', zone, direction, large, viewport });
-      } else if (event.shiftKey) {
-        return;
-      } else if (event.key === 'Home' || event.key === 'End') {
-        const edge = event.key === 'Home' ? 'min' : 'max';
-        make = (viewport) => ({ type: 'edge', zone, edge, viewport });
-      } else if (event.key === 'Enter') {
-        make = (viewport) => ({ type: 'reset', zone, viewport });
-      }
-      if (!make) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dispatch(make);
-    };
-    el.addEventListener('keydown', onKey, true);
-    return () => el.removeEventListener('keydown', onKey, true);
-  }, [zone, dispatch]);
-  const latest = useRef(values);
-  latest.current = values;
-  const apply = useCallback(() => {
-    const el = element.current;
-    if (!el) return;
-    const { now, min, max } = latest.current;
-    const wanted: ReadonlyArray<readonly [string, number]> = [
-      ['aria-valuenow', now],
-      ['aria-valuemin', min],
-      ['aria-valuemax', max],
-    ];
-    for (const [name, value] of wanted) {
-      const text = String(Math.round(value));
-      if (el.getAttribute(name) !== text) el.setAttribute(name, text);
+    let make: ((viewport: Viewport) => ShellAction) | null = null;
+    if (event.key === grow || event.key === shrink) {
+      const direction = event.key === grow ? 1 : -1;
+      const large = event.shiftKey;
+      make = (viewport) => ({ type: 'step', zone, direction, large, viewport });
+    } else if (event.shiftKey) {
+      return;
+    } else if (event.key === 'Home' || event.key === 'End') {
+      const edge = event.key === 'Home' ? 'min' : 'max';
+      make = (viewport) => ({ type: 'edge', zone, edge, viewport });
+    } else if (event.key === 'Enter') {
+      make = (viewport) => ({ type: 'reset', zone, viewport });
     }
-  }, []);
-  useLayoutEffect(apply);
-  useEffect(() => {
-    const el = element.current;
-    if (!el) return undefined;
-    const observer = new MutationObserver(apply);
-    observer.observe(el, { attributes: true, attributeFilter: ['aria-valuenow', 'aria-valuemin', 'aria-valuemax'] });
-    return () => observer.disconnect();
-  }, [apply]);
+    if (!make || disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dispatch(make);
+  };
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (disabled || event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.focus({ preventScroll: true });
+    drag.current = { pointer: event.pointerId, at: axis(event), size: values.now };
+    setActive(true);
+  };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const from = drag.current;
+    if (!from || from.pointer !== event.pointerId) return;
+    const wanted = from.size + sign * (axis(event) - from.at);
+    const size = wanted < values.min - COLLAPSE_THRESHOLD ? 0 : Math.max(wanted, values.min);
+    dispatch((viewport) => ({ type: 'resize', zone, size: Math.round(size), viewport }));
+  };
+  const onPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    if (!drag.current || drag.current.pointer !== event.pointerId) return;
+    drag.current = null;
+    setActive(false);
+  };
   return (
-    <Separator
+    <div
       id={`separator-${zone}`}
       data-testid={`separator-${zone}`}
       data-divider-zone={zone}
+      data-active={active ? 'true' : undefined}
       className={`divider divider-${zone}`}
-      elementRef={element}
-      disabled={disabled}
-      disableDoubleClick
+      role="separator"
+      aria-orientation={zone === 'lower' ? 'horizontal' : 'vertical'}
       aria-label={t('zone.resize', { zone: t(`zone.${zone}`) })}
-      onDoubleClick={() => dispatch((viewport) => ({ type: 'reset', zone, viewport }))}
+      aria-valuenow={Math.round(values.now)}
+      aria-valuemin={Math.round(values.min)}
+      aria-valuemax={Math.round(values.max)}
+      aria-disabled={disabled ? 'true' : undefined}
+      tabIndex={disabled ? -1 : 0}
+      onKeyDown={onKey}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+      onDoubleClick={() => {
+        if (!disabled) dispatch((viewport) => ({ type: 'reset', zone, viewport }));
+      }}
     />
   );
 }
@@ -312,6 +327,7 @@ export function Shell({
   realtime,
   transport,
   loopClick,
+  history,
   left,
   project,
   lower,
@@ -323,26 +339,7 @@ export function Shell({
   const effective: EffectiveLayout = useMemo(() => effectiveLayout(state, viewport), [state, viewport]);
   const [focused, setFocused] = useState<ZoneScope>('project');
 
-  const panels: Record<Zone, RefObject<PanelImperativeHandle | null>> = {
-    left: usePanelRef(),
-    lower: usePanelRef(),
-    right: usePanelRef(),
-  };
   const frames = useRef<Partial<Record<ZoneScope, HTMLElement | null>>>({});
-  const groups = { horizontal: useRef<HTMLDivElement | null>(null), vertical: useRef<HTMLDivElement | null>(null) };
-  // A panel's size from the library's layout, not from the DOM, which lags
-  // behind it while a panel animates.
-  const pixels = (zone: Zone): number => {
-    const panel = panels[zone].current;
-    const group = groups[zone === 'lower' ? 'vertical' : 'horizontal'].current;
-    if (!panel || !group) return 0;
-    const horizontal = zone !== 'lower';
-    let axis = horizontal ? group.clientWidth : group.clientHeight;
-    for (const child of Array.from(group.children)) {
-      if (child instanceof HTMLElement && child.hasAttribute('data-separator')) axis -= horizontal ? child.offsetWidth : child.offsetHeight;
-    }
-    return (panel.getSize().asPercentage / 100) * axis;
-  };
   const offline = phase === 'offline';
   const latest = useRef({ effective, focused, offline });
   latest.current = { effective, focused, offline };
@@ -358,45 +355,6 @@ export function Shell({
     },
     [store],
   );
-
-  // The panels follow the effective layout.
-  useLayoutEffect(() => {
-    for (const zone of ZONES) {
-      const panel = panels[zone].current;
-      if (!panel) continue;
-      const view = effective.zones[zone];
-      if (!view.visible || view.drawer) {
-        if (!panel.isCollapsed()) panel.collapse();
-        continue;
-      }
-      if (panel.isCollapsed() || Math.abs(pixels(zone) - view.size) > 0.5) panel.resize(view.size);
-    }
-  });
-
-  // A drag (or the library's Enter, Home or End) that ended: its sizes go to the reducer.
-  const changed = useCallback(
-    (zones: readonly Zone[]) => (_layout: unknown, meta?: LayoutChangedMeta) => {
-      if (!meta?.isUserInteraction) return;
-      const size = readViewport();
-      const shown = effectiveLayout(store.getSnapshot(), size);
-      for (const zone of zones) {
-        const panel = panels[zone].current;
-        const view = shown.zones[zone];
-        if (!panel || view.drawer) continue;
-        setAnimate(false);
-        if (panel.isCollapsed()) {
-          if (view.visible) store.dispatch({ type: 'resize', zone, size: 0, viewport: size });
-          continue;
-        }
-        const px = Math.round(pixels(zone));
-        if (!view.visible || Math.abs(px - view.size) > 0.5) store.dispatch({ type: 'resize', zone, size: px, viewport: size });
-      }
-    },
-    // The panels' refs are stable objects.
-    [store],
-  );
-  const horizontalChanged = useMemo(() => changed(['left', 'right']), [changed]);
-  const verticalChanged = useMemo(() => changed(['lower']), [changed]);
 
   const isVisible = useCallback((zone: ZoneScope) => zone === 'project' || latest.current.effective.zones[zone].visible, []);
   const focusZone = useCallback((zone: ZoneScope, moveDom: boolean) => {
@@ -546,13 +504,17 @@ export function Shell({
     frames.current[zone] = el;
   };
   const zones = effective.zones;
-  const initial = useRef(effective).current.zones;
-  const startSize = (zone: Zone) => (initial[zone].visible && !initial[zone].drawer ? initial[zone].size : 0);
-  const lowerLimits = limits('lower', viewport);
   const separatorValues = (zone: Zone): SeparatorValues => {
     const { min, max } = limits(zone, viewport);
     return { now: zones[zone].visible ? zones[zone].size : 0, min, max };
   };
+  // The zone sizes the grid of ui/layout.css takes (0 for a hidden zone or the drawer).
+  const cell = (zone: Zone) => (zones[zone].visible && !zones[zone].drawer ? zones[zone].size : 0);
+  const grid = {
+    '--left-zone-w': `${cell('left')}px`,
+    '--right-zone-w': `${cell('right')}px`,
+    '--lower-zone-h': `${cell('lower')}px`,
+  } as CSSProperties;
   const tab = (zone: 'lower' | 'right', id: 'mixconsole' | 'plans') => (
     <div className="zone-tabs" role="tablist" data-part={`${zone}-tabs`}>
       <button
@@ -568,7 +530,14 @@ export function Shell({
   );
 
   return (
-    <div className="shell" data-testid="shell" data-viewport={`${viewport.width}x${viewport.height}`} data-offline={offline ? 'true' : undefined}>
+    <div
+      className="app"
+      data-testid="shell"
+      data-viewport={`${viewport.width}x${viewport.height}`}
+      data-offline={offline ? 'true' : undefined}
+      data-animate={String(animate)}
+      style={grid}
+    >
       <TopBar
         client={client}
         plans={plans}
@@ -581,6 +550,7 @@ export function Shell({
         commands={commands}
         transport={transport}
         loopClick={loopClick}
+        history={history}
       />
       <div className="shell-banner">
         {offline ? (
@@ -590,89 +560,51 @@ export function Shell({
         ) : null}
         {banner}
       </div>
-      <Group orientation="horizontal" id="zones" className="zone-groups" data-animate={String(animate)} elementRef={groups.horizontal} onLayoutChanged={horizontalChanged}>
-        <Panel
-          id="panel-left"
-          panelRef={panels.left}
-          collapsible
-          collapsedSize={0}
-          collapsedThreshold={COLLAPSE_THRESHOLD}
-          minSize={limits('left', viewport).min}
-          maxSize={limits('left', viewport).max}
-          defaultSize={startSize('left')}
-          groupResizeBehavior="preserve-pixel-size"
-          className="panel-inner"
+      <ZoneFrame
+        as="aside"
+        region="leftzone"
+        offline={offline}
+        zone="left"
+        visible={zones.left.visible}
+        focused={focused === 'left'}
+        onFocus={(z) => focusZone(z, false)}
+        frameRef={frameRef('left')}
+      >
+        {left}
+      </ZoneFrame>
+      <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
+      <main className="center">
+        <ZoneFrame offline={offline} zone="project" visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
+          {project}
+        </ZoneFrame>
+        <ZoneSeparator zone="lower" values={separatorValues('lower')} dispatch={dispatch} />
+        <ZoneFrame
+          offline={offline}
+          zone="lower"
+          visible={zones.lower.visible}
+          focused={focused === 'lower'}
+          tabs={tab('lower', 'mixconsole')}
+          onFocus={(z) => focusZone(z, false)}
+          frameRef={frameRef('lower')}
         >
-          <ZoneFrame offline={offline} zone="left" visible={zones.left.visible} focused={focused === 'left'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('left')}>
-            {left}
-          </ZoneFrame>
-        </Panel>
-        <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
-        <Panel id="panel-center" className="panel-inner" minSize={projectMinWidth(state.layout.trackList)}>
-          <Group
-            orientation="vertical"
-            id="zones-center"
-            className="zones-center"
-            elementRef={groups.vertical}
-            onLayoutChanged={verticalChanged}
-          >
-            <Panel id="panel-project" className="panel-inner" minSize={PROJECT_CHROME + EVENT_MIN_HEIGHT}>
-              <ZoneFrame offline={offline} zone="project" visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
-                {project}
-              </ZoneFrame>
-            </Panel>
-            <ZoneSeparator zone="lower" values={separatorValues('lower')} dispatch={dispatch} />
-            <Panel
-              id="panel-lower"
-              panelRef={panels.lower}
-              collapsible
-              collapsedSize={0}
-              collapsedThreshold={COLLAPSE_THRESHOLD}
-              minSize={lowerLimits.min}
-              maxSize={lowerLimits.max}
-              defaultSize={startSize('lower')}
-              groupResizeBehavior="preserve-pixel-size"
-              className="panel-inner"
-            >
-              <ZoneFrame offline={offline}
-                zone="lower"
-                visible={zones.lower.visible}
-                focused={focused === 'lower'}
-                tabs={tab('lower', 'mixconsole')}
-                onFocus={(z) => focusZone(z, false)}
-                frameRef={frameRef('lower')}
-              >
-                {lower}
-              </ZoneFrame>
-            </Panel>
-          </Group>
-        </Panel>
-        <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />
-        <Panel
-          id="panel-right"
-          panelRef={panels.right}
-          collapsible
-          collapsedSize={0}
-          collapsedThreshold={COLLAPSE_THRESHOLD}
-          minSize={limits('right', viewport).min}
-          maxSize={limits('right', viewport).max}
-          defaultSize={startSize('right')}
-          groupResizeBehavior="preserve-pixel-size"
-          className="panel-inner"
-        >
-          <ZoneFrame offline={offline}
-            zone="right"
-            visible={zones.right.visible}
-            focused={focused === 'right'}
-            drawer={zones.right.drawer ? { width: zones.right.size } : null}
-            tabs={tab('right', 'plans')}
-            onFocus={(z) => focusZone(z, false)}
-            frameRef={frameRef('right')}
-          >
-            {right}
-          </ZoneFrame>
-        </Panel>
-      </Group>
+          {lower}
+        </ZoneFrame>
+      </main>
+      <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />
+      <ZoneFrame
+        as="aside"
+        region="plans"
+        offline={offline}
+        zone="right"
+        visible={zones.right.visible}
+        focused={focused === 'right'}
+        drawer={zones.right.drawer ? { width: zones.right.size } : null}
+        tabs={tab('right', 'plans')}
+        onFocus={(z) => focusZone(z, false)}
+        frameRef={frameRef('right')}
+      >
+        {right}
+      </ZoneFrame>
       <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
       <Toasts store={toasts} />
     </div>

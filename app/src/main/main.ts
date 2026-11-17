@@ -51,7 +51,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { engineArgs, engineTestArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
+import { engineArgs, engineTestArgs, fidelityEnvironmentArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
 import { focusFirstWindow } from './focus';
 import { rendererRequestPath } from './serve';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
@@ -253,6 +253,8 @@ function createWindow(): void {
             '--siann-test-hooks',
             ...(process.env.SIANN_TEST_LANGS ? [`--siann-test-langs=${process.env.SIANN_TEST_LANGS}`] : []),
             ...testCapabilitiesArgs(process.env, (file) => fs.readFileSync(file, 'utf8')),
+            // The fidelity run's device and build (m5-ui-alignment-chrome).
+            ...fidelityEnvironmentArgs(process.env),
           ]
         : [],
     },

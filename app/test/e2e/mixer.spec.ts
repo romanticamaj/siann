@@ -107,7 +107,7 @@ async function launch(env: Record<string, string> = {}): Promise<void> {
     },
   });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId(`mixer-strip-${TRACK}`)).toBeVisible();
   client = await engineClient(page);
 }
@@ -597,6 +597,6 @@ test('a reload during a held drag ends the gesture as disconnected within the le
   expect(ended.reason).toBe('disconnected');
   expect(ended.value).toBe(held);
   expect(await revisions()).toBe(before + 1);
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId(`fader-${TRACK}`)).toHaveAttribute('aria-valuenow', String(held));
 });

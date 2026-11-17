@@ -425,23 +425,23 @@ test('Shift+P types a position in the primary format; Enter locates, Escape canc
 test('the period key exchanges the primary and the secondary format', async () => {
   await launch();
   await locate(4 * RATE, '3.1.000');
-  await expect(secondary()).toHaveText('0:04.000');
+  await expect(secondary()).toHaveText('00:00:04.000');
   // The tempo at the cursor (a new session's 120 BPM).
-  await expect(page.getByTestId('transport-tempo')).toHaveText('120.000');
+  await expect(page.getByTestId('transport-tempo')).toHaveText('120.00');
   await focusProject();
   await page.keyboard.press('Period');
-  await expect(primary()).toHaveText('0:04.000');
+  await expect(primary()).toHaveText('00:00:04.000');
   await expect(secondary()).toHaveText('3.1.000');
   // Shift+P now reads seconds.
   await page.keyboard.press('Shift+KeyP');
   const field = page.getByTestId('position-field');
-  await expect(field).toHaveValue('0:04.000');
+  await expect(field).toHaveValue('00:00:04.000');
   await field.fill('2');
   await field.press('Enter');
-  await expect(primary()).toHaveText('0:02.000');
+  await expect(primary()).toHaveText('00:00:02.000');
   await page.keyboard.press('Period');
   await expect(primary()).toHaveText('2.1.000');
-  await expect(secondary()).toHaveText('0:02.000');
+  await expect(secondary()).toHaveText('00:00:02.000');
 });
 
 test('a right-click on the position display opens the time format menu; choosing a format makes it primary', async () => {
@@ -454,14 +454,14 @@ test('a right-click on the position display opens the time format menu; choosing
   await expect(page.getByTestId('time-format-seconds')).toHaveAttribute('aria-checked', 'false');
   await page.getByTestId('time-format-seconds').click();
   await expect(menu).toBeHidden();
-  await expect(primary()).toHaveText('0:04.000');
+  await expect(primary()).toHaveText('00:00:04.000');
   await expect(secondary()).toHaveText('3.1.000');
   // Escape closes it without a change.
   await page.getByTestId('position-display').click({ button: 'right' });
   await expect(page.getByTestId('time-format-seconds')).toHaveAttribute('aria-checked', 'true');
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
-  await expect(primary()).toHaveText('0:04.000');
+  await expect(primary()).toHaveText('00:00:04.000');
   // Back to Bars+Beats; nothing was sent for it.
   await page.getByTestId('position-display').click({ button: 'right' });
   await page.getByTestId('time-format-bars').click();
