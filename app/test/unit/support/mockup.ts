@@ -3,7 +3,8 @@
 // script, not from the code under test. This reads
 // docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html, takes the
 // pieces of its script a test names (the formatters and the fader taper, knob(),
-// strip(), the master strip) and runs them in a vm context whose tok() reads
+// strip(), the master strip, the left zone's block of the app.innerHTML
+// template with sec() and its icons) and runs them in a vm context whose tok() reads
 // the tokens from app/src/renderer/tokens.ts, the mirror of tokens.css the
 // mockup reads through getComputedStyle. A tiny HTML parser turns the markup
 // they return, and the markup react-dom/server renders, into trees a test can
@@ -67,6 +68,8 @@ export interface Mockup {
   pos(db: number): number;
   readonly SCALE: ReadonlyArray<readonly [number, string]>;
   readonly T: readonly MockupTrack[];
+  // The left zone (the Inspector) as the app.innerHTML template writes it: aside.leftzone and its rows.
+  readonly leftzone: string;
 }
 
 // The mockup's functions with LANG set to `lang` ('en' or 'zh-TW').
@@ -85,14 +88,19 @@ export function loadMockup(lang = 'en'): Mockup {
     between(source, 'const hex=', '/* ============================== knob */'),
     between(source, 'function knob(', '/* ============================== markup */'),
     between(source, 'function strip(', '// clip: the title names a clip'),
-    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T};',
+    between(source, 'const P={', '// Fidelity ids'),
+    line(source, 'const ic='),
+    line(source, 'const sec='),
+    // The left zone's block of the app.innerHTML template, evaluated as the template it is.
+    `const leftzone=\`${between(source, '<aside class="leftzone"', '<main class="center">').trim()}\`;`,
+    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone};',
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
   const out = context.out as Mockup;
   // Data made in the vm's realm is copied into this one, so deepStrictEqual compares it by value.
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-  return { knob: out.knob, strip: out.strip, master: out.master, pos: out.pos, SCALE: copy(out.SCALE), T: copy(out.T) };
+  return { knob: out.knob, strip: out.strip, master: out.master, pos: out.pos, SCALE: copy(out.SCALE), T: copy(out.T), leftzone: out.leftzone };
 }
 
 // ---------------------------------------------------------------- markup trees

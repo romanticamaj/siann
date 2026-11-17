@@ -88,8 +88,9 @@ const SCALE: ReadonlyArray<readonly [number, string]> = [
   [-60, '60'],
 ];
 
-// A position of the travel as the mockup writes it in a bottom: one decimal of a percent.
-const percent = (position: number) => `${(position * 100).toFixed(1)}%`;
+// A position of the travel as the mockup writes it in a bottom (or a left, a
+// width): one decimal of a percent.
+export const percent = (position: number) => `${(position * 100).toFixed(1)}%`;
 
 // The fader's dB scale: the labels sit at the taper's positions (spec 4.5 C7).
 function Scale() {
@@ -302,7 +303,6 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
       </div>
       <div className="readout" data-part-of="readout">
         <ValueReadout
-          bare
           kind="gain"
           entityRef={ref}
           value={track.gainMilliDb}
