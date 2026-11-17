@@ -70,6 +70,9 @@ export interface Mockup {
   readonly T: readonly MockupTrack[];
   // The left zone (the Inspector) as the app.innerHTML template writes it: aside.leftzone and its rows.
   readonly leftzone: string;
+  // The project zone's head as the template writes it: div.arr-toolbar (with tool()) and div.infoline.
+  readonly projectHead: string;
+  tool(icon: string, key: number, on?: boolean): string;
 }
 
 // The mockup's functions with LANG set to `lang` ('en' or 'zh-TW').
@@ -93,14 +96,16 @@ export function loadMockup(lang = 'en'): Mockup {
     line(source, 'const sec='),
     // The left zone's block of the app.innerHTML template, evaluated as the template it is.
     `const leftzone=\`${between(source, '<aside class="leftzone"', '<main class="center">').trim()}\`;`,
-    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone};',
+    // The project zone's toolbar and info line, the block of the template above div.arr-body.
+    `const projectHead=\`${between(source, '<div class="arr-toolbar"', '<div class="arr-body"').trim()}\`;`,
+    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone,projectHead,tool};',
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
   const out = context.out as Mockup;
   // Data made in the vm's realm is copied into this one, so deepStrictEqual compares it by value.
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-  return { knob: out.knob, strip: out.strip, master: out.master, pos: out.pos, SCALE: copy(out.SCALE), T: copy(out.T), leftzone: out.leftzone };
+  return { knob: out.knob, strip: out.strip, master: out.master, pos: out.pos, SCALE: copy(out.SCALE), T: copy(out.T), leftzone: out.leftzone, projectHead: out.projectHead, tool: out.tool };
 }
 
 // ---------------------------------------------------------------- markup trees

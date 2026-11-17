@@ -750,3 +750,46 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
   const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(shell, /\.inspector \.ms\b|\.inspector \.value-readout|\.inspector-row|\.value-control|\.fader-cap/);
 });
+
+// ---- m5-ui-port-toolbar (UI redesign 10.10, P1-16): the toolbar and the info line ported from the mockup's template
+
+test('the toolbar port: its gate is report, its holds name pending parts and shell.css applies them, the old toolbar rules are gone', () => {
+  assert.equal(MANIFEST.gates['m5-ui-port-toolbar'], 'report');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const holds = [...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]).sort();
+  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'proposal-pill', 'tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
+  for (const id of holds) {
+    assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
+    assert.match(tokens, new RegExp(`--hold-${id}-w:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${id}-w`);
+  }
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const id of holds) assert.ok(shell.includes(`var(--hold-${id}-w)`), `shell.css applies --hold-${id}-w`);
+  // The pre-port toolbar and info line rules are removed.
+  assert.doesNotMatch(shell, /\.timeline-bar\b|\.info-line\b|\.info-field\b|\.media-pool\b|\.tool-buttons\b|\.snap-controls\b|\.grid-type\s*\{|\.snap-toggle\b/);
+  // No second rule for what ui/project-zone.css draws: outside the button
+  // reset's :where()/:not() lists, no selector of shell.css names them.
+  let bare = shell;
+  while (/\([^()]*\)/.test(bare)) bare = bare.replace(/\([^()]*\)/g, '');
+  const selectors = [...bare.matchAll(/([^{}]+)\{/g)].map((m) => m[1]);
+  for (const name of ['arr-toolbar', 'seg', 'b', 'field', 'spacer', 'infoline', 'f']) {
+    assert.deepEqual(selectors.filter((s) => new RegExp(`\\.${name}(?![\\w-])`).test(s)), [], `no .${name} rule in shell.css`);
+  }
+});
+
+test('shell.css\'s pinned pre-port text styles do not reach the ported project zone', () => {
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => /letter-spacing:\s*normal/.test(m[2]) || /font-feature-settings:\s*normal/.test(m[2]))
+    .map((m) => m[1].trim());
+  // The project zone's element: section.zone.zone-project (Shell.tsx, ZoneFrame).
+  const project = new Set(['zone', 'zone-project']);
+  for (const list of rules) {
+    for (const selector of list.split(/,(?![^()]*\))/).map((s) => s.trim())) {
+      if (/[\s>+~]/.test(selector)) continue;
+      const excluded = [...selector.matchAll(/:not\(\s*\.([\w-]+)\s*\)/g)].map((m) => m[1]);
+      const required = [...selector.replace(/:(?:not|where|is)\((?:[^()]|\([^()]*\))*\)/g, '').matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+      const reaches = required.every((c) => project.has(c)) && excluded.every((c) => !project.has(c));
+      assert.ok(!reaches, `"${selector}" in shell.css pins pre-port text styles on the project zone`);
+    }
+  }
+});

@@ -24,6 +24,7 @@ import { zhHans } from '../../src/renderer/i18n/zh-Hans';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import { engineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
+import { armPlacing, chooseGrid, openPool } from './support/toolbar';
 
 const RATE = 48000;
 const FRAMES = 48000;
@@ -710,7 +711,9 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_x', trackId: 'trk_a', position: 96000, sourceStart: 24000, length: 48000, gain: -3500 }]);
   await launch();
   const line = page.getByTestId('info-line');
-  for (const field of ['start', 'end', 'length', 'offset', 'gain']) await expect(page.getByTestId(`info-${field}`)).toHaveText('');
+  // Nothing selected: the line, and nothing between its edges (m5-ui-port-toolbar).
+  await expect(line).toHaveText('');
+  await expect(line.locator('.f')).toHaveCount(0);
   // The whole session in view, so the clip can be clicked. "connected" comes
   // before the read model's first sync: Shift+F fits the clips loaded when it
   // is pressed (none yet, on a slow runner, and the zoom stays the default),
@@ -723,16 +726,20 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   const target = await rect('clp_x');
   const canvas = await box('timeline-canvas');
   await page.mouse.click(canvas.x + target.x + target.width / 2, canvas.y + target.y + target.height / 2);
-  // 120 BPM: a bar is 96000 frames, a beat 24000.
-  await expect(page.getByTestId('info-start')).toHaveText('2.1.000');
-  await expect(page.getByTestId('info-end')).toHaveText('2.3.000');
-  await expect(page.getByTestId('info-length')).toHaveText('0.2.000');
-  await expect(page.getByTestId('info-offset')).toHaveText('0.1.000');
-  await expect(page.getByTestId('info-gain')).toHaveText('-3.5 dB');
+  // 120 BPM: a bar is 96000 frames, a beat 24000. bar.beat.sixteenth.tick
+  // and bars.beats.sixteenths.ticks, the volume with two decimals (UI redesign 3.2, 10.8).
+  await expect(page.getByTestId('info-start')).toHaveText('2.1.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('2.3.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.2.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.1.0.0');
+  await expect(page.getByTestId('info-volume')).toHaveText('-3.50 dB');
+  // The name is the clip's title (media.name, else the media id).
+  expect(['square', 'square.wav', 'med_sq']).toContain(await page.getByTestId('info-name').textContent());
   await expect(line).toHaveAttribute('data-clip', 'clp_x');
   expect(await line.locator('input, textarea, select, [contenteditable="true"]').count()).toBe(0);
   await focusProject();
-  for (const field of ['start', 'end', 'length', 'offset', 'gain']) await expect(page.getByTestId(`info-${field}`)).toHaveText('');
+  await expect(line).toHaveText('');
+  await expect(line.locator('.f')).toHaveCount(0);
   await expect(line).toHaveAttribute('data-clip', '');
 });
 
@@ -787,9 +794,9 @@ test('a selected clip has the 1.5 px outline of draw(), a drag shows a tooltip, 
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   await expect.poll(async () => (await rect('clp_sq')).width).toBeLessThan(start.width);
 
-  // Place from the media pool on the second lane.
+  // Place from the Pool (Ctrl+P) on the second lane.
   before = await revision();
-  await page.getByTestId('pool-med_sq').click();
+  await armPlacing(page, 'med_sq');
   const v = await view();
   await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
   await expect(page.getByTestId('clip-count')).toHaveText('2');
@@ -1075,4 +1082,178 @@ test("every id of the event display is found, no pending part's id is, and the h
   const cursor = (await parts()).find((p) => p.id === 'cursor')!;
   const bar = (await page.locator('[data-part="scroll-zoom"]').boundingBox())!;
   expect(Math.abs(display.y + cursor.y + cursor.h - bar.y)).toBeLessThan(1);
+});
+
+// ---- m5-ui-port-toolbar: the toolbar, the info line and the Pool (UI redesign 10.8, 10.9, 10.10 P1-16)
+
+const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
+const PENDING_IDS = ['tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill', 'info-fade-in', 'info-fade-out'];
+
+test('the toolbar\'s tools, snap, grid type and auto-scroll show and change the timeline\'s state; every id is found and no pending one', async () => {
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await rect('clp_sq');
+  // Select the clip so the info line's ids are in the window too.
+  const canvas = await box('timeline-canvas');
+  const r = await rect('clp_sq');
+  await page.mouse.click(canvas.x + r.x + r.width / 2, canvas.y + r.y + r.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
+  for (const id of TOOLBAR_IDS) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
+  for (const id of PENDING_IDS) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(0);
+  await expect(page.locator('.arr-toolbar[data-part="toolbar"] > .seg[data-part="tools"] > .b')).toHaveCount(2);
+  await expect(page.locator('.arr-toolbar > .spacer')).toHaveCount(1);
+  // No control the mockup does not draw.
+  for (const gone of ['media-pool', 'delete-clip']) await expect(page.getByTestId(gone)).toHaveCount(0);
+  await expect(page.getByTestId('timeline-error')).toHaveText('');
+
+  // Tools: a click on 3 and on 1, then the keys 3 and 1; .on and aria-pressed follow.
+  const select = page.getByTestId('tool-select');
+  const split = page.getByTestId('tool-split');
+  const active = async (on: typeof select, off: typeof select) => {
+    await expect(on).toHaveClass(/\bon\b/);
+    await expect(on).toHaveAttribute('aria-pressed', 'true');
+    await expect(off).not.toHaveClass(/\bon\b/);
+    await expect(off).toHaveAttribute('aria-pressed', 'false');
+  };
+  await active(select, split);
+  await split.click();
+  await active(split, select);
+  await select.click();
+  await active(select, split);
+  await focusProject();
+  await page.keyboard.press('Digit3');
+  await active(split, select);
+  await page.keyboard.press('Digit1');
+  await active(select, split);
+
+  // Snap: a click and J.
+  const snap = page.getByTestId('snap-toggle');
+  await expect(snap).toHaveAttribute('aria-pressed', 'true');
+  await expect(snap).toHaveClass(/\bon\b/);
+  await snap.click();
+  await expect(snap).toHaveAttribute('aria-pressed', 'false');
+  await expect(snap).not.toHaveClass(/\bon\b/);
+  await focusProject();
+  await page.keyboard.press('KeyJ');
+  await expect(snap).toHaveAttribute('aria-pressed', 'true');
+  await expect(snap).toHaveClass(/\bon\b/);
+
+  // The grid type: each one from the field's menu, the field shows its label; Escape closes the menu.
+  for (const [grid, label] of [['bar', en['grid.bar']], ['beat', en['grid.beat']], ['adapt', en['grid.adapt']]] as const) {
+    await chooseGrid(page, grid);
+    await expect(page.getByTestId('grid-type')).toHaveText(label);
+  }
+  await page.getByTestId('grid-type').click();
+  await expect(page.getByTestId('grid-type-menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('grid-type-menu')).toHaveCount(0);
+
+  // Auto-scroll: a click and F.
+  const follow = page.getByTestId('auto-scroll');
+  await expect(follow).toHaveAttribute('aria-pressed', 'true');
+  await follow.click();
+  await expect(follow).toHaveAttribute('aria-pressed', 'false');
+  await expect(follow).not.toHaveClass(/\bon\b/);
+  await focusProject();
+  await page.keyboard.press('KeyF');
+  await expect(follow).toHaveAttribute('aria-pressed', 'true');
+  await expect(follow).toHaveClass(/\bon\b/);
+});
+
+test('the info line follows a move and a trim of the selected clip, in bar.beat.sixteenth.tick', async () => {
+  test.setTimeout(120_000);
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await chooseGrid(page, 'beat');
+  const canvas = await box('timeline-canvas');
+  let r = await rect('clp_sq');
+  const mid = { x: canvas.x + r.x + r.width / 2, y: canvas.y + r.y + r.height / 2 };
+  await page.mouse.click(mid.x, mid.y);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
+  await expect(page.getByTestId('info-start')).toHaveText('1.1.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('1.3.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.2.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.0.0.0');
+  await expect(page.getByTestId('info-volume')).toHaveText('0.00 dB');
+  const beat = 24000 / (await view()).framesPerPixel;
+
+  // Move one beat right, snapped to the beat grid.
+  let before = await revision();
+  await page.mouse.move(mid.x, mid.y);
+  await page.mouse.down();
+  await page.mouse.move(mid.x + beat + 4, mid.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect(page.getByTestId('info-start')).toHaveText('1.2.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('1.4.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.2.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.0.0.0');
+
+  // Trim the left edge one beat right: the start, the length and the offset follow.
+  await expect.poll(async () => (await rect('clp_sq')).x).toBeGreaterThan(r.x);
+  r = await rect('clp_sq');
+  before = await revision();
+  const left = { x: canvas.x + r.x + 2.5, y: canvas.y + r.y + r.height / 2 };
+  await page.mouse.move(left.x, left.y);
+  await page.mouse.down();
+  await page.mouse.move(left.x + beat + 4, left.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect(page.getByTestId('info-start')).toHaveText('1.3.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('1.4.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.1.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.1.0.0');
+});
+
+test('the Pool opens with Ctrl+P and from the event display\'s context menu, a click arms placing, and the resting window has none', async () => {
+  test.setTimeout(120_000);
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await rect('clp_sq');
+  await expect(page.getByTestId('media-pool')).toHaveCount(0);
+
+  // Ctrl+P (Cmd+P on macOS): the session's media by name, the media id when it has none.
+  await focusProject();
+  await page.keyboard.press(`${MOD}+KeyP`);
+  const pool = page.getByTestId('media-pool');
+  await expect(pool).toBeVisible();
+  expect(['square', 'square.wav', 'med_sq']).toContain(await page.getByTestId('pool-med_sq').textContent());
+  // The Pool sits over the project zone.
+  const zone = (await page.getByTestId('zone-project').boundingBox())!;
+  const over = (await pool.boundingBox())!;
+  expect(over.x).toBeGreaterThanOrEqual(zone.x);
+  expect(over.x + over.width).toBeLessThanOrEqual(zone.x + zone.width + 0.5);
+  expect(over.y).toBeGreaterThanOrEqual(zone.y);
+  // Escape closes it.
+  await page.keyboard.press('Escape');
+  await expect(pool).toHaveCount(0);
+
+  // A click on the media arms placing; a click in the event display places one clip, one revision.
+  const before = await revision();
+  await openPool(page);
+  await page.getByTestId('pool-med_sq').click();
+  await expect(pool).toHaveCount(0);
+  const canvas = await box('timeline-canvas');
+  const v = await view();
+  await page.mouse.click(canvas.x + 600, canvas.y + v.lanesTop + 10);
+  await expect(page.getByTestId('clip-count')).toHaveText('2');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+
+  // The event display's context menu opens it too; Escape closes the menu.
+  await page.mouse.click(canvas.x + 700, canvas.y + canvas.height - 30, { button: 'right' });
+  const menu = page.getByTestId('event-display-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitem')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await page.mouse.click(canvas.x + 700, canvas.y + canvas.height - 30, { button: 'right' });
+  await expect(menu).toBeVisible();
+  await menu.getByTestId('menu-open-pool').click();
+  await expect(menu).toHaveCount(0);
+  await expect(pool).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(pool).toHaveCount(0);
+  // The right-click placed nothing.
+  await expect(page.getByTestId('clip-count')).toHaveText('2');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 });

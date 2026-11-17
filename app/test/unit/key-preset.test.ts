@@ -147,3 +147,17 @@ test('the locator, cycle and metronome keys (m5-ui-loop-click; UI redesign spec 
   // No zone binds these chords (the window's would then lose to it).
   for (const [chord] of windowRows) assert.equal(CUBASE_PRESET.filter((b) => b.chord === chord && b.scope !== 'window').length, 0, chord);
 });
+
+test('Ctrl+P (Cmd+P on macOS) opens the Pool, Cubase\'s Open Pool key (m5-ui-port-toolbar; UI redesign 10.8, 1)', () => {
+  const found = CUBASE_PRESET.filter((b) => b.commandId === 'pool.open');
+  assert.deepEqual(found, [{ chord: 'Mod+P', commandId: 'pool.open', scope: 'window' }]);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+P').map((b) => [b.scope, b.commandId]), [['window', 'pool.open']]);
+  // The other P keys keep their commands.
+  const others: Array<[string, string]> = [
+    ['P', 'transport.locatorsToSelection'],
+    ['Alt+P', 'transport.loopSelection'],
+    ['Shift+P', 'transport.enterPosition'],
+    ['Mod+Alt+P', 'zone.right.plans'],
+  ];
+  for (const [chord, commandId] of others) assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord).map((b) => b.commandId), [commandId], chord);
+});

@@ -173,3 +173,32 @@ test('the locator, cycle and metronome words are in every catalog (m5-ui-loop-cl
   // The level reads in dB in every locale.
   for (const catalog of [en, zhHant, zhHans]) assert.equal(catalog['transport.clickLevelValue'], '{db} dB');
 });
+
+test('the toolbar, info line and Pool words are in every catalog, the mockup\'s in en and zh-TW (m5-ui-port-toolbar)', () => {
+  const keys = ['snap.typeGrid', 'pool.title', 'pool.open', 'pool.menu', 'pool.empty', 'toolbar.autoScrollTitle', 'info.volume'] as const;
+  for (const key of keys) {
+    for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
+      assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+  }
+  // The mockup's L() and its ZH table: Snap, Grid, the grid types, the info line's labels.
+  const mockup: Array<[Key, string, string]> = [
+    ['snap.toggle', 'Snap', '貼齊'],
+    ['snap.typeGrid', 'Grid', '格線'],
+    ['grid.adapt', 'Adapt to Zoom', '依縮放調整'],
+    ['info.start', 'Start', '起點'],
+    ['info.end', 'End', '終點'],
+    ['info.length', 'Length', '長度'],
+    ['info.offset', 'Offset', '偏移'],
+    ['info.volume', 'Volume', '音量'],
+  ];
+  for (const [key, english, traditional] of mockup) {
+    assert.equal(en[key], english, key);
+    assert.equal(zhHant[key], traditional, key);
+  }
+  assert.equal(en['pool.open'], 'Open Pool');
+  assert.equal(en['toolbar.autoScrollTitle'], 'Auto-Scroll (F)');
+  // The old toolbar's words are gone: no Delete clip button, the gain field is the volume field.
+  for (const gone of ['timeline.deleteClip', 'timeline.mediaPool', 'info.gain']) assert.ok(!(gone in en), gone);
+});
