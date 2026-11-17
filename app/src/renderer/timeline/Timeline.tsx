@@ -35,6 +35,7 @@ import type { CapabilitySelector } from '../model/capabilities';
 import { loopClickGates, type LoopClickController } from '../model/loop-click';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { Snapshot } from '../model/read-model';
+import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
 import { Capable, useCapabilities } from '../shell/Capable';
@@ -138,17 +139,19 @@ function useSessionId(client: SessionClient): string | null {
 }
 
 // The scroll-zoom bar's thumb (`<i>`): left and width in percent of the
-// session's extent, from the view key "scrollFrames:framesPerPixel:width".
-export function scrollThumb(viewKey: string, snapshot: Snapshot | null): { left: string; width: string } | null {
-  const [scroll, fpp, width] = viewKey.split(':').map(Number);
-  if (!viewKey || !(fpp! > 0) || !(width! > 0)) return null;
-  const visible = fpp! * width!;
-  let end = scroll! + visible;
+// session's extent (the last clip's end, or the view's end when that is
+// further). Set from the canvas's view listener, never through React, so a
+// page turn while playing commits nothing.
+export function scrollThumb(view: Pick<Viewport, 'scrollFrames' | 'framesPerPixel' | 'width'>, snapshot: Snapshot | null): { left: string; width: string } | null {
+  const scroll = Number(view.scrollFrames);
+  if (!(view.framesPerPixel > 0) || !(view.width > 0)) return null;
+  const visible = view.framesPerPixel * view.width;
+  let end = scroll + visible;
   for (const clip of snapshot?.clips ?? []) {
     if (clip.position.domain === 'audio') end = Math.max(end, Number(clip.position.value) + Number(clip.length));
   }
   const percent = (frames: number) => `${Math.min(100, Math.max(0, (frames / end) * 100))}%`;
-  return { left: percent(scroll!), width: percent(visible) };
+  return { left: percent(scroll), width: percent(visible) };
 }
 
 function send(client: SessionClient, command: TimelineCommand | null): boolean {
@@ -307,17 +310,20 @@ export function Timeline({
     () => 0,
   );
 
-  // The scroll thumb: the view's frames over the session's extent (the last
-  // clip's end, or the view's end when that is further), in percent.
-  const viewKey = useSyncExternalStore(
-    (listener) => (timeline ? timeline.subscribeView(listener) : () => {}),
-    () => {
-      const v = timeline?.getView();
-      return v ? `${v.scrollFrames}:${v.framesPerPixel}:${v.width}` : '';
-    },
-    () => '',
-  );
-  const thumb = scrollThumb(viewKey, snapshot);
+  // The scroll thumb follows the canvas's view in the canvas's frame, as the track list does.
+  const thumbRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!timeline) return undefined;
+    const follow = () => {
+      const el = thumbRef.current;
+      const thumb = scrollThumb(timeline.getView(), client.model.getSnapshot());
+      if (!el || !thumb) return;
+      if (el.style.left !== thumb.left) el.style.left = thumb.left;
+      if (el.style.width !== thumb.width) el.style.width = thumb.width;
+    };
+    follow();
+    return timeline.subscribeView(follow);
+  }, [timeline, client]);
 
   const gateKey = JSON.stringify(gates);
   useEffect(() => {
@@ -516,7 +522,7 @@ export function Timeline({
           <canvas ref={overlayRef} className="timeline-layer timeline-overlay" data-testid="timeline-canvas" />
           <div ref={tooltipRef} className="drag-tooltip" data-testid="drag-tooltip" role="status" hidden />
           <div className="hscroll" data-part="scroll-zoom">
-            <i style={thumb ?? undefined} />
+            <i ref={thumbRef} />
             <u>
               {timeline ? (
                 <input

@@ -854,7 +854,7 @@ function halfLoudWav(file: string): void {
   fs.writeFileSync(file, Buffer.concat([header, data]));
 }
 
-// Two tracks with a clip each of the half-loud file (med_half, 1 s at frame 0).
+// Two tracks with a clip each of the half-loud file (med_half, 1 s).
 function prepareHalf(): void {
   sessionDir = path.join(scratch, 'sessions');
   const bundle = path.join(sessionDir, 'Untitled.siann');
@@ -863,9 +863,10 @@ function prepareHalf(): void {
   const exec = (command: Record<string, unknown>) => cli('exec', bundle, JSON.stringify(command));
   halfLoudWav(path.join(scratch, 'half.wav'));
   cli('import', bundle, path.join(scratch, 'half.wav'), '--media-id', 'med_half');
-  for (const [trackId, clipId] of [['trk_a', 'clp_r'], ['trk_b', 'clp_l']] as const) {
+  // clp_l starts 0.25 s in, so its left edge is clear of the track list's boundary.
+  for (const [trackId, clipId, position] of [['trk_a', 'clp_r', 0], ['trk_b', 'clp_l', FRAMES / 4]] as const) {
     exec({ op: 'track.add', trackId, name: trackId, channels: 1 });
-    exec({ op: 'clip.place', clipId, trackId, mediaId: 'med_half', position: { domain: 'audio', value: '0' }, sourceStart: '0', length: String(FRAMES) });
+    exec({ op: 'clip.place', clipId, trackId, mediaId: 'med_half', position: { domain: 'audio', value: String(position) }, sourceStart: '0', length: String(FRAMES) });
   }
 }
 
