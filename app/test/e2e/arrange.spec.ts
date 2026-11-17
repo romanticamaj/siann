@@ -876,11 +876,35 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   expect(narrow.scroll).toBeGreaterThan(0);
   expect(narrow.client).toBeGreaterThanOrEqual(narrow.scroll);
   expect(narrow.holds).toEqual([0, 0, 0]);
+  // Nothing in the list is wider than the list (spec 2.3): the head, the
+  // marker row's box and every header end inside it, so M and S and the add
+  // button stay in the list and nothing paints over the divider; the count
+  // goes at the narrow end (spec 3.0), as the number and the second row do.
+  const fit = await page.getByTestId('track-list').evaluate((list) => {
+    const right = list.getBoundingClientRect().right;
+    const over = (el: Element | null) => (el ? Math.round(el.getBoundingClientRect().right - right) : null);
+    return {
+      children: [...list.children].map(over),
+      head: over(list.querySelector('.corner')),
+      add: over(list.querySelector('.corner .add')),
+      header: over(list.querySelector('.th')),
+      mute: over(list.querySelector('[data-testid="track-mute-trk_a"]')),
+      solo: over(list.querySelector('[data-testid="track-solo-trk_a"]')),
+      count: list.querySelector<HTMLElement>('.corner .cnt')!.getBoundingClientRect().width,
+    };
+  });
+  for (const edge of [...fit.children, fit.head, fit.add, fit.header, fit.mute, fit.solo]) expect(edge).toBeLessThanOrEqual(0);
+  expect(fit.count).toBe(0);
   await separator.dblclick();
   await expect.poll(width).toBe(216);
   // At the default width the three boxes keep their space (spec 3.0).
   expect(await page.getByTestId('track-header-trk_a').evaluate((th) =>
     [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].filter((el) => el.getBoundingClientRect().width > 0).length)).toBe(3);
+  // and the count is back, inside the head.
+  expect(await page.getByTestId('track-list').evaluate((list) => {
+    const cnt = list.querySelector<HTMLElement>('.corner .cnt')!.getBoundingClientRect();
+    return cnt.width > 0 && cnt.right <= list.querySelector('.corner')!.getBoundingClientRect().right;
+  })).toBe(true);
   await dragBy(-1000);
   await expect.poll(width).toBe(140);
   await separator.dblclick();
