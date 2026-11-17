@@ -304,6 +304,56 @@ test('every shared stylesheet that draws a MixConsole class is linked: M and S t
   assert.deepEqual(selectors.filter((s) => /\.msr(?![\w-])/.test(s)), [], 'no .msr rule in shell.css');
 });
 
+// UI redesign 10.9 (1) and 10.10: a ported component is styled by the shared
+// rules and nothing else. The lower zone holds nothing unported after this
+// feature (tab row, strips, master), so shell.css's pinned pre-port text
+// styles (line height, letter spacing, tabular figures, no font features)
+// no longer reach it: it inherits base.css's body text as the mockup does.
+test('shell.css\'s pinned pre-port text styles do not reach the ported lower zone', () => {
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => /letter-spacing:\s*normal/.test(m[2]) || /font-feature-settings:\s*normal/.test(m[2]))
+    .map((m) => m[1].trim());
+  assert.ok(rules.length > 0, 'the pinned rule is found (other zones are not ported yet)');
+  // The lower zone's element: section.lower.zone.zone-lower (Shell.tsx, ZoneFrame).
+  const lower = new Set(['lower', 'zone', 'zone-lower']);
+  // Whether one compound selector (classes, :not() and :where() of classes) matches it.
+  const matchesLower = (compound) => {
+    const excluded = [...compound.matchAll(/:not\(\s*\.([\w-]+)\s*\)/g)].map((m) => m[1]);
+    const required = [...compound.replace(/:(?:not|where|is)\((?:[^()]|\([^()]*\))*\)/g, '').matchAll(/\.([\w-]+)/g)].map((m) => m[1]);
+    if (/[\s>+~]/.test(compound.trim())) return true; // a descendant selector: treated as reaching it
+    return required.every((c) => lower.has(c)) && excluded.every((c) => !lower.has(c));
+  };
+  for (const list of rules) {
+    for (const selector of list.split(/,(?![^()]*\))/).map((s) => s.trim())) {
+      assert.ok(!matchesLower(selector), `"${selector}" in shell.css pins pre-port text styles on the lower zone`);
+    }
+  }
+  // Nor does any rule of shell.css set them on a part of the lower zone.
+  for (const name of ['lower', 'zone-lower', 'tabs', 'tab', 'mixer', 'strip', 'master']) {
+    const pinned = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => new RegExp(`\\.${name}(?![\\w-])`).test(m[1].replace(/:(?:not|where)\((?:[^()]|\([^()]*\))*\)/g, '')))
+      .filter((m) => /letter-spacing|font-variant-numeric|font-feature-settings|line-height/.test(m[2]));
+    assert.deepEqual(pinned.map((m) => m[1].trim()), [], `no text-style rule for .${name} in shell.css`);
+  }
+});
+
+// Acceptance 9: one strip muted (the mockup's FX, in both images) and one
+// with its fader held, side by side, in en and zh-TW, written by the
+// fidelity run. The mockup draws no held fader, so the run writes the app's
+// lower zone alone in that state and says so in the report's notes.
+test('the fidelity run writes the lower zone with a strip\'s fader held, in every locale', () => {
+  const spec = read('app', 'test', 'e2e', 'mockup-fidelity.spec.ts');
+  assert.match(spec, /path\.join\(dir, 'lower-zone\.fader-held\.app\.png'\)/);
+  assert.match(spec, /notes\.push\(`The held-fader state[^`]*lower-zone\.fader-held\.app\.png/);
+  // Pointer down on a fader's cap, moved, screenshot taken before the release.
+  const held = spec.slice(spec.indexOf("'lower-zone.fader-held.app.png'") - 1500, spec.indexOf("'lower-zone.fader-held.app.png'"));
+  assert.match(held, /page\.mouse\.down\(\)/);
+  assert.match(held, /\.locator\('\.cap'\)/);
+  assert.doesNotMatch(held, /page\.mouse\.up\(\)/);
+  assert.match(read('docs', 'harness', 'test-matrix.md'), /\| m5-ui-port-mixer-strip \|[^\n]*lower-zone\.fader-held\.app\.png/);
+});
+
 // ---- m5-ui-port-arrange-canvas: the event display ported from draw(); its gate stays report
 
 test('the event display\'s gate is report, shell.css leaves .arrange to the shared rules, and no marker row is held by a token', () => {
