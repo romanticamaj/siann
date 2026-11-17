@@ -149,7 +149,7 @@ async function killEngineAndExpectReconnect(): Promise<void> {
 // zone (m5-ui-port-mixer-strip) and the right zone (m5-ui-port-plans, the Plans
 // tab) take ui/base.css's page, as the mockup does (UI redesign 10.9 (1)). The
 // zone buttons are the mockup's icon buttons, named by their aria-label.
-test('the zones not ported yet keep their text styles; the chrome and the ported lower and right zones take the mockup's', async () => {
+test('the zones not ported yet keep their text styles; the chrome and the ported lower and right zones take the mockup\'s', async () => {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const styles = await page.evaluate(() => {
     const pick = (el: Element) => {
