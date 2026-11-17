@@ -372,3 +372,77 @@ test('the decisions of the second round are written where contributors read them
   const gate = milestone('M5').humanGates.find((entry) => entry.id === 'fidelity-decisions-2');
   assert.match(gate.resolution, /^Decided by the maintainer, 2026-11-15/);
 });
+
+// m5-ui-alignment-chrome, fix round 1. The zones are the mockup's CSS grid
+// with SIANN's own dividers: the UI spec says so wherever it named the panel
+// library, and the reversal of row 15's default is recorded there.
+test('the UI spec no longer builds the zones with react-resizable-panels', () => {
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  const section = (heading) => {
+    const start = spec.indexOf(`\n${heading}`);
+    assert.ok(start >= 0, heading);
+    const next = spec.slice(start + 1).search(/\n#{2,3} /);
+    return next < 0 ? spec.slice(start) : spec.slice(start, start + 1 + next);
+  };
+  const library = /react-resizable-panels/;
+  // Item 8 of section 0, the "Resizable zones" row of 5.9, P1-1's scope and
+  // row 15 of section 8 name the library only as what left.
+  const item8 = /\n8\. \*\*Dependencies:\*\*[^\n]*/.exec(spec)?.[0] ?? '';
+  assert.match(item8, /SIANN's own dividers/);
+  assert.match(item8, /react-resizable-panels[^\n]*left with `m5-ui-alignment-chrome`/);
+  const row59 = /\n\| Resizable zones \|[^\n]*/.exec(section('### 5.9 Libraries'))?.[0] ?? '';
+  assert.match(row59, /SIANN's own/);
+  assert.doesNotMatch(row59, /would be more code hand-rolled/);
+  assert.match(row59, /m5-ui-alignment-chrome/);
+  const p11 = /\n- Scope: `tokens\.css`; local Inter[^\n]*/.exec(spec)?.[0] ?? '';
+  assert.match(p11, /draggable and collapsible with `react-resizable-panels`[^;]*replaced by SIANN's own dividers in `m5-ui-alignment-chrome`/);
+  const row15 = /\n\| 15 \| Dependencies and fonts \|[^\n]*/.exec(spec)?.[0] ?? '';
+  assert.match(row15, /`m5-ui-alignment-chrome`/);
+  assert.match(row15, /maintainer/);
+  assert.doesNotMatch(row15, /\| `react-resizable-panels` in P1-1, pinned/);
+  // 2.2's argument for zones stands, on the grid instead of the library.
+  assert.doesNotMatch(section('### 2.2 Why zones and not free docking'), /react-resizable-panels` gives/);
+  // Nothing else in the spec offers the library as current.
+  for (const line of spec.split('\n').filter((l) => library.test(l))) {
+    assert.match(line, /m5-ui-alignment-chrome|\[L1\]/, line.slice(0, 120));
+  }
+});
+
+// Small windows (spec 2.4): every width at which shell.css changes the top
+// bar or the status bar is a width 2.4 names, and 3.0's hold rule says what
+// a held box does under it.
+test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 describe', () => {
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  const css = read('app', 'renderer', 'shell.css');
+  const start = spec.indexOf('\n### 2.4 Small windows');
+  const s24 = spec.slice(start, spec.indexOf('\n### 2.5 ', start));
+  const widths = [...css.matchAll(/@media \(max-width: (\d+)px\)/g)].map((m) => Number(m[1]));
+  assert.deepEqual([...new Set(widths)].sort((a, b) => b - a), [1300, 1100]);
+  for (const width of widths) assert.match(s24, new RegExp(`Under ${width} px wide`), `${width} px in 2.4`);
+  // 1300 px: the transport leaves the centre and the three side holds go.
+  assert.match(s24, /Under 1300 px wide[^\n]*the transport is no longer centred/);
+  for (const part of ['branch chip', 'DSP load', 'Record button']) assert.match(s24, new RegExp(`Under 1300 px wide[^\n]*${part}`), part);
+  // 1100 px: the brand goes too; the session name shortens instead of going.
+  assert.match(s24, /Under 1100 px wide[^\n]*the brand/);
+  assert.match(s24, /session name[^\n]*(ellipsis|shortens)/);
+  // Media queries on the window for the bars, which span it; container queries in the zones.
+  assert.match(s24, /media queries/);
+  // 3.0's hold rule: a hold keeps its space at the mockup's width (1440 px) and down to 1300 px.
+  const s30 = spec.slice(spec.indexOf('\n### 3.0 '), spec.indexOf('\n### 3.1 '));
+  assert.match(s30, /1300 px/);
+  // The CSS does what 2.4 says.
+  const block = (width) => {
+    const at = css.indexOf(`@media (max-width: ${width}px)`);
+    const open = css.indexOf('{', at);
+    let depth = 0;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++;
+      if (css[i] === '}' && --depth === 0) return css.slice(open, i + 1);
+    }
+    return '';
+  };
+  assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
+  assert.match(block(1300), /\.hold-branch-chip, \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
+  assert.match(block(1100), /\.brand \{ display: none; \}/);
+  assert.match(block(1100), /\.hold-display-signature/);
+});
