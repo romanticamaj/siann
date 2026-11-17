@@ -509,6 +509,23 @@ code, dd { font-family: var(--font-mono); }
 .inspector-colour { flex: 0 0 auto; width: calc(12px * var(--scale)); height: calc(12px * var(--scale)); border-radius: var(--radius-s); }
 .inspector-buttons { display: flex; gap: var(--space); margin: calc(var(--space) * 2) 0; }
 .inspector-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: calc(var(--space) * 2); font-size: var(--fs-small); color: var(--tx-3); }
+/* The pre-port M and S and level readout, kept for the Inspector alone until
+   m5-ui-port-inspector deletes them: a component not ported yet looks as it
+   did (UI redesign 10.10). The MixConsole's strips draw .msr and a bare span. */
+.inspector .ms {
+  min-height: 0;
+  height: var(--ms-h);
+  min-width: var(--ms-h);
+  padding: 0 var(--space);
+  border-radius: var(--radius-s);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  line-height: 1;
+}
+.inspector .ms.mute[aria-pressed="true"] { background: var(--mute); border-color: var(--mute); color: var(--bg-0); }
+.inspector .ms.solo[aria-pressed="true"] { background: var(--solo); border-color: var(--solo); color: var(--bg-0); }
+.inspector .value-readout { color: var(--tx-2); white-space: nowrap; cursor: text; font-variant-numeric: tabular-nums; }
+.inspector .value-readout.warn { color: var(--warn); }
 .inspector-row .value-readout { color: var(--tx-1); }
 .inspector .value-control { margin-top: var(--space); }
 .inspector .fader.horizontal { height: var(--control-h); }
