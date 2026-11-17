@@ -179,6 +179,7 @@ test('the lower zone takes the mockup\'s .lower and .tabs with the MixConsole ta
   assert.match(tab[1]!, /^<svg class="i s" viewBox="0 0 16 16"[^>]*>[\s\S]*<\/svg>MixConsole <kbd>Alt\+F3<\/kbd>$/);
   for (const id of ['tab-editor', 'mixer-racks']) assert.ok(!markup.includes(`data-part="${id}"`), `${id} is pending`);
   assert.doesNotMatch(tabs[1]!, /class="spacer"/);
-  // The right zone keeps its row until m5-ui-port-plans.
-  assert.match(markup, /<div class="zone-tabs" role="tablist" data-part="right-tabs">/);
+  // The right zone's row is the mockup's .p-head since m5-ui-port-plans.
+  assert.match(markup, /<div class="p-head" role="tablist" data-part="right-tabs">/);
+  assert.ok(!markup.includes('class="zone-tabs"'), 'no .zone-tabs row is left');
 });

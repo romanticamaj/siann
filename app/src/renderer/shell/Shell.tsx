@@ -76,9 +76,10 @@ import {
   type Zone,
 } from './layout';
 import { useShellState, type LayoutStore } from './layout-store';
+import { Hold } from './Hold';
+import { Icon } from './icons';
 import { StatusBar } from './StatusBar';
 import type { ToastStore } from './toast-store';
-import { Icon } from './icons';
 import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
 import { transportEnabled, type TransportPlayhead } from './Transport';
@@ -172,6 +173,8 @@ export interface ShellProps {
   readonly project: ReactNode;
   readonly lower: ReactNode;
   readonly right: ReactNode;
+  // The end of the right zone's tab row (the hearing switch, m5-ui-port-plans).
+  readonly rightHead?: ReactNode;
 }
 
 interface ZoneFrameProps {
@@ -336,6 +339,7 @@ export function Shell({
   project,
   lower,
   right,
+  rightHead,
 }: ShellProps) {
   const t = useT();
   const viewport = useViewport();
@@ -539,18 +543,26 @@ export function Shell({
       </button>
     </div>
   );
-  // The right zone's row is ported by m5-ui-port-plans.
-  const tab = (zone: 'right', id: 'plans') => (
-    <div className="zone-tabs" role="tablist" data-part={`${zone}-tabs`}>
+  // The right zone's tab row, the mockup's .p-head (m5-ui-port-plans;
+  // ui/right-zone.css): the Plans tab, the boxes of the Media and Meter tabs
+  // (pending: m5b-ui-media, m5b-ui-meter; UI redesign 3.0) and the hearing switch.
+  const rightTabs = (
+    <div className="p-head" role="tablist" data-part="right-tabs">
       <button
         type="button"
         role="tab"
-        data-testid={`tab-${zone}-${id}`} data-part={`tab-${id}`}
-        aria-selected={state.layout.tabs[zone] === id}
-        onClick={() => store.dispatch({ type: 'tab', zone, tab: id })}
+        className="tab on"
+        data-testid="tab-right-plans"
+        data-part="tab-plans"
+        aria-selected={state.layout.tabs.right === 'plans'}
+        onClick={() => store.dispatch({ type: 'tab', zone: 'right', tab: 'plans' })}
       >
-        {t(`tab.${id}`)}
+        <Icon name="spark" small />
+        {t('tab.plans')}
       </button>
+      <Hold className="hold-tab-media" />
+      <Hold className="hold-tab-meter" />
+      {rightHead}
     </div>
   );
 
@@ -625,7 +637,7 @@ export function Shell({
         visible={zones.right.visible}
         focused={focused === 'right'}
         drawer={zones.right.drawer ? { width: zones.right.size } : null}
-        tabs={tab('right', 'plans')}
+        tabs={rightTabs}
         onFocus={(z) => focusZone(z, false)}
         frameRef={frameRef('right')}
       >

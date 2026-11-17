@@ -63,7 +63,34 @@ export function badgeOf(plan: PlanEntry): BadgeKey {
   return BADGES[plan.state];
 }
 
-function timeOf(plan: PlanEntry, firstSeen: number | undefined, nowMs: number, locale: Locale): string | null {
+// The badge's words: "Applied · r31" for a plan that landed at a revision
+// (the mockup's history row; UI redesign 10.10, P1-13 notes: "applied at
+// <revision>" is the badge's text).
+export function badgeText(plan: PlanEntry, badge: BadgeKey | 'stale', t: T): string {
+  const revision = plan.appliedRevision;
+  if (badge === 'applied' && revision !== undefined) return t('badge.appliedAt', { revision });
+  if (badge === 'rolledBack' && revision !== undefined) return t('badge.rolledBackAt', { revision });
+  return t(`badge.${badge}`);
+}
+
+// The badge's class beside .badge: the mockup's four (ui/right-zone.css), and
+// app-only ones for the states the mockup does not show (shell.css).
+const BADGE_CLASSES: Record<BadgeKey | 'stale', string> = {
+  draft: 'draft',
+  needsReview: 'pending',
+  approved: 'approved',
+  approvedForAudition: 'audition',
+  rejected: 'rejected',
+  applied: 'applied',
+  rolledBack: 'rolled-back',
+  stale: 'stale',
+};
+
+export function badgeClass(badge: BadgeKey | 'stale'): string {
+  return `badge ${BADGE_CLASSES[badge]}`;
+}
+
+export function timeOf(plan: PlanEntry, firstSeen: number | undefined, nowMs: number, locale: Locale): string | null {
   // Never the future: a clock read before the plan arrived reads "now".
   if (firstSeen !== undefined) return relativeTime(Math.min(firstSeen, nowMs), nowMs, locale);
   for (const field of ['rejectedAt', 'approvedAt'] as const) {

@@ -370,6 +370,39 @@ test('the event display\'s gate is report, shell.css leaves .arrange to the shar
   assert.doesNotMatch(read('app', 'renderer', 'tokens.css'), /--hold-marker-/);
 });
 
+// ---- m5-ui-port-plans: the Plans tab ported (UI redesign 10.10, P1-13)
+
+test('the Plans tab\'s absent parts keep their boxes through hold tokens applied in shell.css, and its gate is report', () => {
+  assert.equal(MANIFEST.gates['m5-ui-port-plans'], 'report');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  // The part, its sides, and whether a value is set again per Chinese locale.
+  const holds = {
+    'agent-row': [['h'], false],
+    'plan-title': [['h'], false],
+    'plan-intent': [['h'], false],
+    composer: [['h'], false],
+    'tab-media': [['w'], true],
+    'tab-meter': [['w'], true],
+  };
+  for (const [part, [sides, perLocale]] of Object.entries(holds)) {
+    assert.equal(MANIFEST.gates[ruleOf(part).gate], 'pending', `${part} is pending`);
+    for (const side of sides) {
+      const values = [...tokens.matchAll(new RegExp(`--hold-${part}-${side}:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`, 'g'))];
+      assert.ok(values.length >= 1, `--hold-${part}-${side}`);
+      if (perLocale) assert.ok(values.length >= 2, `--hold-${part}-${side} is set again for zh-TW and zh-CN`);
+      assert.ok(shell.includes(`var(--hold-${part}-${side})`), `shell.css applies --hold-${part}-${side}`);
+    }
+  }
+  if (Object.values(holds).some(([, perLocale]) => perLocale)) assert.match(tokens, /:root:lang\(zh-TW\)[^{]*\{[^}]*--hold-tab-media-w/);
+  // The rules the port replaced are gone from shell.css: the old card, the
+  // hearing label, the badges by state key, and the right zone's .zone-tabs.
+  for (const selector of ['.plan-review', '.plan-list', '.plan-card', '.plan-detail', '.plan-steps-select', '.plan-step ', '.step-label', '.hearing-switch', '.hearing-label', '.badge-', '.plan-diff', '.plan-action', '.plan-landed', '.plan-card-lead']) {
+    assert.ok(!shell.includes(selector), `shell.css has no ${selector.trim()} rule`);
+  }
+  assert.doesNotMatch(shell, /\.zone-right \.zone-tabs|\.plans \.zone-tabs/);
+});
+
 test('the chrome\'s gate is report, and the boxes of its absent parts are held by tokens applied in shell.css only', () => {
   assert.equal(MANIFEST.gates['m5-ui-alignment-chrome'], 'report');
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');

@@ -15,8 +15,13 @@ import { relativeTime, translator } from '../../src/renderer/i18n/t';
 import { LOCALES } from '../../src/renderer/i18n/locale';
 import { planEntry, type PlanEntry } from '../../src/renderer/model/plan-store';
 import { cardOf, staleReasons } from '../../src/renderer/plans/card';
-import type { StepNames } from '../../src/renderer/plans/describe';
+import { namesFromSnapshot, type StepNames } from '../../src/renderer/plans/describe';
+import { historyOf } from '../../src/renderer/plans/history';
 import { isolateName as n } from '../../src/renderer/plans/isolate';
+import { defaultSelection } from '../../src/renderer/plans/selection';
+import { APPLIED, mockupPlans, mockupSnapshot, mockupZh, NOTE, PENDING, REJECTED, STALE } from './support/mockup-plan';
+
+const MOCKUP_NAMES = namesFromSnapshot(mockupSnapshot());
 
 const H = (digit: string) => 'sha256:' + digit.repeat(64);
 const NOW = Date.UTC(2026, 10, 14, 12, 0, 0);
@@ -182,4 +187,75 @@ test('stale reasons are in user units', () => {
       assert.ok(!/trk_|clp_|med_|slt_|\d{4,}/.test(text), `${locale}: ${text}`);
     }
   }
+});
+
+// ---- m5-ui-port-plans: which plan is the card, and the history rows (UI redesign 10.10, P1-13 notes)
+
+test('the default selection: the newest plan awaiting a decision, a non-stale one first; else the newest; none when empty', () => {
+  const stale = { stale: [{ ref: 'track:trk_keys', change: 'modified' }] };
+  const pick = (...plans: PlanEntry[]) => defaultSelection(plans);
+  assert.equal(pick(), null);
+  assert.equal(pick(plan(H('1'), 'validated'), plan(H('2'), 'validated')), H('2'), 'the newest');
+  assert.equal(pick(plan(H('1'), 'validated'), plan(H('2'), 'applied')), H('1'), 'awaiting a decision before newer landed plans');
+  assert.equal(pick(plan(H('1'), 'approved'), plan(H('2'), 'rejected')), H('1'), 'approved awaits apply');
+  assert.equal(pick(plan(H('1'), 'validated'), plan(H('2'), 'validated', stale)), H('1'), 'a non-stale one first');
+  assert.equal(pick(plan(H('1'), 'validated', stale), plan(H('2'), 'applied')), H('1'), 'a stale one before none');
+  assert.equal(pick(plan(H('1'), 'rejected'), plan(H('2'), 'applied'), plan(H('3'), 'rolled_back')), H('3'), 'else the newest');
+  // The mockup's session: the pending plan.
+  assert.equal(defaultSelection(mockupPlans()), PENDING);
+});
+
+test('history rows: every plan but the card, newest first, title the first step, one badge, the detail line', () => {
+  const plans = mockupPlans();
+  const firstSeen = new Map([[APPLIED, NOW - 3_600_000]]);
+  const rows = historyOf(plans, PENDING, NOW, firstSeen, 'en', MOCKUP_NAMES);
+  assert.deepEqual(rows.map((r) => r.hash), [APPLIED, REJECTED, STALE]);
+  assert.deepEqual(rows.map((r) => r.shortHash), ['aaaaaaaa', 'bbbbbbbb', 'cccccccc']);
+  assert.deepEqual(rows.map((r) => r.title), [
+    `Set ${n('Kick')} volume to ${formatMilliDb(0)}`,
+    `Pan ${n('Vox Lead')} to R30`,
+    `Set ${n('Kick')} volume to ${formatMilliDb(-1000)}`,
+  ]);
+  // One badge per row: Stale wins over Approved; an applied plan names its revision.
+  assert.deepEqual(rows.map((r) => [r.badge, r.badgeText]), [
+    ['applied', 'Applied · r31'],
+    ['rejected', 'Rejected'],
+    ['stale', 'Stale'],
+  ]);
+  assert.deepEqual(rows.map((r) => [r.detailKind, r.detail]), [
+    ['summary', '4 steps · 1 hour ago'],
+    ['reason', `“${n(NOTE)}” · sent to agent`],
+    ['summary', '1 step'],
+  ]);
+  // The card is not a row; nothing selected: every plan is.
+  assert.equal(historyOf(plans, null, NOW, firstSeen, 'en', MOCKUP_NAMES).length, 4);
+});
+
+test('a history row carries the split and part-of wording in its detail line', () => {
+  const parent = plan(H('5'), 'rejected', { rejectionNote: `partially approved as ${H('6')}` });
+  const child = plan(H('6'), 'applied', { parentPlan: H('5'), appliedRevision: 'r9' });
+  const rows = historyOf([parent, child, plan(H('7'), 'validated')], H('7'), NOW, new Map(), 'en', NAMES);
+  assert.deepEqual(rows.map((r) => [r.detailKind, r.detail]), [
+    ['partOf', '(part of 55555555)'],
+    ['split', 'Split, 5 of 5 approved'],
+  ]);
+  assert.ok(!rows.some((r) => r.detail.includes('partially approved')), "the engine's own note is not shown");
+});
+
+test('"Earlier" and "N plans" in every locale, with plurals; zh-Hant is the mockup\'s', () => {
+  const zh = mockupZh();
+  const t = translator('en');
+  assert.equal(t('plans.earlier'), 'Earlier');
+  assert.equal(t('plans.count', { count: 3 }), '3 plans');
+  assert.equal(t('plans.count', { count: 1 }), '1 plan');
+  const hant = translator('zh-Hant');
+  assert.equal(hant('plans.earlier'), zh.Earlier);
+  assert.equal(hant('plans.count', { count: 3 }), zh['3 plans']);
+  assert.equal(hant('badge.appliedAt', { revision: 'r31' }), zh['Applied · r31']);
+  const hans = translator('zh-Hans');
+  assert.equal(hans('plans.earlier'), '先前');
+  assert.equal(hans('plans.count', { count: 3 }), '3 个计划');
+  // The mockup's rejected row, in its own words around the agent's note.
+  const [, rejected] = historyOf(mockupPlans(), PENDING, NOW, new Map(), 'zh-Hant', MOCKUP_NAMES);
+  assert.equal(rejected!.detail, zh['“Too wide for the verse — keep it mono.” · sent to agent']!.replace('主歌聽起來太寬，維持單聲道。', n(NOTE)));
 });

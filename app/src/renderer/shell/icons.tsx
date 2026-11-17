@@ -76,6 +76,8 @@ const PATHS = {
       <rect x="3.3" y="9.6" width="9.4" height="2.6" fill="currentColor" stroke="none" opacity=".55" />
     </>
   ),
+  check: <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />,
+  x: <path d="M4 4l8 8M12 4l-8 8" />,
   zRight: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1.5" />

@@ -33,6 +33,7 @@ import { RULER_UPPER } from '../../src/renderer/timeline/geometry';
 import { snappedMoveDelta, snapperFor } from '../../src/renderer/timeline/snap';
 import { engineClient, type EngineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
+import { selectPlan } from './support/seed';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -448,8 +449,8 @@ function hash8(hash: string): string {
 async function submit(client: Agent, steps: ReadonlyArray<Record<string, unknown>>): Promise<string> {
   const plan = await client.tool('submit_plan', { steps });
   const hash = plan.hash as string;
-  await page.getByTestId(`plan-${hash8(hash)}`).click();
-  await expect(page.getByTestId('plan-detail')).toBeVisible();
+  // The card by the default selection, or a click on its history row (m5-ui-port-plans).
+  await selectPlan(page, hash);
   return hash;
 }
 
@@ -673,13 +674,13 @@ test('UX screenshot tour', async () => {
     { op: 'track.rename', trackId: 'trk_fx', name: 'FX Riser' },
   ];
   const mixHash = await submit(client, mixPass);
-  await expect(page.getByTestId('plan-diff')).toBeVisible();
+  await expect(page.getByTestId('plan-card')).toBeVisible();
   await expect(page.getByTestId('toast')).toBeVisible();
   await scrollTo('plan-review');
   await shoot(
     page,
     'Plan submitted with diff',
-    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it; the card leads with its first step, the step count, when it arrived, a Needs review badge and the short hash; the steps are numbered from 1, all ticked, in user wording (dB, L/C/R pan, names, no ids); one filled primary (Approve and apply) beside Audition and Reject with its reason field; the diff in user units, raw JSON behind each row's disclosure.`,
+    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; the boxes of the title, intent, agent row and composer left empty until M5b), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text.`,
   );
   await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls).', { fullPage: true });
 
@@ -687,7 +688,7 @@ test('UX screenshot tour', async () => {
   for (const step of [2, 4]) await page.getByTestId(`step-${step}`).getByRole('checkbox').uncheck();
   await expect(page.getByTestId('plan-approve-apply')).toBeEnabled();
   await scrollTo('plan-review');
-  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): the primary now reads "Approve 3 of 5"; Select all and Select none sit above the steps.');
+  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): their boxes empty, the head reads "Steps · 3 of 5 selected" with its link now Select all, and the primary "Approve 3 of 5".');
   await page.getByTestId('plan-approve-apply').click();
   await expect(page.getByTestId(`plan-state-${hash8(mixHash)}`)).toHaveAttribute('data-state', 'rejected');
   const listed = (await watcher.call('plan.list')).plans as Array<Record<string, unknown>>;
@@ -698,7 +699,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Partial approval sub-plan approved',
-    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted); the original card reads "Split, 3 of 5 approved".`,
+    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted): the card follows the sub-plan, its badge "Applied · <revision>" and "(part of ${hash8(mixHash)})" under it, its steps without boxes; the original plan is a history row under "Earlier" reading "Split, 3 of 5 approved".`,
   );
 
   // Audition: a plan approved, proposed and heard in one action.
@@ -715,7 +716,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Audition active',
-    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card reads "Approved for audition", the banner under the top bar names the plan with Hear main, Merge and Discard, the hearing switch at the top of the Plans tab and the status bar show Proposal; main is unchanged.`,
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge and the icon-only Discard; the banner under the top bar names the plan with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged.`,
   );
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -728,15 +729,17 @@ test('UX screenshot tour', async () => {
     { op: 'track.set_gain', trackId: 'trk_kick', gainMilliDb: 3000 },
   ];
   const tidyHash = await submit(client, tidy);
+  // The reason row opens with the first press of Reject (UI redesign 10.10, P1-13).
+  await page.getByTestId('plan-reject').click();
   await page.getByTestId('plan-note').fill('Keep the FX riser; kick is loud enough');
   await scrollTo('plan-review');
-  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected with a reason typed in "Reason (sent to agent)".`);
+  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected; the first press of Reject opened the reason row above the actions, and a reason is typed in "Reason (sent to agent)" (Enter or Reject again sends it, Escape closes it).`);
   await page.getByTestId('plan-reject').click();
   await expect(page.getByTestId(`plan-state-${hash8(tidyHash)}`)).toHaveAttribute('data-state', 'rejected');
   await expect(page.getByTestId(`plan-reason-${hash8(tidyHash)}`)).toBeVisible();
   const rejected = await watcher.call('plan.status', { plan: tidyHash });
   await scrollTo('plan-review');
-  await shoot(page, 'Plan rejected with note', `Rejected; the card shows the reason the engine recorded ("${String(rejected.rejectionNote)}"). The reason field is cleared after Reject.`);
+  await shoot(page, 'Plan rejected with note', `Rejected; the card's badge reads Rejected and a row under it shows the reason the engine recorded ("${String(rejected.rejectionNote)}" · sent to agent), with no actions left. The reason row is closed and cleared after Reject.`);
 
   // A stale plan: another client commits to an entity of the plan.
   const vox = [{ op: 'track.set_gain', trackId: 'trk_voxlead', gainMilliDb: -1000 }, { op: 'track.set_solo', trackId: 'trk_voxlead', solo: false }];
@@ -749,7 +752,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Plan stale error',
-    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge, the reason reads in dB ("Vox Lead: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}"), and Approve and apply is disabled with the reason as its tooltip; Reject stays.`,
+    `A third plan (${hash8(voxHash)}) went stale when another client set the Vox Lead volume: the card carries a Stale badge beside Needs review, a row between the steps and the actions gives the reason in dB ("Vox Lead: volume was ${formatMilliDb(1500)}, now ${formatMilliDb(500)}"), and "Approve 2 of 2" is disabled with the reason as its tooltip; Reject stays.`,
   );
 
   // ---- 7. The engine dies: the window while the shell waits to restart it.

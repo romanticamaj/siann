@@ -1,39 +1,40 @@
 // The Plans tab of the right zone (m5-ui-plan-panel; spec "Frontend", plan
-// review; UI redesign section 4 and P1-5). The hearing switch at the top,
-// then a card per plan (newest first: first step, step count, time, badge,
-// short hash; split label, rejection reason), and for the selected plan its
-// steps (numbered from 1, all ticked, Select all / none), why it is stale in
-// user units, the actions valid in its state with one primary
-// (plans/actions.ts; each only when engine.capabilities lists what it sends;
-// a valid action that cannot run now disabled with its reason), the refusal
-// line (plans/RefusalLine: no ids, the engine's text behind a disclosure),
-// and its diff against the current revision (plan.preview, re-read when
-// the head or the plan changes). Raw steps, refs and entity JSON are behind
-// per-row disclosures. The list follows plan.changed, never an optimistic
-// state; a chain that stops shows where (the engine's state stays as it
-// reports it).
+// review; UI redesign section 4 and P1-5), ported from the mockup's markup by
+// m5-ui-port-plans (10.10, P1-13): the agent row's hold, then .p-scroll with
+// one card for the selected plan (plans/PlanCard: its badge, time and hash,
+// the count chips, the steps in the mockup's wording, the actions valid in
+// its state with one primary, each only when engine.capabilities lists what
+// it sends, a valid action that cannot run now disabled with its reason; the
+// stale reasons, the refusal line and the reason field as rows of their own)
+// and a history row for every other plan, newest first, under "Earlier";
+// then the composer's hold. With no plan selected (first load, after a
+// reconnect) the card is the newest plan that awaits a decision
+// (plans/selection.ts). The hearing switch is in the zone's tab row (Shell).
+// The list follows plan.changed, never an optimistic state; a chain that
+// stops shows where (the engine's state stays as it reports it). Raw steps,
+// refs and entity JSON are behind each step's disclosure.
 //
 // PlanPanelView is the pure view (static-markup tests); PlanPanel reads the
 // stores, plan.preview and session.fetch at the plan's base revision (for
 // the stale reasons), and runs the actions.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
+import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
-import { actionLabel, actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type ActionId, type PlanAction } from './actions';
+import { actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type PlanAction } from './actions';
 import { cardOf, staleReasons as reasonsOf } from './card';
 import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
-import { HearingSwitch } from './HearingSwitch';
+import { historyOf } from './history';
+import { HistoryRow } from './HistoryRow';
 import { usePlanSnapshot, useModelSnapshot, useStepNames } from './hooks';
-import { ISOLATE } from './isolate';
 import { PlanCard } from './PlanCard';
-import { PlanDiff } from './PlanDiff';
-import { RefusalLine, refusalOf, type Refusal } from './RefusalLine';
-import { StepList } from './StepList';
+import { refusalOf, type Refusal } from './RefusalLine';
+import { defaultSelection } from './selection';
 
 export type PanelRefusal = Refusal;
 
@@ -43,6 +44,8 @@ export interface PlanPanelViewProps {
   readonly firstSeen: ReadonlyMap<string, number>;
   readonly nowMs: number;
   readonly names: StepNames;
+  // The plan the user selected; null (or a plan the store no longer holds):
+  // the default selection.
   readonly selected: string | null;
   // null: every step ticked (the default).
   readonly ticked: ReadonlySet<number> | null;
@@ -52,134 +55,86 @@ export interface PlanPanelViewProps {
   readonly preview: PlanPreview | null;
   readonly previewError: PanelRefusal | null;
   readonly staleReasons: readonly string[];
+  // The reason field is open (the first press of Reject).
+  readonly rejecting: boolean;
+  // The step under the pointer.
+  readonly hotStep: number | null;
   readonly onSelect: (hash: string) => void;
   readonly onTicked: (ticked: ReadonlySet<number>) => void;
   readonly onNote: (note: string) => void;
   readonly onRun: (entry: ActionEntry) => void;
-  // Above the cards (the hearing switch).
-  readonly header?: ReactNode;
+  readonly onRejecting: (open: boolean) => void;
+  readonly onHotStep: (index: number | null) => void;
   // Disclosures that start open (tests).
   readonly openSteps?: ReadonlySet<number>;
-  readonly openRows?: ReadonlySet<number>;
   readonly openError?: boolean;
+  readonly openOther?: boolean;
 }
 
-const TEST_IDS: Record<ActionId, string> = {
-  approveApply: 'plan-approve-apply',
-  apply: 'plan-apply',
-  audition: 'plan-audition',
-  reject: 'plan-reject',
-  merge: 'plan-merge',
-  hearMain: 'plan-hear-main',
-  hearProposal: 'plan-hear-proposal',
-  discard: 'plan-discard',
-};
+// The plan on the card: the selected one while the store holds it, else the default.
+export function cardPlan(plans: readonly PlanEntry[], selected: string | null): PlanEntry | undefined {
+  const chosen = selected !== null ? plans.find((p) => p.hash === selected) : undefined;
+  if (chosen) return chosen;
+  const hash = defaultSelection(plans);
+  return hash !== null ? plans.find((p) => p.hash === hash) : undefined;
+}
 
 export function PlanPanelView(props: PlanPanelViewProps) {
-  const { plans, heard, firstSeen, nowMs, names, selected, ticked, note, busy, error } = props;
+  const { plans, heard, firstSeen, nowMs, names, ticked } = props;
   const locale = useLocale();
   const t = translator(locale);
   const can = useCapabilities();
-  const plan = selected !== null ? plans.find((p) => p.hash === selected) : undefined;
-  const newestFirst = [...plans].reverse();
+  const plan = cardPlan(plans, props.selected);
+  const rows = historyOf(plans, plan?.hash ?? null, nowMs, firstSeen, locale, names);
   const chosen = selection(ticked, plan?.steps.length ?? 0);
   const set = plan ? actionSet(plan, heard, chosen) : null;
-  const entries = set && plan ? [...(set.primary ? [set.primary] : []), ...set.secondary].filter((e) => actionMethods(e.id, plan).every((m) => can.has(m))) : [];
-  const landed = plan ? landedLabel(plan, t) : null;
-  // The selected plan's detail, directly under its card.
-  const detail =
-    plan && set ? (
-        <div className="plan-detail" data-testid="plan-detail" data-part="plan-card">
-          <StepList
-            key={plan.hash}
-            steps={plan.steps}
-            names={names}
-            ticked={ticked}
-            selectable={plan.state === 'validated' && can.has('plan.approve')}
-            disabled={busy}
-            onTicked={props.onTicked}
-            openSteps={props.openSteps}
-          />
-          {props.staleReasons.length > 0 ? (
-            <div className="plan-stale-reasons" data-testid="plan-stale-reasons">
-              <h3>{t('plans.staleTitle')}</h3>
-              <ul>
-                {props.staleReasons.map((reason, index) => (
-                  <li key={index} className="plan-stale-reason" {...ISOLATE}>
-                    {reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {entries.length > 0 ? (
-            <div className="plan-actions" data-part="plan-actions">
-              {entries.some((e) => e.id === 'reject') ? (
-                <label className="plan-note">
-                  {t('plans.reason')}{' '}
-                  <input data-testid="plan-note" value={note} onChange={(event) => props.onNote(event.target.value)} />
-                </label>
-              ) : null}
-              {entries.map((entry) => {
-                const reason = set.disabled.get(entry.id);
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={entry === set.primary ? 'plan-action primary' : 'plan-action'}
-                    data-testid={TEST_IDS[entry.id]}
-                    data-part={`plan-${entry.id === 'approveApply' ? 'approve' : entry.id}`}
-                    disabled={busy || reason !== undefined}
-                    title={reason !== undefined ? t(`actionReason.${reason}`) : undefined}
-                    onClick={() => props.onRun(entry)}
-                  >
-                    {actionLabel(entry, plan.steps.length, t)}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-          <RefusalLine
-            key={error ? `${error.code ?? ''}:${error.message}` : ''}
-            refusal={error}
-            locale={locale}
-            names={names}
-            testId="plan-error"
-            className="plan-error"
-            role="status"
-            open={props.openError}
-          />
-          {landed !== null ? (
-            <p className="plan-landed" data-testid="plan-landed">
-              {landed}
-            </p>
-          ) : null}
-          {landed === null && props.preview ? (
-            <PlanDiff key={plan.hash} preview={props.preview} stale={plan.stale} names={names} openRows={props.openRows} />
-          ) : null}
-          {landed === null && props.previewError ? (
-            <RefusalLine refusal={props.previewError} locale={locale} names={names} testId="plan-preview-error" className="plan-preview-error" />
-          ) : null}
-        </div>
-      ) : null;
   return (
-    <section className="plan-review" data-testid="plan-review" aria-label={t('plans.label')}>
-      {props.header}
-      {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
-      <ul className="plan-list" data-testid="plan-list" aria-label={t('plans.list')}>
-        {newestFirst.map((entry) => (
-          <li key={entry.hash}>
-            <PlanCard
-              plan={entry}
-              card={cardOf(entry, plans, heard, nowMs, firstSeen.get(entry.hash), locale, names)}
-              selected={entry.hash === selected}
-              onSelect={() => props.onSelect(entry.hash)}
-            />
-            {entry.hash === selected ? detail : null}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <>
+      <Hold className="hold-agent-row" />
+      <div className="p-scroll" data-testid="plan-review" aria-label={t('plans.label')}>
+        {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
+        {plan && set ? (
+          <PlanCard
+            key={plan.hash}
+            plan={plan}
+            card={cardOf(plan, plans, heard, nowMs, firstSeen.get(plan.hash), locale, names)}
+            names={names}
+            set={set}
+            allowed={(entry) => actionMethods(entry.id, plan).every((m) => can.has(m))}
+            selectable={plan.state === 'validated' && can.has('plan.approve')}
+            ticked={ticked}
+            busy={props.busy}
+            note={props.note}
+            rejecting={props.rejecting}
+            hotStep={props.hotStep}
+            error={props.error}
+            preview={landedLabel(plan) === null ? props.preview : null}
+            previewError={landedLabel(plan) === null ? props.previewError : null}
+            staleReasons={props.staleReasons}
+            openSteps={props.openSteps}
+            openError={props.openError}
+            openOther={props.openOther}
+            onTicked={props.onTicked}
+            onNote={props.onNote}
+            onRun={props.onRun}
+            onRejecting={props.onRejecting}
+            onHotStep={props.onHotStep}
+          />
+        ) : null}
+        {rows.length > 0 ? (
+          <>
+            <div className="hist-h up" data-part="plan-history-head">
+              {t('plans.earlier')}
+              <span>{t('plans.count', { count: rows.length })}</span>
+            </div>
+            {rows.map((row) => (
+              <HistoryRow key={row.hash} row={row} onSelect={() => props.onSelect(row.hash)} />
+            ))}
+          </>
+        ) : null}
+      </div>
+      <Hold className="hold-composer" />
+    </>
   );
 }
 
@@ -268,9 +223,23 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [ticked, setTicked] = useState<ReadonlySet<number> | null>(null);
   const [note, setNote] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [hotStep, setHotStep] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<PanelRefusal | null>(null);
-  const plan = selected !== null ? snapshot.byHash.get(selected) : undefined;
+  const plan = cardPlan(snapshot.plans, selected);
+  // Another plan on the card (a selection, or the default moving on): its
+  // own ticks, reason and refusal.
+  const shown = plan?.hash ?? null;
+  const lastShown = useRef(shown);
+  useEffect(() => {
+    if (lastShown.current === shown) return;
+    lastShown.current = shown;
+    setTicked(null);
+    setRejecting(false);
+    setHotStep(null);
+    setError(null);
+  }, [shown]);
   // A reconnect clears the selection and its ticked steps.
   const seenReconnects = useRef(reconnects);
   useEffect(() => {
@@ -278,6 +247,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
     seenReconnects.current = reconnects;
     setSelected(null);
     setTicked(null);
+    setRejecting(false);
     setError(null);
   }, [reconnects]);
   const preview = usePreview(client, plan, model?.revision ?? null);
@@ -295,6 +265,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
   const select = (hash: string) => {
     setSelected(hash);
     setTicked(null);
+    setRejecting(false);
     setError(null);
   };
 
@@ -324,16 +295,23 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
     if (!plan || busy) return;
     const action = actionFor(entry, plan);
     if (!action) return;
+    // The card stays on the plan it acted on.
+    setSelected(plan.hash);
     setBusy(true);
     void runAction(client, action).then((outcome) => {
       setBusy(false);
       // A partial approval goes on with its sub-plan: follow it.
       if (outcome.plan !== undefined) {
+        // Followed, not chosen: the refusal of the chain stays shown.
+        lastShown.current = outcome.plan;
         setSelected(outcome.plan);
         setTicked(null);
       }
       setError(outcome.ok ? null : { code: outcome.code, message: outcome.engineMessage, changedEntities: outcome.changedEntities });
-      if (outcome.ok && entry.id === 'reject') setNote('');
+      if (outcome.ok && entry.id === 'reject') {
+        setNote('');
+        setRejecting(false);
+      }
     });
   };
 
@@ -344,7 +322,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
       firstSeen={snapshot.firstSeen}
       nowMs={now}
       names={names}
-      selected={plan ? selected : null}
+      selected={shown}
       ticked={ticked}
       note={note}
       busy={busy}
@@ -352,11 +330,14 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
       preview={preview?.preview ?? null}
       previewError={preview?.error ?? null}
       staleReasons={reasons}
+      rejecting={rejecting}
+      hotStep={hotStep}
       onSelect={select}
       onTicked={setTicked}
       onNote={setNote}
       onRun={run}
-      header={<HearingSwitch client={client} plans={plans} />}
+      onRejecting={setRejecting}
+      onHotStep={setHotStep}
     />
   );
 }

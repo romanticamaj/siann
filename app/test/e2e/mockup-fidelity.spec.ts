@@ -94,11 +94,14 @@ test.skip(process.env.SIANN_FIDELITY !== '1', 'set SIANN_FIDELITY=1 to run the m
 // ---------------------------------------------------------------- the mockup's session
 
 // The palette entry (tokens.css --track-<n>) of each mockup track's colour.
-const TRACKS: ReadonlyArray<{ name: string; palette: number; gain: number; pan?: number; mute?: boolean }> = [
-  { name: 'Kick', palette: 0, gain: 0 },
-  { name: 'Snare', palette: 1, gain: -2500 },
-  { name: 'Bass', palette: 2, gain: -4000 },
-  { name: 'Keys', palette: 4, gain: -8000, pan: -3500 },
+// `seed`: what the bundle holds before the earlier applied plan brings the
+// track to the mockup's values (UI redesign 10.2: the history's applied plan
+// has four steps, and the window draws the mockup's session).
+const TRACKS: ReadonlyArray<{ name: string; palette: number; gain: number; pan?: number; mute?: boolean; seed?: { gain?: number; pan?: number } }> = [
+  { name: 'Kick', palette: 0, gain: 0, seed: { gain: -1000 } },
+  { name: 'Snare', palette: 1, gain: -2500, seed: { gain: -3000 } },
+  { name: 'Bass', palette: 2, gain: -4000, seed: { gain: -5000 } },
+  { name: 'Keys', palette: 4, gain: -8000, pan: -3500, seed: { pan: -3000 } },
   { name: 'Vox Lead', palette: 6, gain: 1500 },
   { name: 'Vox BG', palette: 7, gain: -9000, pan: 4000 },
   { name: 'FX', palette: 10, gain: -12000, mute: true },
@@ -195,8 +198,10 @@ function prepareBundle(scratch: string): string {
   TRACKS.forEach((track, index) => {
     const id = TRACK_IDS[index]!;
     exec({ op: 'track.add', trackId: id, name: track.name, channels: 1 });
-    if (track.gain !== 0) exec({ op: 'track.set_gain', trackId: id, gainMilliDb: track.gain });
-    if (track.pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan: track.pan });
+    const gain = track.seed?.gain ?? track.gain;
+    const pan = track.seed?.pan ?? track.pan;
+    if (gain !== 0) exec({ op: 'track.set_gain', trackId: id, gainMilliDb: gain });
+    if (pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan });
     if (track.mute) exec({ op: 'track.set_mute', trackId: id, mute: true });
   });
   // The mockup's locators (bars 9.1 to 13.1) are set once the app runs: they are
@@ -213,6 +218,25 @@ function prepareBundle(scratch: string): string {
     });
   });
   return path.dirname(bundle);
+}
+
+// The mockup's three earlier plans (UI redesign 10.2), in submission order:
+// one made stale (approved, then the applied plan changes its track), one
+// rejected with the mockup's note, one applied whose four steps bring the
+// seeded values to the mockup's. The history rows then read Applied,
+// Rejected, Stale from the top.
+const NOTE = 'Too wide for the verse — keep it mono.';
+function staleSteps(): Array<Record<string, unknown>> {
+  return [{ op: 'track.set_gain', trackId: TRACK_IDS[0]!, gainMilliDb: -2000 }];
+}
+function rejectedSteps(): Array<Record<string, unknown>> {
+  return [{ op: 'track.set_pan', trackId: TRACK_IDS[4]!, pan: 3000 }];
+}
+function appliedSteps(): Array<Record<string, unknown>> {
+  return TRACKS.flatMap((track, index) => [
+    ...(track.seed?.gain !== undefined ? [{ op: 'track.set_gain', trackId: TRACK_IDS[index]!, gainMilliDb: track.gain }] : []),
+    ...(track.seed?.pan !== undefined ? [{ op: 'track.set_pan', trackId: TRACK_IDS[index]!, pan: track.pan }] : []),
+  ]);
 }
 
 // The mockup's pending plan, "Lift the chorus": six steps.
@@ -468,7 +492,8 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   const view = await hook<Viewport>(page, 'view');
   if (view.framesPerPixel !== FRAMES_PER_PIXEL) notes.push(`The app's zoom is ${view.framesPerPixel} frames per pixel, not the mockup's ${FRAMES_PER_PIXEL}: clip positions differ by that ratio.`);
 
-  // The pending plan, selected so its steps and actions show.
+  // The earlier plans, then the pending plan, which the default selection
+  // makes the card (no click: UI redesign 10.10, P1-13 notes).
   const ready = await app.evaluate(() => {
     const shell = (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } | null } }).__siannShell;
     return shell.current();
@@ -476,9 +501,24 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   if (!ready) throw new Error('the shell has no engine');
   const agent = new Agent(ready.port, ready.mcpToken);
   await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mockup-fidelity', version: '1' } });
+  const engine = await engineClient(page, { events: false });
+  expect(appliedSteps()).toHaveLength(4);
+  const stale = (await agent.tool('submit_plan', { steps: staleSteps() })).hash as string;
+  await engine.call('plan.approve', { plan: stale });
+  const rejected = (await agent.tool('submit_plan', { steps: rejectedSteps() })).hash as string;
+  await engine.call('plan.reject', { plan: rejected, note: NOTE });
+  const applied = (await agent.tool('submit_plan', { steps: appliedSteps() })).hash as string;
+  await engine.call('plan.approve', { plan: applied });
+  await engine.call('plan.apply', { plan: applied });
+  await expect.poll(async () => ((await engine.call('plan.status', { plan: stale })).stale as unknown[]).length).toBeGreaterThan(0);
   const plan = await agent.tool('submit_plan', { steps: planSteps() });
-  await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
-  await expect(page.getByTestId('plan-detail')).toBeVisible();
+  await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(plan.hash as string));
+  await expect(page.locator('[data-part-item="plan-history"]')).toHaveCount(3);
+  await expect(page.locator('[data-part-item="plan-history"] .badge')).toHaveText([/./, /./, /./]);
+  await expect(page.getByTestId(`plan-state-${hash8(applied)}`)).toHaveAttribute('data-state', 'applied');
+  await expect(page.getByTestId(`plan-state-${hash8(stale)}`)).toHaveAttribute('data-badge', 'stale');
+  // The Plans button counts the one validated plan, as the mockup's does.
+  await expect(page.getByTestId('plans-count')).toHaveText('1');
 
   // The mockup's selection: Vox Lead, and its clip at bar 9.
   await page.getByTestId(`track-header-${TRACK_IDS[4]!}`).click({ position: { x: 30, y: 30 } });
@@ -488,7 +528,6 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   if (target && canvas) await page.mouse.click(canvas.x + target.x + target.width / 2, canvas.y + target.y + target.height / 2);
   else notes.push(`Clip ${clipId(SELECTED_CLIP)} is not in view: nothing is selected.`);
   // The mockup's project cursor: 10.3.1, which is 19 s at 120 BPM.
-  const engine = await engineClient(page, { events: false });
   // The mockup's cycle: on (the locators came with the bundle).
   // One undoable command that draws only what the mockup draws: the locators.
   await engine.call('command.execute', { commands: [{ op: 'session.set_locators', left: String(8 * BAR), right: String(12 * BAR) }] });
@@ -510,8 +549,10 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   await expect(page.getByTestId('xruns')).toHaveText('0');
   await expect(page.getByTestId('revision')).toHaveText(/^r\d\d$/);
   await expect(page.getByTestId('device')).toHaveText('ASIO · Scarlett 4i4 · 48 kHz / 128 · 5.3 ms');
-  // The pointer leaves the window's content, so nothing is drawn hovered.
-  await page.mouse.move(VIEW.width - 2, 1);
+  // The pointer rests on step 3 of the plan, which the mockup draws hovered
+  // (UI redesign 10.2); everywhere else nothing is hovered.
+  await page.locator('[data-part-item="plan-step"]').nth(2).hover();
+  await expect(page.locator('[data-part-item="plan-step"]').nth(2)).toHaveClass(/\bhot\b/);
   // Every clip in view has its peaks.
   for (const rect of await hook<ClipRect[]>(page, 'clips')) {
     await expect

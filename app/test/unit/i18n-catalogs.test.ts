@@ -32,6 +32,7 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
 // that must come back in every locale; numbers must come back as digits.
 const SENTINELS: Partial<Record<Key, Record<string, string | number>>> = {
   'plans.steps': { count: 7 },
+  'plans.count': { count: 7 },
   'toast.planArrived': { steps: 7 },
   'confirm.removeTracks': { count: 7 },
 };

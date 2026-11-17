@@ -26,6 +26,8 @@ export interface ClipName {
   readonly trackId: string;
   // An audio-domain position in frames, as a decimal string.
   readonly position: string;
+  // The clip's length in frames, when known (the step rows' "ends on").
+  readonly length?: string;
 }
 
 export interface SlotName {
@@ -43,6 +45,10 @@ export interface StepNames {
   // format (Bars+Beats when absent), for positions.
   readonly tempo?: readonly TempoPoint[];
   readonly timeFormat?: TimeFormat;
+  // The track order and the media's names (the step rows of
+  // m5-ui-port-plans: "after <last track>", the placed clip's media).
+  readonly trackOrder?: readonly string[];
+  media?(id: string): string | undefined;
 }
 
 export const NO_NAMES: StepNames = {
@@ -65,8 +71,13 @@ export function namesFromSnapshot(snapshot: Snapshot | null, timeFormat: TimeFor
       const clip = entity(`clip:${id}`);
       const position = clip?.position as { domain?: unknown; value?: unknown } | undefined;
       if (typeof clip?.trackId !== 'string' || position?.domain !== 'audio' || typeof position.value !== 'string') return undefined;
-      return { trackId: clip.trackId, position: position.value };
+      return { trackId: clip.trackId, position: position.value, ...(typeof clip.length === 'string' ? { length: clip.length } : {}) };
     },
+    media: (id) => {
+      const name = entity(`media:${id}`)?.name;
+      return typeof name === 'string' && name !== '' ? name : undefined;
+    },
+    trackOrder: snapshot.trackOrder,
     slot: (id) => {
       const slot = entity(`plugin_slot:${id}`);
       if (typeof slot?.trackId !== 'string' || typeof slot.name !== 'string' || slot.name === '') return undefined;
@@ -86,7 +97,7 @@ function audioFrames(position: unknown): string | undefined {
 }
 
 // The names the session holds, then the ones earlier steps of the plan gave.
-function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]): StepNames {
+export function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]): StepNames {
   const tracks = new Map<string, string>();
   const clips = new Map<string, ClipName>();
   const slots = new Map<string, SlotName>();
@@ -100,13 +111,14 @@ function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]):
         break;
       case 'clip.place': {
         const position = audioFrames(step.position);
-        if (clipId && trackId && position !== undefined) clips.set(clipId, { trackId, position });
+        const length = str(step.length);
+        if (clipId && trackId && position !== undefined) clips.set(clipId, { trackId, position, ...(length !== undefined ? { length } : {}) });
         break;
       }
       case 'clip.move': {
         const known = clipId ? (clips.get(clipId) ?? names.clip(clipId)) : undefined;
         const position = audioFrames(step.position);
-        if (clipId && known && position !== undefined) clips.set(clipId, { trackId: trackId ?? known.trackId, position });
+        if (clipId && known && position !== undefined) clips.set(clipId, { ...known, trackId: trackId ?? known.trackId, position });
         break;
       }
       case 'plugin.insert': {
@@ -127,6 +139,8 @@ function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]):
     sampleRate: names.sampleRate,
     tempo: names.tempo,
     timeFormat: names.timeFormat,
+    ...(names.trackOrder ? { trackOrder: names.trackOrder } : {}),
+    ...(names.media ? { media: names.media } : {}),
   };
 }
 

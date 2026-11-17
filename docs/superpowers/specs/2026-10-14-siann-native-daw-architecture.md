@@ -3660,15 +3660,20 @@ MySong.siann/                    a directory
 - The frontend holds a read model keyed by revision; it never owns session truth.
 - Plan review is a first-class UI (m5-plan-review, presented by m5-ui-plan-panel
   as the Plans tab of the right zone; UI redesign spec section 4 and P1-5 give
-  the presentation: cards, wording, badges, banner). It lists the engine's plans
+  the presentation: one card for the selected plan, history rows for the
+  others (UI redesign 10.10, P1-13), wording, badges, banner). It lists the engine's plans
   (`plan.list`, `plan.changed`) and for the selected plan shows the steps and the
   diff against the current revision (`plan.preview`; before and after per entity,
-  stale entities marked from `plan.status`). Only the actions valid in the plan's
+  stale entities marked from `plan.status`). Every entity of the preview stays
+  reachable on the card: under each step that names it, else under the step
+  whose ids its change carries (a cascade, such as the clips, plugin slots and
+  sends `track.remove` removes), else in an "Other changes" row (UI redesign
+  10.10, P1-13 notes, c). Only the actions valid in the plan's
   state are rendered, with one primary (redesign 4.5 C4):
-  - a validated plan offers "Approve and apply" (primary: `plan.approve`, then
-    `plan.apply`; with a proper subset of the steps ticked it is labelled
-    "Approve N of M" and sends `plan.approve {steps}`, then `plan.apply` of the
-    sub-plan whose hash that answer names), "Audition" (`plan.approve`,
+  - a validated plan offers "Approve N of M" (primary, N the ticked steps,
+    "Approve 6 of 6" with all ticked: `plan.approve`, then `plan.apply`; with
+    a proper subset `plan.approve {steps}`, then `plan.apply` of the sub-plan
+    whose hash that answer names), "Audition" (`plan.approve`,
     `plan.propose`, then `audition.hear {side: branch}`; the card then reads
     "approved for audition") and Reject (`plan.reject` with a note);
   - an approved plan offers Apply (primary, `plan.apply`), Audition
@@ -3702,8 +3707,8 @@ MySong.siann/                    a directory
   instead.
 - The step list is numbered from 1 with every step ticked by default, and Select
   all / Select none (protocol step indexes stay 0-based; only the display is
-  1-based). The default approves the whole plan; unticking steps turns the
-  primary into "Approve N of M", partial approval of a non-empty proper subset
+  1-based). The default approves the whole plan; unticking steps lowers N,
+  partial approval of a non-empty proper subset
   (m5-plan-review: "approve, reject and partial approve"; redesign 4.5 C1).
 - Reusing open-source web DAW UI code requires a license check first (openDAW is
   AGPL).
