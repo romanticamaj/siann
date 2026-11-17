@@ -16,7 +16,7 @@ import {
   framesToTicks,
   ticksToFrames,
 } from '../../src/renderer/timeline/musical-time';
-import { chooseRulerStep, rulerMarks, RULER_MIN_LABEL_PX } from '../../src/renderer/timeline/ruler';
+import { chooseRulerStep, rulerMarks, RULER_BAR_LABEL_PX, RULER_MIN_LABEL_PX } from '../../src/renderer/timeline/ruler';
 import type { TempoPoint } from '../../src/renderer/model/document';
 import type { Viewport } from '../../src/renderer/timeline/geometry';
 import { RULER_HEIGHT, RULER_LOWER, RULER_UPPER } from '../../src/renderer/timeline/TimelineCanvas';
@@ -82,11 +82,30 @@ test('the subdivision gets finer as the frames per pixel fall, labels at least t
   // 100 frames/px: a beat is 240 px; an eighth 120; a sixteenth 60, under the 64 px minimum.
   assert.deepEqual(at(100), { ticks: 960, kind: 'sub' });
   assert.equal(RULER_MIN_LABEL_PX, 64);
+  assert.equal(RULER_BAR_LABEL_PX, 40);
   for (const fpp of [1, 20, 100, 200, 1000, 10000, 100000]) {
     const step = at(fpp);
     const px = (step.ticks * 12.5) / fpp;
-    assert.ok(px >= RULER_MIN_LABEL_PX || step.ticks === 7680 * 64, `${fpp}: ${px} px`);
+    const min = step.kind === 'bar' ? RULER_BAR_LABEL_PX : RULER_MIN_LABEL_PX;
+    assert.ok(px >= min || step.ticks === 7680 * 64, `${fpp}: ${px} px`);
   }
+});
+
+// The mockup's draw() labels every bar at its 40 px per bar (PXB): bar
+// numbers stay at least RULER_BAR_LABEL_PX apart, the finer labels
+// RULER_MIN_LABEL_PX.
+test("bar numbers: every bar at draw()'s 40 px per bar, every other bar just below it", () => {
+  const at = (framesPerPixel: number) => chooseRulerStep(12.5 / framesPerPixel);
+  // 2400 frames/px: a bar is 96000 / 2400 = 40 px.
+  assert.deepEqual(at(2400), { ticks: 7680, kind: 'bar' });
+  // 2500 frames/px: a bar is 38.4 px, two bars 76.8.
+  assert.deepEqual(at(2500), { ticks: 7680 * 2, kind: 'bar' });
+  // 375 frames/px: a beat is 24000 / 375 = 64 px: beats are labelled.
+  assert.deepEqual(at(375), { ticks: 1920, kind: 'beat' });
+  // 400 frames/px: a beat is 60 px, under 64; the 240 px bar is labelled alone.
+  assert.deepEqual(at(400), { ticks: 7680, kind: 'bar' });
+  const view: Viewport = { framesPerPixel: 2400, scrollFrames: '0', rulerHeight: RULER_HEIGHT, laneHeight: 53, width: 680, height: 300, scrollY: 0 };
+  assert.deepEqual(rulerMarks(view, T120, RATE).map((m) => m.label), Array.from({ length: 17 }, (_, i) => String(i + 1)));
 });
 
 test('the marks across a view are bar numbers, then beats and subdivisions zoomed in', () => {

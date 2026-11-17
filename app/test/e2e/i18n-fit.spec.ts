@@ -24,8 +24,11 @@ const SIZES = [
   { width: 1024, height: 700 },
 ];
 const LOCALES = ['en', 'zh-Hant', 'zh-Hans', 'pseudo'] as const;
-const LABELLED = 'button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators]';
-const ONE_LINE = 'button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value]';
+// The MixConsole (m5-ui-port-mixer-strip): the knob, the pan value, M, S, the
+// readout (level and peak value) and the MixConsole tab, in the mockup's boxes.
+const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^=fader-value-]';
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], ${MIXER}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], ${MIXER}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -145,6 +148,15 @@ test('no labelled control overflows or wraps its label in any locale at either w
     'transport-cycle',
     'transport-metronome',
     'display-locators',
+    // The MixConsole strip (m5-ui-port-mixer-strip) and its tab.
+    'pan-trk_keys',
+    'pan-value-trk_keys',
+    'mute-trk_keys',
+    'solo-trk_keys',
+    'fader-value-trk_keys',
+    'peak-value-trk_keys',
+    'peak-value-master',
+    'tab-lower-mixconsole',
   ]) {
     await expect(page.getByTestId(id)).toBeVisible();
   }

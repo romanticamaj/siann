@@ -51,8 +51,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { laneHeightOf, laneTops, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
-import { RULER_LOWER, RULER_UPPER } from '../../src/renderer/timeline/TimelineCanvas';
+import { LANES_TOP, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
 import { trackColourIndex } from '../../src/renderer/timeline/track-colour';
 import {
   compareParts,
@@ -95,25 +94,40 @@ test.skip(process.env.SIANN_FIDELITY !== '1', 'set SIANN_FIDELITY=1 to run the m
 // ---------------------------------------------------------------- the mockup's session
 
 // The palette entry (tokens.css --track-<n>) of each mockup track's colour.
-const TRACKS: ReadonlyArray<{ name: string; palette: number; gain: number; pan?: number; mute?: boolean; kind: string }> = [
-  { name: 'Kick', palette: 0, gain: 0, kind: 'kick' },
-  { name: 'Snare', palette: 1, gain: -2500, kind: 'snare' },
-  { name: 'Bass', palette: 2, gain: -4000, kind: 'bass' },
-  { name: 'Keys', palette: 4, gain: -8000, pan: -3500, kind: 'keys' },
-  { name: 'Vox Lead', palette: 6, gain: 1500, kind: 'vox' },
-  { name: 'Vox BG', palette: 7, gain: -9000, pan: 4000, kind: 'bgv' },
-  { name: 'FX', palette: 10, gain: -12000, mute: true, kind: 'fx' },
+const TRACKS: ReadonlyArray<{ name: string; palette: number; gain: number; pan?: number; mute?: boolean }> = [
+  { name: 'Kick', palette: 0, gain: 0 },
+  { name: 'Snare', palette: 1, gain: -2500 },
+  { name: 'Bass', palette: 2, gain: -4000 },
+  { name: 'Keys', palette: 4, gain: -8000, pan: -3500 },
+  { name: 'Vox Lead', palette: 6, gain: 1500 },
+  { name: 'Vox BG', palette: 7, gain: -9000, pan: 4000 },
+  { name: 'FX', palette: 10, gain: -12000, mute: true },
 ];
-// [track, start bar (1-based), length in bars], in the mockup's order: clip-1 to clip-17.
-const CLIPS: ReadonlyArray<readonly [number, number, number]> = [
-  [0, 1, 4], [0, 5, 4], [0, 9, 4], [0, 13, 4],
-  [1, 5, 4], [1, 9, 4], [1, 13, 4],
-  [2, 3, 6], [2, 9, 8],
-  [3, 1, 8], [3, 9, 8],
-  [4, 5, 3.5], [4, 9, 3.75], [4, 13, 3.5],
-  [5, 9, 8],
-  [6, 6, 2], [6, 9, 1.5],
+// [track, start bar (1-based), length in bars, name], in the mockup's order:
+// clip-1 to clip-17. A clip's title is its media's name (UI redesign 10.7), so
+// each of the mockup's clip names is one media of that name.
+const CLIPS: ReadonlyArray<readonly [number, number, number, string]> = [
+  [0, 1, 4, 'Kick 909'], [0, 5, 4, 'Kick 909'], [0, 9, 4, 'Kick 909'], [0, 13, 4, 'Kick 909'],
+  [1, 5, 4, 'Snare'], [1, 9, 4, 'Snare'], [1, 13, 4, 'Snare'],
+  [2, 3, 6, 'Bass DI'], [2, 9, 8, 'Bass DI · chorus'],
+  [3, 1, 8, 'Rhodes · verse'], [3, 9, 8, 'Rhodes · chorus'],
+  [4, 5, 3.5, 'Verse 1'], [4, 9, 3.75, 'Chorus A · take 3'], [4, 13, 3.5, 'Chorus B'],
+  [5, 9, 8, 'BGV stack'],
+  [6, 6, 2, 'Riser'], [6, 9, 1.5, 'Impact'],
 ];
+// The pending plan's ghost clip, the mockup's eighteenth.
+const PAD_SWELL = 'Pad swell';
+// The media of a clip name.
+const mediaId = (name: string): string => `med_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`;
+
+// The clip names of mockup.html's own CLIPS table, in its order: what the
+// session above has to follow.
+function mockupClipNames(): string[] {
+  const html = fs.readFileSync(path.join(REPO, 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'), 'utf8');
+  const table = /const CLIPS=\[([\s\S]*?)\r?\n\];/.exec(html);
+  if (!table) throw new Error('mockup.html has no CLIPS table');
+  return [...table[1]!.matchAll(/\[\d+,'([^']*)',/g)].map((m) => m[1]!);
+}
 // The mockup's selection: "Chorus A · take 3" on Vox Lead.
 const SELECTED_CLIP = 13;
 const RISER_CLIP = 16;
@@ -167,11 +181,19 @@ function prepareBundle(scratch: string): string {
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'Night Drive', '--rate', String(RATE));
   const exec = (command: Record<string, unknown>) => cli('exec', bundle, JSON.stringify(command));
+  // One media per clip name (and the plan's Pad swell, on Keys' tone), renamed
+  // to the mockup's clip name, with the tone of its track.
+  const named = new Map<string, number>();
+  for (const [track, , , name] of CLIPS) if (!named.has(name)) named.set(name, track);
+  named.set(PAD_SWELL, 3);
+  for (const [name, track] of named) {
+    const wav = path.join(scratch, `${mediaId(name)}.wav`);
+    writeWav(wav, 55 * (track + 1));
+    cli('import', bundle, wav, '--media-id', mediaId(name));
+    exec({ op: 'media.rename', mediaId: mediaId(name), name });
+  }
   TRACKS.forEach((track, index) => {
     const id = TRACK_IDS[index]!;
-    const wav = path.join(scratch, `${track.kind}.wav`);
-    writeWav(wav, 55 * (index + 1));
-    cli('import', bundle, wav, '--media-id', `med_${track.kind}`);
     exec({ op: 'track.add', trackId: id, name: track.name, channels: 1 });
     if (track.gain !== 0) exec({ op: 'track.set_gain', trackId: id, gainMilliDb: track.gain });
     if (track.pan !== undefined) exec({ op: 'track.set_pan', trackId: id, pan: track.pan });
@@ -179,12 +201,12 @@ function prepareBundle(scratch: string): string {
   });
   // The mockup's locators (bars 9.1 to 13.1) are set once the app runs: they are
   // the one undoable command of UI redesign 10.7, so undo is lit and redo dim.
-  CLIPS.forEach(([track, bar, bars], index) => {
+  CLIPS.forEach(([track, bar, bars, name], index) => {
     exec({
       op: 'clip.place',
       clipId: clipId(index + 1),
       trackId: TRACK_IDS[track]!,
-      mediaId: `med_${TRACKS[track]!.kind}`,
+      mediaId: mediaId(name),
       position: { domain: 'audio', value: String((bar - 1) * BAR) },
       sourceStart: '0',
       length: String(Math.round(bars * BAR)),
@@ -201,7 +223,7 @@ function planSteps(): Array<Record<string, unknown>> {
       op: 'clip.place',
       clipId: 'clp_pad_swell',
       trackId: 'trk_pad',
-      mediaId: 'med_keys',
+      mediaId: mediaId(PAD_SWELL),
       position: { domain: 'audio', value: String(8 * BAR) },
       sourceStart: '0',
       length: String(8 * BAR),
@@ -290,18 +312,17 @@ async function hook<T>(page: Page, name: string, arg?: string): Promise<T> {
   ) as Promise<T>;
 }
 
-// The title strip of a clip in the mockup; below it is the waveform.
-const CLIP_TITLE = 13;
-
+// The surface's parts and waveform masks as its last frames drew them
+// (TimelineCanvas.ts, testHooks().parts() and masks(); m5-ui-port-arrange-canvas),
+// in the event display's coordinates, as the mockup's draw() records them
+// in window.__fidelity: the canvas begins at the event display's corner.
 async function collectApp(page: Page): Promise<Collected> {
   const parts = await page.evaluate(collectDom, MANIFEST.styles);
   const masks: Rect[] = [];
   const display = parts.find((part) => part.id === 'event-display');
   if (!display) return { parts, masks };
-  const view = await hook<Viewport>(page, 'view');
-  const lanes = await hook<string[]>(page, 'lanes');
-  const rects = await hook<ClipRect[]>(page, 'clips');
-  const cursorX = await hook<number | null>(page, 'cursorX');
+  const drawn = await hook<Array<{ id: string } & Rect>>(page, 'parts');
+  const waves = await hook<Rect[]>(page, 'masks');
   const at = (rect: Rect): Rect => {
     const x = Math.max(display.x, display.x + rect.x);
     const y = Math.max(display.y, display.y + rect.y);
@@ -312,24 +333,10 @@ async function collectApp(page: Page): Promise<Collected> {
       h: Math.max(0, Math.min(display.y + display.h, display.y + rect.y + rect.h) - y),
     };
   };
-  // The ruler's two halves (TimelineCanvas.ts: locators above, cursor below).
-  parts.push({ id: 'ruler-upper', ...at({ x: 0, y: 0, w: view.width, h: RULER_UPPER }) });
-  parts.push({ id: 'ruler-lower', ...at({ x: 0, y: RULER_UPPER, w: view.width, h: RULER_LOWER }) });
-  const tops = laneTops(lanes, view);
-  lanes.forEach((id, index) => {
-    const n = TRACK_IDS.indexOf(id);
-    if (n >= 0) parts.push({ id: `lane-${n + 1}`, ...at({ x: 0, y: tops[index]!, w: view.width, h: laneHeightOf(id, view) }) });
-  });
-  for (const rect of rects) {
-    const match = /^clp_(\d\d)$/.exec(rect.clipId);
-    const box = { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
-    if (match) parts.push({ id: `clip-${Number(match[1])}`, ...at(box) });
-    masks.push(at({ x: box.x, y: box.y + CLIP_TITLE, w: box.w, h: Math.max(0, box.h - CLIP_TITLE) }));
-  }
-  if (cursorX !== null) parts.push({ id: 'cursor', ...at({ x: cursorX - 0.5, y: RULER_UPPER, w: 1, h: (view.height ?? display.h) - RULER_UPPER }) });
-  // The locator band (m5-ui-loop-click), as the last content frame drew it.
-  const band = await hook<{ x: number; y: number; width: number; height: number } | null>(page, 'locatorBand');
-  if (band) parts.push({ id: 'locator-band', ...at({ x: band.x, y: band.y, w: band.width, h: band.height }) });
+  // ruler-upper, ruler-lower, lane-N, clip-N (in lane order, as the mockup's
+  // CLIPS), locator-band, cursor and cursor-head.
+  for (const part of drawn) parts.push({ id: part.id, ...at(part) });
+  for (const wave of waves) masks.push(at(wave));
   return { parts, masks };
 }
 
@@ -436,6 +443,14 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText(String(CLIPS.length));
+  // The session names each clip's media as the mockup names the clip (UI
+  // redesign 10.7), so every clip title of the side-by-side is the mockup's.
+  const names = mockupClipNames();
+  expect(CLIPS.map((clip) => clip[3])).toEqual(names.slice(0, CLIPS.length));
+  expect(names[CLIPS.length]).toBe(PAD_SWELL);
+  await expect
+    .poll(async () => (await hook<Array<{ clipId: string; title: string }>>(page, 'clips')).map((clip) => `${clip.clipId} ${clip.title}`).sort())
+    .toEqual(CLIPS.map((clip, index) => `${clipId(index + 1)} ${clip[3]}`).sort());
 
   // The mockup's zoom: 20 px per second. The slider moves in quarter octaves,
   // so its step is lifted for this one value (a test-side change of the
@@ -617,6 +632,45 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
         over: result.ratio > MANIFEST.pixels.maxMismatch,
         files,
       });
+    }
+
+    // The resting state (m5-ui-port-arrange-canvas): no clip selected. The
+    // mockup draws its clip selected, so this is the app's project zone alone,
+    // beside the selected-clip pair above. An empty spot of lane 3 (Bass,
+    // bars 1 and 2) takes the selection away.
+    const zone = mockupParts.parts.find((part) => part.id === 'project-zone');
+    const display = appParts.parts.find((part) => part.id === 'event-display');
+    if (zone && display) {
+      await page.mouse.click(display.x + 20, display.y + LANES_TOP + 2 * 53 + 25);
+      await expect.poll(() => hook<string[]>(page, 'selectedClips')).toEqual([]);
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'project-zone.resting.app.png'), encodePng(crop(decodePng(await page.screenshot()), zone)));
+      notes.push(`The resting state (no clip selected) is ${locale}/project-zone.resting.app.png, the app's alone: the mockup shows a selected clip.`);
+    }
+
+    // A strip with its fader held (m5-ui-port-mixer-strip, acceptance 9):
+    // Bass's cap pressed and moved up, the screenshot taken before the
+    // release, so the cap, the readout and the tooltip show the gesture's
+    // value and nothing is committed. The muted strip is the mockup's FX, in
+    // both images above. The mockup draws no held fader: the app's alone.
+    const lowerZone = mockupParts.parts.find((part) => part.id === 'lower-zone');
+    if (lowerZone) {
+      const fader = page.getByTestId(`fader-${TRACK_IDS[2]!}`);
+      const capBox = await fader.locator('.cap').boundingBox();
+      if (!capBox) throw new Error('the Bass fader has no cap');
+      const grab = { x: capBox.x + capBox.width / 2, y: capBox.y + capBox.height / 2 };
+      const before = (await fader.getAttribute('aria-valuetext')) ?? '';
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      for (const dy of [-6, -12, -18]) await page.mouse.move(grab.x, grab.y + dy, { steps: 3 });
+      await expect(fader).not.toHaveAttribute('aria-valuetext', before);
+      await expect(page.getByTestId(`fader-${TRACK_IDS[2]!}-tooltip`)).toBeVisible();
+      await painted(page);
+      const heldValue = (await fader.getAttribute('aria-valuetext')) ?? '';
+      fs.writeFileSync(path.join(dir, 'lower-zone.fader-held.app.png'), encodePng(crop(decodePng(await page.screenshot()), lowerZone)));
+      notes.push(`The held-fader state (Bass held at ${heldValue} from ${before}, before the release; FX muted) is ${locale}/lower-zone.fader-held.app.png, the app's alone: the mockup draws no held fader. Compare it with ${locale}/lower-zone.mockup.png.`);
+      await page.mouse.up();
     }
 
     const entry: LocaleReport = { locale, comparison, regions, extra, notes };

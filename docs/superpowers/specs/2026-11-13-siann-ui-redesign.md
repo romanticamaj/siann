@@ -66,7 +66,7 @@ Track palette, 12 colours at equal lightness so no track shouts: `#F0675B #F2994
 
 Meters: green to -12 dB, yellow to -3 dB, red above, white 1.5 px peak-hold line, latching clip indicator. A strip meter is drawn as the mockup draws it (10.1): one gradient over the 104 px scale (`--meter-low`, `--play` at 55 %, `--meter-mid` at 78 %, `--err` at 96 %) with a `--tx-0` hold line; where this line and the mockup's parameters differ, the mockup's win (P1-12).
 
-Mute and solo follow review item A16: solo yellow, mute blue, record red. An implicitly muted track (another track is soloed) dims its lane and header to 45 %.
+Mute and solo follow review item A16: solo yellow, mute blue, record red. A muted track, and an implicitly muted one (another track is soloed), dims its header to 45 % and draws its clips at 50 %, as the mockup's `draw()` draws a muted track's clips; its lane is not dimmed, as `draw()` does not dim it (changed by `m5-ui-port-arrange-canvas`, which ports the event display from `draw()`, 10.9; before it the lane was dimmed to 45 % too).
 
 ### 1.3 Typography
 
@@ -200,7 +200,7 @@ In this table "hidden" means absent with its space empty. Where a later decision
 | Fade handles, fade fields in the info line | Hidden (E-9) |
 | Time signature display | Hidden in phase 1; bars are computed as 4/4, which the tooltip of the position display states. M5b shows a read-only 4/4 (`m5b-ui-signature`); editing it waits for E-10 |
 | DSP load, LUFS | Hidden in phase 1 (E-13, in M5b: `m5b-engine-load-loudness`, `m5b-ui-meter`); the status bar shows xruns, which `engine.status` has |
-| Master fader and its buttons | Hidden (E-11); the master strip is a meter with a peak value |
+| Master fader and its buttons | Hidden (E-11); the master strip is a meter with a peak value. It keeps the mockup's fader area with its dB scale beside the meter (`strip-master-fader-area`, `strip-master-scale`: the scale reads the meter), and the fader column (`strip-master-fader`, `strip-master-cap`) is an empty box (P1-12) |
 | Insert slots, `e` buttons, Routing and Sends sections, Notepad | Hidden in phase 1; inserts and `e` arrive in phase 3 from `plugin_slot` entities, routing and sends with M6c, the Notepad with `m5b-ui-notepad` |
 | Tools `2` and `4`–`9`; snap types other than Grid | Hidden until phase 3 implements them (renderer work, not backend). Tools `1` and `3` are in P1-8 |
 | Editor tab, Media and Meter tabs | Hidden until phase 3 (in M5b: `m5b-ui-editor-channel`, `m5b-ui-media`, `m5b-ui-meter`) |
@@ -540,7 +540,7 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 | Playhead, loop brace, selection, drag previews, snap guides | The overlay canvas of that surface (Canvas2D) | Moves every frame; must never re-rasterise waveforms |
 | All meters in the mixer | One Canvas2D behind the strips, one draw call per frame for all channels | 64 strips with one canvas each means 64 backing stores and 64 compositor layers |
 | Mini meters in the track headers | One narrow canvas down the header column | Same reason |
-| Fader caps and knobs | DOM elements moved with `transform` from the gesture code, not from React state | Compositor-only movement; React renders a strip once per revision |
+| Fader caps and knobs | DOM elements written by the gesture code in the pointer handler, before React hears of the move, not from React state: the fader's `.cap` by its `style.bottom` (a percentage of its track), the knob's needle by its SVG path's `d` (2026-11-18, m5-ui-port-mixer-strip). The value arc, the readout and the Inspector follow the gesture's overlay when React renders the track | The mockup positions `.cap` with `bottom` and draws knob() as SVG paths, which a `transform` cannot bend into an arc, so the port writes those two properties; each is one element's style or attribute, the move shows in the same frame without a React commit, and the cap and the needle never wait for a React render |
 | Clip editor waveform (lower zone) | Same renderer class as the arrange surface | One implementation to make fast |
 
 ### 5.2 The event display surface
@@ -549,7 +549,7 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 
 Layers:
 
-1. **Content layer**: grid, clips, waveforms, ghosts. Redrawn only when the snapshot, zoom, scroll, size or the selected plan changes.
+1. **Content layer**: grid, clips, waveforms, ghosts. Redrawn only when the snapshot, zoom, scroll, size, the selection or the selected plan changes (a selected clip is drawn in its selected palette, with its outline and corner handles, as the mockup's `draw()` draws it; m5-ui-port-arrange-canvas).
 2. **Overlay layer**: playhead, loop brace, selection, drag preview, snap guides. Redrawn every frame only while playing or during a gesture; otherwise the `requestAnimationFrame` loop is stopped and an idle window does no work.
 
 **Phase 1 keeps Canvas2D for both layers.** It is the code that exists, and it is fast enough for the M5 scenario: at most one min/max column per device pixel, taken from the pyramid level whose bins are the widest that still fit a pixel (the rule the spec already states).
@@ -569,7 +569,7 @@ Layers:
 
 ### 5.3 Meters at display rate without React
 
-`SMTR` frame → `RealtimeClient` → `MeterStore`, a plain object holding `Float32Array`s for peak, RMS, hold and clip per legend index. No event is emitted to React. The mixer's meter canvas and the header meter canvas each run one `requestAnimationFrame` callback that reads the arrays, applies ballistics (`peak-hold.ts`) with the frame's time delta, and draws rectangles. The same store gives the playhead position to the arrange overlay and to the transport display, which writes its digits with `textContent` on a ref. React hears about transport only when `playing` flips.
+`SMTR` frame → `RealtimeClient` → `MeterStore`, a plain object holding `Float32Array`s for peak, RMS, hold and clip per legend index. No event is emitted to React. The mixer's meter canvas and the header meter canvas each run one `requestAnimationFrame` callback that reads the arrays, applies ballistics (`peak-hold.ts`) with the frame's time delta, and draws rectangles. A strip meter draws two channels as the mockup does, so the store keeps the level and hold of each channel too (a mono entity shows the same value in both), while the peak value and the clip stay per entity, the louder channel. The same store gives the playhead position to the arrange overlay and to the transport display, which writes its digits with `textContent` on a ref. React hears about transport only when `playing` flips.
 
 The engine sends one frame per tick and drops frames for a congested socket; the display interpolates nothing and simply draws the newest values. When the window is hidden the loops stop.
 
@@ -777,7 +777,7 @@ The harness entries for these tickets are in `.claude/milestones/M5.json`.
 
 **P1-3 Track list and event display** (`m5-ui-arrange`)
 
-- Scope: fixed track list (colour, number, name with rename, M, S, gain and pan readout, mini meter; the `T` key, the `+` button above the list or a double-click on the list's empty space below the last track adds a track (`track.add` with a client-chosen id `trk_<16 hex>` as clip ids are chosen, `channels` 2, and the catalog's default track name with the next free number); height by dragging the lower border, `Ctrl` for all); canvas sized to its container; content and overlay layers; the overlay layer draws the project cursor from the realtime playhead (`RealtimeClient` `latest().playheadSamples`); Bars+Beats ruler in two halves with drag-zoom in the lower half; read-only info line (its user units: start and end are Bars+Beats positions, bar.beat.ticks, 1-based, 4/4 until E-10; length and offset are Bars+Beats durations counted from zero; gain is dB with one decimal and an explicit sign; P1-11 changes these to the mockup's formats, 3.2 and 10.8, 2); clip title strips; three-tone clips from the track colour; selection outline; drag tooltip; `H` / `G`, `Shift+H` / `Shift+G`, `Shift+F`, `Ctrl`+wheel, `Ctrl+Shift`+wheel, `Shift`+wheel, zoom slider; dimming of muted and implicitly muted lanes; empty-session guidance.
+- Scope: fixed track list (colour, number, name with rename, M, S, gain and pan readout, mini meter; the `T` key, the `+` button above the list or a double-click on the list's empty space below the last track adds a track (`track.add` with a client-chosen id `trk_<16 hex>` as clip ids are chosen, `channels` 2, and the catalog's default track name with the next free number); height by dragging the lower border, `Ctrl` for all); canvas sized to its container; content and overlay layers; the overlay layer draws the project cursor from the realtime playhead (`RealtimeClient` `latest().playheadSamples`); Bars+Beats ruler in two halves with drag-zoom in the lower half; read-only info line (its user units: start and end are Bars+Beats positions, bar.beat.ticks, 1-based, 4/4 until E-10; length and offset are Bars+Beats durations counted from zero; gain is dB with one decimal and an explicit sign; P1-11 changes these to the mockup's formats, 3.2 and 10.8, 2); clip title strips; three-tone clips from the track colour; selection outline; drag tooltip; `H` / `G`, `Shift+H` / `Shift+G`, `Shift+F`, `Ctrl`+wheel, `Ctrl+Shift`+wheel, `Shift`+wheel, zoom slider; dimming of muted and implicitly muted tracks (since `m5-ui-port-arrange-canvas`: the header at 45 % and the clips at 50 %, the lane undimmed, 1.2); empty-session guidance.
 - Acceptance: track names are never covered by clips; each zoom and scroll gesture changes the view as section 3.2 says and never scrolls the page; zoom keeps the position under the pointer fixed (`H` and `G` zoom about the project cursor when it is in view and about the view's centre otherwise); a frame in which only the cursor moved does not redraw the content layer; clip move, trim, place and delete still commit one revision each; the track list / event display boundary drags within 140–420 px, never collapses, moves with the arrow keys and restores 216 px on double-click, and its size is stored in `siann.layout.v1`; review items A2, A14, A15, B12, B13, B14 are closed.
 - Tests: unit (geometry, zoom about a point, ruler subdivision, colour assignment, info-line values); e2e (each zoom gesture, scroll, drag with tooltip, rename, track height).
 - Tour states changed: 01-22 (every state shows the project zone since m5-ui-shell); the review reads 01, 02, 06, 07, 10, 11, 12.
@@ -1295,12 +1295,16 @@ Decided by the author, as the maintainer left the split open (Fable, 2026-11-17)
 
 ### 10.10 The component port tickets (P1-11 to P1-17)
 
+<<<<<<< HEAD
 The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side; the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the Inspector follows the canvas too, because its M and S buttons are `.msr`, a rule of `project-zone.css` (the Inspector cannot link that file itself: its `.arrange` and `.field` rules would restyle the unported timeline, and a second copy of the rule in `shell.css` is not allowed); the closing ticket is last.
+=======
+The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side, except the MixConsole, which runs in wave 11 after the canvas: its M and S take `.msr`, whose rules are in `project-zone.css`, which the canvas links (linking that file earlier would restyle the unported arrange area); the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the closing ticket is last.
+>>>>>>> origin/main
 
 | Ticket | Feature | Wave | After | Ports | On real data |
 |---|---|---|---|---|---|
 | P1-11 | `m5-ui-port-arrange-canvas` | 10 | P1-10, `m5-ui-edit-basics`, `m5-ui-loop-click` | `draw()`: the ruler's two halves, the marker row (empty), lanes, clips with title strips and handles, the locator band, the cursor. Links `project-zone.css` | Real waveforms from the peak pyramids, in the mockup's two tones; clip titles from the media's name |
-| P1-12 | `m5-ui-port-mixer-strip` | 10 | P1-10 | `strip()`, `knob()`, the master strip and the lower zone's tab row. Links `lower-zone.css` | Gain, pan, mute and solo from the read model; meters from the meter frames, outside React; the taper of 4.5 C7 |
+| P1-12 | `m5-ui-port-mixer-strip` | 11 | P1-10, P1-11 | `strip()`, `knob()`, the master strip and the lower zone's tab row. Links `lower-zone.css` (`.msr` comes with P1-11's `project-zone.css`) | Gain, pan, mute and solo from the read model; meters from the meter frames, outside React; the taper of 4.5 C7 |
 | P1-13 | `m5-ui-port-plans` | 10 | P1-10 | The Plans tab: tab row, hearing switch, the card, `step()`, the actions, the history rows. Links `right-zone.css` | The plan store; the text M5 can derive (10.7, 3) |
 | P1-14 | `m5-ui-port-inspector` | 11 | P1-10, P1-11 | The left zone: head, track block, volume and pan rows, the empty rows of `sec()`, the foot. Links `left-zone.css` | The selected track; the same commands as the strip |
 | P1-15 | `m5-ui-port-track-list` | 11 | P1-11 | The list head and `th()` | Tracks in document order; the count of tracks and clips (10.8, 4) |

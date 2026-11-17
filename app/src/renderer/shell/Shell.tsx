@@ -78,6 +78,7 @@ import {
 import { useShellState, type LayoutStore } from './layout-store';
 import { StatusBar } from './StatusBar';
 import type { ToastStore } from './toast-store';
+import { Icon } from './icons';
 import { Toasts } from './Toasts';
 import { TopBar } from './TopBar';
 import { transportEnabled, type TransportPlayhead } from './Transport';
@@ -89,6 +90,8 @@ const COLLAPSE_THRESHOLD = 4;
 // The focus keys run before any element's handler; the rest after.
 const FOCUS_PRESET = CUBASE_PRESET.filter((b) => FOCUS_COMMANDS.has(b.commandId));
 const COMMAND_PRESET = CUBASE_PRESET.filter((b) => !FOCUS_COMMANDS.has(b.commandId));
+// The MixConsole tab's key, as the mockup writes it (the preset's first chord for it).
+const MIXCONSOLE_KEY = CUBASE_PRESET.find((b) => b.commandId === 'zone.lower.mixconsole')?.chord ?? '';
 const TRANSPORT_METHODS = ['transport.play', 'transport.stop', 'transport.locate'];
 const TABBABLE ='a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
 
@@ -99,7 +102,8 @@ function isZoneScope(value: string | undefined): value is ZoneScope {
 // Where the focus is: a zone itself, a control inside one (its boundary
 // included), the page, a modal dialog, or elsewhere (top bar, status bar).
 function placeOf(target: EventTarget | null): FocusPlace {
-  if (!(target instanceof HTMLElement) || target === document.body || target === document.documentElement) return { kind: 'page' };
+  // A control can be an svg (the MixConsole's pan knob).
+  if (!(target instanceof HTMLElement || target instanceof SVGElement) || target === document.body || target === document.documentElement) return { kind: 'page' };
   if (target.closest('dialog[open]')) return { kind: 'dialog' };
   const divider = target.dataset.dividerZone;
   if (isZoneScope(divider)) return { kind: 'control', zone: divider };
@@ -396,7 +400,7 @@ export function Shell({
           return true;
         case 'control': {
           const ring = zoneRing(frames.current[step.zone], step.zone);
-          ringStep(ring, active instanceof HTMLElement ? active : null, step.step)?.focus();
+          ringStep(ring, active instanceof HTMLElement || active instanceof SVGElement ? (active as HTMLElement) : null, step.step)?.focus();
           return true;
         }
         case 'enter':
@@ -515,7 +519,28 @@ export function Shell({
     '--right-zone-w': `${cell('right')}px`,
     '--lower-zone-h': `${cell('lower')}px`,
   } as CSSProperties;
-  const tab = (zone: 'lower' | 'right', id: 'mixconsole' | 'plans') => (
+  // The lower zone's tab row is the mockup's .tabs (m5-ui-port-mixer-strip):
+  // the MixConsole tab with its icon and key. The Editor tab and the rack
+  // switches are m5b-ui-editor-channel's and m5b-ui-inserts-master's, and
+  // absent; they sit after the tab and at the row's end, so nothing moves.
+  const lowerTabs = (
+    <div className="tabs" role="tablist" data-part="lower-tabs">
+      <button
+        type="button"
+        role="tab"
+        className={`tab${state.layout.tabs.lower === 'mixconsole' ? ' on' : ''}`}
+        data-testid="tab-lower-mixconsole"
+        data-part="tab-mixconsole"
+        aria-selected={state.layout.tabs.lower === 'mixconsole'}
+        onClick={() => store.dispatch({ type: 'tab', zone: 'lower', tab: 'mixconsole' })}
+      >
+        <Icon name="sliders" small />
+        {t('tab.mixconsole')} <kbd>{MIXCONSOLE_KEY}</kbd>
+      </button>
+    </div>
+  );
+  // The right zone's row is ported by m5-ui-port-plans.
+  const tab = (zone: 'right', id: 'plans') => (
     <div className="zone-tabs" role="tablist" data-part={`${zone}-tabs`}>
       <button
         type="button"
@@ -583,7 +608,8 @@ export function Shell({
           zone="lower"
           visible={zones.lower.visible}
           focused={focused === 'lower'}
-          tabs={tab('lower', 'mixconsole')}
+          region="lower"
+          tabs={lowerTabs}
           onFocus={(z) => focusZone(z, false)}
           frameRef={frameRef('lower')}
         >
