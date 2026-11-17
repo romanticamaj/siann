@@ -167,5 +167,7 @@ test('the zoom handle follows the zoom: --zoom-at on u is the slider value as a 
   const u = element(element(render(), /<div class="hscroll"/), /<u/);
   assert.match(u, /^<u style="--zoom-at:[0-9.]+">/);
   const css = fs.readFileSync(path.join(ROOT, 'app', 'renderer', 'shell.css'), 'utf8');
-  assert.match(css, /\.hscroll u::after \{ left: calc\(100% \* var\(--zoom-at\) - var\(--zoom-handle\) \/ 2\); \}/, 'shell.css places the handle from --zoom-at');
+  assert.match(css, /\.hscroll u::after \{ left: calc\(100% \* var\(--zoom-at\) - var\(--zoom-handle\) \/ 2\);[^}]*\}/, 'shell.css places the handle from --zoom-at');
+  // The handle is drawn over the input: a press on it must reach the input.
+  assert.match(css, /\.hscroll u::after \{[^}]*pointer-events: none;[^}]*\}/, 'the handle lets the press through to the input');
 });

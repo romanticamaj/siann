@@ -559,17 +559,20 @@ test('the scroll-zoom bar\'s handle shows the zoom: it follows H and G, and a cl
         thumb: inputBox.left + handle / 2 + fraction * (inputBox.width - handle),
         uWidth: box.width,
         target: { width: inputBox.width, height: inputBox.height, top: inputBox.top, bottom: inputBox.bottom },
+        handleBox: { top: box.top + parseFloat(after.top), bottom: box.top + parseFloat(after.top) + parseFloat(after.height) },
         bar: { top: bar.top, bottom: bar.bottom },
         handleSize: handle,
       };
     });
   let g = await geometry();
   expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
-  // The pointer target: u's width and half a handle past each end, the bar's height, inside the bar.
+  // The pointer target: u's width and half a handle past each end, and the
+  // handle's height (the mockup's handle, from the bar's top), so a press
+  // anywhere on the visible handle reaches the input. It starts in the bar.
   expect(g.target.width).toBeCloseTo(g.uWidth + g.handleSize, 0);
-  expect(g.target.height).toBeGreaterThanOrEqual(g.handleSize);
+  expect(Math.abs(g.target.top - g.handleBox.top)).toBeLessThan(0.5);
+  expect(Math.abs(g.target.bottom - g.handleBox.bottom)).toBeLessThan(0.5);
   expect(g.target.top).toBeGreaterThanOrEqual(g.bar.top - 0.5);
-  expect(g.target.bottom).toBeLessThanOrEqual(g.bar.bottom + 0.5);
 
   for (const [key, direction] of [['KeyH', 1], ['KeyG', -1]] as const) {
     const before = g.handle;
@@ -581,14 +584,34 @@ test('the scroll-zoom bar\'s handle shows the zoom: it follows H and G, and a cl
     expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
   }
 
-  // A click at a quarter of u: the zoom changes and the handle lands under the pointer.
+  // A click near u's right end (zoomed in, within the zoom's range for this
+  // session): the zoom changes and the handle lands under the pointer.
   const u = (await page.locator('.hscroll u').boundingBox())!;
-  const x = u.x + u.width / 4;
+  const x = u.x + u.width * 0.9;
   const fpp = (await view()).framesPerPixel;
+  // The handle is the visible control: it is on top of the lower divider's
+  // invisible grab margin, which reaches up into the bar.
+  for (const at of [g.handleBox.top + 1, u.y + u.height / 2, Math.min(g.handleBox.bottom, g.bar.bottom) - 1]) {
+    expect(await page.evaluate(([px, py]) => document.elementFromPoint(px!, py!)?.getAttribute('data-testid'), [x, at])).toBe('zoom-slider');
+  }
   await page.mouse.click(x, u.y + u.height / 2);
   await expect.poll(async () => (await view()).framesPerPixel).not.toBe(fpp);
+  // The view's listeners run with the next content frame, so the handle follows then.
+  await expect.poll(async () => Math.abs((await geometry()).handle - x)).toBeLessThan(2);
   g = await geometry();
-  expect(Math.abs(g.handle - x)).toBeLessThan(g.handleSize / 2 + 1);
+  expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+
+  // A drag that starts on the handle itself (drawn over the input) zooms out.
+  const start = g.handle;
+  const y = u.y + u.height / 2;
+  const fppBefore = (await view()).framesPerPixel;
+  await page.mouse.move(start, y);
+  await page.mouse.down();
+  await page.mouse.move(start - u.width / 4, y, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(async () => (await view()).framesPerPixel).toBeGreaterThan(fppBefore);
+  await expect.poll(async () => Math.abs((await geometry()).handle - (start - u.width / 4))).toBeLessThan(2);
+  g = await geometry();
   expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
 });
 
