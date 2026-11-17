@@ -681,6 +681,19 @@ test('mute and solo commit one revision each and the buttons show the commit', a
   expect(await revisions()).toBe(before + 2);
   expect((await fetchedTrack()).solo).toBe(true);
   await expect.poll(async () => (await chip(`solo-${TRACK}`)).background).toBe(soloOn);
+
+  // The Inspector is not ported yet (m5-ui-port-inspector): its M and S keep
+  // the pre-port .ms rules, scoped to .inspector, so they are 18 px high
+  // (--ms-h) and lit with --mute and --solo, not the generic button's 22 px
+  // and grey pressed state (UI redesign 10.10).
+  await selectClip();
+  for (const [id, on] of [['inspector-mute', muteOn], ['inspector-solo', soloOn]] as const) {
+    await expect(page.getByTestId(id)).toHaveAttribute('aria-pressed', 'true');
+    const drawn = await chip(id);
+    expect(drawn.height).toBe(18);
+    expect(drawn.height).toBe(size.height);
+    expect(drawn.background).toBe(on);
+  }
 });
 
 test('a reload during a held drag ends the gesture as disconnected within the lease, and the renderer syncs to it', async () => {
