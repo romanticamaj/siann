@@ -1295,11 +1295,7 @@ Decided by the author, as the maintainer left the split open (Fable, 2026-11-17)
 
 ### 10.10 The component port tickets (P1-11 to P1-17)
 
-<<<<<<< HEAD
-The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side; the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the Inspector follows the canvas too, because its M and S buttons are `.msr`, a rule of `project-zone.css` (the Inspector cannot link that file itself: its `.arrange` and `.field` rules would restyle the unported timeline, and a second copy of the rule in `shell.css` is not allowed); the closing ticket is last.
-=======
-The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side, except the MixConsole, which runs in wave 11 after the canvas: its M and S take `.msr`, whose rules are in `project-zone.css`, which the canvas links (linking that file earlier would restyle the unported arrange area); the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the closing ticket is last.
->>>>>>> origin/main
+The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side, except the MixConsole and the Inspector, which run in wave 11 after the canvas: their M and S take `.msr`, whose rules are in `project-zone.css`, which the canvas links (linking that file earlier would restyle the unported arrange area, and a second copy of the rule in `shell.css` is not allowed); the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the closing ticket is last.
 
 | Ticket | Feature | Wave | After | Ports | On real data |
 |---|---|---|---|---|---|
