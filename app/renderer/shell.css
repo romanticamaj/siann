@@ -22,8 +22,11 @@
    alignment feature deletes its part of this rule. The lower zone, the left
    zone and the right zone (.plans) are ported (m5-ui-port-mixer-strip,
    m5-ui-port-inspector, m5-ui-port-plans): they take base.css's body text,
-   as the mockup does; :where() keeps the rule's specificity that of .zone. */
-.zone:where(:not(.zone-lower):not(.zone-left)):where(:not(.plans)), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
+   as the mockup does; :where() keeps the rule's specificity that of .zone.
+   In the project zone the arrange body is ported (m5-ui-port-arrange-canvas,
+   m5-ui-port-track-list): only the toolbar and the info line keep the pin,
+   until m5-ui-port-toolbar. */
+.zone:where(:not(.zone-lower):not(.zone-left):not(.zone-project)):where(:not(.plans)), .timeline-bar, .info-line, .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
