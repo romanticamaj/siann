@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "support/mcp_agent.hpp"
 #include "support/protocol_fixture.hpp"
 #include "siann/command/plan.hpp"
 #include "siann/hash/sha256.hpp"
@@ -1020,4 +1021,37 @@ TEST_CASE("command.execute of an over-long fade answers invalid_fade and commits
     execute(clipFade("clp_a", std::pair<std::string, std::string>{"30000", "linear"},
                      std::pair<std::string, std::string>{"18000", "linear"}));
     CHECK(f.head().envelope.id != head);
+}
+
+// m5b-engine-agent-requests ("Plans", decisions of 2026-11-15; Protocol v0 item
+// 32): the request link is not part of the plan, so it is not hashed.
+TEST_CASE("a plan submitted with a request has the hash of the same plan without it", "[protocol][plans][metadata]") {
+    const Array steps{trackGain("trk_a", -600)};
+    std::string without;
+    {
+        Fixture f;
+        const ConnectionId c = f.authed();
+        f.commit(c, Array{trackAdd("trk_a")});
+        without = submitted(f, c, steps);
+    }
+    Fixture f;
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    f.commit(c, Array{trackAdd("trk_a")});
+    McpAgent agent(f);
+    agent.initialize("mix-assistant");
+    f.server.pump();
+    std::string agentId;
+    for (const Value& event : f.events(watcher)) {
+        if (at(event, "type").asString() == "agent.changed") {
+            agentId = at(at(event, "agent"), "id").asString();
+        }
+    }
+    REQUIRE_FALSE(agentId.empty());
+    const Value request =
+        at(f.ok(c, "agent.request", Value(Object{{"agentId", Value(agentId)}, {"text", Value("Lower it")}})), "request");
+    const Value plan = agent.ok("submit_plan", Value(Object{{"steps", Value(steps)}, {"request", at(request, "id")}}));
+    CHECK(at(plan, "hash").asString() == without);
+    CHECK(hash::formatHash(command::planHash(command::Plan::fromJson(plan))) == without);
+    CHECK(plan.find("request") == nullptr);
 }
