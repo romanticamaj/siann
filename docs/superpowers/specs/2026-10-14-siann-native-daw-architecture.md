@@ -4114,8 +4114,62 @@ Not used: Taskflow (allocates at runtime).
   tool methods and `kNotMcp`, disjoint, every exclusion with a reason).
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
-  manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
-  10-minute recording and kill test is the first.
+  manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`) on
+  ubuntu-latest, windows-latest and macos-latest. M2's 10-minute recording and
+  kill test is the first.
+- The pull request path lists of `stepsForPath` send `native/libs/playback`,
+  `native/libs/graph` and `native/libs/realtime` to the desktop (JUCE) and
+  package steps as well as native and gcc: the desktop engine links them, so a
+  JUCE-only regression there fails the pull request instead of the next push to
+  main (m5b-nightly-quality).
+- A nightly workflow, `.github/workflows/nightly.yml` (m5b-nightly-quality),
+  runs what is too slow for a pull request. It triggers on a schedule and on
+  `workflow_dispatch` only, never on pull requests or pushes, and none of its
+  jobs is in `CI ok`, so it cannot block a pull request. Its jobs:
+  - `tour`: `app/test/e2e/ux-tour.spec.ts` with `SIANN_UX_TOUR=1` for each of
+    `SIANN_UX_LOCALE=en`, `zh-Hant` and `zh-Hans` against the core-only
+    `siann-engine` on ubuntu (xvfb), each locale's PNGs and `index.json` notes
+    uploaded as `ux-tour-<locale>`; a state that fails to render fails the job.
+  - `fidelity`: the mockup fidelity gate (`mockup-fidelity.spec.ts`,
+    `SIANN_FIDELITY=1`, `--project fidelity`) on ubuntu and windows, its report
+    uploaded as `fidelity-<os>`. No `continue-on-error` and no threshold of its
+    own: `app/test/fidelity/manifest.json` decides (a gate in report mode
+    never fails, an enforced mismatch does).
+  - `asan-ubsan`: Clang 20 (apt.llvm.org), the core built with
+    `-DSIANN_ASAN_UBSAN=ON` (`-fsanitize=address,undefined
+    -fno-sanitize-recover=undefined` on every target, third-party code
+    included, as `SIANN_RTSAN` does; Clang only, and not together with
+    `SIANN_RTSAN`), the whole ctest suite with `ASAN_OPTIONS` and
+    `UBSAN_OPTIONS` carrying `halt_on_error=1`. A suppression, if one is ever
+    needed, lives in `native/sanitizers/` with its reason on the line above it.
+  - `fuzz`: `-DSIANN_FUZZ=ON` (Clang only) builds the libFuzzer targets
+    `siann_fuzz_protocol_ws` (the WebSocket request path after the upgrade and
+    token handshake, one frame and a delimited sequence of frames, and the
+    meter frame decoder), `siann_fuzz_mcp_http` (the `POST /v0/mcp` body) and
+    `siann_fuzz_command_json` (command and plan JSON parsed and validated)
+    with `-fsanitize=fuzzer,address,undefined`; each runs for a fixed
+    `-max_total_time` from its committed corpus, `native/fuzz/corpus/<target>/`,
+    and any `crash-*`, `timeout-*` or `oom-*` input is uploaded. The same
+    harness functions (`native/fuzz/`) run on every OS in the native job as
+    `fuzz_smoke_test`: every corpus file, then a bounded count of inputs from
+    fixed seeds through a hand-written PRNG (splitmix64), so the inputs are the
+    same under MSVC, GCC and Clang.
+  - `coverage`: `-DSIANN_COVERAGE=ON` (Clang `-fprofile-instr-generate
+    -fcoverage-mapping`), ctest with `LLVM_PROFILE_FILE` per process (`%p`),
+    `llvm-profdata merge`, then `llvm-cov show -format=html` and `llvm-cov
+    report` ignoring `_deps` and the tests; the HTML is uploaded and the
+    summary goes to the job summary. Report only, no threshold. The app job of
+    `ci.yml` prints the app's unit test coverage
+    (`--experimental-test-coverage`) in its job summary the same way.
+  - `perf`: `app/test/e2e/perf.spec.ts` with `SIANN_PERF=1`: a generated
+    64-track, 2,000-clip session playing on the fake device with meters
+    running; main-thread work per frame (median and 99th percentile, from the
+    renderer's `performance.measure` frame marks, which exist only under
+    `SIANN_SHELL_TEST=1`), the JS heap (`performance.memory`) and cold start
+    from engine ready to the first painted session, written to
+    `perf-report.json` against the budgets of UI redesign 5.6 and uploaded.
+    Report only at first: it fails on a crash or a missing measurement, never
+    on a budget.
 
 Test layers:
 
@@ -4124,11 +4178,11 @@ Test layers:
 | L0 unit | time, midi, model, command, JCS fixtures shared with Node, DSP |
 | L1 determinism | journal replay yields identical document hashes; offline render golden files with tolerance |
 | L2 headless end-to-end | CLI builds a session, records from a file-backed fake device, renders, compares |
-| Realtime safety | audio-thread allocation hooks, RealtimeSanitizer, TSAN/ASAN/UBSAN builds |
+| Realtime safety | audio-thread allocation hooks, RealtimeSanitizer, ASAN/UBSAN builds (nightly); TSAN not yet |
 | Stress | fake device driving callbacks at small buffers; deadline-miss counting; rapid graph swaps; queue overflow; device hot-unplug; disk full; sample-rate mismatch |
 | PDC | null tests across direct, send, aux, sidechain; latency change during playback |
 | Parity | offline vs realtime null test (through the same SRC when SRC is active); single vs multi-thread bit-identical (when threading exists) |
-| Fuzz | command JSON and protocol messages |
+| Fuzz | command JSON and protocol messages (WebSocket frames, the MCP HTTP body): libFuzzer nightly, a seeded smoke run in every native job |
 | Plugin (L3) | a built-in hostile test plugin (`siann_hostile_plugin`: allocates, throws, changes latency, sleeps, calls back into the host, crashes on a parameter; outcomes under "siann-host: two targets, one interface", Hostile test plugin) plus pluginval-checked real plugins (VST3 and AU at strictness 5; pluginval is JUCE-based and checks no CLAP; `siann_test_plugin` in CI, the compatibility set on maintainer runs) |
 | Recovery | kill the engine at random points during recording and editing; verify recovery criteria |
 | L4 manual | DAWproject into Cubase / Studio One / Bitwig; recorded per release |
