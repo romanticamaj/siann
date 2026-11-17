@@ -236,9 +236,10 @@ TEST_CASE("A notes edit during playback does not recompile and sets no parameter
     CHECK(p.engine.compileCount() == compiles);
     CHECK(p.engine.driver().liveEpoch() == epoch);
     CHECK(p.inFlightBefore == std::vector<bool>(p.inFlightBefore.size(), false));
-    // The output is the offline render of the document from the first block on.
+    // The output is the offline render of the document after the start's rise
+    // (block 0), before and after both edits alike: no duck, no new sound.
     const auto reference = offline(f.doc(), f.bundle(), framesOf(p));
-    CHECK(matches(p, reference, 0, p.blockCount()));
+    CHECK(matches(p, reference, 1, p.blockCount()));
     CHECK(p.engine.underruns() == 0);
 }
 

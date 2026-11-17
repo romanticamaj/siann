@@ -38,8 +38,11 @@ bool isValidMediaName(std::string_view name) noexcept {
     return !name.empty() && name.size() <= kMaxMediaNameBytes && isWellFormedUtf8(name);
 }
 
+// Notes are shown as text: tab, LF and CR are allowed, as in a plan's intent.
+constexpr std::string_view kNotesControls = "\t\n\r";
+
 bool isValidTrackNotes(std::string_view notes) noexcept {
-    return !notes.empty() && notes.size() <= kMaxTrackNotesBytes && isWellFormedUtf8(notes);
+    return !notes.empty() && notes.size() <= kMaxTrackNotesBytes && textFault(notes, kNotesControls) == TextFault::none;
 }
 
 std::string_view entityTypeName(EntityType type) noexcept {
@@ -225,7 +228,9 @@ Track trackFromJson(const Value& value, Format format) {
         t.input = port;
     }
     if (const Value* notes = r.optional("notes")) {
-        if (notes->kind() != Value::Kind::string || !isValidTrackNotes(notes->asString())) {
+        // The shape here; a refused character is validate()'s invalid_notes.
+        if (notes->kind() != Value::Kind::string || notes->asString().empty() ||
+            notes->asString().size() > kMaxTrackNotesBytes || !isWellFormedUtf8(notes->asString())) {
             r.fail("notes", "must be a string of 1 to 16384 UTF-8 bytes");
         }
         t.notes = notes->asString();
@@ -1244,7 +1249,8 @@ std::vector<ValidationIssue> Document::validate() const {
             issue(out, "invalid_input", EntityType::track, t.id, "a track input is a port >= 0 and 1 or 2 channels");
         }
         if (t.notes && !isValidTrackNotes(*t.notes)) {
-            issue(out, "invalid_notes", EntityType::track, t.id, "track notes are 1 to 16384 bytes of UTF-8");
+            issue(out, "invalid_notes", EntityType::track, t.id, "track notes are 1 to 16384 bytes of UTF-8 without a control character "
+                  "other than tab, LF and CR or a text-direction control");
         }
         if (t.output && bus(*t.output) == nullptr) {
             issue(out, "unknown_bus", EntityType::track, t.id, "the track outputs to a missing bus");

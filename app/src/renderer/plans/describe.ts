@@ -228,6 +228,10 @@ export function describeStep(
       }
       break;
     }
+    case 'track.set_notes':
+      // Named by the track; the notes are free text and stay out of the sentence.
+      if (typeof step.notes === 'string') return t(step.notes === '' ? 'step.clearTrackNotes' : 'step.setTrackNotes', { track: track() });
+      break;
     case 'track.explode':
       return t('step.explodeTrack', { track: track() });
     case 'clip.place':

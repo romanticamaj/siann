@@ -509,7 +509,8 @@ Prepared trackSetInput(const Document& doc, const Command& command) {
 
 // A track's notes (m5b-engine-track-notes): plain text stored byte for byte;
 // "" removes the field, so the track hashes as it did before it had notes. Over
-// kMaxTrackNotesBytes or malformed UTF-8 is invalid_notes; a non-string (null
+// kMaxTrackNotesBytes, malformed UTF-8, a control character other than tab, LF
+// and CR or a display-unsafe character is invalid_notes; a non-string (null
 // included), a missing or an extra field is invalid_params.
 Prepared trackSetNotes(const Document& doc, const Command& command) {
     return editTrack(doc, command, [](Track& t, FieldReader& r) {
@@ -519,7 +520,8 @@ Prepared trackSetNotes(const Document& doc, const Command& command) {
             return;
         }
         if (!model::isValidTrackNotes(notes)) {
-            throw CommandError("invalid_notes", "track notes are at most 16384 bytes of well-formed UTF-8");
+            throw CommandError("invalid_notes", "track notes are at most 16384 bytes of well-formed UTF-8 without a control character "
+                               "other than tab, LF and CR or a text-direction control");
         }
         t.notes = std::move(notes);
     });

@@ -365,6 +365,7 @@ bool onlyFaderChanges(const model::Document& before, const model::Document& afte
         faderOnly.gain = now->gain;
         faderOnly.pan = now->pan;
         faderOnly.mute = now->mute;
+        faderOnly.notes = now->notes;  // text, not sound (m5b-engine-track-notes)
         if (!(faderOnly == *now)) {
             return false;
         }

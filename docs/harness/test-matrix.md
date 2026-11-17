@@ -331,27 +331,35 @@ step ...", "command.execute of an over-long fade answers invalid_fade";
 
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
-| m5b-engine-track-notes (UR-17) | Y (`document_test` `[notes]`, `commands_test` `[notes]`, `history_test` `[notes]`, `plan_hash_test` `[notes]`, `session_test` `[notes]`, `track_notes_test`, `mcp_adapter_test` `[notes]`, `cli_test` catalog) | | Y (`read-model`, `capabilities`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 5: no UI, tour states changed: none) |
+| m5b-engine-track-notes (UR-17) | Y (`document_test` `[notes]`, `commands_test` `[notes]`, `history_test` `[notes]`, `plan_hash_test` `[notes]`, `session_test` `[notes]`, `track_notes_test`, `mcp_adapter_test` `[notes]`, `live_recompile_test` `[notes]`, `cli_test` catalog) | | Y (`read-model`, `capabilities`, `i18n-describe`, `plan-bidi`) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 5: no UI, tour states changed: none) |
 
 Per acceptance item (`m5b-engine-track-notes`): 1 `commands_test` "track.set_notes
 stores the text and declares only the track", "... accepts 16,384 bytes and
 refuses more as invalid_notes", "... refuses malformed UTF-8 as invalid_notes",
-"... refuses malformed params and an unknown track"; `history_test`
-"track.set_notes is one revision; undo restores ..."; `track_notes_test`
+"... keeps tab, LF and CR and refuses other controls and bidi characters",
+"... refuses malformed params and an unknown track", "A bad track.set_notes step
+in a transaction names the step and applies nothing"; `history_test`
+"track.set_notes is one revision; undo restores ...", "Undoing a track.remove
+brings the track's notes back"; `live_recompile_test` "A notes edit during
+playback does not recompile and sets no parameter"; app unit `i18n-describe`
+"a set-notes and a clear-notes step name the track and never print the notes"
+and `plan-bidi` "every name in a step sentence is its own isolate ..."; `track_notes_test`
 "track.set_notes through command.execute is one revision, published as
 track:<id> to a second connection", "plan.preview of track.set_notes ...",
 "plan.propose of a track.set_notes step ..."; `mcp_adapter_test` "submit_plan
 and execute carry track.set_notes ...". 2 `document_test` "The notes fixture
 gives the Node bridge's hashes ...", "A track without notes serializes as before
 ...", "Track notes must be a string of 1 to 16,384 ...", "validate reports
-invalid_notes ..."; `session_test` "A literal bundle from before track notes
+invalid_notes ...", "Track notes refuse control and bidi formatting characters
+..."; `session_test` "A literal bundle from before track notes
 opens with its hashes ...". 3 `session_test` "Track notes survive a checkpoint
 and reopen, and a journal replay without one"; Node `plan-hash` and
 `plan_hash_test` over `track_notes_steps`; Node `read-model-fixtures` and
 `fixture-parity` (the generators); app unit `read-model` "the notes model
 fixture ...", "(g) track notes follow session.changed ...". 4
 `track_notes_test` "engine.capabilities and command.list list
-track.set_notes", "Bad notes answer invalid_notes ..."; app unit
+track.set_notes", "Bad notes answer invalid_notes ...", "A plan step with a
+bidi character in its notes answers invalid_notes with the step index"; app unit
 `capabilities`; `docs/schemas/protocol-engine-v0.md` "Track notes". 5 none (no
 UI).
 

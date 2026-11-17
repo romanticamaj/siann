@@ -219,6 +219,8 @@ export const zhHans: Catalog = {
   'step.setInput': '{track} 从输入 {input} 录音',
   'step.setInputPair': '{track} 从输入 {first}-{second} 录音',
   'step.clearInput': '清除 {track} 的输入',
+  'step.setTrackNotes': '编辑 {track} 的记事本',
+  'step.clearTrackNotes': '清除 {track} 的记事本',
   'step.explodeTrack': '将 {track} 按声道拆成多条音轨',
   'step.placeClip': '在 {track} 的 {time} 放置一个片段',
   'step.moveClip': '将{clip}移到 {time}',

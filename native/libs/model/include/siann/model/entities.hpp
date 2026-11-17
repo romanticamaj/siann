@@ -117,8 +117,10 @@ struct Track {
 // The longest track notes, in UTF-8 bytes.
 inline constexpr std::size_t kMaxTrackNotesBytes = 16'384;
 
-// True for well-formed UTF-8 of 1 to kMaxTrackNotesBytes bytes; newlines and
-// every other code point are allowed (notes are text, not a name).
+// True for well-formed UTF-8 of 1 to kMaxTrackNotesBytes bytes whose only
+// control characters are tab, LF and CR and that has no display-unsafe
+// character (textFault(notes, "\t\n\r"), the rule of a plan's intent: notes are
+// text, not a name).
 bool isValidTrackNotes(std::string_view notes) noexcept;
 
 // A bus (m5b-engine-buses-sends, spec "siann-model", M5b bus and send): sums the
