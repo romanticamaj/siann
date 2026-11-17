@@ -468,7 +468,6 @@
 /* The Plans tab's holds in Chinese (m5-ui-port-plans): the mockup's zh-TW
    boxes, for zh-CN too, as the font stacks above. */
 :root:lang(zh-TW), :root:lang(zh-CN) {
-  --hold-plan-intent-h: calc(33.344px * var(--scale));
   --hold-tab-media-w: calc(59.125px * var(--scale));
   --hold-tab-meter-w: calc(70.688px * var(--scale));
 }

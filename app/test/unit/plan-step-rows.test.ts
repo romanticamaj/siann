@@ -46,7 +46,7 @@ test("the mockup's six steps in English, with plan.preview", () => {
   assert.deepEqual(rows.map((r) => [html(r.title), html(r.detail)]), [
     ['Add track <b>Pad</b>', 'stereo · after FX'],
     ['Place a clip on Pad', 'bar 9.1 → 17.1 · pad_swell.wav'],
-    ['<b>Vox BG</b> gain', '<s>-9.0 dB</s> → <em>-6.0 dB</em>'],
+    ['<b>Vox BG</b> gain', '<s>−9.0 dB</s> → <em>−6.0 dB</em>'],
     ['<b>Keys</b> pan', '<s>L35</s> → <em>L20</em>'],
     ['Unmute <b>FX</b>', '<s>muted</s> → <em>on</em>'],
     ['Move a clip on FX', '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1'],
@@ -54,9 +54,7 @@ test("the mockup's six steps in English, with plan.preview", () => {
   // The mockup's own strings, where M5 can derive them (the clip titles name
   // the clip by its track: their text is m5b-ui-media's).
   for (const index of [0, 2, 3, 4]) assert.equal(html(rows[index]!.title), MOCK_STEPS[index]![0], `title of step ${index + 1}`);
-  for (const index of [0, 1, 3, 4, 5]) assert.equal(html(rows[index]!.detail), MOCK_STEPS[index]![1], `detail of step ${index + 1}`);
-  // The mockup writes the minus as U+2212; the app's dB values are the strip's.
-  assert.equal(html(rows[2]!.detail), MOCK_STEPS[2]![1].replace(/−/g, '-'));
+  for (const index of [0, 1, 2, 3, 4, 5]) assert.equal(html(rows[index]!.detail), MOCK_STEPS[index]![1], `detail of step ${index + 1}`);
   assert.deepEqual(
     rows.map((r) => r.colour),
     ['--ai', '--ai', trackColourVar(T.bg), trackColourVar(T.keys), trackColourVar(T.fx), trackColourVar(T.fx)],
@@ -97,7 +95,7 @@ test('with no preview, the new value only', () => {
   assert.deepEqual(rows.map((r) => html(r.detail)), [
     'stereo · after FX',
     'bar 9.1 → 17.1 · pad_swell.wav',
-    '<em>-6.0 dB</em>',
+    '<em>−6.0 dB</em>',
     '<em>L20</em>',
     '<em>on</em>',
     '<em>bar 7.1</em> · ends on 9.1',
@@ -118,8 +116,8 @@ test('old values carry the earlier steps of the plan: two gain steps on one trac
     { op: 'clip.move', clipId: RISER, position: { domain: 'audio', value: String(7 * BAR) } },
   ];
   assert.deepEqual(stepRows(steps, mockupPreview(), NAMES, en).map((r) => html(r.detail)), [
-    '<s>-9.0 dB</s> → <em>-6.0 dB</em>',
-    '<s>-6.0 dB</s> → <em>-3.0 dB</em>',
+    '<s>−9.0 dB</s> → <em>−6.0 dB</em>',
+    '<s>−6.0 dB</s> → <em>−3.0 dB</em>',
     '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 9.1',
     '<s>bar 7.1</s> → <em>bar 8.1</em> · ends on 10.1',
   ]);
@@ -146,7 +144,7 @@ test('every other op has a title and, where it has one, a detail', () => {
     ['Mute <b>Keys</b>', '<s>on</s> → <em>muted</em>'],
     ['Remove a clip on FX', 'bar 6.1 → 8.1'],
     ['Trim a clip on FX', '<s>4 s</s> → <em>2 s</em>'],
-    ['Clip gain on FX', '<s>0.0 dB</s> → <em>-3.0 dB</em>'],
+    ['Clip gain on FX', '<s>0.0 dB</s> → <em>−3.0 dB</em>'],
     // The trim two steps before shortened the clip to a bar.
     ['Move a clip to Keys', '<s>bar 6.1</s> → <em>bar 7.1</em> · ends on 8.1'],
     // After the track the plan's first step removed: the last one left.

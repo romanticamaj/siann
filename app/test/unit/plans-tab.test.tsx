@@ -276,6 +276,10 @@ test('the tab row is the Plans tab with its spark icon, and the hearing switch i
   const zone = appRightZone(render());
   const tab = find(zone, (n) => partOf(n) === 'tab-plans')!;
   assert.equal(tab.attrs['data-testid'], 'tab-right-plans');
+  // The tab semantics stay on the ported row (10.9 item 1), as in the lower zone.
+  assert.equal(tab.attrs.role, 'tab');
+  assert.equal(tab.attrs['aria-selected'], 'true');
+  assert.equal(find(zone, (n) => partOf(n) === 'right-tabs')!.attrs.role, 'tablist');
   assert.equal(tab.children[0]!.tag, 'svg');
   assert.match(textOf(tab), /Plans/);
   const ab = find(zone, (n) => partOf(n) === 'hearing-switch')!;

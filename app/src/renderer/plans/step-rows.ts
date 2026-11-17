@@ -87,6 +87,8 @@ const TRACK_FIELDS: Readonly<Record<string, string>> = {
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+// A level as the strip writes it, with the mockup's minus sign (U+2212): "−9.0 dB".
+const db = (milliDb: number): string => formatDb(milliDb).replace(/^-/, '−');
 const frames = (position: unknown): string | undefined => {
   const p = position as { domain?: unknown; value?: unknown } | null | undefined;
   return p?.domain === 'audio' && typeof p.value === 'string' && /^\d+$/.test(p.value) ? p.value : undefined;
@@ -161,7 +163,7 @@ export function stepRows(steps: readonly Record<string, unknown>[], preview: Pla
       case 'track.set_gain': {
         title = t('row.gain', { track: bold(trackId) });
         const before = num(old(track?.gainMilliDb));
-        if (typeof step.gainMilliDb === 'number') detail = [change(before !== undefined ? formatDb(before) : undefined, formatDb(step.gainMilliDb))];
+        if (typeof step.gainMilliDb === 'number') detail = [change(before !== undefined ? db(before) : undefined, db(step.gainMilliDb))];
         break;
       }
       case 'track.set_pan': {
@@ -226,7 +228,7 @@ export function stepRows(steps: readonly Record<string, unknown>[], preview: Pla
       case 'clip.set_gain': {
         title = t('row.clipGain', { track: nameOf(clipTrack) });
         const before = num(old(clip?.gainMilliDb));
-        if (typeof step.gainMilliDb === 'number') detail = [change(before !== undefined ? formatDb(before) : undefined, formatDb(step.gainMilliDb))];
+        if (typeof step.gainMilliDb === 'number') detail = [change(before !== undefined ? db(before) : undefined, db(step.gainMilliDb))];
         break;
       }
       default:

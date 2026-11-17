@@ -304,11 +304,9 @@ export function PlanCard(props: PlanCardProps) {
           </label>
         </div>
       ) : null}
-      {cells.some((cell) => cell !== null) ? (
-        <div className="acts" data-part="plan-actions">
-          {cells.map((cell, index) => button(cell, index))}
-        </div>
-      ) : null}
+      <div className="acts" data-part="plan-actions">
+        {cells.map((cell, index) => button(cell, index))}
+      </div>
     </div>
   );
 }

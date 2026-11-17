@@ -538,13 +538,14 @@ export function Shell({
   // ui/right-zone.css): the Plans tab, the boxes of the Media and Meter tabs
   // (pending: m5b-ui-media, m5b-ui-meter; UI redesign 3.0) and the hearing switch.
   const rightTabs = (
-    <div className="p-head" data-part="right-tabs">
+    <div className="p-head" role="tablist" data-part="right-tabs">
       <button
         type="button"
+        role="tab"
         className="tab on"
         data-testid="tab-right-plans"
         data-part="tab-plans"
-        aria-current="page"
+        aria-selected={state.layout.tabs.right === 'plans'}
         onClick={() => store.dispatch({ type: 'tab', zone: 'right', tab: 'plans' })}
       >
         <Icon name="spark" small />

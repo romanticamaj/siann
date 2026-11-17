@@ -182,7 +182,7 @@ test('with every disclosure closed no entity id, milli-dB field, raw pan value o
   }
   // The step rows are in user units: the old value struck, the new one emphasised.
   const markup = view();
-  assert.ok(markup.includes(`<s>${formatDb(0)}</s> → <em>${formatDb(-3000)}</em>`), 'volume in dB');
+  assert.ok(markup.includes(`<s>${formatDb(0)}</s> → <em>${formatDb(-3000).replace('-', '−')}</em>`), 'volume in dB, with the mockup minus sign');
   assert.ok(markup.includes('<s>C</s> → <em>L20</em>'), 'pan in L/C/R');
   assert.ok(markup.includes(`<b>${n('Pad')}</b>`), 'the new track by its name');
 });
@@ -332,13 +332,14 @@ test('only the action set is rendered, in the three cells of .acts, with exactly
     ['approved', { selected: CHILD }, ['audition', 'apply', 'reject']],
     ['proposed and heard', { selected: PROPOSED }, ['hear-main', 'merge', 'discard']],
     ['proposed, main heard', { selected: PROPOSED, heard: 'main' }, ['hear-proposal', 'merge', 'discard']],
-    ['rejected', { selected: REFUSED }, []],
+    // A state with no action keeps the three cells, empty (10.10, P1-13 notes (e)).
+    ['rejected', { selected: REFUSED }, ['', '', '']],
   ];
   for (const [name, props, expected] of cases) {
     const markup = view(props);
     assert.deepEqual(cells(markup), expected, name);
     assert.deepEqual(buttons(markup).sort(), expected.filter(Boolean).sort(), name);
-    assert.equal(count(markup, 'class="btn primary"'), expected.length > 0 ? 1 : 0, name);
+    assert.equal(count(markup, 'class="btn primary"'), expected.some(Boolean) ? 1 : 0, name);
   }
   // The ids of the mockup's three actions are on those actions only.
   assert.match(view(), /data-part="plan-audition"[^>]*data-testid="plan-audition"|data-testid="plan-audition"[^>]*data-part="plan-audition"/);
