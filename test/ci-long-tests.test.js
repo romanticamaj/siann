@@ -65,6 +65,13 @@ test('the long-tests workflow builds the native core and runs siann_cli_tests "[
   }
 });
 
+// m5b-nightly-quality (acceptance item 5, test-matrix gap 12): macOS too.
+test('the long tests run on ubuntu, windows and macos', () => {
+  const matrix = /os:\s*\[([^\]]*)\]/.exec(read(LONG));
+  assert.ok(matrix, 'long-tests.yml has an os matrix');
+  assert.deepEqual(matrix[1].split(',').map((s) => s.trim()).sort(), ['macos-latest', 'ubuntu-latest', 'windows-latest']);
+});
+
 test('the default CI does not select the long tests', () => {
   const text = read(CI);
   assert.ok(!text.includes('[long]'), 'ci.yml never mentions [long]');

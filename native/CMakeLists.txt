@@ -80,3 +80,4 @@ endif()
 
 add_subdirectory(apps/cli)
 add_subdirectory(apps/engine)
+add_subdirectory(fuzz)

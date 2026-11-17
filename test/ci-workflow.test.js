@@ -458,3 +458,202 @@ test('the changes job turns the bridge step into the bridge output, and ci-ok wa
   assert.match(job('ci-ok').text, /needs: \[[^\]]*\bbridge-engine\b[^\]]*\]/);
 });
 
+// ---- The nightly quality jobs (m5b-nightly-quality, acceptance items 1 to 4, 6 and 7) ----
+// .github/workflows/nightly.yml, a file of its own: no job of it can be in ci-ok,
+// and its artifact names cannot collide with the app job's in the same run.
+
+const NIGHTLY = path.join(__dirname, '..', '.github', 'workflows', 'nightly.yml');
+const LONG_TESTS = path.join(__dirname, '..', '.github', 'workflows', 'long-tests.yml');
+const NIGHTLY_JOBS = ['tour', 'fidelity', 'asan-ubsan', 'fuzz', 'coverage', 'perf'];
+const FUZZ_TARGETS = ['protocol_ws', 'mcp_http', 'command_json'];
+
+const nightlyText = () => {
+  assert.ok(fs.existsSync(NIGHTLY), '.github/workflows/nightly.yml exists');
+  return fs.readFileSync(NIGHTLY, 'utf8').replace(/\r\n/g, '\n');
+};
+const nightlyJob = (id) => {
+  const all = jobs(nightlyText());
+  const found = all.find((j) => j.id === id);
+  assert.ok(found, `nightly.yml has a ${id} job (jobs: ${all.map((j) => j.id).join(', ')})`);
+  return found;
+};
+
+// The lines of a top-level YAML key's block (without the key line).
+function topLevelBlock(text, key) {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => line === `${key}:` || line.startsWith(`${key}: `));
+  assert.ok(start >= 0, `top-level "${key}:" in the workflow`);
+  const block = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^\S/.test(lines[i])) break;
+    block.push(lines[i]);
+  }
+  return block;
+}
+
+// Keys directly under a block, at its first indentation level.
+function childKeys(block) {
+  const indents = block.filter((l) => /^\s+\S/.test(l) && !/^\s*#/.test(l)).map((l) => l.match(/^\s*/)[0].length);
+  if (indents.length === 0) return [];
+  const level = Math.min(...indents);
+  return block
+    .filter((l) => l.match(/^\s*/)[0].length === level && /^\s*[A-Za-z_][\w-]*:/.test(l))
+    .map((l) => l.trim().split(':')[0]);
+}
+
+const matrixOf = (text, key) => {
+  const found = new RegExp(`${key}:\\s*\\[([^\\]]*)\\]`).exec(text);
+  assert.ok(found, `a ${key} matrix`);
+  return found[1].split(',').map((s) => s.trim()).sort();
+};
+const configureLine = (text) => {
+  const line = text.split('\n').find((l) => /cmake\s+-S\s+native/.test(l));
+  assert.ok(line, 'the job configures native/');
+  return line;
+};
+const cronOf = (text) => /-\s*cron:\s*'([^']+)'/.exec(text)?.[1];
+
+test('the nightly workflow runs on a schedule and by hand only, at a time of its own', () => {
+  const text = nightlyText();
+  assert.deepEqual(childKeys(topLevelBlock(text, 'on')).sort(), ['schedule', 'workflow_dispatch']);
+  const cron = cronOf(text);
+  assert.ok(cron, 'a cron schedule');
+  assert.notEqual(cron, cronOf(workflowText()), 'not at the time of ci.yml');
+  assert.notEqual(cron, cronOf(fs.readFileSync(LONG_TESTS, 'utf8')), 'not at the time of long-tests.yml');
+  assert.deepEqual(jobs(text).map((j) => j.id).sort(), [...NIGHTLY_JOBS].sort());
+});
+
+test('every nightly action is GitHub\'s own or this repository\'s', () => {
+  for (const [, ref] of nightlyText().matchAll(/uses:\s*(\S+)/g)) {
+    assert.match(ref, /^(actions\/[a-z-]+@v\d+|\.\/\.github\/actions\/[a-z-]+)$/, `nightly.yml: ${ref}`);
+  }
+});
+
+test('no nightly job blocks a pull request: ci.yml names none and ci-ok needs what it did', () => {
+  const ids = jobs(workflowText()).map((j) => j.id);
+  for (const id of NIGHTLY_JOBS) assert.ok(!ids.includes(id), `ci.yml has no ${id} job`);
+  const needs = /(?:^|\n) {4}needs: \[([^\]]*)\]/.exec(job('ci-ok').text);
+  assert.deepEqual(needs[1].split(',').map((s) => s.trim()),
+    ['changes', 'node', 'native', 'rtsan', 'bridge-engine', 'desktop', 'app', 'package']);
+  for (const { text } of jobs(nightlyText())) assert.doesNotMatch(text, /continue-on-error/);
+});
+
+test('nightly tour: ux-tour.spec.ts in en, zh-Hant and zh-Hans against the core-only engine, one artifact per locale', () => {
+  const { text } = nightlyJob('tour');
+  assert.deepEqual(matrixOf(text, 'locale'), ['en', 'zh-Hans', 'zh-Hant']);
+  assert.match(text, /fail-fast:\s*false/);
+  assert.match(text, /SIANN_UX_TOUR:\s*'1'/);
+  assert.match(text, /SIANN_UX_LOCALE:\s*\$\{\{\s*matrix\.locale\s*\}\}/);
+  assert.match(text, /SIANN_UX_OUT:/);
+  assert.doesNotMatch(configureLine(text), /SIANN_WITH_JUCE/, 'core-only: no JUCE');
+  assert.match(text, /cmake\s+--build\s+\S+[^\n]*--target\s+siann-engine\b/);
+  assert.match(text, /SIANN_ENGINE_EXE=/);
+  assert.match(text, /playwright test ux-tour/);
+  const upload = steps({ text }).find((s) => /actions\/upload-artifact@v4/.test(s));
+  assert.ok(upload, 'an upload of the tour');
+  assert.match(upload, /name: ux-tour-\$\{\{ matrix\.locale \}\}/);
+  assert.match(upload, /if-no-files-found: error/);
+});
+
+test('nightly fidelity: the gate on ubuntu and windows, its report as fidelity-<os>, no threshold of its own', () => {
+  const { text } = nightlyJob('fidelity');
+  assert.deepEqual(matrixOf(text, 'os'), ['ubuntu-latest', 'windows-latest']);
+  assert.match(text, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
+  assert.match(text, /SIANN_FIDELITY:\s*'1'/);
+  assert.match(text, /SIANN_FIDELITY_OUT:/);
+  assert.match(text, /playwright test --project fidelity/);
+  assert.doesNotMatch(text, /threshold|max-?diff|--update-snapshots/i);
+  assert.doesNotMatch(configureLine(text), /SIANN_WITH_JUCE/);
+  const upload = steps({ text }).find((s) => /actions\/upload-artifact@v4/.test(s));
+  assert.ok(upload, 'an upload of the report');
+  assert.match(upload, /if: always\(\)/);
+  assert.match(upload, /name: fidelity-\$\{\{ runner\.os \}\}/);
+});
+
+test('nightly asan-ubsan: Clang 20, -DSIANN_ASAN_UBSAN=ON, the whole ctest suite halting on the first report', () => {
+  const { text } = nightlyJob('asan-ubsan');
+  assert.match(text, /\n {4}runs-on: ubuntu-24\.04\n/);
+  assert.match(text, /https:\/\/apt\.llvm\.org\/llvm\.sh/);
+  const configure = configureLine(text);
+  assert.match(configure, /-DCMAKE_CXX_COMPILER=clang\+\+-20/);
+  assert.match(configure, /-DSIANN_ASAN_UBSAN=ON/);
+  assert.match(configure, /-DSIANN_WERROR=ON/);
+  assert.doesNotMatch(configure, /SIANN_WITH_JUCE|SIANN_RTSAN/);
+  assert.match(text, /ASAN_OPTIONS:[^\n]*halt_on_error=1/);
+  assert.match(text, /UBSAN_OPTIONS:[^\n]*halt_on_error=1/);
+  assert.match(text, /ctest\s+--test-dir\s+native\/build\/asan[^\n]*--no-tests=error/);
+  assert.doesNotMatch(text, /ctest[^\n]*\s-R\s/, 'the whole suite, not a filter');
+});
+
+test('nightly fuzz: each libFuzzer target for a fixed time from its committed corpus, crashing inputs uploaded', () => {
+  const { text } = nightlyJob('fuzz');
+  assert.match(text, /\n {4}runs-on: ubuntu-24\.04\n/);
+  const configure = configureLine(text);
+  assert.match(configure, /-DCMAKE_CXX_COMPILER=clang\+\+-20/);
+  assert.match(configure, /-DSIANN_FUZZ=ON/);
+  for (const target of FUZZ_TARGETS) {
+    const run = text.split('\n').find((l) => new RegExp(`siann_fuzz_${target}\\b[^\\n]*-max_total_time=\\d+`).test(l));
+    assert.ok(run, `siann_fuzz_${target} runs for a fixed time`);
+    assert.match(run, new RegExp(`native/fuzz/corpus/${target}\\b`), `${target} starts from its corpus`);
+  }
+  const upload = steps({ text }).find((s) => /actions\/upload-artifact@v4/.test(s));
+  assert.ok(upload, 'an upload of what the fuzzers found');
+  assert.match(upload, /if: failure\(\)/);
+  for (const kind of ['crash', 'timeout', 'oom']) assert.match(upload, new RegExp(`${kind}-\\*`), kind);
+});
+
+test('nightly coverage: llvm-cov HTML uploaded and its summary in the job summary, ignoring _deps and tests', () => {
+  const { text } = nightlyJob('coverage');
+  assert.match(text, /\n {4}runs-on: ubuntu-24\.04\n/);
+  const configure = configureLine(text);
+  assert.match(configure, /-DCMAKE_CXX_COMPILER=clang\+\+-20/);
+  assert.match(configure, /-DSIANN_COVERAGE=ON/);
+  assert.match(text, /LLVM_PROFILE_FILE:[^\n]*%p[^\n]*\.profraw/);
+  assert.match(text, /ctest\s+--test-dir\s+native\/build\/coverage/);
+  assert.match(text, /llvm-profdata-20 merge/);
+  assert.match(text, /llvm-cov-20 show[^\n]*-format=html/);
+  assert.match(text, /llvm-cov-20 report/);
+  const ignore = /--ignore-filename-regex='([^']+)'/.exec(text);
+  assert.ok(ignore, 'an --ignore-filename-regex');
+  assert.ok(new RegExp(ignore[1]).test('/w/native/build/coverage/_deps/catch2-src/x.cpp'), '_deps is ignored');
+  assert.ok(new RegExp(ignore[1]).test('/w/native/libs/graph/tests/graph_test.cpp'), 'tests are ignored');
+  assert.ok(!new RegExp(ignore[1]).test('/w/native/libs/graph/src/graph.cpp'), 'the sources are kept');
+  assert.match(text, />> "\$GITHUB_STEP_SUMMARY"/);
+  assert.doesNotMatch(text, /fail-under|threshold/i, 'report only');
+  const upload = steps({ text }).find((s) => /actions\/upload-artifact@v4/.test(s));
+  assert.ok(upload, 'an upload of the HTML');
+  assert.match(upload, /name: native-coverage/);
+});
+
+test('nightly perf: the 64-track scenario under SIANN_PERF=1, its report uploaded', () => {
+  const { text } = nightlyJob('perf');
+  assert.match(text, /SIANN_PERF:\s*'1'/);
+  assert.match(text, /SIANN_PERF_OUT:/);
+  assert.match(text, /playwright test perf/);
+  assert.doesNotMatch(configureLine(text), /SIANN_WITH_JUCE/);
+  assert.match(text, /SIANN_CLI_EXE=/);
+  const upload = steps({ text }).find((s) => /actions\/upload-artifact@v4/.test(s));
+  assert.ok(upload, 'an upload of the report');
+  assert.match(upload, /if: always\(\)/);
+  assert.match(upload, /perf-report\.json/);
+});
+
+test('the nightly jobs build through the compiler cache', () => {
+  for (const id of NIGHTLY_JOBS) {
+    const { text } = nightlyJob(id);
+    const cache = text.indexOf('uses: ./.github/actions/compiler-cache');
+    assert.ok(cache >= 0, `${id} uses the compiler cache`);
+    assert.ok(cache < text.search(/cmake\s+-S\s+native/), `${id} sets the cache up before it configures`);
+  }
+});
+
+test('the app job prints the unit test coverage in its job summary, with no threshold', () => {
+  const step = steps(job('app')).find((s) => /--experimental-test-coverage/.test(s));
+  assert.ok(step, 'a step runs the unit tests with coverage');
+  assert.match(step, /dist\/test\/unit\/\*\.test\.js/);
+  assert.match(step, /--test-coverage-exclude='dist\/test\/\*\*'/);
+  assert.match(step, /\$GITHUB_STEP_SUMMARY/);
+  assert.doesNotMatch(step, /--test-coverage-(lines|branches|functions)=/);
+  assert.doesNotMatch(step, /continue-on-error/);
+});
+

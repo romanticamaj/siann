@@ -62,7 +62,7 @@ test('the package step reports skipped off Windows and runs nothing there', asyn
 
 test('docs, prose, the renderer and the core never run the package step', () => {
   for (const file of ['docs/harness/runbook.md', 'README.md', 'app/README.md', 'docs/adr/0017-x.md',
-    'app/src/renderer/App.tsx', 'app/test/e2e/editor.spec.ts', 'native/libs/graph/src/graph.cpp',
+    'app/src/renderer/App.tsx', 'app/test/e2e/editor.spec.ts', 'native/libs/model/src/document.cpp',
     'test/run-app.test.js', '.github/workflows/ci.yml']) {
     assert.ok(!stepsForPath(file).includes('package'), file);
   }
@@ -133,10 +133,27 @@ test('app/ runs node and the Electron shell', () => {
 });
 
 test('native/ runs native and g++; the core alone leaves the JUCE preset out', () => {
-  for (const file of ['native/libs/graph/src/graph.cpp', 'native/libs/realtime/include/siann/rt/queue.h',
+  for (const file of ['native/libs/model/src/document.cpp', 'native/libs/session/include/siann/session/session.hpp',
     'native/apps/cli/src/main.cpp', 'native/tools/msvc-env.cmd']) {
     assert.deepEqual(stepsForPaths([file]), ['node', 'native', 'gcc'], file);
   }
+});
+
+// m5b-nightly-quality (acceptance item 5, test-matrix gap 7): the desktop engine
+// links playback, graph and realtime, so their JUCE-only regressions show on the
+// pull request (the desktop job and the installer's engine), not after the merge.
+test('native/libs/playback runs the desktop preset and the installer', () => {
+  assert.deepEqual(stepsForPaths(['native/libs/playback/src/x.cpp']), ['node', 'native', 'desktop', 'package', 'gcc']);
+});
+
+test('native/libs/graph runs the desktop preset and the installer', () => {
+  assert.deepEqual(stepsForPaths(['native/libs/graph/src/graph.cpp']), ['node', 'native', 'desktop', 'package', 'gcc']);
+});
+
+test('native/libs/realtime runs the desktop preset and the installer', () => {
+  assert.deepEqual(stepsForPaths(['native/libs/realtime/include/siann/rt/queue.h']),
+    ['node', 'native', 'desktop', 'package', 'gcc']);
+  assert.deepEqual(stepsForPath('native\\libs\\realtime\\src\\driver.cpp'), ['node', 'native', 'desktop', 'package', 'gcc']);
 });
 
 test('JUCE, plugin hosting, siann-engine and the build files add the desktop preset and the installer', () => {
@@ -165,7 +182,7 @@ test('an unknown path runs everything', () => {
 
 test('paths add up, Windows separators included, and no change still runs node', () => {
   assert.deepEqual(stepsForPaths([]), ['node']);
-  assert.deepEqual(stepsForPaths(['docs/x.md', 'app/src/a.ts', 'native\\libs\\graph\\src\\g.cpp']),
+  assert.deepEqual(stepsForPaths(['docs/x.md', 'app/src/a.ts', 'native\\libs\\model\\src\\g.cpp']),
     ['node', 'native', 'app', 'gcc']);
   assert.deepEqual(stepsForPath('native\\libs\\host_desktop\\src\\x.cpp'), ['node', 'native', 'desktop', 'package', 'gcc']);
   assert.deepEqual(stepsForPath('app\\src\\main\\main.ts'), ['node', 'app', 'package']);
