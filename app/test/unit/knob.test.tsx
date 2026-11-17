@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { Knob } from '../../src/renderer/mixer/Knob';
-import { knobPaths } from '../../src/renderer/mixer/knob';
+import { knobPaths } from '../../src/renderer/mixer/knob-paths';
 import { TOKENS } from '../../src/renderer/tokens';
 import { elements, find, findAll, loadMockup, parse, type Element } from './support/mockup';
 

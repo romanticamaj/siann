@@ -89,7 +89,10 @@ export function loadMockup(lang = 'en'): Mockup {
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
-  return context.out as Mockup;
+  const out = context.out as Mockup;
+  // Data made in the vm's realm is copied into this one, so deepStrictEqual compares it by value.
+  const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+  return { knob: out.knob, strip: out.strip, master: out.master, pos: out.pos, SCALE: copy(out.SCALE), T: copy(out.T) };
 }
 
 // ---------------------------------------------------------------- markup trees
