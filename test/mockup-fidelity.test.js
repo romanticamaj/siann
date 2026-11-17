@@ -279,6 +279,31 @@ test('the MixConsole port links ui/lower-zone.css in the mockup\'s order, its ga
   assert.ok(!('app/src/renderer/mixer/MixerMeters.ts' in JSON.parse(read('app', 'test', 'fidelity', 'debt.json')).literals));
 });
 
+test('every shared stylesheet that draws a MixConsole class is linked: M and S take .msr from ui/project-zone.css', () => {
+  const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  const app = linked(read('app', 'renderer', 'index.html'));
+  const strip = read('app', 'src', 'renderer', 'mixer', 'Strip.tsx');
+  // The class names the strip renders, from its className literals.
+  const classes = new Set();
+  for (const m of strip.matchAll(/className=(?:"([^"]+)"|\{`([^`]+)`\})/g)) {
+    for (const name of (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) if (/^[a-z][\w-]*$/.test(name)) classes.add(name);
+  }
+  assert.ok(classes.has('msr'), 'the strip renders .msr');
+  const dir = path.join(ROOT, 'app', 'renderer', 'ui');
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.css'))) {
+    const css = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const drawn = [...classes].filter((name) => new RegExp(`\\.${name}(?![\\w-])`).test(css));
+    if (drawn.includes('msr')) assert.ok(app.includes(`ui/${file}`), `index.html links ui/${file}, which draws .msr`);
+  }
+  // shell.css draws no second .msr rule: outside the button reset's
+  // :where()/:not() lists (which only exclude .msr from the app's own button
+  // look), no selector names .msr (the empty .msr-box hold is another class).
+  let shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  while (/\([^()]*\)/.test(shell)) shell = shell.replace(/\([^()]*\)/g, '');
+  const selectors = [...shell.matchAll(/([^{}]+)\{/g)].map((m) => m[1]);
+  assert.deepEqual(selectors.filter((s) => /\.msr(?![\w-])/.test(s)), [], 'no .msr rule in shell.css');
+});
+
 // ---- m5-ui-port-arrange-canvas: the event display ported from draw(); its gate stays report
 
 test('the event display\'s gate is report, shell.css leaves .arrange to the shared rules, and no marker row is held by a token', () => {

@@ -625,20 +625,62 @@ test('zero React commits while playing (profiling bundle), and the counter does 
   await client.call('transport.stop');
 });
 
+// A token's computed colour, read through a probe element, so the
+// expectations below come from tokens.css and not from a literal.
+async function tokenColour(token: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement('i');
+    probe.style.background = `var(${name})`;
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return colour;
+  }, token);
+}
+
+// The drawn chip of M or S: ui/project-zone.css's .msr (the mockup's grey
+// box, --ms-w by --ms-h with a hairline border) and its .on colours, not
+// bare letters.
+async function chip(testId: string): Promise<{ background: string; border: string; width: number; height: number }> {
+  return page.getByTestId(testId).evaluate((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return { background: style.backgroundColor, border: style.borderTopWidth, width: Math.round(box.width), height: Math.round(box.height) };
+  });
+}
+
 test('mute and solo commit one revision each and the buttons show the commit', async () => {
   await launch();
   const before = await revisions();
   const mute = page.getByTestId(`mute-${TRACK}`);
   const solo = page.getByTestId(`solo-${TRACK}`);
+  const [idle, muteOn, soloOn] = [await tokenColour('--bg-4'), await tokenColour('--mute'), await tokenColour('--solo')];
   await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  // Off: the mockup's .msr chip, drawn by the shared rules.
+  const size = await page.evaluate(() => {
+    const probe = document.createElement('i');
+    probe.style.cssText = 'position:absolute;width:var(--ms-w);height:var(--ms-h);border-top:var(--hairline) solid';
+    document.body.append(probe);
+    const box = probe.getBoundingClientRect();
+    const border = getComputedStyle(probe).borderTopWidth;
+    probe.remove();
+    return { border, width: Math.round(box.width), height: Math.round(box.height) };
+  });
+  for (const id of [`mute-${TRACK}`, `solo-${TRACK}`]) {
+    expect(await chip(id)).toEqual({ background: idle, ...size });
+  }
   await mute.click();
   await expect(mute).toHaveAttribute('aria-pressed', 'true');
   expect(await revisions()).toBe(before + 1);
   expect((await fetchedTrack()).mute).toBe(true);
+  // On: M is lit with --mute, S stays the idle chip.
+  await expect.poll(async () => (await chip(`mute-${TRACK}`)).background).toBe(muteOn);
+  expect((await chip(`solo-${TRACK}`)).background).toBe(idle);
   await solo.click();
   await expect(solo).toHaveAttribute('aria-pressed', 'true');
   expect(await revisions()).toBe(before + 2);
   expect((await fetchedTrack()).solo).toBe(true);
+  await expect.poll(async () => (await chip(`solo-${TRACK}`)).background).toBe(soloOn);
 });
 
 test('a reload during a held drag ends the gesture as disconnected within the lease, and the renderer syncs to it', async () => {
