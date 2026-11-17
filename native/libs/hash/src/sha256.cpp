@@ -98,6 +98,11 @@ void Sha256::compress(const std::uint8_t* block) noexcept {
 }
 
 void Sha256::update(std::span<const std::uint8_t> data) noexcept {
+    // An empty span may have a null data(): memcpy from null is undefined even
+    // for zero bytes (UBSAN, m5b-nightly-quality; the empty leaf of RFC 6962).
+    if (data.empty()) {
+        return;
+    }
     totalBytes_ += data.size();
     std::size_t offset = 0;
     if (bufferSize_ > 0) {
