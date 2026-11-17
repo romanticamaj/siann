@@ -307,6 +307,18 @@
   --hold-dsp-load-w: calc(99.484px * var(--scale));
   --hold-zone-button-channel-w: calc(26px * var(--scale));
   --hold-zone-button-channel-h: calc(24px * var(--scale));
+  /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
+     agent row (m5b-ui-plan-metadata), the plan's title with the margins
+     the card's h3 rule gives it and its intent (m5b-ui-plan-metadata), the
+     composer with its bottom margin (m5b-ui-composer), the Media tab
+     (m5b-ui-media) and the Meter tab (m5b-ui-meter); the tabs and the
+     intent are set again per Chinese locale below. */
+  --hold-agent-row-h: calc(39px * var(--scale));
+  --hold-plan-title-h: calc(30.188px * var(--scale));
+  --hold-plan-intent-h: calc(33.344px * var(--scale));
+  --hold-composer-h: calc(54px * var(--scale));
+  --hold-tab-media-w: calc(71.078px * var(--scale));
+  --hold-tab-meter-w: calc(69.031px * var(--scale));
 
   /* The locator band in the ruler's upper half (m5-ui-loop-click; UI
      redesign 3.2), the mockup's draw() values: the band starts 2 px below
@@ -451,4 +463,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   :root { --panel-motion: 0s; }
+}
+
+/* The Plans tab's holds in Chinese (m5-ui-port-plans): the mockup's zh-TW
+   boxes, for zh-CN too, as the font stacks above. */
+:root:lang(zh-TW), :root:lang(zh-CN) {
+  --hold-plan-intent-h: calc(33.344px * var(--scale));
+  --hold-tab-media-w: calc(59.125px * var(--scale));
+  --hold-tab-meter-w: calc(70.688px * var(--scale));
 }

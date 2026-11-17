@@ -169,7 +169,6 @@ export const en = {
     plural('en', count, { one: `${count} step`, other: `${count} steps` }),
   'plans.partOf': '(part of {plan})',
   'plans.reason': 'Reason (sent to agent)',
-  'plans.approveApply': 'Approve and apply',
   'plans.approveSome': 'Approve {count} of {total}',
   'plans.reject': 'Reject',
   'plans.apply': 'Apply',
@@ -199,6 +198,7 @@ export const en = {
   'card.split': 'Split, {approved} of {total} approved',
   // The Plans tab ported from the mockup (m5-ui-port-plans; UI redesign 10.7, 3 and 10.10, P1-13).
   'plans.stepsHead': 'Steps · {count} of {total} selected',
+  'plans.tickStep': 'Step {n}',
   'plans.earlier': 'Earlier',
   'badge.appliedAt': 'Applied · {revision}',
   'badge.rolledBackAt': 'Rolled back · {revision}',

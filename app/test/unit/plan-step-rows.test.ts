@@ -104,6 +104,12 @@ test('with no preview, the new value only', () => {
   ]);
 });
 
+test('an applied plan whose track the head already holds names the track before it', () => {
+  const names = { ...NAMES, trackOrder: [...(NAMES.trackOrder ?? []), T.pad], track: (id: string) => (id === T.pad ? 'Pad' : NAMES.track(id)) };
+  const [row] = stepRows(MOCKUP_STEPS.slice(0, 1), null, names, en);
+  assert.equal(html(row!.detail), 'stereo · after FX');
+});
+
 test('old values carry the earlier steps of the plan: two gain steps on one track', () => {
   const steps = [
     { op: 'track.set_gain', trackId: T.bg, gainMilliDb: -6000 },

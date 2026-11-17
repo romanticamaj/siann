@@ -172,12 +172,14 @@ export interface Node {
   readonly children: Node[];
   // The text directly inside (not in children), concatenated.
   text: string;
+  // The text and the children in document order.
+  readonly seq: Array<Node | string>;
 }
 
 const VOID = /^(input|br|img|meta|link|path|rect|circle|stop)$/;
 
 export function parse(markup: string): Node {
-  const root: Node = { tag: '#root', attrs: {}, classes: [], children: [], text: '' };
+  const root: Node = { tag: '#root', attrs: {}, classes: [], children: [], text: '', seq: [] };
   const stack: Node[] = [root];
   const re = /<(\/?)([a-zA-Z0-9]+)((?:\s[^>]*?)?)(\/?)>|([^<]+)/g;
   for (let m = re.exec(markup); m; m = re.exec(markup)) {
@@ -185,18 +187,22 @@ export function parse(markup: string): Node {
     const top = stack[stack.length - 1]!;
     if (text !== undefined) {
       top.text += text.replace(/<!-- -->/g, '');
+      top.seq.push(text.replace(/<!-- -->/g, ''));
       continue;
     }
     const name = tag!.toLowerCase();
     if (close) {
+      // A closing tag of an element never opened (React's </path>) closes nothing.
+      if (!stack.some((n) => n.tag === name)) continue;
       while (stack.length > 1 && stack[stack.length - 1]!.tag !== name) stack.pop();
       if (stack.length > 1) stack.pop();
       continue;
     }
     const attrs: Record<string, string> = {};
     for (const a of (rawAttrs ?? '').matchAll(/([a-zA-Z_:-][\w:.-]*)(?:="([^"]*)")?/g)) attrs[a[1]!] = a[2] ?? '';
-    const node: Node = { tag: name, attrs, classes: (attrs.class ?? '').split(/\s+/).filter(Boolean), children: [], text: '' };
+    const node: Node = { tag: name, attrs, classes: (attrs.class ?? '').split(/\s+/).filter(Boolean), children: [], text: '', seq: [] };
     top.children.push(node);
+    top.seq.push(node);
     if (!selfClose && !VOID.test(name)) stack.push(node);
   }
   return root;
@@ -225,5 +231,5 @@ export function sig(node: Node): string {
 
 // All text below a node, comments removed.
 export function textOf(node: Node): string {
-  return node.text + node.children.map(textOf).join('');
+  return node.seq.map((item) => (typeof item === 'string' ? item : textOf(item))).join('');
 }

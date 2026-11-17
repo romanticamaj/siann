@@ -189,11 +189,14 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
       await expect(page.getByTestId(`zone-${zone}`)).toHaveAttribute('data-visible', 'true');
     }
     for (const zone of ZONES) {
-      const body = page.getByTestId(`zone-${zone}-body`);
+      // The right zone is the mockup's column (m5-ui-port-plans): its .p-scroll scrolls.
+      const body = zone === 'right' ? page.getByTestId('plan-review') : page.getByTestId(`zone-${zone}-body`);
       const result = await body.evaluate((el) => {
         const filler = document.createElement('div');
         filler.style.height = '5000px';
         filler.style.width = '5000px';
+        // In a flex column (the right zone's .p-scroll) an item would shrink.
+        filler.style.flex = 'none';
         filler.dataset.filler = 'true';
         el.appendChild(filler);
         const style = getComputedStyle(el);

@@ -1,8 +1,8 @@
 // The Plans tab's actions (m5-ui-plan-panel; spec "Frontend", plan review;
 // UI redesign 4.5 C4 and 3.0). actionSet() gives the actions valid in a
 // plan's state, one of them primary, and nothing else: a validated plan
-// offers Approve and apply (labelled "Approve N of M" with a proper subset
-// ticked), Audition and Reject; an approved plan Apply, Audition and Reject;
+// offers "Approve N of M" (N the ticked steps, "Approve 6 of 6" with every
+// step ticked: m5-ui-port-plans), Audition and Reject; an approved plan Apply, Audition and Reject;
 // a proposed plan Merge, Hear main or Hear proposal, and Discard. A valid
 // action that cannot run now is in the set but disabled with its reason (a
 // stale plan, nothing ticked). Audition and the Hear actions need an
@@ -109,13 +109,22 @@ export function actionSet(plan: PlanEntry, heard: string | null, chosen: Selecti
   return { primary: { id: 'merge' }, secondary: [...hear, { id: 'discard' }], disabled };
 }
 
-// The three cells of the card's .acts (m5-ui-port-plans): not implemented yet.
-export function actionCells(_set: ActionSet): readonly [ActionEntry | null, ActionEntry | null, ActionEntry | null] {
-  return [null, null, null];
+// The three cells of the card's .acts (m5-ui-port-plans; mockup.html: Audition,
+// Approve, the icon-only Reject; UI redesign 10.10, P1-13 notes): the secondary
+// action, the primary, and the danger action (Reject or Discard). A state
+// with fewer actions leaves its cell empty (null).
+export function actionCells(set: ActionSet): readonly [ActionEntry | null, ActionEntry | null, ActionEntry | null] {
+  const danger = set.secondary.find((entry) => entry.id === 'reject' || entry.id === 'discard') ?? null;
+  const secondary = set.secondary.find((entry) => entry !== danger) ?? null;
+  return [secondary, set.primary, danger];
+}
+
+// The danger cell's actions: an icon-only button named by its label.
+export function isDanger(id: ActionId): boolean {
+  return id === 'reject' || id === 'discard';
 }
 
 const LABELS = {
-  approveApply: 'plans.approveApply',
   apply: 'plans.apply',
   audition: 'plans.audition',
   reject: 'plans.reject',
@@ -123,11 +132,12 @@ const LABELS = {
   hearMain: 'plans.hearMain',
   hearProposal: 'plans.hearProposal',
   discard: 'plans.discard',
-} as const satisfies Record<ActionId, string>;
+} as const satisfies Record<Exclude<ActionId, 'approveApply'>, string>;
 
-// The button's words: "Approve N of M" for a partial approval.
+// The button's words: "Approve N of M", N the steps it approves (every step
+// when no subset is ticked: "Approve 6 of 6", UI redesign 4.5 C4).
 export function actionLabel(entry: ActionEntry, stepCount: number, t: T = translator('en')): string {
-  if (entry.id === 'approveApply' && entry.steps) return t('plans.approveSome', { count: entry.steps.length, total: stepCount });
+  if (entry.id === 'approveApply') return t('plans.approveSome', { count: entry.steps?.length ?? stepCount, total: stepCount });
   return t(LABELS[entry.id]);
 }
 

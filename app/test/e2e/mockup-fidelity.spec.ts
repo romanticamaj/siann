@@ -170,6 +170,10 @@ function prepareBundle(scratch: string): string {
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'Night Drive', '--rate', String(RATE));
   const exec = (command: Record<string, unknown>) => cli('exec', bundle, JSON.stringify(command));
+  // The pending plan's pad, the media the mockup's step 2 names (pad_swell.wav).
+  const pad = path.join(scratch, 'pad_swell.wav');
+  writeWav(pad, 440);
+  cli('import', bundle, pad, '--media-id', 'med_pad_swell');
   TRACKS.forEach((track, index) => {
     const id = TRACK_IDS[index]!;
     const wav = path.join(scratch, `${track.kind}.wav`);
@@ -225,7 +229,7 @@ function planSteps(): Array<Record<string, unknown>> {
       op: 'clip.place',
       clipId: 'clp_pad_swell',
       trackId: 'trk_pad',
-      mediaId: 'med_keys',
+      mediaId: 'med_pad_swell',
       position: { domain: 'audio', value: String(8 * BAR) },
       sourceStart: '0',
       length: String(8 * BAR),

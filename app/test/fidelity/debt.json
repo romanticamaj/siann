@@ -4,7 +4,7 @@
   "tokens": [],
   "fonts": [],
   "literals": {
-    "app/renderer/shell.css": { "colours": 4, "sizes": 84 },
+    "app/renderer/shell.css": { "colours": 4, "sizes": 64 },
     "app/src/renderer/mixer/MixerMeters.ts": { "colours": 6, "sizes": 0 },
     "app/src/renderer/timeline/TimelineCanvas.ts": { "colours": 0, "sizes": 3 }
   }

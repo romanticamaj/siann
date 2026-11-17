@@ -42,6 +42,7 @@ import type { TransportController } from './model/transport';
 import { Mixer } from './mixer/Mixer';
 import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
+import { HearingSwitch } from './plans/HearingSwitch';
 import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
@@ -165,6 +166,7 @@ export function App({
             </Counted>
           }
           right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
+          rightHead={<HearingSwitch client={client} plans={plans} />}
         />
       </TimeFormatContext.Provider>
     </CapabilitiesContext.Provider>
