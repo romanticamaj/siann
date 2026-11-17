@@ -1,7 +1,8 @@
 // The ruler's marks (UI redesign spec 3.2, "Ruler"): bars and beats through
 // root.tempo, with the subdivision chosen by the zoom so labels stay at least
-// RULER_MIN_LABEL_PX apart: several bars per label far out, every bar, every
-// beat, then eighths, sixteenths and thirty-seconds. A bar's label is its
+// RULER_MIN_LABEL_PX apart (bar numbers RULER_BAR_LABEL_PX): several bars per
+// label far out, every bar, every beat, then eighths, sixteenths and
+// thirty-seconds. A bar's label is its
 // number, a beat's bar.beat, a finer step's bar.beat.tick; the same text in
 // every locale. Framework-free.
 
@@ -10,6 +11,9 @@ import type { Viewport } from './geometry';
 import { TICKS_PER_BAR, TICKS_PER_QUARTER, framesToTicks, tempoSegments, ticksToFrames } from './musical-time';
 
 export const RULER_MIN_LABEL_PX = 64;
+// Bar numbers are short: the mockup's draw() labels every bar at its 40 px
+// per bar (PXB), so a bar number needs only that much room.
+export const RULER_BAR_LABEL_PX = 40;
 
 export type MarkKind = 'bar' | 'beat' | 'sub';
 
@@ -34,9 +38,9 @@ const STEPS: readonly RulerStep[] = [
 ];
 
 // The finest step whose labels are at least RULER_MIN_LABEL_PX apart at
-// `pxPerTick`; the coarsest when none is.
+// `pxPerTick` (RULER_BAR_LABEL_PX for bar numbers); the coarsest when none is.
 export function chooseRulerStep(pxPerTick: number): RulerStep {
-  return STEPS.find((step) => step.ticks * pxPerTick >= RULER_MIN_LABEL_PX) ?? STEPS[STEPS.length - 1]!;
+  return STEPS.find((step) => step.ticks * pxPerTick >= (step.kind === 'bar' ? RULER_BAR_LABEL_PX : RULER_MIN_LABEL_PX)) ?? STEPS[STEPS.length - 1]!;
 }
 
 function labelOf(ticks: number): { kind: MarkKind; label: string } {
