@@ -839,7 +839,7 @@ test('muted and implicitly muted tracks are dimmed; an empty session shows guida
 
 test('the track list boundary drags within 140-420, never collapses, takes the keys, restores 216 and is kept in siann.layout.v1 only', async () => {
   test.setTimeout(150_000);
-  prepare([{ id: 'trk_a', name: 'Alpha' }]);
+  prepare([{ id: 'trk_a', name: 'Vox Lead' }]);
   const userData = path.join(scratch, 'user-data');
   await launch({ userData });
   const frames = await recordFrames();
@@ -865,6 +865,24 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   await expect(page.getByTestId('track-name-trk_a')).toBeVisible();
   await expect(page.getByTestId('track-mute-trk_a')).toBeVisible();
   await expect(page.getByTestId('track-solo-trk_a')).toBeVisible();
+  // At the minimum the header shows colour, name, M and S (spec 2.3): the name
+  // is not cut, and the empty boxes of record, read and write go with the
+  // number and the second row (spec 3.0), so they take none of its width.
+  const narrow = await page.getByTestId('track-header-trk_a').evaluate((th) => {
+    const name = th.querySelector<HTMLElement>('.r1 > .name')!;
+    const holds = [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].map((el) => el.getBoundingClientRect().width);
+    return { client: name.clientWidth, scroll: name.scrollWidth, holds };
+  });
+  expect(narrow.scroll).toBeGreaterThan(0);
+  expect(narrow.client).toBeGreaterThanOrEqual(narrow.scroll);
+  expect(narrow.holds).toEqual([0, 0, 0]);
+  await separator.dblclick();
+  await expect.poll(width).toBe(216);
+  // At the default width the three boxes keep their space (spec 3.0).
+  expect(await page.getByTestId('track-header-trk_a').evaluate((th) =>
+    [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].filter((el) => el.getBoundingClientRect().width > 0).length)).toBe(3);
+  await dragBy(-1000);
+  await expect.poll(width).toBe(140);
   await separator.dblclick();
   await expect.poll(width).toBe(216);
 
