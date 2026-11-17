@@ -115,7 +115,7 @@ test.beforeEach(async () => {
   });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
   watcher = await engineClient(page, { events: true });
 });
 
@@ -273,7 +273,7 @@ test('Approve 5 of 5 lands the plan as one revision', async () => {
   await expect(page.getByTestId('plan-approve-apply')).toHaveText('Approve 5 of 5');
   await page.getByTestId('plan-approve-apply').click();
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'applied');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   const applied = await status(hash);
   expect(applied.state).toBe('applied');
   await expect.poll(() => watcher.ofType('session.changed').length).toBe(commits + 1);
@@ -315,7 +315,7 @@ test('a refused apply after the approval leaves the card approved and shows the 
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'approved');
   await expect(stateBadge(hash)).toHaveText(t('badge.approved'));
   expect((await status(hash)).state).toBe('approved');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
 });
 
 test('Approve 3 of 5 applies a sub-plan and labels the parent split', async () => {
@@ -342,7 +342,7 @@ test('Approve 3 of 5 applies a sub-plan and labels the parent split', async () =
   const sub = listed.find((p) => p.parentPlan === hash)!;
   expect(sub.steps).toEqual([STEPS[0], STEPS[1], STEPS[3]]);
   await expect(stateBadge(sub.hash as string)).toHaveAttribute('data-state', 'applied');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   expect((await status(sub.hash as string)).state).toBe('applied');
 });
 
@@ -358,7 +358,7 @@ test('Audition from a validated plan: approved for audition, a banner from every
   await expect(page.getByTestId('hear-proposal')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByTestId('status-heard')).toHaveText(t('status.hearProposal'));
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
 
   // The banner: with the lower zone on the MixConsole, and with it collapsed.
   const banner = page.getByTestId('audition-banner');
@@ -384,7 +384,7 @@ test('Audition from a validated plan: approved for audition, a banner from every
   await expect(banner).toBeVisible();
   await page.getByTestId('plan-merge').click();
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'applied');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect(banner).toHaveCount(0);
 });
 
@@ -406,7 +406,7 @@ test('Reject opens the reason row; Enter sends the reason, which the card shows'
   await expect(page.getByTestId('plan-note')).toHaveCount(0);
   const rejected = await status(hash);
   expect(rejected.rejectionNote).toBe('Keep the bass dry');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
 });
 
 test('a stale plan shows the stale badge, the reason in user units and a disabled primary', async () => {

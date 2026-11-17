@@ -136,14 +136,14 @@ test('the arrange body is .arr-body[arrange] with the track list, its divider an
   assert.match(body, /^<div class="arr-body" data-part="arrange" style="grid-template-columns:[^"]*var\(--divider-w\) minmax\(0, 1fr\)"/);
   const kids = children(body);
   assert.equal(kids.length, 3);
-  assert.equal(kids[0], 'div.track-list[track-list]');
+  assert.equal(kids[0], 'div.headers[track-list]');
   assert.equal(kids[2], 'div.lanes[event-display]');
 });
 
 test('the track list has one empty, hidden element in the marker row, between its head and its body', () => {
-  const list = element(render(), /<div class="track-list"/);
+  const list = element(render(), /<div class="headers"/);
   const kids = children(list);
-  assert.deepEqual(kids, ['div.track-list-head[track-list-head]', 'div', 'div.track-list-body']);
+  assert.deepEqual(kids, ['div.corner[track-list-head]', 'div', 'div.track-list-body']);
   // The marker row: no role, not focusable, hidden from assistive technology, no part id, no text, no class.
   const row = [...list.matchAll(/<div aria-hidden="true"><\/div>/g)];
   assert.equal(row.length, 1, 'one empty element');

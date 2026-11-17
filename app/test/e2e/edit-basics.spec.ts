@@ -700,7 +700,7 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
   await page.getByTestId('confirm-cancel').click();
   await expect(dialog).toBeHidden();
   expect((await head()).revision).toBe(unchanged);
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
 
   await focusProject();
   await operation(
@@ -711,13 +711,13 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
       await page.getByTestId('confirm-ok').click();
     },
     async () => {
-      await expect(page.getByTestId('track-count')).toHaveText('1');
+      await expect(page.getByTestId('about-track-count')).toHaveText('1');
       expect((await track('trk_b')).missing).toBe(true);
       expect(await fetchClip('clp_c')).toBeNull();
     },
   );
   // The one undo brought the tracks and their clips back.
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   expect((await track('trk_c')).missing).toBeFalsy();
   expect(await fetchClip('clp_b')).not.toBeNull();
   expect(await fetchClip('clp_c')).not.toBeNull();

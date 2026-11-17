@@ -264,7 +264,7 @@ test('the track list shows each track, clips are never under it, double-click re
   );
   await launch();
   const frames = await recordFrames();
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
   const expected = [
     { id: 'trk_a', number: '1', name: 'Alpha', gain: '-3.5 dB', pan: 'L35' },
     { id: 'trk_b', number: '2', name: 'Beta', gain: '0.0 dB', pan: 'R40' },
@@ -323,10 +323,10 @@ test('the track list shows each track, clips are never under it, double-click re
   // (spec 3.3): one track.add each.
   await focusProject();
   await page.keyboard.press('KeyT');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
   await page.getByTestId('track-add').click();
-  await expect(page.getByTestId('track-count')).toHaveText('4');
+  await expect(page.getByTestId('about-track-count')).toHaveText('4');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 3}`);
   const adds = ops(frames, 'track.add');
   expect(adds).toHaveLength(2);
@@ -340,9 +340,9 @@ test('the track list shows each track, clips are never under it, double-click re
   const body = await box('track-list-body');
   const headers = await box('track-header-trk_a');
   await page.getByTestId('track-header-trk_a').dblclick({ position: { x: headers.width - 30, y: 4 } });
-  await expect(page.getByTestId('track-count')).toHaveText('4');
+  await expect(page.getByTestId('about-track-count')).toHaveText('4');
   await page.mouse.dblclick(body.x + body.width / 2, body.y + body.height - 10);
-  await expect(page.getByTestId('track-count')).toHaveText('5');
+  await expect(page.getByTestId('about-track-count')).toHaveText('5');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
   expect(ops(frames, 'track.add')).toHaveLength(3);
   await expect(page.getByTestId('track-list').getByText('Audio 3', { exact: true })).toBeVisible();
@@ -354,7 +354,7 @@ test('the track list shows each track, clips are never under it, double-click re
   await expect(page.getByTestId('track-rename-trk_b')).toHaveValue('t');
   await page.getByTestId('track-rename-trk_b').press('Escape');
   await expect(page.getByTestId('track-name-trk_b')).toHaveText('Beta');
-  await expect(page.getByTestId('track-count')).toHaveText('5');
+  await expect(page.getByTestId('about-track-count')).toHaveText('5');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
   expect(ops(frames, 'track.add')).toHaveLength(3);
 });
@@ -653,7 +653,7 @@ test('dragging a header\'s lower border sizes that lane, Ctrl-drag sizes all; he
   await page.reload();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('session-id')).toHaveText(sessionId ?? '');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect.poll(heights).toEqual([73, 73, 73]);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('siann.layout.v1') ?? '{}') as { trackHeights?: Record<string, unknown> });
   expect(stored.trackHeights?.[sessionId ?? '']).toEqual({ trk_a: 73, trk_b: 73, trk_c: 73 });
@@ -813,7 +813,7 @@ test('muted and implicitly muted tracks are dimmed; an empty session shows guida
     { id: 'trk_c', name: 'Gamma' },
   ]);
   await launch();
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect(page.getByTestId('track-header-trk_a')).toHaveAttribute('data-dimmed', 'true');
   await expect(page.getByTestId('track-header-trk_c')).toHaveAttribute('data-dimmed', 'true');
   await expect(page.getByTestId('track-header-trk_b')).not.toHaveAttribute('data-dimmed', 'true');
@@ -830,7 +830,7 @@ test('muted and implicitly muted tracks are dimmed; an empty session shows guida
     const empty = path.join(scratch, `empty-${language}`);
     fs.mkdirSync(empty, { recursive: true });
     await launch({ dir: empty, languages: [language], userData: path.join(scratch, `user-${language}`) });
-    await expect(page.getByTestId('track-count')).toHaveText('0');
+    await expect(page.getByTestId('about-track-count')).toHaveText('0');
     await expect.poll(() => hook<string | null>('guidance')).toBe(catalog['timeline.empty']);
     await app!.close();
     app = undefined;
@@ -892,7 +892,7 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   await page.keyboard.press('Enter');
   await expect.poll(width).toBe(216);
   // The keys were the boundary's: no zone toggled, no track added.
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await expect.poll(width).toBe(232);
@@ -1075,4 +1075,138 @@ test("every id of the event display is found, no pending part's id is, and the h
   const cursor = (await parts()).find((p) => p.id === 'cursor')!;
   const bar = (await page.locator('[data-part="scroll-zoom"]').boundingBox())!;
   expect(Math.abs(display.y + cursor.y + cursor.h - bar.y)).toBeLessThan(1);
+});
+
+// m5-ui-port-track-list: the list is the mockup's .headers, and its gestures
+// keep one revision each. The head's count is the mockup's "N tracks · M
+// clips" (UI redesign 10.8, 4), carrying the id track-count.
+test('add with the .add button, rename, select, mute and solo from the list, one revision each; the count follows a placed and a removed clip', async () => {
+  test.setTimeout(150_000);
+  prepare(
+    [
+      { id: 'trk_a', name: 'Alpha' },
+      { id: 'trk_b', name: 'Beta' },
+    ],
+    [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }],
+  );
+  await launch();
+  const count = page.getByTestId('track-count');
+  await expect(count).toHaveText('2 tracks · 1 clip');
+  await expect(count).toHaveAttribute('data-part', 'track-count');
+  await expect(page.locator('.headers[data-part="track-list"] > .corner[data-part="track-list-head"] > .cnt[data-testid="track-count"]')).toHaveCount(1);
+  await expect(page.locator('.corner > button.add[data-part="track-add"]')).toHaveText('Track');
+
+  // Add: one track.add, a new .th at the end.
+  let before = await revision();
+  await page.getByTestId('track-add').click();
+  await expect(count).toHaveText('3 tracks · 1 clip');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  const added = page.locator('.track-list-column > .th').last();
+  const testId = (await added.getAttribute('data-testid'))!;
+  expect(testId).toMatch(/^track-header-trk_[0-9a-f]{16}$/);
+  const id = testId.slice('track-header-'.length);
+  await expect(page.getByTestId(`track-number-${id}`)).toHaveText('3');
+
+  // Rename: double-click the .name, Enter.
+  before = await revision();
+  await page.getByTestId(`track-name-${id}`).dblclick();
+  await page.getByTestId(`track-rename-${id}`).fill('Gamma');
+  await page.getByTestId(`track-rename-${id}`).press('Enter');
+  await expect(page.getByTestId(`track-name-${id}`)).toHaveText('Gamma');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+
+  // Select: a click on the header gives it .sel, and sends nothing.
+  before = await revision();
+  await added.click({ position: { x: 4, y: 4 } });
+  await expect(added).toHaveClass(/(^| )sel( |$)/);
+  await expect(page.getByTestId('track-header-trk_a')).not.toHaveClass(/(^| )sel( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before}`);
+
+  // Mute: .msr.m.on and the header .muted, one revision.
+  await page.getByTestId(`track-mute-${id}`).click();
+  await expect(page.getByTestId(`track-mute-${id}`)).toHaveClass(/(^| )on( |$)/);
+  await expect(page.getByTestId(`track-mute-${id}`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(added).toHaveClass(/(^| )muted( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  // Solo: .msr.s.on, one revision; the other tracks are muted by it.
+  await page.getByTestId(`track-solo-${id}`).click();
+  await expect(page.getByTestId(`track-solo-${id}`)).toHaveClass(/(^| )on( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
+  await expect(page.getByTestId('track-header-trk_a')).toHaveClass(/(^| )muted( |$)/);
+  await page.getByTestId(`track-mute-${id}`).click();
+  await expect(added).not.toHaveClass(/(^| )muted( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 3}`);
+
+  // The count follows a placed clip and a removed one.
+  const canvas = await box('timeline-canvas');
+  before = await revision();
+  await page.getByTestId('pool-med_sq').click();
+  const v = await view();
+  await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
+  await expect(count).toHaveText('3 tracks · 2 clips');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  const start = await rect('clp_sq');
+  await page.mouse.click(canvas.x + start.x + start.width / 2, canvas.y + start.y + start.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
+  await page.keyboard.press('Delete');
+  await expect(count).toHaveText('3 tracks · 1 clip');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
+});
+
+test('every landed id of the track list is in the window and no pending one is, derived from the manifest', async () => {
+  prepare([
+    { id: 'trk_a', name: 'Alpha' },
+    { id: 'trk_b', name: 'Beta', mute: true },
+    { id: 'trk_c', name: 'Gamma' },
+  ]);
+  await launch();
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
+  const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', 'test', 'fidelity', 'manifest.json'), 'utf8')) as {
+    gates: Record<string, string>;
+    rules: Array<{ match: string[]; gate: string }>;
+  };
+  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+  const gateOf = (id: string) => manifest.gates[manifest.rules.find((rule) => rule.match.some((p) => glob(p).test(id)))!.gate];
+  // The mockup's track list ids (its template and th()) for three tracks and its ghost track.
+  const PER_TRACK = ['', '-colour', '-number', '-name', '-mute', '-solo', '-record', '-read', '-write', '-gain', '-pan', '-meter'];
+  const ids = [
+    'track-list',
+    'track-list-head',
+    'track-add',
+    'track-count',
+    'marker-head',
+    ...[1, 2, 3].flatMap((n) => PER_TRACK.map((suffix) => `track-${n}${suffix}`)),
+    ...PER_TRACK.map((suffix) => `track-ghost${suffix}`),
+  ];
+  // The ids the fidelity run reads (mockup-fidelity.spec.ts, collectDom).
+  const shown = await page.evaluate(() => {
+    const out = Array.from(document.querySelectorAll('[data-part]')).map((el) => el.getAttribute('data-part')!);
+    const counts = new Map<string, number>();
+    for (const item of Array.from(document.querySelectorAll('[data-part-item]'))) {
+      const name = item.getAttribute('data-part-item')!;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+      const id = `${name}-${item.getAttribute('data-part-key') ?? counts.get(name)}`;
+      out.push(id);
+      for (const child of Array.from(item.querySelectorAll('[data-part-of]'))) {
+        if (child.closest('[data-part-item]') === item) out.push(`${id}-${child.getAttribute('data-part-of')}`);
+      }
+    }
+    return out;
+  });
+  const landed = ids.filter((id) => gateOf(id) === 'report');
+  const pending = ids.filter((id) => gateOf(id) === 'pending');
+  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write', 'track-ghost']) expect(pending).toContain(id);
+  for (const id of landed) expect(shown, id).toContain(id);
+  for (const id of pending) expect(shown, id).not.toContain(id);
+  // The structure: .headers > .corner (.add, .cnt), the empty marker box, the headers as th() draws them.
+  await expect(page.locator('.headers > .corner > .add + .cnt')).toHaveCount(1);
+  await expect(page.locator('.headers > div[aria-hidden="true"]:not([class])')).toHaveCount(1);
+  await expect(page.locator('.th > .col + .idx + .body > .r1 + .r2')).toHaveCount(3);
+  await expect(page.locator('.th .r1 > .name + .msr.m + .msr.s + .msr-box + .msr-box + .msr-box')).toHaveCount(3);
+  await expect(page.locator('.th .r2 > .db.num + .pan.num + .hmeter')).toHaveCount(3);
+  await expect(page.getByTestId('track-header-trk_b')).toHaveClass(/(^| )muted( |$)/);
+  // The muted header dims as the shared rule does: its name and second row at 45 %, not the whole header.
+  expect(await page.getByTestId('track-name-trk_b').evaluate((el) => getComputedStyle(el).opacity)).toBe('0.45');
+  expect(await page.getByTestId('track-header-trk_b').evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
 });

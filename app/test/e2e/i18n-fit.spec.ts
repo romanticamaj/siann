@@ -30,8 +30,9 @@ const PLANS = '.p-head .tab, .ab .b, .steps-h a, .acts .btn, .plans .badge';
 // The MixConsole (m5-ui-port-mixer-strip): the knob, the pan value, M, S, the
 // readout (level and peak value) and the MixConsole tab, in the mockup's boxes.
 const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^=fader-value-]';
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], ${PLANS}, ${MIXER}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], ${PLANS}, ${MIXER}`;
+// The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -113,7 +114,7 @@ test('no labelled control overflows or wraps its label in any locale at either w
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   const agent = await agentFor(app);
   if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
   // A plan auditioned: its card reads approved for audition and the banner shows.
@@ -134,8 +135,12 @@ test('no labelled control overflows or wraps its label in any locale at either w
   }
   await expect(page.locator('[data-part="plan-summary"] > span')).toHaveCount(3);
   // The track list (m5-ui-arrange) is in the check: its + button, M and S of
-  // every header and the info line's terms are labelled controls.
+  // every header and the info line's terms are labelled controls; the head's
+  // .add label and its count (m5-ui-port-track-list) are text in the head.
   await expect(page.getByTestId('track-add')).toBeVisible();
+  await expect(page.getByTestId('track-add')).toHaveText(/\S/);
+  await expect(page.getByTestId('track-count')).toBeVisible();
+  await expect(page.getByTestId('track-count')).toHaveText(`${TRACKS.length} tracks · 0 clips`);
   await expect(page.getByTestId('track-mute-trk_kick')).toBeVisible();
   await expect(page.getByTestId('info-line').locator('dt').first()).toBeAttached();
   // The transport bar (m5-ui-transport): its buttons, the position display,
