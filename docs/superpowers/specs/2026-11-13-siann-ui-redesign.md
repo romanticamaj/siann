@@ -200,7 +200,7 @@ In this table "hidden" means absent with its space empty. Where a later decision
 | Fade handles, fade fields in the info line | Hidden (E-9) |
 | Time signature display | Hidden in phase 1; bars are computed as 4/4, which the tooltip of the position display states. M5b shows a read-only 4/4 (`m5b-ui-signature`); editing it waits for E-10 |
 | DSP load, LUFS | Hidden in phase 1 (E-13, in M5b: `m5b-engine-load-loudness`, `m5b-ui-meter`); the status bar shows xruns, which `engine.status` has |
-| Master fader and its buttons | Hidden (E-11); the master strip is a meter with a peak value |
+| Master fader and its buttons | Hidden (E-11); the master strip is a meter with a peak value. It keeps the mockup's fader area with its dB scale beside the meter (`strip-master-fader-area`, `strip-master-scale`: the scale reads the meter), and the fader column (`strip-master-fader`, `strip-master-cap`) is an empty box (P1-12) |
 | Insert slots, `e` buttons, Routing and Sends sections, Notepad | Hidden in phase 1; inserts and `e` arrive in phase 3 from `plugin_slot` entities, routing and sends with M6c, the Notepad with `m5b-ui-notepad` |
 | Tools `2` and `4`–`9`; snap types other than Grid | Hidden until phase 3 implements them (renderer work, not backend). Tools `1` and `3` are in P1-8 |
 | Editor tab, Media and Meter tabs | Hidden until phase 3 (in M5b: `m5b-ui-editor-channel`, `m5b-ui-media`, `m5b-ui-meter`) |
