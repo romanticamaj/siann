@@ -81,6 +81,7 @@ import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import { PickerController } from './mixer/picker';
 import { PluginActions } from './model/plugin-actions';
+import { createFrameRecorder, installFrameMarks, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
@@ -124,6 +125,8 @@ declare global {
     __siannMeters?: MeterTestHooks;
     // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
     __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
+    // The frame marks' recorder (perf scenario, test hook only).
+    __siannFrames?: FrameTestHooks;
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
     // React commits under each <Counted id> (profiling bundle only).
@@ -311,6 +314,25 @@ const onMeterHooks = testHooks
       else delete window.__siannMeters;
     }
   : undefined;
+
+// The perf scenario's frame marks (m5b-nightly-quality; UI redesign 5.6): only
+// under the test hook; otherwise the draw paths' marks stay a no-op.
+const frames = createFrameRecorder(testHooks, {
+  perf: performance,
+  frameTime: () => {
+    const time = document.timeline?.currentTime;
+    return typeof time === 'number' ? time : null;
+  },
+});
+if (frames) {
+  installFrameMarks(frames);
+  window.__siannFrames = { samples: () => frames.samples(), clear: () => frames.clear(), coldStartMs: () => frames.coldStartMs() };
+  const ready = () => {
+    if (client.getState().status === 'connected') frames.engineReady();
+  };
+  client.subscribe(ready);
+  ready();
+}
 
 const countCommit = () => {
   window.__siannCommits = (window.__siannCommits ?? 0) + 1;

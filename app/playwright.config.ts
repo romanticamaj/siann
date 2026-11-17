@@ -9,6 +9,8 @@ import { defineConfig } from '@playwright/test';
 
 // The UX screenshot tour runs only when asked for (SIANN_UX_TOUR=1).
 const tour = process.env.SIANN_UX_TOUR === '1' ? [] : ['**/ux-tour.spec.ts'];
+// The performance scenario (m5b-nightly-quality) likewise only under SIANN_PERF=1.
+const perf = process.env.SIANN_PERF === '1' ? [] : ['**/perf.spec.ts'];
 const PLAIN_TAB = '**/plain-tab.spec.ts';
 // The packaged app (m5b-package-windows): its own project, which exists only
 // when SIANN_PACKAGED_EXE names a packaged SIANN.exe (the package step of
@@ -29,7 +31,7 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
   projects: [
-    { name: 'electron', testIgnore: [...tour, PLAIN_TAB, PACKAGED, FIDELITY] },
+    { name: 'electron', testIgnore: [...tour, ...perf, PLAIN_TAB, PACKAGED, FIDELITY] },
     { name: 'chromium', testMatch: PLAIN_TAB, use: { browserName: 'chromium' } },
     ...packaged,
     ...fidelity,

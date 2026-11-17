@@ -14,6 +14,7 @@
 // frame; a frame is drawn only when a new meter frame arrived or a slot moved.
 
 import type { RealtimeClient } from '../model/realtime-client';
+import { frameMarks } from '../perf/frame-marks';
 import { TOKENS } from '../tokens';
 
 export interface AnimationFrames {
@@ -134,7 +135,10 @@ export class HeaderMeters {
   start(): void {
     if (this.#handle !== null) return;
     const tick = () => {
+      // The perf scenario's frame marks (perf/frame-marks.ts; a no-op outside the test hook).
+      frameMarks().begin();
       this.#draw();
+      frameMarks().end();
       this.#handle = this.#frames.request(tick);
     };
     this.#handle = this.#frames.request(tick);
