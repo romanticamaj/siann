@@ -540,7 +540,7 @@ Linking: hovering a step highlights its ghosts and scrolls them into view; the t
 | Playhead, loop brace, selection, drag previews, snap guides | The overlay canvas of that surface (Canvas2D) | Moves every frame; must never re-rasterise waveforms |
 | All meters in the mixer | One Canvas2D behind the strips, one draw call per frame for all channels | 64 strips with one canvas each means 64 backing stores and 64 compositor layers |
 | Mini meters in the track headers | One narrow canvas down the header column | Same reason |
-| Fader caps and knobs | DOM elements moved with `transform` from the gesture code, not from React state | Compositor-only movement; React renders a strip once per revision |
+| Fader caps and knobs | DOM elements written by the gesture code in the pointer handler, before React hears of the move, not from React state: the fader's `.cap` by its `style.bottom` (a percentage of its track), the knob's needle by its SVG path's `d` (2026-11-18, m5-ui-port-mixer-strip). The value arc, the readout and the Inspector follow the gesture's overlay when React renders the track | The mockup positions `.cap` with `bottom` and draws knob() as SVG paths, which a `transform` cannot bend into an arc, so the port writes those two properties; each is one element's style or attribute, the move shows in the same frame without a React commit, and the cap and the needle never wait for a React render |
 | Clip editor waveform (lower zone) | Same renderer class as the arrange surface | One implementation to make fast |
 
 ### 5.2 The event display surface
