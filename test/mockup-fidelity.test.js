@@ -756,7 +756,8 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
 test('the toolbar port: its gate is report, its holds name pending parts and shell.css applies them, the old toolbar rules are gone', () => {
   assert.equal(MANIFEST.gates['m5-ui-port-toolbar'], 'report');
   const tokens = read('app', 'renderer', 'tokens.css');
-  const holds = [...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]).sort();
+  // The en values, and the Chinese ones of the pill and the fades.
+  const holds = [...new Set([...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]))].sort();
   assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'proposal-pill', 'tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
   for (const id of holds) {
     assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);

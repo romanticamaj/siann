@@ -22,8 +22,10 @@
    alignment feature deletes its part of this rule. The lower zone, the left
    zone and the right zone (.plans) are ported (m5-ui-port-mixer-strip,
    m5-ui-port-inspector, m5-ui-port-plans): they take base.css's body text,
-   as the mockup does; :where() keeps the rule's specificity that of .zone. */
-.zone:where(:not(.zone-lower):not(.zone-left)):where(:not(.plans)), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .click-level {
+   as the mockup does; :where() keeps the rule's specificity that of .zone.
+   So is the project zone (its canvas, track list, toolbar and info line:
+   m5-ui-port-arrange-canvas, m5-ui-port-track-list, m5-ui-port-toolbar). */
+.zone:where(:not(.zone-lower):not(.zone-left):not(.zone-project)):where(:not(.plans)), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -32,10 +34,11 @@
 
 /* The app's controls, outside what the mockup ports. A button the mockup
    draws as a span (.tbtn, .iconbtn, .aibtn, the about line, the lower zone's
-   .tab, a strip's .msr and .pk) takes none of
+   .tab, a strip's .msr and .pk, the project zone toolbar's tools .b and
+   fields .field) takes none of
    these: the shared rules draw it, over the reset below. */
 button, select, input { font: inherit; color: inherit; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow)) {
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field)) {
   white-space: nowrap;
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
@@ -44,13 +47,13 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   border-radius: var(--radius-m);
   cursor: pointer;
 }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow)):hover:not(:disabled) { background: var(--bg-5); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
    styles), at no specificity, so every shared rule wins. */
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow) {
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field) {
   margin: 0;
   padding: 0;
   border: 0;
@@ -60,7 +63,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   text-align: inherit;
   cursor: pointer;
 }
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow):disabled { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field):disabled { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
@@ -204,8 +207,10 @@ code, dd { font-family: var(--font-mono); }
   border-radius: var(--radius-m);
 }
 .click-level-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--tx-2); }
-/* The position display's time format menu (right-click; spec 3.2). */
-.time-format-menu {
+/* The position display's time format menu (right-click; spec 3.2), the
+   project zone toolbar's grid type menu and the event display's context menu
+   (m5-ui-port-toolbar), one look. */
+.time-format-menu, .grid-type-menu, .event-display-menu {
   position: fixed;
   z-index: 30;
   display: flex;
@@ -297,48 +302,56 @@ code, dd { font-family: var(--font-mono); }
   overflow: hidden;
 }
 .timeline { display: contents; }
-.timeline-bar {
+/* The toolbar and the info line are ui/project-zone.css's .arr-toolbar and
+   .infoline (m5-ui-port-toolbar). The app's own pieces around them: the
+   refusal line, which draws nothing while empty, and the empty boxes of the
+   absent parts (spec 3.0): tools 2 and 4 to 9 (m5b-ui-edit-more), the
+   proposal pill (m5b-ui-ghosts) and the fade fields (m5b-ui-fades), each the
+   size the fidelity run measures in the mockup (--hold-*-w); a tool, snap,
+   the grid type or auto-scroll on an engine without its commands, a tool's
+   box (--tool-w, the shared rule's least width) and a field's height (the
+   follow field's width is its icon, padding and border). */
+.timeline-error { min-width: 0; color: var(--err); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-error:empty { display: none; }
+.hold-tool-2, .hold-tool-4, .hold-tool-5, .hold-tool-6, .hold-tool-7, .hold-tool-8, .hold-tool-9, .tool-empty { display: block; flex: none; height: var(--control-h); }
+.hold-tool-2 { width: var(--hold-tool-2-w); }
+.hold-tool-4 { width: var(--hold-tool-4-w); }
+.hold-tool-5 { width: var(--hold-tool-5-w); }
+.hold-tool-6 { width: var(--hold-tool-6-w); }
+.hold-tool-7 { width: var(--hold-tool-7-w); }
+.hold-tool-8 { width: var(--hold-tool-8-w); }
+.hold-tool-9 { width: var(--hold-tool-9-w); }
+.tool-empty { width: var(--tool-w); }
+.field-empty, .hold-proposal-pill { display: block; flex: none; height: var(--field-h); }
+.auto-scroll-empty { width: calc(2 * var(--space-1h) + var(--icon-s) + 2 * var(--hairline)); }
+.hold-proposal-pill { width: var(--hold-proposal-pill-w); }
+.hold-info-fade-in, .hold-info-fade-out { display: block; flex: none; align-self: stretch; }
+.hold-info-fade-in { width: var(--hold-info-fade-in-w); }
+.hold-info-fade-out { width: var(--hold-info-fade-out-w); }
+.tool-empty, .field-empty { pointer-events: none; }
+/* The Pool (m5-ui-port-toolbar; spec 10.8, 1): an app-only window over the
+   project zone, under the info line at its right edge, the track list's
+   width. */
+.pool {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--toolbar) + var(--info-line) + var(--space-2));
+  right: var(--space-2);
   display: flex;
-  gap: calc(var(--space) * 4);
-  align-items: center;
-  padding: 0 calc(var(--space) * 2);
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  flex-direction: column;
+  width: var(--track-list-w);
+  max-height: calc(100% - var(--toolbar) - var(--info-line) - var(--space-4));
+  background: var(--bg-3);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-m);
   overflow: hidden;
-  white-space: nowrap;
 }
-.info-line {
-  display: flex;
-  gap: calc(var(--space) * 2);
-  align-items: center;
-  margin: 0;
-  padding: 0 calc(var(--space) * 2);
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--divider);
-  font-size: var(--fs-small);
-  overflow: hidden;
-  white-space: nowrap;
-}
-.info-field { display: flex; gap: var(--space); align-items: baseline; }
-.info-line dt { color: var(--tx-3); }
-.info-line dd {
-  margin: 0 calc(var(--space) * 2) 0 0;
-  min-width: 7ch;
-  font-variant-numeric: tabular-nums;
-  color: var(--tx-1);
-}
-.media-pool { display: flex; gap: calc(var(--space) * 2); list-style: none; margin: 0; padding: 0; min-width: 0; overflow: hidden; flex: 0 1 auto; }
-.media-pool button[aria-pressed="true"] { outline: 2px solid var(--select); }
-.timeline-error { color: var(--err); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; }
-/* The tools and snap (m5-ui-edit-basics): a segmented pair, a toggle and the grid type. */
-.tool-buttons, .snap-controls { display: flex; gap: 0; align-items: center; flex: none; }
-.tool-buttons .tool { border-radius: 0; }
-.tool-buttons .tool:first-child { border-radius: var(--radius-s) 0 0 var(--radius-s); }
-.tool-buttons .tool:last-child { border-radius: 0 var(--radius-s) var(--radius-s) 0; }
-.tool-buttons .tool + .tool { margin-left: -1px; }
-.tool-buttons .tool[aria-pressed="true"], .snap-toggle[aria-pressed="true"] { background: var(--bg-5); border-color: var(--select); color: var(--tx-1); }
-.snap-controls { gap: var(--space); }
-.grid-type { font-size: var(--fs-small); color: var(--tx-1); }
+.pool-head { flex: none; padding: var(--space-1h) var(--space-2); border-bottom: var(--hairline) solid var(--line); color: var(--tx-2); font-size: var(--fs-small); font-weight: 600; white-space: nowrap; }
+.pool-empty { margin: 0; padding: var(--space-2); color: var(--tx-3); font-size: var(--fs-small); }
+.pool-list { list-style: none; margin: 0; padding: var(--space-half); overflow-y: auto; }
+.pool-item { display: flex; align-items: center; width: 100%; min-height: var(--control-h); padding: 0 var(--space-1h); font-size: var(--fs-small); text-align: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.pool-item { justify-content: flex-start; border-color: transparent; background: none; }
+button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 /* Shift+Delete's confirmation: the About panel's dialog chrome (below). */
 .confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
 .confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }

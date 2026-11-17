@@ -54,7 +54,7 @@ test('the armed media is pressed; a click arms placing, a second click disarms i
   let closed = 0;
   const props = view({ onPlace: (id) => calls.push(id), onClose: () => (closed += 1) });
   (button(PoolView(props), 'pool-med_a').props.onClick as () => void)();
-  assert.deepEqual(calls, ['med_a']);
+  assert.deepEqual([...calls], ['med_a']);
   const again = view({ placingMediaId: 'med_a', onPlace: (id) => calls.push(id), onClose: () => (closed += 1) });
   (button(PoolView(again), 'pool-med_a').props.onClick as () => void)();
   assert.deepEqual(calls, ['med_a', null]);

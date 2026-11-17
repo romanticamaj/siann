@@ -1,9 +1,10 @@
 // The project zone's content (ADR-0019 point 3; UI redesign spec 2.1, 3.2,
-// 3.3, 5.2): the toolbar (the media pool to place from, the Object Selection
-// and Split tools, snap and the grid type, the delete button and the last
-// refusal), the read-only info line, and below them the track list, its
-// boundary and the event display, whose two canvases the imperative
-// TimelineCanvas owns through refs. No drawing state passes through React:
+// 3.3, 5.2, 10.8): the toolbar (Toolbar.tsx, the mockup's: the Object
+// Selection and Split tools, snap and the grid type, auto-scroll, and the
+// last refusal), the read-only info line (InfoLine.tsx), and below them the
+// track list, its boundary and the event display, whose two canvases the
+// imperative TimelineCanvas owns through refs. The Pool (Pool.tsx, Ctrl+P or
+// the event display's context menu) lists the media to place from. No drawing state passes through React:
 // the track list follows the canvas's view through a listener, the meters
 // and the cursor read the RealtimeClient on their own frames.
 //
@@ -11,7 +12,7 @@
 // here: Delete and Backspace, Escape, H and G, Shift+H and Shift+G, Shift+F,
 // T, and the editing keys of m5-ui-edit-basics (1, 3, Alt+X, Ctrl+D, J,
 // Ctrl+A, L, N, B, Alt+S, Shift+E, M, S, Shift+Delete), and F (auto-scroll,
-// m5-ui-transport). The capability rule (spec 3.0) is editGates: a key,
+// m5-ui-transport); Ctrl+P (pool.open, a window command) opens the Pool. The capability rule (spec 3.0) is editGates: a key,
 // button or control exists only when engine.capabilities lists the commands
 // (or the method) it ends in, and the canvas sends no gesture whose commands
 // are not listed (it reads the latest capabilities through a ref). Lane
@@ -28,8 +29,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
-import { refusalLine } from '../i18n/errors';
-import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
+import { localeStore, translator, useLocale } from '../i18n/t';
 import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { CapabilitySelector } from '../model/capabilities';
 import { loopClickGates, type LoopClickController } from '../model/loop-click';
@@ -38,24 +38,22 @@ import type { Snapshot } from '../model/read-model';
 import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
-import { Capable, useCapabilities } from '../shell/Capable';
+import { useCapabilities } from '../shell/Capable';
 import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
 import type { TimelineCommand } from './commands';
 import { removeTracksCommand, trackMuteCommand, trackSoloCommand } from './edit-commands';
 import { InfoLine } from './InfoLine';
+import { EventDisplayMenu, Pool } from './Pool';
 import type { TrackSelectMode } from './selection';
-import { GRID_TYPES, type GridType } from './snap';
 import { IDLE_STATE, TimelineCanvas, type TimelineTestHooks } from './TimelineCanvas';
+import { Toolbar } from './Toolbar';
 import { TrackList, addTrack } from './TrackList';
 import { TrackListDivider } from './TrackListDivider';
 import { MAX_FRAMES_PER_PIXEL } from './zoom';
 
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
 const NO_IDS: readonly string[] = Object.freeze([]);
-
-// Grid types Bar, Beat and Adapt to Zoom (snap type Grid only, spec 3.0).
-const GRID_LABELS: Readonly<Record<GridType, MessageKey>> = { bar: 'grid.bar', beat: 'grid.beat', adapt: 'grid.adapt' };
 
 // The zoom slider's scale: log2 of the frames per pixel.
 const ZOOM_MAX = Math.log2(MAX_FRAMES_PER_PIXEL);
@@ -200,6 +198,9 @@ export function Timeline({
   const sessionId = useSessionId(client);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
   const [removing, setRemoving] = useState<readonly string[] | null>(null);
+  // The Pool (Ctrl+P) and the event display's context menu (where it opened).
+  const [poolOpen, setPoolOpen] = useState(false);
+  const [displayMenu, setDisplayMenu] = useState<{ x: number; y: number } | null>(null);
   const can = useCapabilities();
   const canRef = useRef(can);
   canRef.current = can;
@@ -386,6 +387,9 @@ export function Timeline({
     return () => offs.forEach((off) => off());
   }, [timeline, commands, gateKey, canAdd, client, layout]);
 
+  // Ctrl+P (Cmd+P) opens the Pool, or closes it when it is open, as Cubase's Open Pool does.
+  useEffect(() => commands.register('window', 'pool.open', () => setPoolOpen((open) => !open)), [commands]);
+
   const confirmRemove = () => {
     const ids = removing;
     setRemoving(null);
@@ -410,110 +414,17 @@ export function Timeline({
 
   return (
     <section className="timeline">
-      <div className="timeline-bar" data-part="toolbar">
-        {gates['tool.select'] || gates['tool.split'] ? (
-          <div className="tool-buttons" data-part="tools" role="group" aria-label={t('tool.label')}>
-            {gates['tool.select'] ? (
-              <button
-                type="button"
-                className="tool tool-select"
-                data-testid="tool-select"
-                data-part="tool-1"
-                aria-pressed={state.tool === 'select'}
-                title={t('tool.select')}
-                onClick={() => timeline?.setTool('select')}
-              >
-                {t('tool.select')}
-              </button>
-            ) : null}
-            {gates['tool.split'] ? (
-              <button
-                type="button"
-                className="tool tool-split"
-                data-testid="tool-split"
-                data-part="tool-3"
-                aria-pressed={state.tool === 'split'}
-                title={t('tool.split')}
-                onClick={() => timeline?.setTool('split')}
-              >
-                {t('tool.split')}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        {gates['edit.snapToggle'] ? (
-          <div className="snap-controls">
-            <button
-              type="button"
-              className="snap-toggle"
-              data-testid="snap-toggle"
-              data-part="snap"
-              aria-pressed={snap.on}
-              title={t('snap.toggle')}
-              onClick={() => layout.dispatch({ type: 'snapToggle' })}
-            >
-              {t('snap.toggle')}
-            </button>
-            <select
-              className="grid-type"
-              data-testid="grid-type"
-              data-part="grid-type"
-              aria-label={t('snap.grid')}
-              title={t('snap.grid')}
-              value={snap.grid}
-              onChange={(e) => layout.dispatch({ type: 'setGrid', grid: e.target.value as GridType })}
-            >
-              {GRID_TYPES.map((grid) => (
-                <option key={grid} value={grid}>
-                  {t(GRID_LABELS[grid])}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-        <ul className="media-pool" data-testid="media-pool" aria-label={t('timeline.mediaPool')}>
-          {(snapshot?.media ?? []).map((media) => (
-            <li key={media.id}>
-              {canPlace ? (
-                <button
-                  type="button"
-                  data-testid={`pool-${media.id}`}
-                  aria-pressed={state.placingMediaId === media.id}
-                  onClick={() => timeline?.setPlacing(state.placingMediaId === media.id ? null : media.id)}
-                >
-                  {media.id}
-                </button>
-              ) : (
-                <span className="media-name">{media.id}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-        <Capable command="clip.remove">
-          <button type="button" data-testid="delete-clip" disabled={!state.selectedClipId} onClick={() => void timeline?.deleteSelected()}>
-            {t('timeline.deleteClip')}
-          </button>
-        </Capable>
-        <Capable method="transport.play">
-          <button
-            type="button"
-            className="auto-scroll"
-            data-testid="auto-scroll"
-            data-part="auto-scroll"
-            aria-pressed={autoScroll}
-            title={t('transport.autoScroll')}
-            aria-label={t('transport.autoScroll')}
-            onClick={() => layout.dispatch({ type: 'autoScroll' })}
-          >
-            <svg className="transport-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
-              <path d="M2.5 8h7M7 5l3 3-3 3M13 3v10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        </Capable>
-        <output className="timeline-error" data-testid="timeline-error" data-code={state.error?.code ?? undefined} title={t('timeline.lastError')}>
-          {state.error ? refusalLine(state.error.code, state.error.message, locale) : ''}
-        </output>
-      </div>
+      <Toolbar
+        tool={state.tool}
+        snap={snap}
+        autoScroll={autoScroll}
+        gates={{ select: gates['tool.select'], split: gates['tool.split'], snap: gates['edit.snapToggle'], autoScroll: can.has('transport.play') }}
+        error={state.error}
+        onTool={(tool) => timeline?.setTool(tool)}
+        onSnapToggle={() => layout.dispatch({ type: 'snapToggle' })}
+        onGrid={(grid) => layout.dispatch({ type: 'setGrid', grid })}
+        onAutoScroll={() => layout.dispatch({ type: 'autoScroll' })}
+      />
       <InfoLine client={client} clipId={state.selectedClipId} />
       <div className="arr-body" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
         <TrackList
@@ -530,7 +441,16 @@ export function Timeline({
         {/* The mockup's event display (mockup.html line 287): .lanes with the
             canvas #tl and the scroll-zoom bar. The overlay canvas, the drag
             tooltip and the zoom's range input are the app's own. */}
-        <div className="lanes" data-testid="event-display" data-part="event-display" ref={displayRef}>
+        <div
+          className="lanes"
+          data-testid="event-display"
+          data-part="event-display"
+          ref={displayRef}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setDisplayMenu({ x: event.clientX, y: event.clientY });
+          }}
+        >
           <canvas ref={contentRef} id="tl" data-testid="timeline-content" />
           <canvas ref={overlayRef} className="timeline-layer timeline-overlay" data-testid="timeline-canvas" />
           <div ref={tooltipRef} className="drag-tooltip" data-testid="drag-tooltip" role="status" hidden />
@@ -553,6 +473,25 @@ export function Timeline({
           </div>
         </div>
       </div>
+      <Pool
+        open={poolOpen}
+        media={snapshot?.media ?? []}
+        placingMediaId={state.placingMediaId}
+        canPlace={canPlace}
+        onPlace={(mediaId) => timeline?.setPlacing(mediaId)}
+        onClose={() => setPoolOpen(false)}
+      />
+      {displayMenu ? (
+        <EventDisplayMenu
+          x={displayMenu.x}
+          y={displayMenu.y}
+          onOpenPool={() => {
+            setDisplayMenu(null);
+            setPoolOpen(true);
+          }}
+          onClose={() => setDisplayMenu(null)}
+        />
+      ) : null}
       <ConfirmDialog
         open={removing !== null}
         message={t('confirm.removeTracks', { count: removing?.length ?? 0 })}

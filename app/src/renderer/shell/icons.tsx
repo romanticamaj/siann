@@ -94,6 +94,30 @@ const PATHS = {
       <rect x="10.6" y="7" width="2.8" height="2.4" rx=".6" fill="currentColor" />
     </>
   ),
+  // The project zone toolbar (m5-ui-port-toolbar): the Object Selection and
+  // Split tools, the snap and grid type fields, auto-scroll.
+  ptr: <path d="M4 2.5 12 8.2 8.4 9l-1.3 3.6z" fill="currentColor" strokeWidth="1" />,
+  cut: (
+    <>
+      <circle cx="4.5" cy="4.5" r="1.8" />
+      <circle cx="4.5" cy="11.5" r="1.8" />
+      <path d="M6 5.6 13 11M6 10.4 13 5" />
+    </>
+  ),
+  magnet: (
+    <>
+      <path d="M4 3v5a4 4 0 0 0 8 0V3h-2.6v5a1.4 1.4 0 0 1-2.8 0V3z" />
+      <path d="M4 5.3h2.6M9.4 5.3H12" />
+    </>
+  ),
+  grid: <path d="M2.5 5.5h11M2.5 10.5h11M5.5 2.5v11M10.5 2.5v11" />,
+  follow: (
+    <>
+      <path d="M2.5 8h7" />
+      <path d="M7 5l3 3-3 3" />
+      <path d="M13 3v10" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

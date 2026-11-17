@@ -98,4 +98,7 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Shift+2', commandId: 'transport.toRightLocator', scope: 'window' },
   { chord: 'Mod+Numpad1', commandId: 'transport.setLeftLocator', scope: 'window' },
   { chord: 'Mod+Numpad2', commandId: 'transport.setRightLocator', scope: 'window' },
+  // The Pool (m5-ui-port-toolbar; spec 10.8, 1; research/cubase.md 7): Ctrl+P
+  // (Cmd+P) is Cubase's Open Pool. P, Alt+P, Shift+P and Mod+Alt+P keep theirs.
+  { chord: 'Mod+P', commandId: 'pool.open', scope: 'window' },
 ];

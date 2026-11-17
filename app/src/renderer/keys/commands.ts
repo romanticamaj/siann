@@ -81,6 +81,8 @@ export const COMMAND_IDS = [
   'transport.toRightLocator',
   'transport.setLeftLocator',
   'transport.setRightLocator',
+  // The Pool (m5-ui-port-toolbar; spec 10.8, 1): Cubase's Open Pool.
+  'pool.open',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

@@ -113,11 +113,28 @@ test('no labelled control overflows or wraps its label in any locale at either w
   test.setTimeout(150_000);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-'));
   // One clip, selected below, so the info line holds its fields.
-  const sessionDir = seedBundle(scratch, TRACKS, [{ id: 'clp_fit', trackId: 'trk_keys', at: 1 }]);
+  const sessionDir = seedBundle(scratch, TRACKS, [{ id: 'clp_fit', trackId: 'trk_kick', at: 0.25 }]);
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  // The clip selected first (an auditioned plan holds the event display), so the info line holds its fields.
+  const clip = await page.evaluate(async () => {
+    const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
+    if (!hooks) throw new Error('window.__siannTimeline is missing (SIANN_SHELL_TEST=1)');
+    for (let i = 0; i < 200; i += 1) {
+      const found = hooks.clips().find((c) => c.clipId === 'clp_fit');
+      if (found) return found;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return null;
+  });
+  expect(clip).not.toBeNull();
+  const canvas = (await page.getByTestId('timeline-canvas').boundingBox())!;
+  await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
+  await expect(page.getByTestId('info-line').locator('.f').first()).toBeVisible();
+  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
   const agent = await agentFor(app);
   if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
   // A plan auditioned: its card reads approved for audition and the banner shows.
@@ -142,22 +159,6 @@ test('no labelled control overflows or wraps its label in any locale at either w
   // the selected clip) are labelled controls.
   await expect(page.getByTestId('track-add')).toBeVisible();
   await expect(page.getByTestId('track-mute-trk_kick')).toBeVisible();
-  const clip = await page.evaluate(async () => {
-    const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
-    if (!hooks) throw new Error('window.__siannTimeline is missing (SIANN_SHELL_TEST=1)');
-    for (let i = 0; i < 200; i += 1) {
-      const found = hooks.clips().find((c) => c.clipId === 'clp_fit');
-      if (found) return found;
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-    return null;
-  });
-  expect(clip).not.toBeNull();
-  const canvas = (await page.getByTestId('timeline-canvas').boundingBox())!;
-  await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
-  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
-  await expect(page.getByTestId('info-line').locator('.f').first()).toBeVisible();
-  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
   // The transport bar (m5-ui-transport): its buttons, the position display,
   // the tempo, undo and redo in the top bar.
   // m5-ui-loop-click: the cycle and metronome buttons and the locator display
@@ -206,7 +207,9 @@ test('no labelled control overflows or wraps its label in any locale at either w
       toasts.push(message);
     }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
     await expect(page.getByTestId('toast').last()).toBeVisible();
-    // The Pool, open, in this locale (Ctrl+P; m5-ui-port-toolbar).
+    // The Pool, open, in this locale (Ctrl+P; m5-ui-port-toolbar). The reason
+    // row's text field has the focus, where no key command fires: out of it first.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press('ControlOrMeta+KeyP');
     await expect(page.getByTestId('media-pool')).toBeVisible();
     await expect(page.getByTestId('pool-med_seed')).toBeVisible();

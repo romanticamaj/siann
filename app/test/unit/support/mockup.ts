@@ -94,6 +94,7 @@ export function loadMockup(lang = 'en'): Mockup {
     between(source, 'const P={', '// Fidelity ids'),
     line(source, 'const ic='),
     line(source, 'const sec='),
+    line(source, 'const tool='),
     // The left zone's block of the app.innerHTML template, evaluated as the template it is.
     `const leftzone=\`${between(source, '<aside class="leftzone"', '<main class="center">').trim()}\`;`,
     // The project zone's toolbar and info line, the block of the template above div.arr-body.

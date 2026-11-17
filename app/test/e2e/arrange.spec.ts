@@ -1235,18 +1235,18 @@ test('the Pool opens with Ctrl+P and from the event display\'s context menu, a c
   await expect(pool).toHaveCount(0);
   const canvas = await box('timeline-canvas');
   const v = await view();
-  await page.mouse.click(canvas.x + 600, canvas.y + v.lanesTop + 10);
+  await page.mouse.click(canvas.x + canvas.width - 30, canvas.y + v.lanesTop + 10);
   await expect(page.getByTestId('clip-count')).toHaveText('2');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 
   // The event display's context menu opens it too; Escape closes the menu.
-  await page.mouse.click(canvas.x + 700, canvas.y + canvas.height - 30, { button: 'right' });
+  await page.mouse.click(canvas.x + canvas.width * 0.8, canvas.y + canvas.height - 40, { button: 'right' });
   const menu = page.getByTestId('event-display-menu');
   await expect(menu).toBeVisible();
   await expect(menu.getByRole('menuitem')).toHaveCount(1);
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
-  await page.mouse.click(canvas.x + 700, canvas.y + canvas.height - 30, { button: 'right' });
+  await page.mouse.click(canvas.x + canvas.width * 0.8, canvas.y + canvas.height - 40, { button: 'right' });
   await expect(menu).toBeVisible();
   await menu.getByTestId('menu-open-pool').click();
   await expect(menu).toHaveCount(0);
