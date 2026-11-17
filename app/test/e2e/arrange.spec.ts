@@ -585,6 +585,13 @@ test('while playing with no edits the content layer is not redrawn and the overl
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
   await launch();
   await expect.poll(async () => (await hook<{ drawn: number }>('peakColumns', 'clp_sq')).drawn).toBeGreaterThan(0);
+  // Auto-scroll (on by default) turns the page when the cursor passes the
+  // view's right edge (under 4 s in at this zoom), and a page turn redraws the
+  // content: on a slow runner the measurement below outlasts that, so it is
+  // taken with auto-scroll off and the view is checked not to have moved.
+  const autoScroll = page.getByTestId('auto-scroll');
+  await autoScroll.click();
+  await expect(autoScroll).toHaveAttribute('aria-pressed', 'false');
   const engine = await engineClient(page);
   await engine.call('transport.play');
   await expect.poll(async () => (await hook<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
@@ -600,6 +607,7 @@ test('while playing with no edits the content layer is not redrawn and the overl
   const overlay = await hook<number>('overlayDraws');
   await expect.poll(async () => hook<number>('overlayDraws'), { timeout: 20_000 }).toBeGreaterThan(overlay + 20);
   expect(await hook<number>('contentDraws')).toBe(content);
+  expect((await view()).scrollFrames).toBe('0');
   await engine.call('transport.stop');
   engine.close();
 });
