@@ -192,14 +192,15 @@ test('the port is split by component after the chrome, in parallel where the com
     assert.ok(feature.specRefs.includes('UI redesign: 10.9') && feature.specRefs.some((ref) => /^UI redesign: 10\.10 \(P1-1[1-6]\)$/.test(ref)), `${id}: specRefs`);
   }
   // Wave 10: the first component of each zone, side by side; each depends on the chrome only among the ports.
-  const first = ['m5-ui-port-arrange-canvas', 'm5-ui-port-mixer-strip', 'm5-ui-port-plans', 'm5-ui-port-inspector'];
+  const first = ['m5-ui-port-arrange-canvas', 'm5-ui-port-mixer-strip', 'm5-ui-port-plans'];
   for (const id of first) {
     assert.equal(wave(id), wave(CHROME) + 1, id);
     assert.ok(FEATURES.get(id).dependsOn.includes(CHROME), `${id} depends on the chrome`);
     assert.deepEqual(FEATURES.get(id).dependsOn.filter((dep) => PORTS.includes(dep)), [], `${id} waits for no other port`);
   }
-  // The track list and the toolbar share the project zone's stylesheet, row geometry and clip title with the canvas.
-  for (const id of ['m5-ui-port-track-list', 'm5-ui-port-toolbar']) {
+  // The track list and the toolbar share the project zone's stylesheet, row geometry and clip title with the canvas;
+  // the Inspector takes M and S (.msr) from that stylesheet, which the canvas links.
+  for (const id of ['m5-ui-port-track-list', 'm5-ui-port-toolbar', 'm5-ui-port-inspector']) {
     assert.equal(wave(id), wave('m5-ui-port-arrange-canvas') + 1, id);
     assert.deepEqual(FEATURES.get(id).dependsOn.filter((dep) => PORTS.includes(dep)), ['m5-ui-port-arrange-canvas'], id);
   }
@@ -213,6 +214,7 @@ test('the port is split by component after the chrome, in parallel where the com
   assert.match(FEATURES.get('m5-ui-port-mixer-strip').acceptance.join('\n'), /MixerMeters\.ts holds no colour literal/);
   assert.match(FEATURES.get('m5-ui-port-plans').acceptance.join('\n'), /as step\(\) returns it/);
   assert.match(FEATURES.get('m5-ui-port-track-list').acceptance.join('\n'), /as th\(\) returns it/);
+  assert.match(FEATURES.get('m5-ui-port-inspector').acceptance.join('\n'), /ui\/project-zone\.css is already linked by m5-ui-port-arrange-canvas, and M and S take \.msr from it/);
   const toolbar = FEATURES.get('m5-ui-port-toolbar').acceptance.join('\n');
   assert.match(toolbar, /as tool\(\) returns it/);
   assert.match(toolbar, /opened with Ctrl\+P/);
