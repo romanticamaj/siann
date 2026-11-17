@@ -55,7 +55,6 @@ export const zhHant: Catalog = {
   'topbar.plans': '計畫',
   'topbar.pending': '待審核的計畫：{count}',
   'inspector.label': '檢視器',
-  'inspector.noTrack': '未選取音軌',
   'status.label': '狀態',
 
   'timeline.mediaPool': '媒體庫',
@@ -105,7 +104,8 @@ export const zhHant: Catalog = {
   'strip.soloLabel': '{track} 獨奏',
   'strip.master': '主輸出',
   'inspector.volume': '音量',
-  'inspector.colour': '音軌顏色',
+  'inspector.mono': '單聲道',
+  'inspector.stereo': '立體聲',
 
   'transport.label': '走帶控制',
   'transport.toStart': '移至專案起點',

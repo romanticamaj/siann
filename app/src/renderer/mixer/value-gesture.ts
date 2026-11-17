@@ -1,6 +1,7 @@
 // The pointer and key behaviour of every value control (UI redesign spec 3.4,
-// 5.1; protocol-gestures-v0.md), shared by the Inspector's ValueControl and
-// the MixConsole strip's fader (.ftrack) and pan knob (m5-ui-port-mixer-strip):
+// 5.1; protocol-gestures-v0.md), shared by the MixConsole strip's fader
+// (.ftrack) and pan knob (m5-ui-port-mixer-strip) and the Inspector's volume
+// and pan sliders (.hs, m5-ui-port-inspector):
 //
 // - a drag is one gesture through the GestureController: it begins on the
 //   first move past a 2 px threshold (a click alone sends nothing), each move
