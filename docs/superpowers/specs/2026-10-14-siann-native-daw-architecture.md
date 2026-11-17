@@ -3664,7 +3664,11 @@ MySong.siann/                    a directory
   others (UI redesign 10.10, P1-13), wording, badges, banner). It lists the engine's plans
   (`plan.list`, `plan.changed`) and for the selected plan shows the steps and the
   diff against the current revision (`plan.preview`; before and after per entity,
-  stale entities marked from `plan.status`). Only the actions valid in the plan's
+  stale entities marked from `plan.status`). Every entity of the preview stays
+  reachable on the card: under each step that names it, else under the step
+  whose ids its change carries (a cascade, such as the clips, plugin slots and
+  sends `track.remove` removes), else in an "Other changes" row (UI redesign
+  10.10, P1-13 notes, c). Only the actions valid in the plan's
   state are rendered, with one primary (redesign 4.5 C4):
   - a validated plan offers "Approve N of M" (primary, N the ticked steps,
     "Approve 6 of 6" with all ticked: `plan.approve`, then `plan.apply`; with
