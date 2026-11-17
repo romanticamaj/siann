@@ -616,8 +616,9 @@ code, dd { font-family: var(--font-mono); }
 .hold-composer { height: var(--hold-composer-h); }
 .hold-tab-media { width: var(--hold-tab-media-w); height: var(--zone-head); }
 .hold-tab-meter { width: var(--hold-tab-meter-w); height: var(--zone-head); }
-/* The steps head's link, as the mockup's inline style sets it. */
-.plans .steps-h a { text-transform: none; letter-spacing: 0; cursor: pointer; }
+/* The steps head's link, as the mockup's inline style sets it, on one line
+   at its own width (the count beside it gives way in a long locale). */
+.plans .steps-h a { text-transform: none; letter-spacing: 0; cursor: pointer; flex: none; white-space: nowrap; }
 .plans .step .t { padding: 0; text-align: start; cursor: pointer; }
 /* An unticked step of a plan under review: an outlined box. A plan that
    cannot be approved draws nothing in the column (UI redesign 3.0: an empty
@@ -626,7 +627,11 @@ code, dd { font-family: var(--font-mono); }
 .plans .cb:not([role]) { background: transparent; }
 .plans .cb[role] { cursor: pointer; }
 .plans .btn:disabled { opacity: .5; cursor: default; }
-.plans .hrow { width: 100%; text-align: start; cursor: pointer; }
+/* A history row's title keeps to one line and ends in an ellipsis when the
+   badge leaves it too little room (a long title, or a long locale); the
+   button's name and the title's tooltip keep the whole title. */
+.plans .hrow { width: 100%; text-align: start; cursor: pointer; grid-template-columns: minmax(0, 1fr) auto; }
+.plans .hrow b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plans .hrow:focus-visible, .plans .step .t:focus-visible { outline-offset: calc(var(--hairline) * -2); }
 .plan-none { margin: 0; color: var(--tx-3); font-size: var(--fs-11h); }
 .badge.approved, .badge.draft, .badge.rolled-back { background: var(--bg-5); color: var(--tx-2); }
