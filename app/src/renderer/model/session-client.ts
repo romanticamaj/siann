@@ -88,6 +88,31 @@ export interface SessionClientOptions {
   capabilities?: Capabilities;
 }
 
+// A request from the user to a connected agent (m5b-engine-agent-requests,
+// protocol-engine-v0.md "Agent requests"): engine state, never a revision.
+export type AgentRequestState = 'pending' | 'taken' | 'answered' | 'declined' | 'cancelled' | 'expired';
+
+export interface AgentRequestSelection {
+  readonly tracks: readonly string[];
+  readonly clips: readonly string[];
+}
+
+export interface AgentRequest {
+  readonly id: string;
+  readonly agentId: string;
+  readonly text: string;
+  readonly context: {
+    readonly selection: AgentRequestSelection;
+    readonly locators: unknown;
+    readonly cursor: string | null;
+    readonly headRevision: string;
+  };
+  readonly state: AgentRequestState;
+  readonly plan?: string;
+  readonly message?: string;
+  readonly createdAt: string;
+}
+
 export class ProtocolError extends Error {
   constructor(
     readonly code: string,
@@ -345,6 +370,29 @@ export class SessionClient {
   // commit arrives.
   execute(commands: readonly unknown[], expectedRevision?: string): Promise<unknown> {
     return this.request('command.execute', { commands }, expectedRevision);
+  }
+
+  // agent.request: queues `text` for a connected agent with the selected track
+  // and clip ids (the engine stamps the rest of the context); rejects with
+  // agent_busy, agent_not_connected or invalid_request_text. The request's later
+  // states arrive as agent.request_changed events (onEvent).
+  async agentRequest(agentId: string, text: string, selection?: AgentRequestSelection): Promise<AgentRequest> {
+    const params: Record<string, unknown> = { agentId, text };
+    if (selection) params.selection = { tracks: [...selection.tracks], clips: [...selection.clips] };
+    const result = (await this.request('agent.request', params)) as { request: AgentRequest };
+    return result.request;
+  }
+
+  // agent.cancel_request: the user withdraws an open request.
+  async cancelAgentRequest(request: string): Promise<AgentRequest> {
+    const result = (await this.request('agent.cancel_request', { request })) as { request: AgentRequest };
+    return result.request;
+  }
+
+  // agent.requests: the open requests, then the last closed ones.
+  async agentRequests(): Promise<readonly AgentRequest[]> {
+    const result = (await this.request('agent.requests', {})) as { requests: AgentRequest[] };
+    return result.requests;
   }
 
   #send(connection: Connection, method: string, params: Record<string, unknown>, expectedRevision?: string): Promise<unknown> {

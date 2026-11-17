@@ -92,6 +92,22 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.feature('agents'), true);
   assert.equal(reduced.feature('planMetadata'), false, 'the reduced engine has no features.planMetadata');
   assert.equal(reduced.feature('agents'), false, 'the reduced engine has no features.agents');
+  // m5b-engine-agent-requests: the composer's feature, its methods and the limits.
+  assert.equal(full.feature('agentRequests'), true);
+  assert.equal(reduced.feature('agentRequests'), false, 'the reduced engine has no features.agentRequests');
+  for (const method of ['agent.request', 'agent.cancel_request', 'agent.requests', 'agent.next_request', 'agent.answer_request']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
+  assert.deepEqual(
+    {
+      perAgent: (FULL.limits as Record<string, unknown>).agentRequestsPerAgent,
+      textChars: (FULL.limits as Record<string, unknown>).agentRequestTextChars,
+      waitMs: (FULL.limits as Record<string, unknown>).agentRequestWaitMs,
+      closed: (FULL.limits as Record<string, unknown>).agentRequestsClosedRetained,
+    },
+    { perAgent: 16, textChars: 4000, waitMs: 25000, closed: 16 },
+  );
   // m5b-engine-buses-sends: the bus and send features and commands.
   assert.equal(full.feature('buses'), true);
   assert.equal(full.feature('sends'), true);

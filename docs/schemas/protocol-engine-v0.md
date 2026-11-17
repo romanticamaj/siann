@@ -100,6 +100,45 @@ The engine meters the master output per ITU-R BS.1770-4 (gating as in EBU R128):
 
 On a refusal nothing is stored and no `plan.changed` goes out. `invalid_plan_metadata` is a new stable code. `plan.status`, `plan.list` and `plan.changed` carry `title`, `intent`, `actor` and `rejectionNote` when the plan has them.
 
+`plan.submit` also takes `request` (m5b-engine-agent-requests, below): the id of an open agent request the plan answers. It is not part of the plan and not hashed. From the UI credential it is `invalid_params`; a closed request, or one addressed to another agent, is `request_not_open`, an unknown one `not_found`; nothing is stored then.
+
+## Agent requests (m5b-engine-agent-requests)
+
+A request from the user to an agent that is connected over MCP (spec, Protocol v0 item 32; human gate `agent-request-shape`, decided by the maintainer 2026-11-15). SIANN has no agent runtime: the engine holds the request until the agent takes it with the MCP tool `next_request` and answers it with `answer_request` or `submit_plan {request}` ([Protocol MCP v0](protocol-mcp-v0.md)). A request executes nothing: its text and context are data for the agent, and the only way its outcome reaches the document is a plan the user approves. Requests are engine state on the command thread: not a revision, not in the bundle or the journal, dropped when the engine restarts.
+
+The request object:
+
+```json
+{"id": "arq_5c1e9a0b3d2f4e67", "agentId": "agt_3f2a9c1d0b7e6a54", "text": "Lower the drums",
+ "context": {"selection": {"tracks": ["trk_1"], "clips": ["clp_4"]},
+             "locators": {"schema": "siann.entity.locators.v1", "id": "locators", "left": "0", "right": "192000"},
+             "cursor": "96000", "headRevision": "r3"},
+ "state": "pending", "createdAt": "2026-11-15T10:01:00Z"}
+```
+
+`state` is `pending` or `taken` (open), or `answered`, `declined`, `cancelled` or `expired` (closed, final). `plan` (a plan hash) and `message` appear once an answer set them. `context` is stamped by the engine when it queues the request: only `selection` comes from the UI; `locators` is the head document's locators entity as `session.fetch` returns it (null when none is set), `cursor` the transport position in session frames as a decimal string (null without a transport port), `headRevision` main's head.
+
+| Method | Credential | Params | Result |
+|---|---|---|---|
+| `agent.request` | UI | `{agentId, text, selection?: {tracks?: [id], clips?: [id]}}` | `{request}`, `pending` |
+| `agent.cancel_request` | UI | `{request}` | `{request}`, `cancelled` |
+| `agent.requests` | UI | `{}` | `{requests}`: the open ones oldest first, then the last `limits.agentRequestsClosedRetained` (16) closed ones in the order they closed |
+| `agent.next_request` | MCP (`next_request`) | `{waitMs?}` | `{request}` (now `taken`) or `{request: null}` |
+| `agent.answer_request` | MCP (`answer_request`) | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` | `{request}`, `answered` or `declined` |
+
+The other credential is `scope_denied` for each (not cached). The codes:
+
+| Case | Answer |
+|---|---|
+| `text` (or a `message`) empty, over 4,000 characters (Unicode code points, so at most 16,000 UTF-8 bytes; unlike a plan's title and intent, which count bytes), with a control character other than tab, LF and CR, or with a display-unsafe character (bidi formatting, U+2028, U+2029; `siann/model/display_text.hpp`) | `invalid_request_text` |
+| a missing or non-string `agentId`, `text` or `request`; a selection that is not `{tracks?, clips?}`, a list over 256 ids, or an id that is not `[A-Za-z0-9_-]{1,64}`; an unknown param; `answer_request` with no form or two, `decline` other than `true`, or a plan another client submitted | `invalid_params` |
+| `agentId` unknown, or the agent not connected | `agent_not_connected` |
+| the agent already has `limits.agentRequestsPerAgent` (16) open requests, `pending` or `taken` | `agent_busy` (nothing is queued) |
+| an unknown request id, or an unknown plan hash | `not_found` |
+| cancelling or answering a closed request, or answering one addressed to another agent | `request_not_open` |
+
+Open requests expire when their agent disconnects (`DELETE /v0/mcp`, or idle past `limits.agentIdleMs`; a later reconnect does not revive them), when the agent is forgotten (`limits.agentsRetained`), and when `session.open` or `session.create` serves another session. Every state change publishes `agent.request_changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` lists the five methods, `features.agentRequests` (true when `features.agents` is) and `limits.agentRequestsPerAgent` (16), `agentRequestTextChars` (4000), `agentRequestWaitMs` (25,000 by default, at most `mcpRequestTimeout` minus 1 s) and `agentRequestsClosedRetained` (16). New stable codes: `agent_not_connected`, `agent_busy`, `invalid_request_text`, `request_not_open`.
+
 ## engine.devices
 
 Params `{}`. Result:

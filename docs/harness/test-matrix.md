@@ -384,6 +384,7 @@ mixer strip and session name isolate the name they show).
 | Feature | N | R | U | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
 | m5b-engine-load-loudness (E-13, UR-14) | Y (`loudness_test` (new `siann_dsp_tests`), `load_window_test`, `graph_driver_test` `[loudness]` `[load]`, `realtime_channel_test` `[loudness]`, `transport_methods_test` `[loudness]` `[load]`, `mcp_adapter_test` `[loudness]`, `engine_host_test` `[loudness]` `[load]`) | Y (`loudness_test`, `load_window_test`, `graph_driver_test` alloc guard under `ScopedRealtimeThread`; RTSan build) | Y (`capabilities`, `meter-frames` "a SLUD frame is not an SMTR frame") | Y (`protocol-fixtures` loudness frames) | 3 + RTSan | - (6: no UI, no tour state) |
+| m5b-engine-agent-requests (UR-16; gate `agent-request-shape`) | Y (`agent_requests_test`, `mcp_adapter_test` `[requests]`, `plan_methods_test` `[metadata]` request link) | Y | Y (`capabilities`, `session-client` agent requests) | - | 3 | - (7: no UI, no tour state) |
 
 Per acceptance item (`m5b-engine-load-loudness`): 1 `load_window_test` "LoadWindow
 publishes the average and the peak of a full second of device frames", "LoadWindow
@@ -427,6 +428,30 @@ with the method and both features) and `meter-frames` "a SLUD frame is not an SM
 frame and is ignored", Node `protocol-fixtures` (fixture, layout, doc rows); the
 schema docs; 6 none (no UI).
 
+Per acceptance item (`m5b-engine-agent-requests`): 1 `agent_requests_test` "agent.request from the UI returns
+the pending request with the stamped context; a second client sees
+agent.request_changed", "the text is 1 to 4,000 code points of display-safe
+UTF-8; selection ids are checked; the 17th open request is agent_busy",
+"agent.request to an unknown or disconnected agent is agent_not_connected",
+"the request methods belong to one credential: scope_denied otherwise"; 2
+"next_request returns the oldest pending request at once and marks it taken",
+"next_request parks with an empty queue: a later request, the wait, a second
+call and the clamp", "a retry of next_request with the same id returns the same
+request; an empty poll is no action", "answer_request: a message, a decline, a
+plan the agent submitted; the refusals", "plan.submit {request} links the plan
+and answers the request; the head revision is unchanged", `plan_methods_test`
+"a plan submitted with a request has the hash of the same plan without it",
+`mcp_adapter_test` "tools/list: next_request and answer_request are propose
+tools; submit_plan takes a request"; 3 "agent.cancel_request cancels an open
+request; next_request does not deliver it", "DELETE, idle and session.open
+expire the open requests", "agent.requests lists the open requests and the last
+16 closed ones"; 4 "plan.submit {request} ..." (plan `validated`,
+`session.inspect`'s head unchanged); 5 the gate's resolution in the manifest;
+6 "engine.capabilities lists the request methods, features.agentRequests and
+the request limits", app `capabilities` (`capabilities-full.json`) and
+`session-client` "agent.request, agent.cancel_request and agent.requests go out
+as typed calls; agent.request_changed reaches a listener"; 7 none (no UI).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -443,11 +468,11 @@ is unowned (UI redesign 10.5); not in the counts above:
 | `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
 | `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
 | `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
-| `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
+| `m5b-engine-agent-requests` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds (4,000 characters, 16 open per agent, `agent_busy`), the `next_request` long poll, a second client; gate `agent-request-shape` (resolved) |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
 | `m5b-engine-track-notes` (UR-17; landed, see the table above) | 3 | | | command tests: validation, undo, replay |
 | `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
-| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled |
+| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled; `agent_busy` shown |
 | `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |
 | `m5b-ui-editor-channel` | 4 | `m5b-ui-edit-more` | `tab-editor`, `zone-button-channel` | one revision and one undo per edit in the editor |
 | `m6a-ui-automation` (M6a) | 3 | `m6a-lanes`, `m6a-write-passes` | `*-read`, `*-write`, `strip-*-automation`, `inspector-automation` | e2e with a reduced capabilities fixture |
