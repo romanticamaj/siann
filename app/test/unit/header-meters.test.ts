@@ -130,7 +130,7 @@ test('a horizontal bar inside each measured well, as wide as the reading, with t
   meters.start();
   frames.flush();
   assert.equal(surface.clears(), 1);
-  assert.deepEqual(surface.fills, [], 'silence: no bar (the well is DOM)');
+  assert.equal(surface.fills.length, 0, 'silence: no bar (the well is DOM)');
   assert.equal(surface.canvas.dataset.lit, '0');
 
   // a: -30 dBFS mono, half the well; b: -6 dBFS left, 0 dBFS right: the louder, the whole well.
@@ -209,7 +209,7 @@ test('no draw without a new frame or a moved slot; slots are measured on add, re
   meters.remeasure();
   surface.fills.length = 0;
   frames.flush();
-  assert.deepEqual(surface.fills, []);
+  assert.equal(surface.fills.length, 0);
 
   assert.equal(frames.pending(), 1);
   meters.stop();

@@ -32,10 +32,10 @@
 
 /* The app's controls, outside what the mockup ports. A button the mockup
    draws as a span (.tbtn, .iconbtn, .aibtn, the about line, the lower zone's
-   .tab, a strip's .msr and .pk) takes none of
+   .tab, a strip's .msr and .pk, the track list's .add) takes none of
    these: the shared rules draw it, over the reset below. */
 button, select, input { font: inherit; color: inherit; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow)) {
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .add)) {
   white-space: nowrap;
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
@@ -44,13 +44,13 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   border-radius: var(--radius-m);
   cursor: pointer;
 }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow)):hover:not(:disabled) { background: var(--bg-5); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .add)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .add))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
    styles), at no specificity, so every shared rule wins. */
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow) {
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.add) {
   margin: 0;
   padding: 0;
   border: 0;
@@ -60,7 +60,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   text-align: inherit;
   cursor: pointer;
 }
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow):disabled { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.add):disabled { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
@@ -395,90 +395,31 @@ code, dd { font-family: var(--font-mono); }
 .hscroll u > input[type="range"]::-webkit-slider-thumb { appearance: none; width: var(--zoom-handle); height: 100%; background: transparent; border: 0; }
 .zone-project .hscroll u::after { left: calc(100% * var(--zoom-at) - var(--zoom-handle) / 2); pointer-events: none; }
 
-/* The track list (spec 3.3): headers beside the lanes, translated with them. */
-.track-list {
+/* The track list (spec 3.3): ui/project-zone.css draws the mockup's .headers,
+   .corner with .add and .cnt, .th and its rows, .msr and the .hmeter well
+   (m5-ui-port-track-list); these are the app's own pieces around them. The
+   list is a grid of the head beside the ruler, the empty marker track row
+   (until m5b-ui-markers) and the headers, which a transform scrolls with the
+   lanes. */
+.arr-body > .headers {
   display: grid;
-  /* The head beside the ruler, the empty marker track row (until m5b-ui-markers), the headers. */
   grid-template-rows: var(--ruler-h) var(--marker-h) minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
-  background: var(--bg-2);
   container-type: inline-size;
 }
-.track-list-head {
-  display: flex;
-  align-items: center;
-  padding: 0 var(--space);
-  border-bottom: 1px solid var(--line-2);
-}
-.track-add {
-  width: var(--ms-h);
-  height: var(--ms-h);
-  min-height: 0;
-  padding: 0;
-  font-size: var(--fs-body);
-  line-height: 1;
-}
-.track-add::before { content: "+"; }
 .track-list-body { position: relative; min-height: 0; overflow: hidden; }
 .track-list-column { will-change: transform; }
-.track-header {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space);
-  padding: 0 18px 0 0;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
-  overflow: hidden;
-  box-sizing: border-box;
-  font-size: var(--fs-small);
-}
-.track-header[aria-selected="true"] { background: var(--bg-4); }
-.track-colour { flex: 0 0 4px; align-self: stretch; }
-.track-number { flex: 0 0 auto; min-width: 2ch; color: var(--tx-3); font-variant-numeric: tabular-nums; text-align: right; }
-.track-name, .track-rename { flex: 1 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tx-1); }
-.track-rename { height: var(--ms-h); padding: 0 var(--space); font: inherit; }
-.track-buttons { display: flex; flex: 0 0 auto; gap: 2px; }
-.track-buttons button {
-  width: var(--ms-h);
-  height: var(--ms-h);
-  min-height: 0;
-  padding: 0;
-  font-size: var(--fs-micro);
-}
-.track-mute[aria-pressed="true"] { background: var(--mute); color: var(--bg-0); }
-.track-solo[aria-pressed="true"] { background: var(--solo); color: var(--bg-0); }
-.track-readouts {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  align-items: flex-end;
-  color: var(--tx-2);
-  font-size: var(--fs-micro);
-  font-variant-numeric: tabular-nums;
-}
-.track-meter { position: absolute; top: 4px; bottom: 4px; right: 4px; width: 8px; }
-.track-resize {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 5px;
-  cursor: ns-resize;
-}
-.track-meters {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 4px;
-  width: 8px;
-  height: 100%;
-  pointer-events: none;
-}
+/* The rename field takes the name's place in .r1. */
+.th .track-rename { flex: 1 1 auto; min-width: 0; height: var(--ms-h); padding: 0 var(--space); font: inherit; }
+/* A header's lower border drags its lane's height. */
+.track-resize { position: absolute; left: 0; right: 0; bottom: 0; height: var(--space-5q); cursor: ns-resize; }
+/* The mini meters: one canvas over the column, painting only inside the wells. */
+.track-meters { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 /* At the narrow end the header keeps colour, name, M and S (spec 2.3). */
 @container (max-width: 200px) {
-  .track-number, .track-readouts { display: none; }
+  .th .idx, .th .r2 { display: none; }
+  .th { grid-template-columns: var(--track-colour-w) minmax(0, 1fr); }
 }
 .divider-tracklist { width: var(--divider-w); cursor: ew-resize; }
 .divider-tracklist[data-active="true"] { background: var(--tx-3); }
@@ -522,8 +463,9 @@ code, dd { font-family: var(--font-mono); }
 .knob-defs { position: absolute; }
 /* The box of a button that is absent (spec 3.0): e until m5b-ui-inserts-master,
    or M and S when the engine does not list their commands; in the Inspector
-   also record, monitor, read and write. */
-.btns > .msr-box, .i-btns > .msr-box { flex: none; width: var(--ms-w); height: var(--ms-h); }
+   also record, monitor, read and write; in a track header record, read and
+   write (m5-ui-port-track-list). */
+.btns > .msr-box, .i-btns > .msr-box, .th .r1 > .msr-box { flex: none; width: var(--ms-w); height: var(--ms-h); }
 /* The fader and the knob take a drag; the states the mockup does not show. */
 .strip .ftrack { cursor: ns-resize; touch-action: none; user-select: none; }
 .strip .knob { cursor: ew-resize; touch-action: none; user-select: none; }
