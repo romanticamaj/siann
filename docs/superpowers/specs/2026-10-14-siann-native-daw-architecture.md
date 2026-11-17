@@ -1650,23 +1650,31 @@ Rules:
 - M5b `Track.notes` (m5b-engine-track-notes, UI redesign UR-17): the track may
   carry `notes`, plain text of 1 to 16,384 UTF-8 bytes (`kMaxTrackNotesBytes`,
   well-formed per RFC 3629: no overlong form, no surrogate, nothing above
-  U+10FFFF). It is stored byte for byte, with no normalisation; newlines and tabs
-  are allowed, because notes are text, not a name (the names rule below does not
-  apply; the renderer shows them in their own text area, isolated like a name
-  wherever a sentence quotes them). It is omitted from the track's JSON while
+  U+10FFFF). It is stored byte for byte, with no normalisation. Notes are text, not
+  a name, so they follow the rule of a plan's intent rather than the names rule
+  below: tab, LF and CR are allowed, and any other control character (C0, DEL,
+  C1) or display-unsafe character (the bidi formatting characters and U+2028,
+  U+2029; `siann/model/display_text.hpp`, `textFault(notes, "\t\n\r")`) is
+  refused (decided 2026-11-17: the Notepad and a plan's preview show the text,
+  and a stored RLO would reorder what the user reads). The renderer shows them in
+  their own text area and never quotes them in a sentence: a plan step that sets
+  notes is described by its track's name. It is omitted from the track's JSON while
   absent, as `input` is, so the schema stays `siann.entity.track.v1`, the document
   stays `siann.session_document.v2`, and every existing bundle, checkpoint and
   fixture keeps its entity and document hashes. Reading a track whose `notes` is
   empty, longer than 16,384 bytes, malformed or not a string is `invalid_field`;
-  `validate()` reports stored notes outside the rule as `invalid_notes`. Command
+  `validate()` reports stored notes outside the rule (a refused character
+  included) as `invalid_notes`, so opening such a document is `invalid_document`.
+  Notes are not sound: a notes edit during playback compiles no graph and sets no
+  parameter (`onlyFaderChanges` treats it like a fader change). Command
   `track.set_notes {trackId, notes}` declares exactly `{track:<id>}`, is one
   revision and undoable. Two interpretations pinned here (2026-11-15): `notes: ""`
   removes the field, so the track hashes as it did before it had notes (the media
   name removes with `null`, but an emptied text area is the Notepad's natural
   clear, and `""` is not a value the field can store); and the codes split by
-  what is wrong: a string longer than 16,384 bytes or not well-formed UTF-8 (which
-  only a `json::Value` built in code can carry: the JSON parser refuses a lone
-  surrogate escape and malformed bytes) is
+  what is wrong: a string longer than 16,384 bytes, with a refused character, or
+  not well-formed UTF-8 (which only a `json::Value` built in code can carry: the
+  JSON parser refuses a lone surrogate escape and malformed bytes) is
   `invalid_notes`, while a non-string `notes` (`null` included), a missing
   `notes` or `trackId`, or another field is `invalid_params`. An unknown track is
   `not_found`.
@@ -3418,6 +3426,17 @@ UI redesign E-13 and UR-14; the wire details are in `docs/schemas/protocol-engin
     - `engine.capabilities` lists `meter.reset_loudness` and reports
       `features.load` and `features.loudness`, both true when a transport port is
       present (the condition of `engine.status`).
+
+Protocol v0, track notes (decided 2026-11-15 with m5b-engine-track-notes, UI
+redesign UR-17; the wire details are in `docs/schemas/protocol-engine-v0.md`):
+
+32. Notes are document data and need no method or feature flag of their own: the
+    command `track.set_notes` goes through `command.execute`, a plan step or MCP
+    `execute`, so no MCP tool is added. `engine.capabilities` and `command.list`
+    list `track.set_notes` in `commands`. `plan.preview` shows the track without
+    `notes` before and with it after (the reverse for `""`). Over-long text, a
+    refused character or malformed UTF-8 answers `invalid_notes` with the step
+    index, as any validation error does.
 
 ## Plugin editor windows
 

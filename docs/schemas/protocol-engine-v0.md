@@ -45,11 +45,11 @@ The clip entity carries `fadeIn` and `fadeOut` only while their length is not 0,
 
 ### Track notes (m5b-engine-track-notes, UI redesign UR-17)
 
-A track's notes are document data, set with the command `track.set_notes {trackId, notes}` through `command.execute`, a plan or MCP `execute`; there is no method, no feature flag and no MCP tool of its own. `notes` is plain text of at most 16,384 UTF-8 bytes, stored byte for byte (newlines and tabs kept, nothing normalised); `""` removes the field. The command declares exactly `{track:<id>}` and is one revision, journaled and undoable (undo of the first set removes the field); `session.changed` lists `track:<id>` as `modified`, and `plan.preview` shows the track without `notes` before and with it after (or the reverse for `""`).
+A track's notes are document data, set with the command `track.set_notes {trackId, notes}` through `command.execute`, a plan or MCP `execute`; there is no method, no feature flag and no MCP tool of its own. `notes` is plain text of at most 16,384 UTF-8 bytes, stored byte for byte (tab, LF and CR kept, nothing normalised); another control character or a bidi formatting character (the display-unsafe set of plan metadata) is refused; `""` removes the field. A notes edit during playback does not recompile the graph. The command declares exactly `{track:<id>}` and is one revision, journaled and undoable (undo of the first set removes the field); `session.changed` lists `track:<id>` as `modified`, and `plan.preview` shows the track without `notes` before and with it after (or the reverse for `""`).
 
 | Input | Code |
 |---|---|
-| `notes` longer than 16,384 bytes, or not well-formed UTF-8 (RFC 3629) | `invalid_notes` |
+| `notes` longer than 16,384 bytes, not well-formed UTF-8 (RFC 3629), or with a control character other than tab, LF and CR (C0, DEL, C1) or a display-unsafe character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069, U+2028, U+2029) | `invalid_notes` |
 | `notes` not a string (`null` included), `notes` or `trackId` missing, another field | `invalid_params` |
 | no track `trackId` | `not_found` |
 
