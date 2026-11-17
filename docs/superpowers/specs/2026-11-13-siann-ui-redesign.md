@@ -30,6 +30,7 @@ What changed in revision 4:
 7. **Rendering: React for chrome, one imperative surface for the event display, one for all meters.** Canvas2D in two layers now, hand-written WebGL2 when the 64-track target needs it; no WebGPU, no OffscreenCanvas worker, no GPU library.
 8. **Dependencies:** none for the zones: they are the mockup's CSS grid with SIANN's own dividers (`react-resizable-panels`, used from P1-1, left with `m5-ui-alignment-chrome`: its wrappers cannot sit between the grid and its regions; 8, row 15); `@tanstack/react-virtual` in phase 4. No i18n library. Inter and JetBrains Mono bundled; Chinese text uses the system fonts.
 9. **Phase 1 is ten tickets.** Eight need no protocol or engine change. Loop and metronome need one engine ticket (E-1), which is in scope. Bringing the window to the mockup adds six more (P1-9 to P1-14, section 10.6).
+10. **Components are ported from the mockup, and the look is reviewed by eye** (decided by the maintainer, 2026-11-17; section 10.9). The app does not have to match the mockup pixel by pixel: each component is built from the mockup's markup, the fidelity comparison is a report that never blocks, the token rules still block, and every UI pull request attaches side-by-side screenshots. The six tickets of item 9 became nine: the token conversion and the chrome (P1-9 and P1-10, section 10.6) and seven component ports (P1-11 to P1-17, section 10.10).
 
 ## 1. Design language
 
@@ -175,7 +176,7 @@ Naming: the protocol says *clip* where Cubase says *event*. The UI says "clip" i
 - The test is `engine.capabilities`: a control is drawn only when the method or feature it needs is listed (or, for document fields, when the entity has the field).
 - "Disabled with a tooltip" is reserved for a control that works in this build but not in this state (no audio device, engine disconnected, plan stale, proposal heard). The tooltip names the reason.
 - Why hidden: a disabled button that can never be enabled teaches the user to ignore disabled buttons, and it makes the screenshot tour show a product that does not exist.
-- Why the space stays: the window keeps one layout from M5 to the finished product, so nothing a user has learnt moves when a feature lands, and the fidelity gate can hold every built part to the mockup's position from the first day (10.2).
+- Why the space stays: the window keeps one layout from M5 to the finished product, so nothing a user has learnt moves when a feature lands, and the app's screenshot lines up with the mockup's when the two are reviewed side by side (10.9). Until 2026-11-17 the reason given here was that the fidelity gate could hold every built part to the mockup's position; the gate no longer blocks, and this rule stands.
 - **What "its space stays empty" means.**
   - The element that holds the space has the size the mockup gives the part. A row or column the shared rules fix needs nothing more: the 20 px marker track row stays empty until `m5b-ui-markers`, the insert row of a strip until `m5b-ui-inserts-master`.
   - A box the mockup sizes by its content (a label, a text block) takes its size from a `--hold-<part>-w` or `--hold-<part>-h` token in `tokens.css`. The token carries the size the gate measures for the part in the mockup, per locale where it differs, and the feature that lands the part deletes it. `test/mockup-fidelity.test.js` fails on a hold token whose part is no longer pending.
@@ -184,7 +185,7 @@ Naming: the protocol says *clip* where Cubase says *event*. The UI says "clip" i
   - The empty element draws nothing: no control, no label, no placeholder text, no border or background of its own. It has no role, is not focusable, is hidden from assistive technology, and does not carry the part's `data-part` id, so the gate can never take it for the part.
   - Where nothing follows an absent part in its row or column, nothing needs holding, as long as no compared box grows or shrinks with it (the ghost track under the last track). That holds because the mockup's canvas (60 px of ruler and marker track and 8 lanes of 53 px: 484 px) ends at the 8 px scroll-zoom bar of the 492 px event display: the app ends the project cursor at the top of the scroll-zoom bar, not at the last lane and not at the display's bottom.
   - The same holds in the finished app on an engine that does not list a method: the control is absent and its space is empty.
-- **This rule and "identical to the mockup" (section 10) do not conflict; they apply at different times.** The mockup is what the finished window looks like, and the finished window must match it. Until a part's feature lands, the part is absent under this rule, its space stays empty, and the fidelity gate skips it: `app/test/fidelity/manifest.json` lists it as pending under the feature that owns it. A placeholder or a disabled control is never a way to pass the gate, and never a way to satisfy this rule. When the feature lands, its acceptance includes the gate for its parts, so the part arrives looking as the mockup shows it. Every part has an owning feature (10.5).
+- **This rule and "ported from the mockup" (section 10) do not conflict; they apply at different times.** The mockup is what the finished window looks like. Until a part's feature lands, the part is absent under this rule, its space stays empty, and the fidelity run skips it: `app/test/fidelity/manifest.json` lists it as pending under the feature that owns it. A placeholder or a disabled control is never a way to satisfy this rule. When the feature lands, it ports the part from the mockup's markup, so the part arrives looking as the mockup shows it, and its pull request shows it beside the mockup. Every part has an owning feature (10.5). Decided by the maintainer, 2026-11-17 (10.9): the window no longer has to match the mockup pixel by pixel, and this rule is unchanged.
 
 Applied to what the mockup shows:
 
@@ -203,7 +204,7 @@ In this table "hidden" means absent with its space empty. Where a later decision
 | Insert slots, `e` buttons, Routing and Sends sections, Notepad | Hidden in phase 1; inserts and `e` arrive in phase 3 from `plugin_slot` entities, routing and sends with M6c, the Notepad with `m5b-ui-notepad` |
 | Tools `2` and `4`–`9`; snap types other than Grid | Hidden until phase 3 implements them (renderer work, not backend). Tools `1` and `3` are in P1-8 |
 | Editor tab, Media and Meter tabs | Hidden until phase 3 (in M5b: `m5b-ui-editor-channel`, `m5b-ui-media`, `m5b-ui-meter`) |
-| Clip titles | The media's name (`media.name`, the imported file's base name, in the document since `m5b-engine-project-media`) and the media id when it has none, from P1-11 (`m5-ui-alignment-arrange`). The clip has no name of its own (the clip half of E-4) |
+| Clip titles | The media's name (`media.name`, the imported file's base name, in the document since `m5b-engine-project-media`) and the media id when it has none, from P1-11 (`m5-ui-port-arrange-canvas`). The clip has no name of its own (the clip half of E-4) |
 | Agent row, plan title and summary | Hidden in phase 1 (E-7 and E-14, in M5b: `m5b-engine-plan-metadata`, `m5b-ui-plan-metadata`); the card has no title line: its summary line is the count chips ("+1 track", "+1 clip", "1 move", "3 mix"), as the mockup draws them (P1-13; 10.7, 3). The audition banner, the toast and the history rows still name a plan by its first step and "N steps" |
 | "Ask the agent" box | Hidden in phase 1; in M5b it hands a request to a connected MCP agent (`m5b-engine-agent-requests`, `m5b-ui-composer`; 4.4) |
 | Track colours | Shown: assigned in the renderer from a stable hash of the track id until E-2 |
@@ -315,7 +316,7 @@ The locator range is shown as a band with L and R flags in the ruler and a tint 
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` | P1-2 |
 | Edit history list | Edit > History | E-16 |
 | Info line: show the selection's name (the clip's title, with its track's colour), start, end, length, offset, volume. Positions (start, end) read bar.beat.sixteenth.tick: bar, beat and sixteenth 1-based, the tick within the sixteenth 0 to 479 at 1920 ticks per quarter (`9.1.1.0`). Lengths and the offset read bars.beats.sixteenths.ticks counted from zero (`3.3.0.0`). The volume is dB with two decimals (`0.00 dB`). The top bar's position display keeps bar.beat.tick (3.1) | `Ctrl+I` toggles it | Read-only P1-3; the name field and the mockup's formats P1-11 (10.8, 2); editing (relative across the selection, `Ctrl` absolute) phase 3 |
-| Pool: the session's media by name; a click arms placing | `Ctrl+P`; the event display's context menu | P1-11, a window of its own that the resting window does not show (10.8, 1); the Media tab replaces it in `m5b-ui-media`, and `Ctrl+P` opens that tab |
+| Pool: the session's media by name; a click arms placing | `Ctrl+P`; the event display's context menu | P1-16 (`m5-ui-port-toolbar`), a window of its own that the resting window does not show (10.8, 1); the Media tab replaces it in `m5b-ui-media`, and `Ctrl+P` opens that tab |
 | Open the editor in the lower zone | Double-click or `Return` | Phase 3 |
 | Drag tooltip with the new position and delta | — | P1-3 |
 | Drop audio files from the OS | — | E-5 |
@@ -945,7 +946,7 @@ Where sections 3.0 to 3.7 and "Phase 5" above say M6b for record, record enable,
 - **UR-2 Create, import, names** (`m5b-engine-project-media`; E-5 and the media half of E-4). `session.create`; `media.import` as a job with offline conversion to the session rate and peaks; an optional `name` on the media entity so the UI can show file names. Formats are WAV and FLAC, as the decoder has today. Both methods touch paths on the user's disk, so the MCP propose scope does not get them.
 - **UR-3 Recording through the protocol** (`m5b-engine-record`). The engine process opens device inputs; a track has an input (document) and an armed flag (engine state, like cycle); `transport.record` captures and commits one revision per stop; pending takes after a crash are offered through the protocol. Recording with cycle on runs straight through until `m6b-loop-takes`.
 - **UR-4 Projects and Studio Setup** (`m5b-ui-project`). New, Open, recent, Save, a start view, and the device dialog (output, input, rate, buffer, latency). The dialogs are the shell's; the renderer's only contact with Electron stays `index.tsx`. Save is `session.save`; because every revision is journaled, closing never loses work and there is no "save changes?" prompt.
-- **UR-5 Import in the UI** (`m5b-ui-media`). Drop from the OS onto the event display, and the Media tab (list, search, import, drag to the event display, rename). Clip titles become the media name. The Media tab replaces the Pool window of P1-11, and `Ctrl+P` opens it (10.8, 1).
+- **UR-5 Import in the UI** (`m5b-ui-media`). Drop from the OS onto the event display, and the Media tab (list, search, import, drag to the event display, rename). Clip titles become the media name. The Media tab replaces the Pool window of P1-16, and `Ctrl+P` opens it (10.8, 1).
 - **UR-6 Fades** (`m5b-engine-clip-fades`, `m5b-ui-fades`). The fade half of E-9: fade in and fade out with a linear or equal-power curve. Crossfades and clip mute stay in E-9.
 - **UR-7 More editing** (`m5b-ui-edit-more`). The part of phase 3 that criterion C names or that a Cubase user reaches for in the same breath: Glue and Erase tools, cut, copy and paste, repeat, nudge, rubber band, snap types Grid Relative, Events and Magnetic Cursor, an editable info line. The rest of phase 3 is not in the usable release: Range Selection, Zoom and Play tools, Shuffle, slip, zoom history, stationary cursor, context menus and the key-command editor. (The lower-zone editor and the Channel tab were on this list until 2026-11-15; they are UR-18 now.)
 - **UR-8 Recording in the UI** (`m5b-engine-monitoring`, `m5b-engine-punch-count-in`, `m5b-ui-recording`). Record enable, monitor and input on header, strip and Inspector; Record, punch, pre-roll and count-in on the transport bar; the growing red clip; recovery of pending takes.
@@ -1067,21 +1068,21 @@ Research files and internationalisation
 
 ## 10. Mockup fidelity
 
-Maintainer decision, 2026-11-14: the finished UI looks exactly like the mockup, and that is checked, not judged by eye. The rule for contributors is in `docs/harness/agent-rules.md`, "UI fidelity"; this section is the design.
+Decided by the maintainer, 2026-11-17 (10.9): the app is built from the mockup's source, component by component, and it does not have to match the mockup pixel by pixel. The comparison this section describes is a visual aid that reports and never blocks; the token rules of layer 1 block, and the maintainer reviews the look by eye from side-by-side screenshots. This supersedes the decision of 2026-11-14 that opened this section ("the finished UI looks exactly like the mockup, and that is checked, not judged by eye") and the pixel-identity parts of 10.2 to 10.8, which are kept below as the record of how the comparison works and of what else was decided. The rule for contributors is in `docs/harness/agent-rules.md`, "UI fidelity"; this section is the design.
 
 ### 10.1 The mockup is the reference implementation
 
 The mockup is hand-written HTML and CSS, and the app's renderer is web technology too. So the app does not re-derive the look from screenshots: it reuses the mockup's source.
 
-- **One stylesheet for both.** The mockup's rules live in `app/renderer`: the tokens (colours, type scale, weights, radii, fixed sizes, font stacks, the bundled fonts) in `tokens.css`, the component rules in `ui/base.css`, `ui/layout.css`, `ui/top-bar.css`, `ui/left-zone.css`, `ui/project-zone.css`, `ui/lower-zone.css`, `ui/right-zone.css` and `ui/status-bar.css`. `mockup.html` has no stylesheet of its own; it links exactly those files. The app links the same files, region by region as the alignment features of 10.6 land; a region that is not ported yet still uses `shell.css`.
+- **One stylesheet for both.** The mockup's rules live in `app/renderer`: the tokens (colours, type scale, weights, radii, fixed sizes, font stacks, the bundled fonts) in `tokens.css`, the component rules in `ui/base.css`, `ui/layout.css`, `ui/top-bar.css`, `ui/left-zone.css`, `ui/project-zone.css`, `ui/lower-zone.css`, `ui/right-zone.css` and `ui/status-bar.css`. `mockup.html` has no stylesheet of its own; it links exactly those files. The app links the same files, zone by zone as the chrome (10.6) and the component port features (10.10) land; a component that is not ported yet still uses `shell.css`.
 - **Markup is ported, not reinvented.** Each React component takes its DOM structure and class names from the corresponding mockup markup: top bar, transport, toolbar, info line, track headers, Inspector, MixConsole strip, plan card, status bar. A component that needs an element the mockup does not have (an input for typing a value, a focus ring, an ARIA wrapper) adds it without changing the boxes the mockup draws.
 - **Canvas surfaces copy the mockup's drawing parameters**: the ruler's two halves (18 px and 22 px), the 20 px marker track, 53 px lanes, the lane and clip colours, the 13 px clip title strip, the selection outline and handles, the project cursor and its head. They read them from `app/src/renderer/tokens.ts`, the generated mirror of `tokens.css` (`node scripts/gen-ui-tokens.js`).
-- **Changing the reference needs the maintainer.** `tokens.css`, `app/renderer/ui`, `mockup.html`, the PNGs, and the gate's manifest rules and thresholds are changed only when the maintainer asks. Asked for on 2026-11-15 (10.5): the token conversion of `m5-ui-tokens-spacing` with the mockup edits it needs, the four token values of the ledger, the Medium face, the hold tokens of 3.0, and the owners of the parts that had none. Asked for in the second round of 2026-11-15 (10.7): the two corrections of the mockup's MixConsole and its PNGs retaken, the ids of the ghost adornments and of the step titles that name a clip, the masks of the Plans tab, the app-only tokens of `m5-ui-mockup-alignment`, and the empty-width token of the locator display.
+- **Changing the reference needs the maintainer.** `tokens.css`, `app/renderer/ui`, `mockup.html`, the PNGs, and the gate's manifest rules and thresholds are changed only when the maintainer asks. Asked for on 2026-11-15 (10.5): the token conversion of `m5-ui-tokens-spacing` with the mockup edits it needs, the four token values of the ledger, the Medium face, the hold tokens of 3.0, and the owners of the parts that had none. Asked for in the second round of 2026-11-15 (10.7): the two corrections of the mockup's MixConsole and its PNGs retaken, the ids of the ghost adornments and of the step titles that name a clip, the masks of the Plans tab, the app-only tokens of the closing ticket (`m5-ui-port-cleanup` since 10.9), and the empty-width token of the locator display.
 - The mockup is rendered with the fonts the app bundles: Inter variable, JetBrains Mono Regular and JetBrains Mono Medium (500), which its rules ask for in the display values and key hints. Medium is bundled by `m5-ui-alignment-chrome` (decided by the maintainer, 2026-11-15); until it lands both sides draw Regular there. No rule asks for 600, and it is not bundled.
 
 ### 10.2 The gate: three layers
 
-Literal pixel identity of the whole window is not attainable (real waveforms against drawn ones, live meters and times, per-OS font rasterisation), so the gate has three layers, strict where strictness is meaningful.
+Literal pixel identity of the whole window is not attainable (real waveforms against drawn ones, live meters and times, per-OS font rasterisation), so the comparison has three layers. **Only layer 1 blocks** (decided by the maintainer, 2026-11-17; 10.9). Layers 2 and 3 are measured and reported as a visual aid: their limits are what the report measures against, not pass marks.
 
 | Layer | What must hold | Where |
 |---|---|---|
@@ -1089,9 +1090,9 @@ Literal pixel identity of the whole window is not attainable (real waveforms aga
 | 2. Geometry and styles | For every `data-region` / `data-part` id of the mockup: the app carries the same id, its bounding box is within 1 px on x, y, width and height, and the computed styles listed in the manifest (colours, font, borders, radii, padding, shadow, opacity) are identical | `app/test/e2e/mockup-fidelity.spec.ts` |
 | 3. Pixels | Per region, at most 0.5 % of the unmasked pixels differ (a pixel differs when a channel is more than 16 apart). Chrome only: waveform interiors, dynamic content (times, meter levels, counts, hashes) and skipped parts are masked entirely | the same spec |
 
-Layers 1 and 2 are the strict gates. Layer 3 catches what they cannot see: icons, gradients, canvas drawing, a stacking mistake.
+Layer 1 is the gate. Layer 2 says where a ported component's boxes and styles differ from the mockup's, and layer 3 shows what layer 2 cannot see: icons, gradients, canvas drawing, a stacking mistake. Both go into `report.md` and the region images, which the side-by-side review uses.
 
-The gate compares absolute boxes against the full mockup, and that stays (decided by the maintainer, 2026-11-15). It works because an absent part keeps its space empty (3.0): a part that sits after one is where the mockup draws it. The alternatives were a mockup with the skipped parts removed, which would need a second layout in the shared rules, and moving every displaced part to a later gate, which would leave most of the window unenforced in M5.
+The gate compares absolute boxes against the full mockup, and that stays (decided by the maintainer, 2026-11-15). It works because an absent part keeps its space empty (3.0): a part that sits after one is where the mockup draws it. The alternatives were a mockup with the skipped parts removed, which would need a second layout in the shared rules, and moving every displaced part to a later gate, which would leave most of the window unenforced in M5. Since 2026-11-17 nothing is enforced; the comparison stays absolute because the report and the side-by-side screenshots read best when both windows have one layout.
 
 How layers 2 and 3 run: the spec opens `mockup.html` in Chromium and the app in Electron, both at 1440x900 and device scale factor 1 (forced, whatever the display's scaling), in English and in Traditional Chinese (`mockup.html?lang=zh-TW`). The app runs on the real engine with a session that reproduces the mockup's: "Night Drive", the same 7 tracks with their colours, levels, pans and mute, 17 clips on the same bars at the same zoom, the same track and clip selected, and the same pending 6-step plan submitted over MCP. Waveform content is not compared. The session also carries what the mockup shows around the plan and the transport (10.7): every clip has a media of the mockup's clip name; the locators are set to bars 9.1 and 13.1 with cycle on; one undoable command has run, so undo is lit and redo is dim; and three earlier plans were submitted before the pending one, one applied (4 steps), one rejected with the mockup's note and one made stale, none of which changes what the window draws. The pointer rests on step 3 of the plan, which the mockup draws as the hovered step; everywhere else nothing is hovered.
 
@@ -1105,14 +1106,17 @@ Every region and key component has a stable id, the same in the mockup and in th
 
 ### 10.4 The manifest: who owns each part
 
-`app/test/fidelity/manifest.json` owns every id through ordered rules (the first match wins). Each rule names the feature that builds the part and the gate: the feature whose acceptance says "the fidelity gate passes for these parts". A gate is `pending` (its parts are skipped: the feature has not landed), `report` (measured and reported, never failing) or `enforce` (a mismatch fails). A mockup id that no rule owns fails the run in every mode, and every rule names a feature: no part is unowned (10.5). The parts M5 built answer to the alignment feature of their region (10.6); every other part answers to the feature that builds it.
+`app/test/fidelity/manifest.json` owns every id through ordered rules (the first match wins). Each rule names the feature that builds the part and the gate: the feature that ports the part from the mockup's markup and attaches its side-by-side screenshot. A gate is `pending` (its parts are skipped: the feature has not landed) or `report` (measured and reported, never failing). There was a third mode, `enforce` (a mismatch fails); it is gone since 2026-11-17 (10.9), and `test/mockup-fidelity.test.js` fails on a gate that carries it. A mockup id that no rule owns is listed in the report, and every rule names a feature: no part is unowned (10.5). The parts M5 built answer to the feature that ports them (10.6, 10.10); every other part answers to the feature that builds it.
 
 | Gate | Mode today | Parts |
 |---|---|---|
 | `m5-ui-alignment-chrome` | report | Top bar and status bar: session name, undo and redo, transport and displays (position, time, locators, tempo), cycle and metronome, the left, lower and right zone buttons, Plans button, every status bar item |
-| `m5-ui-alignment-arrange` | report | Project zone: tools 1 and 3, snap, grid type, auto-scroll, info line, track list and headers, ruler, lanes, clips, locator band, cursor |
-| `m5-ui-alignment-mixer-inspector` | report | Left and lower zones: Inspector basics, MixConsole strips and the master meter |
-| `m5-ui-alignment-plans` | report | Right zone: the Plans tab and its card |
+| `m5-ui-port-arrange-canvas` | report | The event display: ruler, lanes, clips, locator band, cursor, the scroll-zoom bar; the project zone's frame |
+| `m5-ui-port-track-list` | report | Track list: its head, the add button, the count, the headers |
+| `m5-ui-port-toolbar` | report | Toolbar and info line: tools 1 and 3, snap, grid type, auto-scroll, the info fields |
+| `m5-ui-port-mixer-strip` | report | Lower zone: its tab row, MixConsole strips and the master meter |
+| `m5-ui-port-inspector` | report | Left zone: Inspector basics |
+| `m5-ui-port-plans` | report | Right zone: the Plans tab and its card |
 | `m5b-ui-ghosts` | pending | Every ghost (track, clip, cap, strip, lane), what a pending plan adds to a strip (step badges, the ghost needle and value of pan, the line to the ghost cap), the proposal pill, the Inspector's "Agent changes" |
 | `m5b-ui-recording` | pending | Record buttons, the monitor button |
 | `m5b-ui-inserts-master` | pending | Insert slots, `e` buttons, the master fader and its buttons, the rack switches |
@@ -1130,9 +1134,9 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5b-ui-editor-channel` | pending | Editor tab, Channel zone button |
 | `m6a-ui-automation` | pending | R and W automation buttons and their row on a strip, the Automation section |
 
-A feature flips its own gate to `enforce` in the pull request that lands it. From the first enforced gate on (`m5-ui-alignment-chrome`), an enforced mismatch fails CI, and a gate still in `report` is measured and reported only. `m5-ui-mockup-alignment` ends with all four of M5's gates enforced.
+A feature sets its own gate from `pending` to `report` in the pull request that lands it; the gates of M5's parts are `report` already. No gate is ever `enforce`, and the run never fails CI (decided by the maintainer, 2026-11-17; 10.9).
 
-Layer 3 masks beyond the pending parts are the manifest's `pixels.dynamic` list. Two entries are there because M5 cannot show the mockup's text, and each names the feature that removes it (10.7, 3): the history rows `plan-history-1` to `plan-history-3` (`m5b-ui-plan-metadata`) and the step titles `plan-step-*-title` (`m5b-ui-media`). The history rows stay parts of `m5-ui-alignment-plans`, so layer 2 holds their boxes and styles in M5.
+Layer 3 masks beyond the pending parts are the manifest's `pixels.dynamic` list. Two entries are there because M5 cannot show the mockup's text, and each names the feature that removes it (10.7, 3): the history rows `plan-history-1` to `plan-history-3` (`m5b-ui-plan-metadata`) and the step titles `plan-step-*-title` (`m5b-ui-media`). The history rows stay parts of the Plans tab's feature (`m5-ui-port-plans`), so layer 2 reports their boxes and styles in M5.
 
 ### 10.5 Decisions of 2026-11-15
 
@@ -1140,7 +1144,7 @@ The plan phase of the alignment stopped on a contradiction, and on three decisio
 
 **1. An absent part keeps its space empty.** The contradiction: 3.0 said an absent part leaves "no reserved space", while the gate compares each part's box with the full mockup, and many parts M5 built sit after an absent one. The mockup's canvas has a 20 px marker track above the first lane, so every track, lane and clip is 20 px lower in the mockup than in a window without markers; the insert row of a strip does the same to pan, the buttons and the fader. Decided: the part's box stays, empty (no control, no label, no placeholder), so every other part lands where the mockup draws it. 3.0 says how. The gate is unchanged (10.2).
 
-**2. Every literal becomes a token; there is no allowlist.** All 423 size and spacing literals of `app/renderer/ui/*.css`, and the 19 size and 74 colour literals of the mockup's script, become named tokens of `tokens.css`, mirrored to TypeScript by `scripts/gen-ui-tokens.js`. The maintainer authorises the token additions and the mockup edits this needs, on one condition: nothing the mockup draws changes, and that is proven by the gate's own measurement of the mockup before and after (equal boxes, equal styles, equal region images). The four token values the ledger names take the mockup's value, because the mockup wins: `--ruler-h` 40 px, `--zone-tabs` 26 px, `--meter-w` 6 px, `--focus` 20 %. `app/test/fidelity/debt.json` ends empty, as `test/ui-tokens.test.js` requires once `m5-ui-mockup-alignment` is done. The work is `m5-ui-tokens-spacing` (10.6), ahead of the alignment so that the ported components and the canvas code have token names to use.
+**2. Every literal becomes a token; there is no allowlist.** All 423 size and spacing literals of `app/renderer/ui/*.css`, and the 19 size and 74 colour literals of the mockup's script, become named tokens of `tokens.css`, mirrored to TypeScript by `scripts/gen-ui-tokens.js`. The maintainer authorises the token additions and the mockup edits this needs, on one condition: nothing the mockup draws changes, and that is proven by the gate's own measurement of the mockup before and after (equal boxes, equal styles, equal region images). The four token values the ledger names take the mockup's value, because the mockup wins: `--ruler-h` 40 px, `--zone-tabs` 26 px, `--meter-w` 6 px, `--focus` 20 %. `app/test/fidelity/debt.json` ends empty, as `test/ui-tokens.test.js` requires once the closing ticket is done (`m5-ui-mockup-alignment` then, `m5-ui-port-cleanup` since 10.9). The work is `m5-ui-tokens-spacing` (10.6), ahead of the alignment so that the ported components and the canvas code have token names to use.
 
 **3. JetBrains Mono Medium (500) is bundled.** The font file (OFL, the same release as the Regular file), its `@font-face`, and font tests, in `m5-ui-alignment-chrome`; the CSP already allows a local font. The mockup and the app both draw 500 where the mockup's rules ask for it. The mockup's PNGs are retaken once in that pull request.
 
@@ -1161,28 +1165,24 @@ Until its owner lands, each of these parts is absent and its space stays empty (
 Three things the maintainer left to the author (decided by Fable, 2026-11-15):
 
 - **The time signature is display only in M5b.** The cell shows the 4/4 the bar maths uses and is not a control. E-10 stays out of M5b (UR-15 gives the reason).
-- **The alignment is split by region** (10.6), because it is a port of the whole renderer: at the baseline none of the 282 compared parts matched. Each region's feature enforces its own gate when it lands, so a later region cannot undo an earlier one unnoticed; `m5-ui-mockup-alignment` closes the series.
+- **The alignment is split by region** (10.6), because it is a port of the whole renderer: at the baseline none of the 282 compared parts matched. Each region's feature enforces its own gate when it lands, so a later region cannot undo an earlier one unnoticed; `m5-ui-mockup-alignment` closes the series. Superseded on 2026-11-17 (10.9): the work is split by component, and no gate is enforced.
 - **DSP load and the master's loudness value are dynamic content.** They joined the manifest's layer 3 masks with the other meter levels when they got an owner; layers 1 and 2 still hold them to the mockup.
 
-### 10.6 The alignment tickets (P1-9 to P1-14)
+### 10.6 The alignment tickets (P1-9 and P1-10)
 
-The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Order: the token conversion first, then the chrome, then the three zones side by side, then the closing ticket.
+The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Order: the token conversion first, then the chrome. This section listed six tickets until 2026-11-17; P1-11 to P1-14 were replaced by the component port tickets of 10.10 (10.9).
 
 | Ticket | Feature | Wave | After | What it settles |
 |---|---|---|---|---|
 | P1-9 | `m5-ui-tokens-spacing` | 8 | `m5-ui-transport`, `m5-ui-edit-basics` | Decision 2: every literal of the shared rules and of the mockup's script is a token, the four token values change, and the mockup is proven unchanged. The app changes by those four values only |
-| P1-10 | `m5-ui-alignment-chrome` | 9 | P1-9, `m5-ui-loop-click`, `m5-ui-transport` | The app links `tokens.css`, `base.css`, `layout.css`, `top-bar.css` and `status-bar.css`; the zone frames, the top bar and the status bar are ported; JetBrains Mono Medium (decision 3). The mockup's text formats of 10.7, 1 (time, tempo, the device and about segments) and the fidelity run's environment data. First enforced gate: from here an enforced mismatch fails CI |
-| P1-11 | `m5-ui-alignment-arrange` | 10 | P1-10, `m5-ui-edit-basics`, `m5-ui-loop-click` | `project-zone.css`; toolbar, info line, track list, and the canvas drawing parameters from `tokens.ts`; clip titles and the info line's name show the media name; the Pool window, the info line's formats, the toolbar without its media and Delete clip buttons, and the track list's count (10.8) |
-| P1-12 | `m5-ui-alignment-mixer-inspector` | 10 | P1-10 | `left-zone.css` and `lower-zone.css`; the Inspector, the strips and the meter surface |
-| P1-13 | `m5-ui-alignment-plans` | 10 | P1-10 | `right-zone.css`; the Plans tab and its card, with the text M5 can derive (10.7, 3) |
-| P1-14 | `m5-ui-mockup-alignment` | 11 | P1-10 to P1-13 | The app's stylesheet links equal the mockup's, `shell.css` holds nothing the mockup draws, `debt.json` is empty, all four gates are enforced on Windows and Linux, and the tour is retaken for the `ui-redesign-review` gate. App-only tokens for the rules `shell.css` keeps (10.7, 4) |
+| P1-10 | `m5-ui-alignment-chrome` | 9 | P1-9, `m5-ui-loop-click`, `m5-ui-transport` | The app links `tokens.css`, `base.css`, `layout.css`, `top-bar.css` and `status-bar.css`; the zone frames, the top bar and the status bar are ported; JetBrains Mono Medium (decision 3). The mockup's text formats of 10.7, 1 (time, tempo, the device and about segments) and the fidelity run's environment data. Its gate stays `report` (10.9): it enforced the first gate while in review, and that was taken back |
 
-Rules for all of them:
+Rules for both:
 
-- A region's ticket links that region's stylesheet, ports its components from the mockup's markup, removes the rules of `shell.css` it replaces, and leaves the regions not ported yet looking as they did.
-- An absent part keeps its space empty (3.0). Each ticket's acceptance lists the absent parts of its region.
-- Each flips its own gate to `enforce` in its pull request and attaches the report for `en` and `zh-TW`.
-- Tour states: each names the states it changes; P1-14 retakes the whole tour once, in the three locales.
+- The chrome's ticket links its stylesheets, ports its components from the mockup's markup, removes the rules of `shell.css` it replaces, and leaves the zones not ported yet looking as they did.
+- An absent part keeps its space empty (3.0). The ticket's acceptance lists the absent parts of the top bar.
+- The pull request attaches the fidelity report for `en` and `zh-TW` and the side-by-side screenshot of 10.9, 4; no gate is set to `enforce`.
+- Tour states: each names the states it changes.
 
 ### 10.7 Decisions of 2026-11-15, second round
 
@@ -1224,6 +1224,8 @@ Settled by the author with these (Fable, 2026-11-15), none of them a change of t
 
 ### 10.8 Decisions of 2026-11-15, third round
 
+Since 2026-11-17 the work this section gives to `m5-ui-alignment-arrange` is in `m5-ui-port-toolbar` (items 1 to 3), `m5-ui-port-track-list` (item 4) and `m5-ui-port-arrange-canvas` (item 5), and where it argues from what layer 3 could pass, the decisions stand without that argument (10.9).
+
 The plan of `m5-ui-alignment-arrange` stopped on one question (where the media pool goes) and four spec issues. All five are **decided under the maintainer's rulings of 2026-11-15**, "the mockup's format wins" (10.7, 1) and "Cubase is the reference for behaviour". None is the maintainer's own decision.
 
 **1. The media pool is Cubase's Pool, a window of its own.** The toolbar held one button per media, which was M5's only UI path to place a clip. The mockup's toolbar has no such buttons, and the fidelity session holds 12 named media, so a pool in the toolbar could not pass layer 3. Decided:
@@ -1255,3 +1257,63 @@ The plan of `m5-ui-alignment-arrange` stopped on one question (where the media p
 - The diagnostics row's test id is renamed `about-track-count`. The specs that read the track count through it change in the same pull request.
 
 **5. Known item, no change: the Riser's opacity.** The mockup draws `clip-16` (Riser, moved by the pending plan) at 38 % opacity, a ghost effect M5 does not have. The app draws it as a clip of a muted track, at 50 %. About 520 px of its title strip are unmasked, roughly 0.2 % of the project zone's unmasked pixels. Together with the FX mute ring that stays inside the 0.5 % limit. If the measured total exceeds the limit, the remedy is a mask in the manifest for the ghost that `m5b-ui-ghosts` owns, and the maintainer decides it. The feature does not dim the clip to pass.
+
+### 10.9 Decision of 2026-11-17: components are ported, and the gate is a visual aid
+
+**Decided by the maintainer, 2026-11-17.** It supersedes the pixel-identity parts of the decisions of 2026-11-14 (the opening of this section, 10.2) and of 2026-11-15 (10.4 to 10.8): wherever those say that a part must be within 1 px of the mockup, that a region may differ in at most 0.5 % of its pixels, that a feature sets its gate to `enforce`, or that a mismatch fails CI, this section replaces them. Everything else in them stands.
+
+In the maintainer's words: the app does not have to match the mockup pixel by pixel; take the HTML that produced the screenshot and use it, build each component with frontend technology, and split the work into frontend tasks.
+
+What led to it: `m5-ui-alignment-chrome` enforced the first gate, and CI on Linux failed on parts that look the same as the mockup's. Fonts lay text out a pixel or two apart between Windows and Linux, and boxes sized by their text move with it. Holding every part to one pixel on two operating systems cost more than the look it protected.
+
+**1. Components are ported from the mockup's source.** The mockup's panels are real DOM, built by its script: the `app.innerHTML` template for the top bar, the Inspector, the toolbar, the info line, the Plans tab and the status bar, and the functions `th()` (a track header), `strip()` and `knob()` (a MixConsole strip and its pan control), `step()` (a plan step), `tool()` (a toolbar tool) and `sec()` (an Inspector section). A port turns one function or one block of that template into a React component that returns the same elements with the same class names, is styled by the shared rules of `app/renderer/ui` and by nothing else, reads its values from the read model and the protocol where the mockup has constants, and keeps the mockup's `data-part` ids (10.3). Only the arrange area is painted: `draw()` fills the `#tl` canvas, with waveforms from a noise function. The app follows `draw()`'s parameters (10.1) and draws real waveforms from the media's peak pyramids.
+
+**2. The fidelity run is a visual aid.** Layers 2 and 3 of 10.2 are measured and reported, and they never block. Every gate that is measured is `report`, for good. There is no `enforce` mode: no feature sets one, and `test/mockup-fidelity.test.js` fails on a gate that is. A feature that lands sets its gate from `pending` to `report`. check-all runs the fidelity run after the app's tests and notes a run that did not pass without failing; CI's step is `continue-on-error` and uploads the report and its images as `fidelity-<os>`. The thresholds of the manifest (1 px, 0.5 %) stay as what the report measures against; they are not pass marks.
+
+**3. Layer 1 still blocks.** No colour or size literal outside `app/renderer/tokens.css`: `test/ui-tokens.test.js` fails otherwise, in `npm test` on every OS. `app/test/fidelity/debt.json` is the ledger of what does not hold yet, and debt.json only shrinks; `m5-ui-port-cleanup` ends with it empty.
+
+**4. The maintainer reviews by eye.** Every UI pull request attaches, for each state it changes, a side-by-side screenshot of the app and the mockup: the same region at 1440x900 and device scale factor 1, in `en` and `zh-TW`. The fidelity run writes both images per region and locale (`<locale>/<region>.app.png` and `<region>.mockup.png`, and `app.png` and `mockup.png` for the whole window), so one run gives them. The mockup shows one state; a state it does not show is attached from the app alone. `report.md` goes with them: it says what differs and by how much.
+
+**5. What does not change.**
+
+- An absent part keeps its space empty (3.0; 10.5, 1). The window keeps one layout from M5 to the finished product, and the app's screenshot lines up with the mockup's.
+- Every part has an owner, and a part whose feature has not landed is `pending` (10.4, 10.5).
+- Changing the reference (`tokens.css`, `app/renderer/ui`, `mockup.html`, its PNGs, the manifest's rules, thresholds and masks) needs the maintainer (10.1), and so does adding to `debt.json`.
+- The decisions of 2026-11-15 on what the window shows: the text formats of the chrome and of the info line, the fader taper of 4.5 C7 and the corrected mockup, the Plans tab's derived text and its masks in the report, the Pool on `Ctrl+P`, the track list's count, clip titles from the media's name, the app-only tokens and the empty-width token (10.7, 10.8).
+- A component's behaviour: gestures, keys, modifiers and one revision per gesture are what the earlier tickets shipped.
+
+**6. The remaining alignment features are replaced by component port features** (10.10). `m5-ui-alignment-chrome` was in review when this was decided and stays; its gate goes back to `report`. Where 10.5 to 10.8 name one of the replaced features, read the port feature that took its work over:
+
+| Replaced | Its work is now in |
+|---|---|
+| `m5-ui-alignment-arrange` (P1-11) | `m5-ui-port-arrange-canvas` (the canvas, clip titles), `m5-ui-port-track-list` (the list and its count), `m5-ui-port-toolbar` (toolbar, info line and its formats, the Pool) |
+| `m5-ui-alignment-mixer-inspector` (P1-12) | `m5-ui-port-mixer-strip`, `m5-ui-port-inspector` |
+| `m5-ui-alignment-plans` (P1-13) | `m5-ui-port-plans` |
+| `m5-ui-mockup-alignment` (P1-14) | `m5-ui-port-cleanup` (the ledger, the app-only tokens of 10.7, 4, the retaken tour) |
+
+Decided by the author, as the maintainer left the split open (Fable, 2026-11-17): the seven features, their waves and their dependencies in 10.10; that the first feature of the project zone is the canvas, because it sets the row geometry and the clip title the track list and the toolbar use; and that `pending` stays a mode, so that a part that is not built is skipped in the report instead of being listed as missing.
+
+### 10.10 The component port tickets (P1-11 to P1-17)
+
+The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Each ticket ports one function or one block of the mockup's script (10.9, 1). The first component of each zone runs in wave 10, side by side; the track list and the toolbar follow the canvas, which links the project zone's stylesheet and sets the rows; the closing ticket is last.
+
+| Ticket | Feature | Wave | After | Ports | On real data |
+|---|---|---|---|---|---|
+| P1-11 | `m5-ui-port-arrange-canvas` | 10 | P1-10, `m5-ui-edit-basics`, `m5-ui-loop-click` | `draw()`: the ruler's two halves, the marker row (empty), lanes, clips with title strips and handles, the locator band, the cursor. Links `project-zone.css` | Real waveforms from the peak pyramids, in the mockup's two tones; clip titles from the media's name |
+| P1-12 | `m5-ui-port-mixer-strip` | 10 | P1-10 | `strip()`, `knob()`, the master strip and the lower zone's tab row. Links `lower-zone.css` | Gain, pan, mute and solo from the read model; meters from the meter frames, outside React; the taper of 4.5 C7 |
+| P1-13 | `m5-ui-port-plans` | 10 | P1-10 | The Plans tab: tab row, hearing switch, the card, `step()`, the actions, the history rows. Links `right-zone.css` | The plan store; the text M5 can derive (10.7, 3) |
+| P1-14 | `m5-ui-port-inspector` | 10 | P1-10 | The left zone: head, track block, volume and pan rows, the empty rows of `sec()`, the foot. Links `left-zone.css` | The selected track; the same commands as the strip |
+| P1-15 | `m5-ui-port-track-list` | 11 | P1-11 | The list head and `th()` | Tracks in document order; the count of tracks and clips (10.8, 4) |
+| P1-16 | `m5-ui-port-toolbar` | 11 | P1-11, `m5-ui-edit-basics` | `tool()`, the snap, grid type and auto-scroll fields, the info line | The tool, snap and follow state; the selected clip in the mockup's formats (10.8, 2); the Pool on `Ctrl+P` (10.8, 1) |
+| P1-17 | `m5-ui-port-cleanup` | 12 | P1-10 to P1-16 | Nothing new: the old components, class names and `shell.css` rules the port left over are removed, and the app's stylesheet links equal the mockup's | `debt.json` empty; the app-only tokens of 10.7, 4; the tour retaken for the `ui-redesign-review` gate |
+
+Rules for all of them:
+
+- The component's DOM structure and class names are the mockup's, and the rules of `shell.css` it replaces are removed. A component not ported yet looks as it did.
+- An absent part keeps its space empty (3.0). Each ticket's acceptance lists the absent parts of its component and the feature that owns each.
+- Tests: unit tests hold the rendered structure, classes and ids to the mockup's markup and cover the values and formats; an e2e covers each user path against the real engine and finds the component's ids and no id of a pending part; the existing e2e of the component's behaviour passes.
+- Review: the side-by-side screenshot and the report of 10.9, 4. The feature's gate is `report` and stays `report`.
+- Layer 1 blocks as before, and the ledger only shrinks: P1-11 clears the entry of `TimelineCanvas.ts`, P1-12 that of `MixerMeters.ts`, and P1-17 what is left of `shell.css`.
+- Tour states: each names the states it changes; P1-17 retakes the whole tour once, in the three locales.
+
+The UI features of M5b and M6a that own parts of the mockup follow the same rule: their acceptance says "ported from the mockup's markup", their gate goes from `pending` to `report` when they land, and they attach the side-by-side screenshot.

@@ -24,7 +24,7 @@ The path-to-step table is in `docs/harness/agent-rules.md` ("Checks") and in `st
 
 ### UI fidelity gate
 
-The UI is checked against the mockup (`docs/harness/agent-rules.md`, "UI fidelity"; UI redesign spec, section 10). Three layers:
+The UI is ported from the mockup, component by component, and compared with it (`docs/harness/agent-rules.md`, "UI fidelity"; UI redesign spec, section 10). Three layers; only the first blocks, and the other two are a report (decided by the maintainer, 2026-11-17):
 
 | Layer | Command | Needs |
 |---|---|---|
