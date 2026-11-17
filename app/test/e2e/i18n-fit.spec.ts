@@ -17,15 +17,18 @@ import * as path from 'node:path';
 import type { Locale } from '../../src/renderer/i18n/locale';
 import { planArrivedMessage } from '../../src/renderer/i18n/messages';
 import { engineClient } from './support/engine-client';
-import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
+import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 const SIZES = [
   { width: 1440, height: 900 },
   { width: 1024, height: 700 },
 ];
 const LOCALES = ['en', 'zh-Hant', 'zh-Hans', 'pseudo'] as const;
-const LABELLED = 'button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators]';
-const ONE_LINE = 'button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value]';
+// The Plans tab's controls (m5-ui-port-plans): the tab, the hearing switch's
+// segments, the steps head's link, the three action buttons and the badges.
+const PLANS = '.p-head .tab, .ab .b, .steps-h a, .acts .btn, .plans .badge';
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], ${PLANS}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], ${PLANS}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -112,14 +115,21 @@ test('no labelled control overflows or wraps its label in any locale at either w
   if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
   // A plan auditioned: its card reads approved for audition and the banner shows.
   const auditioned = await agent.tool('submit_plan', { steps: MIX_PASS.slice(1, 3) });
-  await page.getByTestId(`plan-${hash8(auditioned.hash as string)}`).click();
+  await selectPlan(page, auditioned.hash as string);
   await page.getByTestId('plan-audition').click();
   await expect(page.getByTestId('audition-banner')).toBeVisible();
-  // The plan under review, selected: steps, actions and diff.
+  // The plan under review, selected: its card (summary chips, steps with the
+  // one select link, the three actions), the reason row opened by Reject, the
+  // earlier plan's history row, and the hearing switch in the tab row.
   const plan = await agent.tool('submit_plan', { steps: MIX_PASS });
-  await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
-  await expect(page.getByTestId('plan-diff')).toBeVisible();
+  await selectPlan(page, plan.hash as string);
   await expect(page.getByTestId('plan-approve-apply')).toBeVisible();
+  await page.getByTestId('plan-reject').click();
+  await expect(page.getByTestId('plan-note')).toBeFocused();
+  for (const id of ['tab-right-plans', 'hear-main', 'hear-proposal', 'steps-none', 'plan-audition', 'plan-reject', `plan-${(auditioned.hash as string).slice(7, 15)}`]) {
+    await expect(page.getByTestId(id)).toBeVisible();
+  }
+  await expect(page.locator('[data-part="plan-summary"] > span')).toHaveCount(3);
   // The track list (m5-ui-arrange) is in the check: its + button, M and S of
   // every header and the info line's terms are labelled controls.
   await expect(page.getByTestId('track-add')).toBeVisible();

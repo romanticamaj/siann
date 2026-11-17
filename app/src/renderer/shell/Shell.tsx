@@ -168,6 +168,8 @@ export interface ShellProps {
   readonly project: ReactNode;
   readonly lower: ReactNode;
   readonly right: ReactNode;
+  // m5-ui-port-plans: the hearing switch in the right zone's tab row (not implemented yet).
+  readonly rightHead?: ReactNode;
 }
 
 interface ZoneFrameProps {

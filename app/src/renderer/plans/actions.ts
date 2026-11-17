@@ -109,6 +109,11 @@ export function actionSet(plan: PlanEntry, heard: string | null, chosen: Selecti
   return { primary: { id: 'merge' }, secondary: [...hear, { id: 'discard' }], disabled };
 }
 
+// The three cells of the card's .acts (m5-ui-port-plans): not implemented yet.
+export function actionCells(_set: ActionSet): readonly [ActionEntry | null, ActionEntry | null, ActionEntry | null] {
+  return [null, null, null];
+}
+
 const LABELS = {
   approveApply: 'plans.approveApply',
   apply: 'plans.apply',

@@ -58,6 +58,11 @@ export interface PlanPanelViewProps {
   readonly onRun: (entry: ActionEntry) => void;
   // Above the cards (the hearing switch).
   readonly header?: ReactNode;
+  // m5-ui-port-plans: not implemented yet.
+  readonly rejecting?: boolean;
+  readonly hotStep?: number | null;
+  readonly onRejecting?: (open: boolean) => void;
+  readonly onHotStep?: (index: number | null) => void;
   // Disclosures that start open (tests).
   readonly openSteps?: ReadonlySet<number>;
   readonly openRows?: ReadonlySet<number>;

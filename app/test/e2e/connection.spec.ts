@@ -23,7 +23,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient } from './support/engine-client';
-import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
+import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 const ZONES = ['left', 'project', 'lower', 'right'] as const;
 // The methods a control sends (the mixer, the timeline, plan review). The
@@ -98,7 +98,7 @@ test('while the engine is down a full-width banner shows, the zones are inert an
   await launch(600_000);
   const agent = await agentFor(app!);
   const plan = await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -3000 }] });
-  await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
+  await selectPlan(page, plan.hash as string);
   await expect(page.getByTestId('plan-approve-apply')).toBeEnabled();
   await selectClip('clp_a');
   const revision = (await page.getByTestId('revision').textContent()) ?? '';

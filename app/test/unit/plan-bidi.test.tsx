@@ -36,17 +36,18 @@ const NOTE = `Keep ${RLO}lacov eht${PDF} please`;
 const REJECTED = hashOf('4');
 const FRESH = hashOf('1');
 
-// The opening tag of the element with this class, or '' when there is none.
-function openingTags(markup: string, className: string): string[] {
-  return [...markup.matchAll(new RegExp(`<[a-z]+[^>]*class="${className}"[^>]*>`, 'g'))].map((match) => match[0]);
+// The opening tags of the elements with this class (or matching this pattern).
+function openingTags(markup: string, what: string | RegExp): string[] {
+  const re = typeof what === 'string' ? new RegExp(`<[a-z]+[^>]*class="${what}"[^>]*>`, 'g') : what;
+  return [...markup.matchAll(re)].map((match) => match[1] ?? match[0]);
 }
 
-function assertIsolated(markup: string, className: string) {
-  const tags = openingTags(markup, className);
-  assert.ok(tags.length > 0, `no element with class ${className}`);
+function assertIsolated(markup: string, what: string | RegExp) {
+  const tags = openingTags(markup, what);
+  assert.ok(tags.length > 0, `no element for ${String(what)}`);
   for (const tag of tags) {
-    assert.match(tag, /\sdir="auto"/, `${className}: ${tag}`);
-    assert.match(tag, /style="[^"]*unicode-bidi:isolate/, `${className}: ${tag}`);
+    assert.match(tag, /\sdir="auto"/, `${String(what)}: ${tag}`);
+    assert.match(tag, /style="[^"]*unicode-bidi:isolate/, `${String(what)}: ${tag}`);
   }
 }
 
@@ -65,10 +66,14 @@ function panel(overrides: Partial<PlanPanelViewProps> = {}): string {
     preview: null,
     previewError: null,
     staleReasons: [`Vox ${RLO}emulov${PDF} changed`],
+    rejecting: false,
+    hotStep: null,
     onSelect: () => undefined,
     onTicked: () => undefined,
     onNote: () => undefined,
     onRun: () => undefined,
+    onRejecting: () => undefined,
+    onHotStep: () => undefined,
     ...overrides,
   };
   return renderToStaticMarkup(
@@ -83,12 +88,13 @@ test('ISOLATE is dir="auto" with unicode-bidi: isolate', () => {
   assert.equal(ISOLATE.style.unicodeBidi, 'isolate');
 });
 
-test("the card's lead and rejection note, each step and the stale reasons are bidi-isolated", () => {
+test("a history row's title and rejection note, each step and the stale reasons are bidi-isolated", () => {
   const markup = panel();
   assert.ok(markup.includes(NOTE), 'the note is shown as sent');
-  assertIsolated(markup, 'plan-card-lead');
-  assertIsolated(markup, 'plan-card-reason');
-  assertIsolated(markup, 'step-text');
+  assert.ok(markup.includes(isolateName(NOTE)), 'the note is its own isolate inside its line');
+  assertIsolated(markup, /<button[^>]*class="hrow"[^>]*>(<b[^>]*>)/g);
+  assertIsolated(markup, /(<small[^>]*data-testid="plan-reason-[0-9a-f]{8}"[^>]*>)/g);
+  assertIsolated(markup, 't');
   assertIsolated(markup, 'plan-stale-reason');
 });
 

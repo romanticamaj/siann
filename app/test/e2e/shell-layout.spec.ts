@@ -17,7 +17,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient } from './support/engine-client';
-import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
+import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 type Zone = 'left' | 'lower' | 'right';
 const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
@@ -432,7 +432,8 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   expect(await frame('project')).toBe(true);
   // The focus frame is --focus, the primary text at 20 % (m5-ui-tokens-spacing).
   expect(await page.locator('[data-zone="project"]').evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(232, 235, 241, 0.2)');
-  // Every zone's tab row is --zone-tabs, 26 px.
+  // The lower zone's tab row is --zone-tabs, 26 px; the right zone's is the
+  // mockup's .p-head (--zone-head), since m5-ui-port-plans.
   const tabRows = await page.locator('.zone-tabs').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height).filter((height) => height > 0));
   expect(tabRows.length).toBeGreaterThan(0);
   for (const height of tabRows) expect(height).toBe(26);
@@ -459,8 +460,11 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   // A key typed into the plan note field toggles nothing.
   const agent = await agentFor(app!);
   const plan = await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: 'trk_kick', gainMilliDb: -3000 }] });
-  await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
+  await selectPlan(page, plan.hash as string);
+  // The reason row opens with the first press of Reject (UI redesign 10.10, P1-13).
+  await page.getByTestId('plan-reject').click();
   const note = page.getByTestId('plan-note');
+  await expect(note).toBeFocused();
   await note.click();
   for (const key of [`${MOD}+Alt+KeyL`, 'Alt+KeyI', `${MOD}+Alt+KeyE`, 'Alt+F3', 'F3', `${MOD}+Alt+KeyR`, `${MOD}+Alt+KeyP`]) {
     await page.keyboard.press(key);
