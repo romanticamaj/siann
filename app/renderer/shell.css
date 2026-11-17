@@ -518,7 +518,7 @@ code, dd { font-family: var(--font-mono); }
    channel and takes no pointer events. */
 /* The mockup's .lower is a grid of --zone-tabs and the mixer; .zone makes it a
    column, so the tab row takes that row's height. */
-.zone-lower > .tabs { flex: 0 0 var(--zone-tabs); }
+.zone-lower > .tabs { flex: 0 0 var(--zone-tabs); min-height: 0; }
 .zone-lower > .zone-body { padding: 0; }
 .zone-lower .mixer { position: relative; height: 100%; }
 .mixer-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }

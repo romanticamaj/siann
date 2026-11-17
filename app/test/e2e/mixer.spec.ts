@@ -148,7 +148,8 @@ async function valueNow(control: Locator): Promise<number> {
 // The centre of a fader's cap, where a drag starts.
 async function capCentre(fader: Locator): Promise<{ x: number; y: number }> {
   await fader.scrollIntoViewIfNeeded();
-  const box = await fader.locator('.cap').boundingBox();
+  // The strip's cap is the mockup's .cap; the Inspector's (not ported yet) a .fader-cap.
+  const box = await fader.locator('.cap, .fader-cap').boundingBox();
   if (!box) throw new Error('the fader cap has no box');
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }

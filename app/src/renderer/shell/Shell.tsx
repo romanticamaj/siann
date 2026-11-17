@@ -102,7 +102,8 @@ function isZoneScope(value: string | undefined): value is ZoneScope {
 // Where the focus is: a zone itself, a control inside one (its boundary
 // included), the page, a modal dialog, or elsewhere (top bar, status bar).
 function placeOf(target: EventTarget | null): FocusPlace {
-  if (!(target instanceof HTMLElement) || target === document.body || target === document.documentElement) return { kind: 'page' };
+  // A control can be an svg (the MixConsole's pan knob).
+  if (!(target instanceof HTMLElement || target instanceof SVGElement) || target === document.body || target === document.documentElement) return { kind: 'page' };
   if (target.closest('dialog[open]')) return { kind: 'dialog' };
   const divider = target.dataset.dividerZone;
   if (isZoneScope(divider)) return { kind: 'control', zone: divider };
@@ -399,7 +400,7 @@ export function Shell({
           return true;
         case 'control': {
           const ring = zoneRing(frames.current[step.zone], step.zone);
-          ringStep(ring, active instanceof HTMLElement ? active : null, step.step)?.focus();
+          ringStep(ring, active instanceof HTMLElement || active instanceof SVGElement ? (active as HTMLElement) : null, step.step)?.focus();
           return true;
         }
         case 'enter':
