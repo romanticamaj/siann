@@ -73,8 +73,11 @@ test('SIANN_FUZZ (Clang only) instruments the libraries for libFuzzer and builds
   assert.ok(text.indexOf(block) < firstTarget(text));
   assert.match(text, /add_subdirectory\(fuzz\)/);
   const fuzz = code(read(path.join(FUZZ, 'CMakeLists.txt')));
+  // One executable per target, siann_fuzz_<target>, named outright or by a foreach.
+  const loop = /foreach\(target ([^)]*)\)\s*add_executable\(siann_fuzz_\$\{target\}/.exec(fuzz);
   for (const target of FUZZ_TARGETS) {
-    assert.match(fuzz, new RegExp(`siann_fuzz_${target}\\b`), `the libFuzzer target siann_fuzz_${target}`);
+    const named = new RegExp(`add_executable\\(siann_fuzz_${target}\\b`).test(fuzz);
+    assert.ok(named || (loop && loop[1].split(/\s+/).includes(target)), `the libFuzzer target siann_fuzz_${target}`);
   }
   assert.match(fuzz, /-fsanitize=fuzzer,address,undefined/);
   // The smoke test is an ordinary ctest in the default build, on every OS.

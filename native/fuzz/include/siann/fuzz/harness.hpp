@@ -23,7 +23,9 @@ namespace siann::fuzz {
 // The WebSocket request path after the upgrade and the token handshake: the
 // bytes as one text frame on an authenticated connection, then split on '\n'
 // into a sequence of frames on another, and as the first (auth) frame of an
-// unauthenticated one; also the realtime meter frame decoder.
+// unauthenticated one; also the realtime meter frame decoder. Every "$session"
+// in the bytes becomes the server's (random) session id first, so a corpus
+// request reaches its method instead of session_mismatch.
 void protocolWs(std::string_view bytes);
 
 // The body of POST /v0/mcp, in the MCP session the harness initialized.

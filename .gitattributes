@@ -1,3 +1,5 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 *.peaks binary
+# Fuzz seeds are bytes: the same on every OS, never line-ending converted.
+native/fuzz/corpus/** binary

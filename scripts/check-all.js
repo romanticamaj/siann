@@ -83,6 +83,9 @@ function parseArgs(argv) {
 // build files that choose all of that.
 const DESKTOP_PATHS = [
   /^native\/libs\/host_[^/]+\//,
+  // JUCE-only regressions in what the desktop engine links (m5b-nightly-quality,
+  // test-matrix gap 7): the core libraries the JUCE host's playback runs through.
+  /^native\/libs\/(playback|graph|realtime)\//,
   /^native\/apps\/engine\//,
   /^native\/cmake\//,
   /^native\/CMakePresets\.json$/,
@@ -282,6 +285,7 @@ function listSources() {
   };
   walk(path.join(NATIVE, 'libs'));
   walk(path.join(NATIVE, 'apps'));
+  walk(path.join(NATIVE, 'fuzz'));
   return files.filter((f) => !f.includes(`${path.sep}host_desktop${path.sep}`));
 }
 
@@ -364,6 +368,8 @@ async function gcc(options) {
       if (fs.existsSync(inc)) includes.push(`-I${toPosix(inc)}`);
     }
   }
+  // The fuzz harness (m5b-nightly-quality).
+  includes.push(`-I${toPosix(path.join(NATIVE, 'fuzz', 'include'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'media', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'graph', 'tests'))}`);
   includes.push(`-I${toPosix(path.join(NATIVE, 'libs', 'hash', 'tests'))}`);
@@ -382,7 +388,7 @@ async function gcc(options) {
     includes.push('-isystem', toPosix(dir));
   }
   const flags = ['-std=c++20', '-Wall', '-Wextra', '-Wpedantic', '-Wshadow', '-Werror', '-fsyntax-only',
-    '-DSIANN_FIXTURES_DIR="x"', '-DSIANN_TEST_PLUGIN_CLAP="x"',
+    '-DSIANN_FIXTURES_DIR="x"', '-DSIANN_FUZZ_CORPUS_DIR="x"', '-DSIANN_TEST_PLUGIN_CLAP="x"',
     '-DSIANN_HOSTILE_PLUGIN_CLAP="x"', '-DSIANN_HOST_CLAP_TESTS_EXE="x"', ...includes];
 
   const jobs = [];

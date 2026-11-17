@@ -33,6 +33,49 @@ if(SIANN_RTSAN)
   add_compile_definitions(SIANN_RTSAN=1)
 endif()
 
+# The nightly quality builds (m5b-nightly-quality; architecture spec, "Build,
+# test and CI"), each Clang only and on every target before the first one,
+# third-party code included, as SIANN_RTSAN is. Suppressions, if one is ever
+# needed, live in native/sanitizers/ with their reasons.
+option(SIANN_ASAN_UBSAN "Build everything with AddressSanitizer and UndefinedBehaviorSanitizer (Clang)" OFF)
+option(SIANN_FUZZ "Instrument everything for libFuzzer and build the fuzz targets (Clang)" OFF)
+option(SIANN_COVERAGE "Build everything with Clang source-based coverage" OFF)
+
+if(SIANN_ASAN_UBSAN)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "SIANN_ASAN_UBSAN needs Clang (found ${CMAKE_CXX_COMPILER_ID})")
+  endif()
+  if(SIANN_RTSAN)
+    message(FATAL_ERROR "SIANN_ASAN_UBSAN and SIANN_RTSAN are separate builds: turn one off")
+  endif()
+  # Undefined behaviour stops the test at the first report instead of printing on.
+  add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+  add_compile_definitions(SIANN_ASAN_UBSAN=1)
+endif()
+
+if(SIANN_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "SIANN_FUZZ needs Clang with libFuzzer (found ${CMAKE_CXX_COMPILER_ID})")
+  endif()
+  if(SIANN_RTSAN OR SIANN_ASAN_UBSAN)
+    message(FATAL_ERROR "SIANN_FUZZ brings its own sanitizers: turn SIANN_RTSAN and SIANN_ASAN_UBSAN off")
+  endif()
+  # The libraries get the fuzzer's coverage instrumentation; only the fuzz
+  # targets (native/fuzz) link libFuzzer's main.
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+  add_compile_definitions(SIANN_FUZZ=1)
+endif()
+
+if(SIANN_COVERAGE)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "SIANN_COVERAGE uses Clang source-based coverage (found ${CMAKE_CXX_COMPILER_ID})")
+  endif()
+  add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+  add_link_options(-fprofile-instr-generate)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SiannCompileOptions)
 include(SiannThirdParty)

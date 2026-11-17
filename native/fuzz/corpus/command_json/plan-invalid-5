@@ -1,0 +1,1 @@
+{"schema":"siann.plan.v1","baseRevision":"r4","steps":[{"op":"track.set_gain","trackId":"trk_1","gainMilliDb":-600}],"readSet":[],"writeSet":[{"type":"track","id":"trk_2","hash":"sha256:cf3b08c1f2f965dbea50366dbdca222caf879a86ae978ed555e6090ee2e9a633"},{"type":"track","id":"trk_1","hash":"sha256:9d0372b4bd19755f2a6b3885b1a7a79f205e68701061f62de3a5f62123612e90"}]}
