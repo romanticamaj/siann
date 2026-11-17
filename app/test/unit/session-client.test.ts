@@ -14,6 +14,7 @@ import {
   type AgentRequest,
   type ClientState,
   type EngineEndpoint,
+  type SessionClientOptions,
   type SocketLike,
 } from '../../src/renderer/model/session-client';
 import { sequence, type SequenceStep } from './support/sequence';
@@ -132,6 +133,8 @@ interface ServerScript {
   // The next this-many session.sync starts answer internal_error.
   failSyncs: number;
   other: (message: Message) => Message | null;
+  // The auth reply's about, when a test needs another one.
+  about?: Message;
 }
 
 // The engine's side of one connection.
@@ -149,7 +152,7 @@ function serve(socket: FakeSocket, script: ServerScript): void {
           documentHash: script.sync[0]?.documentHash,
           seq: script.authSeq,
           meters: null,
-          about: { name: 'siann-engine', version: '0.1.0', license: 'GPL-2.0-or-later', source: { commit: 'f'.repeat(40) } },
+          about: script.about ?? { name: 'siann-engine', version: '0.1.0', license: 'GPL-2.0-or-later', source: { commit: 'f'.repeat(40) } },
         }),
       );
       return;
@@ -189,7 +192,7 @@ function fixtureFetch(params: Record<string, unknown>): Message {
   return { ok: true, result: step.fetch.result as unknown as Message };
 }
 
-function rig(overrides: Partial<ServerScript> = {}) {
+function rig(overrides: Partial<ServerScript> = {}, options: Partial<Pick<SessionClientOptions, 'environment'>> = {}) {
   const scheduler = new FakeScheduler();
   const sockets: FakeSocket[] = [];
   let endpoint: EngineEndpoint | null = { port: 1, token: 'tok' };
@@ -214,6 +217,7 @@ function rig(overrides: Partial<ServerScript> = {}) {
     },
     currentEndpoint: async () => endpoint,
     schedule: scheduler.schedule,
+    ...options,
   });
   client.subscribe(() => states.push(client.getState()));
   const last = () => sockets[sockets.length - 1]!;
@@ -788,4 +792,41 @@ test('(19) a request while disconnected is refused before the socket, sends no f
   await assert.rejects(r.client.request('gesture.begin', { target: 'track:trk_1/gain' }), /not connected/);
   assert.equal(socket.sent.length, sentBefore, 'no frame reached the socket');
   assert.deepEqual(r.client.refused(), [{ method: 'command.execute' }, { method: 'plan.approve' }, { method: 'gesture.begin' }]);
+});
+
+// m5-ui-alignment-chrome (UI redesign 10.2): the fidelity run's environment
+// (app/test/fidelity/manifest.json, SIANN_FIDELITY_ENVIRONMENT under
+// SIANN_SHELL_TEST=1) answers engine.status's device and the about's name,
+// version, licence and commit field by field; the source URL stays the
+// engine's, so the "source" link stays. Without it nothing changes.
+const ENVIRONMENT = {
+  device: { id: 'ASIO/Scarlett 4i4', sampleRate: 48000, bufferFrames: 128, inputLatencyFrames: 128, outputLatencyFrames: 128 },
+  engineAbout: { name: 'siann-engine', version: '0.1.0', license: 'AGPL-3.0-or-later', source: { commit: '308d846'.padEnd(40, '0'), dirty: false } },
+};
+const ENGINE_ABOUT = { name: 'siann-engine', version: '0.3.0', license: 'GPL-2.0-or-later', source: { url: 'https://example.invalid/siann', commit: 'f'.repeat(40), dirty: true } };
+const ENGINE_STATUS = {
+  device: { id: 'fake', sampleRate: 44100, bufferFrames: 256, inputLatencyFrames: 0, outputLatencyFrames: 256 },
+  playing: false,
+  xruns: '0',
+};
+const statusServer = (message: Message): Message | null => (message.method === 'engine.status' ? { ok: true, result: structuredClone(ENGINE_STATUS) as unknown as Message } : null);
+
+test('(20) the fidelity environment answers the device of engine.status and the about field by field; without it nothing changes', async () => {
+  const withEnv = rig({ about: ENGINE_ABOUT, other: statusServer }, { environment: ENVIRONMENT });
+  await connected(withEnv);
+  assert.deepEqual(withEnv.client.getState().about, {
+    name: 'siann-engine',
+    version: '0.1.0',
+    license: 'AGPL-3.0-or-later',
+    source: { url: 'https://example.invalid/siann', commit: ENVIRONMENT.engineAbout.source.commit, dirty: false },
+  });
+  const status = (await withEnv.client.request('engine.status', {})) as typeof ENGINE_STATUS;
+  assert.deepEqual(status.device, ENVIRONMENT.device);
+  assert.equal(status.xruns, '0', 'the rest of the answer is the engine\'s');
+  assert.equal(status.playing, false);
+
+  const plain = rig({ about: ENGINE_ABOUT, other: statusServer });
+  await connected(plain);
+  assert.deepEqual(plain.client.getState().about, ENGINE_ABOUT);
+  assert.deepEqual(await plain.client.request('engine.status', {}), ENGINE_STATUS);
 });

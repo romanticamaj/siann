@@ -14,6 +14,7 @@ export const ENGINE_STATUS_POLL_MS = 1000;
 export interface EngineDevice {
   readonly id: string;
   readonly sampleRate: number;
+  readonly bufferFrames: number;
   readonly inputLatencyFrames: number;
   readonly outputLatencyFrames: number;
 }
@@ -44,6 +45,7 @@ export function parseEngineStatus(value: unknown): EngineStatus | null {
       device = Object.freeze({
         id: d.id,
         sampleRate,
+        bufferFrames: finite(d.bufferFrames) ?? 0,
         inputLatencyFrames: finite(d.inputLatencyFrames) ?? 0,
         outputLatencyFrames: finite(d.outputLatencyFrames) ?? 0,
       });
@@ -54,27 +56,37 @@ export function parseEngineStatus(value: unknown): EngineStatus | null {
   return Object.freeze({ device, deviceError, xruns: typeof raw.xruns === 'string' ? raw.xruns : null });
 }
 
+// The status bar's device segment, the mockup's "type · name · kHz / buffer
+// · latency ms" (UI redesign 2.1; 10.7, 1): type and name from the device id
+// <type>/<name> (the name alone, shown once, for an id without a slash), the
+// sample rate in kHz, the buffer in frames, and one latency, the round trip
+// (input plus output) in ms with one decimal. Without a device: the device
+// error's code, or the catalog's "no device", as the name, and nothing else.
 export interface StatusFields {
-  readonly device: string;
+  readonly type: string | null;
+  readonly name: string;
+  readonly rate: string;
+  readonly buffer: string;
   readonly latency: string;
   readonly xruns: string;
 }
 
-const ms = (frames: number, sampleRate: number) => ((frames * 1000) / sampleRate).toFixed(1);
+// 48000 -> 48, 44100 -> 44.1, 22050 -> 22.05.
+const khz = (sampleRate: number) => String(Math.round(sampleRate) / 1000);
 
-// The bar's words for an answer: the device id (or the device error's code,
-// or none), input and output latency in ms, and the xruns as reported.
 export function statusFields(status: EngineStatus | null, t: T): StatusFields {
   const device = status?.device ?? null;
+  const xruns = status?.xruns ?? '';
+  if (!device) return { type: null, name: status?.deviceError?.code ?? t('status.noDevice'), rate: '', buffer: '', latency: '', xruns };
+  const slash = device.id.indexOf('/');
+  const roundTrip = ((device.inputLatencyFrames + device.outputLatencyFrames) * 1000) / device.sampleRate;
   return {
-    device: device ? device.id : (status?.deviceError?.code ?? t('status.noDevice')),
-    latency: device
-      ? t('status.latencyValue', {
-          input: ms(device.inputLatencyFrames, device.sampleRate),
-          output: ms(device.outputLatencyFrames, device.sampleRate),
-        })
-      : '',
-    xruns: status?.xruns ?? '',
+    type: slash > 0 ? device.id.slice(0, slash) : null,
+    name: slash > 0 ? device.id.slice(slash + 1) : device.id,
+    rate: t('status.sampleRate', { khz: khz(device.sampleRate) }),
+    buffer: String(device.bufferFrames),
+    latency: t('status.latencyValue', { ms: roundTrip.toFixed(1) }),
+    xruns,
   };
 }
 

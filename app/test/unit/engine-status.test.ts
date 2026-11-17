@@ -121,13 +121,41 @@ test('an engine whose capabilities do not list engine.status is never asked', as
   store.destroy();
 });
 
-test('statusFields words the device, the latency in ms and the xruns', () => {
-  const t = translator('en');
-  const shown = statusFields(parseEngineStatus(device('7')), t);
-  assert.deepEqual(shown, { device: 'fake', latency: '5.0 / 10.0 ms', xruns: '7' });
-  const none = statusFields(parseEngineStatus({ device: null, deviceError: { code: 'device_lost', message: 'gone' }, xruns: '3' }), t);
-  assert.deepEqual(none, { device: 'device_lost', latency: '', xruns: '3' });
-  const unknown = statusFields(parseEngineStatus({ device: null, xruns: '0' }), t);
-  assert.equal(unknown.device, t('status.noDevice'));
+// The mockup's device segment (UI redesign 2.1, 10.7, 1): "type · name · kHz /
+// buffer · latency ms", one latency, the round trip (input plus output).
+const SCARLETT = {
+  device: { id: 'ASIO/Scarlett 4i4', sampleRate: 48000, bufferFrames: 128, inputLatencyFrames: 128, outputLatencyFrames: 128 },
+  xruns: '0',
+};
+
+test('statusFields words the device as the mockup does, in every locale', () => {
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    const t = translator(locale);
+    // (128 + 128) frames at 48 kHz: 5.333 ms, one decimal.
+    assert.deepEqual(statusFields(parseEngineStatus(SCARLETT), t), {
+      type: 'ASIO',
+      name: 'Scarlett 4i4',
+      rate: '48 kHz',
+      buffer: '128',
+      latency: '5.3 ms',
+      xruns: '0',
+    }, locale);
+    // 44.1 kHz keeps its decimal; 240 + 480 frames at 44.1 kHz is 16.3 ms.
+    const cd = statusFields(parseEngineStatus({ ...SCARLETT, device: { ...SCARLETT.device, sampleRate: 44100, inputLatencyFrames: 240, outputLatencyFrames: 480 } }), t);
+    assert.equal(cd.rate, '44.1 kHz', locale);
+    assert.equal(cd.latency, '16.3 ms', locale);
+    // An id without a slash is shown once, as the name.
+    const fake = statusFields(parseEngineStatus(device('7')), t);
+    assert.deepEqual(fake, { type: null, name: 'fake', rate: '48 kHz', buffer: '256', latency: '15.0 ms', xruns: '7' }, locale);
+    // Only the first slash separates: a name may hold one.
+    assert.equal(statusFields(parseEngineStatus({ ...SCARLETT, device: { ...SCARLETT.device, id: 'Windows Audio/Speakers / Headphones' } }), t).name, 'Speakers / Headphones');
+    // No device: the device error's code, or the catalog's "no device"; nothing else.
+    const none = statusFields(parseEngineStatus({ device: null, deviceError: { code: 'device_lost', message: 'gone' }, xruns: '3' }), t);
+    assert.deepEqual(none, { type: null, name: 'device_lost', rate: '', buffer: '', latency: '', xruns: '3' }, locale);
+    const unknown = statusFields(parseEngineStatus({ device: null, xruns: '0' }), t);
+    assert.equal(unknown.name, t('status.noDevice'), locale);
+    assert.equal(unknown.type, null);
+  }
   assert.equal(parseEngineStatus('nonsense'), null);
+  assert.equal(parseEngineStatus(SCARLETT)?.device?.bufferFrames, 128);
 });

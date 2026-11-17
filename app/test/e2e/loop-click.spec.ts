@@ -262,7 +262,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   await snapOff();
   // No locators yet: no display, its cell empty at --display-locators-empty-w; no band.
   await expect(page.getByTestId('display-locators')).toHaveCount(0);
-  await expect(page.locator('.transport-locators-empty')).toHaveCount(1);
+  await expect(page.locator('.display-locators-empty')).toHaveCount(1);
   expect(await band()).toBeNull();
   const start = await revisions();
 
@@ -276,7 +276,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   expect(await locators()).toEqual(drawn);
   await expect.poll(async () => (await band())?.right).toBe(drawn.right);
   await expect(page.getByTestId('display-locators')).toBeVisible();
-  await expect(page.locator('.transport-locators-empty')).toHaveCount(0);
+  await expect(page.locator('.display-locators-empty')).toHaveCount(0);
 
   // Ctrl-click sets the left locator, Alt-click the right one.
   await upperDrag(150, 150, [MOD]);
@@ -324,7 +324,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   await expect.poll(locators).toBeNull();
   await expect.poll(band).toBeNull();
   await expect(page.getByTestId('display-locators')).toHaveCount(0);
-  await expect(page.locator('.transport-locators-empty')).toHaveCount(1);
+  await expect(page.locator('.display-locators-empty')).toHaveCount(1);
   await expectNoInvalidLocators();
   await expect(page.getByTestId('toast')).toHaveCount(0);
 });
@@ -537,7 +537,7 @@ test('against an engine whose capabilities lack the methods none of the controls
   expect(await band()).toBeNull();
   // The other parts keep their boxes: the empty ones hold the space.
   expect(await boxes()).toEqual(full);
-  const holds = page.locator('.transport-hold, .transport-locators-empty');
+  const holds = page.locator('.transport-hold, .display-locators-empty');
   await expect(holds).toHaveCount(3);
   for (const hold of await holds.all()) {
     await expect(hold).toHaveAttribute('aria-hidden', 'true');

@@ -37,6 +37,7 @@ import type { PlanStore } from './model/plan-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
+import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
 import { Mixer } from './mixer/Mixer';
 import { announceArrivals } from './plans/arrivals';
@@ -69,6 +70,8 @@ export interface AppProps {
   readonly transport: TransportController;
   // Locators, cycle and metronome (m5-ui-loop-click).
   readonly loopClick: LoopClickController;
+  // What undo and redo can do now (the top bar's undo and redo).
+  readonly history: UndoHistory;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
 }
@@ -87,6 +90,7 @@ export function App({
   toasts,
   transport,
   loopClick,
+  history,
   onTimelineHooks,
   onMeterHooks,
 }: AppProps) {
@@ -133,6 +137,7 @@ export function App({
           realtime={realtime}
           transport={transport}
           loopClick={loopClick}
+          history={history}
           left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} />}
           project={
             <Counted id="timeline">

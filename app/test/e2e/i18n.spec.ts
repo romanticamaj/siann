@@ -112,8 +112,8 @@ async function expectLocale(locale: Locale): Promise<void> {
   await expect(page.locator('html')).toHaveAttribute('lang', locale === 'en' ? 'en' : locale === 'zh-Hant' ? 'zh-TW' : 'zh-CN');
   await expect(page.getByTestId('locale-switch')).toHaveValue(locale);
   const t = translator(locale);
-  await expect(page.getByTestId('status')).toHaveText(catalog['connection.connected']);
-  await expect(page.getByTestId('status-bar').locator('dt').first()).toHaveText(catalog['status.engine']);
+  await expect(page.getByTestId('status')).toHaveText(catalog['status.engineConnected']);
+  await expect(page.locator('[data-part="status-saved"]')).toContainText(catalog['status.saved']);
   await expect(page.getByTestId('delete-clip')).toHaveText(catalog['timeline.deleteClip']);
   await expect(page.getByTestId('plan-approve-apply')).toHaveText(catalog['plans.approveApply']);
   await expect(page.getByTestId('fader-trk_a')).toHaveAttribute('aria-label', t('strip.gainLabel', { track: 'trk_a' }));

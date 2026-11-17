@@ -48,15 +48,21 @@ test('across a tempo change: 120 BPM for bar 1, then 60 BPM', () => {
   assert.equal(parsePosition('2.3.960', CHANGE, RATE, 'bars'), '216000');
 });
 
-test('seconds are m:ss.mmm, the same bytes in every locale, never rounded up', () => {
-  assert.equal(formatSeconds(4 * RATE, RATE), '0:04.000');
-  assert.equal(formatSeconds(0, RATE), '0:00.000');
-  assert.equal(formatSeconds(12_000, RATE), '0:00.250');
-  assert.equal(formatSeconds(61.5 * RATE, RATE), '1:01.500');
+test('seconds are hh:mm:ss.mmm, the same bytes in every locale, never rounded up (UI redesign 10.7, 1)', () => {
+  // The mockup's time display: 00:00:19.000 at 19 s.
+  assert.equal(formatSeconds(19 * RATE, RATE), '00:00:19.000');
+  assert.equal(formatSeconds(4 * RATE, RATE), '00:00:04.000');
+  assert.equal(formatSeconds(0, RATE), '00:00:00.000');
+  assert.equal(formatSeconds(12_000, RATE), '00:00:00.250');
+  assert.equal(formatSeconds(61.5 * RATE, RATE), '00:01:01.500');
   // One frame short of a second is still 0.999 s.
-  assert.equal(formatSeconds(RATE - 1, RATE), '0:00.999');
-  assert.equal(formatSeconds('2880000', RATE), '1:00.000');
-  assert.equal(formatPosition(4 * RATE, AT_120, RATE, 'seconds'), '0:04.000');
+  assert.equal(formatSeconds(RATE - 1, RATE), '00:00:00.999');
+  assert.equal(formatSeconds('2880000', RATE), '00:01:00.000');
+  // An hour, and hours past two digits: unbounded.
+  assert.equal(formatSeconds(3600 * RATE, RATE), '01:00:00.000');
+  assert.equal(formatSeconds(String(100 * 3600 * RATE + 5 * RATE), RATE), '100:00:05.000');
+  assert.equal(formatSeconds(-5, RATE), '00:00:00.000');
+  assert.equal(formatPosition(4 * RATE, AT_120, RATE, 'seconds'), '00:00:04.000');
 });
 
 test('a typed position is read in the primary format; garbage, negatives and bar 0 are refused', () => {
@@ -69,24 +75,30 @@ test('a typed position is read in the primary format; garbage, negatives and bar
   for (const bad of ['', 'abc', '0', '0.1.000', '1.0.000', '1.5.000', '1.1.1920', '-1', '1..2', '3.1.000.0', '1e3']) {
     assert.equal(parsePosition(bad, AT_120, RATE, 'bars'), null, JSON.stringify(bad));
   }
-  // Seconds: plain seconds or m:ss.mmm.
+  // Seconds: plain seconds, m:ss.mmm, or hh:mm:ss.mmm as the display shows it.
   assert.equal(parsePosition('4', AT_120, RATE, 'seconds'), '192000');
+  assert.equal(parsePosition('00:00:04.000', AT_120, RATE, 'seconds'), '192000');
+  assert.equal(parsePosition('00:00:19.000', AT_120, RATE, 'seconds'), String(19 * RATE));
+  assert.equal(parsePosition('01:00:00.000', AT_120, RATE, 'seconds'), String(3600 * RATE));
+  assert.equal(parsePosition('0:01:01.5', AT_120, RATE, 'seconds'), String(61.5 * RATE));
   assert.equal(parsePosition('4.5', AT_120, RATE, 'seconds'), '216000');
   assert.equal(parsePosition('0:04.000', AT_120, RATE, 'seconds'), '192000');
   assert.equal(parsePosition('1:01.5', AT_120, RATE, 'seconds'), String(61.5 * RATE));
-  for (const bad of ['', 'x', '-4', '-0:01', '1:60', '4s', '1:2:3']) {
+  for (const bad of ['', 'x', '-4', '-0:01', '1:60', '4s', '00:60:00.000', '00:00:60.000', '1:2:3:4', '::4']) {
     assert.equal(parsePosition(bad, AT_120, RATE, 'seconds'), null, JSON.stringify(bad));
   }
 });
 
-test('the tempo readout is the tempo in force at the cursor, in BPM with three decimals', () => {
-  assert.equal(formatTempo(tempoAt(0, CHANGE, RATE)), '120.000');
+test('the tempo readout is the tempo in force at the cursor, in BPM with two decimals (the mockup\'s 120.00)', () => {
+  assert.equal(formatTempo(tempoAt(0, CHANGE, RATE)), '120.00');
   // Bar 2 starts at 2 s: 60 BPM from there.
-  assert.equal(formatTempo(tempoAt(95_999, CHANGE, RATE)), '120.000');
-  assert.equal(formatTempo(tempoAt(96_000, CHANGE, RATE)), '60.000');
-  assert.equal(formatTempo(tempoAt(288_000, CHANGE, RATE)), '60.000');
-  assert.equal(formatTempo(tempoAt(0, [], RATE)), '120.000');
-  assert.equal(formatTempo(tempoAt(0, [{ ticks: '0', milliBpm: 96_500 }], RATE)), '96.500');
+  assert.equal(formatTempo(tempoAt(95_999, CHANGE, RATE)), '120.00');
+  assert.equal(formatTempo(tempoAt(96_000, CHANGE, RATE)), '60.00');
+  assert.equal(formatTempo(tempoAt(288_000, CHANGE, RATE)), '60.00');
+  assert.equal(formatTempo(tempoAt(0, [], RATE)), '120.00');
+  assert.equal(formatTempo(tempoAt(0, [{ ticks: '0', milliBpm: 96_500 }], RATE)), '96.50');
+  // Truncated, as the time is: 96.509 BPM reads 96.50.
+  assert.equal(formatTempo(96_509), '96.50');
 });
 
 test('the period key exchanges the primary and the secondary format', () => {

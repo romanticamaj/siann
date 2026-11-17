@@ -58,14 +58,18 @@ import { MAX_CLICK_GAIN, MIN_CLICK_GAIN, type LoopClickController } from '../mod
 import type { MeterFrame } from '../model/meter-frames';
 import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
+import type { UndoHistory } from '../model/undo-history';
 import { formatLocators, rangeOf } from '../timeline/locators';
 import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt, type TimeFormat } from '../timeline/transport-time';
 import { PlayheadClock } from '../transport/playhead-clock';
-import { Capable } from './Capable';
+import { useCapabilities } from './Capable';
 import { Counted } from './Counted';
+import { Icon } from './icons';
 import type { LayoutStore } from './layout-store';
+import { Hold } from './Hold';
 
 const DEFAULT_RATE = 48000;
+const TRANSPORT_METHODS = ['transport.play', 'transport.stop', 'transport.locate'];
 
 // Animation frames in which the position display's text changed (the
 // display-rate e2e reads it through window.__siannTransport).
@@ -134,16 +138,6 @@ export interface TransportProps {
 
 const noSubscription = () => () => undefined;
 
-// A 16 px glyph in the text colour: stand-in drawings on spec 1.5's 16 px
-// grid until the Lucide sprite is in the repo.
-function Icon({ path }: { path: string }) {
-  return (
-    <svg className="transport-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
-      <path d={path} fill="currentColor" />
-    </svg>
-  );
-}
-
 export function useTransportAvailability(client: SessionClient, engineStatus: EngineStatusSource, noDevice: NoDeviceKey = 'transport.noDevice'): TransportAvailability {
   const t = useT();
   const key = useSyncExternalStore(
@@ -190,15 +184,35 @@ function useLocatorText(client: SessionClient): string | null {
 }
 
 // A display value as the mockup writes it: the digits, and each separator
-// ("." and "–") in an <em> that `.lcd .val em` dims.
-function lcdDigits(text: string) {
-  return text.split(/([^\d\s]+)/).map((piece, index) => (index % 2 === 1 ? <em key={index}>{piece}</em> : piece));
+// ("." and "–", and the "/" of a signature) in an <em> that `.lcd .val em`
+// dims; the time's colons are digits' company, as in the mockup
+// (00:00:19<em>.</em>000).
+export function lcdPieces(text: string): string[] {
+  return text.split(/([.–/])/).filter((piece) => piece !== '');
 }
 
-// The box an absent part keeps (spec 3.0): nothing in it, no role, no focus,
-// no data-part, hidden from assistive technology.
-function Hold({ className }: { className: string }) {
-  return <span className={className} aria-hidden="true" />;
+function isSeparator(piece: string): boolean {
+  return piece === '.' || piece === '–' || piece === '/';
+}
+
+function lcdDigits(text: string) {
+  return lcdPieces(text).map((piece, index) => (isSeparator(piece) ? <em key={index}>{piece}</em> : piece));
+}
+
+// The same, written outside React (the position, time and tempo values):
+// only when the text changed; returns whether it did.
+function writeLcd(el: HTMLElement, text: string): boolean {
+  if (el.dataset.text === text) return false;
+  el.dataset.text = text;
+  el.replaceChildren(
+    ...lcdPieces(text).map((piece) => {
+      if (!isSeparator(piece)) return document.createTextNode(piece);
+      const em = document.createElement('em');
+      em.textContent = piece;
+      return em;
+    }),
+  );
+  return true;
 }
 
 function TransportBar({ client, realtime, engineStatus, layout, commands, transport, loopClick }: TransportProps) {
@@ -241,6 +255,9 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     const secondaryEl = secondaryRef.current;
     const tempoEl = tempoRef.current;
     if (!primaryEl || !secondaryEl || !tempoEl) return undefined;
+    // A format exchange rewrites both cells.
+    delete primaryEl.dataset.text;
+    delete secondaryEl.dataset.text;
     const clock = new PlayheadClock({ now: () => performance.now() });
     let frame: number | null = null;
     const write = () => {
@@ -250,20 +267,10 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
       const rate = root?.sampleRate ?? DEFAULT_RATE;
       const tempo = root?.tempo ?? [];
       const position = clock.position(rate) ?? '0';
-      const first = formatPosition(position, tempo, rate, primary);
-      const second = formatPosition(position, tempo, rate, otherFormat(primary));
-      let changed = false;
-      if (primaryEl.textContent !== first) {
-        primaryEl.textContent = first;
-        changed = true;
-      }
-      if (secondaryEl.textContent !== second) {
-        secondaryEl.textContent = second;
-        changed = true;
-      }
-      const bpm = formatTempo(tempoAt(position, tempo, rate));
-      if (tempoEl.textContent !== bpm) tempoEl.textContent = bpm;
-      if (changed) writes += 1;
+      const first = writeLcd(primaryEl, formatPosition(position, tempo, rate, primary));
+      const second = writeLcd(secondaryEl, formatPosition(position, tempo, rate, otherFormat(primary)));
+      writeLcd(tempoEl, formatTempo(tempoAt(position, tempo, rate)));
+      if (first || second) writes += 1;
       if (clock.playing()) schedule();
     };
     const schedule = () => {
@@ -315,13 +322,14 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   };
 
   const title = (label: string) => (enabled ? label : (reason ?? label));
+  const label = (format: TimeFormat) => t(format === 'bars' ? 'transport.labelBars' : 'transport.labelTime');
   return (
     <div className="transport" data-testid="transport" data-part="transport" role="group" aria-label={t('transport.label')}>
-      {/* The mockup's order: go to start, cycle, stop, start. */}
-      <div className="transport-buttons" data-part="transport-buttons">
+      {/* The mockup's order: go to start, cycle, stop, start, record. */}
+      <div className="tgroup" data-part="transport-buttons">
         <button
           type="button"
-          className="transport-button"
+          className="tbtn"
           data-testid="transport-to-start"
           data-part="transport-start"
           disabled={!enabled}
@@ -329,7 +337,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           aria-label={t('transport.toStart')}
           onClick={() => void transport.toStart()}
         >
-          <Icon path="M3 2h2v12H3zM14 2v12L6 8z" />
+          <Icon name="rtz" />
         </button>
         {gates.cycle ? (
           <button
@@ -343,14 +351,14 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
             aria-label={t('transport.cycle')}
             onClick={() => void loopClick.toggleCycle()}
           >
-            <Icon path="M3 5h8V3l3 3-3 3V7H5v2H3zm10 6H5v2l-3-3 3-3v2h6V7h2z" />
+            <Icon name="loop" />
           </button>
         ) : (
           <Hold className="transport-hold transport-hold-tbtn" />
         )}
         <button
           type="button"
-          className="transport-button"
+          className="tbtn"
           data-testid="transport-stop"
           data-part="transport-stop"
           disabled={!enabled}
@@ -358,11 +366,11 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           aria-label={t('transport.stop')}
           onClick={() => void transport.stop()}
         >
-          <Icon path="M3 3h10v10H3z" />
+          <Icon name="stop" />
         </button>
         <button
           type="button"
-          className="transport-button transport-play"
+          className="tbtn play"
           data-testid="transport-play"
           data-part="transport-play"
           disabled={!enabled}
@@ -371,11 +379,12 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           aria-label={t('transport.startStop')}
           onClick={() => void transport.toggle()}
         >
-          <Icon path="M4 2v12l10-6z" />
+          <Icon name="play" />
         </button>
+        <Hold className="hold-transport-record" />
       </div>
       <div
-        className="position-display"
+        className="lcd"
         data-testid="position-display"
         data-part="display"
         data-primary={primary}
@@ -388,38 +397,34 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           setMenu({ x: event.clientX, y: event.clientY });
         }}
       >
-        <span className="position-primary" data-testid="position-primary" data-part="display-position" ref={primaryRef} />
-        <span className="position-secondary" data-testid="position-secondary" data-part="display-time" ref={secondaryRef} />
-        {editing ? (
-          <input
-            className="position-field"
-            data-testid="position-field"
-            aria-label={t('transport.positionField')}
-            aria-invalid={invalid ? 'true' : undefined}
-            defaultValue={primaryRef.current?.textContent ?? ''}
-            autoFocus
-            spellCheck={false}
-            onFocus={(event) => event.currentTarget.select()}
-            onChange={() => setInvalid(false)}
-            onKeyDown={onFieldKey}
-            onBlur={close}
-          />
-        ) : null}
-      </div>
-      {menu ? (
-        <TimeFormatMenu
-          primary={primary}
-          x={menu.x}
-          y={menu.y}
-          onChoose={(format) => {
-            setMenu(null);
-            if (format !== primary) layout.dispatch({ type: 'exchangeFormats' });
-          }}
-          onClose={closeMenu}
-        />
-      ) : null}
-      {gates.locators && locatorText !== null ? (
-        <div className="lcd transport-locators">
+        <div className="cell" data-part="display-position">
+          <span className="lbl" aria-hidden="true">
+            {label(primary)}
+          </span>
+          <span className="val" data-testid="position-primary" ref={primaryRef} />
+          {editing ? (
+            <input
+              className="position-field"
+              data-testid="position-field"
+              aria-label={t('transport.positionField')}
+              aria-invalid={invalid ? 'true' : undefined}
+              defaultValue={primaryRef.current?.textContent ?? ''}
+              autoFocus
+              spellCheck={false}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={() => setInvalid(false)}
+              onKeyDown={onFieldKey}
+              onBlur={close}
+            />
+          ) : null}
+        </div>
+        <div className="cell" data-part="display-time">
+          <span className="lbl" aria-hidden="true">
+            {label(otherFormat(primary))}
+          </span>
+          <span className="val sm" data-testid="position-secondary" ref={secondaryRef} />
+        </div>
+        {gates.locators && locatorText !== null ? (
           <div
             className="cell"
             data-testid="display-locators"
@@ -434,11 +439,29 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
               {lcdDigits(locatorText)}
             </span>
           </div>
+        ) : (
+          <Hold className="cell display-locators-empty" />
+        )}
+        <div className="cell" data-part="display-tempo" title={t('transport.tempo')}>
+          <span className="lbl" aria-hidden="true">
+            {t('transport.labelTempo')}
+          </span>
+          <span className="val sm" data-testid="transport-tempo" ref={tempoRef} />
         </div>
-      ) : (
-        <Hold className="transport-locators-empty" />
-      )}
-      <span className="transport-tempo" data-testid="transport-tempo" data-part="display-tempo" title={t('transport.tempo')} ref={tempoRef} />
+        <Hold className="hold-display-signature" />
+      </div>
+      {menu ? (
+        <TimeFormatMenu
+          primary={primary}
+          x={menu.x}
+          y={menu.y}
+          onChoose={(format) => {
+            setMenu(null);
+            if (format !== primary) layout.dispatch({ type: 'exchangeFormats' });
+          }}
+          onClose={closeMenu}
+        />
+      ) : null}
       {gates.click ? (
         <div className="tgroup" data-testid="transport-click" data-part="transport-click" role="group" aria-label={t('transport.click')}>
           <button
@@ -456,7 +479,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
               if (enabled) setLevel({ x: event.clientX, y: event.clientY });
             }}
           >
-            <Icon path="M6 1h4l3 13H3zm1 2-1 4 5-3zM5 9l-.8 3.5h7.6L11 9z" />
+            <Icon name="metro" />
           </button>
         </div>
       ) : (
@@ -594,55 +617,69 @@ export function ClickLevel({ gainMilliDb, x, y, onChoose, onClose }: ClickLevelP
   );
 }
 
-// Undo and redo (spec 3.2): they need no device. While the engine is away
-// the request is refused like any other, as a toast.
-function UndoRedo({ transport }: { transport: TransportController }) {
+// Undo and redo (spec 3.2), the mockup's two .iconbtn in the top bar's left
+// group: they need no device; redo (or undo) is .dim when the undo history
+// says nothing is left on its side (model/undo-history.ts). While the engine
+// is away the request is refused like any other, as a toast. An engine that
+// does not list session.undo and session.redo gets neither; their boxes stay
+// empty, an icon button's size each.
+export function UndoRedo({ transport, history }: { transport: TransportController; history: Pick<UndoHistory, 'getSnapshot' | 'subscribe'> }) {
   const t = useT();
+  const can = useCapabilities();
+  const undo = useSyncExternalStore(
+    (listener) => history.subscribe(listener),
+    () => history.getSnapshot().undo,
+    () => history.getSnapshot().undo,
+  );
+  const redo = useSyncExternalStore(
+    (listener) => history.subscribe(listener),
+    () => history.getSnapshot().redo,
+    () => history.getSnapshot().redo,
+  );
+  if (!can.has('session.undo') || !can.has('session.redo')) {
+    return (
+      <>
+        <Hold className="undo-empty" />
+        <Hold className="undo-empty" />
+      </>
+    );
+  }
   return (
-    <div className="transport undo-redo" data-testid="undo-redo" role="group" aria-label={t('transport.undoRedo')}>
+    <>
       <button
         type="button"
-        className="transport-button"
+        className={undo === 'no' ? 'iconbtn dim' : 'iconbtn'}
         data-testid="undo"
         data-part="undo"
         title={t('transport.undo')}
         aria-label={t('transport.undo')}
         onClick={() => void transport.undo()}
       >
-        <Icon path="M6 3 1 7.5 6 12V9h4a3 3 0 0 1 0 6H8v1h2a4 4 0 0 0 0-8H6z" />
+        <Icon name="undo" />
       </button>
       <button
         type="button"
-        className="transport-button"
+        className={redo === 'no' ? 'iconbtn dim' : 'iconbtn'}
         data-testid="redo"
         data-part="redo"
         title={t('transport.redo')}
         aria-label={t('transport.redo')}
         onClick={() => void transport.redo()}
       >
-        <Icon path="M10 3l5 4.5-5 4.5V9H6a3 3 0 0 0 0 6h2v1H6a4 4 0 0 1 0-8h4z" />
+        <Icon name="redo" />
       </button>
-    </div>
+    </>
   );
 }
 
+// The transport bar, or, on an engine that does not list transport.play,
+// transport.stop and transport.locate, its empty place in the top bar's grid.
 export function Transport(props: TransportProps) {
+  const can = useCapabilities();
+  if (!TRANSPORT_METHODS.every((method) => can.has(method))) return <div className="transport" aria-hidden="true" />;
   return (
-    <>
-      <Capable method="transport.play">
-        <Capable method="transport.stop">
-          <Capable method="transport.locate">
-            <Counted id="transport">
-              <TransportBar {...props} />
-            </Counted>
-          </Capable>
-        </Capable>
-      </Capable>
-      <Capable method="session.undo">
-        <Capable method="session.redo">
-          <UndoRedo transport={props.transport} />
-        </Capable>
-      </Capable>
-    </>
+    <Counted id="transport">
+      <TransportBar {...props} />
+    </Counted>
   );
 }

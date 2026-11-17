@@ -20,7 +20,13 @@ const KEYS = Object.keys(en) as Key[];
 
 // Values that are the same in every locale on purpose.
 // The click level is a number and dB, the same symbol in every locale (spec 6.2).
-const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>(['app.title', 'transport.clickLevelValue']);
+const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
+  'app.title',
+  'transport.clickLevelValue',
+  // The status bar's units, the mockup's in every locale (m5-ui-alignment-chrome).
+  'status.sampleRate',
+  'status.latencyValue',
+]);
 
 // The parameters each function message is called with. Strings are sentinels
 // that must come back in every locale; numbers must come back as digits.

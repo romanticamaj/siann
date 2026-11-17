@@ -27,6 +27,9 @@ export interface TransportControllerOptions {
   readonly playing: () => boolean;
   readonly toasts: TransportToasts;
   readonly locale: () => Locale;
+  // Told when undo or redo is refused for want of anything to undo or redo
+  // (model/undo-history.ts: the top bar dims that button).
+  readonly onNothingLeft?: (method: 'session.undo' | 'session.redo') => void;
 }
 
 export class TransportController {
@@ -77,6 +80,9 @@ export class TransportController {
       const code = (error as { code?: unknown }).code;
       const message = error instanceof Error ? error.message : String(error);
       const known = typeof code === 'string' ? code : null;
+      if ((method === 'session.undo' && known === 'nothing_to_undo') || (method === 'session.redo' && known === 'nothing_to_redo')) {
+        this.#options.onNothingLeft?.(method);
+      }
       this.#options.toasts.push(refusalLine(known, message, this.#options.locale()), (locale) => refusalLine(known, message, locale));
     }
   }

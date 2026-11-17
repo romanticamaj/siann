@@ -425,10 +425,10 @@ jobs:
           name: e2e-results-${{ runner.os }}
           path: app/test-results
           if-no-files-found: ignore
-      # The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the
+      # The mockup fidelity run (docs/harness/agent-rules.md, "UI fidelity"): the
       # window against the mockup at 1440x900 and device scale factor 1, in en and
-      # zh-TW, on Windows and Linux. Report-only until the first gate is enforced:
-      # m5-ui-alignment-chrome sets its gate to enforce and removes continue-on-error.
+      # zh-TW, on Windows and Linux. A visual aid (decided by the maintainer,
+      # 2026-11-17): it reports and uploads its artifact, and never fails the job.
       - name: Mockup fidelity gate
         if: runner.os != 'macOS'
         continue-on-error: true

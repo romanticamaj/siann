@@ -135,7 +135,7 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
     },
   });
   const page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const firstPid = await enginePid(app);
   expect(firstPid).not.toBeNull();
 
@@ -150,10 +150,10 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
     const status = document.querySelector('[data-testid="status"]')!;
     const seen: string[] = [];
     (window as unknown as { __statuses: string[] }).__statuses = seen;
-    new MutationObserver(() => seen.push(status.textContent ?? '')).observe(status, {
-      childList: true,
-      characterData: true,
-      subtree: true,
+    // The connection state as the status bar carries it (its words are the mockup's).
+    new MutationObserver(() => seen.push(status.getAttribute('data-status') ?? '')).observe(status, {
+      attributes: true,
+      attributeFilter: ['data-status'],
     });
   });
 
@@ -202,7 +202,7 @@ test('a plugin crash during playback restarts the engine and the renderer reconn
     .toContain('disconnected');
   await expect.poll(() => enginePid(app!)).not.toBe(firstPid);
   await expect.poll(() => enginePid(app!)).not.toBeNull();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const statuses = await page.evaluate(() => (window as unknown as { __statuses: string[] }).__statuses);
   expect(statuses.indexOf('disconnected')).toBeLessThan(statuses.lastIndexOf('connected'));
   // The renderer shows the recovered head: the last durable revision, which a
