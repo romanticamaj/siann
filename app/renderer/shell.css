@@ -506,6 +506,8 @@ code, dd { font-family: var(--font-mono); }
    around them. The zone body holds the rows edge to edge, as aside.leftzone
    does in the mockup, and the foot keeps to the bottom (its margin-top:auto). */
 .zone-left > .zone-body { padding: 0; display: flex; flex-direction: column; }
+/* A short zone scrolls its rows instead of squashing them. */
+.zone-left > .zone-body > * { flex-shrink: 0; }
 /* The sections of sec() until their features land (spec 3.0): a shut one is
    its head and hairline, an open one its hold. */
 .inspector-hold { display: block; flex: none; height: var(--hold-inspector-routing-h); }

@@ -3,7 +3,8 @@
 // script, not from the code under test. This reads
 // docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html, takes the
 // pieces of its script a test names (the formatters and the fader taper, knob(),
-// strip(), the master strip) and runs them in a vm context whose tok() reads
+// strip(), the master strip, the left zone's block of the app.innerHTML
+// template with sec() and its icons) and runs them in a vm context whose tok() reads
 // the tokens from app/src/renderer/tokens.ts, the mirror of tokens.css the
 // mockup reads through getComputedStyle. A tiny HTML parser turns the markup
 // they return, and the markup react-dom/server renders, into trees a test can
