@@ -111,8 +111,9 @@ test('a strip holds pan, M S, the fader with its meter, level and peak values, t
   // Inside its strip: the strip of trk_a opens before them and trk_b's does not sit between.
   const strip = html.indexOf('data-testid="mixer-strip-trk_a"');
   assert.ok(strip >= 0 && strip < at[0]!);
-  // The name carries the track colour: trk_a hashes to palette entry 8 (FNV-1a, timeline-colour.test.ts).
-  assert.match(tag(html, 'strip-name-trk_a'), /var\(--track-8\)/);
+  // The strip carries the track colour as --c, which its name tag takes (the
+  // mockup's strip()): trk_a hashes to palette entry 8 (FNV-1a, timeline-colour.test.ts).
+  assert.match(tag(html, 'mixer-strip-trk_a'), /--c:var\(--track-8\)/);
   assert.equal(textOf(html, 'strip-name-trk_a'), 'trk_a');
   // A fader is a slider in milli-dB with its value as text.
   assert.equal(attr(html, 'fader-trk_a', 'role'), 'slider');

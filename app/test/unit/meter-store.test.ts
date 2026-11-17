@@ -189,3 +189,46 @@ test('sync reports whether a new frame was taken', () => {
   assert.equal(store.sync(), true);
   assert.equal(store.sync(), false);
 });
+
+// m5-ui-port-mixer-strip (UI redesign 5.3): a strip meter draws two channels
+// as the mockup does, each from its own channel's peak in the frame; a mono
+// entity shows the same value in both. The peak value and the clip stay per
+// entity, the louder channel.
+test('the level and hold of each channel: stereo apart, mono in both, carried across an epoch, reset with the meter', () => {
+  const source = new FakeSource();
+  source.legendValue = { epoch: '1', entities: ['master', 'track:a'] };
+  const store = new MeterStore(source);
+  store.sync();
+  assert.equal(store.channelLevel.length, 4);
+  assert.equal(store.channelHold.length, 4);
+  source.push([[0, [0.5, 0.25]], [1, [0.1]]]);
+  store.sync();
+  store.advance(0);
+  const db = (linear: number) => 20 * Math.log10(linear);
+  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-3, `${a} vs ${b}`);
+  near(store.channelLevel[0]!, db(0.5));
+  near(store.channelLevel[1]!, db(0.25));
+  near(store.channelLevel[2]!, db(0.1));
+  near(store.channelLevel[3]!, db(0.1));
+  near(store.channelHold[1]!, db(0.25));
+  // The entity's own reading is the louder channel; read() gives both channels.
+  near(store.level[0]!, db(0.5));
+  const reading = store.read('master')!;
+  near(reading.channels[0].level, db(0.5));
+  near(reading.channels[1].level, db(0.25));
+  near(reading.channels[1].hold, db(0.25));
+
+  // A new epoch carries each channel with its ref.
+  source.legendValue = { epoch: '2', entities: ['track:a', 'master'] };
+  store.sync();
+  assert.equal(store.channelLevel.length, 4);
+  near(store.channelLevel[0]!, db(0.1));
+  near(store.channelLevel[2]!, db(0.5));
+  near(store.channelLevel[3]!, db(0.25));
+
+  // A reset clears both hold lines of the meter, and only its own.
+  store.reset('master');
+  assert.equal(store.channelHold[2], FLOOR_DB);
+  assert.equal(store.channelHold[3], FLOOR_DB);
+  near(store.channelHold[0]!, db(0.1));
+});
