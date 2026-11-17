@@ -201,15 +201,17 @@ test('stale reasons and the diff table isolate each name', () => {
 
 test('the track list, inspector, mixer strip and session name isolate the names they show', () => {
   const sources = ['timeline/TrackList.tsx', 'shell/Inspector.tsx', 'mixer/Strip.tsx', 'shell/TopBar.tsx'];
-  const classes: Record<string, string> = {
-    'timeline/TrackList.tsx': 'track-name',
-    'shell/Inspector.tsx': 'inspector-track',
-    'mixer/Strip.tsx': 'nametag',
-    'shell/TopBar.tsx': 'session',
+  // The attribute that marks the element showing the name (the Inspector's is
+  // the mockup's text node in .i-name, a span with no class of its own).
+  const marks: Record<string, string> = {
+    'timeline/TrackList.tsx': 'className="track-name"',
+    'shell/Inspector.tsx': 'data-testid="inspector-track"',
+    'mixer/Strip.tsx': 'className="nametag"',
+    'shell/TopBar.tsx': 'className="session"',
   };
   for (const source of sources) {
     const text = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'src', 'renderer', source), 'utf8');
-    const at = text.indexOf(`className="${classes[source]}"`);
+    const at = text.indexOf(marks[source]!);
     assert.ok(at >= 0, source);
     // The element's opening tag and the start of its children.
     assert.match(text.slice(at, at + 300), /\{\.\.\.ISOLATE\}|\.\.\.ISOLATE\.style/, source);

@@ -547,7 +547,7 @@ test('volume, pan, mute and solo from the Inspector make one revision each, and 
     gates: Record<string, string>;
     rules: Array<{ match: string[]; gate: string }>;
   };
-  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\]/g, '\$&').replace(/\*/g, '.*')}$`);
+  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
   const gateOf = (id: string) => manifest.gates[manifest.rules.find((rule) => rule.match.some((p) => glob(p).test(id)))!.gate];
   // The ids of the mockup's left zone.
   const ids = ['left-zone', 'inspector-head', 'inspector-track', 'inspector-name', 'inspector-buttons', 'inspector-mute', 'inspector-solo', 'inspector-record', 'inspector-monitor', 'inspector-read', 'inspector-write', 'inspector-edit', 'inspector-volume', 'inspector-pan', 'inspector-routing', 'inspector-inserts', 'inspector-sends', 'inspector-automation', 'inspector-agent-changes', 'inspector-notepad', 'inspector-tabs'];

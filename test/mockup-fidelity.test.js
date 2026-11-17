@@ -699,3 +699,21 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.hold-display-signature/);
 });
+
+// ---- m5-ui-port-inspector (UI redesign 10.10, P1-14): the left zone ported from the mockup's template
+
+test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate is report, and its holds name pending parts', () => {
+  const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
+  const app = linked(read('app', 'renderer', 'index.html'));
+  assert.ok(app.includes('ui/left-zone.css'), 'index.html links ui/left-zone.css');
+  assert.ok(app.indexOf('ui/top-bar.css') < app.indexOf('ui/left-zone.css') && app.indexOf('ui/left-zone.css') < app.indexOf('ui/project-zone.css'), 'in the mockup\'s order');
+  assert.equal(MANIFEST.gates['m5-ui-port-inspector'], 'report');
+  // The three open sections are held by tokens until their features land; each names a pending part.
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const holds = [...tokens.matchAll(/--hold-(inspector-[a-z0-9-]+)-h\s*:/g)].map((m) => m[1]).sort();
+  assert.deepEqual(holds, ['inspector-agent-changes', 'inspector-inserts', 'inspector-routing']);
+  for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
+  // The temporary pre-port rules #136 kept for the Inspector are gone.
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(shell, /\.inspector \.ms\b|\.inspector \.value-readout|\.inspector-row|\.value-control|\.fader-cap/);
+});
