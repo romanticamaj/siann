@@ -1167,3 +1167,148 @@ TEST_CASE("Buses and sends are added, modified and removed like any entity", "[m
     t.sends.clear();
     CHECK(b.withoutSend("snd_1").withTrack(t).documentHash() == a.documentHash());
 }
+
+// ---- m5b-engine-clip-fades: optional fadeIn and fadeOut on a clip ------------
+
+namespace {
+
+using siann::model::Fade;
+using siann::model::FadeCurve;
+
+// A v2 document written before fades existed, as literal text, with the clip's
+// entity hash and the document hash computed by the Node bridge's src/hash.
+constexpr const char* kPreFadeDocument =
+    R"({"schemaVersion":"siann.session_document.v2","root":{"schema":"siann.entity.root.v1","id":"root",)"
+    R"("name":"Old","sampleRate":48000,"tempo":[{"ticks":"0","milliBpm":120000}],"trackOrder":["trk_1"]},)"
+    R"("media":[{"schema":"siann.entity.media.v1","id":"med_1","contentHash":)"
+    R"("sha256:abababababababababababababababababababababababababababababababab","format":"wav","channels":2,)"
+    R"("sampleRate":48000,"frames":"48000"}],"tracks":[{"schema":"siann.entity.track.v1","id":"trk_1",)"
+    R"("name":"Drums","kind":"audio","channels":2,"gainMilliDb":0,"pan":0,"mute":false,"solo":false}],)"
+    R"("clips":[{"schema":"siann.entity.clip.v1","id":"clp_old","trackId":"trk_1","mediaId":"med_1",)"
+    R"("position":{"domain":"audio","value":"1000"},"sourceStart":"0","length":"24000","gainMilliDb":-3000}]})";
+constexpr const char* kPreFadeClip =
+    R"({"schema":"siann.entity.clip.v1","id":"clp_old","trackId":"trk_1","mediaId":"med_1",)"
+    R"("position":{"domain":"audio","value":"1000"},"sourceStart":"0","length":"24000","gainMilliDb":-3000})";
+constexpr const char* kPreFadeClipHash = "sha256:ab34d227f4a633fe90e343370f2cc0b920136fb80ecb14dc8cbe2a2e266a233b";
+constexpr const char* kPreFadeDocumentHash = "sha256:be8f0096dba523f6a66c79e771dbddaa390faf5f351f57a5d965c3df51811bbc";
+
+const EntityRef kOldClip{EntityType::clip, "clp_old"};
+
+// The pre-fade document with clp_old's closing `"gainMilliDb":-3000}` replaced.
+Value preFadeWith(const std::string& tail) {
+    std::string text = kPreFadeDocument;
+    const std::string from = R"("gainMilliDb":-3000})";
+    const auto pos = text.find(from);
+    REQUIRE(pos != std::string::npos);
+    text.replace(pos, from.size(), R"("gainMilliDb":-3000)" + tail + "}");
+    return siann::json::parse(text);
+}
+
+}  // namespace
+
+TEST_CASE("A clip without fades keeps its literal pre-fade JSON and hash", "[model][fades]") {
+    const Document doc = Document::fromJson(siann::json::parse(kPreFadeDocument));
+    const Clip* c = doc.clip("clp_old");
+    REQUIRE(c != nullptr);
+    CHECK(c->fadeIn == Fade{});
+    CHECK(c->fadeOut == Fade{});
+    CHECK(formatHash(doc.entityHash(kOldClip)) == kPreFadeClipHash);
+    CHECK(formatHash(doc.documentHash()) == kPreFadeDocumentHash);
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(*c)) ==
+          siann::jcs::canonicalize(siann::json::parse(kPreFadeClip)));
+
+    // Both lengths 0 (whatever the curve) write no fade key and keep the hash.
+    Clip zero = *c;
+    zero.fadeIn = Fade{0, FadeCurve::equal_power};
+    zero.fadeOut = Fade{0, FadeCurve::linear};
+    const Value json = siann::model::toJson(zero);
+    CHECK(json.find("fadeIn") == nullptr);
+    CHECK(json.find("fadeOut") == nullptr);
+    const Document again = doc.withClip(zero);
+    CHECK(again.clip("clp_old")->fadeIn == Fade{});  // normalised to linear
+    CHECK(*again.clip("clp_old") == *c);
+    CHECK(formatHash(again.entityHash(kOldClip)) == kPreFadeClipHash);
+    CHECK(again.documentHash() == doc.documentHash());
+
+    // The earlier fixtures keep their hashes.
+    for (const char* name : {"model/session-document-v1.json", "model/session-document-v2.json",
+                             "model/session-document-v2-input.json", "model/session-document-v2-media-name.json"}) {
+        INFO(name);
+        const Value fixture = readFixture(name);
+        const Document d = Document::fromJson(*fixture.find("document"));
+        CHECK(formatHash(d.documentHash()) == fixture.find("documentHash")->asString());
+        CHECK(siann::jcs::canonicalize(d.toJson()).find("fade") == std::string::npos);
+    }
+}
+
+TEST_CASE("The fades fixture round-trips with the Node bridge's hashes", "[model][fixtures][fades]") {
+    const Value fixture = readFixture("model/session-document-v2-fades.json");
+    const Value& original = *fixture.find("document");
+    const Document doc = Document::fromJson(original);
+    CHECK(doc.validate().empty());
+    for (const Value& leaf : fixture.find("entityHashes")->asArray()) {
+        const std::string& type = leaf.find("type")->asString();
+        const std::string& id = leaf.find("id")->asString();
+        INFO(type << ":" << id);
+        CHECK(formatHash(doc.entityHash(EntityRef{leafType(type), id})) == leaf.find("entityHash")->asString());
+    }
+    CHECK(formatHash(doc.documentHash()) == fixture.find("documentHash")->asString());
+    // Written as v3 (m5b-engine-buses-sends writes every document in format v3);
+    // otherwise the same JSON, fades included.
+    std::string expected = siann::jcs::canonicalize(original);
+    const std::string from = "siann.session_document.v2";
+    expected.replace(expected.find(from), from.size(), "siann.session_document.v3");
+    CHECK(siann::jcs::canonicalize(doc.toJson()) == expected);
+    CHECK(Document::fromJson(doc.toJson()).documentHash() == doc.documentHash());
+
+    REQUIRE(doc.clip("clp_1") != nullptr);
+    CHECK(doc.clip("clp_1")->fadeIn == Fade{480, FadeCurve::linear});
+    CHECK(doc.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+    CHECK(doc.clip("clp_2")->fadeIn == Fade{48'000, FadeCurve::equal_power});
+    CHECK(doc.clip("clp_2")->fadeOut == Fade{});
+    CHECK(doc.clip("clp_3")->fadeIn == Fade{});
+    CHECK(doc.clip("clp_3")->fadeOut == Fade{});
+
+    // Removing the fades gives the v2 fixture's clip hashes.
+    const Value v2 = readFixture("model/session-document-v2.json");
+    const Document plain = Document::fromJson(*v2.find("document"));
+    Clip bare = *doc.clip("clp_1");
+    bare.fadeIn = Fade{};
+    bare.fadeOut = Fade{};
+    CHECK(doc.withClip(bare).entityHash(EntityRef{EntityType::clip, "clp_1"}) ==
+          plain.entityHash(EntityRef{EntityType::clip, "clp_1"}));
+}
+
+TEST_CASE("A malformed fade is rejected when the clip is read", "[model][fades]") {
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"480","curve":"linear"})")) == "no error");
+    CHECK(errorCode(preFadeWith(R"(,"fadeOut":{"length":"1","curve":"equal_power"})")) == "no error");
+    // Length 0 is written as no field, so "0" present is not canonical.
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"0","curve":"linear"})")) == "invalid_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"-480","curve":"linear"})")) == "invalid_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":480,"curve":"linear"})")) == "invalid_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"0480","curve":"linear"})")) == "invalid_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"480","curve":"log"})")) == "invalid_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"480"})")) == "missing_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"480","curve":"linear","shape":1})")) == "unknown_field");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":null)")) == "invalid_field");
+    // The two fades may meet (24000 frames) but not overlap.
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"12000","curve":"linear"},)"
+                                R"("fadeOut":{"length":"12000","curve":"linear"})")) == "no error");
+    CHECK(errorCode(preFadeWith(R"(,"fadeIn":{"length":"12000","curve":"linear"},)"
+                                R"("fadeOut":{"length":"12001","curve":"linear"})")) == "invalid_document");
+}
+
+TEST_CASE("validate reports invalid_fade for a negative fade or fades longer than the clip", "[model][fades]") {
+    const Document doc = Document::fromJson(siann::json::parse(kPreFadeDocument));
+    Clip c = *doc.clip("clp_old");
+    c.fadeIn = Fade{24'000, FadeCurve::linear};
+    CHECK(codes(doc.withClip(c)).empty());
+    c.fadeOut = Fade{1, FadeCurve::linear};
+    CHECK(codes(doc.withClip(c)) == std::vector<std::string>{"invalid_fade"});
+    c.fadeIn = Fade{-1, FadeCurve::linear};
+    c.fadeOut = Fade{};
+    CHECK(codes(doc.withClip(c)) == std::vector<std::string>{"invalid_fade"});
+    const auto issues = doc.withClip(c).validate();
+    REQUIRE(issues.size() == 1);
+    CHECK(issues[0].entity == kOldClip);
+}

@@ -150,6 +150,7 @@ struct StreamClipKey {
     std::int64_t length = 0;
     float gain = 1.0f;
     hash::Digest media{};
+    graph::ClipFade fade{};  // a fade-only edit rebuilds the stream (m5b-engine-clip-fades)
     friend bool operator==(const StreamClipKey&, const StreamClipKey&) = default;
 };
 

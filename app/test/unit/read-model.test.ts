@@ -551,3 +551,46 @@ test('the buses model fixture syncs with its document hash', async () => {
   assert.equal(snapshot.buses[0]!.output?.busId, 'bus_fx');
   assert.equal(snapshot.pluginSlots.find((s) => s.id === 'slt_comp')!.busId, 'bus-drums');
 });
+
+// m5b-engine-clip-fades: the fades model fixture hashes as the bridge says, and
+// the fade deltas apply (the hash returns to the earlier value when removed).
+test('the fades model fixture syncs with its document hash and types its fades', async () => {
+  const fixture = readFixture<{ document: Record<string, unknown>; entityHashes: readonly unknown[]; documentHash: string }>(
+    'model',
+    'session-document-v2-fades.json',
+  );
+  const chunk = {
+    revision: 'r7',
+    seq: '0',
+    documentHash: fixture.documentHash,
+    entities: fixture.entityHashes.length,
+    meters: null,
+    chunk: fixture.document as unknown as SyncChunk['chunk'],
+    next: null,
+  } as unknown as SyncChunk;
+  const snapshot = await new ReadModel().fromSync([chunk]);
+  assert.equal(snapshot.documentHash, fixture.documentHash);
+  const clip = (id: string) => snapshot.entities[`clip:${id}`] as ClipEntity;
+  const fadeIn: ClipEntity['fadeIn'] = clip('clp_1').fadeIn;
+  assert.deepEqual(fadeIn, { length: '480', curve: 'linear' });
+  assert.deepEqual(clip('clp_1').fadeOut, { length: '960', curve: 'equal_power' });
+  assert.equal(clip('clp_2').fadeOut, undefined);
+  assert.equal(clip('clp_3').fadeIn, undefined);
+});
+
+test('(f) clip fades follow session.changed and their removal restores the hash', async () => {
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  const apply = (s: (typeof seq.steps)[number]) =>
+    model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  for (const s of [...seq.steps, ...seq.locators.steps, ...seq.master.steps]) await apply(s);
+  assert.equal(model.getSnapshot()!.documentHash, seq.fades.before.documentHash);
+  const set = await apply(seq.fades.steps[0]!);
+  assert.equal(set.documentHash, seq.fades.steps[0]!.documentHash);
+  const faded = set.entities['clip:clp_1'] as ClipEntity;
+  assert.deepEqual(faded.fadeIn, { length: '480', curve: 'linear' });
+  assert.equal(faded.fadeOut?.curve, 'equal_power');
+  const removed = await apply(seq.fades.steps[1]!);
+  assert.equal(removed.documentHash, seq.fades.before.documentHash);
+  assert.equal((removed.entities['clip:clp_1'] as ClipEntity).fadeIn, undefined);
+});

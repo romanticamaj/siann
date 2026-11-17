@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -37,14 +38,16 @@ const std::vector<std::string> kTools = {
     "render",         "open_session",          "save_session",    "play",          "stop",
     "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
     "select_device",  "record_arm",            "record",          "create_session", "import_media",
+    "next_request",   "answer_request",
 };
 
-// The propose scope's tools before m5b-engine-record: recording added none.
+// The propose scope's tools: recording (m5b-engine-record) added none, agent
+// requests (m5b-engine-agent-requests) the agent's two.
 const std::vector<std::string> kProposeTools = {
     "list_commands", "describe_capabilities", "inspect_session", "submit_plan", "plan_status", "reject_plan",
     "propose_plan",  "audition",              "discard_proposal", "job_status", "render",     "save_session",
     "play",          "stop",                  "locate",           "set_cycle",  "set_click",  "engine_status",
-    "list_devices",
+    "list_devices",  "next_request",          "answer_request",
 };
 
 // A transport port that records what each tool reached.
@@ -72,6 +75,7 @@ public:
         out.device = protocol::DeviceInfo{"fake", 48'000, 256, 256, 256};
         out.cycle = cycle;
         out.click = click;
+        out.load = protocol::DspLoad{0.125, 0.5};
         return out;
     }
     protocol::TransportState current() const { return {false, position, cycle, click}; }
@@ -990,6 +994,55 @@ TEST_CASE("tools/list: submit_plan takes a title of 200 and an intent of 2000 at
     CHECK_FALSE(at(*schema, "additionalProperties").asBool());
 }
 
+// m5b-engine-agent-requests (Protocol v0 item 32): the agent's side of a request.
+TEST_CASE("tools/list: next_request and answer_request are propose tools; submit_plan takes a request",
+          "[protocol][mcp][requests]") {
+    Fixture f;
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value tools = at(at(mcp.call(Value(1), "tools/list"), "result"), "tools");
+    const auto schemaOf = [&](const std::string& name) -> Value {
+        for (const Value& tool : tools.asArray()) {
+            if (at(tool, "name").asString() == name) {
+                return at(tool, "inputSchema");
+            }
+        }
+        FAIL("no tool " << name);
+        return Value();
+    };
+    for (const auto& tool : protocol::detail::mcpTools()) {
+        if (tool.name == "next_request") {
+            CHECK(tool.method == "agent.next_request");
+            CHECK(tool.scope == McpScope::propose);
+        }
+        if (tool.name == "answer_request") {
+            CHECK(tool.method == "agent.answer_request");
+            CHECK(tool.scope == McpScope::propose);
+        }
+    }
+
+    const Value next = schemaOf("next_request");
+    const Value& wait = at(at(next, "properties"), "waitMs");
+    CHECK(at(wait, "type").asString() == "integer");
+    CHECK(at(wait, "minimum").asNumber() == 0);
+    CHECK(next.find("required") == nullptr);
+    CHECK_FALSE(at(next, "additionalProperties").asBool());
+
+    const Value answer = schemaOf("answer_request");
+    const Value& properties = at(answer, "properties");
+    CHECK(at(at(properties, "request"), "type").asString() == "string");
+    CHECK(at(at(properties, "plan"), "type").asString() == "string");
+    CHECK(at(at(properties, "message"), "type").asString() == "string");
+    CHECK(at(at(properties, "message"), "maxLength").asNumber() == 4000);
+    CHECK(at(at(properties, "decline"), "const").asBool());
+    CHECK(canonical(at(answer, "required")) == R"(["request"])");
+    CHECK_FALSE(at(answer, "additionalProperties").asBool());
+
+    const Value submit = schemaOf("submit_plan");
+    CHECK(at(at(at(submit, "properties"), "request"), "type").asString() == "string");
+    CHECK(canonical(at(submit, "required")) == R"(["steps"])");
+}
+
 TEST_CASE("submit_plan stores title, intent and the actor from clientInfo.name", "[protocol][mcp][metadata]") {
     Fixture f;
     const ConnectionId c = f.authed();
@@ -1139,4 +1192,66 @@ TEST_CASE("rollback_plan takes a plan hash or a revision id", "[protocol][mcp][p
     const Value rolled = mcp.ok("rollback_plan", Value(Object{{"revision", Value(revision)}}));
     CHECK(at(at(rolled, "revision"), "cause").asString() == "rollback");
     CHECK(at(mcp.ok("plan_status", Value(Object{{"plan", Value(hash)}})), "state").asString() == "rolled_back");
+}
+
+// m5b-engine-clip-fades: no new method, so no new tool; execute carries
+// clip.set_fade and list_commands names it.
+TEST_CASE("execute carries clip.set_fade and list_commands names it", "[protocol][mcp][fades]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a"), mediaAdd("med_a"),
+                                                            clipPlace("clp_a", "trk_a", "med_a", 0)})}}));
+    const Value fade = Value(Object{{"op", Value("clip.set_fade")},
+                                    {"clipId", Value("clp_a")},
+                                    {"fadeIn", Value(Object{{"length", Value("480")}, {"curve", Value("linear")}})}});
+    const Value executed = mcp.ok("execute", Value(Object{{"commands", Value(Array{fade})}}));
+    CHECK(at(at(executed, "revision"), "diff").asArray().at(0).asString() == "clip:clp_a");
+    CHECK(f.head().document.clip("clp_a")->fadeIn.length == 480);
+
+    bool listed = false;
+    const Value commands = mcp.tool("list_commands");  // kept: the loop reads into it
+    for (const Value& name : at(at(commands, "structuredContent"), "commands").asArray()) {
+        listed = listed || name.asString() == "clip.set_fade";
+    }
+    CHECK(listed);
+}
+
+// m5b-engine-load-loudness (Protocol v0 item 31): resetting the user's loudness
+// meter is a display aid, not session state and nothing a plan needs, so no tool
+// maps to it; the adapter lists the exclusion with its reason.
+TEST_CASE("meter.reset_loudness is no MCP tool and the adapter lists its exclusion", "[protocol][mcp][loudness]") {
+    for (const protocol::detail::McpTool& tool : protocol::detail::mcpTools()) {
+        INFO(tool.name);
+        CHECK(tool.method != "meter.reset_loudness");
+        CHECK(std::string(tool.name).find("loudness") == std::string::npos);
+    }
+    const auto& exclusions = protocol::detail::mcpExclusions();
+    const auto excluded = std::find_if(exclusions.begin(), exclusions.end(), [](const auto& exclusion) {
+        return exclusion.method == "meter.reset_loudness";
+    });
+    REQUIRE(excluded != exclusions.end());
+    CHECK_FALSE(excluded->reason.empty());
+
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::trusted));
+    Mcp mcp(f);
+    mcp.initialize();
+    for (const char* name : {"meter.reset_loudness", "reset_loudness", "meter_reset_loudness"}) {
+        INFO(name);
+        const HttpResponse response =
+            mcp.post(Mcp::rpc(Value(2), "tools/call", Value(Object{{"name", Value(name)}, {"arguments", Value(Object{})}})));
+        REQUIRE(response.status == 200);
+        CHECK(at(at(json::parse(response.body), "error"), "code").asNumber() == -32602);
+    }
+}
+
+TEST_CASE("engine_status passes the DSP load through", "[protocol][mcp][load]") {
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::propose));
+    Mcp mcp(f);
+    mcp.initialize();
+    const Value status = mcp.ok("engine_status");
+    CHECK(at(at(status, "load"), "average").asNumber() == 0.125);
+    CHECK(at(at(status, "load"), "peak").asNumber() == 0.5);
 }

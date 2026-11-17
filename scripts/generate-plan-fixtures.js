@@ -115,6 +115,19 @@ function buildFixture() {
       ],
       writeSet: [entry('track', 'trk_1')],
     }],
+    // m5b-engine-clip-fades: a step that sets both fades of a clip.
+    ['clip_set_fade_step', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r5',
+      steps: [{
+        op: 'clip.set_fade',
+        clipId: 'clp_1',
+        fadeIn: { length: '480', curve: 'linear' },
+        fadeOut: { length: '960', curve: 'equal_power' },
+      }],
+      readSet: [],
+      writeSet: [entry('clip', 'clp_1')],
+    }],
     // m5b-engine-project-media: the media entity's optional name, set by media.add
     // and by media.rename (null removes it).
     ['media_add_with_name', {

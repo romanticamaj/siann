@@ -304,6 +304,31 @@ name ..." (bidi formatting and separators stripped, CJK and emoji kept), app
 the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
 has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
 
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `plan_methods_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`, `edit-commands` fades) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
+
+Per acceptance item (`m5b-engine-clip-fades`): 1 `document_test` "A clip
+without fades keeps its literal pre-fade JSON and hash", "The fades fixture
+round-trips with the Node bridge's hashes", "A malformed fade is rejected when
+the clip is read", "validate reports invalid_fade ..."; `session_test` "A bundle
+whose journal and checkpoint are literal pre-fade text opens ..."; `commands_test`
+"clip.set_fade sets either side ...", "clip.set_fade refuses ...", "clip.trim
+shortens fades that no longer fit ..."; `history_test` "clip.set_fade is one revision ...". 2
+`graph_test` "ClipPlayerNode applies the fade formula ...", "A faded clip renders
+the same for any block size"; `offline_test` "The offline render of a faded clip equals the
+curve's formula within one LSB at 24 bit"; `playback_test` "Realtime output of
+faded clips is sample-identical to renderOffline ..."; `cycle_test` "A locate
+into the middle of a fade ...", "A cycle that starts inside a fade in and ends
+inside a fade out ...", the alloc guard; `live_recompile_test` "A fade-only edit
+replaces the track's stream ...". 3 `plan_methods_test` "engine.capabilities
+lists clip.set_fade and features.clipFades ...", "plan.preview of a clip.set_fade
+step ...", "command.execute of an over-long fade answers invalid_fade";
+`mcp_adapter_test`; `plan_hash_test` and Node `plan-hash` over
+`clip_set_fade_step`; Node `read-model-fixtures`; app unit `read-model`,
+`capabilities`. 4 app unit `edit-commands` "split carries a faded clip's fades ...",
+"duplicate and copy carry both fades ...". 5 none (no UI).
+
 Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
 `commands_test` "track.add and track.rename ...", "media.add and media.rename
 ...", "bus.add and bus.rename ...", "session.rename ...", "plugin.insert refuses a display-unsafe descriptor
@@ -322,13 +347,84 @@ DAW-pack intake strips them from names it derives from file names); app
 is wrapped in U+2068 ... U+2069 in every locale; the track list, inspector,
 mixer strip and session name isolate the name they show).
 
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-load-loudness (E-13, UR-14) | Y (`loudness_test` (new `siann_dsp_tests`), `load_window_test`, `graph_driver_test` `[loudness]` `[load]`, `realtime_channel_test` `[loudness]`, `transport_methods_test` `[loudness]` `[load]`, `mcp_adapter_test` `[loudness]`, `engine_host_test` `[loudness]` `[load]`) | Y (`loudness_test`, `load_window_test`, `graph_driver_test` alloc guard under `ScopedRealtimeThread`; RTSan build) | Y (`capabilities`, `meter-frames` "a SLUD frame is not an SMTR frame") | Y (`protocol-fixtures` loudness frames) | 3 + RTSan | - (6: no UI, no tour state) |
+| m5b-engine-agent-requests (UR-16; gate `agent-request-shape`) | Y (`agent_requests_test`, `mcp_adapter_test` `[requests]`, `plan_methods_test` `[metadata]` request link) | Y | Y (`capabilities`, `session-client` agent requests) | - | 3 | - (7: no UI, no tour state) |
+
+Per acceptance item (`m5b-engine-load-loudness`): 1 `load_window_test` "LoadWindow
+publishes the average and the peak of a full second of device frames", "LoadWindow
+reports nothing before the first full window", "LoadWindow: unmeasured callbacks
+contribute nothing", "LoadWindow: blocks of different sizes weigh by their period",
+"LoadWindow: reset clears ...", "LoadWindow: record does not allocate on a realtime
+thread"; `graph_driver_test` "The driver reports DSP load from the callback clock"
+(alloc guard, restart on start); `transport_methods_test` "engine.status carries
+load {average, peak} as numbers from the port"; `mcp_adapter_test` "engine_status
+passes the DSP load through"; `engine_host_test` "engine.status load is the
+driver's and 0 once the device is gone"; 2 `graph_driver_test` "The loudness meter
+reads the master output before the click" (equal readings with the click on, equal
+to a reference meter over the device output), "The master gain at -6 dB lowers the
+loudness by 6 LU", "A locate and a transport stop do not restart the integrated
+value; a reset request does"; `loudness_test` "reset restarts the integrated value
+and leaves momentary and short-term"; `realtime_channel_test` "the publisher sends
+SMTR then SLUD per tick with a subscriber"; `transport_methods_test`
+"meter.reset_loudness calls the port once and answers {}", "meter.reset_loudness: a
+duplicate requestId is cached ...", "meter.reset_loudness is not_supported without
+a transport port ..."; `engine_host_test` "a -23 dBFS 1 kHz tone through the engine
+reads -23 LUFS, and -6 dB of master gain 6 LU less", "a realtime client receives
+loudness frames while the session plays", "engine.select_device keeps the
+integrated value; meter.reset_loudness returns it to -inf"; `engine_launch_test` "a
+client on the fake device plays ..." (the loudness frame over the wire); 3
+`loudness_test` "EBU Tech 3341 case 1: ...", "EBU Tech 3341 case 2: ...", "EBU Tech
+3341 gating cases 3 to 5 read -23.0 LUFS integrated" (each at 44.1, 48 and 96 kHz),
+"the 48 kHz K-weighting equals the table of BS.1770-4 Annex 1", "silence reads minus
+infinity on all three values", "silence after a signal: ...", "the readings do not
+depend on the size of the process() calls"; `graph_driver_test` "The loudness meter
+runs at the session rate behind device-side SRC"; `realtime_channel_test` "loudness
+frames match the shared fixture byte for byte" (negative infinity as `00 00 80 ff`);
+the engine-level reading in `engine_host_test` above; 4 `realtime_channel_test`
+"with no subscriber the publisher never reads the loudness and sends no frame";
+`graph_driver_test` "The loudness history survives a graph swap and a device
+change", "Before the first start the loudness reads minus infinity"; `loudness_test`
+"process, processSilence and reset do not allocate on a realtime thread"; 5
+`transport_methods_test` "engine.capabilities lists meter.reset_loudness with
+features load and loudness", `mcp_adapter_test` "meter.reset_loudness is no MCP tool
+and the adapter lists its exclusion", app unit `capabilities` (`capabilities-full.json`
+with the method and both features) and `meter-frames` "a SLUD frame is not an SMTR
+frame and is ignored", Node `protocol-fixtures` (fixture, layout, doc rows); the
+schema docs; 6 none (no UI).
+
+Per acceptance item (`m5b-engine-agent-requests`): 1 `agent_requests_test` "agent.request from the UI returns
+the pending request with the stamped context; a second client sees
+agent.request_changed", "the text is 1 to 4,000 code points of display-safe
+UTF-8; selection ids are checked; the 17th open request is agent_busy",
+"agent.request to an unknown or disconnected agent is agent_not_connected",
+"the request methods belong to one credential: scope_denied otherwise"; 2
+"next_request returns the oldest pending request at once and marks it taken",
+"next_request parks with an empty queue: a later request, the wait, a second
+call and the clamp", "a retry of next_request with the same id returns the same
+request; an empty poll is no action", "answer_request: a message, a decline, a
+plan the agent submitted; the refusals", "plan.submit {request} links the plan
+and answers the request; the head revision is unchanged", `plan_methods_test`
+"a plan submitted with a request has the hash of the same plan without it",
+`mcp_adapter_test` "tools/list: next_request and answer_request are propose
+tools; submit_plan takes a request"; 3 "agent.cancel_request cancels an open
+request; next_request does not deliver it", "DELETE, idle and session.open
+expire the open requests", "agent.requests lists the open requests and the last
+16 closed ones"; 4 "plan.submit {request} ..." (plan `validated`,
+`session.inspect`'s head unchanged); 5 the gate's resolution in the manifest;
+6 "engine.capabilities lists the request methods, features.agentRequests and
+the request limits", app `capabilities` (`capabilities-full.json`) and
+`session-client` "agent.request, agent.cancel_request and agent.requests go out
+as typed calls; agent.request_changed reaches a listener"; 7 none (no UI).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 61/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 60/133 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-engine-clip-fades` 1/4, `m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
+`m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:
@@ -337,12 +433,12 @@ is unowned (UI redesign 10.5); not in the counts above:
 |---|---|---|---|---|
 | `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
 | `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
-| `m5b-engine-load-loudness` (E-13) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
-| `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
+| `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
+| `m5b-engine-agent-requests` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds (4,000 characters, 16 open per agent, `agent_busy`), the `next_request` long poll, a second client; gate `agent-request-shape` (resolved) |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
 | `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
 | `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
-| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled |
+| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled; `agent_busy` shown |
 | `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |
 | `m5b-ui-editor-channel` | 4 | `m5b-ui-edit-more` | `tab-editor`, `zone-button-channel` | one revision and one undo per edit in the editor |
 | `m6a-ui-automation` (M6a) | 3 | `m6a-lanes`, `m6a-write-passes` | `*-read`, `*-write`, `strip-*-automation`, `inspector-automation` | e2e with a reduced capabilities fixture |

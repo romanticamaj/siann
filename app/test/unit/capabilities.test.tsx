@@ -78,12 +78,33 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(reduced.feature('masterGain'), false);
   assert.equal(full.command('master.set_gain'), true);
   assert.equal(reduced.command('master.set_gain'), false);
+  // m5b-engine-clip-fades: the fade command and its feature (no method of its own).
+  assert.equal(full.feature('clipFades'), true);
+  assert.equal(reduced.feature('clipFades'), false);
+  assert.equal(full.command('clip.set_fade'), true);
+  assert.equal(reduced.command('clip.set_fade'), false);
   // m5b-engine-plan-metadata: plan titles, intents and actors, and the agents in
   // engine.status (true with a transport port); the reduced engine predates both.
   assert.equal(full.feature('planMetadata'), true);
   assert.equal(full.feature('agents'), true);
   assert.equal(reduced.feature('planMetadata'), false, 'the reduced engine has no features.planMetadata');
   assert.equal(reduced.feature('agents'), false, 'the reduced engine has no features.agents');
+  // m5b-engine-agent-requests: the composer's feature, its methods and the limits.
+  assert.equal(full.feature('agentRequests'), true);
+  assert.equal(reduced.feature('agentRequests'), false, 'the reduced engine has no features.agentRequests');
+  for (const method of ['agent.request', 'agent.cancel_request', 'agent.requests', 'agent.next_request', 'agent.answer_request']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
+  assert.deepEqual(
+    {
+      perAgent: (FULL.limits as Record<string, unknown>).agentRequestsPerAgent,
+      textChars: (FULL.limits as Record<string, unknown>).agentRequestTextChars,
+      waitMs: (FULL.limits as Record<string, unknown>).agentRequestWaitMs,
+      closed: (FULL.limits as Record<string, unknown>).agentRequestsClosedRetained,
+    },
+    { perAgent: 16, textChars: 4000, waitMs: 25000, closed: 16 },
+  );
   // m5b-engine-buses-sends: the bus and send features and commands.
   assert.equal(full.feature('buses'), true);
   assert.equal(full.feature('sends'), true);
@@ -91,6 +112,14 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(full.command('bus.add'), true);
   assert.equal(full.command('send.set_level'), true);
   assert.equal(full.command('track.set_output'), true);
+  // m5b-engine-load-loudness: DSP load in engine.status, the loudness frame and
+  // its reset (true with a transport port); the reduced engine predates them.
+  assert.equal(full.has('meter.reset_loudness'), true);
+  assert.equal(reduced.has('meter.reset_loudness'), false);
+  assert.equal(full.feature('load'), true);
+  assert.equal(full.feature('loudness'), true);
+  assert.equal(reduced.feature('load'), false, 'the reduced engine has no features.load');
+  assert.equal(reduced.feature('loudness'), false, 'the reduced engine has no features.loudness');
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);

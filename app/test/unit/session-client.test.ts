@@ -11,6 +11,7 @@ import type { SyncChunk } from '../../src/renderer/model/document';
 import {
   ProtocolError,
   SessionClient,
+  type AgentRequest,
   type ClientState,
   type EngineEndpoint,
   type SessionClientOptions,
@@ -716,6 +717,62 @@ test('(18b) plan.changed with metadata and agent.changed advance lastSeq and lea
   assert.equal(r.client.model.getSnapshot(), before);
   assert.equal(socket.requests('session.fetch').length, 0);
   assert.equal(r.client.getState().syncCount, 1, 'no gap, no sync');
+});
+
+// m5b-engine-agent-requests (Protocol v0 item 32): the composer's calls and event.
+test('(18c) agent.request, agent.cancel_request and agent.requests go out as typed calls; agent.request_changed reaches a listener', async () => {
+  const agentId = 'agt_00c0ffee00c0ffee';
+  const request: AgentRequest = {
+    id: 'arq_00c0ffee',
+    agentId,
+    text: 'Lower the drums',
+    context: { selection: { tracks: ['trk_1'], clips: [] }, locators: null, cursor: '0', headRevision: 'r3' },
+    state: 'pending',
+    createdAt: '2026-11-15T10:00:00Z',
+  };
+  const r = rig({
+    other: (message) => {
+      if (message.method === 'agent.request') return { ok: true, result: { request } };
+      if (message.method === 'agent.cancel_request') return { ok: true, result: { request: { ...request, state: 'cancelled' } } };
+      if (message.method === 'agent.requests') return { ok: true, result: { requests: [request] } };
+      return null;
+    },
+  });
+  const socket = await synced(r);
+  const before = r.client.model.getSnapshot();
+
+  assert.deepEqual(await r.client.agentRequest(agentId, 'Lower the drums', { tracks: ['trk_1'], clips: [] }), request);
+  assert.deepEqual(socket.requests('agent.request')[0]!.params, {
+    agentId,
+    text: 'Lower the drums',
+    selection: { tracks: ['trk_1'], clips: [] },
+  });
+  await r.client.agentRequest(agentId, 'Hi');
+  assert.deepEqual(socket.requests('agent.request')[1]!.params, { agentId, text: 'Hi' }, 'no selection, no param');
+  const cancelled = await r.client.cancelAgentRequest('arq_00c0ffee');
+  assert.equal(cancelled.state, 'cancelled');
+  assert.deepEqual(socket.requests('agent.cancel_request')[0]!.params, { request: 'arq_00c0ffee' });
+  assert.deepEqual(await r.client.agentRequests(), [request]);
+  assert.deepEqual(socket.requests('agent.requests')[0]!.params, {});
+
+  // A full queue rejects with agent_busy, for the box to show.
+  r.script.other = () => ({ ok: false, error: { code: 'agent_busy', message: '16 open requests' } });
+  await assert.rejects(r.client.agentRequest(agentId, 'one more'), (e: unknown) => e instanceof ProtocolError && e.code === 'agent_busy');
+
+  const seen: string[] = [];
+  r.client.onEvent('agent.request_changed', (e) => seen.push(`${e.seq} ${(e.request as AgentRequest).state}`));
+  const next = (BigInt(r.client.getState().lastSeq!) + 1n).toString();
+  socket.deliver({
+    schema: 'siann.event.v1',
+    seq: next,
+    sessionId: SESSION,
+    revision: 'r3',
+    type: 'agent.request_changed',
+    request: { ...request, state: 'taken' },
+  });
+  await until(() => r.client.getState().lastSeq === next, 'lastSeq past the agent.request_changed');
+  assert.deepEqual(seen, [`${next} taken`]);
+  assert.equal(r.client.model.getSnapshot(), before, 'a request changes nothing in the model');
 });
 
 test('(19) a request while disconnected is refused before the socket, sends no frame and is recorded', async () => {

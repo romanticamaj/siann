@@ -215,3 +215,32 @@ TEST_CASE("An edit that only changes fader parameters does not recompile", "[pla
     CHECK(matches(p, reference, 11, p.blockCount()));
     CHECK(p.engine.underruns() == 0);
 }
+
+// m5b-engine-clip-fades: the fades are part of the stream key, so a fade-only
+// edit replaces the track's stream and the heard sound follows the new fade.
+TEST_CASE("A fade-only edit replaces the track's stream and the output follows the fade", "[playback][live][fades]") {
+    Fixture f;
+    Live p(f.session);
+    p.pump(20);
+    const realtime::DiskStream* streamA = p.engine.streamFor("trk_a");
+    const realtime::DiskStream* streamB = p.engine.streamFor("trk_b");
+    const std::size_t compiles = p.engine.compileCount();
+    const auto before = offline(f.doc(), f.bundle(), 60 * kBlock);
+
+    // clp_a spans 0..50000: a fade out over its last 40000 frames covers every
+    // frame the next blocks play.
+    f.exec(R"({"op":"clip.set_fade","clipId":"clp_a","fadeOut":{"length":"40000","curve":"equal_power"}})");
+    p.engine.update(f.doc());
+    p.pump(40);
+
+    CHECK(p.engine.compileCount() == compiles + 1);
+    CHECK(p.engine.streamFor("trk_b") == streamB);
+    CHECK(p.engine.streamFor("trk_a") != nullptr);
+    CHECK(p.engine.streamFor("trk_a") != streamA);
+    const int duck = p.lastDuckBlock();
+    REQUIRE(duck >= 20);
+    const auto reference = offline(f.doc(), f.bundle(), framesOf(p));
+    CHECK(matches(p, reference, duck + 2, p.blockCount()));
+    CHECK_FALSE(matches(p, before, duck + 2, p.blockCount()));
+    CHECK(p.engine.underruns() == 0);
+}

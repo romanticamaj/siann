@@ -16,6 +16,7 @@ if(SIANN_BUILD_TESTS)
   find_package(Threads REQUIRED)
   add_executable(siann_rt_tests
     tests/latest_mailbox_test.cpp
+    tests/load_window_test.cpp
     tests/queue_test.cpp
     tests/realtime_thread_test.cpp
   )

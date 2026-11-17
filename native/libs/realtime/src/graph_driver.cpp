@@ -192,10 +192,18 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
         clickBurst_ = clickSound_.normal.size();
     }
     clickCursor_ = -1;
+    // The loudness meter keeps its history unless the session rate changes.
+    if (config.sampleRate > 0 &&
+        (!loudnessMeter_ || loudnessMeter_->sampleRate() != static_cast<double>(config.sampleRate))) {
+        loudnessMeter_ = std::make_unique<dsp::LoudnessMeter>(static_cast<double>(config.sampleRate), kLoudnessChannels);
+        publishLoudness();
+    }
+    applyLoudnessReset();
     deviceStatus_ = device.open(config);
     setUpResampling(config);
     srcUnderruns_.store(0, std::memory_order_relaxed);
     timing_.reset();
+    load_.reset();
     deviceLost_.store(false, std::memory_order_release);
     device.setOnStopped([this](bool) { deviceLost_.store(true, std::memory_order_release); });
     device_ = &device;
@@ -203,12 +211,57 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
     // The live graph is already in current_; starting the device thread
     // publishes it to the callback. Every callback is timed into timing_
     // (spec, "Realtime rules and enforcement": a deadline miss is counted,
-    // never acted on here).
+    // never acted on here) and, from the same two clock reads, into load_.
     device.start([this](const host::AudioBufferView& in, const host::AudioBufferView& out) {
         const std::int64_t begin = nowNanos();
         process(in, out);
-        timing_.record(out.frames, deviceStatus_.sampleRate, nowNanos() - begin);
+        const std::int64_t duration = nowNanos() - begin;
+        timing_.record(out.frames, deviceStatus_.sampleRate, duration);
+        load_.record(out.frames, deviceStatus_.sampleRate, duration);
     });
+}
+
+void GraphDriver::requestLoudnessReset() noexcept {
+    loudnessResetRequested_.fetch_add(1, std::memory_order_release);
+    if (state_ == DriverState::stopped) {
+        applyLoudnessReset();  // no callback runs: the meter is ours
+    }
+}
+
+void GraphDriver::applyLoudnessReset() noexcept {
+    const std::uint64_t requested = loudnessResetRequested_.load(std::memory_order_acquire);
+    if (requested == loudnessResetApplied_) {
+        return;
+    }
+    loudnessResetApplied_ = requested;
+    if (loudnessMeter_) {
+        loudnessMeter_->reset();
+        publishLoudness();
+    }
+}
+
+void GraphDriver::publishLoudness() noexcept {
+    loudnessMomentary_.store(static_cast<float>(loudnessMeter_->momentary()), std::memory_order_relaxed);
+    loudnessShortTerm_.store(static_cast<float>(loudnessMeter_->shortTerm()), std::memory_order_relaxed);
+    loudnessIntegrated_.store(static_cast<float>(loudnessMeter_->integrated()), std::memory_order_relaxed);
+}
+
+void GraphDriver::meterLoudness(const host::AudioBufferView& output, int offset, int frames, bool sounding) noexcept {
+    if (!loudnessMeter_) {
+        return;
+    }
+    if (sounding) {
+        const float* channels[kLoudnessChannels] = {};
+        const int count = std::min(output.channelCount, kLoudnessChannels);
+        for (int c = 0; c < count; ++c) {
+            channels[c] = output.channel(c) + offset;
+        }
+        loudnessMeter_->process(channels, count, frames);
+    } else {
+        // Stopped: the span is digital silence (spec, Protocol v0 item 31).
+        loudnessMeter_->processSilence(frames);
+    }
+    publishLoudness();
 }
 
 std::int64_t GraphDriver::nowNanos() const noexcept {
@@ -586,6 +639,7 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
     }
 
     drainParams();
+    applyLoudnessReset();
 
     const bool playing = playing_.load(std::memory_order_acquire);
     if (src_ == nullptr) {
@@ -894,6 +948,9 @@ void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, in
             output.channel(c)[offset + i] = v;
         }
     }
+    // The loudness meter: after the duck and rise, before the click (spec,
+    // "Master path"), silence while the graph does not play.
+    meterLoudness(output, offset, frames, source != nullptr);
     // After the graph's output and its meters, before device-side SRC; only
     // while the graph plays.
     if (source != nullptr) {

@@ -174,6 +174,16 @@ applied plan's effects are already there, so one that added an entity answers
 and rolled-back plans instead of previewing them). Errors: `not_found` (no such
 plan), `invalid_params` (no `plan`).
 
+A step that sets a fade (m5b-engine-clip-fades) previews the clip without the
+fade fields before and with them after; a side set to length `"0"` disappears
+from `after`:
+
+```json
+{"op": "clip.set_fade", "clipId": "clp_1", "fadeIn": {"length": "480", "curve": "linear"}}
+-> {"ref": "clip:clp_1", "before": {"length": "48000", "gainMilliDb": 0, ...},
+    "after": {"length": "48000", "gainMilliDb": 0, "fadeIn": {"length": "480", "curve": "linear"}, ...}}
+```
+
 ### Events
 
 `plan.changed` and `audition.changed` (`protocol-events-v1.md`) tell a client when

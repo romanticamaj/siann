@@ -9,6 +9,9 @@ export interface Capabilities {
   readonly methods?: readonly string[];
   readonly features?: Readonly<Record<string, unknown>>;
   readonly commands?: readonly string[];
+  // The engine's bounds (agentRequestsPerAgent, agentRequestTextChars, ... for
+  // the composer's agent requests, m5b-engine-agent-requests).
+  readonly limits?: Readonly<Record<string, unknown>>;
   readonly [field: string]: unknown;
 }
 

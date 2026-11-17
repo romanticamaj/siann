@@ -32,6 +32,17 @@ The master gain is document data, set with the command `master.set_gain {gainMil
 
 The gain applies to the sum of the tracks, before the master meter (meter key `master`), the click and device-side SRC (architecture spec, "Master path"); an offline render applies the same gain, so offline and realtime renders agree. The master gain is also a gesture target, `{ref: "master:master", param: "gain"}` ([Protocol gestures v0](protocol-gestures-v0.md)). `engine.capabilities` lists `master.set_gain` in `commands` and reports `features.masterGain: true`.
 
+### Clip fades (m5b-engine-clip-fades, UI redesign UR-6, Protocol v0 item 30)
+
+Fades are document data, set with the command `clip.set_fade {clipId, fadeIn?, fadeOut?}` through `command.execute`, a plan or MCP `execute`; there is no method and no MCP tool of its own. Each side is `{length, curve}`: `length` in media frames as a decimal string, `"0"` removing the side; `curve` `"linear"` or `"equal_power"`. At least one side is given; an omitted side is unchanged. A missing side, a bad curve, a length that is not a non-negative decimal string, or an extra field is `invalid_params`; `fadeIn.length + fadeOut.length` above the clip's `length` is `invalid_fade`; an unknown clip `not_found`. The command declares exactly `{clip:<id>}` and is one revision.
+
+```json
+{"method": "command.execute", "params": {"command": {"op": "clip.set_fade", "clipId": "clp_1",
+  "fadeIn": {"length": "480", "curve": "linear"}, "fadeOut": {"length": "960", "curve": "equal_power"}}}}
+```
+
+The clip entity carries `fadeIn` and `fadeOut` only while their length is not 0, so a clip without fades hashes as before. `clip.trim` to a length shorter than the two fades shortens them in the same revision (the fade in keeps its length first, the fade out takes the rest; a side shortened to 0 is removed). Offline and realtime renders apply the same gain curve (architecture spec, "siann-graph and siann-engine"). `engine.capabilities` lists `clip.set_fade` in `commands` and reports `features.clipFades: true`.
+
 ## engine.status
 
 Params `{}`. Result:
@@ -40,6 +51,7 @@ Params `{}`. Result:
 {"device": {"id": "fake", "sampleRate": 48000, "bufferFrames": 256, "inputLatencyFrames": 256, "outputLatencyFrames": 256,
             "input": {"id": "fake", "channels": 2, "latencyFrames": 256}},
  "playing": false, "cycle": false, "recording": false, "armed": [], "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
+ "load": {"average": 0.12, "peak": 0.31},
  "plugins": [],
  "agents": [{"id": "agt_3f2a9c1d0b7e6a54", "name": "mix-assistant", "transport": "mcp", "connected": true,
              "lastAction": "submit_plan", "lastActionAt": "2026-11-15T10:00:05Z"}]}
@@ -48,6 +60,16 @@ Params `{}`. Result:
 `device` is null when no device runs, and `deviceError {code, message}` then says why: `no_device`, `device_open_failed`, `device_lost`, `no_audio_backend` (a core-only build without `--device fake`), or a media code when the session's first graph could not be built (`media_missing`, `media_hash_mismatch`, `media_mismatch`, `unsupported_media`, `decode_failed`, `too_large`, `load_failed`). While that first graph could not be built the other methods still run: `proposal.merge` and `proposal.discard` act on the session directly, and only `audition.hear` answers `audition_unavailable`. `id` is `fake`, `<type>/<name>` or `default` (launched without `--device` and nothing selected since). The counters run from the device's start. `plugins` is in [Protocol plugins v0](protocol-plugins-v0.md). `device.input` (m5b-engine-record) is null while no input is open, otherwise the input's `id`, the channels the device opened and its input latency in frames; `recording` and `armed` are the record state's ([Recording](#recording)).
 
 `agents` (m5b-engine-plan-metadata, Protocol v0 item 29) lists the MCP sessions in the order they initialized, each `{id, name, transport: "mcp", connected, lastAction, lastActionAt}`: `id` is `agt_<hex>`, never the `Mcp-Session-Id`; `name` the sanitised `clientInfo.name` (`"MCP client"` without one); `connected` is true from `initialize` until `DELETE /v0/mcp` or `limits.agentIdleMs` without a request (the next request connects it again); `lastAction` is the name of the tool last executed for it and `lastActionAt` the server's ISO time then, both null before its first tool call. Arguments are never recorded. At most `limits.agentsRetained` (32) are kept ([Protocol MCP v0](protocol-mcp-v0.md), Agents). Every change is announced by `agent.changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` reports `features.agents` true when a transport port is present (the condition of `engine.status`), and `features.planMetadata: true`.
+
+`load` (m5b-engine-load-loudness, Protocol v0 item 31) is `{average, peak}`, JSON numbers: `average` is the fraction of the device period the audio callback used over the last full window of one second of device frames (the sum of the callbacks' durations over the sum of their periods), `peak` the largest single callback's fraction in that window. Both can exceed 1 when callbacks miss their deadline. They are measured on the audio thread with the two steady-clock reads that time `xruns`, restart with the device's start, and are `0` while no device runs and before the first window is full. `engine.capabilities` reports `features.load` true when a transport port is present.
+
+## Loudness (m5b-engine-load-loudness, Protocol v0 item 31)
+
+| Method | Params | Result |
+|---|---|---|
+| `meter.reset_loudness` | `{}` | `{}` |
+
+The engine meters the master output per ITU-R BS.1770-4 (gating as in EBU R128): momentary (400 ms), short-term (3 s) and integrated loudness in LUFS, after the master gain and before the click (architecture spec, "Master path"). The values travel on the realtime socket as the `"SLUD"` frame ([Protocol events v1](protocol-events-v1.md), "Loudness frame"). `meter.reset_loudness` restarts the integrated value; a locate or a stop does not, and the meter keeps its state across a graph swap and `engine.select_device`. It is engine state: no revision, no event, honours `expectedRevision` and the idempotency cache, and runs without a device (it is not `no_device`). Without a transport port it is `not_supported`. It is not an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)). `engine.capabilities` lists it in `methods` and reports `features.loudness` true when a transport port is present.
 
 ## Plans: title, intent and actor (m5b-engine-plan-metadata)
 
@@ -60,6 +82,45 @@ Params `{}`. Result:
 | an `actor`, or any param not listed above | `invalid_params` |
 
 On a refusal nothing is stored and no `plan.changed` goes out. `invalid_plan_metadata` is a new stable code. `plan.status`, `plan.list` and `plan.changed` carry `title`, `intent`, `actor` and `rejectionNote` when the plan has them.
+
+`plan.submit` also takes `request` (m5b-engine-agent-requests, below): the id of an open agent request the plan answers. It is not part of the plan and not hashed. From the UI credential it is `invalid_params`; a closed request, or one addressed to another agent, is `request_not_open`, an unknown one `not_found`; nothing is stored then.
+
+## Agent requests (m5b-engine-agent-requests)
+
+A request from the user to an agent that is connected over MCP (spec, Protocol v0 item 32; human gate `agent-request-shape`, decided by the maintainer 2026-11-15). SIANN has no agent runtime: the engine holds the request until the agent takes it with the MCP tool `next_request` and answers it with `answer_request` or `submit_plan {request}` ([Protocol MCP v0](protocol-mcp-v0.md)). A request executes nothing: its text and context are data for the agent, and the only way its outcome reaches the document is a plan the user approves. Requests are engine state on the command thread: not a revision, not in the bundle or the journal, dropped when the engine restarts.
+
+The request object:
+
+```json
+{"id": "arq_5c1e9a0b3d2f4e67", "agentId": "agt_3f2a9c1d0b7e6a54", "text": "Lower the drums",
+ "context": {"selection": {"tracks": ["trk_1"], "clips": ["clp_4"]},
+             "locators": {"schema": "siann.entity.locators.v1", "id": "locators", "left": "0", "right": "192000"},
+             "cursor": "96000", "headRevision": "r3"},
+ "state": "pending", "createdAt": "2026-11-15T10:01:00Z"}
+```
+
+`state` is `pending` or `taken` (open), or `answered`, `declined`, `cancelled` or `expired` (closed, final). `plan` (a plan hash) and `message` appear once an answer set them. `context` is stamped by the engine when it queues the request: only `selection` comes from the UI; `locators` is the head document's locators entity as `session.fetch` returns it (null when none is set), `cursor` the transport position in session frames as a decimal string (null without a transport port), `headRevision` main's head.
+
+| Method | Credential | Params | Result |
+|---|---|---|---|
+| `agent.request` | UI | `{agentId, text, selection?: {tracks?: [id], clips?: [id]}}` | `{request}`, `pending` |
+| `agent.cancel_request` | UI | `{request}` | `{request}`, `cancelled` |
+| `agent.requests` | UI | `{}` | `{requests}`: the open ones oldest first, then the last `limits.agentRequestsClosedRetained` (16) closed ones in the order they closed |
+| `agent.next_request` | MCP (`next_request`) | `{waitMs?}` | `{request}` (now `taken`) or `{request: null}` |
+| `agent.answer_request` | MCP (`answer_request`) | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` | `{request}`, `answered` or `declined` |
+
+The other credential is `scope_denied` for each (not cached). The codes:
+
+| Case | Answer |
+|---|---|
+| `text` (or a `message`) empty, over 4,000 characters (Unicode code points, so at most 16,000 UTF-8 bytes; unlike a plan's title and intent, which count bytes), with a control character other than tab, LF and CR, or with a display-unsafe character (bidi formatting, U+2028, U+2029; `siann/model/display_text.hpp`) | `invalid_request_text` |
+| a missing or non-string `agentId`, `text` or `request`; a selection that is not `{tracks?, clips?}`, a list over 256 ids, or an id that is not `[A-Za-z0-9_-]{1,64}`; an unknown param; `answer_request` with no form or two, `decline` other than `true`, or a plan another client submitted | `invalid_params` |
+| `agentId` unknown, or the agent not connected | `agent_not_connected` |
+| the agent already has `limits.agentRequestsPerAgent` (16) open requests, `pending` or `taken` | `agent_busy` (nothing is queued) |
+| an unknown request id, or an unknown plan hash | `not_found` |
+| cancelling or answering a closed request, or answering one addressed to another agent | `request_not_open` |
+
+Open requests expire when their agent disconnects (`DELETE /v0/mcp`, or idle past `limits.agentIdleMs`; a later reconnect does not revive them), when the agent is forgotten (`limits.agentsRetained`), and when `session.open` or `session.create` serves another session. Every state change publishes `agent.request_changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` lists the five methods, `features.agentRequests` (true when `features.agents` is) and `limits.agentRequestsPerAgent` (16), `agentRequestTextChars` (4000), `agentRequestWaitMs` (25,000 by default, at most `mcpRequestTimeout` minus 1 s) and `agentRequestsClosedRetained` (16). New stable codes: `agent_not_connected`, `agent_busy`, `invalid_request_text`, `request_not_open`.
 
 ## engine.devices
 

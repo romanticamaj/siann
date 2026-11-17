@@ -233,6 +233,14 @@ MixWiring wireMix(GraphBuilder& builder, const model::Document& document, NodeId
     return wiring;
 }
 
+graph::ClipFade clipFade(const model::Clip& clip) noexcept {
+    const auto curve = [](model::FadeCurve c) {
+        return c == model::FadeCurve::equal_power ? graph::FadeCurve::equal_power : graph::FadeCurve::linear;
+    };
+    return graph::ClipFade{clip.fadeIn.length, curve(clip.fadeIn.curve), clip.fadeOut.length,
+                           curve(clip.fadeOut.curve)};
+}
+
 std::vector<FlatTrack> flattenClips(const model::Document& document) {
     const auto& root = document.root();
     const time::TempoMap tempo(root.tempo);
@@ -248,7 +256,7 @@ std::vector<FlatTrack> flattenClips(const model::Document& document) {
         for (const model::Clip* clip : document.clipsOnTrack(track->id)) {
             entry.clips.push_back(FlatClip{timelineStart(*clip, tempo, root.sampleRate), clip->sourceStart,
                                            clip->length, graph::gainFromMilliDb(clip->gain.milliDb),
-                                           document.media(clip->mediaId)});
+                                           document.media(clip->mediaId), clipFade(*clip)});
         }
     }
     return flat;
@@ -278,8 +286,8 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
             if (found == library.media.end()) {
                 throw EngineError("media_missing", "media " + clip.media->id + " is not loaded");
             }
-            clips.push_back(
-                ClipPlayerNode::Clip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, found->second});
+            clips.push_back(ClipPlayerNode::Clip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
+                                                 found->second, clip.fade});
         }
         const NodeId player =
             builder.add(std::make_unique<ClipPlayerNode>(track.channels, std::move(clips)), track.id + ".clips");

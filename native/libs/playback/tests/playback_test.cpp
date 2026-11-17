@@ -1402,3 +1402,43 @@ TEST_CASE("A bus meter reaches the dispatcher under bus:<id> and reads the bus's
     p.engine.dispatcher().tick();
     CHECK(p.engine.dispatcher().meter("bus:bus_fx")->reading.peak[0] == 0.0f);
 }
+
+// m5b-engine-clip-fades: the butler applies the same fade gain as the offline
+// clip player, so the realtime output nulls against renderOffline.
+TEST_CASE("Realtime output of faded clips is sample-identical to renderOffline after the fade-in",
+          "[playback][fades]") {
+    Fixture f;
+    f.importWav("med_st", 2, 50'000);
+    f.importWav("med_mono", 1, 20'000);
+    f.exec(addTrack("trk_a"));
+    f.exec(addTrack("trk_b"));
+    f.exec(place("clp_a1", "trk_a", "med_st", 1'000, 0, 20'000));
+    f.exec(place("clp_a2", "trk_a", "med_st", 15'000, 5'000, 30'000));
+    f.exec(R"({"op":"clip.set_gain","clipId":"clp_a2","gainMilliDb":-6000})");
+    f.exec(place("clp_b1", "trk_b", "med_mono", 3'000, 100, 19'000));
+    // Overlapping clips, both curves, two fades that meet, odd lengths.
+    f.exec(R"({"op":"clip.set_fade","clipId":"clp_a1","fadeIn":{"length":"4801","curve":"linear"},)"
+           R"("fadeOut":{"length":"6000","curve":"equal_power"}})");
+    f.exec(R"({"op":"clip.set_fade","clipId":"clp_a2","fadeIn":{"length":"9999","curve":"equal_power"}})");
+    f.exec(R"({"op":"clip.set_fade","clipId":"clp_b1","fadeIn":{"length":"9500","curve":"equal_power"},)"
+           R"("fadeOut":{"length":"9500","curve":"linear"}})");
+
+    const std::int64_t end = engine::documentEnd(f.doc());
+    const int n = blocksFor(end);
+    Player p(f.session);
+    p.pump(n);
+    const auto reference = offline(f.doc(), f.bundle(), static_cast<std::int64_t>(n) * kBlock);
+    CHECK(blocks(p.out[0], 1, n) == blocks(reference[0], 1, n));
+    CHECK(blocks(p.out[1], 1, n) == blocks(reference[1], 1, n));
+    CHECK_FALSE(silent(blocks(p.out[0], 1, n)));
+    // And it is not the unfaded render.
+    Document plain = f.doc();
+    plain = withCommand(plain, R"({"op":"clip.set_fade","clipId":"clp_a1","fadeIn":{"length":"0","curve":"linear"},)"
+                               R"("fadeOut":{"length":"0","curve":"linear"}})");
+    plain = withCommand(plain, R"({"op":"clip.set_fade","clipId":"clp_a2","fadeIn":{"length":"0","curve":"linear"}})");
+    plain = withCommand(plain, R"({"op":"clip.set_fade","clipId":"clp_b1","fadeIn":{"length":"0","curve":"linear"},)"
+                               R"("fadeOut":{"length":"0","curve":"linear"}})");
+    const auto unfaded = offline(plain, f.bundle(), static_cast<std::int64_t>(n) * kBlock);
+    CHECK(blocks(p.out[0], 1, n) != blocks(unfaded[0], 1, n));
+    CHECK(p.engine.underruns() == 0);
+}
