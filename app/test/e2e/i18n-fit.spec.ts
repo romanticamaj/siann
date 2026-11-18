@@ -591,3 +591,86 @@ test('the DSP load, the Meter tab, the loudness row and the Meter panel fit in e
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-composer: the "ask the agent" box, its send control, the request
+// rows' state texts and their cancel and dismiss controls, in en, zh-TW, zh-CN
+// and the pseudo-locale, at 1440x900: an open request sent and one taken,
+// under them the closed one in each closed state in turn (answered with a
+// message, declined, cancelled, then expired by the agent's disconnect).
+test('the composer, its send control, the request states and their controls fit in every locale', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-composer-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize({ width: 1440, height: 900 });
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  const ready = await app.evaluate(() => (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } } }).__siannShell.current());
+  const agent = new Agent(ready.port, ready.mcpToken);
+  await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mix-assistant', version: '1' } });
+  const field = page.locator('[data-part="composer"] textarea');
+  await expect(field).toBeEnabled();
+  const send = async (text: string) => {
+    const before = await page.locator('.request').count();
+    await field.fill(text);
+    await field.press('Enter');
+    await expect(field).toHaveValue('');
+    await expect(page.locator('.request[data-state="pending"]').last()).toContainText(text);
+    return before;
+  };
+  const failures: string[] = [];
+  const check = async (what: string) => {
+    for (const locale of LOCALES) {
+      await page.evaluate((next) => {
+        const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+        if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+        store.setLocale(next);
+      }, locale);
+      await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+      const report = await page.evaluate(() => {
+        const out: string[] = [];
+        const zone = document.querySelector<HTMLElement>('[data-region="right-zone"]')!.getBoundingClientRect();
+        for (const el of document.querySelectorAll<HTMLElement>('[data-part="composer"], [data-part="composer"] .send, .request-state, .request button, .composer-refusal')) {
+          const box = el.getBoundingClientRect();
+          if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${el.textContent}" ${el.scrollWidth} > ${el.clientWidth}`);
+          if (box.right > zone.right + 0.5 || box.left < zone.left - 0.5) out.push(`${el.className} "${el.textContent}" outside the zone`);
+          if (el.classList.contains('request-state')) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`state "${el.textContent}" wraps`);
+          }
+        }
+        // The placeholder on the box's one line.
+        const area = document.querySelector<HTMLTextAreaElement>('[data-part="composer"] textarea')!;
+        if (area.value === '' && area.scrollHeight > area.clientHeight + 1) out.push(`placeholder "${area.placeholder}" wraps`);
+        return out;
+      });
+      for (const entry of report) failures.push(`${locale} ${what}: ${entry}`);
+    }
+  };
+  await check('empty');
+  // next_request takes the oldest pending request.
+  const take = async () => ((await agent.tool('next_request', { waitMs: 0 })).request as { id: string }).id;
+  await send('Taken request');
+  await take();
+  await send('Open request');
+  await send('Answered request');
+  await take(); // "Open request" stays taken
+  await agent.tool('answer_request', { request: await take(), message: 'Lowered the drums by 3 dB' });
+  await expect(page.locator('.request[data-state="answered"]')).toHaveCount(1);
+  await check('answered');
+  await send('Declined request');
+  await agent.tool('answer_request', { request: await take(), decline: true, message: 'Not now' });
+  await expect(page.locator('.request[data-state="declined"]')).toHaveCount(1);
+  await check('declined');
+  await send('Cancelled request');
+  await page.locator('.request[data-state="pending"] [data-testid="request-cancel"]').last().click();
+  await expect(page.locator('.request[data-state="cancelled"]')).toHaveCount(1);
+  await page.locator('.request[data-state="cancelled"]').getByTestId('request-dismiss').waitFor();
+  await check('cancelled');
+  await agent.end();
+  await expect(page.locator('.request[data-state="expired"]')).toHaveCount(1);
+  await check('expired');
+  expect(failures).toEqual([]);
+});

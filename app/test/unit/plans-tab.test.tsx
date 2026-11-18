@@ -15,7 +15,8 @@
 //                           (.steps-h + one .step per step, as step() returns
 //                           it), .acts[plan-actions] (three .btn); .hist-h and
 //                           one .hrow per earlier plan
-//     the composer's hold
+//     .composer[composer]   the spark icon, span (the textarea, m5b-ui-composer),
+//                           span.send > the send icon
 //
 // The mockup's plan is the fidelity session's: six steps, three earlier plans,
 // the pointer on step 3. The app's .zone-body wrapper is the zone frame's and
@@ -54,9 +55,9 @@ const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.j
 const REDUCED = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-reduced.json'), 'utf8')) as Capabilities;
 
 // The parts of the right zone whose feature has not landed (manifest.json).
-// The Media and Meter tabs landed with m5b-ui-media and m5b-ui-meter: the full
-// capabilities list media.import and features.loudness.
-const PENDING_PARTS = ['composer'];
+// The Media and Meter tabs landed with m5b-ui-media and m5b-ui-meter, and the
+// composer with m5b-ui-composer: no part of the right zone is pending.
+const PENDING_PARTS: string[] = [];
 
 // The mockup's agent: connected, no tool call yet (lastAction null).
 const MOCKUP_AGENT: Agent = { id: 'agt_1', name: 'mix-assistant', transport: 'mcp', connected: true, lastAction: null, lastActionAt: null };
@@ -165,7 +166,8 @@ function mockChildren(node: Node): Node[] {
 function appChildren(node: Node): Node[] {
   let out = node.children.flatMap((c) => (c.classes.includes('zone-body') ? c.children : [c]));
   if (node.classes.includes('t') || node.classes.includes('d')) out = out.filter((c) => !['b', 's', 'em'].includes(c.tag));
-  return out;
+  // The composer's textarea is the one element the app adds to the mockup's box (m5b-ui-composer).
+  return out.filter((c) => c.tag !== 'textarea');
 }
 
 // The mockup's numbered ids are the app's repeated items (UI redesign 10.3).
@@ -242,6 +244,7 @@ test('every id of the Plans tab is in the markup, and no id of a pending part', 
     'agent-row',
     'plan-title',
     'plan-intent',
+    'composer',
   ]) {
     assert.equal(parts.filter((p) => p === id).length, 1, `${id} once`);
   }
