@@ -565,7 +565,7 @@ test('nightly tour: ux-tour.spec.ts in en, zh-Hant and zh-Hans on windows and ub
     assert.doesNotMatch(run, /continue-on-error/, 'a state that fails to render fails the job');
   }
   const uploads = steps(tour).filter((s) => /actions\/upload-artifact@v4/.test(s) && /name: tour-/.test(s));
-  assert.deepEqual(uploads.map((s) => /name: (tour-\S+)/.exec(s)[1]),
+  assert.deepEqual(uploads.map((s) => /name: (tour-[^\n]+)/.exec(s)[1].trim()),
     LOCALES.map((locale) => `tour-\${{ runner.os }}-${locale}`));
   for (const upload of uploads) {
     assert.match(upload, /if: always\(\)/);
@@ -615,7 +615,7 @@ test('nightly asan-ubsan: Clang 20, -DSIANN_ASAN_UBSAN=ON, the whole ctest suite
     const line = text.split('\n').find((l) => new RegExp(`^\\s+${variable}:`).test(l));
     assert.ok(line, variable);
     if (variable !== 'LSAN_OPTIONS') assert.match(line, /halt_on_error=1/, `${variable} halts on the first report`);
-    assert.match(line, new RegExp(`suppressions=[^:\\s]*${SUPPRESSIONS}/${file}\\.supp`), `${variable} passes ${file}.supp`);
+    assert.match(line, new RegExp(`suppressions=[^:]*${SUPPRESSIONS}/${file}\\.supp`), `${variable} passes ${file}.supp`);
   }
   assert.match(text, /ctest\s+--test-dir\s+native\/build\/asan[^\n]*--no-tests=error/);
   assert.doesNotMatch(text, /ctest[^\n]*\s(-R|-E|-L|-LE)\s/, 'the whole suite, not a filter');
