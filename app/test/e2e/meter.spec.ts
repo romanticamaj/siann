@@ -199,13 +199,14 @@ test('(c) the Meter tab: the master\'s wells, its peak value and the three loudn
   await expect(panel.locator('canvas')).toHaveCount(1);
   const [momentary, shortTerm, integrated] = ['loudness-momentary', 'loudness-short-term', 'loudness-integrated'].map((id) => page.getByTestId(id));
   for (const value of [momentary!, shortTerm!, integrated!]) await expect(value).toHaveText('-inf');
+  // No loudness value through React: the panel commits nothing while the values
+  // move from -inf to readings. (The square wave is steady, so once its 400 ms
+  // window is full the momentary value stops changing: waiting for a change
+  // after the first reading raced the runner's speed, macOS CI.)
+  const commits = await commitsOf('meter-panel');
   await client!.call('transport.play');
   for (const value of [momentary!, shortTerm!, integrated!]) await expect(value).toHaveText(LUFS, { timeout: 10_000 });
   await expect(page.getByTestId('meter-panel-peak')).toHaveText(LUFS);
-  // No loudness value through React: the panel commits nothing while the values move.
-  const commits = await commitsOf('meter-panel');
-  const shown = await momentary!.textContent();
-  await expect.poll(() => momentary!.textContent(), { timeout: 10_000 }).not.toBe(shown);
   expect(await commitsOf('meter-panel')).toBe(commits);
   await client!.call('transport.stop');
   await expect(momentary!).toHaveText('-inf', { timeout: 10_000 });
