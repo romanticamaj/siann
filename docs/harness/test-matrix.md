@@ -657,7 +657,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 | `m5b-ui-plan-metadata` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
 | `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
 | `m5b-ui-meter` (landed, see the table above) | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
-| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled; `agent_busy` shown |
+| `m5b-ui-composer` (landed, see the table above) | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled, answered with a message; `agent_busy` shown |
 | `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |
 | `m5b-ui-editor-channel` | 5 | `m5b-ui-edit-more`, `m5b-ui-fades` | `tab-editor`, `zone-button-channel`, `strip-N-edit`, `inspector-edit` | one revision and one undo per edit in the editor |
 | `m6a-ui-automation` (M6a) | 3 | `m6a-lanes`, `m6a-write-passes` | `*-read`, `*-write`, `strip-*-automation`, `inspector-automation` | e2e with a reduced capabilities fixture |
