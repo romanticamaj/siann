@@ -282,6 +282,10 @@ test('gaps 4, 6, 7, 9 and 12 are closed in the gap table and section 6', () => {
   for (const gap of CLOSED_GAPS) {
     assert.ok(!six.some((line) => line.startsWith(`| ${gap} |`)), `gap ${gap} is out of section 6`);
   }
+  // What gap 6 named and the feature does not fuzz: the media decoders.
+  const decoders = six.find((line) => /^\| \d+ \|/.test(line) && /WAV/.test(line) && /FLAC/.test(line));
+  assert.ok(decoders, 'a section 6 row for fuzzing the WAV and FLAC readers');
+  assert.match(decoders, /\| Low[^|]*\|/, 'ranked low');
 });
 
 test('section 7 lists its proposals 1 to 3 and 5 to 7 as done', () => {
@@ -297,7 +301,7 @@ test('section 7 lists its proposals 1 to 3 and 5 to 7 as done', () => {
 test('section 2 has a row for m5b-nightly-quality naming its tests', () => {
   const row = section('## 2. ').split('\n').find((line) => line.startsWith('| m5b-nightly-quality |'));
   assert.ok(row, 'an m5b-nightly-quality row');
-  for (const name of ['ci-workflow', 'ci-long-tests', 'check-all-changed', 'test-matrix', 'native-sanitizers',
+  for (const name of ['ci-workflow', 'ci-long-tests', 'check-all-changed', 'test-matrix', 'native-quality-options', 'tour-output',
     'fuzz_smoke_test', 'perf-report', 'frame-marks', 'perf.spec']) {
     assert.ok(row.includes(name), `the row names ${name}`);
   }

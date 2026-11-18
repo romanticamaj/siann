@@ -44,19 +44,28 @@ std::vector<std::string> corpus(const std::string& target) {
     return out;
 }
 
-template <typename Harness>
+// A harness takes the bytes as libFuzzer's LLVMFuzzerTestOneInput does.
+using Harness = void (*)(const std::uint8_t*, std::size_t);
+
+void feed(Harness harness, const std::string& bytes) {
+    harness(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+}
+
+// Every committed seed file of the target, then the seeded inputs.
 void smoke(const std::string& target, Harness harness) {
     const auto seeds = corpus(target);
     for (std::size_t i = 0; i < seeds.size(); ++i) {
         INFO(target << " corpus entry " << i);
-        REQUIRE_NOTHROW(harness(std::string_view(seeds[i])));
+        REQUIRE_NOTHROW(feed(harness, seeds[i]));
     }
+    // The empty input, as libFuzzer starts with it.
+    REQUIRE_NOTHROW(harness(nullptr, 0));
     for (const std::uint64_t seed : kSeeds) {
         siann::fuzz::SplitMix64 rng(seed);
         for (std::size_t i = 0; i < kIterationsPerSeed; ++i) {
             const std::string input = siann::fuzz::mutate(rng, seeds, kMaxLength);
             INFO(target << " seed " << seed << " input " << i);
-            REQUIRE_NOTHROW(harness(std::string_view(input)));
+            REQUIRE_NOTHROW(feed(harness, input));
         }
     }
 }
@@ -86,10 +95,24 @@ TEST_CASE("mutations are deterministic and bounded", "[fuzz]") {
     }
 }
 
-TEST_CASE("fuzz smoke: protocol WebSocket frames", "[fuzz]") {
-    smoke("protocol_ws", siann::fuzz::protocolWs);
-    CHECK(siann::fuzz::protocolWsStillAnswers());
+TEST_CASE("fuzz smoke: one protocol text frame", "[fuzz]") {
+    smoke("protocol_frame", siann::fuzz::protocolFrame);
+    CHECK(siann::fuzz::protocolStillAnswers());
     siann::fuzz::reset();
+}
+
+TEST_CASE("fuzz smoke: JSON requests over the WebSocket", "[fuzz]") {
+    smoke("ws_request", siann::fuzz::wsRequest);
+    CHECK(siann::fuzz::protocolStillAnswers());
+    siann::fuzz::reset();
+}
+
+TEST_CASE("fuzz smoke: the binary meter frame decoder", "[fuzz]") {
+    smoke("meter_frame", siann::fuzz::meterFrame);
+}
+
+TEST_CASE("fuzz smoke: the binary loudness frame decoder", "[fuzz]") {
+    smoke("loudness_frame", siann::fuzz::loudnessFrame);
 }
 
 TEST_CASE("fuzz smoke: MCP HTTP bodies", "[fuzz]") {
@@ -100,4 +123,20 @@ TEST_CASE("fuzz smoke: MCP HTTP bodies", "[fuzz]") {
 
 TEST_CASE("fuzz smoke: command and plan JSON", "[fuzz]") {
     smoke("command_json", siann::fuzz::commandJson);
+}
+
+TEST_CASE("the decoders' committed seeds are frames they accept", "[fuzz]") {
+    // The corpora start from real frames (fixtures/protocol), so the fuzzer
+    // begins past the header checks.
+    std::size_t meters = 0;
+    for (const std::string& seed : corpus("meter_frame")) {
+        meters += siann::fuzz::meterFrameDecodes(reinterpret_cast<const std::uint8_t*>(seed.data()), seed.size()) ? 1 : 0;
+    }
+    CHECK(meters >= 1);
+    std::size_t loudness = 0;
+    for (const std::string& seed : corpus("loudness_frame")) {
+        loudness +=
+            siann::fuzz::loudnessFrameDecodes(reinterpret_cast<const std::uint8_t*>(seed.data()), seed.size()) ? 1 : 0;
+    }
+    CHECK(loudness >= 1);
 }

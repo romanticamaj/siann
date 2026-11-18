@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   BUDGETS,
   MIN_FRAMES,
+  assertComplete,
   buildPerfReport,
   median,
   missingMeasurements,
@@ -112,4 +113,15 @@ test('too few frames is a missing frame measurement, not a fast one', () => {
 
 test('the scenario must be the 64-track, 2,000-clip session', () => {
   assert.deepEqual(missingMeasurements(buildPerfReport(input({ scenario: { tracks: 8, clips: 2000 } }))), ['scenario']);
+});
+
+test('assertComplete throws on a missing measurement and not on one over its budget', () => {
+  assert.throws(() => assertComplete(buildPerfReport(input({ heapBytes: null }))), /heapMb/);
+  assert.throws(() => assertComplete(buildPerfReport(input({ frameWorkMs: [] }))), /frameMedianMs, frameP99Ms/);
+  const slow = buildPerfReport(input({ frameWorkMs: frames(MIN_FRAMES, 30), heapBytes: 900 * 1024 * 1024, coldStartMs: 9000 }));
+  assert.doesNotThrow(() => assertComplete(slow));
+  for (const row of slow.budgets) {
+    assert.deepEqual(Object.keys(row).filter((k) => ['value', 'budget', 'withinBudget'].includes(k)).sort(),
+      ['budget', 'value', 'withinBudget']);
+  }
 });

@@ -12,9 +12,10 @@ const path = require('node:path');
 
 const NATIVE = path.join(__dirname, '..', 'native');
 const ROOT_CMAKE = path.join(NATIVE, 'CMakeLists.txt');
-const SANITIZERS = path.join(NATIVE, 'sanitizers');
+const SANITIZERS = path.join(NATIVE, 'tools', 'sanitizer-suppressions');
 const FUZZ = path.join(NATIVE, 'fuzz');
-const FUZZ_TARGETS = ['protocol_ws', 'mcp_http', 'command_json'];
+// One target per harness function of native/fuzz/include/siann/fuzz/harness.hpp.
+const FUZZ_TARGETS = ['protocol_frame', 'ws_request', 'meter_frame', 'loudness_frame', 'mcp_http', 'command_json'];
 
 const read = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
 // The CMake text without comments.
@@ -95,10 +96,12 @@ test('SIANN_COVERAGE (Clang only) builds with source-based coverage', () => {
   assert.ok(text.indexOf(block) < firstTarget(text));
 });
 
-test('every sanitizer suppression carries its reason on the line above it', () => {
-  if (!fs.existsSync(SANITIZERS)) return; // no suppression needed
-  for (const name of fs.readdirSync(SANITIZERS)) {
+test('the suppression files exist and every suppression carries its reason on a comment above it', () => {
+  const names = fs.readdirSync(SANITIZERS).filter((name) => name.endsWith('.supp')).sort();
+  assert.deepEqual(names, ['asan.supp', 'lsan.supp', 'ubsan.supp']);
+  for (const name of names) {
     const lines = read(path.join(SANITIZERS, name)).split('\n');
+    assert.ok(lines.some((line) => line.trim().startsWith('#')), `${name} says what it is for`);
     lines.forEach((line, i) => {
       if (line.trim() === '' || line.trim().startsWith('#')) return;
       const above = lines[i - 1] ?? '';
@@ -107,12 +110,29 @@ test('every sanitizer suppression carries its reason on the line above it', () =
   }
 });
 
-test('each fuzz target has a committed, non-empty seed corpus', () => {
-  for (const target of FUZZ_TARGETS) {
+// The fuzz targets as native/fuzz/CMakeLists.txt names them: a foreach list or
+// add_executable(siann_fuzz_<target>).
+function cmakeFuzzTargets() {
+  const fuzz = code(read(path.join(FUZZ, 'CMakeLists.txt')));
+  const names = new Set();
+  const loop = /foreach\(target ([^)]*)\)\s*add_executable\(siann_fuzz_\$\{target\}/.exec(fuzz);
+  if (loop) for (const name of loop[1].trim().split(/\s+/)) names.add(name);
+  for (const [, name] of fuzz.matchAll(/add_executable\(siann_fuzz_([a-z_]+)\b(?!_)/g)) {
+    if (name !== 'smoke_tests') names.add(name);
+  }
+  return [...names].sort();
+}
+
+test('the fuzz CMake names one target per harness function', () => {
+  assert.deepEqual(cmakeFuzzTargets(), [...FUZZ_TARGETS].sort());
+});
+
+test('each fuzz target named in the CMake has a committed, non-empty seed corpus', () => {
+  for (const target of cmakeFuzzTargets()) {
     const dir = path.join(FUZZ, 'corpus', target);
     assert.ok(fs.existsSync(dir), `native/fuzz/corpus/${target}/ exists`);
     const files = fs.readdirSync(dir).filter((name) => fs.statSync(path.join(dir, name)).isFile());
     assert.ok(files.length >= 3, `${target} has at least three seeds (${files.length})`);
-    assert.ok(files.some((name) => fs.statSync(path.join(dir, name)).size > 0), `${target} has a non-empty seed`);
+    assert.ok(files.every((name) => fs.statSync(path.join(dir, name)).size > 0), `every seed of ${target} is non-empty`);
   }
 });

@@ -9,8 +9,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  ALL_STEPS, BRIDGE_NATIVE, bridgeStep, cacheRoot, dependencySource, engineTestFiles, nativeEnv, PACKAGE_NATIVE,
-  packageStep, parseArgs, selectSteps, stepsForPath, stepsForPaths,
+  ALL_STEPS, BRIDGE_NATIVE, bridgeStep, cacheRoot, dependencySource, DESKTOP_PATHS, engineTestFiles, nativeEnv,
+  PACKAGE_NATIVE, PACKAGE_NATIVE_PATHS, packageStep, parseArgs, selectSteps, stepsForPath, stepsForPaths,
 } = require('../scripts/check-all');
 
 const none = { desktop: false, gcc: false, app: false, json: false, only: null,
@@ -62,7 +62,8 @@ test('the package step reports skipped off Windows and runs nothing there', asyn
 
 test('docs, prose, the renderer and the core never run the package step', () => {
   for (const file of ['docs/harness/runbook.md', 'README.md', 'app/README.md', 'docs/adr/0017-x.md',
-    'app/src/renderer/App.tsx', 'app/test/e2e/editor.spec.ts', 'native/libs/model/src/document.cpp',
+    'app/src/renderer/App.tsx', 'app/test/e2e/editor.spec.ts', 'native/libs/graph/src/graph.cpp',
+    'native/libs/playback/src/x.cpp', 'native/libs/realtime/src/x.cpp',
     'test/run-app.test.js', '.github/workflows/ci.yml']) {
     assert.ok(!stepsForPath(file).includes('package'), file);
   }
@@ -141,19 +142,33 @@ test('native/ runs native and g++; the core alone leaves the JUCE preset out', (
 
 // m5b-nightly-quality (acceptance item 5, test-matrix gap 7): the desktop engine
 // links playback, graph and realtime, so their JUCE-only regressions show on the
-// pull request (the desktop job and the installer's engine), not after the merge.
-test('native/libs/playback runs the desktop preset and the installer', () => {
-  assert.deepEqual(stepsForPaths(['native/libs/playback/src/x.cpp']), ['node', 'native', 'desktop', 'package', 'gcc']);
+// pull request in the desktop job. They do not go into the installer's package
+// step: that keeps its own list (PACKAGE_NATIVE_PATHS).
+const CORE_DESKTOP = ['native/libs/playback/src/x.cpp', 'native/libs/graph/src/graph.cpp', 'native/libs/realtime/src/x.cpp'];
+
+for (const file of CORE_DESKTOP) {
+  test(`${file.split('/')[2]} runs the desktop preset, not the installer or the bridge`, () => {
+    assert.ok(DESKTOP_PATHS.some((re) => re.test(file)), `a DESKTOP_PATHS regex matches ${file}`);
+    assert.ok(!PACKAGE_NATIVE_PATHS.some((re) => re.test(file)), `no package path matches ${file}`);
+    assert.ok(stepsForPath(file).includes('desktop'), file);
+    assert.ok(!stepsForPath(file).includes('package'), file);
+    assert.ok(!stepsForPath(file).includes('bridge'), file);
+    assert.deepEqual(stepsForPaths([file]), ['node', 'native', 'desktop', 'gcc']);
+    assert.deepEqual(stepsForPath(file.replace(/\//g, '\\')), ['node', 'native', 'desktop', 'gcc']);
+  });
+}
+
+test('the package step keeps the native paths it had: host libraries, the engine and the build files', () => {
+  assert.equal(PACKAGE_NATIVE_PATHS.length, 6);
+  for (const re of PACKAGE_NATIVE_PATHS) assert.ok(DESKTOP_PATHS.includes(re), `${re} is a desktop path too`);
+  assert.equal(DESKTOP_PATHS.length, PACKAGE_NATIVE_PATHS.length + 3);
 });
 
-test('native/libs/graph runs the desktop preset and the installer', () => {
-  assert.deepEqual(stepsForPaths(['native/libs/graph/src/graph.cpp']), ['node', 'native', 'desktop', 'package', 'gcc']);
-});
-
-test('native/libs/realtime runs the desktop preset and the installer', () => {
-  assert.deepEqual(stepsForPaths(['native/libs/realtime/include/siann/rt/queue.h']),
-    ['node', 'native', 'desktop', 'package', 'gcc']);
-  assert.deepEqual(stepsForPath('native\\libs\\realtime\\src\\driver.cpp'), ['node', 'native', 'desktop', 'package', 'gcc']);
+test('protocol and session still leave the desktop preset out', () => {
+  for (const file of ['native/libs/protocol/src/protocol_server.cpp', 'native/libs/session/src/session.cpp']) {
+    assert.ok(!stepsForPath(file).includes('desktop'), file);
+    assert.ok(!DESKTOP_PATHS.some((re) => re.test(file)), file);
+  }
 });
 
 test('JUCE, plugin hosting, siann-engine and the build files add the desktop preset and the installer', () => {
