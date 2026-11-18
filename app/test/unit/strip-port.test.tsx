@@ -304,7 +304,7 @@ test('without features.masterGain, master.set_gain or the gesture methods the ma
     const [, column] = elements(find(master, byClass('fad')));
     assertEmptyBox(column!, 'the master fader column');
     assert.deepEqual(elements(find(master, byClass('readout'))).map(sig), ['button.pk']);
-    assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
+    assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-fader-area', 'strip-master-loudness', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
   }
 });
 
@@ -624,7 +624,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   for (const el of findAll(root, byAttr('data-part'))) assert.ok(!pending(el.attrs['data-part']!), el.attrs['data-part']!);
 });
 
-test('without features.loudness the master's loudness row is the empty .panrow the shared rules size', () => {
+test('without features.loudness the master\'s loudness row is the empty .panrow the shared rules size', () => {
   const noLoudness: Capabilities = { ...FULL, features: { ...FULL.features, loudness: false } };
   for (const caps of [noLoudness, null]) {
     const master = find(render([kick()], { caps }), (el) => classes(el).includes('master'));

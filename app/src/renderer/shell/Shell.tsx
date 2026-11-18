@@ -93,7 +93,6 @@ import {
   type Zone,
 } from './layout';
 import { useShellState, type LayoutStore } from './layout-store';
-import { useCapabilities } from './Capable';
 import { Hold } from './Hold';
 import { useCapabilities } from './Capable';
 import { pluginsListed } from '../mixer/inserts';
