@@ -1915,9 +1915,16 @@ struct ProtocolServer::Impl {
             }
             linked = given->asString();
         }
+        const std::size_t plansBefore = session->plans().size();
         const command::Plan& plan = session->submitPlan(std::move(steps), std::move(readSet), base, std::move(metadata));
         if (fromMcp && !request.agentId.empty()) {
             planSubmitters_.emplace(*plan.hashText, request.agentId);
+            // The plan's actor is fixed by its first submission: an identical
+            // resubmission by another agent returns the stored plan and does not
+            // make that agent its actor.
+            if (session->plans().size() > plansBefore) {
+                planActors_.emplace(*plan.hashText, request.agentId);
+            }
         }
         if (linked) {
             requestChanged(agentRequests.close(*linked, detail::RequestState::answered, *plan.hashText));
@@ -1936,6 +1943,46 @@ struct ProtocolServer::Impl {
     // (plan hash, agent id) for every plan an agent submitted in this session:
     // the plans agent.answer_request accepts from it.
     std::set<std::pair<std::string, std::string>> planSubmitters_;
+    // Plan actors (security fix after m5b-protocol-parity; protocol-mcp-v0.md,
+    // "Trust model"): plan hash -> the agent id whose submission stored it, and
+    // proposal branch -> the agent id that proposed it. A propose-scoped MCP
+    // caller rejects only the plans it is the actor of and discards only the
+    // proposals of its plans or the ones it proposed (not_plan_actor otherwise).
+    std::map<std::string, std::string, std::less<>> planActors_;
+    std::map<command::BranchId, std::string, std::less<>> branchProposers_;
+
+    static bool proposeScoped(const Pending& request) {
+        return request.scope.has_value() && *request.scope == McpScope::propose;
+    }
+
+    bool actsFor(const Pending& request, const std::string& planHash) const {
+        const auto it = planActors_.find(planHash);
+        return !request.agentId.empty() && it != planActors_.end() && it->second == request.agentId;
+    }
+
+    void requirePlanActor(const Pending& request, const std::string& planHash, std::string_view method) const {
+        if (proposeScoped(request) && !actsFor(request, planHash)) {
+            throw ProtocolError("not_plan_actor", std::string(method) + ": plan " + planHash +
+                                                      " was submitted by another client");
+        }
+    }
+
+    void requireProposalActor(const Pending& request, const command::BranchId& branch,
+                              std::string_view method) const {
+        if (!proposeScoped(request)) {
+            return;
+        }
+        const auto proposer = branchProposers_.find(branch);
+        if (!request.agentId.empty() && proposer != branchProposers_.end() && proposer->second == request.agentId) {
+            return;
+        }
+        if (const std::optional<std::string> plan = session->plans().proposedPlan(branch);
+            plan && actsFor(request, *plan)) {
+            return;
+        }
+        throw ProtocolError("not_plan_actor", std::string(method) + ": branch " + branch +
+                                                  " was neither proposed by this agent nor made of its plan");
+    }
     // The request states changed since the last publishRequestChanges().
     std::vector<detail::AgentRequest> requestChanges_;
 
@@ -2274,13 +2321,22 @@ struct ProtocolServer::Impl {
             }
             indexes.push_back(static_cast<std::size_t>(entry.asNumber()));
         }
-        return success(request.requestId,
-                       session->approvePlanPartial(planHash, indexes, options.actor, options.clock()).toJson());
+        const command::Plan& sub = session->approvePlanPartial(planHash, indexes, options.actor, options.clock());
+        // The sub-plan carries the parent's actor (Plans, metadata), so its agent stays its actor here too.
+        if (const auto parent = planActors_.find(planHash); parent != planActors_.end()) {
+            planActors_.emplace(*sub.hashText, std::string(parent->second));
+        }
+        return success(request.requestId, sub.toJson());
     }
 
     std::string planPropose(const Pending& request) {
         const std::string& planHash = requireString(request.params, "plan", "plan.propose");
         const command::BranchId branch = session->proposePlan(planHash, options.actor, options.clock());
+        // A branch id an earlier proposal used is the new proposal's.
+        branchProposers_.erase(branch);
+        if (request.scope.has_value() && !request.agentId.empty()) {
+            branchProposers_.emplace(branch, request.agentId);
+        }
         const command::Revision& revision = session->history().branchHead(branch);
         std::string response = success(request.requestId, Value(Object{{"branch", Value(branch)},
                                                                          {"revision", revisionJson(revision)}}));
@@ -2306,6 +2362,7 @@ struct ProtocolServer::Impl {
 
     std::string proposalDiscard(const Pending& request) {
         const command::BranchId branch = requireOpenBranch(request.params, "proposal.discard");
+        requireProposalActor(request, branch, "proposal.discard");
         if (options.auditionPort != nullptr) {
             options.auditionPort->discard(branch);
         } else {
@@ -2445,6 +2502,8 @@ struct ProtocolServer::Impl {
             requestChanged(std::move(expired));
         }
         planSubmitters_.clear();
+        planActors_.clear();
+        branchProposers_.clear();
         return success(request.requestId,
                        Value(Object{{"sessionId", Value(nextId)},
                                     {"revision", Value(head.envelope.id)},
@@ -2609,6 +2668,8 @@ struct ProtocolServer::Impl {
         if (method == "plan.reject") {
             const std::string& planHash = requireString(request.params, "plan", method);
             const std::string note = optionalString(request.params, "note", method).value_or("");
+            requirePlan(planHash);
+            requirePlanActor(request, planHash, method);
             return success(request.requestId,
                            session->rejectPlan(planHash, options.actor, options.clock(), note).toJson());
         }
