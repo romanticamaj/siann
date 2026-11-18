@@ -24,7 +24,8 @@
 //   moved clip and the new box of a trimmed one as a hatched, dashed ghost
 //   clip with its waveform and its step number, the original of a moved or
 //   trimmed clip at 38 % with an arrow to its ghost, a removed clip at 38 %
-//   and cross-hatched, and a locator change as a ghost band in the ruler's
+//   and cross-hatched, a removed track's lane cross-hatched with its step
+//   (under its clips, which are removed clips), and a locator change as a ghost band in the ruler's
 //   upper half. They appear at once (no fade: UI redesign 1.6). It is
 //   redrawn only when the snapshot, the selection, the zoom, the scroll, the
 //   size, the lane heights, the peaks, the locale or the ghosts change.
@@ -1641,7 +1642,7 @@ export class TimelineCanvas {
     ghostLanes.forEach((lane) => parts.push({ id: `lane-${lane.key}`, x: lane.x, y: lane.y, w: lane.width, h: lane.height }));
     const lanesOf = new Map<string, { top: number; height: number }>(order.map((id, i) => [id, { top: tops[i]!, height: laneHeightOf(id, view) }]));
     adds.forEach((g, i) => lanesOf.set(g.trackId, { top: ghostLanes[i]!.y, height: ghostLanes[i]!.height }));
-    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), removed: new Map<string, number>() };
+    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), removed: new Map<string, number>(), lanesRemoved: [] };
     const masks: Array<Omit<SurfacePart, 'id'>> = [];
     this.#rects.forEach((rect, index) => {
       const box = clipBox(rect);
@@ -1698,6 +1699,7 @@ export class TimelineCanvas {
       ctx.fillStyle = palette.divider;
       order.forEach((trackId, index) => ctx.fillRect(0, tops[index]! + laneHeightOf(trackId, view) - 1, width, 1));
       this.#drawGhostLanes(ctx, ghostLanes, palette);
+      this.#drawRemovedLanes(ctx, ghostDraw.lanesRemoved, palette);
       ctx.restore();
     }
     this.#drawRuler(ctx, snapshot, palette);
@@ -1872,6 +1874,7 @@ export class TimelineCanvas {
     const shapes: GhostShape[] = [];
     const originals = new Map<string, number>();
     const removed = new Map<string, number>();
+    const lanesRemoved: Array<{ step: number; box: Box }> = [];
     const boxes: GhostBox[] = [];
     const counts = new Map<string, number>();
     const part = (name: string, box: Box) => {
@@ -1906,6 +1909,16 @@ export class TimelineCanvas {
           part(g.kind === 'clip-place' ? 'clip-ghost-new' : g.kind === 'clip-move' ? 'clip-ghost-move' : 'clip-ghost-trim', box);
           break;
         }
+        case 'track-remove': {
+          // The removed track's lane (4.2: "cross-hatched in violet"), under its clips.
+          const lane = lanes.get(g.trackId);
+          if (!lane) break;
+          const box = { x: 0, y: lane.top, width: view.width, height: lane.height };
+          lanesRemoved.push({ step: g.step, box });
+          boxes.push({ step: g.step, box, pure: false });
+          part('lane-ghost-remove', box);
+          break;
+        }
         case 'clip-remove': {
           const from = original(g.clipId);
           if (!from) break;
@@ -1927,7 +1940,31 @@ export class TimelineCanvas {
       }
     }
     this.#ghostBoxes = boxes;
-    return { shapes, originals, removed };
+    return { shapes, originals, removed, lanesRemoved };
+  }
+
+  // A removed track's lane: the proposed lane's hatch, crossed, and its step
+  // disc at the lane's start (its clips are drawn over it, each dimmed and
+  // cross-hatched with its own disc).
+  #drawRemovedLanes(ctx: CanvasRenderingContext2D, lanes: ReadonlyArray<{ step: number; box: Box }>, palette: Palette): void {
+    for (const { step, box } of lanes) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(box.x, box.y, box.width, box.height - 1);
+      ctx.clip();
+      ctx.strokeStyle = palette.aiLane;
+      ctx.lineWidth = LANE_HATCH_WIDTH;
+      for (let x = -box.height; x < box.width + box.height; x += LANE_HATCH_PITCH) {
+        ctx.beginPath();
+        ctx.moveTo(x, box.y + box.height);
+        ctx.lineTo(x + box.height, box.y);
+        ctx.moveTo(x, box.y);
+        ctx.lineTo(x + box.height, box.y + box.height);
+        ctx.stroke();
+      }
+      this.#drawStepDisc(ctx, box, step, palette);
+      ctx.restore();
+    }
   }
 
   // A proposed track's lane: draw()'s hatch over the lane, clipped to it.

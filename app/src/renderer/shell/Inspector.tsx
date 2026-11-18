@@ -36,11 +36,15 @@
 // Agent changes (m5b-ui-ghosts; UI redesign 4.2, 4.4) is the mockup's
 // sec('Agent changes'): a .hist row for each applied plan that touched the
 // track ("r31 · <its step on the track> by <b>plan</b> · N steps", the plan
-// named by plans/plan-name.ts until E-7), then a row for each step of the
-// plan under review with a ghost on the track, or the mockup's "No pending
-// change on this track.". The Volume and Pan values show the pending value
-// after them (.ghost-to), and the name both names of a rename (.ghost-name):
-// elements the mockup has no markup for.
+// named by plans/plan-name.ts until E-7), then a row for each ticked step of
+// the plan under review on the track, or the mockup's "No pending change on
+// this track."; a step is on the track when it names it or one of its clips
+// (plans/track-steps.ts), and the rows come from the plan, so they stay while
+// the ghosts are toggled off. The Volume and Pan values show the pending value
+// after them (.ghost-to; the current one then without its unit, and shell.css
+// lets the value column grow), the name both names of a rename
+// (plans/RenameGhost.tsx): elements the mockup has no markup for. A pending
+// mute or solo rings M or S (.msr.ghost), as the header and the strip do.
 
 import { useRef, useSyncExternalStore, type CSSProperties } from 'react';
 
@@ -62,6 +66,8 @@ import { trackGhosts } from '../plans/ghosts';
 import { useStepNames } from '../plans/hooks';
 import { ISOLATE } from '../plans/isolate';
 import { planName } from '../plans/plan-name';
+import { RenameGhost } from '../plans/RenameGhost';
+import { stepsOnTrack } from '../plans/track-steps';
 import { Icon } from './icons';
 import { trackColourVar } from '../timeline/track-colour';
 import { useCapabilities } from './Capable';
@@ -100,11 +106,22 @@ function AgentChanges({ client, track, plans }: { client: SessionClient; track: 
   const view = useGhostView();
   const store = plans ?? NO_PLANS;
   const snapshot = useSyncExternalStore((l) => store.subscribe(l), () => store.getSnapshot(), () => store.getSnapshot());
-  const touches = (step: Record<string, unknown>) => step.trackId === track.id;
+  const session = useSyncExternalStore((l) => client.model.subscribe(l), () => client.model.getSnapshot(), () => client.model.getSnapshot());
+  const clipTrack = (clipId: string) => {
+    const clip = session?.entities[`clip:${clipId}` as keyof NonNullable<typeof session>['entities']] as { trackId?: unknown } | undefined;
+    return typeof clip?.trackId === 'string' ? clip.trackId : undefined;
+  };
+  // The steps on the track: its own and its clips' (plans/track-steps.ts).
+  const onTrack = (steps: readonly Record<string, unknown>[]) => stepsOnTrack(steps, track.id, clipTrack);
   const applied = (snapshot?.plans ?? [])
-    .filter((p) => p.state === 'applied' && p.appliedRevision !== undefined && p.steps.some(touches))
-    .map((p) => ({ plan: p, step: p.steps.find(touches)!, name: planName(p, t, names)! }));
-  const pending = trackGhosts(view.ghosts, track.id).steps;
+    .filter((p) => p.state === 'applied' && p.appliedRevision !== undefined)
+    .map((p) => ({ plan: p, first: onTrack(p.steps)[0] }))
+    .filter((row): row is { plan: typeof row.plan; first: number } => row.first !== undefined)
+    .map(({ plan: p, first }) => ({ plan: p, step: p.steps[first]!, name: planName(p, t, names)! }));
+  // What approving the plan under review would do on the track: its ticked
+  // steps on it, whether the ghosts are shown or toggled off.
+  const ticked = view.ticked ?? null;
+  const pending = view.plan ? onTrack(view.plan.steps).filter((i) => ticked === null || ticked.has(i)).map((i) => i + 1) : [];
   const reviewed = view.plan ? planName(view.plan, t, names) : null;
   return (
     <div className="sec" data-part="inspector-agent-changes">
@@ -236,6 +253,8 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
   const gain = ghosts.gain.at(-1);
   const pan = ghosts.pan.at(-1);
   const rename = ghosts.rename.at(-1);
+  const mute = ghosts.mute.at(-1);
+  const solo = ghosts.solo.at(-1);
   const gesturable = can.has('gesture.begin') && can.feature('gestures');
   const gainListed = gesturable && can.command('track.set_gain');
   const panListed = gesturable && can.command('track.set_pan');
@@ -250,25 +269,20 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
         <div className="i-name" data-part="inspector-name">
           <span data-testid="inspector-colour" style={swatch} />
           <span data-testid="inspector-track" dir={ISOLATE.dir} style={{ ...ISOLATE.style }}>
-            {rename ? `${track.name} → ` : track.name}
-            {rename ? (
-              <span className="ghost-name" {...ghostAttrs(view, [rename.step])}>
-                {rename.after}
-              </span>
-            ) : null}
+            {rename ? <RenameGhost before={track.name} after={rename.after} step={rename.step} view={view} /> : track.name}
           </span>
           <small>{t(track.channels === 1 ? 'inspector.mono' : 'inspector.stereo')}</small>
         </div>
         <div className="i-btns" data-part="inspector-buttons">
           {can.command('track.set_mute') ? (
-            <button type="button" className={`msr m${track.mute ? ' on' : ''}`} data-testid="inspector-mute" data-part="inspector-mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
+            <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} {...(mute ? ghostAttrs(view, [mute.step]) : {})} data-testid="inspector-mute" data-part="inspector-mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
               M
             </button>
           ) : (
             <Hold className="msr-box" />
           )}
           {can.command('track.set_solo') ? (
-            <button type="button" className={`msr s${track.solo ? ' on' : ''}`} data-testid="inspector-solo" data-part="inspector-solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
+            <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} {...(solo ? ghostAttrs(view, [solo.step]) : {})} data-testid="inspector-solo" data-part="inspector-solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
               S
             </button>
           ) : (

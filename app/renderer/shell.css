@@ -645,6 +645,18 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 [data-ghost-hot] { outline: var(--hairline-1h) solid var(--ai); outline-offset: calc(var(--hairline) * -1); }
 .ghost-to, .ghost-name { color: var(--ai-2); }
 .ghost-removed { opacity: var(--offline-opacity); }
+/* Room for both values: the header's gain readout with a pending value grows
+   from the shared cell (the pan readout moves right, the meter gives way),
+   and so does the Inspector's value column (the slider gives way). */
+.th .r2 .db:has(> .ghost-to) { width: auto; min-width: var(--track-gain-w); flex: none; }
+.i-row:has(> b .ghost-to) { grid-template-columns: var(--inspector-label-w) minmax(0, 1fr) minmax(var(--inspector-value-w), max-content); }
+/* Both names of a rename (plans/RenameGhost.tsx), on one line: where they do
+   not fit, the old name gives way first, the new one last. */
+.ghost-rename { display: inline-flex; max-width: 100%; min-width: 0; }
+.ghost-rename > span { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.ghost-rename > .ghost-was { flex: 0 1000 auto; min-width: calc(var(--space-2) * 2); }
+.ghost-rename > .ghost-arrow { flex: none; }
+.ghost-rename > .ghost-name { flex: 0 1 auto; min-width: 0; }
 .overlaypill .tog[aria-pressed="false"] { background: none; color: var(--ai-2); }
 .overlaypill > span { overflow: hidden; text-overflow: ellipsis; }
 

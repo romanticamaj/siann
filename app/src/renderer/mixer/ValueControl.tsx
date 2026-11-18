@@ -27,7 +27,8 @@ export interface ValueReadoutProps {
   // the Inspector's value its b.num.
   readonly tag?: 'span' | 'b';
   readonly className?: string;
-  // After the value: the pending plan's value (m5b-ui-ghosts, the Inspector's rows).
+  // After the value: the pending plan's value (m5b-ui-ghosts, the Inspector's
+  // rows), which then carries the unit alone ("-9.0 → -6.0 dB").
   readonly suffix?: ReactNode;
 }
 
@@ -44,7 +45,7 @@ export function ValueReadout({ kind, entityRef, value, gestures, testId, label, 
   const classes = [className, warn ? 'warn' : ''].filter(Boolean).join(' ') || undefined;
   return (
     <Tag className={classes} data-testid={testId} aria-label={label} onDoubleClick={typing ? () => setEditing(true) : undefined}>
-      {text}
+      {suffix ? `${text.replace(/ dB$/, '')} ` : text}
       {suffix}
     </Tag>
   );

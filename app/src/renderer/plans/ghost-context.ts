@@ -16,8 +16,11 @@ export interface GhostView {
   readonly outline: number | null;
   // A click on a ghost of `step`.
   pin(step: number): void;
-  // The plan the ghosts are of (the Inspector's pending line names it).
+  // The plan under review while it is reviewable, with the ghosts shown or
+  // toggled off (the Inspector's Agent changes lists what is pending on a
+  // track from it), and its ticked steps (0-based; null: every step).
   readonly plan?: PlanEntry;
+  readonly ticked?: ReadonlySet<number> | null;
 }
 
 export const NO_GHOSTS: GhostView = Object.freeze({ ghosts: Object.freeze([]) as readonly Ghost[], outline: null, pin: () => undefined });
@@ -37,10 +40,11 @@ export function useReviewGhosts(store: ReviewStore | null): GhostView {
   const subscribe = (listener: () => void) => (store ? store.subscribe(listener) : () => undefined);
   const ghosts = useSyncExternalStore(subscribe, () => (store ? store.ghosts() : NO_GHOSTS.ghosts), () => NO_GHOSTS.ghosts);
   const outline = useSyncExternalStore(subscribe, () => (store ? store.outlineStep() : null), () => null);
-  const plan = useSyncExternalStore(subscribe, () => (store && ghosts.length > 0 ? store.plan() : undefined), () => undefined);
+  const plan = useSyncExternalStore(subscribe, () => (store?.reviewable() ? store.plan() : undefined), () => undefined);
+  const ticked = useSyncExternalStore(subscribe, () => (store ? store.getSnapshot().ticked : null), () => null);
   return useMemo<GhostView>(
-    () => (store ? { ghosts, outline, plan, pin: (step) => store.pinGhost(step) } : NO_GHOSTS),
-    [store, ghosts, outline, plan],
+    () => (store ? { ghosts, outline, plan, ticked, pin: (step) => store.pinGhost(step) } : NO_GHOSTS),
+    [store, ghosts, outline, plan, ticked],
   );
 }
 

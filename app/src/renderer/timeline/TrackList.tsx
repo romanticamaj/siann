@@ -22,8 +22,11 @@
 // badge, its name and "proposed track", the summary in .r2) after the last
 // header, at the height of a lane; a header carries its track's ghosts: the
 // dashed ring on M or S (th()'s .msr.ghost), and, as elements the mockup has
-// no markup for, the gain readout with both values (.ghost-to) and both
-// names of a rename (.ghost-name). A click on a proposed header pins its step.
+// no markup for, the gain readout with both values without their unit
+// (4.2's "-9.0 → -6.0", .ghost-to; shell.css lets its cell grow so it clears
+// the pan readout), both names of a rename (plans/RenameGhost.tsx), and for a
+// removed track the dimming its strip has (.ghost-removed) and its step badge
+// before the name. A click on a proposed header pins its step.
 //
 // Double-click a name to rename it (Enter commits one track.rename; Escape
 // and leaving the field cancel); the add button above the list and a
@@ -56,9 +59,10 @@ import type { TrackEntity } from '../model/document';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { Snapshot } from '../model/read-model';
 import type { SessionClient } from '../model/session-client';
-import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
+import { ghostAttrs, NO_GHOSTS, useGhostView, type GhostView } from '../plans/ghost-context';
 import { trackGhosts, type Ghost, type TrackGhosts } from '../plans/ghosts';
 import { ISOLATE } from '../plans/isolate';
+import { RenameGhost, renameTitle } from '../plans/RenameGhost';
 import { Capable, useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
 import { Icon } from '../shell/icons';
@@ -97,6 +101,8 @@ export interface TrackListProps {
 type RegisterMeter = (ref: string, well: HTMLElement) => () => void;
 
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
+// A gain as the header's ghost readout writes it: the value without its unit.
+const bareDb = (milliDb: number) => formatDb(milliDb).replace(/ dB$/, '');
 const NO_TRACK_GHOSTS: TrackGhosts = Object.freeze({ gain: [], pan: [], mute: [], solo: [], rename: [], remove: null, steps: [] });
 const NOTHING = () => undefined;
 
@@ -333,7 +339,7 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
     target.addEventListener('pointercancel', up);
   };
 
-  const classes = ['th', dimmed ? 'muted' : '', selected ? 'sel' : ''].filter(Boolean).join(' ');
+  const classes = ['th', dimmed ? 'muted' : '', selected ? 'sel' : '', ghosts.remove ? 'ghost-removed' : ''].filter(Boolean).join(' ');
   const style = { '--c': `var(${trackColourVar(id)})`, height: `${height}px` } as CSSProperties;
   const gain = ghosts.gain.at(-1);
   const rename = ghosts.rename.at(-1);
@@ -354,6 +360,11 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
       </div>
       <div className="body">
         <div className="r1">
+          {ghosts.remove ? (
+            <span className="stepn" style={{ marginRight: 'var(--space-3q)' }}>
+              {String(ghosts.remove.step)}
+            </span>
+          ) : null}
           {editing ? (
             <input
               className="track-rename"
@@ -378,11 +389,10 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
               {...ISOLATE}
               data-testid={`track-name-${id}`} data-part-of="name"
               data-renamable={canRename ? 'true' : undefined}
-              title={track.name}
+              title={renameTitle(track.name, rename?.after)}
               onDoubleClick={canRename ? () => onEditing(true) : undefined}
             >
-              {rename ? `${track.name} → ` : track.name}
-              {rename ? <span className="ghost-name">{rename.after}</span> : null}
+              {rename ? <RenameGhost before={track.name} after={rename.after} step={rename.step} view={view ?? NO_GHOSTS} /> : track.name}
             </span>
           )}
           {can.command('track.set_mute') ? (
@@ -420,8 +430,8 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
         </div>
         <div className="r2">
           <span className="db num" data-testid={`track-gain-${id}`} data-part-of="gain">
-            {gain ? `${formatDb(gain.before ?? track.gainMilliDb).replace(/ dB$/, '')} ` : formatDb(track.gainMilliDb)}
-            {gain ? <span className="ghost-to">{`→ ${formatDb(gain.after)}`}</span> : null}
+            {gain ? `${bareDb(gain.before ?? track.gainMilliDb)} ` : formatDb(track.gainMilliDb)}
+            {gain ? <span className="ghost-to">{`→ ${bareDb(gain.after)}`}</span> : null}
           </span>
           <span className="pan num" data-testid={`track-pan-${id}`} data-part-of="pan">
             {formatPan(track.pan)}

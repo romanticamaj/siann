@@ -41,7 +41,8 @@
 // knob()'s ghost tick and the new value in --ai-2; a mute change's badge out
 // of the flow and the dashed ring on M (.msr.ghost), a solo change's on S.
 // The mockup has no markup for a removed track's strip (an added class,
-// .ghost-removed, dims it) or both names of a rename (an added .ghost-name).
+// .ghost-removed, dims it) or both names of a rename (plans/RenameGhost.tsx,
+// the tag's one grid item, so the pair stays on one line).
 // A proposed track is a GhostStrip: strip() for the mockup's ghost track, its
 // insert row an empty box and nothing to operate. A click on a ghost pins its
 // step (plans/ghost-context.ts).
@@ -56,6 +57,7 @@ import type { SessionClient } from '../model/session-client';
 import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
 import { trackGhosts, type Ghost, type TrackGhosts } from '../plans/ghosts';
 import { ISOLATE } from '../plans/isolate';
+import { RenameGhost, renameTitle } from '../plans/RenameGhost';
 import { useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
 import { trackColourVar } from '../timeline/track-colour';
@@ -395,13 +397,8 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
         )}
       </div>
       <div className="btns" aria-hidden="true" />
-      <div className="nametag" data-testid={`strip-name-${trackId}`} data-part-of="name" dir={ISOLATE.dir} style={{ ...ISOLATE.style }} title={track.name}>
-        {rename ? `${track.name} → ` : track.name}
-        {rename ? (
-          <span className="ghost-name" {...ghostAttrs(view, [rename.step])}>
-            {rename.after}
-          </span>
-        ) : null}
+      <div className="nametag" data-testid={`strip-name-${trackId}`} data-part-of="name" dir={ISOLATE.dir} style={{ ...ISOLATE.style }} title={renameTitle(track.name, rename?.after)}>
+        {rename ? <RenameGhost before={track.name} after={rename.after} step={rename.step} view={view} /> : track.name}
       </div>
     </div>
   );

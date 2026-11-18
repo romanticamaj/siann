@@ -225,14 +225,17 @@ test('both values and both names have room: the header\'s gain clears its pan, t
   expect(now.top).toBeCloseTo(was.top, 0);
   expect(now.bottom).toBeLessThanOrEqual(tagBox.bottom + 0.5);
   expect(now.right).toBeLessThanOrEqual(tagBox.right + 0.5);
-  // In the header: the new name is drawn whole, and the old one is not cut away.
+  // In the header the name cell left of M and S is narrower than the pair: the
+  // old name gives way first, so neither is cut away and the new name keeps
+  // the larger share; the title holds both whole.
   const name = page.getByTestId('track-name-trk_b');
+  await expect(name).toHaveAttribute('title', 'Bass → Bass DI');
   const nameBox = await boxOf(name);
-  const headerWas = name.locator('.ghost-was');
-  const headerNow = name.locator('.ghost-name');
-  expect(await headerNow.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
-  expect((await boxOf(headerNow)).right).toBeLessThanOrEqual(nameBox.right + 0.5);
-  expect((await boxOf(headerWas)).right - (await boxOf(headerWas)).left).toBeGreaterThan(4);
+  const headerWas = await boxOf(name.locator('.ghost-was'));
+  const headerNow = await boxOf(name.locator('.ghost-name'));
+  expect(headerWas.right - headerWas.left).toBeGreaterThan(4);
+  expect(headerNow.right - headerNow.left).toBeGreaterThanOrEqual(headerWas.right - headerWas.left);
+  expect(headerNow.right).toBeLessThanOrEqual(nameBox.right + 0.5);
 });
 
 test('Agent changes lists every pending step on the track, its clips\' too, with the ghosts shown or hidden', async () => {
