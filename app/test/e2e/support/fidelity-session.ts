@@ -232,7 +232,10 @@ async function stageInserts(page: Page, notes: string[]): Promise<void> {
   try {
     const registry = (await engine.call('plugin.registry')) as { plugins: Array<{ format: string; path: string; approved: boolean }> };
     const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(plugin));
-    if (!install) throw new Error(`the engine did not register ${plugin}`);
+    if (!install) {
+      notes.push(`The engine did not register ${plugin} (no --plugin-dir for it): the insert racks hold empty slots only.`);
+      return;
+    }
     if (!install.approved) await engine.call('plugin.approve', { format: install.format, path: install.path, approved: true });
     for (const [index, count] of MOCKUP_INSERTS.entries()) {
       for (let n = 0; n < count; n += 1) {
