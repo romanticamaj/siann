@@ -176,7 +176,8 @@ test('the renderer creates the recorder from window.siannTest only, and the draw
   // The cold start's start is the supervisor's ready line, not the client's
   // first authenticated connection.
   assert.match(index, /testHooks\.engineReadyAt\(\)/);
-  assert.match(index, /frames\.engineReadyAt\(readyLineAt\(/);
+  assert.match(index, /readyLineAt\(at, performance\.timeOrigin\)/);
+  assert.match(index, /frames\.engineReadyAt\(/);
   assert.doesNotMatch(index, /frames\.engineReady\(\)/);
   for (const file of ['timeline/TimelineCanvas.ts', 'mixer/MixerMeters.ts', 'timeline/HeaderMeters.ts', 'shell/Transport.tsx']) {
     const source = fs.readFileSync(path.join(RENDERER, file), 'utf8');

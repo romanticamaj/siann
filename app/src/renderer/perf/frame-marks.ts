@@ -9,9 +9,16 @@
 // preallocated ring, read through window.__siannFrames. In a plain run nothing
 // is installed and the marks are a no-op that touches no performance API.
 //
-// It also takes the cold start of 5.6: from the engine being ready (the
-// session client's first connection) to the first content frame that draws a
-// session's clips.
+// It also takes the cold start of 5.6 ("after the engine is ready"): from the
+// engine's ready line to the first content frame that draws a session's clips.
+// The ready line is read by the main process supervisor, which keeps the time
+// of the first one (EngineSupervisor.firstReadyAt, epoch ms) and hands it to
+// the renderer under the test hook (window.siannTest.engineReadyAt);
+// readyLineAt() puts it on the renderer's performance clock. So the figure
+// includes everything after the ready line: the endpoint's IPC, any window or
+// bundle load still pending, the WebSocket connect and the token handshake. A
+// paint counts once the session client has connected, so a frame drawn before
+// the engine answered is not this engine's session.
 
 export const FRAME_MARK = 'siann.frame.start';
 export const FRAME_MEASURE = 'siann.frame';
@@ -27,8 +34,6 @@ export interface PerfLike {
 export interface FrameMarks {
   begin(): void;
   end(): void;
-  // The session client connected for the first time.
-  engineReady(): void;
   // A content frame drew a session's clips.
   sessionPainted(): void;
 }
@@ -36,7 +41,6 @@ export interface FrameMarks {
 export const NO_FRAME_MARKS: FrameMarks = {
   begin() {},
   end() {},
-  engineReady() {},
   sessionPainted() {},
 };
 
@@ -71,6 +75,7 @@ export class FrameRecorder implements FrameMarks {
   #open = false;
   #start = 0;
   #ready: number | null = null;
+  #connected = false;
   #painted: number | null = null;
 
   constructor(options: FrameRecorderOptions) {
@@ -98,15 +103,23 @@ export class FrameRecorder implements FrameMarks {
     this.#perf.measure(FRAME_MEASURE, FRAME_MARK);
   }
 
-  engineReady(): void {
-    if (this.#ready === null) this.#ready = this.#perf.now();
+  // The engine's first ready line, on this recorder's performance clock
+  // (readyLineAt). Only the first one counts.
+  engineReadyAt(at: number): void {
+    if (this.#ready === null && Number.isFinite(at)) this.#ready = at;
+  }
+
+  // The session client connected: from here a painted session is this
+  // engine's.
+  connected(): void {
+    this.#connected = true;
   }
 
   sessionPainted(): void {
-    if (this.#ready !== null && this.#painted === null) this.#painted = this.#perf.now();
+    if (this.#connected && this.#painted === null) this.#painted = this.#perf.now();
   }
 
-  // Engine ready to the first painted session, in ms, or null before both.
+  // The ready line to the first painted session, in ms, or null before both.
   coldStartMs(): number | null {
     return this.#ready !== null && this.#painted !== null ? this.#painted - this.#ready : null;
   }
@@ -142,6 +155,13 @@ export class FrameRecorder implements FrameMarks {
     this.#work = 0;
     this.#worked = false;
   }
+}
+
+// The ready line's time (epoch ms, from the main process) on the renderer's
+// performance clock (performance.timeOrigin is the epoch time of its zero);
+// negative when the engine was ready before the page loaded. Null for no time.
+export function readyLineAt(epochMs: number | null, timeOrigin: number): number | null {
+  return typeof epochMs === 'number' && Number.isFinite(epochMs) ? epochMs - timeOrigin : null;
 }
 
 // A recorder only under the test hook (the preload's siannTest); null otherwise.

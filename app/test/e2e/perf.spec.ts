@@ -3,7 +3,8 @@
 // and the fake device, playing with the meters running. It measures the
 // main-thread work per frame (the renderer's performance.measure frame marks,
 // summed per animation frame, read through window.__siannFrames), the JS heap
-// (performance.memory) and the cold start from engine ready to the first
+// (performance.memory) and the cold start from the engine's ready line (the
+// time the main process read it, window.siannTest.engineReadyAt) to the first
 // painted session, and writes perf-report.json (support/perf-report.ts) to
 // SIANN_PERF_OUT. Report only at first: it fails on a crash or a missing
 // measurement, never on a budget.

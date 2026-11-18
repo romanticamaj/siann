@@ -81,7 +81,7 @@ import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 import { PickerController } from './mixer/picker';
 import { PluginActions } from './model/plugin-actions';
-import { createFrameRecorder, installFrameMarks, type FrameTestHooks } from './perf/frame-marks';
+import { createFrameRecorder, installFrameMarks, readyLineAt, type FrameTestHooks } from './perf/frame-marks';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
@@ -109,7 +109,13 @@ declare global {
     // The gesture controller, for the e2e tests to wait on (settled).
     __siannGestures?: GestureController;
     // Present only when the shell runs under SIANN_SHELL_TEST=1.
-    siannTest?: { timelineHooks?: boolean; languages?: readonly string[]; capabilities?: Capabilities; environment?: TestEnvironment };
+    siannTest?: {
+      timelineHooks?: boolean;
+      engineReadyAt?: () => Promise<number | null>;
+      languages?: readonly string[];
+      capabilities?: Capabilities;
+      environment?: TestEnvironment;
+    };
     __siannTimeline?: TimelineTestHooks;
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
@@ -317,6 +323,11 @@ const onMeterHooks = testHooks
 
 // The perf scenario's frame marks (m5b-nightly-quality; UI redesign 5.6): only
 // under the test hook; otherwise the draw paths' marks stay a no-op.
+// The cold start runs from the engine's ready line, which the main process
+// read (window.siannTest.engineReadyAt), not from the client's first
+// authenticated connection: that comes after the endpoint's IPC, the
+// WebSocket connect and the token handshake, all inside the budget. The
+// connection only says that a painted session is this engine's.
 const frames = createFrameRecorder(testHooks, {
   perf: performance,
   frameTime: () => {
@@ -327,8 +338,17 @@ const frames = createFrameRecorder(testHooks, {
 if (frames) {
   installFrameMarks(frames);
   window.__siannFrames = { samples: () => frames.samples(), clear: () => frames.clear(), coldStartMs: () => frames.coldStartMs() };
+  let asked = false;
   const ready = () => {
-    if (client.getState().status === 'connected') frames.engineReady();
+    if (client.getState().status !== 'connected') return;
+    frames.connected();
+    // The ready line precedes the first connection, so its time is known now.
+    if (asked || !testHooks?.engineReadyAt) return;
+    asked = true;
+    void testHooks.engineReadyAt().then((at) => {
+      const start = readyLineAt(at, performance.timeOrigin);
+      if (start !== null) frames.engineReadyAt(start);
+    });
   };
   client.subscribe(ready);
   ready();
