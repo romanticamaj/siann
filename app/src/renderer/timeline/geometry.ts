@@ -146,7 +146,7 @@ export function cornerHandles(box: Box): [Box, Box] {
 // lower corners resize, the rest of each edge is a narrower resize target as
 // well, the volume control is draw()'s box right of the lower-left corner,
 // and the body moves.
-export type HitPart = 'body' | 'left' | 'right' | 'cornerLeft' | 'cornerRight' | 'gain';
+export type HitPart = 'body' | 'left' | 'right' | 'cornerLeft' | 'cornerRight' | 'gain' | 'repeat';
 export type TrimEdge = 'left' | 'right';
 
 // The width of the resize target along each edge, in pixels.
@@ -162,6 +162,19 @@ export const GAIN_H = 10;
 export const GAIN_RADIUS = 3;
 export const GAIN_MIN_WIDTH = GAIN_X + GAIN_W + CORNER_PX + 1;
 export const GAIN_MIN_HEIGHT = 30;
+
+// The repeat handle (m5b-ui-edit-more; spec 3.2, "Clip handles"): draw()'s
+// disc arc(x+w, y+HDR+(h-HDR)/2, 3.2) on the right border, half way down
+// below the title strip, and its hit target, REPEAT_HIT_PX around its centre
+// inside the box. The canvas draws it on the selected clips; on another
+// clip its target is the right edge's.
+export const REPEAT_RADIUS = 3.2;
+export const REPEAT_HIT_PX = 4;
+
+export function repeatHandle(box: Box): { readonly x: number; readonly y: number; readonly radius: number } {
+  const title = Math.min(CLIP_TITLE_HEIGHT, box.height);
+  return { x: box.x + box.width, y: box.y + title + (box.height - title) / 2, radius: REPEAT_RADIUS };
+}
 
 // The edge a resize part changes, or null for the body and the volume control.
 export function trimEdgeOf(part: HitPart): TrimEdge | null {
@@ -247,7 +260,7 @@ export function clipRects(snapshot: Snapshot, view: Viewport): ClipRect[] {
 
 // The clip under a point, topmost (last drawn) first, and which part of it,
 // over the box draw() draws (clipBox): the lower corners (cornerSize), then
-// the edges (HANDLE_PX, or a third of a clip narrower than three handles),
+// the repeat handle, then the edges (HANDLE_PX, or a third of a clip narrower than three handles),
 // then the volume control, then the body.
 export function hitTest(rects: readonly ClipRect[], x: number, y: number): { rect: ClipRect; part: HitPart } | null {
   for (let i = rects.length - 1; i >= 0; i -= 1) {
@@ -259,6 +272,8 @@ export function hitTest(rects: readonly ClipRect[], x: number, y: number): { rec
       if (x < box.x + corner) return { rect, part: 'cornerLeft' };
       if (x >= box.x + box.width - corner) return { rect, part: 'cornerRight' };
     }
+    const repeat = repeatHandle(box);
+    if (x >= repeat.x - REPEAT_HIT_PX && Math.abs(y - repeat.y) <= REPEAT_HIT_PX) return { rect, part: 'repeat' };
     const handle = Math.min(HANDLE_PX, box.width / 3);
     if (x < box.x + handle) return { rect, part: 'left' };
     if (x >= box.x + box.width - handle) return { rect, part: 'right' };

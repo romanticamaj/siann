@@ -115,4 +115,24 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+N', commandId: 'project.new', scope: 'window' },
   { chord: 'Mod+O', commandId: 'project.open', scope: 'window' },
   { chord: 'Mod+S', commandId: 'project.save', scope: 'window' },
+  // The rest of the editing (m5b-ui-edit-more; spec 3.2, 3.6; research/cubase.md
+  // 7.2-7.4): Glue and Erase on the number row; cut, copy and paste at the
+  // cursor, paste at the origin; Repeat; the nudges of the key-command table
+  // (not the manual's range page): Mod+Left/Right the position, Alt+Left the
+  // start left, Alt+Shift+Right the start right, Alt+Shift+Left the end left,
+  // Alt+Right the end right; Select None. edit.glue stays unbound, as in Cubase.
+  { chord: '4', commandId: 'tool.glue', scope: 'project' },
+  { chord: '5', commandId: 'tool.erase', scope: 'project' },
+  { chord: 'Mod+X', commandId: 'edit.cut', scope: 'project' },
+  { chord: 'Mod+C', commandId: 'edit.copy', scope: 'project' },
+  { chord: 'Mod+V', commandId: 'edit.paste', scope: 'project' },
+  { chord: 'Alt+V', commandId: 'edit.pasteAtOrigin', scope: 'project' },
+  { chord: 'Mod+K', commandId: 'edit.repeat', scope: 'project' },
+  { chord: 'Mod+ArrowLeft', commandId: 'edit.nudgeLeft', scope: 'project' },
+  { chord: 'Mod+ArrowRight', commandId: 'edit.nudgeRight', scope: 'project' },
+  { chord: 'Alt+ArrowLeft', commandId: 'edit.nudgeStartLeft', scope: 'project' },
+  { chord: 'Alt+Shift+ArrowRight', commandId: 'edit.nudgeStartRight', scope: 'project' },
+  { chord: 'Alt+Shift+ArrowLeft', commandId: 'edit.nudgeEndLeft', scope: 'project' },
+  { chord: 'Alt+ArrowRight', commandId: 'edit.nudgeEndRight', scope: 'project' },
+  { chord: 'Mod+Shift+A', commandId: 'edit.selectNone', scope: 'project' },
 ];

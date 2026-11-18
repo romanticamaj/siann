@@ -310,7 +310,7 @@
      (m5b-ui-inserts-master) and Agent changes (m5b-ui-ghosts), their whole
      box with its hairline; Agent changes in en (its text wraps to one line
      less in zh-TW, 78.891 px). The project zone toolbar's and info line's
-     (m5-ui-port-toolbar): tools 2 and 4 to 9 (m5b-ui-edit-more), each the
+     (m5-ui-port-toolbar): tools 2 and 6 to 9 (M6a), each the
      width of tool()'s .b, the proposal pill (m5b-ui-ghosts) and the Fade In
      and Fade Out fields (m5b-ui-fades); in en, and in Chinese below. */
   --hold-transport-record-w: calc(32px * var(--scale));
@@ -329,8 +329,6 @@
   --hold-tab-meter-w: calc(69.031px * var(--scale));
   --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
-  --hold-tool-4-w: calc(27.172px * var(--scale));
-  --hold-tool-5-w: calc(27.172px * var(--scale));
   --hold-tool-6-w: calc(27.172px * var(--scale));
   --hold-tool-7-w: calc(27.172px * var(--scale));
   --hold-tool-8-w: calc(27.172px * var(--scale));

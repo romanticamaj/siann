@@ -26,7 +26,7 @@
 // primary format (Bars+Beats by default; the period key exchanges it with
 // Seconds).
 
-import { DEFAULT_SNAP, isGridType, type GridType, type SnapSettings } from '../timeline/snap';
+import { DEFAULT_SNAP, isGridType, isSnapType, type GridType, type SnapSettings, type SnapType } from '../timeline/snap';
 import type { TimeFormat } from '../timeline/transport-time';
 
 export type Zone = 'left' | 'lower' | 'right';
@@ -131,7 +131,9 @@ export type TrackListAction =
   // J: snap on or off (m5-ui-edit-basics).
   | { readonly type: 'snapToggle' }
   // The grid type select: Bar, Beat or Adapt to Zoom.
-  | { readonly type: 'setGrid'; readonly grid: GridType };
+  | { readonly type: 'setGrid'; readonly grid: GridType }
+  // The snap type menu (m5b-ui-edit-more): Grid, Grid Relative, Events or Magnetic Cursor.
+  | { readonly type: 'setSnapType'; readonly snapType: SnapType };
 
 export interface ZoneView {
   readonly visible: boolean;
@@ -295,6 +297,9 @@ function reduceTrackList(state: ShellState, action: TrackListAction): ShellState
     case 'setGrid':
       if (!isGridType(action.grid) || action.grid === state.layout.snap.grid) return state;
       return withLayout(state, { snap: { ...state.layout.snap, grid: action.grid } });
+    case 'setSnapType':
+      if (!isSnapType(action.snapType) || action.snapType === (state.layout.snap.type ?? 'grid')) return state;
+      return withLayout(state, { snap: { ...state.layout.snap, type: action.snapType } });
   }
 }
 
@@ -443,6 +448,8 @@ function parseSnap(value: unknown): SnapSettings {
   return {
     on: typeof snap.on === 'boolean' ? snap.on : DEFAULT_SNAP.on,
     grid: isGridType(snap.grid) ? snap.grid : DEFAULT_SNAP.grid,
+    // An unknown snap type (a later version's Shuffle) reads as Grid.
+    type: isSnapType(snap.type) ? snap.type : 'grid',
   };
 }
 

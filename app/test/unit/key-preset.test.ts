@@ -197,3 +197,34 @@ test('New, Open and Save are Cubase\'s keys; Studio Setup and Open Recent are un
   }
   assert.ok(!(COMMAND_IDS as readonly string[]).includes('project.openRecent.11'), 'ten recent entries, no more');
 });
+
+// m5b-ui-edit-more (UI redesign spec 3.2, 3.6): Glue and Erase on 4 and 5,
+// cut, copy and paste at the cursor and at the origin, Repeat, the nudges of
+// the key-command table, Select None; edit.glue has no key, as in Cubase.
+test('the editing keys of m5b-ui-edit-more, all in the project zone; edit.glue is unbound', () => {
+  const expected: Array<[string, string]> = [
+    ['4', 'tool.glue'],
+    ['5', 'tool.erase'],
+    ['Mod+X', 'edit.cut'],
+    ['Mod+C', 'edit.copy'],
+    ['Mod+V', 'edit.paste'],
+    ['Alt+V', 'edit.pasteAtOrigin'],
+    ['Mod+K', 'edit.repeat'],
+    ['Mod+ArrowLeft', 'edit.nudgeLeft'],
+    ['Mod+ArrowRight', 'edit.nudgeRight'],
+    ['Alt+ArrowLeft', 'edit.nudgeStartLeft'],
+    ['Alt+Shift+ArrowRight', 'edit.nudgeStartRight'],
+    ['Alt+Shift+ArrowLeft', 'edit.nudgeEndLeft'],
+    ['Alt+ArrowRight', 'edit.nudgeEndRight'],
+    ['Mod+Shift+A', 'edit.selectNone'],
+  ];
+  for (const [chord, commandId] of expected) {
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord).map((b) => [b.scope, b.commandId]), [['project', commandId]], chord);
+    assert.ok(COMMAND_IDS.includes(commandId as (typeof COMMAND_IDS)[number]), commandId);
+  }
+  assert.ok(COMMAND_IDS.includes('edit.glue'));
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === 'edit.glue'), [], 'edit.glue has no binding');
+  // C stays the metronome and Mod+A Select All.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'C').map((b) => b.commandId), ['transport.metronomeToggle']);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+A').map((b) => b.commandId), ['edit.selectAll']);
+});

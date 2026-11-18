@@ -296,7 +296,7 @@ The locator range is shown as a band with L and R flags in the ruler and a tint 
 | Lower-left and lower-right corners | Resize; `Ctrl` disables snap | P1-8 (today's trim moves from the whole edge to the corners; the edge stays a 4 px target as well) |
 | Upper-left and upper-right triangles | Drag sets the fade in / fade out length: the fade's end snaps to the grid, `Ctrl` disables snap, the two fades together never exceed the clip, one `clip.set_fade` on release (one revision; a release at the starting length sends nothing). A double-click on a fade handle or inside the fade's shaded area switches that side's curve between linear and equal power (one `clip.set_fade`, same length). Shown on the hovered and the selected clip, only when `features.clipFades` and the command `clip.set_fade` are listed | M5b: `m5b-ui-fades` (UR-6) |
 | Volume control at the bottom left | Hold to get a small fader; `Shift` fine; the change is shown in brackets | P1-8 (`clip.set_gain`) |
-| Middle of the right border | Drag right to repeat copies | M5b (`m5b-ui-edit-more`) |
+| Middle of the right border | Drag right to repeat copies: the count is the drag's distance in selection spans, rounded to the nearest whole span (half a span or more is one copy), and the release sends one `command.execute` of the copies (as `Ctrl+K`). Drawn and hit on the selected clips, as `draw()` draws it (a 3.2 px disc in `select` on the border, half way down below the title strip); on an unselected clip that point is the right edge's resize target | M5b (`m5b-ui-edit-more`) |
 
 **How a fade is drawn** (`m5b-ui-fades`). The fade takes `draw()`'s colours and handle: the `bg-0-a550` shade between the curve and the clip's top edge below the title strip, a 1 px `select` line, and the 8 x 6 px `select` triangle at the fade's end on the title strip's lower edge. Its shape is not `draw()`'s decorative curve but the real gain curve of the architecture spec (`x` for linear, `sin(x*pi/2)` for equal power, mirrored for the fade out) at the fade's real length, and the waveform columns are scaled by that gain. A clip that is neither hovered nor selected draws the scaled waveform and the shade without handles.
 
@@ -308,28 +308,39 @@ How markers are drawn: a position marker takes `draw()`'s parameters (the 2 px f
 
 | Operation | Convention | Status |
 |---|---|---|
-| Select; add; all; none | Click; `Shift`-click; `Ctrl+A`; `Ctrl+Shift+A`; arrow keys step | P1-8 single and `Shift`; rubber band phase 3 |
+| Select; add; all; none | Click; `Shift`-click; `Ctrl+A`; `Ctrl+Shift+A` (Select None, `edit.selectNone`); a drag on empty space with the Object Selection tool draws a rubber band that selects every clip whose box it touches (edges included), `Shift` adding to the selection; arrow keys step | P1-8 single and `Shift`; rubber band and `Ctrl+Shift+A` M5b (`m5b-ui-edit-more`); arrow-key stepping phase 3 |
 | Move, also across tracks | Drag; `Ctrl` constrains | P1-3 (exists); constrain P1-8 |
 | Copy | `Alt`-drag | P1-8 (`clip.place`) |
 | Duplicate | `Ctrl+D` | P1-8 |
-| Repeat | `Ctrl+K` | M5b (`m5b-ui-edit-more`) |
+| Repeat | `Ctrl+K`: a dialog asks for the count (1 to 99) and the selection is copied that many times, copy k shifted by k times the selection's span (the start of its earliest clip to the end of its latest), keeping tracks and offsets; one `command.execute` of `clip.place` (and `clip.set_fade` for a clip with fades) | M5b (`m5b-ui-edit-more`) |
 | Split at Cursor | `Alt+X`: the selected clips, or every track under the cursor when nothing is selected | P1-8 |
 | Delete | `Delete` or `Backspace` | P1-3 (exists) |
-| Cut / copy / paste | `Ctrl+X/C/V` at the cursor; `Alt+V` at origin | M5b (`m5b-ui-edit-more`) |
-| Nudge position and edges | `Ctrl+Left/Right`; `Alt+Left` start left, `Alt+Shift+Right` start right, `Alt+Shift+Left` end left, `Alt+Right` end right (the key-command table, 3.6) | M5b (`m5b-ui-edit-more`) |
+| Cut / copy / paste | `Ctrl+X/C/V` at the cursor; `Alt+V` at origin. Copy keeps the selected clips in an in-memory clipboard of the renderer (media, source start, length, volume, fades, track and offset from the earliest start); cut is copy and one `clip.remove` per clip. Paste places the clipboard with its relative positions and tracks: its earliest clip at the project cursor (`Ctrl+V`) or where it was copied from (`Alt+V`), one `command.execute` of `clip.place` and `clip.set_fade`. A clip whose track or media is gone is left out; nothing is sent when none remains. The clipboard is not the system's, and `Ctrl+C` / `Ctrl+V` in a text field keep their own meaning | M5b (`m5b-ui-edit-more`) |
+| Nudge position and edges | `Ctrl+Left/Right`; `Alt+Left` start left, `Alt+Shift+Right` start right, `Alt+Shift+Left` end left, `Alt+Right` end right (the key-command table, 3.6). The step is one grid step at the selection's start (the grid type's, also with snap off). Position: `clip.move` of every selected clip, the whole selection stopping at the timeline's start. Start: `clip.trim` and `clip.move` together, the audio staying where it is, clamped at the media's start and the timeline's start and at one frame of length. End: `clip.trim`, clamped to the media's length and one frame. One `command.execute` for the selection | M5b (`m5b-ui-edit-more`) |
 | Snap on / off | `J` | P1-8 |
-| Snap type | Grid in P1-8; Grid Relative, Events and (Magnetic) Cursor in M5b (`m5b-ui-edit-more`); Shuffle in phase 3. Events is magnetic to the starts and ends of other clips and, from `m5b-ui-markers`, to position markers and the start and end of cycle markers | |
+| Snap type | Grid in P1-8; Grid Relative, Events and (Magnetic) Cursor in M5b (`m5b-ui-edit-more`); Shuffle in phase 3. Events is magnetic to the starts and ends of other clips and, from `m5b-ui-markers`, to position markers and the start and end of cycle markers. The snap type menu opens from the snap field's chevron, a right-click on the field, or `Down` / `Alt+Down` on the focused field; a click elsewhere on the field and `J` still turn snap on and off. The field's `<em>` names the type | |
 | Grid type | Bar, Beat, Adapt to Zoom | P1-8 |
 | Crossfade | `X` | E-9 |
 | Mute clips | `Shift+M` / `Shift+U` / `Alt+M` | M6a (`m6a-ui-tools` on `m6a-engine-clip-mute`) |
 | Rename | `F2` | E-4 |
 | Undo / redo | `Ctrl+Z` / `Ctrl+Shift+Z` | P1-2 |
+| Glue (tool `4`, `edit.glue`) | A click joins the clip with the next clip of its track when the two are adjacent (the next starts where it ends) pieces of the same media with continuous source positions (the next one's source start is this one's source start plus its length): one `command.execute` of `clip.remove` of the next piece and `clip.trim` of the first to the sum of the lengths, and `clip.set_fade` on the first when the pieces carry fades. The joined clip keeps the first piece's fade in and its volume, and takes the last piece's fade out (none when the last has none), so a split followed by a glue restores the clip. Anything else is refused with a toast naming why (no next clip, a gap or an overlap, other media, a source position that does not continue) and sends nothing. `Alt`-click joins every following piece of the run in one list. A click on a selected clip, with more than one selected, joins each run of the selection (`edit.glue`; singletons are left alone) | M5b (`m5b-ui-edit-more`) |
+| Erase (tool `5`) | A click removes the clicked clip (one `clip.remove`) | M5b (`m5b-ui-edit-more`) |
 | Edit history list | Edit > History | E-16 |
-| Info line: show the selection's name (the clip's title, with its track's colour), start, end, length, offset, volume, fade in, fade out. Positions (start, end) read bar.beat.sixteenth.tick: bar, beat and sixteenth 1-based, the tick within the sixteenth 0 to 479 at 1920 ticks per quarter (`9.1.1.0`). Lengths and the offset read bars.beats.sixteenths.ticks counted from zero (`3.3.0.0`). The volume is dB with two decimals (`0.00 dB`). The fade fields read the fade length in whole milliseconds, `<n> ms` (frames * 1000 / sampleRate, rounded half up; `0 ms` for no fade), the same text in every locale, as the mockup's row reads (`Fade In 12 ms`); a typed value is milliseconds, with or without the `ms` suffix, and is converted to media frames, clamped so fade in + fade out never exceeds the clip's length. The top bar's position display keeps bar.beat.tick (3.1) | `Ctrl+I` toggles it | Read-only P1-3; the name field and the mockup's formats P1-11 (10.8, 2); editing of start, length, offset and volume (relative across the selection, `Ctrl` absolute) M5b (`m5b-ui-edit-more`); the fade fields M5b (`m5b-ui-fades`) |
+| Info line: show the selection's name (the clip's title, with its track's colour), start, end, length, offset, volume, fade in, fade out. Positions (start, end) read bar.beat.sixteenth.tick: bar, beat and sixteenth 1-based, the tick within the sixteenth 0 to 479 at 1920 ticks per quarter (`9.1.1.0`). Lengths and the offset read bars.beats.sixteenths.ticks counted from zero (`3.3.0.0`). The volume is dB with two decimals (`0.00 dB`). The fade fields read the fade length in whole milliseconds, `<n> ms` (frames * 1000 / sampleRate, rounded half up; `0 ms` for no fade), the same text in every locale, as the mockup's row reads (`Fade In 12 ms`); a typed value is milliseconds, with or without the `ms` suffix, and is converted to media frames, clamped so fade in + fade out never exceeds the clip's length. The top bar's position display keeps bar.beat.tick (3.1) | `Ctrl+I` toggles it | Read-only P1-3; the name field and the mockup's formats P1-11 (10.8, 2); editing of start, length, offset and volume M5b (`m5b-ui-edit-more`): a click on the value (or `Enter` on it) opens a text field in its `b.num` holding the value; `Enter` applies the typed value relatively to every selected clip (the primary clip's change, the typed value minus its value, added to each), `Ctrl+Enter` (`Cmd+Return` on macOS) absolutely (every selected clip set to the value), `Escape` or leaving the field cancels; one `command.execute`, nothing when nothing changes or the text does not parse. Start is a `clip.move` (the selection stopping at the timeline's start), length a `clip.trim` (one frame up to the media's end), offset a `clip.trim` of the source start (0 up to the media's length less the clip's), the clip staying where it is, and volume a `clip.set_gain` within -60 to +6 dB. A typed position may leave out trailing parts (`9` is `9.1.1.0`), and a volume may leave out `dB`. End stays read-only; the fade fields M5b (`m5b-ui-fades`) |
 | Pool: the session's media by name; a click arms placing | `Ctrl+P`; the event display's context menu | P1-16 (`m5-ui-port-toolbar`), a window of its own that the resting window does not show (10.8, 1); the Media tab replaces it in `m5b-ui-media`, and `Ctrl+P` opens that tab |
 | Open the editor in the lower zone | Double-click on a clip's body, or `Return` on a selected clip (2.1). A double-click on a fade handle or inside a fade's shaded area keeps its fade meaning (`m5b-ui-fades`, which lands first: 10.11, 10), and the volume control, the corner handles, the 4 px edges and the repeat handle do not open the editor. With several clips selected the editor shows the primary one, the clip the info line reads | M5b (`m5b-ui-editor-channel`) |
 | Drag tooltip with the new position and delta | — | P1-3 |
 | Drop audio files from the OS | — | E-5 |
+
+**Snap types** (`m5b-ui-edit-more`; `research/cubase.md` 2.5). Snap off, or `Ctrl` held while resizing, leaves every type alone.
+
+- **Grid**: a frame snaps to the nearest line of the grid type (P1-8); a moved selection takes the delta that puts the dragged clip's start on a line.
+- **Grid Relative**: a move keeps the dragged clip's offset from its grid line: the delta is a whole number of grid steps (in ticks, through the tempo map). A single frame (a resize, a split, a placement, a locator) snaps as Grid does.
+- **Events**: magnetic to the starts and ends of the other clips on any track (the clips being dragged are not targets). A frame within the tolerance of the nearest such edge goes to it; outside the tolerance it stays where it is. A move tries the dragged clip's start, then its end.
+- **Magnetic Cursor**: the same against the project cursor.
+
+The tolerance is `SNAP_MAGNET_PX` (8 px) at the current zoom, in frames 8 times the frames per pixel. The snap type is a per-viewer setting of the layout store (`siann.layout.v1`, `snap.type`; an unknown value reads as Grid), as snap and the grid type are.
 
 ### 3.3 Track list
 
@@ -461,10 +472,10 @@ Every row of `research/cubase.md` section 9.1.
 | 2 | Timeline with a ruler split into locator half and cursor half | P1-3 (cursor half, drag-zoom), P1-7 (locator half) |
 | 3 | Object Selection: select, move, resize from the lower corners | P1-3, P1-8. Sizing modes "moves contents" and "time stretch": phase 3 and not planned |
 | 4 | Undo / redo with a visible history list | Keys and buttons P1-2; the list needs E-16 |
-| 5 | Snap toggle and snap type menu | P1-8 (Grid); Events and the others phase 3 |
+| 5 | Snap toggle and snap type menu | P1-8 (Grid); Grid Relative, Events and Magnetic Cursor M5b (`m5b-ui-edit-more`); Shuffle phase 3 |
 | 6 | Grid type tied to the time format, with Adapt to Zoom | P1-8 |
 | 7 | Split at cursor and split tool | P1-8 |
-| 8 | `Alt`-drag copy, duplicate, repeat | P1-8; repeat phase 3 |
+| 8 | `Alt`-drag copy, duplicate, repeat | P1-8; repeat M5b (`m5b-ui-edit-more`) |
 | 9 | Horizontal and vertical zoom on keys and wheel | P1-3 |
 | 10 | Zoom Full, Zoom to Selection | P1-3, P1-8 |
 | 11 | Left and right locators with cycle | P1-7 on E-1 |
@@ -473,7 +484,7 @@ Every row of `research/cubase.md` section 9.1.
 | 14 | Strip: pan, M, S, e, fader, meter, peak value, name, colour | P1-4; `e` M5b (`m5b-ui-editor-channel`: it opens the Channel zone, 3.4) |
 | 15 | Fader with +6 dB top, `Ctrl`-click reset, `Shift` fine | P1-4 |
 | 16 | Peak-hold meters, clickable peak readout, clip indication | P1-4 |
-| 17 | Info line that shows and edits the selection | Shows P1-3; edits phase 3 |
+| 17 | Info line that shows and edits the selection | Shows P1-3; edits M5b (`m5b-ui-edit-more`) |
 | 18 | Inspector for the selected track | Basic P1-4; sections phase 3 |
 | 19 | Zones that show and hide, with buttons and keys | P1-1 |
 | 20 | Editor in the lower zone on double-click | Phase 3 |
@@ -761,6 +772,11 @@ Recommendation: **use the system's Chinese UI fonts; do not bundle Noto Sans TC 
 | Tools: select / range / split / glue / erase / zoom / mute / draw / play | 選取 / 範圍 / 分割 / 黏合 / 擦除 / 縮放 / 靜音 / 繪製 / 播放 | 选择 / 范围 / 拆分 / 粘合 / 擦除 / 缩放 / 静音 / 绘制 / 播放 | |
 | Fade in / fade out / crossfade | 淡入 / 淡出 / 交叉淡化 | 淡入 / 淡出 / 交叉淡化 | |
 | Duplicate / repeat | 再製 / 重複 | 复制 / 重复 | |
+| Glue / erase (the tools) | 黏合 / 擦除 | 粘合 / 擦除 | |
+| Repeat (`Ctrl+K`, its dialog) | 重複 | 重复 | |
+| Cut / copy / paste | 剪下 / 拷貝 / 貼上 | 剪切 / 拷贝 / 粘贴 | Copy is 拷貝 / 拷贝 so it differs from Duplicate (再製 / 复制) |
+| Select none | 全部不選 | 全不选 | |
+| Snap type: Grid / Grid Relative / Events / Magnetic Cursor | 格線 / 相對格線 / 事件 / 磁性游標 | 网格 / 相对网格 / 事件 / 磁性光标 | Events keeps Cubase's word (事件) for the type's name |
 | Undo / redo | 復原 / 重做 | 撤销 / 重做 | |
 | Automation; read / write | 自動化；讀取 / 寫入 | 自动化；读 / 写 | Buttons stay **R** / **W** |
 | Session (Cubase: project) | 專案 | 工程 | |

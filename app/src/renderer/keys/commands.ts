@@ -103,6 +103,25 @@ export const COMMAND_IDS = [
   'studio.setup',
   // The plan review (m5b-ui-ghosts; spec 4.2): the proposal pill's toggle, the ghosts on and off.
   'plans.toggleGhosts',
+  // The rest of Cubase's editing (m5b-ui-edit-more; spec 3.2, 3.6): the Glue
+  // and Erase tools, Glue (unbound, as in Cubase: the Glue tool and the Edit
+  // menu reach it), cut, copy, paste at the cursor and at the origin, Repeat,
+  // the nudges of the position, the start and the end, and Select None.
+  'tool.glue',
+  'tool.erase',
+  'edit.glue',
+  'edit.cut',
+  'edit.copy',
+  'edit.paste',
+  'edit.pasteAtOrigin',
+  'edit.repeat',
+  'edit.nudgeLeft',
+  'edit.nudgeRight',
+  'edit.nudgeStartLeft',
+  'edit.nudgeStartRight',
+  'edit.nudgeEndLeft',
+  'edit.nudgeEndRight',
+  'edit.selectNone',
   // The audition (m5b-ui-audition; spec 4.3, 3.6): hear the other side while
   // a plan is auditioned, and run the selected plan's primary action.
   'audition.flip',

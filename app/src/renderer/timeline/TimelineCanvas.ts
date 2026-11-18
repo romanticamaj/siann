@@ -16,7 +16,8 @@
 //   (clip-title.ts), the waveform in two tones from the engine's peak
 //   pyramid (PeaksCache, waveform.ts), the outline, and a selected clip's
 //   palette and lower corner squares. A clip of a muted (or solo-muted) track
-//   is drawn at 50 %. Fade curves (m5b-ui-fades) and the repeat handle are
+//   is drawn at 50 %, a selected clip with draw()'s repeat handle (the disc on
+//   its right border, m5b-ui-edit-more). Fade curves (m5b-ui-fades) are
 //   not drawn. The selected plan's ghosts (m5b-ui-ghosts; UI redesign 4.2,
 //   5.2) are, from the `ghosts` source (model/review-store.ts), in the agent
 //   violet as draw() draws its ghosts (ghost-geometry.ts): a proposed track
@@ -57,7 +58,16 @@
 // selection (Ctrl keeps it to one axis), an Alt-drag copies it, an Alt-click
 // splits the clip there, a lower corner (or the 4 px edge) resizes, and the
 // volume control changes the clip's gain by a vertical drag (Shift: fine),
-// sent once on release. With the Split tool a click splits the clip. The
+// sent once on release. With the Split tool a click splits the clip.
+// m5b-ui-edit-more (spec 3.2): with the Glue tool a click joins the clip with
+// the next piece of its track (Alt: every following piece; on a selected clip
+// with others selected, each run of the selection) and a refusal goes to
+// `onRefuse` (a toast); with the Erase tool a click removes the clip; with
+// the Object Selection tool a drag from empty space draws a rubber band on
+// the overlay that selects every clip it touches (Shift adds; a plain click
+// still clears), and a drag of a selected clip's repeat handle repeats the
+// selection by the drag's distance in spans. Snap types Events and Magnetic
+// Cursor read the other clips' edges and the cursor (snap.ts, snapContext). The
 // modifiers come from keys/tool-modifiers.ts; a pointer that moved less than
 // DRAG_THRESHOLD_PX is a click. Moves, copies, resizes, splits by click and
 // placements land on the grid while snap is on (timeline/snap.ts; Ctrl while
@@ -123,15 +133,28 @@ import {
   revealScroll,
   type GhostLane,
 } from './ghost-geometry';
+import { CLIPBOARD, type Clipboard } from './clipboard';
 import {
   clipGainCommand,
   constrainAxis,
+  copyClips,
   copyCommand,
+  cutCommand,
   duplicateCommand,
   gainFromDrag,
+  glueCommand,
+  glueSelectionCommand,
+  isGlueRefused,
   moveSelectionCommand,
+  nudgeCommand,
+  pasteCommand,
+  repeatCommand,
+  repeatCountFromDrag,
+  selectionLength,
   splitAtCursor as splitAtCursorCommand,
   splitCommand,
+  type GlueRefusal,
+  type NudgeMode,
 } from './edit-commands';
 import {
   CLIP_RADIUS,
@@ -153,6 +176,7 @@ import {
   laneTops,
   lanesHeight,
   lanesTopOf,
+  repeatHandle,
   snapMove,
   snapTrim,
   titleStrip,
@@ -173,7 +197,9 @@ import {
   selectionSpan as spanOf,
   previousClipFrame,
   pruneSelection,
+  rubberBandSelection,
   selectAllClips,
+  selectNone,
   selectionStart,
   zoomToSelection as fitSelection,
 } from './selection';
@@ -195,13 +221,15 @@ import {
   type LocatorHit,
   type LocatorRange,
 } from './locators';
-import { DEFAULT_SNAP, gridStepFrames, snappedMoveDelta, snapperFor, type SnapSettings, type Snapper } from './snap';
+import { DEFAULT_SNAP, gridStepFrames, moveSnapperFor, snapContext, snapperFor, type SnapSettings, type Snapper } from './snap';
 import { SELECTED_OUTLINE_W, clipPalette, trackColourVar, type ClipPalette } from './track-colour';
 import { waveformColumns, type WaveColumn } from './waveform';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
 
-// The tools of P1-8: 1 Object Selection, 3 Split (UI redesign spec 3.2).
-export type Tool = 'select' | 'split';
+// The tools of P1-8: 1 Object Selection, 3 Split; of m5b-ui-edit-more: 4
+// Glue, 5 Erase (UI redesign spec 3.2).
+export type Tool = 'select' | 'split' | 'glue' | 'erase';
+const TOOLS: readonly Tool[] = ['select', 'split', 'glue', 'erase'];
 
 export interface TimelineState {
   // The primary selected clip (the info line's, the last clicked), or null.
@@ -285,6 +313,11 @@ export interface TimelineCanvasOptions {
   readonly now?: () => number;
   // The selected plan's ghosts (m5b-ui-ghosts); none when absent.
   readonly ghosts?: GhostSource;
+  // A glue the Glue tool or edit.glue refuses, and why (m5b-ui-edit-more):
+  // the chrome words it as a toast; nothing is sent.
+  readonly onRefuse?: (reason: GlueRefusal | 'selection') => void;
+  // Where Ctrl+C and Ctrl+X put the clips (the window's clipboard when absent).
+  readonly clipboard?: Clipboard;
 }
 
 // The ghosts of the plan under review (m5b-ui-ghosts; model/review-store.ts):
@@ -395,8 +428,9 @@ export interface EditProbe {
 }
 
 interface Drag {
-  // A clip part (move, copy, resize, Alt-click) or the volume control.
-  readonly kind: 'clip' | 'gain';
+  // A clip part (move, copy, resize, Alt-click), the volume control or the
+  // repeat handle of a selected clip (m5b-ui-edit-more).
+  readonly kind: 'clip' | 'gain' | 'repeat';
   readonly rect: ClipRect;
   readonly part: HitPart;
   readonly startX: number;
@@ -413,6 +447,18 @@ interface Drag {
   dy: number;
   // The modifier flags of the latest pointer event.
   flags: ModifierFlags;
+}
+
+// A rubber band from empty space (m5b-ui-edit-more): where it began, whether
+// Shift adds, and the selection it began on.
+interface BandDrag {
+  readonly startX: number;
+  readonly startY: number;
+  readonly add: boolean;
+  readonly base: readonly string[];
+  x: number;
+  y: number;
+  moved: boolean;
 }
 
 // What a clip drag ends in, as the overlay previews it and the release sends it.
@@ -527,6 +573,8 @@ const WHEEL_PX_PER_STEP = 300;
 const LINE_PX = 16;
 // A drag's preview (a moved, copied or resized clip) over the lanes.
 const PREVIEW_ALPHA = 0.35;
+// The rubber band's fill over the lanes (m5b-ui-edit-more).
+const BAND_FILL_ALPHA = 0.12;
 // The scroll-zoom bar under the canvases (--scrollbar-h): the canvases end
 // at its top, where the mockup's #tl ends.
 const SCROLLBAR_H = Number.parseFloat(TOKENS['scrollbar-h']);
@@ -574,9 +622,10 @@ export class TimelineCanvas {
   #guideX: number | null = null;
   #view: Viewport;
   #drag: Drag | null = null;
+  #band: BandDrag | null = null;
   #rulerDrag: RulerDrag | null = null;
   #locatorDrag: LocatorDrag | null = null;
-  #band: LocatorBandDrawn | null = null;
+  #locatorBand: LocatorBandDrawn | null = null;
   #contentFrame: number | null = null;
   #overlayFrame: number | null = null;
   #columns = new Map<string, PeakColumns>();
@@ -747,6 +796,7 @@ export class TimelineCanvas {
   // redesign spec 4.5 C8), even when the recovered session still has the clip.
   clearSelection(): void {
     this.#drag = null;
+    this.#band = null;
     this.#select([], null);
   }
 
@@ -761,18 +811,90 @@ export class TimelineCanvas {
     });
   }
 
-  // 1 and 3: the Object Selection and Split tools.
+  // 1, 3, 4 and 5: the Object Selection, Split, Glue and Erase tools.
   setTool(tool: Tool): void {
-    if (tool !== 'select' && tool !== 'split') return;
+    if (!TOOLS.includes(tool)) return;
     this.#update({ tool });
-    this.#overlay.style.cursor = tool === 'split' ? 'crosshair' : 'default';
+    this.#overlay.style.cursor = tool === 'split' ? 'crosshair' : tool === 'select' ? 'default' : 'pointer';
   }
 
-  // The snap state (the layout store's): on / off and the grid type.
+  // The snap state (the layout store's): on / off, the grid type and the snap type.
   setSnap(snap: SnapSettings): void {
-    if (snap.on === this.#snap.on && snap.grid === this.#snap.grid) return;
-    this.#snap = { on: snap.on, grid: snap.grid };
+    const type = snap.type ?? 'grid';
+    if (snap.on === this.#snap.on && snap.grid === this.#snap.grid && type === this.#snap.type) return;
+    this.#snap = { on: snap.on, grid: snap.grid, type };
     this.#invalidateOverlay();
+  }
+
+  // A command list built elsewhere (the info line's edit): sent as a gesture's is.
+  async sendCommand(command: TimelineCommand | null): Promise<void> {
+    await this.#send(() => command);
+  }
+
+  // edit.glue: each run of the selection; a refusal when none joins.
+  async glueSelection(): Promise<boolean> {
+    const snapshot = this.#options.model.getSnapshot();
+    const ids = this.#state.selectedClipIds;
+    if (!snapshot || ids.length === 0) return false;
+    const command = glueSelectionCommand(snapshot, ids);
+    if (!command) {
+      this.#options.onRefuse?.('selection');
+      return true;
+    }
+    await this.#send(() => command);
+    return true;
+  }
+
+  // Ctrl+C: the selection into the clipboard; nothing is sent.
+  copy(): boolean {
+    const snapshot = this.#options.model.getSnapshot();
+    const copied = snapshot ? copyClips(snapshot, this.#state.selectedClipIds) : null;
+    if (!copied) return false;
+    (this.#options.clipboard ?? CLIPBOARD).set(copied);
+    return true;
+  }
+
+  // Ctrl+X: copied, then clip.remove of each selected clip.
+  async cut(): Promise<boolean> {
+    const snapshot = this.#options.model.getSnapshot();
+    const ids = this.#state.selectedClipIds;
+    if (!snapshot || !this.copy()) return false;
+    await this.#send(() => cutCommand(snapshot, ids));
+    return true;
+  }
+
+  // Ctrl+V at the project cursor, Alt+V at the origin.
+  async paste(atOrigin = false): Promise<boolean> {
+    const snapshot = this.#options.model.getSnapshot();
+    const clipboard = (this.#options.clipboard ?? CLIPBOARD).get();
+    if (!snapshot || !clipboard) return false;
+    const at = atOrigin ? 'origin' : this.#cursorFrame();
+    await this.#send((clipId) => pasteCommand(snapshot, clipboard, at, clipId), true);
+    return true;
+  }
+
+  // Ctrl+K once counted: `count` copies of the selection after it.
+  async repeat(count: number): Promise<void> {
+    const snapshot = this.#options.model.getSnapshot();
+    const ids = this.#state.selectedClipIds;
+    if (!snapshot || ids.length === 0) return;
+    await this.#send((clipId) => repeatCommand(snapshot, ids, count, clipId), true);
+  }
+
+  // The nudges (Ctrl+Left/Right and the Alt arrows): one grid step at the selection's start.
+  async nudge(mode: NudgeMode, direction: 1 | -1 = 1): Promise<boolean> {
+    const snapshot = this.#options.model.getSnapshot();
+    const ids = this.#state.selectedClipIds;
+    const range = snapshot ? spanOf(snapshot, ids) : null;
+    if (!snapshot || !range) return false;
+    const step = gridStepFrames(this.#snap, this.#view.framesPerPixel, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000, range.start);
+    await this.#send(() => nudgeCommand(snapshot, ids, mode === 'position' ? BigInt(direction) * step : step, mode));
+    return true;
+  }
+
+  // Ctrl+Shift+A: nothing selected.
+  selectNone(): void {
+    this.#select(selectNone(), null);
   }
 
   // Alt+X: the selected clips at the project cursor, or every clip under it.
@@ -932,7 +1054,7 @@ export class TimelineCanvas {
       peakColumns: (clipId) => ({ ...(this.#columns.get(clipId) ?? { drawn: 0, nonZero: 0 }) }),
       waveColumns: (clipId) => [...(this.#waves.get(clipId) ?? [])],
       parts: () => {
-        const band = this.#band ? [{ id: 'locator-band', x: this.#band.x, y: this.#band.y, w: this.#band.width, h: this.#band.height }] : [];
+        const band = this.#locatorBand ? [{ id: 'locator-band', x: this.#locatorBand.x, y: this.#locatorBand.y, w: this.#locatorBand.width, h: this.#locatorBand.height }] : [];
         return [...this.#contentParts, ...band, ...this.#cursorParts].map((p) => ({ ...p }));
       },
       masks: () => this.#masks.map((m) => ({ ...m })),
@@ -949,7 +1071,7 @@ export class TimelineCanvas {
       tool: () => this.#state.tool,
       snap: () => ({ ...this.#snap }),
       snapGuide: () => this.#guideX,
-      locatorBand: () => (this.#band ? { ...this.#band } : null),
+      locatorBand: () => (this.#locatorBand ? { ...this.#locatorBand } : null),
       lastEdit: () => this.#lastEdit,
       ghosts: () => [...this.#ghosts],
       ghostOutline: () => this.#ghostOutline,
@@ -1155,10 +1277,19 @@ export class TimelineCanvas {
     return { ctrlKey: e.ctrlKey === true, altKey: e.altKey === true, shiftKey: e.shiftKey === true, metaKey: e.metaKey === true };
   }
 
-  // The snap of a frame at this zoom (the identity with snap off or ignored).
-  #snapper(snapshot: Snapshot, ignore = false): Snapper {
+  // The snap of a frame at this zoom (the identity with snap off or ignored);
+  // Events and Magnetic Cursor reach the edges of the clips not in `dragged`
+  // and the project cursor.
+  #snapper(snapshot: Snapshot, ignore = false, dragged: readonly string[] = []): Snapper {
     const view = this.#view;
-    return snapperFor(this.#snap, view.framesPerPixel, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000, ignore, BigInt(view.scrollFrames));
+    return snapperFor(this.#snap, view.framesPerPixel, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000, ignore, BigInt(view.scrollFrames), this.#snapContext(snapshot, dragged));
+  }
+
+  #snapContext(snapshot: Snapshot, dragged: readonly string[]) {
+    const type = this.#snap.type ?? 'grid';
+    if (type !== 'events' && type !== 'cursor') return undefined;
+    const cursor = type === 'cursor' ? this.#cursorNow() : null;
+    return snapContext(snapshot, dragged, cursor === null ? null : BigInt(cursor));
   }
 
   #pointerDown(e: PointerEvent): void {
@@ -1206,21 +1337,58 @@ export class TimelineCanvas {
     }
     const flags = this.#flags(e);
     const mods = toolModifiers(flags, this.#platform());
-    const hit = hitTest(clipRects(snapshot, this.#view), x, y);
+    const found = hitTest(clipRects(snapshot, this.#view), x, y);
+    const hit = found ? { rect: found.rect, part: found.part } : null;
     // The original of a moved, trimmed or removed clip is a clip: it selects as before, and pins its step.
     const original = hit ? this.#ghostBoxes.find((b) => b.clipId === hit.rect.clipId) : undefined;
     if (original) this.#options.ghosts?.pin(original.step);
     if (this.#state.tool === 'split') {
       // The Split tool: a click splits the clip under the pointer there.
       if (!hit || !this.#allows('clip.trim') || !this.#allows('clip.place')) return;
-      const frame = this.#snapper(snapshot)(xToFrame(x, this.#view));
+      const frame = this.#snapper(snapshot, false, [hit.rect.clipId])(xToFrame(x, this.#view));
       const clipId = hit.rect.clipId;
       void this.#send((id) => splitCommand(snapshot, [clipId], frame, id), true);
       return;
     }
+    if (this.#state.tool === 'glue') {
+      // The Glue tool: the clip and the next piece; Alt, the whole run; a
+      // selected clip with others selected, each run of the selection.
+      if (!hit || !this.#allows('clip.remove') || !this.#allows('clip.trim')) return;
+      const clipId = hit.rect.clipId;
+      const selected = this.#state.selectedClipIds;
+      if (selected.length > 1 && selected.includes(clipId)) {
+        void this.glueSelection();
+        return;
+      }
+      const glued = glueCommand(snapshot, clipId, { all: flags.altKey });
+      if (isGlueRefused(glued)) {
+        this.#options.onRefuse?.(glued.refused);
+        return;
+      }
+      void this.#send(() => glued);
+      return;
+    }
+    if (this.#state.tool === 'erase') {
+      // The Erase tool: a click removes the clip.
+      if (!hit || !this.#allows('clip.remove')) return;
+      const clipId = hit.rect.clipId;
+      void this.#send(() => gestureCommand(snapshot, { kind: 'delete', clipId }));
+      return;
+    }
     const selection = this.#state.selectedClipIds;
     if (!hit) {
-      if (!mods.fine) this.#select([], null);
+      // Empty space: a rubber band once the pointer moves; a click clears the
+      // selection (Shift keeps it).
+      this.#band = { startX: x, startY: y, add: mods.fine, base: selection, x, y, moved: false };
+      this.#capture(e);
+      return;
+    }
+    // The repeat handle is drawn on the selected clips only; on another clip its point is the right edge's.
+    if (hit.part === 'repeat' && !selection.includes(hit.rect.clipId)) hit.part = 'right';
+    if (hit.part === 'repeat') {
+      if (!this.#allows('clip.place')) return;
+      this.#drag = { kind: 'repeat', rect: hit.rect, part: hit.part, startX: x, startY: y, snapshot, ids: selection, onClick: null, gain: 0, dx: 0, dy: 0, flags };
+      this.#capture(e);
       return;
     }
     const clipId = hit.rect.clipId;
@@ -1282,6 +1450,15 @@ export class TimelineCanvas {
       this.#invalidateContent();
       return;
     }
+    const band = this.#band;
+    if (band) {
+      band.x = x;
+      band.y = y;
+      if (!band.moved && Math.abs(x - band.startX) < DRAG_THRESHOLD_PX && Math.abs(y - band.startY) < DRAG_THRESHOLD_PX) return;
+      band.moved = true;
+      this.#invalidateOverlay();
+      return;
+    }
     const drag = this.#drag;
     if (drag) {
       drag.dx = x - drag.startX;
@@ -1312,6 +1489,7 @@ export class TimelineCanvas {
     }
     if (y < lanesTopOf(this.#view)) return 'default';
     if (this.#state.tool === 'split') return part ? 'crosshair' : 'default';
+    if (this.#state.tool === 'glue' || this.#state.tool === 'erase') return part ? 'pointer' : 'default';
     switch (part) {
       case null:
         return 'default';
@@ -1319,6 +1497,8 @@ export class TimelineCanvas {
         return alt ? 'copy' : 'grab';
       case 'gain':
         return 'ns-resize';
+      case 'repeat':
+        return this.#hoverClipId !== null && this.#state.selectedClipIds.includes(this.#hoverClipId) ? 'copy' : 'ew-resize';
       case 'cornerLeft':
         return 'nesw-resize';
       case 'cornerRight':
@@ -1349,6 +1529,21 @@ export class TimelineCanvas {
       }
       return;
     }
+    const band = this.#band;
+    if (band) {
+      this.#pointerMove(e);
+      this.#band = null;
+      this.#release(e);
+      this.#invalidateOverlay();
+      if (!band.moved) {
+        if (!band.add) this.#select([], null);
+        return;
+      }
+      const ids = rubberBandSelection(this.#rects, this.#bandBox(band), band.base, band.add);
+      const primary = ids.includes(this.#state.selectedClipId ?? '') ? this.#state.selectedClipId : (ids[ids.length - 1] ?? null);
+      this.#select(ids, primary);
+      return;
+    }
     const drag = this.#drag;
     if (!drag) return;
     this.#pointerMove(e);
@@ -1357,6 +1552,11 @@ export class TimelineCanvas {
     this.#hideTooltip();
     this.#invalidateOverlay();
     const snapshot = drag.snapshot;
+    if (drag.kind === 'repeat') {
+      const count = this.#repeatCount(drag);
+      if (count > 0) void this.#send((clipId) => repeatCommand(snapshot, drag.ids, count, clipId), true);
+      return;
+    }
     if (drag.kind === 'gain') {
       if (!this.#moved(drag)) return;
       const gain = gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine);
@@ -1391,13 +1591,13 @@ export class TimelineCanvas {
     const view = this.#view;
     if (!this.#moved(drag)) {
       // Alt-click splits the clip there.
-      if (mods.splitClick) return { kind: 'split', frame: this.#snapper(snapshot)(xToFrame(drag.startX, view)) };
+      if (mods.splitClick) return { kind: 'split', frame: this.#snapper(snapshot, false, [drag.rect.clipId])(xToFrame(drag.startX, view)) };
       return { kind: 'none' };
     }
     const edge = trimEdgeOf(drag.part);
     if (edge) {
       if (!this.#allows('clip.trim') || (edge === 'left' && !this.#allows('clip.move'))) return { kind: 'none' };
-      const snap = this.#snapper(snapshot, mods.noSnap);
+      const snap = this.#snapper(snapshot, mods.noSnap, [drag.rect.clipId]);
       const raw = deltaFrames(drag.dx, view);
       const start = BigInt(drag.rect.position);
       const at = edge === 'right' ? start + BigInt(drag.rect.length) : start;
@@ -1414,8 +1614,26 @@ export class TimelineCanvas {
       if (axis !== 'x') dx = 0;
     }
     const start = BigInt(drag.rect.position);
-    const delta = dx === 0 ? 0n : snappedMoveDelta(start, deltaFrames(dx, view), this.#snapper(snapshot));
+    const move = moveSnapperFor(this.#snap, {
+      framesPerPixel: view.framesPerPixel,
+      tempo: snapshot.root?.tempo ?? [],
+      sampleRate: snapshot.root?.sampleRate ?? 48000,
+      atFrame: BigInt(view.scrollFrames),
+      context: this.#snapContext(snapshot, copy ? [] : drag.ids),
+    });
+    const delta = dx === 0 ? 0n : move(start, BigInt(drag.rect.length), deltaFrames(dx, view));
     return { kind: copy ? 'copy' : 'move', delta, lanes, guide: this.#snap.on && dx !== 0 ? start + delta : null };
+  }
+
+  // The copies a drag of the repeat handle makes so far.
+  #repeatCount(drag: Drag): number {
+    if (!this.#moved(drag)) return 0;
+    return repeatCountFromDrag(deltaFrames(drag.dx, this.#view), selectionLength(drag.snapshot, drag.ids));
+  }
+
+  // The rubber band's box in canvas pixels.
+  #bandBox(band: BandDrag): Box {
+    return { x: band.startX, y: band.startY, width: band.x - band.startX, height: band.y - band.startY };
   }
 
   // The lanes between the dragged clip's lane and the one under the pointer.
@@ -1499,6 +1717,7 @@ export class TimelineCanvas {
     if (this.#locatorDrag?.moved) this.#invalidateContent();
     this.#locatorDrag = null;
     this.#drag = null;
+    this.#band = null;
     this.#rulerDrag = null;
     this.#hideTooltip();
     this.#invalidateOverlay();
@@ -1683,7 +1902,7 @@ export class TimelineCanvas {
     if (!ctx) {
       this.#columns = columns;
       this.#waves = waves;
-      this.#band = null;
+      this.#locatorBand = null;
       return;
     }
     const palette = this.#palette();
@@ -1775,7 +1994,7 @@ export class TimelineCanvas {
     ctx.globalAlpha = 1;
     ctx.fillStyle = palette.rulerUpper;
     ctx.fillRect(0, 0, view.width, ru);
-    this.#band = null;
+    this.#locatorBand = null;
     if (snapshot) this.#drawBand(ctx, snapshot, palette);
     for (const shape of this.#ghostBoxes) if (shape.ruler) this.#drawGhostBand(ctx, shape, palette);
     ctx.fillStyle = palette.rulerLine;
@@ -1847,7 +2066,7 @@ export class TimelineCanvas {
     ctx.fillText('R', x1 - LABEL_INSET, middle);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    this.#band = { ...rect, cycle, left: range.left.toString(), right: range.right.toString() };
+    this.#locatorBand = { ...rect, cycle, left: range.left.toString(), right: range.right.toString() };
   }
 
   // draw()'s clip(): the rounded body, then inside it the title strip, the
@@ -1892,6 +2111,11 @@ export class TimelineCanvas {
     if (selected) {
       ctx.fillStyle = palette.select;
       for (const corner of cornerHandles(box)) ctx.fillRect(corner.x, corner.y, corner.width, corner.height);
+      // draw()'s repeat handle: a disc on the right border (m5b-ui-edit-more).
+      const handle = repeatHandle(box);
+      ctx.beginPath();
+      ctx.arc(handle.x, handle.y, handle.radius, 0, 2 * Math.PI);
+      ctx.fill();
     }
     ctx.restore();
     return columns;
@@ -2251,7 +2475,7 @@ export class TimelineCanvas {
       cursor: this.#playhead,
       playing: this.#playing,
       enabled: this.#autoScroll,
-      dragging: this.#drag !== null || this.#rulerDrag !== null,
+      dragging: this.#drag !== null || this.#rulerDrag !== null || this.#band !== null,
     });
     if (page !== null) {
       this.#view = { ...this.#view, scrollFrames: page };
@@ -2265,6 +2489,7 @@ export class TimelineCanvas {
     const palette = ctx ? this.#palette() : null;
     const drag = this.#drag;
     const plan = drag && drag.kind === 'clip' && snapshot ? this.#plan(drag) : null;
+    const repeats = drag && drag.kind === 'repeat' && snapshot ? this.#repeatPreviews(drag, snapshot) : [];
     this.#guideX = null;
     const selected = new Set(this.#state.selectedClipIds);
     // The previews of a drag, and the outline of a selected clip at its preview.
@@ -2300,7 +2525,7 @@ export class TimelineCanvas {
       ctx.beginPath();
       ctx.rect(0, top, view.width, Math.max(0, height - top));
       ctx.clip();
-      for (const { rect, outlined } of previews) {
+      for (const { rect, outlined } of [...previews, ...repeats.map((rect) => ({ rect, outlined: false }))]) {
         const box = clipBox(rect);
         ctx.globalAlpha = PREVIEW_ALPHA;
         ctx.fillStyle = palette.track(rect.trackId);
@@ -2326,6 +2551,7 @@ export class TimelineCanvas {
         ctx.fillRect(Math.round(this.#guideX), top, 1, height - top);
       }
       this.#drawSplitLine(ctx, snapshot, palette);
+      this.#drawRubberBand(ctx, palette);
       ctx.restore();
     }
     this.#placeTooltip(snapshot, plan);
@@ -2391,13 +2617,47 @@ export class TimelineCanvas {
     ctx.fillText(formatDb(value), gain.x + GAIN_TEXT_X, gain.y + gain.height / 2 - 0.5, gain.width - 2 * GAIN_TEXT_X);
   }
 
+  // The copies a held repeat-handle drag would place, as boxes at their lanes.
+  #repeatPreviews(drag: Drag, snapshot: Snapshot): ClipRect[] {
+    const count = this.#repeatCount(drag);
+    if (count === 0) return [];
+    const by = selectionLength(snapshot, drag.ids);
+    const view = this.#view;
+    const out: ClipRect[] = [];
+    for (const rect of this.#rects) {
+      if (!drag.ids.includes(rect.clipId)) continue;
+      for (let k = 1; k <= count; k += 1) {
+        const position = (BigInt(rect.position) + BigInt(k) * by).toString();
+        out.push({ ...rect, position, x: frameToX(position, view) });
+      }
+    }
+    return out;
+  }
+
+  // The rubber band (m5b-ui-edit-more): its box outlined in --select over a
+  // light fill of the same colour, while the pointer is held past the threshold.
+  #drawRubberBand(ctx: CanvasRenderingContext2D, palette: Palette): void {
+    const band = this.#band;
+    if (!band?.moved) return;
+    const box = this.#bandBox(band);
+    const x = Math.min(box.x, box.x + box.width);
+    const y = Math.min(box.y, box.y + box.height);
+    ctx.globalAlpha = BAND_FILL_ALPHA;
+    ctx.fillStyle = palette.select;
+    ctx.fillRect(x, y, Math.abs(box.width), Math.abs(box.height));
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = palette.select;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(Math.abs(box.width)), Math.round(Math.abs(box.height)));
+  }
+
   // The Split tool's line: where a click would split the clip under the pointer.
   #drawSplitLine(ctx: CanvasRenderingContext2D, snapshot: Snapshot | null, palette: Palette): void {
     const pointer = this.#lastPointer;
     if (this.#state.tool !== 'split' || !pointer || !snapshot || this.#drag) return;
     const hit = hitTest(this.#rects, pointer.x, pointer.y);
     if (!hit) return;
-    const x = frameToX(this.#snapper(snapshot)(xToFrame(pointer.x, this.#view)), this.#view);
+    const x = frameToX(this.#snapper(snapshot, false, [hit.rect.clipId])(xToFrame(pointer.x, this.#view)), this.#view);
     const box = clipBox(hit.rect);
     ctx.fillStyle = palette.tx1;
     ctx.fillRect(Math.round(x), box.y, 1, box.height);

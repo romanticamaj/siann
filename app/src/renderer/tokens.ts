@@ -220,8 +220,6 @@ export const TOKENS = {
   "hold-tab-meter-w": "69.031px",
   "hold-inspector-routing-h": "91px",
   "hold-tool-2-w": "27.172px",
-  "hold-tool-4-w": "27.172px",
-  "hold-tool-5-w": "27.172px",
   "hold-tool-6-w": "27.172px",
   "hold-tool-7-w": "27.172px",
   "hold-tool-8-w": "27.172px",

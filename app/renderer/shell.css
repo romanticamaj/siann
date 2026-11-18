@@ -316,7 +316,7 @@ code, dd { font-family: var(--font-mono); }
 /* The toolbar and the info line are ui/project-zone.css's .arr-toolbar and
    .infoline (m5-ui-port-toolbar). The app's own pieces around them: the
    refusal line, which draws nothing while empty, and the empty boxes of the
-   absent parts (spec 3.0): tools 2 and 4 to 9 (m5b-ui-edit-more), the
+   absent parts (spec 3.0): tools 2 and 6 to 9 (M6a), the
    proposal pill (m5b-ui-ghosts) and the fade fields (m5b-ui-fades), each the
    size the fidelity run measures in the mockup (--hold-*-w); a tool, snap,
    the grid type or auto-scroll on an engine without its commands, a tool's
@@ -324,10 +324,8 @@ code, dd { font-family: var(--font-mono); }
    follow field's width is its icon, padding and border). */
 .timeline-error { min-width: 0; color: var(--err); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .timeline-error:empty { display: none; }
-.hold-tool-2, .hold-tool-4, .hold-tool-5, .hold-tool-6, .hold-tool-7, .hold-tool-8, .hold-tool-9, .tool-empty { display: block; flex: none; height: var(--control-h); }
+.hold-tool-2, .hold-tool-6, .hold-tool-7, .hold-tool-8, .hold-tool-9, .tool-empty { display: block; flex: none; height: var(--control-h); }
 .hold-tool-2 { width: var(--hold-tool-2-w); }
-.hold-tool-4 { width: var(--hold-tool-4-w); }
-.hold-tool-5 { width: var(--hold-tool-5-w); }
 .hold-tool-6 { width: var(--hold-tool-6-w); }
 .hold-tool-7 { width: var(--hold-tool-7-w); }
 .hold-tool-8 { width: var(--hold-tool-8-w); }
@@ -366,6 +364,14 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .confirm-dialog-message { margin: 0 0 calc(var(--space) * 4); }
 .confirm-dialog-buttons { display: flex; gap: calc(var(--space) * 2); justify-content: flex-end; }
 .confirm-dialog .danger { background: var(--err); border-color: var(--err); color: var(--bg-0); }
+/* Ctrl+K's count (m5b-ui-edit-more): the confirmation's chrome with a
+   labelled number field; the mockup has no such dialog. */
+.repeat-dialog-field { display: flex; align-items: center; gap: calc(var(--space) * 2); margin: 0 0 calc(var(--space) * 4); white-space: nowrap; }
+.repeat-dialog-field input { width: 8ch; min-height: var(--control-h); padding: 0 var(--space); background: var(--bg-3); color: inherit; font: inherit; border: var(--hairline) solid var(--line-2); border-radius: var(--radius-s); }
+/* The info line's typed value (m5b-ui-edit-more): a text field inside b.num,
+   in the field's own font; an editable value takes a text cursor. */
+.num[data-editable] { cursor: text; }
+.num .info-edit { min-height: 0; padding: 0 var(--space-half); color: inherit; font: inherit; }
 
 /* The arrange body and the event display are ui/project-zone.css's .arr-body
    and .lanes (m5-ui-port-arrange-canvas): the app adds the one row the body
