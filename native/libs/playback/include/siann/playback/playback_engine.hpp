@@ -193,7 +193,8 @@ struct OwnedStream {
 //
 // m5b-engine-monitoring: a track whose monitor is not off starts its strip with
 // a MonitorInputNode (its mode, Track.input's channel map, options.fadeFrames)
-// and reaches the master over a low-latency edge. compileForPlayback gives it no
+// and reaches its output (the master or a bus) and, through each send, its
+// send buses over low-latency edges (engine::wireMix). compileForPlayback gives it no
 // gate (auto never sees an arm); the PlaybackEngine gives it the track's gate.
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
                                     const PlaybackOptions& options, PluginInstanceTable* plugins = nullptr);
