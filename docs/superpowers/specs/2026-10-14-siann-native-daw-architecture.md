@@ -1387,9 +1387,12 @@ M5 amendments (m5-mixer, Protocol v0 item 24):
   (f) Pre-roll starts playback at S = the frame of tick(R) - bars x 4 x 1920 on the
   tempo map, clamped at 0; capture still begins at R; auto monitoring plays the
   clips until R.
-  (g) Count-in holds the transport at the position playback starts from (R, or S
-  when pre-roll is on too), then starts ("Click"); `transport.stop` during it ends
-  the recording with empty takes, which go to `trash/`.
+  (g) Count-in holds the transport at the position playback starts from (the
+  playhead P, or S when pre-roll is on too), then starts ("Click"); that is the
+  record position R only when punch in does not apply, since with punch in
+  applying playback runs from P and capture begins at R = left.
+  `transport.stop` during the count-in ends the recording with empty takes, which
+  go to `trash/`.
   (h) A bar is four quarter notes until a signature map exists (E-10).
   (i) Loop recording with one take per pass mapped to playlists stays
   m6b-loop-takes.
