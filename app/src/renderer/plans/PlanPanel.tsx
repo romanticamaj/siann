@@ -15,13 +15,18 @@
 // refs and entity JSON are behind each step's disclosure.
 //
 // PlanPanelView is the pure view (static-markup tests); PlanPanel reads the
-// stores, plan.preview and session.fetch at the plan's base revision (for
-// the stale reasons), and runs the actions.
+// stores and runs the actions. The selected plan, its ticked steps, its
+// plan.preview (and session.fetch at its base revision, for the stale
+// reasons), the hovered and the pinned step live in the review store
+// (model/review-store.ts, m5b-ui-ghosts), so the ghosts exist with the zone
+// closed; a step's target button locates its ghosts through it, and a click
+// on a ghost brings its row into view here.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
+import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
@@ -34,7 +39,7 @@ import { HistoryRow } from './HistoryRow';
 import { usePlanSnapshot, useModelSnapshot, useStepNames } from './hooks';
 import { PlanCard } from './PlanCard';
 import { refusalOf, type Refusal } from './RefusalLine';
-import { defaultSelection } from './selection';
+import { cardPlan } from './selection';
 
 export type PanelRefusal = Refusal;
 
@@ -67,19 +72,14 @@ export interface PlanPanelViewProps {
   readonly onRun: (entry: ActionEntry) => void;
   readonly onRejecting: (open: boolean) => void;
   readonly onHotStep: (index: number | null) => void;
+  readonly onLocate?: (index: number) => void;
   // Disclosures that start open (tests).
   readonly openSteps?: ReadonlySet<number>;
   readonly openError?: boolean;
   readonly openOther?: boolean;
 }
 
-// The plan on the card: the selected one while the store holds it, else the default.
-export function cardPlan(plans: readonly PlanEntry[], selected: string | null): PlanEntry | undefined {
-  const chosen = selected !== null ? plans.find((p) => p.hash === selected) : undefined;
-  if (chosen) return chosen;
-  const hash = defaultSelection(plans);
-  return hash !== null ? plans.find((p) => p.hash === hash) : undefined;
-}
+export { cardPlan };
 
 export function PlanPanelView(props: PlanPanelViewProps) {
   const { plans, heard, firstSeen, nowMs, names, ticked } = props;
@@ -109,6 +109,8 @@ export function PlanPanelView(props: PlanPanelViewProps) {
             note={props.note}
             rejecting={props.rejecting}
             hotStep={props.hotStep}
+            pinnedStep={props.pinnedStep ?? null}
+            onLocate={props.onLocate}
             error={props.error}
             preview={landedLabel(plan) === null ? props.preview : null}
             previewError={landedLabel(plan) === null ? props.previewError : null}
@@ -142,62 +144,6 @@ export function PlanPanelView(props: PlanPanelViewProps) {
 
 type Entity = Readonly<Record<string, unknown>>;
 
-interface PreviewState {
-  readonly plan: string;
-  readonly preview?: PlanPreview;
-  readonly error?: PanelRefusal;
-  // The stale refs at the plan's base revision; null when that read was refused.
-  readonly base?: ReadonlyMap<string, Entity | null> | null;
-}
-
-// plan.preview of the selected plan (and, for a stale one, its stale entities
-// at the base revision), read again when the head revision, the plan's state
-// or its staleness changes; none for a plan that has landed.
-function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision: string | null): PreviewState | null {
-  const [state, setState] = useState<PreviewState | null>(null);
-  const hash = plan && landedLabel(plan) === null ? plan.hash : null;
-  const planState = plan?.state ?? null;
-  const staleRefs = plan ? plan.stale.map((s) => s.ref) : [];
-  const staleKey = plan ? plan.stale.map((s) => `${s.ref}:${s.change}`).join(',') : '';
-  const baseRevision = typeof plan?.raw.baseRevision === 'string' ? plan.raw.baseRevision : null;
-  useEffect(() => {
-    if (hash === null) {
-      setState(null);
-      return undefined;
-    }
-    let current = true;
-    const base = async (): Promise<ReadonlyMap<string, Entity | null> | null> => {
-      if (staleRefs.length === 0 || baseRevision === null) return new Map();
-      try {
-        const fetched = (await client.request('session.fetch', { refs: staleRefs, revision: baseRevision })) as {
-          entities?: Array<{ ref?: unknown; entity?: unknown }>;
-        };
-        const map = new Map<string, Entity | null>();
-        for (const item of fetched.entities ?? []) {
-          if (typeof item.ref === 'string') map.set(item.ref, (item.entity as Entity | undefined) ?? null);
-        }
-        return map;
-      } catch {
-        return null;
-      }
-    };
-    void client.request('plan.preview', { plan: hash }).then(
-      async (result) => {
-        const atBase = await base();
-        if (current) setState({ plan: hash, preview: result as PlanPreview, base: atBase });
-      },
-      (error: unknown) => {
-        if (current) setState({ plan: hash, error: refusalOf(error) });
-      },
-    );
-    return () => {
-      current = false;
-    };
-    // staleRefs is staleKey's content.
-  }, [client, hash, planState, staleKey, revision, baseRevision]);
-  return state !== null && state.plan === hash ? state : null;
-}
-
 // The clock at this render; the relative times are re-rendered every 30 s.
 function useNow(): number {
   const [, setTick] = useState(0);
@@ -211,22 +157,24 @@ function useNow(): number {
 export interface PlanPanelProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // The plan review's state (model/review-store.ts): a reconnect clears its
+  // selection there (UI redesign spec 4.5 C8).
+  readonly review: ReviewStore;
   // The reconnects so far (model/connection-phase.ts); each one clears the
-  // selected plan and its ticked steps (UI redesign spec 4.5 C8).
+  // refusal and the reason field.
   readonly reconnects?: number;
 }
 
-export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
+export function PlanPanel({ client, plans, review, reconnects = 0 }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
   const now = useNow();
-  const [selected, setSelected] = useState<string | null>(null);
-  const [ticked, setTicked] = useState<ReadonlySet<number> | null>(null);
+  const reviewState = useSyncExternalStore((listener) => review.subscribe(listener), () => review.getSnapshot(), () => review.getSnapshot());
+  const { selected, ticked, hotStep, pinnedStep } = reviewState;
   const [note, setNote] = useState('');
   const [rejecting, setRejecting] = useState(false);
-  const [hotStep, setHotStep] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<PanelRefusal | null>(null);
   const plan = cardPlan(snapshot.plans, selected);
@@ -237,22 +185,28 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
   useEffect(() => {
     if (lastShown.current === shown) return;
     lastShown.current = shown;
-    setTicked(null);
     setRejecting(false);
-    setHotStep(null);
     setError(null);
   }, [shown]);
-  // A reconnect clears the selection and its ticked steps.
+  // A reconnect clears the refusal and the reason field (the store clears the selection).
   const seenReconnects = useRef(reconnects);
   useEffect(() => {
     if (reconnects === seenReconnects.current) return;
     seenReconnects.current = reconnects;
-    setSelected(null);
-    setTicked(null);
     setRejecting(false);
     setError(null);
   }, [reconnects]);
-  const preview = usePreview(client, plan, model?.revision ?? null);
+  const preview = reviewState.preview !== null && reviewState.preview.plan === plan?.hash ? reviewState.preview : null;
+  void model;
+  // A click on a ghost brings its row into view.
+  useEffect(
+    () =>
+      review.onReveal(({ step, plans: toPlans }) => {
+        if (!toPlans) return;
+        requestAnimationFrame(() => document.querySelector(`[data-testid="step-${step - 1}"]`)?.scrollIntoView({ block: 'nearest' }));
+      }),
+    [review],
+  );
 
   const reasons = useMemo(() => {
     if (!plan || plan.stale.length === 0 || !preview?.preview) return [];
@@ -265,8 +219,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
   }, [plan, preview, client, locale, names]);
 
   const select = (hash: string) => {
-    setSelected(hash);
-    setTicked(null);
+    review.select(hash);
     setRejecting(false);
     setError(null);
   };
@@ -298,7 +251,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
     const action = actionFor(entry, plan);
     if (!action) return;
     // The card stays on the plan it acted on.
-    setSelected(plan.hash);
+    review.select(plan.hash);
     setBusy(true);
     void runAction(client, action).then((outcome) => {
       setBusy(false);
@@ -306,8 +259,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
       if (outcome.plan !== undefined) {
         // Followed, not chosen: the refusal of the chain stays shown.
         lastShown.current = outcome.plan;
-        setSelected(outcome.plan);
-        setTicked(null);
+        review.select(outcome.plan);
       }
       setError(outcome.ok ? null : { code: outcome.code, message: outcome.engineMessage, changedEntities: outcome.changedEntities });
       if (outcome.ok && entry.id === 'reject') {
@@ -330,16 +282,18 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
       busy={busy}
       error={error}
       preview={preview?.preview ?? null}
-      previewError={preview?.error ?? null}
+      previewError={preview?.error !== undefined ? refusalOf(preview.error) : null}
       staleReasons={reasons}
       rejecting={rejecting}
       hotStep={hotStep}
+      pinnedStep={pinnedStep}
+      onLocate={(index) => review.locate(index)}
       onSelect={select}
-      onTicked={setTicked}
+      onTicked={(next) => review.setTicked(next)}
       onNote={setNote}
       onRun={run}
       onRejecting={setRejecting}
-      onHotStep={setHotStep}
+      onHotStep={(index) => review.setHot(index)}
     />
   );
 }

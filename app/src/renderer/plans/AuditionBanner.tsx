@@ -1,8 +1,9 @@
 // The audition banner (m5-ui-plan-panel; UI redesign 4.3 as corrected for
 // P1-5): a row under the top bar, outside the zones, so it is visible
 // whichever zones are open, while the side heard is a proposal branch. It
-// names the plan as its card does (first step and step count; titles arrive
-// with E-7), or reads "Hearing a proposal" when no plan the store holds has
+// names the plan as its card does (first step and step count, through
+// plans/plan-name.ts, which the pill and the Agent changes section share;
+// titles arrive with E-7), or reads "Hearing a proposal" when no plan the store holds has
 // that branch, and offers Hear main, Merge and Discard, each only when
 // engine.capabilities lists its method. A refusal is shown on the banner as
 // plans/RefusalLine shows it (no ids; the engine's text behind a disclosure).
@@ -15,7 +16,7 @@ import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { Capable } from '../shell/Capable';
 import { runAction, type PlanAction } from './actions';
-import { describeStep } from './describe';
+import { planName } from './plan-name';
 import { ISOLATE } from './isolate';
 import { usePlanSnapshot, useStepNames } from './hooks';
 import { RefusalLine, type Refusal } from './RefusalLine';
@@ -35,10 +36,8 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
   const branch = snapshot.heard;
   if (branch === null || branch === 'main') return null;
   const plan = snapshot.plans.find((p) => p.proposalBranch === branch);
-  const first = plan?.steps[0];
-  const text = first
-    ? t('banner.hearing', { lead: describeStep(first, t, names), steps: t('plans.steps', { count: plan!.steps.length }) })
-    : t('banner.generic');
+  const name = plan ? planName(plan, t, names) : null;
+  const text = name ? t('banner.hearing', { lead: name.lead, steps: name.steps }) : t('banner.generic');
   const run = (action: PlanAction) => {
     if (busy) return;
     setBusy(true);
