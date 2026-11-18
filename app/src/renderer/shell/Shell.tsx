@@ -86,6 +86,21 @@ import { transportEnabled, type TransportPlayhead } from './Transport';
 
 // The order Tab walks the zones in.
 const FOCUS_ORDER: readonly ZoneScope[] = ['left', 'project', 'lower', 'right'];
+// The frame's classes per zone: the mockup's element class (aside.leftzone,
+// section.lower, aside.plans; the project zone's section has none), .zone and
+// .zone-<zone>. The dividers' likewise. Literal tables, so every class the
+// renderer emits is spelled out (m5-ui-port-cleanup).
+const ZONE_CLASSES: Readonly<Record<ZoneScope, string>> = {
+  left: 'leftzone zone zone-left',
+  project: 'zone zone-project',
+  lower: 'lower zone zone-lower',
+  right: 'plans zone zone-right',
+};
+const DIVIDER_CLASSES: Readonly<Record<Zone, string>> = {
+  left: 'divider divider-left',
+  lower: 'divider divider-lower',
+  right: 'divider divider-right',
+};
 // A drag this far below a zone's minimum collapses it.
 const COLLAPSE_THRESHOLD = 4;
 // The focus keys run before any element's handler; the rest after.
@@ -179,9 +194,8 @@ export interface ShellProps {
 
 interface ZoneFrameProps {
   readonly zone: ZoneScope;
-  // The element and the mockup's class (aside.leftzone, aside.plans), or a section.
+  // The mockup's element (aside.leftzone, aside.plans), or a section; its class is ZONE_CLASSES'.
   readonly as?: 'aside' | 'section';
-  readonly region?: string;
   readonly visible: boolean;
   readonly focused: boolean;
   readonly offline: boolean;
@@ -192,13 +206,13 @@ interface ZoneFrameProps {
   readonly children: ReactNode;
 }
 
-function ZoneFrame({ zone, as = 'section', region, visible, focused, offline, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
+function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
   const t = useT();
   const Tag = as;
   return (
     <Tag
       ref={frameRef}
-      className={`${region ? `${region} ` : ''}zone zone-${zone}`}
+      className={ZONE_CLASSES[zone]}
       data-testid={`zone-${zone}`}
       data-region={`${zone}-zone`}
       data-zone={zone}
@@ -300,7 +314,7 @@ function ZoneSeparator({
       data-testid={`separator-${zone}`}
       data-divider-zone={zone}
       data-active={active ? 'true' : undefined}
-      className={`divider divider-${zone}`}
+      className={DIVIDER_CLASSES[zone]}
       role="separator"
       aria-orientation={zone === 'lower' ? 'horizontal' : 'vertical'}
       aria-label={t('zone.resize', { zone: t(`zone.${zone}`) })}
@@ -599,7 +613,6 @@ export function Shell({
       </div>
       <ZoneFrame
         as="aside"
-        region="leftzone"
         offline={offline}
         zone="left"
         visible={zones.left.visible}
@@ -620,7 +633,6 @@ export function Shell({
           zone="lower"
           visible={zones.lower.visible}
           focused={focused === 'lower'}
-          region="lower"
           tabs={lowerTabs}
           onFocus={(z) => focusZone(z, false)}
           frameRef={frameRef('lower')}
@@ -631,7 +643,6 @@ export function Shell({
       <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />
       <ZoneFrame
         as="aside"
-        region="plans"
         offline={offline}
         zone="right"
         visible={zones.right.visible}

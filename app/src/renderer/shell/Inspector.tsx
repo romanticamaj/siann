@@ -59,15 +59,19 @@ export interface InspectorProps {
 // The zone's key hint: the preset's last chord that shows it (Alt+I, as the mockup writes it).
 const KEY_HINT = CUBASE_PRESET.filter((binding) => binding.commandId === 'zone.left.toggle').at(-1)?.chord ?? '';
 
-// The sections sec() draws, in its order; an open one holds a body in the mockup.
-const SECTIONS: ReadonlyArray<readonly [string, boolean]> = [
-  ['routing', true],
-  ['inserts', true],
-  ['sends', false],
-  ['automation', false],
-  ['agent-changes', true],
-  ['notepad', false],
-];
+// The sections sec() draws, in its order, as the classes of their empty boxes
+// (spec 3.0): the section's name, and .shut where the mockup draws it shut (an
+// open one holds a body in the mockup). A literal table, so every class is
+// spelled out (m5-ui-port-cleanup).
+const SECTIONS = ['routing', 'inserts', 'sends', 'automation', 'agent-changes', 'notepad'] as const;
+const SECTION_HOLDS: Readonly<Record<(typeof SECTIONS)[number], string>> = {
+  routing: 'inspector-hold routing',
+  inserts: 'inspector-hold inserts',
+  sends: 'inspector-hold sends shut',
+  automation: 'inspector-hold automation shut',
+  'agent-changes': 'inspector-hold agent-changes',
+  notepad: 'inspector-hold notepad shut',
+};
 
 interface SliderProps {
   readonly kind: ValueKind;
@@ -230,8 +234,8 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
           />
         </div>
       </div>
-      {SECTIONS.map(([name, open]) => (
-        <Hold key={name} className={`inspector-hold ${name}${open ? '' : ' shut'}`} />
+      {SECTIONS.map((name) => (
+        <Hold key={name} className={SECTION_HOLDS[name]} />
       ))}
       <Foot />
     </>

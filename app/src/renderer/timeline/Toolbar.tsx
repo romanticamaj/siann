@@ -61,6 +61,17 @@ const TOOLS: ReadonlyArray<{ readonly key: number; readonly landed?: { readonly 
   { key: 8 },
   { key: 9 },
 ];
+// The empty boxes of the tools SIANN has not built (spec 3.0; --hold-tool-<n>-w),
+// by tool() number: a literal table, so every class is spelled out.
+const TOOL_HOLDS: Readonly<Record<number, string>> = {
+  2: 'hold-tool-2',
+  4: 'hold-tool-4',
+  5: 'hold-tool-5',
+  6: 'hold-tool-6',
+  7: 'hold-tool-7',
+  8: 'hold-tool-8',
+  9: 'hold-tool-9',
+};
 
 export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapToggle, onGrid, onAutoScroll }: ToolbarProps) {
   const t = useT();
@@ -72,7 +83,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
       <div className="arr-toolbar" data-part="toolbar">
         <div className="seg" data-part="tools" role="group" aria-label={t('tool.label')}>
           {TOOLS.map(({ key, landed }) => {
-            if (!landed) return <span key={key} className={`hold-tool-${key}`} aria-hidden="true" />;
+            if (!landed) return <span key={key} className={TOOL_HOLDS[key]} aria-hidden="true" />;
             if (!allowed(landed.tool)) return <span key={key} className="tool-empty" aria-hidden="true" />;
             const on = tool === landed.tool;
             return (
