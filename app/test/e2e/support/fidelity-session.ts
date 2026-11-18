@@ -275,6 +275,17 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   // plugin names are its own; the slots read the test plugin's.
   await stageInserts(page, notes);
 
+  // The mockup's record enable (m5b-ui-recording): every track on an input
+  // before any plan (an input is a revision; a plan that read the track would
+  // go stale), the fake device's input open (its outputs loop back).
+  {
+    const inputs = await engineClient(page, { events: false });
+    await inputs.call('engine.select_device', { id: 'fake', inputId: 'fake' });
+    await expect.poll(async () => ((await inputs.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
+    for (const trackId of TRACK_IDS) await inputs.call('command.execute', { commands: [{ op: 'track.set_input', trackId, input: { port: 0, channels: 1 } }] });
+    inputs.close();
+  }
+
   // The mockup's zoom: 20 px per second. The slider moves in quarter octaves,
   // so its step is lifted for this one value (a test-side change of the
   // element, not of the app).
@@ -335,14 +346,7 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   // The Plans button counts the one validated plan, as the mockup's does.
   await expect(page.getByTestId('plans-count')).toHaveText('1');
 
-  // The mockup's record enable (m5b-ui-recording): every track on an input, so
-  // each record enable can arm as the mockup draws it, and Vox Lead armed on
-  // Mono In 1 (its Inspector's In row reads the mockup's "Mono In 1"), with the
-  // fake device's input open (its outputs loop back); nothing records.
-  await engine.call('engine.select_device', { id: 'fake', inputId: 'fake' });
-  await expect.poll(async () => ((await engine.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
-  // (A track an applied plan removed is not_found and keeps no input.)
-  for (const trackId of TRACK_IDS) await engine.call('command.execute', { commands: [{ op: 'track.set_input', trackId, input: { port: 0, channels: 1 } }] }).catch(() => undefined);
+  // Vox Lead armed (m5b-ui-recording; the inputs were set before the plans).
   await engine.call('record.arm', { trackId: TRACK_IDS[4]!, armed: true });
   await expect(page.getByTestId(`track-record-${TRACK_IDS[4]!}`)).toHaveAttribute('aria-pressed', 'true');
   // The others can arm: no reason in their tooltip.
