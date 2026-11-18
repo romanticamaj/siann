@@ -82,6 +82,10 @@ import type { MeterTestHooks } from './mixer/MixerMeters';
 import { PickerController } from './mixer/picker';
 import { PluginActions } from './model/plugin-actions';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
+import type { MediaBridge } from './model/media-bridge';
+import { structuralBlocked } from './model/edit-guard';
+import { MediaImporter, type ImportResult } from './model/media-import';
+import type { MediaHost } from './media/MediaTab';
 
 declare global {
   interface Window {
@@ -99,6 +103,8 @@ declare global {
         opened(path: string): void;
         onChange(callback: (state: ShellProjectState) => void): void;
       };
+      // Importing audio (m5b-ui-media): the shell's file dialog and a dropped file's path.
+      media?: MediaBridge;
       // The application menu (m5b-ui-project): its model out, its clicks in.
       menu?: {
         set(model: MenuModel): void;
@@ -122,6 +128,8 @@ declare global {
       answered(): ReadonlyArray<AnsweredRequest>;
     };
     __siannMeters?: MeterTestHooks;
+    // The import's placeholders as shown and its jobs' results (m5b-ui-media).
+    __siannMedia?: { seen(): ReadonlyArray<{ name: string; progress: number | null }>; results(): readonly ImportResult[] };
     // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
     __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
     // React commits counted at the root (profiling bundle only).
@@ -223,6 +231,12 @@ const loopClick = new LoopClickController({
   toasts,
   locale: () => locales.getSnapshot(),
 });
+
+// Importing audio (m5b-ui-media): media.import jobs for the drop and the Media
+// tab's Import; the drop and Import exist only with the preload bridge.
+const importer = new MediaImporter({ client, schedule, toasts, locale: () => locales.getSnapshot(), blocked: () => structuralBlocked(plans.getSnapshot().heard) });
+const media: MediaHost = { bridge: bridge?.media ?? null, importer, toasts };
+if (testHooks) window.__siannMedia = { seen: () => importer.seen(), results: () => importer.results() };
 
 // The insert racks (m5b-ui-inserts-master): the plugin methods, the picker an empty slot opens, and engine.status for each slot's state.
 const pluginActions = new PluginActions({ client, toasts, locale: () => locales.getSnapshot() });
@@ -348,6 +362,7 @@ const app = (
     saved={saved}
     studioSetup={studioSetup}
     inserts={inserts}
+    media={media}
   />
 );
 createRoot(container).render(

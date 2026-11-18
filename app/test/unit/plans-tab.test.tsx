@@ -5,8 +5,8 @@
 // data-part ids, so ui/right-zone.css draws it.
 //
 //   aside.plans
-//     .p-head[right-tabs]   .tab.on[tab-plans] (spark), the Media and Meter
-//                           tabs' holds, .ab[hearing-switch] > svg + .seg > 2 .b
+//     .p-head[right-tabs]   .tab.on[tab-plans] (spark), .tab[tab-media] (folder;
+//                           m5b-ui-media), the Meter tab's hold, .ab[hearing-switch] > svg + .seg > 2 .b
 //     .agent[agent-row]     .av (spark) + span(b name, " · MCP") + .live(i + text)
 //     .p-scroll             .card[plan-card] > .card-h[plan-head] (.top[plan-meta]:
 //                           the badge, time and base, the hash; h3[plan-title]
@@ -53,7 +53,7 @@ const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.j
 const REDUCED = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-reduced.json'), 'utf8')) as Capabilities;
 
 // The parts of the right zone whose feature has not landed (manifest.json).
-const PENDING_PARTS = ['composer', 'tab-media', 'tab-meter'];
+const PENDING_PARTS = ['composer', 'tab-meter'];
 
 // The mockup's agent: connected, no tool call yet (lastAction null).
 const MOCKUP_AGENT: Agent = { id: 'agt_1', name: 'mix-assistant', transport: 'mcp', connected: true, lastAction: null, lastActionAt: null };
@@ -147,14 +147,14 @@ const partOf = (n: Node) => n.attrs['data-part'];
 
 // The mockup's children as the app must render them: inline text elements of
 // a step's text (b, s, em) are the wording's (plan-step-rows.test.ts), a
-// clip-naming title's wrapper (plan-step-N-title) is a pending part the app
-// does not carry and the step's .go holds the target icon (m5b-ui-ghosts).
+// clip-naming title's wrapper (plan-step-N-title, m5b-ui-media) is carried as
+// the mockup has it and the step's .go holds the target icon (m5b-ui-ghosts).
 // The primary's kbd is drawn since m5b-ui-audition binds Ctrl+Return (UI
 // redesign 3.6).
 function mockChildren(node: Node): Node[] {
   let out = node.children;
   if (node.classes.includes('t') || node.classes.includes('d')) {
-    out = out.flatMap((c) => (/^plan-step-\d+-title$/.test(partOf(c) ?? '') ? c.children : [c])).filter((c) => !['b', 's', 'em'].includes(c.tag));
+    out = out.filter((c) => !['b', 's', 'em'].includes(c.tag));
   }
   return out;
 }
@@ -246,7 +246,9 @@ test('every id of the Plans tab is in the markup, and no id of a pending part', 
   assert.equal(items('plan-step').length, 6);
   assert.equal(items('plan-history').length, 3);
   for (const id of PENDING_PARTS) assert.ok(!markup.includes(`"${id}"`), `no ${id} id`);
-  assert.ok(!/plan-step-\d+-title/.test(markup), 'no plan-step-N-title id');
+  // m5b-ui-media: the tab, and the titles of the two steps that name a clip.
+  assert.equal(parts.filter((p) => p === 'tab-media').length, 1, 'tab-media once');
+  assert.deepEqual([...markup.matchAll(/data-part="(plan-step-\d+-title)"/g)].map((m) => m[1]), ['plan-step-2-title', 'plan-step-6-title']);
 });
 
 // m5b-ui-audition (UI redesign 3.6, 4.5 C4): Ctrl+Return runs the primary,
@@ -469,4 +471,59 @@ test('with features.agents and no agent the row reads "No agent connected"', () 
   const live = find(find(gone, (n) => partOf(n) === 'agent-row')!, (n) => n.classes.includes('live'))!;
   assert.deepEqual(live.classes, ['live', 'off']);
   assert.equal(textOf(live), 'disconnected · idle');
+});
+
+// ---- m5b-ui-media: the Media tab and the clip-naming step titles
+
+test("the Media tab is the mockup's span.tab with the folder icon and its label, after the Plans tab", () => {
+  const zone = appRightZone(render());
+  const head = find(zone, (n) => partOf(n) === 'right-tabs')!;
+  assert.deepEqual(head.children.slice(0, 2).map((n) => partOf(n)), ['tab-plans', 'tab-media']);
+  const tab = head.children[1]!;
+  assert.equal(tab.tag, 'button');
+  assert.deepEqual(tab.classes, ['tab'], 'not .on while Plans shows');
+  assert.equal(tab.attrs.role, 'tab');
+  assert.equal(tab.attrs['aria-selected'], 'false');
+  assert.equal(tab.attrs['data-testid'], 'tab-right-media');
+  const mock = find(mockRightZone(), (n) => partOf(n) === 'tab-media')!;
+  assert.equal(tab.children[0]!.tag, 'svg');
+  assert.deepEqual(tab.children[0]!.classes, mock.children[0]!.classes, "the mockup's ic('folder','s')");
+  assert.equal(textOf(tab), textOf(mock));
+  assert.equal(textOf(tab), 'Media');
+  assert.equal(textOf(find(mockRightZone('zh-TW'), (n) => partOf(n) === 'tab-media')!), '媒體');
+  // The Meter tab's hold follows it.
+  assert.deepEqual(head.children[2]!.classes, ['hold-tab-meter']);
+});
+
+test('a step that names a clip wraps its title in plan-step-N-title, as step() does', () => {
+  const zone = appRightZone(render());
+  const steps = findAll(zone, (n) => n.attrs['data-part-item'] === 'plan-step');
+  steps.forEach((step, index) => {
+    const t = step.children.find((c) => c.classes.includes('t'))!;
+    const title = t.children.find((c) => /^plan-step-\d+-title$/.test(partOf(c) ?? ''));
+    if (index === 1 || index === 5) {
+      assert.ok(title, `step ${index + 1} names a clip`);
+      assert.equal(title.tag, 'span');
+      assert.equal(partOf(title), `plan-step-${index + 1}-title`);
+      assert.deepEqual(title.classes, []);
+      // Between the dot and the detail line, as the mockup has it.
+      assert.deepEqual(t.children.map((c) => c.classes[0] ?? partOf(c)), ['tdot', `plan-step-${index + 1}-title`, 'd']);
+    } else assert.equal(title, undefined, `step ${index + 1} names no clip`);
+  });
+  const two = find(zone, (n) => partOf(n) === 'plan-step-2-title')!;
+  assert.equal(textOf(two).replace(/[\u2068\u2069]/g, ''), 'Place pad_swell.wav on Pad');
+  const six = find(zone, (n) => partOf(n) === 'plan-step-6-title')!;
+  assert.equal(textOf(six).replace(/[\u2068\u2069]/g, ''), 'Move Riser on FX');
+  assert.equal(six.children[0]!.tag, 'b');
+});
+
+test('against capabilities without media.import the Media tab is absent and its box stays empty', () => {
+  const markup = render({}, REDUCED);
+  const zone = appRightZone(markup);
+  assert.ok(!markup.includes('"tab-media"'), 'no tab-media id');
+  assert.ok(!markup.includes('tab-right-media'), 'no Media tab');
+  const head = find(zone, (n) => partOf(n) === 'right-tabs')!;
+  assert.equal(partOf(head.children[0]!), 'tab-plans');
+  assertEmptyBox(head.children[1], 'tab-media-empty');
+  assert.deepEqual(head.children[2]!.classes, ['hold-tab-meter'], "the Meter tab's box follows");
 });

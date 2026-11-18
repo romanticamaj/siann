@@ -24,6 +24,7 @@ import {
   TRACK_LIST_MIN,
   effectiveLayout,
   initialShellState,
+  rightTab,
   limits,
   parseLayout,
   reduce,
@@ -515,4 +516,32 @@ test('the Inserts rack switch: shown by default, toggled by the rack action, par
   // A reload reads it back.
   const reloaded = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: () => undefined } });
   assert.deepEqual(reloaded.getSnapshot().layout.racks, { inserts: false });
+});
+
+// m5b-ui-media: the right zone has the Plans and the Media tab (UI redesign
+// 3.0, UR-5). Ctrl+P and the event display's menu open the Media tab, also
+// from a collapsed right zone; on an engine without media.import a stored
+// Media tab shows the Plans tab.
+test('tabs: the right zone has plans and media; openTab media opens a collapsed right zone on it', () => {
+  assert.deepEqual(DEFAULT_LAYOUT.tabs.right, 'plans');
+  const collapsed = reduce(start(), { type: 'hide', zone: 'right', viewport: WIDE });
+  assert.equal(effectiveLayout(collapsed, WIDE).zones.right.visible, false);
+  const media = reduce(collapsed, { type: 'openTab', zone: 'right', tab: 'media', viewport: WIDE });
+  assert.equal(effectiveLayout(media, WIDE).zones.right.visible, true);
+  assert.equal(media.layout.tabs.right, 'media');
+  assert.deepEqual(reduce(media, { type: 'openTab', zone: 'right', tab: 'media', viewport: WIDE }), media, 'pressed again it stays');
+  const back = reduce(media, { type: 'tab', zone: 'right', tab: 'plans' });
+  assert.equal(back.layout.tabs.right, 'plans');
+  assert.equal(reduce(back, { type: 'tab', zone: 'right', tab: 'meter' }).layout.tabs.right, 'plans', 'no Meter tab yet');
+  // Kept under siann.layout.v1 and read back.
+  assert.equal(parseLayout(serializeLayout(media.layout)).tabs.right, 'media');
+  assert.equal(parseLayout(JSON.stringify({ tabs: { right: 'pool' } })).tabs.right, 'plans');
+});
+
+test('tabs: a stored Media tab falls back to Plans when the engine has no Media tab', () => {
+  const media = reduce(start(), { type: 'tab', zone: 'right', tab: 'media' }).layout;
+  assert.equal(rightTab(media, { media: true }), 'media');
+  assert.equal(rightTab(media, { media: false }), 'plans');
+  assert.equal(rightTab(DEFAULT_LAYOUT, { media: true }), 'plans');
+  assert.equal(rightTab(DEFAULT_LAYOUT, { media: false }), 'plans');
 });

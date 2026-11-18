@@ -73,6 +73,7 @@ import { TimeFormatContext } from './shell/time-format';
 import type { ToastStore } from './shell/toast-store';
 import { NO_TRACKS, pruneTracks, selectTrack, type TrackSelectMode, type TrackSelection } from './timeline/selection';
 import { Timeline } from './timeline/Timeline';
+import { MediaTab, type MediaHost } from './media/MediaTab';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 
@@ -105,6 +106,8 @@ export interface AppProps {
   readonly studioSetup: StudioSetupController;
   // The insert racks' plugin actions, picker and slot states (m5b-ui-inserts-master).
   readonly inserts?: InsertsHost;
+  // Importing audio and the Media tab (m5b-ui-media).
+  readonly media?: MediaHost | null;
 }
 
 export function App({
@@ -130,6 +133,7 @@ export function App({
   saved,
   studioSetup,
   inserts,
+  media = null,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -199,6 +203,7 @@ export function App({
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   const racks = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.racks);
+  const openMedia = useCallback(() => void commands.run('window', 'media.open'), [commands]);
   const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
@@ -243,6 +248,8 @@ export function App({
                 reconnects={reconnects}
                 review={review}
                 toasts={toasts}
+                media={media}
+                onOpenMedia={openMedia}
               />
             </Counted>
           }
@@ -252,6 +259,7 @@ export function App({
             </Counted>
           }
           right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
+          rightMedia={<MediaTab key={epoch} client={client} media={media} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
           startView={startView ? <StartView project={project} /> : null}
           studioSetup={<StudioSetup open={setupOpen} controller={studioSetup} engineStatus={engineStatus} sessionRate={sessionRate} onClose={closeSetup} />}

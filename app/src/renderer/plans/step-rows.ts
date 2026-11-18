@@ -6,8 +6,9 @@
 // on 9.1". Old values are plan.preview's `before` with the plan's earlier
 // steps applied; with no preview (an applied, rolled-back or refused plan)
 // the line gives the new value only. A clip has no name of its own before
-// E-4, so a step that names a clip names it by its track (the mockup's clip
-// titles are m5b-ui-media's). dB is one decimal and pan L/C/R, as the strip
+// E-4, so a step that places or moves a clip names it by its media's name
+// ("Place pad_swell.wav on Pad", "Move Riser on FX"; m5b-ui-media), and by
+// its track when the media has no name. dB is one decimal and pan L/C/R, as the strip
 // shows them (format.ts); positions are bar.beat as the locator display
 // reads them. Every name is its own bidi isolate (isolate.ts). The dot is
 // the step's track colour, the AI colour for a track the plan adds.
@@ -36,6 +37,9 @@ export interface StepRow {
   readonly detail: readonly Segment[];
   // A colour token's name (--ai, --track-N, --tx-4), for the dot's --c.
   readonly colour: string;
+  // The title names a clip, by its media's name (m5b-ui-media): StepRow
+  // wraps it in the mockup's plan-step-N-title part.
+  readonly namesClip?: boolean;
 }
 
 const MARKS: Record<Exclude<SegmentKind, 'plain'>, readonly [string, string]> = {
@@ -139,6 +143,12 @@ export function stepRows(steps: readonly Record<string, unknown>[], preview: Pla
     let title = '';
     let detail: string[] = [];
     let colour = colourOf(trackId ?? clipTrack);
+    let namesClip = false;
+    // A clip's name is its media's (m5b-ui-media; a clip has no name of its own before E-4).
+    const mediaName = (id: string | undefined) => {
+      const name = id !== undefined ? here.media?.(id) : undefined;
+      return name !== undefined && name !== '' ? mark('name', isolateName(name)) : undefined;
+    };
     switch (step.op) {
       case 'track.add': {
         // The track before it: the last one, or, when the head already holds
@@ -187,7 +197,9 @@ export function stepRows(steps: readonly Record<string, unknown>[], preview: Pla
         break;
       }
       case 'clip.place': {
-        title = t('row.placeClip', { track: nameOf(trackId) });
+        const clipTitle = mediaName(str(step.mediaId));
+        title = clipTitle !== undefined ? t('row.placeMedia', { clip: clipTitle, track: nameOf(trackId) }) : t('row.placeClip', { track: nameOf(trackId) });
+        namesClip = clipTitle !== undefined;
         const start = bar(frames(step.position));
         const end = bar(plus(frames(step.position), str(step.length)));
         const mediaId = str(step.mediaId);
@@ -198,7 +210,11 @@ export function stepRows(steps: readonly Record<string, unknown>[], preview: Pla
       }
       case 'clip.move': {
         const target = trackId ?? clipTrack;
-        title = trackId !== undefined && trackId !== clipTrack ? t('row.moveClipTo', { track: nameOf(trackId) }) : t('row.moveClip', { track: nameOf(clipTrack) });
+        const clipTitle = mediaName(str(clip?.mediaId) ?? clipName?.mediaId);
+        const toTrack = trackId !== undefined && trackId !== clipTrack;
+        if (clipTitle !== undefined) title = toTrack ? t('row.moveMediaTo', { clip: clipTitle, track: nameOf(trackId) }) : t('row.moveMedia', { clip: clipTitle, track: nameOf(clipTrack) });
+        else title = toTrack ? t('row.moveClipTo', { track: nameOf(trackId) }) : t('row.moveClip', { track: nameOf(clipTrack) });
+        namesClip = clipTitle !== undefined;
         const to = frames(step.position);
         const from = old(frames(clip?.position));
         const length = str(clip?.length) ?? clipName?.length;
@@ -277,6 +293,6 @@ export function stepRows(steps: readonly Record<string, unknown>[], preview: Pla
       default:
         break;
     }
-    return { title: segmentsOf(title), detail: segmentsOf(detail.join(' · ')), colour };
+    return { title: segmentsOf(title), detail: segmentsOf(detail.join(' · ')), colour, ...(namesClip ? { namesClip } : {}) };
   });
 }

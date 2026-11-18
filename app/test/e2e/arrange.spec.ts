@@ -24,7 +24,7 @@ import { zhHans } from '../../src/renderer/i18n/zh-Hans';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import { engineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
-import { armPlacing, chooseGrid, openPool } from './support/toolbar';
+import { chooseGrid, placeMedia } from './support/toolbar';
 
 const RATE = 48000;
 const FRAMES = 48000;
@@ -794,11 +794,10 @@ test('a selected clip has the 1.5 px outline of draw(), a drag shows a tooltip, 
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   await expect.poll(async () => (await rect('clp_sq')).width).toBeLessThan(start.width);
 
-  // Place from the Pool (Ctrl+P) on the second lane.
+  // Place from the Media tab (Ctrl+P) on the second lane: a row dragged there.
   before = await revision();
-  await armPlacing(page, 'med_sq');
   const v = await view();
-  await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
+  await placeMedia(page, 'med_sq', 300, v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
   await expect(page.getByTestId('clip-count')).toHaveText('2');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 
@@ -1249,41 +1248,29 @@ test('the info line follows a move and a trim of the selected clip, in bar.beat.
   await expect(page.getByTestId('info-offset')).toHaveText('0.1.0.0');
 });
 
-test('the Pool opens with Ctrl+P and from the event display\'s context menu, a click arms placing, and the resting window has none', async () => {
+test('Ctrl+P and the event display\'s context menu open the Media tab, a row dragged to a lane places one clip, and no Pool is left', async () => {
   test.setTimeout(120_000);
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
   await launch();
   await rect('clp_sq');
   await expect(page.getByTestId('media-pool')).toHaveCount(0);
 
-  // Ctrl+P (Cmd+P on macOS): the session's media by name, the media id when it has none.
+  // Ctrl+P (Cmd+P on macOS): the Media tab of the right zone (m5b-ui-media), the media by name or id.
   await focusProject();
   await page.keyboard.press(`${MOD}+KeyP`);
-  const pool = page.getByTestId('media-pool');
-  await expect(pool).toBeVisible();
-  expect(['square', 'square.wav', 'med_sq']).toContain(await page.getByTestId('pool-med_sq').textContent());
-  // The Pool sits over the project zone.
-  const zone = (await page.getByTestId('zone-project').boundingBox())!;
-  const over = (await pool.boundingBox())!;
-  expect(over.x).toBeGreaterThanOrEqual(zone.x);
-  expect(over.x + over.width).toBeLessThanOrEqual(zone.x + zone.width + 0.5);
-  expect(over.y).toBeGreaterThanOrEqual(zone.y);
-  // Escape closes it.
-  await page.keyboard.press('Escape');
-  await expect(pool).toHaveCount(0);
+  await expect(page.getByTestId('media-tab')).toBeVisible();
+  expect(['square', 'square.wav', 'med_sq']).toContain(await page.getByTestId('media-name-med_sq').textContent());
 
-  // A click on the media arms placing; a click in the event display places one clip, one revision.
+  // A row dragged to the event display places one clip, one revision.
   const before = await revision();
-  await openPool(page);
-  await page.getByTestId('pool-med_sq').click();
-  await expect(pool).toHaveCount(0);
-  const canvas = await box('timeline-canvas');
   const v = await view();
-  await page.mouse.click(canvas.x + canvas.width - 30, canvas.y + v.lanesTop + 10);
+  await placeMedia(page, 'med_sq', (await box('event-display')).width - 30, v.lanesTop + 10);
   await expect(page.getByTestId('clip-count')).toHaveText('2');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 
-  // The event display's context menu opens it too; Escape closes the menu.
+  // The event display's context menu opens the tab too; Escape closes the menu.
+  await page.getByTestId('tab-right-plans').click();
+  const canvas = await box('timeline-canvas');
   await page.mouse.click(canvas.x + canvas.width * 0.8, canvas.y + canvas.height - 40, { button: 'right' });
   const menu = page.getByTestId('event-display-menu');
   await expect(menu).toBeVisible();
@@ -1292,14 +1279,12 @@ test('the Pool opens with Ctrl+P and from the event display\'s context menu, a c
   await expect(menu).toHaveCount(0);
   await page.mouse.click(canvas.x + canvas.width * 0.8, canvas.y + canvas.height - 40, { button: 'right' });
   await expect(menu).toBeVisible();
-  await menu.getByTestId('menu-open-pool').click();
+  await menu.getByTestId('menu-open-media').click();
   await expect(menu).toHaveCount(0);
-  await expect(pool).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(pool).toHaveCount(0);
-  // The right-click placed nothing.
+  await expect(page.getByTestId('media-tab')).toBeVisible();
+  // The right-click placed nothing, and the Pool never appeared.
   await expect(page.getByTestId('clip-count')).toHaveText('2');
-  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect(page.getByTestId('media-pool')).toHaveCount(0);
 });
 
 // m5-ui-port-track-list: the list is the mockup's .headers, and its gestures
@@ -1365,9 +1350,8 @@ test('add with the .add button, rename, select, mute and solo from the list, one
   // The count follows a placed clip and a removed one.
   const canvas = await box('timeline-canvas');
   before = await revision();
-  await armPlacing(page, 'med_sq');
   const v = await view();
-  await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
+  await placeMedia(page, 'med_sq', 300, v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
   await expect(count).toHaveText('3 tracks · 2 clips');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   const start = await rect('clp_sq');

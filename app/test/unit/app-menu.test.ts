@@ -147,3 +147,9 @@ test('the shell accepts only a well-formed model from the renderer', () => {
   assert.equal(parseMenuModel({ menus: [{ id: 'file', label: 'File', items: [{ type: 'command', command: 7, label: 'x' }] }] }), null);
   assert.equal(parseMenuModel({ menus: [{ id: 'file', label: 'File', items: [{ type: 'role', role: 'quit' }] }] }), null);
 });
+
+test('no menu item carries the Pool\'s command (m5b-ui-media: the Media tab replaced it)', () => {
+  for (const shell of [true, false]) {
+    for (const menu of model('en', shell).menus) assert.ok(!commands(menu.items).some((item) => item.command === 'pool.open'), menu.id);
+  }
+});

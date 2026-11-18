@@ -106,9 +106,10 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Shift+2', commandId: 'transport.toRightLocator', scope: 'window' },
   { chord: 'Mod+Numpad1', commandId: 'transport.setLeftLocator', scope: 'window' },
   { chord: 'Mod+Numpad2', commandId: 'transport.setRightLocator', scope: 'window' },
-  // The Pool (m5-ui-port-toolbar; spec 10.8, 1; research/cubase.md 7): Ctrl+P
-  // (Cmd+P) is Cubase's Open Pool. P, Alt+P, Shift+P and Mod+Alt+P keep theirs.
-  { chord: 'Mod+P', commandId: 'pool.open', scope: 'window' },
+  // The Media tab (m5b-ui-media; UR-5; spec 10.8, 1; research/cubase.md 7):
+  // Ctrl+P (Cmd+P), Cubase's Open Pool, opens the right zone on it. P, Alt+P,
+  // Shift+P and Mod+Alt+P keep theirs.
+  { chord: 'Mod+P', commandId: 'media.open', scope: 'window' },
   // Projects (m5b-ui-project; spec 3.6; research/cubase.md 7): Cubase's New
   // Project, Open and Save. The File menu shows them as its accelerators and
   // registers none. Studio Setup and Open Recent have no key.

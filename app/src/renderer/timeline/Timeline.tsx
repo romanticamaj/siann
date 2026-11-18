@@ -3,8 +3,9 @@
 // Selection and Split tools, snap and the grid type, auto-scroll, and the
 // last refusal), the info line (InfoLine.tsx, editable since m5b-ui-edit-more), and below them the
 // track list, its boundary and the event display, whose two canvases the
-// imperative TimelineCanvas owns through refs. The Pool (Pool.tsx, Ctrl+P or
-// the event display's context menu) lists the media to place from. No drawing state passes through React:
+// imperative TimelineCanvas owns through refs. The event display's context
+// menu opens the right zone's Media tab (m5b-ui-media), which replaced the
+// Pool. No drawing state passes through React:
 // the track list follows the canvas's view through a listener, the meters
 // and the cursor read the RealtimeClient on their own frames.
 //
@@ -12,7 +13,7 @@
 // here: Delete and Backspace, Escape, H and G, Shift+H and Shift+G, Shift+F,
 // T, and the editing keys of m5-ui-edit-basics (1, 3, Alt+X, Ctrl+D, J,
 // Ctrl+A, L, N, B, Alt+S, Shift+E, M, S, Shift+Delete), and F (auto-scroll,
-// m5-ui-transport); Ctrl+P (pool.open, a window command) opens the Pool. The capability rule (spec 3.0) is editGates: a key,
+// m5-ui-transport). The capability rule (spec 3.0) is editGates: a key,
 // button or control exists only when engine.capabilities lists the commands
 // (or the method) it ends in, and the canvas sends no gesture whose commands
 // are not listed (it reads the latest capabilities through a ref). Lane
@@ -36,8 +37,18 @@
 // `allows` refuses the structural ops, so no drag, split, place or volume
 // gesture begins, and the structural keys (Delete, Alt+X, Ctrl+D, M, S,
 // Shift+Delete, T) decline. Selecting, zooming and locating stay.
+// m5b-ui-media (UR-5, 3.2): with the preload bridge and an engine that lists
+// media.import, the event display is a drop target (data-drop-target): audio
+// files dropped from the OS import (model/media-import.ts) and land at the
+// drop position, snapped as a drag (media-drop.ts), a file of another type is
+// refused with a toast before any request, and a Media tab row dropped there
+// places one clip in one command.execute. While a file imports, a placeholder
+// over the canvas shows its name and progress where its clip will land.
+// While a proposal is heard the edit guard holds the drop: the event display
+// is marked data-drop-target="guarded", a drop there sends nothing (neither
+// media.import nor clip.place) and a toast gives the guard's reason.
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent } from 'react';
 
 import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
 import type { CommandId, CommandRegistry } from '../keys/commands';
@@ -49,7 +60,7 @@ import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
-import { isStructural, structuralBlocked } from '../model/edit-guard';
+import { GUARD_REASON, isStructural, structuralBlocked } from '../model/edit-guard';
 import { useHeard } from '../plans/heard-context';
 import { useStepNames } from '../plans/hooks';
 import { planNameParts } from '../plans/plan-name';
@@ -62,7 +73,14 @@ import { removeTracksCommand, trackMuteCommand, trackSoloCommand, type GlueRefus
 import { infoLineEditCommand, type InfoField } from './info-line';
 import { InfoLine } from './InfoLine';
 import { RepeatDialog } from './RepeatDialog';
-import { EventDisplayMenu, Pool } from './Pool';
+import { EventDisplayMenu } from './EventDisplayMenu';
+import { frameToX, laneHeightOf, laneTops, lanesHeight, lanesTopOf } from './geometry';
+import { placementCommand } from './media-drop';
+import type { MediaEntity } from '../model/document';
+import { acceptedFormats, MEDIA_ROW_TYPE, splitDrop, type DroppedFile } from '../model/media-bridge';
+import type { Placeholder } from '../model/media-import';
+import type { MediaHost } from '../media/MediaTab';
+import { CapabilitiesContext } from '../shell/Capable';
 import type { TrackSelectMode } from './selection';
 import { IDLE_STATE, TimelineCanvas, type TimelineTestHooks } from './TimelineCanvas';
 import { Toolbar } from './Toolbar';
@@ -211,6 +229,26 @@ export interface TimelineProps {
   readonly review?: ReviewStore;
   // Where a refused glue's toast goes (m5b-ui-edit-more); none when absent.
   readonly toasts?: ToastStore;
+  // Importing audio (m5b-ui-media): the bridge, the importer and the toasts; no drop target without the bridge.
+  readonly media?: MediaHost | null;
+  // The event display's context menu: show the right zone on the Media tab.
+  readonly onOpenMedia?: () => void;
+}
+
+const NO_PLACEHOLDERS: readonly Placeholder[] = Object.freeze([]);
+const noPlaceholders = () => NO_PLACEHOLDERS;
+const noSubscription = () => () => undefined;
+
+// Where a placeholder sits over the canvas (canvas pixels), or null when its
+// drop has no lane (the Media tab's Import).
+export function placeholderBox(placeholder: Placeholder, trackOrder: readonly string[], view: Viewport): { left: number; top: number; height: number } | null {
+  if (placeholder.lane === null || placeholder.position === null) return null;
+  const left = frameToX(placeholder.position, view);
+  const { trackId, newIndex } = placeholder.lane;
+  const at = trackId !== null ? trackOrder.indexOf(trackId) : -1;
+  if (at >= 0) return { left, top: laneTops(trackOrder, view)[at]!, height: laneHeightOf(trackId!, view) };
+  const top = lanesTopOf(view) - (view.scrollY ?? 0) + lanesHeight(trackOrder, view) + (newIndex ?? 0) * view.laneHeight;
+  return { left, top, height: view.laneHeight };
 }
 
 function useSessionId(client: SessionClient): string | null {
@@ -260,6 +298,8 @@ export function Timeline({
   reconnects = 0,
   review,
   toasts,
+  media = null,
+  onOpenMedia,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -276,10 +316,10 @@ export function Timeline({
   const [repeating, setRepeating] = useState(false);
   const toastsRef = useRef(toasts);
   toastsRef.current = toasts;
-  // The Pool (Ctrl+P) and the event display's context menu (where it opened).
-  const [poolOpen, setPoolOpen] = useState(false);
+  // The event display's context menu (where it opened).
   const [displayMenu, setDisplayMenu] = useState<{ x: number; y: number } | null>(null);
   const can = useCapabilities();
+  const capabilities = useContext(CapabilitiesContext);
   const canRef = useRef(can);
   canRef.current = can;
   const heard = useHeard();
@@ -290,7 +330,6 @@ export function Timeline({
   const locateRef = useRef(onLocate);
   locateRef.current = onLocate;
   const gates = editGates(can);
-  const canPlace = can.command('clip.place');
   const canAdd = can.command('track.add');
   const trackIds = selectedTrackIds ?? (selectedTrackId ? [selectedTrackId] : NO_IDS);
   const tracksRef = useRef(trackIds);
@@ -505,9 +544,6 @@ export function Timeline({
     return () => offs.forEach((off) => off());
   }, [timeline, commands, gateKey, canAdd, client, layout]);
 
-  // Ctrl+P (Cmd+P) opens the Pool, or closes it when it is open, as Cubase's Open Pool does.
-  useEffect(() => commands.register('window', 'pool.open', () => setPoolOpen((open) => !open)), [commands]);
-
   const confirmRemove = () => {
     const ids = removing;
     setRemoving(null);
@@ -537,6 +573,64 @@ export function Timeline({
   const ghostsOn = useSyncExternalStore(reviewSubscribe, () => review?.getSnapshot().ghostsOn ?? true, () => true);
   const name = planNameParts(reviewed, t, names, can);
   const pill = review && name ? { lead: name.lead, steps: name.steps, on: ghostsOn, onToggle: () => review.toggleGhosts() } : null;
+
+  // m5b-ui-media: the drop target, and the placeholders of the files importing.
+  const mediaTab = can.has('media.import');
+  const bridge = media?.bridge ?? null;
+  const dropTarget = mediaTab && bridge !== null && media !== null;
+  const dropGuarded = structuralBlocked(heard);
+  const importer = media?.importer;
+  const placeholders = useSyncExternalStore(importer ? importer.subscribe : noSubscription, importer ? importer.getSnapshot : noPlaceholders, noPlaceholders);
+  // The placeholders follow the canvas's zoom and scroll.
+  const [, setViewTick] = useState(0);
+  useEffect(() => {
+    if (!timeline || placeholders.every((p) => p.lane === null)) return undefined;
+    return timeline.subscribeView(() => setViewTick((tick) => tick + 1));
+  }, [timeline, placeholders]);
+  const carriesMedia = (event: DragEvent<HTMLElement>) => {
+    const types = Array.from(event.dataTransfer?.types ?? []);
+    return types.includes('Files') || types.includes(MEDIA_ROW_TYPE);
+  };
+  const onDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!carriesMedia(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  };
+  const onDrop = (event: DragEvent<HTMLElement>) => {
+    if (!carriesMedia(event) || !media || !bridge) return;
+    event.preventDefault();
+    if (structuralBlocked(heardRef.current)) {
+      // The edit guard (UI redesign 4.5 C5): nothing is imported or placed onto main while a proposal is heard.
+      const text = (locale: Parameters<typeof translator>[0]) => translator(locale)(GUARD_REASON);
+      media.toasts.push(text(localeStore().getSnapshot()), text);
+      return;
+    }
+    const current = client.model.getSnapshot();
+    const caps = canRef.current;
+    const rowMedia = event.dataTransfer.getData(MEDIA_ROW_TYPE);
+    if (rowMedia) {
+      // A Media tab row: one clip.place (and track.add below the last track), one revision.
+      const entity = current?.entities[`media:${rowMedia}`] as MediaEntity | undefined;
+      const plan = timeline?.dropPlan(event.clientX, event.clientY, 1);
+      const lane = plan?.lanes[0];
+      if (!current || !entity || !plan || !lane || !caps.command('clip.place')) return;
+      if (lane.trackId === null && !caps.command('track.add')) return;
+      send(client, placementCommand(current, lane, { mediaId: entity.id, name: entity.name, frames: entity.frames }, plan.position));
+      return;
+    }
+    const files: DroppedFile[] = Array.from(event.dataTransfer.files ?? []).map((file) => ({ name: file.name, path: bridge.pathForFile(file) }));
+    const { accepted, refused } = splitDrop(files, acceptedFormats(capabilities));
+    for (const file of refused) {
+      const text = (locale: Parameters<typeof translator>[0]) => translator(locale)('media.refused', { name: file.name });
+      media.toasts.push(text(localeStore().getSnapshot()), text);
+    }
+    if (accepted.length === 0) return;
+    const plan = caps.command('clip.place') && caps.command('track.add') ? timeline?.dropPlan(event.clientX, event.clientY, accepted.length) : null;
+    if (plan) void media.importer.drop(accepted, plan);
+    else void media.importer.importFiles(accepted.map((file) => file.path));
+  };
+  const view = timeline?.getView();
+  const order = snapshot?.trackOrder ?? [];
 
   return (
     <section className="timeline">
@@ -587,15 +681,39 @@ export function Timeline({
           className="lanes"
           data-testid="event-display"
           data-part="event-display"
+          data-drop-target={dropTarget ? (dropGuarded ? 'guarded' : 'media') : undefined}
           ref={displayRef}
           onContextMenu={(event) => {
             event.preventDefault();
-            setDisplayMenu({ x: event.clientX, y: event.clientY });
+            if (mediaTab && onOpenMedia) setDisplayMenu({ x: event.clientX, y: event.clientY });
           }}
+          onDragOver={dropTarget ? onDragOver : undefined}
+          onDrop={dropTarget ? onDrop : undefined}
         >
           <canvas ref={contentRef} id="tl" data-testid="timeline-content" />
           <canvas ref={overlayRef} className="timeline-layer timeline-overlay" data-testid="timeline-canvas" />
           <div ref={tooltipRef} className="drag-tooltip" data-testid="drag-tooltip" role="status" hidden />
+          {view
+            ? placeholders.map((placeholder) => {
+                const box = placeholderBox(placeholder, order, view);
+                if (!box) return null;
+                const percent = placeholder.progress === null ? null : Math.round(placeholder.progress * 100);
+                return (
+                  <div
+                    key={placeholder.key}
+                    className="media-placeholder"
+                    data-testid={`media-placeholder-${placeholder.key}`}
+                    role="status"
+                    style={{ left: box.left, top: box.top, height: box.height }}
+                  >
+                    <span className="media-placeholder-name" dir="auto">
+                      {percent === null ? t('media.importingStart', { name: placeholder.name }) : t('media.importing', { name: placeholder.name, percent })}
+                    </span>
+                    <i className="media-placeholder-bar" style={{ width: `${percent ?? 0}%` }} />
+                  </div>
+                );
+              })
+            : null}
           <div className="hscroll" data-part="scroll-zoom">
             <i ref={thumbRef} />
             <u style={{ '--zoom-at': String(zoomAt(framesPerPixel)) } as CSSProperties}>
@@ -615,21 +733,13 @@ export function Timeline({
           </div>
         </div>
       </div>
-      <Pool
-        open={poolOpen}
-        media={snapshot?.media ?? []}
-        placingMediaId={state.placingMediaId}
-        canPlace={canPlace}
-        onPlace={(mediaId) => timeline?.setPlacing(mediaId)}
-        onClose={() => setPoolOpen(false)}
-      />
-      {displayMenu ? (
+      {displayMenu && mediaTab && onOpenMedia ? (
         <EventDisplayMenu
           x={displayMenu.x}
           y={displayMenu.y}
-          onOpenPool={() => {
+          onOpenMedia={() => {
             setDisplayMenu(null);
-            setPoolOpen(true);
+            onOpenMedia();
           }}
           onClose={() => setDisplayMenu(null)}
         />

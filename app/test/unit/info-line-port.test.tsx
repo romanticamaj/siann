@@ -201,3 +201,8 @@ test('while edited, a field is span.f > b.num > input holding the value; the lab
   assert.ok(input!.attrs['aria-label'], 'named');
   assert.equal(text(field), 'Start', 'the label, then the field');
 });
+
+test('the name follows a media.rename (m5b-ui-media: the Media tab renames, the next snapshot shows it)', () => {
+  assert.equal(text(find(render(session(), 'clp_ch'), byAttr('data-testid', 'info-name'))), 'Chorus A · take 3');
+  assert.equal(text(find(render(session(named('chorus_a.wav')), 'clp_ch'), byAttr('data-testid', 'info-name'))), 'chorus_a.wav');
+});

@@ -38,6 +38,9 @@ test('the table of structural ops', () => {
     'marker.move',
     'marker.remove',
     'media.import',
+    // m5b-ui-media: a media's rename and removal commit onto main, as track.rename does.
+    'media.rename',
+    'media.remove',
     'transport.record',
     // m5b-ui-inserts-master: an insert, its removal and its bypass commit onto main.
     'plugin.instantiate',

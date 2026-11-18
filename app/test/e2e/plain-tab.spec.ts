@@ -77,6 +77,20 @@ test('the bundle renders its disconnected state in a plain tab without an except
   await page.keyboard.press('Control+KeyN');
   await page.keyboard.press('Control+KeyO');
   await expect(page.getByTestId('start-view')).toHaveCount(0);
+  // m5b-ui-media: the drop target and Import need the preload bridge, so a
+  // plain tab has neither, and a drop of a file on the event display sends
+  // nothing (and does not navigate away).
+  await expect(page.getByTestId('media-import')).toHaveCount(0);
+  await expect(page.locator('[data-drop-target]')).toHaveCount(0);
+  await page.evaluate(() => {
+    const target = document.querySelector('[data-testid="event-display"]')!;
+    const data = new DataTransfer();
+    data.items.add(new File(['RIFF'], 'kick.wav', { type: 'audio/wav' }));
+    for (const type of ['dragenter', 'dragover', 'drop']) target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data, clientX: 600, clientY: 300 }));
+  });
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'disconnected');
+  await expect(page.getByTestId(/^media-placeholder-/)).toHaveCount(0);
+  expect(page.url()).toBe(`${origin}/index.html`);
   // The bundled fonts load from the same origin.
   const loaded = await page.evaluate(async () => [
     (await document.fonts.load('12px Inter')).filter((face) => face.status === 'loaded').length,

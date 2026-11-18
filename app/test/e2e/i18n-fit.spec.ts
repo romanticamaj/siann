@@ -31,15 +31,18 @@ const PLANS = '.p-head .tab, .ab .b, .steps-h a, .acts .btn, .plans .badge';
 // readout (level and peak value) and the MixConsole tab, in the mockup's boxes.
 const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^=fader-value-]';
 // The project zone toolbar (m5-ui-port-toolbar): the tools, the snap, grid
-// type and auto-scroll fields, the info line's fields and the open Pool.
-const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testid=media-pool] .pool-head, [data-testid^=pool-]';
+// type and auto-scroll fields and the info line's fields.
+const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f';
+// The Media tab (m5b-ui-media): the tab, Import, the search field, the
+// column heads and each row's Remove.
+const MEDIA = '[data-part=tab-media], [data-testid=media-import], [data-testid=media-search], .media-list th, [data-testid^=media-remove-]';
 // The ghosts (m5b-ui-ghosts): the toolbar's proposal pill and its Ghosts
 // toggle, the steps' target buttons, the proposed track's header labels and
 // the proposed strip's NEW · STEP label.
 const GHOSTS = '.overlaypill, .overlaypill .tog, .step .go, .th.ghost .r1 > span, .th.ghost .r2 > span, .strip.ghost .btns > span';
 // The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}, ${MEDIA}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}, ${MEDIA}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -82,7 +85,7 @@ async function resize(size: { width: number; height: number }): Promise<void> {
 }
 
 // Labelled controls whose content is wider than their box.
-async function overflowing(): Promise<string[]> {
+async function overflowing(within: string = LABELLED): Promise<string[]> {
   return page.evaluate((selector) => {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(selector)) {
@@ -93,7 +96,7 @@ async function overflowing(): Promise<string[]> {
       }
     }
     return out;
-  }, LABELLED);
+  }, within);
 }
 
 // The branch chip (m5b-ui-audition), naming the auditioned plan: one line,
@@ -128,7 +131,7 @@ async function chipFits(): Promise<string[]> {
 }
 
 // Labels drawn on more than one line: the line boxes of each text node.
-async function wrapped(): Promise<string[]> {
+async function wrapped(within: string = ONE_LINE): Promise<string[]> {
   return page.evaluate((selector) => {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(selector)) {
@@ -142,7 +145,7 @@ async function wrapped(): Promise<string[]> {
       }
     }
     return out;
-  }, ONE_LINE);
+  }, within);
 }
 
 test('no labelled control overflows or wraps its label in any locale at either window size', async () => {
@@ -255,12 +258,6 @@ test('no labelled control overflows or wraps its label in any locale at either w
       toasts.push(message);
     }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
     await expect(page.getByTestId('toast').last()).toBeVisible();
-    // The Pool, open, in this locale (Ctrl+P; m5-ui-port-toolbar). The reason
-    // row's text field has the focus, where no key command fires: out of it first.
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.press('ControlOrMeta+KeyP');
-    await expect(page.getByTestId('media-pool')).toBeVisible();
-    await expect(page.getByTestId('pool-med_seed')).toBeVisible();
     // The time format menu, open, in this locale.
     await page.getByTestId('position-display').click({ button: 'right' });
     await expect(page.getByTestId('time-format-menu')).toBeVisible();
@@ -272,7 +269,27 @@ test('no labelled control overflows or wraps its label in any locale at either w
     }
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();
-    await expect(page.getByTestId('media-pool')).toHaveCount(0);
+  }
+  // The Media tab (m5b-ui-media), open in each locale at both sizes (Ctrl+P,
+  // which also opens the small window's drawer): the tab, Import, the search
+  // field, the column heads and Remove. The reason row's text field has the
+  // focus, where no key command fires: out of it first.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      if (!(await page.getByTestId('media-tab').isVisible())) await page.keyboard.press('ControlOrMeta+KeyP');
+      await expect(page.getByTestId('media-tab')).toBeVisible();
+      await expect(page.getByTestId('media-row-med_seed')).toBeVisible();
+      for (const entry of await overflowing(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
+      for (const entry of await wrapped(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
+    }
   }
   expect(failures).toEqual([]);
 });

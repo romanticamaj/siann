@@ -12,6 +12,8 @@
 // view, shows the MixConsole for a ghost on a strip, and pins the row (.hot
 // with aria-current) until another step is located or the pointer enters
 // another row. It sends no request.
+// A title that names a clip (by its media's name, m5b-ui-media) is wrapped
+// in the mockup's span[data-part=plan-step-N-title], as step() does.
 
 import type { CSSProperties, ReactNode } from 'react';
 
@@ -120,7 +122,7 @@ export function StepRow({ index, step, row, names, ticked, disabled, hot, pinned
         </span>
         <button type="button" className="t" data-testid={`step-text-${index}`} aria-expanded={open} onClick={onOpen} {...ISOLATE}>
           <span className="tdot" style={{ '--c': `var(${row.colour})` } as CSSProperties} />
-          {segmentNodes(row.title)}
+          {row.namesClip ? <span data-part={`plan-step-${index + 1}-title`}>{segmentNodes(row.title)}</span> : segmentNodes(row.title)}
           <span className="d">{segmentNodes(row.detail)}</span>
         </button>
         <button type="button" className="go" data-testid={`step-go-${index}`} aria-label={t('plans.locate', { n: index + 1 })} title={t('plans.locate', { n: index + 1 })} onClick={onLocate}>

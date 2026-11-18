@@ -299,6 +299,11 @@
      width the fidelity gate measures for display-locators in the mockup,
      the same in en and zh-TW (m5-ui-loop-click). */
   --display-locators-empty-w: calc(101.7px * var(--scale));
+  /* The Media tab (m5b-ui-media; 10.11, 9) is absent on an engine without
+     media.import; its box keeps the width the gate measures for tab-media
+     in the mockup (the values of the hold it replaced), set again per
+     Chinese locale below, so the Meter tab and the hearing switch stay put. */
+  --tab-media-empty-w: calc(71.078px * var(--scale));
 
   /* The boxes of parts still pending (UI redesign 3.0; agent-rules "UI
      fidelity"): the size the fidelity gate measures for each in the mockup,
@@ -319,13 +324,11 @@
   --hold-zone-button-channel-w: calc(26px * var(--scale));
   --hold-zone-button-channel-h: calc(24px * var(--scale));
   /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
-     composer with its bottom margin (m5b-ui-composer), the Media tab
-     (m5b-ui-media) and the Meter tab (m5b-ui-meter); the tabs are set again
-     per Chinese locale below. The agent row, the plan's title and its intent
+     composer with its bottom margin (m5b-ui-composer) and the Meter tab
+     (m5b-ui-meter); the tab is set again per Chinese locale below. The agent row, the plan's title and its intent
      landed with m5b-ui-plan-metadata: shell.css sizes their empty boxes by a
      calc() of the tokens the shared rules size them with. */
   --hold-composer-h: calc(54px * var(--scale));
-  --hold-tab-media-w: calc(71.078px * var(--scale));
   --hold-tab-meter-w: calc(69.031px * var(--scale));
   --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
@@ -499,9 +502,10 @@
   :root { --panel-motion: 0s; }
 }
 
-/* The Plans tab's holds in Chinese (m5-ui-port-plans): the mockup's zh-TW
-   boxes, for zh-CN too, as the font stacks above. */
+/* The Plans tab's hold and the Media tab's empty box in Chinese
+   (m5-ui-port-plans, m5b-ui-media): the mockup's zh-TW boxes, for zh-CN
+   too, as the font stacks above. */
 :root:lang(zh-TW), :root:lang(zh-CN) {
-  --hold-tab-media-w: calc(59.125px * var(--scale));
+  --tab-media-empty-w: calc(59.125px * var(--scale));
   --hold-tab-meter-w: calc(70.688px * var(--scale));
 }

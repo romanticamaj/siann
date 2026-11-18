@@ -29,6 +29,11 @@ import { Timeline, editGates } from '../../src/renderer/timeline/Timeline';
 import { TimelineCanvas } from '../../src/renderer/timeline/TimelineCanvas';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { TrackList } from '../../src/renderer/timeline/TrackList';
+import { MediaImporter } from '../../src/renderer/model/media-import';
+import { MediaTab } from '../../src/renderer/media/MediaTab';
+import { GUARD_REASON } from '../../src/renderer/model/edit-guard';
+import { translator } from '../../src/renderer/i18n/t';
+import { HeardContext } from '../../src/renderer/plans/heard-context';
 import { FakeScheduler, FakeSocket, until } from './support/fakes';
 import { fakeSurface, installSurfaceGlobals } from './support/surface';
 import { sampleSnapshot } from './support/timeline';
@@ -236,9 +241,10 @@ test('mixer strip: fader, pan, mute and solo each need their command; the reduce
 });
 
 // m5-ui-port-toolbar (UI redesign 10.8): the media buttons left the toolbar
-// for the Pool (Ctrl+P; its place buttons need clip.place, pool.test.tsx) and
-// the Delete clip button is gone (Delete and Backspace stay, behind clip.remove).
-test('timeline: the resting window has no media pool and no Delete clip button, whatever the capabilities', () => {
+// and the Delete clip button is gone (Delete and Backspace stay, behind
+// clip.remove); m5b-ui-media's Media tab replaced the Pool, which does not
+// return on any engine (UR-5).
+test('timeline: the window has no media pool and no Delete clip button, whatever the capabilities', () => {
   const timeline = (caps: Capabilities | null) =>
     within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
   for (const caps of [FULL, REDUCED, null]) {
@@ -528,4 +534,75 @@ test('--display-locators-empty-w is a permanent token, not a hold token', () => 
   assert.ok(!'display-locators-empty-w'.startsWith('hold-'));
   assert.equal(typeof TOKENS['display-locators-empty-w'], 'string');
   assert.match(TOKENS['display-locators-empty-w'], /^[\d.]+px$/);
+});
+
+// m5b-ui-media (UI redesign UR-5, 3.0): the event display is a drop target
+// only with the preload bridge and an engine that lists media.import; the
+// Media tab's Import needs the bridge too. In a plain browser tab neither is
+// in the DOM.
+function mediaHost(bridge: boolean) {
+  const client = fakeClient();
+  const importer = new MediaImporter({
+    client: client as unknown as ConstructorParameters<typeof MediaImporter>[0]['client'],
+    schedule: () => () => undefined,
+    toasts: { push: () => 0 },
+    locale: () => 'en',
+  });
+  return {
+    client,
+    host: {
+      bridge: bridge ? { choose: async () => [], pathForFile: () => '' } : null,
+      importer,
+      toasts: { push: () => 0 },
+    },
+  };
+}
+
+test('timeline: the event display is a drop target only with the bridge and media.import', () => {
+  const render = (caps: Capabilities | null, bridge: boolean) => {
+    const { client, host } = mediaHost(bridge);
+    return within(caps, <Timeline client={client} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} media={host} />);
+  };
+  assert.match(render(FULL, true), /data-testid="event-display"[^>]*data-drop-target="media"|data-drop-target="media"[^>]*data-testid="event-display"/);
+  for (const [caps, bridge] of [[FULL, false], [REDUCED, true], [null, true]] as const) {
+    assert.ok(!render(caps, bridge).includes('data-drop-target'), `${caps === FULL ? 'full' : 'reduced'} bridge=${bridge}`);
+  }
+  // Without a media host (a plain browser tab) there is no drop target either.
+  assert.ok(!within(FULL, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />).includes('data-drop-target'));
+});
+
+// The edit guard (UI redesign 4.5 C5): while a branch is heard the event
+// display takes no drop (data-drop-target="guarded") and the tab's Import is
+// disabled with the reason; with main heard both are as they were.
+test('timeline and media tab: while a branch is heard the drop target is guarded and Import is disabled with the reason', () => {
+  const reason = translator('en')(GUARD_REASON);
+  const heard = (side: string | null, node: ReactNode) => within(FULL, <HeardContext.Provider value={side}>{node}</HeardContext.Provider>);
+  const timeline = (side: string | null) => {
+    const { client, host } = mediaHost(true);
+    return heard(side, <Timeline client={client} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} media={host} />);
+  };
+  assert.match(timeline('p1'), /data-drop-target="guarded"/);
+  assert.match(timeline('main'), /data-drop-target="media"/);
+  assert.match(timeline(null), /data-drop-target="media"/);
+  const tab = (side: string | null) => {
+    const { client, host } = mediaHost(true);
+    return heard(side, <MediaTab client={client} media={host} />);
+  };
+  const button = (markup: string) => /<button[^>]*data-testid="media-import"[^>]*>/.exec(markup)?.[0] ?? '';
+  assert.match(button(tab('p1')), /disabled=""/);
+  assert.ok(button(tab('p1')).includes(`title="${reason}"`), button(tab('p1')));
+  assert.doesNotMatch(button(tab('main')), /disabled=""/);
+});
+
+test('media tab: Import only with the bridge; nothing of the tab without media.import', () => {
+  const tab = (caps: Capabilities | null, bridge: boolean) => {
+    const { client, host } = mediaHost(bridge);
+    return within(caps, <MediaTab client={client} media={host} />);
+  };
+  assert.ok(tab(FULL, true).includes('data-testid="media-import"'));
+  assert.ok(tab(FULL, true).includes('data-testid="media-row-med_sq"'));
+  assert.ok(!tab(FULL, false).includes('data-testid="media-import"'), 'no Import in a plain browser tab');
+  assert.ok(tab(FULL, false).includes('data-testid="media-tab"'), 'the list without the bridge');
+  assert.equal(tab(REDUCED, true), '', 'nothing without media.import');
+  assert.equal(tab(null, true), '', 'nothing while the capabilities are unknown');
 });

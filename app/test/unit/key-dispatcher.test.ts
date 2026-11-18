@@ -251,17 +251,17 @@ test('Ctrl+Alt+G toggles the ghosts from any zone, Cmd+Alt+G on macOS, and not w
   }
 });
 
-test('Ctrl+P opens the Pool on Windows and Linux, Cmd+P on macOS, from any zone and not while typing (m5-ui-port-toolbar)', () => {
+test('Ctrl+P opens the Media tab on Windows and Linux, Cmd+P on macOS, from any zone and not while typing (m5b-ui-media)', () => {
   const ctrlP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true } });
   const cmdP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, meta: true }, platform: 'mac' });
   assert.equal(chordOf(ctrlP), 'Mod+P');
   assert.equal(chordOf(cmdP), 'Mod+P');
   for (const key of [ctrlP, cmdP]) {
     for (const focusedZone of ['project', 'left', 'lower', 'right'] as const) {
-      assert.equal(resolveKey({ ...key, focusedZone }, CUBASE_PRESET)?.commandId, 'pool.open', focusedZone);
+      assert.equal(resolveKey({ ...key, focusedZone }, CUBASE_PRESET)?.commandId, 'media.open', focusedZone);
     }
     assert.equal(resolveKey({ ...key, targetIsTextField: true }, CUBASE_PRESET), null);
   }
-  // Ctrl+P on macOS is the Control key: not the Pool.
-  assert.notEqual(resolveKey(input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'pool.open');
+  // Ctrl+P on macOS is the Control key: not the Media tab.
+  assert.notEqual(resolveKey(input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'media.open');
 });

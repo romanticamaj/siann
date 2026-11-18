@@ -32,17 +32,24 @@ import type { TimeFormat } from '../timeline/transport-time';
 export type Zone = 'left' | 'lower' | 'right';
 export const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
 
-// One tab per zone in phase 1; Editor, Media and Meter arrive in phase 3 (3.0).
+// The zones' tabs (3.0): the right zone's Media tab arrived with m5b-ui-media;
+// the Editor and Meter tabs arrive with their features.
 export interface ZoneTabs {
   readonly left: 'track';
   readonly lower: 'mixconsole';
-  readonly right: 'plans';
+  readonly right: 'plans' | 'media';
 }
 const TABS: { readonly [Z in Zone]: readonly ZoneTabs[Z][] } = {
   left: ['track'],
   lower: ['mixconsole'],
-  right: ['plans'],
+  right: ['plans', 'media'],
 };
+
+// The right zone's tab the window shows: the stored one, or Plans when the
+// stored one is the Media tab and the engine has none (no media.import).
+export function rightTab(layout: Pick<Layout, 'tabs'>, available: { readonly media: boolean }): ZoneTabs['right'] {
+  return layout.tabs.right === 'media' && !available.media ? 'plans' : layout.tabs.right;
+}
 
 export type StripWidth = 'normal' | 'narrow';
 
