@@ -119,3 +119,11 @@ export function missingMeasurements(report: PerfReport): string[] {
   for (const row of report.budgets) if (row.value === null) missing.push(row.name);
   return missing;
 }
+
+// Throws when a measurement is missing: the one failure of the scenario besides
+// a crash. A measurement over its budget is reported (withinBudget false) and
+// never throws.
+export function assertComplete(report: PerfReport): void {
+  const missing = missingMeasurements(report);
+  if (missing.length > 0) throw new Error(`the performance scenario did not measure ${missing.join(', ')}`);
+}

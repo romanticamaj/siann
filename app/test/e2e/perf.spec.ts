@@ -18,7 +18,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { buildPerfReport, missingMeasurements, SCENARIO } from './support/perf-report';
+import { assertComplete, buildPerfReport, SCENARIO } from './support/perf-report';
 import { APP_DIR, launchApp, seedLargeBundle } from './support/seed';
 
 const PERF = process.env.SIANN_PERF === '1';
@@ -107,5 +107,5 @@ test('64 tracks, 2,000 clips playing with meters: frame work, JS heap and cold s
   }
 
   expect(crashed, 'the renderer did not crash').toBe(false);
-  expect(missingMeasurements(report), 'every measurement was taken').toEqual([]);
+  assertComplete(report);
 });

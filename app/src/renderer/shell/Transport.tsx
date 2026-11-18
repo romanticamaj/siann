@@ -69,6 +69,7 @@ import type { MeterFrame } from '../model/meter-frames';
 import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
 import type { UndoHistory } from '../model/undo-history';
+import { frameMarks } from '../perf/frame-marks';
 import { formatLocators, rangeOf } from '../timeline/locators';
 import { formatSignature } from '../timeline/musical-time';
 import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt, type TimeFormat } from '../timeline/transport-time';
@@ -304,6 +305,8 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     let frame: number | null = null;
     const write = () => {
       frame = null;
+      // The perf scenario's frame marks (perf/frame-marks.ts; a no-op outside the test hook).
+      frameMarks().begin();
       clock.observe(realtime?.playhead() ?? null);
       const root = client.model.getSnapshot()?.root;
       const rate = root?.sampleRate ?? DEFAULT_RATE;
@@ -313,6 +316,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
       const second = writeLcd(secondaryEl, formatPosition(position, tempo, rate, otherFormat(primary)));
       writeLcd(tempoEl, formatTempo(tempoAt(position, tempo, rate)));
       if (first || second) writes += 1;
+      frameMarks().end();
       if (clock.playing()) schedule();
     };
     const schedule = () => {

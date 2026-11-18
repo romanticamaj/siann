@@ -13,8 +13,8 @@
 // session client's first connection) to the first content frame that draws a
 // session's clips.
 
-export const FRAME_MARK = 'siann-frame-start';
-export const FRAME_MEASURE = 'siann-frame';
+export const FRAME_MARK = 'siann.frame.start';
+export const FRAME_MEASURE = 'siann.frame';
 
 export interface PerfLike {
   now(): number;
