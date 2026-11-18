@@ -1278,7 +1278,8 @@ test("m5b-ui-ghosts: the gate is report, the pill's and the Agent changes' holds
 
 // ---- m5b-ui-audition (UI redesign 4.3, 2.4, 10.4): the branch chip landed, so
 // its gate is report and its hold is gone; it is always rendered while a head
-// revision is known, so no empty-width token replaces the hold (3.0). The
+// revision is known, and the state before the first snapshot is exempt (the
+// test after this one), so no empty-width token replaces the hold (3.0). The
 // violet frame and the solid ghosts are app-only rules of shell.css on
 // existing tokens: the frame's 2 px is --space-half, its colour --ai.
 test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and the frame is drawn on existing tokens', () => {

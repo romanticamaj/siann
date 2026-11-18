@@ -9,6 +9,9 @@
 // ellipsis (shell.css) and the whole name in its title. No branch id is
 // shown. It is rendered while a head revision is known, and goes under
 // 1300 px (shell.css). Offline it keeps the last head the read model holds.
+// Before the first snapshot there is no revision and it renders nothing, with
+// no box in its place: that state is exempt from the empty box, as it is for
+// the session name, which is empty then too (UI redesign 3.0; 10.11, 15).
 
 import { useSyncExternalStore } from 'react';
 
