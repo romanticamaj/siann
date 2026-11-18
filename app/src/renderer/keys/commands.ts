@@ -81,8 +81,9 @@ export const COMMAND_IDS = [
   'transport.toRightLocator',
   'transport.setLeftLocator',
   'transport.setRightLocator',
-  // The Pool (m5-ui-port-toolbar; spec 10.8, 1): Cubase's Open Pool.
-  'pool.open',
+  // The Media tab (m5b-ui-media; UR-5, spec 10.8, 1), which replaced the
+  // Pool: Cubase's Open Pool key opens it.
+  'media.open',
   // Projects and audio setup (m5b-ui-project; spec 3.6, UR-4): New Project,
   // Open and Save on Cubase's keys; Studio Setup and the ten Open Recent
   // entries without a key, from the application menu. New, Open and the

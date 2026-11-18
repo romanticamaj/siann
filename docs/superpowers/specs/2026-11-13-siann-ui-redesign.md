@@ -1181,7 +1181,7 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5b-ui-sends-buses` | pending | Routing and Sends sections |
 | `m5b-ui-markers` | pending | Marker track and its head |
 | `m5b-ui-fades` | pending | Fade fields of the info line |
-| `m5b-ui-media` | pending | Media tab; the titles of the plan steps that name a clip (`plan-step-N-title`) |
+| `m5b-ui-media` | report | Media tab; the titles of the plan steps that name a clip (`plan-step-N-title`) |
 | `m5b-ui-edit-more` | pending | Tools 4 and 5 |
 | `m5b-ui-audition` | report | Branch chip |
 | `m5b-ui-signature` | report | Time signature display |

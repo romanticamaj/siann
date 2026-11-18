@@ -33,6 +33,8 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   // The saved mark, a bullet, and Studio Setup's sample rate in Hz (m5b-ui-project).
   'session.unsavedMark',
   'setup.rateValue',
+  // The Media tab's sample rate in kHz (m5b-ui-media).
+  'media.rate',
   // The agent's transport is the protocol's name, MCP in every locale (the mockup's).
   'agent.transport.mcp',
   // A history row's "N steps · agent": the mockup's separator in every locale.
@@ -47,6 +49,7 @@ const SENTINELS: Partial<Record<Key, Record<string, string | number>>> = {
   'toast.planArrived': { steps: 7 },
   'confirm.removeTracks': { count: 7 },
   'tracklist.count': { tracks: 7, clips: 17 },
+  'media.inUse': { count: 7 },
 };
 
 // Simplified / Traditional pairs (spec 6.3 and the glossary of 6.5).
@@ -309,10 +312,12 @@ test('the Media tab and import words are in every catalog and the Pool\'s are go
     'media.colName', 'media.colLength', 'media.colChannels', 'media.colRate', 'media.colUses',
     'media.open', 'media.menu', 'media.rename', 'media.importing', 'media.importFailed', 'media.refused',
   ]) assert.ok(keys.includes(key as Key), key);
+  // The sample rate's unit reads the same in every locale.
+  const same = new Set<string>(['media.rate']);
   for (const key of keys) {
     for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
-      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
-      assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+      assert.ok(['string', 'function'].includes(typeof catalog[key]), `${name} ${key}`);
+      if (!same.has(key)) assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
     }
   }
   assert.equal(en['media.tab'], 'Media');

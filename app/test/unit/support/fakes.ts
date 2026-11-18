@@ -158,7 +158,7 @@ export class FakeSessionClient {
       }
       const revision = `r${Number(this.#snapshot.revision.slice(1)) + 1}`;
       queueMicrotask(() => this.commit((s) => applyCommands(s, commands, revision)));
-      return Promise.resolve({ revision });
+      return Promise.resolve({ revision: { id: revision } });
     }
     return Promise.reject(new Error(`unexpected ${method}`));
   }

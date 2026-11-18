@@ -99,7 +99,7 @@ test('the placements wait for every import of the drop, then go in drop order at
   // The second ends r9; the read model has not reached it yet.
   client.jobs[1]!.status = done('med_b', 'r9', 'b.wav');
   scheduler.fire(POLL_MS);
-  await until(() => client.requests('job.status').length === 4, 'polled');
+  await until(() => client.requests('job.status').length === 3, 'the running job polled again');
   await settle();
   assert.equal(client.requests('command.execute').length, 0, 'not before the read model reached r9');
   client.commit((s) => addMedia(s, entity('med_b', 'b.wav'), 'r9'));
@@ -186,7 +186,7 @@ test('a refused placement raises a toast and the remaining files are still place
   client.executeAnswer = () => {
     calls += 1;
     if (calls === 1) return Object.assign(new Error('stale'), { code: 'revision_mismatch' });
-    return { revision: 'r9' };
+    return { revision: { id: 'r9' } };
   };
   const finished = importer.drop(FILES, PLAN);
   await until(() => scheduler.pending().length === 1, 'a poll scheduled');

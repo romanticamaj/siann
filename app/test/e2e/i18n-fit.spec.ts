@@ -85,7 +85,7 @@ async function resize(size: { width: number; height: number }): Promise<void> {
 }
 
 // Labelled controls whose content is wider than their box.
-async function overflowing(): Promise<string[]> {
+async function overflowing(within: string = LABELLED): Promise<string[]> {
   return page.evaluate((selector) => {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(selector)) {
@@ -96,7 +96,7 @@ async function overflowing(): Promise<string[]> {
       }
     }
     return out;
-  }, LABELLED);
+  }, within);
 }
 
 // The branch chip (m5b-ui-audition), naming the auditioned plan: one line,
@@ -131,7 +131,7 @@ async function chipFits(): Promise<string[]> {
 }
 
 // Labels drawn on more than one line: the line boxes of each text node.
-async function wrapped(): Promise<string[]> {
+async function wrapped(within: string = ONE_LINE): Promise<string[]> {
   return page.evaluate((selector) => {
     const out: string[] = [];
     for (const el of document.querySelectorAll<HTMLElement>(selector)) {
@@ -145,7 +145,7 @@ async function wrapped(): Promise<string[]> {
       }
     }
     return out;
-  }, ONE_LINE);
+  }, within);
 }
 
 test('no labelled control overflows or wraps its label in any locale at either window size', async () => {
@@ -258,12 +258,6 @@ test('no labelled control overflows or wraps its label in any locale at either w
       toasts.push(message);
     }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
     await expect(page.getByTestId('toast').last()).toBeVisible();
-    // The Media tab, open, in this locale (Ctrl+P; m5b-ui-media). The reason
-    // row's text field has the focus, where no key command fires: out of it first.
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await page.keyboard.press('ControlOrMeta+KeyP');
-    await expect(page.getByTestId('media-tab')).toBeVisible();
-    await expect(page.getByTestId('media-row-med_seed')).toBeVisible();
     // The time format menu, open, in this locale.
     await page.getByTestId('position-display').click({ button: 'right' });
     await expect(page.getByTestId('time-format-menu')).toBeVisible();
@@ -275,8 +269,27 @@ test('no labelled control overflows or wraps its label in any locale at either w
     }
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();
-    // Back to the Plans tab for the next locale.
-    await page.getByTestId('tab-right-plans').click();
+  }
+  // The Media tab (m5b-ui-media), open in each locale at both sizes (Ctrl+P,
+  // which also opens the small window's drawer): the tab, Import, the search
+  // field, the column heads and Remove. The reason row's text field has the
+  // focus, where no key command fires: out of it first.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const size of SIZES) {
+      await resize(size);
+      if (!(await page.getByTestId('media-tab').isVisible())) await page.keyboard.press('ControlOrMeta+KeyP');
+      await expect(page.getByTestId('media-tab')).toBeVisible();
+      await expect(page.getByTestId('media-row-med_seed')).toBeVisible();
+      for (const entry of await overflowing(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
+      for (const entry of await wrapped(MEDIA)) failures.push(`${locale} ${size.width}x${size.height} (Media tab): ${entry}`);
+    }
   }
   expect(failures).toEqual([]);
 });

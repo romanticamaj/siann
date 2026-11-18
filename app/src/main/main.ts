@@ -67,6 +67,7 @@ import * as path from 'node:path';
 
 import { engineArgs, engineTestArgs, fidelityEnvironmentArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
 import { focusFirstWindow } from './focus';
+import { chosenPaths, mediaDialogOptions, mediaFormats, mediaLabel } from './media';
 import { menuTemplate, parseMenuModel, type MenuModel } from './menu';
 import { addRecent, bundleName, isBundlePath, launchSession, recentFile, scratchBundle, serializeRecent, type ProjectsFs } from './projects';
 import { rendererRequestPath } from './serve';
@@ -84,6 +85,7 @@ const IPC_PROJECT_CHOOSE_NEW = 'siann:project:choose-new';
 const IPC_PROJECT_CHOOSE_OPEN = 'siann:project:choose-open';
 const IPC_PROJECT_OPENED = 'siann:project:opened';
 const IPC_PROJECT_CHANGED = 'siann:project:changed';
+const IPC_MEDIA_CHOOSE = 'siann:media:choose';
 const IPC_MENU_SET = 'siann:menu:set';
 const IPC_MENU_COMMAND = 'siann:menu:command';
 const BUNDLE_EXTENSION = 'siann';
@@ -298,6 +300,16 @@ ipcMain.handle(IPC_PROJECT_CHOOSE_OPEN, async (event) => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
   const chosen = result.canceled ? undefined : result.filePaths[0];
   return isBundlePath(chosen) ? chosen : null;
+});
+
+// The Media tab's Import (m5b-ui-media): one or more audio files of the
+// formats the engine lists, absolute paths only; [] when cancelled.
+ipcMain.handle(IPC_MEDIA_CHOOSE, async (event, request: unknown) => {
+  if (!fromApp(event) || !mainWindow) return [];
+  const asked = (typeof request === 'object' && request !== null ? request : {}) as { formats?: unknown; label?: unknown };
+  const options = mediaDialogOptions(mediaFormats(asked.formats), mediaLabel(asked.label));
+  const result = await dialog.showOpenDialog(mainWindow, { properties: [...options.properties], filters: options.filters });
+  return chosenPaths(result);
 });
 
 // The engine created or opened the bundle: it is the current one (an engine

@@ -11,7 +11,7 @@
 // the import's jobs from window.__siannMedia, the document from a second
 // protocol client. Waits are condition polls, never sleeps.
 
-import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type CDPSession, type ElectronApplication, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -26,7 +26,7 @@ import { chooseGrid, dragMediaRow, openMedia } from './support/toolbar';
 const { writeWav } = require('../../../scripts/create-demo-audio.js') as { writeWav(file: string, frequency: number, seconds?: number, sampleRate?: number): void };
 
 const RATE = 48000;
-const BAR = 2 * RATE;
+const BEAT = RATE / 2;
 
 let scratch = '';
 let app: ElectronApplication | undefined;
@@ -90,6 +90,10 @@ async function revision(): Promise<number> {
 }
 
 interface ClipSeen {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   clipId: string;
   trackId: string;
   mediaId: string;
@@ -116,19 +120,20 @@ async function lanePoint(trackId: string | 'below', frame: number): Promise<{ x:
     top += v.laneHeights?.[id] ?? v.laneHeight;
   }
   const height = trackId === 'below' ? v.laneHeight : (v.laneHeights?.[trackId] ?? v.laneHeight);
-  return { x: box.x + (frame - Number(v.scrollFrames)) / v.framesPerPixel, y: box.y + top + height / 2 };
+  // A few pixels in from the frame (snapped back by the Bar grid), so a drop
+  // at frame 0 is clear of the track list's divider over the display's edge.
+  return { x: box.x + (frame - Number(v.scrollFrames)) / v.framesPerPixel + 12, y: box.y + top + height / 2 };
 }
 
-// Files dropped from the OS at a client point: the window's own drag events through CDP.
+// Files dropped from the OS at a client point: the window's own drag events
+// through CDP. One session per window, kept open: detached at once after the
+// drop, the drop's file data can be gone before the renderer reads it.
+let cdpSession: { page: Page; session: CDPSession } | null = null;
 async function dropFiles(files: readonly string[], at: { x: number; y: number }): Promise<void> {
-  const cdp = await page.context().newCDPSession(page);
-  try {
-    const data = { items: [], files: [...files], dragOperationsMask: 1 };
-    for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
-      await cdp.send('Input.dispatchDragEvent', { type, x: Math.round(at.x), y: Math.round(at.y), data });
-    }
-  } finally {
-    await cdp.detach();
+  if (cdpSession?.page !== page) cdpSession = { page, session: await page.context().newCDPSession(page) };
+  const data = { items: [], files: [...files], dragOperationsMask: 1 };
+  for (const type of ['dragEnter', 'dragOver', 'drop'] as const) {
+    await cdpSession.session.send('Input.dispatchDragEvent', { type, x: Math.round(at.x), y: Math.round(at.y), data });
   }
 }
 
@@ -158,10 +163,10 @@ test('two files dropped on a track import and land on consecutive tracks at the 
   const kick = demo('kick.wav', 110);
   const snare = demo('snare.wav', 220);
   await launch(bundle);
-  await chooseGrid(page, 'bar');
+  await chooseGrid(page, 'beat');
   const before = await revision();
-  // 1.3 bars in on Beta: the Bar grid snaps it to bar 2 (frame 96000).
-  await dropFiles([kick, snare], await lanePoint('trk_b', 1.3 * BAR));
+  // 1.3 beats in on Beta: the Beat grid snaps it to the second beat (frame 24000).
+  await dropFiles([kick, snare], await lanePoint('trk_b', 1.3 * BEAT));
   await expect(page.getByTestId('clip-count')).toHaveText('2');
   // Two media.add (the jobs) and two command.execute (the placements).
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
@@ -173,8 +178,8 @@ test('two files dropped on a track import and land on consecutive tracks at the 
   await expect.poll(async () => (await clips()).length).toBe(2);
   const placed = (await clips()).sort((a, b) => a.trackId.localeCompare(b.trackId));
   expect(placed.map((c) => [c.trackId, c.position, c.title])).toEqual([
-    ['trk_b', String(BAR), 'kick.wav'],
-    ['trk_c', String(BAR), 'snare.wav'],
+    ['trk_b', String(BEAT), 'kick.wav'],
+    ['trk_c', String(BEAT), 'snare.wav'],
   ]);
   // The Media tab lists both.
   await openMedia(page);
@@ -183,9 +188,10 @@ test('two files dropped on a track import and land on consecutive tracks at the 
   // The same file again: the session holds its content, so the job ends
   // existing with no revision, and one more clip is placed with that media.
   const again = await revision();
-  await dropFiles([kick], await lanePoint('trk_a', 4 * BAR));
+  await dropFiles([kick], await lanePoint('trk_a', 2.2 * BEAT));
   await expect(page.getByTestId('clip-count')).toHaveText('3');
   await expect(page.getByTestId('revision')).toHaveText(`r${again + 1}`);
+  await expect.poll(async () => (await jobResults()).length).toBe(3);
   expect((await jobResults()).at(-1)).toMatchObject({ existing: true });
   await expect(page.locator('[data-testid^="media-row-"]')).toHaveCount(2);
   const third = (await clips()).find((c) => c.trackId === 'trk_a')!;
@@ -226,6 +232,8 @@ test('Import in the Media tab opens the shell\'s dialog and lists the files; a 4
   await expect(page.locator('[data-testid^="media-row-"]')).toHaveCount(2);
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
   expect(await sent('command.execute')).toBe(0);
+  // The jobs end done once polled after their commits.
+  await expect.poll(async () => (await jobResults()).length).toBe(2);
   const converted = (await jobResults()).find((r) => r.name === 'b44.wav')!;
   expect(converted).toMatchObject({ converted: true, sampleRate: RATE });
   const row = page.getByTestId(`media-row-${String(converted.mediaId)}`);
@@ -234,7 +242,7 @@ test('Import in the Media tab opens the shell\'s dialog and lists the files; a 4
 
   // Drag a row to the event display: one clip.place, one revision.
   const placed = await revision();
-  await dragMediaRow(page, String(converted.mediaId), await lanePoint('trk_a', BAR));
+  await dragMediaRow(page, String(converted.mediaId), await lanePoint('trk_a', BEAT));
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(`r${placed + 1}`);
 
@@ -246,7 +254,7 @@ test('Import in the Media tab opens the shell\'s dialog and lists the files; a 4
   await expect.poll(async () => (await clips())[0]?.title).toBe('Bell');
   const clip = (await clips())[0]!;
   const box = (await page.getByTestId('event-display').boundingBox())!;
-  await page.mouse.click(box.x + clip.x + 4, box.y + clip.y + 10);
+  await page.mouse.click(box.x + clip.x + clip.width / 2, box.y + clip.y + clip.height / 2);
   await expect(page.getByTestId('info-name')).toHaveText('Bell');
 
   // Remove is disabled for used media and removes an unused one.
