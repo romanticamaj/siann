@@ -39,6 +39,12 @@ export function heardGhosts(ghosts: readonly Ghost[], branch: BranchSnapshot | n
         const replaced = value(fromMain(ref), field) ?? g.before;
         return { ...g, after, mode: 'solid', replaced } as Ghost;
       }
+      case 'master-gain': {
+        // m5b-ui-inserts-master: the master's gain, the branch's where the snapshot holds it.
+        const after = value(fromBranch('master:master'), 'gainMilliDb');
+        const replaced = value(fromMain('master:master'), 'gainMilliDb');
+        return { ...g, after: typeof after === 'number' ? after : g.after, mode: 'solid', replaced: typeof replaced === 'number' ? replaced : g.before };
+      }
       case 'rename': {
         const ref = `track:${g.trackId}`;
         const name = fromBranch(ref)?.name;

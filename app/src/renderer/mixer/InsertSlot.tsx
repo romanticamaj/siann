@@ -16,7 +16,9 @@
 // The plan under review adds what 4.2 asks for, app-only rules in shell.css on
 // the --ai* tokens: a dashed slot numbered by its step for an insert (at its
 // index), a dimmed slot for a removal, a dashed ring on bypass. A click on a
-// ghost pins its step.
+// ghost pins its step. While the proposal is heard (m5b-ui-audition; 4.3,
+// 4.5 C5) those ghosts are solid, and bypass, Remove and the empty slot are
+// held by the edit guard with its reason: they commit onto main. e stays.
 
 import { useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 
@@ -25,6 +27,7 @@ import type { Entity, PluginSlotEntity, TrackEntity } from '../model/document';
 import type { SessionClient } from '../model/session-client';
 import { ghostAttrs, type GhostView } from '../plans/ghost-context';
 import { slotGhosts, type Ghost, type SlotGhosts } from '../plans/ghosts';
+import { useEditGuard } from '../plans/heard-context';
 import { useCapabilities } from '../shell/Capable';
 import { Icon } from '../shell/icons';
 import { buttonsListed, RACK_POSITIONS, slotState, type SlotButtons } from './inserts';
@@ -84,6 +87,7 @@ interface SlotProps {
 
 function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: SlotProps) {
   const t = useT();
+  const guard = useEditGuard();
   const status = useEngineStatus(host);
   useEditorVersion(host);
   const name = slot?.name ?? slotId;
@@ -104,8 +108,9 @@ function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: Slot
       data-testid={`${base}-bypass-${slotId}`}
       aria-pressed={bypass}
       aria-label={t('inserts.bypass', { plugin: name })}
-      title={t('inserts.bypass', { plugin: name })}
-      {...(ring ? ghostAttrs(view, [ring.step]) : {})}
+      title={guard ?? t('inserts.bypass', { plugin: name })}
+      disabled={guard !== null}
+      {...(ring ? ghostAttrs(view, [ring.step], ring.mode) : {})}
       onClick={() => void host?.actions.setBypass(slotId, !bypass)}
     >
       <Icon name="power" small />
@@ -130,7 +135,8 @@ function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: Slot
       className={btn}
       data-testid={`${base}-remove-${slotId}`}
       aria-label={t('inserts.remove', { plugin: name })}
-      title={t('inserts.remove', { plugin: name })}
+      title={guard ?? t('inserts.remove', { plugin: name })}
+      disabled={guard !== null}
       onClick={() => void host?.actions.remove(slotId)}
     >
       <Icon name="x" small />
@@ -140,7 +146,7 @@ function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: Slot
     'data-testid': `${base}-${slotId}`,
     'data-slot-id': slotId,
     'data-state': state,
-    ...(removal ? ghostAttrs(view, [removal.step]) : {}),
+    ...(removal ? ghostAttrs(view, [removal.step], removal.mode) : {}),
   };
   if (variant === 'strip') {
     return (
@@ -166,7 +172,7 @@ function FilledSlot({ variant, slotId, slot, ghosts, view, host, buttons }: Slot
 function GhostSlot({ variant, ghost, view }: { variant: 'strip' | 'inspector'; ghost: Extract<Ghost, { kind: 'insert-add' }>; view: GhostView }) {
   const base = SLOT_CLASS[variant];
   return (
-    <div className={`${SLOT_CLASS[variant]} ghost`} data-testid={`${base}-ghost-${ghost.step}`} {...ghostAttrs(view, [ghost.step])} title={ghost.name} onClick={() => view.pin(ghost.step)}>
+    <div className={`${SLOT_CLASS[variant]} ghost`} data-testid={`${base}-ghost-${ghost.step}`} {...ghostAttrs(view, [ghost.step], ghost.mode)} title={ghost.name} onClick={() => view.pin(ghost.step)}>
       <span className="stepn">{String(ghost.step)}</span>
       <span className={NAME_CLASS[variant]}>{ghost.name}</span>
     </div>
@@ -174,10 +180,22 @@ function GhostSlot({ variant, ghost, view }: { variant: 'strip' | 'inspector'; g
 }
 
 // An empty slot; its test id names the track and the position (each is a stop of its own).
+// Held by the edit guard it stays a stop, disabled with the reason, and opens nothing.
 function EmptySlot({ variant, id, label, onOpen, children }: { variant: 'strip' | 'inspector'; id: string; label: string; onOpen: () => void; children: ReactNode }) {
   const base = SLOT_CLASS[variant];
+  const guard = useEditGuard();
+  const open = guard === null ? onOpen : () => undefined;
   return (
-    <div className={`${SLOT_CLASS[variant]} empty`} role="button" tabIndex={0} aria-label={label} data-testid={`${base}-add-${id}`} onClick={onOpen} onKeyDown={activate(onOpen)}>
+    <div
+      className={`${SLOT_CLASS[variant]} empty`}
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      {...(guard !== null ? { 'aria-disabled': true, title: guard } : {})}
+      data-testid={`${base}-add-${id}`}
+      onClick={open}
+      onKeyDown={activate(open)}
+    >
       {children}
     </div>
   );

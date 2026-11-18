@@ -686,6 +686,8 @@ button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
 .th.ghost[data-ghost-mode="solid"]::after, .strip.ghost[data-ghost-mode="solid"]::after { border-style: solid; }
 /* A proposed track's header and strip, heard: the ghost tint without the hatch. */
 .th.ghost[data-ghost-mode="solid"], .strip.ghost[data-ghost-mode="solid"] { background: linear-gradient(var(--ai-a100), var(--ai-a100)), var(--bg-alt); }
+/* A proposed insert's slot, heard (m5b-ui-inserts-master's ghosts): the tint, no hatch, no dash. */
+.slot.ghost[data-ghost-mode="solid"], .islot.ghost[data-ghost-mode="solid"] { background: var(--ai-a100); border-style: solid; }
 .ghost-removed { opacity: var(--offline-opacity); }
 /* The Inspector's sliders (shell/Inspector.tsx): the Volume slider's ghost
    thumb at the pending value, the .hs u box in the strip's .cap.ghost look,
