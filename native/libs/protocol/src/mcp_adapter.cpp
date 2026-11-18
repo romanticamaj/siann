@@ -147,7 +147,9 @@ const std::vector<McpExclusion> kNotMcp = {
     {"plugin.open_editor", "a plugin editor needs a desktop window"},
     {"plugin.close_editor", "a plugin editor needs a desktop window"},
     {"plugin.instantiate", "agents reach plugins through plan steps (plugin.insert and the plugin commands)"},
-    {"plugin.set_parameter", "agents reach plugins through plan steps (plugin.insert and the plugin commands)"},
+    {"plugin.set_parameter",
+     "a live parameter of a running instance, not journaled; no command sets a plugin parameter, so agents have "
+     "no path to plugin parameters in v0"},
     {"session.sync", "read-model replication for UI clients; inspect_session serves agents"},
     {"session.fetch", "read-model replication for UI clients; inspect_session serves agents"},
     {"record.recover_take",

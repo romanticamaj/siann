@@ -2520,7 +2520,10 @@ Every protocol method is an MCP tool or has an entry with its reason in
 `kNotMcp`, the table beside the tool table in `mcp_adapter.cpp`
 (m5b-protocol-parity); the native `protocol_parity_test` and the Node
 `test/protocol-parity.test.js` enforce it, and the Node test also holds the
-methods against the protocol docs and the app's capabilities fixture. A method
+methods against the protocol docs and the app's capabilities fixture: every
+method has a section or row there, and every dotted name a doc heading or
+`Method` column uses is a method or an event (a name only in prose is not
+checked). A method
 is documented by a section or a table row of its own in a
 `docs/schemas/protocol-*.md`; its row in the MCP tool table does not count, as
 it carries no params, result or errors, and neither does a heading that only
@@ -2973,8 +2976,9 @@ with the M4 wave 2 and 3 plans):
     `SIANN_OPEN_EDITOR` are removed ("Process model"). All of them go through the
     command thread, honour `expectedRevision` and the idempotency cache, and are
     in `engine.capabilities`' `methods`; none is an MCP tool (`kNotMcp` gives
-    the reasons: an editor needs a desktop window, and agents reach plugins
-    through plan steps).
+    the reasons: an editor needs a desktop window, agents reach plugin slots
+    through plan steps, and no command sets a plugin parameter, so in v0 agents
+    have no path to `plugin.set_parameter`'s live parameters).
 20. `plugin.set_parameter {slotId, paramId, value}` (m4-crash-recovery): the live
     parameter path for a hosted plugin. `paramId` is a string, the id the
     instance's parameter list reports (`PluginParameterInfo::id`; a CLAP plugin's
