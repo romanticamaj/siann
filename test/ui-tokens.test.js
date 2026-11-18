@@ -189,7 +189,8 @@ test('the zone frame is --focus and the 2 px ring of a control and a divider is 
     assert.ok(m, `${selector}: outline: var(--<width>) solid var(--${colourToken})`);
     return value(m[1]);
   };
-  assert.equal(outline('.zone[data-focused="true"]', 'focus'), '1px');
+  // The project zone's frame is .arrange::after (the SIZES table holds it); the other zones' is an outline.
+  assert.equal(outline('.zone-right[data-focused="true"]', 'focus'), '1px');
   assert.equal(outline(':where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible', 'focus-ring'), '2px');
   assert.equal(outline('.divider:focus-visible', 'focus-ring'), '2px');
   assert.doesNotMatch(rule('.divider:focus-visible'), /var\(--focus\)/);
@@ -401,6 +402,14 @@ test('the debt ledger is empty: no token, no font and no literal entry, and m5-u
 // that was there before changes its value: the expectation is a snapshot of
 // tokens.css taken from origin/main before the feature
 // (test/fixtures/ui-tokens-before-cleanup.json), not the file under test.
+//
+// The snapshot does not freeze the token set. A hold token (--hold-*) comes
+// and goes with its part: the feature that lands the part deletes it, and a
+// feature that leaves a pending box empty may add one (spec 3.0, 10.5;
+// test/mockup-fidelity.test.js fails on a hold whose part has landed). Any
+// later token, such as another permanent --<part>-empty-w (10.7, 5), may be
+// added. What the snapshot holds is that a token of origin/main other than a
+// hold is still declared with its value.
 const APP_ONLY = {
   'toast-max-w': '320px',
   'toast-slide': '12px',
@@ -413,13 +422,31 @@ const APP_ONLY = {
   scrim: '0,0,0,0.45',
 };
 
+// The tokens of `before` that `now` no longer declares, or declares with
+// another value, as `--name: before -> now`; hold tokens excepted, and a new
+// token is never a change.
+function changedSince(before, now) {
+  return Object.entries(before)
+    .filter(([name, raw]) => !name.startsWith('hold-') && now.get(name) !== raw)
+    .map(([name, raw]) => `--${name}: ${raw} -> ${now.has(name) ? now.get(name) : '(removed)'}`);
+}
+
+test('the snapshot check lets hold tokens go and new tokens come, and catches a changed or removed token', () => {
+  const before = { 'bg-0': '#090A0D', 'space': 'calc(4px * var(--scale))', 'hold-tab-media-w': 'calc(60px * var(--scale))' };
+  const now = (entries) => new Map(Object.entries(entries));
+  // The feature that lands the Media tab deletes its hold token.
+  assert.deepEqual(changedSince(before, now({ 'bg-0': '#090A0D', space: 'calc(4px * var(--scale))' })), []);
+  // A new hold, a new --<part>-empty-w and a remeasured hold are not changes.
+  assert.deepEqual(changedSince(before, now({ ...before, 'hold-tab-media-w': 'calc(61px * var(--scale))', 'hold-x-w': 'calc(9px * var(--scale))', 'display-x-empty-w': 'calc(9px * var(--scale))' })), []);
+  // A changed value or a removed token is.
+  assert.deepEqual(changedSince(before, now({ ...before, 'bg-0': '#000000' })), ['--bg-0: #090A0D -> #000000']);
+  assert.deepEqual(changedSince(before, now({ 'bg-0': '#090A0D' })), ['--space: calc(4px * var(--scale)) -> (removed)']);
+});
+
 test('tokens.css declares the app-only tokens of the toasts, dialogs, drawer and scrim, and no earlier token changes', () => {
   const before = JSON.parse(read('test', 'fixtures', 'ui-tokens-before-cleanup.json')).tokens;
   assert.ok(Object.keys(before).length > 300, 'the snapshot holds the tokens of origin/main');
-  for (const [name, raw] of Object.entries(before)) {
-    assert.ok(tokens.has(name), `--${name} is still declared`);
-    assert.equal(tokens.get(name), raw, `--${name} keeps its value`);
-  }
+  assert.deepEqual(changedSince(before, tokens), [], 'a token of origin/main other than a hold keeps its value');
   const shared = `${UI_CSS}\n${MOCKUP}`;
   const shell = read('app', 'renderer', 'shell.css');
   for (const [name, want] of Object.entries(APP_ONLY)) {
@@ -431,10 +458,33 @@ test('tokens.css declares the app-only tokens of the toasts, dialogs, drawer and
     if (name !== 'black-a450') assert.ok(shell.includes(`var(--${name})`), `shell.css uses --${name}`);
   }
   assert.ok(/box-shadow:[^;]*var\(--black-a450\)/.test(shell), 'the toast\'s and the drawer\'s shadows are black at 45 %');
-  // Nothing else is new: the authorised list is the whole addition.
-  assert.deepEqual([...tokens.keys()].filter((name) => !(name in before)).sort(), Object.keys(APP_ONLY).sort());
   // --focus-ring is not added again (applied early in m5-ui-tokens-spacing, 10.7, 4a).
   assert.equal((TOKENS_CSS.match(/--focus-ring\s*:/g) || []).length, 1, '--focus-ring is declared once');
+});
+
+// Shell sets the zone sizes on .app inline, to the zone's current size and to
+// 0 for a hidden zone or the drawer (Shell.tsx, the grid's custom
+// properties): inside the window they are the live layout, not the mockup's
+// sizes, so a shell.css rule that names one follows the user's layout. The
+// audition banner's text keeps 16 times the body text's size before its
+// buttons wrap (16em, whatever the left zone does), and the drawer takes the
+// width Shell sets on it, with no fallback to a size that is 0 in drawer mode.
+test('shell.css names none of the zone sizes Shell overrides on .app', () => {
+  const shellTsx = read('app', 'src', 'renderer', 'shell', 'Shell.tsx');
+  const grid = /const grid = \{([\s\S]*?)\} as CSSProperties;/.exec(shellTsx);
+  assert.ok(grid, 'Shell.tsx sets the grid\'s custom properties in `const grid`');
+  const overridden = [...grid[1].matchAll(/'(--[\w-]+)':/g)].map((m) => m[1]);
+  assert.deepEqual(overridden.sort(), ['--left-zone-w', '--lower-zone-h', '--right-zone-w']);
+  const shell = noComments(read('app', 'renderer', 'shell.css'));
+  for (const name of overridden) assert.ok(!shell.includes(`var(${name}`), `shell.css names ${name}, which Shell sets to the live zone size (0 when hidden)`);
+  const rule = (selector) => {
+    const at = shell.indexOf(`${selector} {`);
+    assert.ok(at >= 0, `shell.css has ${selector}`);
+    return shell.slice(at, shell.indexOf('}', at));
+  };
+  assert.match(rule('.audition-banner-text'), /flex: 1 1 calc\(var\(--fs-body\) \* 16\);/);
+  assert.match(rule('.zone-right[data-drawer="true"]'), /width: var\(--drawer-width\);/);
+  assert.match(shellTsx, /style=\{drawer \? \(\{ '--drawer-width': `\$\{drawer\.width\}px` \}/, 'Shell sets --drawer-width on the drawer');
 });
 
 // m5-ui-alignment-chrome (decided by the maintainer, 2026-11-15): JetBrains

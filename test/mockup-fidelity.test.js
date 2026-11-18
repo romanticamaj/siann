@@ -885,6 +885,88 @@ test('no selector of shell.css is also styled by app/renderer/ui', () => {
   assert.deepEqual(collisions('.statusbar  .loc { position: relative; } .a > .b {y:2} *, *::before { box-sizing: border-box; } @media (max-width: 9px) { .a > .b { z: 3; } } .statusbar .loc:has(select) { q: 1; }', shared), ['.statusbar .loc', '.a>.b', '*']);
 });
 
+// The properties each top-level rule of a stylesheet sets, by selector (as
+// cssRules normalises it); the rules inside an at-rule are left out.
+function topLevelProperties(css) {
+  const out = new Map();
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      const prelude = text.slice(start, i).trim();
+      const end = text.indexOf('}', i);
+      if (depth === 0 && !prelude.startsWith('@')) {
+        const props = [...text.slice(i + 1, end).matchAll(/(?:^|;)\s*([\w-]+)\s*:/g)].map((m) => m[1]);
+        for (const { selector } of cssRules(`${prelude}{}`)) out.set(selector, [...(out.get(selector) || []), ...props]);
+        i = end;
+      } else if (prelude.startsWith('@')) {
+        depth++;
+      } else {
+        i = end;
+      }
+      start = i + 1;
+    } else if (text[i] === '}') {
+      depth = Math.max(0, depth - 1);
+      start = i + 1;
+    } else if (text[i] === ';' && depth === 0) {
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
+// The zone frame is the mockup's region element, styled by the shared rules
+// (UI redesign 10.9, 1): aside.leftzone, section.arrange, section.lower and
+// aside.plans. shell.css's frame classes (.zone, .zone-<zone>) add only what
+// the app needs around them (clipping, shrinking, the focus frame of the
+// zones the mockup does not show focused) and restate no property of the
+// region's own rule; the project zone's rows, background and focus frame are
+// .arrange's and .arrange::after's, with no app wrapper between the section
+// and its toolbar, info line and arrange body.
+const FRAME_REGIONS = {
+  '.zone': ['.leftzone', '.arrange', '.lower', '.plans'],
+  '.zone-left': ['.leftzone'],
+  '.zone-project': ['.arrange'],
+  '.zone-lower': ['.lower'],
+  '.zone-right': ['.plans'],
+};
+function restated(shellCss, uiCss) {
+  const shell = topLevelProperties(shellCss);
+  const ui = topLevelProperties(uiCss);
+  const out = [];
+  for (const [frame, regions] of Object.entries(FRAME_REGIONS)) {
+    for (const prop of shell.get(frame) || []) {
+      for (const region of regions) if ((ui.get(region) || []).includes(prop)) out.push(`${frame} ${prop} (${region})`);
+    }
+  }
+  return out;
+}
+
+test('the zone frame is the mockup\'s region element: shell.css restates none of its rules', () => {
+  const uiCss = fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui')).filter((f) => f.endsWith('.css')).map((f) => read('app', 'renderer', 'ui', f)).join('\n');
+  const shellCss = read('app', 'renderer', 'shell.css');
+  assert.deepEqual(restated(shellCss, uiCss), [], 'the region\'s shared rule draws it: delete the property from the frame rule');
+  // The project zone is section.arrange, its children the toolbar, the info line and the arrange body.
+  const shellTsx = read('app', 'src', 'renderer', 'shell', 'Shell.tsx');
+  assert.match(shellTsx, /project: 'arrange zone zone-project',/);
+  const shell = shellCss.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/\.zone-project\s*>?\s*\.zone-body/.test(shell), 'no app body inside the project zone');
+  assert.ok(!/grid-template-rows:\s*var\(--toolbar\)/.test(shell), '.arrange lays out the project zone\'s rows');
+  assert.ok(!/\.zone-lower\s*>\s*\.tabs/.test(shell), '.lower lays out the lower zone\'s tab row');
+  // The focus frame: .arrange::after for the project zone, shown only while it has the focus;
+  // an outline for the others, which the mockup does not show focused.
+  const props = topLevelProperties(shellCss);
+  assert.deepEqual(props.get('.zone-project:not([data-focused="true"])::after'), ['display']);
+  assert.ok(!props.has('.zone[data-focused="true"]'), 'no outline frame on the project zone');
+  for (const zone of ['left', 'lower', 'right']) assert.ok((props.get(`.zone-${zone}[data-focused="true"]`) || []).includes('outline'), zone);
+  // The detector: a restated property is found, a rule inside a query and a qualified one are not.
+  assert.deepEqual(
+    restated('.zone { display: flex; overflow: hidden; } .zone-lower { min-height: 0; } .zone[hidden] { display: none; } @media (max-width: 9px) { .zone-left { background: red; } }', '.leftzone{display:flex;background:red}.lower{min-height:0}.arrange{display:grid}'),
+    ['.zone display (.leftzone)', '.zone display (.arrange)', '.zone-lower min-height (.lower)'],
+  );
+});
+
 test('shell.css names tokens only and holds nothing pinned for unported zones', () => {
   const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
   // The pre-port text styles pinned on the zones not ported yet are gone: every zone is ported.
