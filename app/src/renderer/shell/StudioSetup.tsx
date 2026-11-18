@@ -15,7 +15,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent }
 
 import { useT } from '../i18n/t';
 import type { EngineStatusSource } from '../model/engine-status';
-import { setupFields, studioSetupAvailable, type StudioSetupController } from '../model/studio-setup';
+import { initialOutput, setupFields, studioSetupAvailable, type StudioSetupController } from '../model/studio-setup';
 import { useCapabilities } from './Capable';
 
 export interface StudioSetupProps {
@@ -42,7 +42,8 @@ function StudioSetupDialog({ open, controller, engineStatus, sessionRate, onClos
     () => engineStatus.getSnapshot(),
     () => engineStatus.getSnapshot(),
   );
-  const current = view.devices.find((device) => device.current)?.id ?? '';
+  // What the output list shows before the user picks, and so what Apply takes.
+  const current = initialOutput(view.devices);
   const currentInput = status?.device?.input?.id ?? '';
   // The lists' choices, until the user picks; then the engine's again after a selection.
   const [output, setOutput] = useState<string | null>(null);

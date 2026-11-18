@@ -11,6 +11,7 @@ export const zhHant: Catalog = {
   'locale.label': '語言',
 
   'status.session': '專案',
+  'status.head': '目前修訂',
   'status.tracks': '音軌',
   'status.clips': '片段',
   'status.syncs': '同步次數',

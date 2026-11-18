@@ -11,6 +11,7 @@ export const zhHans: Catalog = {
   'locale.label': '语言',
 
   'status.session': '工程',
+  'status.head': '当前修订',
   'status.tracks': '音轨',
   'status.clips': '片段',
   'status.syncs': '同步次数',

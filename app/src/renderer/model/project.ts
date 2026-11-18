@@ -17,6 +17,8 @@
 // The saved mark is the renderer's: its baseline is the head revision at the
 // window's first sync, at every epoch (the first sync after it) and the
 // revision session.save answers; it shows while the head differs from it.
+// The status bar's "Saved · rN" names that baseline (savedRevision), never
+// the head.
 // Framework-free: React reads both through useSyncExternalStore.
 
 import type { Locale } from '../i18n/locale';
@@ -252,6 +254,8 @@ export class SavedMark {
   // The sync count when the baseline was last dropped: the next sync sets it.
   #afterSync = 0;
   #baseline: string | null = null;
+  // The baseline the listeners last heard.
+  #told: string | null = null;
   #marked = false;
 
   constructor(client: SavedMarkClient) {
@@ -262,6 +266,9 @@ export class SavedMark {
   }
 
   getSnapshot = (): boolean => this.#marked;
+
+  // The baseline: the revision the status bar calls saved; null before the first sync of an epoch.
+  savedRevision = (): string | null => this.#baseline;
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
@@ -291,8 +298,9 @@ export class SavedMark {
     const head = this.#client.model.getSnapshot()?.revision ?? null;
     if (this.#baseline === null && head !== null && state.syncCount > this.#afterSync) this.#baseline = head;
     const marked = this.#baseline !== null && head !== null && head !== this.#baseline;
-    if (marked === this.#marked) return;
+    if (marked === this.#marked && this.#baseline === this.#told) return;
     this.#marked = marked;
+    this.#told = this.#baseline;
     for (const listener of [...this.#listeners]) listener();
   }
 }

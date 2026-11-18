@@ -53,6 +53,16 @@ export function parseDevices(value: unknown): AudioDevice[] {
   return out;
 }
 
+// The output list's first choice: the entry marked current, else the default
+// output device, else the first output; '' when there is none. The list
+// always shows a device, and with no device running (no entry current) a
+// person cannot pick the option already shown (it fires no change event), so
+// the choice Apply takes must be the one the list shows.
+export function initialOutput(devices: readonly AudioDevice[]): string {
+  const outputs = devices.filter((device) => device.outputChannels !== 0);
+  return (outputs.find((device) => device.current) ?? outputs.find((device) => device.isDefault) ?? outputs[0])?.id ?? '';
+}
+
 // Studio Setup exists only where the engine lists both methods (UI redesign 3.0).
 export function studioSetupAvailable(can: CapabilitySelector): boolean {
   return can.has('engine.devices') && can.has('engine.select_device');

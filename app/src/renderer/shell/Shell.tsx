@@ -200,8 +200,8 @@ export interface ShellProps {
   readonly startView?: ReactNode;
   // The Studio Setup dialog (m5b-ui-project).
   readonly studioSetup?: ReactNode;
-  // The saved mark, for the top bar's session name.
-  readonly saved?: { getSnapshot(): boolean; subscribe(listener: () => void): () => void };
+  // The saved mark, for the top bar's session name and the status bar's saved revision.
+  readonly saved?: { getSnapshot(): boolean; savedRevision(): string | null; subscribe(listener: () => void): () => void };
   // Opens Studio Setup (a transport button without a device).
   readonly onStudioSetup?: () => void;
 }
@@ -686,7 +686,7 @@ export function Shell({
       >
         {right}
       </ZoneFrame>
-      <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
+      <StatusBar client={client} plans={plans} engineStatus={engineStatus} saved={saved} />
       {startView}
       {studioSetup}
       <Toasts store={toasts} />

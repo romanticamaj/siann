@@ -15,6 +15,7 @@ export const en = {
 
   // The status panel.
   'status.session': 'Session',
+  'status.head': 'Head revision',
   'status.tracks': 'Tracks',
   'status.clips': 'Clips',
   'status.syncs': 'Syncs',
