@@ -1263,6 +1263,6 @@ test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and 
   }
   assert.doesNotMatch(shell, /hold-branch-chip/);
   assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-branch-chip/);
-  assert.match(shell, /\.app\[data-hearing="proposal"\]\s*\{[^}]*outline:\s*var\(--space-half\) solid var\(--ai\)/);
+  assert.match(shell, /\.app\[data-hearing="proposal"\]::after\s*\{[^}]*border:\s*var\(--space-half\) solid var\(--ai\)/);
   assert.match(shell, /\[data-ghost-mode="solid"\]/);
 });

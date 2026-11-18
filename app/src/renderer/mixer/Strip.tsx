@@ -427,7 +427,7 @@ export function GhostStrip({ ghost, view }: { ghost: Extract<Ghost, { kind: 'tra
       role="group"
       aria-label={t('ghost.proposedTrack', { name: ghost.name })}
       style={{ '--c': 'var(--ai)' } as CSSProperties}
-      {...ghostAttrs(view, [ghost.step])}
+      {...ghostAttrs(view, [ghost.step], ghost.mode)}
       onClick={() => view.pin(ghost.step)}
     >
       <div className="ins" data-part-of="inserts" aria-hidden="true" />

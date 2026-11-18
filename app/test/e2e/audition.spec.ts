@@ -127,6 +127,7 @@ async function expectHearingProposal(name: RegExp | string): Promise<void> {
 
 async function expectHearingMain(): Promise<void> {
   await expect(shell()).not.toHaveAttribute('data-hearing', 'proposal');
+  expect(await shell().evaluate((el) => getComputedStyle(el, '::after').borderTopStyle)).not.toBe('solid');
   await expect(banner()).toHaveCount(0);
   await expect(chip()).toContainText(/^main\s*r\d+$/);
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -158,11 +159,12 @@ test('the frame, banner, chip and both switches follow audition.changed, also fr
   branch = (await status(hash)).proposalBranch as string;
   const name = /3 steps/;
   await expectHearingProposal(name);
-  // The 2 px violet frame.
+  // The 2 px violet frame, over the zones (the window's edge).
   const outline = await shell().evaluate((el) => {
-    const style = getComputedStyle(el);
-    return { width: style.outlineWidth, style: style.outlineStyle, color: style.outlineColor };
+    const style = getComputedStyle(el, '::after');
+    return { width: style.borderTopWidth, style: style.borderTopStyle, color: style.borderTopColor, position: style.position, inset: style.inset, events: style.pointerEvents };
   });
+  expect([outline.position, outline.inset, outline.events]).toEqual(['fixed', '0px', 'none']);
   expect(outline.width).toBe('2px');
   expect(outline.style).toBe('solid');
   const violet = await page.evaluate(() => {

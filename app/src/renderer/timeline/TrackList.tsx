@@ -475,7 +475,7 @@ function GhostHeader({ ghost, view }: { ghost: Extract<Ghost, { kind: 'track-add
   const style = { '--c': 'var(--ai)', height: `${DEFAULT_LANE_HEIGHT}px` } as CSSProperties;
   const channels = t(ghost.channels === 1 ? 'row.mono' : 'row.stereo');
   return (
-    <div className="th ghost" data-testid={`track-header-${ghost.key}`} data-part-item="track" data-part-key={ghost.key} style={style} {...ghostAttrs(view, [ghost.step])} onPointerDown={() => view.pin(ghost.step)}>
+    <div className="th ghost" data-testid={`track-header-${ghost.key}`} data-part-item="track" data-part-key={ghost.key} style={style} {...ghostAttrs(view, [ghost.step], ghost.mode)} onPointerDown={() => view.pin(ghost.step)}>
       <div className="col" data-part-of="colour" />
       <div className="idx" data-part-of="number">
         +

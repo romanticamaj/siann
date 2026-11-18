@@ -650,10 +650,12 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
    2 px violet frame, and the ghosts solid (what is playing) with the value
    each replaces, main's, as a faint outline. App-only drawings on the
    existing --ai tokens; the mockup has no hearing state. */
-.app[data-hearing="proposal"] { outline: var(--space-half) solid var(--ai); outline-offset: calc(var(--space-half) * -1); }
+/* The frame is drawn over the zones (their backgrounds would cover a border of
+   .app itself) and takes no pointer. */
+.app[data-hearing="proposal"]::after { content: ""; position: fixed; inset: 0; z-index: 40; border: var(--space-half) solid var(--ai); pointer-events: none; }
 .cap.ghost[data-ghost-mode="solid"], .hs > .ghost-thumb[data-ghost-mode="solid"] { background: var(--ai); border-style: solid; }
 .cap[data-replaced], .hs > u[data-replaced] { background: transparent; border: var(--hairline) solid var(--ai-a300); box-shadow: none; }
-button[data-ghost-mode="solid"] { outline-style: solid; }
+button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
 .gline[data-ghost-mode="solid"], .hs > .ghost-line[data-ghost-mode="solid"] { background: var(--ai-line); }
 .th.ghost[data-ghost-mode="solid"]::after, .strip.ghost[data-ghost-mode="solid"]::after { border-style: solid; }
 .ghost-removed { opacity: var(--offline-opacity); }
