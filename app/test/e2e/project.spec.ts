@@ -67,6 +67,10 @@ async function launch(options: { sessionDir?: string; languages?: readonly strin
   app = await launchElectron({ args: [MAIN], cwd: APP_DIR, languages: options.languages ?? ['en-US'], env });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  // engine.capabilities answers after the connection, and until it does New,
+  // Open and Save decline their keys: a Mod+N sent earlier does nothing (seen
+  // on macOS CI). The File menu lists New once the renderer has the answer.
+  await expect.poll(async () => (await menuItem('project.new')) !== null).toBe(true);
 }
 
 async function quit(): Promise<void> {
