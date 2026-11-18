@@ -13,7 +13,8 @@
 // engine's ready line to the first content frame that draws a session's clips.
 // The ready line is read by the main process supervisor, which keeps the time
 // of the first one (EngineSupervisor.firstReadyAt, epoch ms) and hands it to
-// the renderer under the test hook (window.siannTest.engineReadyAt);
+// the renderer under the test hook (the test hook's engineReadyAt, which
+// index.tsx calls);
 // readyLineAt() puts it on the renderer's performance clock. So the figure
 // includes everything after the ready line: the endpoint's IPC, any window or
 // bundle load still pending, the WebSocket connect and the token handshake. A
