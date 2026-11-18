@@ -533,7 +533,7 @@ test('UX screenshot tour', async () => {
   await resize(WIDE);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('about-track-count')).toHaveText('0');
-  await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans. The Plans tab is open: the agent row reads "No agent connected" and, at the tab's foot, the "ask the agent" box is disabled, its tooltip giving the reason (m5b-ui-composer).');
+  await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans. The Plans tab is open: the agent row reads "No agent connected" and, at the foot of the tab, the "ask the agent" box is disabled, its tooltip giving the reason (m5b-ui-composer).');
   await app!.close();
   app = undefined;
 
