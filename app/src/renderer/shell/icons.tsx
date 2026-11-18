@@ -78,7 +78,17 @@ const PATHS = {
     </>
   ),
   check: <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />,
+  // A step's locate button (m5b-ui-ghosts; the mockup's .go).
+  target: (
+    <>
+      <circle cx="8" cy="8" r="5" />
+      <circle cx="8" cy="8" r="1.4" fill="currentColor" />
+    </>
+  ),
   x: <path d="M4 4l8 8M12 4l-8 8" />,
+  // App-only (m5b-ui-inserts-master): an insert slot's bypass, which the
+  // mockup's slot does not draw; on the same 16 px grid and stroke.
+  power: <path d="M8 2.5v5M5 4.5a4.5 4.5 0 1 0 6 0" />,
   zRight: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1.5" />

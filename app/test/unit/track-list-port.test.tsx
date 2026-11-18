@@ -36,6 +36,8 @@ import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document'
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { GhostContext } from '../../src/renderer/plans/ghost-context';
+import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { trackColourVar } from '../../src/renderer/timeline/track-colour';
 import { TrackHeaderView, TrackList } from '../../src/renderer/timeline/TrackList';
@@ -273,12 +275,14 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const root = list(render(mockupEntities(), { clips: 17 }));
   const mockup = mockupHeaders();
   const mockupIds = findAll(mockup, byAttr('data-part')).map((el) => el.attrs['data-part']!);
-  // The mockup's list names the marker head, the record, read and write buttons and the ghost track: all pending.
-  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write', 'track-ghost']) {
+  // The mockup's list names the marker head, the record, read and write buttons: all pending.
+  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write']) {
     assert.ok(mockupIds.includes(id), `the mockup has ${id}`);
     assert.ok(pending(id), `${id} is pending`);
   }
-  assert.deepEqual(ids(root), mockupIds.filter((id) => !pending(id)).sort());
+  // The ghost track landed with m5b-ui-ghosts: it is drawn for a reviewable plan only, and there is none here.
+  assert.ok(mockupIds.includes('track-ghost') && !pending('track-ghost'));
+  assert.deepEqual(ids(root), mockupIds.filter((id) => !pending(id) && !/ghost/.test(id)).sort());
   for (const id of ids(root)) assert.ok(!pending(id), id);
   assert.ok(!ids(root).some((id) => /^(marker-head|track-ghost|track-\d+-(record|read|write))$/.test(id)));
   assert.ok(!findAll(root, byAttr('data-part')).some((el) => /ghost|marker/.test(el.attrs['data-part']!)));
@@ -374,4 +378,102 @@ test('the rendered count is the mockup\'s .cnt for its seven tracks and seventee
   assert.equal(text(find(render([track('trk_a')], { clips: 1 }), byClass('cnt'))), '1 track · 1 clip');
   assert.equal(text(find(render([], { clips: 0 }), byClass('cnt'))), '0 tracks · 0 clips');
   assert.equal(text(find(render([track('trk_a')], { locale: 'zh-Hans', clips: 1 }), byClass('cnt'))), '1 条音轨 · 1 个片段');
+});
+
+// ---- m5b-ui-ghosts (UI redesign 4.2): the proposed track's header is th()
+// for the mockup's ghost track (Pad, step 1); a header carries its track's
+// ghosts: the dashed ring on M or S (th()'s .msr.ghost), and, as added
+// elements the mockup has no markup for, the gain readout with both values
+// and both names on a rename.
+
+function renderGhosts(tracks: TrackEntity[], ghosts: readonly Ghost[], locale?: Locale): Element {
+  const snap = snapshotWith(tracks);
+  const pinned: number[] = [];
+  const node: ReactNode = (
+    <CapabilitiesContext.Provider value={FULL}>
+      <GhostContext.Provider value={{ ghosts, outline: null, pin: (step) => void pinned.push(step) }}>
+        <TrackList client={fakeClient(snap)} realtime={null} timeline={null} layout={createLayoutStore({ storage: null })} selectedTrackId={null} onSelectTrack={() => undefined} />
+      </GhostContext.Provider>
+    </CapabilitiesContext.Provider>
+  );
+  return withLocale(locale, () => parse(renderToStaticMarkup(node)));
+}
+
+const PAD: Ghost = { kind: 'track-add', step: 1, trackId: 'trk_pad', name: 'Pad', channels: 2, key: 'ghost' };
+
+test('a proposed track\'s header is th() for the ghost track: .th.ghost, "+", the step badge, the name, "proposed track" and the summary', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const root = renderGhosts(mockupEntities(), [PAD], locale);
+    const all = headers(root);
+    assert.equal(all.length, 8);
+    const app = all[7]!;
+    const mockup = find(parse(loadMockup(lang).th(MOCKUP.T[7]!, 7)), byClass('th'));
+    assert.equal(sig(app), sig(mockup));
+    assert.equal(styleOf(app, '--c'), 'var(--ai)');
+    const tree = (el: Element): string[] => elements(el).flatMap((child) => [sig(child), ...tree(child).map((s) => `  ${s}`)]);
+    assert.deepEqual(ported(app).flatMap((child) => [sig(child), ...tree(child).map((s) => `  ${s}`)]), elements(mockup).flatMap((child) => [sig(child), ...tree(child).map((s) => `  ${s}`)]), locale);
+    assert.equal(text(find(app, byClass('idx'))), '+');
+    const r1 = elements(find(app, byClass('r1')));
+    const m1 = elements(find(mockup, byClass('r1')));
+    assert.equal(text(r1[0]!), '1');
+    assert.equal(styleOf(r1[0]!, 'margin-right'), styleOf(m1[0]!, 'margin-right'));
+    assert.equal(text(r1[1]!), 'Pad');
+    assert.equal(text(r1[2]!), text(m1[2]!), locale);
+    for (const property of ['color', 'font-size', 'white-space']) assert.equal(styleOf(r1[2]!, property), styleOf(m1[2]!, property), property);
+    assert.equal(text(find(app, byClass('r2'))), text(find(mockup, byClass('r2'))).trim(), locale);
+    // The ids: track-ghost and its colour, number and name, as th() gives them.
+    const mockIds = findAll(mockup, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
+    assert.deepEqual(ids(root).filter((id) => /ghost/.test(id)), mockIds);
+  }
+  // A second proposed track takes ghost-2.
+  const two = renderGhosts([track('trk_a')], [PAD, { kind: 'track-add', step: 4, trackId: 'trk_two', name: 'Two', channels: 1, key: 'ghost-2' }]);
+  assert.deepEqual(headers(two).filter((h) => classes(h).includes('ghost')).map((h) => h.attrs['data-part-key']), ['ghost', 'ghost-2']);
+  assert.match(text(headers(two)[2]!), /mono/);
+});
+
+test('a header\'s ghosts: the dashed ring on M for a mute change (th()\'s .msr.m.ghost), on S for solo, the gain with both values, both names', () => {
+  const fxIndex = MOCKUP.T.findIndex((t) => t.gUnmute);
+  const tracks = mockupEntities();
+  const fx = tracks[fxIndex]!;
+  const bg = tracks[5]!;
+  const root = renderGhosts(tracks, [
+    { kind: 'mute', step: 5, trackId: fx.id, before: true, after: false },
+    { kind: 'solo', step: 6, trackId: bg.id, before: false, after: true },
+    { kind: 'gain', step: 3, trackId: bg.id, before: -9000, after: -6000 },
+    { kind: 'rename', step: 7, trackId: tracks[0]!.id, before: 'Kick', after: 'Kick In' },
+  ]);
+  const all = headers(root);
+  const mute = find(all[fxIndex]!, byAttr('data-part-of', 'mute'));
+  const mockMute = find(mockupHeader(fxIndex), (el) => classes(el).includes('m'));
+  assert.deepEqual(classes(mute).sort(), classes(mockMute).sort());
+  assert.ok(classes(find(all[5]!, byAttr('data-part-of', 'solo'))).includes('ghost'));
+  // 4.2's "-9.0 → -6.0": both values without their unit, so the readout fits
+  // (shell.css lets its cell grow; ghosts.spec.ts checks it clears the pan).
+  const gain = find(all[5]!, byAttr('data-part-of', 'gain'));
+  assert.equal(text(gain), '-9.0 → -6.0');
+  assert.equal(text(find(gain, byClass('ghost-to'))), '→ -6.0');
+  // Both names, each in its own element, so shell.css lets the old one give way first.
+  const name = find(all[0]!, byAttr('data-part-of', 'name'));
+  assert.equal(text(name), 'Kick → Kick In');
+  assert.equal(name.attrs.title, 'Kick → Kick In');
+  const pair = find(name, byClass('ghost-rename'));
+  assert.deepEqual(elements(pair).map(sig), ['span.ghost-was', 'span.ghost-arrow', 'span.ghost-name']);
+  assert.equal(text(find(pair, byClass('ghost-was'))), 'Kick');
+  assert.equal(text(find(pair, byClass('ghost-name'))), 'Kick In');
+  // No ghost of another track leaks: Snare's header is th() as before.
+  assert.ok(!findAll(all[1]!, (el) => classes(el).some((c) => /ghost/.test(c))).length);
+});
+
+test('a removed track\'s header dims (an added class) and carries its step badge and ghost attributes', () => {
+  const tracks = mockupEntities();
+  const fx = tracks[6]!;
+  const root = renderGhosts(tracks, [{ kind: 'track-remove', step: 7, trackId: fx.id }]);
+  const header = headers(root)[6]!;
+  assert.ok(classes(header).includes('ghost-removed'));
+  assert.equal(header.attrs['data-ghost'], '7');
+  const r1 = elements(find(header, byClass('r1')));
+  assert.equal(sig(r1[0]!), 'span.stepn');
+  assert.equal(text(r1[0]!), '7');
+  // The other headers are untouched.
+  assert.ok(headers(root).slice(0, 6).every((h) => !classes(h).includes('ghost-removed') && h.attrs['data-ghost'] === undefined));
 });

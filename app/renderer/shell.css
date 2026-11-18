@@ -35,7 +35,7 @@
    fields .field, the track list's .add) takes none of
    these: the shared rules draw it, over the reset below. */
 button, select, input { font: inherit; color: inherit; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add)) {
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go)) {
   white-space: nowrap;
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
@@ -44,17 +44,17 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   border-radius: var(--radius-m);
   cursor: pointer;
 }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add)):hover:not(:disabled) { background: var(--bg-5); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
 /* A transport button without a device is the way into Studio Setup
    (m5b-ui-project): aria-disabled, so it still takes the click, and drawn as
    a disabled one. */
 button[aria-disabled="true"] { color: var(--tx-4); cursor: default; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
    styles), at no specificity, so every shared rule wins. */
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add) {
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add, button.tog, button.go) {
   margin: 0;
   padding: 0;
   border: 0;
@@ -64,8 +64,8 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   text-align: inherit;
   cursor: pointer;
 }
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add):disabled { cursor: default; }
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add)[aria-disabled="true"] { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add, button.tog, button.go):disabled { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add, button.tog, button.go)[aria-disabled="true"] { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
@@ -323,9 +323,8 @@ code, dd { font-family: var(--font-mono); }
 .hold-tool-8 { width: var(--hold-tool-8-w); }
 .hold-tool-9 { width: var(--hold-tool-9-w); }
 .tool-empty { width: var(--tool-w); }
-.field-empty, .hold-proposal-pill { display: block; flex: none; height: var(--field-h); }
+.field-empty { display: block; flex: none; height: var(--field-h); }
 .auto-scroll-empty { width: calc(2 * var(--space-1h) + var(--icon-s) + 2 * var(--hairline)); }
-.hold-proposal-pill { width: var(--hold-proposal-pill-w); }
 .hold-info-fade-in, .hold-info-fade-out { display: block; flex: none; align-self: stretch; }
 .hold-info-fade-in { width: var(--hold-info-fade-in-w); }
 .hold-info-fade-out { width: var(--hold-info-fade-out-w); }
@@ -456,8 +455,11 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
    open one is its hold, a shut one its head and hairline. */
 .inspector-hold { display: block; flex: none; }
 .inspector-hold.routing { height: var(--hold-inspector-routing-h); }
-.inspector-hold.inserts { height: var(--hold-inspector-inserts-h); }
-.inspector-hold.agent-changes { height: var(--hold-inspector-agent-changes-h); }
+/* Inserts landed (m5b-ui-inserts-master); on an engine without plugins its
+   box is the section the shared rules draw: its head and hairline, the
+   body's padding, three slots and the two gaps between them (117 px in the
+   mockup; UI redesign 3.0). */
+.inspector-hold.inserts { height: calc(var(--section-head-h) + var(--hairline) + var(--space-7q) + var(--space-9q) + 3 * var(--control-h) + 2 * var(--space)); }
 .inspector-hold.sends, .inspector-hold.automation, .inspector-hold.notepad { height: calc(var(--section-head-h) + var(--hairline)); }
 /* The e box sits at the end of the row, as the mockup puts e. */
 .i-btns > .msr-box:last-child { margin-left: auto; }
@@ -528,13 +530,28 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 /* A list longer than the zone scrolls (a state the mockup does not show,
    10.7), by the wheel and the focus, without a gutter that would narrow the card. */
 .plans .p-scroll { overflow-y: auto; scrollbar-width: none; }
-.hold-agent-row, .hold-plan-title, .hold-plan-intent, .hold-composer, .hold-tab-media, .hold-tab-meter { display: block; flex: none; }
-.hold-agent-row { height: var(--hold-agent-row-h); }
-.hold-plan-title { height: var(--hold-plan-title-h); }
-.hold-plan-intent { height: var(--hold-plan-intent-h); }
+.hold-composer, .hold-tab-media, .hold-tab-meter { display: block; flex: none; }
 .hold-composer { height: var(--hold-composer-h); }
 .hold-tab-media { width: var(--hold-tab-media-w); height: var(--zone-head); }
 .hold-tab-meter { width: var(--hold-tab-meter-w); height: var(--zone-head); }
+/* The agent row, the plan's title and its intent (m5b-ui-plan-metadata; UI
+   redesign 3.0, 4.4): landed parts that are absent on an engine without
+   features.agents or features.planMetadata. Their empty boxes take the size
+   the shared rules give the parts, as a calc() of the same tokens (no token
+   of their own): the row's padding, avatar and hairline; the h3's margins
+   and one line of --fs-plan at line-height 1.3; two lines of --fs-11h at
+   line-height 1.45. A plan without an intent keeps those two lines, and so
+   does a one-line intent, so the count chips do not move; a longer intent
+   grows the head. The name in the row ellipsises, so the state keeps its
+   place on the one line; a disconnected agent's dot is the quiet text colour. */
+.agent-row-empty, .plan-title-empty, .plan-intent-empty { display: block; flex: none; }
+.agent-row-empty { height: calc(2 * var(--space-2) + var(--agent-avatar) + var(--hairline)); }
+.plan-title-empty { height: calc(var(--space-2) + var(--space) + 1.3 * var(--fs-plan)); }
+.plan-intent-empty { height: calc(2 * 1.45 * var(--fs-11h)); }
+.card-h p[data-part="plan-intent"] { min-height: calc(2 * 1.45 * var(--fs-11h)); white-space: pre-line; }
+.agent > span:not(.av):not(.live) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+[data-part="agent-row"] > :is(.av, .live) { flex-shrink: 0; }
+.agent .live.off i { background: var(--tx-4); box-shadow: none; }
 /* The steps head's link, as the mockup's inline style sets it, on one line
    at its own width (the count beside it gives way in a long locale). */
 .plans .steps-h a { text-transform: none; letter-spacing: 0; cursor: pointer; flex: none; white-space: nowrap; }
@@ -693,6 +710,118 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .start-path { overflow: hidden; text-overflow: ellipsis; color: var(--tx-3); font-size: var(--fs-small); }
 .start-empty { margin: 0; color: var(--tx-3); }
 .start-error { margin: calc(var(--space) * 3) 0 0; color: var(--err); overflow-wrap: anywhere; }
+
+/* ---- the plan review in place (m5b-ui-ghosts; UI redesign 4.2, 1.6). The
+   shared rules draw the ghosts the mockup has (.th.ghost, .msr.ghost,
+   .strip.ghost, .cap.ghost, .gline, .stepn, .overlaypill, .go); these are the
+   ones it has no markup for, on the --ai tokens. A DOM ghost fades in over
+   150 ms (the canvas's ghosts appear at once), not at all under
+   prefers-reduced-motion; the hovered or pinned step's ghosts are outlined. */
+[data-ghost] { transition: opacity 150ms ease-out; }
+@starting-style { [data-ghost] { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { [data-ghost] { transition: none; } }
+[data-ghost-hot] { outline: var(--hairline-1h) solid var(--ai); outline-offset: calc(var(--hairline) * -1); }
+.ghost-to, .ghost-name { color: var(--ai-2); }
+.ghost-removed { opacity: var(--offline-opacity); }
+/* The Inspector's sliders (shell/Inspector.tsx): the Volume slider's ghost
+   thumb at the pending value, the .hs u box in the strip's .cap.ghost look,
+   joined to the thumb before it by the strip's .gline laid flat; the Pan
+   slider's tick, the knob's ghost needle and its dot. They take a press (it
+   pins the step) but no drag cursor of their own. */
+.hs > .ghost-thumb { position: absolute; z-index: 1; top: calc(var(--space-5q) * -1); width: var(--slider-thumb-w); height: var(--slider-thumb-h); margin-left: calc(var(--space) * -1); border-radius: var(--radius-2); background: repeating-linear-gradient(135deg, var(--ai-a350) 0 var(--space-3q), var(--ai-a120) var(--space-3q) var(--space-1h)); border: var(--hairline-1h) dashed var(--ai); box-shadow: 0 0 var(--space-3) var(--ai-a450); cursor: pointer; }
+.hs > .ghost-line { position: absolute; top: 50%; height: var(--gain-line-w); margin-top: calc(var(--gain-line-w) / -2); background: var(--ai); pointer-events: none; }
+.hs > .ghost-tick { position: absolute; z-index: 1; top: calc(var(--space-5q) * -1); height: var(--slider-thumb-h); width: var(--gain-line-w); margin-left: calc(var(--gain-line-w) / -2); border-radius: var(--hairline); background: var(--ai); cursor: pointer; }
+.hs > .ghost-tick::after { content: ""; position: absolute; left: 50%; top: 0; width: var(--space); height: var(--space); margin: calc(var(--space-half) * -1) 0 0 calc(var(--space-half) * -1); border-radius: var(--radius-round); background: var(--ai); }
+/* Room for both values: the header's gain readout with a pending value grows
+   from the shared cell (the pan readout moves right, the meter gives way),
+   and so does the Inspector's value column (the slider gives way). */
+.th .r2 .db:has(> .ghost-to) { width: auto; min-width: var(--track-gain-w); flex: none; }
+.i-row:has(> b .ghost-to) { grid-template-columns: var(--inspector-label-w) minmax(0, 1fr) minmax(var(--inspector-value-w), max-content); }
+/* Both names of a rename (plans/RenameGhost.tsx), on one line: where they do
+   not fit, the old name gives way first, the new one last. */
+.ghost-rename { display: inline-flex; max-width: 100%; min-width: 0; }
+.ghost-rename > span { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.ghost-rename > .ghost-was { flex: 0 1000 auto; min-width: calc(var(--space-2) * 2); }
+.ghost-rename > .ghost-arrow { flex: none; }
+.ghost-rename > .ghost-name { flex: 0 1 auto; min-width: 0; }
+.overlaypill .tog[aria-pressed="false"] { background: none; color: var(--ai-2); }
+.overlaypill > span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- the insert racks (m5b-ui-inserts-master; UI redesign 3.4, 4.2).
+   ui/lower-zone.css draws the mockup's .ins and .slot, ui/left-zone.css its
+   .islot and the section; these are the app's own pieces: the rack row of a
+   strip scrolls a chain longer than its two positions (by the wheel, and a
+   focused slot scrolls into view) with no scrollbar drawn; the controls the
+   mockup's slot does not have (bypass, e, Remove); the states it does not
+   show (bypassed, missing, a lit e); the slot ghosts on the --ai tokens. */
+.strip .ins { overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.strip .ins::-webkit-scrollbar { display: none; }
+.ins > .slot { flex: none; }
+.slot-name, .islot-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot.empty[role="button"], .islot.empty[role="button"] { cursor: pointer; }
+.slot-btn, .islot-btn { flex: none; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--tx-4); font: inherit; cursor: pointer; }
+.slot-btn { height: 100%; }
+/* In a strip's narrow slot the name comes first: its buttons show while the
+   slot is hovered or holds the focus (they stay in the tab order), and a
+   pressed one (bypassed, an open editor) always shows. */
+.ins > .slot > .slot-btn:not(.on, .ghost) { width: 0; overflow: hidden; }
+.ins > .slot:hover > .slot-btn, .ins > .slot:focus-within > .slot-btn { width: auto; overflow: visible; }
+/* Over the app's button reset (its minimum height, and the fill of a pressed or hovered button). */
+.slot-btn, .islot-btn, .rack-switch, .picker-close, .picker-choose { min-height: 0; border-radius: 0; }
+.slot-btn[aria-pressed], .islot-btn[aria-pressed], .rack-switch[aria-pressed], .slot-btn:hover, .islot-btn:hover, .rack-switch:hover, .picker-close:hover, .picker-choose:hover { background: none; border: 0; }
+.slot-btn > svg.i.s { width: var(--space-2h); height: var(--space-2h); }
+.slot-btn.edit, .islot-btn.edit { font-style: italic; font-family: Georgia, serif; font-weight: var(--fw-bold); }
+.slot-btn.edit { font-size: var(--fs-9h); }
+.islot-btn > svg.i.s { width: var(--space-3); height: var(--space-3); }
+.islot > em > .islot-btn { color: inherit; font: inherit; }
+.slot-btn:hover, .islot-btn:hover { color: var(--tx-1); }
+.slot-btn.on, .islot-btn.on { color: var(--tx-0); }
+.slot-btn.edit.on, .islot-btn.edit.on { color: var(--play); }
+.slot.bypassed, .islot.bypassed { color: var(--tx-4); }
+.slot.bypassed::before, .islot.bypassed::before { background: var(--tx-4); }
+.slot.missing::before, .islot.missing::before { background: var(--err); }
+.islot-state { flex: none; color: var(--err); font-size: var(--fs-micro); }
+/* A proposed insert: the slot dashed and hatched in the agent violet, its
+   step number first; a removal dims (.ghost-removed); a pending bypass rings
+   the button, as .msr.ghost rings M. */
+.slot.ghost, .islot.ghost { background: repeating-linear-gradient(135deg, var(--ai-a100) 0 var(--space-1h), var(--ai-a030) var(--space-1h) var(--space-3)); border: var(--hairline) dashed var(--ai-line); color: var(--ai-2); cursor: pointer; }
+.slot.ghost::before, .islot.ghost::before { display: none; }
+.slot.ghost > .stepn, .islot.ghost > .stepn { flex: none; }
+.slot-btn.ghost, .islot-btn.ghost { outline: var(--hairline-1h) dashed var(--ai); outline-offset: calc(var(--hairline) * -1); }
+/* The rack switches at the end of the lower zone's tab row: the mockup's
+   inline layout, the lit switch in --tx-1 as the mockup draws Inserts. */
+.mixer-racks { display: flex; gap: var(--space-2h); align-items: center; padding-right: var(--space-1h); }
+.rack-switch { padding: 0; border: 0; background: none; font: inherit; color: var(--tx-4); cursor: pointer; }
+.rack-switch.on { color: var(--tx-1); }
+/* The plugin picker (mixer/PluginPicker.tsx), a dialog the mockup does not draw. */
+.plugin-picker {
+  width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
+  max-height: calc(100vh - var(--dialog-margin));
+  padding: calc(var(--space) * 3);
+  background: var(--bg-1);
+  color: var(--tx-1);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-l);
+  font-size: var(--fs-body);
+  line-height: var(--line-height);
+}
+.plugin-picker[open] { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
+.plugin-picker::backdrop { background: var(--scrim); }
+.picker-head { display: flex; align-items: center; gap: var(--space); }
+.picker-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.picker-close { flex: none; display: grid; place-items: center; padding: var(--space-half); border: 0; background: none; color: var(--tx-3); cursor: pointer; }
+.picker-search { height: var(--control-h); padding: 0 var(--space-2); font-size: var(--fs-small); }
+.picker-error { margin: 0; color: var(--err); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.picker-error > code { font-family: var(--font-num); }
+.picker-empty { margin: 0; color: var(--tx-3); font-size: var(--fs-small); }
+.picker-list { margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: var(--space-half); }
+.picker-row { display: flex; align-items: center; gap: var(--space-1h); min-height: var(--control-h); padding: 0 var(--space-1h); border-radius: var(--radius-4); background: var(--bg-4); border: var(--hairline) solid var(--line-2); font-size: var(--fs-small); }
+.picker-choose { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--space-1h); align-self: stretch; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.picker-choose:disabled { cursor: default; opacity: var(--offline-opacity); }
+.picker-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-format, .picker-state { flex: none; color: var(--tx-3); font-size: var(--fs-micro); white-space: nowrap; }
+.picker-state { color: var(--warn); }
+.picker-approve { flex: none; white-space: nowrap; }
 
 /* Small windows (2.4). Under 1100 px the top bar drops the locator, tempo
    and signature displays, and the boxes of the parts not built yet; under

@@ -239,6 +239,18 @@ test('the locator, cycle and metronome keys resolve in every zone and never in a
   assert.equal(resolveKey(input({ code: 'KeyP', key: 'P', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET)?.commandId, 'transport.enterPosition');
 });
 
+test('Ctrl+Alt+G toggles the ghosts from any zone, Cmd+Alt+G on macOS, and not while typing (m5b-ui-ghosts)', () => {
+  const win = input({ code: 'KeyG', key: 'g', modifiers: { ...NONE, ctrl: true, alt: true } });
+  const mac = input({ code: 'KeyG', key: 'g', modifiers: { ...NONE, meta: true, alt: true }, platform: 'mac' });
+  for (const key of [win, mac]) {
+    assert.equal(chordOf(key), 'Mod+Alt+G');
+    for (const focusedZone of ['project', 'left', 'lower', 'right'] as const) {
+      assert.equal(resolveKey({ ...key, focusedZone }, CUBASE_PRESET)?.commandId, 'plans.toggleGhosts', focusedZone);
+    }
+    assert.equal(resolveKey({ ...key, targetIsTextField: true }, CUBASE_PRESET), null);
+  }
+});
+
 test('Ctrl+P opens the Pool on Windows and Linux, Cmd+P on macOS, from any zone and not while typing (m5-ui-port-toolbar)', () => {
   const ctrlP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true } });
   const cmdP = input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, meta: true }, platform: 'mac' });

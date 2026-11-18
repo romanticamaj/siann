@@ -1,8 +1,9 @@
 // The audition banner (m5-ui-plan-panel; UI redesign 4.3 as corrected for
 // P1-5): a row under the top bar, outside the zones, so it is visible
 // whichever zones are open, while the side heard is a proposal branch. It
-// names the plan as its card does (first step and step count; titles arrive
-// with E-7), or reads "Hearing a proposal" when no plan the store holds has
+// names the plan through plans/plan-name.ts (its title with
+// features.planMetadata, m5b-ui-plan-metadata; else its first step and step
+// count), or reads "Hearing a proposal" when no plan the store holds has
 // that branch, and offers Hear main, Merge and Discard, each only when
 // engine.capabilities lists its method. A refusal is shown on the banner as
 // plans/RefusalLine shows it (no ids; the engine's text behind a disclosure).
@@ -13,10 +14,10 @@ import { useState } from 'react';
 import { translator, useLocale } from '../i18n/t';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
-import { Capable } from '../shell/Capable';
+import { Capable, useCapabilities } from '../shell/Capable';
 import { runAction, type PlanAction } from './actions';
-import { describeStep } from './describe';
-import { ISOLATE } from './isolate';
+import { ISOLATE, isolateName } from './isolate';
+import { planName } from './plan-name';
 import { usePlanSnapshot, useStepNames } from './hooks';
 import { RefusalLine, type Refusal } from './RefusalLine';
 
@@ -30,15 +31,19 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
   const t = translator(locale);
   const snapshot = usePlanSnapshot(plans);
   const names = useStepNames(client);
+  const can = useCapabilities();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ branch: string; refusal: Refusal } | null>(null);
   const branch = snapshot.heard;
   if (branch === null || branch === 'main') return null;
   const plan = snapshot.plans.find((p) => p.proposalBranch === branch);
-  const first = plan?.steps[0];
-  const text = first
-    ? t('banner.hearing', { lead: describeStep(first, t, names), steps: t('plans.steps', { count: plan!.steps.length }) })
-    : t('banner.generic');
+  const name = planName(plan, t, names, can);
+  const text =
+    name.kind === 'title'
+      ? t('banner.hearingTitled', { title: isolateName(name.title) })
+      : name.kind === 'steps'
+        ? t('banner.hearing', { lead: name.lead, steps: name.steps })
+        : t('banner.generic');
   const run = (action: PlanAction) => {
     if (busy) return;
     setBusy(true);

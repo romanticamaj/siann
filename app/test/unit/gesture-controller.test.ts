@@ -102,6 +102,28 @@ test('pan maps to the pan parameter', async () => {
   assert.equal(client.model.getView().gesture?.field, 'pan');
 });
 
+// m5b-ui-inserts-master: the master fader's gesture targets master:master's
+// gain (protocol-gestures-v0.md), with the entity absent at 0 dB.
+test('a master gesture sends the master target and ends with one gesture.end', async () => {
+  const { client, controller } = await rig();
+  const master = { ref: 'master:master', param: 'gain' };
+  assert.equal(client.model.getSnapshot()!.master, null);
+  controller.begin('master:master', 'gainMilliDb');
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.begin', { target: master }]]);
+  client.answer('gesture.begin', { target: master, startValue: 0, leaseMs: 1000 });
+  await settle();
+  controller.move(-3000);
+  assert.equal((client.model.select('master:master') as { gainMilliDb: number }).gainMilliDb, -3000);
+  client.answer('gesture.update');
+  await settle();
+  controller.end();
+  await settle();
+  assert.deepEqual(client.calls.map((c) => [c.method, c.params]), [['gesture.end', { target: master, value: -3000 }]]);
+  client.answer('gesture.end', { target: master, startValue: 0, value: -3000, revision: { id: 'r4', diff: ['master:master'] } });
+  await settle();
+  assert.deepEqual(client.calls, [], 'one gesture.end and nothing after it');
+});
+
 test('moves set the overlay at once and coalesce into one update in flight', async () => {
   const { client, controller } = await rig();
   controller.begin(REF, 'gainMilliDb');

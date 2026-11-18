@@ -403,3 +403,28 @@ test('a rejection shows its reason and a split parent its split label, in their 
   // On the card, a rejection's reason is a row of its head.
   assert.match(view({ selected: REFUSED }), /data-testid="plan-reason-44444444"[^>]*>“⁨Keep the vocal⁩” · sent to agent</);
 });
+
+// m5b-ui-plan-metadata (UI redesign 4.3, 4.5): titled plans, the agent's name.
+const TITLED: PlanEntry[] = [
+  entry(FRESH, 'validated', MIX_STEPS, { title: 'Lift the chorus', intent: 'Pad and vocals.', actor: { kind: 'mcp', name: 'mix-assistant' } }),
+  entry(REFUSED, 'rejected', [{ op: 'track.remove', trackId: VOX }], { rejectionNote: 'Keep the vocal', title: 'Drop the vocal', actor: { kind: 'mcp', name: 'mix-assistant' } }),
+  entry(STALE, 'validated', MIX_STEPS, { title: 'Tame the low end', actor: { kind: 'mcp', name: 'mix-assistant' } }),
+];
+
+test('history rows are titled by the plan\'s title, and an agent\'s plan names the agent in its detail', () => {
+  const markup = view({ plans: TITLED, selected: REFUSED, firstSeen: new Map([[STALE, 1_000]]) });
+  const titles = [...markup.matchAll(/<button[^>]*class="hrow"[^>]*><b title="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(titles, ['Tame the low end', 'Lift the chorus']);
+  assert.ok(markup.includes(`3 steps · ${n('mix-assistant')} · 1 minute ago`), 'N steps · agent · time');
+  // The rejected plan on the card: its title, and the note from the plan (plan.changed) under .top.
+  assert.match(markup, /<h3 data-part="plan-title"[^>]*>Drop the vocal<\/h3>/);
+  assert.match(markup, /data-testid="plan-reason-44444444"[^>]*>“⁨Keep the vocal⁩” · sent to agent</);
+});
+
+test('with reduced capabilities the rows and the card name plans as in M5', () => {
+  const markup = view({ plans: TITLED, selected: REFUSED, firstSeen: new Map([[STALE, 1_000]]) }, REDUCED);
+  assert.ok(!markup.includes('Tame the low end') && !markup.includes('Lift the chorus') && !markup.includes('Drop the vocal'), 'no title');
+  assert.ok(!markup.includes('mix-assistant'), 'no agent name');
+  assert.ok(markup.includes('3 steps · 1 minute ago'));
+  assert.ok(!markup.includes('data-part="plan-title"') && !markup.includes('data-part="agent-row"'));
+});

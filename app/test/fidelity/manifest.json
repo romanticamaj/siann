@@ -30,8 +30,8 @@
   "pixels": {
     "channelTolerance": 16,
     "maxMismatch": 0.005,
-    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending. DSP load and the master's loudness value are meter levels and joined the list when they got an owner (2026-11-15). Decided by the maintainer, 2026-11-15 (UI redesign 10.5, second round): the three history rows (plan-history-1 to 3: their titles and the agent's name need E-7 and E-14) are masked until m5b-ui-plan-metadata removes them from this list, and the titles of the steps that name a clip (plan-step-N-title: a clip has no name before the clip half of E-4) until m5b-ui-media narrows that mask: it unmasks plan-step-6-title (\"Move Riser on FX\": the media is named Riser) and leaves plan-step-2-title masked, whose mockup text names the clip \"Pad swell\" while its media is pad_swell.wav, until the clip half of E-4 has an owner (decided by Fable, delegated by the maintainer, 2026-11-18; UI redesign 10.11). The history head (plan-history-head) is not masked: M5 derives it.",
-    "dynamic": ["display-*", "dsp-load", "strip-master-loudness", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head", "plan-history-1", "plan-history-2", "plan-history-3", "plan-step-*-title"]
+    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending. DSP load and the master's loudness value are meter levels and joined the list when they got an owner (2026-11-15). Decided by the maintainer, 2026-11-15 (UI redesign 10.5, second round): the three history rows (plan-history-1 to 3: their titles and the agent's name need E-7 and E-14) were masked until m5b-ui-plan-metadata, which shows both, removed them from this list (what still differs, the time, the revision, Roll back and the stale row's detail, is reported), and the titles of the steps that name a clip (plan-step-N-title: a clip has no name before the clip half of E-4) until m5b-ui-media narrows that mask: it unmasks plan-step-6-title (\"Move Riser on FX\": the media is named Riser) and leaves plan-step-2-title masked, whose mockup text names the clip \"Pad swell\" while its media is pad_swell.wav, until the clip half of E-4 has an owner (decided by Fable, delegated by the maintainer, 2026-11-18; UI redesign 10.11). The history head (plan-history-head) is not masked: M5 derives it.",
+    "dynamic": ["display-*", "dsp-load", "strip-master-loudness", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head", "plan-step-*-title"]
   },
   "gates": {
     "m5-ui-alignment-chrome": "report",
@@ -41,18 +41,18 @@
     "m5-ui-port-inspector": "report",
     "m5-ui-port-track-list": "report",
     "m5-ui-port-toolbar": "report",
-    "m5b-ui-ghosts": "pending",
+    "m5b-ui-ghosts": "report",
     "m5b-ui-audition": "pending",
     "m5b-ui-media": "pending",
     "m5b-ui-edit-more": "pending",
     "m5b-ui-fades": "pending",
-    "m5b-ui-inserts-master": "pending",
+    "m5b-ui-inserts-master": "report",
     "m5b-ui-recording": "pending",
     "m5b-ui-markers": "pending",
     "m5b-ui-sends-buses": "pending",
     "m5b-ui-signature": "report",
     "m5b-ui-meter": "pending",
-    "m5b-ui-plan-metadata": "pending",
+    "m5b-ui-plan-metadata": "report",
     "m5b-ui-composer": "pending",
     "m5b-ui-notepad": "pending",
     "m5b-ui-editor-channel": "pending",

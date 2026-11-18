@@ -23,6 +23,7 @@ const EVENTS_DOC = 'docs/schemas/protocol-events-v1.md';
 const MCP_DOC = 'docs/schemas/protocol-mcp-v0.md';
 const FULL = 'app/test/unit/fixtures/capabilities-full.json';
 const REDUCED = 'app/test/unit/fixtures/capabilities-reduced.json';
+const SUBSETS = ['app/test/unit/fixtures/capabilities-no-plugins.json', 'app/test/unit/fixtures/capabilities-no-master.json'];
 const DOCS_PLACE = 'docs/schemas/protocol-*.md';
 
 const DOTTED = /^[a-z_]+\.[a-z_]+$/;
@@ -240,10 +241,13 @@ function checkFullFixture(world) {
   ];
 }
 
-// (d) capabilities-reduced.json is a subset of the full fixture.
+// (d) capabilities-reduced.json, and every other reduced fixture
+// (capabilities-no-plugins.json, capabilities-no-master.json: m5b-ui-inserts-master),
+// is a subset of the full fixture.
 function checkReducedSubset(world) {
   const full = new Set(world.full);
-  return world.reduced.filter((m) => !full.has(m)).map((name) => ({ name, place: 'capabilities-reduced.json' }));
+  const subsets = [['capabilities-reduced.json', world.reduced], ...Object.entries(world.subsets ?? {})];
+  return subsets.flatMap(([place, methods]) => methods.filter((m) => !full.has(m)).map((name) => ({ name, place })));
 }
 
 // (e) the tool table of protocol-mcp-v0.md equals kTools: names in tools/list
@@ -417,6 +421,7 @@ function realWorld() {
     docExclusions: extractDocExclusions(mcp),
     full: JSON.parse(read(FULL)).methods,
     reduced: JSON.parse(read(REDUCED)).methods,
+    subsets: Object.fromEntries(SUBSETS.map((file) => [path.basename(file), JSON.parse(read(file)).methods])),
   };
 }
 
@@ -676,6 +681,13 @@ const PLANTS = [
     name: 'transport.rewind',
     place: 'capabilities-reduced.json',
     apply: (w) => w.reduced.push('transport.rewind'),
+  },
+  {
+    check: 'd',
+    plant: 'a no-plugins fixture method outside full',
+    name: 'transport.rewind',
+    place: 'capabilities-no-plugins.json',
+    apply: (w) => w.subsets['capabilities-no-plugins.json'].push('transport.rewind'),
   },
   {
     check: 'd',

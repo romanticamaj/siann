@@ -7,10 +7,10 @@
 //   aside.plans
 //     .p-head[right-tabs]   .tab.on[tab-plans] (spark), the Media and Meter
 //                           tabs' holds, .ab[hearing-switch] > svg + .seg > 2 .b
-//     the agent row's hold
+//     .agent[agent-row]     .av (spark) + span(b name, " · MCP") + .live(i + text)
 //     .p-scroll             .card[plan-card] > .card-h[plan-head] (.top[plan-meta]:
-//                           the badge, time and base, the hash; the title and
-//                           intent holds; .sum[plan-summary]), .steps[plan-steps]
+//                           the badge, time and base, the hash; h3[plan-title]
+//                           and p[plan-intent]; .sum[plan-summary]), .steps[plan-steps]
 //                           (.steps-h + one .step per step, as step() returns
 //                           it), .acts[plan-actions] (three .btn); .hist-h and
 //                           one .hrow per earlier plan
@@ -44,15 +44,21 @@ import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { Shell } from '../../src/renderer/shell/Shell';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
-import { find, findAll, mockupPlans, mockupPreview, mockupRightZone, mockupSnapshot, parse, PENDING, sig, textOf, type Node } from './support/mockup-plan';
+import type { Agent } from '../../src/renderer/model/agents';
+import { planEntry, type PlanEntry } from '../../src/renderer/model/plan-store';
+import { find, findAll, INTENT, MOCKUP, mockupPlans, mockupPreview, mockupRightZone, mockupSnapshot, parse, PENDING, sig, textOf, TITLE, type Node } from './support/mockup-plan';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
 const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.json'), 'utf8')) as Capabilities;
+const REDUCED = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-reduced.json'), 'utf8')) as Capabilities;
 
 // The parts of the right zone whose feature has not landed (manifest.json).
-const PENDING_PARTS = ['agent-row', 'plan-title', 'plan-intent', 'composer', 'tab-media', 'tab-meter'];
+const PENDING_PARTS = ['composer', 'tab-media', 'tab-meter'];
 
-function render(overrides: Partial<PlanPanelViewProps> = {}): string {
+// The mockup's agent: connected, no tool call yet (lastAction null).
+const MOCKUP_AGENT: Agent = { id: 'agt_1', name: 'mix-assistant', transport: 'mcp', connected: true, lastAction: null, lastActionAt: null };
+
+function render(overrides: Partial<PlanPanelViewProps> = {}, caps: Capabilities = FULL): string {
   const snapshot = mockupSnapshot();
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined, select: (ref: string) => snapshot.entities[ref] } as unknown as ReadModel;
   const client = new SessionClient({
@@ -71,7 +77,7 @@ function render(overrides: Partial<PlanPanelViewProps> = {}): string {
     model,
     state: new TransportStateStore(client),
     deviceReady: () => false,
-    capabilities: () => capabilitySelector(FULL),
+    capabilities: () => capabilitySelector(caps),
     toasts,
     locale: () => 'en',
   });
@@ -91,6 +97,7 @@ function render(overrides: Partial<PlanPanelViewProps> = {}): string {
     staleReasons: [],
     rejecting: false,
     hotStep: 2,
+    agent: MOCKUP_AGENT,
     onSelect: () => undefined,
     onTicked: () => undefined,
     onNote: () => undefined,
@@ -100,7 +107,7 @@ function render(overrides: Partial<PlanPanelViewProps> = {}): string {
     ...overrides,
   };
   return renderToStaticMarkup(
-    <CapabilitiesContext.Provider value={FULL}>
+    <CapabilitiesContext.Provider value={caps}>
       <Shell
         client={client}
         plans={plans}
@@ -141,10 +148,9 @@ const partOf = (n: Node) => n.attrs['data-part'];
 // The mockup's children as the app must render them: inline text elements of
 // a step's text (b, s, em) are the wording's (plan-step-rows.test.ts), a
 // clip-naming title's wrapper (plan-step-N-title) is a pending part the app
-// does not carry, the step's .go is empty and the primary's kbd is not drawn
+// does not carry, the step's .go holds the target icon (m5b-ui-ghosts) and the primary's kbd is not drawn
 // (UI redesign 3.0: no control without a backend).
 function mockChildren(node: Node): Node[] {
-  if (node.classes.includes('go')) return [];
   let out = node.children;
   if (node.classes.includes('t') || node.classes.includes('d')) {
     out = out.flatMap((c) => (/^plan-step-\d+-title$/.test(partOf(c) ?? '') ? c.children : [c])).filter((c) => !['b', 's', 'em'].includes(c.tag));
@@ -230,6 +236,9 @@ test('every id of the Plans tab is in the markup, and no id of a pending part', 
     'plan-approve',
     'plan-reject',
     'plan-history-head',
+    'agent-row',
+    'plan-title',
+    'plan-intent',
   ]) {
     assert.equal(parts.filter((p) => p === id).length, 1, `${id} once`);
   }
@@ -240,23 +249,38 @@ test('every id of the Plans tab is in the markup, and no id of a pending part', 
   assert.ok(!/plan-step-\d+-title/.test(markup), 'no plan-step-N-title id');
 });
 
-test('the holds carry nothing, the .go cells are empty, the primary has no kbd, the steps head one link', () => {
+test('the holds carry nothing, the .go cells are target buttons, the primary has no kbd, the steps head one link', () => {
   const zone = appRightZone(render());
   const holds = findAll(zone, (n) => n.classes.some((c) => c.startsWith('hold-')));
   assert.deepEqual(holds.map((h) => h.classes[0]).sort(), PENDING_PARTS.map((p) => `hold-${p}`).sort());
   for (const hold of holds) assertHold(hold, hold.classes[0]!.slice('hold-'.length), 'hold');
   assert.equal(findAll(zone, (n) => n.tag === 'kbd').length, 0, 'no kbd');
+  // m5b-ui-ghosts: .go is the keyboard path to a step's ghosts, a button with the mockup's target icon and a name.
   const go = findAll(zone, (n) => n.classes.includes('go'));
   assert.equal(go.length, 6);
-  for (const cell of go) {
-    assert.equal(cell.children.length + cell.text.length, 0, 'an empty .go');
-    assert.ok(!('role' in cell.attrs) && !('tabindex' in cell.attrs), 'no control in .go');
-  }
+  go.forEach((cell, index) => {
+    assert.equal(cell.tag, 'button');
+    assert.equal(cell.attrs.type, 'button');
+    assert.ok(cell.attrs['aria-label']?.includes(String(index + 1)), 'named with its step');
+    const icon = cell.children[0]!;
+    assert.equal(icon.tag, 'svg');
+    assert.deepEqual(icon.classes, ['i', 's']);
+  });
   const head = find(zone, (n) => partOf(n) === 'plan-steps-head')!;
   assert.equal(head.children.filter((n) => n.tag === 'a').length, 1, 'one link');
   // The row under the pointer is hot, and only that one.
   const steps = findAll(zone, (n) => n.attrs['data-part-item'] === 'plan-step');
   assert.deepEqual(steps.map((s) => s.classes.includes('hot')), [false, false, true, false, false, false]);
+  assert.ok(steps.every((s) => !('aria-current' in s.attrs)), 'no row pinned');
+});
+
+test("a pinned step's row is .hot with aria-current, also with the pointer elsewhere", () => {
+  const zone = appRightZone(render({ hotStep: null, pinnedStep: 4 }));
+  const steps = findAll(zone, (n) => n.attrs['data-part-item'] === 'plan-step');
+  assert.deepEqual(steps.map((s) => s.classes.includes('hot')), [false, false, false, false, true, false]);
+  assert.deepEqual(steps.map((s) => s.attrs['aria-current'] ?? null), [null, null, null, null, 'step', null]);
+  const both = findAll(appRightZone(render({ hotStep: 1, pinnedStep: 4 })), (n) => n.attrs['data-part-item'] === 'plan-step');
+  assert.deepEqual(both.map((s) => s.classes.includes('hot')), [false, true, false, false, true, false]);
 });
 
 test('the old Plans markup is gone', () => {
@@ -314,4 +338,110 @@ test('the card shows the mockup text M5 derives', () => {
   const reject = find(zone, (n) => partOf(n) === 'plan-reject')!;
   assert.equal(reject.attrs['aria-label'], 'Reject');
   assert.equal(textOf(reject), '');
+});
+
+// ---- m5b-ui-plan-metadata: the agent row, the plan's title and intent (UI redesign 4.4, 4.3, 3.0)
+
+// The mockup's markup of a part, evaluated from mockup.html (lines 306, 311, 312).
+function mockPart(id: string): Node {
+  const node = find(mockRightZone(), (n) => partOf(n) === id);
+  assert.ok(node, `the mockup has ${id}`);
+  assert.ok(MOCKUP.includes(`dp('${id}')`), `${id} is in mockup.html`);
+  return node;
+}
+
+const tree = (n: Node): unknown => ({ sig: sig(n), children: n.tag === 'svg' ? [] : n.children.map(tree) });
+
+test("the agent row, the title and the intent are the mockup's markup with real data", () => {
+  const zone = appRightZone(render());
+  for (const id of ['agent-row', 'plan-title', 'plan-intent']) {
+    const app = find(zone, (n) => partOf(n) === id);
+    assert.ok(app, `${id} is rendered`);
+    assert.deepEqual(tree(app), tree(mockPart(id)), id);
+  }
+  const row = find(zone, (n) => partOf(n) === 'agent-row')!;
+  assert.equal(row.tag, 'div');
+  assert.deepEqual(row.children.map(sig), ['span.av', 'span', 'span.live']);
+  assert.equal(row.children[0]!.children[0]!.tag, 'svg', 'the spark icon');
+  assert.deepEqual(row.children[0]!.children[0]!.classes, mockPart('agent-row').children[0]!.children[0]!.classes, 'the small icon');
+  assert.equal(textOf(row.children[1]!), 'mix-assistant · MCP');
+  assert.equal(textOf(row.children[1]!.children[0]!), 'mix-assistant');
+  assert.equal(textOf(row.children[2]!), 'connected · idle');
+  assert.equal(row.children[2]!.children[0]!.tag, 'i');
+  // In .card-h: after .top, before .sum.
+  const head = find(zone, (n) => partOf(n) === 'plan-head')!;
+  const order = head.children.map((n) => partOf(n));
+  assert.ok(order.indexOf('plan-meta') < order.indexOf('plan-title'));
+  assert.equal(order.indexOf('plan-intent'), order.indexOf('plan-title') + 1);
+  assert.equal(order.indexOf('plan-summary'), order.indexOf('plan-intent') + 1);
+  assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-title')!), TITLE);
+  assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-intent')!), INTENT);
+  // The history rows read the mockup's titles.
+  assert.deepEqual(
+    findAll(zone, (n) => n.classes.includes('hrow')).map((r) => textOf(r.children[0]!)),
+    ['Tame the low end', 'Double the lead vocal', 'Trim silence on drums'],
+  );
+});
+
+function assertEmptyBox(app: Node | undefined, cls: string) {
+  assert.ok(app, `.${cls} is there`);
+  assert.deepEqual(app.classes, [cls], cls);
+  assert.equal(app.attrs['aria-hidden'], 'true', `${cls}: hidden from assistive technology`);
+  for (const attr of ['role', 'tabindex', 'data-part', 'data-part-item']) assert.ok(!(attr in app.attrs), `${cls} has no ${attr}`);
+  assert.equal(app.children.length, 0, `${cls} is empty`);
+  assert.equal(textOf(app), '', `${cls} has no text`);
+}
+
+test('against capabilities without planMetadata and agents the three parts are absent and their boxes stay empty', () => {
+  const markup = render({}, REDUCED);
+  const zone = appRightZone(markup);
+  for (const id of ['agent-row', 'plan-title', 'plan-intent']) assert.ok(!markup.includes(`"${id}"`), `no ${id} id`);
+  assertEmptyBox(find(zone, (n) => n.classes.includes('agent-row-empty')), 'agent-row-empty');
+  assertEmptyBox(find(zone, (n) => n.classes.includes('plan-title-empty')), 'plan-title-empty');
+  assertEmptyBox(find(zone, (n) => n.classes.includes('plan-intent-empty')), 'plan-intent-empty');
+  // In the places of the parts: the row's box after the tab row, the boxes after .top.
+  const kids = appChildren(zone);
+  assert.ok(kids[1]!.classes.includes('agent-row-empty'), "the agent row's box follows the tab row");
+  const head = find(zone, (n) => partOf(n) === 'plan-head')!;
+  const at = head.children.findIndex((n) => n.classes.includes('plan-title-empty'));
+  assert.ok(at > 0);
+  assert.ok(head.children[at + 1]!.classes.includes('plan-intent-empty'));
+  assert.equal(partOf(head.children[at + 2]!), 'plan-summary');
+  assert.ok(!markup.includes(TITLE) && !markup.includes('mix-assistant'), 'nothing of the metadata is shown');
+  // The history rows name the plans as in M5.
+  const titles = findAll(zone, (n) => n.classes.includes('hrow')).map((r) => textOf(r.children[0]!));
+  assert.ok(!titles.includes('Tame the low end'), JSON.stringify(titles));
+});
+
+function untitled(): PlanEntry[] {
+  const plans = mockupPlans();
+  const raw: Record<string, unknown> = { ...plans[3]!.raw };
+  delete raw.title;
+  delete raw.intent;
+  plans[3] = planEntry(raw)!;
+  return plans;
+}
+
+test('a plan without a title shows its first step in the h3, and its intent box stays empty', () => {
+  const zone = appRightZone(render({ plans: untitled() }));
+  const title = find(zone, (n) => partOf(n) === 'plan-title')!;
+  assert.equal(title.tag, 'h3');
+  assert.match(textOf(title), /Add track/);
+  assert.ok(!find(zone, (n) => partOf(n) === 'plan-intent'), 'no intent');
+  assert.equal(findAll(zone, (n) => n.tag === 'p' && n.attrs['data-part'] === 'plan-intent').length, 0);
+  assertEmptyBox(find(zone, (n) => n.classes.includes('plan-intent-empty')), 'plan-intent-empty');
+});
+
+test('with features.agents and no agent the row reads "No agent connected"', () => {
+  const zone = appRightZone(render({ agent: null }));
+  const row = find(zone, (n) => partOf(n) === 'agent-row')!;
+  assert.ok(row, 'the row is there');
+  assert.ok(row.classes.includes('agent'));
+  assert.match(textOf(row), /No agent connected/);
+  assert.ok(!find(row, (n) => n.tag === 'b'), 'no name');
+  // A disconnected agent: the row says so, with the app's modifier on .live.
+  const gone = appRightZone(render({ agent: { ...MOCKUP_AGENT, connected: false } }));
+  const live = find(find(gone, (n) => partOf(n) === 'agent-row')!, (n) => n.classes.includes('live'))!;
+  assert.deepEqual(live.classes, ['live', 'off']);
+  assert.equal(textOf(live), 'disconnected · idle');
 });

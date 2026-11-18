@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import type { Locale } from '../../src/renderer/i18n/locale';
 import { planArrivedMessage } from '../../src/renderer/i18n/messages';
 import { engineClient } from './support/engine-client';
-import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
+import { Agent, agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 const SIZES = [
   { width: 1440, height: 900 },
@@ -33,9 +33,13 @@ const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^
 // The project zone toolbar (m5-ui-port-toolbar): the tools, the snap, grid
 // type and auto-scroll fields, the info line's fields and the open Pool.
 const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testid=media-pool] .pool-head, [data-testid^=pool-]';
+// The ghosts (m5b-ui-ghosts): the toolbar's proposal pill and its Ghosts
+// toggle, the steps' target buttons, the proposed track's header labels and
+// the proposed strip's NEW · STEP label.
+const GHOSTS = '.overlaypill, .overlaypill .tog, .step .go, .th.ghost .r1 > span, .th.ghost .r2 > span, .strip.ghost .btns > span';
 // The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -155,6 +159,10 @@ test('no labelled control overflows or wraps its label in any locale at either w
     await expect(page.getByTestId(id)).toBeVisible();
   }
   await expect(page.locator('[data-part="plan-summary"] > span')).toHaveCount(3);
+  // m5b-ui-ghosts: the plan under review is reviewable, so its pill ends the toolbar and its ghosts are drawn.
+  await expect(page.locator('[data-part="proposal-pill"]')).toBeVisible();
+  await expect(page.locator('[data-part="proposal-pill"] .tog')).toBeVisible();
+  await expect(page.locator('.step .go').first()).toBeVisible();
   // The track list (m5-ui-arrange) is in the check: its + button, M and S of
   // every header and the info line's fields (m5-ui-port-toolbar: .f, for
   // the selected clip) are labelled controls; the head's .add label and its
@@ -283,6 +291,129 @@ test('the start view and Studio Setup fit in every locale at either window size'
     await check('Studio Setup', locale);
     await page.getByTestId('setup-close').click();
     await expect(page.getByTestId('studio-setup')).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-plan-metadata: the agent row and a titled card with its intent, in
+// en, zh-TW and zh-CN, at 1440 px and with the right zone at its minimum
+// width. The row is one line (.agent is nowrap), so a long name ellipsises
+// inside its span instead of pushing the state off the row.
+test('the agent row and a titled card fit in every locale at 1440 px and at the right zone\'s minimum width', async () => {
+  test.setTimeout(120_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-agent-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize({ width: 1440, height: 900 });
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  // An agent with a long name.
+  const ready = await app.evaluate(() => (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } } }).__siannShell.current());
+  const named = new Agent(ready.port, ready.mcpToken);
+  await named.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mix-assistant for the whole chorus and the bridge', version: '1' } });
+  const plan = await named.tool('submit_plan', {
+    steps: MIX_PASS,
+    title: 'Lift the chorus',
+    intent: 'Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.',
+  });
+  await selectPlan(page, plan.hash as string);
+  const row = page.locator('[data-part="agent-row"]');
+  await expect(row.locator('b')).toHaveText('mix-assistant for the whole chorus and the bridge');
+  await expect(row).toHaveCSS('white-space', 'nowrap');
+  await expect(page.locator('[data-part="plan-title"]')).toBeVisible();
+  await expect(page.locator('[data-part="plan-intent"]')).toBeVisible();
+  const separator = page.getByTestId('separator-right');
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans']) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const edge of ['Enter', 'Home']) {
+      await separator.focus();
+      await page.keyboard.press(edge);
+      if (edge === 'Home') await expect(separator).toHaveAttribute('aria-valuenow', await separator.getAttribute('aria-valuemin') ?? '');
+      const report = await page.evaluate(() => {
+        const out: string[] = [];
+        const zone = document.querySelector<HTMLElement>('[data-region="right-zone"]')!;
+        const right = zone.getBoundingClientRect().right;
+        const agentRow = document.querySelector<HTMLElement>('[data-part="agent-row"]')!;
+        if (agentRow.scrollWidth > agentRow.clientWidth) out.push(`agent row ${agentRow.scrollWidth} > ${agentRow.clientWidth}`);
+        for (const el of agentRow.querySelectorAll<HTMLElement>(':scope > span')) {
+          if (el.getBoundingClientRect().right > right + 0.5) out.push(`agent row span "${el.textContent}" past the zone`);
+        }
+        const live = agentRow.querySelector<HTMLElement>('.live')!;
+        const rects = new Set([...live.getClientRects()].map((r) => Math.round(r.top)));
+        if (rects.size > 1) out.push('the state wraps');
+        for (const sel of ['[data-part="plan-title"]', '[data-part="plan-intent"]', '[data-part="plan-head"]']) {
+          const el = document.querySelector<HTMLElement>(sel)!;
+          if (el.scrollWidth > el.clientWidth) out.push(`${sel} ${el.scrollWidth} > ${el.clientWidth}`);
+        }
+        return out;
+      });
+      for (const entry of report) failures.push(`${locale} ${edge === 'Home' ? 'minimum' : '1440'}: ${entry}`);
+    }
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-inserts-master: the rack switch, the slot buttons (bypass, e,
+// Remove, the empty slot's +), the Inspector's Inserts section and the open
+// plugin picker fit in en, zh-TW and zh-CN at 1440x900. The slot's plugin
+// name ellipsises inside its box by design, so the check is on the controls.
+// A strip's slot shows its buttons while hovered: they are measured on the
+// hovered slot.
+const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
+const RACKS = '[data-part=mixer-racks] button, .slot.empty, .slot:hover button, .islot button, .islot.empty, [data-part=inspector-inserts] .sec-h';
+const PICKER = '.plugin-picker button, .plugin-picker .picker-format, .plugin-picker .picker-state';
+
+test('the rack switch, the slots, the Inspector\'s Inserts section and the picker fit in every locale', async () => {
+  test.skip(!PLUGIN, 'set SIANN_TEST_PLUGIN_CLAP');
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-inserts-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], env: { SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', '--plugin-dir', path.dirname(PLUGIN!)]) } });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  const registry = (await engine.call('plugin.registry')) as { plugins: Array<{ format: string; path: string }> };
+  const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(PLUGIN!))!;
+  await engine.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+  await engine.call('plugin.instantiate', { trackId: 'trk_keys', index: 0, descriptor: { format: install.format, path: install.path } });
+  engine.close();
+  await resize(SIZES[0]!);
+  await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)')).toHaveCount(1);
+  await page.getByTestId('track-header-trk_keys').click();
+  await expect(page.locator('[data-part="inspector-inserts"] .islot:not(.empty)')).toHaveCount(1);
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    const measure = (selector: string) => page.evaluate((selector) => {
+      const out: string[] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (el.getClientRects().length === 0) continue;
+        if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${(el.textContent ?? '').trim().slice(0, 40)}" ${el.scrollWidth} > ${el.clientWidth}`);
+        for (const node of el.childNodes) {
+          if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`${el.className} "${node.textContent.trim()}" wraps`);
+        }
+      }
+      return out;
+    }, selector);
+    await page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)').hover();
+    await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:hover button')).toHaveCount(3);
+    for (const entry of await measure(RACKS)) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+    await expect(page.getByTestId('plugin-picker')).toBeVisible();
+    await expect(page.getByTestId('picker-install').first()).toBeVisible();
+    for (const entry of await measure(PICKER)) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('picker-close').click();
+    await expect(page.getByTestId('plugin-picker')).toBeHidden();
   }
   expect(failures).toEqual([]);
 });

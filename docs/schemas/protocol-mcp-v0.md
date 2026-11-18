@@ -146,6 +146,9 @@ same JSON-RPC `id` runs against the session served now.
 | `locate` | `transport.locate` | propose | `{frames: "<decimal>"}` |
 | `set_cycle` | `transport.set_cycle` | propose | `{enabled}` |
 | `set_click` | `transport.set_click` | propose | `{enabled, gainMilliDb?}` |
+| `set_punch` | `transport.set_punch` | propose | `{in, out}` |
+| `set_preroll` | `transport.set_preroll` | propose | `{enabled, bars?}` |
+| `set_count_in` | `transport.set_count_in` | propose | `{enabled, bars?}` |
 | `engine_status` | `engine.status` | propose | `{}` |
 | `list_devices` | `engine.devices` | propose | `{}` |
 | `select_device` | `engine.select_device` | trusted | `{id, inputId?}` |
@@ -225,6 +228,14 @@ decision about files on their disk, and the UI offers it from `pendingTakes`
 one, so while a recording runs both are `scope_denied` under `propose` and run
 nothing. Stopped, they work as before; under `trusted` (and from the UI) they end
 the recording as the UI's stop does.
+
+`set_punch`, `set_preroll` and `set_count_in` (m5b-engine-punch-count-in, Protocol
+v0 item 34) wrap `transport.set_punch`, `transport.set_preroll` and
+`transport.set_count_in` one to one in the propose scope: they set engine state that
+shapes the next recording and start nothing (a change during a recording affects
+the next one), so a propose agent can prepare a punch-in that only `record`, which
+stays trusted, starts. Each returns the transport result, with `punch`, `preroll`
+and `countIn`.
 
 `submit_plan`'s `title` (at most 200 UTF-8 bytes, one line) and `intent` (at
 most 2,000 UTF-8 bytes) are the plan's metadata (m5b-engine-plan-metadata,

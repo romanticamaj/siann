@@ -518,7 +518,7 @@ function appStep(options) {
   if (!(options.selected || []).includes('native')) {
     const built = sequence([
       ['cmake', ['--preset', 'dev']],
-      ['cmake', ['--build', '--preset', 'dev', '--target', 'siann-engine', 'siann-cli', 'siann_hostile_plugin_CLAP']],
+      ['cmake', ['--build', '--preset', 'dev', '--target', 'siann-engine', 'siann-cli', 'siann_hostile_plugin_CLAP', 'siann_test_plugin_CLAP']],
     ], options);
     if (!built.ok) return built;
   }
@@ -547,6 +547,15 @@ function appStep(options) {
   if (fs.existsSync(desktopExe) && clap) {
     env.SIANN_DESKTOP_ENGINE_EXE = desktopExe;
     env.SIANN_TEST_PLUGIN_CLAP = clap;
+  }
+  // The insert racks' e2e (m5b-ui-inserts-master) runs on the core engine with
+  // siann_test_plugin's CLAP: the desktop build's where it exists, else the core
+  // build's (a file, its Debug/ copy, or the .clap bundle directory on macOS).
+  if (!env.SIANN_TEST_PLUGIN_CLAP) {
+    const coreClapDir = path.join(NATIVE, 'build', 'dev', 'libs', 'host_clap', 'test_plugin');
+    const coreClap = [path.join(coreClapDir, 'siann_test_plugin.clap'), path.join(coreClapDir, 'Debug', 'siann_test_plugin.clap')]
+      .find((candidate) => fs.existsSync(candidate));
+    if (coreClap) env.SIANN_TEST_PLUGIN_CLAP = coreClap;
   }
   // npm is a .cmd shim on Windows, which spawnSync runs only through cmd.exe.
   const npm = (args) => (isWindows ? run('cmd.exe', ['/d', '/c', 'npm', ...args], APP, env) : run('npm', args, APP, env));

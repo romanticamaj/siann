@@ -14,20 +14,26 @@ Transport::Transport(GraphDriver& driver, Butler& butler, Options options)
 void Transport::locate(std::int64_t target) {
     std::lock_guard lock(mutex_);
     const bool play = pending_ && pending_->play;
-    pending_ = Pending{++generation_, target, play, std::nullopt};
+    const CountIn countIn = pending_ ? pending_->countIn : CountIn{};
+    pending_ = Pending{++generation_, target, play, std::nullopt, countIn};
     butler_.seek(generation_, target);
 }
 
 void Transport::play() {
+    play(std::nullopt, CountIn{});
+}
+
+void Transport::play(std::optional<std::int64_t> from, CountIn countIn) {
     std::lock_guard lock(mutex_);
     if (playingLocked()) {
         return;
     }
-    if (pending_) {
+    if (pending_ && (!from || *from == pending_->target)) {
         pending_->play = true;  // the pending locate carries the start
+        pending_->countIn = countIn;
         return;
     }
-    pending_ = Pending{++generation_, positionLocked(), true, std::nullopt};
+    pending_ = Pending{++generation_, from.value_or(positionLocked()), true, std::nullopt, countIn};
     butler_.seek(generation_, pending_->target);
 }
 
@@ -105,7 +111,8 @@ std::size_t Transport::sendPendingLocked(std::chrono::steady_clock::time_point n
     if (!ready && !late) {
         return 0;
     }
-    if (!driver_.pushLocate(TransportCommand{pending_->generation, pending_->target, pending_->play})) {
+    if (!driver_.pushLocate(TransportCommand{pending_->generation, pending_->target, pending_->play,
+                                             pending_->play ? pending_->countIn : CountIn{}})) {
         return 0;  // transportInbox full: retry on the next tick
     }
     if (late) {
@@ -121,7 +128,8 @@ bool Transport::sentUnapplied() const noexcept {
 }
 
 bool Transport::playingLocked() const noexcept {
-    return driver_.playing() || (pending_ && pending_->play) || (sentUnapplied() && sent_->play);
+    return driver_.playing() || driver_.countingIn() || (pending_ && pending_->play) ||
+           (sentUnapplied() && sent_->play);
 }
 
 std::int64_t Transport::positionLocked() const noexcept {

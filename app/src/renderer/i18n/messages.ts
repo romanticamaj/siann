@@ -9,6 +9,12 @@ export function planArrivedMessage(locale: Locale, params: { readonly steps: num
   return translator(locale)('toast.planArrived', { steps: params.steps });
 }
 
+// A titled plan's arrival (m5b-ui-plan-metadata): the title is the agent's
+// text, passed in already isolated (plans/isolate.ts, isolateName).
+export function planArrivedTitledMessage(locale: Locale, params: { readonly title: string }): string {
+  return translator(locale)('toast.planArrivedTitled', { title: params.title });
+}
+
 export function reconnectedMessage(locale: Locale, params: { readonly revision: string }): string {
   return translator(locale)('toast.reconnected', { revision: params.revision });
 }

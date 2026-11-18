@@ -101,6 +101,8 @@ export const COMMAND_IDS = [
   'project.openRecent.9',
   'project.openRecent.10',
   'studio.setup',
+  // The plan review (m5b-ui-ghosts; spec 4.2): the proposal pill's toggle, the ghosts on and off.
+  'plans.toggleGhosts',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

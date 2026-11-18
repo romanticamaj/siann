@@ -61,7 +61,17 @@ export interface Layout {
   readonly timeFormat: TimeFormat;
   // Snap on / off (J) and the grid type (m5-ui-edit-basics).
   readonly snap: SnapSettings;
+  // The rack switches of the lower zone's tab row (mixer-racks; m5b-ui-inserts-master,
+  // UI redesign 3.4): whether the strips' rack row shows the insert racks.
+  readonly racks: RackSwitches;
 }
+
+export interface RackSwitches {
+  readonly inserts: boolean;
+}
+export type Rack = keyof RackSwitches;
+const RACKS: readonly Rack[] = ['inserts'];
+const DEFAULT_RACKS: RackSwitches = Object.freeze({ inserts: true });
 
 export interface ShellState {
   readonly layout: Layout;
@@ -100,7 +110,9 @@ export type ViewAction =
   // F or the auto-scroll button: toggle, or set `enabled`.
   | { readonly type: 'autoScroll'; readonly enabled?: boolean }
   // The period key: the primary and the secondary format change places.
-  | { readonly type: 'exchangeFormats' };
+  | { readonly type: 'exchangeFormats' }
+  // A rack switch: flipped, or set with `visible`.
+  | { readonly type: 'rack'; readonly rack: Rack; readonly visible?: boolean };
 
 // The track list boundary and the lane heights (m5-ui-arrange): no zone, no viewport.
 export type TrackListAction =
@@ -170,6 +182,7 @@ export const DEFAULT_LAYOUT: Layout = Object.freeze({
   autoScroll: true,
   timeFormat: 'bars',
   snap: DEFAULT_SNAP,
+  racks: DEFAULT_RACKS,
 });
 
 function isZone(zone: unknown): zone is Zone {
@@ -286,7 +299,7 @@ function reduceTrackList(state: ShellState, action: TrackListAction): ShellState
 }
 
 function isViewAction(action: ShellAction): action is ViewAction {
-  return action.type === 'autoScroll' || action.type === 'exchangeFormats';
+  return action.type === 'autoScroll' || action.type === 'exchangeFormats' || action.type === 'rack';
 }
 
 function reduceView(state: ShellState, action: ViewAction): ShellState {
@@ -297,6 +310,11 @@ function reduceView(state: ShellState, action: ViewAction): ShellState {
     }
     case 'exchangeFormats':
       return withLayout(state, { timeFormat: state.layout.timeFormat === 'bars' ? 'seconds' : 'bars' });
+    case 'rack': {
+      if (!RACKS.includes(action.rack)) return state;
+      const visible = action.visible ?? !state.layout.racks[action.rack];
+      return visible === state.layout.racks[action.rack] ? state : withLayout(state, { racks: { ...state.layout.racks, [action.rack]: visible } });
+    }
   }
 }
 
@@ -403,6 +421,7 @@ export function serializeLayout(layout: Layout): string {
     autoScroll: layout.autoScroll,
     timeFormat: layout.timeFormat,
     snap: layout.snap,
+    racks: layout.racks,
   });
 }
 
@@ -411,6 +430,13 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 // The snap state: each field falls back to its default on its own.
+// The rack switches: each falls back to its default on its own.
+function parseRacks(value: unknown): RackSwitches {
+  const racks = record(value);
+  if (!racks) return DEFAULT_RACKS;
+  return { inserts: typeof racks.inserts === 'boolean' ? racks.inserts : DEFAULT_RACKS.inserts };
+}
+
 function parseSnap(value: unknown): SnapSettings {
   const snap = record(value);
   if (!snap) return DEFAULT_SNAP;
@@ -465,6 +491,7 @@ export function parseLayout(text: string | null): Layout {
     autoScroll: typeof object.autoScroll === 'boolean' ? object.autoScroll : DEFAULT_LAYOUT.autoScroll,
     timeFormat: object.timeFormat === 'seconds' || object.timeFormat === 'bars' ? object.timeFormat : DEFAULT_LAYOUT.timeFormat,
     snap: parseSnap(object.snap),
+    racks: parseRacks(object.racks),
   };
 }
 
@@ -482,6 +509,7 @@ export function viewFor(
     autoScroll: layout.autoScroll,
     timeFormat: layout.timeFormat,
     snap: layout.snap,
+    racks: layout.racks,
     trackHeights: (sessionId !== null ? layout.trackHeights[sessionId] : undefined) ?? {},
   };
 }

@@ -19,6 +19,7 @@
 // renderer stays disconnected. Under SIANN_SHELL_TEST=1
 // (the preload's window.siannTest) the timeline's test hooks are
 // window.__siannTimeline, the mixer's meter canvas is window.__siannMeters,
+// the plan review's ghosts are window.__siannGhosts (m5b-ui-ghosts),
 // the locale store is window.__siannLocale (which accepts the pseudo-locale),
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
@@ -59,7 +60,10 @@ import { ConnectionPhaseStore } from './model/connection-phase';
 import { EngineStatusStore } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
+import { AgentStore } from './model/agents';
 import { PlanStore } from './model/plan-store';
+import { ReviewStore } from './model/review-store';
+import type { Ghost } from './plans/ghosts';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { UndoHistory } from './model/undo-history';
 import { SessionClient, type AnsweredRequest, type EngineEndpoint, type SentRequest, type SocketLike, type TestEnvironment } from './model/session-client';
@@ -74,6 +78,8 @@ import { announceReconnects, ToastStore } from './shell/toast-store';
 import { setCommitSink } from './shell/Counted';
 import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
+import { PickerController } from './mixer/picker';
+import { PluginActions } from './model/plugin-actions';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
@@ -115,6 +121,8 @@ declare global {
       answered(): ReadonlyArray<AnsweredRequest>;
     };
     __siannMeters?: MeterTestHooks;
+    // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
+    __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
     // React commits under each <Counted id> (profiling bundle only).
@@ -169,6 +177,21 @@ const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
+// The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
+const agents = new AgentStore();
+agents.attach(client);
+// The plan under review, its preview and its ghosts (m5b-ui-ghosts).
+const review = new ReviewStore({ client, plans });
+if (testHooks) {
+  window.__siannGhosts = {
+    list: () => review.ghosts(),
+    ticked: () => {
+      const ticked = review.getSnapshot().ticked;
+      return ticked === null ? null : [...ticked].sort((a, b) => a - b);
+    },
+    outline: () => review.outlineStep(),
+  };
+}
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
 
@@ -196,6 +219,10 @@ const loopClick = new LoopClickController({
   toasts,
   locale: () => locales.getSnapshot(),
 });
+
+// The insert racks (m5b-ui-inserts-master): the plugin methods, the picker an empty slot opens, and engine.status for each slot's state.
+const pluginActions = new PluginActions({ client, toasts, locale: () => locales.getSnapshot() });
+const inserts = { actions: pluginActions, picker: new PickerController({ actions: pluginActions }), status: engineStatus };
 
 let endpoint: EngineEndpoint | null = null;
 const peaks = new PeaksCache({
@@ -300,6 +327,8 @@ const app = (
     realtime={realtime}
     peaks={peaks}
     plans={plans}
+    agents={agents}
+    review={review}
     engineStatus={engineStatus}
     layout={layout}
     commands={commands}
@@ -314,6 +343,7 @@ const app = (
     project={project}
     saved={saved}
     studioSetup={studioSetup}
+    inserts={inserts}
   />
 );
 createRoot(container).render(

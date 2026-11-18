@@ -69,6 +69,7 @@ import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zo
 import type { Phase } from '../model/connection-phase';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
+import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { bindLoopClickCommands, type LoopClickController } from '../model/loop-click';
 import { bindTransportCommands, type TransportController } from '../model/transport';
@@ -83,6 +84,8 @@ import {
 } from './layout';
 import { useShellState, type LayoutStore } from './layout-store';
 import { Hold } from './Hold';
+import { useCapabilities } from './Capable';
+import { pluginsListed } from '../mixer/inserts';
 import { Icon } from './icons';
 import { StatusBar } from './StatusBar';
 import type { ToastStore } from './toast-store';
@@ -171,6 +174,9 @@ export function useViewport(): Viewport {
 export interface ShellProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // The plan review (m5b-ui-ghosts): Ctrl+Alt+G toggles its ghosts, and a
+  // located step or a clicked ghost shows the MixConsole or the Plans tab.
+  readonly review?: ReviewStore;
   // engine.status as last polled, for the status bar.
   readonly engineStatus: EngineStatusSource;
   readonly store: LayoutStore;
@@ -359,6 +365,7 @@ function ZoneSeparator({
 export function Shell({
   client,
   plans,
+  review,
   engineStatus,
   store,
   commands,
@@ -381,6 +388,7 @@ export function Shell({
   onStudioSetup,
 }: ShellProps) {
   const t = useT();
+  const can = useCapabilities();
   const viewport = useViewport();
   const state = useShellState(store);
   const effective: EffectiveLayout = useMemo(() => effectiveLayout(state, viewport), [state, viewport]);
@@ -472,6 +480,20 @@ export function Shell({
     ];
     return () => offs.forEach((off) => off());
   }, [commands, dispatch, focusZone, isVisible]);
+
+  // The plan review (m5b-ui-ghosts; UI redesign 4.2): Ctrl+Alt+G, and the zones a reveal asks for.
+  useEffect(() => {
+    if (!review) return undefined;
+    const offToggle = commands.register('window', 'plans.toggleGhosts', () => review.toggleGhosts());
+    const offReveal = review.onReveal(({ mixer, plans: toPlans }) => {
+      if (mixer) dispatch((viewport) => ({ type: 'openTab', zone: 'lower', tab: 'mixconsole', viewport }));
+      if (toPlans) dispatch((viewport) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport }));
+    });
+    return () => {
+      offToggle();
+      offReveal();
+    };
+  }, [commands, dispatch, review]);
 
   // The transport, undo and redo; the position display's formats and auto-scroll.
   useEffect(() => {
@@ -567,9 +589,16 @@ export function Shell({
     '--lower-zone-h': `${cell('lower')}px`,
   } as CSSProperties;
   // The lower zone's tab row is the mockup's .tabs (m5-ui-port-mixer-strip):
-  // the MixConsole tab with its icon and key. The Editor tab and the rack
-  // switches are m5b-ui-editor-channel's and m5b-ui-inserts-master's, and
-  // absent; they sit after the tab and at the row's end, so nothing moves.
+  // the MixConsole tab with its icon and key, the spacer, and the rack
+  // switches (mixer-racks; m5b-ui-inserts-master, UI redesign 3.4) at the
+  // row's end with one switch, Inserts, which shows and hides the strips'
+  // insert racks and is kept in siann.layout.v1. Routing and Sends join it
+  // with m5b-ui-sends-buses; Narrow and the menu the mockup draws there have
+  // no behaviour and are not rendered. On an engine without plugins the
+  // switches are not in the DOM and nothing replaces them: the row ends at its
+  // spacer (3.0). The Editor tab is m5b-ui-editor-channel's and absent; it
+  // sits after the MixConsole tab, so nothing moves.
+  const racksShown = pluginsListed(can);
   const lowerTabs = (
     <div className="tabs" role="tablist" data-part="lower-tabs">
       <button
@@ -584,6 +613,20 @@ export function Shell({
         <Icon name="sliders" small />
         {t('tab.mixconsole')} <kbd>{MIXCONSOLE_KEY}</kbd>
       </button>
+      <span className="spacer" />
+      {racksShown ? (
+        <span className="mixer-racks" data-part="mixer-racks" role="group" aria-label={t('racks.label')}>
+          <button
+            type="button"
+            className={`rack-switch${state.layout.racks.inserts ? ' on' : ''}`}
+            data-testid="rack-inserts"
+            aria-pressed={state.layout.racks.inserts}
+            onClick={() => store.dispatch({ type: 'rack', rack: 'inserts' })}
+          >
+            {t('racks.inserts')}
+          </button>
+        </span>
+      ) : null}
     </div>
   );
   // The right zone's tab row, the mockup's .p-head (m5-ui-port-plans;

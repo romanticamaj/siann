@@ -29,6 +29,7 @@ if(SIANN_BUILD_TESTS)
     tests/src_test.cpp
     tests/capture_bank_test.cpp
     tests/monitoring_test.cpp
+    tests/count_in_test.cpp
   )
   target_link_libraries(siann_realtime_tests PRIVATE siann::realtime siann::host_fake siann::media siann_rt_alloc_guard
                         siann::engine Catch2::Catch2WithMain)

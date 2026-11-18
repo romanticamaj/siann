@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { ClientState } from '../../src/renderer/model/session-client';
-import { PlanStore, type PlanClient, type PlanEvent } from '../../src/renderer/model/plan-store';
+import { planEntry, PlanStore, type PlanClient, type PlanEvent } from '../../src/renderer/model/plan-store';
 import { settle, until } from './support/fakes';
 
 const H1 = 'sha256:' + '1'.repeat(64);
@@ -298,4 +298,65 @@ test('a held plan that becomes rejected or approved is re-read with plan.status 
   client.emit(changed(H3, 'applied'));
   await settle();
   assert.equal(client.count('plan.status'), 2);
+});
+
+// m5b-ui-plan-metadata (E-7; UI redesign 4.5, "Rejection and split"): the
+// plan's title, intent and actor are kept, and plan.changed carries the
+// metadata and the note, so a rejection needs no request.
+test('planEntry keeps the title, the intent and the actor', () => {
+  const entry = planEntry(planObject(H1, 'validated', { title: 'Lift the chorus', intent: 'Bring the vocals forward.', actor: { kind: 'mcp', name: 'mix-assistant' } }))!;
+  assert.equal(entry.title, 'Lift the chorus');
+  assert.equal(entry.intent, 'Bring the vocals forward.');
+  assert.deepEqual(entry.actor, { kind: 'mcp', name: 'mix-assistant' });
+  const bare = planEntry(planObject(H2, 'validated', { title: 7, actor: { kind: 'robot' } }))!;
+  assert.equal(bare.title, undefined);
+  assert.equal(bare.intent, undefined);
+  assert.equal(bare.actor, undefined);
+});
+
+test('a plan.changed to rejected with its note updates the held plan with no plan.status or plan.list', async () => {
+  const store = new PlanStore({ now: () => 0 });
+  const client = await connected(store, () => [planObject(H1, 'validated')], (hash) => planObject(hash, 'rejected', { rejectionNote: 'from status' }));
+  const before = client.requests.length;
+  client.emit({
+    ...changed(H1, 'rejected'),
+    title: 'Lift the chorus',
+    intent: 'Bring the vocals forward.',
+    actor: { kind: 'mcp', name: 'mix-assistant' },
+    rejectionNote: 'Too wide for the verse',
+  });
+  await settle();
+  const entry = store.getSnapshot().byHash.get(H1)!;
+  assert.equal(entry.state, 'rejected');
+  assert.equal(entry.rejectionNote, 'Too wide for the verse');
+  assert.equal(entry.title, 'Lift the chorus');
+  assert.equal(entry.intent, 'Bring the vocals forward.');
+  assert.deepEqual(entry.actor, { kind: 'mcp', name: 'mix-assistant' });
+  assert.deepEqual(client.requests.slice(before), [], 'no request');
+});
+
+test('a rejected plan.changed without a note (an engine before E-7) still re-reads plan.status; approved always does', async () => {
+  const store = new PlanStore({ now: () => 0 });
+  const client = await connected(
+    store,
+    () => [planObject(H1, 'validated'), planObject(H2, 'validated')],
+    (hash) => (hash === H1 ? planObject(H1, 'rejected', { rejectionNote: 'old engine' }) : planObject(hash, 'approved', { approvedAt: '2026-11-14T12:00:00Z' })),
+  );
+  client.emit(changed(H1, 'rejected'));
+  await until(() => store.getSnapshot().byHash.get(H1)?.rejectionNote === 'old engine', 'the note from plan.status');
+  client.emit({ ...changed(H2, 'approved'), title: 'Tame the low end' });
+  await until(() => store.getSnapshot().byHash.get(H2)?.raw.approvedAt !== undefined, 'approvedAt');
+  assert.deepEqual(
+    client.requests.filter((r) => r.method === 'plan.status').map((r) => r.params.plan),
+    [H1, H2],
+  );
+});
+
+test('a plan.changed with new metadata and the same state updates the held plan', async () => {
+  const store = new PlanStore({ now: () => 0 });
+  const client = await connected(store, () => [planObject(H1, 'validated')], (hash) => planObject(hash, 'validated'));
+  client.emit({ ...changed(H1, 'validated'), title: 'Titled later' });
+  await settle();
+  assert.equal(store.getSnapshot().byHash.get(H1)!.title, 'Titled later');
+  assert.equal(client.count('plan.status'), 0);
 });

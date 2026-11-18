@@ -244,3 +244,66 @@ TEST_CASE("A checkpoint without the transport field means cycle off", "[session]
     CHECK(report.checkpointVerified);
     CHECK_FALSE(reopened.cycle());
 }
+
+// m5b-engine-punch-count-in (spec, "Session bundle"): the punch flags are engine
+// state written into the checkpoint's transport object with the cycle flag, by
+// every checkpoint write, and read back on open; absent means false.
+TEST_CASE("The punch flags round-trip in the checkpoint with the cycle flag", "[session][punch]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        CHECK(session.punch() == siann::session::PunchFlags{});
+        session.setPunch(siann::session::PunchFlags{true, false});
+        session.setCycle(true);
+        CHECK(session.punch() == siann::session::PunchFlags{true, false});
+        session.checkpoint();
+    }
+    const Value checkpoint = siann::json::parse(siann::io::readFile(dir.bundle() / "session.json"));
+    const Value* transport = checkpoint.find("transport");
+    REQUIRE(transport != nullptr);
+    CHECK(transport->find("cycle")->asBool());
+    REQUIRE(transport->find("punch") != nullptr);
+    CHECK(transport->find("punch")->find("in")->asBool());
+    CHECK_FALSE(transport->find("punch")->find("out")->asBool());
+    {
+        Session session = Session::open(dir.bundle());
+        CHECK(session.cycle());
+        CHECK(session.punch() == siann::session::PunchFlags{true, false});
+        // A toggle alone writes nothing.
+        session.setPunch(siann::session::PunchFlags{false, true});
+        closeSession(session);
+    }
+    {
+        Session session = Session::open(dir.bundle());
+        CHECK(session.punch() == siann::session::PunchFlags{true, false});
+        session.setPunch(siann::session::PunchFlags{false, true});
+        session.checkpoint();
+    }
+    CHECK(Session::open(dir.bundle()).punch() == siann::session::PunchFlags{false, true});
+}
+
+TEST_CASE("A checkpoint without punch reads both flags false", "[session][punch]") {
+    TempDir dir;
+    {
+        Session session = newSession(dir.bundle());
+        session.setPunch(siann::session::PunchFlags{true, true});
+        session.setCycle(true);
+        session.checkpoint();
+    }
+    // A checkpoint of m5-ui-engine-loop-click: transport {cycle} only.
+    Value checkpoint = siann::json::parse(siann::io::readFile(dir.bundle() / "session.json"));
+    Object members;
+    for (const auto& member : checkpoint.asObject()) {
+        if (member.first == "transport") {
+            members.emplace_back("transport", Value(Object{{"cycle", Value(true)}}));
+        } else {
+            members.push_back(member);
+        }
+    }
+    siann::io::writeFileAtomic(dir.bundle() / "session.json", siann::jcs::canonicalize(Value(std::move(members))) + "\n");
+    OpenReport report;
+    const Session reopened = Session::open(dir.bundle(), &report);
+    CHECK(report.checkpointVerified);
+    CHECK(reopened.cycle());
+    CHECK(reopened.punch() == siann::session::PunchFlags{});
+}

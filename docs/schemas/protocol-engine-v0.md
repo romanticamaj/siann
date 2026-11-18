@@ -1,6 +1,6 @@
 # Protocol engine v0
 
-The transport, status and device methods of the native protocol server, and what `session.open` and the bundle lock do in `siann-engine` (architecture spec, "siann-protocol", Protocol v0 items 16, 17, 18 and 22; "Process model"; "Session bundle"; m4-engine-device and m5-engine-sessions-devices). They reach the engine through `ServerOptions::transportPort` (`protocol::TransportPort`, implemented by `EngineHost` in `native/apps/engine`). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. Each is also an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)): `play`, `stop`, `locate`, `set_cycle`, `set_click`, `engine_status` and `list_devices` in the propose scope, `select_device` in the trusted scope. The recording methods (m5b-engine-record, Protocol v0 item 28) go through `ServerOptions::recordPort` (`protocol::RecordPort`, also implemented by `EngineHost`): see [Recording](#recording).
+The transport, status and device methods of the native protocol server, and what `session.open` and the bundle lock do in `siann-engine` (architecture spec, "siann-protocol", Protocol v0 items 16, 17, 18 and 22; "Process model"; "Session bundle"; m4-engine-device and m5-engine-sessions-devices). They reach the engine through `ServerOptions::transportPort` (`protocol::TransportPort`, implemented by `EngineHost` in `native/apps/engine`). Without a port they answer `not_supported`. Every method runs on the command thread, honours `expectedRevision` and the idempotency cache, and is listed in `engine.capabilities`' `methods`. Each is also an MCP tool ([Protocol MCP v0](protocol-mcp-v0.md)): `play`, `stop`, `locate`, `set_cycle`, `set_click`, `set_punch`, `set_preroll`, `set_count_in`, `engine_status` and `list_devices` in the propose scope, `select_device` in the trusted scope. The recording methods (m5b-engine-record, Protocol v0 item 28) go through `ServerOptions::recordPort` (`protocol::RecordPort`, also implemented by `EngineHost`): see [Recording](#recording).
 
 ## Transport
 
@@ -11,10 +11,13 @@ The transport, status and device methods of the native protocol server, and what
 | `transport.locate` | `{frames: "<decimal>"}` | `{playing, position, cycle, click}` |
 | `transport.set_cycle` | `{enabled: bool}` | `{playing, position, cycle, click}` |
 | `transport.set_click` | `{enabled: bool, gainMilliDb?: int}` | `{playing, position, cycle, click}` |
+| `transport.set_punch` | `{in: bool, out: bool}` | `{playing, position, cycle, click, punch, preroll, countIn}` |
+| `transport.set_preroll` | `{enabled: bool, bars?: int}` | `{playing, position, cycle, click, punch, preroll, countIn}` |
+| `transport.set_count_in` | `{enabled: bool, bars?: int}` | `{playing, position, cycle, click, punch, preroll, countIn}` |
 
 `position` is a decimal string of session frames, `cycle` a boolean and `click` `{enabled, gainMilliDb}`. A locate reports its target at once; the playhead reaches it when the butler is ready. Without a running device each answers `no_device` with the reason as the message. A `frames` that is missing or not a non-negative decimal string is `invalid_params`.
 
-Since m5b-engine-record every transport result also carries `recording` (a boolean) and `armed` (the armed track ids, in id order), and `transport.stop` ends a recording and commits it before it stops (see [Recording](#recording)).
+Since m5b-engine-record every transport result also carries `recording` (a boolean) and `armed` (the armed track ids, in id order), and `transport.stop` ends a recording and commits it before it stops (see [Recording](#recording)). Since m5b-engine-punch-count-in every transport result also carries `punch: {in, out}`, `preroll: {enabled, bars}` and `countIn: {enabled, bars}` ([Punch, pre-roll and count-in](#punch-pre-roll-and-count-in-m5b-engine-punch-count-in-protocol-v0-item-34)).
 
 ### Cycle and click (m5-ui-engine-loop-click, Protocol v0 item 26)
 
@@ -25,6 +28,24 @@ The locators themselves are document data, set with the command `session.set_loc
 `transport.changed {cycle, click: {enabled, gainMilliDb}}` is published to every subscribed connection when either value actually changes, whoever asked ([Protocol events v1](protocol-events-v1.md)); repeating the current value publishes nothing.
 
 The engine host keeps both flags across `engine.select_device`. The cycle flag is written into the bundle's checkpoint (`transport: {cycle}`) with every checkpoint write, and `session.open` takes the opened bundle's flag; the click state is not stored. `engine.capabilities` reports `features.locators: true` and `features.cycle`, `features.click` true when a transport port is present.
+
+### Punch, pre-roll and count-in (m5b-engine-punch-count-in, Protocol v0 item 34)
+
+Three engine states that shape the next recording (architecture spec, "Recording"). None creates a revision; each answers `not_supported` without a transport port and `no_device` without a running device, as `transport.set_cycle` does.
+
+- `transport.set_punch {in, out}`: two booleans, both required. The punch range is the document's `locators` entity, never a second range; with no locators the flags have no effect. With punch in on and the playhead before `left`, a recording starts capturing at `left` (playback runs from the playhead); with punch out on, it ends at `right` and playback runs on: the take holds exactly the input frames that land in `[left, right)`, to the sample, and auto monitoring switches at the same frames. At the punch-out the recording ends as `transport.record {enabled: false}` does (`endedBy: "stop"`, one revision).
+- `transport.set_preroll {enabled, bars?}`: when a recording starts from a stopped transport with pre-roll on, playback starts `bars` bars (four quarter notes each) before the record position on the tempo map, clamped at 0; capture still begins at the record position.
+- `transport.set_count_in {enabled, bars?}`: when a recording starts from a stopped transport with count-in on, the engine plays `bars` x 4 clicks with the transport held at the position playback starts from, then starts on the next beat within one sample. The count-in click sounds even when the metronome is off, at the click's gain, and never reaches a take or a render. `transport.stop` during it ends the recording with empty takes.
+
+`bars` is an integer in [1, 8]; omitted, the current value is kept (defaults: pre-roll 1, count-in 2). A missing or non-boolean flag, or a `bars` that is not an integer in range, is `invalid_params`. Every transport result and `engine.status` carry the three states:
+
+```json
+{"playing": false, "position": "0", "cycle": false, "click": {"enabled": false, "gainMilliDb": -12000},
+ "recording": false, "armed": [], "punch": {"in": true, "out": true},
+ "preroll": {"enabled": false, "bars": 1}, "countIn": {"enabled": true, "bars": 2}}
+```
+
+`transport.changed` carries all five fields and is published when any of them actually changes ([Protocol events v1](protocol-events-v1.md)). The engine host keeps the three states across `engine.select_device`; the punch flags are written into the checkpoint with the cycle flag (`transport: {cycle, punch: {in, out}}`) and `session.open` takes the opened bundle's; pre-roll and count-in are not stored. `engine.capabilities` lists the three methods and reports `features.punch`, `features.preroll` and `features.countIn`, true when `features.recording` is. Loop recording with one take per pass is not part of this (m6b-loop-takes).
 
 ### Master gain (m5b-engine-master, UI redesign E-11)
 
@@ -50,14 +71,15 @@ Params `{}`. Result:
 ```json
 {"device": {"id": "fake", "sampleRate": 48000, "bufferFrames": 256, "inputLatencyFrames": 256, "outputLatencyFrames": 256,
             "input": {"id": "fake", "channels": 2, "latencyFrames": 256}},
- "playing": false, "cycle": false, "recording": false, "armed": [], "monitorRoundTripFrames": 512, "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
+ "playing": false, "cycle": false, "recording": false, "armed": [], "punch": {"in": false, "out": false},
+ "preroll": {"enabled": false, "bars": 1}, "countIn": {"enabled": false, "bars": 2}, "monitorRoundTripFrames": 512, "click": {"enabled": false, "gainMilliDb": -12000}, "xruns": "0", "maxCallbackMicros": 0.0, "unmeasuredCallbacks": "0", "underruns": "0", "srcUnderruns": "0",
  "load": {"average": 0.12, "peak": 0.31},
  "plugins": [],
  "agents": [{"id": "agt_3f2a9c1d0b7e6a54", "name": "mix-assistant", "transport": "mcp", "connected": true,
              "lastAction": "submit_plan", "lastActionAt": "2026-11-15T10:00:05Z"}]}
 ```
 
-`device` is null when no device runs, and `deviceError {code, message}` then says why: `no_device`, `device_open_failed`, `device_lost`, `no_audio_backend` (a core-only build without `--device fake`), or a media code when the session's first graph could not be built (`media_missing`, `media_hash_mismatch`, `media_mismatch`, `unsupported_media`, `decode_failed`, `too_large`, `load_failed`). While that first graph could not be built the other methods still run: `proposal.merge` and `proposal.discard` act on the session directly, and only `audition.hear` answers `audition_unavailable`. `id` is `fake`, `<type>/<name>` or `default` (launched without `--device` and nothing selected since). The counters run from the device's start. `plugins` is in [Protocol plugins v0](protocol-plugins-v0.md). `device.input` (m5b-engine-record) is null while no input is open, otherwise the input's `id`, the channels the device opened and its input latency in frames; `recording` and `armed` are the record state's ([Recording](#recording)). `monitorRoundTripFrames` (m5b-engine-monitoring) is what a monitored input takes from the device input to the device output, in session frames, or null while no input is open ([Monitoring](#monitoring)).
+`device` is null when no device runs, and `deviceError {code, message}` then says why: `no_device`, `device_open_failed`, `device_lost`, `no_audio_backend` (a core-only build without `--device fake`), or a media code when the session's first graph could not be built (`media_missing`, `media_hash_mismatch`, `media_mismatch`, `unsupported_media`, `decode_failed`, `too_large`, `load_failed`). While that first graph could not be built the other methods still run: `proposal.merge` and `proposal.discard` act on the session directly, and only `audition.hear` answers `audition_unavailable`. `id` is `fake`, `<type>/<name>` or `default` (launched without `--device` and nothing selected since). The counters run from the device's start. `plugins` is in [Protocol plugins v0](protocol-plugins-v0.md). `device.input` (m5b-engine-record) is null while no input is open, otherwise the input's `id`, the channels the device opened and its input latency in frames; `recording` and `armed` are the record state's ([Recording](#recording)); `punch`, `preroll` and `countIn` are the transport results' (m5b-engine-punch-count-in). `monitorRoundTripFrames` (m5b-engine-monitoring) is what a monitored input takes from the device input to the device output, in session frames, or null while no input is open ([Monitoring](#monitoring)).
 
 `agents` (m5b-engine-plan-metadata, Protocol v0 item 29) lists the MCP sessions in the order they initialized, each `{id, name, transport: "mcp", connected, lastAction, lastActionAt}`: `id` is `agt_<hex>`, never the `Mcp-Session-Id`; `name` the sanitised `clientInfo.name` (`"MCP client"` without one); `connected` is true from `initialize` until `DELETE /v0/mcp` or `limits.agentIdleMs` without a request (the next request connects it again); `lastAction` is the name of the tool last executed for it and `lastActionAt` the server's ISO time then, both null before its first tool call. Arguments are never recorded. At most `limits.agentsRetained` (32) are kept ([Protocol MCP v0](protocol-mcp-v0.md), Agents). Every change is announced by `agent.changed` ([Protocol events v1](protocol-events-v1.md)). `engine.capabilities` reports `features.agents` true when a transport port is present (the condition of `engine.status`), and `features.planMetadata: true`.
 

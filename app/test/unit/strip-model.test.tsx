@@ -126,7 +126,7 @@ test('a strip holds pan, M S, the fader with its meter, level and peak values, t
   assert.equal(attr(html, 'pan-trk_a', 'aria-valuetext'), 'C');
 });
 
-test('strips follow trackOrder; the master strip exists only with a master legend entry and has no controls', () => {
+test('strips follow trackOrder; the master strip exists only with a master legend entry, with its fader and no other control', () => {
   const html = mixer(fakeClient(snapshot()));
   const b = html.indexOf('data-testid="mixer-strip-trk_b"');
   const a = html.indexOf('data-testid="mixer-strip-trk_a"');
@@ -136,7 +136,16 @@ test('strips follow trackOrder; the master strip exists only with a master legen
   const masterHtml = html.slice(master);
   assert.ok(masterHtml.includes('data-testid="meter-master"'));
   assert.ok(masterHtml.includes('data-testid="peak-value-master"'));
-  for (const id of ['fader-master', 'pan-master', 'mute-master', 'solo-master']) assert.ok(!html.includes(`data-testid="${id}"`), id);
+  // m5b-ui-inserts-master: the master's fader, bound to master:master (0 dB while absent), and its level.
+  assert.equal(attr(html, 'fader-master', 'role'), 'slider');
+  assert.equal(attr(html, 'fader-master', 'aria-valuenow'), '0');
+  assert.equal(attr(html, 'fader-master', 'data-position'), '0.75');
+  assert.equal(textOf(html, 'fader-value-master'), '0.0 dB');
+  const order = ['fader-master', 'meter-master', 'fader-value-master', 'peak-value-master'].map((id) => html.indexOf(`data-testid="${id}"`));
+  for (let i = 1; i < order.length; i += 1) assert.ok(order[i - 1]! < order[i]!, 'fader, meter, level, peak');
+  for (const id of ['pan-master', 'mute-master', 'solo-master']) assert.ok(!html.includes(`data-testid="${id}"`), id);
+  const reduced = mixer(fakeClient(snapshot()), REDUCED);
+  for (const id of ['fader-master', 'fader-value-master']) assert.ok(!reduced.includes(`data-testid="${id}"`), `${id} without features.masterGain`);
   assert.ok(html.includes('data-testid="mixer-meters"'), 'the one meter canvas');
   assert.equal((html.match(/<canvas/g) ?? []).length, 1, 'exactly one canvas');
 

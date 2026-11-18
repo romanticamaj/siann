@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "siann/command/command.hpp"
+#include "siann/engine/offline.hpp"
 #include "siann/engine_app/engine_host.hpp"
 #include "siann/hash/json.hpp"
 #include "siann/host/manual_audio_device.hpp"
@@ -188,6 +189,7 @@ struct RecordRig {
     void openInput() {
         host->selectDeviceWithInput("manual", std::string("manual"));
         device = made.back();
+        frames = 0;
     }
 
     playback::PlaybackEngine& engine() { return host->playback(); }
@@ -205,9 +207,10 @@ struct RecordRig {
         REQUIRE_FALSE(engine().transport().pendingLocate());
     }
 
-    void pump(int blocks) {
+    void pump(int blocks, std::vector<float>* capture = nullptr) {
         for (int b = 0; b < blocks; ++b) {
-            device->pump(1);
+            device->pump(1, capture);
+            frames += kBlock;
             service();
         }
     }
@@ -227,6 +230,9 @@ struct RecordRig {
     }
 
     std::size_t revisions() const { return fixture.session.history().revisions().size(); }
+
+    // Device frames pumped on `device` since openInput() (an input generator's frame).
+    std::int64_t frames = 0;
 };
 
 std::string codeOf(const std::function<void()>& call) {
@@ -1121,5 +1127,449 @@ TEST_CASE("a track removed on a path that did not refuse it: the other takes com
     SECTION("trashed") {
         CHECK(rig.host->recoverTake(orphan, false, std::nullopt, "user", "t").trashed);
         CHECK(rig.host->pendingTakes().empty());
+    }
+}
+
+// ---- punch, pre-roll and count-in (m5b-engine-punch-count-in) --------------------
+//
+// Spec, "Recording" (punch, pre-roll and count-in) and "Click". The punch range is
+// the document's locators. With an input generator the device's input frame d is
+// known for every captured sample: the transport starts at device frame `started`
+// at playhead P, so stamp s is device frame started + s - P, and a take sample at
+// timeline t has stamp t + recordOffset.
+
+namespace {
+
+constexpr std::int64_t kOffset = kInputLatency + kOutputLatency;  // the record offset, no latent insert
+constexpr std::int64_t kBar = 96'000;                             // 120 BPM at 48 kHz
+
+std::string setLocators(std::int64_t left, std::int64_t right) {
+    return R"({"op":"session.set_locators","left":")" + std::to_string(left) + R"(","right":")" +
+           std::to_string(right) + R"("})";
+}
+
+// Every device frame distinct and exact in float.
+float ramp(int channel, std::int64_t frame) {
+    const float v = static_cast<float>(frame % 65'536 + 1) / 65'536.0f;
+    return channel == 0 ? v : -v;
+}
+
+// Pumps one block at a time until the playhead leaves `from`; returns the device
+// frame the transport started at (mid-callback after a count-in).
+std::int64_t pumpUntilStarted(RecordRig& rig, std::int64_t from, std::vector<float>* capture = nullptr,
+                              int limit = 4'000) {
+    for (int i = 0; i < limit; ++i) {
+        rig.pump(1, capture);
+        const std::int64_t position = rig.engine().driver().playhead();
+        if (position != from) {
+            return rig.frames - (position - from);
+        }
+    }
+    FAIL("the transport never started");
+    return -1;
+}
+
+// Pumps until the recording has ended on its own (the punch-out, on the host's tick).
+void pumpUntilEnded(RecordRig& rig, std::vector<float>* capture = nullptr, int limit = 4'000) {
+    for (int i = 0; i < limit && rig.host->recordState().recording; ++i) {
+        rig.pump(1, capture);
+    }
+    REQUIRE_FALSE(rig.host->recordState().recording);
+}
+
+media::AudioBuffer takeAudio(const RecordRig& rig, const model::Clip& clip) {
+    const model::Media* media = rig.fixture.doc().media(clip.mediaId);
+    REQUIRE(media != nullptr);
+    return readMedia(rig, *media);
+}
+
+}  // namespace
+
+TEST_CASE("a take recorded with punch in and out holds exactly the frames between the locators",
+          "[engine][record][punch]") {
+    const std::uint64_t violations = rt::allocationViolations();
+    SECTION("generated input, compared sample by sample") {
+        constexpr std::int64_t kLeft = 30'011;
+        constexpr std::int64_t kRight = 50'027;
+        constexpr std::int64_t kFrom = 20'000;
+        RecordRig rig;
+        rig.openInput();
+        rig.device->setInputGenerator(&ramp);
+        rig.exec(setLocators(kLeft, kRight));
+        const protocol::TransportState punched = rig.host->setPunch(true, true);
+        CHECK(punched.punch == protocol::PunchState{true, true});
+        rig.host->arm("trk_mono", true);
+        rig.host->locate(kFrom);
+        rig.settle();
+        rig.pump(1);
+        const std::size_t before = rig.revisions();
+
+        CHECK(rig.host->record(true).recording);
+        rig.settle();
+        const std::int64_t started = pumpUntilStarted(rig, kFrom);
+        const std::string takeId = rig.host->recordState().takes[0].takeId;
+        pumpUntilEnded(rig);
+
+        // Ended by the punch-out as record(false) ends it: one revision, playback on.
+        const protocol::RecordState ended = rig.host->recordState();
+        REQUIRE(ended.takes.size() == 1);
+        CHECK(ended.takes[0].endedBy == std::optional<std::string>("stop"));
+        CHECK(rig.revisions() == before + 1);
+        CHECK(rig.host->transportState().playing);
+        const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+        REQUIRE(clip != nullptr);
+        CHECK(clip->position.value == kLeft);
+        CHECK(clip->length == kRight - kLeft);
+        const media::AudioBuffer audio = takeAudio(rig, *clip);
+        REQUIRE(audio.info.frames == kRight - kLeft);
+        for (std::int64_t j = 0; j < audio.info.frames; ++j) {
+            const std::int64_t deviceFrame = started + (kLeft + kOffset + j) - kFrom;
+            if (audio.samples[static_cast<std::size_t>(j)] != ramp(0, deviceFrame)) {
+                FAIL("take sample " << j << " is not the input at device frame " << deviceFrame);
+            }
+        }
+    }
+    SECTION("a non-zero record offset through the loopback device") {
+        // The impulse plays at kImpulseAt and comes back kOffset frames later.
+        constexpr std::int64_t kLeft = 8'003;
+        constexpr std::int64_t kRight = 12'005;
+        RecordRig rig;
+        rig.openInput();
+        rig.exec(setLocators(kLeft, kRight));
+        rig.host->setPunch(true, true);
+        rig.host->arm("trk_mono", true);
+        rig.host->record(true);
+        rig.settle();
+        const std::string takeId = rig.host->recordState().takes[0].takeId;
+        pumpUntilEnded(rig);
+        const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+        REQUIRE(clip != nullptr);
+        CHECK(clip->position.value == kLeft);
+        CHECK(clip->length == kRight - kLeft);
+        CHECK(std::llabs(impulsePlacement(rig, takeId) - kImpulseAt) <= 1);
+    }
+    CHECK(rt::allocationViolations() == violations);
+}
+
+TEST_CASE("auto monitoring switches at the punch frames", "[engine][record][punch][monitor]") {
+    constexpr std::int64_t kLeft = 30'011;
+    constexpr std::int64_t kRight = 40'027;
+    constexpr std::int64_t kFrom = 20'000;
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator(&ramp);
+    rig.exec(setLocators(kLeft, kRight));
+    rig.exec(setMonitor("trk_mono", "auto"));
+    rig.host->setPunch(true, true);
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(kFrom);
+    rig.settle();
+    rig.pump(1);
+    rig.host->record(true);
+    rig.settle();
+    std::vector<float> out;
+    const std::int64_t first = rig.frames;  // out[0] is this device frame
+    const std::int64_t started = pumpUntilStarted(rig, kFrom, &out);
+    pumpUntilEnded(rig, &out);
+    rig.pump(4, &out);
+
+    // The input crossfades in at the first captured frame and back out at the first
+    // frame after the last, both inside a block.
+    const std::int64_t switchIn = started + kLeft + kOffset - kFrom - first;
+    const std::int64_t switchBack = started + kRight + kOffset - kFrom - first;
+    REQUIRE((first + switchIn) % kBlock != 0);
+    REQUIRE((first + switchBack) % kBlock != 0);
+    REQUIRE(static_cast<std::int64_t>(out.size()) > switchBack + kBlock);
+    const auto gainAt = [&](std::int64_t i) {
+        return out[static_cast<std::size_t>(i)] / ramp(0, first + i);
+    };
+    const float full = gainAt((switchIn + switchBack) / 2);
+    REQUIRE(full > 0.1f);
+    const float fade = static_cast<float>(kBlock);  // options.playback.fadeFrames
+    CHECK(out[static_cast<std::size_t>(switchIn - 1)] == 0.0f);
+    CHECK(std::fabs(gainAt(switchIn) - full / fade) < 1e-4f);
+    CHECK(std::fabs(gainAt(switchIn + 9) - full * 10.0f / fade) < 1e-4f);
+    CHECK(std::fabs(gainAt(switchBack - 1) - full) < 1e-4f);
+    CHECK(std::fabs(gainAt(switchBack) - full * (fade - 1.0f) / fade) < 1e-4f);
+}
+
+TEST_CASE("playback runs on after the punch-out and one revision is committed", "[engine][record][punch]") {
+    constexpr std::int64_t kRight = 20'003;
+    constexpr std::int64_t kFrom = 1'000;
+    RecordRig rig;
+    rig.openInput();
+    rig.exec(setLocators(5'000, kRight));
+    rig.host->setPunch(false, true);  // punch out only: capture starts at the playhead, as before
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(kFrom);
+    rig.settle();
+    rig.pump(1);
+    const std::size_t before = rig.revisions();
+    rig.host->record(true);
+    rig.settle();
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    pumpUntilEnded(rig);
+    CHECK(rig.revisions() == before + 1);
+    const std::int64_t at = rig.host->transportState().position;
+    rig.pump(20);
+    CHECK(rig.host->transportState().playing);
+    CHECK(rig.host->transportState().position == at + 20 * kBlock);
+    CHECK(rig.revisions() == before + 1);
+    CHECK_FALSE(rig.engine().driver().captureActive());
+    CHECK(rig.host->recordState().armed == std::vector<std::string>{"trk_mono"});
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == kFrom - kOffset);
+    CHECK(clip->position.value + clip->length == kRight);
+}
+
+TEST_CASE("pre-roll starts bars before the record position, clamped at 0, and the take starts at the record position",
+          "[engine][record][preroll]") {
+    const auto [from, expectedStart] = GENERATE(std::pair<std::int64_t, std::int64_t>{100'000, 100'000 - kBar},
+                                                std::pair<std::int64_t, std::int64_t>{50'000, 0});
+    INFO("record position " << from);
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator(&ramp);
+    CHECK(rig.host->setPreroll(true, 1).preroll == protocol::BarsState{true, 1});
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(from);
+    rig.settle();
+    rig.pump(1);
+    const protocol::TransportState started = rig.host->record(true);
+    CHECK(started.recording);
+    CHECK(started.position == expectedStart);
+    rig.settle();
+    const std::int64_t startFrame = pumpUntilStarted(rig, expectedStart);
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.pumpUntil(from + 10'000);
+    rig.host->record(false);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == from);
+    const media::AudioBuffer audio = takeAudio(rig, *clip);
+    REQUIRE(audio.info.frames > 0);
+    // Its first sample is the input that landed at the record position.
+    CHECK(audio.samples[0] == ramp(0, startFrame + (from + kOffset) - expectedStart));
+}
+
+TEST_CASE("a one-bar count-in then four bars gives a four-bar take that starts at the record position",
+          "[engine][record][countin]") {
+    constexpr std::int64_t kFrom = 48'000;
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator(&ramp);
+    rig.exec(setLocators(kFrom, kFrom + 4 * kBar));
+    rig.host->setPunch(false, true);
+    CHECK(rig.host->setCountIn(true, 1).countIn == protocol::BarsState{true, 1});
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(kFrom);
+    rig.settle();
+    rig.pump(1);
+    const std::int64_t requested = rig.frames;
+    rig.host->record(true);
+    rig.settle();
+    rig.pump(8);
+    // Held at the record position: the start is on its way.
+    CHECK(rig.engine().driver().countingIn());
+    CHECK(rig.host->transportState().playing);
+    CHECK(rig.host->transportState().position == kFrom);
+    const std::int64_t started = pumpUntilStarted(rig, kFrom);
+    // One bar of count-in from the callback the start reached the audio thread in.
+    CHECK(started == requested + kBar);  // 120 BPM: four beats of exactly 24000 frames
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    pumpUntilEnded(rig);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == kFrom);
+    CHECK(clip->length == 4 * kBar);
+    const media::AudioBuffer audio = takeAudio(rig, *clip);
+    CHECK(audio.samples[0] == ramp(0, started + kOffset));
+}
+
+TEST_CASE("punch in, pre-roll and count-in combine: playback starts at P or S, the take at R",
+          "[engine][record][punch][preroll][countin]") {
+    // Spec, "Recording" (b), (f) and (g): R = left with punch in and P < left, else
+    // P; pre-roll starts playback at S, computed from R; without pre-roll playback
+    // starts at the playhead P; a count-in holds the transport where playback starts.
+    struct Combination {
+        bool punchIn;
+        bool preroll;
+        bool countIn;
+    };
+    const Combination c = GENERATE(Combination{true, false, true}, Combination{true, true, false},
+                                   Combination{false, true, true}, Combination{true, true, true});
+    INFO("punch in " << c.punchIn << ", pre-roll " << c.preroll << ", count-in " << c.countIn);
+    constexpr std::int64_t kFrom = 120'000;  // P
+    constexpr std::int64_t kLeft = 150'000;  // on a tick, so S is exact
+    const std::int64_t recordAt = c.punchIn ? kLeft : kFrom;
+    const std::int64_t playFrom = c.preroll ? recordAt - kBar : kFrom;
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator(&ramp);
+    rig.exec(setLocators(kLeft, kLeft + 4 * kBar));
+    rig.host->setPunch(c.punchIn, false);
+    rig.host->setPreroll(c.preroll, 1);
+    rig.host->setCountIn(c.countIn, 1);
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(kFrom);
+    rig.settle();
+    rig.pump(1);
+    const std::int64_t requested = rig.frames;
+    CHECK(rig.host->record(true).position == playFrom);
+    rig.settle();
+    if (c.countIn) {
+        rig.pump(8);
+        // Held where playback starts from, not at R.
+        CHECK(rig.engine().driver().countingIn());
+        CHECK(rig.host->transportState().position == playFrom);
+    }
+    const std::int64_t started = pumpUntilStarted(rig, playFrom);
+    if (c.countIn) {
+        CHECK(started == requested + kBar);
+    }
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.pumpUntil(recordAt + kOffset + 10'000);
+    rig.host->record(false);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == recordAt);
+    const media::AudioBuffer audio = takeAudio(rig, *clip);
+    REQUIRE(audio.info.frames > 0);
+    // Its first sample is the input that landed at R, with playback from playFrom.
+    CHECK(audio.samples[0] == ramp(0, started + (recordAt + kOffset) - playFrom));
+}
+
+TEST_CASE("the count-in click is not in the take and not in an offline render", "[engine][record][countin][click]") {
+    constexpr std::int64_t kFrom = 60'000;  // the source's impulse is long past
+    RecordRig rig;
+    rig.openInput();  // loopback: whatever the device puts out comes back in
+    rig.host->setCountIn(true, 1);
+    CHECK_FALSE(rig.host->transportState().click.enabled);  // the metronome is off
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(kFrom);
+    rig.settle();
+    rig.pump(1);
+    const command::Revision before = rig.fixture.session.history().head();
+    rig.host->record(true);
+    rig.settle();
+    std::vector<float> out;
+    pumpUntilStarted(rig, kFrom, &out);
+    float clickPeak = 0.0f;
+    for (const float v : out) {
+        clickPeak = std::max(clickPeak, std::fabs(v));
+    }
+    CHECK(clickPeak > 0.01f);  // the count-in sounded at the device output
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.pumpUntil(kFrom + kBar);
+    rig.host->record(false);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == kFrom);
+    const media::AudioBuffer audio = takeAudio(rig, *clip);
+    REQUIRE(audio.info.frames > 0);
+    float takePeak = 0.0f;
+    for (const float v : audio.samples) {
+        takePeak = std::max(takePeak, std::fabs(v));
+    }
+    CHECK(takePeak == 0.0f);
+
+    // The committed session renders as it did before the recording.
+    const fs::path bundle = rig.fixture.session.bundlePath();
+    const model::Document& after = rig.fixture.doc();
+    const engine::RenderOptions range{0, kFrom + kBar, kBlock};
+    const media::AudioBuffer rendered = engine::renderOffline(after, engine::loadMedia(after, bundle), range);
+    const media::AudioBuffer plain = engine::renderOffline(before.document, engine::loadMedia(before.document, bundle), range);
+    CHECK(rendered.samples == plain.samples);
+}
+
+TEST_CASE("punch without locators records as before", "[engine][record][punch]") {
+    RecordRig rig;
+    rig.openInput();
+    rig.host->setPunch(true, true);
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(48'000);
+    rig.settle();
+    rig.host->record(true);
+    rig.settle();
+    rig.pump(200);  // no right locator: nothing ends it
+    CHECK(rig.host->recordState().recording);
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.host->record(false);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == 48'000 - kOffset);
+}
+
+TEST_CASE("cycle on: the recording still runs through, no second take", "[engine][record][punch][cycle]") {
+    RecordRig rig;
+    rig.openInput();
+    rig.exec(setLocators(2'003, 6'005));
+    rig.host->setCycle(true);
+    rig.host->setPunch(true, true);
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(1'000);
+    rig.settle();
+    rig.pump(1);
+    const std::size_t before = rig.revisions();
+    rig.host->record(true);
+    rig.settle();
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    pumpUntilEnded(rig);
+    // The wrap stayed suspended while the take captured; by the punch-out (right plus
+    // the record offset) the playhead is past the right locator, so it plays on.
+    CHECK(rig.engine().driver().cycleWraps() == 0);
+    rig.pump(100);
+    CHECK_FALSE(rig.host->recordState().recording);
+    CHECK(rig.revisions() == before + 1);
+    CHECK(rig.fixture.doc().clipsOnTrack("trk_mono").size() == 1);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == 2'003);
+    CHECK(clip->length == 6'005 - 2'003);
+}
+
+TEST_CASE("pre-roll and count-in apply only from a stopped transport; a stop during the count-in trashes the takes",
+          "[engine][record][preroll][countin]") {
+    SECTION("started while playing, capture begins at once") {
+        RecordRig rig;
+        rig.openInput();
+        rig.host->setPreroll(true, 1);
+        rig.host->setCountIn(true, 1);
+        rig.host->arm("trk_mono", true);
+        rig.host->locate(100'000);
+        rig.host->play();
+        rig.settle();
+        rig.pump(4);
+        const std::int64_t at = rig.host->transportState().position;
+        rig.host->record(true);
+        rig.pump(4);
+        CHECK_FALSE(rig.engine().driver().countingIn());
+        CHECK(rig.host->transportState().position == at + 4 * kBlock);  // no jump back
+        const std::string takeId = rig.host->recordState().takes[0].takeId;
+        rig.host->record(false);
+        const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+        REQUIRE(clip != nullptr);
+        CHECK(clip->position.value == at - kOffset);
+    }
+    SECTION("transport.stop during the count-in") {
+        RecordRig rig;
+        rig.openInput();
+        rig.host->setCountIn(true, 2);
+        rig.host->arm("trk_mono", true);
+        const std::size_t before = rig.revisions();
+        rig.host->record(true);
+        rig.settle();
+        rig.pump(20);
+        REQUIRE(rig.engine().driver().countingIn());
+        const std::string takeId = rig.host->recordState().takes[0].takeId;
+        const protocol::TransportState stopped = rig.host->stop();
+        CHECK_FALSE(stopped.recording);
+        CHECK_FALSE(stopped.playing);
+        rig.pump(4);
+        CHECK_FALSE(rig.engine().driver().countingIn());
+        CHECK(rig.host->transportState().position == 0);
+        CHECK(rig.revisions() == before);
+        CHECK(fs::exists(rig.fixture.session.bundlePath() / "trash" / (takeId + ".json")));
     }
 }

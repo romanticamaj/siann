@@ -16,11 +16,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { formatMilliDb } from '../../src/renderer/format';
 import { translator } from '../../src/renderer/i18n/t';
-import type { Capabilities } from '../../src/renderer/model/capabilities';
+import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import { PlanStore } from '../../src/renderer/model/plan-store';
 import { AuditionBanner } from '../../src/renderer/plans/AuditionBanner';
 import { HearingSwitch } from '../../src/renderer/plans/HearingSwitch';
+import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { isolateName } from '../../src/renderer/plans/isolate';
+import { planName } from '../../src/renderer/plans/plan-name';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { BRANCH, fakePlanClient, hashOf, MIX_STEPS, planObject } from './support/plans';
 
@@ -60,6 +62,26 @@ test('a heard branch shows a banner naming its plan, with Hear main, Merge and D
   for (const id of ['banner-hear-main', 'banner-merge', 'banner-discard']) assert.ok(!reduced.includes(id), id);
 });
 
+// m5b-ui-plan-metadata (UI redesign 4.3): a titled plan is named by its title.
+function titledHearing(title?: string): PlanStore {
+  const store = new PlanStore({ now: () => 0 });
+  store.fromList({ plans: [planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH, ...(title !== undefined ? { title } : {}) })] });
+  store.setHeard(BRANCH);
+  return store;
+}
+
+test('with features.planMetadata the banner names a titled plan by its title; M5 wording without it or without a title', () => {
+  const t = translator('en');
+  const titled = within(FULL, <AuditionBanner client={fakePlanClient().client} plans={titledHearing('Lift the chorus')} />);
+  assert.ok(titled.includes(t('banner.hearingTitled', { title: isolateName('Lift the chorus') })), titled);
+  assert.ok(!titled.includes(t('plans.steps', { count: 3 })), 'no step count beside a title');
+  const reduced = within(REDUCED, <AuditionBanner client={fakePlanClient().client} plans={titledHearing('Lift the chorus')} />);
+  assert.ok(!reduced.includes('Lift the chorus'), 'no title without the feature');
+  assert.ok(reduced.includes(`Set ${isolateName('Keys')} volume to ${formatMilliDb(-3000)}`), reduced);
+  const untitled = within(FULL, <AuditionBanner client={fakePlanClient().client} plans={titledHearing()} />);
+  assert.ok(untitled.includes(t('plans.steps', { count: 3 })), untitled);
+});
+
 test('main or an unknown side: no banner; a branch no plan holds: the generic banner', () => {
   assert.equal(banner('main'), '');
   assert.equal(banner(null), '');
@@ -67,6 +89,21 @@ test('main or an unknown side: no banner; a branch no plan holds: the generic ba
   assert.match(generic, /data-testid="audition-banner"/);
   assert.ok(generic.includes(translator('en')('banner.generic')), generic);
   assert.ok(!generic.includes('Keys'), 'no plan named');
+});
+
+// m5b-ui-ghosts: the banner names its plan through the helper the pill and
+// the Agent changes section share (plans/plan-name.ts), with the same text.
+test('the banner\'s name is the plan-name helper\'s, and a branch no plan owns reads the generic line', () => {
+  const t = translator('en');
+  const store = storeHearing(BRANCH);
+  const plan = store.getSnapshot().plans.find((p) => p.proposalBranch === BRANCH)!;
+  const name = planName(plan, t, namesFromSnapshot(fakePlanClient().client.model.getSnapshot()), capabilitySelector(FULL));
+  assert.equal(name.kind, 'steps');
+  if (name.kind !== 'steps') return;
+  const markup = banner(BRANCH);
+  const text = /<span class="audition-banner-text"[^>]*>([^<]*)<\/span>/.exec(markup)?.[1] ?? '';
+  assert.equal(text.replace(/&#x27;/g, "'"), t('banner.hearing', { lead: name.lead, steps: name.steps }));
+  assert.equal(/<span class="audition-banner-text"[^>]*>([^<]*)<\/span>/.exec(banner('p9'))?.[1], t('banner.generic'));
 });
 
 const switcher = (heard: string | null, caps: Capabilities | null = FULL) =>

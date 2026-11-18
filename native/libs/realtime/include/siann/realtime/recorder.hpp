@@ -18,6 +18,11 @@
 // the audio thread captures nothing more. A recorder with room for N channels
 // records a take of fewer (start's takeChannels), so each capture bank slot
 // records a mono or a stereo take from one preallocated ring.
+//
+// m5b-engine-punch-count-in: a take can be given a capture window [from, until)
+// in stamp positions when it starts; the audio thread keeps only the frames
+// inside it, mid-block at both ends, and captureEnded() turns true once the
+// window's end has passed (the owner then ends the take as asked: stop).
 
 #include <atomic>
 #include <chrono>
@@ -54,6 +59,12 @@ public:
     virtual void checkpoint() = 0;
     virtual void close() = 0;
     virtual std::int64_t frames() const noexcept = 0;
+};
+
+// The stamps a take keeps, [from, until). The default keeps every frame.
+struct CaptureWindow {
+    std::int64_t from = std::numeric_limits<std::int64_t>::min();
+    std::int64_t until = std::numeric_limits<std::int64_t>::max();
 };
 
 using TakeWriterFactory =
@@ -99,10 +110,11 @@ public:
     // the WAV header now makes durable (an exception of its own is ignored);
     // stop() reports its final checkpoint too (on the calling thread, after the
     // writer thread has ended). takeChannels (0: all) records the first that
-    // many channels of each captured block.
+    // many channels of each captured block, and `window` the stamps it keeps.
     void start(const std::filesystem::path& file, std::int64_t sampleRate,
                std::function<void(std::int64_t startPosition)> onStart = {},
-               std::function<void(std::int64_t durableFrames)> onCheckpoint = {}, int takeChannels = 0);
+               std::function<void(std::int64_t durableFrames)> onCheckpoint = {}, int takeChannels = 0,
+               CaptureWindow window = {});
 
     // Control side. Stops capturing, waits until the audio thread has left
     // capture() (at most one block), writes the rest and closes the file. A
@@ -122,8 +134,17 @@ public:
     // Any thread: the writer failed (or onStart threw), so the take has ended.
     bool diskFailed() const noexcept { return diskFailed_.load(std::memory_order_acquire); }
 
+    // Any thread: a block reached the capture window's end, so the take has ended.
+    bool windowPassed() const noexcept { return windowPassed_.load(std::memory_order_acquire); }
+
     // Any thread: the audio thread captures nothing more for this take.
-    bool captureEnded() const noexcept { return captureComplete() || overflowed() || diskFailed(); }
+    bool captureEnded() const noexcept {
+        return captureComplete() || overflowed() || diskFailed() || windowPassed();
+    }
+
+    // Any thread: the window of the current (or last) take; the default before any.
+    std::int64_t captureFrom() const noexcept { return windowFrom_.load(std::memory_order_acquire); }
+    std::int64_t captureUntil() const noexcept { return windowUntil_.load(std::memory_order_acquire); }
 
     // Any thread: the timeline position of the take's first frame (kNoStart
     // until captured), the frames the last checkpoint made durable, and the
@@ -156,6 +177,7 @@ private:
     std::chrono::steady_clock::time_point lastCheckpoint_{};
     std::vector<std::vector<float>> scratch_;
     std::vector<float*> scratchPointers_;
+    std::vector<float*> slicePointers_;  // audio thread: a captured block from an offset
     std::thread thread_;
 
     std::atomic<bool> armed_{false};
@@ -166,6 +188,9 @@ private:
     std::atomic<std::int64_t> captured_{0};  // frames written to the ring this take
     std::atomic<std::int64_t> durableFrames_{0};
     std::atomic<bool> diskFailed_{false};
+    std::atomic<std::int64_t> windowFrom_{CaptureWindow{}.from};
+    std::atomic<std::int64_t> windowUntil_{CaptureWindow{}.until};
+    std::atomic<bool> windowPassed_{false};
 };
 
 }  // namespace siann::realtime
