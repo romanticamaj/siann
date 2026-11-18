@@ -308,3 +308,55 @@ test('the agent row and a titled card fit in every locale at 1440 px and at the 
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-inserts-master: the rack switch, the slot buttons (bypass, e,
+// Remove, the empty slot's +), the Inspector's Inserts section and the open
+// plugin picker fit in en, zh-TW and zh-CN at 1440x900. The slot's plugin
+// name ellipsises inside its box by design, so the check is on the controls.
+const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
+const INSERTS = '[data-part=mixer-racks] button, .slot.empty, .slot button, .islot button, .islot.empty, [data-part=inspector-inserts] .sec-h, .plugin-picker button, .plugin-picker .picker-format, .plugin-picker .picker-state';
+
+test('the rack switch, the slots, the Inspector\'s Inserts section and the picker fit in every locale', async () => {
+  test.skip(!PLUGIN, 'set SIANN_TEST_PLUGIN_CLAP');
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-inserts-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], env: { SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', '--plugin-dir', path.dirname(PLUGIN!)]) } });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  const registry = (await engine.call('plugin.registry')) as { plugins: Array<{ format: string; path: string }> };
+  const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(PLUGIN!))!;
+  await engine.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+  await engine.call('plugin.instantiate', { trackId: 'trk_keys', index: 0, descriptor: { format: install.format, path: install.path } });
+  engine.close();
+  await resize(SIZES[0]!);
+  await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)')).toHaveCount(1);
+  await page.getByTestId('track-header-trk_keys').click();
+  await expect(page.locator('[data-part="inspector-inserts"] .islot:not(.empty)')).toHaveCount(1);
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+    await expect(page.getByTestId('plugin-picker')).toBeVisible();
+    await expect(page.getByTestId('picker-install').first()).toBeVisible();
+    const report = await page.evaluate((selector) => {
+      const out: string[] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (el.getClientRects().length === 0) continue;
+        if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${(el.textContent ?? '').trim().slice(0, 40)}" ${el.scrollWidth} > ${el.clientWidth}`);
+        for (const node of el.childNodes) {
+          if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`${el.className} "${node.textContent.trim()}" wraps`);
+        }
+      }
+      return out;
+    }, INSERTS);
+    for (const entry of report) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('picker-close').click();
+    await expect(page.getByTestId('plugin-picker')).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});

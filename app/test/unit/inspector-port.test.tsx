@@ -31,7 +31,7 @@ import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import { toPosition } from '../../src/renderer/mixer/value-gesture';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
-import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document';
+import type { ClipEntity, PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
@@ -60,8 +60,9 @@ const pending = (id: string) => {
   return MANIFEST.gates[rule.gate] === 'pending';
 };
 
-function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = []) {
-  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], clips);
+function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = [], slots: readonly PluginSlotEntity[] = []) {
+  const base = snapshotOf(tracks.map((t) => t.id), tracks, [], clips);
+  const snap = { ...base, entities: { ...base.entities, ...Object.fromEntries(slots.map((s) => [`plugin_slot:${s.id}`, s])) } };
   const model = {
     getSnapshot: () => snap,
     getView: () => ({ snapshot: snap, gesture: null, overlaid: null }),
@@ -74,11 +75,13 @@ function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = []) {
 const gestures = {} as unknown as GestureController;
 
 // The Inspector's rows, as the zone body holds them (a #root of its children).
-function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale } = {}): Element {
+function render(tracks: TrackEntity[], options: { trackId?: string | null; caps?: Capabilities | null; locale?: Locale; slots?: readonly PluginSlotEntity[]; ghosts?: readonly Ghost[] } = {}): Element {
   const trackId = options.trackId === undefined ? (tracks[0]?.id ?? null) : options.trackId;
   const node: ReactNode = (
     <CapabilitiesContext.Provider value={options.caps === undefined ? FULL : options.caps}>
-      <Inspector client={fakeClient(tracks)} gestures={gestures} trackId={trackId} />
+      <GhostContext.Provider value={{ ghosts: options.ghosts ?? [], outline: null, pin: () => undefined }}>
+        <Inspector client={fakeClient(tracks, [], options.slots ?? [])} gestures={gestures} trackId={trackId} />
+      </GhostContext.Provider>
     </CapabilitiesContext.Provider>
   );
   const before = localeStore();
@@ -226,13 +229,14 @@ test('the pan row: the label, .hs with its thumb only, the value as C, L35, R100
   }
 });
 
-test('the five pending sections keep their rows as empty boxes, the open two and the shut three; Agent changes is sec()', () => {
+test('the four pending sections keep their rows as empty boxes, the open one and the shut three; Agent changes and Inserts are sec()', () => {
   const app = render([vox()]);
   const holds = findAll(app, byClass('inspector-hold'));
-  // Agent changes landed with m5b-ui-ghosts: its section is the mockup's sec() (the next tests).
-  const mockup = findAll(mockupZone(), byClass('sec')).filter((sec) => sec.attrs['data-part'] !== 'inspector-agent-changes');
-  assert.equal(holds.length, 5);
-  assert.equal(mockup.length, 5);
+  // Agent changes landed with m5b-ui-ghosts, Inserts with m5b-ui-inserts-master: their sections are the mockup's sec() (the next tests).
+  const landed = ['inspector-agent-changes', 'inspector-inserts'];
+  const mockup = findAll(mockupZone(), byClass('sec')).filter((sec) => !landed.includes(sec.attrs['data-part']!));
+  assert.equal(holds.length, 4);
+  assert.equal(mockup.length, 4);
   for (const [i, hold] of holds.entries()) {
     assertEmptyBox(hold, `section ${i + 1}`);
     const id = mockup[i]!.attrs['data-part']!;
@@ -261,7 +265,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const app = render([vox()]);
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(app), ids(mockupZone()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
+  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-inserts', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
 });
 
 test('with no track selected, or a track gone, the zone shows its head and foot and nothing between them', () => {
@@ -509,6 +513,90 @@ test('an applied plan that only changed a track\'s clips is listed as touching i
   assert.equal(text(find(row, byClass('mono'))), 'r35');
   // A plan that touched neither the track nor its clips is not.
   assert.equal(findAll(renderReview([keysTrack()], T.keys, [], undefined, { clips: [riser()], extra: [trimmed] }), byAttr('data-testid', `agent-change-${'e'.repeat(8)}`)).length, 0);
+});
+
+// ---- m5b-ui-inserts-master: the Inserts section, the mockup's
+// sec('Inserts', ...): .sec with its head (the chevron, the title, the count),
+// .sec-b with a .islot per slot in the track's inserts order, each holding
+// the mockup's <em>e</em> (the e control's place) and the added bypass and
+// Remove, then one .islot.empty "+ Add insert". Without plugins, the section
+// is a Hold box sized by a shell.css calc().
+
+const islot = (id: string, name: string, bypass = false): PluginSlotEntity => ({
+  schema: 'siann.entity.plugin_slot.v1',
+  id,
+  trackId: 'trk_a',
+  format: 'clap',
+  uid: `org.test.${id}`,
+  name,
+  path: `/plugins/${id}.clap`,
+  bypass,
+});
+
+test('the Inserts section is sec(\'Inserts\'): its head with the count, a .islot per slot with its e, then one .islot.empty', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const withTwo: TrackEntity = { ...vox(), inserts: ['slt_2', 'slt_1'] };
+    const app = find(render([withTwo], { locale, slots: [islot('slt_1', 'Comp'), islot('slt_2', 'De-ess')] }), byAttr('data-part', 'inspector-inserts'));
+    const mockup = find(mockupZone(lang), byAttr('data-part', 'inspector-inserts'));
+    assert.equal(sig(app), sig(mockup));
+    assert.deepEqual(elements(app).map(sig), elements(mockup).map(sig));
+    const [head, body] = elements(app);
+    const [mHead, mBody] = elements(mockup);
+    assert.deepEqual(elements(head!).map(sig), elements(mHead!).map(sig));
+    assert.equal(text(head!), text(mHead!), `${locale}: the title and the count 2`);
+    assert.deepEqual(elements(body!).map(sig), elements(mBody!).map(sig));
+    const [first, second, empty] = elements(body!);
+    const [mFirst, , mEmpty] = elements(mBody!);
+    assert.equal(text(find(first!, byClass('islot-name'))), 'De-ess', 'signal order');
+    assert.equal(text(find(second!, byClass('islot-name'))), 'Comp');
+    // The mockup's em is the e control's place.
+    const em = find(first!, (el) => el.tag === 'em');
+    assert.equal(text(em), text(find(mFirst!, (el) => el.tag === 'em')));
+    const e = find(em, (el) => el.tag === 'button');
+    assert.equal(e.attrs['data-testid'], 'islot-edit-slt_2');
+    assert.equal(text(e), 'e');
+    assert.equal(find(first!, byAttr('data-testid', 'islot-bypass-slt_2')).attrs['aria-pressed'], 'false');
+    assert.ok(findAll(first!, byAttr('data-testid', 'islot-remove-slt_2')).length === 1);
+    assert.equal(text(empty!), text(mEmpty!), `${locale}: + Add insert`);
+    assert.equal(empty!.attrs.role, 'button');
+  }
+});
+
+test('the Inserts section lists every slot without a limit, then one empty slot', () => {
+  const ids = ['s1', 's2', 's3', 's4', 's5', 's6'];
+  const many: TrackEntity = { ...vox(), inserts: ids };
+  const body = find(find(render([many], { slots: ids.map((id) => islot(id, id.toUpperCase())) }), byAttr('data-part', 'inspector-inserts')), byClass('sec-b'));
+  assert.deepEqual(elements(body).map(sig), [...ids.map(() => 'div.islot'), 'div.empty.islot']);
+  assert.equal(text(find(find(render([vox()]), byAttr('data-part', 'inspector-inserts')), byClass('sec-h'))).endsWith('0'), true, 'a track without inserts counts 0');
+});
+
+test('without plugins the Inserts section is an empty box kept by its calc() rule, with no id', () => {
+  const noPlugins = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-no-plugins.json'), 'utf8')) as Capabilities;
+  const app = render([vox()], { caps: noPlugins });
+  assert.equal(findAll(app, byAttr('data-part', 'inspector-inserts')).length, 0);
+  const holds = findAll(app, byClass('inspector-hold'));
+  const inserts = holds.find((h) => classes(h).includes('inserts'));
+  assert.ok(inserts, 'the inserts box');
+  assertEmptyBox(inserts, 'the Inserts box');
+  // Its size: the shell.css calc() of the tokens the shared rules size the section with (117 px in the mockup).
+  const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');
+  assert.match(css, /\.inspector-hold\.inserts \{ height: calc\(var\(--section-head-h\) \+ var\(--hairline\) \+ var\(--space-7q\) \+ var\(--space-9q\) \+ 3 \* var\(--control-h\) \+ 2 \* var\(--space\)\); \}/);
+});
+
+test('a slot ghost in the Inspector: a dashed slot numbered by its step, a dimmed removal, a ring on bypass', () => {
+  const withTwo: TrackEntity = { ...vox(), inserts: ['slt_1', 'slt_2'] };
+  const ghosts: Ghost[] = [
+    { kind: 'insert-remove', step: 2, trackId: 'trk_a', slotId: 'slt_1' },
+    { kind: 'insert-bypass', step: 3, trackId: 'trk_a', slotId: 'slt_2', before: false, after: true },
+    { kind: 'insert-add', step: 4, trackId: 'trk_a', slotId: 'slt_7', name: 'Limiter', index: 2 },
+  ];
+  const body = find(find(render([withTwo], { slots: [islot('slt_1', 'Comp'), islot('slt_2', 'EQ')], ghosts }), byAttr('data-part', 'inspector-inserts')), byClass('sec-b'));
+  assert.deepEqual(elements(body).map(sig), ['div.ghost-removed.islot', 'div.islot', 'div.ghost.islot', 'div.empty.islot']);
+  const [removed, bypassed, added] = elements(body);
+  assert.equal(removed!.attrs['data-ghost'], '2');
+  assert.ok(classes(find(bypassed!, byAttr('data-testid', 'islot-bypass-slt_2'))).includes('ghost'));
+  assert.equal(text(find(added!, byClass('stepn'))), '4');
+  assert.equal(text(find(added!, byClass('islot-name'))), 'Limiter');
 });
 
 test('a stored gain above +6 dB pins the thumb at the end and warns on the value', () => {

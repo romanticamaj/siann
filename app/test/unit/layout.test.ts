@@ -272,7 +272,7 @@ test('serialize and parse one object; unknown or corrupt JSON falls back to the 
   const withHeights: Layout = { ...changed, stripWidth: 'narrow', trackHeights: { ses_a: { trk_1: 96 } } };
   const text = serializeLayout(withHeights);
   const object = JSON.parse(text) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
+  assert.deepEqual(Object.keys(object).sort(), ['autoScroll', 'collapsed', 'racks', 'sizes', 'snap', 'stripWidth', 'tabs', 'timeFormat', 'trackHeights', 'trackList']);
   assert.deepEqual(parseLayout(text), withHeights);
   for (const bad of [null, '', '{', 'null', '42', '[]', '"x"']) assert.deepEqual(parseLayout(bad), DEFAULT_LAYOUT, String(bad));
   // Field by field: a bad field falls back, the rest is kept.
@@ -469,4 +469,32 @@ test('auto-scroll and the primary time format: defaults, F and the period key, k
   const stored = JSON.parse(saved.get(LAYOUT_KEY)!) as { autoScroll: unknown; timeFormat: unknown };
   assert.equal(stored.autoScroll, false);
   assert.equal(stored.timeFormat, 'seconds');
+});
+
+// m5b-ui-inserts-master: the rack switches (mixer-racks; UI redesign 3.4)
+// land with Inserts, which shows and hides the insert racks of every strip
+// and is kept in siann.layout.v1.
+test('the Inserts rack switch: shown by default, toggled by the rack action, parsed field by field and stored', () => {
+  assert.deepEqual(DEFAULT_LAYOUT.racks, { inserts: true });
+  const hidden = reduce(start(), { type: 'rack', rack: 'inserts' });
+  assert.deepEqual(hidden.layout.racks, { inserts: false });
+  assert.deepEqual(reduce(hidden, { type: 'rack', rack: 'inserts' }).layout.racks, { inserts: true });
+  assert.equal(reduce(hidden, { type: 'rack', rack: 'inserts', visible: false }), hidden, 'unchanged: the same state');
+  assert.deepEqual(reduce(start(), { type: 'rack', rack: 'sends' as 'inserts' }).layout, DEFAULT_LAYOUT, 'an unknown rack changes nothing');
+  // The zones are untouched.
+  assert.deepEqual(hidden.layout.sizes, DEFAULT_LAYOUT.sizes);
+  // A layout stored before this feature has no racks: the default.
+  assert.deepEqual(parseLayout(JSON.stringify({ trackList: 300 })).racks, { inserts: true });
+  for (const bad of ['no', 1, null, { inserts: 'off' }]) assert.deepEqual(parseLayout(JSON.stringify({ racks: bad })).racks, { inserts: true }, JSON.stringify(bad));
+  assert.deepEqual(parseLayout(JSON.stringify({ racks: { inserts: false } })).racks, { inserts: false });
+  const layout: Layout = { ...DEFAULT_LAYOUT, racks: { inserts: false } };
+  assert.deepEqual(parseLayout(serializeLayout(layout)), layout);
+
+  const saved = new Map<string, string>();
+  const store = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => void saved.set(k, v) } });
+  store.dispatch({ type: 'rack', rack: 'inserts' });
+  assert.deepEqual((JSON.parse(saved.get(LAYOUT_KEY)!) as { racks: unknown }).racks, { inserts: false });
+  // A reload reads it back.
+  const reloaded = createLayoutStore({ storage: { getItem: (k) => saved.get(k) ?? null, setItem: () => undefined } });
+  assert.deepEqual(reloaded.getSnapshot().layout.racks, { inserts: false });
 });

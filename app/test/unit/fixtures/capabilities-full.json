@@ -35,7 +35,7 @@
     "audition": true,
     "transport": true,
     "render": true,
-    "plugins": false,
+    "plugins": {"formats": ["clap"], "flags": ["sampleAccurateParameters", "midiInput", "midiOutput", "sidechain", "variableLatency", "editor"]},
     "gestures": true,
     "peaks": true,
     "recording": true,

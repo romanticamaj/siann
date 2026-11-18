@@ -159,3 +159,37 @@ test('statusFields words the device as the mockup does, in every locale', () => 
   assert.equal(parseEngineStatus('nonsense'), null);
   assert.equal(parseEngineStatus(SCARLETT)?.device?.bufferFrames, 128);
 });
+
+// m5b-ui-inserts-master: a slot shows its plugin's state with the engine's
+// code (docs/schemas/protocol-plugins-v0.md, "engine.status plugins[]").
+const PLUGINS = [
+  { slotId: 'slt_1', trackId: 'trk_1', format: 'clap', uid: 'org.siann.test-plugin', state: 'running', capabilities: {}, latencyFrames: 64, tailFrames: 0, callbacks: '1', xruns: '0' },
+  { slotId: 'slt_2', trackId: 'trk_1', format: 'clap', uid: 'org.x', state: 'missing', error: { code: 'plugin_not_approved', message: 'not approved' }, capabilities: null },
+  { slotId: 'slt_3', busId: 'bus_1', format: 'clap', uid: 'org.y', state: 'running', error: { code: 'state_missing', message: 'default state' } },
+  { slotId: 42, state: 'running' },
+];
+
+test('engine.status plugins[] by slot: state, owner and the error code and message', async () => {
+  const status = parseEngineStatus({ ...SCARLETT, plugins: PLUGINS })!;
+  assert.deepEqual(status.plugins.map((p) => p.slotId), ['slt_1', 'slt_2', 'slt_3'], 'a row without a string slotId is dropped');
+  assert.deepEqual(status.plugins[0], { slotId: 'slt_1', trackId: 'trk_1', busId: null, format: 'clap', uid: 'org.siann.test-plugin', state: 'running', error: null });
+  assert.deepEqual(status.plugins[1]!.error, { code: 'plugin_not_approved', message: 'not approved' });
+  assert.equal(status.plugins[1]!.state, 'missing');
+  assert.equal(status.plugins[2]!.busId, 'bus_1');
+  assert.deepEqual(parseEngineStatus(SCARLETT)!.plugins, [], 'none without the field');
+
+  // The store answers by slot id.
+  const { sockets, client, store } = setup(WITH_STATUS);
+  assert.equal(store.plugin('slt_1'), null, 'unknown before the first answer');
+  client.connect({ port: 1, token: 'tok' });
+  sockets[0]!.onopen?.();
+  await until(() => store.getSnapshot() !== null, 'the first engine.status');
+  assert.equal(store.plugin('slt_1'), null, 'an engine.status without the slot');
+  store.destroy();
+  const withSlots = parseEngineStatus({ ...device('0'), plugins: PLUGINS })!;
+  const lookup = new EngineStatusStore({ client, schedule: () => () => undefined });
+  (lookup as unknown as { getSnapshot: () => unknown }).getSnapshot = () => withSlots;
+  assert.equal(lookup.plugin('slt_2')?.error?.code, 'plugin_not_approved');
+  assert.equal(lookup.plugin('slt_9'), null);
+  lookup.destroy();
+});

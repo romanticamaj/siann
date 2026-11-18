@@ -224,7 +224,9 @@ test('strips in track order, a master strip, values in dB and L/C/R', async () =
     for (const box of await channels.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width))) expect(box).toBe(width);
   }
   await expect(master.getByTestId('peak-value-master')).toBeVisible();
-  await expect(master.locator('[role="slider"]')).toHaveCount(0);
+  // m5b-ui-inserts-master: the master's one control is its fader (its M, rack and e are M6c's).
+  await expect(master.locator('[role="slider"]')).toHaveCount(1);
+  await expect(master.getByTestId('fader-master')).toHaveAttribute('aria-valuetext', '0.0 dB');
   await expect(master.locator('button[aria-pressed]')).toHaveCount(0);
 
   await client.call('command.execute', {
@@ -286,7 +288,9 @@ test('the lower zone carries the mockup\'s ids of every landed part and none of 
   });
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
-  expect(pending).toEqual(expect.arrayContaining(['strip-1-inserts', 'strip-1-edit', 'strip-master-fader', 'tab-editor', 'mixer-racks']));
+  expect(pending).toEqual(expect.arrayContaining(['strip-1-edit', 'strip-master-inserts', 'tab-editor']));
+  // m5b-ui-inserts-master landed the racks, the master fader and its cap, and the rack switches.
+  expect(landed).toEqual(expect.arrayContaining(['strip-1-inserts', 'strip-2-inserts', 'strip-master-fader', 'strip-master-cap', 'mixer-racks']));
   expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
   expect(pending.filter((id) => shown.includes(id))).toEqual([]);
   // Every strip's button row is M, S and the empty box of e; the box has no role, focus or text.
@@ -423,6 +427,91 @@ test('Ctrl-click resets a fader to 0.0 dB and a pan to C in one revision each, o
   expect((await fetchedTrack()).pan).toBe(0);
   await gestureIdle();
   expect(await revisions()).toBe(before + 1);
+});
+
+// m5b-ui-inserts-master: the master fader, bound to master:master (absent at
+// 0 dB), with the track fader's taper and modifiers and one revision per gesture.
+async function fetchedMaster(): Promise<number> {
+  const fetched = (await client.call('session.fetch', { refs: ['master:master'] })) as { entities: Array<{ entity?: { gainMilliDb: number }; missing?: boolean }> };
+  return fetched.entities[0]?.entity?.gainMilliDb ?? 0;
+}
+
+test('the master fader: a drag commits one master.set_gain, Shift is fine, Ctrl-click sets 0.0 dB, undo restores', async () => {
+  await launch();
+  const fader = page.getByTestId('fader-master');
+  await expect(fader).toHaveAttribute('aria-valuenow', '0');
+  await expect(fader).toHaveAttribute('data-position', '0.75');
+  await expect(page.getByTestId('fader-value-master')).toHaveText('0.0 dB');
+  // The fidelity ids of the master's fader and cap.
+  const ids = await page.getByTestId('mixer-strip-master').evaluate((el) => Array.from(el.querySelectorAll('[data-part-of]')).map((c) => c.getAttribute('data-part-of')));
+  expect(ids).toEqual(expect.arrayContaining(['fader', 'cap']));
+
+  watcher = await engineClient(page, { events: true });
+  let before = await revisions();
+  await dragWithoutRelease(fader, 0, 30);
+  await gestureSettled();
+  const moved = await valueNow(fader);
+  expect(moved).toBeLessThan(0);
+  expect(await revisions()).toBe(before);
+  await page.mouse.up();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  expect(await fetchedMaster()).toBe(moved);
+  await expect.poll(() => watcher!.ofType('gesture.ended').length).toBe(1);
+  await gestureIdle();
+  expect(await revisions()).toBe(before + 1);
+  await expect(page.getByTestId('fader-value-master')).toHaveText(/^-\d+\.\d dB$/);
+
+  // Shift-drag moves a tenth as far.
+  const coarse = moved;
+  before = await revisions();
+  await withKey('Shift', () => dragWithoutRelease(fader, 0, 30));
+  await gestureSettled();
+  const fine = (await valueNow(fader)) - coarse;
+  await page.mouse.up();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  expect(fine).toBeLessThan(0);
+  expect(Math.abs(fine)).toBeLessThan(Math.abs(coarse) / 3);
+  await gestureIdle();
+
+  // Ctrl-click: 0.0 dB, which removes master:master, in one revision.
+  before = await revisions();
+  await withKey('Control', () => fader.click());
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await expect(fader).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.getByTestId('fader-value-master')).toHaveText('0.0 dB');
+  const fetched = (await client.call('session.fetch', { refs: ['master:master'] })) as { entities: Array<{ missing?: boolean }> };
+  expect(fetched.entities[0]?.missing).toBe(true);
+  await gestureIdle();
+
+  // Undo restores the gain before the Ctrl-click.
+  const restored = await valueNowAfterUndo(fader);
+  expect(restored).toBeLessThan(0);
+  expect(await fetchedMaster()).toBe(restored);
+});
+
+async function valueNowAfterUndo(fader: Locator): Promise<number> {
+  const before = await revisions();
+  await client.call('session.undo');
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await expect(fader).not.toHaveAttribute('aria-valuenow', '0');
+  return valueNow(fader);
+}
+
+test('with its fader, the master meter keeps its clip latch and the peak value that resets on click', async () => {
+  await launch();
+  await setGain(6000);
+  await client.call('command.execute', { commands: [{ op: 'master.set_gain', gainMilliDb: 6000 }] });
+  await expect(page.getByTestId('fader-master')).toHaveAttribute('aria-valuenow', '6000');
+  await client.call('transport.play');
+  await expect.poll(async () => (await meter('master'))?.clip ?? false).toBe(true);
+  await client.call('transport.stop');
+  await expect.poll(async () => (await meter('master'))?.peak ?? 1).toBe(0);
+  const peakValue = page.getByTestId('peak-value-master');
+  await expect(peakValue).toHaveText(/^\+\d+\.\d$/);
+  await expect(peakValue).toHaveClass(/\bclip\b/);
+  await peakValue.click();
+  await expect.poll(async () => (await meter('master'))!.clip).toBe(false);
+  await expect(peakValue).toHaveText('-inf');
 });
 
 test('double-clicking a value takes a typed gain or pan; Enter commits one revision, Escape nothing', async () => {

@@ -55,8 +55,21 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   }
   assert.equal(full.feature('gestures'), true);
   assert.equal(reduced.feature('gestures'), false);
-  assert.equal(full.feature('plugins'), false, 'false is absent');
-  assert.equal(capabilitySelector({ ...FULL, features: { plugins: { formats: ['clap'], flags: [] } } }).feature('plugins'), true);
+  // m5b-ui-inserts-master: the full fixture carries the core engine's real
+  // features.plugins (it hosts CLAP in every build: protocol-plugins-v0.md,
+  // "engine.capabilities"); a false one is absent, as a reduced fixture says.
+  assert.equal(full.feature('plugins'), true);
+  assert.deepEqual(FULL.features?.plugins, {
+    formats: ['clap'],
+    flags: ['sampleAccurateParameters', 'midiInput', 'midiOutput', 'sidechain', 'variableLatency', 'editor'],
+  });
+  const noPlugins = read('capabilities-no-plugins.json');
+  assert.equal(capabilitySelector(noPlugins).feature('plugins'), false);
+  assert.equal(capabilitySelector({ ...noPlugins, features: { ...noPlugins.features, plugins: false } }).feature('plugins'), false, 'false is absent');
+  assert.deepEqual({ ...noPlugins, features: { ...noPlugins.features, plugins: FULL.features?.plugins } }, FULL, 'the no-plugins fixture is the full one less features.plugins');
+  const noMaster = read('capabilities-no-master.json');
+  assert.equal(capabilitySelector(noMaster).feature('masterGain'), false);
+  assert.equal(capabilitySelector(noMaster).command('master.set_gain'), true, 'only the feature is left out');
   // m5-ui-loop-click: the engine reports locators (and cycle and click with a transport port).
   assert.equal(full.feature('locators'), true);
   assert.equal(reduced.feature('locators'), false);
