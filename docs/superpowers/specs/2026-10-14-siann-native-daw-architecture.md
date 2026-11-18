@@ -3952,6 +3952,31 @@ MySong.siann/                    a directory
   `engine.devices`, selects through `engine.select_device` and shows
   `engine.status`; a refused selection sends the previous device again when
   one ran.
+- Recording (m5b-ui-recording; UI redesign UR-8, 3.1, 3.5): record enable on
+  the track header, the strip and the Inspector sends one `record.arm`
+  (`R` on the selected track); the armed set and `recording` are read from
+  `engine.status` at connect and after a reconnect, from each transport and
+  record method's result and from `record.changed`, so a change made by
+  another connection shows. The Inspector's monitor button sends one
+  `track.set_monitor` (off to input, input or auto to off) and its input
+  selector, the In row of the Routing section, one `track.set_input` over the
+  open input's mono ports and stereo pairs; both read the document. Record on
+  the transport bar (`Num *`, `Ctrl+Shift+R`) sends `transport.record`; its
+  record options panel sends `transport.set_punch` (`I`, `O`),
+  `transport.set_preroll` and `transport.set_count_in` and shows what
+  `transport.changed` and `engine.status` say. While recording the event
+  display's overlay draws a red clip per take from its `startFrame` to the
+  playhead with a waveform from the `input:<trackId>` meter frames, outside
+  React; the meters of armed tracks read `input:<trackId>`; the committed
+  clip `clp_<takeId>` replaces it on `session.changed`, and an early end
+  (`endedBy` overflow, disk, device) is a toast. The shell holds
+  `powerSaveBlocker('prevent-app-suspension')` from the start of a recording
+  to its end, the window's close or the engine's loss (`main/power-save.ts`,
+  told by the renderer over the preload bridge; a plain browser tab holds
+  none). Pending takes (`pendingTakes` of the auth reply and `session.sync`)
+  are listed in a dialog with Keep (`record.recover_take {accept: true}`) and
+  Discard (`accept: false`). Without `features.recording` none of it is in
+  the DOM and the boxes stay empty (UI redesign 3.0).
 - The frontend holds a read model keyed by revision; it never owns session truth.
 - Plan review is a first-class UI (m5-plan-review, presented by m5-ui-plan-panel
   as the Plans tab of the right zone; UI redesign spec section 4 and P1-5 give

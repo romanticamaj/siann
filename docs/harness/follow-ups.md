@@ -282,6 +282,18 @@ None of these blocks M5b; each has no owner yet unless it names one.
     ends, after the restarts, in the supervisor's "keeps stopping" dialog instead
     of the start view (`m5b-ui-project`). The shell could read the engine's last
     stderr line and fall back to the scratch bundle with the start view.
+13. The monitor button of `m5b-ui-recording` toggles between `off` and `input`;
+    `auto` (monitor while stopped on an armed track and while recording), which
+    the engine has, is shown when a plan or another connection sets it but has
+    no way to be chosen in the UI (UI redesign 3.5; 10.11, 16). A mode menu on
+    the button, or a preference for the default mode, would give it one.
+14. Monitor is in the Inspector only, the one place the mockup draws it (10.11,
+    16). A monitor button on the track header and the strip needs a fourth
+    `.msr` in `strip()`'s button row, which does not fit an 88 px strip, so
+    `tokens.css`, `lower-zone.css` and the mockup would change: the maintainer's.
+15. Punch, pre-roll and count-in are in the Record button's options panel
+    (10.11, 17). Toggles in the transport bar itself need a mockup and a token
+    change: the maintainer's.
 
 ## Where tests run
 
