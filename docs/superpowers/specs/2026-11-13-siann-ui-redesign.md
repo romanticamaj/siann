@@ -1310,6 +1310,8 @@ The harness entries are in `.claude/milestones/M5.json`; acceptance is there. Ea
 | P1-16 | `m5-ui-port-toolbar` | 11 | P1-11, `m5-ui-edit-basics` | `tool()`, the snap, grid type and auto-scroll fields, the info line | The tool, snap and follow state; the selected clip in the mockup's formats (10.8, 2); the Pool on `Ctrl+P` (10.8, 1) |
 | P1-17 | `m5-ui-port-cleanup` | 12 | P1-10 to P1-16 | Nothing new: the old components, class names and `shell.css` rules the port left over are removed, and the app's stylesheet links equal the mockup's | `debt.json` empty; the app-only tokens of 10.7, 4; the tour retaken for the `ui-redesign-review` gate |
 
+Status: P1-17 (`m5-ui-port-cleanup`) landed, closing the port for M5's parts: the app links the mockup's nine stylesheets and then `shell.css`, which holds only rules for what the mockup does not draw, each naming tokens (the app-only tokens of 10.7, 4); no leftover component, class name or catalog string; `debt.json` is empty.
+
 Rules for all of them:
 
 - The component's DOM structure and class names are the mockup's, and the rules of `shell.css` it replaces are removed. A component not ported yet looks as it did.
