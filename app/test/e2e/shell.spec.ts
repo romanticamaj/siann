@@ -93,15 +93,24 @@ test('the renderer connects with the token handshake', async () => {
     };
   });
   expect(preferences).toEqual({ contextIsolation: true, nodeIntegration: false, sandbox: true });
-  // The preload bridge exposes the engine endpoint and nothing else; the MCP
-  // token stays in the main process.
+  // The preload bridge exposes the engine endpoint and, since m5b-ui-project,
+  // the shell's project record and dialogs and the menu's two directions, and
+  // nothing else; the MCP token stays in the main process.
   const bridge = await page.evaluate(async () => {
     const siann = (window as unknown as { siann: Record<string, Record<string, unknown>> }).siann;
     const engine = siann.engine as { current(): Promise<Record<string, unknown> | null> };
     const current = await engine.current();
-    return { top: Object.keys(siann), engine: Object.keys(siann.engine), current: current ? Object.keys(current) : null };
+    return {
+      top: Object.keys(siann),
+      engine: Object.keys(siann.engine),
+      project: Object.keys(siann.project ?? {}),
+      menu: Object.keys(siann.menu ?? {}),
+      current: current ? Object.keys(current) : null,
+    };
   });
-  expect(bridge.top).toEqual(['engine']);
+  expect([...bridge.top].sort()).toEqual(['engine', 'menu', 'project']);
+  expect([...bridge.project].sort()).toEqual(['chooseNew', 'chooseOpen', 'onChange', 'opened', 'state']);
+  expect([...bridge.menu].sort()).toEqual(['onCommand', 'set']);
   expect([...bridge.engine].sort()).toEqual(['current', 'onChange']);
   expect([...(bridge.current ?? [])].sort()).toEqual(['port', 'token']);
 });
