@@ -1001,7 +1001,8 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   edge. Pre-fader and post-fader sends are separate edges with their own latency.
 - MIDI to instruments is scheduled earlier by the downstream compensation of the
   instrument's path, so instrument tracks line up with audio tracks.
-- Input monitoring uses a low-latency path that bypasses compensation delays.
+- Input monitoring uses a low-latency path that bypasses compensation delays (the
+  monitoring path below says which edges).
 - Recording offset: realtime playback is not latency-shifted, so what the performer
   hears trails the timeline by the total latency of the output path they monitor
   (master or a cue mix) plus the device output latency (plus output SRC latency),
@@ -1019,22 +1020,36 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   available; the reported values are the fallback.
 - The formula is the same in every monitoring mode. Input monitoring (auto or input)
   uses a low-latency path that bypasses compensation delays, which changes what the
-  performer hears of themselves, not where the take lands. M2 tests this with a fake
-  loopback device in each mode.
+  performer hears of themselves, not where the take lands. m5b-engine-monitoring
+  tests this with a loopback `ManualAudioDevice` in each mode (`engine_record_test`
+  "a take recorded while monitoring lands within one sample in every mode").
 - The monitoring path (M5b, m5b-engine-monitoring). A track whose `monitor` is auto
   or input starts its strip with a `MonitorInputNode`: port 0 is the track's clip
   source, and each block it outputs either the clips or the device input mapped
   through `Track.input` (the block's input at the session rate,
   `ProcessContext::input`), crossfading over `fadeFrames` when it switches. The
-  edge from that strip to the master is marked low-latency: its compensation delay
-  line keeps running, and its output crossfades from the delayed signal to the
-  undelayed one while the node passes input, and back while it plays clips again.
-  The performer hears the input after the device terms, the SRC terms, the track's
-  own inserts and the master path, never after the compensation that lines the
-  other tracks up. The node decides per block on the audio thread (input mode
-  always; auto when the transport is stopped on an armed track, or while the track
-  captures), never through a republish, so a punch switches at the frame it
-  captures from. `engine.status` reports the round trip as
+  edges that carry only that track's signal are marked low-latency: its output
+  edge (into the master, or into the bus `Track.output` names) and, per send, the
+  send's edge into its bus (the edge from the strip into the send node has one
+  input and so no compensation). On such an edge the compensation delay line keeps
+  running and the output crossfades from the delayed signal to the undelayed one
+  while the node passes input, and back while it plays clips again. The line stores
+  none of the input: while the node passes any input it stores silence, and when
+  the node is back on the clips it takes the strip's output back over `fadeFrames`.
+  So a switch back to the clips (a punch-out, auto at the end of a capture, a start
+  from stopped-and-armed) plays `compensation` frames of silence and then the
+  compensated clips, faded in, never the performer's input a second time. The
+  edges of a bus (into the next bus or the master) carry other tracks too and keep
+  their compensation: a monitored track routed to a bus skips the compensation at
+  that bus's input, but hears every later bus input's and the master's, so the
+  other tracks of the bus stay aligned. The performer hears the input after the
+  device terms, the SRC terms, the track's own inserts, the buses its output and
+  sends pass through (their inserts and the compensation at their outputs) and the
+  master path, never after the compensation that lines the other tracks up at the
+  first bus or master input. The node decides per block on the audio thread (input
+  mode always; auto when the transport is stopped on an armed track, or while the
+  track captures), never through a republish, so a punch switches in the block it
+  captures from, crossfaded over `fadeFrames`. `engine.status` reports the round trip as
   `monitorRoundTripFrames = inputLatencyFrames + outputLatencyFrames +
   srcOutputLatencyFrames + srcMonitorFifoFrames + monitorPathLatency`:
   `srcMonitorFifoFrames` is the FIFO that carries the resampled input to the
@@ -1043,9 +1058,16 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   never waits for input; the input resampler itself adds no delay in sample
   terms (its lookahead is what the FIFO waits for, and the recorder's stamps
   account for it separately), so `srcInputLatencyFrames` is not a term of its
-  own. `monitorPathLatency` is the largest over the monitored tracks of the
-  track's own latency plus the master path's (0 with none). It is null while no
-  input is open. The record offset does not change with the mode.
+  own. `monitorPathLatency` is the largest over the low-latency edges of the
+  latency at the edge's source (the track's own inserts) plus the latency from the
+  edge's destination to the graph's output (the bus chain after it, its
+  compensation included, and the master path), 0 with none (`LatencyReport`'s
+  `monitorInputPathFrames`). `monitorRoundTripFrames` is null while no input is
+  open. A monitored track without `Track.input`, or with one the open input does
+  not cover, monitors silence: in input mode its clips are silent on playback. The
+  coverage check (`port < channels` and `inputChannels <= channels - port`) cannot
+  overflow for any port the document allows (0 to INT32_MAX). The record offset
+  does not change with the mode.
 - A stopped engine (m5b-engine-monitoring): a live graph with a monitoring node is
   processed while the transport is stopped, with `ProcessContext::rolling` false:
   players output silence and keep their position, the playhead does not move, the
@@ -1056,7 +1078,10 @@ PDC determines graph structure, so it is part of compilation, not a post-pass.
   sources (`PreparedGraph::startEdges()`, clip players and disk streams) over
   `fadeFrames`, so the monitored input keeps its level across a play or record
   start. A graph without one still rises as a whole. A locate while stopped
-  ducks nothing in either case.
+  ducks nothing in either case. Since a graph that monitors is processed while
+  stopped, its plugin inserts run on stopped blocks too, so a plugin parameter set
+  while stopped (and a hostile plugin's crash parameter) lands at the next
+  processed block, and `xruns` and `maxCallbackMicros` cover that work.
 - Latency change at runtime (VST3 `restartComponent(kLatencyChanged)`, CLAP
   `latency.changed`, AU property notifications) arrives on any thread, is forwarded
   to the command thread through `pluginEventRt` or `pluginEventAny`, and triggers a recompile with

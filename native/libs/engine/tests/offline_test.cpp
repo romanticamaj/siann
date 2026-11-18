@@ -725,3 +725,141 @@ TEST_CASE("The offline render of a faded clip equals the curve's formula within 
         }
     }
 }
+
+// ---- m5b-engine-monitoring: a monitored track routed through buses and sends ----
+
+namespace {
+
+using siann::graph::AudioBufferView;
+using siann::graph::BusNode;
+using siann::graph::ClipPlayerNode;
+using siann::graph::FakeLatencyNode;
+using siann::graph::GraphBuilder;
+using siann::graph::MonitorGate;
+using siann::graph::MonitorInputMode;
+using siann::graph::MonitorInputNode;
+using siann::graph::NodeId;
+using siann::graph::PlanarAudio;
+using siann::graph::PreparedGraph;
+using siann::graph::ProcessContext;
+
+// trk_a (stereo, monitored, input port 0 mono) outputs to bus_grp and sends
+// post-fader to bus_fx; trk_c (100 frames of latency) also feeds bus_grp, trk_d
+// (40) bus_fx, trk_b (160) the master; both buses feed the master. Compensation:
+// trk_a's edge into bus_grp 100, its send's edge into bus_fx 40, bus_grp's into
+// the master 60 and bus_fx's 120.
+void monitoredBusSession(Fixture& f) {
+    f.exec(R"({"op":"track.add","trackId":"trk_c","name":"C","channels":2})");
+    f.exec(R"({"op":"track.add","trackId":"trk_d","name":"D","channels":2})");
+    f.exec(R"({"op":"bus.add","busId":"bus_grp","name":"Group"})");
+    f.exec(R"({"op":"bus.add","busId":"bus_fx","name":"FX"})");
+    f.exec(R"({"op":"track.set_output","trackId":"trk_a","output":{"busId":"bus_grp"}})");
+    f.exec(R"({"op":"track.set_output","trackId":"trk_c","output":{"busId":"bus_grp"}})");
+    f.exec(R"({"op":"track.set_output","trackId":"trk_d","output":{"busId":"bus_fx"}})");
+    f.exec(R"({"op":"send.add","sendId":"snd_a","trackId":"trk_a","busId":"bus_fx","pre":false})");
+}
+
+// The mix of monitoredBusSession through wireMix, with trk_a's strip a
+// MonitorInputNode over a clip impulse at frame 300, and the other tracks a
+// latency node each. `monitored` hands wireMix trk_a's monitor node.
+std::unique_ptr<PreparedGraph> monitoredBusGraph(const Document& document, MonitorInputMode mode,
+                                                 const MonitorGate* gate, bool monitored) {
+    GraphBuilder builder;
+    const NodeId master = builder.add(std::make_unique<BusNode>(2), "master");
+    const std::map<std::string, std::int64_t> latency{{"trk_b", 160}, {"trk_c", 100}, {"trk_d", 40}};
+    auto impulse = std::make_shared<PlanarAudio>();
+    impulse->channels = 2;
+    impulse->frames = 1;
+    impulse->data = {{1.0f}, {1.0f}};
+    const std::vector<siann::engine::FlatTrack> flat = siann::engine::flattenClips(document);
+    std::map<std::string, siann::engine::TrackTaps> taps;
+    for (const siann::engine::FlatTrack& track : flat) {
+        const std::string& id = track.track->id;
+        std::vector<ClipPlayerNode::Clip> clips;
+        if (id == "trk_a") {
+            clips.push_back(ClipPlayerNode::Clip{300, 0, 1, 1.0f, impulse});
+        }
+        const NodeId player = builder.add(std::make_unique<ClipPlayerNode>(2, std::move(clips)), id + ".clips");
+        if (id == "trk_a") {
+            const NodeId monitor =
+                builder.add(std::make_unique<MonitorInputNode>(2, mode, 0, 1, gate, 16), id + ".monitor");
+            builder.connect(player, monitor);
+            taps.emplace(id, siann::engine::TrackTaps{monitor, monitor,
+                                                      monitored ? std::optional<NodeId>(monitor) : std::nullopt});
+        } else {
+            const NodeId late = builder.add(std::make_unique<FakeLatencyNode>(2, latency.at(id)), id + ".late");
+            builder.connect(player, late);
+            taps.emplace(id, siann::engine::TrackTaps{late, late, std::nullopt});
+        }
+    }
+    siann::engine::wireMix(builder, document, master, flat, taps, nullptr);
+    builder.setOutput(master);
+    return std::move(builder).compile(64);
+}
+
+// The left channel of `frames` frames, with a mono device input of an impulse at 500.
+std::vector<float> runMonitored(PreparedGraph& graph, std::int64_t frames) {
+    std::vector<float> input(static_cast<std::size_t>(frames), 0.0f);
+    input[500] = 1.0f;
+    std::vector<float> out;
+    for (std::int64_t start = 0; start < frames; start += 64) {
+        float* channel = input.data() + start;
+        const AudioBufferView view{&channel, 1, 64};
+        ProcessContext context{start, 64};
+        context.input = &view;
+        graph.process(context);
+        for (int i = 0; i < 64; ++i) {
+            out.push_back(graph.output().channel(0)[i]);
+        }
+    }
+    return out;
+}
+
+std::vector<std::int64_t> peaks(const std::vector<float>& samples) {
+    std::vector<std::int64_t> at;
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        if (samples[i] != 0.0f) {
+            at.push_back(static_cast<std::int64_t>(i));
+        }
+    }
+    return at;
+}
+
+}  // namespace
+
+TEST_CASE("A monitored track's bus input and send skip the compensation; the buses' own edges keep it",
+          "[engine][monitor][buses]") {
+    Fixture f;
+    monitoredBusSession(f);
+    const MonitorGate unarmed;
+
+    // Input monitoring: the input reaches bus_grp and bus_fx undelayed, then
+    // takes each bus's compensation into the master (60 and 120 frames).
+    auto input = monitoredBusGraph(f.doc(), MonitorInputMode::input, nullptr, true);
+    CHECK(input->totalLatency() == 160);
+    CHECK(input->monitorPathLatency() == 120);  // the slower of the two routes
+    CHECK(peaks(runMonitored(*input, 1'024)) == std::vector<std::int64_t>{560, 620});
+
+    // The clips of the same strip stay aligned with the other tracks: both
+    // routes of the impulse at 300 arrive at 300 + 160.
+    auto clips = monitoredBusGraph(f.doc(), MonitorInputMode::automatic, &unarmed, true);
+    CHECK(peaks(runMonitored(*clips, 1'024)) == std::vector<std::int64_t>{460});
+
+    // Without the monitor node (the offline wiring), the input is compensated too.
+    auto plain = monitoredBusGraph(f.doc(), MonitorInputMode::input, nullptr, false);
+    CHECK(plain->monitorPathLatency() == 0);
+    CHECK(peaks(runMonitored(*plain, 1'024)) == std::vector<std::int64_t>{660});
+}
+
+TEST_CASE("An offline render ignores a track's monitor mode and renders its clips", "[engine][monitor]") {
+    Fixture f;
+    f.exec(kPlaceA);
+    monitoredBusSession(f);
+    const AudioBuffer before = renderOffline(f.doc(), f.library());
+    REQUIRE(nonZero(before) > 0);
+    for (const char* mode : {"input", "auto"}) {
+        INFO(mode);
+        f.exec(std::string(R"({"op":"track.set_monitor","trackId":"trk_a","monitor":")") + mode + "\"}");
+        CHECK(renderOffline(f.doc(), f.library()).samples == before.samples);
+    }
+}

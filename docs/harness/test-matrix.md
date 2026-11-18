@@ -186,7 +186,7 @@ the realtime tests; 9 none (no UI).
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
-| m5b-engine-monitoring | Y (`document_test`/`commands_test`/`history_test` `track.set_monitor`, `plan_hash_test` set_monitor fixture, `graph_test` `[monitor]`, `monitoring_test`, `engine_record_test` loopback offset per mode (plain and latent insert), round trip and stopped meter, `live_recompile_test` set_monitor transition, `record_methods_test`, `transport_methods_test` engine.status keys, `mcp_adapter_test`) | Y (`monitoring_test` and `live_recompile_test` with `siann_rt_alloc_guard`) | | Y (`plan-hash` fixture parity; app unit `capabilities`, `i18n-describe`) | 3 | - (no UI: the monitor buttons come with `m5b-ui-recording`; tour states changed: none) |
+| m5b-engine-monitoring | Y (`document_test`/`commands_test`/`history_test` `track.set_monitor`, `plan_hash_test` set_monitor fixture, `graph_test` `[monitor]` (the INT32_MAX coverage edge values, no input replayed after a switch back), `offline_test` `[monitor]` (bus and send routing, the offline render), `monitoring_test`, `engine_record_test` loopback offset per mode (plain and latent insert), round trip and stopped meter, `live_recompile_test` set_monitor transition, `record_methods_test`, `transport_methods_test` engine.status keys, `mcp_adapter_test`) | Y (`monitoring_test` and `live_recompile_test` with `siann_rt_alloc_guard`) | | Y (`plan-hash` fixture parity; app unit `capabilities`, `i18n-describe`) | 3 | - (no UI: the monitor buttons come with `m5b-ui-recording`; tour states changed: none) |
 
 Per acceptance item (`m5b-engine-monitoring`): 1 `document_test` "A track's
 monitor round-trips and is omitted while off"; `commands_test` "track.set_monitor
@@ -196,18 +196,24 @@ one revision each; undo restores the mode before it"; `plan_hash_test` "The
 track_monitor_steps fixture prepares as track.set_monitor" and Node `plan-hash`
 fixture parity over `fixtures/plan/plan-hash.json` (`track_monitor_steps`);
 `graph_test` "MonitorInputNode passes the mapped input when open and its port 0
-when closed", "A stopped context silences the clip player"; `monitoring_test`
+when closed", "MonitorInputNode's coverage check holds at the edge values up to
+INT32_MAX", "A stopped context silences the clip player"; `offline_test` "An
+offline render ignores a track's monitor mode and renders its clips";
+`monitoring_test`
 "Input monitoring reaches the output in the same callback, stopped and playing",
 "Auto monitoring follows the bank's gate: stopped and armed, or capturing", "A
 start through pushLocate keeps monitored input at full level and raises the
 clips", "A stopped monitoring graph publishes its meters; a graph without one
 stays idle"; `engine_record_test` "auto monitoring follows arming: the input
 while stopped and armed", "a monitored track's meter shows its input while the
-transport is stopped"; `mcp_adapter_test` "execute carries track.set_monitor;
+transport is stopped", "arming needs an input that covers the track's, and
+follows the document" (a port near INT32_MAX); `mcp_adapter_test` "execute carries track.set_monitor;
 list_commands names it and no tool is added"; app unit `i18n-describe` (the plan
 card wording in en, zh-Hant and zh-Hans). 2 `graph_test` "Monitored input
 bypasses compensation; the same track's clips stay aligned", "startEdges marks
-the edges leaving a source, in compile and recompile"; `monitoring_test` "The
+the edges leaving a source, in compile and recompile"; `offline_test` "A
+monitored track's bus input and send skip the compensation; the buses' own edges
+keep it"; `monitoring_test` "The
 monitored round trip is the device terms plus the monitored path", "Through
 device-side SRC the monitored input arrives after exactly the reported terms";
 `engine_record_test` "engine.status reports the monitored round trip, null
@@ -219,7 +225,8 @@ lands within one sample in every mode" (GENERATE over off, auto and input) and
 was played" (the same GENERATE over off, auto and input; the monitored round trip
 leaves the other track's insert out). 4 `live_recompile_test` "track.set_monitor
 while playing goes through the structural transition without a step"; `graph_test`
-"Flipping the monitor gate mid-run crossfades without a step"; `monitoring_test`
+"Flipping the monitor gate mid-run crossfades without a step", "Switching a
+monitored strip back to its clips plays no input a second time"; `monitoring_test`
 "Gate flips and a publish while monitoring allocate nothing on the audio thread"
 (with `siann_rt_alloc_guard`); `record_methods_test` "engine.capabilities lists
 track.set_monitor and features.monitoring"; app unit `capabilities`
