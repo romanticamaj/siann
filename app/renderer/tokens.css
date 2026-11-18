@@ -489,6 +489,24 @@
   --status-chip-h: calc(16px * var(--scale));
 }
 
+/* App-only tokens (m5-ui-port-cleanup; UI redesign 10.7, 4, authorised by the
+   maintainer, 2026-11-15): the values of the shell.css rules for what the
+   mockup does not draw, the toasts, the dialogs, the small window's drawer and
+   the scrim behind a dialog. Neither the shared rules nor the mockup name
+   them, and they change no token above. The 2 px focus ring is --focus-ring
+   (10.7, 4a). */
+:root {
+  --black-a450: rgb(0 0 0 / .45);
+  --scrim: var(--black-a450);
+  --toast-max-w: calc(320px * var(--scale));
+  --toast-slide: calc(12px * var(--scale));
+  --toast-shadow-y: calc(6px * var(--scale));
+  --toast-shadow-blur: calc(18px * var(--scale));
+  --dialog-w: calc(560px * var(--scale));
+  --dialog-margin: calc(32px * var(--scale));
+  --drawer-shadow-blur: calc(24px * var(--scale));
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root { --panel-motion: 0s; }
 }

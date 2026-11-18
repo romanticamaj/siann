@@ -246,7 +246,7 @@ export function PlanCard(props: PlanCardProps) {
         ))}
       </div>
       {homes.rest.length > 0 ? (
-        <div className="card-row plan-other" data-testid="plan-other">
+        <div className="card-row" data-testid="plan-other">
           <button type="button" className="disclosure" data-testid="plan-other-toggle" aria-expanded={otherOpen} onClick={() => setOtherOpen(!otherOpen)}>
             {t('plans.otherChanges', { count: homes.rest.length })}
           </button>
@@ -258,7 +258,7 @@ export function PlanCard(props: PlanCardProps) {
           <b>{t('plans.staleTitle')}</b>
           <ul>
             {props.staleReasons.map((reason, index) => (
-              <li key={index} className="plan-stale-reason" {...ISOLATE}>
+              <li key={index} {...ISOLATE}>
                 {reason}
               </li>
             ))}
@@ -278,7 +278,7 @@ export function PlanCard(props: PlanCardProps) {
         />
       ) : null}
       {props.previewError ? (
-        <RefusalLine refusal={props.previewError} locale={locale} names={names} testId="plan-preview-error" className="card-row plan-preview-error" />
+        <RefusalLine refusal={props.previewError} locale={locale} names={names} testId="plan-preview-error" className="card-row" />
       ) : null}
       {noting ? (
         <div className="card-row plan-note">

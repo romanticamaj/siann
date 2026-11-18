@@ -99,7 +99,7 @@ test('the status bar about button reads name, version, 7-character commit, licen
           locale,
         );
         // The mockup's text runs: "(", the commit in .mono, then ") · licence · " and the link.
-        assert.match(button, new RegExp(`\\(<span class="mono"[^>]*>${short}</span></span><span class="about-tail">\\) · <span class="about-license">`));
+        assert.match(button, new RegExp(`\\(<span class="mono"[^>]*>${short}</span></span><span class="about-tail">\\) · <span data-testid="about-license">`));
         assert.ok(button.endsWith(`<a>${source}</a></span></button>`), button);
         assert.ok(!button.includes(about.source!.commit!), 'the whole commit is the About panel\'s');
         assert.ok(!button.includes('+dirty'), 'the dirty mark is the About panel\'s');

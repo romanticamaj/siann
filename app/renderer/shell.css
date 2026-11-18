@@ -1,31 +1,28 @@
-/* The app's own rules (UI redesign spec 2). The window, the top bar and the
-   status bar are the mockup's (m5-ui-alignment-chrome): the page, the .app
-   grid and the bars are drawn by ui/base.css, ui/layout.css, ui/top-bar.css
-   and ui/status-bar.css, linked before this file (docs/harness/agent-rules.md,
-   "UI fidelity"). What stays here is what the mockup does not draw: the
-   window's fill, the banner row, hidden and drawer zones, the dividers and
-   the focus frame, the boxes of absent parts, the reset of the buttons that
-   are spans in the mockup, the controls laid over a part (the position
-   field, the language select), the small window rules, and the zones not
-   ported yet, which keep the text styles they had until their alignment
-   feature ports them. Panels open and close in 120 ms, not at all under
-   prefers-reduced-motion (the token is 0s there). */
+/* The app's own rules (UI redesign spec 2; 10.9 and 10.10). The window is the
+   mockup's: tokens.css and app/renderer/ui, linked before this file, draw
+   every part the mockup shows, and the component port is finished for M5's
+   parts (m5-ui-port-cleanup). This file holds only what the mockup does not
+   draw, each rule naming tokens: the window's fill and the banner row, the
+   connection banner, the toasts and the dialogs, hidden, offline and drawer
+   zones, the dividers, the focus frame and rings, the empty boxes of absent
+   parts (the hold tokens), the reset of the buttons that are spans in the
+   mockup, the controls laid over a part (the position field, the language
+   select, the typed value), the Pool, the menus, the drag tooltips, and the
+   narrow-container and small-window rules. No selector here is one of
+   app/renderer/ui's (test/mockup-fidelity.test.js). Panels open and close in
+   120 ms, not at all under prefers-reduced-motion (the token is 0s there). */
 
-*, *::before, *::after { box-sizing: border-box; }
+/* base.css sizes every element by its border box; the pseudo-elements too. */
+*::before, *::after { box-sizing: border-box; }
 
 /* The mockup's window is 1440x900; the app's is the window. */
 #root { height: 100%; }
-.app { --app-w: 100%; --app-h: 100%; position: relative; }
+#root > .app { --app-w: 100%; --app-h: 100%; position: relative; }
 
-/* The zones not ported yet look as they did (m5-ui-alignment-chrome): the
-   text styles they inherited from the old page rule, pinned. Each region's
-   alignment feature deletes its part of this rule. The lower zone, the left
-   zone and the right zone (.plans) are ported (m5-ui-port-mixer-strip,
-   m5-ui-port-inspector, m5-ui-port-plans): they take base.css's body text,
-   as the mockup does; :where() keeps the rule's specificity that of .zone.
-   So is the project zone (its canvas, track list, toolbar and info line:
-   m5-ui-port-arrange-canvas, m5-ui-port-track-list, m5-ui-port-toolbar). */
-.zone:where(:not(.zone-lower):not(.zone-left):not(.zone-project)):where(:not(.plans)), .toasts, .about-panel, .confirm-dialog, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level {
+/* The app's overlays, which the mockup does not draw, keep the plain text
+   styles of the page before the port: every zone takes base.css's body text,
+   as the mockup does. */
+.toasts, .about-panel, .confirm-dialog, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -43,7 +40,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
   background: var(--bg-4);
-  border: 1px solid var(--line-2);
+  border: var(--hairline) solid var(--line-2);
   border-radius: var(--radius-m);
   cursor: pointer;
 }
@@ -67,7 +64,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
-  border: 1px solid var(--line-2);
+  border: var(--hairline) solid var(--line-2);
   border-radius: var(--radius-s);
 }
 code, dd { font-family: var(--font-mono); }
@@ -84,9 +81,10 @@ code, dd { font-family: var(--font-mono); }
 
 /* ---- the frame: the .app grid of ui/layout.css. The zones sit in the row
    between the bars whatever the banner row does, each in its column even
-   when another is hidden. */
-.app > .topbar { grid-row: 1; }
-.app > .statusbar { grid-row: -2 / -1; }
+   when another is hidden. The bars keep to one line and give way when the
+   window is narrow. */
+.app > .topbar { grid-row: 1; white-space: nowrap; }
+.app > .statusbar { grid-row: -2 / -1; white-space: nowrap; min-width: 0; }
 .app > .leftzone { grid-column: 1; grid-row: -3 / -2; }
 .app > .center { grid-column: 2; grid-row: -3 / -2; position: relative; }
 .app > .plans { grid-column: 3; grid-row: -3 / -2; }
@@ -105,9 +103,9 @@ code, dd { font-family: var(--font-mono); }
 .connection-banner {
   padding: var(--space) calc(var(--space) * 3);
   background: var(--warn);
-  color: #000;
+  color: var(--bg-0);
   font-weight: 600;
-  border-bottom: 1px solid var(--divider);
+  border-bottom: var(--hairline) solid var(--divider);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -128,27 +126,26 @@ code, dd { font-family: var(--font-mono); }
   display: flex;
   align-items: center;
   gap: calc(var(--space) * 2);
-  max-width: calc(320px * var(--scale));
+  max-width: var(--toast-max-w);
   padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 3);
   background: var(--bg-4);
-  border: 1px solid var(--line-2);
+  border: var(--hairline) solid var(--line-2);
   border-radius: var(--radius-l);
-  box-shadow: 0 6px 18px rgb(0 0 0 / .45);
+  box-shadow: 0 var(--toast-shadow-y) var(--toast-shadow-blur) var(--black-a450);
   pointer-events: auto;
   animation: toast-in var(--toast-motion);
 }
 .toast-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .toast-close { min-height: 0; padding: 0 var(--space); background: transparent; border: 0; color: var(--tx-2); }
 @keyframes toast-in {
-  from { transform: translateY(12px); opacity: 0; }
+  from { transform: translateY(var(--toast-slide)); opacity: 0; }
   to { transform: none; opacity: 1; }
 }
 
-/* ---- the top bar (ui/top-bar.css draws it) */
-.topbar { white-space: nowrap; }
-.session { min-width: 0; }
+/* ---- the top bar (ui/top-bar.css draws it). The session's name is a span
+   in the app, which shortens with an ellipsis when the window is narrow. */
+.session:has(> span) { min-width: 0; }
 .session > span { overflow: hidden; text-overflow: ellipsis; }
-.transport-icon { display: block; }
 /* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
    branch chip, the Record button, the signature display, DSP load (with the
    margin the mockup's .dsp has) and the Channel zone button. */
@@ -234,16 +231,16 @@ code, dd { font-family: var(--font-mono); }
   overflow: hidden;
   background: var(--bg-1);
   outline: 0 solid transparent;
-  outline-offset: -1px;
+  outline-offset: calc(var(--hairline) * -1);
 }
-.zone[data-focused="true"] { outline: 1px solid var(--focus); }
+.zone[data-focused="true"] { outline: var(--hairline) solid var(--focus); }
 .zone[hidden] { display: none; }
 .zone:focus { outline-color: var(--focus); }
 .zone:focus:not([data-focused="true"]) { outline: none; }
 /* Every control reached from the keyboard shows a ring (spec 2.1): zones' controls, the top bar, the status bar. */
 :where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: var(--space-half) solid var(--focus-ring);
+  outline-offset: var(--hairline);
 }
 .zone-body {
   flex: 1 1 auto;
@@ -254,17 +251,18 @@ code, dd { font-family: var(--font-mono); }
 }
 .zone-body[hidden] { display: none; }
 
-/* The right zone under 1280 px (spec 2.4): an overlay drawer over the project zone. */
-.zone[data-drawer="true"] {
+/* The right zone under 1280 px (spec 2.4): an overlay drawer over the project
+   zone, as wide as the zone it replaces unless the layout says otherwise. */
+.zone-right[data-drawer="true"] {
   position: fixed;
   top: var(--top-bar);
   right: 0;
   bottom: var(--status-bar);
-  width: var(--drawer-width, 348px);
+  width: var(--drawer-width, var(--right-zone-w));
   height: auto;
   z-index: 10;
-  border-left: 1px solid var(--divider);
-  box-shadow: -8px 0 24px rgb(0 0 0 / .45);
+  border-left: var(--hairline) solid var(--divider);
+  box-shadow: calc(var(--space-2) * -1) 0 var(--drawer-shadow-blur) var(--black-a450);
 }
 
 /* ---- dividers: a 1 px line over the edge of its zone's cell, a 7 px hit
@@ -291,7 +289,7 @@ code, dd { font-family: var(--font-mono); }
 }
 .divider:hover, .divider:focus-visible, .divider[data-active="true"] { background: var(--tx-3); }
 /* A divider reached from the keyboard: a 2 px ring around its line. */
-.divider:focus-visible { background: var(--focus-ring); outline: 2px solid var(--focus-ring); outline-offset: 0; }
+.divider:focus-visible { background: var(--focus-ring); outline: var(--space-half) solid var(--focus-ring); outline-offset: 0; }
 
 /* ---- the project zone: toolbar, info line, track list and event display.
    It scrolls by a transform in the event display, never by DOM overflow. */
@@ -451,12 +449,13 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .zone-left > .zone-body { padding: 0; display: flex; flex-direction: column; }
 /* A short zone scrolls its rows instead of squashing them. */
 .zone-left > .zone-body > * { flex-shrink: 0; }
-/* The sections of sec() until their features land (spec 3.0): a shut one is
-   its head and hairline, an open one its hold. */
-.inspector-hold { display: block; flex: none; height: var(--hold-inspector-routing-h); }
+/* The sections of sec() until their features land (spec 3.0), by name: an
+   open one is its hold, a shut one its head and hairline. */
+.inspector-hold { display: block; flex: none; }
+.inspector-hold.routing { height: var(--hold-inspector-routing-h); }
 .inspector-hold.inserts { height: var(--hold-inspector-inserts-h); }
 .inspector-hold.agent-changes { height: var(--hold-inspector-agent-changes-h); }
-.inspector-hold.shut { height: calc(var(--section-head-h) + var(--hairline)); }
+.inspector-hold.sends, .inspector-hold.automation, .inspector-hold.notepad { height: calc(var(--section-head-h) + var(--hairline)); }
 /* The e box sits at the end of the row, as the mockup puts e. */
 .i-btns > .msr-box:last-child { margin-left: auto; }
 /* An unlisted slider keeps its column. */
@@ -465,8 +464,8 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .i-row > .hs { cursor: ew-resize; touch-action: none; user-select: none; }
 .i-row > b { cursor: text; white-space: nowrap; }
 .i-row > b.warn { color: var(--warn); }
-.hs > /* ---- the value tooltip of a drag and the typed-value field (spec 3.4) */
-.value-tooltip { left: auto; right: 0; top: auto; bottom: calc(100% + var(--space)); }
+/* The value tooltip of a slider's drag sits above its end (spec 3.4). */
+.hs > .value-tooltip { left: auto; right: 0; top: auto; bottom: calc(100% + var(--space)); }
 
 /* ---- the lower zone: MixConsole (spec 3.4, 5.1). ui/lower-zone.css draws the
    mockup's .lower, .tabs, .mixer and .strip (m5-ui-port-mixer-strip); these
@@ -491,9 +490,11 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .ftrack.warn .cap { border-color: var(--warn); }
 .readout .warn { color: var(--warn); }
 .readout > span { cursor: text; }
-.readout .pk { cursor: pointer; }
+/* The peak value is a button in the app: a click resets it. */
+.readout button.pk { cursor: pointer; }
 .readout .pk.clip { color: var(--err); }
-/* The drag tooltips: beside the fader's track, under the pan row. */
+/* The drag tooltips: beside the fader's track, under the pan row; the value
+   tooltip of a drag and the typed-value field (spec 3.4). */
 .strip .panrow { position: relative; }
 .panrow > .value-tooltip { left: 50%; top: 100%; transform: translateX(-50%); }
 
@@ -502,9 +503,9 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   z-index: 3;
   left: calc(100% + var(--space));
   top: 0;
-  padding: 1px var(--space);
+  padding: var(--hairline) var(--space);
   background: var(--bg-5);
-  border: 1px solid var(--line-2);
+  border: var(--hairline) solid var(--line-2);
   border-radius: var(--radius-s);
   color: var(--tx-1);
   font-size: var(--fs-micro);
@@ -512,7 +513,7 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   white-space: nowrap;
   pointer-events: none;
 }
-.value-input { width: 100%; min-width: 0; height: var(--ms-h); padding: 0 2px; font-size: var(--fs-micro); }
+.value-input { width: 100%; min-width: 0; height: var(--ms-h); padding: 0 var(--space-half); font-size: var(--fs-micro); }
 
 /* ---- the right zone: the Plans tab (m5-ui-port-plans; UI redesign 10.10,
    P1-13). ui/right-zone.css draws the mockup's parts; these rules are the
@@ -569,8 +570,8 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .step-entity-label { color: var(--tx-1); }
 .disclosure { min-height: 0; padding: 0 var(--space-1h); font-size: var(--fs-small); color: var(--tx-3); background: transparent; }
 
-/* ---- the audition banner (under the top bar, outside the zones) */
-.shell-banner { min-width: 0; }
+/* ---- the audition banner (under the top bar, outside the zones). Its text
+   takes a zone's width before its buttons wrap under it. */
 .audition-banner {
   display: flex;
   flex-wrap: wrap;
@@ -578,20 +579,18 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   gap: var(--space) calc(var(--space) * 2);
   padding: var(--space) calc(var(--space) * 3);
   background: var(--ai-dim);
-  border-bottom: 1px solid var(--ai);
+  border-bottom: var(--hairline) solid var(--ai);
   color: var(--ai-2);
 }
-.audition-banner-text { flex: 1 1 16em; min-width: 0; overflow-wrap: anywhere; }
+.audition-banner-text { flex: 1 1 var(--left-zone-w); min-width: 0; overflow-wrap: anywhere; }
 .audition-banner .primary { background: var(--tx-1); border-color: var(--tx-1); color: var(--bg-0); font-weight: 600; }
 .audition-banner-error { flex-basis: 100%; color: var(--err); }
 
-
 /* ---- the status bar (ui/status-bar.css draws it) */
-.statusbar { white-space: nowrap; min-width: 0; }
 .statusbar [data-status="connecting"] .ok { background: var(--warn); }
 .statusbar [data-status="disconnected"] .ok { background: var(--err); }
 /* The language: the <select> laid over the mockup's .loc, transparent. */
-.statusbar .loc { position: relative; }
+.statusbar .loc:has(select) { position: relative; }
 .statusbar .loc select {
   position: absolute;
   inset: 0;
@@ -601,36 +600,36 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   opacity: 0;
   cursor: pointer;
 }
-.statusbar .loc:has(select:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.statusbar .loc:has(select:focus-visible) { outline: var(--space-half) solid var(--focus-ring); outline-offset: var(--hairline); }
 /* The licence line (2.1): the right-hand group and the about button give
    way when the bar is short, and then only the start of the line clips:
    the licence and the source never shrink. Laid out on one baseline, it
    draws as the mockup's inline line does. */
-.statusbar .right { min-width: 0; }
+.statusbar .right:has(> .about) { min-width: 0; }
 .statusbar .about { display: flex; align-items: baseline; min-width: 0; color: inherit; }
 .statusbar .about:hover:not(:disabled) { color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-tail { flex: none; white-space: pre; }
 .about-panel, .confirm-dialog {
-  width: min(560px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
+  max-height: calc(100vh - var(--dialog-margin));
   overflow: auto;
   padding: calc(var(--space) * 4);
   background: var(--bg-1);
   color: var(--tx-1);
-  border: 1px solid var(--line-2);
+  border: var(--hairline) solid var(--line-2);
   border-radius: var(--radius-l);
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop, .confirm-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.about-panel::backdrop, .confirm-dialog::backdrop { background: var(--scrim); }
 .about-panel h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
 .about-panel h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
 .about-diagnostics {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 2px calc(var(--space) * 2);
+  gap: var(--space-half) calc(var(--space) * 2);
   margin: 0 0 calc(var(--space) * 3);
   font-size: var(--fs-small);
 }

@@ -63,12 +63,11 @@ export function AboutLine({ about }: { about: AboutInfo | null }) {
   const source = about.source ?? {};
   return (
     <>
-      <span className="about-name">{about.name ?? ''}</span> <span className="about-version">{about.version ?? ''}</span>{' '}
-      (<code className="about-commit">{wholeCommit(about, t)}</code>) · <span className="about-license">{about.license ?? ''}</span>
+      <span>{about.name ?? ''}</span> <span>{about.version ?? ''}</span> (<code>{wholeCommit(about, t)}</code>) · <span>{about.license ?? ''}</span>
       {source.url ? (
         <>
           {' · '}
-          <span className="about-source">{t('about.source', { url: source.url })}</span>
+          <span>{t('about.source', { url: source.url })}</span>
         </>
       ) : null}
     </>
@@ -95,7 +94,7 @@ export function AboutButton({ about, onOpen }: { about: AboutInfo | null; onOpen
       </span>
       <span className="about-tail">
         {') · '}
-        <span className="about-license">{about.license ?? ''}</span>
+        <span data-testid="about-license">{about.license ?? ''}</span>
         {url ? (
           <>
             {' · '}

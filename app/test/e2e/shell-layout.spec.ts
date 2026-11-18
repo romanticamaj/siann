@@ -564,7 +564,7 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
   await launch(sessionDir);
   const about = page.getByTestId('about');
   await expect(about).toContainText(/(A?GPL)-\d\.\d-or-later/);
-  const license = (await page.locator('.about .about-license').textContent()) ?? '';
+  const license = (await page.locator('.about [data-testid="about-license"]').textContent()) ?? '';
   expect(license).toMatch(/^(A?GPL)-\d\.\d-or-later$/);
   const title = (await about.getAttribute('title')) ?? '';
   expect(title).toContain(license);
@@ -596,11 +596,11 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
           const r = document.querySelector(selector)!.getBoundingClientRect();
           return { left: r.left, right: r.right, width: r.width };
         };
-        const span = document.querySelector<HTMLElement>('.about .about-license')!;
+        const span = document.querySelector<HTMLElement>('.about [data-testid="about-license"]')!;
         return {
           button: rect('[data-testid=about]'),
           bar: rect('[data-testid=status-bar]'),
-          license: rect('.about .about-license'),
+          license: rect('.about [data-testid="about-license"]'),
           clipped: span.scrollWidth > span.clientWidth,
           viewport: window.innerWidth,
         };
