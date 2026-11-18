@@ -35,6 +35,10 @@ import type { ClipEntity, PluginSlotEntity, TrackEntity } from '../../src/render
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { InsertsContext, type InsertsHost } from '../../src/renderer/mixer/inserts-context';
+import type { PickerController } from '../../src/renderer/mixer/picker';
+import { parseEngineStatus } from '../../src/renderer/model/engine-status';
+import type { PluginActions } from '../../src/renderer/model/plugin-actions';
 import { Inspector } from '../../src/renderer/shell/Inspector';
 import { translator } from '../../src/renderer/i18n/t';
 import { PlanStore } from '../../src/renderer/model/plan-store';
@@ -581,6 +585,31 @@ test('without plugins the Inserts section is an empty box kept by its calc() rul
   // Its size: the shell.css calc() of the tokens the shared rules size the section with (117 px in the mockup).
   const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');
   assert.match(css, /\.inspector-hold\.inserts \{ height: calc\(var\(--section-head-h\) \+ var\(--hairline\) \+ var\(--space-7q\) \+ var\(--space-9q\) \+ 3 \* var\(--control-h\) \+ 2 \* var\(--space\)\); \}/);
+});
+
+test('a missing plugin shows its state with the engine\'s code (engine.status plugins[])', () => {
+  const withOne: TrackEntity = { ...vox(), inserts: ['slt_1'] };
+  const status = parseEngineStatus({
+    device: null,
+    xruns: '0',
+    plugins: [{ slotId: 'slt_1', trackId: 'trk_a', format: 'clap', uid: 'org.x', state: 'missing', error: { code: 'plugin_not_approved', message: 'org.x is not approved' } }],
+  });
+  const actions = { editorOpen: () => false, subscribe: () => () => undefined, getVersion: () => 0 } as unknown as PluginActions;
+  const host = { actions, picker: {} as PickerController, status: { subscribe: () => () => undefined, getSnapshot: () => status } } as unknown as InsertsHost;
+  const markup = parse(
+    renderToStaticMarkup(
+      <CapabilitiesContext.Provider value={FULL}>
+        <InsertsContext.Provider value={host}>
+          <Inspector client={fakeClient([withOne], [], [islot('slt_1', 'Comp')])} gestures={gestures} trackId="trk_a" />
+        </InsertsContext.Provider>
+      </CapabilitiesContext.Provider>,
+    ),
+  );
+  const slot = find(markup, byAttr('data-testid', 'islot-slt_1'));
+  assert.ok(classes(slot).includes('missing'));
+  assert.equal(slot.attrs['data-state'], 'missing');
+  assert.equal(text(find(slot, byClass('islot-state'))), 'plugin_not_approved');
+  assert.equal(slot.attrs.title, 'Comp · plugin_not_approved: org.x is not approved');
 });
 
 test('a slot ghost in the Inspector: a dashed slot numbered by its step, a dimmed removal, a ring on bypass', () => {
