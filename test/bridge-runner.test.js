@@ -361,16 +361,35 @@ test('rollback_plan opens the bundle and calls plan.rollback with the revision',
 
 test('validateJournal accepts v1 and refuses the Ardour-era v0 with a clear message', () => {
   assert.throws(() => validateJournal({ schemaVersion: 'siann.command_journal.v0', journalId: 'x', batches: [] }),
-    /siann\.command_journal\.v0.*Ardour/);
+    { code: 'journal_v0_unsupported', message: /siann\.command_journal\.v0.*Ardour/ });
   assert.throws(() => validateJournal({ schemaVersion: 'siann.command_journal.v1', journalId: 'x' }),
-    /batches must be an array/);
+    { code: 'invalid_batches', message: /batches must be an array/ });
   assert.throws(() => validateJournal({ schemaVersion: 'siann.command_journal.v1', journalId: 'x', bundle: '/b',
-    status: 'applied', batches: [{ status: 'applied', risk: 'normal', entries: [], planHash: 'nope' }] }), /planHash/);
+    status: 'applied', batches: [{ status: 'applied', risk: 'normal', entries: [], planHash: 'nope' }] }),
+  { code: 'invalid_plan_hash', message: /planHash/ });
   for (const touchedIds of ['track:trk_1', ['trk_1'], [7], ['track:']]) {
     assert.throws(() => validateJournal({ schemaVersion: 'siann.command_journal.v1', journalId: 'x', bundle: '/b',
-      status: 'applied', batches: [{ status: 'applied', risk: 'normal', entries: [], touchedIds }] }), /touchedIds/);
+      status: 'applied', batches: [{ status: 'applied', risk: 'normal', entries: [], touchedIds }] }),
+    { code: 'invalid_touched_ids', message: /touchedIds/ });
   }
   const ok = { schemaVersion: 'siann.command_journal.v1', journalId: 'x', bundle: '/b', status: 'failed', batches: [] };
+  assert.equal(validateJournal(ok), ok);
+});
+
+// m5b-bridge-cli-coverage (acceptance item 2): every refusal is a BridgeError with
+// the code of docs/schemas/command-journal-v1.md, "Validation", the one
+// validate-journal prints; the messages stay (rollback-workflow matches them).
+test('validateJournal refuses each invalid journal with its error code', () => {
+  const { INVALID_JOURNALS, journalV1 } = require('./helpers/journals');
+  const root = path.join(os.tmpdir(), 'siann-validate-journal-unit');
+  for (const [code, label, make] of INVALID_JOURNALS) {
+    assert.throws(() => validateJournal(make(root)), (error) => {
+      assert.equal(error.name, 'BridgeError', label);
+      assert.equal(error.code, code, label);
+      return true;
+    }, label);
+  }
+  const ok = journalV1(root);
   assert.equal(validateJournal(ok), ok);
 });
 

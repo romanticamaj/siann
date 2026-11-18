@@ -21,12 +21,12 @@ gaps here when it lands.
 | 2 method/tool/doc/fixture parity | closed by `m5b-protocol-parity` (section 4) | 2 |
 | 3 bridge targets the Ardour engine, gated tests dead | closed by `m5b-bridge-native-client` (layer G in CI) | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
-| 5 rollback never deletes media or renders | `m5b-bridge-cli-coverage` | 3 |
+| 5 rollback never deletes media or renders | closed by `m5b-bridge-cli-coverage` (native and G) | 3 |
 | 6 no ASAN/UBSAN, no fuzzing | `m5b-nightly-quality` | 3 |
 | 7 desktop job skipped on core-library PRs | `m5b-nightly-quality` | 3 |
 | 8 macOS-specific behaviour manual only | not taken: needs the macOS bundle (M0 `m0-macos-bundle`, apple-signing gate) | |
 | 9 UI spec 5.6 performance budgets | `m5b-nightly-quality` | 3 |
-| 10 bridge CLI holes (`reject-plan`, `validate-journal`, `--run`) | `m5b-bridge-cli-coverage` | 3 |
+| 10 bridge CLI holes (`reject-plan`, `validate-journal`, `--run`) | closed by `m5b-bridge-cli-coverage` (B and G; `bin/siann.js` branch coverage gated at 70 % on ubuntu) | 3 |
 | 11 `read-model-sequence.json` not checked against the engine | not taken: stays an M5 follow-up | |
 | 12 long tests not on macOS | `m5b-nightly-quality` | 3 |
 | 13 M4 ordering / link assertions | not taken: stays an M4 follow-up | |
@@ -46,7 +46,7 @@ gaps here when it lands.
 | **F** | Mockup fidelity run (`docs/harness/agent-rules.md`, "UI fidelity"). Blocking: tokens and the manifest, `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). A report, never blocking (decided by the maintainer, 2026-11-17): geometry against 1 px, computed styles and chrome pixels per region, `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW; its region images are the side-by-side screenshots a UI pull request attaches | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **A report for good** (`continue-on-error`, report uploaded as `fidelity-<os>`): no gate is `enforce` and the step never fails the job |
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
 | **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows | nightly + manual; never on PRs |
-| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
+| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, the `G:` cases of `test/bridge-cli-run-flags.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
 | **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, `SIANN_UX_TOUR=1`, human gates) | maintainer's machines | never | see 3.2 |
 
 Sizes at the audit: ~1,000 native `TEST_CASE`s (protocol 174, apps/engine 93,
@@ -142,7 +142,23 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
 | m5b-bridge-native-client | Y (`plan_methods_test` plan.rollback {revision} after a reopen, both or neither param, not_a_plan, not on main, the stored plan rolled_back with plan.changed; `mcp_adapter_test` rollback_plan's argument) | | | Y (`ws-codec` RFC 6455 vectors; `runtime-client` against the in-process fake engine; `bridge-runner`, `bridge-cli`, `rollback-workflow`, `live-import-pack` against the fake engine (`test/helpers/fake-engine*.js`); G: `runtime-engine`, `live-import-pack` engine case against siann-engine) | 3 (B and G) | - |
+| m5b-bridge-cli-coverage | Y (`plan_methods_test` "plan.rollback leaves the render, the media file and its peaks on disk": {plan} in the process and {revision} after a reopen) | | | Y (`import-pack-plan` rejectImportPackPlan units; `bridge-cli-reject`, `bridge-cli-journal`, `bridge-cli-run-flags` (the COVERED table against the option table, the fake engine's refusal and failed launch per --run), `bridge-cli-usage`, `bridge-runner` codes, `ci-workflow` coverage step, `test-matrix`; G: `bridge-cli-run-flags` the three --run against siann-engine and rollback keeping media/, renders/ and peaks/ byte for byte) | 3 (B and G); the coverage gate on ubuntu | - |
 | m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools and propose stop/locate while recording, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `session_test` head guard, `engine_launch_test` kill-and-recover, wire loopback `track_recording` and a propose agent's stop over the wire) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
+
+Per acceptance item (`m5b-bridge-cli-coverage`): 1 `import-pack-plan` (pending,
+defaults, approved, re-rejection refused, tampered without laundering), `bridge-cli-reject`
+(the same through the CLI, usage errors and exit codes, approve-plan and
+apply-plan refusing a rejected plan); 2 `bridge-cli-journal` (a valid journal,
+one case per validator code, `journal_unreadable`, `journal_not_json`, usage),
+`bridge-runner` "validateJournal refuses each invalid journal with its error
+code"; 3 `bridge-cli-run-flags` (COVERED against `COMMANDS`, `[--run]` in
+`--help`, the fake engine per flag, G: each --run against siann-engine); 4
+`plan_methods_test` "plan.rollback leaves the render, the media file and its
+peaks on disk" (seen failing with a temporary `remove_all` of `peaks/` in the
+plan.rollback path), G: `bridge-cli-run-flags` "G: rollback --run against
+siann-engine"; 5 `ci-workflow` (the ubuntu coverage step), `bridge-cli-usage`,
+`test-matrix` (gaps 5 and 10 closed, the Node bridge rows). Tour states
+changed: none.
 
 Per acceptance item (`m5b-bridge-native-client`): 1 `runtime-client` (start,
 envelope, `resolveEngineExe`, the source no longer names the Ardour runtime),
@@ -622,18 +638,19 @@ board run cannot run on hosted runners and need a named owner (rule 6).
 
 | Subcommand / module | Tests (`test/`) | Line % | Gaps |
 |---|---|---|---|
-| `run <cmd> --runner`, `--help` | `bridge-cli` (fake runner) | `bin/siann.js` 74 % / branch 37 % | |
+| `run <cmd> --runner`, `--help`, usage errors | `bridge-cli` (fake runner), `bridge-cli-usage` (every subcommand's missing arguments, unknown commands and options, `--help` after a command) | `bin/siann.js` 100 % / branch 96 % (37 % at the audit; gated at 70 % on ubuntu) | |
 | `plan intake` | `intake-plan`, `skill-docs` | `intake-plan.js` 94 % | |
-| `workflow import-pack` | `import-pack-workflow`, `import-pack-plan` | `import-pack-plan.js` 81 % | `--run` untested |
-| `workflow validate-plan`, `approve-plan`, `apply-plan` | `import-pack-plan` (one CLI test) | | `--run` untested |
-| `workflow reject-plan` | **none** | | CLI and `rejectImportPackPlan` untested |
-| `rollback` | `rollback-workflow` | `rollback.js` 87 % / branch 50 % | `--run` untested |
+| `workflow import-pack` | `import-pack-workflow`, `import-pack-plan`, `bridge-cli-run-flags` (`--run` against the fake engine; `--plan --run` refused; G against siann-engine) | `import-pack-plan.js` 93 % | |
+| `workflow validate-plan`, `approve-plan`, `apply-plan` | `import-pack-plan` (one CLI test), `bridge-cli-reject` (both refuse a rejected plan), `bridge-cli-run-flags` (`apply-plan --run` against the fake engine; G against siann-engine) | | |
+| `workflow reject-plan` | `bridge-cli-reject`, `import-pack-plan` (rejectImportPackPlan units) | | |
+| `rollback` | `rollback-workflow`, `bridge-cli-run-flags` (`--run` against the fake engine; G: `--run` against siann-engine keeps media/, renders/ and peaks/ byte for byte) | `rollback.js` 100 % / branch 100 % | |
 | `export dawproject` | `dawproject-export`, `smoke-dawproject` | `dawproject.js` 95 % | |
 | `live import-pack` | `live-import-pack` (fake runtime) | `live-import-pack.js` 93 % / branch 37 % | real run: G only |
-| `validate-journal` | `validateJournal` unit in `bridge-runner` | | CLI untested |
+| `validate-journal` | `bridge-cli-journal`, `bridge-runner` (validateJournal codes) | | |
 | JCS / Merkle / plan hash | `jcs`, `merkle`, `plan-hash`, `fixture-parity` | 100 / 98 / 94 % | |
 | runtime client | `ws-codec`, `runtime-client` (in-process fake engine), `runtime-engine` (G) | | |
 | command runner | `bridge-runner` (fake engine), `bridge-cli` and `rollback-workflow` (fake engine process), G | | |
+| rollback keeps media and renders | native: `plan_methods_test` "plan.rollback leaves the render, the media file and its peaks on disk"; G: `bridge-cli-run-flags` "G: rollback --run against siann-engine" | | |
 
 There is **no MCP server in Node**: MCP is served by the native engine
 (`native/libs/protocol/src/mcp_adapter.cpp`, `POST /v0/mcp`). The Node bridge
@@ -673,6 +690,7 @@ onto session.create, media.import, plans, session.save and render.start.
 | `studio-setup` "a refused selection sends the previous device again ..." (U only) | the fake device cannot refuse an open after one succeeded: `--fake-open-failures N` counts from the launch's open, so the e2e (`studio-setup.spec`) drives only the case with no device running, where nothing is sent back | the unit test runs in `npm test` on every OS; a hardware device held by another program is the maintainer's bench, at the `audio-hardware` gate |
 | `inserts.spec.ts` block A (insert, bypass, remove and their undo; the picker's approval) | `SIANN_TEST_PLUGIN_CLAP` alone: siann_test_plugin's CLAP from the core build (the desktop build's where that build exists), its directory passed as `--plugin-dir` through `SIANN_ENGINE_TEST_ARGS`; skipped without it | **In CI** on the three OSes: `check-all.js`'s app step and CI's app job build `siann_test_plugin_CLAP` in the core build and export the variable; locally `node scripts/check-all.js --only app` |
 | `inserts.spec.ts` block B (a slot's `e` opens and closes the CLAP editor) | `SIANN_DESKTOP_ENGINE_EXE` and `SIANN_TEST_PLUGIN_CLAP`, Windows only (the core engine answers `editor_failed`; editor ownership as `editor.spec.ts`) | the desktop job on Windows, and `check-all.js --app` when the desktop preset is built |
+| `bridge-cli-run-flags.test.js` `G:` cases (each `--run` subcommand, and rollback keeping media, renders and peaks, against siann-engine) | `SIANN_RUN_ENGINE_TESTS=1` (layer G) | **In CI**: the `bridge-engine` job on the three OSes; locally `node scripts/check-all.js --only bridge`. Gated because they need a built `siann-engine`, which the `node` job does not build; their ungated halves (the fake engine) run in `npm test` |
 | `[.][hostile-crash-child]` | hidden helper | run by its parent test; fine |
 | M2 device bench, M0 macOS bundle signing, M4 JUCE `processBlock` audit, DAWproject into Cubase (L4) | human gates | maintainer, per milestone exit / release |
 
@@ -758,27 +776,26 @@ Taken on Windows, Node 22, 2026-11-14.
 
 | Area | How | Lines | Branches | Functions | Least covered |
 |---|---|---|---|---|---|
-| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 92.7 % | 80.7 % | 97.0 % | Retaken with `m5b-bridge-native-client` (2026-11-15; the audit's figures were 89.2 / 70.9 / 96.0 with `client.js` 84/57): `bin/siann.js` 80/42, `import-pack-plan.js` 81/72, `live-import-pack.js` 100/46 (branch), `import-pack.js` 94/75 (branch), `runner.js` 94/79, `client.js` 95/84, `ws.js` 97/93, `rollback.js` 100/100 |
+| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 96.5 % | 87.0 % | 97.7 % | Retaken with `m5b-bridge-cli-coverage` (2026-11-18, Windows, Node 24): `bin/siann.js` 100/96, `import-pack-plan.js` 93/82, `live-import-pack.js` 100/46 (branch), `import-pack.js` 95/85, `runner.js` 97/87, `client.js` 96/85, `ws.js` 97/93, `rollback.js` 100/100. CI's node job on ubuntu fails below 70 % branch coverage of `bin/**` (`--test-coverage-include='bin/**' --test-coverage-branches=70`). Before, with `m5b-bridge-native-client` (2026-11-15; the audit's figures were 89.2 / 70.9 / 96.0 with `client.js` 84/57): `bin/siann.js` 80/42, `import-pack-plan.js` 81/72, `live-import-pack.js` 100/46 (branch), `import-pack.js` 94/75 (branch), `runner.js` 94/79, `client.js` 95/84, `ws.js` 97/93, `rollback.js` 100/100 |
 | Node, incl. `scripts/` | same, no include filter | 86.5 % | 78.0 % | 91.2 % | `scripts/check-all.js` 53 % (the build steps), `create-daw-manifest.js` 73 % |
 | App, unit tests only | `npm run build` then `node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js` | 89.7 % of loaded files | 88.2 % | 79.7 % | `PlanPanel` 33 %, `TrackListDivider` 32 %, `ValueControl` 37 %, `Mixer` 42 %, `TrackList` 49 %, `Timeline` 51 %, `StepList` 72 %, `plans/diff` 79 %, `keys/commands` 80 %. Never loaded by a unit test: `main.ts`, `preload.ts`, `App.tsx`, `Shell.tsx`, `TopBar.tsx`, `index.tsx` (covered by e2e only) |
 | App e2e | not measured | | | | proposal: `NODE_V8_COVERAGE` for the main process and Playwright's `page.coverage` (Chromium) for the renderer, merged with c8-style tooling in the app job |
 | Native | not measured (heavy) | | | | proposal: a nightly ubuntu job, Clang `-fprofile-instr-generate -fcoverage-mapping`, ctest with `LLVM_PROFILE_FILE=%p.profraw`, `llvm-profdata merge`, `llvm-cov report --ignore-filename-regex='(_deps|tests)/'`; or GCC `--coverage` + gcovr. Report only, no threshold at first |
 
 The low React-component numbers are expected: those components are exercised by
-Playwright, which is not measured. The low `bin/siann.js` branch figure is the
-error paths of each subcommand (usage errors, `--run`).
+Playwright, which is not measured. The `bin/siann.js` branch figure, 42 % before
+`m5b-bridge-cli-coverage`, was the error paths of each subcommand (usage errors,
+`--run`); their tests brought it to 96 %.
 
 ## 6. Gaps ranked by risk
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
-| 5 | m3-rollback 2: media/renders never deleted by rollback | Medium: data loss | native: render a file, roll back the plan, assert the file and the media entry's blob remain | M3 follow-up |
 | 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
 | 7 | Desktop (JUCE) job skipped on PRs that change core libs | Medium: JUCE-only breakage lands on main | add `native/libs/playback`, `graph`, `realtime` to `DESKTOP_PATHS`, or rely on the nightly and track red nightlies | infra |
 | 8 | macOS-specific behaviour manual only (editor float/level, `m0-macos-bundle`, AU third-party) | Medium | an XCTest-free check in the desktop job: window level of an open editor via `CGWindowListCopyWindowInfo`; bundle `Info.plist` assertions once m0-macos-bundle is built | M0 / M5 exit |
 | 9 | Performance budgets of UI spec 5.6 (64 tracks, frame time, memory, cold start) have no scenario | Medium for M5b/M6c | Playwright perf scenario reading `performance.measure` marks; nightly, report-only first | UI phase 4 / M6c |
-| 10 | Bridge CLI holes: `workflow reject-plan`, `validate-journal` CLI, every `--run` flag | Low-medium | CLI tests with the fake runner (as `bridge-cli.test.js` does) | Node bridge, next bridge change |
 | 11 | `read-model-sequence.json` never checked against the engine | Low-medium | native test that replays the sequence's commands and compares the emitted events | M5 follow-up |
 | 12 | Long tests not on macOS | Low | add macos-latest to `long-tests.yml` | infra |
 | 13 | m4-crash-recovery 3, m4-engine-device 3: ordering / link not asserted | Low | ctest: `siann-engine --print-error-mode` (test-only flag) before any plugin; CMake check that `siann_engine_*_tests` link `siann_rt_alloc_guard` | M4 follow-up |

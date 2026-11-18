@@ -274,6 +274,11 @@ function rejectImportPackPlan(planFile, outFile, options = {}) {
   const absolutePlanFile = path.resolve(planFile);
   const absoluteOutFile = path.resolve(outFile);
   const plan = loadImportPackPlan(absolutePlanFile);
+  // Rejection takes a pending or approved plan (architecture spec, "Plans"): a
+  // rejected one keeps its first reviewer, time and reason.
+  if (plan.review && plan.review.state === 'rejected') {
+    throw new Error('plan is already rejected');
+  }
   const rejectedPlan = {
     ...plan,
     review: {

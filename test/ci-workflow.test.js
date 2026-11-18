@@ -304,6 +304,22 @@ test('the Node job runs npm test on Windows, macOS and Linux', () => {
   assert.match(text, /run: npm test/);
 });
 
+// m5b-bridge-cli-coverage (acceptance item 5; spec, "Build, test and CI"): on
+// ubuntu the node job enforces 70 % branch coverage of bin/siann.js. The flags
+// need Node 22.8, so they are not in npm test (engines floor Node 20).
+test('the Node job enforces 70 % branch coverage of bin/** on ubuntu only', () => {
+  const node = job('node');
+  const gate = steps(node).filter((step) => step.includes('--experimental-test-coverage'));
+  assert.equal(gate.length, 1, 'one coverage step');
+  const [step] = gate;
+  assert.match(step, /--test-coverage-include='?bin\/\*\*'?/);
+  assert.match(step, /--test-coverage-branches=70\b/);
+  assert.match(step, /\n {8}if: matrix\.os == 'ubuntu-latest'\n/);
+  assert.match(node.text, /node-version: 22\b/);
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.doesNotMatch(pkg.scripts.test, /coverage/);
+});
+
 test('the native, RTSan, desktop and app jobs build through the compiler cache', () => {
   for (const id of ['native', 'rtsan', 'desktop', 'app']) {
     const { text } = job(id);
