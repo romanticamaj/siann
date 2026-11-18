@@ -153,7 +153,7 @@ async function killEngineAndExpectReconnect(): Promise<void> {
 // m5-ui-port-track-list): the track list takes the page's text styles, and
 // only the toolbar and the info line keep the pinned ones until
 // m5-ui-port-toolbar.
-test('the zones not ported yet keep their text styles; the chrome, the ported lower, left and right zones and the track list take the mockup's', async () => {
+test('the zones not ported yet keep their text styles; the chrome, the ported lower, left and right zones and the track list take the mockup\'s', async () => {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const styles = await page.evaluate(() => {
     const pick = (el: Element) => {
