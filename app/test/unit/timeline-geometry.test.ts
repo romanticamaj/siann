@@ -18,6 +18,8 @@ import {
   MARKER_HEIGHT,
   MAX_LANE_HEIGHT,
   MIN_LANE_HEIGHT,
+  REPEAT_HIT_PX,
+  REPEAT_RADIUS,
   clampLaneHeight,
   clipBox,
   clipRects,
@@ -26,6 +28,7 @@ import {
   laneHeightOf,
   laneTops,
   lanesHeight,
+  repeatHandle,
   deltaFrames,
   frameToX,
   hitTest,
@@ -301,4 +304,23 @@ test("a clip's box, title strip and corner handles are draw()'s, from its bars, 
   assert.equal(hitTest(rects, 400, 290)?.part, 'body');
   assert.equal(hitTest(rects, 400, 273), null, 'the inset above the box');
   assert.equal(hitTest(rects, 400, 322), null, 'the gap below the box');
+});
+
+// m5b-ui-edit-more (UI redesign 3.2, "Clip handles"): the repeat handle in the
+// middle of the right border, draw()'s arc(x+w, y+HDR+(h-HDR)/2, 3.2), hit
+// within REPEAT_HIT_PX of its centre inside the box, before the right edge.
+test('the repeat handle sits on the right border half way down below the title strip, and is its own hit part', () => {
+  assert.equal(REPEAT_RADIUS, 3.2);
+  assert.equal(REPEAT_HIT_PX, 4);
+  const rects = clipRects(sampleSnapshot(), VIEW);
+  const rect = rects.find((r) => r.clipId === 'clp_1')!;
+  // clp_1's box: x 49..287, y 23..76; the title strip is 13 px.
+  assert.deepEqual(repeatHandle(clipBox(rect)), { x: 287, y: 23 + CLIP_TITLE_HEIGHT + (53 - CLIP_TITLE_HEIGHT) / 2, radius: 3.2 });
+  assert.equal(hitTest(rects, 285, 56)?.part, 'repeat');
+  assert.equal(hitTest(rects, 283, 52)?.part, 'repeat');
+  assert.equal(hitTest(rects, 286.5, 60)?.part, 'repeat');
+  assert.equal(hitTest(rects, 285, 51)?.part, 'right', 'above it, the edge');
+  assert.equal(hitTest(rects, 285, 61)?.part, 'right', 'below it, the edge');
+  assert.equal(hitTest(rects, 282, 56)?.part, 'body', 'left of it, the body');
+  assert.equal(hitTest(rects, 287.5, 56), null, 'outside the box, nothing');
 });

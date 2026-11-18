@@ -297,7 +297,7 @@ async function setSnap(on: boolean, grid?: 'bar' | 'beat' | 'adapt'): Promise<vo
     await focusProject();
     await page.keyboard.press('KeyJ');
   }
-  await expect.poll(snapState).toEqual({ on, grid: grid ?? (await snapState()).grid });
+  await expect.poll(snapState).toMatchObject({ on, grid: grid ?? (await snapState()).grid });
 }
 
 test('keys 1 and 3 choose the tools; the Split tool and Alt-click split, Alt-drag copies, Ctrl-drag constrains the axis', async () => {
@@ -567,13 +567,13 @@ test('J toggles snap; grid Bar and Beat put a dragged clip on their lines; Adapt
   test.setTimeout(150_000);
   await launchWith([{ clipId: 'clp_s', trackId: 'trk_a', position: 0, length: 24000 }]);
   // Snap is on by default, grid Adapt to Zoom (UI redesign spec 4.5 C10).
-  expect(await snapState()).toEqual({ on: true, grid: 'adapt' });
+  expect(await snapState()).toEqual({ on: true, grid: 'adapt', type: 'grid' });
   await focusProject();
   await page.keyboard.press('KeyJ');
-  await expect.poll(snapState).toEqual({ on: false, grid: 'adapt' });
+  await expect.poll(snapState).toEqual({ on: false, grid: 'adapt', type: 'grid' });
   await expect(page.getByTestId('snap-toggle')).toHaveAttribute('aria-pressed', 'false');
   await page.keyboard.press('KeyJ');
-  await expect.poll(snapState).toEqual({ on: true, grid: 'adapt' });
+  await expect.poll(snapState).toEqual({ on: true, grid: 'adapt', type: 'grid' });
   await expect(page.getByTestId('snap-toggle')).toHaveAttribute('aria-pressed', 'true');
 
   const dropAt = async (dx: number, expected: (position: number) => void) =>

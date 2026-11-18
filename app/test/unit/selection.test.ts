@@ -10,14 +10,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { frameToX, type Viewport } from '../../src/renderer/timeline/geometry';
+import { clipBox, frameToX, type ClipRect, type Viewport } from '../../src/renderer/timeline/geometry';
 import {
   clickSelection,
   nextClipFrame,
   previousClipFrame,
   pruneSelection,
   pruneTracks,
+  rubberBandSelection,
   selectAllClips,
+  selectNone,
   selectTrack,
   selectionSpan,
   selectionStart,
@@ -98,4 +100,44 @@ test('tracks: click selects one, Ctrl-click toggles, Shift-click takes the range
   // A removed track leaves the selection; the primary moves to what remains.
   assert.deepEqual(pruneTracks(two, ['trk_1', 'trk_2', 'trk_3']), { primary: 'trk_2', ids: ['trk_2'] });
   assert.equal(pruneTracks(two, order), two, 'unchanged: the same object');
+});
+
+// ---- m5b-ui-edit-more (UI redesign spec 3.2, "Editing"): the rubber band and Select None.
+
+// Three clips in two lanes, as the canvas lays them out (their boxes are clipBox's).
+const rect = (clipId: string, x: number, y: number, width: number, height = 53): ClipRect => ({
+  clipId,
+  trackId: y < 100 ? 'trk_a' : 'trk_b',
+  mediaId: 'med',
+  position: '0',
+  sourceStart: '0',
+  length: '1',
+  x,
+  y,
+  width,
+  height,
+});
+const RECTS = [rect('clp_l', 0, 60, 100), rect('clp_r', 200, 60, 100), rect('clp_low', 50, 113, 100)];
+
+test('a rubber band selects every clip whose box it touches, edges included', () => {
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 10, y: 70, width: 20, height: 10 }, [], false), ['clp_l']);
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 0, y: 0, width: 400, height: 300 }, [], false), ['clp_l', 'clp_r', 'clp_low']);
+  // Touching the right edge of clp_l's box exactly.
+  const box = clipBox(RECTS[0]!);
+  assert.deepEqual(rubberBandSelection(RECTS, { x: box.x + box.width, y: box.y, width: 5, height: 1 }, [], false), ['clp_l']);
+  assert.deepEqual(rubberBandSelection(RECTS, { x: box.x + box.width + 0.5, y: box.y, width: 5, height: 1 }, [], false), []);
+  // A band drawn right to left or bottom to top is the same box.
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 260, y: 200, width: -120, height: -100 }, [], false), ['clp_r', 'clp_low']);
+  // Without Shift it replaces the selection; touching nothing selects nothing.
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 160, y: 0, width: 10, height: 10 }, ['clp_r'], false), []);
+});
+
+test('Shift adds the band\'s clips to the selection, keeping its order', () => {
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 210, y: 70, width: 10, height: 10 }, ['clp_low'], true), ['clp_low', 'clp_r']);
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 0, y: 0, width: 400, height: 300 }, ['clp_r'], true), ['clp_r', 'clp_l', 'clp_low']);
+  assert.deepEqual(rubberBandSelection(RECTS, { x: 160, y: 0, width: 10, height: 10 }, ['clp_r'], true), ['clp_r']);
+});
+
+test('Ctrl+Shift+A selects none', () => {
+  assert.deepEqual(selectNone(), []);
 });

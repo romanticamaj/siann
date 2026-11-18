@@ -891,6 +891,38 @@ test('UX screenshot tour', async () => {
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('media-pool')).toHaveCount(0);
 
+  // ---- 32 (m5b-ui-edit-more; UI redesign 3.2): the two pieces of the Keys
+  // clip split at 25 glued again with the Glue tool (4; a click on a selected
+  // piece joins the selection's run in one revision), then the snap type menu
+  // open from the snap field's chevron. The mockup has no such menu, so the
+  // review reads this state alone.
+  await waveformsDrawn();
+  const glueBox = await canvasBox();
+  const leftPiece = await clipRect('clp_06_keys');
+  const rightPiece = (await timeline<Rect[]>('clips')).find((r) => r.trackId === 'trk_keys' && BigInt(r.position) === cut)!;
+  await page.mouse.click(glueBox.x + leftPiece.x + leftPiece.width / 2, glueBox.y + leftPiece.y + leftPiece.height / 2);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(glueBox.x + rightPiece.x + rightPiece.width / 2, glueBox.y + rightPiece.y + rightPiece.height / 2);
+  await page.keyboard.up('Shift');
+  const clipsBeforeGlue = Number(await page.getByTestId('clip-count').textContent());
+  await page.keyboard.press('Digit4');
+  await expect(page.getByTestId('tool-glue')).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.click(glueBox.x + leftPiece.x + leftPiece.width / 2, glueBox.y + leftPiece.y + leftPiece.height / 2);
+  await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBeforeGlue - 1));
+  await expect.poll(async () => (await clipRect('clp_06_keys')).width).toBeGreaterThan(leftPiece.width);
+  await page.getByTestId('snap-toggle').locator('svg').last().click();
+  await expect(page.getByTestId('snap-type-menu')).toBeVisible();
+  await shoot(
+    page,
+    'Pieces glued, snap type menu open',
+    'The Keys clip\'s two pieces (split at the cursor in state 25) selected and glued with the Glue tool (key 4, lit in the toolbar): one clip.remove and one clip.trim in one revision, so the clip is whole again with its fades and volume. The snap type menu is open under the snap field\'s chevron: Grid (checked), Grid Relative, Events (magnetic to the other clips\' starts and ends) and Magnetic Cursor. The mockup does not show this menu.',
+    { number: 32 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('snap-type-menu')).toHaveCount(0);
+  await page.keyboard.press('Digit1');
+  await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-pressed', 'true');
+
   // ---- 26 and 27 (m5b-ui-ghosts; UI redesign 4.2, 5.2): a plan's ghosts in
   // the event display and on the MixConsole.
   const ghostPlan = [

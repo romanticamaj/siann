@@ -130,15 +130,17 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'inspector-notepad': 'm5b-ui-notepad' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'inspector-notepad': 'm5b-ui-notepad' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
-  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata, m5b-ui-inserts-master).
+  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata, m5b-ui-inserts-master, m5b-ui-edit-more).
   assert.equal(ruleOf('agent-row').gate, 'm5b-ui-plan-metadata');
   assert.equal(MANIFEST.gates['m5b-ui-plan-metadata'], 'report');
   assert.equal(ruleOf('strip-3-inserts').gate, 'm5b-ui-inserts-master');
   assert.equal(MANIFEST.gates['m5b-ui-inserts-master'], 'report');
+  for (const id of ['tool-4', 'tool-5']) assert.equal(ruleOf(id).gate, 'm5b-ui-edit-more', id);
+  assert.equal(MANIFEST.gates['m5b-ui-edit-more'], 'report');
   // The proposal pill stays m5b-ui-ghosts', which landed it (report).
   assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
   assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
@@ -616,8 +618,8 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
     'strip-master-fader': 'm5b-ui-inserts-master', 'strip-master-cap': 'm5b-ui-inserts-master', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-inserts': 'm5b-ui-inserts-master', 'mixer-racks': 'm5b-ui-inserts-master',
     'strip-3-edit': 'm5b-ui-editor-channel', 'inspector-edit': 'm5b-ui-editor-channel', 'tab-editor': 'm5b-ui-editor-channel',
   };
-  // m5b-ui-inserts-master landed its parts (report); the others are pending.
-  const landed = new Set(['m5b-ui-inserts-master']);
+  // m5b-ui-inserts-master and m5b-ui-edit-more landed their parts (report); the others are pending.
+  const landed = new Set(['m5b-ui-inserts-master', 'm5b-ui-edit-more']);
   for (const [id, gate] of Object.entries(owners)) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(ruleOf(id).feature, gate, id);
@@ -825,7 +827,8 @@ test('the toolbar port: its gate is report, its holds name pending parts and she
   const tokens = read('app', 'renderer', 'tokens.css');
   // The en values, and the Chinese ones of the pill and the fades.
   const holds = [...new Set([...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
+  // m5b-ui-edit-more deleted the holds of tools 4 and 5 when it landed them.
+  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
   for (const id of holds) {
     assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
     assert.match(tokens, new RegExp(`--hold-${id}-w:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${id}-w`);
@@ -1280,4 +1283,25 @@ test("m5b-ui-ghosts: the gate is report, the pill's and the Agent changes' holds
     'track-ghost-2', 'track-ghost-2-name', 'lane-ghost-3', 'strip-ghost-2', 'strip-ghost-2-inserts', 'strip-ghost-2-name', 'clip-ghost-new-2', 'locator-band-ghost', 'proposal-pill', 'inspector-agent-changes']) {
     assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
   }
+});
+
+// ---- m5b-ui-edit-more (UI redesign 3.2, 10.9): tools 4 and 5 landed
+
+test('m5b-ui-edit-more: its gate is report, its parts are tools 4 and 5 and their hold tokens are gone', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-edit-more'], 'report');
+  const rule = MANIFEST.rules.find((r) => r.gate === 'm5b-ui-edit-more');
+  assert.deepEqual(rule.match, ['tool-4', 'tool-5']);
+  const tokens = read('app', 'renderer', 'tokens.css');
+  for (const id of ['tool-4', 'tool-5']) {
+    assert.doesNotMatch(tokens, new RegExp(`--hold-${id}-w`), id);
+    assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), new RegExp(`hold-${id}-w`), `tokens.ts regenerated: ${id}`);
+  }
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(shell, /hold-tool-[45]/, 'no shell.css rule for the holds of tools 4 and 5');
+  // The holds of tools 2 and 6 to 9 stay, with their pending owners.
+  for (const id of ['tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9']) {
+    assert.match(tokens, new RegExp(`--hold-${id}-w:`), id);
+    assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
+  }
+  assert.ok(!Object.values(MANIFEST.gates).includes('enforce'));
 });

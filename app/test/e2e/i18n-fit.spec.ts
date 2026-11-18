@@ -139,7 +139,8 @@ test('no labelled control overflows or wraps its label in any locale at either w
   await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
   await expect(page.getByTestId('info-line').locator('.f').first()).toBeVisible();
-  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
+  // Tools 4 and 5 (m5b-ui-edit-more) are .arr-toolbar .b too.
+  for (const id of ['tool-select', 'tool-split', 'tool-glue', 'tool-erase', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
   const agent = await agentFor(app);
   if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
   // A plan auditioned: its card reads approved for audition and the banner shows.
@@ -417,3 +418,73 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-edit-more (UI redesign 3.2, 6.3): the snap type menu, open, and the
+// repeat dialog (Ctrl+K), open, fit in every locale at both window sizes: no
+// item or label overflows its box or wraps.
+test('the snap type menu and the repeat dialog fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-edit-'));
+  const sessionDir = seedBundle(scratch, TRACKS, [{ id: 'clp_fit', trackId: 'trk_kick', at: 0.25 }]);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('tool-glue')).toBeVisible();
+  const clip = await page.evaluate(async () => {
+    const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
+    if (!hooks) throw new Error('window.__siannTimeline is missing (SIANN_SHELL_TEST=1)');
+    for (let i = 0; i < 200; i += 1) {
+      const found = hooks.clips().find((c) => c.clipId === 'clp_fit');
+      if (found) return found;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return null;
+  });
+  expect(clip).not.toBeNull();
+  const canvas = (await page.getByTestId('timeline-canvas').boundingBox())!;
+  const failures: string[] = [];
+  const DIALOG = '[data-testid=repeat-dialog] label, [data-testid=repeat-dialog] button, [data-testid=repeat-dialog] p';
+  const check = async (what: string, selector?: string) => {
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing()) failures.push(`${what} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await wrapped()) failures.push(`${what} ${size.width}x${size.height}: ${entry}`);
+      if (selector) {
+        const report = await page.evaluate((sel) => {
+          const out: string[] = [];
+          for (const el of document.querySelectorAll<HTMLElement>(sel)) {
+            if (el.scrollWidth > el.clientWidth) out.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? '').trim()}" ${el.scrollWidth} > ${el.clientWidth}`);
+          }
+          return out;
+        }, selector);
+        for (const entry of report) failures.push(`${what} ${size.width}x${size.height}: ${entry}`);
+      }
+    }
+    await resize(SIZES[0]!);
+  };
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    // The snap type menu, from the snap field's chevron.
+    await page.getByTestId('snap-toggle').locator('svg').last().click();
+    await expect(page.getByTestId('snap-type-menu')).toBeVisible();
+    await expect(page.getByTestId('snap-type-menu').getByRole('menuitemradio')).toHaveCount(4);
+    await check(`${locale} snap type menu`);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('snap-type-menu')).toHaveCount(0);
+    // The repeat dialog: the clip selected, Ctrl+K.
+    await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
+    await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
+    await page.keyboard.press('ControlOrMeta+KeyK');
+    await expect(page.getByTestId('repeat-dialog')).toBeVisible();
+    await check(`${locale} repeat dialog`, DIALOG);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('repeat-dialog')).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});
+

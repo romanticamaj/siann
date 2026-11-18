@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
-import { LANES_TOP, clipBox, cornerHandles, xToFrame } from '../../src/renderer/timeline/geometry';
+import { LANES_TOP, clipBox, cornerHandles, repeatHandle, xToFrame } from '../../src/renderer/timeline/geometry';
 import type { PeakPyramid } from '../../src/renderer/model/peaks';
 import { TOKENS } from '../../src/renderer/tokens';
 import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type GhostSource, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
@@ -896,7 +896,7 @@ test('the title is clipTitle() in --fw-strong --fs-micro, follows a media rename
   });
 });
 
-test('a selected clip has the selected outline and the two corner squares; no fade, repeat handle or ghost is drawn; a selection redraws the content', () => {
+test('a selected clip has the selected outline, the two corner squares and the repeat handle; no fade or ghost is drawn; a selection redraws the content', () => {
   withNamedTokens(() => {
     const r = drawRig(sampleSnapshot());
     const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
@@ -917,9 +917,17 @@ test('a selected clip has the selected outline and the two corner squares; no fa
     for (const corner of cornerHandles(box)) {
       assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--select' && c.args.join() === [corner.x, corner.y, corner.width, corner.height].join()), `the corner at ${corner.x}`);
     }
-    // Pending parts (m5b-ui-fades, m5b-ui-ghosts, the repeat handle): not drawn, on either layer.
+    // The repeat handle (m5b-ui-edit-more): draw()'s 3.2 px disc in --select on the right border, half way down below the title strip.
+    const handle = repeatHandle(box);
+    const arcs = calls.filter((c) => c.path?.some((s) => s.op === 'arc'));
+    assert.equal(arcs.length, 1, 'one disc: the repeat handle');
+    assert.equal(arcs[0]!.kind, 'fill');
+    assert.equal(arcs[0]!.style, '--select');
+    assert.deepEqual(arcs[0]!.path!.find((s) => s.op === 'arc')!.args.slice(0, 3), [handle.x, handle.y, 3.2]);
+    // Pending parts (m5b-ui-fades, m5b-ui-ghosts): not drawn, on either layer.
     for (const call of [...calls, ...r.surface.overlayCalls.calls]) {
-      assert.ok(!call.path?.some((s) => s.op === 'quadraticCurveTo' || s.op === 'arc'), 'no fade curve and no repeat handle');
+      assert.ok(!call.path?.some((s) => s.op === 'quadraticCurveTo'), 'no fade curve');
+      if (call !== arcs[0]) assert.ok(!call.path?.some((s) => s.op === 'arc'), 'no other disc');
       assert.notEqual(call.style, '--bg-0-a550', 'no fade shade');
       assert.ok(!/^--ai/.test(call.style), 'no ghost');
       if (call.kind === 'fill' && call.path && call.path.length === 3 && call.path[0]!.args[1]! > RULER_HEIGHT) assert.fail(`a triangle at ${JSON.stringify(call.path)}: no fade triangle`);

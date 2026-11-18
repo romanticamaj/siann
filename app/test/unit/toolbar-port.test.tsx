@@ -8,11 +8,14 @@
 // - the children in the template's order: .seg (the tools), the snap, grid
 //   type and auto-scroll .field, the .spacer, then the box of the proposal
 //   pill (m5b-ui-ghosts);
-// - tools 1 and 3 as tool() returns them: .b with the small icon and its kbd,
-//   .on on the active one; the boxes of tools 2 and 4 to 9 (m5b-ui-edit-more)
-//   stay where tool() would put them, empty;
+// - tools 1, 3, 4 and 5 as tool() returns them: .b with the small icon and
+//   its kbd, .on on the active one (Glue and Erase landed with
+//   m5b-ui-edit-more); the boxes of tools 2 and 6 to 9 (M6a) stay where
+//   tool() would put them, empty;
 // - the snap field: magnet, label, the snap type in <em>, chevron, .on when
-//   snap is on; the grid type field: grid, the grid type's label, chevron;
+//   snap is on, the <em> naming the chosen snap type; the snap type menu
+//   (m5b-ui-edit-more) lists the four types as menuitemradio; the grid type
+//   field: grid, the grid type's label, chevron;
 //   auto-scroll: the follow icon alone, .on when it follows;
 // - the labels per locale are the mockup's L() (en and zh-TW);
 // - the ids are the mockup's minus the pending parts'; the test ids of
@@ -26,8 +29,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
-import type { GridType } from '../../src/renderer/timeline/snap';
-import { Toolbar, type ToolbarProps } from '../../src/renderer/timeline/Toolbar';
+import type { GridType, SnapType } from '../../src/renderer/timeline/snap';
+import { SnapTypeMenu, Toolbar, type ToolbarProps } from '../../src/renderer/timeline/Toolbar';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
 
 const MANIFEST = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'test', 'fidelity', 'manifest.json'), 'utf8')) as {
@@ -43,18 +46,26 @@ const pending = (id: string) => {
 };
 
 const noop = () => undefined;
-const ALL = { select: true, split: true, snap: true, autoScroll: true };
+const ALL = { select: true, split: true, glue: true, erase: true, snap: true, autoScroll: true };
+// The tools this feature and M5 landed, by tool() number, with their tool and test id.
+const LANDED: Record<string, readonly [ToolbarProps['tool'], string]> = {
+  'tool-1': ['select', 'tool-select'],
+  'tool-3': ['split', 'tool-split'],
+  'tool-4': ['glue', 'tool-glue'],
+  'tool-5': ['erase', 'tool-erase'],
+};
 
 function props(over: Partial<ToolbarProps> = {}): ToolbarProps {
   return {
     tool: 'select',
-    snap: { on: true, grid: 'adapt' as GridType },
+    snap: { on: true, grid: 'adapt' as GridType, type: 'grid' as SnapType },
     autoScroll: false,
     gates: ALL,
     error: null,
     onTool: noop,
     onSnapToggle: noop,
     onGrid: noop,
+    onSnapType: noop,
     onAutoScroll: noop,
     ...over,
   };
@@ -140,8 +151,8 @@ test('with a reviewable plan the pill ends the toolbar: span.overlaypill, the sp
   assert.equal(find(off, byClass('tog')).attrs['aria-pressed'], 'false');
 });
 
-test('the tools: 1 and 3 as tool() returns them, the boxes of 2 and 4 to 9 empty in their places', () => {
-  for (const [tool, active] of [['select', 'tool-1'], ['split', 'tool-3']] as const) {
+test('the tools: 1, 3, 4 and 5 as tool() returns them, the boxes of 2 and 6 to 9 empty in their places', () => {
+  for (const [active, [tool]] of Object.entries(LANDED)) {
     const app = part(render({ tool }), 'tools');
     const mockup = part(mockupToolbar(), 'tools');
     assert.equal(sig(app), 'div.seg');
@@ -151,12 +162,15 @@ test('the tools: 1 and 3 as tool() returns them, the boxes of 2 and 4 to 9 empty
     assert.equal(theirs.length, 9);
     for (let i = 0; i < 9; i += 1) {
       const id = theirs[i]!.attrs['data-part']!;
-      if (id === 'tool-1' || id === 'tool-3') {
+      if (LANDED[id]) {
         const el = mine[i]!;
+        assert.equal(el.tag, 'button', `${id}: a button`);
         assert.equal(el.attrs['data-part'], id);
+        assert.equal(el.attrs['data-testid'], LANDED[id]![1]);
         assert.ok(classes(el).includes('b'), `${id}: .b`);
         assert.equal(classes(el).includes('on'), id === active, `${id}: .on`);
         assert.equal(el.attrs['aria-pressed'], String(id === active), `${id}: aria-pressed`);
+        assert.ok(el.attrs['aria-label'], `${id}: named`);
         const [icon, kbd, ...rest] = elements(el);
         const [mIcon, mKbd] = elements(theirs[i]!);
         assertIcon(icon!, mIcon!, id);
@@ -166,22 +180,33 @@ test('the tools: 1 and 3 as tool() returns them, the boxes of 2 and 4 to 9 empty
       } else {
         assert.ok(pending(id), `${id} is pending`);
         assertEmptyBox(mine[i]!, id);
+        // Its hold token's box (shell.css), M6a's until it lands.
+        assert.deepEqual(classes(mine[i]!), [`hold-${id}`], id);
       }
     }
   }
   // tool() with the mockup's arguments writes the same as the template.
   const mockup = loadMockup();
   assert.equal(sig(find(parse(mockup.tool('cut', 3)), byClass('b'))), 'span.b');
+  assert.equal(sig(find(parse(mockup.tool('glue', 4)), byClass('b'))), 'span.b');
+  assert.equal(sig(find(parse(mockup.tool('erase', 5)), byClass('b'))), 'span.b');
   assert.equal(sig(find(parse(mockup.tool('ptr', 1, true)), byClass('b'))), 'span.b.on');
+  // The parts of tools 4 and 5 are this feature's, reported; the holds are 2 and 6 to 9 only.
+  for (const id of ['tool-4', 'tool-5']) assert.ok(!pending(id), id);
+  const app = part(render(), 'tools');
+  assert.deepEqual(
+    elements(app).flatMap((el) => classes(el).filter((c) => c.startsWith('hold-'))),
+    ['hold-tool-2', 'hold-tool-6', 'hold-tool-7', 'hold-tool-8', 'hold-tool-9'],
+  );
   // The test ids of m5-ui-edit-basics stay.
-  const app = render();
-  assert.equal(part(app, 'tool-1').attrs['data-testid'], 'tool-select');
-  assert.equal(part(app, 'tool-3').attrs['data-testid'], 'tool-split');
+  const all = render();
+  assert.equal(part(all, 'tool-1').attrs['data-testid'], 'tool-select');
+  assert.equal(part(all, 'tool-3').attrs['data-testid'], 'tool-split');
 });
 
 test('the snap field: magnet, label, the snap type, chevron; .on and pressed with snap', () => {
   for (const on of [true, false]) {
-    const field = part(render({ snap: { on, grid: 'adapt' } }), 'snap');
+    const field = part(render({ snap: { on, grid: 'adapt', type: 'grid' } }), 'snap');
     const mField = part(mockupToolbar(), 'snap');
     assert.equal(sig(field).replace(/^button/, 'span').replace(/\.on\b/, ''), 'span.field');
     assert.equal(classes(field).includes('on'), on);
@@ -194,6 +219,35 @@ test('the snap field: magnet, label, the snap type, chevron; .on and pressed wit
     assert.equal(em!.tag, 'em');
     assert.equal(text(em!), text(mEm!));
     assertIcon(chev!, mChev!, 'chev');
+    assert.equal(field.attrs['aria-haspopup'], 'menu', 'the chevron opens the snap type menu');
+  }
+});
+
+// m5b-ui-edit-more (UI redesign 3.2, "Snap types"): the field's <em> names the chosen type.
+test('the snap field\'s <em> reads the chosen snap type', () => {
+  const words: Record<SnapType, string> = { grid: 'Grid', gridRelative: 'Grid Relative', events: 'Events', cursor: 'Magnetic Cursor' };
+  for (const type of ['grid', 'gridRelative', 'events', 'cursor'] as const) {
+    const field = part(render({ snap: { on: true, grid: 'bar', type } }), 'snap');
+    assert.equal(text(find(field, (el) => el.tag === 'em')), words[type], type);
+    assert.equal(field.attrs['data-snap-type'], type);
+  }
+  const zh = part(render({ snap: { on: true, grid: 'bar', type: 'events' } }, 'zh-Hant'), 'snap');
+  assert.equal(text(find(zh, (el) => el.tag === 'em')), '事件');
+});
+
+test('the snap type menu lists Grid, Grid Relative, Events and Magnetic Cursor as menuitemradio, the current one checked', () => {
+  const before = localeStore();
+  try {
+    const menu = find(parse(renderToStaticMarkup(<SnapTypeMenu type="events" x={10} y={20} onChoose={noop} onClose={noop} />)), byAttr('role', 'menu'));
+    assert.equal(menu.attrs['data-testid'], 'snap-type-menu');
+    assert.ok(classes(menu).includes('grid-type-menu'), 'the grid type menu\'s look');
+    const items = findAll(menu, byAttr('role', 'menuitemradio'));
+    assert.deepEqual(items.map((el) => el.attrs['data-testid']), ['snap-type-grid', 'snap-type-gridRelative', 'snap-type-events', 'snap-type-cursor']);
+    assert.deepEqual(items.map(text), ['Grid', 'Grid Relative', 'Events', 'Magnetic Cursor']);
+    assert.deepEqual(items.map((el) => el.attrs['aria-checked']), ['false', 'false', 'true', 'false']);
+    for (const item of items) assert.ok(classes(item).includes('time-format-item'));
+  } finally {
+    installLocaleStore(before);
   }
 });
 
@@ -201,7 +255,7 @@ test('the grid type field: grid icon, the grid type\'s label, chevron, for Bar, 
   const mField = part(mockupToolbar(), 'grid-type');
   const labels: Record<GridType, string> = { bar: 'Bar', beat: 'Beat', adapt: 'Adapt to Zoom' };
   for (const grid of ['bar', 'beat', 'adapt'] as const) {
-    const field = part(render({ snap: { on: true, grid } }), 'grid-type');
+    const field = part(render({ snap: { on: true, grid, type: 'grid' } }), 'grid-type');
     assert.equal(sig(field).replace(/^button/, 'span'), 'span.field');
     assert.equal(field.attrs['data-testid'], 'grid-type');
     assert.equal(field.attrs['aria-haspopup'], 'menu');
@@ -213,7 +267,7 @@ test('the grid type field: grid icon, the grid type\'s label, chevron, for Bar, 
     assert.equal(text(field), labels[grid]);
   }
   // The mockup's own grid type is Adapt to Zoom.
-  assert.equal(text(part(render({ snap: { on: true, grid: 'adapt' } }), 'grid-type')), text(mField));
+  assert.equal(text(part(render({ snap: { on: true, grid: 'adapt', type: 'grid' } }), 'grid-type')), text(mField));
 });
 
 test('auto-scroll: the follow icon alone, the mockup\'s inline padding, .on and pressed when it follows', () => {
@@ -234,10 +288,10 @@ test('auto-scroll: the follow icon alone, the mockup\'s inline padding, .on and 
 
 test('the labels are the mockup\'s in en and zh-TW', () => {
   for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
-    const app = render({ snap: { on: true, grid: 'adapt' } }, locale);
+    const app = render({ snap: { on: true, grid: 'adapt', type: 'grid' } }, locale);
     const mockup = mockupToolbar(lang);
     for (const id of ['snap', 'grid-type']) assert.equal(text(part(app, id)), text(part(mockup, id)), `${locale}: ${id}`);
-    assert.equal(text(part(app, 'tool-1')), text(part(mockup, 'tool-1')));
+    for (const id of ['tool-1', 'tool-4', 'tool-5']) assert.equal(text(part(app, id)), text(part(mockup, id)), `${locale}: ${id}`);
   }
 });
 
@@ -247,9 +301,9 @@ test('the ids are the mockup\'s minus the pending parts\'; no media button, no D
   // The pill (m5b-ui-ghosts) is there only with a reviewable plan.
   assert.deepEqual(ids(app), ids(mockupToolbar()).filter((id) => !pending(id) && id !== 'proposal-pill'));
   assert.deepEqual(ids(render({ pill: { lead: 'x', steps: '1 step', on: true, onToggle: noop } })), ids(mockupToolbar()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['auto-scroll', 'grid-type', 'snap', 'tool-1', 'tool-3', 'toolbar', 'tools'].sort());
+  assert.deepEqual(ids(app), ['auto-scroll', 'grid-type', 'snap', 'tool-1', 'tool-3', 'tool-4', 'tool-5', 'toolbar', 'tools'].sort());
   const testids = findAll(app, byAttr('data-testid')).map((el) => el.attrs['data-testid']!);
-  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type', 'auto-scroll', 'timeline-error']) assert.ok(testids.includes(id), id);
+  for (const id of ['tool-select', 'tool-split', 'tool-glue', 'tool-erase', 'snap-toggle', 'grid-type', 'auto-scroll', 'timeline-error']) assert.ok(testids.includes(id), id);
   assert.ok(!testids.some((id) => id === 'media-pool' || id.startsWith('pool-') || id === 'delete-clip'), testids.join(' '));
   // No refusal: the line is there, empty.
   assert.equal(text(find(app, byAttr('data-testid', 'timeline-error'))), '');
@@ -259,7 +313,7 @@ test('the ids are the mockup\'s minus the pending parts\'; no media button, no D
 });
 
 test('an engine without the tools, snap or the transport keeps their boxes, empty (UI redesign 3.0)', () => {
-  const app = render({ gates: { select: false, split: false, snap: false, autoScroll: false } });
+  const app = render({ gates: { select: false, split: false, glue: false, erase: false, snap: false, autoScroll: false } });
   const ids = findAll(app, byAttr('data-part')).map((el) => el.attrs['data-part']);
   assert.deepEqual(ids.sort(), ['toolbar', 'tools']);
   const tools = elements(part(app, 'tools'));
@@ -269,5 +323,10 @@ test('an engine without the tools, snap or the transport keeps their boxes, empt
   // Every box but the pill's, which is not in the DOM without a reviewable plan (UI redesign 3.0).
   assert.equal(row.length, elements(mockupToolbar()).length - 1, 'no field collapses');
   for (const box of row.slice(1, 4)) assertEmptyBox(box, 'a field');
-  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type', 'auto-scroll']) assert.ok(!findAll(app, byAttr('data-testid', id)).length, id);
+  for (const id of ['tool-select', 'tool-split', 'tool-glue', 'tool-erase', 'snap-toggle', 'grid-type', 'auto-scroll']) assert.ok(!findAll(app, byAttr('data-testid', id)).length, id);
+  // Glue alone missing (no clip.trim): its box is the empty tool box, the others stay.
+  const noGlue = render({ gates: { ...ALL, glue: false } });
+  assert.deepEqual(classes(elements(part(noGlue, 'tools'))[3]!), ['tool-empty']);
+  assertEmptyBox(elements(part(noGlue, 'tools'))[3]!, 'tool 4');
+  assert.equal(part(noGlue, 'tool-5').attrs['data-testid'], 'tool-erase');
 });
