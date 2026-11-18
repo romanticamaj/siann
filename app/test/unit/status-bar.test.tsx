@@ -177,7 +177,9 @@ test('the status bar shows device, latency, xruns and the side heard, and keeps 
   assert.match(outside, /<span class="hear" data-part="status-hearing"><svg class="i s"[^>]*>.*?<\/svg>Hearing <b data-testid="status-heard" data-heard="main">main<\/b><\/span>/);
   assert.match(outside, /data-testid="revision"/);
   assert.match(outside, /data-testid="locale-switch"/);
-  for (const id of ['session-id', 'track-count', 'clip-count', 'sync-count', 'connections']) {
+  // The diagnostics row's test id is about-track-count (UI redesign 10.8, 4): track-count is the track list head's count.
+  assert.ok(!bar.includes('data-testid="track-count"'), 'no track-count in the status bar or its About panel');
+  for (const id of ['session-id', 'about-track-count', 'clip-count', 'sync-count', 'connections']) {
     assert.ok(!outside.includes(`data-testid="${id}"`), `${id} is not in the bar`);
     assert.ok(inside.includes(`data-testid="${id}"`), `${id} is in the About panel`);
   }

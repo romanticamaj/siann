@@ -102,7 +102,7 @@ async function launch(): Promise<void> {
   });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
   // Snap is on by default since m5-ui-edit-basics; these gestures are checked
   // unsnapped (edit-basics.spec.ts checks the snapped ones), so J turns it off.
   await page.keyboard.press('KeyJ');

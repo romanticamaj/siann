@@ -35,6 +35,7 @@ const SENTINELS: Partial<Record<Key, Record<string, string | number>>> = {
   'plans.count': { count: 7 },
   'toast.planArrived': { steps: 7 },
   'confirm.removeTracks': { count: 7 },
+  'tracklist.count': { tracks: 7, clips: 17 },
 };
 
 // Simplified / Traditional pairs (spec 6.3 and the glossary of 6.5).

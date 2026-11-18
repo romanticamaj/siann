@@ -41,7 +41,7 @@ async function launch(languages: readonly string[], hook = true): Promise<void> 
   app = await launchApp({ sessionDir, userData, languages, hook });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
 }
 
 test.beforeEach(() => {

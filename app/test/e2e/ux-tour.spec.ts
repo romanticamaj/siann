@@ -512,7 +512,7 @@ test('UX screenshot tour', async () => {
   await launch(path.join(scratch, 'empty-sessions'));
   await resize(WIDE);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText('0');
+  await expect(page.getByTestId('about-track-count')).toHaveText('0');
   await shoot(page, 'Empty session', 'First launch on an empty session directory: the engine created a new session with no tracks, clips or plans.');
   await app!.close();
   app = undefined;
@@ -522,7 +522,7 @@ test('UX screenshot tour', async () => {
   await launch(path.dirname(bundle), { SIANN_SHELL_BACKOFF_MS: String(RESTART_MS) });
   await resize(WIDE);
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText('10');
   await waveformsDrawn();
   watcher = await engineClient(page, { events: true });
@@ -774,7 +774,7 @@ test('UX screenshot tour', async () => {
   // The toast is shot while it shows (it dismisses itself after a few seconds).
   const toast = page.getByTestId('toast');
   await expect(toast).toBeVisible();
-  await expect(page.getByTestId('track-count')).not.toHaveText('');
+  await expect(page.getByTestId('about-track-count')).not.toHaveText('');
   await expect(page.getByTestId('connection-banner')).toHaveCount(0);
   const toastText = await toast.locator('.toast-text').textContent();
   await painted(page);

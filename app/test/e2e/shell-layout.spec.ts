@@ -352,7 +352,7 @@ test('the layout survives a restart and a session.open, under one localStorage k
   await engine.call('session.open', { path: path.join(otherDir, 'Untitled.siann') });
   engine.close();
   await expect(page.getByTestId('session-id')).not.toHaveText(sessionId ?? '');
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
   await expectSize('left', before.left);
   await expectSize('lower', before.lower);
   expect(await visible('right')).toBe(false);
@@ -368,7 +368,7 @@ test('no protocol request carries the layout, and layout changes make no revisio
   page.on('websocket', (socket) => socket.on('framesent', (frame) => frames.push(String(frame.payload))));
   await page.reload();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   expect(frames.some((f) => f.includes('"auth"')), 'the frames of the new page are collected').toBe(true);
   const revision = await page.getByTestId('revision').textContent();
 

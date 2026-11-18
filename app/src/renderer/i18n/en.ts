@@ -75,6 +75,10 @@ export const en = {
   // The track list (m5-ui-arrange). {track} is the user's track name.
   'tracklist.label': 'Track list',
   'tracklist.add': 'Add track',
+  // The head's add button and its count (m5-ui-port-track-list; the mockup's .add and .cnt, UI redesign 10.8, 4).
+  'tracklist.addLabel': 'Track',
+  'tracklist.count': ({ tracks, clips }: { tracks: number; clips: number }): string =>
+    `${plural('en', tracks, { one: `${tracks} track`, other: `${tracks} tracks` })} · ${plural('en', clips, { one: `${clips} clip`, other: `${clips} clips` })}`,
   'tracklist.rename': 'Rename {track}',
   'tracklist.resize': 'Resize the track list',
   'tracklist.height': 'Height of {track}',

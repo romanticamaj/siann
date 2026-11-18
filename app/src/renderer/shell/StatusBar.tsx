@@ -275,7 +275,7 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
           <dt>{t('status.session')}</dt>
           <dd data-testid="session-id">{state.sessionId ?? ''}</dd>
           <dt>{t('status.tracks')}</dt>
-          <dd data-testid="track-count">{snapshot ? String(snapshot.tracks.length) : ''}</dd>
+          <dd data-testid="about-track-count">{snapshot ? String(snapshot.tracks.length) : ''}</dd>
           <dt>{t('status.clips')}</dt>
           <dd data-testid="clip-count">{snapshot ? String(snapshot.clips.length) : ''}</dd>
           <dt>{t('status.syncs')}</dt>

@@ -43,6 +43,7 @@ const PATHS = {
     </>
   ),
   chev: <path d="M4.5 6.5 8 10l3.5-3.5" />,
+  plus: <path d="M8 3.5v9M3.5 8h9" />,
   spark: (
     <>
       <path d="M7 2.5 8.2 6 11.5 7 8.2 8.2 7 11.5 5.8 8.2 2.5 7 5.8 6z" fill="currentColor" strokeWidth="1" />
