@@ -47,6 +47,13 @@ struct OpenReport {
     std::vector<std::string> pendingTakes;
 };
 
+// Punch in and out (m5b-engine-punch-count-in): engine state kept in the checkpoint.
+struct PunchFlags {
+    bool in = false;
+    bool out = false;
+    friend bool operator==(const PunchFlags&, const PunchFlags&) = default;
+};
+
 class Session {
 public:
     // Revisions between automatic checkpoints.
@@ -93,6 +100,12 @@ public:
     // alone, and read back on open (false when the checkpoint has no field).
     bool cycle() const noexcept;
     void setCycle(bool enabled) noexcept;
+
+    // The punch flags (m5b-engine-punch-count-in): engine state like the cycle
+    // flag, written into the checkpoint with it as transport: {cycle, punch: {in,
+    // out}} by every checkpoint write, and read back on open (false when absent).
+    PunchFlags punch() const noexcept;
+    void setPunch(PunchFlags flags) noexcept;
 
     // Proposal branches (command/history.hpp). Every branch commit and merge
     // is one journal record, durable before it is published. Opening and

@@ -16,8 +16,9 @@
 //
 // Monitoring (m5b-engine-monitoring): a slot can be bound to a track's monitor
 // gate; every block the bank writes the gate's `capturing` (the slot's recorder
-// records, the transport plays and the map reaches the input), so auto
-// monitoring follows the capture at the block it starts. The gate's `armed` is
+// records, the transport plays and the map reaches the input) and, beside it, the
+// recorder's capture window (m5b-engine-punch-count-in), so auto monitoring
+// follows the capture to the frame it starts and ends at. The gate's `armed` is
 // the engine host's.
 
 #include <array>

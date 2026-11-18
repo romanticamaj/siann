@@ -2,6 +2,7 @@ add_library(siann_playback
   src/audition.cpp
   src/playback_engine.cpp
   src/plugin_instances.cpp
+  src/punch.cpp
 )
 add_library(siann::playback ALIAS siann_playback)
 target_include_directories(siann_playback PUBLIC include)
@@ -18,6 +19,7 @@ if(SIANN_BUILD_TESTS)
     tests/plugin_instances_test.cpp
     tests/cycle_test.cpp
     tests/click_test.cpp
+    tests/punch_test.cpp
   )
   # siann_host_clap and its test plugin are defined later (libs/host_clap); the
   # instance table tests host siann_test_plugin as a CLAP.

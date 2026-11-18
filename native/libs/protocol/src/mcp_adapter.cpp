@@ -78,6 +78,20 @@ const std::vector<McpTool> kTools = {
     {"set_click", "transport.set_click", McpScope::propose,
      "Turns the metronome on or off, optionally with its gain; returns {playing, position, cycle, click}.",
      R"({"type":"object","properties":{"enabled":{"type":"boolean"},"gainMilliDb":{"type":"integer","minimum":-60000,"maximum":0,"description":"default -12000; omitted keeps the current gain"}},"required":["enabled"],"additionalProperties":false})"},
+    // m5b-engine-punch-count-in (Protocol v0 item 34): engine state that shapes the
+    // next recording and starts nothing, so propose; record stays trusted.
+    {"set_punch", "transport.set_punch", McpScope::propose,
+     "Turns punch in and out at the locators on or off for the next recording; returns the transport state with "
+     "punch, preroll and countIn.",
+     R"({"type":"object","properties":{"in":{"type":"boolean","description":"capture starts at the left locator"},"out":{"type":"boolean","description":"capture ends at the right locator"}},"required":["in","out"],"additionalProperties":false})"},
+    {"set_preroll", "transport.set_preroll", McpScope::propose,
+     "Turns pre-roll on or off, optionally with its bars: a recording started from stop plays that many bars before "
+     "the record position; returns the transport state.",
+     R"({"type":"object","properties":{"enabled":{"type":"boolean"},"bars":{"type":"integer","minimum":1,"maximum":8,"description":"default 1; omitted keeps the current value"}},"required":["enabled"],"additionalProperties":false})"},
+    {"set_count_in", "transport.set_count_in", McpScope::propose,
+     "Turns the count-in on or off, optionally with its bars: a recording started from stop clicks that many bars "
+     "with the transport held, then starts; returns the transport state.",
+     R"({"type":"object","properties":{"enabled":{"type":"boolean"},"bars":{"type":"integer","minimum":1,"maximum":8,"description":"default 2; omitted keeps the current value"}},"required":["enabled"],"additionalProperties":false})"},
     {"engine_status", "engine.status", McpScope::propose,
      "Returns the device (or deviceError), playing, the driver's timing counters, the DSP load and the plugin "
      "instances.",

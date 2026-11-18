@@ -400,6 +400,7 @@ const std::vector<std::string_view> kMethods = {
     "plugin.set_parameter", "plugin.registry", "plugin.approve", "engine.devices", "engine.select_device",
     "gesture.begin",   "gesture.update",  "gesture.hold",    "gesture.end",       "gesture.cancel",
     "plan.list",       "plan.preview",    "transport.set_cycle", "transport.set_click",
+    "transport.set_punch", "transport.set_preroll", "transport.set_count_in",
     "record.arm",      "transport.record", "record.recover_take",
     "session.create",  "media.import",    "meter.reset_loudness",
     "agent.request",   "agent.cancel_request", "agent.requests", "agent.next_request", "agent.answer_request",
@@ -515,13 +516,24 @@ Value clickJson(const ClickState& click) {
     return Value(Object{{"enabled", Value(click.enabled)}, {"gainMilliDb", Value(click.gainMilliDb)}});
 }
 
+Value punchJson(const PunchState& punch) {
+    return Value(Object{{"in", Value(punch.in)}, {"out", Value(punch.out)}});
+}
+
+Value barsJson(const BarsState& state) {
+    return Value(Object{{"enabled", Value(state.enabled)}, {"bars", Value(state.bars)}});
+}
+
 Value transportStateJson(const TransportState& state) {
     return Value(Object{{"playing", Value(state.playing)},
                         {"position", decimal(state.position)},
                         {"cycle", Value(state.cycle)},
                         {"click", clickJson(state.click)},
                         {"recording", Value(state.recording)},
-                        {"armed", stringArray(state.armed)}});
+                        {"armed", stringArray(state.armed)},
+                        {"punch", punchJson(state.punch)},
+                        {"preroll", barsJson(state.preroll)},
+                        {"countIn", barsJson(state.countIn)}});
 }
 
 bool requireBool(const Value& params, std::string_view key, std::string_view method) {
@@ -541,6 +553,20 @@ std::optional<std::int32_t> optionalClickGain(const Value& params) {
     if (value->kind() != Value::Kind::number || std::floor(value->asNumber()) != value->asNumber() ||
         value->asNumber() < ClickState::kMinGainMilliDb || value->asNumber() > ClickState::kMaxGainMilliDb) {
         throw ProtocolError("invalid_params", "transport.set_click: gainMilliDb must be an integer in [-60000, 0]");
+    }
+    return static_cast<std::int32_t>(value->asNumber());
+}
+
+// transport.set_preroll's and set_count_in's optional bars (Protocol v0 item 34):
+// an integer in [1, 8].
+std::optional<std::int32_t> optionalBars(const Value& params, std::string_view method) {
+    const Value* value = params.find("bars");
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    if (value->kind() != Value::Kind::number || std::floor(value->asNumber()) != value->asNumber() ||
+        value->asNumber() < BarsState::kMinBars || value->asNumber() > BarsState::kMaxBars) {
+        throw ProtocolError("invalid_params", std::string(method) + ": bars must be an integer in [1, 8]");
     }
     return static_cast<std::int32_t>(value->asNumber());
 }
@@ -588,6 +614,9 @@ Value engineStatusJson(const EngineStatus& status) {
                {"click", clickJson(status.click)},
                {"recording", Value(status.recording)},
                {"armed", stringArray(status.armed)},
+               {"punch", punchJson(status.punch)},
+               {"preroll", barsJson(status.preroll)},
+               {"countIn", barsJson(status.countIn)},
                {"xruns", decimal(status.xruns)},
                {"maxCallbackMicros", Value(status.maxCallbackMicros)},
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
@@ -1828,6 +1857,10 @@ struct ProtocolServer::Impl {
                                       {"cycle", Value(options.transportPort != nullptr)},
                                       {"click", Value(options.transportPort != nullptr)},
                                       {"recording", Value(options.recordPort != nullptr)},
+                                      // Protocol v0 item 34: with features.recording.
+                                      {"punch", Value(options.recordPort != nullptr)},
+                                      {"preroll", Value(options.recordPort != nullptr)},
+                                      {"countIn", Value(options.recordPort != nullptr)},
                                       {"monitoring", Value(options.recordPort != nullptr &&
                                                            options.recordPort->monitoringAvailable())},
                                       {"masterGain", Value(true)},
@@ -2742,6 +2775,20 @@ struct ProtocolServer::Impl {
             const std::optional<std::int32_t> gain = optionalClickGain(request.params);
             return success(request.requestId, transportStateJson(transportPort.setClick(enabled, gain)));
         }
+        if (method == "transport.set_punch") {
+            TransportPort& transportPort = requireTransport();
+            const bool punchIn = requireBool(request.params, "in", method);
+            const bool punchOut = requireBool(request.params, "out", method);
+            return success(request.requestId, transportStateJson(transportPort.setPunch(punchIn, punchOut)));
+        }
+        if (method == "transport.set_preroll" || method == "transport.set_count_in") {
+            TransportPort& transportPort = requireTransport();
+            const bool enabled = requireBool(request.params, "enabled", method);
+            const std::optional<std::int32_t> bars = optionalBars(request.params, method);
+            return success(request.requestId,
+                           transportStateJson(method == "transport.set_preroll" ? transportPort.setPreroll(enabled, bars)
+                                                                                : transportPort.setCountIn(enabled, bars)));
+        }
         if (method == "engine.status") {
             return success(request.requestId, engineStatus());
         }
@@ -2902,10 +2949,14 @@ struct ProtocolServer::Impl {
         }
     }
 
-    // The cycle flag and the click, for transport.changed (Protocol v0 item 26).
+    // The cycle flag, the click (Protocol v0 item 26) and the punch, pre-roll and
+    // count-in (item 34), for transport.changed.
     struct TransportFlags {
         bool cycle = false;
         ClickState click;
+        PunchState punch;
+        BarsState preroll;
+        BarsState countIn;
         friend bool operator==(const TransportFlags&, const TransportFlags&) = default;
     };
 
@@ -2914,14 +2965,15 @@ struct ProtocolServer::Impl {
             return std::nullopt;
         }
         const EngineStatus status = options.transportPort->status();
-        return TransportFlags{status.cycle, status.click};
+        return TransportFlags{status.cycle, status.click, status.punch, status.preroll, status.countIn};
     }
 
-    // The methods that can change the flags: the two setters, and session.open
-    // (the engine takes the opened bundle's cycle flag).
+    // The methods that can change the flags: the setters, and session.open (the
+    // engine takes the opened bundle's cycle and punch flags).
     static bool touchesTransportFlags(const std::string& method) {
-        return method == "transport.set_cycle" || method == "transport.set_click" || method == "session.open" ||
-               method == "session.create";
+        return method == "transport.set_cycle" || method == "transport.set_click" ||
+               method == "transport.set_punch" || method == "transport.set_preroll" ||
+               method == "transport.set_count_in" || method == "session.open" || method == "session.create";
     }
 
     // Command thread: runs the request, then publishes the lifecycle events it caused.
@@ -2945,8 +2997,11 @@ struct ProtocolServer::Impl {
         if (watchFlags) {
             const std::optional<TransportFlags> flagsAfter = transportFlags();
             if (flagsAfter && flagsAfter != flagsBefore) {
-                events.publish("transport.changed",
-                               Object{{"cycle", Value(flagsAfter->cycle)}, {"click", clickJson(flagsAfter->click)}});
+                events.publish("transport.changed", Object{{"cycle", Value(flagsAfter->cycle)},
+                                                           {"click", clickJson(flagsAfter->click)},
+                                                           {"punch", punchJson(flagsAfter->punch)},
+                                                           {"preroll", barsJson(flagsAfter->preroll)},
+                                                           {"countIn", barsJson(flagsAfter->countIn)}});
             }
         }
         return response;
