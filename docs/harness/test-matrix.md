@@ -673,7 +673,9 @@ Proposed, not done (each needs a decision or touches build config others are edi
    `protocol-mcp-v0.md`, "Methods without a tool"), the app's
    `capabilities-full.json` entry, and an app client unit test when the app
    calls it, and a Node bridge test (fake engine, plus layer G) when the bridge
-   calls it. The parity tests enforce all but the first and the last two:
+   calls it. The parity tests enforce the capabilities entry, the doc row, the
+   tool-or-exclusion choice and the fixture entry, not the native protocol test,
+   a new tool's adapter test or the client tests:
    `protocol_parity_test` (ctest) and `test/protocol-parity.test.js` (`npm test`,
    section 4).
 3. **Every UI feature** gets unit tests for its pure logic, a Playwright e2e for
