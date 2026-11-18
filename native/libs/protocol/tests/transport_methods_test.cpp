@@ -2,7 +2,8 @@
 // Protocol v0 item 18, m4-engine-device), engine.devices and
 // engine.select_device (item 22, m5-engine-sessions-devices),
 // transport.set_cycle and transport.set_click with transport.changed (item 26,
-// m5-ui-engine-loop-click) through the
+// m5-ui-engine-loop-click), transport.set_punch, set_preroll and set_count_in
+// (item 34, m5b-engine-punch-count-in) through the
 // TransportPort: the server side only, on a fake port. The engine's real port is tested in
 // apps/engine/tests.
 
@@ -15,8 +16,10 @@
 #include <string>
 #include <vector>
 
+#include "siann/protocol/record_port.hpp"
 #include "siann/protocol/transport_port.hpp"
 #include "support/protocol_fixture.hpp"
+#include "support/rate_port.hpp"
 
 using namespace siann;
 using namespace siann::protocol::testing;
@@ -66,10 +69,34 @@ public:
         }
         return state();
     }
+    TransportState setPunch(bool punchIn, bool punchOut) override {
+        ++calls;
+        punchCalls.emplace_back(punchIn, punchOut);
+        refuseIfAsked();
+        punch = protocol::PunchState{punchIn, punchOut};
+        return state();
+    }
+    TransportState setPreroll(bool enabled, std::optional<std::int32_t> bars) override {
+        ++calls;
+        prerollCalls.emplace_back(enabled, bars);
+        refuseIfAsked();
+        preroll = protocol::BarsState{enabled, bars.value_or(preroll.bars)};
+        return state();
+    }
+    TransportState setCountIn(bool enabled, std::optional<std::int32_t> bars) override {
+        ++calls;
+        countInCalls.emplace_back(enabled, bars);
+        refuseIfAsked();
+        countIn = protocol::BarsState{enabled, bars.value_or(countIn.bars)};
+        return state();
+    }
     EngineStatus status() const override {
         EngineStatus out = reported;
         out.cycle = cycle;
         out.click = click;
+        out.punch = punch;
+        out.preroll = preroll;
+        out.countIn = countIn;
         return out;
     }
     std::vector<protocol::DeviceDescription> devices() const override {
@@ -99,11 +126,23 @@ public:
     protocol::ClickState click;
     std::vector<bool> cycleCalls;
     std::vector<std::pair<bool, std::optional<std::int32_t>>> clickCalls;
+    protocol::PunchState punch;
+    protocol::BarsState preroll{false, protocol::BarsState::kDefaultPrerollBars};
+    protocol::BarsState countIn{false, protocol::BarsState::kDefaultCountInBars};
+    std::vector<std::pair<bool, bool>> punchCalls;
+    std::vector<std::pair<bool, std::optional<std::int32_t>>> prerollCalls;
+    std::vector<std::pair<bool, std::optional<std::int32_t>>> countInCalls;
     std::optional<std::string> refusal;
     EngineStatus reported;
 
 private:
-    TransportState state() const { return TransportState{playing, position, cycle, click}; }
+    TransportState state() const {
+        TransportState out{playing, position, cycle, click};
+        out.punch = punch;
+        out.preroll = preroll;
+        out.countIn = countIn;
+        return out;
+    }
     void refuseIfAsked() const {
         if (refusal) {
             throw TransportPortError(*refusal, "the port refused");
@@ -450,7 +489,8 @@ std::vector<Value> transportEvents(const Harness& f, ConnectionId connection) {
 }
 
 void checkTransportResult(const Value& result, bool cycle, bool clickOn, double gain) {
-    CHECK(keysOf(result) == std::set<std::string>{"playing", "position", "cycle", "click", "recording", "armed"});
+    CHECK(keysOf(result) == std::set<std::string>{"playing", "position", "cycle", "click", "recording", "armed",
+                                                  "punch", "preroll", "countIn"});
     CHECK(at(result, "cycle").asBool() == cycle);
     CHECK(keysOf(at(result, "click")) == std::set<std::string>{"enabled", "gainMilliDb"});
     CHECK(at(at(result, "click"), "enabled").asBool() == clickOn);
@@ -753,5 +793,226 @@ TEST_CASE("engine.capabilities lists meter.reset_loudness with features load and
         const Value& features = at(capabilities, "features");
         CHECK(at(features, "load").asBool() == withTransport);
         CHECK(at(features, "loudness").asBool() == withTransport);
+    }
+}
+
+// ---- m5b-engine-punch-count-in (Protocol v0 item 34) ------------------------------
+
+namespace {
+
+Value punchParams(bool punchIn, bool punchOut) {
+    return Value(Object{{"in", Value(punchIn)}, {"out", Value(punchOut)}});
+}
+
+Value barsParams(bool on, double bars) {
+    return Value(Object{{"enabled", Value(on)}, {"bars", Value(bars)}});
+}
+
+void checkThreeStates(const Value& holder, bool punchIn, bool punchOut, bool prerollOn, double prerollBars,
+                      bool countInOn, double countInBars) {
+    CHECK(keysOf(at(holder, "punch")) == std::set<std::string>{"in", "out"});
+    CHECK(at(at(holder, "punch"), "in").asBool() == punchIn);
+    CHECK(at(at(holder, "punch"), "out").asBool() == punchOut);
+    CHECK(keysOf(at(holder, "preroll")) == std::set<std::string>{"enabled", "bars"});
+    CHECK(at(at(holder, "preroll"), "enabled").asBool() == prerollOn);
+    CHECK(at(at(holder, "preroll"), "bars").asNumber() == prerollBars);
+    CHECK(keysOf(at(holder, "countIn")) == std::set<std::string>{"enabled", "bars"});
+    CHECK(at(at(holder, "countIn"), "enabled").asBool() == countInOn);
+    CHECK(at(at(holder, "countIn"), "bars").asNumber() == countInBars);
+}
+
+// A record port that only says the engine records (features.recording).
+class StubRecordPort final : public protocol::RecordPort {
+public:
+    protocol::RecordState arm(const std::string&, bool) override { return {}; }
+    TransportState record(bool) override { return {}; }
+    protocol::RecordState recordState() const override { return {}; }
+    std::vector<protocol::PendingTake> pendingTakes() const override { return {}; }
+    protocol::RecoverResult recoverTake(const std::string&, bool, const std::optional<std::string>&, std::string,
+                                        std::string) override {
+        return {};
+    }
+};
+
+}  // namespace
+
+TEST_CASE("transport.set_punch, set_preroll and set_count_in reach the port and return the three states",
+          "[protocol][transport][punch]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+
+    const Value punched = f.ok(c, "transport.set_punch", punchParams(true, false));
+    checkTransportResult(punched, false, false, -12'000);
+    checkThreeStates(punched, true, false, false, 1, false, 2);
+    CHECK(port.punchCalls == std::vector<std::pair<bool, bool>>{{true, false}});
+
+    const Value prerolled = f.ok(c, "transport.set_preroll", barsParams(true, 3));
+    checkThreeStates(prerolled, true, false, true, 3, false, 2);
+    // bars omitted keeps the value: the port gets nothing for it.
+    checkThreeStates(f.ok(c, "transport.set_preroll", enabled(false)), true, false, false, 3, false, 2);
+    const Value counted = f.ok(c, "transport.set_count_in", barsParams(true, 8));
+    checkThreeStates(counted, true, false, false, 3, true, 8);
+    checkThreeStates(f.ok(c, "transport.set_count_in", barsParams(true, 1)), true, false, false, 3, true, 1);
+    REQUIRE(port.prerollCalls.size() == 2);
+    CHECK(port.prerollCalls[0] == std::pair<bool, std::optional<std::int32_t>>{true, 3});
+    CHECK(port.prerollCalls[1] == std::pair<bool, std::optional<std::int32_t>>{false, std::nullopt});
+    REQUIRE(port.countInCalls.size() == 2);
+    CHECK(port.countInCalls[0] == std::pair<bool, std::optional<std::int32_t>>{true, 8});
+
+    // Every transport result and engine.status carry them.
+    for (const auto& [method, params] : std::vector<std::pair<std::string, Value>>{
+             {"transport.play", Value(Object{})}, {"transport.locate", frames("0")},
+             {"transport.stop", Value(Object{})}, {"transport.set_cycle", enabled(true)},
+             {"transport.set_click", enabled(false)}}) {
+        INFO(method);
+        checkThreeStates(f.ok(c, method, params), true, false, false, 3, true, 1);
+    }
+    checkThreeStates(f.ok(c, "engine.status"), true, false, false, 3, true, 1);
+}
+
+TEST_CASE("punch, pre-roll and count-in refuse bad params before the port", "[protocol][transport][punch]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::vector<Value> badPunch = {
+        Value(Object{}), Value(Object{{"in", Value(true)}}), Value(Object{{"out", Value(true)}}),
+        Value(Object{{"in", Value(1)}, {"out", Value(true)}}), Value(Object{{"in", Value(true)}, {"out", Value("no")}}),
+        Value(Object{{"in", Value(nullptr)}, {"out", Value(false)}})};
+    for (const Value& params : badPunch) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "transport.set_punch", params)) == "invalid_params");
+    }
+    const std::vector<Value> badBars = {
+        Value(Object{}), Value(Object{{"enabled", Value(1)}}), Value(Object{{"bars", Value(2)}}),
+        barsParams(true, 0), barsParams(true, 9), barsParams(true, -1), barsParams(true, 1.5), barsParams(true, 1e12),
+        Value(Object{{"enabled", Value(true)}, {"bars", Value("2")}}),
+        Value(Object{{"enabled", Value(true)}, {"bars", Value(nullptr)}})};
+    for (const Value& params : badBars) {
+        INFO(canonical(params));
+        CHECK(errorCode(f.call(c, "transport.set_preroll", params)) == "invalid_params");
+        CHECK(errorCode(f.call(c, "transport.set_count_in", params)) == "invalid_params");
+    }
+    CHECK(port.calls == 0);
+}
+
+TEST_CASE("punch, pre-roll and count-in: without a port not_supported, a port's no_device passes through",
+          "[protocol][transport][punch]") {
+    {
+        Fixture f;
+        const ConnectionId c = f.authed();
+        CHECK(errorCode(f.call(c, "transport.set_punch", punchParams(true, true))) == "not_supported");
+        CHECK(errorCode(f.call(c, "transport.set_preroll", enabled(true))) == "not_supported");
+        CHECK(errorCode(f.call(c, "transport.set_count_in", enabled(true))) == "not_supported");
+    }
+    {
+        // A port that does not implement them.
+        RatePort plain(48'000);
+        ServerOptions options = manualOptions();
+        options.transportPort = &plain;
+        Fixture f(options);
+        const ConnectionId c = f.authed();
+        CHECK(errorCode(f.call(c, "transport.set_punch", punchParams(true, true))) == "not_supported");
+        CHECK(errorCode(f.call(c, "transport.set_preroll", enabled(true))) == "not_supported");
+        CHECK(errorCode(f.call(c, "transport.set_count_in", enabled(true))) == "not_supported");
+    }
+    FakePort port;
+    port.refusal = "no_device";
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const ConnectionId watcher = f.authed(true);
+    CHECK(errorCode(f.call(c, "transport.set_punch", punchParams(true, true))) == "no_device");
+    CHECK(errorCode(f.call(c, "transport.set_preroll", enabled(true))) == "no_device");
+    CHECK(errorCode(f.call(c, "transport.set_count_in", enabled(true))) == "no_device");
+    CHECK(transportEvents(f, watcher).empty());
+}
+
+TEST_CASE("transport.changed carries the three states and is published once per actual change",
+          "[protocol][transport][punch]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed(true);
+    const ConnectionId watcher = f.authed(true);
+
+    f.ok(c, "transport.set_punch", punchParams(true, true));
+    auto events = transportEvents(f, watcher);
+    REQUIRE(events.size() == 1);
+    CHECK(keysOf(events[0]) == std::set<std::string>{"type", "cycle", "click", "punch", "preroll", "countIn"});
+    checkThreeStates(events[0], true, true, false, 1, false, 2);
+    f.ok(c, "transport.set_punch", punchParams(true, true));  // the same value
+    CHECK(transportEvents(f, watcher).size() == 1);
+
+    f.ok(c, "transport.set_preroll", barsParams(true, 2));
+    f.ok(c, "transport.set_preroll", barsParams(true, 2));  // the same again
+    f.ok(c, "transport.set_count_in", barsParams(false, 4));  // the bars alone change
+    f.ok(c, "transport.set_count_in", enabled(false));        // nothing changes
+    events = transportEvents(f, watcher);
+    REQUIRE(events.size() == 3);
+    checkThreeStates(events[1], true, true, true, 2, false, 2);
+    checkThreeStates(events[2], true, true, true, 2, false, 4);
+    CHECK(at(events[2], "cycle").asBool() == false);
+    // No revision: no session.changed with them.
+    for (const Value& event : f.events(watcher)) {
+        CHECK(at(event, "type").asString() != "session.changed");
+    }
+}
+
+TEST_CASE("punch, pre-roll and count-in: a duplicate requestId is cached and a stale expectedRevision runs nothing",
+          "[protocol][transport][punch]") {
+    FakePort port;
+    Fixture f(withPort(port));
+    const ConnectionId c = f.authed();
+    const std::string head = f.head().envelope.id;
+
+    for (const auto& [method, params] : std::vector<std::pair<std::string, Value>>{
+             {"transport.set_punch", punchParams(true, false)},
+             {"transport.set_preroll", barsParams(true, 2)},
+             {"transport.set_count_in", barsParams(true, 3)}}) {
+        INFO(method);
+        const int before = port.calls;
+        const std::string request = f.request("dup_" + method, method, params);
+        f.transport.deliver(c, request);
+        f.server.pump();
+        f.transport.deliver(c, request);
+        f.server.pump();
+        CHECK(port.calls == before + 1);
+        const auto sent = f.transport.sent(c);
+        REQUIRE(sent.size() >= 2);
+        CHECK(sent[sent.size() - 1] == sent[sent.size() - 2]);
+
+        f.transport.deliver(c, jcs::canonicalize(Value(Object{{"requestId", Value("stale_" + method)},
+                                                              {"sessionId", Value(f.server.sessionId())},
+                                                              {"method", Value(method)},
+                                                              {"params", params},
+                                                              {"expectedRevision", Value("rev_not_the_head")}})));
+        f.server.pump();
+        CHECK(errorCode(json::parse(f.transport.sent(c).back())) == "revision_mismatch");
+        CHECK(port.calls == before + 1);
+    }
+    CHECK(f.head().envelope.id == head);  // engine state, never a revision
+}
+
+TEST_CASE("engine.capabilities lists set_punch, set_preroll and set_count_in with features punch, preroll and countIn",
+          "[protocol][transport][punch]") {
+    for (const bool recording : {false, true}) {
+        INFO("with a record port: " << recording);
+        FakePort port;
+        StubRecordPort record;
+        ServerOptions options = withPort(port);
+        if (recording) {
+            options.recordPort = &record;
+        }
+        Fixture f(options);
+        const Value capabilities = f.ok(f.authed(), "engine.capabilities");
+        const auto& methods = at(capabilities, "methods").asArray();
+        for (const char* name : {"transport.set_punch", "transport.set_preroll", "transport.set_count_in"}) {
+            INFO(name);
+            CHECK(std::any_of(methods.begin(), methods.end(), [&](const Value& m) { return m.asString() == name; }));
+        }
+        const Value& features = at(capabilities, "features");
+        CHECK(at(features, "recording").asBool() == recording);
+        CHECK(at(features, "punch").asBool() == recording);
+        CHECK(at(features, "preroll").asBool() == recording);
+        CHECK(at(features, "countIn").asBool() == recording);
     }
 }

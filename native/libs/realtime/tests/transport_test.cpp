@@ -299,6 +299,44 @@ TEST_CASE("Play from stop is a locate to the current position followed by transp
     CHECK(rig.transport.lateLocates() == 0);
 }
 
+// m5b-engine-punch-count-in: a start from a given position with a count-in is one
+// locate carrying both; the transport reports playing from the moment it is asked,
+// holds the playhead at the position for the count-in and then runs from there.
+TEST_CASE("a start that carries a count-in and a start position", "[transport][play][countin]") {
+    TransportRig rig;
+    const realtime::CountIn countIn{4, 1'000.5};  // 4002 frames, not a block multiple
+    rig.transport.play(20'000, countIn);
+    CHECK(rig.transport.playing());
+    CHECK(rig.transport.position() == 20'000);
+    CHECK(rig.transport.pendingLocate());
+    rig.butler.runOnce();
+    REQUIRE(rig.tick() == 1);
+    rig.pump(1);
+    CHECK(rig.driver.countingIn());
+    CHECK(rig.transport.playing());  // a start on its way
+    CHECK(rig.transport.position() == 20'000);
+    CHECK(rig.driver.playhead() == 20'000);
+
+    rig.transport.play(30'000, countIn);  // already starting: nothing to do
+    CHECK_FALSE(rig.transport.pendingLocate());
+
+    rig.pump(70);  // 71 blocks: 4544 frames, the count-in's 4002 among them
+    CHECK_FALSE(rig.driver.countingIn());
+    CHECK(rig.driver.playing());
+    CHECK(rig.driver.playhead() == 20'000 + 71 * kBlock - 4'002);
+
+    // Stopped, a plain play() still starts where the playhead is, at once.
+    rig.transport.stop();
+    rig.pump(1);
+    const std::int64_t p = rig.driver.playhead();
+    rig.transport.play();
+    rig.butler.runOnce();
+    REQUIRE(rig.tick() == 1);
+    rig.pump(2);
+    CHECK_FALSE(rig.driver.countingIn());
+    CHECK(rig.driver.playhead() == p + 2 * kBlock);
+}
+
 TEST_CASE("Stop wins over a play that has not reached the audio thread", "[transport][play]") {
     TransportRig rig;
 

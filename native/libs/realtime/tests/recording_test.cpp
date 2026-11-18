@@ -180,6 +180,63 @@ TEST_CASE("maxFrames stops the capture after exactly that many frames, mid-block
     }
 }
 
+// m5b-engine-punch-count-in (spec, "Recording", the Recorder's capture window): a
+// take started with a window [from, until) in stamp positions keeps exactly the
+// frames inside it, mid-block at both ends, and captureEnded() turns true once
+// the window's end has passed. The binary links siann_rt_alloc_guard.
+TEST_CASE("a take with a capture window keeps exactly the frames inside it, mid-block at both ends",
+          "[record][window][alloc]") {
+    TempDir dir;
+    GraphDriver driver({});
+    driver.publish(clipGraph({}));
+    Recorder::Options options;
+    options.writerThread = false;
+    Recorder recorder(2, options);
+    driver.attachRecorder(&recorder);
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    driver.play();
+    driver.start(device, config(2));
+
+    // Neither end on a block boundary; the window opens two blocks in.
+    constexpr std::int64_t kFrom = 2 * kBlock + 23;
+    constexpr std::int64_t kUntil = 7 * kBlock + 41;
+    recorder.start(dir.path() / "take.wav", 48'000, {}, {}, 0, realtime::CaptureWindow{kFrom, kUntil});
+    CHECK(recorder.captureFrom() == kFrom);
+    CHECK(recorder.captureUntil() == kUntil);
+    const auto before = rt::allocationViolations();
+    device.pump(2);
+    CHECK(recorder.startPosition() == Recorder::kNoStart);  // nothing inside yet
+    device.pump(5);
+    CHECK_FALSE(recorder.captureEnded());  // the window's last frame is in the next block
+    device.pump(1);
+    CHECK(recorder.captureEnded());
+    CHECK(recorder.windowPassed());
+    device.pump(3);  // nothing more is kept
+    CHECK(rt::allocationViolations() == before);
+    recorder.drain();
+    const auto result = recorder.stop();
+    driver.stop();
+
+    CHECK(result.endedBy == realtime::EndedBy::stop);
+    CHECK(result.startPosition == kFrom);
+    REQUIRE(result.frames == kUntil - kFrom);
+    const auto take = readWav(result.file);
+    REQUIRE(take.info.frames == kUntil - kFrom);
+    for (std::int64_t i = 0; i < take.info.frames; ++i) {
+        const std::int64_t frame = kFrom + i;  // the driver's stamp is the device frame here
+        if (take.samples[static_cast<std::size_t>(i * 2)] != inputValue(0, frame) ||
+            take.samples[static_cast<std::size_t>(i * 2 + 1)] != inputValue(1, frame)) {
+            FAIL("recorded sample differs at frame " << i);
+        }
+    }
+
+    // Without a window a take starts with the first playing block, as before.
+    Recorder plain(2, options);
+    CHECK(plain.captureFrom() == realtime::CaptureWindow{}.from);
+    CHECK(plain.captureUntil() == realtime::CaptureWindow{}.until);
+}
+
 TEST_CASE("onCheckpoint reports the frames the WAV header makes durable", "[record][checkpoint]") {
     TempDir dir;
     GraphDriver driver({});
