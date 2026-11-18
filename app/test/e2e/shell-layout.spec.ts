@@ -642,15 +642,17 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
 
 // The top bar in small windows (UI redesign spec 2.4 and 3.0). From 1440 down
 // to 1301 px the transport is centred and the branch chip (m5b-ui-audition)
-// and the boxes of the pending DSP load and Record button keep their space;
-// from 1300 px down the transport follows the left group and those three go; from 1100 px
+// and the box of the pending DSP load keep their space; from 1300 px down the
+// transport follows the left group and those two go, while the Record button
+// (m5b-ui-recording) stays at every width and takes its room from the session
+// name; from 1100 px
 // down the brand and the locator, tempo and signature displays go too (the
 // Sig cell, m5b-ui-signature), and the session name shortens instead of
 // going. The bar never overflows.
 test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
   const sessionDir = seedBundle(scratch, TRACKS);
   await launch(sessionDir);
-  const HOLDS = ['[data-part=branch-chip]', '.hold-dsp-load', '.hold-transport-record'];
+  const HOLDS = ['[data-part=branch-chip]', '.hold-dsp-load'];
   const measure = () =>
     page.evaluate((holds) => {
       const bar = document.querySelector<HTMLElement>('[data-testid=top-bar]')!;
@@ -680,6 +682,7 @@ test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
         time: shown('[data-part=display-time]'),
         position: shown('[data-part=display-position]'),
         session: shown('[data-testid=session-name]'),
+        record: shown('[data-part=transport-record]'),
         overflow: bar.scrollWidth - bar.clientWidth,
       };
     }, HOLDS);
@@ -687,17 +690,20 @@ test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
   await resize({ width: 1440, height: 900 });
   let m = await measure();
   expect(m.centre, '1440: centred').toBeLessThanOrEqual(1);
-  expect(m.holds, '1440: holds keep their space').toEqual([true, true, true]);
+  expect(m.holds, '1440: holds keep their space').toEqual([true, true]);
+  expect(m.record, '1440: Record').toBe(true);
   expect([m.brand, m.signature, m.tempo], '1440').toEqual([true, true, true]);
 
   await resize({ width: 1301, height: 800 });
   m = await measure();
-  expect(m.holds, '1301: holds keep their space').toEqual([true, true, true]);
+  expect(m.holds, '1301: holds keep their space').toEqual([true, true]);
+  expect(m.record, '1301: Record').toBe(true);
   expect(m.centre, '1301: centred').toBeLessThanOrEqual(1);
 
   await resize({ width: 1280, height: 800 });
   m = await measure();
-  expect(m.holds, '1280: holds gone').toEqual([false, false, false]);
+  expect(m.holds, '1280: holds gone').toEqual([false, false]);
+  expect(m.record, '1280: a working Record button is never hidden').toBe(true);
   expect(m.brand, '1280: brand stays').toBe(true);
   expect([m.signature, m.tempo], '1280: displays stay').toEqual([true, true]);
   // The transport follows the left group (the grid's gap only), not the centre.
@@ -706,7 +712,8 @@ test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
 
   await resize({ width: 1080, height: 700 });
   m = await measure();
-  expect(m.holds, '1080').toEqual([false, false, false]);
+  expect(m.holds, '1080').toEqual([false, false]);
+  expect(m.record, '1080: Record stays').toBe(true);
   expect([m.brand, m.signature, m.tempo], '1080: brand and displays gone').toEqual([false, false, false]);
   expect([m.position, m.time, m.session], '1080: position, time and session name stay').toEqual([true, true, true]);
   expect(m.overflow, '1080').toBeLessThanOrEqual(0);

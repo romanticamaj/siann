@@ -232,3 +232,26 @@ test('the editing keys of m5b-ui-edit-more, all in the project zone; edit.glue i
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'C').map((b) => b.commandId), ['transport.metronomeToggle']);
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+A').map((b) => b.commandId), ['edit.selectAll']);
 });
+
+// m5b-ui-recording (UI redesign 3.1, 3.3, 3.6): R arms the selected track in
+// the project zone, as M and S act on it; Num * records, Ctrl+Shift+R (Cmd on
+// macOS) is its laptop fallback; I and O toggle the punch in and out. None of
+// them collides with a chord already bound.
+test('the record keys: R, Num *, Mod+Shift+R, I and O (m5b-ui-recording)', () => {
+  const rows: Array<[string, string, string]> = [
+    ['R', 'project', 'track.recordEnable'],
+    ['NumpadMultiply', 'window', 'transport.record'],
+    ['Mod+Shift+R', 'window', 'transport.record'],
+    ['I', 'window', 'transport.punchIn'],
+    ['O', 'window', 'transport.punchOut'],
+  ];
+  for (const [chord, scope, commandId] of rows) {
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord), [{ chord, commandId, scope }], chord);
+    assert.ok((COMMAND_IDS as readonly string[]).includes(commandId), commandId);
+  }
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === 'transport.record').map((b) => b.chord), ['NumpadMultiply', 'Mod+Shift+R']);
+  // The neighbours keep their commands.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Alt+R').map((b) => b.commandId), ['zone.right.toggle']);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Alt+I').map((b) => b.commandId), ['zone.left.toggle']);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'M').map((b) => b.commandId), ['track.muteSelected']);
+});

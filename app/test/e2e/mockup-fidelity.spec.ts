@@ -349,6 +349,10 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
     if (!mockupParts || !mockupShot) throw new Error('the mockup was not measured');
     // m5b-ui-plan-metadata's parts are in the window (the agent row, the plan's title and intent).
     for (const id of ['agent-row', 'plan-title', 'plan-intent']) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
+    // m5b-ui-recording's parts are in the window: Record, the Inspector's record enable and monitor, and each header's and strip's record enable.
+    for (const id of ['transport-record', 'inspector-record', 'inspector-monitor']) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
+    await expect(page.locator('[data-part-item="track"] [data-part-of="record"]').first()).toBeVisible();
+    await expect(page.locator('[data-part-item="strip"] [data-part-of="record"]').first()).toBeVisible();
     const appParts = await collectApp(page);
     const appShot = await page.screenshot();
     fs.writeFileSync(path.join(dir, 'mockup.png'), mockupShot);

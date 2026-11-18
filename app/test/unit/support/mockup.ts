@@ -86,6 +86,8 @@ export interface Mockup {
   tool(icon: string, key: number, on?: boolean): string;
   // The top bar's branch chip as the template writes it (m5b-ui-audition).
   readonly branchChip: string;
+  // An icon as ic() writes it (m5b-ui-recording: rec and mon): svg.i, or svg.i.s with 's'.
+  ic(name: string, size?: string): string;
   // The track header the mockup draws for track `index` of T.
   th(track: MockupTrack, index: number): string;
   // The track list as the app.innerHTML template writes it: div.headers, its head, the marker head and T.map(th).
@@ -124,7 +126,7 @@ export function loadMockup(lang = 'en'): Mockup {
     `const headers=\`${between(source, '<div class="headers"', '<div class="lanes"').trim()}\`;`,
     // The top bar's branch chip (m5b-ui-audition), the template's one line.
     `const branchChip=\`${between(source, '<span class="chip"', '<span class="sep">').trim()}\`;`,
-    'this.out={knob:(p)=>knob(p),knobGhost:(p,g,id)=>knob(p,g,id),sec,strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan,projectHead,tool,branchChip};',
+    'this.out={knob:(p)=>knob(p),knobGhost:(p,g,id)=>knob(p,g,id),sec,strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan,projectHead,tool,branchChip,ic};',
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
@@ -148,6 +150,7 @@ export function loadMockup(lang = 'en'): Mockup {
     projectHead: out.projectHead,
     tool: out.tool,
     branchChip: out.branchChip,
+    ic: out.ic,
   };
 }
 

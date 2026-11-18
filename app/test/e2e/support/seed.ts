@@ -32,6 +32,8 @@ export interface SeedTrack {
   readonly pan?: number;
   readonly mute?: boolean;
   readonly solo?: boolean;
+  // The device input it records from (m5b-ui-recording): track.set_input.
+  readonly input?: { readonly port: number; readonly channels: number };
 }
 
 // A clip of one second of a square wave (media med_seed, imported once).
@@ -65,8 +67,10 @@ function squareWav(file: string): void {
 }
 
 // A bundle with tracks (and clips, when given) at
-// <scratch>/sessions/Untitled.siann; returns its directory.
-export function seedBundle(scratch: string, tracks: readonly SeedTrack[], clips: readonly SeedClip[] = []): string {
+// <scratch>/sessions/Untitled.siann; returns its directory. `tempoMilliBpm`
+// sets one tempo from the start (m5b-ui-recording: 240 BPM makes a bar one
+// second on the paced fake device).
+export function seedBundle(scratch: string, tracks: readonly SeedTrack[], clips: readonly SeedClip[] = [], options: { tempoMilliBpm?: number } = {}): string {
   const bundle = path.join(scratch, 'sessions', 'Untitled.siann');
   fs.mkdirSync(path.dirname(bundle), { recursive: true });
   cli('create', bundle, '--name', 'I18n', '--rate', '48000');
@@ -77,7 +81,9 @@ export function seedBundle(scratch: string, tracks: readonly SeedTrack[], clips:
     if (track.pan) exec({ op: 'track.set_pan', trackId: track.id, pan: track.pan });
     if (track.mute) exec({ op: 'track.set_mute', trackId: track.id, mute: true });
     if (track.solo) exec({ op: 'track.set_solo', trackId: track.id, solo: true });
+    if (track.input) exec({ op: 'track.set_input', trackId: track.id, input: track.input });
   }
+  if (options.tempoMilliBpm) exec({ op: 'session.set_tempo', tempo: [{ ticks: '0', milliBpm: options.tempoMilliBpm }] });
   if (clips.length > 0) {
     const wav = path.join(scratch, 'seed-square.wav');
     squareWav(wav);

@@ -265,3 +265,29 @@ test('Ctrl+P opens the Media tab on Windows and Linux, Cmd+P on macOS, from any 
   // Ctrl+P on macOS is the Control key: not the Media tab.
   assert.notEqual(resolveKey(input({ code: 'KeyP', key: 'p', modifiers: { ...NONE, ctrl: true }, platform: 'mac' }), CUBASE_PRESET)?.commandId, 'media.open');
 });
+
+// m5b-ui-recording: R in the project zone only (it acts on the selected
+// track, as M and S do); Num *, Ctrl+Shift+R (Cmd+Shift+R on macOS), I and O
+// from every zone; none while typing.
+test('the record keys resolve where they are bound and never in a text field (m5b-ui-recording)', () => {
+  const r = input({ code: 'KeyR', key: 'r' });
+  assert.equal(resolveKey(r, CUBASE_PRESET)?.commandId, 'track.recordEnable');
+  assert.equal(resolveKey({ ...r, focusedZone: 'lower' }, CUBASE_PRESET), null);
+  assert.equal(resolveKey({ ...r, targetIsTextField: true }, CUBASE_PRESET), null);
+  const windowKeys: Array<{ code: string; key: string; modifiers?: Partial<typeof NONE>; platform?: 'mac' | 'other'; commandId: string }> = [
+    { code: 'NumpadMultiply', key: '*', commandId: 'transport.record' },
+    { code: 'KeyR', key: 'R', modifiers: { ctrl: true, shift: true }, commandId: 'transport.record' },
+    { code: 'KeyR', key: 'R', modifiers: { meta: true, shift: true }, platform: 'mac', commandId: 'transport.record' },
+    { code: 'KeyI', key: 'i', commandId: 'transport.punchIn' },
+    { code: 'KeyO', key: 'o', commandId: 'transport.punchOut' },
+  ];
+  for (const { code, key, modifiers, platform, commandId } of windowKeys) {
+    const press = input({ code, key, modifiers: { ...NONE, ...modifiers }, ...(platform ? { platform } : {}) });
+    for (const focusedZone of ['project', 'left', 'lower', 'right'] as const) {
+      assert.equal(resolveKey({ ...press, focusedZone }, CUBASE_PRESET)?.commandId, commandId, `${code} in ${focusedZone}`);
+    }
+    assert.equal(resolveKey({ ...press, targetIsTextField: true }, CUBASE_PRESET), null, `${code} in a text field`);
+  }
+  // The number row's 8 with Shift is not Num *.
+  assert.equal(resolveKey(input({ code: 'Digit8', key: '*', modifiers: { ...NONE, shift: true } }), CUBASE_PRESET), null);
+});

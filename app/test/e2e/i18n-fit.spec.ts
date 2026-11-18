@@ -537,3 +537,45 @@ test('the snap type menu and the repeat dialog fit in every locale at either win
   expect(failures).toEqual([]);
 });
 
+
+// m5b-ui-recording (UI redesign 3.1, 3.5; 10.11, 16 and 17): the record
+// options panel (its four options and two bar counts), Record and the
+// Inspector's In row (its .pick and the native select over it) in the four
+// locales at both sizes, with an input open and a track armed.
+test('the record options panel, Record and the In row fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-record-'));
+  const sessionDir = seedBundle(scratch, [{ id: 'trk_vox', name: 'Vox Lead', input: { port: 0, channels: 1 } }]);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  await engine.call('engine.select_device', { id: 'fake', inputId: 'fake' });
+  await expect.poll(async () => ((await engine.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
+  await page.getByTestId('track-header-trk_vox').locator('.name').click();
+  await page.getByTestId('track-record-trk_vox').click();
+  await expect(page.getByTestId('track-record-trk_vox')).toHaveAttribute('aria-pressed', 'true');
+  const RECORD = '[data-testid=record-options] label, [data-testid=record-options] input, [data-part=transport-record], .irow .pick';
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    await page.getByTestId('transport-record').click({ button: 'right' });
+    await expect(page.getByTestId('record-options')).toBeVisible();
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing(RECORD)) failures.push(`${locale} ${size.width}x${size.height} (recording): ${entry}`);
+      for (const entry of await wrapped('[data-testid=record-options] label, .irow > span, .irow .pick')) failures.push(`${locale} ${size.width}x${size.height} (recording): ${entry}`);
+      // The panel stays inside the window.
+      const inside = await page.getByTestId('record-options').evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5;
+      });
+      if (!inside) failures.push(`${locale} ${size.width}x${size.height}: the record options panel leaves the window`);
+    }
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('record-options')).toBeHidden();
+  }
+  engine.close();
+  expect(failures).toEqual([]);
+});

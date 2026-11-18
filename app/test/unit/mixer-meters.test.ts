@@ -283,3 +283,38 @@ test('the meter surface names its colours by token: no colour literal, and no me
     }
   }
 });
+
+// m5b-ui-recording (UI redesign 3.5): an armed track's strip meter and peak
+// value read its input meter (input:<trackId>) while the legend has it; the
+// input is metered while the transport is stopped too (the engine measures it
+// whether the transport plays or not, protocol-events-v1 "meters.legend").
+test('an armed track\'s strip reads input:<trackId>, stopped or playing (m5b-ui-recording)', () => {
+  const source = new FakeSource();
+  source.legendValue = { epoch: '1', entities: ['master', 'track:a', 'input:a'] };
+  const store = new MeterStore(source);
+  const frames = new FakeFrames();
+  let now = 0;
+  let armed: readonly string[] = ['a'];
+  const { canvas, rects } = fakeCanvas();
+  const meters = new MixerMeters({ canvas, store, frames, clock: () => now, hidden: () => false, pixelRatio: () => 1, size: () => ({ width: 300, height: 220 }), armed: () => armed });
+  const text = { textContent: '' as string | null };
+  TRACK.forEach((x, channel) => meters.addSlot({ ref: 'track:a', channel, measure: () => ({ x, y: TOP, width: 6, height: HEIGHT }) }));
+  meters.addPeak('track:a', text);
+  meters.measure();
+  // Stopped: the track repeats its last reading (nothing), the input is live at -12 dBFS.
+  source.push([[1, 0.5], [2, 0.25]], false);
+  meters.onFrame();
+  now += 1000 / 60;
+  frames.run();
+  assert.equal(bars(rects, TRACK[0]!).length, 1, 'the input\'s bar while stopped');
+  assert.equal(text.textContent, '-12.0');
+  assert.ok(store.read('input:a')!.peak > 0.24);
+  assert.equal(store.read('track:a')!.peak, 0, 'a track\'s stale reading while stopped stays silent');
+  // Disarmed: the track's meter, silent while stopped.
+  armed = [];
+  source.push([[1, 0.5], [2, 0.25]], false);
+  meters.wake();
+  now += 5000;
+  frames.run();
+  assert.equal(bars(rects, TRACK[0]!).length, 0);
+});

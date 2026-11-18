@@ -167,7 +167,8 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
     'button.tbtn.lit[transport-cycle]',
     'button.tbtn[transport-stop]',
     'button.tbtn.play[transport-play]',
-    'span.hold-transport-record',
+    // Record (m5b-ui-recording) without a record host: the box a .tbtn holds (UI redesign 3.0; 10.11, 19).
+    'span.transport-hold.transport-hold-tbtn',
   ]);
   assert.deepEqual(children(markup, /<div class="lcd" /), [
     'div.cell[display-position]',
@@ -203,7 +204,6 @@ test('every hold element is empty, hidden, has no role, no tabindex and no data-
   const markup = render();
   const holds = [...markup.matchAll(/<span class="hold-[^"]*"[^>]*>[^<]*<\/span>/g)].map((m) => m[0]);
   assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), [
-    'hold-transport-record',
     'hold-dsp-load',
     'hold-zone-button-channel',
   ]);
