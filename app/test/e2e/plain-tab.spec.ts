@@ -68,6 +68,15 @@ test('the bundle renders its disconnected state in a plain tab without an except
   // No engine: the disconnected banner (m5-ui-connection) shows, and the zones are inert.
   await expect(page.getByTestId('connection-banner')).toBeVisible();
   await expect(page.getByTestId('zone-project')).toHaveAttribute('inert', '');
+  // m5b-ui-project: New, Open and the recent list need the shell (UI redesign
+  // 3.0), so a plain tab has no start view and no control for them; Ctrl+N and
+  // Ctrl+O run nothing.
+  await expect(page.getByTestId('start-view')).toHaveCount(0);
+  await expect(page.getByTestId('start-new')).toHaveCount(0);
+  await expect(page.getByTestId('start-open')).toHaveCount(0);
+  await page.keyboard.press('Control+KeyN');
+  await page.keyboard.press('Control+KeyO');
+  await expect(page.getByTestId('start-view')).toHaveCount(0);
   // The bundled fonts load from the same origin.
   const loaded = await page.evaluate(async () => [
     (await document.fonts.load('12px Inter')).filter((face) => face.status === 'loaded').length,

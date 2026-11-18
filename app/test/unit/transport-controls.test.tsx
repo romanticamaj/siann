@@ -30,7 +30,7 @@ import { TransportController } from '../../src/renderer/model/transport';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
-import { ClickLevel, TimeFormatMenu, Transport, transportAvailability, UndoRedo } from '../../src/renderer/shell/Transport';
+import { ClickLevel, TimeFormatMenu, Transport, transportAvailability, transportButton, UndoRedo } from '../../src/renderer/shell/Transport';
 import { sampleSnapshot } from './support/timeline';
 
 // dist/test/unit -> app/test/unit/fixtures
@@ -79,6 +79,8 @@ function client(snapshot: Snapshot | null = null): SessionClient {
 interface Extra {
   readonly snapshot?: Snapshot | null;
   readonly state?: { cycle: boolean; click: { enabled: boolean; gainMilliDb: number } } | null;
+  // Studio Setup's opener (m5b-ui-project).
+  readonly onStudioSetup?: () => void;
 }
 
 function render(capabilities: Capabilities | null, status: EngineStatus | null, extra: Extra = {}): string {
@@ -111,6 +113,7 @@ function render(capabilities: Capabilities | null, status: EngineStatus | null, 
         commands={new CommandRegistry()}
         transport={controller}
         loopClick={loopClick}
+        onStudioSetup={extra.onStudioSetup}
       />
     </CapabilitiesContext.Provider>,
   );
@@ -388,4 +391,58 @@ test('a right-click on the metronome opens its level (the button handles context
   const button = source.slice(source.indexOf('data-part="transport-metronome"'), source.indexOf('</button>', source.indexOf('data-part="transport-metronome"')));
   assert.match(button, /onContextMenu=\{[^]*preventDefault\(\)[^]*setLevel\(/);
   assert.match(source, /<ClickLevel [^>]*onChoose=\{\(value\) => void loopClick\.setClickLevel\(value\)\}/);
+});
+
+// m5b-ui-project (UI redesign 3.0, UR-4): with no device a transport button is
+// the way into Studio Setup. It is aria-disabled, not disabled (Chromium sends
+// no click to a disabled button), its tooltip gives the reason and then the
+// Studio Setup hint on a line of its own, and a click opens Studio Setup;
+// disconnected, it stays disabled and does nothing.
+test('with no device and Studio Setup the buttons are aria-disabled, name Studio Setup after the reason and open it', () => {
+  let opened = 0;
+  const markup = render(FULL, NO_DEVICE, { onStudioSetup: () => (opened += 1), state: { cycle: false, click: { enabled: false, gainMilliDb: -12000 } } });
+  const t = translator('en');
+  const cases: Array<[string, 'transport.noDevice' | 'transport.noDeviceCycle' | 'transport.noDeviceClick']> = [
+    ['transport-play', 'transport.noDevice'],
+    ['transport-stop', 'transport.noDevice'],
+    ['transport-to-start', 'transport.noDevice'],
+    ['transport-cycle', 'transport.noDeviceCycle'],
+    ['transport-metronome', 'transport.noDeviceClick'],
+  ];
+  for (const [id, key] of cases) {
+    const button = tag(markup, id);
+    assert.ok(!/disabled=""/.test(button), `${id} is not natively disabled: ${button}`);
+    assert.match(button, /aria-disabled="true"/, id);
+    assert.ok(button.includes(`title="device_open_failed: ${t(key)}
+${t('transport.studioSetupHint')}"`), `${id}: ${button}`);
+  }
+  for (const locale of LOCALES) {
+    const tl = translator(locale);
+    const props = transportButton(transportAvailability(NO_DEVICE, tl), tl('transport.startStop'), () => assert.fail('the action must not run'), () => (opened += 1), tl);
+    assert.equal(props.title, `device_open_failed: ${tl('transport.noDevice')}
+${tl('transport.studioSetupHint')}`, locale);
+    assert.equal(props['aria-disabled'], 'true');
+    assert.equal(props.disabled, false);
+    props.onClick();
+  }
+  assert.equal(opened, LOCALES.length);
+  assert.notEqual(translator('zh-Hant')('transport.studioSetupHint'), t('transport.studioSetupHint'));
+});
+
+test('disconnected, or without Studio Setup, the buttons stay disabled and a click opens nothing', () => {
+  const t = translator('en');
+  let opened = 0;
+  const disconnected = transportButton(transportAvailability(WITH_DEVICE, t, false), t('transport.stop'), () => undefined, () => (opened += 1), t);
+  assert.deepEqual({ disabled: disconnected.disabled, aria: disconnected['aria-disabled'], title: disconnected.title }, { disabled: true, aria: undefined, title: t('error.disconnected') });
+  disconnected.onClick();
+  const noSetup = transportButton(transportAvailability(NO_DEVICE, t), t('transport.stop'), () => undefined, undefined, t);
+  assert.equal(noSetup.disabled, true);
+  assert.equal(noSetup.title, `device_open_failed: ${t('transport.noDevice')}`);
+  noSetup.onClick();
+  assert.equal(opened, 0);
+  let ran = 0;
+  const enabled = transportButton(transportAvailability(WITH_DEVICE, t), t('transport.stop'), () => (ran += 1), () => (opened += 1), t);
+  assert.deepEqual({ disabled: enabled.disabled, title: enabled.title }, { disabled: false, title: t('transport.stop') });
+  enabled.onClick();
+  assert.deepEqual([ran, opened], [1, 0]);
 });

@@ -169,3 +169,24 @@ test('Shift+C is unbound and no command edits the time signature (m5b-ui-signatu
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Shift+C'), []);
   assert.deepEqual(COMMAND_IDS.filter((id) => /signature|metre/i.test(id)), []);
 });
+
+// m5b-ui-project (UI redesign 3.6, UR-4): Cubase's own keys for New Project,
+// Open and Save, in the window scope; Studio Setup and the ten Open Recent
+// entries are commands without a key, reached from the application menu.
+test('New, Open and Save are Cubase\'s keys; Studio Setup and Open Recent are unbound commands (m5b-ui-project)', () => {
+  const rows: Array<[string, string]> = [
+    ['Mod+N', 'project.new'],
+    ['Mod+O', 'project.open'],
+    ['Mod+S', 'project.save'],
+  ];
+  for (const [chord, commandId] of rows) {
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord), [{ chord, commandId, scope: 'window' }], chord);
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === commandId).map((b) => b.chord), [chord], commandId);
+  }
+  const unbound = ['studio.setup', ...Array.from({ length: 10 }, (_, i) => `project.openRecent.${i + 1}`)];
+  for (const id of unbound) {
+    assert.ok((COMMAND_IDS as readonly string[]).includes(id), `${id} is a command`);
+    assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === id), [], `${id} has no key`);
+  }
+  assert.ok(!(COMMAND_IDS as readonly string[]).includes('project.openRecent.11'), 'ten recent entries, no more');
+});

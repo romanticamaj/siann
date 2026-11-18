@@ -98,7 +98,9 @@ export function seedBundle(scratch: string, tracks: readonly SeedTrack[], clips:
 }
 
 export function launchApp(options: {
-  sessionDir: string;
+  // null: no SIANN_SESSION_DIR, so the shell chooses the bundle itself (the
+  // last one, or the scratch bundle with the start view; m5b-ui-project).
+  sessionDir: string | null;
   userData: string;
   languages: readonly string[];
   hook?: boolean;
@@ -112,15 +114,17 @@ export function launchApp(options: {
   env?: Record<string, string>;
 }): Promise<ElectronApplication> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
+  const inherited: Record<string, string | undefined> = { ...process.env };
+  delete inherited.SIANN_SESSION_DIR;
   return launchElectron({
     args: [MAIN],
     cwd: APP_DIR,
     languages: options.languages,
     hook: options.hook,
     env: {
-      ...process.env,
+      ...inherited,
       SIANN_ENGINE_EXE: exeFromEnv('SIANN_ENGINE_EXE'),
-      SIANN_SESSION_DIR: options.sessionDir,
+      ...(options.sessionDir !== null ? { SIANN_SESSION_DIR: options.sessionDir } : {}),
       SIANN_USER_DATA: options.userData,
       SIANN_SHELL_BACKOFF_MS: String(options.backoffMs ?? 50),
       SIANN_SHELL_TEST: '1',

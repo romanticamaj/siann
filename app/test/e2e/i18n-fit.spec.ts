@@ -235,3 +235,54 @@ test('no labelled control overflows or wraps its label in any locale at either w
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-project: the start view (its New and Open buttons, its recent row)
+// and Studio Setup (its device table, the output and input lists, the status
+// terms and its buttons) in the four locales at both sizes.
+test('the start view and Studio Setup fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-project-'));
+  const userData = path.join(scratch, 'user-data');
+  // One recent bundle, gone, and a launch with no bundle: the start view with an empty list;
+  // then New gives the list a row for the next launch.
+  app = await launchApp({ sessionDir: null, userData, languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const bundle = path.join(scratch, 'A project with a long name.siann');
+  await app.evaluate(({ dialog }, file) => {
+    (dialog as unknown as Record<string, unknown>).showSaveDialog = async () => ({ canceled: false, filePath: file });
+  }, bundle);
+  await page.getByTestId('start-new').click();
+  await expect(page.getByTestId('start-view')).toHaveCount(0);
+  await app.close();
+  // The bundle moved away: the next launch shows the start view, and New made a record of another one.
+  const other = path.join(scratch, 'Other.siann');
+  fs.renameSync(bundle, other);
+  fs.writeFileSync(path.join(userData, 'recent-projects.json'), JSON.stringify({ schema: 'siann.recent.v1', recent: [path.join(scratch, 'Gone.siann'), other] }));
+  app = await launchApp({ sessionDir: null, userData, languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect(page.getByTestId('start-recent-1')).toBeVisible();
+
+  const failures: string[] = [];
+  const check = async (what: string, locale: string) => {
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing()) failures.push(`${what} ${locale} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await wrapped()) failures.push(`${what} ${locale} ${size.width}x${size.height}: ${entry}`);
+    }
+  };
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    await check('start view', locale);
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('studio.setup')!.click());
+    await expect(page.getByTestId('studio-setup')).toBeVisible();
+    await expect(page.getByTestId('setup-device-fake')).toBeVisible();
+    await check('Studio Setup', locale);
+    await page.getByTestId('setup-close').click();
+    await expect(page.getByTestId('studio-setup')).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});

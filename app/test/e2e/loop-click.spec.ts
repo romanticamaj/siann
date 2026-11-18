@@ -476,7 +476,9 @@ test('without a device cycle and the metronome are disabled with the reason and 
   for (const [id, text] of reasons) {
     const button = page.getByTestId(id);
     await expect(button).toBeDisabled();
-    await expect(button).toHaveAttribute('title', new RegExp(`^[a-z_]+: ${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
+    // The reason, then (m5b-ui-project) the way into Studio Setup on a line of its own.
+    const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await expect(button).toHaveAttribute('title', new RegExp(`^[a-z_]+: ${escape(text)}\\n${escape(en['transport.studioSetupHint'])}$`));
   }
   // The band: drawn and edited without a device.
   await upperDrag(100, 300);
