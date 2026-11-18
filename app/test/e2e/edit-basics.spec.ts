@@ -21,6 +21,7 @@ import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
+import { chooseGrid } from './support/toolbar';
 
 const RATE = 48000;
 // The media: four seconds of square wave.
@@ -291,7 +292,7 @@ async function snapState(): Promise<{ on: boolean; grid: string }> {
 }
 
 async function setSnap(on: boolean, grid?: 'bar' | 'beat' | 'adapt'): Promise<void> {
-  if (grid) await page.getByTestId('grid-type').selectOption(grid);
+  if (grid) await chooseGrid(page, grid);
   if ((await snapState()).on !== on) {
     await focusProject();
     await page.keyboard.press('KeyJ');

@@ -147,6 +147,14 @@
   --line-height: 1.4;
 }
 
+/* The holds whose labels differ in Chinese (m5-ui-port-toolbar): the width
+   the fidelity run measures in the mockup's zh-TW, for both Chinese locales. */
+:root:lang(zh-TW), :root:lang(zh-CN) {
+  --hold-proposal-pill-w: calc(190.188px * var(--scale));
+  --hold-info-fade-in-w: calc(77.031px * var(--scale));
+  --hold-info-fade-out-w: calc(83.156px * var(--scale));
+}
+
 /* Tokens taken from the redesign's mockup (docs/superpowers/specs/
    2026-11-13-siann-ui-redesign/mockup.html), so that every colour, font size,
    weight, radius and fixed size the mockup uses has a name here and nowhere
@@ -303,7 +311,10 @@
      (m5-ui-port-inspector): Routing (m5b-ui-sends-buses), Inserts
      (m5b-ui-inserts-master) and Agent changes (m5b-ui-ghosts), their whole
      box with its hairline; Agent changes in en (its text wraps to one line
-     less in zh-TW, 78.891 px). */
+     less in zh-TW, 78.891 px). The project zone toolbar's and info line's
+     (m5-ui-port-toolbar): tools 2 and 4 to 9 (m5b-ui-edit-more), each the
+     width of tool()'s .b, the proposal pill (m5b-ui-ghosts) and the Fade In
+     and Fade Out fields (m5b-ui-fades); in en, and in Chinese below. */
   --hold-branch-chip-w: calc(86.719px * var(--scale));
   --hold-transport-record-w: calc(32px * var(--scale));
   --hold-transport-record-h: calc(28px * var(--scale));
@@ -326,6 +337,16 @@
   --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-inspector-inserts-h: calc(117px * var(--scale));
   --hold-inspector-agent-changes-h: calc(94.836px * var(--scale));
+  --hold-tool-2-w: calc(27.172px * var(--scale));
+  --hold-tool-4-w: calc(27.172px * var(--scale));
+  --hold-tool-5-w: calc(27.172px * var(--scale));
+  --hold-tool-6-w: calc(27.172px * var(--scale));
+  --hold-tool-7-w: calc(27.172px * var(--scale));
+  --hold-tool-8-w: calc(27.172px * var(--scale));
+  --hold-tool-9-w: calc(27.172px * var(--scale));
+  --hold-proposal-pill-w: calc(251.438px * var(--scale));
+  --hold-info-fade-in-w: calc(94.047px * var(--scale));
+  --hold-info-fade-out-w: calc(109.422px * var(--scale));
 
   /* The locator band in the ruler's upper half (m5-ui-loop-click; UI
      redesign 3.2), the mockup's draw() values: the band starts 2 px below

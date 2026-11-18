@@ -527,6 +527,12 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
   const canvas = await page.getByTestId('timeline-canvas').boundingBox();
   if (target && canvas) await page.mouse.click(canvas.x + target.x + target.width / 2, canvas.y + target.y + target.height / 2);
   else notes.push(`Clip ${clipId(SELECTED_CLIP)} is not in view: nothing is selected.`);
+  // The info line shows the selected clip, as the mockup's does (m5-ui-port-toolbar).
+  if (target) await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', clipId(SELECTED_CLIP));
+  // The mockup's toolbar: the Object Selection tool, snap on with the grid
+  // Adapt to Zoom (the defaults) and auto-scroll off (the app's default is on).
+  if ((await page.getByTestId('auto-scroll').getAttribute('aria-pressed')) === 'true') await page.getByTestId('auto-scroll').click();
+  await expect(page.getByTestId('auto-scroll')).toHaveAttribute('aria-pressed', 'false');
   // The mockup's project cursor: 10.3.1, which is 19 s at 120 BPM.
   // The mockup's cycle: on (the locators came with the bundle).
   // One undoable command that draws only what the mockup draws: the locators.
@@ -688,6 +694,16 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
       await painted(page);
       fs.writeFileSync(path.join(dir, 'project-zone.resting.app.png'), encodePng(crop(decodePng(await page.screenshot()), zone)));
       notes.push(`The resting state (no clip selected) is ${locale}/project-zone.resting.app.png, the app's alone: the mockup shows a selected clip.`);
+      // The Pool open (m5-ui-port-toolbar): Ctrl+P over the project zone. The
+      // mockup has no Pool: the app's alone.
+      await page.keyboard.press('ControlOrMeta+KeyP');
+      await expect(page.getByTestId('media-pool')).toBeVisible();
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'project-zone.pool.app.png'), encodePng(crop(decodePng(await page.screenshot()), zone)));
+      notes.push(`The Pool open (Ctrl+P) is ${locale}/project-zone.pool.app.png, the app's alone: the mockup has no Pool.`);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('media-pool')).toHaveCount(0);
     }
 
     // A strip with its fader held (m5-ui-port-mixer-strip, acceptance 9):

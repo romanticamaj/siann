@@ -644,7 +644,7 @@ test('UX screenshot tour', async () => {
   const grab = { x: cbox.x + target.x + target.width / 2, y: cbox.y + target.y + target.height / 2 };
   await page.mouse.click(grab.x, grab.y);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_06_keys');
-  await shoot(page, 'Clip selected', 'The Keys clip clicked: a 2 px outline on the overlay with its handles (the resize squares in the lower corners and the volume control just inside the lower-left one); the info line shows its start, end, length, offset and gain, and the Delete clip button is enabled.');
+  await shoot(page, 'Clip selected', `The Keys clip clicked: a 2 px outline on the overlay with its handles (the resize squares in the lower corners and the volume control just inside the lower-left one); the info line (the mockup's, m5-ui-port-toolbar) shows its name in its track's colour (${await page.getByTestId('info-name').textContent()}), then its start ${await page.getByTestId('info-start').textContent()} and end ${await page.getByTestId('info-end').textContent()} in bar.beat.sixteenth.tick, its length and offset counted from zero and its volume (${await page.getByTestId('info-volume').textContent()}). Delete and Backspace remove it; the toolbar has no Delete clip button.`);
   await page.mouse.move(grab.x, grab.y);
   await page.mouse.down();
   await page.mouse.move(grab.x + 60, grab.y, { steps: 5 });
@@ -853,6 +853,22 @@ test('UX screenshot tour', async () => {
     'The metronome turned on with its button (transport.set_click; C does the same, a right-click on it gives its level): the button is lit. The click is generated from the tempo map and added to the device output after the master meter; nothing else in the window changes.',
     { number: 24 },
   );
+
+  // ---- 26 (m5-ui-port-toolbar): the Pool, opened with Ctrl+P (Cmd+P on
+  // macOS) over the project zone: the session's media by name, a click arms
+  // placing. The mockup has no Pool, so the review reads this state alone.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+KeyP');
+  await expect(page.getByTestId('media-pool')).toBeVisible();
+  const poolItems = await page.locator('[data-testid^="pool-"]').count();
+  await shoot(
+    page,
+    'Pool open',
+    `The Pool (Cubase's, UI redesign 10.8), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu has Open Pool too): an app-only window over the project zone listing the session's ${poolItems} media by name (the media id when there is none); a click on one arms placing and the next click in the event display places it. Escape closes it; the resting window does not show it.`,
+    { number: 26 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('media-pool')).toHaveCount(0);
 
   // ---- What the window has no surface for (unnumbered).
   shots.push({

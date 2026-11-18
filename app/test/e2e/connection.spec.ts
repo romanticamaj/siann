@@ -128,9 +128,9 @@ test('while the engine is down a full-width banner shows, the zones are inert an
   for (const zone of ['lower', 'right']) expect(await opacity(zone)).toBeLessThan(before);
 
   // A user tries every kind of control: a mixer button, the timeline's
-  // delete button and key, a fader key, a plan action.
+  // Delete key (the toolbar has no Delete clip button, m5-ui-port-toolbar), a
+  // fader key, a plan action.
   await page.getByTestId('mute-trk_a').click({ force: true });
-  await page.getByTestId('delete-clip').click({ force: true });
   await page.keyboard.press('Delete');
   await page.getByTestId('fader-trk_a').press('ArrowUp');
   await page.getByTestId('plan-approve-apply').click({ force: true });

@@ -30,9 +30,12 @@ const PLANS = '.p-head .tab, .ab .b, .steps-h a, .acts .btn, .plans .badge';
 // The MixConsole (m5-ui-port-mixer-strip): the knob, the pan value, M, S, the
 // readout (level and peak value) and the MixConsole tab, in the mockup's boxes.
 const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^=fader-value-]';
+// The project zone toolbar (m5-ui-port-toolbar): the tools, the snap, grid
+// type and auto-scroll fields, the info line's fields and the open Pool.
+const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testid=media-pool] .pool-head, [data-testid^=pool-]';
 // The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}`;
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -110,11 +113,29 @@ async function wrapped(): Promise<string[]> {
 test('no labelled control overflows or wraps its label in any locale at either window size', async () => {
   test.setTimeout(150_000);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-'));
-  const sessionDir = seedBundle(scratch, TRACKS);
+  // One clip, selected below, so the info line holds its fields.
+  const sessionDir = seedBundle(scratch, TRACKS, [{ id: 'clp_fit', trackId: 'trk_kick', at: 0.25 }]);
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
+  // The clip selected first (an auditioned plan holds the event display), so the info line holds its fields.
+  const clip = await page.evaluate(async () => {
+    const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
+    if (!hooks) throw new Error('window.__siannTimeline is missing (SIANN_SHELL_TEST=1)');
+    for (let i = 0; i < 200; i += 1) {
+      const found = hooks.clips().find((c) => c.clipId === 'clp_fit');
+      if (found) return found;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return null;
+  });
+  expect(clip).not.toBeNull();
+  const canvas = (await page.getByTestId('timeline-canvas').boundingBox())!;
+  await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
+  await expect(page.getByTestId('info-line').locator('.f').first()).toBeVisible();
+  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
   const agent = await agentFor(app);
   if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
   // A plan auditioned: its card reads approved for audition and the banner shows.
@@ -135,14 +156,14 @@ test('no labelled control overflows or wraps its label in any locale at either w
   }
   await expect(page.locator('[data-part="plan-summary"] > span')).toHaveCount(3);
   // The track list (m5-ui-arrange) is in the check: its + button, M and S of
-  // every header and the info line's terms are labelled controls; the head's
-  // .add label and its count (m5-ui-port-track-list) are text in the head.
+  // every header and the info line's fields (m5-ui-port-toolbar: .f, for
+  // the selected clip) are labelled controls; the head's .add label and its
+  // count (m5-ui-port-track-list) are text in the head.
   await expect(page.getByTestId('track-add')).toBeVisible();
   await expect(page.getByTestId('track-add')).toHaveText(/\S/);
   await expect(page.getByTestId('track-count')).toBeVisible();
-  await expect(page.getByTestId('track-count')).toHaveText(`${TRACKS.length} tracks · 0 clips`);
+  await expect(page.getByTestId('track-count')).toHaveText(`${TRACKS.length} tracks · 1 clip`);
   await expect(page.getByTestId('track-mute-trk_kick')).toBeVisible();
-  await expect(page.getByTestId('info-line').locator('dt').first()).toBeAttached();
   // The transport bar (m5-ui-transport): its buttons, the position display,
   // the tempo, undo and redo in the top bar.
   // m5-ui-loop-click: the cycle and metronome buttons and the locator display
@@ -191,6 +212,12 @@ test('no labelled control overflows or wraps its label in any locale at either w
       toasts.push(message);
     }, planArrivedMessage(locale as Locale, { steps: MIX_PASS.length }));
     await expect(page.getByTestId('toast').last()).toBeVisible();
+    // The Pool, open, in this locale (Ctrl+P; m5-ui-port-toolbar). The reason
+    // row's text field has the focus, where no key command fires: out of it first.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press('ControlOrMeta+KeyP');
+    await expect(page.getByTestId('media-pool')).toBeVisible();
+    await expect(page.getByTestId('pool-med_seed')).toBeVisible();
     // The time format menu, open, in this locale.
     await page.getByTestId('position-display').click({ button: 'right' });
     await expect(page.getByTestId('time-format-menu')).toBeVisible();
@@ -201,6 +228,7 @@ test('no labelled control overflows or wraps its label in any locale at either w
     }
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();
+    await expect(page.getByTestId('media-pool')).toHaveCount(0);
   }
   expect(failures).toEqual([]);
 });

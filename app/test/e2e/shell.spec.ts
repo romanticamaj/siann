@@ -145,15 +145,14 @@ async function killEngineAndExpectReconnect(): Promise<void> {
 // --line-height, no letter spacing, tabular numerals, no font features), so
 // the regions look as they did until their alignment features port them. An
 // element of a zone that sets one of these itself keeps its own value; every
-// other inherits the zone's. The zone buttons are the mockup's icon buttons,
-// named by their aria-label. The lower zone, the left zone and the right zone
-// are ported (m5-ui-port-mixer-strip, m5-ui-port-inspector, m5-ui-port-plans;
-// UI redesign 10.9 (1)): they take ui/base.css's page, as the mockup does. In
-// the project zone the arrange body is ported (m5-ui-port-arrange-canvas,
-// m5-ui-port-track-list): the track list takes the page's text styles, and
-// only the toolbar and the info line keep the pinned ones until
-// m5-ui-port-toolbar.
-test('the zones not ported yet keep their text styles; the chrome, the ported lower, left and right zones and the track list take the mockup\'s', async () => {
+// other inherits the zone's. The ported zones are out of that rule: the lower
+// zone (m5-ui-port-mixer-strip), the left zone (m5-ui-port-inspector), the
+// right zone (m5-ui-port-plans, the Plans tab) and the project zone (its
+// canvas, track list, toolbar and info line; m5-ui-port-toolbar the last)
+// take ui/base.css's page, as the mockup does (UI redesign 10.9 (1)), so no
+// zone keeps the pinned styles now. The zone buttons are the mockup's icon
+// buttons, named by their aria-label.
+test('the chrome and the ported lower, left, right and project zones take the mockup\'s text styles', async () => {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const styles = await page.evaluate(() => {
     const pick = (el: Element) => {
@@ -161,10 +160,8 @@ test('the zones not ported yet keep their text styles; the chrome, the ported lo
       return { ls: s.letterSpacing, lh: s.lineHeight, fs: parseFloat(s.fontSize), fvn: s.fontVariantNumeric, ffs: s.fontFeatureSettings };
     };
     const lineHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--line-height'));
-    const zones = [
-      { zone: 'toolbar', ...pick(document.querySelector('[data-zone="project"] .timeline-bar')!) },
-      { zone: 'info line', ...pick(document.querySelector('[data-zone="project"] .info-line')!) },
-    ];
+    // No zone is left unported (m5-ui-port-toolbar).
+    const zones = ([] as string[]).map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
     const right = pick(document.querySelector('[data-zone="right"]')!);
     // ui/base.css's body: the line height as a factor, the letter spacing in em.
     const body = getComputedStyle(document.body);
@@ -172,7 +169,7 @@ test('the zones not ported yet keep their text styles; the chrome, the ported lo
     const bodyLs = parseFloat(body.letterSpacing) / parseFloat(body.fontSize);
     // Inherited values: the pinned element's own, through every element that does not set them.
     const offenders: string[] = [];
-    for (const zone of document.querySelectorAll('[data-zone="project"] .timeline-bar, [data-zone="project"] .info-line')) {
+    for (const zone of document.querySelectorAll('[data-zone]:not([data-zone="right"]):not([data-zone="lower"]):not([data-zone="left"]):not([data-zone="project"])')) {
       for (const el of zone.querySelectorAll('*')) {
         const s = pick(el);
         if (s.ls !== 'normal' && s.ls !== '0px') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} letter-spacing ${s.ls}`);
@@ -180,7 +177,7 @@ test('the zones not ported yet keep their text styles; the chrome, the ported lo
       }
     }
     const ported = [
-      ...['lower', 'left'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) })),
+      ...['lower', 'left', 'project'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) })),
       { zone: 'track list', ...pick(document.querySelector('[data-zone="project"] .headers')!) },
     ];
     return { zones, right, bodyLh, bodyLs, lineHeight, offenders, body: pick(document.body), ported };
@@ -201,7 +198,7 @@ test('the zones not ported yet keep their text styles; the chrome, the ported lo
   // The chrome: ui/base.css's page.
   expect(styles.body.ffs).not.toBe('normal');
   expect(styles.body.ls).not.toBe('normal');
-  // The lower zone and the left zone: the page's letter spacing, font
+  // The lower, left and project zones: the page's letter spacing, font
   // features, numerals and line height (base.css's body), none of the pinned
   // pre-port ones.
   for (const zone of styles.ported) {

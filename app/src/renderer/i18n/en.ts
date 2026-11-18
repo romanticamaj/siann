@@ -66,8 +66,6 @@ export const en = {
   'status.label': 'Status',
 
   // Timeline.
-  'timeline.mediaPool': 'Media pool',
-  'timeline.deleteClip': 'Delete clip',
   'timeline.lastError': 'Last error',
   // The empty session's guidance, drawn on the event display.
   'timeline.empty': 'Empty project: press T or click + above the track list to add a track.',
@@ -91,6 +89,7 @@ export const en = {
   'tool.select': 'Object Selection',
   'tool.split': 'Split',
   'snap.toggle': 'Snap',
+  'snap.typeGrid': 'Grid',
   'snap.grid': 'Grid type',
   'grid.bar': 'Bar',
   'grid.beat': 'Beat',
@@ -108,7 +107,13 @@ export const en = {
   'info.end': 'End',
   'info.length': 'Length',
   'info.offset': 'Offset',
-  'info.gain': 'Volume',
+  'info.volume': 'Volume',
+
+  'pool.title': 'Pool',
+  'pool.open': 'Open Pool',
+  'pool.menu': 'Event display',
+  'pool.empty': 'No media in this project.',
+  'toolbar.autoScrollTitle': 'Auto-Scroll (F)',
 
   // Mixer.
   'mixer.label': 'Mixer',

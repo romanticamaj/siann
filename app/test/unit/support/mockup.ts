@@ -71,6 +71,9 @@ export interface Mockup {
   readonly T: readonly MockupTrack[];
   // The left zone (the Inspector) as the app.innerHTML template writes it: aside.leftzone and its rows.
   readonly leftzone: string;
+  // The project zone's head as the template writes it: div.arr-toolbar (with tool()) and div.infoline.
+  readonly projectHead: string;
+  tool(icon: string, key: number, on?: boolean): string;
   // The track header the mockup draws for track `index` of T.
   th(track: MockupTrack, index: number): string;
   // The track list as the app.innerHTML template writes it: div.headers, its head, the marker head and T.map(th).
@@ -100,11 +103,14 @@ export function loadMockup(lang = 'en'): Mockup {
     between(source, 'const P={', '// Fidelity ids'),
     line(source, 'const ic='),
     line(source, 'const sec='),
+    line(source, 'const tool='),
     // The left zone's block of the app.innerHTML template, evaluated as the template it is.
     `const leftzone=\`${between(source, '<aside class="leftzone"', '<main class="center">').trim()}\`;`,
+    // The project zone's toolbar and info line, the block of the template above div.arr-body.
+    `const projectHead=\`${between(source, '<div class="arr-toolbar"', '<div class="arr-body"').trim()}\`;`,
     // The track list's block of the template, evaluated the same way.
     `const headers=\`${between(source, '<div class="headers"', '<div class="lanes"').trim()}\`;`,
-    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan};',
+    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan,projectHead,tool};',
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
@@ -123,6 +129,8 @@ export function loadMockup(lang = 'en'): Mockup {
     headers: out.headers,
     fdb: out.fdb,
     fpan: out.fpan,
+    projectHead: out.projectHead,
+    tool: out.tool,
   };
 }
 
