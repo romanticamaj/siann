@@ -33,8 +33,8 @@ const GHOSTS: readonly Ghost[] = [
   { kind: 'track-add', step: 4, trackId: 'trk_pad', name: 'Pad', channels: 2, key: 'ghost' },
 ];
 
-function branch(entities: Record<string, unknown>, name = 'p1'): BranchSnapshot {
-  return { branch: name, revision: 'r9', entities: new Map(Object.entries(entities)) };
+function branch(entities: Record<string, object>, name = 'p1'): BranchSnapshot {
+  return { branch: name, revision: 'r9', entities: new Map(Object.entries(entities) as Array<[string, Record<string, unknown>]>) };
 }
 
 const branchKeys = (gainMilliDb: number, extra: Record<string, unknown> = {}) => ({ ...track('trk_keys'), name: 'Keys', gainMilliDb, pan: -2000, ...extra });

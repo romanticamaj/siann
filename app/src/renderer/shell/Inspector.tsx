@@ -68,7 +68,8 @@ import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { describeStep } from '../plans/describe';
 import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
-import { trackGhosts, type ValueGhost } from '../plans/ghosts';
+import { trackGhosts, type Ghost } from '../plans/ghosts';
+import { useEditGuard } from '../plans/heard-context';
 import { useStepNames } from '../plans/hooks';
 import { ISOLATE } from '../plans/isolate';
 import { planName } from '../plans/plan-name';
@@ -171,7 +172,7 @@ interface SliderProps {
   readonly testId: string;
   readonly label: string;
   // The ticked steps' pending values of this slider (m5b-ui-ghosts), in step order.
-  readonly ghosts: readonly ValueGhost<string, number>[];
+  readonly ghosts: ReadonlyArray<Extract<Ghost, { kind: 'gain' | 'pan' }>>;
   readonly view: GhostView;
 }
 
@@ -224,14 +225,14 @@ function Slider({ kind, track, gestures, testId, label, ghosts, view }: SliderPr
           event.stopPropagation();
           view.pin(g.step);
         };
-        if (!gain) return <span key={`t${g.step}`} className="ghost-tick" aria-hidden="true" data-testid={`${testId}-ghost-${g.step}`} {...ghostAttrs(view, [g.step])} style={{ left: percent(to) }} onPointerDown={pin} />;
-        const from = toPosition(kind, g.before ?? value);
+        if (!gain) return <span key={`t${g.step}`} className="ghost-tick" aria-hidden="true" data-testid={`${testId}-ghost-${g.step}`} {...ghostAttrs(view, [g.step], g.mode)} style={{ left: percent(to) }} onPointerDown={pin} />;
+        const from = toPosition(kind, g.mode === 'solid' ? value : (g.before ?? value));
         return [
-          <span key={`l${g.step}`} className="ghost-line" aria-hidden="true" data-testid={`${testId}-ghost-line-${g.step}`} {...ghostAttrs(view, [g.step])} style={{ left: percent(Math.min(from, to)), width: percent(Math.abs(to - from)) }} />,
-          <span key={`c${g.step}`} className="ghost-thumb" aria-hidden="true" data-testid={`${testId}-ghost-${g.step}`} {...ghostAttrs(view, [g.step])} style={{ left: percent(to) }} onPointerDown={pin} />,
+          <span key={`l${g.step}`} className="ghost-line" aria-hidden="true" data-testid={`${testId}-ghost-line-${g.step}`} {...ghostAttrs(view, [g.step], g.mode)} style={{ left: percent(Math.min(from, to)), width: percent(Math.abs(to - from)) }} />,
+          <span key={`c${g.step}`} className="ghost-thumb" aria-hidden="true" data-testid={`${testId}-ghost-${g.step}`} {...ghostAttrs(view, [g.step], g.mode)} style={{ left: percent(to) }} onPointerDown={pin} />,
         ];
       })}
-      <u ref={thumb} style={{ left: percent(position) }} />
+      <u ref={thumb} {...(gain && ghosts.some((g) => g.mode === 'solid') ? { 'data-replaced': 'true' } : {})} style={{ left: percent(position) }} />
       <span ref={tooltip} className="value-tooltip" data-testid={`${testId}-tooltip`} role="status" hidden />
     </span>
   );
@@ -263,6 +264,7 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
   const can = useCapabilities();
   const track = useTrack(client, trackId);
   const view = useGhostView();
+  const guard = useEditGuard();
   if (!track) {
     return (
       <>
@@ -299,14 +301,14 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
         </div>
         <div className="i-btns" data-part="inspector-buttons">
           {can.command('track.set_mute') ? (
-            <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} {...(mute ? ghostAttrs(view, [mute.step]) : {})} data-testid="inspector-mute" data-part="inspector-mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
+            <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} {...(mute ? ghostAttrs(view, [mute.step], mute.mode) : {})} disabled={guard !== null} title={guard ?? undefined} data-testid="inspector-mute" data-part="inspector-mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
               M
             </button>
           ) : (
             <Hold className="msr-box" />
           )}
           {can.command('track.set_solo') ? (
-            <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} {...(solo ? ghostAttrs(view, [solo.step]) : {})} data-testid="inspector-solo" data-part="inspector-solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
+            <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} {...(solo ? ghostAttrs(view, [solo.step], solo.mode) : {})} disabled={guard !== null} title={guard ?? undefined} data-testid="inspector-solo" data-part="inspector-solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
               S
             </button>
           ) : (

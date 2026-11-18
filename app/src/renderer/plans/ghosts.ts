@@ -30,7 +30,7 @@ export interface LocatorPair {
   readonly right: string;
 }
 
-export type Ghost =
+export type Ghost = (
   | { readonly kind: 'track-add'; readonly step: number; readonly trackId: string; readonly name: string; readonly channels: number | null; readonly key: string }
   | { readonly kind: 'clip-place'; readonly step: number; readonly clipId: string; readonly trackId: string; readonly mediaId: string; readonly position: string; readonly sourceStart: string; readonly length: string }
   | {
@@ -72,7 +72,18 @@ export type Ghost =
   | ValueGhost<'mute', boolean>
   | ValueGhost<'solo', boolean>
   | { readonly kind: 'rename'; readonly step: number; readonly trackId: string; readonly before: string | null; readonly after: string }
-  | { readonly kind: 'locators'; readonly step: number; readonly before: LocatorPair | null; readonly after: LocatorPair };
+  | { readonly kind: 'locators'; readonly step: number; readonly before: LocatorPair | null; readonly after: LocatorPair }
+) &
+  GhostMode;
+
+// While the proposal is heard (m5b-ui-audition; plans/heard-ghosts.ts): mode
+// 'solid' (what is playing; absent for the dashed ghosts of plan.preview) and
+// the value the ghost replaces, main's, which is drawn as the faint outline.
+// A solid ghost of a value no step names has step 0 and carries no number.
+export interface GhostMode {
+  readonly mode?: 'solid';
+  readonly replaced?: number | boolean | string | null;
+}
 
 // A change of one track field: its old value (null when unknown) and the new one.
 export interface ValueGhost<K extends string, V> {

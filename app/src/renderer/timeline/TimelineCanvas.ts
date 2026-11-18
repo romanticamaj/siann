@@ -115,6 +115,7 @@ import {
   arrowOf,
   ghostClipBox,
   ghostLaneRects,
+  ghostStroke,
   locatorGhostRect,
   revealScroll,
   type GhostLane,
@@ -428,6 +429,8 @@ interface GhostShape {
   readonly rect: ClipRect;
   readonly title: string;
   readonly arrow: { x0: number; y0: number; x1: number; y1: number } | null;
+  // While the proposal is heard (m5b-ui-audition): drawn solid, unhatched.
+  readonly mode?: 'solid';
 }
 
 interface RulerDrag {
@@ -1911,7 +1914,7 @@ export class TimelineCanvas {
             originals.set(g.clipId, g.step);
             boxes.push({ step: g.step, box: clipBox(from), pure: false, clipId: g.clipId });
           }
-          shapes.push({ step: g.step, box, rect, title: clipTitle(snapshot, g), arrow: g.kind === 'clip-move' && from ? arrowOf(clipBox(from), box) : null });
+          shapes.push({ step: g.step, box, rect, title: clipTitle(snapshot, g), arrow: g.kind === 'clip-move' && from ? arrowOf(clipBox(from), box) : null, ...(g.mode ? { mode: g.mode } : {}) });
           boxes.push({ step: g.step, box, pure: true });
           part(g.kind === 'clip-place' ? 'clip-ghost-new' : g.kind === 'clip-move' ? 'clip-ghost-move' : 'clip-ghost-trim', box);
           break;
@@ -2011,6 +2014,7 @@ export class TimelineCanvas {
   // dashed outline; and a moved clip's arrow from its original.
   #drawGhostShape(ctx: CanvasRenderingContext2D, snapshot: Snapshot, shape: GhostShape, palette: Palette): void {
     const { box } = shape;
+    const stroke = ghostStroke(shape.mode);
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.beginPath();
@@ -2021,20 +2025,22 @@ export class TimelineCanvas {
     ctx.beginPath();
     ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
     ctx.clip();
-    ctx.strokeStyle = palette.aiHatch;
-    ctx.lineWidth = GHOST_HATCH_WIDTH;
-    for (let k = -box.height; k < box.width; k += GHOST_HATCH_PITCH) {
-      ctx.beginPath();
-      ctx.moveTo(box.x + k, box.y + box.height);
-      ctx.lineTo(box.x + k + box.height, box.y);
-      ctx.stroke();
+    if (stroke.hatch) {
+      ctx.strokeStyle = palette.aiHatch;
+      ctx.lineWidth = GHOST_HATCH_WIDTH;
+      for (let k = -box.height; k < box.width; k += GHOST_HATCH_PITCH) {
+        ctx.beginPath();
+        ctx.moveTo(box.x + k, box.y + box.height);
+        ctx.lineTo(box.x + k + box.height, box.y);
+        ctx.stroke();
+      }
     }
     const strip = titleStrip(box);
     ctx.fillStyle = palette.aiTitle;
     ctx.fillRect(strip.x, strip.y, strip.width, strip.height);
     const tones: ClipPalette = { body: palette.aiBody, title: palette.aiTitle, titleText: palette.aiTitleText, waveOuter: palette.aiWaveOuter, waveOuterAlpha: 1, waveInner: palette.aiWaveInner, outline: palette.ai, outlineWidth: GHOST_OUTLINE_W };
     this.#drawWaveform(ctx, snapshot, shape.rect, box, tones, 1);
-    this.#drawStepDisc(ctx, box, shape.step, palette);
+    if (shape.step > 0) this.#drawStepDisc(ctx, box, shape.step, palette);
     ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
@@ -2044,7 +2050,7 @@ export class TimelineCanvas {
       ctx.fillText(shape.title, x, box.y + TITLE_Y, Math.max(0, box.x + box.width - x - TITLE_X));
     }
     ctx.restore();
-    ctx.setLineDash([...GHOST_DASH]);
+    ctx.setLineDash([...stroke.dash]);
     ctx.strokeStyle = palette.ai;
     ctx.lineWidth = GHOST_OUTLINE_W;
     ctx.beginPath();

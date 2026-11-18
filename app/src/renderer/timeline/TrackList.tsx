@@ -62,6 +62,7 @@ import type { SessionClient } from '../model/session-client';
 import { ghostAttrs, NO_GHOSTS, useGhostView, type GhostView } from '../plans/ghost-context';
 import { trackGhosts, type Ghost, type TrackGhosts } from '../plans/ghosts';
 import { ISOLATE } from '../plans/isolate';
+import { useEditGuard } from '../plans/heard-context';
 import { RenameGhost, renameTitle } from '../plans/RenameGhost';
 import { Capable, useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
@@ -192,7 +193,8 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
 
   // A double-click on the empty space below the last header adds a track
   // (spec 3.3); one on a header (its name renames) adds nothing.
-  const canAdd = can.command('track.add');
+  const guard = useEditGuard();
+  const canAdd = can.command('track.add') && guard === null;
   const addOnEmptySpace = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.target instanceof Element && event.target.closest('.th')) return;
     addTrack(client, t);
@@ -207,7 +209,8 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
             className="add"
             data-testid="track-add" data-part="track-add"
             aria-label={t('tracklist.add')}
-            title={t('tracklist.add')}
+            title={guard ?? t('tracklist.add')}
+            disabled={guard !== null}
             onClick={() => addTrack(client, t)}
           >
             <Icon name="plus" small />
@@ -241,7 +244,8 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
                 height={clampLaneHeight(heights[trackId] ?? DEFAULT_LANE_HEIGHT)}
                 dimmed={dimmed.has(trackId)}
                 selected={selected.has(trackId)}
-                canRename={can.command('track.rename')}
+                canRename={can.command('track.rename') && guard === null}
+                guard={guard}
                 client={client}
                 registerMeter={registerMeter}
                 onSelect={onSelectTrack}
@@ -267,6 +271,8 @@ interface TrackHeaderProps {
   readonly dimmed: boolean;
   readonly selected: boolean;
   readonly canRename: boolean;
+  // The edit guard's reason while a proposal is heard (m5b-ui-audition): M and S are disabled with it.
+  readonly guard?: string | null;
   readonly client: SessionClient;
   readonly registerMeter: RegisterMeter;
   readonly onSelect: (trackId: string, mode: TrackSelectMode) => void;
@@ -295,7 +301,7 @@ export interface TrackHeaderViewProps extends Omit<TrackHeaderProps, 'registerMe
 }
 
 // th() for one track: what the header shows for a given editing state.
-export function TrackHeaderView({ track, number, height, dimmed, selected, canRename, client, editing, onEditing, meterRef, onSelect, onResize, ghosts = NO_TRACK_GHOSTS, view }: TrackHeaderViewProps) {
+export function TrackHeaderView({ track, number, height, dimmed, selected, canRename, guard = null, client, editing, onEditing, meterRef, onSelect, onResize, ghosts = NO_TRACK_GHOSTS, view }: TrackHeaderViewProps) {
   const t = useT();
   const can = useCapabilities();
   const id = track.id;
@@ -400,6 +406,9 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
               type="button"
               className={`msr m${track.mute ? ' on' : ''}${ghosts.mute.length > 0 ? ' ghost' : ''}`}
               data-testid={`track-mute-${id}`} data-part-of="mute"
+              {...(ghosts.mute.at(-1)?.mode ? { 'data-ghost-mode': 'solid' } : {})}
+              disabled={guard !== null}
+              title={guard ?? undefined}
               aria-pressed={track.mute}
               aria-label={t('tracklist.mute', { track: track.name })}
               onClick={() => toggle('track.set_mute')}
@@ -414,6 +423,9 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
               type="button"
               className={`msr s${track.solo ? ' on' : ''}${ghosts.solo.length > 0 ? ' ghost' : ''}`}
               data-testid={`track-solo-${id}`} data-part-of="solo"
+              {...(ghosts.solo.at(-1)?.mode ? { 'data-ghost-mode': 'solid' } : {})}
+              disabled={guard !== null}
+              title={guard ?? undefined}
               aria-pressed={track.solo}
               aria-label={t('tracklist.solo', { track: track.name })}
               onClick={() => toggle('track.set_solo')}
@@ -430,7 +442,7 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
         </div>
         <div className="r2">
           <span className="db num" data-testid={`track-gain-${id}`} data-part-of="gain">
-            {gain ? `${bareDb(gain.before ?? track.gainMilliDb)} ` : formatDb(track.gainMilliDb)}
+            {gain ? `${bareDb(gain.mode === 'solid' ? track.gainMilliDb : (gain.before ?? track.gainMilliDb))} ` : formatDb(track.gainMilliDb)}
             {gain ? <span className="ghost-to">{`→ ${bareDb(gain.after)}`}</span> : null}
           </span>
           <span className="pan num" data-testid={`track-pan-${id}`} data-part-of="pan">

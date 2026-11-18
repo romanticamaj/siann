@@ -45,6 +45,7 @@ import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
 import { HearingSwitch } from './plans/HearingSwitch';
 import { GhostContext, ReviewContext, useReviewGhosts } from './plans/ghost-context';
+import { HeardContext } from './plans/heard-context';
 import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
@@ -133,6 +134,8 @@ export function App({
     review.reset();
   }, [review, reconnects]);
   const ghosts = useReviewGhosts(review);
+  // The side heard, for the edit guard of the zones (m5b-ui-audition).
+  const heard = useSyncExternalStore((listener) => plans.subscribe(listener), () => plans.getSnapshot().heard);
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   return (
@@ -140,6 +143,7 @@ export function App({
       <TimeFormatContext.Provider value={timeFormat}>
        <ReviewContext.Provider value={review}>
         <GhostContext.Provider value={ghosts}>
+        <HeardContext.Provider value={heard}>
         <Shell
           client={client}
           plans={plans}
@@ -182,9 +186,10 @@ export function App({
               <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
             </Counted>
           }
-          right={<PlanPanel client={client} plans={plans} review={review} reconnects={reconnects} />}
+          right={<PlanPanel client={client} plans={plans} review={review} reconnects={reconnects} commands={commands} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
         />
+        </HeardContext.Provider>
         </GhostContext.Provider>
        </ReviewContext.Provider>
       </TimeFormatContext.Provider>

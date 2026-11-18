@@ -7,7 +7,9 @@
 // that branch, and offers Hear main, Merge and Discard, each only when
 // engine.capabilities lists its method. A refusal is shown on the banner as
 // plans/RefusalLine shows it (no ids; the engine's text behind a disclosure).
-// The violet frame, solid ghosts, Shift+A and the branch chip are P2-3.
+// Since m5b-ui-audition (P2-3) it names the plan through heardPlanName, as
+// the branch chip does, and the window around it has the violet frame
+// (shell/Shell.tsx, .app[data-hearing="proposal"]); its buttons carry no key.
 
 import { useState } from 'react';
 
@@ -16,7 +18,7 @@ import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { Capable } from '../shell/Capable';
 import { runAction, type PlanAction } from './actions';
-import { planName } from './plan-name';
+import { heardPlanName } from './plan-name';
 import { ISOLATE } from './isolate';
 import { usePlanSnapshot, useStepNames } from './hooks';
 import { RefusalLine, type Refusal } from './RefusalLine';
@@ -33,10 +35,9 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
   const names = useStepNames(client);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ branch: string; refusal: Refusal } | null>(null);
-  const branch = snapshot.heard;
-  if (branch === null || branch === 'main') return null;
-  const plan = snapshot.plans.find((p) => p.proposalBranch === branch);
-  const name = plan ? planName(plan, t, names) : null;
+  const heard = heardPlanName(snapshot, t, names);
+  if (heard === null) return null;
+  const { branch, name } = heard;
   const text = name ? t('banner.hearing', { lead: name.lead, steps: name.steps }) : t('banner.generic');
   const run = (action: PlanAction) => {
     if (busy) return;

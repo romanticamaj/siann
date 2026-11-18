@@ -36,6 +36,11 @@ import { RefusalLine, type Refusal } from './RefusalLine';
 import { stepRows } from './step-rows';
 import { EntityRows, StepRow } from './StepRow';
 
+// The key the primary button shows (m5b-ui-audition; UI redesign 3.6): the
+// mockup's kbd, the Return glyph of Ctrl+Return (Cmd+Return on macOS), which
+// runs the primary while the right zone has the focus (plans.primary).
+export const PRIMARY_KEY = '⏎';
+
 export const ACTION_TEST_IDS: Record<ActionId, string> = {
   approveApply: 'plan-approve-apply',
   apply: 'plan-apply',
@@ -175,6 +180,12 @@ export function PlanCard(props: PlanCardProps) {
       >
         <Icon name={ACTION_ICONS[entry.id]} small />
         {danger ? null : label}
+        {cell === 1 ? (
+          <>
+            {' '}
+            <kbd>{PRIMARY_KEY}</kbd>
+          </>
+        ) : null}
       </button>
     );
   };

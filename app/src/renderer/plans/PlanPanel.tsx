@@ -30,7 +30,8 @@ import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
-import { actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type PlanAction } from './actions';
+import type { CommandRegistry } from '../keys/commands';
+import { actionMethods, actionSet, landedLabel, primaryAction, runAction, type ActionEntry, type PlanAction } from './actions';
 import { cardOf, staleReasons as reasonsOf } from './card';
 import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
@@ -163,14 +164,18 @@ export interface PlanPanelProps {
   // The reconnects so far (model/connection-phase.ts); each one clears the
   // refusal and the reason field.
   readonly reconnects?: number;
+  // The key commands: Ctrl+Return in the right zone runs the card's primary
+  // (plans.primary, m5b-ui-audition); none when absent.
+  readonly commands?: CommandRegistry;
 }
 
-export function PlanPanel({ client, plans, review, reconnects = 0 }: PlanPanelProps) {
+export function PlanPanel({ client, plans, review, reconnects = 0, commands }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
   const now = useNow();
+  const can = useCapabilities();
   const reviewState = useSyncExternalStore((listener) => review.subscribe(listener), () => review.getSnapshot(), () => review.getSnapshot());
   const { selected, ticked, hotStep, pinnedStep } = reviewState;
   const [note, setNote] = useState('');
@@ -268,6 +273,20 @@ export function PlanPanel({ client, plans, review, reconnects = 0 }: PlanPanelPr
       }
     });
   };
+
+  // Ctrl+Return (Cmd+Return) with the right zone focused: the card's primary,
+  // Approve N of M, Apply or Merge, when it can run now; otherwise the key
+  // keeps its default (UI redesign 3.6, 4.5 C4).
+  const primary = useRef<() => boolean>(() => false);
+  primary.current = () => {
+    if (!plan || busy) return false;
+    const set = actionSet(plan, snapshot.heard, selection(ticked, plan.steps.length));
+    const entry = primaryAction(set, (e) => actionMethods(e.id, plan).every((m) => can.has(m)));
+    if (!entry) return false;
+    run(entry);
+    return true;
+  };
+  useEffect(() => (commands ? commands.register('right', 'plans.primary', () => primary.current()) : undefined), [commands]);
 
   return (
     <PlanPanelView

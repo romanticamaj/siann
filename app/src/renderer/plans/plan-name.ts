@@ -1,11 +1,12 @@
 // A plan's name until E-7 gives plans a title (m5b-ui-ghosts; UI redesign
 // 4.2, 4.3): its first step in user wording (plans/describe.ts) and its step
 // count ("3 steps"). One helper for every place that names a plan by it: the
-// audition banner, the toolbar's proposal pill, the Inspector's Agent changes
-// section and the card's lead. A plan without steps has no name.
+// audition banner, the branch chip (heardPlanName, m5b-ui-audition), the
+// toolbar's proposal pill, the Inspector's Agent changes section and the
+// card's lead. A plan without steps has no name.
 
 import type { T } from '../i18n/t';
-import type { PlanEntry } from '../model/plan-store';
+import type { PlanEntry, PlanSnapshot } from '../model/plan-store';
 import { describeStep, type StepNames } from './describe';
 
 export interface PlanName {
@@ -19,4 +20,20 @@ export function planName(plan: Pick<PlanEntry, 'steps'>, t: T, names: StepNames)
   const first = plan.steps[0];
   if (!first) return null;
   return { lead: describeStep(first, t, names), steps: t('plans.steps', { count: plan.steps.length }) };
+}
+
+export interface HeardName {
+  // The branch heard (never shown).
+  readonly branch: string;
+  // The name of the plan that owns it; null when no held plan does (the generic word).
+  readonly name: PlanName | null;
+}
+
+// The heard proposal's name (m5b-ui-audition; UI redesign 4.3), for the
+// banner and the branch chip alike; null while main is heard or the side is unknown.
+export function heardPlanName(snapshot: Pick<PlanSnapshot, 'heard' | 'plans'>, t: T, names: StepNames): HeardName | null {
+  const branch = snapshot.heard;
+  if (branch === null || branch === 'main') return null;
+  const plan = snapshot.plans.find((p) => p.proposalBranch === branch);
+  return { branch, name: plan ? planName(plan, t, names) : null };
 }

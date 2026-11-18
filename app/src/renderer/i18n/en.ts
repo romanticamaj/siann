@@ -251,6 +251,15 @@ export const en = {
   'banner.label': 'Audition',
   'banner.hearing': 'Hearing proposal: {lead} ({steps}). Main is unchanged.',
   'banner.generic': 'Hearing a proposal. Main is unchanged.',
+  // The branch chip in the top bar (m5b-ui-audition; UI redesign 4.3): main and
+  // its head revision, or the heard proposal's name as the banner gives it.
+  'chip.main': 'main',
+  'chip.mainTitle': 'Main, at {revision}',
+  'chip.proposal': '{lead}, {steps}',
+  'chip.generic': 'Proposal',
+  // The edit guard (m5b-ui-audition; UI redesign 4.5 C5): the tooltip of a
+  // structural control while a proposal is heard.
+  'guard.structural': 'Not while hearing the proposal: hear main to edit',
 
   // The plan's diff, in user units; the raw entity is behind each row's disclosure.
   'diff.before': 'Before',

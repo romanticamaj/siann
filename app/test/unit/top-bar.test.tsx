@@ -41,7 +41,7 @@ import { translator } from '../../src/renderer/i18n/t';
 import { formatSignature } from '../../src/renderer/timeline/musical-time';
 import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { planName } from '../../src/renderer/plans/plan-name';
-import { elements, loadMockup, parse, sig, text, type Element } from './support/mockup';
+import { byAttr, elements, find, loadMockup, parse, sig, text, type Element } from './support/mockup';
 import { BRANCH, hashOf, MIX_STEPS, planObject, planSnapshot } from './support/plans';
 import { sampleSnapshot } from './support/timeline';
 
@@ -188,8 +188,8 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
   // The icons are the mockup's: svg.i in the buttons, svg.i.s by the session name and in the Plans button.
   // undo, redo, start, cycle, stop, play, the metronome, three zone buttons and the Plans button's spark
   assert.equal((markup.match(/<svg class="i" viewBox="0 0 16 16"/g) ?? []).length, 11);
-  // the session's chevron
-  assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 1);
+  // the session's chevron and the branch chip's icon (m5b-ui-audition)
+  assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 2);
   assert.match(markup, /<button[^>]*class="aibtn"[^>]*data-part="plans-button"[^>]*><svg class="i" viewBox="0 0 16 16"/);
   // The old wrappers are gone.
   for (const gone of ['transport-locators', 'position-display"', 'top-bar"', 'zone-buttons"', 'transport-buttons"']) {
@@ -319,7 +319,7 @@ test('UndoHistory follows the causes of session.changed and forgets on a new con
 function chipOf(markup: string): Element {
   const at = markup.indexOf('<span class="chip"');
   assert.ok(at >= 0, 'the chip is there');
-  return elements(parse(`<div>${markup.slice(at, markup.indexOf('<span class="sep"', at))}</div>`))[0]!;
+  return find(parse(markup.slice(at, markup.indexOf('<span class="sep"', at))), byAttr('data-part', 'branch-chip'));
 }
 
 function storeHearing(heard: string | null): PlanStore {
@@ -330,7 +330,7 @@ function storeHearing(heard: string | null): PlanStore {
 }
 
 test('the branch chip has the mockup\'s markup and reads main r<head> while main is heard', () => {
-  const mock = elements(parse(`<div>${loadMockup('en').branchChip}</div>`))[0]!;
+  const mock = find(parse(loadMockup('en').branchChip), byAttr('data-part', 'branch-chip'));
   for (const heard of ['main', null]) {
     const app = chipOf(render({ snapshot: planSnapshot(), plans: storeHearing(heard) }));
     assert.equal(sig(app), sig(mock));

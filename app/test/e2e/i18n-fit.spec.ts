@@ -96,6 +96,26 @@ async function overflowing(): Promise<string[]> {
   }, LABELLED);
 }
 
+// The branch chip (m5b-ui-audition), naming the auditioned plan: one line,
+// inside .tb-left and clear of the separator after it, shortened with an
+// ellipsis, its whole name in its title. Under 1300 px it is not shown.
+async function chipFits(): Promise<string[]> {
+  return page.evaluate(() => {
+    const chip = document.querySelector<HTMLElement>('[data-part=branch-chip]');
+    if (!chip) return ['no branch chip'];
+    if (window.innerWidth <= 1300) return getComputedStyle(chip).display === 'none' ? [] : ['the chip is shown under 1300 px'];
+    const out: string[] = [];
+    const box = chip.getBoundingClientRect();
+    const sep = chip.parentElement!.querySelector<HTMLElement>('.sep')!.getBoundingClientRect();
+    const left = chip.parentElement!.getBoundingClientRect();
+    if (box.right > sep.left + 0.5 || box.right > left.right + 0.5) out.push(`the chip runs past its group: ${box.right} > ${sep.left}`);
+    const name = chip.querySelector<HTMLElement>('span')!;
+    if (name.getClientRects().length !== 1) out.push('the chip wraps');
+    if (!chip.title || !chip.title.includes((name.textContent ?? '').slice(0, 4))) out.push(`the chip's title does not hold its name: ${chip.title}`);
+    return out;
+  });
+}
+
 // Labels drawn on more than one line: the line boxes of each text node.
 async function wrapped(): Promise<string[]> {
   return page.evaluate((selector) => {
@@ -236,6 +256,7 @@ test('no labelled control overflows or wraps its label in any locale at either w
       await resize(size);
       for (const entry of await overflowing()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
       for (const entry of await wrapped()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await chipFits()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
     }
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();

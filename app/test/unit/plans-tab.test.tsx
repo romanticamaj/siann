@@ -338,7 +338,7 @@ test('the card shows the mockup text M5 derives', () => {
   assert.deepEqual(sum.children.map(textOf), ['+1 track', '+1 clip', '1 move', '3 mix']);
   assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-badge')!), 'Needs review');
   assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-steps-head')!), 'Steps · 6 of 6 selectedSelect none');
-  assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-approve')!), 'Approve 6 of 6');
+  assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-approve')!), 'Approve 6 of 6 ⏎');
   assert.equal(textOf(find(zone, (n) => partOf(n) === 'plan-history-head')!), 'Earlier3 plans');
   const meta = find(zone, (n) => partOf(n) === 'plan-meta')!;
   assert.equal(textOf(meta.children[1]!), '2 minutes ago · base r39');

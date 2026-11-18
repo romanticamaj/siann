@@ -109,6 +109,15 @@ export function actionSet(plan: PlanEntry, heard: string | null, chosen: Selecti
   return { primary: { id: 'merge' }, secondary: [...hear, { id: 'discard' }], disabled };
 }
 
+// What Ctrl+Return runs (m5b-ui-audition; UI redesign 3.6, 4.5 C4): the
+// primary when it can run now (not disabled with a reason, and every method
+// it sends listed by engine.capabilities: `allowed`), else nothing.
+export function primaryAction(set: ActionSet, allowed: (entry: ActionEntry) => boolean): ActionEntry | null {
+  const primary = set.primary;
+  if (!primary || set.disabled.has(primary.id) || !allowed(primary)) return null;
+  return primary;
+}
+
 // The three cells of the card's .acts (m5-ui-port-plans; mockup.html: Audition,
 // Approve, the icon-only Reject; UI redesign 10.10, P1-13 notes): the secondary
 // action, the primary, and the danger action (Reject or Discard). A state
