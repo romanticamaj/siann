@@ -111,6 +111,15 @@ test("the audition banner's text is bidi-isolated", () => {
   assertIsolated(markup, 'audition-banner-text');
 });
 
+// m5b-ui-plan-metadata: the plan's title and intent and the agent's name.
+test("the card's title and intent and the agent row's name are bidi-isolated", () => {
+  const plans = [entry(FRESH, 'validated', MIX_STEPS, { title: `Lift ${RLO}surohc`, intent: `Pad ${RLO}sdrawrof`, actor: { kind: 'mcp', name: `mix${RLO}` } })];
+  const markup = panel({ plans, agent: { id: 'agt_1', name: `mix${RLO}tnatsissa`, transport: 'mcp', connected: true, lastAction: null, lastActionAt: null } });
+  assertIsolated(markup, /(<h3[^>]*data-part="plan-title"[^>]*>)/g);
+  assertIsolated(markup, /(<p[^>]*data-part="plan-intent"[^>]*>)/g);
+  assertIsolated(/data-part="agent-row"[\s\S]*?<\/div>/.exec(markup)?.[0] ?? '', /(<b[^>]*>)/g);
+});
+
 // Follow-up to #123: the step text is isolated as a whole, but a name inside
 // it is the agent's or the user's, so each interpolated name is its own
 // isolate (U+2068 FSI ... U+2069 PDI) and an RLO or an unclosed LRI in a track,

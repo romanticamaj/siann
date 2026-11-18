@@ -99,6 +99,11 @@ export const APPLIED = hashOf('a');
 export const REJECTED = hashOf('b');
 export const STALE = hashOf('c');
 export const NOTE = 'Too wide for the verse — keep it mono.';
+// The mockup's agent and its plans' metadata (m5b-ui-plan-metadata).
+export const AGENT_NAME = 'mix-assistant';
+export const ACTOR = { kind: 'mcp', name: AGENT_NAME } as const;
+export const TITLE = 'Lift the chorus';
+export const INTENT = 'Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.';
 
 function plan(hash: string, state: string, steps: ReadonlyArray<Record<string, unknown>>, extra: Record<string, unknown> = {}): PlanEntry {
   return planEntry({ schema: 'siann.plan.v1', hash, state, baseRevision: 'r39', steps, readSet: [], writeSet: [], stale: [], ...extra })!;
@@ -108,10 +113,12 @@ function plan(hash: string, state: string, steps: ReadonlyArray<Record<string, u
 export function mockupPlans(): PlanEntry[] {
   return [
     plan(STALE, 'approved', [{ op: 'track.set_gain', trackId: T.kick, gainMilliDb: -1000 }], {
+      title: 'Trim silence on drums',
+      actor: ACTOR,
       baseRevision: 'r27',
       stale: [{ ref: `track:${T.kick}`, change: 'modified' }],
     }),
-    plan(REJECTED, 'rejected', [{ op: 'track.set_pan', trackId: T.lead, pan: 3000 }], { rejectionNote: NOTE }),
+    plan(REJECTED, 'rejected', [{ op: 'track.set_pan', trackId: T.lead, pan: 3000 }], { rejectionNote: NOTE, title: 'Double the lead vocal', actor: ACTOR }),
     plan(
       APPLIED,
       'applied',
@@ -121,9 +128,9 @@ export function mockupPlans(): PlanEntry[] {
         { op: 'track.set_gain', trackId: T.bass, gainMilliDb: -4000 },
         { op: 'track.set_pan', trackId: T.keys, pan: -3500 },
       ],
-      { appliedRevision: 'r31', baseRevision: 'r30' },
+      { appliedRevision: 'r31', baseRevision: 'r30', title: 'Tame the low end', actor: ACTOR },
     ),
-    plan(PENDING, 'validated', MOCKUP_STEPS),
+    plan(PENDING, 'validated', MOCKUP_STEPS, { title: TITLE, intent: INTENT, actor: ACTOR }),
   ];
 }
 

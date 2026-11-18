@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import type { Locale } from '../../src/renderer/i18n/locale';
 import { planArrivedMessage } from '../../src/renderer/i18n/messages';
 import { engineClient } from './support/engine-client';
-import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
+import { Agent, agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 const SIZES = [
   { width: 1440, height: 900 },
@@ -240,6 +240,71 @@ test('no labelled control overflows or wraps its label in any locale at either w
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();
     await expect(page.getByTestId('media-pool')).toHaveCount(0);
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-plan-metadata: the agent row and a titled card with its intent, in
+// en, zh-TW and zh-CN, at 1440 px and with the right zone at its minimum
+// width. The row is one line (.agent is nowrap), so a long name ellipsises
+// inside its span instead of pushing the state off the row.
+test('the agent row and a titled card fit in every locale at 1440 px and at the right zone\'s minimum width', async () => {
+  test.setTimeout(120_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-agent-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize({ width: 1440, height: 900 });
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  // An agent with a long name.
+  const ready = await app.evaluate(() => (globalThis as unknown as { __siannShell: { current(): { port: number; mcpToken: string } } }).__siannShell.current());
+  const named = new Agent(ready.port, ready.mcpToken);
+  await named.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mix-assistant for the whole chorus and the bridge', version: '1' } });
+  const plan = await named.tool('submit_plan', {
+    steps: MIX_PASS,
+    title: 'Lift the chorus',
+    intent: 'Add a pad under the chorus, bring the backing vocals forward and land the riser on the downbeat of bar 9.',
+  });
+  await selectPlan(page, plan.hash as string);
+  const row = page.locator('[data-part="agent-row"]');
+  await expect(row.locator('b')).toHaveText('mix-assistant for the whole chorus and the bridge');
+  await expect(row).toHaveCSS('white-space', 'nowrap');
+  await expect(page.locator('[data-part="plan-title"]')).toBeVisible();
+  await expect(page.locator('[data-part="plan-intent"]')).toBeVisible();
+  const separator = page.getByTestId('separator-right');
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans']) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const edge of ['Enter', 'Home']) {
+      await separator.focus();
+      await page.keyboard.press(edge);
+      if (edge === 'Home') await expect(separator).toHaveAttribute('aria-valuenow', await separator.getAttribute('aria-valuemin') ?? '');
+      const report = await page.evaluate(() => {
+        const out: string[] = [];
+        const zone = document.querySelector<HTMLElement>('[data-region="right-zone"]')!;
+        const right = zone.getBoundingClientRect().right;
+        const agentRow = document.querySelector<HTMLElement>('[data-part="agent-row"]')!;
+        if (agentRow.scrollWidth > agentRow.clientWidth) out.push(`agent row ${agentRow.scrollWidth} > ${agentRow.clientWidth}`);
+        for (const el of agentRow.querySelectorAll<HTMLElement>(':scope > span')) {
+          if (el.getBoundingClientRect().right > right + 0.5) out.push(`agent row span "${el.textContent}" past the zone`);
+        }
+        const live = agentRow.querySelector<HTMLElement>('.live')!;
+        const rects = new Set([...live.getClientRects()].map((r) => Math.round(r.top)));
+        if (rects.size > 1) out.push('the state wraps');
+        for (const sel of ['[data-part="plan-title"]', '[data-part="plan-intent"]', '[data-part="plan-head"]']) {
+          const el = document.querySelector<HTMLElement>(sel)!;
+          if (el.scrollWidth > el.clientWidth) out.push(`${sel} ${el.scrollWidth} > ${el.clientWidth}`);
+        }
+        return out;
+      });
+      for (const entry of report) failures.push(`${locale} ${edge === 'Home' ? 'minimum' : '1440'}: ${entry}`);
+    }
   }
   expect(failures).toEqual([]);
 });

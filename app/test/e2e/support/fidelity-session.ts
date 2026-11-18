@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import type { ClipRect, Viewport } from '../../../src/renderer/timeline/geometry';
 import { trackColourIndex } from '../../../src/renderer/timeline/track-colour';
 import { engineClient } from './engine-client';
+import { sessionText } from './fidelity-text';
 import { Agent, exeFromEnv, hash8 } from './seed';
 
 const REPO = path.resolve(__dirname, '..', '..', '..', '..');
@@ -58,7 +59,7 @@ export const mediaId = (name: string): string => `med_${name.toLowerCase().repla
 // The clip names of mockup.html's own CLIPS table, in its order: what the
 // session above has to follow.
 export function mockupClipNames(): string[] {
-  const html = fs.readFileSync(path.join(REPO, 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'), 'utf8');
+  const html = fs.readFileSync(MOCKUP_HTML, 'utf8');
   const table = /const CLIPS=\[([\s\S]*?)\r?\n\];/.exec(html);
   if (!table) throw new Error('mockup.html has no CLIPS table');
   return [...table[1]!.matchAll(/\[\d+,'([^']*)',/g)].map((m) => m[1]!);
@@ -156,8 +157,14 @@ export function prepareBundle(scratch: string): string {
 // one made stale (approved, then the applied plan changes its track), one
 // rejected with the mockup's note, one applied whose four steps bring the
 // seeded values to the mockup's. The history rows then read Applied,
-// Rejected, Stale from the top.
-const NOTE = 'Too wide for the verse — keep it mono.';
+// Rejected, Stale from the top. Each carries the mockup's title, and an MCP
+// client named mix-assistant submits them, so the rows read the mockup's
+// titles and agent (m5b-ui-plan-metadata). The app does not translate an
+// agent's text, so the titles, the intent and the note are the ones the
+// mockup draws in the locale under test (fidelity-text.ts: its ZH table for
+// zh-TW), and the zh-TW rows read 收緊低頻, 疊加主唱, 修剪鼓組的空白.
+export const AGENT_NAME = 'mix-assistant';
+export const MOCKUP_HTML = path.join(REPO, 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html');
 export function staleSteps(): Array<Record<string, unknown>> {
   return [{ op: 'track.set_gain', trackId: TRACK_IDS[0]!, gainMilliDb: -2000 }];
 }
@@ -210,7 +217,10 @@ export async function painted(page: Page): Promise<void> {
 
 // Brings the app's window to the mockup's state, once it is up and sized on a
 // bundle from prepareBundle(): what the run cannot reproduce goes to `notes`.
-export async function stageSession(app: ElectronApplication, page: Page, notes: string[]): Promise<void> {
+// `locale` is the manifest's locale the window runs in (en, zh-TW): the
+// agent's text is the mockup's in that locale.
+export async function stageSession(app: ElectronApplication, page: Page, notes: string[], locale = 'en'): Promise<void> {
+  const text = sessionText(locale, fs.readFileSync(MOCKUP_HTML, 'utf8'));
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText(String(CLIPS.length));
@@ -247,21 +257,37 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   });
   if (!ready) throw new Error('the shell has no engine');
   const agent = new Agent(ready.port, ready.mcpToken);
-  await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mockup-fidelity', version: '1' } });
+  await agent.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: AGENT_NAME, version: '1' } });
   const engine = await engineClient(page, { events: false });
   expect(appliedSteps()).toHaveLength(4);
-  const stale = (await agent.tool('submit_plan', { steps: staleSteps() })).hash as string;
+  const stale = (await agent.tool('submit_plan', { steps: staleSteps(), title: text.titles.stale })).hash as string;
   await engine.call('plan.approve', { plan: stale });
-  const rejected = (await agent.tool('submit_plan', { steps: rejectedSteps() })).hash as string;
-  await engine.call('plan.reject', { plan: rejected, note: NOTE });
-  const applied = (await agent.tool('submit_plan', { steps: appliedSteps() })).hash as string;
+  const rejected = (await agent.tool('submit_plan', { steps: rejectedSteps(), title: text.titles.rejected })).hash as string;
+  await engine.call('plan.reject', { plan: rejected, note: text.note });
+  const applied = (await agent.tool('submit_plan', { steps: appliedSteps(), title: text.titles.applied })).hash as string;
   await engine.call('plan.approve', { plan: applied });
   await engine.call('plan.apply', { plan: applied });
   await expect.poll(async () => ((await engine.call('plan.status', { plan: stale })).stale as unknown[]).length).toBeGreaterThan(0);
-  const plan = await agent.tool('submit_plan', { steps: planSteps() });
+  const plan = await agent.tool('submit_plan', { steps: planSteps(), title: text.titles.plan, intent: text.intent });
+  // The mockup's agent row reads "connected · idle": the session that
+  // submitted ends, and a second one named the same only initializes, so the
+  // agent shown has made no tool call yet (lastAction null).
+  await agent.end();
+  const idle = new Agent(ready.port, ready.mcpToken);
+  await idle.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: AGENT_NAME, version: '1' } });
+  const row = page.locator('[data-part="agent-row"]');
+  await expect(row.locator('b')).toHaveText(AGENT_NAME);
+  await expect(row.locator('.live')).toHaveText(new RegExp(`^\\S+ · \\S+$`));
+  await expect(row.locator('.live')).not.toHaveClass(/\boff\b/);
+  await expect(row.locator('.live')).not.toHaveAttribute('title', /./);
   await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(plan.hash as string));
   await expect(page.locator('[data-part-item="plan-history"]')).toHaveCount(3);
   await expect(page.locator('[data-part-item="plan-history"] .badge')).toHaveText([/./, /./, /./]);
+  // The agent's text reads the mockup's in this locale (UI redesign 10.7, 3).
+  await expect(page.locator('[data-part="plan-title"]')).toHaveText(text.titles.plan);
+  await expect(page.locator('[data-part="plan-intent"]')).toHaveText(text.intent);
+  await expect(page.locator('[data-part-item="plan-history"] > b')).toHaveText([text.titles.applied, text.titles.rejected, text.titles.stale]);
+  await expect(page.locator('[data-part-item="plan-history"]').nth(1).locator('small')).toContainText(text.note);
   await expect(page.getByTestId(`plan-state-${hash8(applied)}`)).toHaveAttribute('data-state', 'applied');
   await expect(page.getByTestId(`plan-state-${hash8(stale)}`)).toHaveAttribute('data-badge', 'stale');
   // The Plans button counts the one validated plan, as the mockup's does.

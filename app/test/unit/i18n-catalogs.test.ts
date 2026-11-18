@@ -28,6 +28,10 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   // The status bar's units, the mockup's in every locale (m5-ui-alignment-chrome).
   'status.sampleRate',
   'status.latencyValue',
+  // The agent's transport is the protocol's name, MCP in every locale (the mockup's).
+  'agent.transport.mcp',
+  // A history row's "N steps · agent": the mockup's separator in every locale.
+  'history.summaryBy',
 ]);
 
 // The parameters each function message is called with. Strings are sentinels
@@ -211,7 +215,7 @@ test('the toolbar, info line and Pool words are in every catalog, the mockup\'s 
 // a quoted literal (a t('key') call, or a key table such as GRID_LABELS), or
 // through one of the dynamic prefixes below, each of which a renderer source
 // builds with a template (`zone.${zone}`).
-const DYNAMIC_PREFIXES = ['zone.', 'badge.', 'diff.kind.', 'actionReason.'] as const;
+const DYNAMIC_PREFIXES = ['zone.', 'badge.', 'diff.kind.', 'actionReason.', 'agent.tool.'] as const;
 
 test('every key of en.ts is used by the renderer', () => {
   const renderer = path.resolve(__dirname, '..', '..', '..', 'src', 'renderer');
@@ -230,4 +234,26 @@ test('every key of en.ts is used by the renderer', () => {
   const unused = KEYS.filter((key) => !quoted(key) && !DYNAMIC_PREFIXES.some((prefix) => key.startsWith(prefix)));
   assert.ok(KEYS.length > 300, `${KEYS.length} keys`);
   assert.deepEqual(unused, [], 'catalog keys no renderer source names: delete them from every catalog');
+});
+
+test("the agent row's words and the titled banner and toast are in every catalog, the mockup's in en and zh-TW (m5b-ui-plan-metadata)", () => {
+  const keys = ['agent.connected', 'agent.disconnected', 'agent.idle', 'agent.none', 'agent.tool.other', 'agent.tool.submit_plan', 'banner.hearingTitled', 'toast.planArrivedTitled'] as const;
+  for (const key of keys) {
+    for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
+      assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+  }
+  assert.equal(en['agent.transport.mcp'], 'MCP');
+  assert.equal(en['agent.none'], 'No agent connected');
+  // The mockup's "connected · idle" and its zh-TW words.
+  assert.equal(`${en['agent.connected']} · ${en['agent.idle']}`, 'connected · idle');
+  assert.equal(`${zhHant['agent.connected']} · ${zhHant['agent.idle']}`, '已連線 · 閒置');
+  assert.equal(zhHans['agent.connected'], '已连接');
+  assert.equal(en['plans.reason'], 'Reason (sent to agent)');
+  for (const catalog of [en, zhHant, zhHans]) {
+    assert.deepEqual(placeholders(catalog['banner.hearingTitled'] as string), ['title']);
+    assert.deepEqual(placeholders(catalog['toast.planArrivedTitled'] as string), ['title']);
+    assert.deepEqual(placeholders(catalog['history.summaryBy'] as string), ['name', 'steps']);
+  }
 });

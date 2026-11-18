@@ -247,7 +247,7 @@ let scratch = '';
 
 // `beforeSetup` runs once the app's window is up and sized, before the spec
 // touches it (the gate measures the mockup there, in the same Electron).
-async function openApp(languages: readonly string[], notes: string[], beforeSetup?: (electronApp: ElectronApplication) => Promise<void>): Promise<Page> {
+async function openApp(locale: string, languages: readonly string[], notes: string[], beforeSetup?: (electronApp: ElectronApplication) => Promise<void>): Promise<Page> {
   if (!fs.existsSync(MAIN)) throw new Error(`${MAIN} is missing: run npm run build first`);
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fidelity-run-'));
   const sessionDir = prepareBundle(scratch);
@@ -276,7 +276,7 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
     await beforeSetup(app);
     await page.bringToFront();
   }
-  await stageSession(app, page, notes);
+  await stageSession(app, page, notes, locale);
   return page;
 }
 
@@ -334,7 +334,7 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
     const notes: string[] = [];
 
     const measured: { parts?: Collected; shot?: Buffer } = {};
-    const page = await openApp(setting.languages, notes, async (electronApp) => {
+    const page = await openApp(locale, setting.languages, notes, async (electronApp) => {
       const mockup = await openMockupInApp(electronApp, REPO, setting.query);
       try {
         measured.parts = await collectMockup(mockup.page);
@@ -346,6 +346,8 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
     const mockupParts = measured.parts;
     const mockupShot = measured.shot;
     if (!mockupParts || !mockupShot) throw new Error('the mockup was not measured');
+    // m5b-ui-plan-metadata's parts are in the window (the agent row, the plan's title and intent).
+    for (const id of ['agent-row', 'plan-title', 'plan-intent']) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
     const appParts = await collectApp(page);
     const appShot = await page.screenshot();
     fs.writeFileSync(path.join(dir, 'mockup.png'), mockupShot);

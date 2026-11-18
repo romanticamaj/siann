@@ -40,7 +40,7 @@ import type { RealtimeClient } from '../model/realtime-client';
 import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { useStepNames } from '../plans/hooks';
-import { planName } from '../plans/plan-name';
+import { planNameParts } from '../plans/plan-name';
 import { useCapabilities } from '../shell/Capable';
 import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
@@ -432,7 +432,7 @@ export function Timeline({
   const reviewSubscribe = (listener: () => void) => (review ? review.subscribe(listener) : () => undefined);
   const reviewed = useSyncExternalStore(reviewSubscribe, () => (review?.reviewable() ? review.plan() : undefined), () => undefined);
   const ghostsOn = useSyncExternalStore(reviewSubscribe, () => review?.getSnapshot().ghostsOn ?? true, () => true);
-  const name = reviewed ? planName(reviewed, t, names) : null;
+  const name = planNameParts(reviewed, t, names, can);
   const pill = review && name ? { lead: name.lead, steps: name.steps, on: ghostsOn, onToggle: () => review.toggleGhosts() } : null;
 
   return (
