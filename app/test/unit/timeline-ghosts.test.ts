@@ -26,6 +26,7 @@ import {
   ghostClipBox,
   ghostLaneRects,
   locatorGhostRect,
+  revealScroll,
 } from '../../src/renderer/timeline/ghost-geometry';
 
 const BAR = 96000;
@@ -86,4 +87,14 @@ test('the locator ghost band is where the band of the new range would be', () =>
   // Bars 9 to 13: draw()'s band at L0 = 320, L1 = 480, from y 2 to RU - 1.
   assert.deepEqual(locatorGhostRect({ left: BigInt(8 * BAR), right: BigInt(12 * BAR) }, view(2400)), { x: 320, y: 2, width: 160, height: 15 });
   assert.deepEqual(locatorGhostRect({ left: BigInt(8 * BAR), right: BigInt(12 * BAR) }, view(1200)), { x: 640, y: 2, width: 320, height: 15 });
+});
+
+// A view whose scroll is not a whole number of pixels leaves a box a fraction
+// of a pixel past an edge; the reveal still scrolls it in (rounding outwards),
+// or a hover would leave it cut by that fraction.
+test('a reveal scrolls a box a fraction of a pixel past an edge by a whole pixel, outwards', () => {
+  const v = view(256);
+  assert.deepEqual(revealScroll({ x: -0.0859375, y: 63, width: 120, height: 46 }, v, 60, 0), { dx: -1, dy: 0 });
+  assert.deepEqual(revealScroll({ x: 900.5, y: 63, width: 100, height: 46 }, v, 60, 0), { dx: 1, dy: 0 });
+  assert.equal(revealScroll({ x: 0, y: 63, width: 120, height: 46 }, v, 60, 0), null);
 });
