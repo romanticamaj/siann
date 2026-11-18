@@ -195,8 +195,8 @@ kNotMcp are disjoint ...", "every kNotMcp entry carries its reason",
 (h) and its self-test; 3 `protocol-parity` (a), (c) and (h), app unit
 `capabilities`; 4 `mcp_adapter_test` "list_plans and preview_plan wrap ...",
 "undo and redo are scope_denied under propose ...", "under the trusted scope
-undo and redo move main's head ...", "tools/list returns the 34 tools ...",
-`protocol_parity_test` for the 15 exclusions; 5 `test-matrix` "section 4 of the
+undo and redo move main's head ...", "tools/list returns the 36 tools ...",
+`protocol_parity_test` for the 19 exclusions; 5 `test-matrix` "section 4 of the
 test matrix names the protocol parity tests", "gap 2 ... left the gap list",
 "rule 2 of section 8 names the protocol parity tests".
 

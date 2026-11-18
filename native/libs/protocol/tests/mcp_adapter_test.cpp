@@ -337,7 +337,7 @@ TEST_CASE("plugin.registry and plugin.approve are not MCP tools", "[protocol][mc
     }
 }
 
-TEST_CASE("tools/list returns the 34 tools with input schemas", "[protocol][mcp]") {
+TEST_CASE("tools/list returns the 36 tools with input schemas", "[protocol][mcp]") {
     Fixture f;
     Mcp mcp(f);
     mcp.initialize();
