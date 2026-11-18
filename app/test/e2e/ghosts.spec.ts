@@ -167,7 +167,86 @@ test('every ghost id is in the window, on the DOM and on the canvas', async () =
   }
   await expect(page.getByTestId('mixer-strip-trk_b').locator('[data-part-of="mute-step-ghost"]')).toHaveCount(1);
   const parts = (await timeline<Array<{ id: string }>>('parts')).map((p) => p.id);
-  for (const id of ['lane-ghost', 'clip-ghost-new', 'clip-ghost-move', 'clip-ghost-trim', 'clip-ghost-remove', 'locator-band-ghost']) expect(parts, id).toContain(id);
+  for (const id of ['lane-ghost', 'lane-ghost-remove', 'clip-ghost-new', 'clip-ghost-move', 'clip-ghost-trim', 'clip-ghost-remove', 'locator-band-ghost']) expect(parts, id).toContain(id);
+  // The removed track's header dims and carries its step (7).
+  await expect(page.getByTestId('track-header-trk_c')).toHaveClass(/\bghost-removed\b/);
+  await expect(page.getByTestId('track-header-trk_c').locator('.r1 > .stepn')).toHaveText('7');
+});
+
+// The rectangle a node's text is drawn in (its range), not the box it is laid out in.
+async function inkOf(locator: ReturnType<Page['getByTestId']>): Promise<{ left: number; right: number; top: number; bottom: number }> {
+  return locator.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const r = range.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+  });
+}
+
+async function boxOf(locator: ReturnType<Page['getByTestId']>): Promise<{ left: number; right: number; top: number; bottom: number }> {
+  const b = (await locator.boundingBox())!;
+  return { left: b.x, right: b.x + b.width, top: b.y, bottom: b.y + b.height };
+}
+
+test('both values and both names have room: the header\'s gain clears its pan, the Inspector shows both values, the name tag one line', async () => {
+  await page.getByTestId('track-header-trk_a').click({ position: { x: 30, y: 30 } });
+  // The header's gain readout (Keys, step 3): all of it is drawn left of the pan readout.
+  const gain = page.getByTestId('track-gain-trk_a');
+  await expect(gain).toHaveText('-9.0 → -6.0');
+  const pan = await inkOf(page.getByTestId('track-pan-trk_a'));
+  expect((await inkOf(gain)).right).toBeLessThanOrEqual(pan.left);
+  expect((await inkOf(gain)).right).toBeLessThanOrEqual((await boxOf(gain)).right + 0.5);
+  // An untouched header keeps the shared rule's cell: Bass's pan readout stays where it was.
+  const bassGain = await boxOf(page.getByTestId('track-gain-trk_b'));
+  const fxGain = await boxOf(page.getByTestId('track-gain-trk_c'));
+  expect(bassGain.right).toBeCloseTo(fxGain.right, 0);
+
+  // The Inspector's Volume and Pan rows (Keys, steps 3 and 8): both values, inside the row and the zone.
+  const zone = await boxOf(page.getByTestId('zone-left'));
+  for (const [id, row, value] of [['inspector-volume-value', 'inspector-volume', '-9.0 → -6.0 dB'], ['inspector-pan-value', 'inspector-pan', 'C → L20']] as const) {
+    const el = page.getByTestId(id);
+    await expect(el).toHaveText(value);
+    const ink = await inkOf(el);
+    const rowBox = await boxOf(page.locator(`[data-part="${row}"]`));
+    expect(ink.right, id).toBeLessThanOrEqual((await boxOf(el)).right + 0.5);
+    expect(ink.right, id).toBeLessThanOrEqual(rowBox.right + 0.5);
+    expect(ink.right, id).toBeLessThanOrEqual(zone.right);
+    expect(ink.left, id).toBeGreaterThanOrEqual(rowBox.left);
+  }
+  // The Inspector's S carries the dashed ring of step 10.
+  await expect(page.getByTestId('inspector-solo')).toHaveClass(/\bghost\b/);
+
+  // The rename (Bass -> Bass DI, step 11) in the MixConsole: one line, inside the tag.
+  const tag = page.getByTestId('strip-name-trk_b');
+  await expect(tag).toHaveText('Bass → Bass DI');
+  const tagBox = await boxOf(tag);
+  const was = await boxOf(tag.locator('.ghost-was'));
+  const now = await boxOf(tag.locator('.ghost-name'));
+  expect(now.top).toBeCloseTo(was.top, 0);
+  expect(now.bottom).toBeLessThanOrEqual(tagBox.bottom + 0.5);
+  expect(now.right).toBeLessThanOrEqual(tagBox.right + 0.5);
+  // In the header: the new name is drawn whole, and the old one is not cut away.
+  const name = page.getByTestId('track-name-trk_b');
+  const nameBox = await boxOf(name);
+  const headerWas = name.locator('.ghost-was');
+  const headerNow = name.locator('.ghost-name');
+  expect(await headerNow.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect((await boxOf(headerNow)).right).toBeLessThanOrEqual(nameBox.right + 0.5);
+  expect((await boxOf(headerWas)).right - (await boxOf(headerWas)).left).toBeGreaterThan(4);
+});
+
+test('Agent changes lists every pending step on the track, its clips\' too, with the ghosts shown or hidden', async () => {
+  await page.getByTestId('track-header-trk_a').click({ position: { x: 30, y: 30 } });
+  const section = page.locator('[data-part="inspector-agent-changes"]');
+  const rows = async () => section.locator('[data-testid^="agent-pending-"]').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
+  // Keys: its gain (3), its clips' move (4) and remove (6), its pan (8), its solo (10).
+  const keys = ['agent-pending-3', 'agent-pending-4', 'agent-pending-6', 'agent-pending-8', 'agent-pending-10'];
+  await expect.poll(rows).toEqual(keys);
+  await page.locator('[data-part="proposal-pill"] .tog').click();
+  await expect.poll(async () => (await ghosts()).length).toBe(0);
+  await expect.poll(rows).toEqual(keys);
+  await page.locator('[data-part="proposal-pill"] .tog').click();
+  await expect.poll(async () => (await ghosts()).length).toBe(EXPECTED.length);
 });
 
 test('hovering a step outlines its ghosts and scrolls them into view; .go by keyboard opens the MixConsole and pins the step; no request', async () => {

@@ -447,12 +447,33 @@ test('a header\'s ghosts: the dashed ring on M for a mute change (th()\'s .msr.m
   const mockMute = find(mockupHeader(fxIndex), (el) => classes(el).includes('m'));
   assert.deepEqual(classes(mute).sort(), classes(mockMute).sort());
   assert.ok(classes(find(all[5]!, byAttr('data-part-of', 'solo'))).includes('ghost'));
+  // 4.2's "-9.0 → -6.0": both values without their unit, so the readout fits
+  // (shell.css lets its cell grow; ghosts.spec.ts checks it clears the pan).
   const gain = find(all[5]!, byAttr('data-part-of', 'gain'));
-  assert.equal(text(gain), '-9.0 → -6.0 dB');
-  assert.equal(text(find(gain, byClass('ghost-to'))), '→ -6.0 dB');
+  assert.equal(text(gain), '-9.0 → -6.0');
+  assert.equal(text(find(gain, byClass('ghost-to'))), '→ -6.0');
+  // Both names, each in its own element, so shell.css lets the old one give way first.
   const name = find(all[0]!, byAttr('data-part-of', 'name'));
   assert.equal(text(name), 'Kick → Kick In');
-  assert.equal(text(find(name, byClass('ghost-name'))), 'Kick In');
+  assert.equal(name.attrs.title, 'Kick → Kick In');
+  const pair = find(name, byClass('ghost-rename'));
+  assert.deepEqual(elements(pair).map(sig), ['span.ghost-was', 'span.ghost-arrow', 'span.ghost-name']);
+  assert.equal(text(find(pair, byClass('ghost-was'))), 'Kick');
+  assert.equal(text(find(pair, byClass('ghost-name'))), 'Kick In');
   // No ghost of another track leaks: Snare's header is th() as before.
   assert.ok(!findAll(all[1]!, (el) => classes(el).some((c) => /ghost/.test(c))).length);
+});
+
+test('a removed track\'s header dims (an added class) and carries its step badge and ghost attributes', () => {
+  const tracks = mockupEntities();
+  const fx = tracks[6]!;
+  const root = renderGhosts(tracks, [{ kind: 'track-remove', step: 7, trackId: fx.id }]);
+  const header = headers(root)[6]!;
+  assert.ok(classes(header).includes('ghost-removed'));
+  assert.equal(header.attrs['data-ghost'], '7');
+  const r1 = elements(find(header, byClass('r1')));
+  assert.equal(sig(r1[0]!), 'span.stepn');
+  assert.equal(text(r1[0]!), '7');
+  // The other headers are untouched.
+  assert.ok(headers(root).slice(0, 6).every((h) => !classes(h).includes('ghost-removed') && h.attrs['data-ghost'] === undefined));
 });

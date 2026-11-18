@@ -1226,3 +1226,20 @@ test('a reveal scrolls by the least amount that shows the step\'s ghosts', () =>
   assert.equal(r.hooks.view().scrollFrames, String(1295 * 100));
   r.canvas.destroy();
 });
+
+test('a removed track\'s lane is cross-hatched in violet with its step disc (lane-ghost-remove), even with no clip on it', () => {
+  withNamedTokens(() => {
+    const removal: readonly Ghost[] = [{ kind: 'track-remove', step: 4, trackId: 'trk_a' }];
+    const r = ghostRig(removal);
+    const parts = new Map(r.hooks.parts().map((p) => [p.id, p]));
+    // trk_b, then trk_a: the second lane.
+    assert.deepEqual(parts.get('lane-ghost-remove'), { id: 'lane-ghost-remove', x: 0, y: LANES_TOP + 53, w: 800, h: 53 });
+    const calls = r.surface.contentCalls.calls;
+    assert.ok(calls.some((c) => c.kind === 'stroke' && c.style === '--ai-a070' && c.lineWidth === 5), 'the lane cross-hatch');
+    assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai'), 'the step disc');
+    r.ghosts.set([]);
+    flushFrames();
+    assert.ok(!r.hooks.parts().some((p) => p.id === 'lane-ghost-remove'));
+    r.canvas.destroy();
+  });
+});

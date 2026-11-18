@@ -393,4 +393,9 @@ test('a removed track\'s strip is dimmed by an added class; a rename shows both 
   const name = find(stripOf(root, 'Vox BG'), byClass('nametag'));
   assert.equal(text(name), 'Vox BG → Vox Pad');
   assert.equal(text(find(name, byClass('ghost-name'))), 'Vox Pad');
+  // .nametag is a grid: the pair is its one item (a bare text node beside an
+  // element would be a second grid item, on a second row the tag cuts off).
+  assert.equal(name.children.length, 1);
+  assert.deepEqual(elements(name).map(sig), ['span.ghost-rename']);
+  assert.equal(name.attrs.title, 'Vox BG → Vox Pad');
 });

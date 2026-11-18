@@ -30,7 +30,7 @@ import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
-import type { TrackEntity } from '../../src/renderer/model/document';
+import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
@@ -41,9 +41,9 @@ import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { GhostContext } from '../../src/renderer/plans/ghost-context';
 import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { planName } from '../../src/renderer/plans/plan-name';
-import { mockupPlans, PENDING, T } from './support/mockup-plan';
+import { BAR, hashOf, mockupPlans, PENDING, RISER, T } from './support/mockup-plan';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
-import { snapshotOf, track } from './support/timeline';
+import { clip, snapshotOf, track } from './support/timeline';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
 const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.json'), 'utf8')) as Capabilities;
@@ -59,8 +59,8 @@ const pending = (id: string) => {
   return MANIFEST.gates[rule.gate] === 'pending';
 };
 
-function fakeClient(tracks: TrackEntity[]) {
-  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], []);
+function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = []) {
+  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], clips);
   const model = {
     getSnapshot: () => snap,
     getView: () => ({ snapshot: snap, gesture: null, overlaid: null }),
@@ -303,14 +303,22 @@ test('reduced capabilities remove the controls, and their boxes stay', () => {
 // change on this track.". The Volume and Pan rows carry the pending values as
 // added elements.
 
-function renderReview(tracks: TrackEntity[], trackId: string, ghosts: readonly Ghost[], locale?: Locale): Element {
+interface ReviewOptions {
+  readonly clips?: readonly ClipEntity[];
+  // The ticked steps of the plan under review (0-based; null: all).
+  readonly ticked?: ReadonlySet<number> | null;
+  // More plans for the store, as plan.list gives them.
+  readonly extra?: readonly unknown[];
+}
+
+function renderReview(tracks: TrackEntity[], trackId: string, ghosts: readonly Ghost[], locale?: Locale, options: ReviewOptions = {}): Element {
   const plans = new PlanStore({ now: () => 0 });
-  plans.fromList({ plans: mockupPlans().map((p) => p.raw) });
+  plans.fromList({ plans: [...mockupPlans().map((p) => p.raw), ...(options.extra ?? [])] });
   const plan = plans.getSnapshot().byHash.get(PENDING);
   const node: ReactNode = (
     <CapabilitiesContext.Provider value={FULL}>
-      <GhostContext.Provider value={{ ghosts, outline: null, pin: () => undefined, plan }}>
-        <Inspector client={fakeClient(tracks)} gestures={gestures} trackId={trackId} plans={plans} />
+      <GhostContext.Provider value={{ ghosts, outline: null, pin: () => undefined, plan, ticked: options.ticked ?? null }}>
+        <Inspector client={fakeClient(tracks, options.clips)} gestures={gestures} trackId={trackId} plans={plans} />
       </GhostContext.Provider>
     </CapabilitiesContext.Provider>
   );
@@ -370,9 +378,63 @@ test('the Volume and Pan rows show a pending value beside the current one; a ren
     { kind: 'rename', step: 5, trackId: T.keys, before: 'Keys', after: 'Rhodes' },
   ]);
   const [volume, pan] = findAll(zone, byClass('i-row'));
+  // The current value without its unit, then the pending one: 4.2's "the value
+  // shows both" in the value column, which shell.css lets grow (ghosts.spec.ts
+  // checks nothing is cut off).
+  const value = (row: Element) => find(row, (el) => el.tag === 'b');
+  assert.equal(text(value(volume!)), '-8.0 → -6.0 dB');
   assert.equal(text(find(volume!, byClass('ghost-to'))), '→ -6.0 dB');
+  assert.equal(text(value(pan!)), 'L35 → L20');
   assert.equal(text(find(pan!, byClass('ghost-to'))), '→ L20');
   assert.equal(text(find(zone, byAttr('data-testid', 'inspector-track'))), 'Keys → Rhodes');
+  assert.deepEqual(elements(find(zone, byClass('ghost-rename'))).map(sig), ['span.ghost-was', 'span.ghost-arrow', 'span.ghost-name']);
+  // Without a ghost the values keep their unit.
+  const [plainVolume] = findAll(renderReview([keysTrack()], T.keys, []), byClass('i-row'));
+  assert.equal(text(value(plainVolume!)), '-8.0 dB');
+});
+
+test('a pending mute or solo puts the dashed ring on the Inspector\'s M or S (.msr.ghost), as on the header and the strip', () => {
+  const zone = renderReview([keysTrack()], T.keys, [
+    { kind: 'mute', step: 3, trackId: T.keys, before: false, after: true },
+    { kind: 'solo', step: 4, trackId: T.keys, before: false, after: true },
+  ]);
+  const mute = find(zone, byAttr('data-testid', 'inspector-mute'));
+  const solo = find(zone, byAttr('data-testid', 'inspector-solo'));
+  assert.deepEqual(classes(mute).sort(), ['ghost', 'm', 'msr']);
+  assert.deepEqual(classes(solo).sort(), ['ghost', 'msr', 's']);
+  assert.equal(mute.attrs['data-ghost'], '3');
+  assert.equal(solo.attrs['data-ghost'], '4');
+  const plain = renderReview([keysTrack()], T.keys, [{ kind: 'solo', step: 4, trackId: T.keys, before: false, after: true }]);
+  assert.ok(!classes(find(plain, byAttr('data-testid', 'inspector-mute'))).includes('ghost'));
+});
+
+const fxTrack = (): TrackEntity => ({ ...track(T.fx), name: 'FX', gainMilliDb: -12000, mute: true });
+const riser = () => clip(RISER, T.fx, 'med_fx', String(5 * BAR), '0', String(2 * BAR));
+const pendingRows = (zone: Element) => findAll(find(zone, byAttr('data-part', 'inspector-agent-changes')), byAttr('data-testid')).map((el) => el.attrs['data-testid']!).filter((id) => id.startsWith('agent-pending-'));
+
+test('what is pending on a track is every ticked step of the plan under review on it, its clips\' steps too, with the ghosts shown or not', () => {
+  // Step 5 unmutes FX, step 6 moves the Riser, a clip on FX (the step names the clip only).
+  const shown = renderReview([fxTrack()], T.fx, [{ kind: 'mute', step: 5, trackId: T.fx, before: true, after: false }], undefined, { clips: [riser()] });
+  assert.deepEqual(pendingRows(shown), ['agent-pending-5', 'agent-pending-6']);
+  // The ghosts toggled off (Ctrl+Alt+G): the plan is still pending.
+  const hidden = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()] });
+  assert.deepEqual(pendingRows(hidden), ['agent-pending-5', 'agent-pending-6']);
+  // An unticked step is not what approving would do.
+  const ticked = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()], ticked: new Set([0, 1, 2, 3, 5]) });
+  assert.deepEqual(pendingRows(ticked), ['agent-pending-6']);
+  // A track whose only pending change is a clip's: its row, not "No pending change".
+  const onlyClip = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()], ticked: new Set([5]) });
+  assert.deepEqual(pendingRows(onlyClip), ['agent-pending-6']);
+  assert.ok(!text(find(onlyClip, byAttr('data-part', 'inspector-agent-changes'))).includes('No pending change'));
+});
+
+test('an applied plan that only changed a track\'s clips is listed as touching it', () => {
+  const trimmed = { schema: 'siann.plan.v1', hash: hashOf('e'), state: 'applied', appliedRevision: 'r35', baseRevision: 'r34', steps: [{ op: 'clip.trim', clipId: RISER, sourceStart: '0', length: String(BAR) }], readSet: [], writeSet: [], stale: [] };
+  const zone = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()], extra: [trimmed] });
+  const row = find(zone, byAttr('data-testid', `agent-change-${'e'.repeat(8)}`));
+  assert.equal(text(find(row, byClass('mono'))), 'r35');
+  // A plan that touched neither the track nor its clips is not.
+  assert.equal(findAll(renderReview([keysTrack()], T.keys, [], undefined, { clips: [riser()], extra: [trimmed] }), byAttr('data-testid', `agent-change-${'e'.repeat(8)}`)).length, 0);
 });
 
 test('a stored gain above +6 dB pins the thumb at the end and warns on the value', () => {
