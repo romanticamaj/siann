@@ -12,10 +12,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { LocatorsEntity } from '../../src/renderer/model/document';
+import type { LocatorsEntity, PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { PlanPreview } from '../../src/renderer/plans/diff';
-import { ghostsOf, type Ghost } from '../../src/renderer/plans/ghosts';
+import { ghostsOf, hasStripGhost, masterGhosts, slotGhosts, type Ghost } from '../../src/renderer/plans/ghosts';
 import { clip, media, snapshotOf, track } from './support/timeline';
 
 const A = 'trk_a';
@@ -205,4 +205,114 @@ test('no ghost on a track that exists neither in the snapshot nor through a tick
 
 test('without a preview there are no ghosts', () => {
   assert.deepEqual(ghostsOf(STEPS, null, session(), null), []);
+});
+
+// ---- m5b-ui-inserts-master (UI redesign 4.2): the master gain and the insert
+// kinds. A session with two slots on A (slt_1 bypassed) and none elsewhere.
+
+const slot = (id: string, trackId: string, name: string, bypass = false): PluginSlotEntity => ({
+  schema: 'siann.entity.plugin_slot.v1',
+  id,
+  trackId,
+  format: 'clap',
+  uid: `org.test.${id}`,
+  name,
+  path: `/plugins/${id}.clap`,
+  bypass,
+});
+
+function rackSession(master: number | null = null): Snapshot {
+  const base = session();
+  const a = { ...(base.entities[`track:${A}`] as TrackEntity), inserts: ['slt_1', 'slt_2'] };
+  const entities: Record<string, unknown> = { ...base.entities, [`track:${A}`]: a, 'plugin_slot:slt_1': slot('slt_1', A, 'Comp', true), 'plugin_slot:slt_2': slot('slt_2', A, 'EQ') };
+  if (master !== null) entities['master:master'] = { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: master };
+  return { ...base, entities: entities as Snapshot['entities'] };
+}
+
+const RACK_STEPS: ReadonlyArray<Record<string, unknown>> = [
+  /* 1 */ { op: 'master.set_gain', gainMilliDb: -3000 },
+  /* 2 */ { op: 'plugin.insert', trackId: B, index: 0, slotId: 'slt_9', descriptor: { format: 'clap', uid: 'org.siann.test-plugin', name: 'SIANN Test Plugin', path: '/p/t.clap' }, stateBlob: null },
+  /* 3 */ { op: 'plugin.remove', slotId: 'slt_2' },
+  /* 4 */ { op: 'plugin.set_bypass', slotId: 'slt_1', bypass: false },
+  /* 5 */ { op: 'master.set_gain', gainMilliDb: -6000 },
+  /* 6 */ { op: 'track.add', trackId: NEW, name: 'Pad', channels: 2 },
+  /* 7 */ { op: 'plugin.insert', trackId: NEW, index: 0, slotId: 'slt_10', descriptor: { format: 'clap', uid: 'org.x', name: 'X' }, stateBlob: null },
+  /* 8 */ { op: 'plugin.insert', trackId: A, index: 99, slotId: 'slt_11', descriptor: { format: 'clap', uid: 'org.y' }, stateBlob: null },
+];
+
+function rackPreview(masterBefore: Record<string, unknown> | null): PlanPreview {
+  const s = rackSession();
+  const e = (ref: string) => s.entities[ref] as unknown as Record<string, unknown>;
+  return {
+    revision: 'r7',
+    documentHash: `sha256:${'c'.repeat(64)}`,
+    stale: [],
+    entities: [
+      { ref: 'master:master', before: masterBefore, after: { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -6000 } },
+      { ref: `track:${B}`, before: e(`track:${B}`), after: { ...e(`track:${B}`), inserts: ['slt_9'] } },
+      { ref: 'plugin_slot:slt_9', before: null, after: slot('slt_9', B, 'SIANN Test Plugin') as unknown as Record<string, unknown> },
+      { ref: `track:${A}`, before: e(`track:${A}`), after: { ...e(`track:${A}`), inserts: ['slt_1', 'slt_11'] } },
+      { ref: 'plugin_slot:slt_2', before: e('plugin_slot:slt_2'), after: null },
+      { ref: 'plugin_slot:slt_1', before: e('plugin_slot:slt_1'), after: { ...e('plugin_slot:slt_1'), bypass: false } },
+    ],
+  };
+}
+
+const rack = (ticked: ReadonlySet<number> | null = null, masterBefore: Record<string, unknown> | null = null) => ghostsOf(RACK_STEPS, rackPreview(masterBefore), rackSession(), ticked);
+const rackWithout = (...steps: number[]) => new Set(RACK_STEPS.map((_, i) => i).filter((i) => !steps.includes(i + 1)));
+
+test('master.set_gain: before from the preview\'s master:master, or 0 dB while it is absent; two steps chain', () => {
+  assert.deepEqual(ofKind(rack(), 'master-gain'), [
+    { kind: 'master-gain', step: 1, before: 0, after: -3000 },
+    { kind: 'master-gain', step: 5, before: -3000, after: -6000 },
+  ]);
+  const set = { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -1500 };
+  assert.deepEqual(ofKind(rack(null, set), 'master-gain').map((g) => g.before), [-1500, -3000]);
+  // Step 1 unticked: step 5 starts from the head.
+  assert.deepEqual(ofKind(rack(rackWithout(1)), 'master-gain'), [{ kind: 'master-gain', step: 5, before: 0, after: -6000 }]);
+  assert.deepEqual(ofKind(rack(rackWithout(1), set), 'master-gain')[0]!.before, -1500);
+  // A value that is not a gain gives none.
+  assert.deepEqual(ghostsOf([{ op: 'master.set_gain', gainMilliDb: 'loud' }], rackPreview(null), rackSession(), null), []);
+});
+
+test('plugin.insert: an insert-add on its track with the slot id, the plugin\'s name and its index (clamped to the end)', () => {
+  assert.deepEqual(ofKind(rack(), 'insert-add'), [
+    { kind: 'insert-add', step: 2, trackId: B, slotId: 'slt_9', name: 'SIANN Test Plugin', index: 0 },
+    // After step 3 removed slt_2, A holds one slot: index 99 clamps to 1; no name: the uid.
+    { kind: 'insert-add', step: 8, trackId: A, slotId: 'slt_11', name: 'org.y', index: 1 },
+  ]);
+  // With step 3 unticked, A still holds two slots.
+  assert.equal(ofKind(rack(rackWithout(3)), 'insert-add').find((g) => g.step === 8)?.index, 2);
+});
+
+test('plugin.remove: an insert-remove on the slot\'s track', () => {
+  assert.deepEqual(ofKind(rack(), 'insert-remove'), [{ kind: 'insert-remove', step: 3, trackId: A, slotId: 'slt_2' }]);
+  // An unknown slot gives none.
+  assert.deepEqual(ghostsOf([{ op: 'plugin.remove', slotId: 'slt_none' }], rackPreview(null), rackSession(), null), []);
+});
+
+test('plugin.set_bypass: an insert-bypass with the old and the new value', () => {
+  assert.deepEqual(ofKind(rack(), 'insert-bypass'), [{ kind: 'insert-bypass', step: 4, trackId: A, slotId: 'slt_1', before: true, after: false }]);
+});
+
+test('an unticked insert or master step contributes none; an insert on a proposed track yields none', () => {
+  const less = rack(rackWithout(2, 3, 4));
+  assert.deepEqual(ofKind(less, 'insert-add').map((g) => g.step), [8]);
+  assert.deepEqual(ofKind(less, 'insert-remove'), []);
+  assert.deepEqual(ofKind(less, 'insert-bypass'), []);
+  assert.deepEqual(rack(new Set()), []);
+  // Step 7 inserts on the track step 6 proposes: its ghost strip's rack stays empty.
+  assert.ok(!ofKind(rack(), 'insert-add').some((g) => g.trackId === NEW));
+  assert.deepEqual(ofKind(rack(), 'track-add').map((g) => g.trackId), [NEW]);
+});
+
+test('the slot ghosts of a track and the master\'s ghosts, by kind', () => {
+  const ghosts = rack();
+  const onA = slotGhosts(ghosts, A);
+  assert.deepEqual(onA.add.map((g) => g.slotId), ['slt_11']);
+  assert.deepEqual(onA.remove.map((g) => g.slotId), ['slt_2']);
+  assert.deepEqual(onA.bypass.map((g) => g.slotId), ['slt_1']);
+  assert.deepEqual(slotGhosts(ghosts, B).add.map((g) => g.step), [2]);
+  assert.deepEqual(masterGhosts(ghosts).map((g) => g.step), [1, 5]);
+  for (const step of [1, 2, 3, 4]) assert.equal(hasStripGhost(ghosts, step), true, `step ${step} is on a strip`);
 });

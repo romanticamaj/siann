@@ -329,7 +329,6 @@
   --hold-tab-media-w: calc(71.078px * var(--scale));
   --hold-tab-meter-w: calc(69.031px * var(--scale));
   --hold-inspector-routing-h: calc(91px * var(--scale));
-  --hold-inspector-inserts-h: calc(117px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
   --hold-tool-4-w: calc(27.172px * var(--scale));
   --hold-tool-5-w: calc(27.172px * var(--scale));

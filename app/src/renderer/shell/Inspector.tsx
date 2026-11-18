@@ -28,10 +28,16 @@
 //
 // An absent part keeps its space empty (spec 3.0): the boxes have no role, no
 // focus, no data-part id and are hidden from assistive technology; shell.css
-// sizes them (the open sections by --hold-inspector-*-h until the features
-// that land them, m5b-ui-sends-buses and m5b-ui-inserts-master; the shut ones
-// and the buttons by the shared rules' sizes). The capability rule (3.0): an
-// unlisted control leaves its box.
+// sizes them (Routing by --hold-inspector-routing-h until m5b-ui-sends-buses
+// lands it; the shut ones and the buttons by the shared rules' sizes). The
+// capability rule (3.0): an unlisted control leaves its box.
+//
+// Inserts (m5b-ui-inserts-master) is the mockup's sec('Inserts', ...)
+// (mixer/InsertSlot.tsx): the head with the count, every slot of the track in
+// signal order with the mockup's <em>e</em> as the place of e and the added
+// bypass and Remove, then one .islot.empty. On an engine without plugins the
+// section is an empty box, sized by a shell.css calc() of the tokens the
+// shared rules size the section with (the 117 px the mockup measures).
 //
 // Agent changes (m5b-ui-ghosts; UI redesign 4.2, 4.4) is the mockup's
 // sec('Agent changes'): a .hist row for each applied plan that touched the
@@ -78,6 +84,8 @@ import { Icon } from './icons';
 import { trackColourVar } from '../timeline/track-colour';
 import { useCapabilities } from './Capable';
 import { Hold } from './Hold';
+import { InspectorInserts } from '../mixer/InsertSlot';
+import { pluginsListed } from '../mixer/inserts';
 
 export interface InspectorProps {
   readonly client: SessionClient;
@@ -353,9 +361,9 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
           />
         </div>
       </div>
-      {SECTIONS.map((name) => (
-        <Hold key={name} className={SECTION_HOLDS[name]} />
-      ))}
+      {SECTIONS.map((name) =>
+        name === 'inserts' && pluginsListed(can) ? <InspectorInserts key={name} client={client} track={track} view={view} /> : <Hold key={name} className={SECTION_HOLDS[name]} />,
+      )}
       <AgentChanges client={client} track={track} plans={plans} />
       <Hold className={SECTION_HOLDS.notepad} />
       <Foot />

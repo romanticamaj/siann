@@ -86,6 +86,9 @@ const PATHS = {
     </>
   ),
   x: <path d="M4 4l8 8M12 4l-8 8" />,
+  // App-only (m5b-ui-inserts-master): an insert slot's bypass, which the
+  // mockup's slot does not draw; on the same 16 px grid and stroke.
+  power: <path d="M8 2.5v5M5 4.5a4.5 4.5 0 1 0 6 0" />,
   zRight: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1.5" />

@@ -451,3 +451,26 @@ test('an applied, a rejected or a stale plan has no ghosts and no pill, and noth
   await expect(page.getByTestId(`plan-state-${hash8(applied)}`)).toHaveAttribute('data-state', 'applied');
   await noGhosts();
 });
+
+// m5b-ui-inserts-master (UI redesign 4.2): a plan's master.set_gain is a
+// ghost cap on the master fader joined to the real cap, and the readout shows
+// both values. (The insert kinds need a real slot: inserts.spec.ts, block A.)
+test('a plan\'s master.set_gain: the ghost cap and its line on the master fader, both values in the readout', async () => {
+  const master = await submit([{ op: 'master.set_gain', gainMilliDb: -6000 }]);
+  await selectPlan(page, master);
+  await expect.poll(async () => pairs(await ghosts())).toEqual(['master-gain 1']);
+  const strip = page.getByTestId('mixer-strip-master');
+  await expect(strip.locator('.ftrack .cap.ghost')).toHaveCount(1);
+  await expect(strip.locator('.ftrack .gline')).toHaveCount(1);
+  await expect(strip.locator('.ftrack .cap.ghost')).toHaveAttribute('data-ghost', '1');
+  await expect(page.getByTestId('fader-value-master')).toHaveText('0.0 dB');
+  await expect(page.getByTestId('fader-value-master-ghost')).toHaveText('→ -6.0');
+  // The ghost cap sits below the real one (-6 dB under 0 dB), joined by the line.
+  const [ghostBox, capBox, lineBox] = await Promise.all(['.cap.ghost', '.cap:not(.ghost)', '.gline'].map((s) => strip.locator(`.ftrack ${s}`).boundingBox()));
+  expect(ghostBox!.y).toBeGreaterThan(capBox!.y);
+  expect(lineBox!.height).toBeGreaterThan(0);
+  await page.getByTestId('plan-reject').click();
+  await page.getByTestId('plan-reject').click();
+  await expect.poll(async () => (await ghosts()).length).toBe(0);
+  await expect(strip.locator('.cap.ghost')).toHaveCount(0);
+});
