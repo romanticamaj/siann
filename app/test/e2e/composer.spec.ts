@@ -329,6 +329,71 @@ test('a text over the limit is refused in the box and kept', async () => {
   expect((await requests()).length).toBe(1);
 });
 
+test('the box rests at the mockup one-line height, grows with its text to four lines, then scrolls', async () => {
+  await mixAssistant();
+  await expect(field()).toBeEnabled();
+  const metrics = () =>
+    field().evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        line: parseFloat(style.lineHeight),
+        height: el.getBoundingClientRect().height,
+        client: el.clientHeight,
+        scroll: el.scrollHeight,
+        top: el.scrollTop,
+        overflow: style.overflowY,
+        box: el.closest('[data-part="composer"]')!.getBoundingClientRect().height,
+      };
+    });
+  // The mockup's box: the send control, the padding and the border of the shared .composer rule.
+  const mockupBox = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.height = 'calc(var(--composer-send) + 2 * var(--space-9q) + 2 * var(--hairline))';
+    document.body.append(probe);
+    const height = probe.getBoundingClientRect().height;
+    probe.remove();
+    return height;
+  });
+  expect(mockupBox).toBeGreaterThan(0);
+  const rest = await metrics();
+  expect(rest.line).toBeGreaterThan(0);
+  // Empty, and with one line of text, the field is one line high and the box is the mockup's.
+  expect(Math.abs(rest.height - rest.line)).toBeLessThanOrEqual(1);
+  expect(Math.abs(rest.box - mockupBox)).toBeLessThanOrEqual(1);
+  await field().click();
+  await page.keyboard.type('Lower the drums');
+  expect(Math.abs((await metrics()).height - rest.line)).toBeLessThanOrEqual(1);
+  expect(Math.abs((await metrics()).box - rest.box)).toBeLessThanOrEqual(1);
+  // Each Shift+Enter adds a line, up to four, with nothing to scroll.
+  for (let n = 2; n <= 4; n += 1) {
+    await page.keyboard.press('Shift+Enter');
+    await page.keyboard.type(`line ${n}`);
+    const now = await metrics();
+    expect(Math.abs(now.height - n * rest.line), `${n} lines high`).toBeLessThanOrEqual(1);
+    expect(now.scroll, `${n} lines fit`).toBeLessThanOrEqual(now.client + 1);
+  }
+  const four = await metrics();
+  expect(four.box).toBeGreaterThan(rest.box + 2 * rest.line);
+  // Past four lines the box stops growing and its text scrolls, the caret's line in view.
+  for (let n = 5; n <= 7; n += 1) {
+    await page.keyboard.press('Shift+Enter');
+    await page.keyboard.type(`line ${n}`);
+  }
+  const seven = await metrics();
+  expect(Math.abs(seven.height - 4 * rest.line), 'capped at four lines').toBeLessThanOrEqual(1);
+  expect(Math.abs(seven.box - four.box), 'the box stops growing').toBeLessThanOrEqual(1);
+  expect(seven.overflow).toBe('auto');
+  expect(seven.scroll).toBeGreaterThan(seven.client + rest.line);
+  expect(seven.top).toBeGreaterThan(0);
+  await expect(field()).toHaveValue('Lower the drums\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7');
+  expect(await requests()).toEqual([]);
+  // Sent, it empties and rests at one line again.
+  await page.keyboard.press('Enter');
+  await expect(field()).toHaveValue('');
+  expect(Math.abs((await metrics()).height - rest.line)).toBeLessThanOrEqual(1);
+  expect(Math.abs((await metrics()).box - rest.box)).toBeLessThanOrEqual(1);
+});
+
 test('against capabilities without the feature the box is not in the DOM and its space stays empty', async () => {
   const parts = async () => {
     const out: Record<string, { x: number; y: number; width: number; height: number }> = {};

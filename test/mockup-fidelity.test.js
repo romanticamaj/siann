@@ -1342,6 +1342,16 @@ test("the composer's gate is report, its hold is gone, and shell.css sizes its e
     assert.doesNotMatch(read('app', 'renderer', 'ui', file), /composer-empty|composer textarea|\.requests?\b/, `ui/${file} is unchanged`);
   }
   assert.match(shell, /\.composer textarea\s*\{/, 'the field reset is in shell.css');
+  // The box rests at one line, grows with its text to four lines, then scrolls
+  // (UI redesign 4.4); app/test/e2e/composer.spec.ts measures it in the window.
+  const field = /(?:^|\})\s*\.composer textarea\s*\{([^}]*)\}/.exec(shell);
+  assert.ok(field, 'shell.css has a .composer textarea rule');
+  const decl = (name) => new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+);`).exec(field[1])?.[1].trim();
+  assert.equal(decl('line-height'), '1.45', 'the field line height');
+  assert.match(decl('min-height') ?? '', /^calc\(\s*1\.45 \* var\(--fs-11h\)\s*\)$/, 'rests at one line');
+  assert.match(decl('max-height') ?? '', /^calc\(\s*4 \* 1\.45 \* var\(--fs-11h\)\s*\)$/, 'grows to at most four lines');
+  assert.equal(decl('field-sizing'), 'content', 'grows with its text');
+  assert.equal(decl('overflow-y'), 'auto', 'scrolls past four lines');
 });
 
 // ---- m5b-ui-ghosts (UI redesign 4.2, 10.4): the ghosts, the proposal pill and
