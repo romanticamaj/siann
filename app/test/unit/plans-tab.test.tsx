@@ -32,7 +32,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { CommandRegistry } from '../../src/renderer/keys/commands';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import { LoopClickController, TransportStateStore } from '../../src/renderer/model/loop-click';
-import { PlanStore } from '../../src/renderer/model/plan-store';
+import { planEntry, PlanStore } from '../../src/renderer/model/plan-store';
 import type { ReadModel } from '../../src/renderer/model/read-model';
 import { SessionClient } from '../../src/renderer/model/session-client';
 import { TransportController } from '../../src/renderer/model/transport';
@@ -141,14 +141,14 @@ const partOf = (n: Node) => n.attrs['data-part'];
 // The mockup's children as the app must render them: inline text elements of
 // a step's text (b, s, em) are the wording's (plan-step-rows.test.ts), a
 // clip-naming title's wrapper (plan-step-N-title) is a pending part the app
-// does not carry, the step's .go holds the target icon (m5b-ui-ghosts) and the primary's kbd is not drawn
-// (UI redesign 3.0: no control without a backend).
+// does not carry and the step's .go holds the target icon (m5b-ui-ghosts).
+// The primary's kbd is drawn since m5b-ui-audition binds Ctrl+Return (UI
+// redesign 3.6).
 function mockChildren(node: Node): Node[] {
   let out = node.children;
   if (node.classes.includes('t') || node.classes.includes('d')) {
     out = out.flatMap((c) => (/^plan-step-\d+-title$/.test(partOf(c) ?? '') ? c.children : [c])).filter((c) => !['b', 's', 'em'].includes(c.tag));
   }
-  if (node.classes.includes('btn')) out = out.filter((c) => c.tag !== 'kbd');
   return out;
 }
 
@@ -239,12 +239,37 @@ test('every id of the Plans tab is in the markup, and no id of a pending part', 
   assert.ok(!/plan-step-\d+-title/.test(markup), 'no plan-step-N-title id');
 });
 
-test('the holds carry nothing, the .go cells are target buttons, the primary has no kbd, the steps head one link', () => {
+// m5b-ui-audition (UI redesign 3.6, 4.5 C4): Ctrl+Return runs the primary,
+// so the primary button ends with the mockup's kbd, for Approve N of M,
+// Apply and Merge; no other button carries one.
+test('the primary button ends with the mockup\'s kbd for Approve N of M, Apply and Merge, and no other button has one', () => {
+  const mockKbd = findAll(mockRightZone(), (n) => n.tag === 'kbd');
+  assert.equal(mockKbd.length, 1);
+  const withState = (state: string, extra: Record<string, unknown> = {}) =>
+    mockupPlans().map((p) => (p.hash === PENDING ? planEntry({ ...p.raw, state, ...extra })! : p));
+  const cases: Array<[string, Partial<PlanPanelViewProps>]> = [
+    ['approveApply', {}],
+    ['apply', { plans: withState('approved') }],
+    ['merge', { plans: withState('approved', { proposalBranch: 'p4' }), heard: 'p4' }],
+  ];
+  for (const [what, overrides] of cases) {
+    const zone = appRightZone(render(overrides));
+    const primary = find(zone, (n) => n.tag === 'button' && n.classes.includes('primary'))!;
+    assert.ok(primary, what);
+    const last = primary.children.at(-1)!;
+    assert.equal(last.tag, 'kbd', what);
+    assert.equal(textOf(last), textOf(mockKbd[0]!), what);
+    assert.deepEqual(last.classes, mockKbd[0]!.classes, what);
+    const kbds = findAll(zone, (n) => n.tag === 'kbd');
+    assert.equal(kbds.length, 1, `${what}: only the primary's`);
+  }
+});
+
+test('the holds carry nothing, the .go cells are target buttons, the steps head one link', () => {
   const zone = appRightZone(render());
   const holds = findAll(zone, (n) => n.classes.some((c) => c.startsWith('hold-')));
   assert.deepEqual(holds.map((h) => h.classes[0]).sort(), PENDING_PARTS.map((p) => `hold-${p}`).sort());
   for (const hold of holds) assertHold(hold, hold.classes[0]!.slice('hold-'.length), 'hold');
-  assert.equal(findAll(zone, (n) => n.tag === 'kbd').length, 0, 'no kbd');
   // m5b-ui-ghosts: .go is the keyboard path to a step's ghosts, a button with the mockup's target icon and a name.
   const go = findAll(zone, (n) => n.classes.includes('go'));
   assert.equal(go.length, 6);

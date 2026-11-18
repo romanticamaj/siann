@@ -423,7 +423,6 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
-    'branch-chip': ['w'],
     'transport-record': ['w', 'h'],
     'dsp-load': ['w'],
     'zone-button-channel': ['w', 'h'],
@@ -788,7 +787,7 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
     return '';
   };
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
-  assert.match(block(1300), /\.hold-branch-chip, \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
+  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
 });
@@ -1246,4 +1245,24 @@ test("m5b-ui-ghosts: the gate is report, the pill's and the Agent changes' holds
     'track-ghost-2', 'track-ghost-2-name', 'lane-ghost-3', 'strip-ghost-2', 'strip-ghost-2-inserts', 'strip-ghost-2-name', 'clip-ghost-new-2', 'locator-band-ghost', 'proposal-pill', 'inspector-agent-changes']) {
     assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
   }
+});
+
+// ---- m5b-ui-audition (UI redesign 4.3, 2.4, 10.4): the branch chip landed, so
+// its gate is report and its hold is gone; it is always rendered while a head
+// revision is known, so no empty-width token replaces the hold (3.0). The
+// violet frame and the solid ghosts are app-only rules of shell.css on
+// existing tokens: the frame's 2 px is --space-half, its colour --ai.
+test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and the frame is drawn on existing tokens', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-audition'], 'report');
+  assert.equal(ruleOf('branch-chip').gate, 'm5b-ui-audition');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const name of ['--hold-branch-chip-w', '--branch-chip-empty-w']) {
+    assert.ok(!tokens.includes(name), `${name} is not in tokens.css`);
+    assert.ok(!shell.includes(name), `${name} is not in shell.css`);
+  }
+  assert.doesNotMatch(shell, /hold-branch-chip/);
+  assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-branch-chip/);
+  assert.match(shell, /\.app\[data-hearing="proposal"\]\s*\{[^}]*outline:\s*var\(--space-half\) solid var\(--ai\)/);
+  assert.match(shell, /\[data-ghost-mode="solid"\]/);
 });

@@ -39,6 +39,10 @@ import { ToastStore } from '../../src/renderer/shell/toast-store';
 import { TopBar } from '../../src/renderer/shell/TopBar';
 import { translator } from '../../src/renderer/i18n/t';
 import { formatSignature } from '../../src/renderer/timeline/musical-time';
+import { namesFromSnapshot } from '../../src/renderer/plans/describe';
+import { planName } from '../../src/renderer/plans/plan-name';
+import { elements, loadMockup, parse, sig, text, type Element } from './support/mockup';
+import { BRANCH, hashOf, MIX_STEPS, planObject, planSnapshot } from './support/plans';
 import { sampleSnapshot } from './support/timeline';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
@@ -58,7 +62,7 @@ function fixedHistory(value: UndoAvailability): Pick<UndoHistory, 'getSnapshot' 
   return { getSnapshot: () => value, subscribe: () => () => undefined };
 }
 
-function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null } = {}): string {
+function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore } = {}): string {
   const snapshot = options.snapshot === undefined ? withLocators(sampleSnapshot()) : options.snapshot;
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
   const session = new SessionClient({
@@ -89,7 +93,7 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
     <CapabilitiesContext.Provider value={FULL}>
       <TopBar
         client={session}
-        plans={new PlanStore()}
+        plans={options.plans ?? new PlanStore()}
         zones={zones}
         onToggle={() => undefined}
         onPlans={() => undefined}
@@ -148,7 +152,7 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
     'h1.visually-hidden',
     'div.brand[brand]',
     'div.session[session-name]',
-    'span.hold-branch-chip',
+    'span.chip[branch-chip]',
     'span.sep',
     'button.iconbtn[undo]',
     'button.iconbtn.dim[redo]',
@@ -197,7 +201,6 @@ test('every hold element is empty, hidden, has no role, no tabindex and no data-
   const markup = render();
   const holds = [...markup.matchAll(/<span class="hold-[^"]*"[^>]*>[^<]*<\/span>/g)].map((m) => m[0]);
   assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), [
-    'hold-branch-chip',
     'hold-transport-record',
     'hold-dsp-load',
     'hold-zone-button-channel',
@@ -305,4 +308,61 @@ test('UndoHistory follows the causes of session.changed and forgets on a new con
   connections = 2;
   stateListeners.forEach((l) => l());
   assert.deepEqual(history.getSnapshot(), { undo: 'unknown', redo: 'unknown' });
+});
+
+// ---- m5b-ui-audition (UI redesign 4.3, 2.4; mockup.html line 224): the branch
+// chip, span.chip[branch-chip] > the branch icon, a span and span.num, reads
+// `main r<head>` while main is heard and the plan's name (plans/plan-name.ts,
+// as the banner names it) while its branch is heard, ellipsised with the
+// whole name in its title. The Hold that kept its box is gone.
+
+function chipOf(markup: string): Element {
+  const at = markup.indexOf('<span class="chip"');
+  assert.ok(at >= 0, 'the chip is there');
+  return elements(parse(`<div>${markup.slice(at, markup.indexOf('<span class="sep"', at))}</div>`))[0]!;
+}
+
+function storeHearing(heard: string | null): PlanStore {
+  const store = new PlanStore({ now: () => 0 });
+  store.fromList({ plans: [planObject(hashOf('1'), 'validated', MIX_STEPS), planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH })] });
+  store.setHeard(heard);
+  return store;
+}
+
+test('the branch chip has the mockup\'s markup and reads main r<head> while main is heard', () => {
+  const mock = elements(parse(`<div>${loadMockup('en').branchChip}</div>`))[0]!;
+  for (const heard of ['main', null]) {
+    const app = chipOf(render({ snapshot: planSnapshot(), plans: storeHearing(heard) }));
+    assert.equal(sig(app), sig(mock));
+    assert.equal(app.attrs['data-part'], 'branch-chip');
+    assert.deepEqual(elements(app).map(sig), elements(mock).map(sig));
+    assert.equal(elements(app)[0]!.attrs.class, elements(mock)[0]!.attrs.class, 'the small branch icon');
+    assert.equal(elements(app)[2]!.attrs.style?.replace(/\s/g, ''), elements(mock)[2]!.attrs.style?.replace(/\s/g, ''));
+    assert.equal(text(elements(app)[1]!), 'main');
+    assert.equal(text(elements(app)[2]!), planSnapshot().revision);
+  }
+  assert.ok(!render().includes('hold-branch-chip'), 'no hold');
+});
+
+test('while a branch is heard the chip names its plan as the banner does, the whole name in its title', () => {
+  const t = translator('en');
+  const store = storeHearing(BRANCH);
+  const names = namesFromSnapshot(planSnapshot());
+  const name = planName(store.getSnapshot().byHash.get(hashOf('2'))!, t, names)!;
+  const whole = t('chip.proposal', { lead: name.lead, steps: name.steps });
+  const app = chipOf(render({ snapshot: planSnapshot(), plans: store }));
+  assert.equal(app.attrs['data-part'], 'branch-chip');
+  assert.deepEqual(elements(app).map(sig), ['svg.i.s', 'span']);
+  assert.equal(text(elements(app)[1]!), whole);
+  assert.equal(app.attrs.title, whole);
+  // A branch no held plan owns: the generic word.
+  const generic = chipOf(render({ snapshot: planSnapshot(), plans: storeHearing('p9') }));
+  assert.equal(text(elements(generic)[1]!), t('chip.generic'));
+  assert.ok(!new RegExp(`\\b(${BRANCH}|p9)\\b`).test(text(generic) + text(app)), 'no branch id');
+});
+
+test('without a head revision there is no chip and no box', () => {
+  const markup = render({ snapshot: null });
+  assert.ok(!markup.includes('data-part="branch-chip"'));
+  assert.ok(!markup.includes('hold-branch-chip'));
 });

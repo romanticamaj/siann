@@ -11,8 +11,9 @@ import { formatMilliDb } from '../../src/renderer/format';
 import { translator } from '../../src/renderer/i18n/t';
 import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { isolateName } from '../../src/renderer/plans/isolate';
-import { planName } from '../../src/renderer/plans/plan-name';
-import { entry, hashOf, MIX_STEPS, planSnapshot } from './support/plans';
+import { PlanStore } from '../../src/renderer/model/plan-store';
+import { heardPlanName, planName } from '../../src/renderer/plans/plan-name';
+import { BRANCH, entry, hashOf, MIX_STEPS, planObject, planSnapshot } from './support/plans';
 
 const names = namesFromSnapshot(planSnapshot());
 
@@ -34,4 +35,22 @@ test('the name is worded in the locale it is given', () => {
 
 test('a plan without steps has no name', () => {
   assert.equal(planName(entry(hashOf('3'), 'validated', []), translator('en'), names), null);
+});
+
+// m5b-ui-audition (UI redesign 4.3): the banner and the branch chip name the
+// heard proposal through one helper, heardPlanName: the plan whose branch is
+// heard, named by planName, or no name when no held plan owns the branch (the
+// generic word); null while main is heard or the side is unknown.
+test('heardPlanName names the plan whose branch is heard, or none for a branch no plan owns', () => {
+  const t = translator('en');
+  const store = new PlanStore({ now: () => 0 });
+  store.fromList({ plans: [planObject(hashOf('1'), 'validated', MIX_STEPS), planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH })] });
+  store.setHeard(BRANCH);
+  assert.deepEqual(heardPlanName(store.getSnapshot(), t, names), { branch: BRANCH, name: planName(store.getSnapshot().byHash.get(hashOf('2'))!, t, names) });
+  store.setHeard('p9');
+  assert.deepEqual(heardPlanName(store.getSnapshot(), t, names), { branch: 'p9', name: null });
+  store.setHeard('main');
+  assert.equal(heardPlanName(store.getSnapshot(), t, names), null);
+  store.setHeard(null);
+  assert.equal(heardPlanName(store.getSnapshot(), t, names), null);
 });

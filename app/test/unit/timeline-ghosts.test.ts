@@ -25,6 +25,7 @@ import {
   arrowOf,
   ghostClipBox,
   ghostLaneRects,
+  ghostStroke,
   locatorGhostRect,
   revealScroll,
 } from '../../src/renderer/timeline/ghost-geometry';
@@ -87,6 +88,14 @@ test('the locator ghost band is where the band of the new range would be', () =>
   // Bars 9 to 13: draw()'s band at L0 = 320, L1 = 480, from y 2 to RU - 1.
   assert.deepEqual(locatorGhostRect({ left: BigInt(8 * BAR), right: BigInt(12 * BAR) }, view(2400)), { x: 320, y: 2, width: 160, height: 15 });
   assert.deepEqual(locatorGhostRect({ left: BigInt(8 * BAR), right: BigInt(12 * BAR) }, view(1200)), { x: 640, y: 2, width: 320, height: 15 });
+});
+
+// m5b-ui-audition (UI redesign 4.3): a solid ghost (the proposal heard) is
+// drawn without the hatch and with an unbroken outline; a dashed one exactly
+// as m5b-ui-ghosts drew it.
+test('the ghost stroke: dashed and hatched, or solid and unhatched while the proposal is heard', () => {
+  assert.deepEqual(ghostStroke(undefined), { dash: GHOST_DASH, hatch: true });
+  assert.deepEqual(ghostStroke('solid'), { dash: [], hatch: false });
 });
 
 // A view whose scroll is not a whole number of pixels leaves a box a fraction
