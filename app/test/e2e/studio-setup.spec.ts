@@ -85,7 +85,8 @@ test('with no device the transport\'s tooltip names Studio Setup, a click opens 
   const play = page.getByTestId('transport-play');
   await expect(play).toHaveAttribute('aria-disabled', 'true');
   await expect(play).toHaveAttribute('title', `device_open_failed: ${en['transport.noDevice']}\n${en['transport.studioSetupHint']}`);
-  await play.click();
+  // aria-disabled: Playwright's actionability check refuses it, a person's click does not.
+  await play.click({ force: true });
   await expect(page.getByTestId('studio-setup')).toBeVisible();
   // The transport sent nothing.
   expect(await page.evaluate(() => window.__siannClient!.sent().filter((r) => r.method.startsWith('transport.')).length)).toBe(0);
