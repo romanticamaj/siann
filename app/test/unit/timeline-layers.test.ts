@@ -1107,10 +1107,10 @@ const SAMPLE_GHOSTS: readonly Ghost[] = [
   { kind: 'clip-move', step: 3, clipId: 'clp_1', mediaId: 'med_sq', fromTrackId: 'trk_b', trackId: 'trk_b', from: '4800', position: '19200', sourceStart: '0', length: '24000' },
 ];
 
-function ghostRig(initial: readonly Ghost[] = SAMPLE_GHOSTS) {
+function ghostRig(initial: readonly Ghost[] = SAMPLE_GHOSTS, height = 300) {
   clearFrames();
   setDevicePixelRatio(1);
-  const surface = fakeSurface(800, 300);
+  const surface = fakeSurface(800, height);
   const m = modelOf(sampleSnapshot());
   const playhead = playheadOf();
   const ghosts = ghostSource(initial);
@@ -1225,6 +1225,34 @@ test('a reveal scrolls by the least amount that shows the step\'s ghosts', () =>
   flushFrames();
   assert.equal(r.hooks.view().scrollFrames, String(1295 * 100));
   r.canvas.destroy();
+});
+
+// 4.2, "Linking": a gain, pan, mute, solo or rename ghost lives on the track
+// header (and the strip), not on the canvas; a reveal still scrolls the lanes,
+// which the track list follows, by the least amount that shows the track's row.
+test('a reveal of a header-only ghost (gain, pan, mute, solo, rename) scrolls the lanes to its track\'s row', () => {
+  const header: readonly Ghost[] = [
+    { kind: 'gain', step: 1, trackId: 'trk_a', before: 0, after: -3000 },
+    { kind: 'pan', step: 2, trackId: 'trk_a', before: 0, after: 0.5 },
+    { kind: 'mute', step: 3, trackId: 'trk_a', before: false, after: true },
+    { kind: 'solo', step: 4, trackId: 'trk_a', before: false, after: true },
+    { kind: 'rename', step: 5, trackId: 'trk_a', before: 'A', after: 'A2' },
+  ];
+  for (const g of header) {
+    // trk_b, then trk_a (LANES_TOP + 53 to LANES_TOP + 106); 60 px of lanes
+    // show above the horizontal scrollbar.
+    const r = ghostRig([g], LANES_TOP + 60 + SCROLLBAR);
+    assert.equal(r.hooks.view().scrollY ?? 0, 0);
+    r.ghosts.reveal(g.step);
+    flushFrames();
+    assert.equal(r.hooks.view().scrollY, 46, `${g.kind}: the row's bottom meets the view's`);
+    assert.equal(r.hooks.view().scrollFrames, '0', `${g.kind}: no sideways scroll`);
+    r.ghosts.reveal(g.step);
+    flushFrames();
+    assert.equal(r.hooks.view().scrollY, 46, `${g.kind}: already in view`);
+    assert.ok(!r.hooks.parts().some((p) => /ghost/.test(p.id)), `${g.kind}: nothing drawn on the canvas`);
+    r.canvas.destroy();
+  }
 });
 
 test('a removed track\'s lane is cross-hatched in violet with its step disc (lane-ghost-remove), even with no clip on it', () => {
