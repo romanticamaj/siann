@@ -1153,7 +1153,7 @@ Every region and key component has a stable id, the same in the mockup and in th
 | `m5-ui-port-mixer-strip` | report | Lower zone: its tab row, MixConsole strips and the master meter |
 | `m5-ui-port-inspector` | report | Left zone: Inspector basics |
 | `m5-ui-port-plans` | report | Right zone: the Plans tab and its card |
-| `m5b-ui-ghosts` | pending | Every ghost (track, clip, cap, strip, lane), what a pending plan adds to a strip (step badges, the ghost needle and value of pan, the line to the ghost cap), the proposal pill, the Inspector's "Agent changes" |
+| `m5b-ui-ghosts` | report | Every ghost (track, clip, cap, strip, lane), what a pending plan adds to a strip (step badges, the ghost needle and value of pan, the line to the ghost cap), the proposal pill, the Inspector's "Agent changes" |
 | `m5b-ui-recording` | pending | Record buttons, the monitor button |
 | `m5b-ui-inserts-master` | pending | Insert slots of the track strips and of the Inspector, the master fader, the rack switches |
 | `m5b-ui-sends-buses` | pending | Routing and Sends sections |
