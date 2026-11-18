@@ -680,7 +680,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Plan submitted with diff',
-    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; the boxes of the title, intent, agent row and composer left empty until M5b), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text. Since m5b-ui-ghosts the plan's ghosts are drawn in place (UI redesign 4.2): the proposed Pad as a dashed header, a hatched lane under the last one and a dashed strip labelled NEW · STEP 1 before the master; the Vox BG fader's ghost cap joined to its cap with both values and its step badge, the violet tick on the Keys pan knob, the dashed ring on FX's M and both names of the rename; the toolbar ends with the proposal pill naming the plan (its first step and the step count) with its Ghosts toggle.`,
+    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; m5b-ui-plan-metadata: the agent row heads the tab, "ux-tour · MCP", connected, its last tool in user wording ("submitted a plan"), and the plan, submitted without a title, leads its card with its first step while its intent box stays empty; the composer's box is left empty until m5b-ui-composer), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text. Since m5b-ui-ghosts the plan's ghosts are drawn in place (UI redesign 4.2): the proposed Pad as a dashed header, a hatched lane under the last one and a dashed strip labelled NEW · STEP 1 before the master; the Vox BG fader's ghost cap joined to its cap with both values and its step badge, the violet tick on the Keys pan knob, the dashed ring on FX's M and both names of the rename; the toolbar ends with the proposal pill naming the plan (its first step and the step count) with its Ghosts toggle.`,
   );
   await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls), with the plan\'s ghosts and the proposal pill.', { fullPage: true });
 
@@ -718,7 +718,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Audition active',
-    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action. The window has the 2 px violet frame; the branch chip in the top bar names the proposal as the banner does (its first step and "3 steps") instead of main r<head>; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge with its ⏎ (Ctrl+Return in the right zone) and the icon-only Discard; the banner under the top bar names the plan with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The ghosts are solid, drawn from the branch snapshot (what is playing): the Keys and Vox BG caps and the pan tick, the ring on Vox Lead's S, with main's caps as faint outlines. Structural edits are disabled with the reason as their tooltip. The mockup has no hearing state: this state is the app's alone.`,
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action. The window has the 2 px violet frame; the branch chip in the top bar names the proposal as the banner does (its first step and "3 steps") instead of main r<head>; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge with its ⏎ (Ctrl+Return in the right zone) and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The ghosts are solid, drawn from the branch snapshot (what is playing): the Keys and Vox BG caps and the pan tick, the ring on Vox Lead's S, with main's caps as faint outlines. Structural edits are disabled with the reason as their tooltip. The mockup has no hearing state: this state is the app's alone.`,
   );
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -770,7 +770,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Engine disconnected',
-    `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it. A full-width banner under the top bar says the engine is disconnected; the four zones are dimmed and inert, so no control can send a request (the top bar's zone buttons and the status bar stay live).`,
+    `The engine process was killed; status "${down}" while the shell waits ${RESTART_MS / 1000} s to restart it. A full-width banner under the top bar says the engine is disconnected; the agent row reads "No agent connected" (the agents are forgotten with the engine); the four zones are dimmed and inert, so no control can send a request (the top bar's zone buttons and the status bar stay live).`,
   );
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected', { timeout: RESTART_MS + 30_000 });
   // The toast is shot while it shows (it dismisses itself after a few seconds).
@@ -784,7 +784,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Engine reconnected',
-    `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}").`,
+    `The shell restarted the engine on the same bundle and the renderer reconnected to a new session. The banner is gone, the zones are live again, the clip selection is cleared, and a toast names the recovered revision ("${toastText}"). The new engine has no agent yet: the agent row reads "No agent connected".`,
   );
 
   // ---- 25 (m5-ui-edit-basics; 23 and 24 are m5-ui-loop-click's): the
@@ -923,6 +923,27 @@ test('UX screenshot tour', async () => {
   // Discarded, so what follows is as before.
   await page.getByTestId('banner-discard').click();
   await expect(page.getByTestId('audition-banner')).toHaveCount(0);
+  // ---- 41 (m5b-ui-plan-metadata): a titled plan with its intent, the agent
+  // row connected. The tour's MCP client keeps its name (ux-tour).
+  const titledClient = await agent();
+  const titled = await titledClient.tool('submit_plan', {
+    steps: [
+      { op: 'track.set_gain', trackId: 'trk_voxbg', gainMilliDb: -6000 },
+      { op: 'track.set_pan', trackId: 'trk_keys', pan: -2000 },
+    ],
+    title: 'Lift the chorus',
+    intent: 'Bring the backing vocals forward and narrow the keys so the lead vocal sits on top.',
+  });
+  await selectPlan(page, titled.hash as string);
+  await expect(page.locator('[data-part="plan-title"]')).toHaveText('Lift the chorus');
+  await expect(page.locator('[data-part="agent-row"] b')).toHaveText('ux-tour');
+  await scrollTo('plan-review');
+  await shoot(
+    page,
+    'Titled plan with intent',
+    `An MCP agent (clientInfo.name "ux-tour") submitted a plan with a title and an intent (${hash8(titled.hash as string)}): the agent row heads the Plans tab with the agent's name, MCP and "connected · submitted a plan" (the time in its tooltip); the card leads with the title "Lift the chorus" and the intent under it in two lines, then the count chips; the toast named the plan by its title.`,
+    { number: 41 },
+  );
 
   // ---- What the window has no surface for (unnumbered).
   shots.push({

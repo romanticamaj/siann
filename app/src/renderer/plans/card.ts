@@ -21,8 +21,7 @@ import { formatMilliDb, formatPan } from '../format';
 import type { Locale } from '../i18n/locale';
 import { relativeTime, translator, type T } from '../i18n/t';
 import type { PlanEntry, PlanState } from '../model/plan-store';
-import type { StepNames } from './describe';
-import { planName } from './plan-name';
+import { describeStep, type StepNames } from './describe';
 import { isolateName } from './isolate';
 
 export type BadgeKey = 'draft' | 'needsReview' | 'approved' | 'approvedForAudition' | 'rejected' | 'applied' | 'rolledBack';
@@ -113,9 +112,9 @@ export function cardOf(
 ): PlanCardData {
   const t = translator(locale);
   const child = plan.state === 'rejected' ? allPlans.find((p) => p.parentPlan === plan.hash) : undefined;
-  const name = planName(plan, t, names);
+  const first = plan.steps[0];
   return {
-    lead: name?.lead ?? '',
+    lead: first ? describeStep(first, t, names) : '',
     stepCount: plan.steps.length,
     steps: t('plans.steps', { count: plan.steps.length }),
     time: timeOf(plan, firstSeen, nowMs, locale),

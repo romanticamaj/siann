@@ -348,8 +348,9 @@ test('while a branch is heard the chip names its plan as the banner does, the wh
   const t = translator('en');
   const store = storeHearing(BRANCH);
   const names = namesFromSnapshot(planSnapshot());
-  const name = planName(store.getSnapshot().byHash.get(hashOf('2'))!, t, names)!;
-  const whole = t('chip.proposal', { lead: name.lead, steps: name.steps });
+  const name = planName(store.getSnapshot().byHash.get(hashOf('2'))!, t, names, capabilitySelector(FULL));
+  assert.equal(name.kind, 'steps', 'an untitled plan');
+  const whole = name.kind === 'steps' ? t('chip.proposal', { lead: name.lead, steps: name.steps }) : '';
   const app = chipOf(render({ snapshot: planSnapshot(), plans: store }));
   assert.equal(app.attrs['data-part'], 'branch-chip');
   assert.deepEqual(elements(app).map(sig), ['svg.i.s', 'span']);
@@ -359,6 +360,13 @@ test('while a branch is heard the chip names its plan as the banner does, the wh
   const generic = chipOf(render({ snapshot: planSnapshot(), plans: storeHearing('p9') }));
   assert.equal(text(elements(generic)[1]!), t('chip.generic'));
   assert.ok(!new RegExp(`\\b(${BRANCH}|p9)\\b`).test(text(generic) + text(app)), 'no branch id');
+  // A titled plan (m5b-ui-plan-metadata, features.planMetadata): its title.
+  const titled = new PlanStore({ now: () => 0 });
+  titled.fromList({ plans: [planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH, title: 'Lift the chorus' })] });
+  titled.setHeard(BRANCH);
+  const chip = chipOf(render({ snapshot: planSnapshot(), plans: titled }));
+  assert.equal(text(elements(chip)[1]!), 'Lift the chorus');
+  assert.equal(chip.attrs.title, 'Lift the chorus');
 });
 
 test('without a head revision there is no chip and no box', () => {

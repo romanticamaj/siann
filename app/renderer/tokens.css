@@ -319,14 +319,11 @@
   --hold-zone-button-channel-w: calc(26px * var(--scale));
   --hold-zone-button-channel-h: calc(24px * var(--scale));
   /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
-     agent row (m5b-ui-plan-metadata), the plan's title with the margins
-     the card's h3 rule gives it and its intent (m5b-ui-plan-metadata), the
      composer with its bottom margin (m5b-ui-composer), the Media tab
-     (m5b-ui-media) and the Meter tab (m5b-ui-meter); the tabs and the
-     intent are set again per Chinese locale below. */
-  --hold-agent-row-h: calc(39px * var(--scale));
-  --hold-plan-title-h: calc(30.188px * var(--scale));
-  --hold-plan-intent-h: calc(33.344px * var(--scale));
+     (m5b-ui-media) and the Meter tab (m5b-ui-meter); the tabs are set again
+     per Chinese locale below. The agent row, the plan's title and its intent
+     landed with m5b-ui-plan-metadata: shell.css sizes their empty boxes by a
+     calc() of the tokens the shared rules size them with. */
   --hold-composer-h: calc(54px * var(--scale));
   --hold-tab-media-w: calc(71.078px * var(--scale));
   --hold-tab-meter-w: calc(69.031px * var(--scale));

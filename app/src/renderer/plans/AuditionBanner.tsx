@@ -1,9 +1,9 @@
 // The audition banner (m5-ui-plan-panel; UI redesign 4.3 as corrected for
 // P1-5): a row under the top bar, outside the zones, so it is visible
 // whichever zones are open, while the side heard is a proposal branch. It
-// names the plan as its card does (first step and step count, through
-// plans/plan-name.ts, which the pill and the Agent changes section share;
-// titles arrive with E-7), or reads "Hearing a proposal" when no plan the store holds has
+// names the plan through plans/plan-name.ts (its title with
+// features.planMetadata, m5b-ui-plan-metadata; else its first step and step
+// count), or reads "Hearing a proposal" when no plan the store holds has
 // that branch, and offers Hear main, Merge and Discard, each only when
 // engine.capabilities lists its method. A refusal is shown on the banner as
 // plans/RefusalLine shows it (no ids; the engine's text behind a disclosure).
@@ -16,10 +16,10 @@ import { useState } from 'react';
 import { translator, useLocale } from '../i18n/t';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
-import { Capable } from '../shell/Capable';
+import { Capable, useCapabilities } from '../shell/Capable';
 import { runAction, type PlanAction } from './actions';
+import { ISOLATE, isolateName } from './isolate';
 import { heardPlanName } from './plan-name';
-import { ISOLATE } from './isolate';
 import { usePlanSnapshot, useStepNames } from './hooks';
 import { RefusalLine, type Refusal } from './RefusalLine';
 
@@ -33,12 +33,18 @@ export function AuditionBanner({ client, plans }: AuditionBannerProps) {
   const t = translator(locale);
   const snapshot = usePlanSnapshot(plans);
   const names = useStepNames(client);
+  const can = useCapabilities();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ branch: string; refusal: Refusal } | null>(null);
-  const heard = heardPlanName(snapshot, t, names);
+  const heard = heardPlanName(snapshot, t, names, can);
   if (heard === null) return null;
   const { branch, name } = heard;
-  const text = name ? t('banner.hearing', { lead: name.lead, steps: name.steps }) : t('banner.generic');
+  const text =
+    name.kind === 'title'
+      ? t('banner.hearingTitled', { title: isolateName(name.title) })
+      : name.kind === 'steps'
+        ? t('banner.hearing', { lead: name.lead, steps: name.steps })
+        : t('banner.generic');
   const run = (action: PlanAction) => {
     if (busy) return;
     setBusy(true);

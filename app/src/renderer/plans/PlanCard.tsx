@@ -4,8 +4,12 @@
 //   .card[plan-card]
 //     .card-h[plan-head]  .top[plan-meta]: the state badge (and Stale beside
 //                         it, 4.5 C6), the time and base revision, the short
-//                         hash; the split, rejection or part-of row; the
-//                         title's and intent's holds (E-7, m5b-ui-plan-metadata);
+//                         hash; the split, rejection or part-of row;
+//                         h3[plan-title] and p[plan-intent] (E-7,
+//                         m5b-ui-plan-metadata: with features.planMetadata the
+//                         title, or the first step for an untitled plan, and the
+//                         intent; an absent one leaves its box empty, the
+//                         intent's two lines too, so the chips do not move);
 //                         .sum[plan-summary], the count chips
 //     .steps[plan-steps]  .steps-h with one link (Select none, or Select all
 //                         while some step is unticked), a StepRow per step
@@ -22,6 +26,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
 import type { PlanEntry } from '../model/plan-store';
+import { useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
 import { Icon, type IconName } from '../shell/icons';
 import { actionCells, actionLabel, isDanger, type ActionEntry, type ActionId, type ActionSet } from './actions';
@@ -32,6 +37,7 @@ import { diffRows, selection, type DiffRow, type PlanPreview } from './diff';
 import { entityHomes } from './entity-homes';
 import { rejectionLine } from './history';
 import { ISOLATE } from './isolate';
+import { planName } from './plan-name';
 import { RefusalLine, type Refusal } from './RefusalLine';
 import { stepRows } from './step-rows';
 import { EntityRows, StepRow } from './StepRow';
@@ -102,6 +108,9 @@ export function PlanCard(props: PlanCardProps) {
   const { plan, card, names, set, busy, ticked } = props;
   const locale = useLocale();
   const t = translator(locale);
+  const can = useCapabilities();
+  const metadata = can.feature('planMetadata');
+  const name = planName(plan, t, names, can);
   const [open, setOpen] = useState<ReadonlySet<number>>(() => props.openSteps ?? new Set());
   const [otherOpen, setOtherOpen] = useState(props.openOther ?? false);
   const noteRef = useRef<HTMLInputElement | null>(null);
@@ -226,8 +235,20 @@ export function PlanCard(props: PlanCardProps) {
             {card.partOf}
           </div>
         ) : null}
-        <Hold className="hold-plan-title" />
-        <Hold className="hold-plan-intent" />
+        {metadata ? (
+          <h3 data-part="plan-title" data-testid="plan-title" {...ISOLATE}>
+            {name.kind === 'title' ? name.title : card.lead}
+          </h3>
+        ) : (
+          <Hold className="plan-title-empty" />
+        )}
+        {metadata && plan.intent !== undefined ? (
+          <p data-part="plan-intent" data-testid="plan-intent" {...ISOLATE}>
+            {plan.intent}
+          </p>
+        ) : (
+          <Hold className="plan-intent-empty" />
+        )}
         <div className="sum" data-part="plan-summary">
           {chipsOf(plan.steps, t).map((chip) => (
             <span key={chip.kind}>

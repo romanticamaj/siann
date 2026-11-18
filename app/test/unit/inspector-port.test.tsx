@@ -30,7 +30,7 @@ import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import { toPosition } from '../../src/renderer/mixer/value-gesture';
-import type { Capabilities } from '../../src/renderer/model/capabilities';
+import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { SessionClient } from '../../src/renderer/model/session-client';
@@ -41,7 +41,7 @@ import { PlanStore } from '../../src/renderer/model/plan-store';
 import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { GhostContext } from '../../src/renderer/plans/ghost-context';
 import type { Ghost } from '../../src/renderer/plans/ghosts';
-import { planName } from '../../src/renderer/plans/plan-name';
+import { planNameParts } from '../../src/renderer/plans/plan-name';
 import { BAR, hashOf, mockupPlans, PENDING, RISER, T } from './support/mockup-plan';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
 import { clip, snapshotOf, track } from './support/timeline';
@@ -351,7 +351,9 @@ test('Agent changes is sec(): its head, and a .hist row per applied plan that to
     // The applied plan of the mockup's history changed Keys' pan at r31.
     const t = translator(locale);
     const plan = mockupPlans()[2]!;
-    const name = planName(plan, t, namesFromSnapshot(null))!;
+    // The mockup's applied plan carries a title, so it leads the row (m5b-ui-plan-metadata).
+    const name = planNameParts(plan, t, namesFromSnapshot(null), capabilitySelector(FULL))!;
+    assert.equal(name.lead, plan.title);
     const [applied, pendingRow] = rows;
     assert.equal(text(find(applied!, byClass('mono'))), 'r31');
     assert.equal(text(find(applied!, (el) => el.tag === 'b')), name.lead);

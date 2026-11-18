@@ -33,6 +33,8 @@ import type { ConnectionPhaseStore } from './model/connection-phase';
 import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
+import type { AgentStore } from './model/agents';
+import { capabilitySelector } from './model/capabilities';
 import type { PlanStore } from './model/plan-store';
 import type { ReviewStore } from './model/review-store';
 import type { RealtimeClient } from './model/realtime-client';
@@ -65,6 +67,8 @@ export interface AppProps {
   readonly realtime: RealtimeClient;
   readonly peaks: PeaksCache;
   readonly plans: PlanStore;
+  // The agents the engine lists (m5b-ui-plan-metadata: the Plans tab's agent row).
+  readonly agents?: AgentStore;
   // The plan review and its ghosts (m5b-ui-ghosts).
   readonly review: ReviewStore;
   readonly engineStatus: EngineStatusSource;
@@ -88,6 +92,7 @@ export function App({
   realtime,
   peaks,
   plans,
+  agents,
   review,
   engineStatus,
   layout,
@@ -107,7 +112,10 @@ export function App({
   );
   const phase = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().phase);
   const reconnects = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().reconnect?.count ?? 0);
-  useEffect(() => announceArrivals(plans, toasts, () => localeStore().getSnapshot()), [plans, toasts]);
+  useEffect(
+    () => announceArrivals(plans, toasts, () => localeStore().getSnapshot(), () => capabilitySelector(client.getState().capabilities)),
+    [plans, toasts, client],
+  );
   const [tracks, setTracks] = useState<TrackSelection>(NO_TRACKS);
   const order = () => client.model.getSnapshot()?.trackOrder ?? [];
   // A clip selected selects its track.
@@ -186,7 +194,7 @@ export function App({
               <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
             </Counted>
           }
-          right={<PlanPanel client={client} plans={plans} review={review} reconnects={reconnects} commands={commands} />}
+          right={<PlanPanel client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
         />
         </HeardContext.Provider>

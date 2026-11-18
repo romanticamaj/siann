@@ -3,7 +3,8 @@
 // icon, a span and span.num in --tx-3), styled by ui/top-bar.css. While main
 // is heard (or the side is unknown) it reads `main` and the head revision;
 // while a branch is heard it names the plan as the banner does
-// (plans/plan-name.ts, heardPlanName: its first step and step count, the
+// (plans/plan-name.ts, heardPlanName: its title with features.planMetadata,
+// else its first step and step count, the
 // generic word when no held plan owns the branch), shortened with an
 // ellipsis (shell.css) and the whole name in its title. No branch id is
 // shown. It is rendered while a head revision is known, and goes under
@@ -17,6 +18,7 @@ import type { SessionClient } from '../model/session-client';
 import { useStepNames } from '../plans/hooks';
 import { ISOLATE } from '../plans/isolate';
 import { heardPlanName } from '../plans/plan-name';
+import { useCapabilities } from './Capable';
 import { Icon } from './icons';
 
 export interface BranchChipProps {
@@ -29,15 +31,17 @@ export interface BranchChipProps {
 export function BranchChip({ client, plans, revision }: BranchChipProps) {
   const t = useT();
   const names = useStepNames(client);
+  const can = useCapabilities();
   const snapshot = useSyncExternalStore(
     (listener) => plans.subscribe(listener),
     () => plans.getSnapshot(),
     () => plans.getSnapshot(),
   );
   if (revision === null) return null;
-  const heard = heardPlanName(snapshot, t, names);
+  const heard = heardPlanName(snapshot, t, names, can);
   if (heard !== null) {
-    const name = heard.name ? t('chip.proposal', { lead: heard.name.lead, steps: heard.name.steps }) : t('chip.generic');
+    const name =
+      heard.name.kind === 'title' ? heard.name.title : heard.name.kind === 'steps' ? t('chip.proposal', { lead: heard.name.lead, steps: heard.name.steps }) : t('chip.generic');
     return (
       <span className="chip" data-part="branch-chip" data-testid="branch-chip" data-heard="proposal" title={name}>
         <Icon name="branch" small />

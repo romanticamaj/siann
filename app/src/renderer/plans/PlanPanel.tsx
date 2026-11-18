@@ -1,6 +1,7 @@
 // The Plans tab of the right zone (m5-ui-plan-panel; spec "Frontend", plan
 // review; UI redesign section 4 and P1-5), ported from the mockup's markup by
-// m5-ui-port-plans (10.10, P1-13): the agent row's hold, then .p-scroll with
+// m5-ui-port-plans (10.10, P1-13): the agent row (m5b-ui-plan-metadata, when
+// engine.capabilities lists features.agents; its empty box otherwise), then .p-scroll with
 // one card for the selected plan (plans/PlanCard: its badge, time and hash,
 // the count chips, the steps in the mockup's wording, the actions valid in
 // its state with one primary, each only when engine.capabilities lists what
@@ -25,6 +26,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
+import { shownAgent, type Agent, type AgentStore } from '../model/agents';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
 import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
@@ -32,6 +34,7 @@ import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
 import type { CommandRegistry } from '../keys/commands';
 import { actionMethods, actionSet, landedLabel, primaryAction, runAction, type ActionEntry, type PlanAction } from './actions';
+import { AgentRow } from './AgentRow';
 import { cardOf, staleReasons as reasonsOf } from './card';
 import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
@@ -65,6 +68,8 @@ export interface PlanPanelViewProps {
   readonly rejecting: boolean;
   // The step under the pointer.
   readonly hotStep: number | null;
+  // The agent the row shows (model/agents.ts, shownAgent); none: "No agent connected".
+  readonly agent?: Agent | null;
   // The step pinned by its target button or a click on a ghost (m5b-ui-ghosts).
   readonly pinnedStep?: number | null;
   readonly onSelect: (hash: string) => void;
@@ -88,12 +93,12 @@ export function PlanPanelView(props: PlanPanelViewProps) {
   const t = translator(locale);
   const can = useCapabilities();
   const plan = cardPlan(plans, props.selected);
-  const rows = historyOf(plans, plan?.hash ?? null, nowMs, firstSeen, locale, names);
+  const rows = historyOf(plans, plan?.hash ?? null, nowMs, firstSeen, locale, names, can);
   const chosen = selection(ticked, plan?.steps.length ?? 0);
   const set = plan ? actionSet(plan, heard, chosen) : null;
   return (
     <>
-      <Hold className="hold-agent-row" />
+      {can.feature('agents') ? <AgentRow agent={props.agent ?? null} /> : <Hold className="agent-row-empty" />}
       <div className="p-scroll" data-testid="plan-review" aria-label={t('plans.label')}>
         {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
         {plan && set ? (
@@ -167,10 +172,18 @@ export interface PlanPanelProps {
   // The key commands: Ctrl+Return in the right zone runs the card's primary
   // (plans.primary, m5b-ui-audition); none when absent.
   readonly commands?: CommandRegistry;
+  // The agents the engine lists (m5b-ui-plan-metadata).
+  readonly agents?: AgentStore;
 }
 
-export function PlanPanel({ client, plans, review, reconnects = 0, commands }: PlanPanelProps) {
+const NO_AGENTS = { subscribe: () => () => undefined, getSnapshot: () => null };
+
+export function PlanPanel({ client, plans, review, reconnects = 0, agents, commands }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
+  const source = agents ?? NO_AGENTS;
+  const subscribe = useMemo(() => (listener: () => void) => source.subscribe(listener), [source]);
+  const listed = useSyncExternalStore(subscribe, () => source.getSnapshot());
+  const agent = listed ? shownAgent(listed.agents) : null;
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
@@ -305,6 +318,7 @@ export function PlanPanel({ client, plans, review, reconnects = 0, commands }: P
       staleReasons={reasons}
       rejecting={rejecting}
       hotStep={hotStep}
+      agent={agent}
       pinnedStep={pinnedStep}
       onLocate={(index) => review.locate(index)}
       onSelect={select}

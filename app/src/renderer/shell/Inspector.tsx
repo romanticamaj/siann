@@ -72,7 +72,7 @@ import { trackGhosts, type Ghost } from '../plans/ghosts';
 import { useEditGuard } from '../plans/heard-context';
 import { useStepNames } from '../plans/hooks';
 import { ISOLATE } from '../plans/isolate';
-import { planName } from '../plans/plan-name';
+import { planNameParts } from '../plans/plan-name';
 import { RenameGhost } from '../plans/RenameGhost';
 import { stepsOnTrack } from '../plans/track-steps';
 import { Icon } from './icons';
@@ -109,6 +109,7 @@ const NO_PLANS = { subscribe: () => () => undefined, getSnapshot: () => null };
 // sec('Agent changes') for the track: the applied plans that touched it, then what is pending on it.
 function AgentChanges({ client, track, plans }: { client: SessionClient; track: TrackEntity; plans?: PlanStore }) {
   const t = useT();
+  const can = useCapabilities();
   const names = useStepNames(client);
   const view = useGhostView();
   const store = plans ?? NO_PLANS;
@@ -124,12 +125,12 @@ function AgentChanges({ client, track, plans }: { client: SessionClient; track: 
     .filter((p) => p.state === 'applied' && p.appliedRevision !== undefined)
     .map((p) => ({ plan: p, first: onTrack(p.steps)[0] }))
     .filter((row): row is { plan: typeof row.plan; first: number } => row.first !== undefined)
-    .map(({ plan: p, first }) => ({ plan: p, step: p.steps[first]!, name: planName(p, t, names)! }));
+    .map(({ plan: p, first }) => ({ plan: p, step: p.steps[first]!, name: planNameParts(p, t, names, can)! }));
   // What approving the plan under review would do on the track: its ticked
   // steps on it, whether the ghosts are shown or toggled off.
   const ticked = view.ticked ?? null;
   const pending = view.plan ? onTrack(view.plan.steps).filter((i) => ticked === null || ticked.has(i)).map((i) => i + 1) : [];
-  const reviewed = view.plan ? planName(view.plan, t, names) : null;
+  const reviewed = planNameParts(view.plan, t, names, can);
   return (
     <div className="sec" data-part="inspector-agent-changes">
       <div className="sec-h">
@@ -157,7 +158,7 @@ function AgentChanges({ client, track, plans }: { client: SessionClient; track: 
           ))
         ) : (
           <div className="hist" style={{ color: 'var(--tx-3)' }}>
-            {t('agent.none')}
+            {t('agentChanges.none')}
           </div>
         )}
       </div>
