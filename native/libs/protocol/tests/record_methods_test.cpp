@@ -55,8 +55,10 @@ public:
         out.playing = playing;
         out.recording = recordState_.recording;
         out.armed = recordState_.armed;
+        out.monitorRoundTripFrames = roundTrip;
         return out;
     }
+    bool monitoringAvailable() const override { return monitoring; }
     std::vector<protocol::DeviceDescription> devices() const override {
         protocol::DeviceDescription fake{"fake", "fake", "fake", false, true};
         fake.inputChannels = 2;
@@ -151,6 +153,8 @@ public:
     std::uint64_t overflows = 0;
     bool playing = false;
     int calls = 0;
+    std::optional<std::int64_t> roundTrip;  // engine.status' monitorRoundTripFrames
+    bool monitoring = true;                 // features.monitoring
     std::vector<std::optional<std::string>> recoverTrackIds;  // each recoverTake's trackId
     int recordings = 0;
 
@@ -486,6 +490,41 @@ TEST_CASE("engine.capabilities lists the record methods, track.set_input and fea
     }
     CHECK(lists(at(capabilities, "commands"), "track.set_input"));
     CHECK(at(at(capabilities, "features"), "recording").asBool());
+}
+
+// m5b-engine-monitoring (Protocol v0 item 33).
+TEST_CASE("engine.capabilities lists track.set_monitor and features.monitoring", "[protocol][record][monitor]") {
+    {
+        RecordFixture f;
+        const Value capabilities = f.harness.ok(f.harness.authed(), "engine.capabilities");
+        CHECK(lists(at(capabilities, "commands"), "track.set_monitor"));
+        CHECK(at(at(capabilities, "features"), "monitoring").asBool());
+    }
+    {
+        RecordFixture f;
+        f.port.monitoring = false;  // an engine that records no input
+        const Value capabilities = f.harness.ok(f.harness.authed(), "engine.capabilities");
+        CHECK_FALSE(at(at(capabilities, "features"), "monitoring").asBool());
+    }
+    {
+        RecordFixture f(false);
+        const Value capabilities = f.harness.ok(f.harness.authed(), "engine.capabilities");
+        CHECK(lists(at(capabilities, "commands"), "track.set_monitor"));  // a command either way
+        CHECK_FALSE(at(at(capabilities, "features"), "monitoring").asBool());
+    }
+}
+
+TEST_CASE("engine.status carries monitorRoundTripFrames, null without an input", "[protocol][record][monitor]") {
+    RecordFixture f;
+    const ConnectionId c = f.harness.authed();
+    const Value none = f.harness.ok(c, "engine.status");
+    const Value* missing = none.find("monitorRoundTripFrames");
+    REQUIRE(missing != nullptr);
+    CHECK(missing->isNull());
+    f.port.roundTrip = 512;
+    const Value status = f.harness.ok(c, "engine.status");
+    REQUIRE(at(status, "monitorRoundTripFrames").kind() == Value::Kind::number);
+    CHECK(at(status, "monitorRoundTripFrames").asNumber() == 512.0);
 }
 
 // m5b-engine-record: an orphan take (its track removed) is recovered onto the

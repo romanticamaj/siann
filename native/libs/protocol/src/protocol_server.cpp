@@ -593,6 +593,9 @@ Value engineStatusJson(const EngineStatus& status) {
                {"unmeasuredCallbacks", decimal(status.unmeasuredCallbacks)},
                {"underruns", decimal(status.underruns)},
                {"srcUnderruns", decimal(status.srcUnderruns)},
+               {"monitorRoundTripFrames", status.monitorRoundTripFrames
+                                              ? Value(static_cast<double>(*status.monitorRoundTripFrames))
+                                              : Value(nullptr)},
                // Protocol v0 item 31: fractions of the device period, JSON numbers.
                {"load", Value(Object{{"average", Value(status.load.average)}, {"peak", Value(status.load.peak)}})}};
     if (status.deviceError) {
@@ -1825,6 +1828,8 @@ struct ProtocolServer::Impl {
                                       {"cycle", Value(options.transportPort != nullptr)},
                                       {"click", Value(options.transportPort != nullptr)},
                                       {"recording", Value(options.recordPort != nullptr)},
+                                      {"monitoring", Value(options.recordPort != nullptr &&
+                                                           options.recordPort->monitoringAvailable())},
                                       {"masterGain", Value(true)},
                                       {"buses", Value(true)},
                                       {"sends", Value(true)},

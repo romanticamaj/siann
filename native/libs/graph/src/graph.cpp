@@ -39,6 +39,10 @@ struct Storage {
 struct DelayLine {
     std::vector<std::vector<float>> ring;
     std::size_t position = 0;
+    // A low-latency edge's weight on what it stores (m5b-engine-monitoring):
+    // 0 while its monitor passes any input, so the line never holds the input,
+    // then back to 1 over the monitor's fade, so the clips return without a step.
+    float resume = 1.0f;
 
     DelayLine(int channels, std::int64_t delay)
         : ring(static_cast<std::size_t>(channels), std::vector<float>(static_cast<std::size_t>(delay), 0.0f)) {}
@@ -61,6 +65,8 @@ struct PreparedGraph::Impl {
         float gain;
         std::int64_t compensation;
         std::shared_ptr<DelayLine> delay;  // null without compensation
+        // The low-latency edge's MonitorInputNode (shared with recompiled graphs).
+        const MonitorInputNode* monitor = nullptr;
     };
     struct NodeState {
         std::shared_ptr<Node> node;  // shared with recompiled graphs
@@ -83,11 +89,13 @@ struct PreparedGraph::Impl {
     std::int64_t compensationLimit = 0;
     AudioBufferView outputView;
     std::vector<NodeId> meters;  // MeterNodes in schedule order
+    bool monitoring = false;     // a node is a MonitorInputNode
     // Set by recompile() only.
     const PreparedGraph* recompiledFrom = nullptr;
     std::vector<std::uint8_t> ramped;
     std::vector<std::uint8_t> held;  // holdEdges() output, preallocated
     std::int64_t settle = 0;
+    std::vector<std::uint8_t> start;  // startEdges(): edges leaving a source
     // Audio thread -> control side. latencyQueued[n] is set while node n has
     // a change in the outbox, so the outbox holds at most one per node and
     // never fills.
@@ -137,15 +145,22 @@ struct PreparedGraph::Impl {
         latencyQueued = std::make_unique<std::atomic<bool>[]>(nodes.size());
     }
 
-    // Lists every MeterNode in schedule order.
+    // Lists every MeterNode in schedule order, whether the graph monitors and
+    // the edges leaving a source.
     void listMeters() {
         meters.clear();
+        monitoring = false;
         for (const std::size_t n : order) {
             auto& state = nodes[n];
             state.meter = dynamic_cast<const MeterNode*>(state.node.get());
             if (state.meter != nullptr) {
                 meters.push_back(n);
             }
+            monitoring = monitoring || dynamic_cast<const MonitorInputNode*>(state.node.get()) != nullptr;
+        }
+        start.assign(edges.size(), 0);
+        for (std::size_t e = 0; e < edges.size(); ++e) {
+            start[e] = nodes[edges[e].from].node->inputPorts().empty() ? 1 : 0;
         }
     }
 
@@ -167,7 +182,14 @@ void GraphBuilder::connect(NodeId from, NodeId to, int port, float gain) {
     if (from >= nodes_.size() || to >= nodes_.size()) {
         throw GraphError("unknown_node", "connect refers to a node that was not added");
     }
-    edges_.push_back(EdgeSpec{from, to, port, gain});
+    edges_.push_back(EdgeSpec{from, to, port, gain, kNoMonitor});
+}
+
+void GraphBuilder::connectLowLatency(NodeId from, NodeId to, NodeId monitor, int port, float gain) {
+    if (from >= nodes_.size() || to >= nodes_.size() || monitor >= nodes_.size()) {
+        throw GraphError("unknown_node", "connectLowLatency refers to a node that was not added");
+    }
+    edges_.push_back(EdgeSpec{from, to, port, gain, monitor});
 }
 
 void GraphBuilder::setOutput(NodeId node) {
@@ -206,8 +228,17 @@ std::unique_ptr<PreparedGraph> GraphBuilder::compile(int maxBlockFrames, std::in
             throw GraphError("channel_mismatch", "edge '" + impl->nodes[spec.from].name + "' -> '" + dst.name +
                                                      "' connects different channel counts");
         }
+        const MonitorInputNode* monitor = nullptr;
+        if (spec.monitor != kNoMonitor) {
+            monitor = dynamic_cast<const MonitorInputNode*>(impl->nodes[spec.monitor].node.get());
+            if (monitor == nullptr) {
+                throw GraphError("not_a_monitor", "the low-latency edge into '" + dst.name + "' names '" +
+                                                      impl->nodes[spec.monitor].name + "', not a monitor input");
+            }
+        }
         impl->nodes[spec.to].incoming.push_back(impl->edges.size());
-        impl->edges.push_back(PreparedGraph::Impl::Edge{spec.from, spec.to, spec.port, spec.gain, 0, nullptr});
+        impl->edges.push_back(
+            PreparedGraph::Impl::Edge{spec.from, spec.to, spec.port, spec.gain, 0, nullptr, monitor});
     }
 
     // Kahn's algorithm with the lowest node id first, for a deterministic order.
@@ -268,7 +299,7 @@ std::unique_ptr<PreparedGraph> PreparedGraph::recompile() const {
     }
     impl->edges.reserve(old.edges.size());
     for (const auto& edge : old.edges) {
-        impl->edges.push_back(Impl::Edge{edge.from, edge.to, edge.port, edge.gain, 0, nullptr});
+        impl->edges.push_back(Impl::Edge{edge.from, edge.to, edge.port, edge.gain, 0, nullptr, edge.monitor});
     }
     impl->computeLatency();
     // The nodes are already prepared for this block size (and may be running).
@@ -303,7 +334,11 @@ void PreparedGraph::process(const ProcessContext& context) noexcept {
 
 void PreparedGraph::process(const ProcessContext& context, const EdgeRamp& ramp) noexcept {
     const int frames = std::clamp(context.frames, 0, impl_->maxBlock);
-    const ProcessContext block{context.blockStart, frames};
+    ProcessContext block = context;
+    block.frames = frames;
+    if (block.input != nullptr && (block.input->channels == nullptr || block.input->frames < frames)) {
+        block.input = nullptr;  // too short for this block: no input
+    }
     const bool ramping = ramp.fadeFrames > 0 && ramp.edges.size() == impl_->edges.size();
 
     for (const std::size_t n : impl_->order) {
@@ -320,19 +355,37 @@ void PreparedGraph::process(const ProcessContext& context, const EdgeRamp& ramp)
             if (edge.delay) {
                 DelayLine& delay = *edge.delay;
                 const std::size_t length = delay.ring.front().size();
+                const float resumeStep =
+                    edge.monitor != nullptr ? 1.0f / static_cast<float>(edge.monitor->fadeFrames()) : 0.0f;
+                float resumed = delay.resume;  // where the envelope ends this block
                 for (int c = 0; c < source.channelCount; ++c) {
                     auto& ring = delay.ring[static_cast<std::size_t>(c)];
                     std::size_t pos = delay.position;
+                    float resume = delay.resume;  // the same envelope on every channel
                     for (int i = 0; i < frames; ++i) {
-                        const float delayed = ring[pos];
-                        ring[pos] = source.channel(c)[i];
+                        const float now = source.channel(c)[i];
+                        float delayed = ring[pos];
+                        if (edge.monitor != nullptr) {
+                            // Monitored input skips the compensation (crossfaded),
+                            // and the line stores none of it (see DelayLine::resume).
+                            const float blend = edge.monitor->inputBlend(i);
+                            resume = blend > 0.0f ? 0.0f : std::min(1.0f, resume + resumeStep);
+                            ring[pos] = resume == 1.0f ? now : now * resume;
+                            delayed = blend == 0.0f   ? delayed
+                                      : blend == 1.0f ? now
+                                                      : delayed * (1.0f - blend) + now * blend;
+                        } else {
+                            ring[pos] = now;
+                        }
                         const float gain = ramped ? edge.gain * rampGain(ramp, i) : edge.gain;
                         target.channel(c)[i] += delayed * gain;
                         if (++pos == length) {
                             pos = 0;
                         }
                     }
+                    resumed = resume;
                 }
+                delay.resume = resumed;
                 delay.position = (delay.position + static_cast<std::size_t>(frames)) % length;
             } else {
                 for (int c = 0; c < source.channelCount; ++c) {
@@ -375,6 +428,28 @@ int PreparedGraph::maxBlockFrames() const noexcept {
 
 std::int64_t PreparedGraph::totalLatency() const noexcept {
     return impl_->nodes[impl_->outputNode].outputLatency;
+}
+
+bool PreparedGraph::monitors() const noexcept {
+    return impl_->monitoring;
+}
+
+std::span<const std::uint8_t> PreparedGraph::startEdges() const noexcept {
+    return impl_->start;
+}
+
+std::int64_t PreparedGraph::monitorPathLatency() const noexcept {
+    std::int64_t slowest = 0;
+    const std::int64_t total = totalLatency();
+    for (const auto& edge : impl_->edges) {
+        if (edge.monitor == nullptr) {
+            continue;
+        }
+        const auto& to = impl_->nodes[edge.to];
+        const std::int64_t arrival = to.outputLatency - to.compiledLatency;
+        slowest = std::max(slowest, impl_->nodes[edge.from].outputLatency + total - arrival);
+    }
+    return slowest;
 }
 
 std::int64_t PreparedGraph::edgeCompensation(NodeId from, NodeId to, int port) const noexcept {

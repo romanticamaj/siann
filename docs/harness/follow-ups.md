@@ -190,9 +190,11 @@ Deferred:
 3. Record the start value next to the end value in the journal entry of a
    gesture's commit, with automation write passes (spec, "Gestures", M5
    amendments); `gesture.end` and `gesture.ended` report it until then.
-4. The fake device meters only while the transport plays (frames carry no entries
-   while stopped); the mixer's meters e2e test plays the transport. Decide whether a
-   stopped engine should still meter its inputs once input monitoring arrives.
+4. Done by `m5b-engine-monitoring` (M5b): a live graph with a monitoring node runs
+   while the transport is stopped, so a monitored track's meter reads its input
+   (`engine_record_test`); a graph without one still meters nothing while stopped,
+   and an armed track's `input:<trackId>` entry meters either way. The mixer's
+   meters e2e test still plays the transport.
 5. A realtime socket the engine closes on its own while the command socket stays
    open is reopened at the session client's next state change, not at once.
 

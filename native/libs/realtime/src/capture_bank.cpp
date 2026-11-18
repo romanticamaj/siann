@@ -40,6 +40,12 @@ bool CaptureBank::armed(std::size_t slot) const noexcept {
     return slot < slots_.size() && (slots_[slot]->map.load(std::memory_order_acquire) & kArmed) != 0;
 }
 
+void CaptureBank::bindMonitorGate(std::size_t slot, graph::MonitorGate* gate) noexcept {
+    if (slot < slots_.size()) {
+        slots_[slot]->gate.store(gate, std::memory_order_release);
+    }
+}
+
 InputMeterReading CaptureBank::meter(std::size_t slot) const noexcept {
     InputMeterReading out;
     if (slot >= slots_.size()) {
@@ -64,8 +70,16 @@ void CaptureBank::process(const host::AudioBufferView& input, std::int64_t timel
         }
         const int port = static_cast<int>((map >> 8) & kPortMask);
         const int channels = static_cast<int>(map & 0xFF);
+        graph::MonitorGate* gate = slot.gate.load(std::memory_order_acquire);
         if (port + channels > input.channelCount || input.channels == nullptr) {
+            if (gate != nullptr) {
+                gate->capturing.store(false, std::memory_order_release);
+            }
             continue;  // the open input does not reach this map
+        }
+        if (gate != nullptr) {
+            gate->capturing.store(playing && slot.recorder.recording() && !slot.recorder.captureEnded(),
+                                  std::memory_order_release);
         }
         const host::AudioBufferView view{input.channels + port, channels, input.frames};
         for (int c = 0; c < channels; ++c) {
