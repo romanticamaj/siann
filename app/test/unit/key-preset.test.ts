@@ -161,3 +161,11 @@ test('Ctrl+P (Cmd+P on macOS) opens the Pool, Cubase\'s Open Pool key (m5-ui-por
   ];
   for (const [chord, commandId] of others) assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord).map((b) => b.commandId), [commandId], chord);
 });
+
+// m5b-ui-signature (UI redesign UR-15): the Sig cell is a readout. Shift+C,
+// Cubase's signature key, stays unbound until the meter map (E-10), and no
+// command edits the signature.
+test('Shift+C is unbound and no command edits the time signature (m5b-ui-signature)', () => {
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Shift+C'), []);
+  assert.deepEqual(COMMAND_IDS.filter((id) => /signature|metre/i.test(id)), []);
+});
