@@ -130,10 +130,13 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad', 'agent-row': 'm5b-ui-plan-metadata', 'proposal-pill': 'm5b-ui-ghosts' })) {
+  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad', 'proposal-pill': 'm5b-ui-ghosts' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
+  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata).
+  assert.equal(ruleOf('agent-row').gate, 'm5b-ui-plan-metadata');
+  assert.equal(MANIFEST.gates['m5b-ui-plan-metadata'], 'report');
 });
 
 test('a feature that owns parts names its gate in its acceptance, asks for a side-by-side screenshot and never for enforce', () => {
@@ -1238,7 +1241,7 @@ test("the plan metadata's gate is report, its holds are gone, and shell.css size
     'plan-intent-empty': /^calc\(\s*2 \* 1\.45 \* var\(--fs-11h\)\s*\)$/,
   };
   for (const [cls, want] of Object.entries(heights)) {
-    const rule = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`).exec(shell);
+    const rule = new RegExp(`(?:^|\\})\\s*\\.${cls}\\s*\\{([^}]*)\\}`).exec(shell);
     assert.ok(rule, `shell.css has a .${cls} rule of its own`);
     const height = /(?:^|;)\s*height:\s*([^;]+)/.exec(rule[1])?.[1].trim();
     assert.match(height ?? '', want, `.${cls}'s height`);

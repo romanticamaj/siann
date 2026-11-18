@@ -1,6 +1,7 @@
 // The Plans tab of the right zone (m5-ui-plan-panel; spec "Frontend", plan
 // review; UI redesign section 4 and P1-5), ported from the mockup's markup by
-// m5-ui-port-plans (10.10, P1-13): the agent row's hold, then .p-scroll with
+// m5-ui-port-plans (10.10, P1-13): the agent row (m5b-ui-plan-metadata, when
+// engine.capabilities lists features.agents; its empty box otherwise), then .p-scroll with
 // one card for the selected plan (plans/PlanCard: its badge, time and hash,
 // the count chips, the steps in the mockup's wording, the actions valid in
 // its state with one primary, each only when engine.capabilities lists what
@@ -18,14 +19,16 @@
 // stores, plan.preview and session.fetch at the plan's base revision (for
 // the stale reasons), and runs the actions.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
+import { shownAgent, type Agent, type AgentStore } from '../model/agents';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
 import { actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type PlanAction } from './actions';
+import { AgentRow } from './AgentRow';
 import { cardOf, staleReasons as reasonsOf } from './card';
 import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
@@ -59,6 +62,8 @@ export interface PlanPanelViewProps {
   readonly rejecting: boolean;
   // The step under the pointer.
   readonly hotStep: number | null;
+  // The agent the row shows (model/agents.ts, shownAgent); none: "No agent connected".
+  readonly agent?: Agent | null;
   readonly onSelect: (hash: string) => void;
   readonly onTicked: (ticked: ReadonlySet<number>) => void;
   readonly onNote: (note: string) => void;
@@ -85,12 +90,12 @@ export function PlanPanelView(props: PlanPanelViewProps) {
   const t = translator(locale);
   const can = useCapabilities();
   const plan = cardPlan(plans, props.selected);
-  const rows = historyOf(plans, plan?.hash ?? null, nowMs, firstSeen, locale, names);
+  const rows = historyOf(plans, plan?.hash ?? null, nowMs, firstSeen, locale, names, can);
   const chosen = selection(ticked, plan?.steps.length ?? 0);
   const set = plan ? actionSet(plan, heard, chosen) : null;
   return (
     <>
-      <Hold className="hold-agent-row" />
+      {can.feature('agents') ? <AgentRow agent={props.agent ?? null} /> : <Hold className="agent-row-empty" />}
       <div className="p-scroll" data-testid="plan-review" aria-label={t('plans.label')}>
         {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
         {plan && set ? (
@@ -212,10 +217,18 @@ export interface PlanPanelProps {
   // The reconnects so far (model/connection-phase.ts); each one clears the
   // selected plan and its ticked steps (UI redesign spec 4.5 C8).
   readonly reconnects?: number;
+  // The agents the engine lists (m5b-ui-plan-metadata).
+  readonly agents?: AgentStore;
 }
 
-export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
+const NO_AGENTS = { subscribe: () => () => undefined, getSnapshot: () => null };
+
+export function PlanPanel({ client, plans, reconnects = 0, agents }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
+  const source = agents ?? NO_AGENTS;
+  const subscribe = useMemo(() => (listener: () => void) => source.subscribe(listener), [source]);
+  const listed = useSyncExternalStore(subscribe, () => source.getSnapshot());
+  const agent = listed ? shownAgent(listed.agents) : null;
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
@@ -332,6 +345,7 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
       staleReasons={reasons}
       rejecting={rejecting}
       hotStep={hotStep}
+      agent={agent}
       onSelect={select}
       onTicked={setTicked}
       onNote={setNote}

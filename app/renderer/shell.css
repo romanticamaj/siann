@@ -523,13 +523,28 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 /* A list longer than the zone scrolls (a state the mockup does not show,
    10.7), by the wheel and the focus, without a gutter that would narrow the card. */
 .plans .p-scroll { overflow-y: auto; scrollbar-width: none; }
-.hold-agent-row, .hold-plan-title, .hold-plan-intent, .hold-composer, .hold-tab-media, .hold-tab-meter { display: block; flex: none; }
-.hold-agent-row { height: var(--hold-agent-row-h); }
-.hold-plan-title { height: var(--hold-plan-title-h); }
-.hold-plan-intent { height: var(--hold-plan-intent-h); }
+.hold-composer, .hold-tab-media, .hold-tab-meter { display: block; flex: none; }
 .hold-composer { height: var(--hold-composer-h); }
 .hold-tab-media { width: var(--hold-tab-media-w); height: var(--zone-head); }
 .hold-tab-meter { width: var(--hold-tab-meter-w); height: var(--zone-head); }
+/* The agent row, the plan's title and its intent (m5b-ui-plan-metadata; UI
+   redesign 3.0, 4.4): landed parts that are absent on an engine without
+   features.agents or features.planMetadata. Their empty boxes take the size
+   the shared rules give the parts, as a calc() of the same tokens (no token
+   of their own): the row's padding, avatar and hairline; the h3's margins
+   and one line of --fs-plan at line-height 1.3; two lines of --fs-11h at
+   line-height 1.45. A plan without an intent keeps those two lines, and so
+   does a one-line intent, so the count chips do not move; a longer intent
+   grows the head. The name in the row ellipsises, so the state keeps its
+   place on the one line; a disconnected agent's dot is the quiet text colour. */
+.agent-row-empty, .plan-title-empty, .plan-intent-empty { display: block; flex: none; }
+.agent-row-empty { height: calc(2 * var(--space-2) + var(--agent-avatar) + var(--hairline)); }
+.plan-title-empty { height: calc(var(--space-2) + var(--space) + 1.3 * var(--fs-plan)); }
+.plan-intent-empty { height: calc(2 * 1.45 * var(--fs-11h)); }
+.card-h p[data-part="plan-intent"] { min-height: calc(2 * 1.45 * var(--fs-11h)); white-space: pre-line; }
+.agent > span:not(.av):not(.live) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+[data-part="agent-row"] > :is(.av, .live) { flex-shrink: 0; }
+.agent .live.off i { background: var(--tx-4); box-shadow: none; }
 /* The steps head's link, as the mockup's inline style sets it, on one line
    at its own width (the count beside it gives way in a long locale). */
 .plans .steps-h a { text-transform: none; letter-spacing: 0; cursor: pointer; flex: none; white-space: nowrap; }

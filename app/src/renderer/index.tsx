@@ -49,6 +49,7 @@ import { ConnectionPhaseStore } from './model/connection-phase';
 import { EngineStatusStore } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
+import { AgentStore } from './model/agents';
 import { PlanStore } from './model/plan-store';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { UndoHistory } from './model/undo-history';
@@ -143,6 +144,9 @@ const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
+// The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
+const agents = new AgentStore();
+agents.attach(client);
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
 
@@ -221,6 +225,7 @@ const app = (
     realtime={realtime}
     peaks={peaks}
     plans={plans}
+    agents={agents}
     engineStatus={engineStatus}
     layout={layout}
     commands={commands}

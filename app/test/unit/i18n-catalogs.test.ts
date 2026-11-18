@@ -30,6 +30,8 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   'status.latencyValue',
   // The agent's transport is the protocol's name, MCP in every locale (the mockup's).
   'agent.transport.mcp',
+  // A history row's "N steps · agent": the mockup's separator in every locale.
+  'history.summaryBy',
 ]);
 
 // The parameters each function message is called with. Strings are sentinels
@@ -235,7 +237,7 @@ test('every key of en.ts is used by the renderer', () => {
 });
 
 test("the agent row's words and the titled banner and toast are in every catalog, the mockup's in en and zh-TW (m5b-ui-plan-metadata)", () => {
-  const keys = ['agent.connected', 'agent.disconnected', 'agent.idle', 'agent.none', 'agent.tool.other', 'agent.tool.submit_plan', 'banner.hearingTitled', 'toast.planArrivedTitled', 'history.summaryBy'] as const;
+  const keys = ['agent.connected', 'agent.disconnected', 'agent.idle', 'agent.none', 'agent.tool.other', 'agent.tool.submit_plan', 'banner.hearingTitled', 'toast.planArrivedTitled'] as const;
   for (const key of keys) {
     for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
       assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
