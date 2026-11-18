@@ -15,6 +15,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { MediaEntity } from '../../src/renderer/model/document';
+import { translator } from '../../src/renderer/i18n/t';
+import { GUARD_REASON } from '../../src/renderer/model/edit-guard';
 import { MediaImporter, POLL_MS } from '../../src/renderer/model/media-import';
 import type { DropPlan } from '../../src/renderer/timeline/media-drop';
 import { addMedia, FakeScheduler, FakeSessionClient, settle, until } from './support/fakes';
@@ -25,7 +27,7 @@ const FILES = [
   { name: 'b.wav', path: '/x/b.wav' },
 ];
 
-function setup(trackOrder = ['trk_a', 'trk_b']) {
+function setup(trackOrder = ['trk_a', 'trk_b'], blocked: () => boolean = () => false) {
   const client = new FakeSessionClient(snapshotOf(trackOrder, trackOrder.map(track), [media('med_1', '48000')], []));
   const scheduler = new FakeScheduler();
   const toasts: string[] = [];
@@ -35,6 +37,7 @@ function setup(trackOrder = ['trk_a', 'trk_b']) {
     schedule: scheduler.schedule,
     toasts: { push: (text: string) => (toasts.push(text), toasts.length) },
     locale: () => 'en',
+    blocked,
     ids: { importId: () => `imp_${(n += 1)}`, trackId: () => `trk_new${n}`, clipId: () => `clp_${(n += 1)}` },
   });
   return { client, scheduler, toasts, importer };
@@ -217,4 +220,36 @@ test('Import from the tab imports each file and places nothing', async () => {
   await finished;
   assert.equal(client.requests('command.execute').length, 0);
   assert.deepEqual(importer.getSnapshot(), []);
+});
+
+// The edit guard (UI redesign 4.5 C5): while a proposal is heard the import
+// commits nothing onto main. A drop or Import then sends no request and a
+// toast gives the guard's reason; a drop whose imports began with main heard
+// places no clip once a proposal is heard, and says so.
+test('while blocked a drop and Import send no request, and a toast gives the guard reason', async () => {
+  const { client, importer, toasts } = setup(['trk_a', 'trk_b'], () => true);
+  await importer.drop(FILES, PLAN);
+  await importer.importFiles(['/x/a.wav']);
+  await settle();
+  assert.equal(client.requests('media.import').length, 0);
+  assert.equal(client.requests('command.execute').length, 0);
+  assert.deepEqual(importer.getSnapshot(), []);
+  assert.deepEqual(toasts, [translator('en')(GUARD_REASON), translator('en')(GUARD_REASON)]);
+});
+
+test('a drop whose imports end once a proposal is heard places nothing and says why', async () => {
+  let heard = false;
+  const { client, scheduler, importer, toasts } = setup(['trk_a', 'trk_b'], () => heard);
+  const finished = importer.drop(FILES, PLAN);
+  await until(() => scheduler.pending().length === 1, 'a poll scheduled');
+  heard = true;
+  client.jobs[0]!.status = done('med_a', 'r8', 'a.wav');
+  client.jobs[1]!.status = done('med_b', 'r9', 'b.wav');
+  scheduler.fire(POLL_MS);
+  await until(() => client.requests('job.status').length === 2, 'polled');
+  client.commit((s) => addMedia(addMedia(s, entity('med_a', 'a.wav'), 'r8'), entity('med_b', 'b.wav'), 'r9'));
+  await finished;
+  assert.equal(client.requests('command.execute').length, 0);
+  assert.deepEqual(importer.getSnapshot(), []);
+  assert.deepEqual(toasts, [translator('en')(GUARD_REASON)]);
 });

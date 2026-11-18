@@ -21,6 +21,7 @@ import { translator } from '../../src/renderer/i18n/t';
 import { MediaActions, mediaRows, MediaTabView, removeMediaCommand, renameMediaCommand, type MediaTabViewProps } from '../../src/renderer/media/MediaTab';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { MediaEntity } from '../../src/renderer/model/document';
+import { GUARD_REASON } from '../../src/renderer/model/edit-guard';
 import { FakeSessionClient, until } from './support/fakes';
 import { byAttr, byClass, find, findAll, parse, text } from './support/mockup';
 import { clip, media, snapshotOf, track } from './support/timeline';
@@ -51,6 +52,7 @@ function props(overrides: Partial<MediaTabViewProps> = {}): MediaTabViewProps {
     can: { rename: true, remove: true, place: true },
     canImport: true,
     renaming: null,
+    guard: null,
     t: en,
     onQuery: noop,
     onImport: noop,
@@ -206,4 +208,42 @@ test('a file being imported shows its name and progress at the top of the list',
   assert.match(text(row), /b\.wav/);
   assert.match(text(row), /40 %/);
   assert.ok(FULL.commands?.includes('media.rename'));
+});
+
+// The edit guard (UI redesign 4.5 C5): while a branch is heard, Import, a
+// row's drag, the rename and Remove are disabled with the guard's reason;
+// the search and the list stay.
+test('while a branch is heard Import, the drag, the rename and Remove are disabled with the reason; the search stays', () => {
+  const reason = en(GUARD_REASON);
+  const markup = view({ guard: reason });
+  const importButton = find(markup, byAttr('data-testid', 'media-import'))!;
+  assert.ok('disabled' in importButton.attrs, 'Import disabled');
+  assert.equal(importButton.attrs.title, reason);
+  for (const id of ['med_1', 'med_2']) {
+    const remove = find(markup, byAttr('data-testid', `media-remove-${id}`))!;
+    assert.ok('disabled' in remove.attrs, id);
+    assert.equal(remove.attrs.title, reason, id);
+  }
+  const rows = findAll(markup, (el) => (el.attrs['data-testid'] ?? '').startsWith('media-row-'));
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every((row) => row.attrs.draggable !== 'true'), 'no row drags');
+  const search = find(markup, byAttr('data-testid', 'media-search'))!;
+  assert.ok(!('disabled' in search.attrs), 'the search stays');
+  // No handler starts a rename, a drag, an import or a removal.
+  let calls = 0;
+  const count = () => {
+    calls += 1;
+  };
+  const tree = MediaTabView(props({ guard: reason, onImport: count, onStartRename: count, onRemove: count, onDragStart: count }));
+  assert.equal(byTestId(tree, 'media-name-med_1')!.props.onDoubleClick, undefined);
+  assert.equal(byTestId(tree, 'media-row-med_2')!.props.onDragStart, undefined);
+  (byTestId(tree, 'media-import')!.props.onClick as () => void)();
+  (byTestId(tree, 'media-remove-med_2')!.props.onClick as () => void)();
+  assert.equal(calls, 0);
+  // A rename under way is not shown as a field while heard.
+  assert.equal(findAll(view({ guard: reason, renaming: 'med_1' }), byAttr('data-testid', 'media-rename-input')).length, 0);
+  // With main heard nothing is disabled.
+  const free = view();
+  assert.ok(!('disabled' in find(free, byAttr('data-testid', 'media-import'))!.attrs));
+  assert.ok(!('disabled' in find(free, byAttr('data-testid', 'media-remove-med_2'))!.attrs));
 });

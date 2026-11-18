@@ -17,6 +17,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { translator } from '../../src/renderer/i18n/t';
+import { GUARD_REASON } from '../../src/renderer/model/edit-guard';
+import { MEDIA_ROW_TYPE } from '../../src/renderer/model/media-bridge';
 import { engineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
 import { agentFor, APP_DIR, exeFromEnv, MAIN, selectPlan } from './support/seed';
@@ -314,6 +317,88 @@ test('Ctrl+P and the event display\'s context menu open the Media tab, also from
   await expect(page.getByTestId('media-tab')).toBeVisible();
   // The Pool is gone.
   await expect(page.getByTestId('media-pool')).toHaveCount(0);
+});
+
+// The edit guard (UI redesign 4.5 C5): while a proposal is heard the media's
+// import, rename and removal would commit onto main, so a drop on the event
+// display sends no media.import and raises a toast with the guard's reason,
+// a row dropped there sends no command, and the Media tab's Import, the row's
+// drag, the rename and Remove are disabled with that reason; with main heard
+// they are enabled again. Main's head does not move while heard.
+test('while a proposal is heard the drop, Import, the row drag, rename and Remove are held with the reason', async () => {
+  const bundle = prepare();
+  const kick = demo('kick.wav', 110);
+  const pad = demo('pad.wav', 330);
+  const late = demo('late.wav', 440);
+  await launch(bundle);
+  const reason = translator('en')(GUARD_REASON);
+  // A used media (kick, dropped) and an unused one (pad, imported).
+  await dropFiles([kick], await lanePoint('trk_a', 0));
+  await expect.poll(async () => (await clips()).length).toBe(1);
+  await app!.evaluate(({ dialog }, files) => {
+    (dialog as unknown as Record<string, unknown>).showOpenDialog = async () => ({ canceled: false, filePaths: files });
+  }, [pad]);
+  await openMedia(page);
+  await page.getByTestId('media-import').click();
+  await expect(page.locator('[data-testid^="media-row-"]')).toHaveCount(2);
+  const used = (await clips())[0]!.mediaId;
+  const unused = (await mediaRows()).find((id) => id !== used)!;
+
+  // Audition a plan: a proposal is heard.
+  const agent = await agentFor(app!);
+  const hash = (await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: 'trk_b', gainMilliDb: -600 }] })).hash as string;
+  await page.getByTestId('tab-right-plans').click();
+  await selectPlan(page, hash);
+  await page.getByTestId('plan-audition').click();
+  await expect(page.getByTestId('shell')).toHaveAttribute('data-hearing', 'proposal');
+  const watcher = await engineClient(page);
+  const head = async () => (await watcher.call('session.inspect')).revision as string;
+  const mainHead = await head();
+  const imports = await sent('media.import');
+  const executes = await sent('command.execute');
+
+  // The tab: Import, Remove, the drag and the rename are held, with the reason.
+  await openMedia(page);
+  await expect(page.getByTestId('media-import')).toBeDisabled();
+  await expect(page.getByTestId('media-import')).toHaveAttribute('title', reason);
+  for (const id of [used, unused]) {
+    await expect(page.getByTestId(`media-remove-${id}`)).toBeDisabled();
+    await expect(page.getByTestId(`media-remove-${id}`)).toHaveAttribute('title', reason);
+    await expect(page.getByTestId(`media-row-${id}`)).not.toHaveAttribute('draggable', 'true');
+  }
+  await page.getByTestId(`media-name-${unused}`).dblclick();
+  await expect(page.getByTestId('media-rename-input')).toHaveCount(0);
+  await expect(page.getByTestId('media-search')).toBeEnabled();
+
+  // The event display: a file dropped from the OS is refused with the reason, and a row dropped there sends nothing.
+  await expect(page.getByTestId('event-display')).toHaveAttribute('data-drop-target', 'guarded');
+  await dropFiles([late], await lanePoint('trk_c', 0));
+  await expect(page.getByTestId('toast-message').last()).toContainText(reason);
+  const at = await lanePoint('trk_b', BEAT);
+  await page.evaluate(
+    ({ id, x, y, type }) => {
+      const target = document.querySelector('[data-testid="event-display"]')!;
+      const data = new DataTransfer();
+      data.setData(type, id);
+      for (const name of ['dragenter', 'dragover', 'drop']) target.dispatchEvent(new DragEvent(name, { bubbles: true, cancelable: true, dataTransfer: data, clientX: x, clientY: y }));
+    },
+    { id: unused, x: at.x, y: at.y, type: MEDIA_ROW_TYPE },
+  );
+  await watcher.call('session.inspect');
+  expect(await sent('media.import')).toBe(imports);
+  expect(await sent('command.execute')).toBe(executes);
+  expect(await head()).toBe(mainHead);
+  await expect(page.getByTestId('clip-count')).toHaveText('1');
+
+  // With main heard everything is enabled again.
+  await page.getByTestId('banner-hear-main').click();
+  await expect(page.getByTestId('shell')).not.toHaveAttribute('data-hearing', 'proposal');
+  await openMedia(page);
+  await expect(page.getByTestId('media-import')).toBeEnabled();
+  await expect(page.getByTestId(`media-remove-${unused}`)).toBeEnabled();
+  await expect(page.getByTestId(`media-row-${unused}`)).toHaveAttribute('draggable', 'true');
+  await expect(page.getByTestId('event-display')).toHaveAttribute('data-drop-target', 'media');
+  watcher.close();
 });
 
 // The feature's ids (manifest: tab-media and plan-step-*-title): the Media tab,

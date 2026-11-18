@@ -31,6 +31,9 @@ import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { TrackList } from '../../src/renderer/timeline/TrackList';
 import { MediaImporter } from '../../src/renderer/model/media-import';
 import { MediaTab } from '../../src/renderer/media/MediaTab';
+import { GUARD_REASON } from '../../src/renderer/model/edit-guard';
+import { translator } from '../../src/renderer/i18n/t';
+import { HeardContext } from '../../src/renderer/plans/heard-context';
 import { FakeScheduler, FakeSocket, until } from './support/fakes';
 import { fakeSurface, installSurfaceGlobals } from './support/surface';
 import { sampleSnapshot } from './support/timeline';
@@ -566,6 +569,29 @@ test('timeline: the event display is a drop target only with the bridge and medi
   }
   // Without a media host (a plain browser tab) there is no drop target either.
   assert.ok(!within(FULL, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />).includes('data-drop-target'));
+});
+
+// The edit guard (UI redesign 4.5 C5): while a branch is heard the event
+// display takes no drop (data-drop-target="guarded") and the tab's Import is
+// disabled with the reason; with main heard both are as they were.
+test('timeline and media tab: while a branch is heard the drop target is guarded and Import is disabled with the reason', () => {
+  const reason = translator('en')(GUARD_REASON);
+  const heard = (side: string | null, node: ReactNode) => within(FULL, <HeardContext.Provider value={side}>{node}</HeardContext.Provider>);
+  const timeline = (side: string | null) => {
+    const { client, host } = mediaHost(true);
+    return heard(side, <Timeline client={client} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} media={host} />);
+  };
+  assert.match(timeline('p1'), /data-drop-target="guarded"/);
+  assert.match(timeline('main'), /data-drop-target="media"/);
+  assert.match(timeline(null), /data-drop-target="media"/);
+  const tab = (side: string | null) => {
+    const { client, host } = mediaHost(true);
+    return heard(side, <MediaTab client={client} media={host} />);
+  };
+  const button = (markup: string) => /<button[^>]*data-testid="media-import"[^>]*>/.exec(markup)?.[0] ?? '';
+  assert.match(button(tab('p1')), /disabled=""/);
+  assert.ok(button(tab('p1')).includes(`title="${reason}"`), button(tab('p1')));
+  assert.doesNotMatch(button(tab('main')), /disabled=""/);
 });
 
 test('media tab: Import only with the bridge; nothing of the tab without media.import', () => {
