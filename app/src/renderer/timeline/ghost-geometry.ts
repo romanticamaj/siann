@@ -68,9 +68,10 @@ export function revealScroll(box: Box, view: Viewport, lanesTop: number, maxScro
   let dy = 0;
   if (box.y < lanesTop) dy = box.y - lanesTop;
   else if (box.y + box.height > height) dy = Math.min(box.y - lanesTop, box.y + box.height - height);
+  // Whole pixels, rounded outwards: a box a fraction past an edge still comes in.
+  const outwards = (d: number) => (d < 0 ? Math.floor(d) : Math.ceil(d));
   const scrollY = view.scrollY ?? 0;
-  dy = Math.max(-scrollY, Math.min(maxScrollY - scrollY, dy));
-  dx = Math.round(dx);
-  dy = Math.round(dy);
+  dx = outwards(dx);
+  dy = Math.max(-scrollY, Math.min(maxScrollY - scrollY, outwards(dy)));
   return dx === 0 && dy === 0 ? null : { dx, dy };
 }
