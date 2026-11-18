@@ -17,6 +17,7 @@ import {
   createFrameRecorder,
   frameMarks,
   installFrameMarks,
+  readyLineAt,
   type PerfLike,
 } from '../../src/renderer/perf/frame-marks';
 
@@ -106,21 +107,37 @@ test('an end() without a begin() records nothing', () => {
   assert.deepEqual(perf.calls, []);
 });
 
-test('cold start: engine ready to the first painted session, each taken once', () => {
+// The cold start of UI redesign 5.6 runs from the engine's ready line (read by
+// the main process supervisor, which hands its time to the renderer under the
+// test hook) to the first content frame that draws a session's clips. The
+// ready line's time is on the wall clock (epoch ms); readyLineAt() puts it on
+// the renderer's performance clock.
+test('cold start: from the ready line to the first painted session, each taken once', () => {
   const { perf, rec } = recorder();
   assert.equal(rec.coldStartMs(), null);
   perf.t = 100;
-  rec.sessionPainted(); // before the engine: not a session of this engine
+  rec.sessionPainted(); // before the client connected: not a session of this engine
   assert.equal(rec.coldStartMs(), null);
-  perf.t = 200;
-  rec.engineReady();
-  perf.t = 250;
-  rec.engineReady();
+  perf.t = 600;
+  rec.connected();
   perf.t = 1100;
   rec.sessionPainted();
+  assert.equal(rec.coldStartMs(), null, 'no ready line time yet');
+  // The ready line came before the connection; its time arrives after the paint.
+  rec.engineReadyAt(-200);
+  rec.engineReadyAt(50);
   perf.t = 1300;
   rec.sessionPainted();
-  assert.equal(rec.coldStartMs(), 900);
+  rec.connected();
+  assert.equal(rec.coldStartMs(), 1300, 'ready line at -200 to the paint at 1100');
+});
+
+test('readyLineAt puts the epoch time of the ready line on the performance clock of the renderer', () => {
+  assert.equal(readyLineAt(1_700_000_000_250, 1_700_000_000_000), 250);
+  assert.equal(readyLineAt(1_699_999_999_900, 1_700_000_000_000), -100, 'before the page loaded');
+  assert.equal(readyLineAt(null, 1_700_000_000_000), null);
+  assert.equal(readyLineAt(Number.NaN, 1_700_000_000_000), null);
+  assert.equal(readyLineAt('1' as unknown as number, 1_700_000_000_000), null);
 });
 
 test('without the test hook there is no recorder and the marks touch no performance API', () => {
@@ -130,7 +147,6 @@ test('without the test hook there is no recorder and the marks touch no performa
   const marks = frameMarks();
   marks.begin();
   marks.end();
-  marks.engineReady();
   marks.sessionPainted();
   assert.deepEqual(perf.calls, []);
 });
@@ -157,6 +173,11 @@ test('the renderer creates the recorder from window.siannTest only, and the draw
   const index = fs.readFileSync(path.join(RENDERER, 'index.tsx'), 'utf8');
   assert.match(index, /createFrameRecorder\(testHooks,/);
   assert.match(index, /window\.__siannFrames/);
+  // The cold start's start is the supervisor's ready line, not the client's
+  // first authenticated connection.
+  assert.match(index, /testHooks\.engineReadyAt\(\)/);
+  assert.match(index, /frames\.engineReadyAt\(readyLineAt\(/);
+  assert.doesNotMatch(index, /frames\.engineReady\(\)/);
   for (const file of ['timeline/TimelineCanvas.ts', 'mixer/MixerMeters.ts', 'timeline/HeaderMeters.ts', 'shell/Transport.tsx']) {
     const source = fs.readFileSync(path.join(RENDERER, file), 'utf8');
     assert.match(source, /frameMarks\(\)\.begin\(\)/, file);
