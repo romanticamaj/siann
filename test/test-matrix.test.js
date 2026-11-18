@@ -204,3 +204,28 @@ test('a feature\'s "Per acceptance item" paragraph covers every item and cites r
     }
   }
 });
+
+// m5b-bridge-cli-coverage (acceptance item 5): gaps 5 (rollback keeps media and
+// renders) and 10 (bridge CLI holes) are closed, and the Node bridge table names
+// the tests of reject-plan and validate-journal.
+test('gaps 5 and 10 left section 6 and the Node bridge table names the reject-plan and validate-journal tests', () => {
+  const rows = matrixSection('6. ').split('\n').filter((line) => line.startsWith('| '));
+  assert.ok(rows.length > 2, 'section 6 has its table');
+  for (const gap of [5, 10]) {
+    assert.equal(rows.find((line) => new RegExp(`^\\|\\s*${gap}\\s*\\|`).test(line)), undefined, `no row for gap ${gap}`);
+  }
+  const text = matrixText();
+  const start = text.indexOf('### Node bridge (`bin/siann.js`)');
+  assert.ok(start >= 0, 'the matrix has the Node bridge table');
+  const table = text.slice(start, text.indexOf('\n## ', start)).split('\n').filter((line) => line.startsWith('| '));
+  for (const subcommand of ['workflow reject-plan', 'validate-journal']) {
+    const row = table.find((line) => line.split('|')[1].includes(`\`${subcommand}`));
+    assert.ok(row, `the Node bridge table has a row for ${subcommand}`);
+    const tests = [...row.split('|')[2].matchAll(/`([a-z0-9-]+)`/g)].map((m) => m[1]);
+    assert.ok(tests.length > 0, `the ${subcommand} row names its tests`);
+    for (const name of tests) {
+      assert.ok(fs.existsSync(path.join(ROOT, 'test', `${name}.test.js`)), `test/${name}.test.js exists (${subcommand})`);
+    }
+    assert.doesNotMatch(row, /\*\*none\*\*|untested/, `${subcommand} is no longer a hole`);
+  }
+});

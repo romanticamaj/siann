@@ -619,7 +619,7 @@ test('the notes model fixture syncs with its document hash and types the notes',
   assert.equal(track(snapshot, 'trk_bass').notes, undefined);
 });
 
-test('(g) track notes follow session.changed and their removal restores the hash', async () => {
+test('(h) track notes follow session.changed and their removal restores the hash', async () => {
   const model = new ReadModel();
   await model.fromSync(chunks);
   const apply = (s: (typeof seq.steps)[number]) =>
@@ -632,4 +632,65 @@ test('(g) track notes follow session.changed and their removal restores the hash
   const removed = await apply(seq.notes.steps[1]!);
   assert.equal(removed.documentHash, seq.notes.before.documentHash);
   assert.equal(track(removed, 'trk_1').notes, undefined);
+});
+
+// m5b-ui-inserts-master: the master fader is a gesture on master:master
+// (docs/schemas/protocol-gestures-v0.md: the master target always exists).
+// While the entity is absent (0 dB) the overlay stands on a synthetic entity
+// at 0; an unrelated delta keeps a held master gesture; the commit that adds
+// or removes master:master drops the ended overlay.
+const gainOf = (entity: unknown) => (entity as { gainMilliDb: number } | undefined)?.gainMilliDb;
+
+test('(g) a master gesture begins while master:master is absent, overlays a synthetic entity and survives unrelated deltas', async () => {
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  for (let i = 0; i < seq.steps.length; i += 1) await model.applyChanged(step(i).event, step(i).fetched);
+  assert.equal(model.getSnapshot()!.master, null);
+  model.beginGesture('master:master', 'gainMilliDb');
+  assert.equal(model.getView().gesture?.ref, 'master:master');
+  assert.equal(model.select('master:master'), undefined, 'no value yet: nothing to overlay');
+  model.setGesture(-4500);
+  assert.deepEqual(model.select('master:master'), { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -4500 });
+  assert.equal(model.getSnapshot()!.master, null, 'the snapshot is untouched');
+  // The locators steps change nothing of the master: the held gesture stays.
+  for (const s of seq.locators.steps) {
+    await model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  }
+  assert.equal(model.getView().gesture?.ref, 'master:master');
+  assert.equal(gainOf(model.select('master:master')), -4500);
+  // Ended, the overlay waits for its commit, which adds master:master and drops it.
+  assert.equal(model.endGesture(), -4500);
+  assert.equal(gainOf(model.select('master:master')), -4500);
+  const added = seq.master.steps[0]!;
+  await model.applyChanged(added.event as unknown as SessionChanged, added.fetch.result.entities as unknown as FetchedEntity[]);
+  assert.equal(model.getView().gesture, null);
+  assert.equal(gainOf(model.select('master:master')), -6000);
+});
+
+test('(g) the commit that removes master:master drops an ended master overlay, and a sync keeps a held one', async () => {
+  const model = new ReadModel();
+  await model.fromSync(chunks);
+  for (let i = 0; i < seq.steps.length; i += 1) await model.applyChanged(step(i).event, step(i).fetched);
+  for (const s of [...seq.locators.steps, ...seq.master.steps.slice(0, 2)]) {
+    await model.applyChanged(s.event as unknown as SessionChanged, s.fetch.result.entities as unknown as FetchedEntity[]);
+  }
+  assert.equal(model.getSnapshot()!.master?.gainMilliDb, -3000);
+  model.beginGesture('master:master', 'gainMilliDb');
+  model.setGesture(0);
+  model.endGesture();
+  const removed = seq.master.steps[2]!;
+  await model.applyChanged(removed.event as unknown as SessionChanged, removed.fetch.result.entities as unknown as FetchedEntity[]);
+  assert.equal(model.getView().gesture, null);
+  assert.equal(model.select('master:master'), undefined);
+  // A held master gesture survives a sync of the same session with the master absent.
+  const fresh = new ReadModel();
+  await fresh.fromSync(chunks, 'ses_1');
+  fresh.beginGesture('master:master', 'gainMilliDb');
+  fresh.setGesture(-1000);
+  await fresh.fromSync(chunks, 'ses_1');
+  assert.equal(fresh.getView().gesture?.ref, 'master:master');
+  assert.equal(gainOf(fresh.select('master:master')), -1000);
+  // Pan is no master parameter.
+  fresh.cancelGesture();
+  assert.throws(() => fresh.beginGesture('master:master', 'pan'), (e: unknown) => e instanceof ReadModelError && e.code === 'not_continuous');
 });

@@ -41,6 +41,7 @@ class FakePlanClient implements PlanClient {
     error: null,
     legend: null,
     capabilities: null,
+    epoch: 0,
   };
   readonly requests: Array<{ method: string; params: Record<string, unknown> }> = [];
   readonly answers = new Map<string, (params: Record<string, unknown>) => unknown>();

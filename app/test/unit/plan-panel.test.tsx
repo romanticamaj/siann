@@ -152,14 +152,14 @@ test('steps are numbered from 1, all ticked by default, with one link: Select no
   assert.match(markup, /<a[^>]*data-testid="steps-none"[^>]*>Select none<\/a>/);
   assert.ok(!markup.includes('data-testid="steps-all"'));
   assert.ok(markup.includes('Steps · 3 of 3 selected'));
-  assert.ok(markup.includes('>Approve 3 of 3<'), 'the primary names every step');
+  assert.ok(markup.includes('>Approve 3 of 3 <kbd>'), 'the primary names every step');
   // Unticked steps lower N and the link selects all.
   const partial = view({ ticked: new Set([0, 2]) });
   assert.equal(count(partial, 'aria-checked="true"'), 2);
   assert.equal(count(partial, 'aria-checked="false"'), 1);
   assert.match(partial, /<a[^>]*data-testid="steps-all"[^>]*>Select all<\/a>/);
   assert.ok(partial.includes('Steps · 2 of 3 selected'));
-  assert.ok(partial.includes('>Approve 2 of 3<'), 'the primary names the subset');
+  assert.ok(partial.includes('>Approve 2 of 3 <kbd>'), 'the primary names the subset');
   // Not reviewable (approved), or no plan.approve: no checkbox and no link; the boxes stay, empty.
   for (const markupOf of [view({ selected: CHILD }), view({}, REDUCED)]) {
     assert.ok(!markupOf.includes('role="checkbox"'));

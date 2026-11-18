@@ -43,6 +43,16 @@ const PATHS = {
     </>
   ),
   chev: <path d="M4.5 6.5 8 10l3.5-3.5" />,
+  // The branch chip's icon (m5b-ui-audition).
+  branch: (
+    <>
+      <circle cx="4.5" cy="4" r="1.5" />
+      <circle cx="4.5" cy="12" r="1.5" />
+      <circle cx="11.5" cy="5.5" r="1.5" />
+      <path d="M4.5 5.5v5" />
+      <path d="M11.5 7c0 2.5-7 1.5-7 3.5" />
+    </>
+  ),
   plus: <path d="M8 3.5v9M3.5 8h9" />,
   spark: (
     <>
@@ -86,6 +96,9 @@ const PATHS = {
     </>
   ),
   x: <path d="M4 4l8 8M12 4l-8 8" />,
+  // App-only (m5b-ui-inserts-master): an insert slot's bypass, which the
+  // mockup's slot does not draw; on the same 16 px grid and stroke.
+  power: <path d="M8 2.5v5M5 4.5a4.5 4.5 0 1 0 6 0" />,
   zRight: (
     <>
       <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
@@ -110,6 +123,20 @@ const PATHS = {
       <circle cx="4.5" cy="4.5" r="1.8" />
       <circle cx="4.5" cy="11.5" r="1.8" />
       <path d="M6 5.6 13 11M6 10.4 13 5" />
+    </>
+  ),
+  // The Glue and Erase tools (m5b-ui-edit-more; mockup.html, P.glue and P.erase).
+  glue: (
+    <>
+      <path d="M6 2.5h4l-.6 3h-2.8z" />
+      <path d="M6.2 5.5h3.6l1.2 8H5z" />
+    </>
+  ),
+  erase: (
+    <>
+      <path d="M9.5 3 13 6.5 7.5 12H5l-2-2z" />
+      <path d="M6.5 6 10 9.5" />
+      <path d="M5 13.5h8" />
     </>
   ),
   magnet: (

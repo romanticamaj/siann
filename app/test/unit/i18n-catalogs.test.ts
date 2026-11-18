@@ -28,6 +28,11 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   // The status bar's units, the mockup's in every locale (m5-ui-alignment-chrome).
   'status.sampleRate',
   'status.latencyValue',
+  // The branch chip's "main", the mockup's in every locale (m5b-ui-audition).
+  'chip.main',
+  // The saved mark, a bullet, and Studio Setup's sample rate in Hz (m5b-ui-project).
+  'session.unsavedMark',
+  'setup.rateValue',
   // The agent's transport is the protocol's name, MCP in every locale (the mockup's).
   'agent.transport.mcp',
   // A history row's "N steps · agent": the mockup's separator in every locale.
@@ -256,4 +261,41 @@ test("the agent row's words and the titled banner and toast are in every catalog
     assert.deepEqual(placeholders(catalog['toast.planArrivedTitled'] as string), ['title']);
     assert.deepEqual(placeholders(catalog['history.summaryBy'] as string), ['name', 'steps']);
   }
+});
+
+test('the words of glue, erase, the snap types, the repeat dialog and the info line\'s editing are in every catalog (m5b-ui-edit-more)', () => {
+  const words: Array<[Key, string, string, string]> = [
+    ['tool.glue', 'Glue', '黏合', '粘合'],
+    ['tool.erase', 'Erase', '擦除', '擦除'],
+    ['snap.type', 'Snap type', '貼齊類型', '吸附类型'],
+    ['snap.typeGridRelative', 'Grid Relative', '相對格線', '相对网格'],
+    ['snap.typeEvents', 'Events', '事件', '事件'],
+    ['snap.typeCursor', 'Magnetic Cursor', '磁性游標', '磁性光标'],
+    ['repeat.title', 'Repeat', '重複', '重复'],
+    ['repeat.confirm', 'Repeat', '重複', '重复'],
+  ];
+  for (const [key, english, traditional, simplified] of words) {
+    assert.equal(en[key], english, key);
+    assert.equal(zhHant[key], traditional, key);
+    assert.equal(zhHans[key], simplified, key);
+  }
+  const keys: Key[] = [
+    'repeat.count',
+    'info.editHint',
+    'glue.refused.no_next',
+    'glue.refused.gap',
+    'glue.refused.other_media',
+    'glue.refused.source_not_continuous',
+    'glue.refused.other_track',
+    'glue.refused.selection',
+  ];
+  for (const key of keys) {
+    assert.equal(typeof en[key], 'string', key);
+    for (const [name, catalog] of [['zh-Hant', zhHant], ['zh-Hans', zhHans]] as const) {
+      assert.equal(typeof catalog[key], 'string', `${name} ${key}`);
+      assert.notEqual(catalog[key], en[key], `${name} ${key} is translated`);
+    }
+  }
+  // The snap field's word for Grid stays the mockup's.
+  assert.equal(zhHant['snap.typeGrid'], '格線');
 });

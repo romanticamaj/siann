@@ -1,6 +1,6 @@
 // How a plan is named (m5b-ui-plan-metadata; UI redesign 4.3: one shared
 // helper for the card's title line, the history rows, the audition banner and
-// the toast, and for the ghosts' pill and the branch chip once those land).
+// the toast, the ghosts' pill and the branch chip (heardPlanName, m5b-ui-audition)).
 // With features.planMetadata and a title: the title. Otherwise the M5
 // wording: the first step in user wording and the step count; with no steps,
 // the generic word ("a proposal"). Without the feature a title the plan
@@ -8,7 +8,7 @@
 
 import type { T } from '../i18n/t';
 import type { CapabilitySelector } from '../model/capabilities';
-import type { PlanEntry } from '../model/plan-store';
+import type { PlanEntry, PlanSnapshot } from '../model/plan-store';
 import { describeStep, type StepNames } from './describe';
 
 export type PlanName =
@@ -33,4 +33,20 @@ export function planNameParts(plan: PlanEntry | undefined, t: T, names: StepName
   const name = planName(plan, t, names, can);
   if (name.kind === 'generic') return null;
   return { lead: name.kind === 'title' ? name.title : name.lead, steps: t('plans.steps', { count: plan.steps.length }) };
+}
+
+export interface HeardName {
+  // The branch heard (never shown).
+  readonly branch: string;
+  // The name of the plan that owns it, or the generic word when no held plan does.
+  readonly name: PlanName;
+}
+
+// The heard proposal's name (m5b-ui-audition; UI redesign 4.3), for the
+// banner and the branch chip alike; null while main is heard or the side is unknown.
+export function heardPlanName(snapshot: Pick<PlanSnapshot, 'heard' | 'plans'>, t: T, names: StepNames, can: CapabilitySelector): HeardName | null {
+  const branch = snapshot.heard;
+  if (branch === null || branch === 'main') return null;
+  const plan = snapshot.plans.find((p) => p.proposalBranch === branch);
+  return { branch, name: planName(plan, t, names, can) };
 }

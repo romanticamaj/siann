@@ -21,12 +21,12 @@ gaps here when it lands.
 | 2 method/tool/doc/fixture parity | closed by `m5b-protocol-parity` (section 4) | 2 |
 | 3 bridge targets the Ardour engine, gated tests dead | closed by `m5b-bridge-native-client` (layer G in CI) | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
-| 5 rollback never deletes media or renders | `m5b-bridge-cli-coverage` | 3 |
+| 5 rollback never deletes media or renders | closed by `m5b-bridge-cli-coverage` (native and G) | 3 |
 | 6 no ASAN/UBSAN, no fuzzing | `m5b-nightly-quality` | 3 |
 | 7 desktop job skipped on core-library PRs | `m5b-nightly-quality` | 3 |
 | 8 macOS-specific behaviour manual only | not taken: needs the macOS bundle (M0 `m0-macos-bundle`, apple-signing gate) | |
 | 9 UI spec 5.6 performance budgets | `m5b-nightly-quality` | 3 |
-| 10 bridge CLI holes (`reject-plan`, `validate-journal`, `--run`) | `m5b-bridge-cli-coverage` | 3 |
+| 10 bridge CLI holes (`reject-plan`, `validate-journal`, `--run`) | closed by `m5b-bridge-cli-coverage` (B and G; `bin/siann.js` branch coverage gated at 70 % on ubuntu) | 3 |
 | 11 `read-model-sequence.json` not checked against the engine | not taken: stays an M5 follow-up | |
 | 12 long tests not on macOS | `m5b-nightly-quality` | 3 |
 | 13 M4 ordering / link assertions | not taken: stays an M4 follow-up | |
@@ -46,7 +46,7 @@ gaps here when it lands.
 | **F** | Mockup fidelity run (`docs/harness/agent-rules.md`, "UI fidelity"). Blocking: tokens and the manifest, `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). A report, never blocking (decided by the maintainer, 2026-11-17): geometry against 1 px, computed styles and chrome pixels per region, `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW; its region images are the side-by-side screenshots a UI pull request attaches | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **A report for good** (`continue-on-error`, report uploaded as `fidelity-<os>`): no gate is `enforce` and the step never fails the job |
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
 | **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows | nightly + manual; never on PRs |
-| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
+| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, the `G:` cases of `test/bridge-cli-run-flags.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
 | **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, `SIANN_UX_TOUR=1`, human gates) | maintainer's machines | never | see 3.2 |
 
 Sizes at the audit: ~1,000 native `TEST_CASE`s (protocol 174, apps/engine 93,
@@ -142,7 +142,23 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
 | m5b-bridge-native-client | Y (`plan_methods_test` plan.rollback {revision} after a reopen, both or neither param, not_a_plan, not on main, the stored plan rolled_back with plan.changed; `mcp_adapter_test` rollback_plan's argument) | | | Y (`ws-codec` RFC 6455 vectors; `runtime-client` against the in-process fake engine; `bridge-runner`, `bridge-cli`, `rollback-workflow`, `live-import-pack` against the fake engine (`test/helpers/fake-engine*.js`); G: `runtime-engine`, `live-import-pack` engine case against siann-engine) | 3 (B and G) | - |
+| m5b-bridge-cli-coverage | Y (`plan_methods_test` "plan.rollback leaves the render, the media file and its peaks on disk": {plan} in the process and {revision} after a reopen) | | | Y (`import-pack-plan` rejectImportPackPlan units; `bridge-cli-reject`, `bridge-cli-journal`, `bridge-cli-run-flags` (the COVERED table against the option table, the fake engine's refusal and failed launch per --run), `bridge-cli-usage`, `bridge-runner` codes, `ci-workflow` coverage step, `test-matrix`; G: `bridge-cli-run-flags` the three --run against siann-engine and rollback keeping media/, renders/ and peaks/ byte for byte) | 3 (B and G); the coverage gate on ubuntu | - |
 | m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools and propose stop/locate while recording, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `session_test` head guard, `engine_launch_test` kill-and-recover, wire loopback `track_recording` and a propose agent's stop over the wire) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
+
+Per acceptance item (`m5b-bridge-cli-coverage`): 1 `import-pack-plan` (pending,
+defaults, approved, re-rejection refused, tampered without laundering), `bridge-cli-reject`
+(the same through the CLI, usage errors and exit codes, approve-plan and
+apply-plan refusing a rejected plan); 2 `bridge-cli-journal` (a valid journal,
+one case per validator code, `journal_unreadable`, `journal_not_json`, usage),
+`bridge-runner` "validateJournal refuses each invalid journal with its error
+code"; 3 `bridge-cli-run-flags` (COVERED against `COMMANDS`, `[--run]` in
+`--help`, the fake engine per flag, G: each --run against siann-engine); 4
+`plan_methods_test` "plan.rollback leaves the render, the media file and its
+peaks on disk" (seen failing with a temporary `remove_all` of `peaks/` in the
+plan.rollback path), G: `bridge-cli-run-flags` "G: rollback --run against
+siann-engine"; 5 `ci-workflow` (the ubuntu coverage step), `bridge-cli-usage`,
+`test-matrix` (gaps 5 and 10 closed, the Node bridge rows). Tour states
+changed: none.
 
 Per acceptance item (`m5b-bridge-native-client`): 1 `runtime-client` (start,
 envelope, `resolveEngineExe`, the source no longer names the Ardour runtime),
@@ -231,6 +247,53 @@ monitored strip back to its clips plays no input a second time"; `monitoring_tes
 (with `siann_rt_alloc_guard`); `record_methods_test` "engine.capabilities lists
 track.set_monitor and features.monitoring"; app unit `capabilities`
 (`capabilities-full.json`); tour states changed: none (no UI).
+
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-punch-count-in | Y (`recording_test` capture window, `capture_bank_test` and `monitoring_test` the gate's window, `count_in_test`, `transport_test` counted start, `punch_test`, `locators_session_test` checkpoint punch, `engine_host_test` punch across rebind, `engine_record_test` punch, pre-roll and count-in on the manual device, `transport_methods_test`, `mcp_adapter_test`, `engine_launch_test` wire case) | Y (`recording_test`, `monitoring_test`, `capture_bank_test`, `count_in_test` and `engine_record_test` with `siann_rt_alloc_guard`) | | Y (`protocol-parity` fixture; app unit `capabilities` over `capabilities-full.json`) | all 3 | - (real-device count-in and punch: the audio-hardware human gate at the milestone exit; no UI until `m5b-ui-recording`; tour states changed: none) |
+
+Per acceptance item (`m5b-engine-punch-count-in`): 1 `recording_test` "a take
+with a capture window keeps exactly the frames inside it, mid-block at both ends"
+(with the alloc guard); `capture_bank_test` "the monitor gate follows the capture
+window: the bank hands it the window"; `monitoring_test` "the monitor gate follows
+the capture window to the frame"; `locators_session_test` "The punch flags
+round-trip in the checkpoint with the cycle flag", "A checkpoint without punch
+reads both flags false"; `engine_host_test` "session.open hands the opened
+session's punch flags to the host; pre-roll and count-in are kept";
+`engine_record_test` "a take recorded with punch in and out holds exactly the
+frames between the locators" (generated input sample by sample, and the loopback
+device's record offset), "auto monitoring switches at the punch frames",
+"playback runs on after the punch-out and one revision is committed". 2
+`punch_test` "pre-roll start frame from the tempo map, clamped at 0", "the
+count-in's beats are spaced by the tempo at the held position"; `count_in_test`
+"a count-in plays bars x 4 clicks with the playhead held, with the metronome off,
+and the playhead starts at the expected frame within one sample" (97 BPM, a start
+inside a callback, the alloc guard), "no click outside the count-in while the
+metronome is off", "a pause during the count-in ends it with the transport
+stopped"; `transport_test` "a start that carries a count-in and a start
+position"; `engine_record_test` "pre-roll starts bars before the record position,
+clamped at 0, and the take starts at the record position", "a one-bar count-in
+then four bars gives a four-bar take that starts at the record position", "the
+count-in click is not in the take and not in an offline render", "pre-roll and
+count-in apply only from a stopped transport; a stop during the count-in trashes
+the takes". 3 `engine_record_test` "punch without locators records as before",
+"cycle on: the recording still runs through, no second take" (the range is the
+locators entity; no second range exists in the model). 4 `transport_methods_test`
+"transport.set_punch, set_preroll and set_count_in reach the port and return the
+three states", "punch, pre-roll and count-in refuse bad params before the port",
+"... without a port not_supported, a port's no_device passes through",
+"transport.changed carries the three states and is published once per actual
+change", "... a duplicate requestId is cached and a stale expectedRevision runs
+nothing", "engine.capabilities lists set_punch, set_preroll and set_count_in with
+features punch, preroll and countIn"; `mcp_adapter_test` "set_punch, set_preroll
+and set_count_in wrap their methods one to one under propose" and the propose
+tool list; `protocol_parity_test` and Node `protocol-parity` (the tables, the
+three schema docs and `capabilities-full.json`); `engine_launch_test` "punch,
+pre-roll and count-in set on the wire read back in engine.status". 5 none
+(loop takes stay `m6b-loop-takes`; no UI, tour states changed: none). Under
+device-side SRC the count-in is exact in session frames and the punch switches
+within one graph block (spec, "Click", "Latency model"); the exact cases run on
+the non-SRC manual device.
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
@@ -539,6 +602,7 @@ window), `mockup-fidelity.test.js` "the chrome's gate is report ..." (gate
 | Feature | N | D | U | E | F | M (tour) | Platforms | Gaps |
 |---|---|---|---|---|---|---|---|---|
 | m5b-ui-plan-metadata | | | Y (`plan-store`: title, intent and actor kept, a rejected plan.changed with its note merged with no request, an event without a note re-reads, approved re-reads; `plan-name`: the title, the first step and "N steps", M5 wording without the feature, generic; `agents`: engine.status and agent.changed parsed, the shown agent, the row's words, a catalog entry per MCP tool of `protocol-mcp-v0.md` in three locales, cleared without an engine, nothing requested without the feature; `plans-tab`: the agent row, title and intent against mockup.html, the three empty boxes with reduced capabilities, an untitled plan, "No agent connected"; `plan-panel`, `plan-card`: history titles, the actor in the detail, the rejection note; `audition-banner`, `toast-arrivals`: the title; `plan-bidi`: isolates; `i18n-catalogs`) | Y (`plan-review.spec` "the agent row, the title and the intent ...": an MCP client named mix-assistant, agent.changed without a reload, toast, history row, reject note, banner, DELETE /v0/mcp; "with reduced capabilities ...": the ids absent, the empty boxes, the same boxes for right-tabs, .p-scroll and plan-summary; `i18n-fit` the row and the titled card in three locales at 1440 and at the right zone's minimum; `mockup-fidelity.spec` the three ids) | report (gate `m5b-ui-plan-metadata`; `mockup-fidelity.test.js` checks the gate, the hold tokens' removal, the calc rules and the unmasked history rows) | 13 to 22, 41 | all three | - |
+| m5b-ui-project (UR-4) | | | Y (`projects`: the recent list and the launch choice; `app-menu`: the renderer's menu model and main's template; `key-preset`: Mod+N/O/S, `studio.setup` and `project.openRecent.*` unbound; `project-controller`: New, Open, Save, the refusals, no shell port; `saved-mark`; `session-client`: the session epoch; `studio-setup`: rows, select, restore, status fields, SRC, capability; `transport-controls`: the no-device way into Studio Setup; `top-bar`: the name and the mark; `start-view`; `renderer-sources`, `i18n-catalogs`, `i18n-no-literals`, `test/ui-tokens.test.js`) | Y (`project.spec`: start view, New by Ctrl+N, relaunch on the last bundle, start view when it is gone, the native menu in en and zh-TW, Open Recent, one `session.save` per Ctrl+S, the lock refusal with the path, the saved mark across Save and a relaunch, criterion B's document hash round trip, `SIANN_SESSION_DIR`; `studio-setup.spec`: the fake device's channels, a selection and the status fields, the no-device tooltip and click, a refused open without a second select; `plain-tab.spec`: no start view, no New or Open; `i18n-fit` the new controls in four locales) | report (no part of `manifest.json` is this feature's; the top bar's session name changes in every state) | the top bar's title in every state; appends 29 (start view) and 30 (Studio Setup) | 3 | - (6: the restore after a refused open from a running device is unit only, section 3.2) |
 
 Per acceptance item (`m5b-ui-plan-metadata`): 1 `plan-name`, `plans-tab`,
 `plan-panel`, `audition-banner`, `toast-arrivals`, e2e `plan-review`; 2
@@ -553,17 +617,32 @@ the tour (13 to 22, 41); 7 `plans-tab` (structure against mockup.html lines
 window), `mockup-fidelity.test.js` (gate `report`, history rows unmasked), the
 side-by-side screenshots by eye.
 
+Per acceptance item (`m5b-ui-project`): 1 app unit `key-preset` "New, Open and
+Save are Cubase's keys ...", `app-menu` (the model in three locales, the
+template's accelerators, `registerAccelerator: false`, `triggeredByAccelerator`),
+`project-controller` "without a shell port ...", `renderer-sources`, e2e
+`project` (c), `plain-tab`; 2 `project-controller`, `session-client` "the
+session epoch ...", e2e `project` (a) and (d); 3 `projects` "launchSession ...",
+e2e `project` (b) and (g); 4 `saved-mark`, `top-bar`, `status-bar` "the saved
+revision is the saved mark's baseline ...", e2e `project` (c) and (e) (the status
+bar's saved revision with the mark);
+5 e2e `project` (f); 6 `studio-setup`, `transport-controls` "with no device and
+Studio Setup ...", e2e `studio-setup`; 7 `i18n-catalogs`, e2e `i18n-fit`, the
+tour (29 and 30, the top bar of every state).
+
 | Feature | U | E | F | B | M (tour) | Platforms | Gaps |
 |---|---|---|---|---|---|---|---|
 | m5b-ui-ghosts (P2-1, P2-2) | Y (`plan-ghosts`: one test per kind of 4.2 (track.add with `track-ghost`, `lane-ghost`, `strip-ghost` and `ghost-2`, `ghost-3`; clip.place, clip.move, clip.trim, clip.remove, track.remove with its cascade (kept with the `track.remove` when entity-homes would home a clip to an earlier step that only shares its media), gain, pan, mute, solo, rename, locators), an unticked step contributes none, values from `before` with the ticked steps applied in order, the 1-based step number in the full plan, no ghost on a track that neither exists nor is added by a ticked step, no preview no ghosts; `plan-name`, `audition-banner` (the banner through the helper, the generic line); `review-store` (selection, ticks, preview, hot and pinned step, the toggle, the reviewable predicate, a reconnect); `timeline-ghosts` (the boxes, the arrow, the ghost lane, the locator band at two zooms; the 38 % and the hatch constants); `timeline-layers` (a ghost change redraws the content, a hovered step only the overlay, a playhead-only frame neither; the parts `clip-ghost-new`, `clip-ghost-move`, `lane-ghost`; a removed track's lane cross-hatched with its step, `lane-ghost-remove`; a reveal of a gain, pan, mute, solo or rename ghost scrolls the lanes to its track's row and never sideways); `track-list-port` (also the gain readout without units, both names in their own elements, a removed track's header dimmed with its step badge), `strip-port` (the rename as the name tag's one grid item), `knob`, `inspector-port` (also both values with the unit once, the Volume slider's ghost thumb at each ticked step's gain joined to the thumb before it and the Pan slider's violet tick, aria-hidden, none with the ghosts off, their shell.css rules in the strip's `.cap.ghost` look on the --ai tokens, the dashed ring on M and S, Agent changes from the plan's ticked steps on the track and its clips with the ghosts shown or hidden, an applied plan that changed only the track's clips), `toolbar-port`, `plans-tab` against th(), strip(), knob(), sec(), the toolbar block and step() evaluated from mockup.html; `key-preset`, `key-dispatcher` (Mod+Alt+G); `i18n-catalogs`) | Y (`ghosts.spec`: the ghost list against every kind and the ticked steps, each id in the window, hover and `.go` (keyboard, the MixConsole shown, the pin, no request), a click on a ghost cap and a ghost clip pins the row, the pill and Ctrl+Alt+G, no ghost or pill for an applied, rejected or stale plan, the request log, room for both values and names (the header's gain clears its pan, the Inspector's values inside their row and zone, the name tag on one line, the header's old name giving way first), the Inspector's sliders (the ghost thumb at -6.0 dB joined to the real thumb, the violet tick at L20, aria-hidden, on --ai, gone with the step unticked and with the ghosts off), Agent changes listing a track's clip steps with the ghosts toggled off, a removed track's header and lane, the content draws while playing, reduced motion; `i18n-fit` (pill, `.tog`, `.go`, ghost labels in four locales)) | report (`m5b-ui-ghosts`; side-by-side screenshots of the toolbar, track list, event display, MixConsole and Inspector in en and zh-TW) | Y (`mockup-fidelity`: the gate report, the two hold tokens gone, `ghost-2` owned by the `*ghost*` rule; `ui-tokens`) | 13 to 18 (ghosts and the pill), the toolbar and the Inspector's Agent changes in every state with a selected track; 26 ghosts in the event display, 27 ghosts on the MixConsole; the Pool's state renumbered from 26 to 31 | 3 | - (8: the screenshots, by eye (maintainer)) |
+| m5b-ui-inserts-master (UR-10, E-11) | Y (`read-model`: the master gesture with the entity absent (start 0, the synthetic entity), kept across unrelated deltas, dropped by the commit that adds or removes `master:master`; `gesture-controller`: target `{ref: master:master, param: gain}`, one `gesture.end`; `strip-port`, `strip-model`: the master's `.ftrack` with `.unity` and `.cap` at the taper (0 dB at 75.0 %), its readout, the M5 meter without `features.masterGain`, the track strips' `.ins` with a `.slot` per `plugin_slot` in `inserts` order, `.slot.empty` filling to two, then one after two or more, bypass, `e` and Remove in a slot, no slot without plugins; `inspector-port`: `sec('Inserts')` with `.islot` and its `em` holding `e`, then one `.islot.empty`, the `calc()` box without plugins; `insert-rack`: rack rows, the insert index, the slot state from `engine.status plugins[]`; `plugin-picker`: approved installs by name and format, search, Approve after a confirmation naming the file, a refused approval's code and message, `plugin.instantiate` at the end of the chain, a failed job's code; `plan-ghosts`: master-gain, insert-add, insert-remove, insert-bypass, unticked steps, an insert on a proposed track; `layout`: `racks.inserts` parsed and toggled; `capabilities`: the engine's real `features.plugins`, the no-plugins and no-master fixtures; `engine-status`: `plugins[]` by slot) | Y (`mixer`: the master fader commits one `master.set_gain`, Shift fine, Ctrl-click 0.0 dB, undo, the peak value resets on click; `inserts` block A (`SIANN_TEST_PLUGIN_CLAP`, core engine, three OSes): approve in the picker, insert, bypass, remove, the undo of each, a rack of three that scrolls, the Inspector's list, the Inserts switch kept across a reload, `editor_failed` on the core engine; block B (`SIANN_DESKTOP_ENGINE_EXE` and `SIANN_TEST_PLUGIN_CLAP`, Windows): `e` opens and closes the editor; block C (no gate): the no-plugins and no-master fixtures; `ghosts`: the master's ghost cap and both values, the bypass ring and the dimmed removal on a real slot; `i18n-fit`: the switch, picker, slot buttons and Inspector section in the three locales) | report (`m5b-ui-inserts-master`; side-by-side screenshots of the MixConsole, the Inspector and the lower tab row in en and zh-TW; the picker and the reduced-capability states as app-only screenshots) | Y (`mockup-fidelity`: the gate report, `--hold-inspector-inserts-h` gone; `ui-tokens`; `protocol-parity` with the new fixtures) | 04, 07, 08, 09 retaken (the master fader, the racks); 34 appended (a rack with a plugin, the picker open; needs `SIANN_TEST_PLUGIN_CLAP`) | 3 (block B: Windows) | - (the screenshots, by eye (maintainer)) |
+| m5b-ui-edit-more | Y (`glue-commands`: adjacent continuous pieces give clip.remove and clip.trim, the fade rule (fade in kept, the last fade out, `"0"` when the last has none), split then glue restores the entity, each refusal reason, Alt joins the run, the selection's runs, expectedRevision; `clipboard-commands`: copyClips, cutCommand, pasteCommand at the cursor and the origin (tracks and offsets kept, a gone track or media left out, null when none remains), repeatCommand (k spans, 0 or invalid null), repeatCountFromDrag; `nudge-commands`: position (the selection stops at 0), start (trim and move, clamped at sourceStart 0 and one frame), end (clamped to the media), one list; `snap`: SNAP_TYPES, Grid unchanged, Grid Relative keeps the offset (whole steps), Events and Magnetic Cursor within SNAP_MAGNET_PX at two zooms, never a dragged clip, off and ignore are the identity; `selection`: rubberBandSelection (edges inclusive, Shift adds), selectNone; `info-line-edit`: parsePosition, parseLength, parseDb round trips and garbage, infoLineEditCommand relative and absolute for start, length, offset and volume with their clamps, one list, null when unchanged; `key-preset`: the rows of 4, 5, Mod+X/C/V, Alt+V, Mod+K, the nudges and Mod+Shift+A, edit.glue unbound; `toolbar-port`: tools 4 and 5 against tool(), the holds of 2 and 6 to 9 only, the snap type in `<em>`, the snap type menu; `info-line-port`: the four editable fields keep `span.f > b.num`, end read-only; `layout`: `snap.type` persisted with its fallback; `timeline-geometry`: the repeat handle's hit part; `timeline-layers`: the repeat handle drawn on a selected clip; `edit-basics-mod-keys`: the new spec too; `i18n-catalogs`) | Y (`edit-more.spec`: one test per operation, each one revision and one undo restoring the document hash: glue after a split (the pre-split hash), a refused glue (toast, no revision), Alt-click glue, glue of a selection, erase, cut, copy and paste at the cursor, Alt+V, Ctrl+K with its count, the repeat handle, Ctrl+Left/Right, the four Alt nudges, the info line relative and Ctrl absolute on two clips, Events and Magnetic Cursor on a drag; the rubber band and Ctrl+Shift+A (no revision); tool-4 and tool-5 in the window; a reduced-capabilities fixture leaves a tool's box empty; `i18n-fit`: tools 4 and 5, the snap type menu and the repeat dialog in four locales) | report (`m5b-ui-edit-more`; side-by-side screenshots of the toolbar and the info line in en and zh-TW; from the app alone, in both locales, the fidelity run's `repeat-dialog.app.png` (Ctrl+K), `project-zone.snap-type-menu.app.png` and `project-zone.info-edit.app.png` (the info line's Start open as a text field), each with a note in `report.md`) | Y (`mockup-fidelity`: the gate report, the holds of tools 4 and 5 gone, `tool-2` as the pending example; `ui-tokens`) | the toolbar in every state; 32 (two pieces glued, the snap type menu open) | 3 | - (10: the screenshots, by eye (maintainer)) |
+| m5b-ui-audition (P2-3) | Y (`branch-snapshot`: proposal.changed fetches its refs at the branch revision once, a second one refetches the union at the new revision, a late answer of an older request is dropped, dropped on proposal.closed of its branch, on any status but connected and on every syncCount change, held again only from the next proposal.changed, never from session.inspect; `edit-guard` (the predicate, the table of structural ops, the one catalog key in three locales); `heard-ghosts` (solid from the branch with main's value as `replaced`, unchanged without a snapshot, a gesture's value a solid ghost of step 0); `audition-keys` (`Shift+A` window, `Mod+Enter` right zone only, neither in a text field, Enter and NumpadEnter kept, Ctrl+Shift+A not taken, `flipTarget`, `primaryAction`); `top-bar` (the chip against the template's line evaluated from mockup.html, `main r<head>`, the plan's name and title while heard, the generic word, no hold; before the first snapshot an empty session name and no chip with nothing in its place, UI redesign 10.11, 15); `edit-guard`, `edit-guard-ui` and `heard-ghosts` also hold the inserts of `m5b-ui-inserts-master` under the guard (bypass, Remove, the empty slot, the picker's choice; e stays) and its ghosts solid while heard; `plan-name` (`heardPlanName`); `plans-tab`, `plan-panel` (the primary's last child the mockup's `<kbd>⏎</kbd>` for Approve N of M, Apply and Merge, no other kbd); `shell-frame` (`data-hearing`); `strip-port` (the solid ghost cap, pan tick and M ring, the real cap marked `data-replaced`, no badge on step 0, none of it on dashed ghosts); `timeline-ghosts` (`ghostStroke`); `timeline-layers` (heard: no lane or clip hatch and no dashed outline on a ghost clip, the proposed lane, a removed lane, a removed clip and the locator band, the lanes' ghost body, a moved clip's original a faint `--ai-a300` outline instead of 38 %); `edit-guard-ui` (Split, M and S disabled with the reason, the fader and knob live); `i18n-catalogs`) | Y (`audition.spec`: frame (a fixed `::after` over the window with a computed 2 px `--ai` border, no pointer), banner, chip and both switches follow audition.changed from a second client; Shift+A both ways and nothing with no proposal (a watcher round-trip); Ctrl+Return merges from the right zone, applies a validated plan, does nothing from the project zone; solid ghosts with main's values as the outline in the hook, the canvas and the strip, dashed after a reload with the frame kept; the guard on Add Track, Split, M and S with the reason, T, Delete, Alt+X, Ctrl+D, M, S, a clip drag and a rename inert with main's head unchanged, a fader drag ending in proposal.changed on the branch as a solid un-numbered ghost; Merge and Discard (proposal.closed merged true and false, the card's state); a partial approval merging exactly its two ticked steps; the engine killed while heard: no frame, banner or solid ghost, the chip `main r<recovered>`, no fetch at the old branch revision; `shell-layout` (the chip shown at 1440 and 1301 px, gone at 1280 and 1080); `i18n-fit` (the chip on one line inside its group with its title, the Plans button in the window, the session's name whole beside the chip, the primary with its kbd, in four locales); `plan-review`, `i18n` (the primary's text with its kbd)) | report (`m5b-ui-audition`; side-by-side screenshots of the top bar in en and zh-TW; 17 and 28 app-only, the mockup has no hearing state) | Y (`mockup-fidelity`: the gate report, `--hold-branch-chip-w` and its rules gone, the 1300 px rule names the chip, the frame on `--space-half` and `--ai`, the proposed header and strip unhatched while heard, the session's name not shrinking beside the chip; `ui-tokens`) | the top bar in every state but 05 (the chip); the primary's kbd in 13 to 15, 17, 18, 20, 21, 26 and 27; 17 hearing the proposal (frame, chip, solid ghosts); 28 appended (the 6-step plan auditioned, solid clip and track ghosts, the Split tool disabled) | 3 | - (7: the screenshots, by eye (maintainer)). The violet frame, the solid ghost and the faint outline are app-only `shell.css` rules on existing tokens; offline the chip keeps the last `main r<head>` |
 
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 60/133 (the nine UI features that own mockup parts each gained an item for those parts, layer F: since 2026-11-17 "ported from the mockup's markup, side-by-side screenshot attached", with the fidelity run as a report; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
-`m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
+ctest, ...): M5b 67/133 (the nine UI features that own mockup parts each gained an item for those parts, layer F: since 2026-11-17 "ported from the mockup's markup, side-by-side screenshot attached", with the fidelity run as a report; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+`m5b-engine-markers` 0/4 (`m5b-engine-buses-sends`, `m5b-engine-punch-count-in` and `m5b-ui-edit-more`, 10/10 since its plan, moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:
@@ -593,18 +672,19 @@ board run cannot run on hosted runners and need a named owner (rule 6).
 
 | Subcommand / module | Tests (`test/`) | Line % | Gaps |
 |---|---|---|---|
-| `run <cmd> --runner`, `--help` | `bridge-cli` (fake runner) | `bin/siann.js` 74 % / branch 37 % | |
+| `run <cmd> --runner`, `--help`, usage errors | `bridge-cli` (fake runner), `bridge-cli-usage` (every subcommand's missing arguments, unknown commands and options, `--help` after a command) | `bin/siann.js` 100 % / branch 96 % (37 % at the audit; gated at 70 % on ubuntu) | |
 | `plan intake` | `intake-plan`, `skill-docs` | `intake-plan.js` 94 % | |
-| `workflow import-pack` | `import-pack-workflow`, `import-pack-plan` | `import-pack-plan.js` 81 % | `--run` untested |
-| `workflow validate-plan`, `approve-plan`, `apply-plan` | `import-pack-plan` (one CLI test) | | `--run` untested |
-| `workflow reject-plan` | **none** | | CLI and `rejectImportPackPlan` untested |
-| `rollback` | `rollback-workflow` | `rollback.js` 87 % / branch 50 % | `--run` untested |
+| `workflow import-pack` | `import-pack-workflow`, `import-pack-plan`, `bridge-cli-run-flags` (`--run` against the fake engine; `--plan --run` refused; G against siann-engine) | `import-pack-plan.js` 93 % | |
+| `workflow validate-plan`, `approve-plan`, `apply-plan` | `import-pack-plan` (one CLI test), `bridge-cli-reject` (both refuse a rejected plan), `bridge-cli-run-flags` (`apply-plan --run` against the fake engine; G against siann-engine) | | |
+| `workflow reject-plan` | `bridge-cli-reject`, `import-pack-plan` (rejectImportPackPlan units) | | |
+| `rollback` | `rollback-workflow`, `bridge-cli-run-flags` (`--run` against the fake engine; G: `--run` against siann-engine keeps media/, renders/ and peaks/ byte for byte) | `rollback.js` 100 % / branch 100 % | |
 | `export dawproject` | `dawproject-export`, `smoke-dawproject` | `dawproject.js` 95 % | |
 | `live import-pack` | `live-import-pack` (fake runtime) | `live-import-pack.js` 93 % / branch 37 % | real run: G only |
-| `validate-journal` | `validateJournal` unit in `bridge-runner` | | CLI untested |
+| `validate-journal` | `bridge-cli-journal`, `bridge-runner` (validateJournal codes) | | |
 | JCS / Merkle / plan hash | `jcs`, `merkle`, `plan-hash`, `fixture-parity` | 100 / 98 / 94 % | |
 | runtime client | `ws-codec`, `runtime-client` (in-process fake engine), `runtime-engine` (G) | | |
 | command runner | `bridge-runner` (fake engine), `bridge-cli` and `rollback-workflow` (fake engine process), G | | |
+| rollback keeps media and renders | native: `plan_methods_test` "plan.rollback leaves the render, the media file and its peaks on disk"; G: `bridge-cli-run-flags` "G: rollback --run against siann-engine" | | |
 
 There is **no MCP server in Node**: MCP is served by the native engine
 (`native/libs/protocol/src/mcp_adapter.cpp`, `POST /v0/mcp`). The Node bridge
@@ -641,6 +721,10 @@ onto session.create, media.import, plans, session.save and render.start.
 | `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | the feature's build agent attaches the states; the maintainer reviews at the `ux-review` gate |
 | `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), as a report that never fails the job (decided by the maintainer, 2026-11-17), so it is run and uploaded on every such PR, not left to a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `mockup-fidelity.spec.ts` "the mockup's measurement (<locale>)" (F on the mockup alone) | `SIANN_FIDELITY_MOCKUP_ONLY=1` with `SIANN_FIDELITY=1` and `SIANN_FIDELITY_MOCKUP_ROOT` (set by `scripts/fidelity-mockup-compare.js`); with the flag set the spec's app gate test skips, without it this test skips | **Not in CI**: it measures a worktree of the base commit, which the CI checkout does not have. The implementer of a change to `tokens.css`, `app/renderer/ui/*.css` or the mockup's script runs `node scripts/fidelity-mockup-compare.js` before the PR (first `m5-ui-tokens-spacing`) and attaches the result; the reviewer checks it at review |
+| `studio-setup` "a refused selection sends the previous device again ..." (U only) | the fake device cannot refuse an open after one succeeded: `--fake-open-failures N` counts from the launch's open, so the e2e (`studio-setup.spec`) drives only the case with no device running, where nothing is sent back | the unit test runs in `npm test` on every OS; a hardware device held by another program is the maintainer's bench, at the `audio-hardware` gate |
+| `inserts.spec.ts` block A (insert, bypass, remove and their undo; the picker's approval) | `SIANN_TEST_PLUGIN_CLAP` alone: siann_test_plugin's CLAP from the core build (the desktop build's where that build exists), its directory passed as `--plugin-dir` through `SIANN_ENGINE_TEST_ARGS`; skipped without it | **In CI** on the three OSes: `check-all.js`'s app step and CI's app job build `siann_test_plugin_CLAP` in the core build and export the variable; locally `node scripts/check-all.js --only app` |
+| `inserts.spec.ts` block B (a slot's `e` opens and closes the CLAP editor) | `SIANN_DESKTOP_ENGINE_EXE` and `SIANN_TEST_PLUGIN_CLAP`, Windows only (the core engine answers `editor_failed`; editor ownership as `editor.spec.ts`) | the desktop job on Windows, and `check-all.js --app` when the desktop preset is built |
+| `bridge-cli-run-flags.test.js` `G:` cases (each `--run` subcommand, and rollback keeping media, renders and peaks, against siann-engine) | `SIANN_RUN_ENGINE_TESTS=1` (layer G) | **In CI**: the `bridge-engine` job on the three OSes; locally `node scripts/check-all.js --only bridge`. Gated because they need a built `siann-engine`, which the `node` job does not build; their ungated halves (the fake engine) run in `npm test` |
 | `[.][hostile-crash-child]` | hidden helper | run by its parent test; fine |
 | M2 device bench, M0 macOS bundle signing, M4 JUCE `processBlock` audit, DAWproject into Cubase (L4) | human gates | maintainer, per milestone exit / release |
 
@@ -705,8 +789,9 @@ Not covered by the parity tests:
   `list_commands`, `reject_plan`, `discard_proposal`, `list_plans`,
   `preview_plan`, `undo`, `redo`, transport and device tools.
 - App: `plan.submit`, `plan.rollback`, `render.start`, `job.status`,
-  `session.create`, `media.import`, `record.*`, `meter.reset_loudness`, devices
-  and plugins have no app client yet (expected in M5b). `transport.play`/`stop`/`locate`
+  `session.create`, `media.import`, `record.*`, `meter.reset_loudness`,
+  `transport.set_punch`/`set_preroll`/`set_count_in` (until `m5b-ui-recording`),
+  devices and plugins have no app client yet (expected in M5b). `transport.play`/`stop`/`locate`
   and `session.undo`/`redo` have one since m5-ui-transport
   (`model/transport.ts`, `undo-redo.test`), `transport.set_cycle`/`set_click`
   since m5-ui-loop-click (`model/loop-click.ts`, `locator-commands.test`), and
@@ -725,27 +810,26 @@ Taken on Windows, Node 22, 2026-11-14.
 
 | Area | How | Lines | Branches | Functions | Least covered |
 |---|---|---|---|---|---|
-| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 92.7 % | 80.7 % | 97.0 % | Retaken with `m5b-bridge-native-client` (2026-11-15; the audit's figures were 89.2 / 70.9 / 96.0 with `client.js` 84/57): `bin/siann.js` 80/42, `import-pack-plan.js` 81/72, `live-import-pack.js` 100/46 (branch), `import-pack.js` 94/75 (branch), `runner.js` 94/79, `client.js` 95/84, `ws.js` 97/93, `rollback.js` 100/100 |
+| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 96.5 % | 87.0 % | 97.7 % | Retaken with `m5b-bridge-cli-coverage` (2026-11-18, Windows, Node 24): `bin/siann.js` 100/96, `import-pack-plan.js` 93/82, `live-import-pack.js` 100/46 (branch), `import-pack.js` 95/85, `runner.js` 97/87, `client.js` 96/85, `ws.js` 97/93, `rollback.js` 100/100. CI's node job on ubuntu fails below 70 % branch coverage of `bin/**` (`--test-coverage-include='bin/**' --test-coverage-branches=70`). Before, with `m5b-bridge-native-client` (2026-11-15; the audit's figures were 89.2 / 70.9 / 96.0 with `client.js` 84/57): `bin/siann.js` 80/42, `import-pack-plan.js` 81/72, `live-import-pack.js` 100/46 (branch), `import-pack.js` 94/75 (branch), `runner.js` 94/79, `client.js` 95/84, `ws.js` 97/93, `rollback.js` 100/100 |
 | Node, incl. `scripts/` | same, no include filter | 86.5 % | 78.0 % | 91.2 % | `scripts/check-all.js` 53 % (the build steps), `create-daw-manifest.js` 73 % |
 | App, unit tests only | `npm run build` then `node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js` | 89.7 % of loaded files | 88.2 % | 79.7 % | `PlanPanel` 33 %, `TrackListDivider` 32 %, `ValueControl` 37 %, `Mixer` 42 %, `TrackList` 49 %, `Timeline` 51 %, `StepList` 72 %, `plans/diff` 79 %, `keys/commands` 80 %. Never loaded by a unit test: `main.ts`, `preload.ts`, `App.tsx`, `Shell.tsx`, `TopBar.tsx`, `index.tsx` (covered by e2e only) |
 | App e2e | not measured | | | | proposal: `NODE_V8_COVERAGE` for the main process and Playwright's `page.coverage` (Chromium) for the renderer, merged with c8-style tooling in the app job |
 | Native | not measured (heavy) | | | | proposal: a nightly ubuntu job, Clang `-fprofile-instr-generate -fcoverage-mapping`, ctest with `LLVM_PROFILE_FILE=%p.profraw`, `llvm-profdata merge`, `llvm-cov report --ignore-filename-regex='(_deps|tests)/'`; or GCC `--coverage` + gcovr. Report only, no threshold at first |
 
 The low React-component numbers are expected: those components are exercised by
-Playwright, which is not measured. The low `bin/siann.js` branch figure is the
-error paths of each subcommand (usage errors, `--run`).
+Playwright, which is not measured. The `bin/siann.js` branch figure, 42 % before
+`m5b-bridge-cli-coverage`, was the error paths of each subcommand (usage errors,
+`--run`); their tests brought it to 96 %.
 
 ## 6. Gaps ranked by risk
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
-| 5 | m3-rollback 2: media/renders never deleted by rollback | Medium: data loss | native: render a file, roll back the plan, assert the file and the media entry's blob remain | M3 follow-up |
 | 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
 | 7 | Desktop (JUCE) job skipped on PRs that change core libs | Medium: JUCE-only breakage lands on main | add `native/libs/playback`, `graph`, `realtime` to `DESKTOP_PATHS`, or rely on the nightly and track red nightlies | infra |
 | 8 | macOS-specific behaviour manual only (editor float/level, `m0-macos-bundle`, AU third-party) | Medium | an XCTest-free check in the desktop job: window level of an open editor via `CGWindowListCopyWindowInfo`; bundle `Info.plist` assertions once m0-macos-bundle is built | M0 / M5 exit |
 | 9 | Performance budgets of UI spec 5.6 (64 tracks, frame time, memory, cold start) have no scenario | Medium for M5b/M6c | Playwright perf scenario reading `performance.measure` marks; nightly, report-only first | UI phase 4 / M6c |
-| 10 | Bridge CLI holes: `workflow reject-plan`, `validate-journal` CLI, every `--run` flag | Low-medium | CLI tests with the fake runner (as `bridge-cli.test.js` does) | Node bridge, next bridge change |
 | 11 | `read-model-sequence.json` never checked against the engine | Low-medium | native test that replays the sequence's commands and compares the emitted events | M5 follow-up |
 | 12 | Long tests not on macOS | Low | add macos-latest to `long-tests.yml` | infra |
 | 13 | m4-crash-recovery 3, m4-engine-device 3: ordering / link not asserted | Low | ctest: `siann-engine --print-error-mode` (test-only flag) before any plugin; CMake check that `siann_engine_*_tests` link `siann_rt_alloc_guard` | M4 follow-up |

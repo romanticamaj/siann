@@ -128,6 +128,7 @@ class FakeClient implements AgentClient {
     error: null,
     legend: null,
     capabilities: null,
+    epoch: 0,
   };
   readonly requests: string[] = [];
   status: () => unknown = () => ({ agents: [] });

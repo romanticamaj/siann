@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <climits>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 
@@ -487,27 +488,58 @@ void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
     if (current_ != nullptr) {
         current_->locate(command.generation, command.position);
     }
+    if (countIn_.active) {
+        endCountIn(false);  // a newer locate ends a count-in; it may carry its own
+    }
     if (command.play && !playing_.load()) {
-        // Start, then undo it if pause() covers this generation. With
-        // sequentially consistent operations either this thread sees the
-        // pause or pause()'s store of false comes after ours, so a pause
-        // racing a queued start always wins.
-        playing_.store(true);
-        if (command.generation <= pausedThrough_.load()) {
-            playing_.store(false);
-        } else if (current_ != nullptr && current_->monitors() && pathRise_ == 0 && !pathDuck_) {
-            // A graph that monitors was audible while stopped (its monitored
-            // input): raise only the sources, which were silent, so the input
-            // keeps its level across the start.
-            pathEdges_ = current_->startEdges();
-            pathRise_ = options_.fadeFrames;
-            startRise_ = true;
+        if (command.countIn.beats > 0 && command.countIn.beatFrames > 0.0 &&
+            command.generation > pausedThrough_.load()) {
+            // Held at the position for the count-in; renderBlock starts it.
+            countIn_ = detail::CountInRun{true,
+                                          command.generation,
+                                          command.countIn.beats,
+                                          command.countIn.beatFrames,
+                                          0,
+                                          std::llround(command.countIn.beats * command.countIn.beatFrames),
+                                          0,
+                                          0};
+            countInGeneration_.store(command.generation, std::memory_order_release);
+            countingIn_.store(true, std::memory_order_release);
         } else {
-            riseRemaining_ = options_.fadeFrames;  // from silence: fade in
+            startRolling(command.generation);
         }
     }
     // After the playhead: a reader that sees this generation sees its position.
     appliedLocate_.store(command.generation, std::memory_order_release);
+}
+
+void GraphDriver::startRolling(std::uint64_t generation) noexcept {
+    // Start, then undo it if pause() covers this generation. With sequentially
+    // consistent operations either this thread sees the pause or pause()'s
+    // store of false comes after ours, so a pause racing a queued start always
+    // wins.
+    playing_.store(true);
+    if (generation <= pausedThrough_.load()) {
+        playing_.store(false);
+    } else if (current_ != nullptr && current_->monitors() && pathRise_ == 0 && !pathDuck_) {
+        // A graph that monitors was audible while stopped (its monitored
+        // input): raise only the sources, which were silent, so the input
+        // keeps its level across the start.
+        pathEdges_ = current_->startEdges();
+        pathRise_ = options_.fadeFrames;
+        startRise_ = true;
+    } else {
+        riseRemaining_ = options_.fadeFrames;  // from silence: fade in
+    }
+}
+
+void GraphDriver::endCountIn(bool start) noexcept {
+    const std::uint64_t generation = countIn_.generation;
+    countIn_.active = false;
+    countingIn_.store(false, std::memory_order_release);
+    if (start) {
+        startRolling(generation);
+    }
 }
 
 void GraphDriver::replayLocate() noexcept {
@@ -597,6 +629,10 @@ void GraphDriver::finishStop() {
     pathRise_ = 0;
     pathEdges_ = {};
     startRise_ = false;
+    if (countIn_.active) {
+        endCountIn(false);  // the device stopped: the transport stays stopped
+    }
+    countInBurst_ = static_cast<std::size_t>(-1);
     if (locatePending_) {
         applyLocate(pendingLocate_);
         locatePending_ = false;
@@ -678,28 +714,38 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
 
     drainParams();
     applyLoudnessReset();
+    if (countIn_.active && countIn_.generation <= pausedThrough_.load()) {
+        endCountIn(false);  // stopped during the count-in: it ends, the transport stays
+    }
 
     const bool playing = playing_.load(std::memory_order_acquire);
     if (src_ == nullptr) {
         // After this block's transport command: the input block lines up with
         // the output block rendered from the current playhead in this same
-        // callback, so a start captures from its first block.
+        // callback, so a start captures from its first block. A count-in that
+        // ends inside this callback splits it: the input before the split is
+        // the held transport's, the rest is captured from the playhead it holds.
         const std::int64_t stamp = playhead_.load(std::memory_order_relaxed);
-        if (recorder_ != nullptr) {
-            recorder_->capture(input, stamp, playing);
-        }
-        if (bank_) {
-            bank_->process(input, stamp, playing);
+        if (countIn_.active) {
+            const int split =
+                static_cast<int>(std::min<std::int64_t>(countIn_.end - countIn_.elapsed, input.frames));
+            captureDirect(input, 0, split, stamp, false);
+            if (split < input.frames) {
+                captureDirect(input, split, input.frames - split, stamp, true);
+            }
+        } else {
+            captureDirect(input, 0, input.frames, stamp, playing);
         }
     }
+    bool rolling = playing;  // turns true where a count-in ends
     if (src_ != nullptr) {
-        processResampled(input, output, playing);
+        processResampled(input, output, rolling);
     } else {
         // The callback's own input, frame for frame with the output it renders.
         renderInput_ = input.channels != nullptr && input.frames >= output.frames ? input : host::AudioBufferView{};
         const int chunk = current_ != nullptr ? current_->maxBlockFrames() : output.frames;
         for (int offset = 0; offset < output.frames; offset += chunk) {
-            renderBlock(output, offset, std::min(chunk, output.frames - offset), playing);
+            renderBlock(output, offset, std::min(chunk, output.frames - offset), rolling);
         }
         renderInput_ = {};
     }
@@ -836,6 +882,7 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
     const int channels = std::min(output.channelCount, s.outputChannels);
     std::int64_t steps = 0;
     int written = 0;
+    bool rolling = playing;  // turns true where a count-in ends inside a step
     while (written < output.frames) {
         if (s.carryCount > 0) {
             const int n = std::min(s.carryCount, output.frames - written);
@@ -858,12 +905,12 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
             srcUnderruns_.fetch_add(static_cast<std::uint64_t>(output.frames - written), std::memory_order_relaxed);
             break;
         }
-        srcStep(playing);
+        srcStep(rolling);
         ++steps;
     }
 }
 
-void GraphDriver::srcStep(bool playing) noexcept {
+void GraphDriver::srcStep(bool& playing) noexcept {
     SrcPath& s = *src_;
     const int fresh = s.head ^ 1;
     const host::AudioBufferView view{s.slots[fresh].pointers.data(), s.outputChannels, s.block};
@@ -879,10 +926,26 @@ void GraphDriver::srcStep(bool playing) noexcept {
     s.head = fresh;
 }
 
-void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept {
+void GraphDriver::renderBlock(const host::AudioBufferView& output, int offset, int frames, bool& playing) noexcept {
     // Cycle: a block that reaches the right locator renders up to it, wraps,
     // and renders the rest from the left locator (spec, "Cycle").
     while (frames > 0) {
+        if (countIn_.active) {
+            // Count-in: the transport held up to the frame it starts at, then
+            // the rest of the block playing (spec, "Click").
+            const std::int64_t left = countIn_.end - countIn_.elapsed;
+            if (left > 0) {
+                const int span = static_cast<int>(std::min<std::int64_t>(frames, left));
+                renderSpan(output, offset, span, false);
+                offset += span;
+                frames -= span;
+            }
+            if (countIn_.elapsed >= countIn_.end) {
+                endCountIn(true);
+                playing = playing_.load(std::memory_order_acquire);
+            }
+            continue;
+        }
         const std::int64_t position = playhead_.load(std::memory_order_relaxed);
         // While a recording captures, the wrap is suspended (m5b-engine-record).
         const bool wraps = playing && current_ != nullptr && cycle_.enabled && cycle_.left < cycle_.right &&
@@ -945,6 +1008,53 @@ void GraphDriver::addClick(const host::AudioBufferView& output, int offset, int 
         }
     }
     clickCursor_ = position + frames;
+}
+
+void GraphDriver::addCountIn(const host::AudioBufferView& output, int offset, int frames) noexcept {
+    const std::size_t length = clickSound_.normal.size();
+    if (!countIn_.active && countInBurst_ >= length) {
+        return;
+    }
+    const float gain = clickGain_.load(std::memory_order_relaxed);
+    for (int i = 0; i < frames; ++i) {
+        if (countIn_.active && countIn_.nextBeat < countIn_.beats &&
+            countIn_.elapsed + i == countIn_.nextBeatFrame) {
+            countInBurst_ = 0;
+            countInAccent_ = countIn_.nextBeat % 4 == 0;
+            ++countIn_.nextBeat;
+            countIn_.nextBeatFrame = std::llround(countIn_.nextBeat * countIn_.beatFrames);
+        }
+        if (countInBurst_ < length) {
+            const float v = (countInAccent_ ? clickSound_.accent : clickSound_.normal)[countInBurst_] * gain;
+            ++countInBurst_;
+            for (int c = 0; c < output.channelCount; ++c) {
+                output.channel(c)[offset + i] += v;
+            }
+        }
+    }
+    if (countIn_.active) {
+        countIn_.elapsed += frames;
+    }
+}
+
+void GraphDriver::captureDirect(const host::AudioBufferView& input, int offset, int frames, std::int64_t stamp,
+                                bool playing) noexcept {
+    host::AudioBufferView view = input;
+    if (offset > 0 && input.channels != nullptr) {
+        const int channels = std::min(input.channelCount, kMaxRenderInputChannels);
+        for (int c = 0; c < channels; ++c) {
+            captureInputPointers_[static_cast<std::size_t>(c)] = input.channels[c] + offset;
+        }
+        view = host::AudioBufferView{captureInputPointers_.data(), channels, frames};
+    } else {
+        view.frames = frames;
+    }
+    if (recorder_ != nullptr) {
+        recorder_->capture(view, stamp, playing);
+    }
+    if (bank_) {
+        bank_->process(view, stamp, playing);
+    }
 }
 
 void GraphDriver::pushMonitor(const host::AudioBufferView& resampled) noexcept {
@@ -1073,6 +1183,9 @@ void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, in
     if (source != nullptr && playing) {
         addClick(output, offset, frames, position);
     }
+    // The count-in (spec, "Click"): at the same tap, whether or not the metronome
+    // is on, while the transport is held (and the last burst's tail after it).
+    addCountIn(output, offset, frames);
 }
 
 }  // namespace siann::realtime

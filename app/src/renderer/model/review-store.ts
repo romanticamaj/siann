@@ -21,7 +21,15 @@
 // MixConsole when a ghost is on a strip; a click on a ghost pins its step and
 // asks for the Plans tab. The pin lasts until another step is located or the
 // pointer enters another row.
+//
+// While the plan's proposal branch is heard (m5b-ui-audition; UI redesign
+// 4.3) and the branch snapshot (model/branch-snapshot.ts) holds that branch,
+// ghosts() is plans/heard-ghosts.ts's heardGhosts of them: solid, from the
+// branch, with main's values as the outline. Without the snapshot (after a
+// reconnect or a reload, until the next proposal.changed) they stay dashed.
 
+import type { BranchSnapshot } from './branch-snapshot';
+import { heardGhosts } from '../plans/heard-ghosts';
 import { landedLabel } from '../plans/actions';
 import type { PlanPreview } from '../plans/diff';
 import { ghostsOf, hasStripGhost, type Ghost } from '../plans/ghosts';
@@ -34,6 +42,12 @@ type Entity = Readonly<Record<string, unknown>>;
 export interface ReviewClient {
   readonly model: { getSnapshot(): Snapshot | null; subscribe(listener: () => void): () => void };
   request(method: string, params: Record<string, unknown>): Promise<unknown>;
+}
+
+// The branch snapshots (model/branch-snapshot.ts).
+export interface ReviewBranches {
+  get(branch: string): BranchSnapshot | null;
+  subscribe(listener: () => void): () => void;
 }
 
 export interface ReviewPlans {
@@ -79,6 +93,7 @@ const INITIAL: ReviewState = Object.freeze({ selected: null, ticked: null, hotSt
 export class ReviewStore {
   readonly #client: ReviewClient;
   readonly #plans: ReviewPlans;
+  readonly #branches: ReviewBranches | null;
   #state: ReviewState = INITIAL;
   readonly #listeners = new Set<() => void>();
   readonly #reveals = new Set<(request: RevealRequest) => void>();
@@ -86,11 +101,20 @@ export class ReviewStore {
   #shown: string | null = null;
   #previewKey: string | null = null;
   #token = 0;
-  #memo: { plan: PlanEntry; preview: PlanPreview; snapshot: Snapshot | null; ticked: ReadonlySet<number> | null; ghosts: readonly Ghost[] } | null = null;
+  #memo: {
+    plan: PlanEntry;
+    preview: PlanPreview;
+    snapshot: Snapshot | null;
+    ticked: ReadonlySet<number> | null;
+    branch: BranchSnapshot | null;
+    ghosts: readonly Ghost[];
+  } | null = null;
 
-  constructor(options: { client: ReviewClient; plans: ReviewPlans }) {
+  constructor(options: { client: ReviewClient; plans: ReviewPlans; branches?: ReviewBranches }) {
     this.#client = options.client;
     this.#plans = options.plans;
+    this.#branches = options.branches ?? null;
+    if (this.#branches) this.#off.push(this.#branches.subscribe(() => this.#emit()));
     this.#off.push(this.#plans.subscribe(() => this.#refresh()));
     this.#off.push(this.#client.model.subscribe(() => this.#refresh()));
     this.#refresh(false);
@@ -135,11 +159,19 @@ export class ReviewStore {
     if (!this.#state.ghostsOn || !reviewable(plan) || !preview || this.#state.preview?.plan !== plan.hash) return NONE;
     const snapshot = this.#client.model.getSnapshot();
     const ticked = this.#state.ticked;
+    const branch = this.heardBranch(plan);
     const memo = this.#memo;
-    if (memo && memo.plan === plan && memo.preview === preview && memo.snapshot === snapshot && memo.ticked === ticked) return memo.ghosts;
-    const ghosts = Object.freeze(ghostsOf(plan.steps, preview, snapshot, ticked));
-    this.#memo = { plan, preview, snapshot, ticked, ghosts };
+    if (memo && memo.plan === plan && memo.preview === preview && memo.snapshot === snapshot && memo.ticked === ticked && memo.branch === branch) return memo.ghosts;
+    const ghosts = Object.freeze([...heardGhosts(ghostsOf(plan.steps, preview, snapshot, ticked), branch, snapshot)]);
+    this.#memo = { plan, preview, snapshot, ticked, branch, ghosts };
     return ghosts;
+  }
+
+  // The branch snapshot of the plan's proposal while it is heard, else null.
+  heardBranch(plan: PlanEntry | undefined = this.plan()): BranchSnapshot | null {
+    const branch = plan?.proposalBranch;
+    if (!branch || !this.#branches || this.#plans.getSnapshot().heard !== branch) return null;
+    return this.#branches.get(branch);
   }
 
   // The step whose ghosts are outlined (1-based): the hovered one, else the pinned one.

@@ -1,7 +1,7 @@
 // The project zone's content (ADR-0019 point 3; UI redesign spec 2.1, 3.2,
 // 3.3, 5.2, 10.8): the toolbar (Toolbar.tsx, the mockup's: the Object
 // Selection and Split tools, snap and the grid type, auto-scroll, and the
-// last refusal), the read-only info line (InfoLine.tsx), and below them the
+// last refusal), the info line (InfoLine.tsx, editable since m5b-ui-edit-more), and below them the
 // track list, its boundary and the event display, whose two canvases the
 // imperative TimelineCanvas owns through refs. The Pool (Pool.tsx, Ctrl+P or
 // the event display's context menu) lists the media to place from. No drawing state passes through React:
@@ -26,10 +26,20 @@
 // the locators through the LoopClickController (only when the engine lists
 // session.set_locators and the locators feature), and P and Alt+P take the
 // canvas's selection from here.
+// m5b-ui-edit-more: 4 and 5 (Glue, Erase), edit.glue (no key), Ctrl+X, Ctrl+C,
+// Ctrl+V, Alt+V, Ctrl+K (RepeatDialog asks for the count), the nudges, and
+// Ctrl+Shift+A; the toolbar's snap type menu; the info line's typed values
+// (infoLineEditCommand, one command list through the canvas); a refused glue
+// is a toast (the `toasts` store) worded in the locale.
+// m5b-ui-audition (UI redesign 4.5 C5): while a proposal is heard the edit
+// guard (model/edit-guard.ts) holds every structural edit: the canvas's
+// `allows` refuses the structural ops, so no drag, split, place or volume
+// gesture begins, and the structural keys (Delete, Alt+X, Ctrl+D, M, S,
+// Shift+Delete, T) decline. Selecting, zooming and locating stay.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
-import { localeStore, translator, useLocale } from '../i18n/t';
+import { localeStore, translator, useLocale, type MessageKey } from '../i18n/t';
 import type { CommandId, CommandRegistry } from '../keys/commands';
 import type { CapabilitySelector } from '../model/capabilities';
 import { loopClickGates, type LoopClickController } from '../model/loop-click';
@@ -39,14 +49,19 @@ import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
+import { isStructural, structuralBlocked } from '../model/edit-guard';
+import { useHeard } from '../plans/heard-context';
 import { useStepNames } from '../plans/hooks';
 import { planNameParts } from '../plans/plan-name';
 import { useCapabilities } from '../shell/Capable';
 import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
+import type { ToastStore } from '../shell/toast-store';
 import type { TimelineCommand } from './commands';
-import { removeTracksCommand, trackMuteCommand, trackSoloCommand } from './edit-commands';
+import { removeTracksCommand, trackMuteCommand, trackSoloCommand, type GlueRefusal } from './edit-commands';
+import { infoLineEditCommand, type InfoField } from './info-line';
 import { InfoLine } from './InfoLine';
+import { RepeatDialog } from './RepeatDialog';
 import { EventDisplayMenu, Pool } from './Pool';
 import type { TrackSelectMode } from './selection';
 import { IDLE_STATE, TimelineCanvas, type TimelineTestHooks } from './TimelineCanvas';
@@ -91,7 +106,35 @@ export type EditCommand = Extract<
   | 'track.muteSelected'
   | 'track.soloSelected'
   | 'track.removeSelected'
+  | 'tool.glue'
+  | 'tool.erase'
+  | 'edit.glue'
+  | 'edit.cut'
+  | 'edit.copy'
+  | 'edit.paste'
+  | 'edit.pasteAtOrigin'
+  | 'edit.repeat'
+  | 'edit.nudgeLeft'
+  | 'edit.nudgeRight'
+  | 'edit.nudgeStartLeft'
+  | 'edit.nudgeStartRight'
+  | 'edit.nudgeEndLeft'
+  | 'edit.nudgeEndRight'
+  | 'edit.selectNone'
 >;
+
+// A refused glue's toast, by reason (UI redesign 3.2, "Tools").
+const GLUE_REFUSED: Readonly<Record<GlueRefusal | 'selection', MessageKey>> = {
+  no_next: 'glue.refused.no_next',
+  gap: 'glue.refused.gap',
+  other_media: 'glue.refused.other_media',
+  source_not_continuous: 'glue.refused.source_not_continuous',
+  other_track: 'glue.refused.other_track',
+  selection: 'glue.refused.selection',
+};
+
+// The info line's fields and the commands each edit sends.
+const INFO_EDIT_OPS: Readonly<Record<InfoField, string>> = { start: 'clip.move', length: 'clip.trim', offset: 'clip.trim', volume: 'clip.set_gain' };
 
 // Which editing commands (keys, buttons) exist with these capabilities (UI
 // redesign spec 3.0): each needs the commands it ends in (or, for L, N and
@@ -99,6 +142,9 @@ export type EditCommand = Extract<
 export function editGates(can: CapabilitySelector): Record<EditCommand, boolean> {
   const split = can.command('clip.trim') && can.command('clip.place');
   const locate = can.has('transport.locate');
+  const glue = can.command('clip.remove') && can.command('clip.trim');
+  const place = can.command('clip.place');
+  const start = can.command('clip.trim') && can.command('clip.move');
   return {
     'tool.select': can.command('clip.move') || can.command('clip.trim') || can.command('clip.place'),
     'tool.split': split,
@@ -115,8 +161,27 @@ export function editGates(can: CapabilitySelector): Record<EditCommand, boolean>
     'track.muteSelected': can.command('track.set_mute'),
     'track.soloSelected': can.command('track.set_solo'),
     'track.removeSelected': can.command('track.remove'),
+    // m5b-ui-edit-more: each on the commands it sends; copy and Select None send nothing.
+    'tool.glue': glue,
+    'tool.erase': can.command('clip.remove'),
+    'edit.glue': glue,
+    'edit.cut': can.command('clip.remove'),
+    'edit.copy': true,
+    'edit.paste': place,
+    'edit.pasteAtOrigin': place,
+    'edit.repeat': place,
+    'edit.nudgeLeft': can.command('clip.move'),
+    'edit.nudgeRight': can.command('clip.move'),
+    'edit.nudgeStartLeft': start,
+    'edit.nudgeStartRight': start,
+    'edit.nudgeEndLeft': can.command('clip.trim'),
+    'edit.nudgeEndRight': can.command('clip.trim'),
+    'edit.selectNone': true,
   };
 }
+
+// The editing commands that send structural commands (the edit guard holds them).
+const STRUCTURAL_EDITS: ReadonlySet<EditCommand> = new Set<EditCommand>(['edit.delete', 'edit.splitAtCursor', 'edit.duplicate', 'track.muteSelected', 'track.soloSelected', 'track.removeSelected']);
 
 export interface TimelineProps {
   readonly client: SessionClient;
@@ -144,6 +209,8 @@ export interface TimelineProps {
   readonly loopClick?: LoopClickController;
   // The plan review (m5b-ui-ghosts): the canvas's ghosts and the toolbar's pill; none when absent.
   readonly review?: ReviewStore;
+  // Where a refused glue's toast goes (m5b-ui-edit-more); none when absent.
+  readonly toasts?: ToastStore;
 }
 
 function useSessionId(client: SessionClient): string | null {
@@ -192,6 +259,7 @@ export function Timeline({
   loopClick,
   reconnects = 0,
   review,
+  toasts,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -204,12 +272,21 @@ export function Timeline({
   const sessionId = useSessionId(client);
   const [timeline, setTimeline] = useState<TimelineCanvas | null>(null);
   const [removing, setRemoving] = useState<readonly string[] | null>(null);
+  // Ctrl+K's count dialog (m5b-ui-edit-more).
+  const [repeating, setRepeating] = useState(false);
+  const toastsRef = useRef(toasts);
+  toastsRef.current = toasts;
   // The Pool (Ctrl+P) and the event display's context menu (where it opened).
   const [poolOpen, setPoolOpen] = useState(false);
   const [displayMenu, setDisplayMenu] = useState<{ x: number; y: number } | null>(null);
   const can = useCapabilities();
   const canRef = useRef(can);
   canRef.current = can;
+  const heard = useHeard();
+  const heardRef = useRef(heard);
+  heardRef.current = heard;
+  // Whether `op` may be sent now: listed by the engine, and not held by the edit guard.
+  const allowed = useCallback((op: string) => canRef.current.command(op) && !(isStructural(op) && structuralBlocked(heardRef.current)), []);
   const locateRef = useRef(onLocate);
   locateRef.current = onLocate;
   const gates = editGates(can);
@@ -255,7 +332,7 @@ export function Timeline({
         t: () => translator(localeStore().getSnapshot()),
         subscribe: (listener) => localeStore().subscribe(listener),
       },
-      allows: (op) => canRef.current.command(op),
+      allows: allowed,
       playhead: realtime ?? undefined,
       laneHeights: {
         get: heights,
@@ -295,6 +372,10 @@ export function Timeline({
             onReveal: (listener) => review.onReveal((request) => listener(request.step)),
           }
         : undefined,
+      onRefuse: (reason) => {
+        const key = GLUE_REFUSED[reason];
+        toastsRef.current?.push(translator(localeStore().getSnapshot())(key), (locale) => translator(locale)(key));
+      },
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
     const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
@@ -357,7 +438,7 @@ export function Timeline({
   const gateKey = JSON.stringify(gates);
   useEffect(() => {
     if (!timeline) return undefined;
-    const allowed = editGates(canRef.current);
+    const gated = editGates(canRef.current);
     const offs = [
       commands.register('project', 'edit.cancel', () => timeline.setPlacing(null)),
       commands.register('project', 'view.zoomIn', () => timeline.zoomIn()),
@@ -367,13 +448,35 @@ export function Timeline({
       commands.register('project', 'view.zoomFull', () => timeline.zoomFull()),
     ];
     const edit = (id: EditCommand, handler: () => boolean | void) => {
-      if (allowed[id]) offs.push(commands.register('project', id, handler));
+      if (!gated[id]) return;
+      // A structural edit declines while a proposal is heard (the edit guard).
+      const guarded = STRUCTURAL_EDITS.has(id) ? () => (structuralBlocked(heardRef.current) ? false : handler()) : handler;
+      offs.push(commands.register('project', id, guarded));
     };
     const tracks = () => tracksRef.current;
     const selection = () => ({ primary: primaryRef.current, ids: tracksRef.current });
     edit('edit.delete', () => void timeline.deleteSelected());
     edit('tool.select', () => timeline.setTool('select'));
     edit('tool.split', () => timeline.setTool('split'));
+    edit('tool.glue', () => timeline.setTool('glue'));
+    edit('tool.erase', () => timeline.setTool('erase'));
+    edit('edit.glue', () => void timeline.glueSelection());
+    edit('edit.cut', () => void timeline.cut());
+    edit('edit.copy', () => timeline.copy());
+    edit('edit.paste', () => void timeline.paste(false));
+    edit('edit.pasteAtOrigin', () => void timeline.paste(true));
+    edit('edit.repeat', () => {
+      if (timeline.getState().selectedClipIds.length === 0) return false;
+      setRepeating(true);
+      return true;
+    });
+    edit('edit.nudgeLeft', () => void timeline.nudge('position', -1));
+    edit('edit.nudgeRight', () => void timeline.nudge('position', 1));
+    edit('edit.nudgeStartLeft', () => void timeline.nudge('startLeft'));
+    edit('edit.nudgeStartRight', () => void timeline.nudge('startRight'));
+    edit('edit.nudgeEndLeft', () => void timeline.nudge('endLeft'));
+    edit('edit.nudgeEndRight', () => void timeline.nudge('endRight'));
+    edit('edit.selectNone', () => timeline.selectNone());
     edit('edit.splitAtCursor', () => void timeline.splitAtCursor());
     edit('edit.duplicate', () => void timeline.duplicate());
     edit('edit.snapToggle', () => layout.dispatch({ type: 'snapToggle' }));
@@ -398,7 +501,7 @@ export function Timeline({
       setRemoving(ids);
       return true;
     });
-    if (canAdd) offs.push(commands.register('project', 'track.add', () => addTrack(client, translator(localeStore().getSnapshot()))));
+    if (canAdd) offs.push(commands.register('project', 'track.add', () => (structuralBlocked(heardRef.current) ? false : addTrack(client, translator(localeStore().getSnapshot())))));
     return () => offs.forEach((off) => off());
   }, [timeline, commands, gateKey, canAdd, client, layout]);
 
@@ -441,15 +544,30 @@ export function Timeline({
         tool={state.tool}
         snap={snap}
         autoScroll={autoScroll}
-        gates={{ select: gates['tool.select'], split: gates['tool.split'], snap: gates['edit.snapToggle'], autoScroll: can.has('transport.play') }}
+        gates={{ select: gates['tool.select'], split: gates['tool.split'], glue: gates['tool.glue'], erase: gates['tool.erase'], snap: gates['edit.snapToggle'], autoScroll: can.has('transport.play') }}
         error={state.error}
         onTool={(tool) => timeline?.setTool(tool)}
         onSnapToggle={() => layout.dispatch({ type: 'snapToggle' })}
         onGrid={(grid) => layout.dispatch({ type: 'setGrid', grid })}
+        onSnapType={(snapType) => layout.dispatch({ type: 'setSnapType', snapType })}
         onAutoScroll={() => layout.dispatch({ type: 'autoScroll' })}
         pill={pill}
       />
-      <InfoLine client={client} clipId={state.selectedClipId} />
+      <InfoLine
+        client={client}
+        clipId={state.selectedClipId}
+        selection={state.selectedClipIds}
+        onEdit={
+          timeline && (can.command('clip.move') || can.command('clip.trim') || can.command('clip.set_gain'))
+            ? (field, text, absolute) => {
+                const current = client.model.getSnapshot();
+                const primary = state.selectedClipId;
+                if (!current || !primary || !can.command(INFO_EDIT_OPS[field])) return;
+                void timeline.sendCommand(infoLineEditCommand(current, state.selectedClipIds, primary, field, text, absolute));
+              }
+            : undefined
+        }
+      />
       <div className="arr-body" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>
         <TrackList
           client={client}
@@ -516,6 +634,14 @@ export function Timeline({
           onClose={() => setDisplayMenu(null)}
         />
       ) : null}
+      <RepeatDialog
+        open={repeating}
+        onConfirm={(count) => {
+          setRepeating(false);
+          void timeline?.repeat(count);
+        }}
+        onCancel={() => setRepeating(false)}
+      />
       <ConfirmDialog
         open={removing !== null}
         message={t('confirm.removeTracks', { count: removing?.length ?? 0 })}

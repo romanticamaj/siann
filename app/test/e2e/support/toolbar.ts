@@ -6,7 +6,7 @@
 
 import { expect, type Locator, type Page } from '@playwright/test';
 
-import type { GridType } from '../../../src/renderer/timeline/snap';
+import type { GridType, SnapType } from '../../../src/renderer/timeline/snap';
 
 // Opens the Pool with Ctrl+P (Cmd+P on macOS) unless it is open.
 export async function openPool(page: Page): Promise<Locator> {
@@ -32,4 +32,20 @@ export async function chooseGrid(page: Page, grid: GridType): Promise<void> {
   await menu.getByTestId(`grid-type-${grid}`).click();
   await expect(menu).toHaveCount(0);
   await expect(page.getByTestId('grid-type')).toHaveAttribute('data-grid', grid);
+}
+
+// Chooses a snap type from the snap field's menu (m5b-ui-edit-more; UI
+// redesign 3.2): the field's chevron opens it, a click elsewhere on the field
+// still turns snap on and off.
+export async function chooseSnapType(page: Page, type: SnapType): Promise<void> {
+  const field = page.getByTestId('snap-toggle');
+  const pressed = await field.getAttribute('aria-pressed');
+  await field.locator('svg').last().click();
+  const menu = page.getByTestId('snap-type-menu');
+  await expect(menu).toBeVisible();
+  await menu.getByTestId(`snap-type-${type}`).click();
+  await expect(menu).toHaveCount(0);
+  await expect(field).toHaveAttribute('data-snap-type', type);
+  // Opening the menu did not toggle snap.
+  await expect(field).toHaveAttribute('aria-pressed', pressed ?? 'true');
 }

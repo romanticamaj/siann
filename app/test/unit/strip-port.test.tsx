@@ -29,7 +29,7 @@ import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { Mixer } from '../../src/renderer/mixer/Mixer';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
-import type { TrackEntity } from '../../src/renderer/model/document';
+import type { PluginSlotEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { MeterLegend } from '../../src/renderer/model/meter-frames';
 import type { Snapshot } from '../../src/renderer/model/read-model';
@@ -70,11 +70,26 @@ function fakeClient(snap: Snapshot, legend: MeterLegend | null = LEGEND) {
 const gestures = {} as unknown as GestureController;
 const realtime = { subscribe: () => () => undefined } as unknown as RealtimeClient;
 
-function render(tracks: TrackEntity[], options: { selected?: string | null; caps?: Capabilities | null; locale?: Locale } = {}): Element {
-  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], []);
+interface RenderOptions {
+  selected?: string | null;
+  caps?: Capabilities | null;
+  locale?: Locale;
+  // m5b-ui-inserts-master: the plugin slots in the session, and the Inserts rack switch.
+  slots?: PluginSlotEntity[];
+  racks?: { inserts: boolean };
+}
+
+function withSlots(snap: Snapshot, slots: readonly PluginSlotEntity[]): Snapshot {
+  const entities = { ...snap.entities };
+  for (const s of slots) entities[`plugin_slot:${s.id}`] = s;
+  return { ...snap, entities, pluginSlots: [...slots] };
+}
+
+function render(tracks: TrackEntity[], options: RenderOptions = {}): Element {
+  const snap = withSlots(snapshotOf(tracks.map((t) => t.id), tracks, [], []), options.slots ?? []);
   const node: ReactNode = (
     <CapabilitiesContext.Provider value={options.caps === undefined ? FULL : options.caps}>
-      <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} selectedTrackId={options.selected ?? null} />
+      <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} selectedTrackId={options.selected ?? null} racks={options.racks} />
     </CapabilitiesContext.Provider>
   );
   const before = localeStore();
@@ -194,7 +209,7 @@ test('the fader area: the scale at the taper\'s positions, the fader with its un
   for (const ch of elements(meter!)) assert.deepEqual(ch.children, []);
 });
 
-test('the readout holds the level and the peak value; the second button row and the insert row are empty boxes', () => {
+test('the readout holds the level and the peak value; the second button row is an empty box', () => {
   const strip = strips(render([kick(), snare()]))[1]!;
   const rows = elements(strip);
   const readout = rows[4]!;
@@ -203,7 +218,6 @@ test('the readout holds the level and the peak value; the second button row and 
   assert.equal(text(level!), '-2.5 dB');
   assert.equal(peak!.tag, 'button');
   assert.ok(classes(peak!).includes('pk'));
-  assertEmptyBox(rows[0]!, '.ins');
   assertEmptyBox(rows[5]!, 'the automation row');
 });
 
@@ -213,7 +227,7 @@ test('the selected track\'s strip is .sel', () => {
   assert.ok(classes(b!).includes('sel'));
 });
 
-test('the master strip is the mockup\'s .strip.master: its fader area with scale and meter, the peak value, its name; the rest empty', () => {
+test('the master strip is the mockup\'s .strip.master: scale, fader and meter, the level and the peak value, its name; the rest empty', () => {
   const root = render([kick()]);
   const master = find(root, (el) => classes(el).includes('master'));
   const mockup = mockupMaster();
@@ -221,56 +235,148 @@ test('the master strip is the mockup\'s .strip.master: its fader area with scale
   assert.deepEqual(elements(master).map(sig), elements(mockup).map(sig));
   assert.equal(styleOf(master, '--c'), 'var(--lit-1)');
   const [ins, loudness, buttons, fad, readout, automation, name] = elements(master);
+  // The master's M, rack and e are M6c's; its loudness row is m5b-ui-meter's.
   assertEmptyBox(ins!, 'master .ins');
   assertEmptyBox(loudness!, 'master loudness row');
   assertEmptyBox(buttons!, 'master buttons');
   assertEmptyBox(automation!, 'master automation');
-  const [scale, column, meter] = elements(fad!);
-  assert.deepEqual(elements(scale!).map((el) => [text(el), styleOf(el, 'bottom')]), elements(elements(elements(mockup)[3]!)[0]!).map((el) => [text(el), styleOf(el, 'bottom')]));
-  assertEmptyBox(column!, 'the master fader column');
+  const [mScale, mFader] = elements(elements(mockup)[3]!);
+  const [scale, fader, meter] = elements(fad!);
+  assert.deepEqual(elements(scale!).map((el) => [text(el), styleOf(el, 'bottom')]), elements(mScale!).map((el) => [text(el), styleOf(el, 'bottom')]));
+  // m5b-ui-inserts-master: the mockup's .ftrack with its unity line and its cap, at 0 dB (75.0 %) while master:master is absent.
+  assert.equal(sig(fader!), sig(mFader!));
+  assert.equal(fader!.attrs['data-part-of'], 'fader');
+  assert.deepEqual(elements(fader!).filter((el) => !classes(el).includes('value-tooltip')).map(sig), elements(mFader!).map(sig));
+  const [unity, cap] = elements(fader!);
+  const [mUnity, mCap] = elements(mFader!);
+  assert.equal(parseFloat(styleOf(unity!, 'bottom')!), parseFloat(styleOf(mUnity!, 'bottom')!), 'the mockup writes 75%');
+  assert.equal(parseFloat(styleOf(cap!, 'bottom')!), parseFloat(styleOf(mCap!, 'bottom')!));
+  assert.equal(styleOf(cap!, 'bottom'), '75.0%');
+  assert.equal(cap!.attrs['data-part-of'], 'cap');
+  assert.equal(fader!.attrs.role, 'slider');
+  assert.equal(fader!.attrs.tabindex, '0');
+  assert.equal(fader!.attrs['aria-valuenow'], '0');
+  assert.equal(fader!.attrs['aria-valuemax'], '6000');
+  assert.equal(fader!.attrs['aria-valuetext'], '0.0 dB');
+  assert.equal(fader!.attrs['aria-label'], 'Master gain');
   assert.deepEqual(elements(meter!).map(sig), ['div.ch', 'div.ch']);
-  assert.deepEqual(elements(readout!).map(sig), ['button.pk']);
+  // The readout: the level, then the peak value, as the mockup's two spans.
+  assert.deepEqual(elements(readout!).map(sig), ['span', 'button.pk']);
+  assert.equal(text(elements(readout!)[0]!), '0.0 dB');
   assert.equal(text(name!), 'Master');
 });
 
-test('the ids are the mockup\'s minus the pending parts\', and no pending id is anywhere', () => {
-  const root = render([kick(), snare()]);
-  const [one, two] = strips(root);
-  for (const [i, app] of [[0, one!], [1, two!]] as const) {
-    const expected = mockupIds(mockupStrip(i)).filter((id) => !pending(id));
-    assert.deepEqual(appIds(app, String(i + 1)), expected, `strip-${i + 1}`);
+test('the master fader reads master:master\'s gain at the taper\'s position', () => {
+  const snap = snapshotOf(['trk_a'], [kick()], [], []);
+  const withMaster = { ...snap, master: { schema: 'siann.entity.master.v1' as const, id: 'master' as const, gainMilliDb: -6000 }, entities: { ...snap.entities, 'master:master': { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -6000 } } } as Snapshot;
+  const root = parse(
+    renderToStaticMarkup(
+      <CapabilitiesContext.Provider value={FULL}>
+        <Mixer client={fakeClient(withMaster)} gestures={gestures} realtime={realtime} />
+      </CapabilitiesContext.Provider>,
+    ),
+  );
+  const fader = find(find(root, byClass('master')), byClass('ftrack'));
+  assert.equal(styleOf(find(fader, byClass('cap')), 'bottom'), `${(milliDbToPosition(-6000) * 100).toFixed(1)}%`);
+  assert.equal(fader.attrs['aria-valuenow'], '-6000');
+  assert.equal(text(elements(find(find(root, byClass('master')), byClass('readout')))[0]!), '-6.0 dB');
+});
+
+test('without features.masterGain, master.set_gain or the gesture methods the master stays the M5 meter', () => {
+  const noMaster = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-no-master.json'), 'utf8')) as Capabilities;
+  const without = [
+    noMaster,
+    { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'master.set_gain') },
+    { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'gesture.begin') },
+  ];
+  for (const caps of without) {
+    const master = find(render([kick()], { caps }), (el) => classes(el).includes('master'));
+    const [, column] = elements(find(master, byClass('fad')));
+    assertEmptyBox(column!, 'the master fader column');
+    assert.deepEqual(elements(find(master, byClass('readout'))).map(sig), ['button.pk']);
+    assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
   }
-  const master = find(root, (el) => classes(el).includes('master'));
-  assert.deepEqual(appIds(master, 'master'), mockupIds(mockupMaster()).filter((id) => !pending(id)));
-  assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
-  // The mixer itself.
-  assert.equal(find(root, byClass('mixer')).attrs['data-part'], 'mixer');
-  // Nothing else carries an id the manifest has pending.
-  for (const el of findAll(root, byAttr('data-part'))) assert.ok(!pending(el.attrs['data-part']!), el.attrs['data-part']!);
 });
 
-test('reduced capabilities still remove the controls, and the boxes stay', () => {
-  const noMuteSolo: Capabilities = { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'track.set_mute' && c !== 'track.set_solo') };
-  const strip = strips(render([kick()], { caps: noMuteSolo }))[0]!;
-  const btns = find(strip, byClass('btns'));
-  assert.equal(findAll(btns, (el) => el.tag === 'button').length, 0);
-  assert.equal(elements(btns).length, 3, 'M, S and e keep their boxes');
-  for (const box of elements(btns)) assertEmptyBox(box, 'an unlisted button');
-  const bare = strips(render([kick()], { caps: null }))[0]!;
-  assert.equal(findAll(bare, (el) => el.attrs.role === 'slider').length, 0);
-  assert.deepEqual(elements(bare).map(sig), ['div.ins', 'div.panrow', 'div.btns', 'div.fad', 'div.readout', 'div.btns', 'div.nametag']);
+// ---- m5b-ui-inserts-master: the insert rack of a track strip, strip()'s
+// .ins: a .slot per plugin_slot in the track's inserts order, .slot.empty '+'
+// filling the two positions, all slots then one empty slot when there are two
+// or more; each filled slot holds its name and the added bypass, e and Remove.
+
+const pluginSlot = (id: string, trackId: string, name: string, bypass = false): PluginSlotEntity => ({
+  schema: 'siann.entity.plugin_slot.v1',
+  id,
+  trackId,
+  format: 'clap',
+  uid: `org.test.${id}`,
+  name,
+  path: `/plugins/${id}.clap`,
+  bypass,
 });
 
-test('a stored gain above +6 dB pins the cap at the top and warns on the fader and the level', () => {
-  const loud: TrackEntity = { ...kick(), gainMilliDb: 9000 };
-  const strip = strips(render([loud]))[0]!;
-  const fader = find(strip, byClass('ftrack'));
-  assert.equal(styleOf(find(fader, byClass('cap')), 'bottom'), '100.0%');
-  assert.equal(fader.attrs['data-position'], '1');
-  assert.ok(classes(fader).includes('warn'));
-  const level = elements(find(strip, byClass('readout')))[0]!;
-  assert.equal(text(level), '+9.0 dB');
-  assert.ok(classes(level).includes('warn'));
+test('the rack: strip()\'s .ins with a .slot per insert in signal order and .slot.empty in the remaining position', () => {
+  // The mockup's Kick: one insert (Transient) and one empty slot.
+  const withOne: TrackEntity = { ...kick(), inserts: ['slt_1'] };
+  const app = find(strips(render([withOne], { slots: [pluginSlot('slt_1', 'trk_a', 'Transient')] }))[0]!, byClass('ins'));
+  const mockup = find(mockupStrip(0), byClass('ins'));
+  assert.equal(app.attrs['data-part-of'], 'inserts');
+  assert.ok(!('aria-hidden' in app.attrs));
+  assert.deepEqual(elements(app).map(sig), elements(mockup).map(sig));
+  assert.deepEqual(elements(app).map(sig), ['div.slot', 'div.empty.slot']);
+  const [filled, empty] = elements(app);
+  assert.equal(text(find(filled!, byClass('slot-name'))), text(elements(mockup)[0]!));
+  assert.equal(text(empty!), text(elements(mockup)[1]!), '+');
+  assert.equal(empty!.attrs.role, 'button');
+  assert.equal(empty!.attrs.tabindex, '0');
+  assert.equal(empty!.attrs['aria-label'], 'Add insert to Kick');
+  // The three buttons added to the slot: bypass, e, Remove.
+  const buttons = findAll(filled!, (el) => el.tag === 'button');
+  assert.deepEqual(buttons.map((b) => b.attrs['data-testid']), ['slot-bypass-slt_1', 'slot-edit-slt_1', 'slot-remove-slt_1']);
+  assert.equal(text(buttons[1]!), 'e');
+  assert.equal(buttons[0]!.attrs['aria-pressed'], 'false');
+  assert.equal(buttons[1]!.attrs['aria-pressed'], 'false', 'e is unlit until an editor opens');
+  // No slot carries a fidelity id: the mockup has none for them.
+  for (const el of findAll(app, () => true).slice(1)) assert.ok(!('data-part-of' in el.attrs) && !('data-part' in el.attrs), sig(el));
+});
+
+test('the rack: no insert is two empty slots; two or more are every slot then one empty slot; bypass is pressed', () => {
+  const none = find(strips(render([kick()]))[0]!, byClass('ins'));
+  assert.deepEqual(elements(none).map(sig), ['div.empty.slot', 'div.empty.slot']);
+  const many: TrackEntity = { ...kick(), inserts: ['slt_3', 'slt_1', 'slt_2'] };
+  const slots = [pluginSlot('slt_1', 'trk_a', 'EQ'), pluginSlot('slt_2', 'trk_a', 'Verb', true), pluginSlot('slt_3', 'trk_a', 'Gate')];
+  const rack = find(strips(render([many], { slots }))[0]!, byClass('ins'));
+  assert.deepEqual(elements(rack).map(sig), ['div.slot', 'div.slot', 'div.bypassed.slot', 'div.empty.slot']);
+  assert.deepEqual(findAll(rack, byClass('slot-name')).map(text), ['Gate', 'EQ', 'Verb'], 'the track\'s inserts order');
+  assert.equal(find(rack, byAttr('data-testid', 'slot-bypass-slt_2')).attrs['aria-pressed'], 'true');
+});
+
+test('the rack is an empty box without plugins, without plugin.instantiate or plugin.registry, or with the Inserts switch off', () => {
+  const noPlugins = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-no-plugins.json'), 'utf8')) as Capabilities;
+  const withOne: TrackEntity = { ...kick(), inserts: ['slt_1'] };
+  const slots = [pluginSlot('slt_1', 'trk_a', 'Transient')];
+  for (const [what, options] of [
+    ['no features.plugins', { caps: noPlugins }],
+    ['no plugin.instantiate', { caps: { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'plugin.instantiate') } }],
+    ['no plugin.registry', { caps: { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'plugin.registry') } }],
+    ['the switch off', { racks: { inserts: false } }],
+  ] as const) {
+    const strip = strips(render([withOne], { slots, ...options }))[0]!;
+    assertEmptyBox(find(strip, byClass('ins')), `${what}: .ins`);
+    assert.ok(!appIds(strip, '1').includes('strip-1-inserts'), what);
+  }
+});
+
+test('a slot without bypass, Remove or the editor methods leaves out that button; a missing plugin shows the engine\'s code', () => {
+  const withOne: TrackEntity = { ...kick(), inserts: ['slt_1'] };
+  const slots = [pluginSlot('slt_1', 'trk_a', 'Transient')];
+  const less: Capabilities = {
+    ...FULL,
+    commands: (FULL.commands ?? []).filter((c) => c !== 'plugin.set_bypass' && c !== 'plugin.remove'),
+    methods: (FULL.methods ?? []).filter((m) => m !== 'plugin.open_editor'),
+  };
+  const slot = find(strips(render([withOne], { slots, caps: less }))[0]!, byClass('slot'));
+  assert.deepEqual(findAll(slot, (el) => el.tag === 'button'), []);
+  assert.equal(text(find(slot, byClass('slot-name'))), 'Transient');
 });
 
 // ---- m5b-ui-ghosts (UI redesign 4.2): what a pending plan adds to a strip,
@@ -384,6 +490,49 @@ test('a proposed track: a dashed strip labelled NEW · STEP n before the master,
   assert.deepEqual(strips(two).filter((s) => classes(s).includes('ghost')).map((s) => s.attrs['data-part-key']), ['ghost', 'ghost-2']);
 });
 
+// m5b-ui-audition (UI redesign 4.3): while the proposal is heard its ghosts
+// are solid (data-ghost-mode="solid", shell.css) and the value each replaces,
+// main's, is the faint outline: the real cap stays at main's value, marked
+// data-replaced. A ghost without a step (a gesture on the branch) carries no
+// badge. The dashed ghosts carry neither attribute.
+test('solid ghosts while the proposal is heard: the ghost cap, the pan tick and the M ring solid, the real cap the outline', () => {
+  const solid: readonly Ghost[] = [
+    { kind: 'gain', step: 3, trackId: 'trk_bg', before: -9000, after: -4500, mode: 'solid', replaced: -9000 },
+    { kind: 'pan', step: 4, trackId: 'trk_keys', before: -3500, after: -2000, mode: 'solid', replaced: -3500 },
+    { kind: 'mute', step: 5, trackId: 'trk_fx', before: true, after: false, mode: 'solid', replaced: true },
+    { kind: 'gain', step: 0, trackId: 'trk_keys', before: -8000, after: -2500, mode: 'solid', replaced: -8000 },
+  ];
+  const root = renderGhosts([keys(), voxBg(), fx()], solid);
+  const bg = stripOf(root, 'Vox BG');
+  const ghostCap = find(bg, byClass('ghost'));
+  assert.equal(ghostCap.attrs['data-ghost-mode'], 'solid');
+  assert.equal(styleOf(ghostCap, 'bottom'), `${(milliDbToPosition(-4500) * 100).toFixed(1)}%`, 'at the branch value');
+  const cap = findAll(bg, (el) => el.attrs['data-part-of'] === 'cap')[0]!;
+  assert.equal(cap.attrs['data-replaced'], 'true');
+  assert.equal(styleOf(cap, 'bottom'), `${(milliDbToPosition(-9000) * 100).toFixed(1)}%`, 'the outline at main\'s value');
+  const tick = findAll(stripOf(root, 'Keys'), (el) => el.attrs['data-part-of'] === 'pan-knob-ghost')[0]!;
+  assert.equal(tick.attrs['data-ghost-mode'], 'solid');
+  const mute = findAll(stripOf(root, 'FX'), (el) => el.attrs['data-part-of'] === 'mute')[0]!;
+  assert.ok(classes(mute).includes('ghost'));
+  assert.equal(mute.attrs['data-ghost-mode'], 'solid');
+  // The un-numbered gain ghost on Keys: the solid cap, no badge.
+  const keysStrip = stripOf(root, 'Keys');
+  assert.equal(find(keysStrip, byClass('ghost')).attrs['data-ghost-mode'], 'solid');
+  assert.equal(findAll(keysStrip, (el) => el.attrs['data-part-of'] === 'gain-step-ghost').length, 0, 'no step badge');
+});
+
+test('dashed ghosts carry no solid mode and no replaced mark', () => {
+  const markup = renderToStaticMarkup(
+    <CapabilitiesContext.Provider value={FULL}>
+      <GhostContext.Provider value={{ ghosts: MOCKUP_GHOSTS, outline: null, pin: () => undefined }}>
+        <Mixer client={fakeClient(snapshotOf(['trk_keys', 'trk_bg', 'trk_fx'], [keys(), voxBg(), fx()], [], []))} gestures={gestures} realtime={realtime} />
+      </GhostContext.Provider>
+    </CapabilitiesContext.Provider>,
+  );
+  assert.ok(!markup.includes('data-ghost-mode'));
+  assert.ok(!markup.includes('data-replaced'));
+});
+
 test('a removed track\'s strip is dimmed by an added class; a rename shows both names', () => {
   const root = renderGhosts([keys(), voxBg()], [
     { kind: 'track-remove', step: 2, trackId: 'trk_keys' },
@@ -398,4 +547,93 @@ test('a removed track\'s strip is dimmed by an added class; a rename shows both 
   assert.equal(name.children.length, 1);
   assert.deepEqual(elements(name).map(sig), ['span.ghost-rename']);
   assert.equal(name.attrs.title, 'Vox BG → Vox Pad');
+});
+
+// ---- the master-gain ghost (UI redesign 4.2): the ghost cap joined to the real cap, both values.
+test('a master-gain ghost: the line from the real cap to the ghost cap and the readout with both values', () => {
+  const root = renderGhosts([keys()], [{ kind: 'master-gain', step: 2, before: 0, after: -6000 }]);
+  const master = find(root, (el) => classes(el).includes('master'));
+  const fader = find(master, byClass('ftrack'));
+  assert.deepEqual(elements(fader).filter((el) => !classes(el).includes('value-tooltip')).map(sig), ['div.unity', 'div.gline', 'div.cap.ghost', 'div.cap']);
+  const [, line, ghost, cap] = elements(fader);
+  const at = (db: number) => `${(milliDbToPosition(db) * 100).toFixed(1)}%`;
+  assert.equal(styleOf(ghost!, 'bottom'), at(-6000));
+  assert.equal(styleOf(cap!, 'bottom'), at(0));
+  assert.equal(styleOf(line!, 'bottom'), at(-6000));
+  assert.equal(styleOf(line!, 'height'), `${((milliDbToPosition(0) - milliDbToPosition(-6000)) * 100).toFixed(1)}%`);
+  assert.equal(ghost!.attrs['data-ghost'], '2');
+  const readout = find(master, byClass('readout'));
+  assert.equal(text(elements(readout)[0]!), '0.0 dB');
+  assert.equal(text(find(readout, byClass('to'))), '→ -6.0');
+  const ids = appIds(master, 'master');
+  for (const id of ['strip-master-cap-ghost', 'strip-master-gain-line-ghost']) assert.ok(ids.includes(id), id);
+});
+
+test('slot ghosts: a dashed slot numbered by its step for an insert, a dimmed slot for a removal, a ring on bypass', () => {
+  const withTwo: TrackEntity = { ...keys(), inserts: ['slt_1', 'slt_2'] };
+  const snap = withSlots(snapshotOf(['trk_keys'], [withTwo], [], []), [pluginSlot('slt_1', 'trk_keys', 'Comp'), pluginSlot('slt_2', 'trk_keys', 'EQ', true)]);
+  const ghosts: Ghost[] = [
+    { kind: 'insert-remove', step: 3, trackId: 'trk_keys', slotId: 'slt_1' },
+    { kind: 'insert-bypass', step: 4, trackId: 'trk_keys', slotId: 'slt_2', before: true, after: false },
+    { kind: 'insert-add', step: 5, trackId: 'trk_keys', slotId: 'slt_9', name: 'Limiter', index: 2 },
+  ];
+  const view: GhostView = { ghosts, outline: null, pin: () => undefined };
+  const root = parse(
+    renderToStaticMarkup(
+      <CapabilitiesContext.Provider value={FULL}>
+        <GhostContext.Provider value={view}>
+          <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} />
+        </GhostContext.Provider>
+      </CapabilitiesContext.Provider>,
+    ),
+  );
+  const rack = find(strips(root)[0]!, byClass('ins'));
+  assert.deepEqual(elements(rack).map(sig), ['div.ghost-removed.slot', 'div.bypassed.slot', 'div.ghost.slot', 'div.empty.slot']);
+  const [removed, bypassed, added] = elements(rack);
+  assert.equal(removed!.attrs['data-ghost'], '3');
+  assert.ok(classes(find(bypassed!, byAttr('data-testid', 'slot-bypass-slt_2'))).includes('ghost'), 'the dashed ring on bypass');
+  assert.equal(added!.attrs['data-ghost'], '5');
+  assert.equal(text(find(added!, byClass('stepn'))), '5');
+  assert.equal(text(find(added!, byClass('slot-name'))), 'Limiter');
+  assert.deepEqual(findAll(added!, (el) => el.tag === 'button'), [], 'nothing to operate on a proposed slot');
+});
+
+test('the ids are the mockup\'s minus the pending parts\', and no pending id is anywhere', () => {
+  const root = render([kick(), snare()]);
+  const [one, two] = strips(root);
+  for (const [i, app] of [[0, one!], [1, two!]] as const) {
+    const expected = mockupIds(mockupStrip(i)).filter((id) => !pending(id));
+    assert.deepEqual(appIds(app, String(i + 1)), expected, `strip-${i + 1}`);
+  }
+  const master = find(root, (el) => classes(el).includes('master'));
+  assert.deepEqual(appIds(master, 'master'), mockupIds(mockupMaster()).filter((id) => !pending(id)));
+  assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-cap', 'strip-master-fader', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
+  // The mixer itself.
+  assert.equal(find(root, byClass('mixer')).attrs['data-part'], 'mixer');
+  // Nothing else carries an id the manifest has pending.
+  for (const el of findAll(root, byAttr('data-part'))) assert.ok(!pending(el.attrs['data-part']!), el.attrs['data-part']!);
+});
+
+test('reduced capabilities still remove the controls, and the boxes stay', () => {
+  const noMuteSolo: Capabilities = { ...FULL, commands: (FULL.commands ?? []).filter((c) => c !== 'track.set_mute' && c !== 'track.set_solo') };
+  const strip = strips(render([kick()], { caps: noMuteSolo }))[0]!;
+  const btns = find(strip, byClass('btns'));
+  assert.equal(findAll(btns, (el) => el.tag === 'button').length, 0);
+  assert.equal(elements(btns).length, 3, 'M, S and e keep their boxes');
+  for (const box of elements(btns)) assertEmptyBox(box, 'an unlisted button');
+  const bare = strips(render([kick()], { caps: null }))[0]!;
+  assert.equal(findAll(bare, (el) => el.attrs.role === 'slider').length, 0);
+  assert.deepEqual(elements(bare).map(sig), ['div.ins', 'div.panrow', 'div.btns', 'div.fad', 'div.readout', 'div.btns', 'div.nametag']);
+});
+
+test('a stored gain above +6 dB pins the cap at the top and warns on the fader and the level', () => {
+  const loud: TrackEntity = { ...kick(), gainMilliDb: 9000 };
+  const strip = strips(render([loud]))[0]!;
+  const fader = find(strip, byClass('ftrack'));
+  assert.equal(styleOf(find(fader, byClass('cap')), 'bottom'), '100.0%');
+  assert.equal(fader.attrs['data-position'], '1');
+  assert.ok(classes(fader).includes('warn'));
+  const level = elements(find(strip, byClass('readout')))[0]!;
+  assert.equal(text(level), '+9.0 dB');
+  assert.ok(classes(level).includes('warn'));
 });

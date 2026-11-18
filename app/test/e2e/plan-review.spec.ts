@@ -41,6 +41,8 @@ import { selectPlan } from './support/seed';
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
 const t = translator('en');
+// The primary button's text: its label and the mockup's kbd, the Return glyph (m5b-ui-audition).
+const primaryText = (label: string) => `${label} ⏎`;
 
 function exeFromEnv(name: string): string {
   const exe = process.env[name];
@@ -304,7 +306,7 @@ test("every id of the Plans tab is in the window, and no id of a pending part", 
 test('Approve 5 of 5 lands the plan as one revision', async () => {
   const hash = await submitted(await agent());
   const commits = watcher.ofType('session.changed').length;
-  await expect(page.getByTestId('plan-approve-apply')).toHaveText('Approve 5 of 5');
+  await expect(page.getByTestId('plan-approve-apply')).toHaveText(primaryText('Approve 5 of 5'));
   await page.getByTestId('plan-approve-apply').click();
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'applied');
   await expect(page.getByTestId('about-track-count')).toHaveText('3');
@@ -358,16 +360,16 @@ test('Approve 3 of 5 applies a sub-plan and labels the parent split', async () =
   await expect(page.getByTestId('steps-none')).toHaveText(t('plans.selectNone'));
   await page.getByTestId('step-2').getByRole('checkbox').uncheck();
   await page.getByTestId('step-4').getByRole('checkbox').uncheck();
-  await expect(page.getByTestId('plan-approve-apply')).toHaveText('Approve 3 of 5');
+  await expect(page.getByTestId('plan-approve-apply')).toHaveText(primaryText('Approve 3 of 5'));
   await expect(page.locator('[data-part="plan-steps-head"]')).toContainText('Steps · 3 of 5 selected');
   // The link selects all again, and then none.
   await page.getByTestId('steps-all').click();
-  await expect(page.getByTestId('plan-approve-apply')).toHaveText('Approve 5 of 5');
+  await expect(page.getByTestId('plan-approve-apply')).toHaveText(primaryText('Approve 5 of 5'));
   await page.getByTestId('steps-none').click();
   await expect(page.getByTestId('plan-approve-apply')).toBeDisabled();
   await expect(page.getByTestId('plan-approve-apply')).toHaveAttribute('title', t('actionReason.noneTicked'));
   for (const index of [0, 1, 3]) await page.getByTestId(`step-${index}`).getByRole('checkbox').check();
-  await expect(page.getByTestId('plan-approve-apply')).toHaveText('Approve 3 of 5');
+  await expect(page.getByTestId('plan-approve-apply')).toHaveText(primaryText('Approve 3 of 5'));
   await page.getByTestId('plan-approve-apply').click();
   // The card follows the sub-plan; the parent is a history row labelled split.
   await expect(stateBadge(hash)).toHaveAttribute('data-state', 'rejected');

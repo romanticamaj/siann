@@ -11,9 +11,10 @@ import * as path from 'node:path';
 
 import { translator } from '../../src/renderer/i18n/t';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
+import { PlanStore } from '../../src/renderer/model/plan-store';
 import { describeStep, namesFromSnapshot } from '../../src/renderer/plans/describe';
-import { planName, planNameParts } from '../../src/renderer/plans/plan-name';
-import { entry, hashOf, MIX_STEPS, planSnapshot } from './support/plans';
+import { heardPlanName, planName, planNameParts } from '../../src/renderer/plans/plan-name';
+import { BRANCH, entry, hashOf, MIX_STEPS, planObject, planSnapshot } from './support/plans';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
 const read = (name: string) => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8')) as Capabilities;
@@ -66,4 +67,27 @@ test('the pill and the Agent changes take the title as the lead with the step co
   assert.deepEqual(planNameParts(entry(hashOf('1'), 'validated'), t, names, FULL), { lead: describeStep(MIX_STEPS[0]!, t, names), steps });
   assert.equal(planNameParts(entry(hashOf('2'), 'validated', [], { title: 'Empty' }), t, names, FULL), null);
   assert.equal(planNameParts(entry(hashOf('3'), 'validated', []), t, names, FULL), null);
+});
+
+// m5b-ui-audition (UI redesign 4.3): the banner and the branch chip name the
+// heard proposal through one helper, heardPlanName: the plan whose branch is
+// heard, named by planName (its title with features.planMetadata), or the
+// generic word when no held plan owns the branch; null while main is heard
+// or the side is unknown.
+test('heardPlanName names the plan whose branch is heard, or the generic word for a branch no plan owns', () => {
+  const store = new PlanStore({ now: () => 0 });
+  store.fromList({
+    plans: [planObject(hashOf('1'), 'validated', MIX_STEPS), planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH, title: 'Lift the chorus' })],
+  });
+  store.setHeard(BRANCH);
+  const plan = store.getSnapshot().byHash.get(hashOf('2'))!;
+  assert.deepEqual(heardPlanName(store.getSnapshot(), t, names, FULL), { branch: BRANCH, name: planName(plan, t, names, FULL) });
+  assert.deepEqual(heardPlanName(store.getSnapshot(), t, names, FULL)?.name, { kind: 'title', title: 'Lift the chorus' });
+  assert.equal(heardPlanName(store.getSnapshot(), t, names, REDUCED)?.name.kind, 'steps');
+  store.setHeard('p9');
+  assert.deepEqual(heardPlanName(store.getSnapshot(), t, names, FULL), { branch: 'p9', name: { kind: 'generic' } });
+  store.setHeard('main');
+  assert.equal(heardPlanName(store.getSnapshot(), t, names, FULL), null);
+  store.setHeard(null);
+  assert.equal(heardPlanName(store.getSnapshot(), t, names, FULL), null);
 });

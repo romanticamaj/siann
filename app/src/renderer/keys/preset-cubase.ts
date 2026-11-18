@@ -24,6 +24,12 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+Alt+P', commandId: 'zone.right.plans', scope: 'window' },
   // The plan review (m5b-ui-ghosts; spec 4.2, 3.6): the ghosts of the overlaid plan on and off.
   { chord: 'Mod+Alt+G', commandId: 'plans.toggleGhosts', scope: 'window' },
+  // The audition (m5b-ui-audition; spec 4.3, 3.6, on keys Cubase leaves free):
+  // Shift+A hears the other side while a plan is auditioned; Ctrl+Return
+  // (Cmd+Return on macOS) with the right zone focused runs the selected plan's
+  // primary action. Enter and NumpadEnter keep theirs.
+  { chord: 'Shift+A', commandId: 'audition.flip', scope: 'window' },
+  { chord: 'Mod+Enter', commandId: 'plans.primary', scope: 'right' },
   // The focus frame (zone-focus.ts). Tab and Shift+Tab cycle the zones from a
   // zone or the page and walk a zone's controls from inside it; F6 and
   // Shift+F6 cycle the zones from anywhere; Enter on a zone enters it and
@@ -103,4 +109,30 @@ export const CUBASE_PRESET: readonly Binding[] = [
   // The Pool (m5-ui-port-toolbar; spec 10.8, 1; research/cubase.md 7): Ctrl+P
   // (Cmd+P) is Cubase's Open Pool. P, Alt+P, Shift+P and Mod+Alt+P keep theirs.
   { chord: 'Mod+P', commandId: 'pool.open', scope: 'window' },
+  // Projects (m5b-ui-project; spec 3.6; research/cubase.md 7): Cubase's New
+  // Project, Open and Save. The File menu shows them as its accelerators and
+  // registers none. Studio Setup and Open Recent have no key.
+  { chord: 'Mod+N', commandId: 'project.new', scope: 'window' },
+  { chord: 'Mod+O', commandId: 'project.open', scope: 'window' },
+  { chord: 'Mod+S', commandId: 'project.save', scope: 'window' },
+  // The rest of the editing (m5b-ui-edit-more; spec 3.2, 3.6; research/cubase.md
+  // 7.2-7.4): Glue and Erase on the number row; cut, copy and paste at the
+  // cursor, paste at the origin; Repeat; the nudges of the key-command table
+  // (not the manual's range page): Mod+Left/Right the position, Alt+Left the
+  // start left, Alt+Shift+Right the start right, Alt+Shift+Left the end left,
+  // Alt+Right the end right; Select None. edit.glue stays unbound, as in Cubase.
+  { chord: '4', commandId: 'tool.glue', scope: 'project' },
+  { chord: '5', commandId: 'tool.erase', scope: 'project' },
+  { chord: 'Mod+X', commandId: 'edit.cut', scope: 'project' },
+  { chord: 'Mod+C', commandId: 'edit.copy', scope: 'project' },
+  { chord: 'Mod+V', commandId: 'edit.paste', scope: 'project' },
+  { chord: 'Alt+V', commandId: 'edit.pasteAtOrigin', scope: 'project' },
+  { chord: 'Mod+K', commandId: 'edit.repeat', scope: 'project' },
+  { chord: 'Mod+ArrowLeft', commandId: 'edit.nudgeLeft', scope: 'project' },
+  { chord: 'Mod+ArrowRight', commandId: 'edit.nudgeRight', scope: 'project' },
+  { chord: 'Alt+ArrowLeft', commandId: 'edit.nudgeStartLeft', scope: 'project' },
+  { chord: 'Alt+Shift+ArrowRight', commandId: 'edit.nudgeStartRight', scope: 'project' },
+  { chord: 'Alt+Shift+ArrowLeft', commandId: 'edit.nudgeEndLeft', scope: 'project' },
+  { chord: 'Alt+ArrowRight', commandId: 'edit.nudgeEndRight', scope: 'project' },
+  { chord: 'Mod+Shift+A', commandId: 'edit.selectNone', scope: 'project' },
 ];

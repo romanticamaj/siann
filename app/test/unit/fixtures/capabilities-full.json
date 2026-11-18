@@ -26,6 +26,7 @@
     "gesture.begin", "gesture.update", "gesture.hold", "gesture.end", "gesture.cancel",
     "plan.list", "plan.preview", "record.arm", "transport.record", "record.recover_take",
     "session.create", "media.import", "transport.set_cycle", "transport.set_click", "meter.reset_loudness",
+    "transport.set_punch", "transport.set_preroll", "transport.set_count_in",
     "agent.request", "agent.cancel_request", "agent.requests", "agent.next_request", "agent.answer_request"
   ],
   "features": {
@@ -34,7 +35,7 @@
     "audition": true,
     "transport": true,
     "render": true,
-    "plugins": false,
+    "plugins": {"formats": ["clap"], "flags": ["sampleAccurateParameters", "midiInput", "midiOutput", "sidechain", "variableLatency", "editor"]},
     "gestures": true,
     "peaks": true,
     "recording": true,
@@ -43,6 +44,9 @@
     "locators": true,
     "cycle": true,
     "click": true,
+    "punch": true,
+    "preroll": true,
+    "countIn": true,
     "masterGain": true,
     "clipFades": true,
     "planMetadata": true,

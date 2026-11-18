@@ -219,6 +219,36 @@ export async function painted(page: Page): Promise<void> {
 // bundle from prepareBundle(): what the run cannot reproduce goes to `notes`.
 // `locale` is the manifest's locale the window runs in (en, zh-TW): the
 // agent's text is the mockup's in that locale.
+// The slots of the mockup's T (Kick to FX): its ins entries that are not "—".
+const MOCKUP_INSERTS = [1, 2, 2, 1, 2, 2, 1];
+
+async function stageInserts(page: Page, notes: string[]): Promise<void> {
+  const plugin = process.env.SIANN_TEST_PLUGIN_CLAP;
+  if (!plugin) {
+    notes.push('SIANN_TEST_PLUGIN_CLAP is not set: the insert racks hold empty slots only, the mockup draws plugins in them.');
+    return;
+  }
+  const engine = await engineClient(page, { events: false });
+  try {
+    const registry = (await engine.call('plugin.registry')) as { plugins: Array<{ format: string; path: string; approved: boolean }> };
+    const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(plugin));
+    if (!install) {
+      notes.push(`The engine did not register ${plugin} (no --plugin-dir for it): the insert racks hold empty slots only.`);
+      return;
+    }
+    if (!install.approved) await engine.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+    for (const [index, count] of MOCKUP_INSERTS.entries()) {
+      for (let n = 0; n < count; n += 1) {
+        await engine.call('plugin.instantiate', { trackId: TRACK_IDS[index]!, index: n, descriptor: { format: install.format, path: install.path } });
+      }
+    }
+  } finally {
+    engine.close();
+  }
+  await expect(page.locator('.strip .ins .slot:not(.empty)')).toHaveCount(MOCKUP_INSERTS.reduce((a, b) => a + b, 0));
+  notes.push('The insert slots hold siann_test_plugin ("SIANN Test Plugin"), with the bypass, e and Remove the app adds to the mockup\'s slot; the mockup names its plugins (Transient, Gate, EQ ...).');
+}
+
 export async function stageSession(app: ElectronApplication, page: Page, notes: string[], locale = 'en'): Promise<void> {
   const text = sessionText(locale, fs.readFileSync(MOCKUP_HTML, 'utf8'));
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
@@ -232,6 +262,12 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect
     .poll(async () => (await hook<Array<{ clipId: string; title: string }>>(page, 'clips')).map((clip) => `${clip.clipId} ${clip.title}`).sort())
     .toEqual(CLIPS.map((clip, index) => `${clipId(index + 1)} ${clip[3]}`).sort());
+
+  // The mockup's insert racks (m5b-ui-inserts-master): as many slots per track
+  // as strip() draws (T.ins without its "—"), siann_test_plugin's CLAP in each,
+  // before any plan, so no plan reads a track the inserts change. The mockup's
+  // plugin names are its own; the slots read the test plugin's.
+  await stageInserts(page, notes);
 
   // The mockup's zoom: 20 px per second. The slider moves in quarter octaves,
   // so its step is lifted for this one value (a test-side change of the
@@ -317,6 +353,13 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
   await engine.call('transport.locate', { frames: String(19 * RATE) });
   await expect.poll(async () => Math.round((await hook<number | null>(page, 'cursorX')) ?? -1)).toBe(Math.round((19 * RATE) / FRAMES_PER_PIXEL));
+  // The mockup's session is saved: Save (Ctrl+S, the renderer's session.save) clears the saved mark (m5b-ui-project).
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('ControlOrMeta+KeyS');
+  await expect
+    .poll(() => page.evaluate(() => window.__siannClient!.answered().filter((r) => r.method === 'session.save' && r.code === null).length))
+    .toBeGreaterThan(0);
+  await expect(page.getByTestId('session-name')).not.toHaveAttribute('data-unsaved', 'true');
   // Toasts are transient (the plan's arrival): dismissed, they are not chrome.
   await page.evaluate(() => {
     const toasts = (window as unknown as { __siannToasts?: { getSnapshot(): ReadonlyArray<{ id: number }>; dismiss(id: number): void } }).__siannToasts;

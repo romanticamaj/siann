@@ -24,6 +24,14 @@
 // setting, also words positions in the Plans tab. The locators, cycle and
 // metronome (m5-ui-loop-click) are the LoopClickController's: its buttons in
 // the transport, its band in the event display's ruler, its keys in the shell.
+// Projects (m5b-ui-project): New, Open, the recent list and Save are the
+// ProjectController's commands (New, Open and the recent list only with the
+// shell's port), the start view covers the zones until a bundle is opened, and
+// Studio Setup is a dialog opened by studio.setup or by a transport button
+// without a device. Every session epoch (session.opened) drops what the
+// window keeps of the old session: the track selection, and the timeline and
+// the Plans tab are mounted again, so their clip selection, zoom and plan
+// selection start afresh; a reconnect still clears the selections only.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -40,19 +48,27 @@ import type { ReviewStore } from './model/review-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
+import type { ProjectController, SavedMark } from './model/project';
+import { studioSetupAvailable, type StudioSetupController } from './model/studio-setup';
 import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
+import { pluginsListed } from './mixer/inserts';
+import { InsertsContext, type InsertsHost } from './mixer/inserts-context';
 import { Mixer } from './mixer/Mixer';
+import { PluginPicker } from './mixer/PluginPicker';
 import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
 import { HearingSwitch } from './plans/HearingSwitch';
 import { GhostContext, ReviewContext, useReviewGhosts } from './plans/ghost-context';
+import { HeardContext } from './plans/heard-context';
 import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
+import { StartView } from './shell/StartView';
+import { StudioSetup } from './shell/StudioSetup';
 import { TimeFormatContext } from './shell/time-format';
 import type { ToastStore } from './shell/toast-store';
 import { NO_TRACKS, pruneTracks, selectTrack, type TrackSelectMode, type TrackSelection } from './timeline/selection';
@@ -83,6 +99,12 @@ export interface AppProps {
   readonly history: UndoHistory;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
+  // Projects and Studio Setup (m5b-ui-project).
+  readonly project: ProjectController;
+  readonly saved: SavedMark;
+  readonly studioSetup: StudioSetupController;
+  // The insert racks' plugin actions, picker and slot states (m5b-ui-inserts-master).
+  readonly inserts?: InsertsHost;
 }
 
 export function App({
@@ -104,6 +126,10 @@ export function App({
   history,
   onTimelineHooks,
   onMeterHooks,
+  project,
+  saved,
+  studioSetup,
+  inserts,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -132,22 +158,55 @@ export function App({
   );
   // Removed tracks leave the selection.
   useEffect(() => client.model.subscribe(() => setTracks((current) => pruneTracks(current, order()))), [client]);
-  useEffect(() => setTracks(NO_TRACKS), [reconnects]);
-  // A reconnect clears the plan review's selection, its ticks and its pin (spec 4.5 C8).
-  const seenReconnects = useRef(reconnects);
+  const epoch = useSyncExternalStore(
+    (listener) => client.subscribe(listener),
+    () => client.getState().epoch,
+  );
+  useEffect(() => setTracks(NO_TRACKS), [reconnects, epoch]);
+  // Projects: the key commands and menu items, and the start view.
+  useEffect(() => project.bind(commands, () => capabilitySelector(client.getState().capabilities)), [project, commands, client]);
+  const startView = useSyncExternalStore(project.subscribe, () => project.getSnapshot().shell && project.getSnapshot().startView);
+  // Studio Setup: studio.setup, and the transport's buttons without a device.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const openSetup = useCallback(() => setSetupOpen(true), []);
+  const closeSetup = useCallback(() => setSetupOpen(false), []);
+  const setupAvailable = studioSetupAvailable(capabilitySelector(capabilities));
+  useEffect(
+    () =>
+      commands.register('window', 'studio.setup', () => {
+        if (!studioSetupAvailable(capabilitySelector(client.getState().capabilities))) return false;
+        setSetupOpen(true);
+        return true;
+      }),
+    [commands, client],
+  );
+  const sessionRate = useSyncExternalStore(
+    (listener) => client.model.subscribe(listener),
+    () => client.model.getSnapshot()?.root?.sampleRate ?? null,
+  );
+  // A reconnect clears the plan review's selection, its ticks and its pin (spec 4.5 C8),
+  // and so does a session epoch: the plans are another session's.
+  const seenSession = useRef({ reconnects, epoch });
   useEffect(() => {
-    if (reconnects === seenReconnects.current) return;
-    seenReconnects.current = reconnects;
+    const seen = seenSession.current;
+    if (reconnects === seen.reconnects && epoch === seen.epoch) return;
+    seenSession.current = { reconnects, epoch };
     review.reset();
-  }, [review, reconnects]);
+  }, [review, reconnects, epoch]);
   const ghosts = useReviewGhosts(review);
+  // The side heard, for the edit guard of the zones (m5b-ui-audition).
+  const heard = useSyncExternalStore((listener) => plans.subscribe(listener), () => plans.getSnapshot().heard);
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
+  const racks = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.racks);
+  const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
+     <InsertsContext.Provider value={inserts ?? null}>
       <TimeFormatContext.Provider value={timeFormat}>
        <ReviewContext.Provider value={review}>
         <GhostContext.Provider value={ghosts}>
+        <HeardContext.Provider value={heard}>
         <Shell
           client={client}
           plans={plans}
@@ -167,6 +226,7 @@ export function App({
           project={
             <Counted id="timeline">
               <Timeline
+                key={epoch}
                 client={client}
                 peaks={peaks}
                 commands={commands}
@@ -182,20 +242,28 @@ export function App({
                 loopClick={loopClick}
                 reconnects={reconnects}
                 review={review}
+                toasts={toasts}
               />
             </Counted>
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} />
             </Counted>
           }
-          right={<PlanPanel client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} />}
+          right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
+          startView={startView ? <StartView project={project} /> : null}
+          studioSetup={<StudioSetup open={setupOpen} controller={studioSetup} engineStatus={engineStatus} sessionRate={sessionRate} onClose={closeSetup} />}
+          saved={saved}
+          onStudioSetup={setupAvailable ? openSetup : undefined}
         />
+        {inserts && pluginsListed(capabilitySelector(capabilities)) ? <PluginPicker picker={inserts.picker} trackName={trackName} /> : null}
+        </HeardContext.Provider>
         </GhostContext.Provider>
        </ReviewContext.Provider>
       </TimeFormatContext.Provider>
+     </InsertsContext.Provider>
     </CapabilitiesContext.Provider>
   );
 }

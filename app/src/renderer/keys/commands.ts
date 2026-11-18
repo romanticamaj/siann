@@ -83,8 +83,49 @@ export const COMMAND_IDS = [
   'transport.setRightLocator',
   // The Pool (m5-ui-port-toolbar; spec 10.8, 1): Cubase's Open Pool.
   'pool.open',
+  // Projects and audio setup (m5b-ui-project; spec 3.6, UR-4): New Project,
+  // Open and Save on Cubase's keys; Studio Setup and the ten Open Recent
+  // entries without a key, from the application menu. New, Open and the
+  // recent entries need the shell and exist only with its preload bridge.
+  'project.new',
+  'project.open',
+  'project.save',
+  'project.openRecent.1',
+  'project.openRecent.2',
+  'project.openRecent.3',
+  'project.openRecent.4',
+  'project.openRecent.5',
+  'project.openRecent.6',
+  'project.openRecent.7',
+  'project.openRecent.8',
+  'project.openRecent.9',
+  'project.openRecent.10',
+  'studio.setup',
   // The plan review (m5b-ui-ghosts; spec 4.2): the proposal pill's toggle, the ghosts on and off.
   'plans.toggleGhosts',
+  // The rest of Cubase's editing (m5b-ui-edit-more; spec 3.2, 3.6): the Glue
+  // and Erase tools, Glue (unbound, as in Cubase: the Glue tool and the Edit
+  // menu reach it), cut, copy, paste at the cursor and at the origin, Repeat,
+  // the nudges of the position, the start and the end, and Select None.
+  'tool.glue',
+  'tool.erase',
+  'edit.glue',
+  'edit.cut',
+  'edit.copy',
+  'edit.paste',
+  'edit.pasteAtOrigin',
+  'edit.repeat',
+  'edit.nudgeLeft',
+  'edit.nudgeRight',
+  'edit.nudgeStartLeft',
+  'edit.nudgeStartRight',
+  'edit.nudgeEndLeft',
+  'edit.nudgeEndRight',
+  'edit.selectNone',
+  // The audition (m5b-ui-audition; spec 4.3, 3.6): hear the other side while
+  // a plan is auditioned, and run the selected plan's primary action.
+  'audition.flip',
+  'plans.primary',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

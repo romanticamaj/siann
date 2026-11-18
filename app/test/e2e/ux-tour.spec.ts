@@ -262,7 +262,7 @@ async function launch(sessionDir: string, extraEnv: Record<string, string> = {})
       SIANN_USER_DATA: path.join(scratch, `user-data-${path.basename(sessionDir)}`),
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', ...(process.env.SIANN_TEST_PLUGIN_CLAP ? ['--plugin-dir', path.dirname(process.env.SIANN_TEST_PLUGIN_CLAP)] : [])]),
       ...extraEnv,
     },
   });
@@ -382,11 +382,14 @@ async function waveformsDrawn(): Promise<void> {
     // drawn, not nonZero: a clip whose visible part is silence (the riser's
     // quiet start) has its columns drawn, all zero. The view's width is read
     // in the poll: after a resize the zones animate to their sizes (120 ms),
-    // so a clip at the right edge may leave the view while this waits.
+    // so a clip at the right edge may leave the view while this waits. While
+    // a proposal is heard a moved clip's original is main's place as a faint
+    // outline with no waveform (peakColumns says outline), and is passed by.
     await expect
       .poll(async () => {
         const width = (await timeline<{ width: number }>('view')).width;
-        return rect.x >= width || (await timeline<{ drawn: number }>('peakColumns', rect.clipId)).drawn > 0;
+        const columns = await timeline<{ drawn: number; outline?: true }>('peakColumns', rect.clipId);
+        return rect.x >= width || columns.outline === true || columns.drawn > 0;
       })
       .toBe(true);
   }
@@ -499,7 +502,21 @@ test.afterEach(async () => {
   scratch = '';
 });
 
+// siann_test_plugin's CLAP (m5b-ui-inserts-master): its directory is a
+// --plugin-dir of every launch, and state 34 and the racks of 04 onward need it.
+const TEST_PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
+
+// The test plugin's install in the engine's registry, approved.
+async function testPluginInstall(client: EngineClient): Promise<{ format: string; path: string }> {
+  const registry = (await client.call('plugin.registry')) as { plugins: Array<{ format: string; path: string; approved: boolean }> };
+  const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(TEST_PLUGIN!));
+  if (!install) throw new Error(`the engine did not register ${TEST_PLUGIN}`);
+  if (!install.approved) await client.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+  return install;
+}
+
 test('UX screenshot tour', async () => {
+  if (!TEST_PLUGIN) throw new Error('set SIANN_TEST_PLUGIN_CLAP to siann_test_plugin\'s CLAP (state 34 and the racks need it)');
   test.setTimeout(420_000);
   fs.mkdirSync(OUT, { recursive: true });
   for (const old of fs.readdirSync(OUT).filter((f) => /^\d\d-.*\.png$/.test(f) || f === 'index.json')) {
@@ -529,6 +546,12 @@ test('UX screenshot tour', async () => {
   const summary = 'Kick 0 dB, Snare -2.5 dB, Bass -4 dB, Keys -8 dB pan L35, Vox Lead +1.5 dB solo, Vox BG -9 dB pan R40, FX -12 dB muted';
   await shoot(page, 'Session loaded', `A 7-track session (${summary}); 10 clips with waveforms from the engine's peaks. Transport stopped.`);
   await shoot(page, 'Session loaded full page', 'The same state as the whole page: since m5-ui-shell the page never scrolls, so this is the window.', { fullPage: true });
+
+  // m5b-ui-inserts-master: Vox Lead gets the test plugin as an insert (approved
+  // and instantiated through the protocol), so the racks of 04 onward show a slot.
+  const install = await testPluginInstall(watcher);
+  await watcher.call('plugin.instantiate', { trackId: 'trk_voxlead', index: 0, descriptor: { format: install.format, path: install.path } });
+  await expect(page.getByTestId('mixer-strip-trk_voxlead').locator('.slot:not(.empty)')).toHaveCount(1);
 
   // Playing: the meters read (fake device). Vox Lead's solo is clicked off
   // first, so every unmuted track sounds, and back on after. The solo
@@ -632,10 +655,10 @@ test('UX screenshot tour', async () => {
   }
   await gestureSettled();
   const held = (await fader.getAttribute('aria-valuetext')) ?? '';
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the insert and automation rows are empty boxes.`);
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): the insert rack (m5b-ui-inserts-master: Vox Lead's SIANN Test Plugin, whose bypass, e and Remove show while the slot is hovered or focused, and the empty + slots), pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the automation row is an empty box. The Inserts rack switch ends the lower zone's tab row.`);
   await page.mouse.up();
   await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
-  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it, the master strip shows its meter, peak value and name only.`);
+  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it. The master strip has its fader at 0.0 dB (m5b-ui-inserts-master), its meter, its level and peak value and its name; its M, rack and e are M6c's and their boxes stay empty.`);
   await scrollTop();
 
   // ---- 5. A clip selected, mid-move, and moved.
@@ -712,11 +735,13 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('plan-audition').click();
   await expect(page.getByTestId('audition-banner')).toBeVisible();
   await expect(page.getByTestId('hear-proposal')).toHaveAttribute('aria-pressed', 'true');
+  // m5b-ui-audition: the ghosts turn solid once the branch snapshot arrives.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __siannGhosts?: { list(): Array<{ mode?: string }> } }).__siannGhosts?.list().every((g) => g.mode === 'solid') ?? false)).toBe(true);
   await scrollTo('plan-review');
   await shoot(
     page,
     'Audition active',
-    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The plan is approved, neither applied, rejected nor stale, so its ghosts stay drawn (the Keys and Vox BG ghost caps and pan tick, the ring on Vox Lead's S) and the pill names it.`,
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action. The window has the 2 px violet frame; the branch chip in the top bar names the proposal as the banner does (its first step and "3 steps") instead of main r<head>; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge with its ⏎ (Ctrl+Return in the right zone) and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The ghosts are solid, drawn from the branch snapshot (what is playing): the Keys and Vox BG caps and the pan tick, the ring on Vox Lead's S, with main's caps as faint outlines. Structural edits are disabled with the reason as their tooltip. The mockup has no hearing state: this state is the app's alone.`,
   );
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -871,6 +896,38 @@ test('UX screenshot tour', async () => {
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('media-pool')).toHaveCount(0);
 
+  // ---- 32 (m5b-ui-edit-more; UI redesign 3.2): the two pieces of the Keys
+  // clip split at 25 glued again with the Glue tool (4; a click on a selected
+  // piece joins the selection's run in one revision), then the snap type menu
+  // open from the snap field's chevron. The mockup has no such menu, so the
+  // review reads this state alone.
+  await waveformsDrawn();
+  const glueBox = await canvasBox();
+  const leftPiece = await clipRect('clp_06_keys');
+  const rightPiece = (await timeline<Rect[]>('clips')).find((r) => r.trackId === 'trk_keys' && BigInt(r.position) === cut)!;
+  await page.mouse.click(glueBox.x + leftPiece.x + leftPiece.width / 2, glueBox.y + leftPiece.y + leftPiece.height / 2);
+  await page.keyboard.down('Shift');
+  await page.mouse.click(glueBox.x + rightPiece.x + rightPiece.width / 2, glueBox.y + rightPiece.y + rightPiece.height / 2);
+  await page.keyboard.up('Shift');
+  const clipsBeforeGlue = Number(await page.getByTestId('clip-count').textContent());
+  await page.keyboard.press('Digit4');
+  await expect(page.getByTestId('tool-glue')).toHaveAttribute('aria-pressed', 'true');
+  await page.mouse.click(glueBox.x + leftPiece.x + leftPiece.width / 2, glueBox.y + leftPiece.y + leftPiece.height / 2);
+  await expect(page.getByTestId('clip-count')).toHaveText(String(clipsBeforeGlue - 1));
+  await expect.poll(async () => (await clipRect('clp_06_keys')).width).toBeGreaterThan(leftPiece.width);
+  await page.getByTestId('snap-toggle').locator('svg').last().click();
+  await expect(page.getByTestId('snap-type-menu')).toBeVisible();
+  await shoot(
+    page,
+    'Pieces glued, snap type menu open',
+    'The Keys clip\'s two pieces (split at the cursor in state 25) selected and glued with the Glue tool (key 4, lit in the toolbar): one clip.remove and one clip.trim in one revision, so the clip is whole again with its fades and volume. The snap type menu is open under the snap field\'s chevron: Grid (checked), Grid Relative, Events (magnetic to the other clips\' starts and ends) and Magnetic Cursor. The mockup does not show this menu.',
+    { number: 32 },
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('snap-type-menu')).toHaveCount(0);
+  await page.keyboard.press('Digit1');
+  await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-pressed', 'true');
+
   // ---- 26 and 27 (m5b-ui-ghosts; UI redesign 4.2, 5.2): a plan's ghosts in
   // the event display and on the MixConsole.
   const ghostPlan = [
@@ -902,6 +959,25 @@ test('UX screenshot tour', async () => {
     { number: 27 },
   );
 
+  // ---- 28 (m5b-ui-audition; UI redesign 4.3, 4.5 C5): the same plan
+  // auditioned: its clip and track ghosts solid in the event display, the
+  // frame and the banner, and a structural control disabled with its reason.
+  await page.mouse.move(0, 0);
+  await page.getByTestId('plan-audition').click();
+  await expect(page.getByTestId('audition-banner')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __siannGhosts?: { list(): Array<{ mode?: string }> } }).__siannGhosts?.list().filter((g) => g.mode === 'solid').length ?? 0)).toBeGreaterThanOrEqual(ghostPlan.length);
+  await expect(page.getByTestId('tool-split')).toBeDisabled();
+  await page.getByTestId('tool-split').hover();
+  await waveformsDrawn();
+  await shoot(
+    page,
+    'Hearing a proposal with clip and track ghosts',
+    `The 6-step plan (${hash8(ghostHash)}) auditioned: the 2 px violet frame, the banner and the branch chip naming it, and its ghosts solid in the event display (the Strings lane, unhatched, and its placed clip; the moved Kick clip, its original now main's place as a faint outline), on the headers and the MixConsole (the Strings header and strip unhatched, the Bass cap solid with main's cap as a faint outline; Kick's M and the Keys knob solid, main's value the control itself), drawn from the branch snapshot. Structural edits are disabled while the proposal is heard: the Split tool, under the pointer, is dimmed and its tooltip gives the reason (the tooltip is the system's and is not in the capture); the fader and pan stay live and go to the side heard. The mockup has no hearing state: this state is the app's alone.`,
+    { number: 28 },
+  );
+  // Discarded, so what follows is as before.
+  await page.getByTestId('banner-discard').click();
+  await expect(page.getByTestId('audition-banner')).toHaveCount(0);
   // ---- 41 (m5b-ui-plan-metadata): a titled plan with its intent, the agent
   // row connected. The tour's MCP client keeps its name (ux-tour).
   const titledClient = await agent();
@@ -924,13 +1000,67 @@ test('UX screenshot tour', async () => {
     { number: 41 },
   );
 
-  // ---- What the window has no surface for (unnumbered).
-  shots.push({
-    file: null,
-    state: 'Plugin insert and editor (not captured)',
-    notes:
-      'The renderer shows no plugin inserts and no editor inside its window: a plugin editor is a separate native window owned by the shell (editor.spec.ts, desktop engine only), so there is nothing in the window to capture.',
-  });
+  // ---- 34 (m5b-ui-inserts-master; UI redesign 3.4): an insert rack with a
+  // plugin, and the picker open from an empty slot.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('mixer-strip-trk_voxlead').locator('.slot:not(.empty)')).toHaveCount(1);
+  await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+  await expect(page.getByTestId('plugin-picker')).toBeVisible();
+  await expect(page.getByTestId('picker-install').first()).toBeVisible();
+  const installs = await page.getByTestId('picker-install').count();
+  await shoot(
+    page,
+    'Insert rack and plugin picker',
+    `Vox Lead's insert rack holds the SIANN Test Plugin (its name; bypass, e for its editor and Remove, added to the mockup's .slot, show while it is hovered or focused) above one empty + slot; a click on an empty slot of Bass opened the plugin picker: the ${installs} installs of plugin.registry by name and format with a search field, an approved one chosen with its row, an unapproved one with Approve (after a confirmation that names the file). Choosing one inserts it at the end of the chain as one revision. The picker is app-only (the mockup draws none), so the review reads this state alone; a plugin's editor is a native window outside the page.`,
+    { number: 34 },
+  );
+  await page.getByTestId('picker-close').click();
+  await expect(page.getByTestId('plugin-picker')).toBeHidden();
+
+  // ---- 29 and 30 (m5b-ui-project): the start view, on a launch of its own
+  // without SIANN_SESSION_DIR and with a recent list whose last bundle is
+  // gone, then Studio Setup from the Studio menu. The mockup draws neither:
+  // the review reads these states alone.
+  await app!.close();
+  app = undefined;
+  const projectData = path.join(scratch, 'user-data-projects');
+  fs.mkdirSync(projectData, { recursive: true });
+  fs.writeFileSync(
+    path.join(projectData, 'recent-projects.json'),
+    JSON.stringify({ schema: 'siann.recent.v1', recent: [path.join(scratch, 'Deleted song.siann'), bundle] }),
+  );
+  const projectEnv: Record<string, string | undefined> = {
+    ...process.env,
+    SIANN_ENGINE_EXE: exeFromEnv('SIANN_ENGINE_EXE'),
+    SIANN_USER_DATA: projectData,
+    SIANN_SHELL_BACKOFF_MS: '50',
+    SIANN_SHELL_TEST: '1',
+    SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+  };
+  delete projectEnv.SIANN_SESSION_DIR;
+  app = await launchElectron({ args: [MAIN], languages: LANGUAGES, cwd: APP_DIR, env: projectEnv });
+  page = await app.firstWindow();
+  await resize(WIDE);
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect(page.getByTestId('start-recent-1')).toBeVisible();
+  await shoot(
+    page,
+    'Start view',
+    'A launch whose last bundle was deleted (no SIANN_SESSION_DIR): the engine runs on a scratch bundle in user data, never listed as recent, and the start view over the zones offers New Project (Ctrl+N), Open (Ctrl+O) and the recent list (the bundle that is gone was dropped from it). The top bar shows no session name. App-only state: the mockup has no start view.',
+    { number: 29 },
+  );
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('studio.setup')!.click());
+  await expect(page.getByTestId('studio-setup')).toBeVisible();
+  await expect(page.getByTestId('setup-device-fake')).toBeVisible();
+  await expect(page.getByTestId('setup-rate')).toBeVisible();
+  await shoot(
+    page,
+    'Studio Setup',
+    'Studio > Studio Setup: the devices of engine.devices with their input and output channel counts (the fake device: 2 and 2), the output and input lists engine.select_device takes, and the running device\'s sample rate, buffer, input and output latency and whether device-side SRC is active, from engine.status. App-only state: the mockup has no Studio Setup.',
+    { number: 30 },
+  );
+  await page.getByTestId('setup-close').click();
   fs.writeFileSync(path.join(OUT, 'index.json'), `${JSON.stringify(shots, null, 2)}\n`);
   console.log(`UX tour: ${shots.filter((s) => s.file !== null).length} screenshots in ${OUT}`);
 });

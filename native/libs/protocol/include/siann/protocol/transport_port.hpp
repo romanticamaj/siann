@@ -1,7 +1,7 @@
 #pragma once
 
 // The protocol server's way to the transport and the device (architecture spec,
-// "siann-protocol", Protocol v0 items 18, 22 and 26). siann-protocol does not link the
+// "siann-protocol", Protocol v0 items 18, 22, 26 and 34). siann-protocol does not link the
 // playback engine; the engine host implements this interface and hands it to
 // the server in ServerOptions. Every call runs on the command thread.
 
@@ -27,6 +27,28 @@ struct ClickState {
     friend bool operator==(const ClickState&, const ClickState&) = default;
 };
 
+// Punch in and out at the locators (Protocol v0 item 34, m5b-engine-punch-count-in).
+struct PunchState {
+    bool in = false;
+    bool out = false;
+
+    friend bool operator==(const PunchState&, const PunchState&) = default;
+};
+
+// Pre-roll or count-in (Protocol v0 item 34): on or off and its length in bars,
+// an integer in [kMinBars, kMaxBars].
+struct BarsState {
+    static constexpr std::int32_t kMinBars = 1;
+    static constexpr std::int32_t kMaxBars = 8;
+    static constexpr std::int32_t kDefaultPrerollBars = 1;
+    static constexpr std::int32_t kDefaultCountInBars = 2;
+
+    bool enabled = false;
+    std::int32_t bars = kDefaultPrerollBars;
+
+    friend bool operator==(const BarsState&, const BarsState&) = default;
+};
+
 struct TransportState {
     bool playing = false;
     std::int64_t position = 0;  // session frames
@@ -35,6 +57,10 @@ struct TransportState {
     // Protocol v0 item 28 (m5b-engine-record): a recording runs, and the armed tracks.
     bool recording = false;
     std::vector<std::string> armed{};
+    // Protocol v0 item 34 (m5b-engine-punch-count-in).
+    PunchState punch{};
+    BarsState preroll{false, BarsState::kDefaultPrerollBars};
+    BarsState countIn{false, BarsState::kDefaultCountInBars};
 };
 
 // The open input (m5b-engine-record): the id it was selected by, the channels
@@ -96,6 +122,10 @@ struct EngineStatus {
     ClickState click;
     bool recording = false;  // Protocol v0 item 28
     std::vector<std::string> armed{};
+    // Protocol v0 item 34 (m5b-engine-punch-count-in), as in TransportState.
+    PunchState punch{};
+    BarsState preroll{false, BarsState::kDefaultPrerollBars};
+    BarsState countIn{false, BarsState::kDefaultCountInBars};
     std::uint64_t xruns = 0;
     double maxCallbackMicros = 0.0;
     std::uint64_t unmeasuredCallbacks = 0;
@@ -136,6 +166,24 @@ public:
     // current gain when `gainMilliDb` is empty; the server has checked its range.
     virtual TransportState setCycle(bool enabled) = 0;
     virtual TransportState setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) = 0;
+    // Protocol v0 item 34 (m5b-engine-punch-count-in): engine state, never a
+    // revision; an empty `bars` keeps the current value (the server has checked its
+    // range). A port that does not record answers not_supported.
+    virtual TransportState setPunch(bool punchIn, bool punchOut) {
+        (void)punchIn;
+        (void)punchOut;
+        throw TransportPortError("not_supported", "this engine host has no punch");
+    }
+    virtual TransportState setPreroll(bool enabled, std::optional<std::int32_t> bars) {
+        (void)enabled;
+        (void)bars;
+        throw TransportPortError("not_supported", "this engine host has no pre-roll");
+    }
+    virtual TransportState setCountIn(bool enabled, std::optional<std::int32_t> bars) {
+        (void)enabled;
+        (void)bars;
+        throw TransportPortError("not_supported", "this engine host has no count-in");
+    }
     virtual EngineStatus status() const = 0;
 
     // engine.devices: every device --device could name, `current` marking one.

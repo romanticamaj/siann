@@ -263,7 +263,8 @@ async function openApp(locale: string, languages: readonly string[], notes: stri
       SIANN_USER_DATA: path.join(scratch, 'user-data'),
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      // The test plugin's directory, for the mockup's insert racks (m5b-ui-inserts-master).
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', ...(process.env.SIANN_TEST_PLUGIN_CLAP ? ['--plugin-dir', path.dirname(process.env.SIANN_TEST_PLUGIN_CLAP)] : [])]),
       // The mockup's device and build in the status bar (UI redesign 10.2).
       SIANN_FIDELITY_ENVIRONMENT: JSON.stringify(MANIFEST.environment),
     },
@@ -391,6 +392,43 @@ for (const [locale, setting] of Object.entries(MANIFEST.locales)) {
         over: result.ratio > MANIFEST.pixels.maxMismatch,
         files,
       });
+    }
+
+    // m5b-ui-edit-more's states the mockup does not show, the app's alone,
+    // with the mockup's clip still selected and nothing committed: the
+    // repeat dialog (Ctrl+K, over the whole window), the snap type menu open
+    // from the snap field's chevron and the info line's Start open as a text
+    // field (each over the project zone). Each is cancelled with Escape.
+    const projectZone = mockupParts.parts.find((part) => part.id === 'project-zone');
+    if (projectZone && (await page.getByTestId('info-line').getAttribute('data-clip')) !== '') {
+      await expect(page.getByTestId('zone-project')).toHaveAttribute('data-focused', 'true');
+      await page.keyboard.press('ControlOrMeta+KeyK');
+      await expect(page.getByTestId('repeat-dialog')).toBeVisible();
+      await expect(page.getByTestId('repeat-count')).toBeFocused();
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'repeat-dialog.app.png'), await page.screenshot());
+      notes.push(`The repeat dialog (Ctrl+K on the selected clip) is ${locale}/repeat-dialog.app.png, the app's alone: the mockup has no such dialog.`);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('repeat-dialog')).toBeHidden();
+
+      await page.getByTestId('snap-toggle').locator('svg').last().click();
+      await expect(page.getByTestId('snap-type-menu')).toBeVisible();
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'project-zone.snap-type-menu.app.png'), encodePng(crop(decodePng(await page.screenshot()), projectZone)));
+      notes.push(`The snap type menu open is ${locale}/project-zone.snap-type-menu.app.png, the app's alone: the mockup has no such menu.`);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('snap-type-menu')).toHaveCount(0);
+
+      await page.getByTestId('info-start').click();
+      await expect(page.getByTestId('info-start-input')).toBeFocused();
+      await page.mouse.move(VIEW.width - 2, 1);
+      await painted(page);
+      fs.writeFileSync(path.join(dir, 'project-zone.info-edit.app.png'), encodePng(crop(decodePng(await page.screenshot()), projectZone)));
+      notes.push(`The info line with its Start value open as a text field is ${locale}/project-zone.info-edit.app.png, the app's alone: the mockup's info line only shows its values.`);
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('info-start-input')).toHaveCount(0);
     }
 
     // The resting state (m5-ui-port-arrange-canvas): no clip selected. The

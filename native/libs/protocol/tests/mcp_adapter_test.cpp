@@ -36,7 +36,8 @@ const std::vector<std::string> kTools = {
     "approve_plan",   "reject_plan",           "apply_plan",      "rollback_plan", "propose_plan",
     "audition",       "merge_proposal",        "discard_proposal", "execute",      "job_status",
     "render",         "open_session",          "save_session",    "play",          "stop",
-    "locate",         "set_cycle",             "set_click",       "engine_status", "list_devices",
+    "locate",         "set_cycle",             "set_click",       "set_punch",     "set_preroll",
+    "set_count_in",   "engine_status",         "list_devices",
     "select_device",  "record_arm",            "record",          "create_session", "import_media",
     "list_plans",     "preview_plan",          "undo",            "redo",
     "next_request",   "answer_request",
@@ -44,11 +45,13 @@ const std::vector<std::string> kTools = {
 
 // The propose scope's tools: recording (m5b-engine-record) added none;
 // m5b-protocol-parity added list_plans and preview_plan, which only read;
-// agent requests (m5b-engine-agent-requests) the agent's two.
+// agent requests (m5b-engine-agent-requests) the agent's two; punch, pre-roll and
+// count-in (m5b-engine-punch-count-in) three that start nothing.
 const std::vector<std::string> kProposeTools = {
     "list_commands", "describe_capabilities", "inspect_session", "submit_plan", "plan_status", "reject_plan",
     "propose_plan",  "audition",              "discard_proposal", "job_status", "render",     "save_session",
-    "play",          "stop",                  "locate",           "set_cycle",  "set_click",  "engine_status",
+    "play",          "stop",                  "locate",           "set_cycle",  "set_click",  "set_punch",
+    "set_preroll",   "set_count_in",          "engine_status",
     "list_devices",  "list_plans",            "preview_plan",     "next_request", "answer_request",
 };
 
@@ -72,15 +75,36 @@ public:
         }
         return reached("set_click", current());
     }
+    protocol::TransportState setPunch(bool punchIn, bool punchOut) override {
+        punch = protocol::PunchState{punchIn, punchOut};
+        return reached("set_punch", current());
+    }
+    protocol::TransportState setPreroll(bool enabled, std::optional<std::int32_t> bars) override {
+        preroll = protocol::BarsState{enabled, bars.value_or(preroll.bars)};
+        return reached("set_preroll", current());
+    }
+    protocol::TransportState setCountIn(bool enabled, std::optional<std::int32_t> bars) override {
+        countIn = protocol::BarsState{enabled, bars.value_or(countIn.bars)};
+        return reached("set_count_in", current());
+    }
     protocol::EngineStatus status() const override {
         protocol::EngineStatus out;
         out.device = protocol::DeviceInfo{"fake", 48'000, 256, 256, 256};
         out.cycle = cycle;
         out.click = click;
+        out.punch = punch;
+        out.preroll = preroll;
+        out.countIn = countIn;
         out.load = protocol::DspLoad{0.125, 0.5};
         return out;
     }
-    protocol::TransportState current() const { return {false, position, cycle, click}; }
+    protocol::TransportState current() const {
+        protocol::TransportState out{false, position, cycle, click};
+        out.punch = punch;
+        out.preroll = preroll;
+        out.countIn = countIn;
+        return out;
+    }
     std::vector<protocol::DeviceDescription> devices() const override {
         return {{"fake", "fake", "fake", false, true}};
     }
@@ -99,6 +123,9 @@ public:
     std::int64_t position = 0;
     bool cycle = false;
     protocol::ClickState click;
+    protocol::PunchState punch;
+    protocol::BarsState preroll{false, protocol::BarsState::kDefaultPrerollBars};
+    protocol::BarsState countIn{false, protocol::BarsState::kDefaultCountInBars};
 
 private:
     protocol::TransportState reached(const std::string& name, protocol::TransportState state) {
@@ -886,6 +913,38 @@ TEST_CASE("set_cycle and set_click wrap their methods one to one under propose",
     port.refusal = "no_device";
     CHECK(at(mcp.error("set_cycle", Value(Object{{"enabled", Value(false)}})), "code").asString() == "no_device");
     CHECK(at(mcp.error("set_click", Value(Object{{"enabled", Value(false)}})), "code").asString() == "no_device");
+}
+
+// m5b-engine-punch-count-in (Protocol v0 item 34): set_punch, set_preroll and
+// set_count_in wrap their methods one to one in the propose scope.
+TEST_CASE("set_punch, set_preroll and set_count_in wrap their methods one to one under propose",
+          "[protocol][mcp][transport][punch]") {
+    RecordingPort port;
+    Fixture f(withTransport(port, McpScope::propose));
+    Mcp mcp(f);
+    mcp.initialize();
+    const ConnectionId ui = f.authed();
+
+    const Value punched = mcp.ok("set_punch", Value(Object{{"in", Value(true)}, {"out", Value(true)}}));
+    CHECK(at(at(punched, "punch"), "in").asBool());
+    CHECK(at(at(punched, "punch"), "out").asBool());
+    const Value direct = f.ok(ui, "transport.set_punch", Value(Object{{"in", Value(true)}, {"out", Value(true)}}));
+    CHECK(canonical(direct) == canonical(punched));
+
+    const Value prerolled = mcp.ok("set_preroll", Value(Object{{"enabled", Value(true)}, {"bars", Value(2)}}));
+    CHECK(at(at(prerolled, "preroll"), "enabled").asBool());
+    CHECK(at(at(prerolled, "preroll"), "bars").asNumber() == 2);
+    const Value counted = mcp.ok("set_count_in", Value(Object{{"enabled", Value(true)}}));
+    CHECK(at(at(counted, "countIn"), "enabled").asBool());
+    CHECK(at(at(counted, "countIn"), "bars").asNumber() == 2);
+    CHECK(port.calls == std::vector<std::string>{"set_punch", "set_punch", "set_preroll", "set_count_in"});
+
+    // The method's own errors, no_device included.
+    CHECK(at(mcp.error("set_preroll", Value(Object{{"enabled", Value(true)}, {"bars", Value(9)}})), "code")
+              .asString() == "invalid_params");
+    CHECK(at(mcp.error("set_punch", Value(Object{{"in", Value(true)}})), "code").asString() == "invalid_params");
+    port.refusal = "no_device";
+    CHECK(at(mcp.error("set_count_in", Value(Object{{"enabled", Value(false)}})), "code").asString() == "no_device");
 }
 
 TEST_CASE("without a transport port set_cycle and set_click answer not_supported", "[protocol][mcp][transport][cycle]") {

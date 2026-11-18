@@ -96,6 +96,37 @@ async function overflowing(): Promise<string[]> {
   }, LABELLED);
 }
 
+// The branch chip (m5b-ui-audition), naming the auditioned plan: one line,
+// inside .tb-left and clear of the separator after it, shortened with an
+// ellipsis, its whole name in its title. Under 1300 px it is not shown.
+async function chipFits(): Promise<string[]> {
+  return page.evaluate(() => {
+    const chip = document.querySelector<HTMLElement>('[data-part=branch-chip]');
+    if (!chip) return ['no branch chip'];
+    if (window.innerWidth <= 1300) return getComputedStyle(chip).display === 'none' ? [] : ['the chip is shown under 1300 px'];
+    const out: string[] = [];
+    const box = chip.getBoundingClientRect();
+    const sep = chip.parentElement!.querySelector<HTMLElement>('.sep')!.getBoundingClientRect();
+    const left = chip.parentElement!.getBoundingClientRect();
+    if (box.right > sep.left + 0.5 || box.right > left.right + 0.5) out.push(`the chip runs past its group: ${box.right} > ${sep.left}`);
+    const name = chip.querySelector<HTMLElement>('span')!;
+    if (name.getClientRects().length !== 1) out.push('the chip wraps');
+    if (!chip.title || !chip.title.includes((name.textContent ?? '').slice(0, 4))) out.push(`the chip's title does not hold its name: ${chip.title}`);
+    // A long name shortens; it never pushes the bar's right group out of the window.
+    const plans = document.querySelector<HTMLElement>('[data-testid=plans-button]')!.getBoundingClientRect();
+    if (plans.right > window.innerWidth + 0.5) out.push(`the Plans button is pushed out: ${plans.right} > ${window.innerWidth}`);
+    // The chip gives way first: the session's name stays whole (its text as
+    // wide as its box; an ellipsis shows at any fraction of a pixel short).
+    const session = document.querySelector<HTMLElement>('[data-testid=session-name] > span')!;
+    const range = document.createRange();
+    range.selectNodeContents(session);
+    const text = range.getBoundingClientRect().width;
+    const shown = session.getBoundingClientRect().width;
+    if (text > shown + 0.01) out.push(`the session's name is shortened: ${text} > ${shown}`);
+    return out;
+  });
+}
+
 // Labels drawn on more than one line: the line boxes of each text node.
 async function wrapped(): Promise<string[]> {
   return page.evaluate((selector) => {
@@ -139,7 +170,8 @@ test('no labelled control overflows or wraps its label in any locale at either w
   await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
   await expect(page.getByTestId('info-line').locator('.f').first()).toBeVisible();
-  for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
+  // Tools 4 and 5 (m5b-ui-edit-more) are .arr-toolbar .b too.
+  for (const id of ['tool-select', 'tool-split', 'tool-glue', 'tool-erase', 'snap-toggle', 'grid-type']) await expect(page.getByTestId(id)).toBeVisible();
   const agent = await agentFor(app);
   if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
   // A plan auditioned: its card reads approved for audition and the banner shows.
@@ -236,10 +268,62 @@ test('no labelled control overflows or wraps its label in any locale at either w
       await resize(size);
       for (const entry of await overflowing()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
       for (const entry of await wrapped()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await chipFits()) failures.push(`${locale} ${size.width}x${size.height}: ${entry}`);
     }
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('time-format-menu')).toBeHidden();
     await expect(page.getByTestId('media-pool')).toHaveCount(0);
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-project: the start view (its New and Open buttons, its recent row)
+// and Studio Setup (its device table, the output and input lists, the status
+// terms and its buttons) in the four locales at both sizes.
+test('the start view and Studio Setup fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-project-'));
+  const userData = path.join(scratch, 'user-data');
+  // One recent bundle, gone, and a launch with no bundle: the start view with an empty list;
+  // then New gives the list a row for the next launch.
+  app = await launchApp({ sessionDir: null, userData, languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const bundle = path.join(scratch, 'A project with a long name.siann');
+  await app.evaluate(({ dialog }, file) => {
+    (dialog as unknown as Record<string, unknown>).showSaveDialog = async () => ({ canceled: false, filePath: file });
+  }, bundle);
+  await page.getByTestId('start-new').click();
+  await expect(page.getByTestId('start-view')).toHaveCount(0);
+  await app.close();
+  // The bundle moved away: the next launch shows the start view, and New made a record of another one.
+  const other = path.join(scratch, 'Other.siann');
+  fs.renameSync(bundle, other);
+  fs.writeFileSync(path.join(userData, 'recent-projects.json'), JSON.stringify({ schema: 'siann.recent.v1', recent: [path.join(scratch, 'Gone.siann'), other] }));
+  app = await launchApp({ sessionDir: null, userData, languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect(page.getByTestId('start-recent-1')).toBeVisible();
+
+  const failures: string[] = [];
+  const check = async (what: string, locale: string) => {
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing()) failures.push(`${what} ${locale} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await wrapped()) failures.push(`${what} ${locale} ${size.width}x${size.height}: ${entry}`);
+    }
+  };
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => window.__siannLocale!.setLocale(next as never), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    await check('start view', locale);
+    await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('studio.setup')!.click());
+    await expect(page.getByTestId('studio-setup')).toBeVisible();
+    await expect(page.getByTestId('setup-device-fake')).toBeVisible();
+    await check('Studio Setup', locale);
+    await page.getByTestId('setup-close').click();
+    await expect(page.getByTestId('studio-setup')).toBeHidden();
   }
   expect(failures).toEqual([]);
 });
@@ -308,3 +392,131 @@ test('the agent row and a titled card fit in every locale at 1440 px and at the 
   }
   expect(failures).toEqual([]);
 });
+
+// m5b-ui-inserts-master: the rack switch, the slot buttons (bypass, e,
+// Remove, the empty slot's +), the Inspector's Inserts section and the open
+// plugin picker fit in en, zh-TW and zh-CN at 1440x900. The slot's plugin
+// name ellipsises inside its box by design, so the check is on the controls.
+// A strip's slot shows its buttons while hovered: they are measured on the
+// hovered slot.
+const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
+const RACKS = '[data-part=mixer-racks] button, .slot.empty, .slot:hover button, .islot button, .islot.empty, [data-part=inspector-inserts] .sec-h';
+const PICKER = '.plugin-picker button, .plugin-picker .picker-format, .plugin-picker .picker-state';
+
+test('the rack switch, the slots, the Inspector\'s Inserts section and the picker fit in every locale', async () => {
+  test.skip(!PLUGIN, 'set SIANN_TEST_PLUGIN_CLAP');
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-inserts-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'], env: { SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', '--plugin-dir', path.dirname(PLUGIN!)]) } });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  const engine = await engineClient(page);
+  const registry = (await engine.call('plugin.registry')) as { plugins: Array<{ format: string; path: string }> };
+  const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(PLUGIN!))!;
+  await engine.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+  await engine.call('plugin.instantiate', { trackId: 'trk_keys', index: 0, descriptor: { format: install.format, path: install.path } });
+  engine.close();
+  await resize(SIZES[0]!);
+  await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)')).toHaveCount(1);
+  await page.getByTestId('track-header-trk_keys').click();
+  await expect(page.locator('[data-part="inspector-inserts"] .islot:not(.empty)')).toHaveCount(1);
+  const failures: string[] = [];
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
+    await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    const measure = (selector: string) => page.evaluate((selector) => {
+      const out: string[] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (el.getClientRects().length === 0) continue;
+        if (el.scrollWidth > el.clientWidth) out.push(`${el.className} "${(el.textContent ?? '').trim().slice(0, 40)}" ${el.scrollWidth} > ${el.clientWidth}`);
+        for (const node of el.childNodes) {
+          if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`${el.className} "${node.textContent.trim()}" wraps`);
+        }
+      }
+      return out;
+    }, selector);
+    await page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)').hover();
+    await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:hover button')).toHaveCount(3);
+    for (const entry of await measure(RACKS)) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+    await expect(page.getByTestId('plugin-picker')).toBeVisible();
+    await expect(page.getByTestId('picker-install').first()).toBeVisible();
+    for (const entry of await measure(PICKER)) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('picker-close').click();
+    await expect(page.getByTestId('plugin-picker')).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});
+
+// m5b-ui-edit-more (UI redesign 3.2, 6.3): the snap type menu, open, and the
+// repeat dialog (Ctrl+K), open, fit in every locale at both window sizes: no
+// item or label overflows its box or wraps.
+test('the snap type menu and the repeat dialog fit in every locale at either window size', async () => {
+  test.setTimeout(150_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-edit-'));
+  const sessionDir = seedBundle(scratch, TRACKS, [{ id: 'clp_fit', trackId: 'trk_kick', at: 0.25 }]);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('tool-glue')).toBeVisible();
+  const clip = await page.evaluate(async () => {
+    const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
+    if (!hooks) throw new Error('window.__siannTimeline is missing (SIANN_SHELL_TEST=1)');
+    for (let i = 0; i < 200; i += 1) {
+      const found = hooks.clips().find((c) => c.clipId === 'clp_fit');
+      if (found) return found;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return null;
+  });
+  expect(clip).not.toBeNull();
+  const canvas = (await page.getByTestId('timeline-canvas').boundingBox())!;
+  const failures: string[] = [];
+  const DIALOG = '[data-testid=repeat-dialog] label, [data-testid=repeat-dialog] button, [data-testid=repeat-dialog] p';
+  const check = async (what: string, selector?: string) => {
+    for (const size of SIZES) {
+      await resize(size);
+      for (const entry of await overflowing()) failures.push(`${what} ${size.width}x${size.height}: ${entry}`);
+      for (const entry of await wrapped()) failures.push(`${what} ${size.width}x${size.height}: ${entry}`);
+      if (selector) {
+        const report = await page.evaluate((sel) => {
+          const out: string[] = [];
+          for (const el of document.querySelectorAll<HTMLElement>(sel)) {
+            if (el.scrollWidth > el.clientWidth) out.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? '').trim()}" ${el.scrollWidth} > ${el.clientWidth}`);
+          }
+          return out;
+        }, selector);
+        for (const entry of report) failures.push(`${what} ${size.width}x${size.height}: ${entry}`);
+      }
+    }
+    await resize(SIZES[0]!);
+  };
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    // The snap type menu, from the snap field's chevron.
+    await page.getByTestId('snap-toggle').locator('svg').last().click();
+    await expect(page.getByTestId('snap-type-menu')).toBeVisible();
+    await expect(page.getByTestId('snap-type-menu').getByRole('menuitemradio')).toHaveCount(4);
+    await check(`${locale} snap type menu`);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('snap-type-menu')).toHaveCount(0);
+    // The repeat dialog: the clip selected, Ctrl+K.
+    await page.mouse.click(canvas.x + clip!.x + clip!.width / 2, canvas.y + clip!.y + clip!.height / 2);
+    await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_fit');
+    await page.keyboard.press('ControlOrMeta+KeyK');
+    await expect(page.getByTestId('repeat-dialog')).toBeVisible();
+    await check(`${locale} repeat dialog`, DIALOG);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('repeat-dialog')).toBeHidden();
+  }
+  expect(failures).toEqual([]);
+});
+

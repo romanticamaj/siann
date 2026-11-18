@@ -86,45 +86,51 @@ const ENTITY_REF_RE = /^[a-z_]+:[^\s:][^\s]*$/;
 
 function validateTouchedIds(touchedIds) {
   if (!Array.isArray(touchedIds) || !touchedIds.every((ref) => typeof ref === 'string' && ENTITY_REF_RE.test(ref))) {
-    throw new Error(`invalid touchedIds (an array of "<entityType>:<id>" refs): ${JSON.stringify(touchedIds)}`);
+    throw new BridgeError('invalid_touched_ids',
+      `invalid touchedIds (an array of "<entityType>:<id>" refs): ${JSON.stringify(touchedIds)}`);
   }
 }
 
 function validateJournal(journal) {
   if (journal && journal.schemaVersion === JOURNAL_V0) {
-    throw new Error(`${JOURNAL_V0} is the Ardour engine's journal (session tar snapshots); it cannot be rolled back `
+    throw new BridgeError('journal_v0_unsupported', `${JOURNAL_V0} is the Ardour engine's journal (session tar `
+      + 'snapshots); it cannot be rolled back '
       + `or read by the native bridge, which writes ${JOURNAL_SCHEMA} (docs/schemas/command-journal-v1.md)`);
   }
   if (!journal || journal.schemaVersion !== JOURNAL_SCHEMA) {
-    throw new Error(`journal schemaVersion must be ${JOURNAL_SCHEMA}`);
+    throw new BridgeError('invalid_schema_version', `journal schemaVersion must be ${JOURNAL_SCHEMA}`);
   }
   if (!journal.journalId || typeof journal.journalId !== 'string') {
-    throw new Error('journalId must be a non-empty string');
+    throw new BridgeError('invalid_journal_id', 'journalId must be a non-empty string');
   }
   if (!Array.isArray(journal.batches)) {
-    throw new Error('journal batches must be an array');
+    throw new BridgeError('invalid_batches', 'journal batches must be an array');
   }
   const applied = journal.batches.some((batch) => batch && batch.status === 'applied');
   if ((typeof journal.bundle !== 'string' || !journal.bundle) && (applied || journal.bundle !== null)) {
-    throw new Error('journal bundle must be the session bundle path (null only when nothing was applied)');
+    throw new BridgeError('invalid_bundle',
+      'journal bundle must be the session bundle path (null only when nothing was applied)');
   }
-  for (const batch of journal.batches) {
+  for (const entry of journal.batches) {
+    const batch = entry && typeof entry === 'object' ? entry : {};
     if (!['applied', 'failed', 'rolled_back'].includes(batch.status)) {
-      throw new Error(`invalid batch status: ${batch.status}`);
+      throw new BridgeError('invalid_batch_status', `invalid batch status: ${batch.status}`);
     }
     if (!['low', 'normal', 'high'].includes(batch.risk)) {
-      throw new Error(`invalid batch risk: ${batch.risk}`);
+      throw new BridgeError('invalid_batch_risk', `invalid batch risk: ${batch.risk}`);
     }
     if (!Array.isArray(batch.entries)) {
-      throw new Error('batch entries must be an array');
+      throw new BridgeError('invalid_batch_entries', 'batch entries must be an array');
     }
     if (batch.planHash !== undefined && batch.planHash !== null && !HASH_RE.test(batch.planHash)) {
-      throw new Error(`invalid planHash: ${batch.planHash}`);
+      throw new BridgeError('invalid_plan_hash', `invalid planHash: ${batch.planHash}`);
     }
     if (batch.touchedIds !== undefined && batch.touchedIds !== null) validateTouchedIds(batch.touchedIds);
     for (const state of [batch.preState, batch.postState]) {
       const hash = state && state.documentHash;
-      if (hash && !HASH_RE.test(hash)) throw new Error(`invalid documentHash: ${hash}`);
+      if (hash && !HASH_RE.test(hash)) {
+        throw new BridgeError('invalid_document_hash', `invalid documentHash: ${hash}`);
+      }
     }
   }
   return journal;

@@ -25,7 +25,7 @@ import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import type { ClipEntity, MediaEntity } from '../../src/renderer/model/document';
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { SessionClient } from '../../src/renderer/model/session-client';
-import { InfoLine } from '../../src/renderer/timeline/InfoLine';
+import { InfoLine, InfoValueField } from '../../src/renderer/timeline/InfoLine';
 import { trackColourVar } from '../../src/renderer/timeline/track-colour';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
 import { clip, media, snapshotOf, track } from './support/timeline';
@@ -147,4 +147,57 @@ test('the ids are the mockup\'s minus the pending parts\'', () => {
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(render(session(), 'clp_ch')), ids(mockupLine()).filter((id) => !pending(id)));
   assert.deepEqual(ids(render(session(), 'clp_ch')), ['info-end', 'info-length', 'info-line', 'info-name', 'info-offset', 'info-start', 'info-volume']);
+});
+
+// m5b-ui-edit-more (UI redesign 3.2, "Info line"): start, length, offset and
+// volume become editable without changing the template's structure; end stays read-only.
+const EDITABLE = ['info-start', 'info-length', 'info-offset', 'info-volume'];
+
+function renderEditable(snapshot: Snapshot, clipId: string | null): Element {
+  return find(parse(renderToStaticMarkup(<InfoLine client={client(snapshot)} clipId={clipId} selection={clipId ? [clipId] : []} onEdit={() => undefined} />)), byClass('infoline'));
+}
+
+test('the four editable fields keep span.f > b.num and take the focus; end stays read-only', () => {
+  const app = renderEditable(session(), 'clp_ch');
+  const mockup = mockupLine();
+  for (const id of FIELDS) {
+    const field = find(app, byAttr('data-part', id));
+    const mField = find(mockup, byAttr('data-part', id));
+    assert.equal(sig(field), 'span.f', id);
+    assert.deepEqual(field.children.map((c) => (typeof c === 'string' ? '#text' : sig(c))), mField.children.map((c) => (typeof c === 'string' ? '#text' : sig(c))), id);
+    assert.equal(text(field), text(mField), id);
+    const num = find(field, byClass('num'));
+    if (EDITABLE.includes(id)) {
+      assert.equal(num.attrs.tabindex, '0', );
+      assert.equal(num.attrs['data-editable'], 'true', id);
+      assert.ok(num.attrs['aria-label'], );
+      assert.ok(num.attrs.title, );
+    } else {
+      assert.ok(!('tabindex' in num.attrs), );
+      assert.ok(!('data-editable' in num.attrs), id);
+    }
+  }
+  // Without an edit handler (an engine that lists none of the commands) nothing is editable.
+  for (const num of findAll(render(session(), 'clp_ch'), byClass('num'))) assert.ok(!('tabindex' in num.attrs));
+});
+
+test('while edited, a field is span.f > b.num > input holding the value; the label stays', () => {
+  const field = find(
+    parse(
+      renderToStaticMarkup(
+        <InfoValueField part="info-start" label="Start" value="9.1.1.0" editable editing onBegin={() => undefined} onCommit={() => undefined} onCancel={() => undefined} />,
+      ),
+    ),
+    byAttr('data-part', 'info-start'),
+  );
+  assert.equal(sig(field), 'span.f');
+  const num = find(field, byClass('num'));
+  assert.equal(num.tag, 'b');
+  const [input, ...rest] = elements(num);
+  assert.deepEqual(rest, []);
+  assert.equal(input!.tag, 'input');
+  assert.equal(input!.attrs.value, '9.1.1.0');
+  assert.equal(input!.attrs['data-testid'], 'info-start-input');
+  assert.ok(input!.attrs['aria-label'], 'named');
+  assert.equal(text(field), 'Start', 'the label, then the field');
 });

@@ -130,13 +130,17 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad' })) {
+  for (const [id, gate] of Object.entries({ 'tool-2': 'm6a-ui-tools', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'inspector-notepad': 'm5b-ui-notepad' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
-  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata).
+  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata, m5b-ui-inserts-master, m5b-ui-edit-more).
   assert.equal(ruleOf('agent-row').gate, 'm5b-ui-plan-metadata');
   assert.equal(MANIFEST.gates['m5b-ui-plan-metadata'], 'report');
+  assert.equal(ruleOf('strip-3-inserts').gate, 'm5b-ui-inserts-master');
+  assert.equal(MANIFEST.gates['m5b-ui-inserts-master'], 'report');
+  for (const id of ['tool-4', 'tool-5']) assert.equal(ruleOf(id).gate, 'm5b-ui-edit-more', id);
+  assert.equal(MANIFEST.gates['m5b-ui-edit-more'], 'report');
   // The proposal pill stays m5b-ui-ghosts', which landed it (report).
   assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
   assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
@@ -373,6 +377,27 @@ test('the fidelity run writes the lower zone with a strip\'s fader held, in ever
   assert.match(read('docs', 'harness', 'test-matrix.md'), /\| m5-ui-port-mixer-strip \|[^\n]*lower-zone\.fader-held\.app\.png/);
 });
 
+// m5b-ui-edit-more: the states it adds that the mockup does not show (the
+// repeat dialog, the snap type menu, the info line with a value's text field
+// open) are written by the fidelity run as the app's alone, in en and zh-TW,
+// and the test matrix's row names those files.
+test('the fidelity run writes the repeat dialog, the snap type menu and an info-line field open, the app\'s alone', () => {
+  const spec = read('app', 'test', 'e2e', 'mockup-fidelity.spec.ts');
+  const states = {
+    'repeat-dialog': /page\.keyboard\.press\('ControlOrMeta\+KeyK'\)[\s\S]*getByTestId\('repeat-dialog'\)\)\.toBeVisible\(\)/,
+    'project-zone.snap-type-menu': /getByTestId\('snap-type-menu'\)\)\.toBeVisible\(\)/,
+    'project-zone.info-edit': /getByTestId\('info-start-input'\)\)\.toBeFocused\(\)/,
+  };
+  const matrix = read('docs', 'harness', 'test-matrix.md');
+  for (const [file, driven] of Object.entries(states)) {
+    const at = spec.indexOf(`'${file}.app.png'`);
+    assert.ok(at > 0, `the run writes ${file}.app.png`);
+    assert.match(spec.slice(Math.max(0, at - 1200), at), driven, `${file}: the state is driven before the screenshot`);
+    assert.match(spec, new RegExp(`notes\\.push\\(\`[^\`]*\\$\\{locale\\}/${file.replace(/\./g, '\\.')}\\.app\\.png, the app's alone`), `${file}: a note in the report`);
+    assert.match(matrix, new RegExp(`\\| m5b-ui-edit-more \\|[^\\n]*${file.replace(/\./g, '\\.')}\\.app\\.png`), `${file}: named in the matrix row`);
+  }
+});
+
 // ---- m5-ui-port-arrange-canvas: the event display ported from draw(); its gate stays report
 
 test('the event display\'s gate is report, shell.css leaves .arrange to the shared rules, and no marker row is held by a token', () => {
@@ -423,7 +448,6 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
-    'branch-chip': ['w'],
     'transport-record': ['w', 'h'],
     'dsp-load': ['w'],
     'zone-button-channel': ['w', 'h'],
@@ -614,10 +638,12 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
     'strip-master-fader': 'm5b-ui-inserts-master', 'strip-master-cap': 'm5b-ui-inserts-master', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-inserts': 'm5b-ui-inserts-master', 'mixer-racks': 'm5b-ui-inserts-master',
     'strip-3-edit': 'm5b-ui-editor-channel', 'inspector-edit': 'm5b-ui-editor-channel', 'tab-editor': 'm5b-ui-editor-channel',
   };
+  // m5b-ui-inserts-master and m5b-ui-edit-more landed their parts (report); the others are pending.
+  const landed = new Set(['m5b-ui-inserts-master', 'm5b-ui-edit-more']);
   for (const [id, gate] of Object.entries(owners)) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(ruleOf(id).feature, gate, id);
-    assert.equal(MANIFEST.gates[gate], 'pending', gate);
+    assert.equal(MANIFEST.gates[gate], landed.has(gate) ? 'report' : 'pending', gate);
     // The acceptance of the owner names the part.
     const text = FEATURES.get(gate).acceptance.join('\n');
     const name = id.replace(/^strip-3-/, 'strip-').replace(/^strip-(inserts|edit)$/, 'strip-');
@@ -790,7 +816,7 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
     return '';
   };
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
-  assert.match(block(1300), /\.hold-branch-chip, \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
+  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
 });
@@ -803,10 +829,11 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
   assert.ok(app.includes('ui/left-zone.css'), 'index.html links ui/left-zone.css');
   assert.ok(app.indexOf('ui/top-bar.css') < app.indexOf('ui/left-zone.css') && app.indexOf('ui/left-zone.css') < app.indexOf('ui/project-zone.css'), 'in the mockup\'s order');
   assert.equal(MANIFEST.gates['m5-ui-port-inspector'], 'report');
-  // The three open sections are held by tokens until their features land; each names a pending part.
+  // The open sections are held by tokens until their features land; each names a pending part.
+  // Inserts landed (m5b-ui-inserts-master): its box on an engine without plugins is a shell.css calc().
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = [...tokens.matchAll(/--hold-(inspector-[a-z0-9-]+)-h\s*:/g)].map((m) => m[1]).sort();
-  assert.deepEqual(holds, ['inspector-inserts', 'inspector-routing']);
+  assert.deepEqual(holds, ['inspector-routing']);
   for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
   // The temporary pre-port rules #136 kept for the Inspector are gone.
   const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -820,7 +847,8 @@ test('the toolbar port: its gate is report, its holds name pending parts and she
   const tokens = read('app', 'renderer', 'tokens.css');
   // The en values, and the Chinese ones of the pill and the fades.
   const holds = [...new Set([...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
+  // m5b-ui-edit-more deleted the holds of tools 4 and 5 when it landed them.
+  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
   for (const id of holds) {
     assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
     assert.match(tokens, new RegExp(`--hold-${id}-w:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${id}-w`);
@@ -1275,4 +1303,74 @@ test("m5b-ui-ghosts: the gate is report, the pill's and the Agent changes' holds
     'track-ghost-2', 'track-ghost-2-name', 'lane-ghost-3', 'strip-ghost-2', 'strip-ghost-2-inserts', 'strip-ghost-2-name', 'clip-ghost-new-2', 'locator-band-ghost', 'proposal-pill', 'inspector-agent-changes']) {
     assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
   }
+});
+
+// ---- m5b-ui-edit-more (UI redesign 3.2, 10.9): tools 4 and 5 landed
+
+test('m5b-ui-edit-more: its gate is report, its parts are tools 4 and 5 and their hold tokens are gone', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-edit-more'], 'report');
+  const rule = MANIFEST.rules.find((r) => r.gate === 'm5b-ui-edit-more');
+  assert.deepEqual(rule.match, ['tool-4', 'tool-5']);
+  const tokens = read('app', 'renderer', 'tokens.css');
+  for (const id of ['tool-4', 'tool-5']) {
+    assert.doesNotMatch(tokens, new RegExp(`--hold-${id}-w`), id);
+    assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), new RegExp(`hold-${id}-w`), `tokens.ts regenerated: ${id}`);
+  }
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(shell, /hold-tool-[45]/, 'no shell.css rule for the holds of tools 4 and 5');
+  // The holds of tools 2 and 6 to 9 stay, with their pending owners.
+  for (const id of ['tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9']) {
+    assert.match(tokens, new RegExp(`--hold-${id}-w:`), id);
+    assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
+  }
+  assert.ok(!Object.values(MANIFEST.gates).includes('enforce'));
+});
+
+// ---- m5b-ui-audition (UI redesign 4.3, 2.4, 10.4): the branch chip landed, so
+// its gate is report and its hold is gone; it is always rendered while a head
+// revision is known, and the state before the first snapshot is exempt (the
+// test after this one), so no empty-width token replaces the hold (3.0). The
+// violet frame and the solid ghosts are app-only rules of shell.css on
+// existing tokens: the frame's 2 px is --space-half, its colour --ai.
+test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and the frame is drawn on existing tokens', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-audition'], 'report');
+  assert.equal(ruleOf('branch-chip').gate, 'm5b-ui-audition');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const name of ['--hold-branch-chip-w', '--branch-chip-empty-w']) {
+    assert.ok(!tokens.includes(name), `${name} is not in tokens.css`);
+    assert.ok(!shell.includes(name), `${name} is not in shell.css`);
+  }
+  assert.doesNotMatch(shell, /hold-branch-chip/);
+  assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-branch-chip/);
+  assert.match(shell, /\.app\[data-hearing="proposal"\]::after\s*\{[^}]*border:\s*var\(--space-half\) solid var\(--ai\)/);
+  assert.match(shell, /\[data-ghost-mode="solid"\]/);
+  // A proposed insert's slot, heard: the ghost tint without the hatch or the dash (m5b-ui-inserts-master's ghosts).
+  assert.match(shell, /\.slot\.ghost\[data-ghost-mode="solid"\],\s*\.islot\.ghost\[data-ghost-mode="solid"\]\s*\{\s*background:\s*var\(--ai-a100\);\s*border-style:\s*solid;\s*\}/);
+  // A proposed track's header and strip lose the shared rules' hatch while
+  // heard: their body is the ghost tint, unhatched (UI redesign 4.3).
+  const unhatched = /\.th\.ghost\[data-ghost-mode="solid"\],\s*\.strip\.ghost\[data-ghost-mode="solid"\]\s*\{[^}]*background:\s*linear-gradient\(var\(--ai-a100\), var\(--ai-a100\)\), var\(--bg-alt\)/;
+  assert.match(shell, unhatched);
+  // The chip gives way before the session's name: while it is in the left
+  // group, the name does not shrink (above 1300 px, where the chip shows).
+  assert.match(shell, /\.tb-left:has\(> \[data-part="branch-chip"\]\) > \.session\s*\{\s*flex-shrink:\s*0;\s*\}/);
+});
+
+// The state before the first snapshot is exempt from the empty box (UI
+// redesign 3.0; 10.11, 15: decided by Fable, delegated by the maintainer,
+// 2026-11-19): the session name is empty and the branch chip is absent, and
+// no permanent token is authorised for the chip.
+test('m5b-ui-audition: before the first snapshot the chip is exempt from the empty box, in the spec and the agent rules, with no token', () => {
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  const rules = read('docs', 'harness', 'agent-rules.md');
+  const rule = spec.slice(spec.indexOf('### 3.0 '), spec.indexOf('### 3.1 '));
+  assert.match(rule, /\n  - Before the first snapshot nothing is held\.[^\n]*session name is empty[^\n]*branch chip[^\n]*no `--branch-chip-empty-w` exists \(10\.11, 15\)/);
+  assert.match(rule, /\n  - Before the first snapshot[^\n]*covers that state only/);
+  const decisions = spec.slice(spec.indexOf('### 10.11 '));
+  assert.match(decisions, /\n\*\*15\. The branch chip before the first snapshot is exempt from the empty box\*\* \(`m5b-ui-audition`\)[^\n]*Decided by Fable, delegated by the maintainer, 2026-11-19\.\n/);
+  assert.match(rules, /The state before the first snapshot is exempt \(spec 3\.0; 10\.11, 15\)[^\n]*no `--branch-chip-empty-w`/);
+  assert.match(rules, /decided by Fable, delegated by the maintainer, 2026-11-19 \(spec 10\.11, 15\)/);
+  // The table of authorised permanent tokens does not name the chip.
+  assert.doesNotMatch(rules, /\| A permanent `--<part>-empty-w` token[^\n]*branch-chip/);
+  for (const file of [['app', 'renderer', 'tokens.css'], ['app', 'renderer', 'shell.css'], ['app', 'src', 'renderer', 'tokens.ts']]) assert.doesNotMatch(read(...file), /branch-chip-empty/, file.join('/'));
 });

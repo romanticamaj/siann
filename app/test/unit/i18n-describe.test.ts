@@ -263,6 +263,13 @@ const CODES = [
   'queue_full',
   'lease_expired',
   'invalid_name',
+  // The plugin codes an insert slot and the picker show (m5b-ui-inserts-master; protocol-plugins-v0.md).
+  'plugin_not_registered',
+  'plugin_not_found',
+  'plugin_load_failed',
+  'plugin_missing',
+  'editor_failed',
+  'no_plugin_host',
 ];
 
 test('engine error codes: catalog text in Chinese, the engine\'s own message in English', () => {

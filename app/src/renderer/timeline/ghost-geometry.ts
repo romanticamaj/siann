@@ -20,6 +20,13 @@ export const GHOST_HATCH_PITCH = 11;
 export const GHOST_HATCH_WIDTH = 4;
 export const GHOST_DASH: readonly number[] = Object.freeze([4, 3]);
 export const GHOST_OUTLINE_W = 1.25;
+
+// How a ghost clip, lane or band is stroked (m5b-ui-audition; UI redesign
+// 4.3): dashed and hatched as draw() draws a proposal, or, while the proposal
+// is heard (a solid ghost), unhatched with an unbroken outline.
+export function ghostStroke(mode: 'solid' | undefined): { readonly dash: readonly number[]; readonly hatch: boolean } {
+  return mode === 'solid' ? { dash: [], hatch: false } : { dash: GHOST_DASH, hatch: true };
+}
 // The proposed lane's hatch (draw(): lineWidth 5, x += 14).
 export const LANE_HATCH_PITCH = 14;
 export const LANE_HATCH_WIDTH = 5;

@@ -599,7 +599,9 @@ test('Ctrl+Z and Ctrl+Shift+Z undo and redo a clip move; nothing to undo is a to
 test('with no audio device the transport is disabled, its tooltip gives the reason, and Space sends nothing', async () => {
   // Every open of the fake device fails (as shell.spec.ts does), on every build.
   await launch({ engineArgs: ['--fake-open-failures', '1000'], device: false });
-  const reason = new RegExp(`^[a-z_]+: ${en['transport.noDevice'].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+  // The reason, then (m5b-ui-project) the way into Studio Setup on a line of its own.
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const reason = new RegExp(`^[a-z_]+: ${escape(en['transport.noDevice'])}\\n${escape(en['transport.studioSetupHint'])}$`);
   for (const id of ['transport-play', 'transport-stop', 'transport-to-start']) {
     const button = page.getByTestId(id);
     await expect(button).toBeDisabled();

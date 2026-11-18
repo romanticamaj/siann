@@ -18,10 +18,12 @@ export interface KnobProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
   readonly pan: number;
   // The pending plan's pan (m5b-ui-ghosts).
   readonly ghost?: number;
+  // 'solid' while the proposal is heard (m5b-ui-audition).
+  readonly ghostMode?: 'solid';
   readonly ref?: Ref<SVGSVGElement>;
 }
 
-export function Knob({ pan, ghost, ref, ...rest }: KnobProps) {
+export function Knob({ pan, ghost, ghostMode, ref, ...rest }: KnobProps) {
   const paths = knobPaths(pan, ghost);
   const part = (rest as Record<string, unknown>)['data-part-of'];
   return (
@@ -32,7 +34,7 @@ export function Knob({ pan, ghost, ref, ...rest }: KnobProps) {
       <circle cx="12" cy="11.5" r="6.2" fill="url(#kg)" />
       <path data-knob="needle" d={paths.needle} stroke={TOKENS['tx-0']} strokeWidth="1.6" strokeLinecap="round" />
       {paths.ghost !== null && paths.ghostDot !== null ? (
-        <g data-part-of={typeof part === 'string' ? `${part}-ghost` : undefined} data-ghost="">
+        <g data-part-of={typeof part === 'string' ? `${part}-ghost` : undefined} data-ghost="" {...(ghostMode ? { 'data-ghost-mode': ghostMode } : {})}>
           <path d={paths.ghost} stroke={TOKENS.ai} strokeWidth="2" strokeLinecap="round" />
           <circle cx={paths.ghostDot[0]} cy={paths.ghostDot[1]} r="2" fill={TOKENS.ai} />
         </g>

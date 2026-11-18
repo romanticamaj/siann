@@ -13,7 +13,7 @@
 
 import type { ClipEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
-import type { Viewport } from './geometry';
+import { clipBox, type Box, type ClipRect, type Viewport } from './geometry';
 import { zoomToRange } from './zoom';
 
 export function clickSelection(current: readonly string[], clipId: string | null, add: boolean): string[] {
@@ -122,4 +122,30 @@ export function pruneTracks(current: TrackSelection, order: readonly string[]): 
   if (ids.length === current.ids.length && primaryKept) return current;
   const primary = primaryKept ? current.primary : (ids[ids.length - 1] ?? null);
   return { primary, ids };
+}
+
+// ---- m5b-ui-edit-more (spec 3.2, "Editing"): the rubber band and Select None.
+
+// A drag on empty space with the Object Selection tool: every clip whose box
+// (clipBox, as drawn) the band touches, edges included; with Shift (add) the
+// band's clips join the current selection after it. The band may be drawn in
+// any direction.
+export function rubberBandSelection(rects: readonly ClipRect[], band: Box, current: readonly string[], add: boolean): string[] {
+  const x0 = Math.min(band.x, band.x + band.width);
+  const x1 = Math.max(band.x, band.x + band.width);
+  const y0 = Math.min(band.y, band.y + band.height);
+  const y1 = Math.max(band.y, band.y + band.height);
+  const hit = rects
+    .filter((rect) => {
+      const box = clipBox(rect);
+      return box.x <= x1 && x0 <= box.x + box.width && box.y <= y1 && y0 <= box.y + box.height;
+    })
+    .map((rect) => rect.clipId);
+  if (!add) return hit;
+  return [...current, ...hit.filter((id) => !current.includes(id))];
+}
+
+// Ctrl+Shift+A: nothing selected.
+export function selectNone(): string[] {
+  return [];
 }

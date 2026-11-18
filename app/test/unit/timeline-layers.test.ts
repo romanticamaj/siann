@@ -16,14 +16,14 @@ import assert from 'node:assert/strict';
 import type { MeterFrame } from '../../src/renderer/model/meter-frames';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
-import { LANES_TOP, clipBox, cornerHandles, xToFrame } from '../../src/renderer/timeline/geometry';
+import { LANES_TOP, clipBox, cornerHandles, repeatHandle, xToFrame } from '../../src/renderer/timeline/geometry';
 import type { PeakPyramid } from '../../src/renderer/model/peaks';
 import { TOKENS } from '../../src/renderer/tokens';
 import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type GhostSource, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
 import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
-import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
+import { clearFrames, fakeSurface, type Call, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
 import { media, sampleSnapshot, snapshotOf, track } from './support/timeline';
 
 installSurfaceGlobals();
@@ -54,7 +54,7 @@ function playheadOf() {
   let frame: MeterFrame | null = null;
   const listeners = new Set<() => void>();
   const source: PlayheadSource = {
-    latest: () => frame,
+    playhead: () => frame,
     subscribe: (fn) => {
       listeners.add(fn);
       return () => void listeners.delete(fn);
@@ -896,7 +896,7 @@ test('the title is clipTitle() in --fw-strong --fs-micro, follows a media rename
   });
 });
 
-test('a selected clip has the selected outline and the two corner squares; no fade, repeat handle or ghost is drawn; a selection redraws the content', () => {
+test('a selected clip has the selected outline, the two corner squares and the repeat handle; no fade or ghost is drawn; a selection redraws the content', () => {
   withNamedTokens(() => {
     const r = drawRig(sampleSnapshot());
     const rect = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
@@ -917,9 +917,17 @@ test('a selected clip has the selected outline and the two corner squares; no fa
     for (const corner of cornerHandles(box)) {
       assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--select' && c.args.join() === [corner.x, corner.y, corner.width, corner.height].join()), `the corner at ${corner.x}`);
     }
-    // Pending parts (m5b-ui-fades, m5b-ui-ghosts, the repeat handle): not drawn, on either layer.
+    // The repeat handle (m5b-ui-edit-more): draw()'s 3.2 px disc in --select on the right border, half way down below the title strip.
+    const handle = repeatHandle(box);
+    const arcs = calls.filter((c) => c.path?.some((s) => s.op === 'arc'));
+    assert.equal(arcs.length, 1, 'one disc: the repeat handle');
+    assert.equal(arcs[0]!.kind, 'fill');
+    assert.equal(arcs[0]!.style, '--select');
+    assert.deepEqual(arcs[0]!.path!.find((s) => s.op === 'arc')!.args.slice(0, 3), [handle.x, handle.y, 3.2]);
+    // Pending parts (m5b-ui-fades, m5b-ui-ghosts): not drawn, on either layer.
     for (const call of [...calls, ...r.surface.overlayCalls.calls]) {
-      assert.ok(!call.path?.some((s) => s.op === 'quadraticCurveTo' || s.op === 'arc'), 'no fade curve and no repeat handle');
+      assert.ok(!call.path?.some((s) => s.op === 'quadraticCurveTo'), 'no fade curve');
+      if (call !== arcs[0]) assert.ok(!call.path?.some((s) => s.op === 'arc'), 'no other disc');
       assert.notEqual(call.style, '--bg-0-a550', 'no fade shade');
       assert.ok(!/^--ai/.test(call.style), 'no ghost');
       if (call.kind === 'fill' && call.path && call.path.length === 3 && call.path[0]!.args[1]! > RULER_HEIGHT) assert.fail(`a triangle at ${JSON.stringify(call.path)}: no fade triangle`);
@@ -1269,5 +1277,63 @@ test('a removed track\'s lane is cross-hatched in violet with its step disc (lan
     flushFrames();
     assert.ok(!r.hooks.parts().some((p) => p.id === 'lane-ghost-remove'));
     r.canvas.destroy();
+  });
+});
+
+// m5b-ui-audition (UI redesign 4.3): while the proposal is heard every ghost
+// the event display draws is solid (what is playing): the proposed lane, a
+// ghost clip, a removed lane and a removed clip lose their hatch and their
+// dashed outline, the locator ghost band its dash; the value each replaces,
+// main's, is the faint outline: a moved clip's original is its outline in
+// --ai-a300 instead of the clip at 38 %.
+test('while the proposal is heard every canvas ghost is solid, unhatched and undashed, a moved clip\'s original its faint outline', () => {
+  withNamedTokens(() => {
+    const solid = (ghosts: readonly Ghost[]) => ghosts.map((g) => ({ ...g, mode: 'solid' }) as Ghost);
+    const locators: Ghost = { kind: 'locators', step: 4, before: null, after: { left: '9600', right: '19200' } };
+    const removal: readonly Ghost[] = [
+      { kind: 'track-remove', step: 1, trackId: 'trk_a' },
+      { kind: 'clip-remove', step: 1, clipId: 'clp_2', trackId: 'trk_a', mediaId: 'med_si', position: '0', sourceStart: '1000', length: '9600', cascade: true },
+    ];
+    const hatch = (c: Call) => c.kind === 'stroke' && (c.style === '--ai-a070' || c.style === '--ai-a160');
+    const ghostStrokes = (calls: readonly Call[]) => calls.filter((c) => (c.kind === 'stroke' || c.kind === 'strokeRect') && c.style.startsWith('--ai'));
+    for (const set of [[...SAMPLE_GHOSTS, locators], removal]) {
+      // Dashed and hatched as m5b-ui-ghosts draws a proposal.
+      const dashed = ghostRig(set);
+      const before = dashed.surface.contentCalls.calls;
+      assert.ok(ghostStrokes(before).some((c) => c.dash.length > 0), 'a dashed ghost outline');
+      assert.ok(before.some(hatch), 'a hatch');
+      dashed.canvas.destroy();
+
+      const r = ghostRig(solid(set));
+      const calls = r.surface.contentCalls.calls;
+      assert.deepEqual(calls.filter(hatch), [], 'no lane or clip hatch');
+      assert.deepEqual(ghostStrokes(calls).filter((c) => c.dash.length > 0), [], 'no dashed ghost outline');
+      if (set === removal) {
+        // The removed lane and clip: the ghost body, an unbroken outline and the step disc.
+        const lane = r.hooks.parts().find((p) => p.id === 'lane-ghost-remove')!;
+        assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--ai-a100' && c.args[1] === lane.y && c.args[2] === lane.w), 'the removed lane\'s body');
+        const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_2')!);
+        assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai-a100' && c.path?.[0]?.op === 'roundRect' && c.path[0].args[0] === box.x && c.path[0].args[1] === box.y), 'the removed clip\'s body');
+        assert.ok(calls.some((c) => c.kind === 'stroke' && c.style === '--ai' && c.lineWidth === 1.25), 'the removed clip\'s outline');
+        assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai'), 'the step disc');
+      } else {
+        // The proposed lane: the ghost body over the lane, no hatch.
+        const lane = r.hooks.parts().find((p) => p.id === 'lane-ghost')!;
+        assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--ai-a100' && c.args[1] === lane.y && c.args[2] === lane.w), 'the proposed lane\'s body');
+        // The locator ghost band's outline, unbroken.
+        assert.ok(calls.some((c) => c.kind === 'strokeRect' && c.style === '--ai' && c.dash.length === 0), 'the band\'s outline');
+        // The moved clip's original: its faint outline, not the clip at 38 %.
+        assert.ok(!calls.some((c) => c.alpha === 0.38), 'no clip at 38 %');
+        const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_1')!);
+        const outline = calls.filter((c) => c.kind === 'stroke' && c.style === '--ai-a300' && c.path?.[0]?.op === 'roundRect');
+        assert.equal(outline.length, 1, 'one faint outline');
+        assert.ok(Math.abs(outline[0]!.path![0]!.args[0]! - box.x) < 1 && Math.abs(outline[0]!.path![0]!.args[1]! - box.y) < 1, 'at the original\'s box');
+        assert.deepEqual(outline[0]!.dash, []);
+        // Its peak columns are not drawn, and the hook says it is an outline,
+        // so a wait for every clip's waveform (the UX tour's) passes it by.
+        assert.deepEqual(r.hooks.peakColumns('clp_1'), { drawn: 0, nonZero: 0, outline: true });
+      }
+      r.canvas.destroy();
+    }
   });
 });

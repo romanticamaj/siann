@@ -39,6 +39,10 @@ import { ToastStore } from '../../src/renderer/shell/toast-store';
 import { TopBar } from '../../src/renderer/shell/TopBar';
 import { translator } from '../../src/renderer/i18n/t';
 import { formatSignature } from '../../src/renderer/timeline/musical-time';
+import { namesFromSnapshot } from '../../src/renderer/plans/describe';
+import { planName } from '../../src/renderer/plans/plan-name';
+import { byAttr, elements, find, loadMockup, parse, sig, text, type Element } from './support/mockup';
+import { BRANCH, hashOf, MIX_STEPS, planObject, planSnapshot } from './support/plans';
 import { sampleSnapshot } from './support/timeline';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
@@ -58,7 +62,7 @@ function fixedHistory(value: UndoAvailability): Pick<UndoHistory, 'getSnapshot' 
   return { getSnapshot: () => value, subscribe: () => () => undefined };
 }
 
-function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null } = {}): string {
+function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore; marked?: boolean; nameHidden?: boolean } = {}): string {
   const snapshot = options.snapshot === undefined ? withLocators(sampleSnapshot()) : options.snapshot;
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
   const session = new SessionClient({
@@ -89,7 +93,7 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
     <CapabilitiesContext.Provider value={FULL}>
       <TopBar
         client={session}
-        plans={new PlanStore()}
+        plans={options.plans ?? new PlanStore()}
         zones={zones}
         onToggle={() => undefined}
         onPlans={() => undefined}
@@ -100,6 +104,8 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
         transport={transport}
         loopClick={loopClick}
         history={fixedHistory(options.history ?? { undo: 'yes', redo: 'no' })}
+        saved={options.marked === undefined ? undefined : { getSnapshot: () => options.marked === true, subscribe: () => () => undefined }}
+        nameHidden={options.nameHidden}
       />
     </CapabilitiesContext.Provider>,
   );
@@ -148,7 +154,7 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
     'h1.visually-hidden',
     'div.brand[brand]',
     'div.session[session-name]',
-    'span.hold-branch-chip',
+    'span.chip[branch-chip]',
     'span.sep',
     'button.iconbtn[undo]',
     'button.iconbtn.dim[redo]',
@@ -184,8 +190,8 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
   // The icons are the mockup's: svg.i in the buttons, svg.i.s by the session name and in the Plans button.
   // undo, redo, start, cycle, stop, play, the metronome, three zone buttons and the Plans button's spark
   assert.equal((markup.match(/<svg class="i" viewBox="0 0 16 16"/g) ?? []).length, 11);
-  // the session's chevron
-  assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 1);
+  // the session's chevron and the branch chip's icon (m5b-ui-audition)
+  assert.equal((markup.match(/<svg class="i s" viewBox="0 0 16 16"/g) ?? []).length, 2);
   assert.match(markup, /<button[^>]*class="aibtn"[^>]*data-part="plans-button"[^>]*><svg class="i" viewBox="0 0 16 16"/);
   // The old wrappers are gone.
   for (const gone of ['transport-locators', 'position-display"', 'top-bar"', 'zone-buttons"', 'transport-buttons"']) {
@@ -197,7 +203,6 @@ test('every hold element is empty, hidden, has no role, no tabindex and no data-
   const markup = render();
   const holds = [...markup.matchAll(/<span class="hold-[^"]*"[^>]*>[^<]*<\/span>/g)].map((m) => m[0]);
   assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), [
-    'hold-branch-chip',
     'hold-transport-record',
     'hold-dsp-load',
     'hold-zone-button-channel',
@@ -305,4 +310,105 @@ test('UndoHistory follows the causes of session.changed and forgets on a new con
   connections = 2;
   stateListeners.forEach((l) => l());
   assert.deepEqual(history.getSnapshot(), { undo: 'unknown', redo: 'unknown' });
+});
+
+// ---- m5b-ui-audition (UI redesign 4.3, 2.4; mockup.html line 224): the branch
+// chip, span.chip[branch-chip] > the branch icon, a span and span.num, reads
+// `main r<head>` while main is heard and the plan's name (plans/plan-name.ts,
+// as the banner names it) while its branch is heard, ellipsised with the
+// whole name in its title. The Hold that kept its box is gone.
+
+function chipOf(markup: string): Element {
+  const at = markup.indexOf('<span class="chip"');
+  assert.ok(at >= 0, 'the chip is there');
+  return find(parse(markup.slice(at, markup.indexOf('<span class="sep"', at))), byAttr('data-part', 'branch-chip'));
+}
+
+function storeHearing(heard: string | null): PlanStore {
+  const store = new PlanStore({ now: () => 0 });
+  store.fromList({ plans: [planObject(hashOf('1'), 'validated', MIX_STEPS), planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH })] });
+  store.setHeard(heard);
+  return store;
+}
+
+test('the branch chip has the mockup\'s markup and reads main r<head> while main is heard', () => {
+  const mock = find(parse(loadMockup('en').branchChip), byAttr('data-part', 'branch-chip'));
+  for (const heard of ['main', null]) {
+    const app = chipOf(render({ snapshot: planSnapshot(), plans: storeHearing(heard) }));
+    assert.equal(sig(app), sig(mock));
+    assert.equal(app.attrs['data-part'], 'branch-chip');
+    assert.deepEqual(elements(app).map(sig), elements(mock).map(sig));
+    assert.equal(elements(app)[0]!.attrs.class, elements(mock)[0]!.attrs.class, 'the small branch icon');
+    assert.equal(elements(app)[2]!.attrs.style?.replace(/\s/g, ''), elements(mock)[2]!.attrs.style?.replace(/\s/g, ''));
+    assert.equal(text(elements(app)[1]!), 'main');
+    assert.equal(text(elements(app)[2]!), planSnapshot().revision);
+  }
+  assert.ok(!render().includes('hold-branch-chip'), 'no hold');
+});
+
+test('while a branch is heard the chip names its plan as the banner does, the whole name in its title', () => {
+  const t = translator('en');
+  const store = storeHearing(BRANCH);
+  const names = namesFromSnapshot(planSnapshot());
+  const name = planName(store.getSnapshot().byHash.get(hashOf('2'))!, t, names, capabilitySelector(FULL));
+  assert.equal(name.kind, 'steps', 'an untitled plan');
+  const whole = name.kind === 'steps' ? t('chip.proposal', { lead: name.lead, steps: name.steps }) : '';
+  const app = chipOf(render({ snapshot: planSnapshot(), plans: store }));
+  assert.equal(app.attrs['data-part'], 'branch-chip');
+  assert.deepEqual(elements(app).map(sig), ['svg.i.s', 'span']);
+  assert.equal(text(elements(app)[1]!), whole);
+  assert.equal(app.attrs.title, whole);
+  // A branch no held plan owns: the generic word.
+  const generic = chipOf(render({ snapshot: planSnapshot(), plans: storeHearing('p9') }));
+  assert.equal(text(elements(generic)[1]!), t('chip.generic'));
+  assert.ok(!new RegExp(`\\b(${BRANCH}|p9)\\b`).test(text(generic) + text(app)), 'no branch id');
+  // A titled plan (m5b-ui-plan-metadata, features.planMetadata): its title.
+  const titled = new PlanStore({ now: () => 0 });
+  titled.fromList({ plans: [planObject(hashOf('2'), 'approved', MIX_STEPS, { proposalBranch: BRANCH, title: 'Lift the chorus' })] });
+  titled.setHeard(BRANCH);
+  const chip = chipOf(render({ snapshot: planSnapshot(), plans: titled }));
+  assert.equal(text(elements(chip)[1]!), 'Lift the chorus');
+  assert.equal(chip.attrs.title, 'Lift the chorus');
+});
+
+// Before the first snapshot nothing is held (UI redesign 3.0; 10.11, 15): the
+// window has no document yet, so the session name is empty and the chip is
+// not rendered, with no box in its place. Every snapshot has a revision, so
+// from the first one on the chip is always there.
+test('before the first snapshot the session name is empty and the chip is absent with no box; any snapshot brings the chip', () => {
+  const markup = render({ snapshot: null });
+  assert.ok(!markup.includes('data-part="branch-chip"'));
+  assert.ok(!markup.includes('hold-branch-chip'));
+  assert.ok(!markup.includes('branch-chip-empty'), 'no empty box');
+  // The left group is the mockup's without the chip: nothing stands in for it.
+  assert.deepEqual(children(markup, /<div class="tb-left">/).slice(1), ['div.brand[brand]', 'div.session[session-name]', 'span.sep', 'button.iconbtn[undo]', 'button.iconbtn.dim[redo]']);
+  // The session name is empty in the same state, and was never held.
+  const session = find(parse(markup), byAttr('data-part', 'session-name'));
+  assert.equal(text(session), '');
+  assert.equal(session.attrs.title, '');
+  // With a snapshot both are there: the name and main's head.
+  for (const snapshot of [planSnapshot(), sampleSnapshot()]) {
+    const withDocument = render({ snapshot });
+    assert.equal(text(elements(chipOf(withDocument))[2]!), snapshot.revision);
+    assert.equal(text(find(parse(withDocument), byAttr('data-part', 'session-name'))), snapshot.root?.name);
+  }
+});
+
+// m5b-ui-project (UI redesign UR-4): the session's name with the saved mark,
+// a bullet after the name inside the same .session part (no new element), and
+// no name over the start view's scratch bundle.
+test('the session name carries the saved mark while the head is newer than the last save, and none over the start view', () => {
+  const t = translator('en');
+  const clean = render({ marked: false });
+  assert.match(clean, /<div class="session" data-part="session-name" data-testid="session-name" title="Song"><span[^>]*>Song<\/span> <svg/);
+  const marked = render({ marked: true });
+  const session = /<div class="session"[^>]*>[\s\S]*?<\/div>/.exec(marked)![0];
+  assert.match(session, /data-unsaved="true"/);
+  assert.ok(session.includes(`title="${t('session.unsavedTitle', { name: 'Song' })}"`), session);
+  assert.match(session, /<span[^>]*>Song<\/span>(<!-- -->)? •(<!-- -->)? <svg/, session);
+  // The structure stays the mockup's: the name's span and the chevron, nothing more.
+  assert.deepEqual(children(marked, /<div class="session"/), ['span', 'svg.i.s']);
+  assert.equal(t('session.unsavedMark'), '•');
+  const hidden = render({ nameHidden: true, marked: true });
+  assert.match(hidden, /<div class="session" data-part="session-name" data-testid="session-name" title=""><span[^>]*><\/span> <svg/);
 });

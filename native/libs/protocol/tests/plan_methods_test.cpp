@@ -4,6 +4,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -13,7 +16,10 @@
 #include "support/protocol_fixture.hpp"
 #include "siann/command/plan.hpp"
 #include "siann/hash/sha256.hpp"
+#include "siann/io/durable_file.hpp"
+#include "siann/media/audio.hpp"
 #include "siann/protocol/about.hpp"
+#include "siann/session/media_import.hpp"
 
 using namespace siann;
 using namespace siann::protocol::testing;
@@ -1054,4 +1060,160 @@ TEST_CASE("a plan submitted with a request has the hash of the same plan without
     CHECK(at(plan, "hash").asString() == without);
     CHECK(hash::formatHash(command::planHash(command::Plan::fromJson(plan))) == without);
     CHECK(plan.find("request") == nullptr);
+}
+
+// m3-rollback acceptance item 2, m5b-bridge-cli-coverage acceptance item 4
+// (architecture spec, "Plans": a rollback changes only the document; "Session
+// bundle": renders/ is never touched by rollback). media.import (a job, outside
+// any plan) writes the blob and its peaks; session.undo takes the media entity
+// out of the head while the files stay, so the plan's media.add enters it; a
+// render follows the plan. Rolling the plan back removes the entity again, and
+// the blob, its peaks and the render stay byte for byte.
+namespace {
+
+std::string utf8Path(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+protocol::ServerOptions keepJobOptions() {
+    protocol::ServerOptions options = manualOptions();
+    options.jobs.workerThread = false;
+    return options;
+}
+
+std::string fileHash(const std::filesystem::path& file) {
+    return hash::formatHash(hash::sha256(io::readFile(file)));
+}
+
+// What the plan entered and what rollback must leave on disk.
+struct KeptFiles {
+    std::string mediaId;
+    std::string planHash;
+    std::string planRevision;
+    std::string beforePlan;  // the head's documentHash before plan.apply
+    std::vector<std::filesystem::path> files;  // renders/keep.wav, the media blob, its peaks
+    std::vector<std::uintmax_t> sizes;
+    std::vector<std::string> hashes;
+};
+
+Value jobDone(Harness& h, ConnectionId c, const std::string& jobId) {
+    h.server.runJobs();
+    h.server.pump();
+    const Value status = h.ok(c, "job.status", Value(Object{{"jobId", Value(jobId)}}));
+    INFO(canonical(status));
+    REQUIRE(at(status, "state").asString() == "done");
+    return at(status, "result");
+}
+
+KeptFiles importPlanRender(Harness& h, session::Session& served, const std::filesystem::path& bundle) {
+    const ConnectionId c = h.authed();
+    KeptFiles kept;
+
+    media::AudioBuffer tone;
+    tone.info = media::AudioInfo{2, 48'000, 4'800};
+    for (std::int64_t i = 0; i < tone.info.frames; ++i) {
+        const auto sample = static_cast<float>(0.25 * std::sin(static_cast<double>(i) * 0.0576));
+        tone.samples.push_back(sample);
+        tone.samples.push_back(sample);
+    }
+    const std::filesystem::path source = bundle.parent_path() / "tone.wav";
+    io::writeFileAtomic(source, media::encodeWavFloat32(tone));
+
+    const std::size_t revisionsBefore = served.history().revisions().size();
+    const std::string importJob =
+        at(h.ok(c, "media.import", Value(Object{{"path", Value(utf8Path(source))}, {"clientImportId", Value("imp-1")}})),
+           "jobId")
+            .asString();
+    const Value imported = jobDone(h, c, importJob);
+    REQUIRE(served.history().revisions().size() == revisionsBefore + 1);  // one media.add revision
+    kept.mediaId = at(imported, "mediaId").asString();
+    const model::Media* stored = served.history().head().document.media(kept.mediaId);
+    REQUIRE(stored != nullptr);
+    const std::filesystem::path blob = session::mediaPath(bundle, stored->contentHash);
+    const std::filesystem::path peaks = bundle / "peaks" / (hash::toHex(stored->contentHash) + ".peaks");
+    REQUIRE(std::filesystem::exists(blob));
+    REQUIRE(std::filesystem::exists(peaks));
+
+    h.ok(c, "session.undo");
+    REQUIRE(served.history().head().document.media(kept.mediaId) == nullptr);
+    REQUIRE(std::filesystem::exists(blob));
+    REQUIRE(std::filesystem::exists(peaks));
+
+    const Value mediaAddStep(Object{{"op", Value("media.add")},
+                                    {"mediaId", Value(kept.mediaId)},
+                                    {"contentHash", at(imported, "contentHash")},
+                                    {"format", Value("wav")},
+                                    {"channels", at(imported, "channels")},
+                                    {"sampleRate", at(imported, "sampleRate")},
+                                    {"frames", at(imported, "frames")},
+                                    {"name", at(imported, "name")}});
+    const Value clipStep(Object{{"op", Value("clip.place")},
+                                {"clipId", Value("clp_keep")},
+                                {"trackId", Value("trk_keep")},
+                                {"mediaId", Value(kept.mediaId)},
+                                {"position", Value(Object{{"domain", Value("audio")}, {"value", Value("0")}})},
+                                {"sourceStart", Value("0")},
+                                {"length", Value("4800")}});
+    kept.planHash =
+        at(h.ok(c, "plan.submit", stepsParams(Array{mediaAddStep, trackAdd("trk_keep"), clipStep})), "hash").asString();
+    h.ok(c, "plan.approve", planParams(kept.planHash));
+    kept.beforePlan = hash::formatHash(served.history().head().envelope.documentHash);
+    kept.planRevision = at(at(h.ok(c, "plan.apply", planParams(kept.planHash)), "revision"), "id").asString();
+    REQUIRE(served.history().head().document.media(kept.mediaId) != nullptr);
+
+    const std::string renderJob = at(h.ok(c, "render.start", Value(Object{{"name", Value("keep")}})), "jobId").asString();
+    jobDone(h, c, renderJob);
+    const std::filesystem::path render = bundle / "renders" / "keep.wav";
+    REQUIRE(std::filesystem::exists(render));
+
+    kept.files = {render, blob, peaks};
+    for (const std::filesystem::path& file : kept.files) {
+        kept.sizes.push_back(std::filesystem::file_size(file));
+        kept.hashes.push_back(fileHash(file));
+    }
+    return kept;
+}
+
+void checkKept(const KeptFiles& kept, const Value& rolled, const session::Session& served) {
+    CHECK(at(at(rolled, "revision"), "documentHash").asString() == kept.beforePlan);
+    CHECK(hash::formatHash(served.history().head().envelope.documentHash) == kept.beforePlan);
+    CHECK(served.history().head().document.media(kept.mediaId) == nullptr);
+    for (std::size_t i = 0; i < kept.files.size(); ++i) {
+        INFO(utf8Path(kept.files[i]));
+        REQUIRE(std::filesystem::exists(kept.files[i]));
+        CHECK(std::filesystem::file_size(kept.files[i]) == kept.sizes[i]);
+        CHECK(fileHash(kept.files[i]) == kept.hashes[i]);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("plan.rollback leaves the render, the media file and its peaks on disk",
+          "[protocol][plans][rollback][media]") {
+    TempDir dir;
+
+    SECTION("plan.rollback {plan} in the same process") {
+        session::Session served = session::Session::create(dir.bundle(), model::Document::create("Song", 48'000),
+                                                           "tester", "2026-11-04T00:00:00Z");
+        Harness h(served, keepJobOptions());
+        const KeptFiles kept = importPlanRender(h, served, dir.bundle());
+        const ConnectionId c = h.authed();
+        const Value rolled = h.ok(c, "plan.rollback", planParams(kept.planHash));
+        checkKept(kept, rolled, served);
+    }
+    SECTION("plan.rollback {revision} after the bundle is reopened (the path rollback --run takes)") {
+        KeptFiles kept;
+        {
+            session::Session first = session::Session::create(dir.bundle(), model::Document::create("Song", 48'000),
+                                                              "tester", "2026-11-04T00:00:00Z");
+            Harness h(first, keepJobOptions());
+            kept = importPlanRender(h, first, dir.bundle());
+        }
+        session::Session reopened = session::Session::open(dir.bundle());
+        Harness h(reopened, keepJobOptions());
+        const ConnectionId c = h.authed();
+        const Value rolled = h.ok(c, "plan.rollback", Value(Object{{"revision", Value(kept.planRevision)}}));
+        checkKept(kept, rolled, reopened);
+    }
 }

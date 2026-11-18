@@ -25,7 +25,7 @@ import { createLayoutStore, type LayoutStore } from '../../src/renderer/shell/la
 import { Shell } from '../../src/renderer/shell/Shell';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
 
-function render(store: LayoutStore = createLayoutStore({ storage: null })): string {
+function render(store: LayoutStore = createLayoutStore({ storage: null }), plans: PlanStore = new PlanStore()): string {
   const client = new SessionClient({
     createSocket: () => {
       throw new Error('no socket in this test');
@@ -46,7 +46,7 @@ function render(store: LayoutStore = createLayoutStore({ storage: null })): stri
   return renderToStaticMarkup(
     <Shell
       client={client}
-      plans={new PlanStore()}
+      plans={plans}
       engineStatus={{ getSnapshot: () => null, subscribe: () => () => undefined }}
       store={store}
       commands={new CommandRegistry()}
@@ -118,6 +118,18 @@ test('Shell renders the mockup\'s .app grid with the six regions in its order', 
   }
   // No panel library's wrappers.
   assert.ok(!/data-panel|data-separator|data-group/.test(markup), 'no react-resizable-panels markup');
+});
+
+// m5b-ui-audition (UI redesign 4.3): while a branch is heard the window has
+// the violet frame, drawn by shell.css on .app[data-hearing="proposal"].
+test('.app carries data-hearing="proposal" only while a branch is heard', () => {
+  const app = (heard: string | null) => {
+    const plans = new PlanStore();
+    plans.setHeard(heard);
+    return /<div class="app"[^>]*>/.exec(render(undefined, plans))![0];
+  };
+  assert.match(app('p1'), /data-hearing="proposal"/);
+  for (const heard of ['main', null]) assert.ok(!/data-hearing/.test(app(heard)), String(heard));
 });
 
 test('the zone sizes reach the grid as custom properties; a hidden zone is 0', () => {
@@ -192,8 +204,11 @@ test('the lower zone takes the mockup\'s .lower and .tabs with the MixConsole ta
   assert.match(tab[0], /data-testid="tab-lower-mixconsole"/);
   // The mockup's ic('sliders','s'), the label, then the key in a kbd.
   assert.match(tab[1]!, /^<svg class="i s" viewBox="0 0 16 16"[^>]*>[\s\S]*<\/svg>MixConsole <kbd>Alt\+F3<\/kbd>$/);
-  for (const id of ['tab-editor', 'mixer-racks']) assert.ok(!markup.includes(`data-part="${id}"`), `${id} is pending`);
-  assert.doesNotMatch(tabs[1]!, /class="spacer"/);
+  assert.ok(!markup.includes('data-part="tab-editor"'), 'tab-editor is pending');
+  // m5b-ui-inserts-master: the spacer, then the rack switches; with no capabilities known
+  // (this render) the switches are not in the DOM and the row ends at its spacer.
+  assert.ok(!markup.includes('data-part="mixer-racks"'), 'no rack switch without features.plugins');
+  assert.match(tabs[1]!, /<\/button><span class="spacer"><\/span>$/);
   // The right zone's row is the mockup's .p-head since m5-ui-port-plans.
   assert.match(markup, /<div class="p-head" role="tablist" data-part="right-tabs">/);
   assert.ok(!markup.includes('class="zone-tabs"'), 'no .zone-tabs row is left');

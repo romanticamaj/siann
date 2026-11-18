@@ -30,6 +30,13 @@
 // buttons and the status bar send nothing and stay live. The toasts sit
 // outside the zones.
 //
+// The audition (m5b-ui-audition; spec 4.3, 3.6): while a branch is heard
+// (audition.changed) .app carries data-hearing="proposal", on which shell.css
+// draws the 2 px violet frame, and Shift+A (audition.flip) hears the other
+// side: main from a branch, the open proposal from main (plans/hearing.ts);
+// it declines, sending nothing, while the side is unknown, no proposal is
+// open or the engine does not list audition.hear.
+//
 // The transport (m5-ui-transport; spec 3.1, 3.6): the window's transport
 // keys, undo and redo are registered here over the TransportController
 // (model/transport.ts), and run only while the engine lists them and, for
@@ -40,6 +47,12 @@
 // (m5-ui-loop-click: Num / and /, C, P, Alt+P, Num 1 / 2, Shift+1 / 2,
 // Ctrl+Num 1 / 2) are registered here over the LoopClickController, which
 // declines what would send nothing (no device, no locators, no capability).
+//
+// Projects (m5b-ui-project): the start view, when given, covers the zones,
+// which are inert under it as when offline, and only the window's project,
+// Studio Setup and focus keys run (dispatcher.ts, runsOnStartView). Studio
+// Setup, when given, is a dialog beside the toasts. The top bar shows the
+// saved mark after the session's name.
 
 import {
   useCallback,
@@ -67,6 +80,8 @@ import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { bindLoopClickCommands, type LoopClickController } from '../model/loop-click';
 import { bindTransportCommands, type TransportController } from '../model/transport';
+import { runAction } from '../plans/actions';
+import { flipTarget } from '../plans/hearing';
 import type { UndoHistory } from '../model/undo-history';
 import {
   effectiveLayout,
@@ -78,6 +93,8 @@ import {
 } from './layout';
 import { useShellState, type LayoutStore } from './layout-store';
 import { Hold } from './Hold';
+import { useCapabilities } from './Capable';
+import { pluginsListed } from '../mixer/inserts';
 import { Icon } from './icons';
 import { StatusBar } from './StatusBar';
 import type { ToastStore } from './toast-store';
@@ -194,6 +211,14 @@ export interface ShellProps {
   readonly right: ReactNode;
   // The end of the right zone's tab row (the hearing switch, m5-ui-port-plans).
   readonly rightHead?: ReactNode;
+  // The start view (m5b-ui-project), over the zones; null when it is not up.
+  readonly startView?: ReactNode;
+  // The Studio Setup dialog (m5b-ui-project).
+  readonly studioSetup?: ReactNode;
+  // The saved mark, for the top bar's session name and the status bar's saved revision.
+  readonly saved?: { getSnapshot(): boolean; savedRevision(): string | null; subscribe(listener: () => void): () => void };
+  // Opens Studio Setup (a transport button without a device).
+  readonly onStudioSetup?: () => void;
 }
 
 interface ZoneFrameProps {
@@ -366,8 +391,13 @@ export function Shell({
   lower,
   right,
   rightHead,
+  startView = null,
+  studioSetup = null,
+  saved,
+  onStudioSetup,
 }: ShellProps) {
   const t = useT();
+  const can = useCapabilities();
   const viewport = useViewport();
   const state = useShellState(store);
   const effective: EffectiveLayout = useMemo(() => effectiveLayout(state, viewport), [state, viewport]);
@@ -375,8 +405,16 @@ export function Shell({
 
   const frames = useRef<Partial<Record<ZoneScope, HTMLElement | null>>>({});
   const offline = phase === 'offline';
-  const latest = useRef({ effective, focused, offline });
-  latest.current = { effective, focused, offline };
+  const hearing = useSyncExternalStore(
+    (listener) => plans.subscribe(listener),
+    () => plans.getSnapshot().heard,
+    () => plans.getSnapshot().heard,
+  );
+  const covered = startView !== null && startView !== undefined && startView !== false;
+  // The zones take no pointer, focus or key under the banner or the start view.
+  const inert = offline || covered;
+  const latest = useRef({ effective, focused, offline, covered });
+  latest.current = { effective, focused, offline, covered };
 
   // Zones that open or close by a button or key animate (spec 1.6); drags,
   // arrow steps and the first layout do not.
@@ -457,6 +495,19 @@ export function Shell({
     return () => offs.forEach((off) => off());
   }, [commands, dispatch, focusZone, isVisible]);
 
+  // Shift+A (m5b-ui-audition): the other side, from the PlanStore only.
+  useEffect(
+    () =>
+      commands.register('window', 'audition.flip', () => {
+        if (!capabilitySelector(client.getState().capabilities).has('audition.hear')) return false;
+        const side = flipTarget(plans.getSnapshot());
+        if (side === null) return false;
+        void runAction(client, { kind: 'hear', side });
+        return true;
+      }),
+    [commands, client, plans],
+  );
+
   // The plan review (m5b-ui-ghosts; UI redesign 4.2): Ctrl+Alt+G, and the zones a reveal asks for.
   useEffect(() => {
     if (!review) return undefined;
@@ -486,7 +537,7 @@ export function Shell({
         return true;
       }),
       commands.register('project', 'view.autoScroll', () => store.dispatch({ type: 'autoScroll' })),
-      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.latest()?.playheadSamples ?? null }),
+      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.playhead()?.playheadSamples ?? null }),
     ];
     return () => offs.forEach((off) => off());
   }, [client, commands, engineStatus, store, transport, loopClick, realtime]);
@@ -531,6 +582,7 @@ export function Shell({
           focusedZone: latest.current.focused,
           platform,
           offline: latest.current.offline,
+          startView: latest.current.covered,
         },
         preset,
       );
@@ -564,9 +616,16 @@ export function Shell({
     '--lower-zone-h': `${cell('lower')}px`,
   } as CSSProperties;
   // The lower zone's tab row is the mockup's .tabs (m5-ui-port-mixer-strip):
-  // the MixConsole tab with its icon and key. The Editor tab and the rack
-  // switches are m5b-ui-editor-channel's and m5b-ui-inserts-master's, and
-  // absent; they sit after the tab and at the row's end, so nothing moves.
+  // the MixConsole tab with its icon and key, the spacer, and the rack
+  // switches (mixer-racks; m5b-ui-inserts-master, UI redesign 3.4) at the
+  // row's end with one switch, Inserts, which shows and hides the strips'
+  // insert racks and is kept in siann.layout.v1. Routing and Sends join it
+  // with m5b-ui-sends-buses; Narrow and the menu the mockup draws there have
+  // no behaviour and are not rendered. On an engine without plugins the
+  // switches are not in the DOM and nothing replaces them: the row ends at its
+  // spacer (3.0). The Editor tab is m5b-ui-editor-channel's and absent; it
+  // sits after the MixConsole tab, so nothing moves.
+  const racksShown = pluginsListed(can);
   const lowerTabs = (
     <div className="tabs" role="tablist" data-part="lower-tabs">
       <button
@@ -581,6 +640,20 @@ export function Shell({
         <Icon name="sliders" small />
         {t('tab.mixconsole')} <kbd>{MIXCONSOLE_KEY}</kbd>
       </button>
+      <span className="spacer" />
+      {racksShown ? (
+        <span className="mixer-racks" data-part="mixer-racks" role="group" aria-label={t('racks.label')}>
+          <button
+            type="button"
+            className={`rack-switch${state.layout.racks.inserts ? ' on' : ''}`}
+            data-testid="rack-inserts"
+            aria-pressed={state.layout.racks.inserts}
+            onClick={() => store.dispatch({ type: 'rack', rack: 'inserts' })}
+          >
+            {t('racks.inserts')}
+          </button>
+        </span>
+      ) : null}
     </div>
   );
   // The right zone's tab row, the mockup's .p-head (m5-ui-port-plans;
@@ -612,6 +685,7 @@ export function Shell({
       data-testid="shell"
       data-viewport={`${viewport.width}x${viewport.height}`}
       data-offline={offline ? 'true' : undefined}
+      data-hearing={hearing !== null && hearing !== 'main' ? 'proposal' : undefined}
       data-animate={String(animate)}
       style={grid}
     >
@@ -628,6 +702,9 @@ export function Shell({
         transport={transport}
         loopClick={loopClick}
         history={history}
+        saved={saved}
+        nameHidden={covered}
+        onStudioSetup={onStudioSetup}
       />
       <div className="shell-banner">
         {offline ? (
@@ -639,7 +716,7 @@ export function Shell({
       </div>
       <ZoneFrame
         as="aside"
-        offline={offline}
+        offline={inert}
         zone="left"
         visible={zones.left.visible}
         focused={focused === 'left'}
@@ -650,12 +727,12 @@ export function Shell({
       </ZoneFrame>
       <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
       <main className="center">
-        <ZoneFrame offline={offline} zone="project" bare visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
+        <ZoneFrame offline={inert} zone="project" bare visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
           {project}
         </ZoneFrame>
         <ZoneSeparator zone="lower" values={separatorValues('lower')} dispatch={dispatch} />
         <ZoneFrame
-          offline={offline}
+          offline={inert}
           zone="lower"
           visible={zones.lower.visible}
           focused={focused === 'lower'}
@@ -669,7 +746,7 @@ export function Shell({
       <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />
       <ZoneFrame
         as="aside"
-        offline={offline}
+        offline={inert}
         zone="right"
         visible={zones.right.visible}
         focused={focused === 'right'}
@@ -680,7 +757,9 @@ export function Shell({
       >
         {right}
       </ZoneFrame>
-      <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
+      <StatusBar client={client} plans={plans} engineStatus={engineStatus} saved={saved} />
+      {startView}
+      {studioSetup}
       <Toasts store={toasts} />
     </div>
   );
