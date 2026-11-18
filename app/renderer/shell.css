@@ -150,8 +150,12 @@ code, dd { font-family: var(--font-mono); }
    ellipsis inside .tb-left, the whole name in its title. */
 [data-part="branch-chip"] { min-width: 0; flex: 0 1000 auto; }
 /* The left group's column may then be narrower than the chip's whole name:
-   the chip gives way first, so the bar keeps the mockup's three columns. */
+   the chip gives way first, so the bar keeps the mockup's three columns. A
+   flex weight shares the shrink and the session's ellipsis shows at any
+   fraction of a pixel, so the session's name does not shrink at all beside
+   the chip (under 1300 px, where the chip is hidden, it does again). */
 .topbar > .tb-left:has(> [data-part="branch-chip"]) { min-width: 0; }
+.tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 0; }
 [data-part="branch-chip"] > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
    Record button, DSP load (with the margin the mockup's .dsp has) and the
@@ -676,6 +680,8 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
 .gline[data-ghost-mode="solid"], .hs > .ghost-line[data-ghost-mode="solid"] { background: var(--ai-line); }
 .th.ghost[data-ghost-mode="solid"]::after, .strip.ghost[data-ghost-mode="solid"]::after { border-style: solid; }
+/* A proposed track's header and strip, heard: the ghost tint without the hatch. */
+.th.ghost[data-ghost-mode="solid"], .strip.ghost[data-ghost-mode="solid"] { background: linear-gradient(var(--ai-a100), var(--ai-a100)), var(--bg-alt); }
 .ghost-removed { opacity: var(--offline-opacity); }
 /* The Inspector's sliders (shell/Inspector.tsx): the Volume slider's ghost
    thumb at the pending value, the .hs u box in the strip's .cap.ghost look,
@@ -708,6 +714,7 @@ button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
 @media (max-width: 1300px) {
   .topbar { grid-template-columns: auto auto minmax(0, 1fr); }
   [data-part="branch-chip"], .hold-dsp-load, .hold-transport-record { display: none; }
+  .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 1; }
 }
 @media (max-width: 1100px) {
   .lcd .cell[data-part="display-locators"], .lcd .display-locators-empty, .lcd .cell[data-part="display-tempo"], .lcd .cell[data-part="display-signature"] { display: none; }

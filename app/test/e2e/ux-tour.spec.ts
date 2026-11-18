@@ -917,7 +917,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Hearing a proposal with clip and track ghosts',
-    `The 6-step plan (${hash8(ghostHash)}) auditioned: the 2 px violet frame, the banner and the branch chip naming it, and its ghosts solid in the event display (the Strings lane and its placed clip, the moved Kick clip with its original at 38 %), on the headers and the MixConsole, drawn from the branch snapshot with main's values as faint outlines. Structural edits are disabled while the proposal is heard: the Split tool, under the pointer, is dimmed and its tooltip gives the reason (the tooltip is the system's and is not in the capture); the fader and pan stay live and go to the side heard. The mockup has no hearing state: this state is the app's alone.`,
+    `The 6-step plan (${hash8(ghostHash)}) auditioned: the 2 px violet frame, the banner and the branch chip naming it, and its ghosts solid in the event display (the Strings lane, unhatched, and its placed clip; the moved Kick clip, its original now main's place as a faint outline), on the headers and the MixConsole (the Strings header and strip unhatched, the Bass cap solid with main's cap as a faint outline; Kick's M and the Keys knob solid, main's value the control itself), drawn from the branch snapshot. Structural edits are disabled while the proposal is heard: the Split tool, under the pointer, is dimmed and its tooltip gives the reason (the tooltip is the system's and is not in the capture); the fader and pan stay live and go to the side heard. The mockup has no hearing state: this state is the app's alone.`,
     { number: 28 },
   );
   // Discarded, so what follows is as before.
