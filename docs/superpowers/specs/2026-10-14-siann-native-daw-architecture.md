@@ -2247,6 +2247,18 @@ Decisions of 2026-11-04 (m3-plans):
   3. Store the sub-plan as `validated` and mark the original `rejected`.
   4. Approve the sub-plan. If that is `plan_stale`, the sub-plan stays `validated`
      and the original stays `rejected`; the error names the sub-plan's hash.
+- The Node bridge's file plans (`siann.import_pack_plan.v1`,
+  `docs/schemas/import-pack-plan-v1.md`; m5b-bridge-cli-coverage, 2026-11-18)
+  follow the same rule with their own three states, `pending` (the file
+  counterpart of `validated`), `approved` and `rejected`: `workflow reject-plan`
+  takes a `pending` or `approved` plan and refuses a `rejected` one (exit 1,
+  nothing written), so a rejection's reviewer, time and reason are never
+  overwritten. One deliberate difference: a `pending` plan whose command no
+  longer matches its `integrity.commandHash` (a tampered plan, which would never
+  reach `validated`) can still be rejected. Rejecting is the one safe thing to do
+  with such a file, and it launders nothing: the command and hashes are copied
+  unchanged, `validate-plan` still reports `command_hash_mismatch`, and a
+  rejected plan is neither approvable nor applicable.
 - Plans are in-memory engine state in M3 and are not persisted in the bundle.
   A plan applied by an earlier process is rolled back by its revision id
   (siann-protocol item 14, `plan.rollback {revision}`; m5b-bridge-native-client:

@@ -68,9 +68,13 @@ hashed silently.
 It prints `{ok: true, workflow: "reject-plan", sourcePlanFile, planFile,
 reviewState: "rejected", rejectedBy, reason}` and exits 0.
 
-- Any plan that loads can be rejected: a pending plan, an approved one (it can
-  no longer be applied), and an already rejected one, whose `rejectedBy`,
-  `rejectedAt` and `reason` are stamped again.
+- A pending plan and an approved one (it can no longer be applied) can be
+  rejected. An already rejected plan is refused ("plan is already rejected",
+  exit 1, nothing written), so a rejection's `rejectedBy`, `rejectedAt` and
+  `reason` are never overwritten; this follows the architecture spec's plan
+  state machine ("Plans"), where rejection needs a validated or approved plan.
+  A tampered pending plan is the one deliberate exception the spec names: it can
+  be rejected, as the next item says.
 - Rejection never recomputes a hash: `command`, `integrity.commandHash` and the
   other review fields are copied byte for byte. A plan whose command was edited
   after generation is still rejected, and `validate-plan` on the output still

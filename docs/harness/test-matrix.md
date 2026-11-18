@@ -146,7 +146,7 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools and propose stop/locate while recording, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `session_test` head guard, `engine_launch_test` kill-and-recover, wire loopback `track_recording` and a propose agent's stop over the wire) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
 
 Per acceptance item (`m5b-bridge-cli-coverage`): 1 `import-pack-plan` (pending,
-defaults, approved, re-rejected, tampered without laundering), `bridge-cli-reject`
+defaults, approved, re-rejection refused, tampered without laundering), `bridge-cli-reject`
 (the same through the CLI, usage errors and exit codes, approve-plan and
 apply-plan refusing a rejected plan); 2 `bridge-cli-journal` (a valid journal,
 one case per validator code, `journal_unreadable`, `journal_not_json`, usage),
