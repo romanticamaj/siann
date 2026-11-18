@@ -159,7 +159,7 @@ test('the zones keep their ids, focus attributes and dividers, positioned out of
 // frame are the shared rules'; the zone's content is its direct child, with
 // no app body between them. The other zones keep their body, the app's
 // scroll wrapper (10.10).
-test('the project zone is the mockup's section.arrange, with its content as its direct children', () => {
+test('the project zone is the mockup\'s section.arrange, with its content as its direct children', () => {
   const markup = render();
   const project = /<section class="([^"]*)"[^>]*data-region="project-zone"[^>]*>/.exec(markup);
   assert.ok(project, 'the project zone');
