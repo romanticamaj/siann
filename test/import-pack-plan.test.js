@@ -350,7 +350,8 @@ test('validateImportPackPlan reports commands that cannot be canonicalized', () 
 });
 
 // m5b-bridge-cli-coverage (acceptance item 1; docs/schemas/import-pack-plan-v1.md,
-// "Rejection"): rejectImportPackPlan rejects any plan that loads, copies the
+// "Rejection"): rejectImportPackPlan rejects a pending or approved plan (a
+// rejected one is refused), copies the
 // command and its hashes untouched and never recomputes one, so a tampered plan
 // stays tampered after the rejection.
 const { rejectImportPackPlan } = require('../src/workflows/import-pack-plan');
@@ -436,24 +437,20 @@ test('rejectImportPackPlan rejects an approved plan, which apply then refuses', 
   assert.equal(fs.existsSync(path.join(tmp, 'again.json')), false);
 });
 
-test('rejectImportPackPlan re-stamps an already rejected plan with the new reviewer, time and reason', () => {
+test('rejectImportPackPlan refuses an already rejected plan and writes nothing', () => {
   const { tmp, planFile } = planFixture('siann-reject-twice-');
   const once = path.join(tmp, 'once.json');
   const twice = path.join(tmp, 'twice.json');
   rejectImportPackPlan(planFile, once, { rejectedBy: 'ana', rejectedAt: '2026-11-18T10:00:00.000Z', reason: 'first' });
-  const summary = rejectImportPackPlan(once, twice, {
-    rejectedBy: 'ben', rejectedAt: '2026-11-18T11:00:00.000Z', reason: 'second',
-  });
+  const onceBytes = fs.readFileSync(once, 'utf8');
 
-  assert.equal(summary.reviewState, 'rejected');
-  const first = JSON.parse(fs.readFileSync(once, 'utf8'));
-  const second = JSON.parse(fs.readFileSync(twice, 'utf8'));
-  assert.equal(second.review.rejectedBy, 'ben');
-  assert.equal(second.review.rejectedAt, '2026-11-18T11:00:00.000Z');
-  assert.equal(second.review.reason, 'second');
-  assert.equal(JSON.stringify(second.command), JSON.stringify(first.command));
-  assert.equal(second.integrity.commandHash, first.integrity.commandHash);
-  assert.equal(validateImportPackPlan(twice).ok, true);
+  assert.throws(
+    () => rejectImportPackPlan(once, twice, { rejectedBy: 'ben', rejectedAt: '2026-11-18T11:00:00.000Z', reason: 'second' }),
+    /plan is already rejected/,
+  );
+  assert.equal(fs.existsSync(twice), false);
+  assert.throws(() => rejectImportPackPlan(once, once, { rejectedBy: 'ben' }), /plan is already rejected/);
+  assert.equal(fs.readFileSync(once, 'utf8'), onceBytes, 'the first rejection is not overwritten');
 });
 
 test('rejectImportPackPlan rejects a tampered plan without laundering it: validate still reports command_hash_mismatch', () => {

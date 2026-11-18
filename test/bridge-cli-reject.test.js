@@ -2,9 +2,9 @@
 
 // `siann workflow reject-plan` through bin/siann.js (m5b-bridge-cli-coverage,
 // acceptance item 1; docs/schemas/import-pack-plan-v1.md, "Rejection"): the
-// rejected plan keeps its hash chain, approved, rejected and tampered plans are
-// rejected without a hash being recomputed, usage errors exit 1, and approve-plan
-// and apply-plan refuse a rejected plan.
+// rejected plan keeps its hash chain, approved and tampered plans are rejected
+// without a hash being recomputed, a rejected plan is refused, usage errors
+// exit 1, and approve-plan and apply-plan refuse a rejected plan.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -112,20 +112,18 @@ test('reject-plan on an approved plan rejects it, and apply-plan then refuses it
   assert.equal(fs.existsSync(commandFile), false);
 });
 
-test('reject-plan on a rejected plan stamps the new reviewer, time and reason', (t) => {
+test('reject-plan on a rejected plan exits 1, writes nothing and keeps the first rejection', (t) => {
   const { tmp, planFile } = plans(t, 'siann-cli-reject-twice-');
   const once = path.join(tmp, 'once.json');
   const twice = path.join(tmp, 'twice.json');
   json(siann(['workflow', 'reject-plan', planFile, '--out', once, '--rejected-by', 'ana', '--reason', 'first', '--json']));
-  const summary = json(siann(['workflow', 'reject-plan', once, '--out', twice,
-    '--rejected-by', 'ben', '--reason', 'second', '--json']));
-  assert.equal(summary.rejectedBy, 'ben');
-  assert.equal(summary.reason, 'second');
-  const first = readJson(once);
-  const second = readJson(twice);
-  assert.equal(second.review.rejectedBy, 'ben');
-  assert.equal(second.review.reason, 'second');
-  assert.equal(second.integrity.commandHash, first.integrity.commandHash);
+  const onceBytes = fs.readFileSync(once, 'utf8');
+  const result = siann(['workflow', 'reject-plan', once, '--out', twice,
+    '--rejected-by', 'ben', '--reason', 'second', '--json']);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /plan is already rejected/);
+  assert.equal(fs.existsSync(twice), false);
+  assert.equal(fs.readFileSync(once, 'utf8'), onceBytes);
 });
 
 test('reject-plan on a tampered plan rejects it and validate-plan still reports command_hash_mismatch', (t) => {
