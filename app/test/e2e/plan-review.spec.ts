@@ -545,8 +545,9 @@ test('without features.planMetadata and features.agents the parts are absent, th
   const lineHeight = await page.locator('[data-part="plan-intent"]').evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
   expect(Math.round(intentBox.height / lineHeight)).toBe(2);
   const boxes = await rightBoxes();
-  // A plan without an intent keeps the chips at the same y.
-  const bare = (await full.tool('submit_plan', { steps: STEPS, title: 'No intent' })).hash as string;
+  // A plan without an intent keeps the chips at the same y (other steps: the
+  // metadata is outside the hash, so the same steps would be the same plan).
+  const bare = (await full.tool('submit_plan', { steps: STEPS.slice(0, 4), title: 'No intent' })).hash as string;
   await selectPlan(page, bare);
   await expect(page.locator('.plan-intent-empty')).toHaveCount(1);
   expect((await page.locator('[data-part="plan-summary"]').boundingBox())!.y).toBeCloseTo((boxes['plan-summary'] as { y: number }).y, 0);
@@ -572,8 +573,15 @@ test('without features.planMetadata and features.agents the parts are absent, th
     expect(await box.getAttribute('data-part')).toBeNull();
     await expect(box).toHaveText('');
   }
-  // The space stays: the same boxes as the full run's titled plan.
-  expect(await rightBoxes()).toEqual(boxes);
+  // The space stays: the same boxes as the full run's titled plan, within the
+  // fidelity run's 1 px (a text line and its calc() round apart on a
+  // fractional device scale).
+  const reducedBoxes = await rightBoxes();
+  for (const [id, box] of Object.entries(boxes) as Array<[string, Record<string, number>]>) {
+    for (const side of ['x', 'y', 'width', 'height']) {
+      expect(Math.abs((reducedBoxes[id] as Record<string, number>)[side]! - box[side]!), `${id} ${side}`).toBeLessThanOrEqual(1);
+    }
+  }
   await expect(page.locator('[data-region="right-zone"]')).not.toContainText(TITLE);
   await expect(page.locator('[data-region="right-zone"]')).not.toContainText('mix-assistant');
   // The history row and the banner use the first step and "N steps".
