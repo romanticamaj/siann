@@ -597,6 +597,9 @@ export class TimelineCanvas {
   // hit test and reveal) and the step the last overlay frame outlined.
   #ghosts: readonly Ghost[] = [];
   #ghostBoxes: GhostBox[] = [];
+  // The lanes of the tracks whose ghosts live on the header and the strip only
+  // (gain, pan, mute, solo, rename): reveal scrolls to them, nothing draws them.
+  #ghostRows: Array<{ readonly step: number; readonly top: number; readonly height: number }> = [];
   #ghostOutline: number | null = null;
   #ghostLanes = 0;
 
@@ -936,18 +939,21 @@ export class TimelineCanvas {
   }
 
   // Scrolls by the least amount that shows the ghosts of `step` (1-based) as
-  // the last content frame drew them; nothing when they show already.
+  // the last content frame drew them; nothing when they show already. A ghost
+  // on a track header only (gain, pan, mute, solo, rename) scrolls the lanes,
+  // which the track list follows, to its track's row and never sideways.
   reveal(step: number): void {
     const boxes = this.#ghostBoxes.filter((b) => b.step === step);
-    if (boxes.length === 0) return;
+    const rows = this.#ghostRows.filter((r) => r.step === step);
+    if (boxes.length === 0 && rows.length === 0) return;
     const view = this.#view;
     const top = lanesTopOf(view);
-    const x0 = Math.min(...boxes.map((b) => b.box.x));
-    const x1 = Math.max(...boxes.map((b) => b.box.x + b.box.width));
+    const x0 = boxes.length > 0 ? Math.min(...boxes.map((b) => b.box.x)) : 0;
+    const x1 = boxes.length > 0 ? Math.max(...boxes.map((b) => b.box.x + b.box.width)) : 0;
     // The ruler's ghost (the locator band) scrolls only sideways.
-    const lanes = boxes.filter((b) => !b.ruler);
-    const y0 = lanes.length > 0 ? Math.min(...lanes.map((b) => b.box.y)) : top;
-    const y1 = lanes.length > 0 ? Math.max(...lanes.map((b) => b.box.y + b.box.height)) : top;
+    const lanes = [...boxes.filter((b) => !b.ruler).map((b) => ({ y: b.box.y, bottom: b.box.y + b.box.height })), ...rows.map((r) => ({ y: r.top, bottom: r.top + r.height }))];
+    const y0 = lanes.length > 0 ? Math.min(...lanes.map((b) => b.y)) : top;
+    const y1 = lanes.length > 0 ? Math.max(...lanes.map((b) => b.bottom)) : top;
     const order = this.#options.model.getSnapshot()?.trackOrder ?? [];
     const limit = maxScrollY(view, lanesHeight(order, view) + this.#ghostLanes * view.laneHeight);
     const move = revealScroll({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 }, view, top, limit);
@@ -1876,6 +1882,7 @@ export class TimelineCanvas {
     const removed = new Map<string, number>();
     const lanesRemoved: Array<{ step: number; box: Box }> = [];
     const boxes: GhostBox[] = [];
+    const rows: Array<{ step: number; top: number; height: number }> = [];
     const counts = new Map<string, number>();
     const part = (name: string, box: Box) => {
       const n = (counts.get(name) ?? 0) + 1;
@@ -1935,11 +1942,22 @@ export class TimelineCanvas {
           part('locator-band-ghost', band);
           break;
         }
+        case 'gain':
+        case 'pan':
+        case 'mute':
+        case 'solo':
+        case 'rename': {
+          // Drawn on the header and the strip; the lane is where reveal scrolls.
+          const lane = lanes.get(g.trackId);
+          if (lane) rows.push({ step: g.step, top: lane.top, height: lane.height });
+          break;
+        }
         default:
           break;
       }
     }
     this.#ghostBoxes = boxes;
+    this.#ghostRows = rows;
     return { shapes, originals, removed, lanesRemoved };
   }
 
