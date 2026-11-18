@@ -47,6 +47,7 @@ function fakeClient(answer: (method: string, params: Record<string, unknown>) =>
     error: null,
     legend: null,
     capabilities: FULL,
+    epoch: 0,
   };
   const request = async (method: string, params: Record<string, unknown>) => {
     sent.push({ method, params });

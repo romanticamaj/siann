@@ -30,6 +30,9 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   'status.latencyValue',
   // The branch chip's "main", the mockup's in every locale (m5b-ui-audition).
   'chip.main',
+  // The saved mark, a bullet, and Studio Setup's sample rate in Hz (m5b-ui-project).
+  'session.unsavedMark',
+  'setup.rateValue',
   // The agent's transport is the protocol's name, MCP in every locale (the mockup's).
   'agent.transport.mcp',
   // A history row's "N steps · agent": the mockup's separator in every locale.

@@ -830,3 +830,33 @@ test('(20) the fidelity environment answers the device of engine.status and the 
   assert.deepEqual(plain.client.getState().about, ENGINE_ABOUT);
   assert.deepEqual(await plain.client.request('engine.status', {}), ENGINE_STATUS);
 });
+
+test('(21) the session epoch counts session.opened and an adopted sessionId, never a reconnect (m5b-ui-project)', async () => {
+  const r = rig();
+  assert.equal(r.client.getState().epoch, 0, 'no session opened yet');
+  const socket = await synced(r);
+  assert.equal(r.client.getState().epoch, 0, 'the first sync is not an epoch');
+  // session.opened (New or Open): one epoch.
+  const NEW = 'ses_0000000000000bee';
+  r.script.sessionId = NEW;
+  r.script.sync = chunksOf(seq.base.document, 'r3', '8', seq.base.documentHash);
+  socket.deliver({ schema: 'siann.event.v1', seq: '8', sessionId: NEW, revision: 'r3', type: 'session.opened', documentHash: seq.base.documentHash });
+  await until(() => r.client.getState().syncCount === 2, 'the sync of the opened session');
+  assert.equal(r.client.getState().epoch, 1, 'session.opened (with its new id) is one epoch, not two');
+  // An event naming another session (its session.opened lost in a gap): one more.
+  const OTHER = 'ses_000000000000c0de';
+  r.script.sessionId = OTHER;
+  r.script.sync = chunksOf(seq.base.document, 'r3', '9', seq.base.documentHash);
+  socket.deliver({ ...event(1), seq: '10', sessionId: OTHER, revision: 'r4', documentHash: seq.base.documentHash, changedIds: [] });
+  await until(() => r.client.getState().sessionId === OTHER && r.client.getState().syncCount === 3, 'the adopted session');
+  assert.equal(r.client.getState().epoch, 2);
+  // A reconnect to a restarted engine (a new session id in the auth reply) is not an epoch.
+  socket.serverClose();
+  r.script.sessionId = 'ses_00000000000000aa';
+  r.script.authSeq = '0';
+  r.script.sync = chunksOf(seq.base.document, 'r3', '0', seq.base.documentHash);
+  await connected(r, { port: 2, token: 'tok' });
+  await until(() => r.client.getState().syncCount === 4, 'the sync of the restarted engine');
+  assert.equal(r.client.getState().sessionId, 'ses_00000000000000aa');
+  assert.equal(r.client.getState().epoch, 2, 'an engine restart keeps the epoch: the selection stays');
+});

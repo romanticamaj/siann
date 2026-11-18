@@ -47,6 +47,12 @@
 // (m5-ui-loop-click: Num / and /, C, P, Alt+P, Num 1 / 2, Shift+1 / 2,
 // Ctrl+Num 1 / 2) are registered here over the LoopClickController, which
 // declines what would send nothing (no device, no locators, no capability).
+//
+// Projects (m5b-ui-project): the start view, when given, covers the zones,
+// which are inert under it as when offline, and only the window's project,
+// Studio Setup and focus keys run (dispatcher.ts, runsOnStartView). Studio
+// Setup, when given, is a dialog beside the toasts. The top bar shows the
+// saved mark after the session's name.
 
 import {
   useCallback,
@@ -205,6 +211,14 @@ export interface ShellProps {
   readonly right: ReactNode;
   // The end of the right zone's tab row (the hearing switch, m5-ui-port-plans).
   readonly rightHead?: ReactNode;
+  // The start view (m5b-ui-project), over the zones; null when it is not up.
+  readonly startView?: ReactNode;
+  // The Studio Setup dialog (m5b-ui-project).
+  readonly studioSetup?: ReactNode;
+  // The saved mark, for the top bar's session name and the status bar's saved revision.
+  readonly saved?: { getSnapshot(): boolean; savedRevision(): string | null; subscribe(listener: () => void): () => void };
+  // Opens Studio Setup (a transport button without a device).
+  readonly onStudioSetup?: () => void;
 }
 
 interface ZoneFrameProps {
@@ -377,6 +391,10 @@ export function Shell({
   lower,
   right,
   rightHead,
+  startView = null,
+  studioSetup = null,
+  saved,
+  onStudioSetup,
 }: ShellProps) {
   const t = useT();
   const can = useCapabilities();
@@ -392,8 +410,11 @@ export function Shell({
     () => plans.getSnapshot().heard,
     () => plans.getSnapshot().heard,
   );
-  const latest = useRef({ effective, focused, offline });
-  latest.current = { effective, focused, offline };
+  const covered = startView !== null && startView !== undefined && startView !== false;
+  // The zones take no pointer, focus or key under the banner or the start view.
+  const inert = offline || covered;
+  const latest = useRef({ effective, focused, offline, covered });
+  latest.current = { effective, focused, offline, covered };
 
   // Zones that open or close by a button or key animate (spec 1.6); drags,
   // arrow steps and the first layout do not.
@@ -516,7 +537,7 @@ export function Shell({
         return true;
       }),
       commands.register('project', 'view.autoScroll', () => store.dispatch({ type: 'autoScroll' })),
-      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.latest()?.playheadSamples ?? null }),
+      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.playhead()?.playheadSamples ?? null }),
     ];
     return () => offs.forEach((off) => off());
   }, [client, commands, engineStatus, store, transport, loopClick, realtime]);
@@ -561,6 +582,7 @@ export function Shell({
           focusedZone: latest.current.focused,
           platform,
           offline: latest.current.offline,
+          startView: latest.current.covered,
         },
         preset,
       );
@@ -680,6 +702,9 @@ export function Shell({
         transport={transport}
         loopClick={loopClick}
         history={history}
+        saved={saved}
+        nameHidden={covered}
+        onStudioSetup={onStudioSetup}
       />
       <div className="shell-banner">
         {offline ? (
@@ -691,7 +716,7 @@ export function Shell({
       </div>
       <ZoneFrame
         as="aside"
-        offline={offline}
+        offline={inert}
         zone="left"
         visible={zones.left.visible}
         focused={focused === 'left'}
@@ -702,12 +727,12 @@ export function Shell({
       </ZoneFrame>
       <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
       <main className="center">
-        <ZoneFrame offline={offline} zone="project" bare visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
+        <ZoneFrame offline={inert} zone="project" bare visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
           {project}
         </ZoneFrame>
         <ZoneSeparator zone="lower" values={separatorValues('lower')} dispatch={dispatch} />
         <ZoneFrame
-          offline={offline}
+          offline={inert}
           zone="lower"
           visible={zones.lower.visible}
           focused={focused === 'lower'}
@@ -721,7 +746,7 @@ export function Shell({
       <ZoneSeparator zone="right" disabled={zones.right.drawer} values={separatorValues('right')} dispatch={dispatch} />
       <ZoneFrame
         as="aside"
-        offline={offline}
+        offline={inert}
         zone="right"
         visible={zones.right.visible}
         focused={focused === 'right'}
@@ -732,7 +757,9 @@ export function Shell({
       >
         {right}
       </ZoneFrame>
-      <StatusBar client={client} plans={plans} engineStatus={engineStatus} />
+      <StatusBar client={client} plans={plans} engineStatus={engineStatus} saved={saved} />
+      {startView}
+      {studioSetup}
       <Toasts store={toasts} />
     </div>
   );

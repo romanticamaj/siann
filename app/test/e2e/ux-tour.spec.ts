@@ -984,6 +984,51 @@ test('UX screenshot tour', async () => {
   );
   await page.getByTestId('picker-close').click();
   await expect(page.getByTestId('plugin-picker')).toBeHidden();
+
+  // ---- 29 and 30 (m5b-ui-project): the start view, on a launch of its own
+  // without SIANN_SESSION_DIR and with a recent list whose last bundle is
+  // gone, then Studio Setup from the Studio menu. The mockup draws neither:
+  // the review reads these states alone.
+  await app!.close();
+  app = undefined;
+  const projectData = path.join(scratch, 'user-data-projects');
+  fs.mkdirSync(projectData, { recursive: true });
+  fs.writeFileSync(
+    path.join(projectData, 'recent-projects.json'),
+    JSON.stringify({ schema: 'siann.recent.v1', recent: [path.join(scratch, 'Deleted song.siann'), bundle] }),
+  );
+  const projectEnv: Record<string, string | undefined> = {
+    ...process.env,
+    SIANN_ENGINE_EXE: exeFromEnv('SIANN_ENGINE_EXE'),
+    SIANN_USER_DATA: projectData,
+    SIANN_SHELL_BACKOFF_MS: '50',
+    SIANN_SHELL_TEST: '1',
+    SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+  };
+  delete projectEnv.SIANN_SESSION_DIR;
+  app = await launchElectron({ args: [MAIN], languages: LANGUAGES, cwd: APP_DIR, env: projectEnv });
+  page = await app.firstWindow();
+  await resize(WIDE);
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('start-view')).toBeVisible();
+  await expect(page.getByTestId('start-recent-1')).toBeVisible();
+  await shoot(
+    page,
+    'Start view',
+    'A launch whose last bundle was deleted (no SIANN_SESSION_DIR): the engine runs on a scratch bundle in user data, never listed as recent, and the start view over the zones offers New Project (Ctrl+N), Open (Ctrl+O) and the recent list (the bundle that is gone was dropped from it). The top bar shows no session name. App-only state: the mockup has no start view.',
+    { number: 29 },
+  );
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById('studio.setup')!.click());
+  await expect(page.getByTestId('studio-setup')).toBeVisible();
+  await expect(page.getByTestId('setup-device-fake')).toBeVisible();
+  await expect(page.getByTestId('setup-rate')).toBeVisible();
+  await shoot(
+    page,
+    'Studio Setup',
+    'Studio > Studio Setup: the devices of engine.devices with their input and output channel counts (the fake device: 2 and 2), the output and input lists engine.select_device takes, and the running device\'s sample rate, buffer, input and output latency and whether device-side SRC is active, from engine.status. App-only state: the mockup has no Studio Setup.',
+    { number: 30 },
+  );
+  await page.getByTestId('setup-close').click();
   fs.writeFileSync(path.join(OUT, 'index.json'), `${JSON.stringify(shots, null, 2)}\n`);
   console.log(`UX tour: ${shots.filter((s) => s.file !== null).length} screenshots in ${OUT}`);
 });

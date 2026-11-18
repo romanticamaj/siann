@@ -17,6 +17,7 @@ export class FakeAttachClient implements PlanClient {
   state: ClientState = {
     status: 'connecting',
     sessionId: null,
+    epoch: 0,
     revision: null,
     about: null,
     lastSeq: null,

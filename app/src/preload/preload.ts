@@ -1,6 +1,8 @@
 // The preload bridge (contextIsolation on, sandboxed): the renderer gets the
-// engine's {port, token} and change notifications, nothing else. The MCP
-// token never leaves the main process.
+// engine's {port, token} and change notifications, the shell's project
+// record and folder dialogs, and the application menu's two directions
+// (m5b-ui-project), nothing else. The MCP token never leaves the main
+// process.
 
 import { contextBridge, ipcRenderer } from 'electron';
 
@@ -43,11 +45,58 @@ if (process.argv.includes(TEST_HOOKS_ARG)) {
   });
 }
 
+// The shell's record of bundles (m5b-ui-project): {current, startView,
+// recent: [{path, name}]}, checked field by field.
+interface ProjectState {
+  current: string | null;
+  startView: boolean;
+  recent: Array<{ path: string; name: string }>;
+}
+
+function projectState(value: unknown): ProjectState | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { current, startView, recent } = value as Record<string, unknown>;
+  if ((current !== null && typeof current !== 'string') || typeof startView !== 'boolean' || !Array.isArray(recent)) return null;
+  const entries = recent.filter(
+    (entry): entry is { path: string; name: string } =>
+      typeof entry === 'object' && entry !== null && typeof (entry as { path?: unknown }).path === 'string' && typeof (entry as { name?: unknown }).name === 'string',
+  );
+  return { current, startView, recent: entries.map(({ path, name }) => ({ path, name })) };
+}
+
+const pathOrNull = (value: unknown): string | null => (typeof value === 'string' && value.length > 0 ? value : null);
+
 contextBridge.exposeInMainWorld('siann', {
   engine: {
     current: async (): Promise<EngineEndpoint | null> => endpoint(await ipcRenderer.invoke('siann:engine:current')),
     onChange: (callback: (next: EngineEndpoint | null) => void): void => {
       ipcRenderer.on('siann:engine:changed', (_event, value: unknown) => callback(endpoint(value)));
+    },
+  },
+  // Projects (m5b-ui-project): the record, the shell's folder dialogs, and
+  // the report of a bundle the engine created or opened.
+  project: {
+    state: async (): Promise<ProjectState | null> => projectState(await ipcRenderer.invoke('siann:project:state')),
+    chooseNew: async (): Promise<string | null> => pathOrNull(await ipcRenderer.invoke('siann:project:choose-new')),
+    chooseOpen: async (): Promise<string | null> => pathOrNull(await ipcRenderer.invoke('siann:project:choose-open')),
+    opened: (path: string): void => {
+      if (typeof path === 'string') ipcRenderer.send('siann:project:opened', path);
+    },
+    onChange: (callback: (state: ProjectState) => void): void => {
+      ipcRenderer.on('siann:project:changed', (_event, value: unknown) => {
+        const state = projectState(value);
+        if (state) callback(state);
+      });
+    },
+  },
+  // The application menu (m5b-ui-project): the renderer's model out, the
+  // command id of a click in.
+  menu: {
+    set: (model: unknown): void => ipcRenderer.send('siann:menu:set', model),
+    onCommand: (callback: (command: string) => void): void => {
+      ipcRenderer.on('siann:menu:command', (_event, value: unknown) => {
+        if (typeof value === 'string') callback(value);
+      });
     },
   },
 });

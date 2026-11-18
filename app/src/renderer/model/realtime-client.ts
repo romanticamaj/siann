@@ -5,12 +5,18 @@
 // the first text frame, decodes each binary frame with the legend the
 // SessionClient holds, and keeps the newest frame and the newest reading per
 // entity (latest wins; nothing is queued). A frame of an epoch other than the
-// legend's is ignored. It closes when the command socket closes and opens
-// again when the command socket has reconnected.
+// legend's is not metered. Its playhead is the transport's, not the graph's:
+// playhead() is the newest frame of any epoch and outlives a new legend, so
+// the project cursor stays known through the graph publication every edit
+// brings (the legend event and the first frame of its epoch arrive on two
+// sockets, in either order); only a disconnect drops it. It closes when the
+// command socket closes and opens again when the command socket has
+// reconnected.
 //
 // Framework-free: the meter surfaces read latest() and meter() from their own
-// animation frame (ADR-0019 point 3: no meter value passes through React state);
-// subscribe() is for plain listeners.
+// animation frame (ADR-0019 point 3: no meter value passes through React state),
+// the project cursor and the transport read playhead(); subscribe() is for
+// plain listeners.
 
 import { decodeMeterFrame, type MeterEntry, type MeterFrame, type MeterLegend } from './meter-frames';
 import type { SessionClient, SocketLike } from './session-client';
@@ -39,6 +45,7 @@ export class RealtimeClient {
   #channel: Channel | null = null;
   #legend: MeterLegend | null = null;
   #latest: MeterFrame | null = null;
+  #playhead: MeterFrame | null = null;
   #readings = new Map<number, MeterEntry>();
   #frames = 0;
   #closed = false;
@@ -57,6 +64,12 @@ export class RealtimeClient {
   // The newest frame of the legend's epoch, or null.
   latest(): MeterFrame | null {
     return this.#latest;
+  }
+
+  // The newest frame of any epoch, for its playheadSamples and playing; null
+  // only before the first frame of a connection.
+  playhead(): MeterFrame | null {
+    return this.#playhead;
   }
 
   // Frames accepted since this client was made.
@@ -123,10 +136,13 @@ export class RealtimeClient {
 
   #receive(data: ArrayBuffer | ArrayBufferView): void {
     const frame = decodeMeterFrame(data);
-    if (!frame || !this.#legend || frame.epoch !== this.#legend.epoch) return;
-    this.#latest = frame;
-    for (const entry of frame.entries) this.#readings.set(entry.entityIndex, entry);
-    this.#frames += 1;
+    if (!frame) return;
+    this.#playhead = frame;
+    if (this.#legend && frame.epoch === this.#legend.epoch) {
+      this.#latest = frame;
+      for (const entry of frame.entries) this.#readings.set(entry.entityIndex, entry);
+      this.#frames += 1;
+    }
     for (const listener of [...this.#listeners]) listener();
   }
 
@@ -134,6 +150,7 @@ export class RealtimeClient {
     const channel = this.#channel;
     this.#channel = null;
     this.#latest = null;
+    this.#playhead = null;
     this.#readings = new Map();
     if (channel && !channel.closed) {
       channel.closed = true;

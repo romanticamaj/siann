@@ -62,7 +62,7 @@ function fixedHistory(value: UndoAvailability): Pick<UndoHistory, 'getSnapshot' 
   return { getSnapshot: () => value, subscribe: () => () => undefined };
 }
 
-function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore } = {}): string {
+function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore; marked?: boolean; nameHidden?: boolean } = {}): string {
   const snapshot = options.snapshot === undefined ? withLocators(sampleSnapshot()) : options.snapshot;
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
   const session = new SessionClient({
@@ -104,6 +104,8 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
         transport={transport}
         loopClick={loopClick}
         history={fixedHistory(options.history ?? { undo: 'yes', redo: 'no' })}
+        saved={options.marked === undefined ? undefined : { getSnapshot: () => options.marked === true, subscribe: () => () => undefined }}
+        nameHidden={options.nameHidden}
       />
     </CapabilitiesContext.Provider>,
   );
@@ -390,4 +392,23 @@ test('before the first snapshot the session name is empty and the chip is absent
     assert.equal(text(elements(chipOf(withDocument))[2]!), snapshot.revision);
     assert.equal(text(find(parse(withDocument), byAttr('data-part', 'session-name'))), snapshot.root?.name);
   }
+});
+
+// m5b-ui-project (UI redesign UR-4): the session's name with the saved mark,
+// a bullet after the name inside the same .session part (no new element), and
+// no name over the start view's scratch bundle.
+test('the session name carries the saved mark while the head is newer than the last save, and none over the start view', () => {
+  const t = translator('en');
+  const clean = render({ marked: false });
+  assert.match(clean, /<div class="session" data-part="session-name" data-testid="session-name" title="Song"><span[^>]*>Song<\/span> <svg/);
+  const marked = render({ marked: true });
+  const session = /<div class="session"[^>]*>[\s\S]*?<\/div>/.exec(marked)![0];
+  assert.match(session, /data-unsaved="true"/);
+  assert.ok(session.includes(`title="${t('session.unsavedTitle', { name: 'Song' })}"`), session);
+  assert.match(session, /<span[^>]*>Song<\/span>(<!-- -->)? •(<!-- -->)? <svg/, session);
+  // The structure stays the mockup's: the name's span and the chevron, nothing more.
+  assert.deepEqual(children(marked, /<div class="session"/), ['span', 'svg.i.s']);
+  assert.equal(t('session.unsavedMark'), '•');
+  const hidden = render({ nameHidden: true, marked: true });
+  assert.match(hidden, /<div class="session" data-part="session-name" data-testid="session-name" title=""><span[^>]*><\/span> <svg/);
 });

@@ -29,7 +29,12 @@
 //   work in this build but not now: they are disabled and their tooltip says
 //   why (spec 3.0), the device error's code in front. An engine whose
 //   capabilities lack transport.play, transport.stop or transport.locate gets
-//   no transport at all (Capable).
+//   no transport at all (Capable). Without a device, and where Studio Setup
+//   exists (m5b-ui-project; spec 3.0), the buttons are the way into it: they
+//   are aria-disabled instead of disabled (Chromium sends no click to a
+//   disabled button), their tooltip gives the reason and then, on a line of
+//   its own, that a click opens Studio Setup, and a click opens it
+//   (transportButton). Disconnected, they stay disabled.
 // - Undo and redo (spec 3.2) sit beside it, need no device, and are absent
 //   without session.undo and session.redo.
 // - Locators, cycle and metronome (m5-ui-loop-click; spec 3.1, 3.2): the
@@ -88,6 +93,34 @@ export interface TransportAvailability {
   readonly enabled: boolean;
   // Why not, for the tooltip; null when enabled.
   readonly reason: string | null;
+  // Not enabled because no audio device runs (the engine is connected).
+  readonly noDevice?: boolean;
+}
+
+// What a transport button renders for its availability (m5b-ui-project):
+// enabled, its label and its action; without a device and with Studio Setup,
+// aria-disabled, the reason and the Studio Setup hint, and a click that opens
+// it; otherwise disabled with the reason.
+export interface TransportButtonProps {
+  readonly disabled: boolean;
+  readonly 'aria-disabled'?: 'true';
+  readonly title: string;
+  readonly onClick: () => void;
+}
+
+export function transportButton(
+  availability: TransportAvailability,
+  label: string,
+  action: () => void,
+  onStudioSetup: (() => void) | undefined,
+  t: T,
+): TransportButtonProps {
+  if (availability.enabled) return { disabled: false, title: label, onClick: action };
+  const reason = availability.reason ?? label;
+  if (availability.noDevice && onStudioSetup) {
+    return { disabled: false, 'aria-disabled': 'true', title: `${reason}\n${t('transport.studioSetupHint')}`, onClick: onStudioSetup };
+  }
+  return { disabled: true, title: reason, onClick: action };
 }
 
 // Whether the transport can run now: not without an audio device (the device
@@ -115,7 +148,7 @@ type NoDeviceKey = Extract<MessageKey, 'transport.noDevice' | 'transport.noDevic
 function availabilityOf(key: DeviceKey, t: T, connected: boolean, noDevice: NoDeviceKey = 'transport.noDevice'): TransportAvailability {
   if (key !== null && key !== 'device') {
     const code = key.slice('none:'.length);
-    return { enabled: false, reason: code ? `${code}: ${t(noDevice)}` : t(noDevice) };
+    return { enabled: false, reason: code ? `${code}: ${t(noDevice)}` : t(noDevice), noDevice: true };
   }
   if (connected) return { enabled: true, reason: null };
   return { enabled: false, reason: t('error.disconnected') };
@@ -128,7 +161,7 @@ export function transportEnabled(status: EngineStatus | null, connected: boolean
 
 // The realtime playhead (RealtimeClient fits).
 export interface TransportPlayhead {
-  latest(): MeterFrame | null;
+  playhead(): MeterFrame | null;
   subscribe(listener: () => void): () => void;
 }
 
@@ -140,6 +173,9 @@ export interface TransportProps {
   readonly commands: CommandRegistry;
   readonly transport: TransportController;
   readonly loopClick: LoopClickController;
+  // Studio Setup's opener (m5b-ui-project): a transport button disabled for
+  // want of a device opens it. Absent where Studio Setup is.
+  readonly onStudioSetup?: () => void;
 }
 
 const noSubscription = () => () => undefined;
@@ -221,9 +257,9 @@ function writeLcd(el: HTMLElement, text: string): boolean {
   return true;
 }
 
-function TransportBar({ client, realtime, engineStatus, layout, commands, transport, loopClick }: TransportProps) {
+function TransportBar({ client, realtime, engineStatus, layout, commands, transport, loopClick, onStudioSetup }: TransportProps) {
   const t = useT();
-  const { enabled, reason } = useTransportAvailability(client, engineStatus);
+  const { enabled, reason, noDevice: noDeviceNow } = useTransportAvailability(client, engineStatus);
   const cycleAvailability = useTransportAvailability(client, engineStatus, 'transport.noDeviceCycle');
   const clickAvailability = useTransportAvailability(client, engineStatus, 'transport.noDeviceClick');
   const gates = loopClick.gates();
@@ -235,7 +271,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   // The playing flag: a commit only when it flips.
   const playing = useSyncExternalStore(
     realtime ? (listener) => realtime.subscribe(listener) : noSubscription,
-    () => realtime?.latest()?.playing ?? false,
+    () => realtime?.playhead()?.playing ?? false,
     () => false,
   );
   const primary = useSyncExternalStore(
@@ -268,7 +304,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     let frame: number | null = null;
     const write = () => {
       frame = null;
-      clock.observe(realtime?.latest() ?? null);
+      clock.observe(realtime?.playhead() ?? null);
       const root = client.model.getSnapshot()?.root;
       const rate = root?.sampleRate ?? DEFAULT_RATE;
       const tempo = root?.tempo ?? [];
@@ -327,7 +363,9 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     void transport.locate(frames);
   };
 
-  const title = (label: string) => (enabled ? label : (reason ?? label));
+  const availability: TransportAvailability = { enabled, reason, noDevice: noDeviceNow };
+  const button = (label: string, action: () => void, which: TransportAvailability = availability) =>
+    transportButton(which, label, action, onStudioSetup, t);
   const label = (format: TimeFormat) => t(format === 'bars' ? 'transport.labelBars' : 'transport.labelTime');
   return (
     <div className="transport" data-testid="transport" data-part="transport" role="group" aria-label={t('transport.label')}>
@@ -338,10 +376,8 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           className="tbtn"
           data-testid="transport-to-start"
           data-part="transport-start"
-          disabled={!enabled}
-          title={title(t('transport.toStart'))}
+          {...button(t('transport.toStart'), () => void transport.toStart())}
           aria-label={t('transport.toStart')}
-          onClick={() => void transport.toStart()}
         >
           <Icon name="rtz" />
         </button>
@@ -351,11 +387,9 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
             className={`tbtn${cycle ? ' lit' : ''}`}
             data-testid="transport-cycle"
             data-part="transport-cycle"
-            disabled={!enabled}
             aria-pressed={cycle}
-            title={cycleAvailability.enabled ? t('transport.cycle') : (cycleAvailability.reason ?? t('transport.cycle'))}
+            {...button(t('transport.cycle'), () => void loopClick.toggleCycle(), { ...cycleAvailability, enabled })}
             aria-label={t('transport.cycle')}
-            onClick={() => void loopClick.toggleCycle()}
           >
             <Icon name="loop" />
           </button>
@@ -367,10 +401,8 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           className="tbtn"
           data-testid="transport-stop"
           data-part="transport-stop"
-          disabled={!enabled}
-          title={title(t('transport.stop'))}
+          {...button(t('transport.stop'), () => void transport.stop())}
           aria-label={t('transport.stop')}
-          onClick={() => void transport.stop()}
         >
           <Icon name="stop" />
         </button>
@@ -379,11 +411,9 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           className="tbtn play"
           data-testid="transport-play"
           data-part="transport-play"
-          disabled={!enabled}
           aria-pressed={playing}
-          title={title(t('transport.startStop'))}
+          {...button(t('transport.startStop'), () => void transport.toggle())}
           aria-label={t('transport.startStop')}
-          onClick={() => void transport.toggle()}
         >
           <Icon name="play" />
         </button>
@@ -487,11 +517,9 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
             className={`tbtn${click ? ' lit' : ''}`}
             data-testid="transport-metronome"
             data-part="transport-metronome"
-            disabled={!enabled}
             aria-pressed={click}
-            title={clickAvailability.enabled ? t('transport.metronome') : (clickAvailability.reason ?? t('transport.metronome'))}
+            {...button(t('transport.metronome'), () => void loopClick.toggleClick(), { ...clickAvailability, enabled })}
             aria-label={t('transport.metronome')}
-            onClick={() => void loopClick.toggleClick()}
             onContextMenu={(event: MouseEvent<HTMLButtonElement>) => {
               event.preventDefault();
               if (enabled) setLevel({ x: event.clientX, y: event.clientY });

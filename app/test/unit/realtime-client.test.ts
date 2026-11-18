@@ -178,17 +178,27 @@ test('keeps the newest reading per entity and notifies subscribers', async () =>
   assert.equal(notified, 2);
 });
 
-test('ignores a frame whose epoch is not the legend’s, a malformed frame and text', async () => {
+test('meters no frame whose epoch is not the legend’s, but takes its playhead; ignores a malformed frame and text', async () => {
   const r = rig();
   const socket = await connected(r);
+  let notified = 0;
+  r.realtime.subscribe(() => {
+    notified += 1;
+  });
   socket.deliverBinary(EPOCH_1);
-  socket.deliverBinary(new Uint8Array([1, 2, 3]));
-  socket.deliver({ type: 'auth' });
   assert.equal(r.realtime.frameCount(), 0);
   assert.equal(r.realtime.latest(), null);
   assert.equal(r.realtime.meter('master'), null);
+  assert.equal(r.realtime.playhead()?.playheadSamples, '-1');
+  assert.equal(r.realtime.playhead()?.playing, false);
+  assert.equal(notified, 1);
+  socket.deliverBinary(new Uint8Array([1, 2, 3]));
+  socket.deliver({ type: 'auth' });
+  assert.equal(r.realtime.playhead()?.playheadSamples, '-1');
+  assert.equal(notified, 1);
   socket.deliverBinary(STEREO);
   assert.equal(r.realtime.frameCount(), 1);
+  assert.equal(r.realtime.playhead(), r.realtime.latest());
 });
 
 test('a new legend epoch drops the readings of the old one', async () => {
@@ -210,6 +220,34 @@ test('a new legend epoch drops the readings of the old one', async () => {
   assert.equal(r.realtime.meter('master'), null);
 });
 
+// Every edit publishes a graph, so a new legend; its event (command socket) and
+// the first frame of its epoch (realtime socket) come in either order. The
+// playhead is the transport's: the project cursor never reads as unknown in
+// between (Alt+X just after an edit split nothing, edit-basics.spec on macOS).
+test('a new legend epoch keeps the playhead until the next frame replaces it', async () => {
+  const r = rig();
+  const socket = await connected(r);
+  socket.deliverBinary(STEREO);
+  const before = r.realtime.playhead();
+  assert.equal(before?.playheadSamples, '96000');
+  r.command[0]!.deliver({
+    schema: 'siann.event.v1',
+    seq: String(Number(seq.base.seq) + 1),
+    sessionId: seq.sessionId,
+    revision: seq.base.revision,
+    type: 'meters.legend',
+    epoch: '4',
+    entities: ['master'],
+  });
+  await until(() => r.session.getState().legend?.epoch === '4', 'the new legend');
+  assert.equal(r.realtime.latest(), null);
+  assert.equal(r.realtime.playhead(), before);
+  // A frame of the old epoch, still in flight: its playhead is the newest.
+  socket.deliverBinary(EPOCH_1);
+  assert.equal(r.realtime.playhead()?.playheadSamples, '-1');
+  assert.equal(r.realtime.latest(), null);
+});
+
 test('reconnects with the command socket and closes with it', async () => {
   const r = rig();
   const first = await connected(r);
@@ -218,6 +256,7 @@ test('reconnects with the command socket and closes with it', async () => {
   r.command[0]!.serverClose();
   assert.equal(first.closedByClient, true);
   assert.equal(r.realtime.latest(), null);
+  assert.equal(r.realtime.playhead(), null);
   assert.equal(r.meters.length, 1);
 
   r.scheduler.fire(250); // the session client's reconnect
