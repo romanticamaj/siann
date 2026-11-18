@@ -238,6 +238,72 @@ test('both values and both names have room: the header\'s gain clears its pan, t
   expect(headerNow.right).toBeLessThanOrEqual(nameBox.right + 0.5);
 });
 
+test('the Inspector\'s sliders carry the ghosts: a ghost thumb joined to the real one on Volume, a violet tick on Pan; aria-hidden, the ticked steps, gone with the toggle', async () => {
+  await page.getByTestId('track-header-trk_a').click({ position: { x: 30, y: 30 } });
+  const volume = page.getByTestId('inspector-volume');
+  const pan = page.getByTestId('inspector-pan');
+  // Keys: its gain at step 3 (-9.0 -> -6.0 dB), its pan at step 8 (C -> L20).
+  const thumb = page.getByTestId('inspector-volume-ghost-3');
+  const line = page.getByTestId('inspector-volume-ghost-line-3');
+  const tick = page.getByTestId('inspector-pan-ghost-8');
+  for (const el of [thumb, line, tick]) {
+    await expect(el).toBeVisible();
+    await expect(el).toHaveAttribute('aria-hidden', 'true');
+  }
+  // Where the slider puts a position of its travel (the thumb is centred on it).
+  const xOf = async (el: typeof thumb) =>
+    el.evaluate((ghost) => {
+      const s = ghost.parentElement!;
+      return s.getBoundingClientRect().left + s.clientLeft + (parseFloat((ghost as HTMLElement).style.left) / 100) * s.clientWidth;
+    });
+  const centre = async (el: typeof thumb) => {
+    const b = await boxOf(el);
+    return (b.left + b.right) / 2;
+  };
+  expect(await centre(thumb)).toBeCloseTo(await xOf(thumb), 0);
+  expect(await centre(tick)).toBeCloseTo(await xOf(tick), 0);
+  // -6.0 dB is right of the real thumb at -9.0 dB, and the line runs from one to the other.
+  const real = await centre(volume.locator('u'));
+  const ghost = await centre(thumb);
+  expect(ghost).toBeGreaterThan(real + 2);
+  const run = await boxOf(line);
+  expect(run.left).toBeCloseTo(real, 0);
+  expect(run.right).toBeCloseTo(ghost, 0);
+  // L20 is left of the centred pan thumb.
+  expect(await centre(tick)).toBeLessThan((await centre(pan.locator('u'))) - 2);
+  // Violet, on the --ai token.
+  const ai = await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--ai)';
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  });
+  expect(await tick.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(ai);
+  expect(await line.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(ai);
+  expect(await thumb.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(ai);
+  // The slider still reads the track's own value.
+  await expect(volume).toHaveAttribute('aria-valuenow', '-9000');
+
+  // Unticking step 3 takes its marks away and leaves the pan's; ticking it brings them back.
+  await step(2).getByRole('checkbox').click();
+  await expect(thumb).toHaveCount(0);
+  await expect(line).toHaveCount(0);
+  await expect(tick).toHaveCount(1);
+  await step(2).getByRole('checkbox').click();
+  await expect(thumb).toHaveCount(1);
+
+  // The ghosts toggled off: no mark on either slider; on again, they are back.
+  const tog = page.locator('[data-part="proposal-pill"] .tog');
+  await tog.click();
+  await expect(volume.locator('.ghost-thumb, .ghost-line')).toHaveCount(0);
+  await expect(pan.locator('.ghost-tick')).toHaveCount(0);
+  await tog.click();
+  await expect(thumb).toBeVisible();
+  await expect(tick).toBeVisible();
+});
+
 test('Agent changes lists every pending step on the track, its clips\' too, with the ghosts shown or hidden', async () => {
   await page.getByTestId('track-header-trk_a').click({ position: { x: 30, y: 30 } });
   const section = page.locator('[data-part="inspector-agent-changes"]');

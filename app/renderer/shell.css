@@ -644,6 +644,15 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 [data-ghost-hot] { outline: var(--hairline-1h) solid var(--ai); outline-offset: calc(var(--hairline) * -1); }
 .ghost-to, .ghost-name { color: var(--ai-2); }
 .ghost-removed { opacity: var(--offline-opacity); }
+/* The Inspector's sliders (shell/Inspector.tsx): the Volume slider's ghost
+   thumb at the pending value, the .hs u box in the strip's .cap.ghost look,
+   joined to the thumb before it by the strip's .gline laid flat; the Pan
+   slider's tick, the knob's ghost needle and its dot. They take a press (it
+   pins the step) but no drag cursor of their own. */
+.hs > .ghost-thumb { position: absolute; z-index: 1; top: calc(var(--space-5q) * -1); width: var(--slider-thumb-w); height: var(--slider-thumb-h); margin-left: calc(var(--space) * -1); border-radius: var(--radius-2); background: repeating-linear-gradient(135deg, var(--ai-a350) 0 var(--space-3q), var(--ai-a120) var(--space-3q) var(--space-1h)); border: var(--hairline-1h) dashed var(--ai); box-shadow: 0 0 var(--space-3) var(--ai-a450); cursor: pointer; }
+.hs > .ghost-line { position: absolute; top: 50%; height: var(--gain-line-w); margin-top: calc(var(--gain-line-w) / -2); background: var(--ai); pointer-events: none; }
+.hs > .ghost-tick { position: absolute; z-index: 1; top: calc(var(--space-5q) * -1); height: var(--slider-thumb-h); width: var(--gain-line-w); margin-left: calc(var(--gain-line-w) / -2); border-radius: var(--hairline); background: var(--ai); cursor: pointer; }
+.hs > .ghost-tick::after { content: ""; position: absolute; left: 50%; top: 0; width: var(--space); height: var(--space); margin: calc(var(--space-half) * -1) 0 0 calc(var(--space-half) * -1); border-radius: var(--radius-round); background: var(--ai); }
 /* Room for both values: the header's gain readout with a pending value grows
    from the shared cell (the pan readout moves right, the meter gives way),
    and so does the Inspector's value column (the slider gives way). */

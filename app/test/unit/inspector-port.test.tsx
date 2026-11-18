@@ -29,6 +29,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
+import { toPosition } from '../../src/renderer/mixer/value-gesture';
 import type { Capabilities } from '../../src/renderer/model/capabilities';
 import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
@@ -391,6 +392,77 @@ test('the Volume and Pan rows show a pending value beside the current one; a ren
   // Without a ghost the values keep their unit.
   const [plainVolume] = findAll(renderReview([keysTrack()], T.keys, []), byClass('i-row'));
   assert.equal(text(value(plainVolume!)), '-8.0 dB');
+});
+
+// 4.2: a pending gain puts a ghost cap on the Volume slider at the new
+// position, joined to the real one; a pending pan a violet tick on the Pan
+// slider. The marks are the ticked steps' (the ghost list is), aria-hidden,
+// and go with the ghosts.
+test('the Volume slider carries a ghost thumb at each pending gain, joined to the thumb before it; the Pan slider a violet tick', () => {
+  const at = (kind: 'gain' | 'pan', value: number) => `${(toPosition(kind, value) * 100).toFixed(1)}%`;
+  const span = (kind: 'gain', from: number, to: number) => ((toPosition(kind, to) - toPosition(kind, from)) * 100).toFixed(1);
+  const zone = renderReview([keysTrack()], T.keys, [
+    { kind: 'gain', step: 3, trackId: T.keys, before: -8000, after: -6000 },
+    { kind: 'gain', step: 6, trackId: T.keys, before: -6000, after: 0 },
+    { kind: 'pan', step: 4, trackId: T.keys, before: -3500, after: -2000 },
+  ]);
+  const volume = find(zone, byAttr('data-testid', 'inspector-volume'));
+  const pan = find(zone, byAttr('data-testid', 'inspector-pan'));
+  // The marks sit before the thumb, so the fill and the thumb stay the mockup's <i> and <u>.
+  assert.deepEqual(withoutTooltip(volume).map(sig), ['i', 'span.ghost-line', 'span.ghost-thumb', 'span.ghost-line', 'span.ghost-thumb', 'u']);
+  assert.deepEqual(withoutTooltip(pan).map(sig), ['span.ghost-tick', 'u']);
+  const [, line3, thumb3, line6, thumb6] = withoutTooltip(volume);
+  // Step 3 runs from the real thumb (-8.0 dB) to -6.0 dB; step 6 on from there to 0.0 dB.
+  assert.equal(styleOf(thumb3!, 'left'), at('gain', -6000));
+  assert.equal(styleOf(line3!, 'left'), at('gain', -8000));
+  assert.equal(parseFloat(styleOf(line3!, 'width')!).toFixed(1), span('gain', -8000, -6000));
+  assert.equal(styleOf(thumb6!, 'left'), at('gain', 0));
+  assert.equal(styleOf(line6!, 'left'), at('gain', -6000));
+  assert.equal(parseFloat(styleOf(line6!, 'width')!).toFixed(1), span('gain', -6000, 0));
+  const [tick] = withoutTooltip(pan);
+  assert.equal(styleOf(tick!, 'left'), at('pan', -2000));
+  // Hidden from assistive technology (the value text says both values), each with its step.
+  for (const [el, step] of [[line3, '3'], [thumb3, '3'], [line6, '6'], [thumb6, '6'], [tick, '4']] as const) {
+    assert.equal(el!.attrs['aria-hidden'], 'true');
+    assert.equal(el!.attrs['data-ghost'], step);
+  }
+  assert.equal(thumb3!.attrs['data-testid'], 'inspector-volume-ghost-3');
+  assert.equal(tick!.attrs['data-testid'], 'inspector-pan-ghost-4');
+  // The sliders' own values are the track's, not the plan's.
+  assert.equal(volume.attrs['aria-valuenow'], '-8000');
+  assert.equal(pan.attrs['aria-valuenow'], '-3500');
+  // Step 3 unticked: only step 6's mark, joined to the real thumb (its before is then the track's value).
+  const one = withoutTooltip(find(renderReview([keysTrack()], T.keys, [{ kind: 'gain', step: 6, trackId: T.keys, before: -8000, after: 0 }]), byAttr('data-testid', 'inspector-volume')));
+  assert.deepEqual(one.map(sig), ['i', 'span.ghost-line', 'span.ghost-thumb', 'u']);
+  assert.equal(styleOf(one[1]!, 'left'), at('gain', -8000));
+  // A ghost with no known before starts at the real thumb too.
+  const unknown = withoutTooltip(find(renderReview([keysTrack()], T.keys, [{ kind: 'gain', step: 3, trackId: T.keys, before: null, after: -6000 }]), byAttr('data-testid', 'inspector-volume')));
+  assert.equal(styleOf(unknown[1]!, 'left'), at('gain', -8000));
+  // The ghosts toggled off (the plan still pending) or no ghost: the mockup's sliders alone.
+  const off = renderReview([keysTrack()], T.keys, []);
+  assert.deepEqual(withoutTooltip(find(off, byAttr('data-testid', 'inspector-volume'))).map(sig), ['i', 'u']);
+  assert.deepEqual(withoutTooltip(find(off, byAttr('data-testid', 'inspector-pan'))).map(sig), ['u']);
+  // Another track's ghosts stay off this track's sliders.
+  const other = renderReview([keysTrack(), voxTrack()], T.lead, [{ kind: 'gain', step: 3, trackId: T.keys, before: -8000, after: -6000 }]);
+  assert.equal(findAll(other, byClass('ghost-thumb')).length, 0);
+});
+
+test('the slider ghost marks are drawn on the --ai tokens, the thumb in the strip\'s .cap.ghost look (shell.css)', () => {
+  const renderer = path.resolve(__dirname, '..', '..', '..', 'renderer');
+  const css = fs.readFileSync(path.join(renderer, 'shell.css'), 'utf8');
+  const rule = (selector: string) => {
+    const start = css.indexOf(`${selector} {`);
+    assert.ok(start >= 0, selector);
+    return css.slice(start + selector.length + 2, css.indexOf('}', start));
+  };
+  const squash = (decl: string) => decl.replace(/\s+/g, '');
+  const capGhost = /\.cap\.ghost\{([^}]*)\}/.exec(fs.readFileSync(path.join(renderer, 'ui', 'lower-zone.css'), 'utf8'))![1]!;
+  const thumb = squash(rule('.hs > .ghost-thumb'));
+  // The strip's ghost cap's hatch, dashed violet edge and glow, declaration for declaration.
+  for (const decl of capGhost.split(';')) assert.ok(thumb.includes(squash(decl)), decl);
+  for (const selector of ['.hs > .ghost-line', '.hs > .ghost-tick', '.hs > .ghost-tick::after']) assert.match(rule(selector), /background: var\(--ai\)/, selector);
+  // No literal colour: the --ai tokens only.
+  for (const selector of ['.hs > .ghost-thumb', '.hs > .ghost-line', '.hs > .ghost-tick', '.hs > .ghost-tick::after']) assert.doesNotMatch(rule(selector), /#[0-9a-f]{3,8}\b|rgb\(/i, selector);
 });
 
 test('a pending mute or solo puts the dashed ring on the Inspector\'s M or S (.msr.ghost), as on the header and the strip', () => {

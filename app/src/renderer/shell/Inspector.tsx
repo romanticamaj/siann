@@ -43,10 +43,16 @@
 // the ghosts are toggled off. The Volume and Pan values show the pending value
 // after them (.ghost-to; the current one then without its unit, and shell.css
 // lets the value column grow), the name both names of a rename
-// (plans/RenameGhost.tsx): elements the mockup has no markup for. A pending
-// mute or solo rings M or S (.msr.ghost), as the header and the strip do.
+// (plans/RenameGhost.tsx): elements the mockup has no markup for. The sliders
+// carry them too, as the strip's fader and knob do: the Volume slider a ghost
+// thumb (.ghost-thumb, the look of the strip's .cap.ghost) at each ticked
+// step's new position, joined to the one before it, the real thumb for the
+// first, by a violet line (.ghost-line, the strip's .gline); the Pan slider a
+// violet tick (.ghost-tick, the knob's ghost needle and its dot). They are
+// aria-hidden (the value text says both values) and leave with the ghosts. A
+// pending mute or solo rings M or S (.msr.ghost), as the header and the strip do.
 
-import { useRef, useSyncExternalStore, type CSSProperties } from 'react';
+import { useRef, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
 
 import { formatDb, formatPan } from '../format';
 import { useT } from '../i18n/t';
@@ -61,8 +67,8 @@ import type { GestureController } from '../model/gesture-controller';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { describeStep } from '../plans/describe';
-import { ghostAttrs, useGhostView } from '../plans/ghost-context';
-import { trackGhosts } from '../plans/ghosts';
+import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
+import { trackGhosts, type ValueGhost } from '../plans/ghosts';
 import { useStepNames } from '../plans/hooks';
 import { ISOLATE } from '../plans/isolate';
 import { planName } from '../plans/plan-name';
@@ -164,11 +170,16 @@ interface SliderProps {
   readonly gestures: GestureController;
   readonly testId: string;
   readonly label: string;
+  // The ticked steps' pending values of this slider (m5b-ui-ghosts), in step order.
+  readonly ghosts: readonly ValueGhost<string, number>[];
+  readonly view: GhostView;
 }
 
 // The mockup's .hs: the volume slider has its fill (<i>) and thumb (<u>), the
-// pan slider its thumb only; both at the value's position of the travel.
-function Slider({ kind, track, gestures, testId, label }: SliderProps) {
+// pan slider its thumb only; both at the value's position of the travel. A
+// pending value adds its ghost marks before the thumb (aria-hidden; a press
+// on one pins its step, as on the strip's ghost cap).
+function Slider({ kind, track, gestures, testId, label, ghosts, view }: SliderProps) {
   const slider = useRef<HTMLSpanElement | null>(null);
   const fill = useRef<HTMLElement | null>(null);
   const thumb = useRef<HTMLElement | null>(null);
@@ -207,6 +218,19 @@ function Slider({ kind, track, gestures, testId, label }: SliderProps) {
       {...handlers}
     >
       {gain ? <i ref={fill} style={{ width: percent(position) }} /> : null}
+      {ghosts.map((g) => {
+        const to = toPosition(kind, g.after);
+        const pin = (event: PointerEvent) => {
+          event.stopPropagation();
+          view.pin(g.step);
+        };
+        if (!gain) return <span key={`t${g.step}`} className="ghost-tick" aria-hidden="true" data-testid={`${testId}-ghost-${g.step}`} {...ghostAttrs(view, [g.step])} style={{ left: percent(to) }} onPointerDown={pin} />;
+        const from = toPosition(kind, g.before ?? value);
+        return [
+          <span key={`l${g.step}`} className="ghost-line" aria-hidden="true" data-testid={`${testId}-ghost-line-${g.step}`} {...ghostAttrs(view, [g.step])} style={{ left: percent(Math.min(from, to)), width: percent(Math.abs(to - from)) }} />,
+          <span key={`c${g.step}`} className="ghost-thumb" aria-hidden="true" data-testid={`${testId}-ghost-${g.step}`} {...ghostAttrs(view, [g.step])} style={{ left: percent(to) }} onPointerDown={pin} />,
+        ];
+      })}
       <u ref={thumb} style={{ left: percent(position) }} />
       <span ref={tooltip} className="value-tooltip" data-testid={`${testId}-tooltip`} role="status" hidden />
     </span>
@@ -297,7 +321,7 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
         </div>
         <div className="i-row" data-part="inspector-volume">
           <span>{t('inspector.volume')}</span>
-          {gainListed ? <Slider kind="gain" track={track} gestures={gestures} testId="inspector-volume" label={t('strip.gainLabel', { track: track.name })} /> : <Hold className="hs-box" />}
+          {gainListed ? <Slider kind="gain" track={track} gestures={gestures} testId="inspector-volume" label={t('strip.gainLabel', { track: track.name })} ghosts={ghosts.gain} view={view} /> : <Hold className="hs-box" />}
           <ValueReadout
             tag="b"
             className="num"
@@ -313,7 +337,7 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
         </div>
         <div className="i-row" data-part="inspector-pan">
           <span>{t('strip.pan')}</span>
-          {panListed ? <Slider kind="pan" track={track} gestures={gestures} testId="inspector-pan" label={t('strip.panLabel', { track: track.name })} /> : <Hold className="hs-box" />}
+          {panListed ? <Slider kind="pan" track={track} gestures={gestures} testId="inspector-pan" label={t('strip.panLabel', { track: track.name })} ghosts={ghosts.pan} view={view} /> : <Hold className="hs-box" />}
           <ValueReadout
             tag="b"
             className="num"
