@@ -83,6 +83,24 @@ export const COMMAND_IDS = [
   'transport.setRightLocator',
   // The Pool (m5-ui-port-toolbar; spec 10.8, 1): Cubase's Open Pool.
   'pool.open',
+  // Projects and audio setup (m5b-ui-project; spec 3.6, UR-4): New Project,
+  // Open and Save on Cubase's keys; Studio Setup and the ten Open Recent
+  // entries without a key, from the application menu. New, Open and the
+  // recent entries need the shell and exist only with its preload bridge.
+  'project.new',
+  'project.open',
+  'project.save',
+  'project.openRecent.1',
+  'project.openRecent.2',
+  'project.openRecent.3',
+  'project.openRecent.4',
+  'project.openRecent.5',
+  'project.openRecent.6',
+  'project.openRecent.7',
+  'project.openRecent.8',
+  'project.openRecent.9',
+  'project.openRecent.10',
+  'studio.setup',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

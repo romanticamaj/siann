@@ -22,7 +22,7 @@
 /* The app's overlays, which the mockup does not draw, keep the plain text
    styles of the page before the port: every zone takes base.css's body text,
    as the mockup does. */
-.toasts, .about-panel, .confirm-dialog, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level {
+.toasts, .about-panel, .confirm-dialog, .studio-setup, .start-view, .time-format-menu, .grid-type-menu, .event-display-menu, .click-level {
   line-height: var(--line-height);
   letter-spacing: normal;
   font-variant-numeric: tabular-nums;
@@ -46,6 +46,10 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
 }
 button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
+/* A transport button without a device is the way into Studio Setup
+   (m5b-ui-project): aria-disabled, so it still takes the click, and drawn as
+   a disabled one. */
+button[aria-disabled="true"] { color: var(--tx-4); cursor: default; }
 button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
@@ -61,6 +65,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   cursor: pointer;
 }
 :where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add):disabled { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add)[aria-disabled="true"] { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
@@ -608,7 +613,7 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .statusbar .about:hover:not(:disabled) { color: var(--tx-2); }
 .about-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .about-tail { flex: none; white-space: pre; }
-.about-panel, .confirm-dialog {
+.about-panel, .confirm-dialog, .studio-setup {
   width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
   max-height: calc(100vh - var(--dialog-margin));
   overflow: auto;
@@ -620,10 +625,10 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   font-size: var(--fs-body);
   white-space: normal;
 }
-.about-panel::backdrop, .confirm-dialog::backdrop { background: var(--scrim); }
-.about-panel h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
+.about-panel::backdrop, .confirm-dialog::backdrop, .studio-setup::backdrop { background: var(--scrim); }
+.about-panel h2, .studio-setup h2 { margin: 0 0 calc(var(--space) * 2); font-size: var(--fs-plan); font-weight: 600; }
 .about-panel-line { margin: 0 0 calc(var(--space) * 3); overflow-wrap: anywhere; user-select: text; }
-.about-panel h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
+.about-panel h3, .studio-setup h3 { margin: 0 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
 .about-diagnostics {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -633,6 +638,61 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 }
 .about-diagnostics dt { color: var(--tx-3); }
 .about-diagnostics dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
+
+/* Studio Setup (m5b-ui-project): the About panel's dialog chrome (above),
+   the devices as a table, the output and input lists, the running device's
+   figures as the diagnostics' terms. The mockup has no such dialog. */
+.setup-devices { width: 100%; border-collapse: collapse; margin: 0 0 calc(var(--space) * 3); font-size: var(--fs-small); }
+.setup-devices th, .setup-devices td { padding: var(--space-half) var(--space); text-align: start; border-bottom: var(--hairline) solid var(--line-2); white-space: nowrap; }
+.setup-devices th { color: var(--tx-3); font-weight: 600; }
+.setup-devices .num { text-align: end; font-variant-numeric: tabular-nums; }
+.setup-current { margin-inline-start: var(--space); color: var(--tx-3); }
+.setup-choice { display: flex; flex-wrap: wrap; align-items: end; gap: calc(var(--space) * 2); margin: 0 0 calc(var(--space) * 3); }
+.setup-choice label { display: grid; gap: var(--space-half); min-width: 0; font-size: var(--fs-small); color: var(--tx-3); }
+.setup-choice select {
+  min-height: var(--control-h);
+  max-width: calc(var(--dialog-w) / 2);
+  background: var(--bg-4);
+  color: var(--tx-1);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-m);
+}
+.setup-error { margin: 0 0 calc(var(--space) * 3); color: var(--err); overflow-wrap: anywhere; }
+.setup-none { margin: 0 0 calc(var(--space) * 3); color: var(--tx-3); }
+
+/* The start view (m5b-ui-project): over the zones, between the top bar and
+   the status bar, while the shell runs its scratch bundle. A panel on the
+   dialogs' chrome with New, Open and the recent list. The mockup has none. */
+.start-view {
+  position: absolute;
+  inset: var(--top-bar) 0 var(--status-bar) 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-0);
+}
+.start-panel {
+  width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
+  max-height: calc(100% - var(--dialog-margin));
+  overflow: auto;
+  padding: calc(var(--space) * 4);
+  background: var(--bg-1);
+  color: var(--tx-1);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-l);
+  font-size: var(--fs-body);
+}
+.start-panel h2 { margin: 0 0 calc(var(--space) * 3); font-size: var(--fs-plan); font-weight: 600; }
+.start-panel h3 { margin: calc(var(--space) * 4) 0 var(--space); font-size: var(--fs-small); font-weight: 600; color: var(--tx-2); }
+.start-actions { display: flex; gap: calc(var(--space) * 2); }
+.start-actions .start-primary { border-color: var(--tx-3); }
+.start-recent { display: grid; gap: var(--space-half); margin: 0; padding: 0; list-style: none; }
+.start-recent button { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; padding: var(--space) calc(var(--space) * 2); text-align: start; }
+.start-recent b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.start-path { overflow: hidden; text-overflow: ellipsis; color: var(--tx-3); font-size: var(--fs-small); }
+.start-empty { margin: 0; color: var(--tx-3); }
+.start-error { margin: calc(var(--space) * 3) 0 0; color: var(--err); overflow-wrap: anywhere; }
 
 /* Small windows (2.4). Under 1100 px the top bar drops the locator, tempo
    and signature displays, and the boxes of the parts not built yet; under

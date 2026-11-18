@@ -132,8 +132,9 @@ test('the transport is enabled with a device and disabled with the reason withou
     const none = transportAvailability(NO_DEVICE, t);
     assert.equal(none.enabled, false);
     assert.equal(none.reason, `device_open_failed: ${t('transport.noDevice')}`, locale);
-    // No error code: the catalog's text alone.
-    assert.deepEqual(transportAvailability(NO_DEVICE_NO_ERROR, t), { enabled: false, reason: t('transport.noDevice') });
+    // No error code: the catalog's text alone. Both are "no device" (m5b-ui-project: the way into Studio Setup).
+    assert.equal(none.noDevice, true);
+    assert.deepEqual(transportAvailability(NO_DEVICE_NO_ERROR, t), { enabled: false, reason: t('transport.noDevice'), noDevice: true });
     // While the engine is away the reason is the connection.
     assert.deepEqual(transportAvailability(null, t, false), { enabled: false, reason: t('error.disconnected') });
     // Connected, before the first engine.status answer: the engine decides.

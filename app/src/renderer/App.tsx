@@ -24,6 +24,14 @@
 // setting, also words positions in the Plans tab. The locators, cycle and
 // metronome (m5-ui-loop-click) are the LoopClickController's: its buttons in
 // the transport, its band in the event display's ruler, its keys in the shell.
+// Projects (m5b-ui-project): New, Open, the recent list and Save are the
+// ProjectController's commands (New, Open and the recent list only with the
+// shell's port), the start view covers the zones until a bundle is opened, and
+// Studio Setup is a dialog opened by studio.setup or by a transport button
+// without a device. Every session epoch (session.opened) drops what the
+// window keeps of the old session: the track selection, and the timeline and
+// the Plans tab are mounted again, so their clip selection, zoom and plan
+// selection start afresh; a reconnect still clears the selections only.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
@@ -37,6 +45,9 @@ import type { PlanStore } from './model/plan-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
+import { capabilitySelector } from './model/capabilities';
+import type { ProjectController, SavedMark } from './model/project';
+import { studioSetupAvailable, type StudioSetupController } from './model/studio-setup';
 import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
 import { Mixer } from './mixer/Mixer';
@@ -49,6 +60,8 @@ import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
+import { StartView } from './shell/StartView';
+import { StudioSetup } from './shell/StudioSetup';
 import { TimeFormatContext } from './shell/time-format';
 import type { ToastStore } from './shell/toast-store';
 import { NO_TRACKS, pruneTracks, selectTrack, type TrackSelectMode, type TrackSelection } from './timeline/selection';
@@ -75,6 +88,10 @@ export interface AppProps {
   readonly history: UndoHistory;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
+  // Projects and Studio Setup (m5b-ui-project).
+  readonly project: ProjectController;
+  readonly saved: SavedMark;
+  readonly studioSetup: StudioSetupController;
 }
 
 export function App({
@@ -94,6 +111,9 @@ export function App({
   history,
   onTimelineHooks,
   onMeterHooks,
+  project,
+  saved,
+  studioSetup,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -119,7 +139,32 @@ export function App({
   );
   // Removed tracks leave the selection.
   useEffect(() => client.model.subscribe(() => setTracks((current) => pruneTracks(current, order()))), [client]);
-  useEffect(() => setTracks(NO_TRACKS), [reconnects]);
+  const epoch = useSyncExternalStore(
+    (listener) => client.subscribe(listener),
+    () => client.getState().epoch,
+  );
+  useEffect(() => setTracks(NO_TRACKS), [reconnects, epoch]);
+  // Projects: the key commands and menu items, and the start view.
+  useEffect(() => project.bind(commands, () => capabilitySelector(client.getState().capabilities)), [project, commands, client]);
+  const startView = useSyncExternalStore(project.subscribe, () => project.getSnapshot().shell && project.getSnapshot().startView);
+  // Studio Setup: studio.setup, and the transport's buttons without a device.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const openSetup = useCallback(() => setSetupOpen(true), []);
+  const closeSetup = useCallback(() => setSetupOpen(false), []);
+  const setupAvailable = studioSetupAvailable(capabilitySelector(capabilities));
+  useEffect(
+    () =>
+      commands.register('window', 'studio.setup', () => {
+        if (!studioSetupAvailable(capabilitySelector(client.getState().capabilities))) return false;
+        setSetupOpen(true);
+        return true;
+      }),
+    [commands, client],
+  );
+  const sessionRate = useSyncExternalStore(
+    (listener) => client.model.subscribe(listener),
+    () => client.model.getSnapshot()?.root?.sampleRate ?? null,
+  );
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   return (
@@ -143,6 +188,7 @@ export function App({
           project={
             <Counted id="timeline">
               <Timeline
+                key={epoch}
                 client={client}
                 peaks={peaks}
                 commands={commands}
@@ -165,8 +211,12 @@ export function App({
               <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
             </Counted>
           }
-          right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
+          right={<PlanPanel key={epoch} client={client} plans={plans} reconnects={reconnects} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
+          startView={startView ? <StartView project={project} /> : null}
+          studioSetup={<StudioSetup open={setupOpen} controller={studioSetup} engineStatus={engineStatus} sessionRate={sessionRate} onClose={closeSetup} />}
+          saved={saved}
+          onStudioSetup={setupAvailable ? openSetup : undefined}
         />
       </TimeFormatContext.Provider>
     </CapabilitiesContext.Provider>

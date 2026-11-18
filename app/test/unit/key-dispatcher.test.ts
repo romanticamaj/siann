@@ -108,6 +108,21 @@ test('while the engine is disconnected no zone command runs; the window layout a
   assert.equal(resolveKey(offline({ code: 'F6', key: 'F6' }), CUBASE_PRESET)?.commandId, 'focus.nextZone');
 });
 
+// m5b-ui-project: the start view covers the zones (they are inert), so only
+// the window's project, Studio Setup and focus keys run; Space plays nothing.
+test('under the start view only Ctrl+N, Ctrl+O, Ctrl+S and the focus keys run', () => {
+  const covered = (over: Partial<KeyInput>) => input({ ...over, startView: true });
+  const ctrl = { ...NONE, ctrl: true };
+  assert.equal(resolveKey(covered({ code: 'KeyN', key: 'n', modifiers: ctrl }), CUBASE_PRESET)?.commandId, 'project.new');
+  assert.equal(resolveKey(covered({ code: 'KeyO', key: 'o', modifiers: ctrl }), CUBASE_PRESET)?.commandId, 'project.open');
+  assert.equal(resolveKey(covered({ code: 'KeyS', key: 's', modifiers: ctrl }), CUBASE_PRESET)?.commandId, 'project.save');
+  assert.equal(resolveKey(covered({ code: 'Tab', key: 'Tab' }), CUBASE_PRESET)?.commandId, 'focus.next');
+  for (const [code, key] of [['Space', ' '], ['KeyT', 't'], ['Delete', 'Delete'], ['F3', 'F3']] as const) {
+    assert.equal(resolveKey(covered({ code, key }), CUBASE_PRESET), null, code);
+  }
+  assert.equal(resolveKey(input({ code: 'KeyN', key: 'n', modifiers: ctrl }), CUBASE_PRESET)?.commandId, 'project.new');
+});
+
 test('the editing keys (m5-ui-edit-basics) never fire while typing; 1 is the number row, not the numpad', () => {
   const keys: Array<[string, Partial<KeyInput['modifiers']>]> = [
     ['Digit1', {}],
