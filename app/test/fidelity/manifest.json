@@ -30,7 +30,7 @@
   "pixels": {
     "channelTolerance": 16,
     "maxMismatch": 0.005,
-    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending. DSP load and the master's loudness value are meter levels and joined the list when they got an owner (2026-11-15). Decided by the maintainer, 2026-11-15 (UI redesign 10.5, second round): the three history rows (plan-history-1 to 3: their titles and the agent's name need E-7 and E-14) are masked until m5b-ui-plan-metadata removes them from this list, and the titles of the steps that name a clip (plan-step-N-title: a clip has no name before the clip half of E-4) until m5b-ui-media does. The history head (plan-history-head) is not masked: M5 derives it.",
+    "note": "Chrome only: waveform interiors and dynamic content are masked entirely (maintainer, 2026-11-14), as are parts whose gate is pending. DSP load and the master's loudness value are meter levels and joined the list when they got an owner (2026-11-15). Decided by the maintainer, 2026-11-15 (UI redesign 10.5, second round): the three history rows (plan-history-1 to 3: their titles and the agent's name need E-7 and E-14) are masked until m5b-ui-plan-metadata removes them from this list, and the titles of the steps that name a clip (plan-step-N-title: a clip has no name before the clip half of E-4) until m5b-ui-media narrows that mask: it unmasks plan-step-6-title (\"Move Riser on FX\": the media is named Riser) and leaves plan-step-2-title masked, whose mockup text names the clip \"Pad swell\" while its media is pad_swell.wav, until the clip half of E-4 has an owner (decided by Fable, delegated by the maintainer, 2026-11-18; UI redesign 10.11). The history head (plan-history-head) is not masked: M5 derives it.",
     "dynamic": ["display-*", "dsp-load", "strip-master-loudness", "status-device", "status-xruns", "status-saved", "status-about", "plan-meta", "*-meter", "*-readout", "info-start", "info-end", "info-length", "info-offset", "info-volume", "track-count", "cursor", "cursor-head", "plan-history-1", "plan-history-2", "plan-history-3", "plan-step-*-title"]
   },
   "gates": {
@@ -56,7 +56,9 @@
     "m5b-ui-composer": "pending",
     "m5b-ui-notepad": "pending",
     "m5b-ui-editor-channel": "pending",
-    "m6a-ui-automation": "pending"
+    "m6a-ui-automation": "pending",
+    "m6a-ui-tools": "pending",
+    "m6c-ui-master-channel": "pending"
   },
   "rules": [
     {"match":["*ghost*","proposal-pill","inspector-agent-changes"],"feature":"m5b-ui-ghosts","gate":"m5b-ui-ghosts"},
@@ -67,13 +69,16 @@
     {"match":["agent-row","plan-title","plan-intent"],"feature":"m5b-ui-plan-metadata","gate":"m5b-ui-plan-metadata"},
     {"match":["composer"],"feature":"m5b-ui-composer","gate":"m5b-ui-composer"},
     {"match":["inspector-notepad"],"feature":"m5b-ui-notepad","gate":"m5b-ui-notepad"},
-    {"match":["tab-editor","zone-button-channel"],"feature":"m5b-ui-editor-channel","gate":"m5b-ui-editor-channel"},
-    {"match":["strip-*-inserts","strip-*-edit","strip-master-fader","strip-master-cap","strip-master-buttons","strip-master-mute","inspector-inserts","inspector-edit","mixer-racks"],"feature":"m5b-ui-inserts-master","gate":"m5b-ui-inserts-master"},
+    {"match":["strip-master-inserts","strip-master-edit","strip-master-buttons","strip-master-mute"],"feature":"m6c-ui-master-channel","gate":"m6c-ui-master-channel"},
+    {"match":["tab-editor","zone-button-channel","strip-*-edit","inspector-edit"],"feature":"m5b-ui-editor-channel","gate":"m5b-ui-editor-channel"},
+    {"match":["strip-*-inserts","strip-master-fader","strip-master-cap","inspector-inserts","mixer-racks"],"feature":"m5b-ui-inserts-master","gate":"m5b-ui-inserts-master"},
     {"match":["inspector-routing","inspector-sends"],"feature":"m5b-ui-sends-buses","gate":"m5b-ui-sends-buses"},
     {"match":["marker-head","marker-track"],"feature":"m5b-ui-markers","gate":"m5b-ui-markers"},
     {"match":["info-fade-in","info-fade-out"],"feature":"m5b-ui-fades","gate":"m5b-ui-fades"},
     {"match":["tab-media","plan-step-*-title"],"feature":"m5b-ui-media","gate":"m5b-ui-media"},
-    {"match":["tool-2","tool-4","tool-5","tool-6","tool-7","tool-8","tool-9"],"feature":"m5b-ui-edit-more","gate":"m5b-ui-edit-more"},
+    {"match":["tool-4","tool-5"],"feature":"m5b-ui-edit-more","gate":"m5b-ui-edit-more"},
+    {"match":["tool-8"],"feature":"m6a-ui-automation","gate":"m6a-ui-automation"},
+    {"match":["tool-2","tool-6","tool-7","tool-9"],"feature":"m6a-ui-tools","gate":"m6a-ui-tools"},
     {"match":["branch-chip"],"feature":"m5b-ui-audition","gate":"m5b-ui-audition"},
     {"match":["transport-cycle","transport-click","transport-metronome","display-locators"],"feature":"m5-ui-loop-click","gate":"m5-ui-alignment-chrome"},
     {"match":["locator-band"],"feature":"m5-ui-loop-click","gate":"m5-ui-port-arrange-canvas"},

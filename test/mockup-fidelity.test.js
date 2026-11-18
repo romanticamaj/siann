@@ -26,7 +26,10 @@ const MOCKUP = read(...MANIFEST.mockup.split('/'));
 const milestone = (id) => JSON.parse(read('.claude', 'milestones', `${id}.json`));
 // The milestones that own parts of the mockup: M5 built the window, M5b is the
 // usable release, and M6a owns the automation parts (maintainer, 2026-11-15).
-const OWNERS = ['M5', 'M5b', 'M6a'];
+// Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign
+// 10.11): M6a also owns the tools M5b leaves out, and M6c the master's mute,
+// insert rack and e, which need engine work no earlier milestone has.
+const OWNERS = ['M5', 'M5b', 'M6a', 'M6c'];
 const FEATURES = new Map(OWNERS.flatMap((id) => milestone(id).features.map((f) => [f.id, { ...f, milestone: id }])));
 const DONE = new Set(OWNERS.flatMap((id) => milestone(id).done));
 // M5's parts answer to the feature that ports them from the mockup's markup:
@@ -587,7 +590,46 @@ test('the mockup\'s fader taper is the app\'s (spec 4.5 C7), and every strip has
   }
   assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'pending');
   assert.equal(ruleOf('strip-7-mute').gate, 'm5-ui-port-mixer-strip');
-  assert.equal(ruleOf('strip-7-edit').gate, 'm5b-ui-inserts-master');
+  // Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign 10.11): e opens the Channel zone.
+  assert.equal(ruleOf('strip-7-edit').gate, 'm5b-ui-editor-channel');
+});
+
+// Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign
+// 10.11): the plan phase of M5b found parts no M5b feature can wire to real
+// data. Each has an owner whose engine work exists or lands first, so no
+// control is rendered that does nothing (UI redesign 3.0).
+test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\' e have the owners of 2026-11-18', () => {
+  const owners = {
+    'tool-4': 'm5b-ui-edit-more', 'tool-5': 'm5b-ui-edit-more',
+    'tool-8': 'm6a-ui-automation',
+    'tool-2': 'm6a-ui-tools', 'tool-6': 'm6a-ui-tools', 'tool-7': 'm6a-ui-tools', 'tool-9': 'm6a-ui-tools',
+    'strip-master-mute': 'm6c-ui-master-channel', 'strip-master-inserts': 'm6c-ui-master-channel', 'strip-master-edit': 'm6c-ui-master-channel', 'strip-master-buttons': 'm6c-ui-master-channel',
+    'strip-master-fader': 'm5b-ui-inserts-master', 'strip-master-cap': 'm5b-ui-inserts-master', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-inserts': 'm5b-ui-inserts-master', 'mixer-racks': 'm5b-ui-inserts-master',
+    'strip-3-edit': 'm5b-ui-editor-channel', 'inspector-edit': 'm5b-ui-editor-channel', 'tab-editor': 'm5b-ui-editor-channel',
+  };
+  for (const [id, gate] of Object.entries(owners)) {
+    assert.equal(ruleOf(id).gate, gate, id);
+    assert.equal(ruleOf(id).feature, gate, id);
+    assert.equal(MANIFEST.gates[gate], 'pending', gate);
+    // The acceptance of the owner names the part.
+    const text = FEATURES.get(gate).acceptance.join('\n');
+    const name = id.replace(/^strip-3-/, 'strip-').replace(/^strip-(inserts|edit)$/, 'strip-');
+    assert.ok(text.includes(name), `${gate} names ${id}`);
+  }
+  assert.equal(FEATURES.get('m6a-ui-tools').milestone, 'M6a');
+  assert.equal(FEATURES.get('m6c-ui-master-channel').milestone, 'M6c');
+  // The engine work each needs lands in an earlier wave of the same milestone.
+  assert.deepEqual(FEATURES.get('m6a-ui-tools').dependsOn, ['m6a-engine-clip-mute']);
+  assert.deepEqual(FEATURES.get('m6c-ui-master-channel').dependsOn, ['m6c-engine-master-channel']);
+  // m5b-ui-edit-more no longer claims the tools it does not build.
+  const editMore = FEATURES.get('m5b-ui-edit-more').acceptance.join('\n');
+  assert.match(editMore, /this feature's parts, tool-4 and tool-5, take/);
+  assert.doesNotMatch(editMore, /this feature's parts,[^.]*tool-(2|6|7|8|9)/);
+  // The features that extend the ghost model wait for it.
+  for (const id of ['m5b-ui-fades', 'm5b-ui-markers', 'm5b-ui-sends-buses']) assert.ok(FEATURES.get(id).dependsOn.includes('m5b-ui-ghosts'), id);
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  assert.match(spec, /\n### 10\.11 Decisions of 2026-11-18: the plan phase of M5b\n/);
+  assert.match(spec, /decided by Fable, delegated by the maintainer, 2026-11-18/);
 });
 
 test('the Plans tab masks only what M5 cannot derive, and each mask names the feature that removes it', () => {
@@ -655,7 +697,8 @@ test('the decisions of the second round are written where contributors read them
   assert.match(spec, /applied early in `m5-ui-tokens-spacing` by the main session under the maintainer's 2026-11-15 authorisation 4a/);
   // A landed part that can be absent at runtime: a permanent width token, not a hold.
   assert.match(FEATURES.get('m5-ui-loop-click').acceptance.join('\n'), /its box keeps the width of --display-locators-empty-w/);
-  assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click` \|/);
+  assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click`; `--dsp-load-empty-w` and `--tab-meter-empty-w`, in `m5b-ui-meter` \|/);
+  assert.match(FEATURES.get('m5b-ui-meter').acceptance.join('\n'), /keep the widths of --dsp-load-empty-w and --tab-meter-empty-w/);
   assert.match(spec, /permanent `--<part>-empty-w` token/);
   assert.equal(ruleOf('display-locators').gate, CHROME);
   // The mixer's acceptance does not bend around the mockup's two corrected mistakes.
