@@ -113,6 +113,39 @@ async function canvasGhosts(): Promise<GhostEntry[]> {
   return page.evaluate(() => (window as unknown as { __siannTimeline: { ghosts(): GhostEntry[] } }).__siannTimeline.ghosts().map((g) => ({ ...g })));
 }
 
+interface ClipBox {
+  readonly clipId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+async function clipBoxes(): Promise<ClipBox[]> {
+  return page.evaluate(() => {
+    const hooks = (window as unknown as { __siannTimeline?: { clips(): ClipBox[] } }).__siannTimeline;
+    return hooks ? hooks.clips().map(({ clipId, x, y, width, height }) => ({ clipId, x, y, width, height })) : [];
+  });
+}
+
+// The canvas's box of a clip, once it is drawn and at rest: the layout is
+// filled by a draw (after a reload, later than the DOM the tests wait on), so
+// this waits until the clip is listed with the same box in two reads running.
+async function clipBox(clipId: string): Promise<ClipBox> {
+  let last = '';
+  let found: ClipBox | undefined;
+  await expect
+    .poll(async () => {
+      found = (await clipBoxes()).find((c) => c.clipId === clipId);
+      const now = found ? JSON.stringify(found) : '';
+      const settled = now !== '' && now === last;
+      last = now;
+      return settled;
+    })
+    .toBe(true);
+  return found!;
+}
+
 const shell = () => page.getByTestId('shell');
 const banner = () => page.getByTestId('audition-banner');
 const chip = () => page.locator('[data-part="branch-chip"]');
@@ -227,7 +260,8 @@ test('while heard the ghosts are solid from the branch, with main\'s values as t
   await selectPlan(page, hash);
   await expectHearingProposal(/3 steps/);
   await expect.poll(async () => (await ghosts()).map((g) => `${g.kind} ${g.step} ${g.mode ?? 'dashed'}`)).toEqual(['gain 1 dashed', 'clip-move 2 dashed', 'pan 3 dashed']);
-  await expect.poll(async () => (await canvasGhosts()).every((g) => g.mode === undefined)).toBe(true);
+  // The canvas has them drawn again (an empty list would not say so), none solid.
+  await expect.poll(async () => (await canvasGhosts()).map((g) => g.mode ?? 'dashed')).toEqual(['dashed', 'dashed', 'dashed']);
 });
 
 async function expectGuarded(control: Locator): Promise<void> {
@@ -244,9 +278,8 @@ test('structural edits are disabled with the reason; a fader gesture goes onto t
   await expectGuarded(page.getByTestId('mute-trk_c'));
   await expectGuarded(page.getByTestId('solo-trk_c'));
   // The keys and the canvas are inert: T, Delete, Alt+X, Ctrl+D, M, S on a selected clip and track.
-  const clips = await page.evaluate(() => (window as unknown as { __siannTimeline: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline.clips());
+  const clip = await clipBox('clp_2');
   const box = (await page.getByTestId('timeline-canvas').boundingBox())!;
-  const clip = clips.find((c) => c.clipId === 'clp_2')!;
   const centre = { x: box.x + clip.x + clip.width / 2, y: box.y + clip.y + clip.height / 2 };
   await page.mouse.click(centre.x, centre.y);
   for (const key of ['KeyT', 'Delete', 'Alt+KeyX', 'ControlOrMeta+KeyD', 'KeyM', 'KeyS']) {
