@@ -319,7 +319,7 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
             }
         }
         builder.connect(previous, fader);
-        taps.emplace(track.id, TrackTaps{previous, fader});
+        taps.emplace(track.id, TrackTaps{previous, fader, std::nullopt});  // offline: no monitor
     }
     // Buses, sends and each track's output (m5b-engine-buses-sends); a document
     // without buses connects every fader to the master, as before.
