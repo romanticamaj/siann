@@ -74,12 +74,9 @@ test('SIANN_FUZZ (Clang only) instruments the libraries for libFuzzer and builds
   assert.ok(text.indexOf(block) < firstTarget(text));
   assert.match(text, /add_subdirectory\(fuzz\)/);
   const fuzz = code(read(path.join(FUZZ, 'CMakeLists.txt')));
-  // One executable per target, siann_fuzz_<target>, named outright or by a foreach.
-  const loop = /foreach\(target ([^)]*)\)\s*add_executable\(siann_fuzz_\$\{target\}/.exec(fuzz);
-  for (const target of FUZZ_TARGETS) {
-    const named = new RegExp(`add_executable\\(siann_fuzz_${target}\\b`).test(fuzz);
-    assert.ok(named || (loop && loop[1].split(/\s+/).includes(target)), `the libFuzzer target siann_fuzz_${target}`);
-  }
+  // One executable per target, siann_fuzz_<target>, from the SIANN_FUZZ_TARGETS list.
+  assert.match(fuzz, /foreach\(entry IN LISTS SIANN_FUZZ_TARGETS\)[\s\S]*add_executable\(siann_fuzz_\$\{target\}/);
+  assert.deepEqual(cmakeFuzzTargets().map(([name]) => name).sort(), [...FUZZ_TARGETS].sort());
   assert.match(fuzz, /-fsanitize=fuzzer,address,undefined/);
   // The smoke test is an ordinary ctest in the default build, on every OS.
   assert.match(fuzz, /fuzz_smoke_test\.cpp/);
@@ -110,25 +107,26 @@ test('the suppression files exist and every suppression carries its reason on a 
   }
 });
 
-// The fuzz targets as native/fuzz/CMakeLists.txt names them: a foreach list or
-// add_executable(siann_fuzz_<target>).
+// The fuzz targets as native/fuzz/CMakeLists.txt names them: SIANN_FUZZ_TARGETS,
+// <target>=<harness function> pairs.
 function cmakeFuzzTargets() {
   const fuzz = code(read(path.join(FUZZ, 'CMakeLists.txt')));
-  const names = new Set();
-  const loop = /foreach\(target ([^)]*)\)\s*add_executable\(siann_fuzz_\$\{target\}/.exec(fuzz);
-  if (loop) for (const name of loop[1].trim().split(/\s+/)) names.add(name);
-  for (const [, name] of fuzz.matchAll(/add_executable\(siann_fuzz_([a-z_]+)\b(?!_)/g)) {
-    if (name !== 'smoke_tests') names.add(name);
-  }
-  return [...names].sort();
+  const list = /set\(SIANN_FUZZ_TARGETS([^)]*)\)/.exec(fuzz);
+  assert.ok(list, 'native/fuzz/CMakeLists.txt sets SIANN_FUZZ_TARGETS');
+  return list[1].trim().split(/\s+/).map((pair) => pair.split('='));
 }
 
 test('the fuzz CMake names one target per harness function', () => {
-  assert.deepEqual(cmakeFuzzTargets(), [...FUZZ_TARGETS].sort());
+  const header = read(path.join(FUZZ, 'include', 'siann', 'fuzz', 'harness.hpp'));
+  const targets = cmakeFuzzTargets();
+  assert.deepEqual(targets.map(([name]) => name).sort(), [...FUZZ_TARGETS].sort());
+  for (const [name, fn] of targets) {
+    assert.match(header, new RegExp(`void ${fn}\\(const std::uint8_t\\* data, std::size_t size\\);`), `${name}: ${fn}`);
+  }
 });
 
 test('each fuzz target named in the CMake has a committed, non-empty seed corpus', () => {
-  for (const target of cmakeFuzzTargets()) {
+  for (const [target] of cmakeFuzzTargets()) {
     const dir = path.join(FUZZ, 'corpus', target);
     assert.ok(fs.existsSync(dir), `native/fuzz/corpus/${target}/ exists`);
     const files = fs.readdirSync(dir).filter((name) => fs.statSync(path.join(dir, name)).isFile());

@@ -22,9 +22,22 @@ if(SIANN_BUILD_TESTS)
   catch_discover_tests(siann_fuzz_smoke_tests)
 endif()
 
+# One target per harness function: <target> runs siann::fuzz::<function>.
+set(SIANN_FUZZ_TARGETS
+  protocol_frame=protocolFrame
+  ws_request=wsRequest
+  meter_frame=meterFrame
+  loudness_frame=loudnessFrame
+  mcp_http=mcpHttp
+  command_json=commandJson)
+
 if(SIANN_FUZZ)
-  foreach(target protocol_ws mcp_http command_json)
-    add_executable(siann_fuzz_${target} src/libfuzzer_${target}.cpp)
+  foreach(entry IN LISTS SIANN_FUZZ_TARGETS)
+    string(REPLACE "=" ";" pair "${entry}")
+    list(GET pair 0 target)
+    list(GET pair 1 function)
+    add_executable(siann_fuzz_${target} src/libfuzzer_main.cpp)
+    target_compile_definitions(siann_fuzz_${target} PRIVATE SIANN_FUZZ_TARGET=${function})
     target_link_libraries(siann_fuzz_${target} PRIVATE siann_fuzz_harness)
     target_compile_options(siann_fuzz_${target} PRIVATE -fsanitize=fuzzer,address,undefined)
     target_link_options(siann_fuzz_${target} PRIVATE -fsanitize=fuzzer,address,undefined)

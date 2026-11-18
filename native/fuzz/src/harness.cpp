@@ -180,6 +180,21 @@ std::vector<std::string_view> frames(std::string_view bytes) {
     return out;
 }
 
+std::string_view view(const std::uint8_t* data, std::size_t size) {
+    return size == 0 ? std::string_view() : std::string_view(reinterpret_cast<const char*>(data), size);
+}
+
+// The server's session id is random: the corpus names it as $session.
+std::string withSession(const Server& s, std::string_view input) {
+    std::string text(input);
+    const std::string& id = s.server.sessionId();
+    for (std::size_t at = text.find(kSessionPlaceholder); at != std::string::npos;
+         at = text.find(kSessionPlaceholder, at + id.size())) {
+        text.replace(at, kSessionPlaceholder.size(), id);
+    }
+    return text;
+}
+
 template <typename Fn>
 void refusable(Fn&& fn) {
     try {
@@ -193,30 +208,9 @@ void refusable(Fn&& fn) {
 
 }  // namespace
 
-void protocolWs(std::string_view input) {
+void protocolFrame(const std::uint8_t* data, std::size_t size) {
     Server& s = *wsServer();
-    // The server's session id is random: the corpus names it as $session.
-    std::string text(input);
-    for (std::size_t at = text.find(kSessionPlaceholder); at != std::string::npos;
-         at = text.find(kSessionPlaceholder, at + s.server.sessionId().size())) {
-        text.replace(at, kSessionPlaceholder.size(), s.server.sessionId());
-    }
-    const std::string_view bytes(text);
-
-    // The bytes as one frame on an authenticated connection.
-    if (const auto connection = s.authed()) {
-        s.transport.deliver(*connection, text);
-        s.server.pump();
-        s.drop(*connection);
-    }
-    // As a sequence of frames.
-    if (const auto connection = s.authed()) {
-        for (const std::string_view frame : frames(bytes)) {
-            s.transport.deliver(*connection, std::string(frame));
-        }
-        s.server.pump();
-        s.drop(*connection);
-    }
+    const std::string text = withSession(s, view(data, size));
     // As the first frame, where the server expects the token.
     auto upgrade = s.transport.connect();
     if (upgrade.connection) {
@@ -224,16 +218,49 @@ void protocolWs(std::string_view input) {
         s.server.pump();
         s.drop(*upgrade.connection);
     }
-    // A realtime meter frame, as the app decodes it.
-    (void)protocol::decodeMeterFrame(bytes);
+    // As one frame on an authenticated connection.
+    if (const auto connection = s.authed()) {
+        s.transport.deliver(*connection, text);
+        s.server.pump();
+        s.drop(*connection);
+    }
 }
 
-void mcpHttp(std::string_view bytes) {
+void wsRequest(const std::uint8_t* data, std::size_t size) {
+    Server& s = *wsServer();
+    const std::string text = withSession(s, view(data, size));
+    if (const auto connection = s.authed()) {
+        for (const std::string_view frame : frames(text)) {
+            s.transport.deliver(*connection, std::string(frame));
+        }
+        s.server.pump();
+        s.drop(*connection);
+    }
+}
+
+void meterFrame(const std::uint8_t* data, std::size_t size) {
+    (void)meterFrameDecodes(data, size);
+}
+
+void loudnessFrame(const std::uint8_t* data, std::size_t size) {
+    (void)loudnessFrameDecodes(data, size);
+}
+
+bool meterFrameDecodes(const std::uint8_t* data, std::size_t size) {
+    return protocol::decodeMeterFrame(view(data, size)).has_value();
+}
+
+bool loudnessFrameDecodes(const std::uint8_t* data, std::size_t size) {
+    return protocol::decodeLoudnessFrame(view(data, size)).has_value();
+}
+
+void mcpHttp(const std::uint8_t* data, std::size_t size) {
     Server& s = *mcpServer();
-    (void)s.mcp(std::string(bytes));
+    (void)s.mcp(std::string(view(data, size)));
 }
 
-void commandJson(std::string_view bytes) {
+void commandJson(const std::uint8_t* data, std::size_t size) {
+    const std::string_view bytes = view(data, size);
     const model::Document& document = baseDocument();
     refusable([&] {
         const Value value = json::parse(bytes);
@@ -261,7 +288,7 @@ void commandJson(std::string_view bytes) {
     });
 }
 
-bool protocolWsStillAnswers() {
+bool protocolStillAnswers() {
     Server& s = *wsServer();
     const auto connection = s.authed();
     if (!connection) {

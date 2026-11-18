@@ -36,7 +36,7 @@ endif()
 # The nightly quality builds (m5b-nightly-quality; architecture spec, "Build,
 # test and CI"), each Clang only and on every target before the first one,
 # third-party code included, as SIANN_RTSAN is. Suppressions, if one is ever
-# needed, live in native/sanitizers/ with their reasons.
+# needed, live in native/tools/sanitizer-suppressions/ with their reasons.
 option(SIANN_ASAN_UBSAN "Build everything with AddressSanitizer and UndefinedBehaviorSanitizer (Clang)" OFF)
 option(SIANN_FUZZ "Instrument everything for libFuzzer and build the fuzz targets (Clang)" OFF)
 option(SIANN_COVERAGE "Build everything with Clang source-based coverage" OFF)

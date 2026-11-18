@@ -3,8 +3,8 @@
 
 // Writes the seed corpus of the fuzz targets (native/fuzz/corpus/<target>/,
 // m5b-nightly-quality): real requests as the protocol tests send them, the
-// meter frames of fixtures/protocol/meter-frames.json, and the plans and
-// commands of fixtures/plan/plan-hash.json. The files are committed (and
+// meter and loudness frames of fixtures/protocol/meter-frames.json and
+// loudness-frames.json, and the plans and commands of fixtures/plan/plan-hash.json. The files are committed (and
 // binary in .gitattributes, so the bytes are the same on every OS); the
 // libFuzzer runs add to the corpus only in their own working copy. Run it again
 // after a fixture changes: `node scripts/generate-fuzz-corpus.js`.
@@ -32,10 +32,22 @@ const clipPlace = (id, track, media, at) => ({
   sourceStart: '0', trackId: track,
 });
 
-function protocolWs() {
-  const meter = require(path.join(ROOT, 'fixtures', 'protocol', 'meter-frames.json'));
-  const out = {
+// protocol_frame: one text frame, first as the auth frame of a new connection.
+function protocolFrame() {
+  return {
     'auth-bad-token': json({ token: '0'.repeat(64), type: 'auth' }),
+    'auth-no-token': json({ type: 'auth' }),
+    'not-json': 'hello',
+    'engine-capabilities': request('engine.capabilities'),
+    'session-inspect': request('session.inspect'),
+    'missing-request-id': json({ method: 'engine.capabilities', params: {}, sessionId: '$session' }),
+    'wrong-session': json({ method: 'engine.about', params: {}, requestId: 'req_x', sessionId: 'ses_none' }),
+  };
+}
+
+// ws_request: newline-separated JSON requests on an authenticated connection.
+function wsRequest() {
+  const out = {
     'engine-capabilities': request('engine.capabilities'),
     'engine-about': request('engine.about'),
     'session-inspect': request('session.inspect'),
@@ -55,11 +67,21 @@ function protocolWs() {
     'unknown-method': request('no.such_method'),
     'missing-request-id': json({ method: 'engine.capabilities', params: {}, sessionId: '$session' }),
   };
-  meter.meterFrames.forEach((frame, i) => {
-    out[`meter-frame-${i}`] = Buffer.from(frame.hex, 'hex');
+  return out;
+}
+
+// meter_frame and loudness_frame: the binary frames of the protocol fixtures.
+function binaryFrames(file, key, prefix) {
+  const fixture = require(path.join(ROOT, 'fixtures', 'protocol', file));
+  const out = {};
+  fixture[key].forEach((frame, i) => {
+    out[`${prefix}-${i}`] = Buffer.from(frame.hex, 'hex');
   });
   return out;
 }
+
+const meterFrame = () => binaryFrames('meter-frames.json', 'meterFrames', 'meter-frame');
+const loudnessFrame = () => binaryFrames('loudness-frames.json', 'loudnessFrames', 'loudness-frame');
 
 function mcpHttp() {
   return {
@@ -98,6 +120,15 @@ function commandJson() {
   return out;
 }
 
+const TARGETS = {
+  protocol_frame: protocolFrame,
+  ws_request: wsRequest,
+  meter_frame: meterFrame,
+  loudness_frame: loudnessFrame,
+  mcp_http: mcpHttp,
+  command_json: commandJson,
+};
+
 function write(target, files) {
   const dir = path.join(CORPUS, target);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -107,9 +138,10 @@ function write(target, files) {
 }
 
 if (require.main === module) {
-  for (const [target, files] of [['protocol_ws', protocolWs()], ['mcp_http', mcpHttp()], ['command_json', commandJson()]]) {
-    console.log(`${target}: ${write(target, files)} files`);
+  fs.rmSync(path.join(CORPUS, 'protocol_ws'), { recursive: true, force: true });
+  for (const [target, files] of Object.entries(TARGETS)) {
+    console.log(`${target}: ${write(target, files())} files`);
   }
 }
 
-module.exports = { protocolWs, mcpHttp, commandJson };
+module.exports = { TARGETS };

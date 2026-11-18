@@ -1,0 +1,12 @@
+# UndefinedBehaviorSanitizer suppressions (UBSAN_OPTIONS=suppressions=<this
+# file>), read by the asan-ubsan job of the nightly workflow
+# (m5b-nightly-quality).
+#
+# Empty on purpose: what the first ASAN + UBSAN runs found was in SIANN code and
+# was fixed. A suppression is for a finding in third-party code only, one line
+# each (<check>:<file or function>, for example alignment:<third-party file>),
+# with a comment line directly above it giving the reason: the finding, the
+# upstream issue, and why it cannot be fixed here. The build stops at undefined
+# behaviour (-fno-sanitize-recover=undefined), so a suppression is the only way
+# past one. test/native-quality-options.test.js fails on a suppression without a
+# reason.

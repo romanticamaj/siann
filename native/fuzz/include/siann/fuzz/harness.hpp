@@ -3,9 +3,10 @@
 // Fuzz harnesses for the engine's untrusted input (architecture spec, "Build,
 // test and CI", Fuzz; m5b-nightly-quality). One function per target, shared by
 // the two drivers: the libFuzzer executables of the Clang SIANN_FUZZ build
-// (siann_fuzz_<target>, nightly) and the seeded smoke ctest of every native
-// build (fuzz_smoke_test.cpp). Each takes any bytes and returns: a crash, a
-// sanitizer report or an exception escaping it is a finding.
+// (siann_fuzz_<target>, nightly, from native/fuzz/corpus/<target>/) and the
+// seeded smoke ctest of every native build (fuzz_smoke_test.cpp). Each takes any
+// bytes, as LLVMFuzzerTestOneInput does, and returns: a crash, a sanitizer
+// report or an exception escaping it is a finding.
 //
 // The protocol targets drive one ProtocolServer over the in-memory transport
 // (FakeTransport), with a session in a temporary bundle, created on first use
@@ -20,23 +21,40 @@
 
 namespace siann::fuzz {
 
-// The WebSocket request path after the upgrade and the token handshake: the
-// bytes as one text frame on an authenticated connection, then split on '\n'
-// into a sequence of frames on another, and as the first (auth) frame of an
-// unauthenticated one; also the realtime meter frame decoder. Every "$session"
-// in the bytes becomes the server's (random) session id first, so a corpus
-// request reaches its method instead of session_mismatch.
-void protocolWs(std::string_view bytes);
+// In the two protocol targets every "$session" in the bytes becomes the
+// server's (random) session id first, so a corpus request reaches its method
+// instead of session_mismatch.
 
-// The body of POST /v0/mcp, in the MCP session the harness initialized.
-void mcpHttp(std::string_view bytes);
+// protocol_frame: the protocol server's handling of one text frame, as the
+// first (auth) frame of a new connection and as a frame on an authenticated one.
+void protocolFrame(const std::uint8_t* data, std::size_t size);
 
-// Command and plan JSON: parsed, then validated against a small document.
-void commandJson(std::string_view bytes);
+// ws_request: the JSON request path over the WebSocket, after the upgrade and
+// the token handshake: the bytes split on '\n' into a sequence of request frames
+// on one authenticated connection (a commit, an undo, a fetch, ...).
+void wsRequest(const std::uint8_t* data, std::size_t size);
+
+// meter_frame and loudness_frame: the decoders of the realtime channel's binary
+// meter and loudness frames (realtime_channel.hpp), as the app decodes them.
+void meterFrame(const std::uint8_t* data, std::size_t size);
+void loudnessFrame(const std::uint8_t* data, std::size_t size);
+
+// mcp_http: the body of POST /v0/mcp, in the MCP session the harness
+// initialized, through the adapter.
+void mcpHttp(const std::uint8_t* data, std::size_t size);
+
+// command_json: command and plan JSON, parsed, then validated against a small
+// document.
+void commandJson(const std::uint8_t* data, std::size_t size);
+
+// Whether the decoders accept the bytes (the smoke test checks that the seeds
+// are real frames).
+bool meterFrameDecodes(const std::uint8_t* data, std::size_t size);
+bool loudnessFrameDecodes(const std::uint8_t* data, std::size_t size);
 
 // After a run: the server still answers a valid request (engine.capabilities
 // on a new connection; tools/list over MCP).
-bool protocolWsStillAnswers();
+bool protocolStillAnswers();
 bool mcpHttpStillAnswers();
 
 // Releases the shared server and its temporary bundle.

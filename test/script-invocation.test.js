@@ -41,7 +41,7 @@ test('the g++ check reaches the JUCE sources too', () => {
 // m5b-nightly-quality: the fuzz harness and its drivers compile under g++ too.
 test('the g++ check reaches native/fuzz', () => {
   const sources = listSources().map((f) => path.relative(path.join(__dirname, '..', 'native'), f).replace(/\\/g, '/'));
-  for (const file of ['fuzz/src/harness.cpp', 'fuzz/src/libfuzzer_protocol_ws.cpp', 'fuzz/tests/fuzz_smoke_test.cpp']) {
+  for (const file of ['fuzz/src/harness.cpp', 'fuzz/src/libfuzzer_main.cpp', 'fuzz/tests/fuzz_smoke_test.cpp']) {
     assert.ok(sources.includes(file), file);
   }
 });

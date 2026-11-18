@@ -1,0 +1,9 @@
+# LeakSanitizer suppressions (LSAN_OPTIONS=suppressions=<this file>), read by
+# the asan-ubsan job of the nightly workflow (m5b-nightly-quality), where ASAN
+# runs LeakSanitizer at exit (detect_leaks=1).
+#
+# Empty on purpose: the first ASAN + UBSAN runs reported no leak. A suppression
+# is for a leak in third-party code only, one line each (leak:<function or
+# library>), with a comment line directly above it giving the reason: the
+# finding, the upstream issue, and why it cannot be fixed here.
+# test/native-quality-options.test.js fails on a suppression without one.
