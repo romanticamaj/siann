@@ -19,7 +19,7 @@ import * as path from 'node:path';
 
 import { engineClient } from './support/engine-client';
 import { launchElectron } from './support/launch';
-import { APP_DIR, exeFromEnv, MAIN } from './support/seed';
+import { agentFor, APP_DIR, exeFromEnv, MAIN, selectPlan } from './support/seed';
 import { chooseGrid, dragMediaRow, openMedia } from './support/toolbar';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -316,11 +316,42 @@ test('Ctrl+P and the event display\'s context menu open the Media tab, also from
   await expect(page.getByTestId('media-pool')).toHaveCount(0);
 });
 
+// The feature's ids (manifest: tab-media and plan-step-*-title): the Media tab,
+// and the title of each plan step that names a clip, which the mockup wraps
+// in plan-step-N-title (its step(), clip true) and the app wraps when the
+// clip's media has a name. An agent submits a plan whose steps 2 and 3 name a
+// clip (a place of the dropped file's media, a move of its clip) around a
+// gain step and a track step that name none.
 test('every id of the feature is in the window', async () => {
   const bundle = prepare();
+  const kick = demo('kick.wav', 110);
   await launch(bundle);
   await expect(page.locator('[data-part="tab-media"]')).toHaveCount(1);
   await expect(page.locator('[data-part="tab-media"]')).toHaveClass('tab');
+  await dropFiles([kick], await lanePoint('trk_a', 0));
+  await expect.poll(async () => (await clips()).length).toBe(1);
+  const [dropped] = await clips();
+  const agent = await agentFor(app!);
+  const hash = (await agent.tool('submit_plan', {
+    steps: [
+      { op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -600 },
+      { op: 'clip.place', clipId: 'clp_e2e_title', trackId: 'trk_b', mediaId: dropped!.mediaId, position: { domain: 'audio', value: String(4 * BEAT) }, sourceStart: '0', length: String(BEAT) },
+      { op: 'clip.move', clipId: dropped!.clipId, position: { domain: 'audio', value: String(8 * BEAT) } },
+      { op: 'track.rename', trackId: 'trk_c', name: 'Gamma 2' },
+    ],
+  })).hash as string;
+  await page.getByTestId('tab-right-plans').click();
+  await selectPlan(page, hash);
+  const titles = page.locator('[data-region="right-zone"] [data-part^="plan-step-"][data-part$="-title"]');
+  await expect(titles).toHaveCount(2);
+  expect(await titles.evaluateAll((els) => els.map((el) => el.getAttribute('data-part')))).toEqual(['plan-step-2-title', 'plan-step-3-title']);
+  for (const id of ['plan-step-2-title', 'plan-step-3-title']) {
+    const title = page.locator(`[data-part="${id}"]`);
+    await expect(title, id).toHaveCount(1);
+    await expect(title, id).toContainText('kick.wav');
+    // Inside its step's row, as the mockup's step() puts it.
+    await expect(page.locator(`[data-part-item="plan-step"] [data-part="${id}"]`), id).toHaveCount(1);
+  }
 });
 
 // Reduced capabilities (UI redesign 3.0): without media.import nothing of the

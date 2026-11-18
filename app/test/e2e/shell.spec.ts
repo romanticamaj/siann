@@ -379,6 +379,14 @@ test('the whole window has no id of a pending part and every landed id of the mo
     expect(landed.length).toBeGreaterThan(60);
     expect(named.filter((id) => mode(id) === 'pending').length).toBeGreaterThan(10);
     expect(landed.filter((id) => !shown.includes(id)), 'landed ids of the mockup missing from the window').toEqual([]);
+    // The ids the mockup's markup computes: a plan step that names a clip
+    // (step()'s sixth argument true) wraps its title in plan-step-N-title
+    // (m5b-ui-media). Checked for presence whether or not pixels.dynamic masks
+    // them (it masks plan-step-2-title's pixels only).
+    const titled = [...mockup.matchAll(/\$\{step\((\d+),.*,(?:true|false),true\)\}/g)].map((m) => `plan-step-${m[1]!}-title`);
+    expect(titled).toEqual(['plan-step-2-title', 'plan-step-6-title']);
+    expect(titled.filter((id) => mode(id) === 'report')).toEqual(titled);
+    expect(titled.filter((id) => !shown.includes(id)), 'computed ids of the mockup missing from the window').toEqual([]);
   } finally {
     await app.close().catch(() => undefined);
     fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
