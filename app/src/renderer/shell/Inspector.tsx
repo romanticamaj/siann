@@ -12,8 +12,8 @@
 //     .i-row     Volume: the label, the slider (.hs: its fill <i> and thumb <u>
 //                at the taper's position), the value (b.num, dB)
 //     .i-row     Pan: the label, the slider (its thumb only), the value (C, L35)
-//   six boxes    where sec() draws Routing, Inserts, Sends, Automation, Agent
-//                changes and Notepad
+//   five boxes   where sec() draws Routing, Inserts, Sends, Automation and
+//                Notepad, and between the last two the Agent changes section
 //   .z-foot      the Track tab and the box of Editor
 //
 // The track is the app's selected track (trackId: a header clicked, or the
@@ -29,12 +29,22 @@
 // An absent part keeps its space empty (spec 3.0): the boxes have no role, no
 // focus, no data-part id and are hidden from assistive technology; shell.css
 // sizes them (the open sections by --hold-inspector-*-h until the features
-// that land them, m5b-ui-sends-buses, m5b-ui-inserts-master, m5b-ui-ghosts;
-// the shut ones and the buttons by the shared rules' sizes). The capability
-// rule (3.0): an unlisted control leaves its box.
+// that land them, m5b-ui-sends-buses and m5b-ui-inserts-master; the shut ones
+// and the buttons by the shared rules' sizes). The capability rule (3.0): an
+// unlisted control leaves its box.
+//
+// Agent changes (m5b-ui-ghosts; UI redesign 4.2, 4.4) is the mockup's
+// sec('Agent changes'): a .hist row for each applied plan that touched the
+// track ("r31 · <its step on the track> by <b>plan</b> · N steps", the plan
+// named by plans/plan-name.ts until E-7), then a row for each step of the
+// plan under review with a ghost on the track, or the mockup's "No pending
+// change on this track.". The Volume and Pan values show the pending value
+// after them (.ghost-to), and the name both names of a rename (.ghost-name):
+// elements the mockup has no markup for.
 
-import { useRef, type CSSProperties } from 'react';
+import { useRef, useSyncExternalStore, type CSSProperties } from 'react';
 
+import { formatDb, formatPan } from '../format';
 import { useT } from '../i18n/t';
 import { CUBASE_PRESET } from '../keys/preset-cubase';
 import { percent, toggleTrack, useTrack } from '../mixer/Strip';
@@ -46,7 +56,13 @@ import type { TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
 import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
+import { describeStep } from '../plans/describe';
+import { ghostAttrs, useGhostView } from '../plans/ghost-context';
+import { trackGhosts } from '../plans/ghosts';
+import { useStepNames } from '../plans/hooks';
 import { ISOLATE } from '../plans/isolate';
+import { planName } from '../plans/plan-name';
+import { Icon } from './icons';
 import { trackColourVar } from '../timeline/track-colour';
 import { useCapabilities } from './Capable';
 import { Hold } from './Hold';
@@ -66,15 +82,64 @@ const KEY_HINT = CUBASE_PRESET.filter((binding) => binding.commandId === 'zone.l
 // (spec 3.0): the section's name, and .shut where the mockup draws it shut (an
 // open one holds a body in the mockup). A literal table, so every class is
 // spelled out (m5-ui-port-cleanup).
-const SECTIONS = ['routing', 'inserts', 'sends', 'automation', 'agent-changes', 'notepad'] as const;
-const SECTION_HOLDS: Readonly<Record<(typeof SECTIONS)[number], string>> = {
+const SECTIONS = ['routing', 'inserts', 'sends', 'automation'] as const;
+const SECTION_HOLDS: Readonly<Record<(typeof SECTIONS)[number] | 'notepad', string>> = {
   routing: 'inspector-hold routing',
   inserts: 'inspector-hold inserts',
   sends: 'inspector-hold sends shut',
   automation: 'inspector-hold automation shut',
-  'agent-changes': 'inspector-hold agent-changes',
   notepad: 'inspector-hold notepad shut',
 };
+
+const NO_PLANS = { subscribe: () => () => undefined, getSnapshot: () => null };
+
+// sec('Agent changes') for the track: the applied plans that touched it, then what is pending on it.
+function AgentChanges({ client, track, plans }: { client: SessionClient; track: TrackEntity; plans?: PlanStore }) {
+  const t = useT();
+  const names = useStepNames(client);
+  const view = useGhostView();
+  const store = plans ?? NO_PLANS;
+  const snapshot = useSyncExternalStore((l) => store.subscribe(l), () => store.getSnapshot(), () => store.getSnapshot());
+  const touches = (step: Record<string, unknown>) => step.trackId === track.id;
+  const applied = (snapshot?.plans ?? [])
+    .filter((p) => p.state === 'applied' && p.appliedRevision !== undefined && p.steps.some(touches))
+    .map((p) => ({ plan: p, step: p.steps.find(touches)!, name: planName(p, t, names)! }));
+  const pending = trackGhosts(view.ghosts, track.id).steps;
+  const reviewed = view.plan ? planName(view.plan, t, names) : null;
+  return (
+    <div className="sec" data-part="inspector-agent-changes">
+      <div className="sec-h">
+        <Icon name="chev" small />
+        {t('inspector.agentChanges')}
+        <span />
+      </div>
+      <div className="sec-b">
+        {applied.map(({ plan, step, name }) => (
+          <div key={plan.hash} className="hist" data-testid={`agent-change-${plan.hash.slice(7, 15)}`} {...ISOLATE}>
+            <span className="mono">{plan.appliedRevision}</span>
+            {` · ${t('agent.appliedBy', { change: describeStep(step, t, names) })} `}
+            <b>{name.lead}</b>
+            {` · ${name.steps}`}
+          </div>
+        ))}
+        {pending.length > 0 && view.plan ? (
+          pending.map((n) => (
+            <div key={`pending-${n}`} className="hist" data-testid={`agent-pending-${n}`} {...ghostAttrs(view, [n])} {...ISOLATE}>
+              <span className="mono">{t('agent.step', { n })}</span>
+              {` · ${describeStep(view.plan!.steps[n - 1] ?? {}, t, names)} ${t('agent.pendingIn')} `}
+              <b>{reviewed?.lead ?? ''}</b>
+              {` · ${reviewed?.steps ?? ''}`}
+            </div>
+          ))
+        ) : (
+          <div className="hist" style={{ color: 'var(--tx-3)' }}>
+            {t('agent.none')}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 interface SliderProps {
   readonly kind: ValueKind;
@@ -152,10 +217,11 @@ function Foot() {
   );
 }
 
-export function Inspector({ client, gestures, trackId }: InspectorProps) {
+export function Inspector({ client, gestures, trackId, plans }: InspectorProps) {
   const t = useT();
   const can = useCapabilities();
   const track = useTrack(client, trackId);
+  const view = useGhostView();
   if (!track) {
     return (
       <>
@@ -166,6 +232,10 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
   }
   const ref = `track:${track.id}`;
   const colour = `var(${trackColourVar(track.id)})`;
+  const ghosts = trackGhosts(view.ghosts, track.id);
+  const gain = ghosts.gain.at(-1);
+  const pan = ghosts.pan.at(-1);
+  const rename = ghosts.rename.at(-1);
   const gesturable = can.has('gesture.begin') && can.feature('gestures');
   const gainListed = gesturable && can.command('track.set_gain');
   const panListed = gesturable && can.command('track.set_pan');
@@ -180,7 +250,12 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
         <div className="i-name" data-part="inspector-name">
           <span data-testid="inspector-colour" style={swatch} />
           <span data-testid="inspector-track" dir={ISOLATE.dir} style={{ ...ISOLATE.style }}>
-            {track.name}
+            {rename ? `${track.name} → ` : track.name}
+            {rename ? (
+              <span className="ghost-name" {...ghostAttrs(view, [rename.step])}>
+                {rename.after}
+              </span>
+            ) : null}
           </span>
           <small>{t(track.channels === 1 ? 'inspector.mono' : 'inspector.stereo')}</small>
         </div>
@@ -219,6 +294,7 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
             testId="inspector-volume-value"
             label={t('strip.levelLabel', { track: track.name })}
             typing={gainListed ? { testId: 'inspector-volume-input', label: t('strip.gainInput', { track: track.name }) } : undefined}
+            suffix={gain ? <span className="ghost-to" {...ghostAttrs(view, [gain.step])}>{`→ ${formatDb(gain.after)}`}</span> : undefined}
           />
         </div>
         <div className="i-row" data-part="inspector-pan">
@@ -234,12 +310,15 @@ export function Inspector({ client, gestures, trackId }: InspectorProps) {
             testId="inspector-pan-value"
             label={t('strip.panLabel', { track: track.name })}
             typing={panListed ? { testId: 'inspector-pan-input', label: t('strip.panInput', { track: track.name }) } : undefined}
+            suffix={pan ? <span className="ghost-to" {...ghostAttrs(view, [pan.step])}>{`→ ${formatPan(pan.after)}`}</span> : undefined}
           />
         </div>
       </div>
       {SECTIONS.map((name) => (
         <Hold key={name} className={SECTION_HOLDS[name]} />
       ))}
+      <AgentChanges client={client} track={track} plans={plans} />
+      <Hold className={SECTION_HOLDS.notepad} />
       <Foot />
     </>
   );

@@ -324,4 +324,18 @@ export const zhHant: Catalog = {
   'error.queue_full': '引擎忙碌中，請再試一次',
   'error.lease_expired': '租約已過期',
   'error.invalid_name': '名稱不能包含控制字元、文字方向控制字元或分行符號',
+  // The plan review in place (m5b-ui-ghosts; UI redesign 4.2).
+  'ghost.proposed': '提案音軌',
+  'ghost.proposedTrack': '提案音軌 {name}',
+  'ghost.trackSummary': '{channels} · {gain} · {pan} · 無插入效果',
+  'ghost.newStep': '新增 · 步驟 {n}',
+  'pill.label': '審核中的計畫，就地顯示',
+  'pill.toggle': '就地顯示計畫（Ctrl+Alt+G）',
+  'pill.ghosts': '預覽',
+  'plans.locate': '就地顯示步驟 {n}',
+  'inspector.agentChanges': '代理變更',
+  'agent.appliedBy': '{change}：',
+  'agent.step': '步驟 {n}',
+  'agent.pendingIn': '待審核，於',
+  'agent.none': '這條音軌沒有待審核的變更。',
 };

@@ -35,7 +35,7 @@
    fields .field, the track list's .add) takes none of
    these: the shared rules draw it, over the reset below. */
 button, select, input { font: inherit; color: inherit; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add)) {
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go)) {
   white-space: nowrap;
   min-height: var(--control-h);
   padding: 0 calc(var(--space) * 2);
@@ -44,13 +44,13 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   border-radius: var(--radius-m);
   cursor: pointer;
 }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add)):hover:not(:disabled) { background: var(--bg-5); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go)):hover:not(:disabled) { background: var(--bg-5); }
 button:disabled { color: var(--tx-4); cursor: default; }
-button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
+button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t, .hrow, .field, .add, .tog, .go))[aria-pressed="true"] { background: var(--bg-5); border-color: var(--tx-3); }
 /* A ported button: Chromium's button rules undone (padding, border,
    background, and the letter spacing and case it resets, both compared
    styles), at no specificity, so every shared rule wins. */
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add) {
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add, button.tog, button.go) {
   margin: 0;
   padding: 0;
   border: 0;
@@ -60,7 +60,7 @@ button:where(:not(.tbtn, .iconbtn, .aibtn, .about, .tab, .msr, .pk, .b, .btn, .t
   text-align: inherit;
   cursor: pointer;
 }
-:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add):disabled { cursor: default; }
+:where(button.tbtn, button.iconbtn, button.aibtn, button.about, button.tab, button.msr, button.pk, button.b, button.btn, button.t, button.hrow, button.field, button.add, button.tog, button.go):disabled { cursor: default; }
 select, input:not([type]), input[type="text"] {
   min-height: var(--control-h);
   background: var(--bg-3);
@@ -319,9 +319,8 @@ code, dd { font-family: var(--font-mono); }
 .hold-tool-8 { width: var(--hold-tool-8-w); }
 .hold-tool-9 { width: var(--hold-tool-9-w); }
 .tool-empty { width: var(--tool-w); }
-.field-empty, .hold-proposal-pill { display: block; flex: none; height: var(--field-h); }
+.field-empty { display: block; flex: none; height: var(--field-h); }
 .auto-scroll-empty { width: calc(2 * var(--space-1h) + var(--icon-s) + 2 * var(--hairline)); }
-.hold-proposal-pill { width: var(--hold-proposal-pill-w); }
 .hold-info-fade-in, .hold-info-fade-out { display: block; flex: none; align-self: stretch; }
 .hold-info-fade-in { width: var(--hold-info-fade-in-w); }
 .hold-info-fade-out { width: var(--hold-info-fade-out-w); }
@@ -453,7 +452,6 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .inspector-hold { display: block; flex: none; }
 .inspector-hold.routing { height: var(--hold-inspector-routing-h); }
 .inspector-hold.inserts { height: var(--hold-inspector-inserts-h); }
-.inspector-hold.agent-changes { height: var(--hold-inspector-agent-changes-h); }
 .inspector-hold.sends, .inspector-hold.automation, .inspector-hold.notepad { height: calc(var(--section-head-h) + var(--hairline)); }
 /* The e box sits at the end of the row, as the mockup puts e. */
 .i-btns > .msr-box:last-child { margin-left: auto; }
@@ -634,6 +632,21 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 }
 .about-diagnostics dt { color: var(--tx-3); }
 .about-diagnostics dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
+
+/* ---- the plan review in place (m5b-ui-ghosts; UI redesign 4.2, 1.6). The
+   shared rules draw the ghosts the mockup has (.th.ghost, .msr.ghost,
+   .strip.ghost, .cap.ghost, .gline, .stepn, .overlaypill, .go); these are the
+   ones it has no markup for, on the --ai tokens. A DOM ghost fades in over
+   150 ms (the canvas's ghosts appear at once), not at all under
+   prefers-reduced-motion; the hovered or pinned step's ghosts are outlined. */
+[data-ghost] { transition: opacity 150ms ease-out; }
+@starting-style { [data-ghost] { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { [data-ghost] { transition: none; } }
+[data-ghost-hot] { outline: var(--hairline-1h) solid var(--ai); outline-offset: calc(var(--hairline) * -1); }
+.ghost-to, .ghost-name { color: var(--ai-2); }
+.ghost-removed { opacity: var(--offline-opacity); }
+.overlaypill .tog[aria-pressed="false"] { background: none; color: var(--ai-2); }
+.overlaypill > span { overflow: hidden; text-overflow: ellipsis; }
 
 /* Small windows (2.4). Under 1100 px the top bar drops the locator, tempo
    and signature displays, and the boxes of the parts not built yet; under

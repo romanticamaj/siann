@@ -11,8 +11,13 @@
 // are the mixer's first children as in the mockup (its alternating
 // backgrounds count them). The canvas's test hooks (window.__siannMeters
 // under SIANN_SHELL_TEST=1) are handed to index.tsx through onMeterHooks.
+//
+// The plan under review (m5b-ui-ghosts; UI redesign 4.2): a proposed track's
+// strip (GhostStrip) follows the tracks' strips, before the master, in step
+// order; a request to reveal a step's ghosts (a hovered or located step)
+// scrolls the mixer by the least amount that shows its strips.
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { useT } from '../i18n/t';
 import type { GestureController } from '../model/gesture-controller';
@@ -22,7 +27,8 @@ import type { SessionClient } from '../model/session-client';
 import { KnobGradient } from './Knob';
 import { MetersContext, type MetersRegistry } from './meters-context';
 import { MixerMeters, type MeterTestHooks, type PeakText } from './MixerMeters';
-import { MasterStrip, Strip } from './Strip';
+import { GhostStrip, MasterStrip, Strip } from './Strip';
+import { ReviewContext, useGhostView } from '../plans/ghost-context';
 
 export interface MixerProps {
   readonly client: SessionClient;
@@ -113,6 +119,8 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
     () => client.getState().legend?.entities.includes('master') === true,
   );
   const [board] = useState(() => new MeterBoard(realtime));
+  const view = useGhostView();
+  const review = useContext(ReviewContext);
   const container = useRef<HTMLElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
@@ -135,7 +143,20 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
   }, [board, realtime, onMeterHooks]);
 
   // Strips moved without changing size (a new track order): measure again.
-  useEffect(() => board.meters.invalidate(), [board, order, hasMaster]);
+  const proposed = view.ghosts.filter((g) => g.kind === 'track-add').length;
+  useEffect(() => board.meters.invalidate(), [board, order, hasMaster, proposed]);
+
+  // A step's ghosts brought into view: the least scroll that shows its strips (after the zone has opened).
+  useEffect(
+    () =>
+      review?.onReveal(({ step }) => {
+        requestAnimationFrame(() => {
+          const el = container.current?.querySelector(`[data-ghost~="${step}"]`);
+          el?.closest('.strip')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+      }),
+    [review],
+  );
 
   return (
     <MetersContext.Provider value={board}>
@@ -143,6 +164,7 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
         {(order ?? []).map((trackId) => (
           <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} />
         ))}
+        {view.ghosts.map((g) => (g.kind === 'track-add' ? <GhostStrip key={`ghost-${g.trackId}`} ghost={g} view={view} /> : null))}
         {hasMaster ? <MasterStrip /> : null}
         <KnobGradient />
         <canvas className="mixer-meters" data-testid="mixer-meters" ref={canvas} aria-hidden="true" />

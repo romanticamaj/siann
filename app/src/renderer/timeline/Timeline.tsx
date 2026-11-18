@@ -37,7 +37,10 @@ import type { PeaksCache } from '../model/peaks-cache';
 import type { Snapshot } from '../model/read-model';
 import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
+import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
+import { useStepNames } from '../plans/hooks';
+import { planName } from '../plans/plan-name';
 import { useCapabilities } from '../shell/Capable';
 import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { createLayoutStore, type LayoutStore } from '../shell/layout-store';
@@ -139,6 +142,8 @@ export interface TimelineProps {
   readonly onHooks?: (hooks: TimelineTestHooks | null) => void;
   // Locators, cycle and metronome (m5-ui-loop-click); no band when absent.
   readonly loopClick?: LoopClickController;
+  // The plan review (m5b-ui-ghosts): the canvas's ghosts and the toolbar's pill; none when absent.
+  readonly review?: ReviewStore;
 }
 
 function useSessionId(client: SessionClient): string | null {
@@ -186,6 +191,7 @@ export function Timeline({
   onLocate,
   loopClick,
   reconnects = 0,
+  review,
 }: TimelineProps) {
   const contentRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -280,6 +286,15 @@ export function Timeline({
             toggleCycle: () => loopClick.toggleCycle(),
           }
         : undefined,
+      ghosts: review
+        ? {
+            ghosts: () => review.ghosts(),
+            outlineStep: () => review.outlineStep(),
+            subscribe: (listener) => review.subscribe(listener),
+            pin: (step) => review.pinGhost(step),
+            onReveal: (listener) => review.onReveal((request) => listener(request.step)),
+          }
+        : undefined,
     });
     surface.setSnap(layout.getSnapshot().layout.snap);
     const offAutoScroll = layout.subscribe(() => surface.setAutoScroll(layout.getSnapshot().layout.autoScroll));
@@ -295,7 +310,7 @@ export function Timeline({
       surface.destroy();
       setTimeline(null);
     };
-  }, [client, peaks, realtime, layout, sessionId, onHooks, platform, loopClick]);
+  }, [client, peaks, realtime, layout, sessionId, onHooks, platform, loopClick, review]);
 
   useEffect(() => {
     timeline?.setSnap(snap);
@@ -412,6 +427,14 @@ export function Timeline({
 
   const selectTrack = useCallback((trackId: string, mode: TrackSelectMode) => onSelectTrack?.(trackId, mode), [onSelectTrack]);
 
+  // The proposal pill (m5b-ui-ghosts): the reviewable plan's name and the ghosts toggle.
+  const names = useStepNames(client);
+  const reviewSubscribe = (listener: () => void) => (review ? review.subscribe(listener) : () => undefined);
+  const reviewed = useSyncExternalStore(reviewSubscribe, () => (review?.reviewable() ? review.plan() : undefined), () => undefined);
+  const ghostsOn = useSyncExternalStore(reviewSubscribe, () => review?.getSnapshot().ghostsOn ?? true, () => true);
+  const name = reviewed ? planName(reviewed, t, names) : null;
+  const pill = review && name ? { lead: name.lead, steps: name.steps, on: ghostsOn, onToggle: () => review.toggleGhosts() } : null;
+
   return (
     <section className="timeline">
       <Toolbar
@@ -424,6 +447,7 @@ export function Timeline({
         onSnapToggle={() => layout.dispatch({ type: 'snapToggle' })}
         onGrid={(grid) => layout.dispatch({ type: 'setGrid', grid })}
         onAutoScroll={() => layout.dispatch({ type: 'autoScroll' })}
+        pill={pill}
       />
       <InfoLine client={client} clipId={state.selectedClipId} />
       <div className="arr-body" data-part="arrange" style={{ gridTemplateColumns: `${trackListWidth}px var(--divider-w) minmax(0, 1fr)` }}>

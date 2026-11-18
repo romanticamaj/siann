@@ -7,7 +7,11 @@
 // a row under the step holds the raw step and the plan.preview entities it
 // touches or causes (ref, before, after, the stale mark; entity-homes.ts), in
 // the DOM only while open.
-// .go stays empty until m5b-ui-ghosts lands the locate action (3.0).
+// .go is the step's target button (m5b-ui-ghosts; UI redesign 4.2): the
+// keyboard path to its ghosts, as the pointer's hover is: it brings them into
+// view, shows the MixConsole for a ghost on a strip, and pins the row (.hot
+// with aria-current) until another step is located or the pointer enters
+// another row. It sends no request.
 
 import type { CSSProperties, ReactNode } from 'react';
 
@@ -64,15 +68,18 @@ export interface StepRowProps {
   readonly ticked: boolean | null;
   readonly disabled: boolean;
   readonly hot: boolean;
+  // Pinned by its target button or a click on one of its ghosts: aria-current.
+  readonly pinned?: boolean;
   readonly open: boolean;
   // The preview's rows with their index in the preview, for the disclosure.
   readonly entities: ReadonlyArray<{ readonly index: number; readonly row: DiffRow }>;
   readonly onTick: () => void;
   readonly onOpen: () => void;
   readonly onHot: (hot: boolean) => void;
+  readonly onLocate?: () => void;
 }
 
-export function StepRow({ index, step, row, names, ticked, disabled, hot, open, entities, onTick, onOpen, onHot }: StepRowProps) {
+export function StepRow({ index, step, row, names, ticked, disabled, hot, pinned = false, open, entities, onTick, onOpen, onHot, onLocate }: StepRowProps) {
   const t = useT();
   const toggle = () => {
     if (!disabled) onTick();
@@ -83,6 +90,7 @@ export function StepRow({ index, step, row, names, ticked, disabled, hot, open, 
         className={hot ? 'step hot' : 'step'}
         data-part-item="plan-step"
         data-testid={`step-${index}`}
+        aria-current={pinned ? 'step' : undefined}
         onPointerEnter={() => onHot(true)}
         onPointerLeave={() => onHot(false)}
       >
@@ -115,7 +123,9 @@ export function StepRow({ index, step, row, names, ticked, disabled, hot, open, 
           {segmentNodes(row.title)}
           <span className="d">{segmentNodes(row.detail)}</span>
         </button>
-        <span className="go" />
+        <button type="button" className="go" data-testid={`step-go-${index}`} aria-label={t('plans.locate', { n: index + 1 })} title={t('plans.locate', { n: index + 1 })} onClick={onLocate}>
+          <Icon name="target" small />
+        </button>
       </div>
       {open ? (
         <div className="step-more" data-testid={`step-more-${index}`}>

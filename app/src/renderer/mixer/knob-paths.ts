@@ -11,20 +11,24 @@ export interface KnobPaths {
   // Null at the centre: knob() draws no arc there.
   readonly arc: string | null;
   readonly needle: string;
-  // The pending plan's pan (m5b-ui-ghosts): null without one.
+  // The pending plan's pan (m5b-ui-ghosts): knob()'s violet tick from radius
+  // 5 to radius 10.5 at the new angle, and the dot at its end; null without one.
   readonly ghost: string | null;
+  readonly ghostDot: readonly [number, number] | null;
 }
 
 const CENTRE = 12;
 const TRACK_RADIUS = 9.5;
 const NEEDLE_INNER = 2.5;
 const NEEDLE_OUTER = 6.5;
+const GHOST_INNER = 5;
+const GHOST_OUTER = 10.5;
 
 // The angle of a pan of -100..100, in radians from the top, clockwise.
 const angle = (p: number) => ((-135 + ((p + 100) / 200) * 270) * Math.PI) / 180;
 const point = (a: number, r: number): [number, number] => [CENTRE + r * Math.sin(a), CENTRE - r * Math.cos(a)];
 
-export function knobPaths(pan: number, _ghost?: number): KnobPaths {
+export function knobPaths(pan: number, ghost?: number): KnobPaths {
   const p = pan / 100;
   const [bx0, by0] = point(angle(-100), TRACK_RADIUS);
   const [bx1, by1] = point(angle(100), TRACK_RADIUS);
@@ -39,5 +43,9 @@ export function knobPaths(pan: number, _ghost?: number): KnobPaths {
   }
   const [nx, ny] = point(angle(p), NEEDLE_OUTER);
   const [cx, cy] = point(angle(p), NEEDLE_INNER);
-  return { track, arc, needle: `M${cx} ${cy}L${nx} ${ny}`, ghost: null };
+  if (ghost === undefined) return { track, arc, needle: `M${cx} ${cy}L${nx} ${ny}`, ghost: null, ghostDot: null };
+  const g = ghost / 100;
+  const [gx, gy] = point(angle(g), GHOST_OUTER);
+  const [hx, hy] = point(angle(g), GHOST_INNER);
+  return { track, arc, needle: `M${cx} ${cy}L${nx} ${ny}`, ghost: `M${hx} ${hy}L${gx} ${gy}`, ghostDot: [gx, gy] };
 }

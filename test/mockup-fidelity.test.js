@@ -130,10 +130,13 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad', 'agent-row': 'm5b-ui-plan-metadata', 'proposal-pill': 'm5b-ui-ghosts' })) {
+  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad', 'agent-row': 'm5b-ui-plan-metadata' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
+  // The proposal pill stays m5b-ui-ghosts', which landed it (report).
+  assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
+  assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
 });
 
 test('a feature that owns parts names its gate in its acceptance, asks for a side-by-side screenshot and never for enforce', () => {

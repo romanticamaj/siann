@@ -179,7 +179,7 @@ test('hovering a step outlines its ghosts and scrolls them into view; .go by key
   expect(shown.x + shown.w).toBeLessThanOrEqual(width + 1);
   // The DOM ghosts of the hovered step carry the outline: the proposed strip for step 1.
   await step(0).hover();
-  await expect(page.locator('[data-part-item="strip"][data-part-key="ghost"]')).toHaveClass(/\bghost-hot\b/);
+  await expect(page.locator('[data-part-item="strip"][data-part-key="ghost"]')).toHaveAttribute('data-ghost-hot', 'true');
 
   // The lower zone hidden, .go on the gain step by keyboard: the MixConsole shows and the step stays pinned.
   if ((await page.getByTestId('zone-lower').getAttribute('data-visible')) === 'true') await page.getByTestId('zone-button-lower').click();

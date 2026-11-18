@@ -15,8 +15,15 @@
 // Absent parts keep their space empty (spec 3.0): the marker row's box until
 // m5b-ui-markers, the boxes of record, read and write in .r1 (m5b-ui-recording,
 // m6a-ui-automation), and M, S and the add button when engine.capabilities
-// does not list their commands. The ghost track of a pending plan is not drawn
-// (m5b-ui-ghosts).
+// does not list their commands.
+//
+// The plan under review (m5b-ui-ghosts; UI redesign 4.2): a proposed track is
+// th() for the mockup's ghost track (GhostHeader: .th.ghost, "+", its step
+// badge, its name and "proposed track", the summary in .r2) after the last
+// header, at the height of a lane; a header carries its track's ghosts: the
+// dashed ring on M or S (th()'s .msr.ghost), and, as elements the mockup has
+// no markup for, the gain readout with both values (.ghost-to) and both
+// names of a rename (.ghost-name). A click on a proposed header pins its step.
 //
 // Double-click a name to rename it (Enter commits one track.rename; Escape
 // and leaving the field cancel); the add button above the list and a
@@ -49,6 +56,8 @@ import type { TrackEntity } from '../model/document';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { Snapshot } from '../model/read-model';
 import type { SessionClient } from '../model/session-client';
+import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
+import { trackGhosts, type Ghost, type TrackGhosts } from '../plans/ghosts';
 import { ISOLATE } from '../plans/isolate';
 import { Capable, useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
@@ -88,6 +97,7 @@ export interface TrackListProps {
 type RegisterMeter = (ref: string, well: HTMLElement) => () => void;
 
 const EMPTY_HEIGHTS: Readonly<Record<string, number>> = Object.freeze({});
+const NO_TRACK_GHOSTS: TrackGhosts = Object.freeze({ gain: [], pan: [], mute: [], solo: [], rename: [], remove: null, steps: [] });
 const NOTHING = () => undefined;
 
 // A well's inside (within its border) in the canvas's CSS px.
@@ -118,6 +128,7 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
   const order = snapshot?.trackOrder ?? [];
   const dimmed = dimmedTracks(snapshot?.tracks ?? []);
   const selected = new Set(selectedTrackIds ?? (selectedTrackId ? [selectedTrackId] : []));
+  const view = useGhostView();
 
   // The column follows the event display's vertical scroll, in the canvas's
   // frame; the meter wells move with it.
@@ -229,9 +240,12 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
                 registerMeter={registerMeter}
                 onSelect={onSelectTrack}
                 onResize={resizeLane}
+                ghosts={view.ghosts.length > 0 ? trackGhosts(view.ghosts, trackId) : NO_TRACK_GHOSTS}
+                view={view}
               />
             );
           })}
+          {view.ghosts.map((g) => (g.kind === 'track-add' ? <GhostHeader key={`ghost-${g.trackId}`} ghost={g} view={view} /> : null))}
         </div>
         {realtime ? <canvas className="track-meters" data-testid="track-meters" ref={meters} /> : null}
       </div>
@@ -251,6 +265,9 @@ interface TrackHeaderProps {
   readonly registerMeter: RegisterMeter;
   readonly onSelect: (trackId: string, mode: TrackSelectMode) => void;
   readonly onResize: (trackId: string, all: boolean, height: number) => void;
+  // The plan under review's ghosts on this track (m5b-ui-ghosts); none when absent.
+  readonly ghosts?: TrackGhosts;
+  readonly view?: GhostView;
 }
 
 const TrackHeader = memo(function TrackHeader({ registerMeter, ...props }: TrackHeaderProps) {
@@ -272,7 +289,7 @@ export interface TrackHeaderViewProps extends Omit<TrackHeaderProps, 'registerMe
 }
 
 // th() for one track: what the header shows for a given editing state.
-export function TrackHeaderView({ track, number, height, dimmed, selected, canRename, client, editing, onEditing, meterRef, onSelect, onResize }: TrackHeaderViewProps) {
+export function TrackHeaderView({ track, number, height, dimmed, selected, canRename, client, editing, onEditing, meterRef, onSelect, onResize, ghosts = NO_TRACK_GHOSTS, view }: TrackHeaderViewProps) {
   const t = useT();
   const can = useCapabilities();
   const id = track.id;
@@ -318,6 +335,9 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
 
   const classes = ['th', dimmed ? 'muted' : '', selected ? 'sel' : ''].filter(Boolean).join(' ');
   const style = { '--c': `var(${trackColourVar(id)})`, height: `${height}px` } as CSSProperties;
+  const gain = ghosts.gain.at(-1);
+  const rename = ghosts.rename.at(-1);
+  const attrs = view && ghosts.steps.length > 0 ? ghostAttrs(view, ghosts.steps) : {};
   return (
     <div
       className={classes}
@@ -325,6 +345,7 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
       data-dimmed={dimmed ? 'true' : undefined}
       aria-selected={selected}
       style={style}
+      {...attrs}
       onPointerDown={(e) => onSelect(id, e.shiftKey ? 'range' : e.ctrlKey || e.metaKey ? 'toggle' : 'replace')}
     >
       <div className="col" data-testid={`track-colour-${id}`} data-part-of="colour" />
@@ -360,13 +381,14 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
               title={track.name}
               onDoubleClick={canRename ? () => onEditing(true) : undefined}
             >
-              {track.name}
+              {rename ? `${track.name} → ` : track.name}
+              {rename ? <span className="ghost-name">{rename.after}</span> : null}
             </span>
           )}
           {can.command('track.set_mute') ? (
             <button
               type="button"
-              className={`msr m${track.mute ? ' on' : ''}`}
+              className={`msr m${track.mute ? ' on' : ''}${ghosts.mute.length > 0 ? ' ghost' : ''}`}
               data-testid={`track-mute-${id}`} data-part-of="mute"
               aria-pressed={track.mute}
               aria-label={t('tracklist.mute', { track: track.name })}
@@ -380,7 +402,7 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
           {can.command('track.set_solo') ? (
             <button
               type="button"
-              className={`msr s${track.solo ? ' on' : ''}`}
+              className={`msr s${track.solo ? ' on' : ''}${ghosts.solo.length > 0 ? ' ghost' : ''}`}
               data-testid={`track-solo-${id}`} data-part-of="solo"
               aria-pressed={track.solo}
               aria-label={t('tracklist.solo', { track: track.name })}
@@ -398,7 +420,8 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
         </div>
         <div className="r2">
           <span className="db num" data-testid={`track-gain-${id}`} data-part-of="gain">
-            {formatDb(track.gainMilliDb)}
+            {gain ? `${formatDb(gain.before ?? track.gainMilliDb).replace(/ dB$/, '')} ` : formatDb(track.gainMilliDb)}
+            {gain ? <span className="ghost-to">{`→ ${formatDb(gain.after)}`}</span> : null}
           </span>
           <span className="pan num" data-testid={`track-pan-${id}`} data-part-of="pan">
             {formatPan(track.pan)}
@@ -417,6 +440,38 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
         aria-label={t('tracklist.height', { track: track.name })}
         onPointerDown={startResize}
       />
+    </div>
+  );
+}
+
+// th() for a proposed track (m5b-ui-ghosts; mockup.html's ghost track): .th.ghost
+// on the AI colour, "+" for its number, its step badge before its name, the
+// mockup's "proposed track" and its summary; the ids of the mockup's
+// track-ghost (or track-ghost-2 for a later proposed track). A press pins its step.
+function GhostHeader({ ghost, view }: { ghost: Extract<Ghost, { kind: 'track-add' }>; view: GhostView }) {
+  const t = useT();
+  const style = { '--c': 'var(--ai)', height: `${DEFAULT_LANE_HEIGHT}px` } as CSSProperties;
+  const channels = t(ghost.channels === 1 ? 'row.mono' : 'row.stereo');
+  return (
+    <div className="th ghost" data-testid={`track-header-${ghost.key}`} data-part-item="track" data-part-key={ghost.key} style={style} {...ghostAttrs(view, [ghost.step])} onPointerDown={() => view.pin(ghost.step)}>
+      <div className="col" data-part-of="colour" />
+      <div className="idx" data-part-of="number">
+        +
+      </div>
+      <div className="body">
+        <div className="r1">
+          <span className="stepn" style={{ marginRight: 'var(--space-3q)' }}>
+            {String(ghost.step)}
+          </span>
+          <span className="name" data-part-of="name" {...ISOLATE} title={ghost.name}>
+            {ghost.name}
+          </span>
+          <span style={{ color: 'var(--ai-2)', fontSize: 'var(--fs-10h)', whiteSpace: 'nowrap' }}>{t('ghost.proposed')}</span>
+        </div>
+        <div className="r2">
+          <span>{t('ghost.trackSummary', { channels, gain: formatDb(0), pan: formatPan(0) })}</span>
+        </div>
+      </div>
     </div>
   );
 }
