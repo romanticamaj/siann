@@ -18,7 +18,7 @@ gaps here when it lands.
 |---|---|---|
 | 0 stale nested CMake cache (section 7) | fixed in #103 | |
 | 1 the component port after `m5-ui-tokens-spacing` (`m5-ui-alignment-chrome` in review; seven `m5-ui-port-*` not started, which replaced the other alignment features on 2026-11-17) (m5-ui-transport closed its 8, m5-ui-edit-basics its 9, m5-ui-loop-click its 11; gap 1 of section 6 is closed) | the chrome and the port features (in flight) | 9 to 12 |
-| 2 method/tool/doc/fixture parity | `m5b-protocol-parity` | 2 |
+| 2 method/tool/doc/fixture parity | closed by `m5b-protocol-parity` (section 4) | 2 |
 | 3 bridge targets the Ardour engine, gated tests dead | closed by `m5b-bridge-native-client` (layer G in CI) | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
 | 5 rollback never deletes media or renders | `m5b-bridge-cli-coverage` | 3 |
@@ -183,6 +183,22 @@ cycle wrap is suspended ...", `engine_record_test` "recording with cycle on
 ...", `cycle_test`; 8 `record_methods_test` "engine.capabilities lists ...",
 `mcp_adapter_test`, the alloc guard linked into `siann_engine_host_tests` and
 the realtime tests; 9 none (no UI).
+
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-protocol-parity | Y (`protocol_parity_test`, `mcp_adapter_test` `list_plans`, `preview_plan`, `undo`, `redo`) | Y (the same tests) | | Y (`protocol-parity`, `test-matrix`; app unit `capabilities`) | 3 + RTSan | - (tour states changed: none) |
+
+Per acceptance item (`m5b-protocol-parity`): 1 `protocol_parity_test` "every
+served method is an MCP tool or a kNotMcp entry ...", "the tool methods and
+kNotMcp are disjoint ...", "every kNotMcp entry carries its reason",
+"engine.capabilities lists kMethods in its order"; 2 `protocol-parity` (a) to
+(h) and its self-test; 3 `protocol-parity` (a), (c) and (h), app unit
+`capabilities`; 4 `mcp_adapter_test` "list_plans and preview_plan wrap ...",
+"undo and redo are scope_denied under propose ...", "under the trusted scope
+undo and redo move main's head ...", "tools/list returns the 36 tools ...",
+`protocol_parity_test` for the 19 exclusions; 5 `test-matrix` "section 4 of the
+test matrix names the protocol parity tests", "gap 2 ... left the gap list",
+"rule 2 of section 8 names the protocol parity tests".
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
@@ -519,30 +535,69 @@ schedule (18:30 UTC) runs everything.
 
 ## 4. Parity: protocol method x MCP tool x clients
 
-The engine serves 44 methods (`kMethods`, `protocol_server.cpp`); 26 are MCP
-tools (`mcp_adapter.cpp`). Every method has a native test. Gaps:
+Closed by `m5b-protocol-parity` (gap 2). The engine serves 55 methods
+(`kMethods`, `protocol_server.cpp`, in `engine.capabilities` order); 36 are MCP
+tools (`kTools`, `mcp_adapter.cpp`) and the other 19 have a reasoned entry in
+`kNotMcp` beside the tool table (`engine.about`, the five `gesture.*`, six
+`plugin.*`, `session.sync`, `session.fetch`, `record.recover_take`,
+`meter.reset_loudness`, and the user's side of agent requests: `agent.request`,
+`agent.cancel_request`, `agent.requests`). Every method
+has a native test. What the parity tests assert:
 
-- No test compares `kMethods` with the MCP tool table: 18 methods have no tool
-  and only `plugin.registry`/`plugin.approve` and `plan.list`/`plan.preview` are
-  asserted as deliberate exclusions; `session.sync`, `session.fetch`,
-  `session.undo`, `session.redo`, `engine.about`, the other `plugin.*` and the
-  `gesture.*` methods are excluded by nobody's decision on record.
-- No test compares `engine.capabilities.methods` with `docs/schemas/protocol-*.md`
-  (`plan.list` and `plan.preview` are in no protocol doc) or with the app's
-  `app/test/unit/fixtures/capabilities-full.json` (missing `transport.set_cycle`,
-  `transport.set_click`).
+- `protocol_parity_test` (N, ctest on the three OSes, the gcc and RTSan jobs):
+  `kMethods` is exactly the union of the tool table's methods and `kNotMcp`, the
+  two are disjoint, no table repeats a name, every `kNotMcp` entry has a
+  non-empty reason, and `engine.capabilities` `methods` over a served request
+  equals `kMethods` in order. A method added with neither a tool nor an
+  exclusion fails here.
+- `test/protocol-parity.test.js` (B, `npm test`, no build) reads `kMethods`,
+  `kTools` and `kNotMcp` from the C++ sources (and fails loudly when the parser
+  finds none of the known entries) and asserts: (a) every method has a heading
+  or a table row whose cell starts with the backticked method in a
+  `docs/schemas/protocol-*.md`, where the two MCP mapping tables of
+  `protocol-mcp-v0.md` (the tool table and "Methods without a tool") do not
+  count: a tool row carries no params, result or errors (the core methods are
+  in `protocol-core-v0.md`); (b) every dotted name those docs use in a
+  heading or a `Method` column is a method or an event (the headings of
+  `protocol-events-v1.md` between "Event envelope" and "Methods"); (c)
+  `app/test/unit/fixtures/capabilities-full.json` lists exactly `kMethods`; (d)
+  `capabilities-reduced.json` is a subset of it; (e) the tool table of
+  `protocol-mcp-v0.md` equals `kTools` row by row in `tools/list` order, with
+  method and scope; (f) the native union, disjointness and reason checks; (g)
+  the doc's "Methods without a tool" table lists `kNotMcp` in order; (h)
+  `plan.list` and `plan.preview` (acceptance item 3), and `engine.capabilities`
+  and `render.start` (the methods behind `describe_capabilities` and `render`,
+  whose other headings only add a plugin detail), each have a contract: a
+  section whose body gives params, result and errors, or a row of their own in
+  a Method, Params, Result, Errors table with those cells filled. A failure
+  names the method and the place. A table-driven self-test plants an extra and
+  a missing entry for every check and asserts the check names it.
+- `mcp_adapter_test` covers each tool: `list_plans` and `preview_plan` (propose)
+  answer what `plan.list` and `plan.preview` answer, errors included; `undo` and
+  `redo` are `scope_denied` under propose and move main's head under trusted;
+  `next_request` and `answer_request` are covered by their own feature's tests.
+  App unit `capabilities` reads the full fixture with `transport.set_cycle` and
+  `transport.set_click`.
+
+Not covered by the parity tests:
+
 - MCP tools tested only in the adapter test, not end to end: `execute`,
-  `list_commands`, `reject_plan`, `discard_proposal`, transport and device tools.
+  `list_commands`, `reject_plan`, `discard_proposal`, `list_plans`,
+  `preview_plan`, `undo`, `redo`, transport and device tools.
 - App: `plan.submit`, `plan.rollback`, `render.start`, `job.status`,
-  `transport.set_cycle`/`set_click`, devices, plugins have no app client yet
-  (expected until m5-ui-loop-click, M5b). `transport.play`/`stop`/`locate`
+  `session.create`, `media.import`, `record.*`, `meter.reset_loudness`, devices
+  and plugins have no app client yet (expected in M5b). `transport.play`/`stop`/`locate`
   and `session.undo`/`redo` have one since m5-ui-transport
-  (`model/transport.ts`, `undo-redo.test`).
+  (`model/transport.ts`, `undo-redo.test`), `transport.set_cycle`/`set_click`
+  since m5-ui-loop-click (`model/loop-click.ts`, `locator-commands.test`), and
+  `agent.request`/`cancel_request` since m5b-engine-agent-requests
+  (`model/session-client.ts`).
 - Shared fixtures used by all three languages: `jcs`, `hash`, `peaks`,
   `meter-frames`. `plan/plan-hash.json` has no app test (the app hashes plans
   for display); `protocol/read-model-sequence.json` is generated in Node and
   consumed by the app but **never checked against the native engine's output**;
   `time/*.json` has no app test though `musical-time.ts` converts positions.
+- The `features` of the capabilities fixtures are not compared with the engine's.
 
 ## 5. Coverage measured
 
@@ -564,7 +619,6 @@ error paths of each subcommand (usage errors, `--run`).
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
-| 2 | No method/tool/doc/fixture parity test (section 4) | High: an agent-facing method can ship without an MCP tool, doc or app capability entry, silently | native test: every `kMethods` entry is an MCP tool or in an explicit `kNotMcp` list with a reason; Node test: every method in a protocol doc table and the reverse (read `kMethods` from source); app unit: `capabilities-full.json` equals `kMethods` | `m5b-protocol-parity` (M5b wave 2) |
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
 | 5 | m3-rollback 2: media/renders never deleted by rollback | Medium: data loss | native: render a file, roll back the plan, assert the file and the media entry's blob remain | M3 follow-up |
 | 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
@@ -615,9 +669,15 @@ Proposed, not done (each needs a decision or touches build config others are edi
 2. **Every new protocol method** gets: a native protocol test (params, errors,
    idempotency, `expectedRevision`), an entry in `engine.capabilities`, a row
    in its `docs/schemas/protocol-*.md`, an MCP tool with an adapter test **or**
-   an explicit, reasoned exclusion, the app's `capabilities-full.json` entry,
-   and an app client unit test when the app calls it, and a Node bridge test
-   (fake engine, plus layer G) when the bridge calls it.
+   an explicit, reasoned exclusion (an entry in `kNotMcp` and a row of
+   `protocol-mcp-v0.md`, "Methods without a tool"), the app's
+   `capabilities-full.json` entry, and an app client unit test when the app
+   calls it, and a Node bridge test (fake engine, plus layer G) when the bridge
+   calls it. The parity tests enforce the capabilities entry, the doc row, the
+   tool-or-exclusion choice and the fixture entry, not the native protocol test,
+   a new tool's adapter test or the client tests:
+   `protocol_parity_test` (ctest) and `test/protocol-parity.test.js` (`npm test`,
+   section 4).
 3. **Every UI feature** gets unit tests for its pure logic, a Playwright e2e for
    each user path against the real engine, the i18n fit check covering its new
    controls, and the tour states it changes (until the tour runs in CI, the

@@ -44,6 +44,7 @@ if(SIANN_BUILD_TESTS)
     tests/session_create_test.cpp
     tests/media_import_test.cpp
     tests/mcp_adapter_test.cpp
+    tests/protocol_parity_test.cpp
     tests/mcp_e2e_test.cpp
     tests/gesture_methods_test.cpp
     tests/record_methods_test.cpp

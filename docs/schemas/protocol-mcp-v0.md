@@ -153,6 +153,10 @@ same JSON-RPC `id` runs against the session served now.
 | `record` | `transport.record` | trusted | `{enabled}` |
 | `create_session` | `session.create` | trusted | `{path, name?}` |
 | `import_media` | `media.import` | trusted | `{path, clientImportId}` |
+| `list_plans` | `plan.list` | propose | `{}` |
+| `preview_plan` | `plan.preview` | propose | `{plan}` |
+| `undo` | `session.undo` | trusted | `{}` |
+| `redo` | `session.redo` | trusted | `{}` |
 | `next_request` | `agent.next_request` | propose | `{waitMs?}` |
 | `answer_request` | `agent.answer_request` | propose | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` |
 
@@ -208,13 +212,15 @@ through `execute` or a plan with their commands, and `list_commands` returns
 v0 item 31) like the method it wraps. No tool wraps `meter.reset_loudness`, by
 decision: it restarts the integrated value of the user's loudness meter, a display
 aid, not session state, and nothing a plan needs; an agent reads loudness from a
-render, not from the live meter. The adapter lists the method in its exclusions
-(`mcpExclusions()`), and a tool call naming it is refused like any unknown tool.
+render, not from the live meter. The adapter lists the method in `kNotMcp`
+("Methods without a tool"), and a tool call naming it is refused like any unknown tool.
 
 `record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
 recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted
 scope: recording writes to the user's disk and commits a revision. No tool wraps
-`record.recover_take`. The propose scope's tools are unchanged, but `stop` and
+`record.recover_take`: accepting or trashing a take a crash left is the user's
+decision about files on their disk, and the UI offers it from `pendingTakes`
+(below). The propose scope's tools are unchanged, but `stop` and
 `locate` end a running recording and commit it, and a propose agent cannot start
 one, so while a recording runs both are `scope_denied` under `propose` and run
 nothing. Stopped, they work as before; under `trusted` (and from the UI) they end
@@ -231,6 +237,44 @@ engine records `{kind: "mcp", name}` from the session's `clientInfo.name`.
 wrap `session.create` and `media.import` of [Protocol engine v0](protocol-engine-v0.md).
 Both read or write paths on the user's disk, so the propose scope never gets them;
 the import's job is polled with `job_status`.
+
+`list_plans`, `preview_plan`, `undo` and `redo` (m5b-protocol-parity) wrap
+`plan.list`, `plan.preview` ([Protocol events v1](protocol-events-v1.md), Methods;
+wire examples in [plan-v1.md](plan-v1.md)), `session.undo` and `session.redo` one
+to one. The two plan reads are propose: they change nothing, and an agent
+previewing its own plan sees the diff the reviewer will see. `undo` and `redo`
+move main's head, so they are trusted; under `propose` they are `scope_denied`,
+run nothing and are not cached.
+
+### Methods without a tool
+
+Every method of `engine.capabilities` `methods` is a tool's method above or a row
+of this table, never both: `kNotMcp` beside the tool table in
+`native/libs/protocol/src/mcp_adapter.cpp`, in its order, checked by the native
+`protocol_parity_test` and by `test/protocol-parity.test.js`. An MCP request for
+one of them is `-32602` (unknown tool).
+
+| Method | Reason |
+|---|---|
+| `engine.about` | its content is the `about` object of `describe_capabilities` |
+| `gesture.begin` | a pointer lease of a UI, not an agent's verb; agents change values through commands and plans |
+| `gesture.update` | a pointer lease of a UI, not an agent's verb; agents change values through commands and plans |
+| `gesture.hold` | a pointer lease of a UI, not an agent's verb; agents change values through commands and plans |
+| `gesture.end` | a pointer lease of a UI, not an agent's verb; agents change values through commands and plans |
+| `gesture.cancel` | a pointer lease of a UI, not an agent's verb; agents change values through commands and plans |
+| `plugin.registry` | approving what code loads is the user's decision (Protocol v0 item 21) |
+| `plugin.approve` | approving what code loads is the user's decision (Protocol v0 item 21) |
+| `plugin.open_editor` | a plugin editor needs a desktop window |
+| `plugin.close_editor` | a plugin editor needs a desktop window |
+| `plugin.instantiate` | agents reach plugins through plan steps (`plugin.insert` and the plugin commands) |
+| `plugin.set_parameter` | a live parameter of a running instance, not journaled; no command sets a plugin parameter, so agents have no path to plugin parameters in v0 |
+| `session.sync` | read-model replication for UI clients; `inspect_session` serves agents |
+| `session.fetch` | read-model replication for UI clients; `inspect_session` serves agents |
+| `record.recover_take` | accepting or trashing a take a crash left is the user's decision about files on their disk; the UI offers it from `pendingTakes` |
+| `meter.reset_loudness` | restarts the integrated value of the user's loudness meter: a display aid, not session state, and nothing a plan needs; an agent measures loudness from a render |
+| `agent.request` | the user's side of an agent request (Protocol v0 item 32); the agent takes it with `next_request` |
+| `agent.cancel_request` | the user's side of an agent request (Protocol v0 item 32); the agent takes it with `next_request` |
+| `agent.requests` | the user's side of an agent request (Protocol v0 item 32); the agent takes it with `next_request` |
 
 Maintainer note: `propose_plan` and `audition` under `propose` let an agent
 change what the user hears without changing main. If that is unwanted, flip
