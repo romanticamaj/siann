@@ -25,9 +25,9 @@
 //   - app/src/renderer/tokens.ts, the mirror for canvas code, is the generated
 //     copy of tokens.css.
 //
-// What does not hold yet is written down in app/test/fidelity/debt.json, the
-// debt m5-ui-port-cleanup pays: the test fails on anything not in it, and
-// on an entry that no longer applies, so the ledger only shrinks.
+// app/test/fidelity/debt.json, the ledger of what did not hold yet, is empty
+// since m5-ui-port-cleanup, its gate: the test requires it empty, for tokens,
+// fonts and literals alike, and every file above holds no literal at all.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -39,7 +39,6 @@ const { readTokens, resolve, simplify, generate, OUT } = require('../scripts/gen
 const ROOT = path.resolve(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
 const MOCKUP_PATH = ['docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'];
-const MOCKUP_FILE = MOCKUP_PATH.join('/');
 const TOKENS_CSS = read('app', 'renderer', 'tokens.css');
 const MOCKUP = read(...MOCKUP_PATH);
 const MOCKUP_JS = MOCKUP.slice(MOCKUP.indexOf('<script>') + 8, MOCKUP.lastIndexOf('</script>'));
@@ -174,7 +173,8 @@ test('the ruler, the zone tab rows, the meter slot and the focus frame carry the
 // The zone frame is --focus at 20 %; the 2 px keyboard ring of a control and
 // of a divider keeps its 55 % through an app-only token (UI redesign 2.1:
 // every stop shows a visible focus ring; 10.7, 4a: the 2 px focus ring is an
-// app-only token), so the frame's new value dims nothing else.
+// app-only token), so the frame's new value dims nothing else. The widths
+// name tokens too (m5-ui-port-cleanup): 1 px for the frame, 2 px for the ring.
 test('the zone frame is --focus and the 2 px ring of a control and a divider is --focus-ring at 55 %', () => {
   assert.equal(colour(value('focus-ring')), '232,235,241,0.55');
   const shell = noComments(read('app', 'renderer', 'shell.css'));
@@ -183,9 +183,15 @@ test('the zone frame is --focus and the 2 px ring of a control and a divider is 
     assert.ok(at >= 0, `shell.css has ${selector}`);
     return shell.slice(at, shell.indexOf('}', at));
   };
-  assert.match(rule('.zone[data-focused="true"]'), /outline: 1px solid var\(--focus\);/);
-  assert.match(rule(':where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible'), /outline: 2px solid var\(--focus-ring\);/);
-  assert.match(rule('.divider:focus-visible'), /outline: 2px solid var\(--focus-ring\);/);
+  // The width of `outline: var(--<width>) solid var(--<colour>)`, resolved.
+  const outline = (selector, colourToken) => {
+    const m = new RegExp(String.raw`outline: var\(--([\w-]+)\) solid var\(--${colourToken}\);`).exec(rule(selector));
+    assert.ok(m, `${selector}: outline: var(--<width>) solid var(--${colourToken})`);
+    return value(m[1]);
+  };
+  assert.equal(outline('.zone[data-focused="true"]', 'focus'), '1px');
+  assert.equal(outline(':where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible', 'focus-ring'), '2px');
+  assert.equal(outline('.divider:focus-visible', 'focus-ring'), '2px');
   assert.doesNotMatch(rule('.divider:focus-visible'), /var\(--focus\)/);
 });
 
@@ -332,18 +338,11 @@ test('size tokens scale with the UI, and a spacing step has one token', () => {
   for (const n of [1, 2, 3, 4]) assert.ok(steps.has(`${4 * n}px`), `the grid step ${4 * n}px has a token`);
 });
 
-test('the renderer and the mockup hold no colour or size literal beyond the ledger\'s debts', () => {
-  const found = rendererLiterals();
-  for (const [file, counts] of Object.entries(found)) {
-    const debt = DEBT.literals[file] || { colours: 0, sizes: 0 };
-    assert.ok(counts.colours <= debt.colours, `${file}: ${counts.colours} colour literals (debt.json allows ${debt.colours}); name a token of app/renderer/tokens.css instead`);
-    assert.ok(counts.sizes <= debt.sizes, `${file}: ${counts.sizes} size literals (debt.json allows ${debt.sizes}); name a token of app/renderer/tokens.css instead`);
-  }
-  // The ledger only shrinks: an entry above what is there is lowered or removed.
-  for (const [file, debt] of Object.entries(DEBT.literals)) {
-    const counts = found[file] || { colours: 0, sizes: 0 };
-    assert.deepEqual(counts, { colours: debt.colours, sizes: debt.sizes }, `${file} has fewer literals than debt.json records: lower the entry`);
-  }
+// m5-ui-port-cleanup: no file of the renderer or the mockup holds a colour or
+// size literal, shell.css included, and shell.css holds no negative one either.
+test('the renderer and the mockup hold no colour or size literal', () => {
+  assert.deepEqual(rendererLiterals(), {}, 'name a token of app/renderer/tokens.css instead');
+  assert.deepEqual(negativeLiterals(read('app', 'renderer', 'shell.css')), [], 'app/renderer/shell.css: a negative size is calc(var(--token) * -1)');
 });
 
 // A font weight in the shared rules or the mockup is a weight token or the
@@ -385,25 +384,57 @@ test('the literal scanners see what they should', () => {
   assert.deepEqual(codeLiterals('class A { #abc = 1; f() { return this.#abc; } }'), { colours: 0, sizes: 0 });
 });
 
-test('the debt ledger is owned by a feature of M5', () => {
-  const m5 = JSON.parse(read('.claude', 'milestones', 'M5.json'));
-  assert.ok(m5.features.some((f) => f.id === DEBT.gate), `${DEBT.gate} is a feature of M5`);
-  for (const entry of DEBT.fonts) assert.ok(entry.family && entry.why, `debt.json font entry ${JSON.stringify(entry)}`);
-  assert.ok(!m5.done.includes(DEBT.gate) || (DEBT.tokens.length === 0 && Object.keys(DEBT.literals).length === 0), `${DEBT.gate} is done: debt.json must be empty`);
+// The ledger is empty and stays empty (m5-ui-port-cleanup is its gate;
+// decided by the maintainer, 2026-11-15: no allowlist). Unconditional: the
+// test does not read the milestone's done list.
+test('the debt ledger is empty: no token, no font and no literal entry, and m5-ui-port-cleanup is its gate', () => {
+  assert.equal(DEBT.gate, 'm5-ui-port-cleanup');
+  assert.deepEqual(DEBT.tokens, [], 'every token carries the mockup\'s value');
+  assert.deepEqual(DEBT.fonts, [], 'every face the rules ask for is bundled');
+  assert.deepEqual(DEBT.literals, {}, 'no file holds a colour or size literal');
 });
 
-// m5-ui-tokens-spacing cleared the token entries and the literals of the
-// shared rules and of the mockup; what is left belongs to the alignment
-// features of the regions, and the font entry to m5-ui-alignment-chrome.
-test('the ledger holds no token entry and nothing of the shared rules or the mockup', () => {
-  assert.deepEqual(DEBT.tokens, [], 'every token carries the mockup\'s value');
-  const files = Object.keys(DEBT.literals);
-  assert.deepEqual(files.filter((file) => file.startsWith('app/renderer/ui/')), []);
-  assert.ok(!files.includes(MOCKUP_FILE), 'the mockup\'s script has no literal debt');
-  // m5-ui-port-arrange-canvas took TimelineCanvas.ts off the ledger.
-  const left = ['app/renderer/shell.css', 'app/src/renderer/mixer/MixerMeters.ts'];
-  assert.deepEqual(files.filter((file) => !left.includes(file)), [], 'what is left belongs to the alignment features');
-  assert.equal(DEBT.fonts.length, 0, 'm5-ui-alignment-chrome bundles JetBrains Mono Medium: no font entry is left');
+// The app-only tokens of m5-ui-port-cleanup (UI redesign 10.7, 4; authorised
+// by the maintainer, 2026-11-15, for this feature only): the values of the
+// shell.css rules the mockup does not draw. They are named for the app's own
+// elements, so neither the shared rules nor the mockup name them, and no token
+// that was there before changes its value: the expectation is a snapshot of
+// tokens.css taken from origin/main before the feature
+// (test/fixtures/ui-tokens-before-cleanup.json), not the file under test.
+const APP_ONLY = {
+  'toast-max-w': '320px',
+  'toast-slide': '12px',
+  'toast-shadow-y': '6px',
+  'toast-shadow-blur': '18px',
+  'dialog-w': '560px',
+  'dialog-margin': '32px',
+  'drawer-shadow-blur': '24px',
+  'black-a450': '0,0,0,0.45',
+  scrim: '0,0,0,0.45',
+};
+
+test('tokens.css declares the app-only tokens of the toasts, dialogs, drawer and scrim, and no earlier token changes', () => {
+  const before = JSON.parse(read('test', 'fixtures', 'ui-tokens-before-cleanup.json')).tokens;
+  assert.ok(Object.keys(before).length > 300, 'the snapshot holds the tokens of origin/main');
+  for (const [name, raw] of Object.entries(before)) {
+    assert.ok(tokens.has(name), `--${name} is still declared`);
+    assert.equal(tokens.get(name), raw, `--${name} keeps its value`);
+  }
+  const shared = `${UI_CSS}\n${MOCKUP}`;
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const [name, want] of Object.entries(APP_ONLY)) {
+    assert.ok(tokens.has(name), `tokens.css declares --${name}`);
+    assert.ok(!(name in before), `--${name} is new`);
+    assert.equal(colour(value(name)) ?? value(name), want, `--${name}`);
+    assert.ok(!new RegExp(`--${name}(?![\\w-])`).test(shared), `--${name} is app-only: no shared rule and not the mockup name it`);
+    // The shadow colour is named by the shadow tokens' rules; the rest by shell.css.
+    if (name !== 'black-a450') assert.ok(shell.includes(`var(--${name})`), `shell.css uses --${name}`);
+  }
+  assert.ok(/box-shadow:[^;]*var\(--black-a450\)/.test(shell), 'the toast\'s and the drawer\'s shadows are black at 45 %');
+  // Nothing else is new: the authorised list is the whole addition.
+  assert.deepEqual([...tokens.keys()].filter((name) => !(name in before)).sort(), Object.keys(APP_ONLY).sort());
+  // --focus-ring is not added again (applied early in m5-ui-tokens-spacing, 10.7, 4a).
+  assert.equal((TOKENS_CSS.match(/--focus-ring\s*:/g) || []).length, 1, '--focus-ring is declared once');
 });
 
 // m5-ui-alignment-chrome (decided by the maintainer, 2026-11-15): JetBrains

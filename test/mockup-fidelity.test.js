@@ -250,18 +250,25 @@ test('an absent part keeps its space empty: a hold token names a part that is st
 // ---- m5-ui-alignment-chrome: the shared stylesheets linked; its gate stays report
 // (decided by the maintainer, 2026-11-17: the fidelity run is a visual aid and never blocks)
 
-test('the app links tokens.css and the shared stylesheets of the landed ports in the mockup\'s order, then shell.css', () => {
+// m5-ui-port-cleanup (acceptance 1): one stylesheet set for the app and the
+// mockup. The app links the mockup's nine files (tokens.css and every file of
+// app/renderer/ui) in the mockup's order, optionally followed by shell.css,
+// and nothing else.
+test('the app\'s links are the mockup\'s nine, in order, optionally followed by shell.css and by nothing else', () => {
   const linked = (html) => [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1]);
   const app = linked(read('app', 'renderer', 'index.html'));
-  const chrome = ['tokens.css', 'ui/base.css', 'ui/layout.css', 'ui/top-bar.css', 'ui/status-bar.css'];
-  // The mockup's own order, filtered to these five.
-  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', '')).filter((href) => chrome.includes(href));
-  assert.deepEqual(mockup, chrome);
-  // Each component port links its zone's file (UI redesign 10.10): the app's
-  // links are the mockup's, in its order, for the files linked so far, then shell.css.
-  const all = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', ''));
-  for (const href of chrome) assert.ok(app.includes(href), href);
-  assert.deepEqual(app, [...all.filter((href) => app.includes(href)), 'shell.css']);
+  const mockup = linked(MOCKUP).map((href) => href.replace('../../../../app/renderer/', ''));
+  assert.equal(mockup.length, 9, 'the mockup links nine stylesheets');
+  assert.equal(mockup[0], 'tokens.css', 'tokens.css first');
+  // The mockup's nine cover every file of app/renderer/ui.
+  const ui = fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui')).filter((f) => f.endsWith('.css')).map((f) => `ui/${f}`).sort();
+  assert.deepEqual(mockup.slice(1).sort(), ui, 'every file of app/renderer/ui is one of the mockup\'s links');
+  assert.ok(app.length === 9 || app.length === 10, `${app.length} links`);
+  assert.deepEqual(app.slice(0, 9), mockup, 'the mockup\'s nine, in its order');
+  if (app.length === 10) assert.equal(app[9], 'shell.css', 'then shell.css, and nothing else');
+  // No other way in: no <style> and no @import.
+  assert.doesNotMatch(read('app', 'renderer', 'index.html'), /<style[\s>]/);
+  assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /@import/);
 });
 
 // ---- m5-ui-port-mixer-strip (UI redesign 10.10, P1-12): the MixConsole ported from strip(), knob() and the master
@@ -315,7 +322,9 @@ test('shell.css\'s pinned pre-port text styles do not reach the ported lower zon
   const rules = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((m) => /letter-spacing:\s*normal/.test(m[2]) || /font-feature-settings:\s*normal/.test(m[2]))
     .map((m) => m[1].trim());
-  assert.ok(rules.length > 0, 'the pinned rule is found (other zones are not ported yet)');
+  // Every zone is ported (m5-ui-port-cleanup): what still sets these text
+  // styles is a rule for the app's own overlays, and it names no zone.
+  for (const list of rules) assert.doesNotMatch(list, /\.zone(?![\w-])/, `"${list}" pins text styles on a zone`);
   // The lower zone's element: section.lower.zone.zone-lower (Shell.tsx, ZoneFrame).
   const lower = new Set(['lower', 'zone', 'zone-lower']);
   // Whether one compound selector (classes, :not() and :where() of classes) matches it.
@@ -793,4 +802,295 @@ test('shell.css\'s pinned pre-port text styles do not reach the ported project z
       assert.ok(!reaches, `"${selector}" in shell.css pins pre-port text styles on the project zone`);
     }
   }
+});
+
+// ---- m5-ui-port-cleanup (UI redesign 10.10, P1-17): the port closed
+
+// The rules of a stylesheet as { selector, at } pairs: each selector of a
+// rule's list, whitespace normalised (runs of space collapsed, none around a
+// combinator or inside parentheses), with the prelude of the at-rule that
+// encloses it ('' at the top level). The steps of @keyframes are not selectors.
+function cssRules(css) {
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const normal = (s) => s.trim().replace(/\s+/g, ' ').replace(/\s*([>+~])\s*/g, '$1').replace(/\(\s*/g, '(').replace(/\s*\)/g, ')').replace(/\s*,\s*/g, ',');
+  const split = (list) => {
+    const out = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] === '(') depth++;
+      else if (list[i] === ')') depth--;
+      else if (list[i] === ',' && depth === 0) {
+        out.push(list.slice(start, i));
+        start = i + 1;
+      }
+    }
+    out.push(list.slice(start));
+    return out.map(normal).filter(Boolean);
+  };
+  const rules = [];
+  const stack = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === ';') start = i + 1;
+    else if (c === '}') {
+      stack.pop();
+      start = i + 1;
+    } else if (c === '{') {
+      const prelude = text.slice(start, i).trim();
+      if (prelude.startsWith('@')) {
+        stack.push(prelude.replace(/\s+/g, ' '));
+        start = i + 1;
+        continue;
+      }
+      if (!stack.some((at) => at.startsWith('@keyframes'))) {
+        for (const selector of split(prelude)) rules.push({ selector, at: stack.join(' ') });
+      }
+      // A rule's body holds no braces: skip to its end.
+      i = text.indexOf('}', i);
+      start = i + 1;
+    }
+  }
+  return rules;
+}
+
+const UI_RULES = () => fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui')).filter((f) => f.endsWith('.css')).flatMap((f) => cssRules(read('app', 'renderer', 'ui', f)));
+// A narrow-window state the mockup does not show: a rule inside a media or a
+// container query (acceptance 1 and UI redesign 10.7 allow it).
+const NARROW = (rule) => /^@(media|container)\b/.test(rule.at);
+
+// shell.css holds nothing the mockup draws: no selector of it is also a
+// selector of app/renderer/ui (acceptance 1).
+function collisions(shellCss, uiRules) {
+  const ui = new Set(uiRules.map((rule) => rule.selector));
+  return cssRules(shellCss).filter((rule) => !NARROW(rule) && ui.has(rule.selector)).map((rule) => rule.selector);
+}
+
+test('no selector of shell.css is also styled by app/renderer/ui', () => {
+  const ui = UI_RULES();
+  assert.ok(ui.length > 200, `${ui.length} selectors in app/renderer/ui`);
+  assert.deepEqual(collisions(read('app', 'renderer', 'shell.css'), ui), [], 'requalify the rule by the app-only element or state it serves, or delete it');
+  // The parser: lists split at the top level only, whitespace normalised,
+  // at-rules recorded, keyframe steps skipped.
+  assert.deepEqual(cssRules('/* .x{} */ .a > .b,\n .c:not(.d, .e){x:1} @media (max-width: 10px){ .f{y:2} } @container (max-width: 5px){.g  .h{z:3}} @keyframes k{from{a:b}to{a:c}} i{j:k}'), [
+    { selector: '.a>.b', at: '' },
+    { selector: '.c:not(.d,.e)', at: '' },
+    { selector: '.f', at: '@media (max-width: 10px)' },
+    { selector: '.g .h', at: '@container (max-width: 5px)' },
+    { selector: 'i', at: '' },
+  ]);
+  // It catches a collision however the selector is spaced, and exempts a narrow-window state.
+  const shared = cssRules('.statusbar .loc{display:flex}.a>.b{x:1}*{box-sizing:border-box}');
+  assert.deepEqual(collisions('.statusbar  .loc { position: relative; } .a > .b {y:2} *, *::before { box-sizing: border-box; } @media (max-width: 9px) { .a > .b { z: 3; } } .statusbar .loc:has(select) { q: 1; }', shared), ['.statusbar .loc', '.a>.b', '*']);
+});
+
+test('shell.css names tokens only and holds nothing pinned for unported zones', () => {
+  const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  // The pre-port text styles pinned on the zones not ported yet are gone: every zone is ported.
+  for (const zone of ['zone-lower', 'zone-left', 'zone-project', 'plans']) {
+    assert.ok(!new RegExp(`:not\\(\\.${zone}\\)`).test(shell), `no rule pinned on the zones other than .${zone}`);
+  }
+  // Every value is a token: no colour and no size literal (test/ui-tokens.test.js counts them),
+  // and no var() names a custom property tokens.css does not declare, except the ones the app sets on an element.
+  const declared = new Set([...read('app', 'renderer', 'tokens.css').matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  const set = new Set([...shell.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  const local = ['--c', '--zoom-at', '--drawer-width'];
+  for (const m of shell.matchAll(/var\((--[\w-]+)/g)) assert.ok(declared.has(m[1]) || set.has(m[1]) || local.includes(m[1]), `shell.css names ${m[1]}, which tokens.css does not declare`);
+  // The header says what is left, and nothing is "not ported yet".
+  assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /not ported yet|until their alignment/);
+  // No comment sits inside a selector.
+  assert.doesNotMatch(read('app', 'renderer', 'shell.css'), /[>+~,]\s*\/\*[^*]*\*\/\s*[.#\w]/);
+});
+
+// ---- no leftover class: what the renderer emits and what the stylesheets style
+
+const RENDERER_SRC = path.join(ROOT, 'app', 'src', 'renderer');
+
+function rendererSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      // The token mirror and the catalogs hold no class names.
+      else if (/\.tsx?$/.test(entry.name) && entry.name !== 'tokens.ts' && !full.includes(`${path.sep}i18n${path.sep}`)) out.push(full);
+    }
+  };
+  walk(RENDERER_SRC);
+  return out.sort().map((file) => ({ file: path.relative(ROOT, file).replace(/\\/g, '/'), text: fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1') }));
+}
+
+// The end of the expression that starts at `i` (after an opening `{`, `(` or
+// `[`, or a template's `${`): the index of its closing bracket, skipping strings.
+function closeOf(text, i, open = '{', close = '}') {
+  let depth = 1;
+  for (let j = i; j < text.length; j++) {
+    const c = text[j];
+    if (c === "'" || c === '"') j = endOfQuote(text, j);
+    else if (c === '`') j = endOfTemplate(text, j);
+    else if (c === open) depth++;
+    else if (c === close && --depth === 0) return j;
+  }
+  throw new Error(`unclosed ${open} at ${i}: ${text.slice(i - 20, i + 60)}`);
+}
+function endOfQuote(text, i) {
+  for (let j = i + 1; j < text.length; j++) {
+    if (text[j] === '\\') j++;
+    else if (text[j] === text[i]) return j;
+  }
+  throw new Error(`unclosed string at ${i}`);
+}
+function endOfTemplate(text, i) {
+  for (let j = i + 1; j < text.length; j++) {
+    if (text[j] === '\\') j++;
+    else if (text[j] === '$' && text[j + 1] === '{') j = closeOf(text, j + 2);
+    else if (text[j] === '`') return j;
+  }
+  throw new Error(`unclosed template at ${i}`);
+}
+
+// What a class-name expression can produce: the words of its string literals
+// and of its templates' static parts, the values of the literal tables it
+// looks up (`TABLE[key]`), of the *Class() helpers it calls and of the local
+// constant it names. A template that glues a name to a value the scan cannot
+// enumerate (`zone-${zone}`, `${name}`) is reported: the class is computed,
+// and the scan would miss it. Strings compared (`x === 'a'`) or passed to a
+// call (`.join(' ')`) are not classes.
+function classesOf(expr, ctx, out) {
+  let code = '';
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (c === "'" || c === '"') {
+      const end = endOfQuote(expr, i);
+      const before = expr.slice(0, i).trimEnd();
+      const after = expr.slice(end + 1).trimStart();
+      if (!/(===|!==|==|!=|\w\()$/.test(before) && !/^(===|!==|==|!=)/.test(after)) out.words.push(...expr.slice(i + 1, end).split(/\s+/));
+      code += '0';
+      i = end;
+    } else if (c === '`') {
+      const end = endOfTemplate(expr, i);
+      let chunk = '';
+      for (let j = i + 1; j < end; j++) {
+        if (expr[j] === '$' && expr[j + 1] === '{') {
+          const close = closeOf(expr, j + 2);
+          const hole = expr.slice(j + 2, close).trim();
+          const glued = /[\w-]$/.test(chunk) || /^[\w-]/.test(expr.slice(close + 1, end));
+          const bare = /^[a-z_$][\w$.]*(\[[^\]]*\])?$/.test(hole);
+          if (bare) out.computed.push(`${ctx.file}: \`...\${${hole}}...\``);
+          else if (glued && !/^[^?]+\?\s*'( [^']*)?'\s*:\s*'( [^']*)?'$/.test(hole)) out.computed.push(`${ctx.file}: \`${chunk}\${${hole}}\``);
+          out.words.push(...chunk.split(/\s+/));
+          chunk = '';
+          if (!bare) classesOf(hole, ctx, out);
+          j = close;
+        } else chunk += expr[j];
+      }
+      out.words.push(...chunk.split(/\s+/));
+      code += '0';
+      i = end;
+    } else code += c;
+  }
+  for (const m of code.matchAll(/\b([A-Z][A-Z0-9_]*)\[/g)) tableOf(m[1], ctx, out);
+  for (const m of code.matchAll(/\b(\w+Class)\(/g)) {
+    const fn = ctx.sources.map((s) => ({ s, at: s.text.search(new RegExp(`function ${m[1]}\\(`)) })).find((x) => x.at >= 0);
+    assert.ok(fn, `${ctx.file}: no function ${m[1]} in the renderer`);
+    const open = fn.s.text.indexOf('{', fn.s.text.indexOf(')', fn.at));
+    classesOf(fn.s.text.slice(open + 1, closeOf(fn.s.text, open + 1)).replace(/\breturn\b/g, ''), { ...ctx, file: fn.s.file }, out);
+  }
+  const bare = code.trim();
+  if (/^[a-z]\w*$/.test(bare) && bare !== 'className') {
+    // A local constant: what it is built from.
+    const source = ctx.sources.find((s) => s.file === ctx.file);
+    const decl = new RegExp(`\\bconst ${bare}(?::[^=]+)? = `).exec(source.text);
+    if (!decl) out.computed.push(`${ctx.file}: className={${bare}}`);
+    else classesOf(source.text.slice(decl.index + decl[0].length, source.text.indexOf(';\n', decl.index)), ctx, out);
+  }
+}
+
+// The values of a literal table, `const NAME: Record<K, string> = { k: 'v', ... };`.
+function tableOf(name, ctx, out) {
+  const source = ctx.sources.find((s) => new RegExp(`\\bconst ${name}\\b[^=]*= \\{`).test(s.text));
+  assert.ok(source, `${ctx.file}: no literal table ${name} in the renderer`);
+  const at = source.text.search(new RegExp(`\\bconst ${name}\\b[^=]*= \\{`));
+  const open = source.text.indexOf('= {', at) + 2;
+  const body = source.text.slice(open + 1, closeOf(source.text, open + 1));
+  const values = [...body.matchAll(/:\s*'([^']*)'/g)].map((m) => m[1]);
+  assert.ok(values.length > 0, `${name} holds string values`);
+  for (const v of values) out.words.push(...v.split(/\s+/));
+}
+
+// Every class the renderer emits: the className attributes of its TSX, what
+// they look up, and the classes its .ts code toggles.
+function emittedClasses() {
+  const sources = rendererSources();
+  const out = { words: [], computed: [] };
+  for (const source of sources) {
+    const ctx = { file: source.file, sources };
+    for (const m of source.text.matchAll(/\bclassName=(?:"([^"]*)"|\{)/g)) {
+      if (m[1] !== undefined) out.words.push(...m[1].split(/\s+/));
+      else classesOf(source.text.slice(m.index + m[0].length, closeOf(source.text, m.index + m[0].length)), ctx, out);
+    }
+    for (const m of source.text.matchAll(/classList\??\.(?:add|remove|toggle)\(\s*'([^']+)'/g)) out.words.push(m[1]);
+  }
+  return { classes: new Set(out.words.filter(Boolean)), computed: out.computed };
+}
+
+const selectorClasses = (rules) => new Set(rules.flatMap((rule) => [...rule.selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map((m) => m[1])));
+
+test('no leftover class: every class the renderer emits is styled, and every class of shell.css is emitted', () => {
+  const { classes, computed } = emittedClasses();
+  // The scan is exact: no class name is computed from a value it cannot enumerate.
+  assert.deepEqual(computed, [], 'build the class from a literal table (const NAME = { key: \'class\' })');
+  for (const name of ['app', 'zone', 'zone-lower', 'zone-project', 'zone-left', 'zone-right', 'divider-left', 'divider-right', 'divider-lower', 'hold-tool-2', 'hold-tool-9', 'strip', 'msr', 'badge', 'rolled-back', 'clip', 'shut', 'agent-changes']) {
+    assert.ok(classes.has(name), `the scan finds .${name}`);
+  }
+  for (const name of classes) assert.match(name, /^-?[_a-zA-Z][\w-]*$/, `"${name}" is a class name`);
+  const ui = selectorClasses(UI_RULES());
+  const shellRules = cssRules(read('app', 'renderer', 'shell.css'));
+  const shell = selectorClasses(shellRules);
+  // (b) Each class the renderer emits has a rule, in app/renderer/ui or shell.css.
+  assert.deepEqual([...classes].filter((name) => !ui.has(name) && !shell.has(name)).sort(), [], 'classes the renderer emits that no stylesheet styles');
+  // (c) Each class of a shell.css selector is one the renderer emits.
+  assert.deepEqual([...shell].filter((name) => !classes.has(name)).sort(), [], 'classes of shell.css no renderer source emits');
+  // The scan itself: a glued computed name is reported, a conditional suffix and a table are not.
+  const probe = { words: [], computed: [] };
+  const sources = [{ file: 'probe.tsx', text: "const ZONES = { a: 'zone-a', b: 'zone-b' };\nconst classes = ['x', on ? 'y' : ''].join(' ');\n" }];
+  for (const expr of ['`zone zone-${zone}`', '`${name}`', '`tab${on ? \' on\' : \'\'}`', '`zone ${ZONES[zone]}`', 'classes', "side === 'main' ? 'b on' : 'b'"]) classesOf(expr, { file: 'probe.tsx', sources }, probe);
+  assert.deepEqual(probe.computed, ['probe.tsx: `...${zone}...`', 'probe.tsx: `...${name}...`']);
+  assert.deepEqual([...new Set(probe.words.filter(Boolean))].sort(), ['b', 'on', 'tab', 'x', 'y', 'zone', 'zone-', 'zone-a', 'zone-b']);
+});
+
+// Acceptance 4 and 5: the gates of M5's parts are report, for good.
+test('every gate of an M5 feature is report, none is enforce, every rule has an owner and every hold names a pending part', () => {
+  const m5 = ['m5-ui-alignment-chrome', 'm5-ui-port-arrange-canvas', 'm5-ui-port-track-list', 'm5-ui-port-toolbar', 'm5-ui-port-mixer-strip', 'm5-ui-port-inspector', 'm5-ui-port-plans'];
+  assert.deepEqual([CHROME, ...PORTS].sort(), [...m5].sort());
+  for (const gate of m5) assert.equal(MANIFEST.gates[gate], 'report', gate);
+  assert.deepEqual(Object.keys(MANIFEST.gates).filter((gate) => gate.startsWith('m5-')).sort(), [...m5].sort(), 'M5\'s gates are these seven');
+  assert.deepEqual(Object.entries(MANIFEST.gates).filter(([, mode]) => mode === 'enforce'), [], 'no gate is enforce');
+  for (const rule of MANIFEST.rules) assert.ok(rule.feature && rule.gate && FEATURES.has(rule.gate), `${rule.match.join(', ')} has an owner`);
+  const holds = [...read('app', 'renderer', 'tokens.css').matchAll(/--hold-([a-z0-9-]+)-[wh]\s*:/g)].map((m) => m[1]);
+  assert.ok(holds.length > 10, `${holds.length} hold tokens`);
+  for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', `--hold-${id}: its part's gate is pending`);
+});
+
+// Acceptance 5: the documents describe the port as finished for M5's parts.
+test('the rules, the runbook and the test matrix describe the component port as finished for M5\'s parts', () => {
+  const rules = read('docs', 'harness', 'agent-rules.md');
+  const runbook = read('docs', 'harness', 'runbook.md');
+  const matrix = read('docs', 'harness', 'test-matrix.md');
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  for (const [name, text] of [['agent-rules', rules], ['runbook', runbook], ['test-matrix', matrix]]) {
+    assert.match(text, /[Tt]he component port is finished for M5's parts/, name);
+  }
+  // The ledger is empty and required empty; nothing says what "does not hold yet".
+  assert.doesNotMatch(rules, /the ledger of what does not hold yet/);
+  assert.match(rules, /`app\/test\/fidelity\/debt\.json` is empty/);
+  assert.match(runbook, /`app\/test\/fidelity\/debt\.json` is empty/);
+  // The matrix's row for the closing feature names its tests per acceptance item.
+  assert.doesNotMatch(matrix, /m5-ui-port-cleanup \(open\)/);
+  const row = /\n\| m5-ui-port-cleanup \|[^\n]*/.exec(matrix)?.[0] ?? '';
+  for (const name of ['ui-tokens', 'mockup-fidelity', 'port-cleanup', 'i18n-catalogs', 'shell.spec']) assert.ok(row.includes(name), `the matrix row names ${name}`);
+  // Spec 10.10 records that P1-17 landed.
+  const s1010 = spec.slice(spec.indexOf('\n### 10.10 '));
+  assert.match(s1010, /P1-17 \(`m5-ui-port-cleanup`\) landed/);
 });

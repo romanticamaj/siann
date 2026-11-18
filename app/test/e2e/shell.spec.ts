@@ -10,6 +10,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { matches, ownerOf, type Manifest } from './support/fidelity-core';
+import { prepareBundle, stageSession } from './support/fidelity-session';
 import { launchElectron } from './support/launch';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
@@ -304,4 +306,68 @@ test('quitting stops the engine first and only then quits', async () => {
   await app.close();
 
   expect(fs.readFileSync(orderFile, 'utf8').trim().split(/\r?\n/)).toEqual(['engine exit, restart in null', 'will-quit']);
+});
+
+// m5-ui-port-cleanup (acceptance 4; UI redesign 3.0): on the mockup's own
+// session (support/fidelity-session.ts, the fidelity run's), the whole window
+// carries no id of a part whose gate is pending in the manifest, and every id
+// the mockup's markup names outright whose part has landed (its gate report)
+// and whose content is not dynamic is in the DOM.
+test('the whole window has no id of a pending part and every landed id of the mockup, derived from the manifest', async () => {
+  test.setTimeout(240_000);
+  await app.close();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-shell-fidelity-'));
+  try {
+    const bundleDir = prepareBundle(scratch);
+    const manifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'test', 'fidelity', 'manifest.json'), 'utf8')) as Manifest & { environment: unknown };
+    await launch(50, {
+      SIANN_SESSION_DIR: bundleDir,
+      SIANN_USER_DATA: path.join(scratch, 'user-data'),
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      SIANN_FIDELITY_ENVIRONMENT: JSON.stringify(manifest.environment),
+    });
+    const view = { width: manifest.viewport.width, height: manifest.viewport.height };
+    await app.evaluate(({ BrowserWindow }, { width, height }) => BrowserWindow.getAllWindows()[0]!.setContentSize(width, height), view);
+    await page.setViewportSize(view);
+    const notes: string[] = [];
+    await stageSession(app, page, notes);
+    // Every id in the DOM, as the fidelity run names them (collectDom): the
+    // regions, the parts, and the repeated items with their data-part-of children.
+    const shown = await page.evaluate(() => {
+      const out: string[] = [];
+      for (const el of Array.from(document.querySelectorAll('[data-region]'))) out.push(el.getAttribute('data-region')!);
+      for (const el of Array.from(document.querySelectorAll('[data-part]'))) out.push(el.getAttribute('data-part')!);
+      const counts = new Map<string, number>();
+      for (const item of Array.from(document.querySelectorAll('[data-part-item]'))) {
+        const name = item.getAttribute('data-part-item')!;
+        let key = item.getAttribute('data-part-key');
+        if (!key) {
+          counts.set(name, (counts.get(name) ?? 0) + 1);
+          key = String(counts.get(name));
+        }
+        out.push(`${name}-${key}`);
+        for (const child of Array.from(item.querySelectorAll('[data-part-of]'))) {
+          if (child.closest('[data-part-item]') === item) out.push(`${name}-${key}-${child.getAttribute('data-part-of')}`);
+        }
+      }
+      return out;
+    });
+    expect(shown.length).toBeGreaterThan(200);
+    const mode = (id: string) => {
+      const owner = ownerOf(manifest, id);
+      expect(owner, `a manifest rule owns ${id}`).not.toBeNull();
+      return owner!.mode;
+    };
+    expect(shown.filter((id) => mode(id) === 'pending'), 'ids of pending parts in the window').toEqual([]);
+    // The ids the mockup's markup names outright (dp() and dr()), landed and not dynamic.
+    const mockup = fs.readFileSync(path.join(APP_DIR, '..', manifest.mockup), 'utf8');
+    const named = [...new Set([...mockup.matchAll(/\$\{d[pr]\('([a-z0-9-]+)'\)\}/g)].map((m) => m[1]!))];
+    const landed = named.filter((id) => mode(id) === 'report' && !matches(manifest.pixels.dynamic, id));
+    expect(landed.length).toBeGreaterThan(60);
+    expect(named.filter((id) => mode(id) === 'pending').length).toBeGreaterThan(10);
+    expect(landed.filter((id) => !shown.includes(id)), 'landed ids of the mockup missing from the window').toEqual([]);
+  } finally {
+    await app.close().catch(() => undefined);
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
 });
