@@ -67,7 +67,8 @@
 // FIFO's frames are part of the monitored round trip and nothing of the
 // recorder's stamps. A live graph that monitors (PreparedGraph::monitors()) is
 // processed while the transport is stopped too, with rolling false: the
-// playhead does not move, its meters publish and the click stays off. A graph
+// playhead does not move, its meters publish and the click stays off, except a
+// count-in (spec, "Click"). A graph
 // without one is not processed while stopped. Because such a graph is audible
 // while stopped, a transport start raises only its sources' edges
 // (PreparedGraph::startEdges()), not the whole output: the monitored input
