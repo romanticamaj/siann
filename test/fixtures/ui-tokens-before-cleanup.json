@@ -1,5 +1,5 @@
 {
-  "about": "The custom properties of the plain :root blocks of app/renderer/tokens.css at 3a37c51 (origin/main before m5-ui-port-cleanup), name to declared value, as readTokens() of scripts/gen-ui-tokens.js reads them. test/ui-tokens.test.js holds every one to its value: the closing feature adds app-only tokens and changes none (UI redesign 10.7, 4). Generated once from git show 3a37c51:app/renderer/tokens.css; never regenerated.",
+  "about": "The custom properties of the plain :root blocks of app/renderer/tokens.css at 3a37c51 (origin/main before m5-ui-port-cleanup), name to declared value, as readTokens() of scripts/gen-ui-tokens.js reads them. test/ui-tokens.test.js holds every one but the hold tokens to its value: the closing feature adds app-only tokens and changes none (UI redesign 10.7, 4). It does not freeze the token set: a hold token goes when its part lands (spec 3.0, 10.5) and later tokens may be added. Generated once from git show 3a37c51:app/renderer/tokens.css; never regenerated.",
   "source": "3a37c51:app/renderer/tokens.css",
   "tokens": {
     "bg-0": "#090A0D",

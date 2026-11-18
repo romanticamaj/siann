@@ -87,12 +87,12 @@ import { transportEnabled, type TransportPlayhead } from './Transport';
 // The order Tab walks the zones in.
 const FOCUS_ORDER: readonly ZoneScope[] = ['left', 'project', 'lower', 'right'];
 // The frame's classes per zone: the mockup's element class (aside.leftzone,
-// section.lower, aside.plans; the project zone's section has none), .zone and
-// .zone-<zone>. The dividers' likewise. Literal tables, so every class the
-// renderer emits is spelled out (m5-ui-port-cleanup).
+// section.arrange, section.lower, aside.plans), .zone and .zone-<zone>. The
+// dividers' likewise. Literal tables, so every class the renderer emits is
+// spelled out (m5-ui-port-cleanup).
 const ZONE_CLASSES: Readonly<Record<ZoneScope, string>> = {
   left: 'leftzone zone zone-left',
-  project: 'zone zone-project',
+  project: 'arrange zone zone-project',
   lower: 'lower zone zone-lower',
   right: 'plans zone zone-right',
 };
@@ -201,12 +201,15 @@ interface ZoneFrameProps {
   readonly offline: boolean;
   readonly drawer?: { readonly width: number } | null;
   readonly tabs?: ReactNode;
+  // The content is the frame's direct children, as in the mockup's
+  // section.arrange, with no zone body (the app's scroll wrapper) between them.
+  readonly bare?: boolean;
   readonly onFocus: (zone: ZoneScope) => void;
   readonly frameRef: (el: HTMLElement | null) => void;
   readonly children: ReactNode;
 }
 
-function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, tabs, onFocus, frameRef, children }: ZoneFrameProps) {
+function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, tabs, bare = false, onFocus, frameRef, children }: ZoneFrameProps) {
   const t = useT();
   const Tag = as;
   return (
@@ -228,9 +231,13 @@ function ZoneFrame({ zone, as = 'section', visible, focused, offline, drawer, ta
       onPointerDownCapture={() => onFocus(zone)}
     >
       {tabs}
-      <div className="zone-body" data-testid={`zone-${zone}-body`}>
-        {children}
-      </div>
+      {bare ? (
+        children
+      ) : (
+        <div className="zone-body" data-testid={`zone-${zone}-body`}>
+          {children}
+        </div>
+      )}
     </Tag>
   );
 }
@@ -624,7 +631,7 @@ export function Shell({
       </ZoneFrame>
       <ZoneSeparator zone="left" values={separatorValues('left')} dispatch={dispatch} />
       <main className="center">
-        <ZoneFrame offline={offline} zone="project" visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
+        <ZoneFrame offline={offline} zone="project" bare visible focused={focused === 'project'} onFocus={(z) => focusZone(z, false)} frameRef={frameRef('project')}>
           {project}
         </ZoneFrame>
         <ZoneSeparator zone="lower" values={separatorValues('lower')} dispatch={dispatch} />

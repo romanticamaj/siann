@@ -221,19 +221,22 @@ code, dd { font-family: var(--font-mono); }
 .time-format-item[aria-checked="true"]::before { content: "\2713"; margin-right: var(--space); }
 .time-format-item[aria-checked="false"]::before { content: ""; display: inline-block; width: 1ch; margin-right: var(--space); }
 
-/* ---- zones */
+/* ---- zones. The frame is the mockup's region element (aside.leftzone,
+   section.arrange, section.lower, aside.plans), laid out and drawn by its
+   shared rule; .zone adds only what the app needs around it: the zone may
+   shrink, it clips, and it carries a focus frame. The mockup shows the
+   project zone focused, with .arrange::after; the app shows that frame while
+   the zone has the focus, and an outline of the same line on the other zones,
+   which the mockup does not show focused. */
 .zone {
-  position: relative;
-  display: flex;
-  flex-direction: column;
   min-width: 0;
-  min-height: 0;
   overflow: hidden;
-  background: var(--bg-1);
   outline: 0 solid transparent;
   outline-offset: calc(var(--hairline) * -1);
 }
-.zone[data-focused="true"] { outline: var(--hairline) solid var(--focus); }
+.zone-left, .zone-lower, .zone-right { position: relative; }
+.zone-left[data-focused="true"], .zone-lower[data-focused="true"], .zone-right[data-focused="true"] { outline: var(--hairline) solid var(--focus); }
+.zone-project:not([data-focused="true"])::after { display: none; }
 .zone[hidden] { display: none; }
 .zone:focus { outline-color: var(--focus); }
 .zone:focus:not([data-focused="true"]) { outline: none; }
@@ -252,16 +255,16 @@ code, dd { font-family: var(--font-mono); }
 .zone-body[hidden] { display: none; }
 
 /* The right zone under 1280 px (spec 2.4): an overlay drawer over the project
-   zone, as wide as the zone it replaces unless the layout says otherwise. */
+   zone, as wide as the layout makes it: Shell sets --drawer-width on the
+   drawer (the zone's size), and --right-zone-w is 0 in drawer mode. */
 .zone-right[data-drawer="true"] {
   position: fixed;
   top: var(--top-bar);
   right: 0;
   bottom: var(--status-bar);
-  width: var(--drawer-width, var(--right-zone-w));
+  width: var(--drawer-width);
   height: auto;
   z-index: 10;
-  border-left: var(--hairline) solid var(--divider);
   box-shadow: calc(var(--space-2) * -1) 0 var(--drawer-shadow-blur) var(--black-a450);
 }
 
@@ -291,14 +294,10 @@ code, dd { font-family: var(--font-mono); }
 /* A divider reached from the keyboard: a 2 px ring around its line. */
 .divider:focus-visible { background: var(--focus-ring); outline: var(--space-half) solid var(--focus-ring); outline-offset: 0; }
 
-/* ---- the project zone: toolbar, info line, track list and event display.
-   It scrolls by a transform in the event display, never by DOM overflow. */
-.zone-project .zone-body {
-  display: grid;
-  grid-template-rows: var(--toolbar) var(--info-line) minmax(0, 1fr);
-  padding: 0;
-  overflow: hidden;
-}
+/* ---- the project zone: the mockup's section.arrange, whose rows are the
+   toolbar, the info line and the arrange body (ui/project-zone.css). The
+   timeline's own element adds no box, so they are the section's rows. It
+   scrolls by a transform in the event display, never by DOM overflow. */
 .timeline { display: contents; }
 /* The toolbar and the info line are ui/project-zone.css's .arr-toolbar and
    .infoline (m5-ui-port-toolbar). The app's own pieces around them: the
@@ -472,9 +471,8 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
    are the app's own pieces around them. The zone body holds the mixer edge to
    edge and scrolls it sideways; one canvas over the strips paints every meter
    channel and takes no pointer events. */
-/* The mockup's .lower is a grid of --zone-tabs and the mixer; .zone makes it a
-   column, so the tab row takes that row's height. */
-.zone-lower > .tabs { flex: 0 0 var(--zone-tabs); min-height: 0; }
+/* The mockup's .lower is a grid of --zone-tabs and the mixer: the tab row and
+   the zone body are its rows. */
 .zone-lower > .zone-body { padding: 0; }
 .zone-lower .mixer { position: relative; height: 100%; }
 .mixer-meters { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; }
@@ -571,7 +569,8 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .disclosure { min-height: 0; padding: 0 var(--space-1h); font-size: var(--fs-small); color: var(--tx-3); background: transparent; }
 
 /* ---- the audition banner (under the top bar, outside the zones). Its text
-   takes a zone's width before its buttons wrap under it. */
+   keeps 16 times the body text's size (16em) before its buttons wrap under
+   it, whatever the zones' sizes are. */
 .audition-banner {
   display: flex;
   flex-wrap: wrap;
@@ -582,7 +581,7 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   border-bottom: var(--hairline) solid var(--ai);
   color: var(--ai-2);
 }
-.audition-banner-text { flex: 1 1 var(--left-zone-w); min-width: 0; overflow-wrap: anywhere; }
+.audition-banner-text { flex: 1 1 calc(var(--fs-body) * 16); min-width: 0; overflow-wrap: anywhere; }
 .audition-banner .primary { background: var(--tx-1); border-color: var(--tx-1); color: var(--bg-0); font-weight: 600; }
 .audition-banner-error { flex-basis: 100%; color: var(--err); }
 
