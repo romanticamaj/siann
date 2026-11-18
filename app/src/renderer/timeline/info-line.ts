@@ -101,7 +101,10 @@ export const INFO_EDIT_FIELDS: readonly InfoField[] = ['start', 'length', 'offse
 // to the media's end), offset clip.trim of the source start (0 up to the media
 // less the clip's length; the clip stays put), volume clip.set_gain within -60
 // to +6 dB. Null when the text does not parse, the primary is unknown or
-// nothing changes.
+// nothing changes. The line shows values rounded (to a tick, to 0.01 dB), so
+// a typed value equal to the one shown (as parsed: 9 is 9.1.1.0) is no change
+// to the primary: relative, nothing is sent; absolute, the primary keeps its
+// exact value and only the other clips are set.
 export function infoLineEditCommand(
   snapshot: Snapshot,
   ids: readonly string[],
@@ -116,7 +119,15 @@ export function infoLineEditCommand(
   };
   const primary = clip(primaryId);
   if (!primary) return null;
+  const parse = field === 'volume' ? parseDb : field === 'start' ? parsePosition : parseLength;
+  const typedValue = parse(typed);
+  if (typedValue === null) return null;
+  const shown = infoLine(snapshot, primaryId);
+  const unchanged = shown !== null && parse(shown[field]) === typedValue;
+  if (unchanged && !absolute) return null;
   const seen = new Set<string>();
+  // Unchanged and absolute: the primary is where the value says already.
+  if (unchanged) seen.add(primaryId);
   const clips: ClipEntity[] = [];
   for (const id of ids) {
     if (seen.has(id)) continue;
