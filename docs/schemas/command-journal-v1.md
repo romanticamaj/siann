@@ -146,6 +146,33 @@ runner's v0 fields are refused, never dropped:
   the revision of its `media.add` (the head for content the session already
   held, `existing: true`), `contentHash` and `frames`.
 
+## Validation
+
+`siann validate-journal <journal> [--json]` reads the file and checks it with
+`validateJournal` (`src/bridge/runner.js`), the check `rollback` makes too. A
+valid journal exits 0 and prints `{ok: true, journal: {path, journalId,
+status, risk, entryCount, bundle, planHash, appliedRevision}}` (`planHash` and
+`appliedRevision` of the last applied batch). A file it refuses exits 1 and
+prints `{ok: false, status: "failed", error: {code, message}}` on stdout with
+`--json`; without it the text form ends with `error: <code>: <message>`. No
+journal file is a usage error (exit 1, usage on stderr). The codes:
+
+| Code | When |
+|---|---|
+| `journal_unreadable` | the file does not exist or cannot be read |
+| `journal_not_json` | the file is not JSON |
+| `journal_v0_unsupported` | `schemaVersion` is `siann.command_journal.v0`, the Ardour engine's journal |
+| `invalid_schema_version` | any other `schemaVersion` than `siann.command_journal.v1` |
+| `invalid_journal_id` | `journalId` is missing or not a non-empty string |
+| `invalid_batches` | `batches` is not an array |
+| `invalid_bundle` | `bundle` is not a non-empty string while a batch is applied, or neither a string nor `null` |
+| `invalid_batch_status` | a batch's `status` is not `applied`, `failed` or `rolled_back` |
+| `invalid_batch_risk` | a batch's `risk` is not `low`, `normal` or `high` |
+| `invalid_batch_entries` | a batch's `entries` is not an array |
+| `invalid_plan_hash` | a batch's `planHash` is present and not `sha256:` and 64 hex digits |
+| `invalid_touched_ids` | a batch's `touchedIds` is present and not an array of `"<entityType>:<id>"` refs |
+| `invalid_document_hash` | a `preState` or `postState` `documentHash` is present and not a `sha256:` hash |
+
 ## Rollback
 
 `siann rollback <journal> [--run]` writes a command file that opens `bundle`

@@ -58,6 +58,30 @@ hashed silently.
 - Consumers accept `siann.import_pack_plan.v0` and
   `siann.import_pack_plan.v1` and reject every other version.
 
+## Rejection
+
+`siann workflow reject-plan <plan> --out <rejected> [--rejected-by <name>]
+[--reason <text>] [--json]` writes a copy of the plan with `review.state`
+`rejected`, `review.rejectedBy` (`--rejected-by`, else `$USER`, else
+`unknown`), `review.rejectedAt` (an ISO 8601 time) and `review.reason`
+(`--reason`, else `Rejected during review.`). The source file is not changed.
+It prints `{ok: true, workflow: "reject-plan", sourcePlanFile, planFile,
+reviewState: "rejected", rejectedBy, reason}` and exits 0.
+
+- Any plan that loads can be rejected: a pending plan, an approved one (it can
+  no longer be applied), and an already rejected one, whose `rejectedBy`,
+  `rejectedAt` and `reason` are stamped again.
+- Rejection never recomputes a hash: `command`, `integrity.commandHash` and the
+  other review fields are copied byte for byte. A plan whose command was edited
+  after generation is still rejected, and `validate-plan` on the output still
+  reports `command_hash_mismatch`: a rejection does not launder a tamper.
+- A rejected plan is neither approvable nor applicable: `approve-plan` refuses
+  it ("only pending plans can be approved") and `apply-plan` refuses it ("plan
+  must be approved before apply") and writes no command file.
+- A missing plan file or `--out` is a usage error (exit 1, usage on stderr); a
+  plan file that cannot be read or is not a plan exits 1 with the message on
+  stderr.
+
 ## Canonicalization
 
 The implementation is `src/hash/jcs.js`:

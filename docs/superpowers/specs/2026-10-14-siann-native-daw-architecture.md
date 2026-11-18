@@ -4047,6 +4047,11 @@ Not used: Taskflow (allocates at runtime).
   `test/`, `native/libs/protocol` and `native/apps/engine` to it, and pushes to
   main and the nightly run take it. Locally `node scripts/check-all.js --only
   bridge`.
+- The `node` CI job on ubuntu also runs the Node tests with
+  `--experimental-test-coverage --test-coverage-include=bin/**
+  --test-coverage-branches=70` and fails when the branch coverage of the CLI
+  (`bin/siann.js`) falls below 70 % (m5b-bridge-cli-coverage); the flags need
+  Node 22.8, so they stay out of `npm test`, whose floor is Node 20.
 - `npm run app` at the repository root (`scripts/run-app.js`, Node built-ins only)
   starts the app from a source checkout: `npm ci` in `app/` when its
   dependencies are missing or older than `app/package-lock.json`, `npm run build`,
