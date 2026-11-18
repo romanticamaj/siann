@@ -127,14 +127,23 @@ export function ghostsOf(
   };
   const trackKnown = (id: string | undefined): id is string => id !== undefined && read(`track:${id}`) !== null;
 
-  // The cascades of plan.preview (removed clips no step names), by the step entityHomes homes them to.
+  // The cascades of plan.preview: the removed clips of a removed track that
+  // no clip.remove names, each under the step entityHomes homes it to when
+  // that step is on the same track (its rule 2 can also home a clip to an
+  // earlier step that only shares its media id: then the track.remove's).
   const rows = diffRows(preview);
   const homes = entityHomes(steps, rows);
-  const cascadeOf = (index: number): string[] =>
-    homes.steps[index]!.map((at) => rows[at]!)
-      .filter((row) => row.kind === 'removed' && row.ref.startsWith('clip:'))
-      .map((row) => row.ref)
-      .filter((ref) => !steps.some((s) => s.op === 'clip.remove' && `clip:${str(s.clipId)}` === ref));
+  const homeOf = (at: number) => homes.steps.findIndex((list) => list.includes(at));
+  const cascadeOf = (index: number, trackId: string): Array<{ ref: string; step: number }> =>
+    rows
+      .map((row, at) => ({ row, at }))
+      .filter(({ row }) => row.kind === 'removed' && row.ref.startsWith('clip:') && row.before?.trackId === trackId)
+      .filter(({ row }) => !steps.some((s) => s.op === 'clip.remove' && `clip:${str(s.clipId)}` === row.ref))
+      .map(({ row, at }) => {
+        const home = homeOf(at);
+        const onTrack = home >= 0 && steps[home]!.trackId === trackId && isTicked(home);
+        return { ref: row.ref, step: (onTrack ? home : index) + 1 };
+      });
 
   const out: Ghost[] = [];
   const removedTracks = new Set<string>();
@@ -180,10 +189,10 @@ export function ghostsOf(
         out.push({ kind: 'track-remove', step: n, trackId });
         removedTracks.add(trackId);
         // Its clips, under the step entity-homes gives them (this one, as a rule).
-        for (const ref of cascadeOf(index)) {
+        for (const { ref, step: home } of cascadeOf(index, trackId)) {
           const clip = read(ref);
           if (!clip) continue;
-          const g = removal(clip, n, ref.slice('clip:'.length), true);
+          const g = removal(clip, home, ref.slice('clip:'.length), true);
           if (g) out.push(g);
           state.set(ref, null);
         }

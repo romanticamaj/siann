@@ -945,7 +945,7 @@ export class TimelineCanvas {
     const x1 = Math.max(...boxes.map((b) => b.box.x + b.box.width));
     // The ruler's ghost (the locator band) scrolls only sideways.
     const lanes = boxes.filter((b) => !b.ruler);
-    const y0 = lanes.length > 0 ? Math.min(...lanes.map((b) => b.box.y)) : top + (view.scrollY ?? 0) * 0;
+    const y0 = lanes.length > 0 ? Math.min(...lanes.map((b) => b.box.y)) : top;
     const y1 = lanes.length > 0 ? Math.max(...lanes.map((b) => b.box.y + b.box.height)) : top;
     const order = this.#options.model.getSnapshot()?.trackOrder ?? [];
     const limit = maxScrollY(view, lanesHeight(order, view) + this.#ghostLanes * view.laneHeight);
@@ -1697,7 +1697,7 @@ export class TimelineCanvas {
       }
       ctx.fillStyle = palette.divider;
       order.forEach((trackId, index) => ctx.fillRect(0, tops[index]! + laneHeightOf(trackId, view) - 1, width, 1));
-      this.#drawGhostLanes(ctx, ghostLanes, order.length, palette);
+      this.#drawGhostLanes(ctx, ghostLanes, palette);
       ctx.restore();
     }
     this.#drawRuler(ctx, snapshot, palette);
@@ -1931,8 +1931,8 @@ export class TimelineCanvas {
   }
 
   // A proposed track's lane: draw()'s hatch over the lane, clipped to it.
-  #drawGhostLanes(ctx: CanvasRenderingContext2D, lanes: readonly GhostLane[], first: number, palette: Palette): void {
-    lanes.forEach((lane, i) => {
+  #drawGhostLanes(ctx: CanvasRenderingContext2D, lanes: readonly GhostLane[], palette: Palette): void {
+    for (const lane of lanes) {
       ctx.fillStyle = palette.divider;
       ctx.fillRect(0, lane.y + lane.height - 1, lane.width, 1);
       ctx.save();
@@ -1948,9 +1948,7 @@ export class TimelineCanvas {
         ctx.stroke();
       }
       ctx.restore();
-      void first;
-      void i;
-    });
+    }
   }
 
   // draw()'s clip() for a ghost: the violet body hatched, the title strip,

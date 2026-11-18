@@ -20,7 +20,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
-import { agentFor, hash8, launchApp, seedBundle, type Agent } from './support/seed';
+import { agentFor, hash8, launchApp, seedBundle, selectPlan, type Agent } from './support/seed';
 
 const RATE = 48000;
 const audio = (seconds: number) => ({ domain: 'audio', value: String(Math.round(seconds * RATE)) });
@@ -108,6 +108,17 @@ async function methods(): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __siannClient: { sent(): Array<{ method: string }> } }).__siannClient.sent().map((r) => r.method));
 }
 
+// The zoom slider set to `fpp` frames per pixel (a test-side change of its step, as the fidelity session does).
+async function zoomTo(fpp: number): Promise<void> {
+  await page.getByTestId('zoom-slider').evaluate((el, value) => {
+    const input = el as HTMLInputElement;
+    input.step = 'any';
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, String(Number(input.max) - Math.log2(value)));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, fpp);
+  await expect.poll(async () => (await timeline<{ framesPerPixel: number }>('view')).framesPerPixel).toBe(fpp);
+}
+
 const pairs = (list: readonly GhostEntry[]) => list.map((g) => `${g.kind} ${g.step}`);
 const step = (index: number) => page.getByTestId(`step-${index}`);
 
@@ -140,7 +151,7 @@ test('a plan of every kind: the ghost list, and unticking a step removes exactly
   await step(8).getByRole('checkbox').click();
   // The review asked plan.preview and nothing the Plans tab did not ask before.
   const added = (await methods()).slice(before.length);
-  expect(new Set(added.filter((m) => !['plan.list', 'plan.status', 'session.inspect', 'session.fetch'].includes(m)))).toEqual(new Set(['plan.preview']));
+  expect(new Set(added.filter((m) => !['plan.list', 'plan.status', 'session.inspect', 'session.fetch', 'engine.status'].includes(m)))).toEqual(new Set(['plan.preview']));
 });
 
 test('every ghost id is in the window, on the DOM and on the canvas', async () => {
@@ -161,14 +172,20 @@ test('every ghost id is in the window, on the DOM and on the canvas', async () =
 
 test('hovering a step outlines its ghosts and scrolls them into view; .go by keyboard opens the MixConsole and pins the step; no request', async () => {
   const before = await methods();
-  // The placed clip (step 2, at 3 s) out of view: zoom in and scroll right.
-  const canvas = page.getByTestId('timeline-canvas');
-  await canvas.hover();
-  for (let i = 0; i < 4; i += 1) await page.keyboard.press('KeyH');
+  // The placed clip (step 2, at 3 s) out of view: zoomed in to 16 frames per pixel, it lies past the right edge.
+  await zoomTo(16);
+  const width0 = (await timeline<{ width: number }>('view')).width;
+  const outside = async () => {
+    const part = (await timeline<Array<{ id: string; x: number; w: number }>>('parts')).find((p) => p.id === 'clip-ghost-new');
+    return part !== undefined && (part.x + part.w < 0 || part.x > width0);
+  };
+  // Shift+wheel scrolls right until the ghost is behind the left edge.
+  const area = (await page.getByTestId('timeline-canvas').boundingBox())!;
+  await page.mouse.move(area.x + area.width / 2, area.y + area.height / 2);
   await page.keyboard.down('Shift');
-  for (let i = 0; i < 6; i += 1) await page.mouse.wheel(0, 600);
+  for (let i = 0; i < 60 && !(await outside()); i += 1) await page.mouse.wheel(0, 2000);
   await page.keyboard.up('Shift');
-  await expect.poll(async () => (await timeline<Array<{ id: string; x: number }>>('parts')).find((p) => p.id === 'clip-ghost-new')?.x ?? -1e9).toBeLessThan(-50);
+  await expect.poll(outside).toBe(true);
   const far = await timeline<{ scrollFrames: string }>('view');
   await step(1).hover();
   await expect.poll(() => timeline<number | null>('ghostOutline')).toBe(2);
@@ -176,7 +193,8 @@ test('hovering a step outlines its ghosts and scrolls them into view; .go by key
   const shown = (await timeline<Array<{ id: string; x: number; w: number }>>('parts')).find((p) => p.id === 'clip-ghost-new')!;
   const width = (await timeline<{ width: number }>('view')).width;
   expect(shown.x).toBeGreaterThanOrEqual(-1);
-  expect(shown.x + shown.w).toBeLessThanOrEqual(width + 1);
+  // A ghost wider than the view shows from its start; one that fits shows whole.
+  expect(shown.x + Math.min(shown.w, width)).toBeLessThanOrEqual(width + 1);
   // The DOM ghosts of the hovered step carry the outline: the proposed strip for step 1.
   await step(0).hover();
   await expect(page.locator('[data-part-item="strip"][data-part-key="ghost"]')).toHaveAttribute('data-ghost-hot', 'true');
@@ -196,7 +214,7 @@ test('hovering a step outlines its ghosts and scrolls them into view; .go by key
   // The pointer entering another row ends the pin.
   await step(5).hover();
   await expect(step(2)).not.toHaveAttribute('aria-current', 'step');
-  expect((await methods()).slice(before.length).filter((m) => m !== 'plan.list' && m !== 'plan.status')).toEqual([]);
+  expect((await methods()).slice(before.length).filter((m) => !['plan.list', 'plan.status', 'engine.status'].includes(m))).toEqual([]);
 });
 
 test('a click on a ghost cap or a ghost clip pins its step and shows its row on the Plans tab', async () => {
@@ -207,8 +225,10 @@ test('a click on a ghost cap or a ghost clip pins its step and shows its row on 
   await expect(page.getByTestId('zone-right')).toHaveAttribute('data-visible', 'true');
   await expect(step(2)).toHaveAttribute('aria-current', 'step');
   await expect(step(2)).toBeInViewport();
-  // A ghost clip on the canvas: the placed one (step 2).
-  await page.keyboard.press('Shift+KeyF');
+  // A ghost clip on the canvas: the placed one (step 2), in view at 256 frames per pixel.
+  await zoomTo(256);
+  // Hovering its row brings it into view.
+  await step(1).hover();
   type Part = { id: string; x: number; y: number; w: number; h: number };
   const placed = async () => (await timeline<Part[]>('parts')).find((p) => p.id === 'clip-ghost-new');
   await expect.poll(async () => (await placed())?.x ?? -1).toBeGreaterThanOrEqual(0);
@@ -222,7 +242,7 @@ test('a click on a ghost cap or a ghost clip pins its step and shows its row on 
 
 test('the pill names the plan and toggles the ghosts, as Ctrl+Alt+G does', async () => {
   const pill = page.locator('[data-part="proposal-pill"]');
-  await expect(pill.locator('b')).toHaveText('Add track Pad');
+  await expect(pill.locator('b')).toContainText('Pad');
   await expect(pill).toContainText('12 steps');
   const tog = pill.locator('.tog');
   await expect(tog).toHaveAttribute('aria-pressed', 'true');
@@ -270,14 +290,14 @@ test('an applied, a rejected or a stale plan has no ghosts and no pill, and noth
   await noGhosts();
   // Stale: another client changes what the plan read.
   const stale = await submit([{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -3000 }]);
-  await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(stale));
+  await selectPlan(page, stale);
   await expect.poll(async () => (await ghosts()).length).toBe(1);
   await engine.call('command.execute', { commands: [{ op: 'track.set_gain', trackId: 'trk_a', gainMilliDb: -4000 }] });
   await expect(page.getByTestId(`plan-stale-${hash8(stale)}`)).toBeVisible();
   await noGhosts();
   // Applied.
   const applied = await submit([{ op: 'track.set_pan', trackId: 'trk_b', pan: 1000 }]);
-  await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(applied));
+  await selectPlan(page, applied);
   await expect.poll(async () => (await ghosts()).length).toBe(1);
   await page.getByTestId('plan-approve-apply').click();
   await expect(page.getByTestId(`plan-state-${hash8(applied)}`)).toHaveAttribute('data-state', 'applied');

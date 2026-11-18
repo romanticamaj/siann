@@ -130,6 +130,17 @@ test('clip.remove and track.remove: the removed clip, the removed track, and its
   assert.deepEqual(ofKind(all(without(7)), 'track-remove'), []);
 });
 
+test('a cascade stays with the track.remove when entity-homes would home it to an earlier step that only shares its media', () => {
+  // Step 1 places a clip of med_3, the removed track's clip's media; step 2 removes the track.
+  const steps = [
+    { op: 'clip.place', clipId: 'clp_x', trackId: A, mediaId: 'med_3', position: audio('0'), sourceStart: '0', length: '100' },
+    { op: 'track.remove', trackId: C },
+  ];
+  const p = preview();
+  const only: PlanPreview = { ...p, entities: p.entities.filter((e) => e.ref === 'clip:clp_3' || e.ref === `track:${C}`) };
+  assert.deepEqual(ofKind(ghostsOf(steps, only, session(), null), 'clip-remove').map((g) => [g.clipId, g.step]), [['clp_3', 2]]);
+});
+
 test('gain: one ghost per step, the old value the one the earlier ticked steps leave', () => {
   assert.deepEqual(ofKind(all(), 'gain'), [
     { kind: 'gain', step: 3, trackId: A, before: -9000, after: -6000 },
