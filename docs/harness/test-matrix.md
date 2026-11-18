@@ -47,10 +47,10 @@ gaps here when it lands.
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
 | **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows, macos | nightly + manual; never on PRs |
 | **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, the `G:` cases of `test/bridge-cli-run-flags.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
-| **T** | UX screenshot tour (`app/test/e2e/ux-tour.spec.ts`, `SIANN_UX_TOUR=1`) against the core-only `siann-engine`, one run per `SIANN_UX_LOCALE` (en, zh-Hant, zh-Hans); PNGs and `index.json` notes uploaded as `ux-tour-<locale>` | `nightly.yml` `tour` job | ubuntu (xvfb) | nightly + manual (`workflow_dispatch`); never on PRs; a state that fails to render fails the job |
-| **Fn** | The fidelity gate of F (`mockup-fidelity.spec.ts`, `SIANN_FIDELITY=1`, `--project fidelity`), report uploaded as `fidelity-<os>`; the manifest alone decides what fails, no step tolerates a failure | `nightly.yml` `fidelity` job | ubuntu (xvfb), windows | nightly + manual |
-| **A** | Native suite under Clang 20 ASAN + UBSAN (`-DSIANN_ASAN_UBSAN=ON`, `-fno-sanitize-recover=undefined`, `ASAN_OPTIONS` and `UBSAN_OPTIONS` with `halt_on_error=1`), the whole ctest; suppressions only in `native/sanitizers/` with reasons (none needed) | `nightly.yml` `asan-ubsan` job | ubuntu only (Clang) | nightly + manual |
-| **Z** | Fuzzing (`native/fuzz/`): libFuzzer targets `siann_fuzz_protocol_ws`, `siann_fuzz_mcp_http`, `siann_fuzz_command_json` (`-DSIANN_FUZZ=ON`), 300 s each from `native/fuzz/corpus/<target>/`, findings uploaded; the same harnesses as the seeded `fuzz_smoke_test` ctest in N | `nightly.yml` `fuzz` job (libFuzzer); `native` job (smoke) | libFuzzer: ubuntu; smoke: ubuntu, windows, macos | libFuzzer: nightly + manual; smoke: as N |
+| **T** | UX screenshot tour (`app/test/e2e/ux-tour.spec.ts`, `SIANN_UX_TOUR=1`) against the core-only `siann-engine` and `siann-cli`, one run per `SIANN_UX_LOCALE` (en, zh-Hant, zh-Hans); PNGs and `index.json` notes uploaded as `tour-<os>-<locale>`; then `scripts/check-tour-output.js` (an `index.json` per locale, every listed PNG there and not empty, the same states in every locale; `test/tour-output.test.js` in B) | `nightly.yml` `tour` job | ubuntu (xvfb, `fonts-noto-cjk`), windows | nightly + manual (`workflow_dispatch`); never on PRs; a state that fails to render fails the job |
+| **Fn** | The fidelity run of F (`mockup-fidelity.spec.ts`, `SIANN_FIDELITY=1`, `--project fidelity`) in the tour job, before the CJK fonts are installed so the measurement is the app job's; `continue-on-error`, report uploaded as `fidelity-<os>`, no threshold of its own | `nightly.yml` `tour` job | ubuntu (xvfb), windows | nightly + manual; a report, never failing the job |
+| **A** | Native suite under Clang 20 ASAN + UBSAN (`-DSIANN_ASAN_UBSAN=ON`, `-fno-sanitize-recover=undefined`, `ASAN_OPTIONS` and `UBSAN_OPTIONS` with `halt_on_error=1`), the whole ctest; `ASAN_OPTIONS`, `UBSAN_OPTIONS` and `LSAN_OPTIONS` pass `native/tools/sanitizer-suppressions/` (`asan.supp`, `ubsan.supp`, `lsan.supp`), comments only so far, every suppression with its reason (`test/native-quality-options.test.js`) | `nightly.yml` `asan-ubsan` job | ubuntu only (Clang) | nightly + manual |
+| **Z** | Fuzzing (`native/fuzz/`): libFuzzer targets `siann_fuzz_protocol_frame`, `siann_fuzz_ws_request`, `siann_fuzz_meter_frame`, `siann_fuzz_loudness_frame`, `siann_fuzz_mcp_http`, `siann_fuzz_command_json` (`-DSIANN_FUZZ=ON`), 180 s each from `native/fuzz/corpus/<target>/`, `crash-*`, `leak-*`, `timeout-*` and `oom-*` uploaded; the same harnesses as the seeded `fuzz_smoke_test` ctest in N and R | `nightly.yml` `fuzz` job (libFuzzer); `native` and `rtsan` jobs (smoke) | libFuzzer: ubuntu; smoke: ubuntu, windows, macos | libFuzzer: nightly + manual; smoke: as N |
 | **C** | Native coverage, Clang source-based (`-DSIANN_COVERAGE=ON`, `LLVM_PROFILE_FILE=%p-%m.profraw`, `llvm-profdata merge`, `llvm-cov show -format=html` and `llvm-cov report`, `_deps` and tests ignored), HTML uploaded as `native-coverage`, summary in the job summary; report only | `nightly.yml` `coverage` job | ubuntu only | nightly + manual |
 | **Pf** | Performance scenario (`app/test/e2e/perf.spec.ts`, `SIANN_PERF=1`): 64 tracks, 2,000 clips playing on the fake device with meters; frame work median and p99 from the renderer's frame marks, JS heap, cold start; `perf-report.json` against UI redesign 5.6, uploaded as `perf-report`; report only (fails on a crash or a missing measurement) | `nightly.yml` `perf` job | ubuntu (xvfb) | nightly + manual |
 | **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, human gates) | maintainer's machines | never | see 3.2 |
@@ -613,27 +613,29 @@ tour (29 and 30, the top bar of every state).
 
 | Feature | N | U | E | B | Nightly | Platforms | Gaps |
 |---|---|---|---|---|---|---|---|
-| m5b-nightly-quality | Y (`fuzz_smoke_test`: splitmix64 vectors, deterministic mutations, every corpus file then about 2,000 seeded inputs per target, the server answering afterwards) | Y (`perf-report`: median, p99, the 5.6 budgets, missing measurements; `frame-marks`: per-frame sums, only under the test hook) | `perf.spec` (Pf, `SIANN_PERF=1`) | Y (`ci-workflow` nightly jobs and the app job's coverage step; `ci-long-tests` macOS; `check-all-changed` playback, graph, realtime; `test-matrix`; `native-sanitizers`; `script-invocation` g++ reaches `native/fuzz`) | T, Fn, A, Z, C, Pf (`nightly.yml`), L on macos | smoke: 3; nightly: ubuntu (Fn also windows) | - |
+| m5b-nightly-quality | Y (`fuzz_smoke_test`: splitmix64 vectors, deterministic mutations, per target every committed seed, the empty input and about 2,000 seeded inputs, the server answering afterwards, the decoders' seeds decoding) | Y (`perf-report`: median, p99, the 5.6 budgets, `{value, budget, withinBudget}`, `assertComplete`; `frame-marks`: `siann.frame` per frame, only under the test hook, in the four draw paths) | `perf.spec` (Pf, `SIANN_PERF=1`) | Y (`ci-workflow` nightly jobs, the app job's coverage step, long-tests on macos; `ci-long-tests` macOS; `check-all-changed` playback, graph, realtime; `test-matrix`; `native-quality-options`; `tour-output`; `script-invocation` g++ reaches `native/fuzz`) | T, Fn, A, Z, C, Pf (`nightly.yml`), L on macos | smoke: 3; nightly: ubuntu (T and Fn also windows) | - |
 
-Per acceptance item (`m5b-nightly-quality`): 1 `ci-workflow` "nightly tour: ...",
-"nightly fidelity: ...", "the nightly workflow runs on a schedule and by hand
-only ..." and the dispatched run's `ux-tour-<locale>` and `fidelity-<os>`
-artifacts; 2 `native-sanitizers` (SIANN_ASAN_UBSAN beside SIANN_RTSAN, before the
-first target, Clang only and not with RTSan, suppressions with reasons) and
-`ci-workflow` "nightly asan-ubsan: ..."; its first local run (Clang 20.1.8, WSL)
-found two defects, fixed here: `Sha256::update` passed a null pointer to
-`memcpy` for an empty span (UBSAN, the RFC 6962 empty leaf in `merkle_test`),
-and `plan_test` "Plan entity sets accept bus and send refs" read a revision
-through a reference the rollback had moved (ASAN); then all 1,131 ctest tests
-passed under ASAN + UBSAN; 3 `fuzz_smoke_test` (ctest, three OSes), `native-sanitizers`
-(corpora, targets) and `ci-workflow` "nightly fuzz: ..."; 4 `ci-workflow`
-"nightly coverage: ..." and "the app job prints the unit test coverage ..."; 5
-`check-all-changed` "native/libs/playback runs ...", "native/libs/graph runs
-...", "native/libs/realtime runs ..." and `ci-long-tests` "the long tests run on
-ubuntu, windows and macos"; 6 app unit `perf-report` and `frame-marks`,
-`perf.spec.ts` in the nightly run; 7 `ci-workflow` "no nightly job blocks a pull
-request ..." and `test-matrix` (section 1 rows, 3.1, the gaps, section 7, this
-row, the tour's 3.2 row). Tour states changed: none.
+Per acceptance item (`m5b-nightly-quality`): 1 `ci-workflow` "nightly tour:
+ux-tour.spec.ts in en, zh-Hant and zh-Hans ...", "nightly tour: the fidelity
+report on the same runners ...", "the nightly workflow runs on a schedule and
+by hand only ...", `tour-output` and the dispatched run's `tour-<os>-<locale>`
+and `fidelity-<os>` artifacts; 2 `native-quality-options` (SIANN_ASAN_UBSAN
+beside SIANN_RTSAN, before the first target, Clang only and not with RTSan, the
+suppression files with reasons) and `ci-workflow` "nightly asan-ubsan: ...";
+its first local run (Clang 20.1.8, WSL) found two defects, fixed here:
+`Sha256::update` passed a null pointer to `memcpy` for an empty span (UBSAN,
+the RFC 6962 empty leaf in `merkle_test`), and `plan_test` "Plan entity sets
+accept bus and send refs" read a revision through a reference the rollback had
+moved (ASAN); 3 `fuzz_smoke_test` (ctest, three OSes), `native-quality-options`
+(the targets of the CMake, one per harness function, and their corpora) and
+`ci-workflow` "nightly fuzz: ..."; 4 `ci-workflow` "nightly coverage: ..." and
+"the app job prints the unit test coverage ..."; 5 `check-all-changed`
+"playback runs the desktop preset ...", "graph runs ...", "realtime runs ...",
+"the package step keeps the native paths it had ..." and `ci-long-tests` "the
+long tests run on ubuntu, windows and macos"; 6 app unit `perf-report` and
+`frame-marks`, `perf.spec.ts` in the nightly run; 7 `ci-workflow` "no nightly
+job blocks a pull request ..." and `test-matrix` (section 1 rows, 3.1, the gaps,
+section 7, this row, the tour's 3.2 row). Tour states changed: none.
 
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
@@ -720,7 +722,7 @@ onto session.create, media.import, plans, session.save and render.start.
 | "the maintainer's CLAP opens its editor" (Surge XT) | `SIANN_TEST_CLAP` | maintainer, at M5 exit |
 | `juce_device_test` `[hardware]` cases | an output device (SKIP on runners) | maintainer's bench, M2 exit |
 | `node scripts/pluginval.js --compat` | one env var per plugin in `scripts/compat-plugins.json` | maintainer, M4 exit, before a JUCE pin move |
-| `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | **nightly in CI, three locales** (layer T: the `tour` job of `nightly.yml` runs it for en, zh-Hant and zh-Hans and uploads `ux-tour-<locale>`); the feature's build agent still attaches the states it changed (or dispatches the workflow on its branch), and the maintainer reviews at the `ux-review` gate |
+| `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | **nightly in CI, three locales** (layer T: the `tour` job of `nightly.yml` runs it for en, zh-Hant and zh-Hans on windows and ubuntu and uploads `tour-<os>-<locale>`); the feature's build agent still attaches the states it changed (or dispatches the workflow on its branch), and the maintainer reviews at the `ux-review` gate |
 | `perf.spec.ts` (Pf; UI redesign 5.6) | `SIANN_PERF=1` (and `testIgnore`) | **nightly in CI** (the `perf` job of `nightly.yml`, ubuntu, `perf-report.json` uploaded); report only. Locally the runbook's command ("Nightly quality jobs"); a change to the timeline or meter draw paths dispatches the workflow on its branch |
 | `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), as a report that never fails the job (decided by the maintainer, 2026-11-17), so it is run and uploaded on every such PR, not left to a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `mockup-fidelity.spec.ts` "the mockup's measurement (<locale>)" (F on the mockup alone) | `SIANN_FIDELITY_MOCKUP_ONLY=1` with `SIANN_FIDELITY=1` and `SIANN_FIDELITY_MOCKUP_ROOT` (set by `scripts/fidelity-mockup-compare.js`); with the flag set the spec's app gate test skips, without it this test skips | **Not in CI**: it measures a worktree of the base commit, which the CI checkout does not have. The implementer of a change to `tokens.css`, `app/renderer/ui/*.css` or the mockup's script runs `node scripts/fidelity-mockup-compare.js` before the PR (first `m5-ui-tokens-spacing`) and attaches the result; the reviewer checks it at review |
@@ -736,7 +738,7 @@ onto session.create, media.import, plans, session.save and render.start.
 A pull request runs only the jobs its paths need (`stepsForPath` in
 `scripts/check-all.js`). Consequences: a change in `native/libs/playback`,
 `native/libs/graph` or `native/libs/realtime` runs N, R **and D** (the JUCE
-build) and the installer's job since `m5b-nightly-quality` (gap 7 closed); a
+build) since `m5b-nightly-quality` (gap 7 closed), not the installer's job; a
 change in another core library (`model`, `session`, `command`, ...) runs N and
 R only; a change in `native/` never runs the app e2e against the new engine
 until main. The nightly schedule of `ci.yml` (18:30 UTC) runs everything;
@@ -835,7 +837,8 @@ Playwright, which is not measured. The `bin/siann.js` branch figure, 42 % before
 | 8 | macOS-specific behaviour manual only (editor float/level, `m0-macos-bundle`, AU third-party) | Medium | an XCTest-free check in the desktop job: window level of an open editor via `CGWindowListCopyWindowInfo`; bundle `Info.plist` assertions once m0-macos-bundle is built | M0 / M5 exit |
 | 11 | `read-model-sequence.json` never checked against the engine | Low-medium | native test that replays the sequence's commands and compares the emitted events | M5 follow-up |
 | 13 | m4-crash-recovery 3, m4-engine-device 3: ordering / link not asserted | Low | ctest: `siann-engine --print-error-mode` (test-only flag) before any plugin; CMake check that `siann_engine_*_tests` link `siann_rt_alloc_guard` | M4 follow-up |
-| 14 | No TSAN build; no fuzz target for the WAV and media readers (left by `m5b-nightly-quality`, which fuzzes the protocol input and command JSON) | Low-medium: data races in the command/protocol thread handoff; a hostile media file | a nightly `-fsanitize=thread` job over the protocol and realtime suites; a libFuzzer target over `media::` decoding beside `native/fuzz/` | M7 hardening |
+| 14 | No TSAN build | Low-medium: data races in the command/protocol thread handoff | a nightly `-fsanitize=thread` job over the protocol and realtime suites | M7 hardening |
+| 15 | The media decoders (the WAV and FLAC readers of `native/libs/media`) are not fuzzed: gap 6 named them, `m5b-nightly-quality` fuzzes the protocol input and command JSON | Low: a hostile media file reaches them only through an import the user asked for | a libFuzzer target and a seeded smoke case over `media::` decoding beside `native/fuzz/`, seeded from `fixtures/` WAV and FLAC files | M7 hardening |
 
 ## 7. CI changes
 

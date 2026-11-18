@@ -73,31 +73,38 @@ Run it in the logged-in Aqua session (Screen Sharing or the Mac's own terminal, 
 
 ### CI
 
-`.github/workflows/ci.yml` starts with a `changes` job that runs `check-all --changed --plan` on the pull request's diff and gates the other jobs: docs-only pull requests run the Node job alone; `native/` changes run the native and RTSan jobs (and desktop and package for the paths above, which include `native/libs/playback`, `native/libs/graph` and `native/libs/realtime`); `app/` runs the app job and the desktop job, which holds app's editor e2e; what goes into the Windows installer (the `package` step's paths) runs the `package` job, which also uploads the installer and its SHA-256. Pushes to main, the nightly schedule and manual runs (`workflow_dispatch`) run everything. The native, RTSan, desktop and app jobs keep a compiler cache in `actions/cache` (ccache on Linux and macOS, a pinned sccache on Windows, which builds with Ninja in the MSVC environment). The `CI ok` job passes when every job passed or was skipped for its paths: it is the check to require for merging, as skipped matrix jobs never report their per-OS names.
+`.github/workflows/ci.yml` starts with a `changes` job that runs `check-all --changed --plan` on the pull request's diff and gates the other jobs: docs-only pull requests run the Node job alone; `native/` changes run the native and RTSan jobs (and desktop and package for the paths above; `native/libs/playback`, `native/libs/graph` and `native/libs/realtime` run desktop without package); `app/` runs the app job and the desktop job, which holds app's editor e2e; what goes into the Windows installer (the `package` step's paths) runs the `package` job, which also uploads the installer and its SHA-256. Pushes to main, the nightly schedule and manual runs (`workflow_dispatch`) run everything. The native, RTSan, desktop and app jobs keep a compiler cache in `actions/cache` (ccache on Linux and macOS, a pinned sccache on Windows, which builds with Ninja in the MSVC environment). The `CI ok` job passes when every job passed or was skipped for its paths: it is the check to require for merging, as skipped matrix jobs never report their per-OS names.
 
 ### Nightly quality jobs
 
 `.github/workflows/nightly.yml` runs on a schedule and by hand (`gh workflow run nightly.yml --ref <branch>`), never on pull requests, and none of its jobs is in `CI ok`. `long-tests.yml` runs the `[long]` tests on ubuntu, windows and macos the same way. Each job locally (Linux or WSL with Clang 20 from apt.llvm.org for the native ones; the app ones need `npm run build` in `app/` and `SIANN_ENGINE_EXE`, `SIANN_CLI_EXE` as for the other e2e specs):
 
 ```sh
-# tour, per locale (en | zh-Hant | zh-Hans): PNGs and index.json in the directory
-cd app && SIANN_UX_TOUR=1 SIANN_UX_LOCALE=zh-Hant SIANN_UX_OUT=/tmp/tour-zh-Hant npx playwright test ux-tour
-# fidelity gate
+# fidelity report (run it before installing CJK fonts on Linux, as the job does)
 cd app && SIANN_FIDELITY=1 SIANN_FIDELITY_OUT=/tmp/fidelity npx playwright test --project fidelity
+# tour, once per locale (en, zh-Hant, zh-Hans) into one root, then the output check
+cd app && for l in en zh-Hant zh-Hans; do SIANN_UX_TOUR=1 SIANN_UX_LOCALE=$l SIANN_UX_OUT=/tmp/tour npx playwright test ux-tour; done
+node scripts/check-tour-output.js /tmp/tour
 # performance scenario (report only): perf-report.json in the directory
 cd app && SIANN_PERF=1 SIANN_PERF_OUT=/tmp/perf npx playwright test perf
 # ASAN + UBSAN over the whole ctest suite
 cmake -S native -B native/build/asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_ASAN_UBSAN=ON
-cmake --build native/build/asan && ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ctest --test-dir native/build/asan --output-on-failure
-# libFuzzer targets (siann_fuzz_protocol_ws, siann_fuzz_mcp_http, siann_fuzz_command_json)
+S=$PWD/native/tools/sanitizer-suppressions
+cmake --build native/build/asan && ASAN_OPTIONS=halt_on_error=1:suppressions=$S/asan.supp UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:suppressions=$S/ubsan.supp LSAN_OPTIONS=suppressions=$S/lsan.supp ctest --test-dir native/build/asan --output-on-failure
+# libFuzzer targets: siann_fuzz_<target> for protocol_frame, ws_request, meter_frame,
+# loudness_frame, mcp_http and command_json, each from native/fuzz/corpus/<target>/
+# (regenerated from the fixtures by node scripts/generate-fuzz-corpus.js)
 cmake -S native -B native/build/fuzz -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_FUZZ=ON -DSIANN_BUILD_TESTS=OFF
 cmake --build native/build/fuzz && native/build/fuzz/fuzz/siann_fuzz_command_json -max_total_time=60 native/fuzz/corpus/command_json
 # native coverage: HTML in native/build/coverage/html
 cmake -S native -B native/build/coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-20 -DSIANN_COVERAGE=ON
-cmake --build native/build/coverage && LLVM_PROFILE_FILE="$PWD/native/build/coverage/prof/%p.profraw" ctest --test-dir native/build/coverage
+cmake --build native/build/coverage && LLVM_PROFILE_FILE="$PWD/native/build/coverage/profiles/%p-%m.profraw" ctest --test-dir native/build/coverage
+# then llvm-profdata-20 merge and llvm-cov-20 show / report as the coverage job does
+# app unit coverage, as the app job prints it
+cd app && npm run build && node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js
 ```
 
-A fuzz finding is fixed with its input added to `native/fuzz/corpus/<target>/` (the smoke test then replays it on every OS), or filed as an issue when the fix is large. A sanitizer suppression goes in `native/sanitizers/` with its reason in a comment on the line above it.
+A fuzz finding is fixed with its input added to `native/fuzz/corpus/<target>/` (the smoke test then replays it on every OS), or filed as an issue when the fix is large. A sanitizer suppression goes in `native/tools/sanitizer-suppressions/` (`asan.supp`, `ubsan.supp`, `lsan.supp`) with its reason in a comment on the line above it.
 
 ## Recommended order
 

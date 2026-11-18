@@ -4118,58 +4118,79 @@ Not used: Taskflow (allocates at runtime).
   ubuntu-latest, windows-latest and macos-latest. M2's 10-minute recording and
   kill test is the first.
 - The pull request path lists of `stepsForPath` send `native/libs/playback`,
-  `native/libs/graph` and `native/libs/realtime` to the desktop (JUCE) and
-  package steps as well as native and gcc: the desktop engine links them, so a
-  JUCE-only regression there fails the pull request instead of the next push to
-  main (m5b-nightly-quality).
+  `native/libs/graph` and `native/libs/realtime` to the desktop (JUCE) step as
+  well as native and gcc: the desktop engine links them, so a JUCE-only
+  regression there fails the pull request instead of the next push to main
+  (m5b-nightly-quality). These three do not join the package paths: the
+  installer's step keeps its own list (`PACKAGE_NATIVE_PATHS`: the host
+  libraries, `native/apps/engine` and the build files).
 - A nightly workflow, `.github/workflows/nightly.yml` (m5b-nightly-quality),
   runs what is too slow for a pull request. It triggers on a schedule and on
   `workflow_dispatch` only, never on pull requests or pushes, and none of its
-  jobs is in `CI ok`, so it cannot block a pull request. Its jobs:
-  - `tour`: `app/test/e2e/ux-tour.spec.ts` with `SIANN_UX_TOUR=1` for each of
-    `SIANN_UX_LOCALE=en`, `zh-Hant` and `zh-Hans` against the core-only
-    `siann-engine` on ubuntu (xvfb), each locale's PNGs and `index.json` notes
-    uploaded as `ux-tour-<locale>`; a state that fails to render fails the job.
-  - `fidelity`: the mockup fidelity gate (`mockup-fidelity.spec.ts`,
-    `SIANN_FIDELITY=1`, `--project fidelity`) on ubuntu and windows, its report
-    uploaded as `fidelity-<os>`. No `continue-on-error` and no threshold of its
-    own: `app/test/fidelity/manifest.json` decides (a gate in report mode
-    never fails, an enforced mismatch does).
+  jobs is in `CI ok`, so it cannot block a pull request. It reads no secret
+  (`permissions: contents: read`) and uses GitHub's own actions only. Its jobs:
+  - `tour`, on windows-latest and ubuntu-latest (xvfb): first the mockup
+    fidelity report as the app job runs it on pull requests
+    (`mockup-fidelity.spec.ts`, `SIANN_FIDELITY=1`, `--project fidelity`,
+    `continue-on-error`, its report uploaded as `fidelity-<os>`, no threshold
+    of its own: every gate of `app/test/fidelity/manifest.json` is `report` or
+    `pending`); then, on Linux, the CJK fonts (`fonts-noto-cjk`), installed
+    after the fidelity run so its measurement matches the app job's; then
+    `app/test/e2e/ux-tour.spec.ts` with `SIANN_UX_TOUR=1` once per
+    `SIANN_UX_LOCALE` (`en`, `zh-Hant`, `zh-Hans`) against the core-only
+    `siann-engine` and `siann-cli`, each locale's PNGs and `index.json` notes
+    uploaded as `tour-<os>-<locale>`. A state that fails to render fails the
+    job, and `scripts/check-tour-output.js` fails it when a locale has no
+    `index.json`, a listed PNG is missing or empty, or the locales captured
+    different states.
   - `asan-ubsan`: Clang 20 (apt.llvm.org), the core built with
     `-DSIANN_ASAN_UBSAN=ON` (`-fsanitize=address,undefined
     -fno-sanitize-recover=undefined` on every target, third-party code
     included, as `SIANN_RTSAN` does; Clang only, and not together with
     `SIANN_RTSAN`), the whole ctest suite with `ASAN_OPTIONS` and
-    `UBSAN_OPTIONS` carrying `halt_on_error=1`. A suppression, if one is ever
-    needed, lives in `native/sanitizers/` with its reason on the line above it.
-  - `fuzz`: `-DSIANN_FUZZ=ON` (Clang only) builds the libFuzzer targets
-    `siann_fuzz_protocol_ws` (the WebSocket request path after the upgrade and
-    token handshake, one frame and a delimited sequence of frames, and the
-    meter frame decoder), `siann_fuzz_mcp_http` (the `POST /v0/mcp` body) and
-    `siann_fuzz_command_json` (command and plan JSON parsed and validated)
-    with `-fsanitize=fuzzer,address,undefined`; each runs for a fixed
-    `-max_total_time` from its committed corpus, `native/fuzz/corpus/<target>/`,
-    and any `crash-*`, `timeout-*` or `oom-*` input is uploaded. The same
-    harness functions (`native/fuzz/`) run on every OS in the native job as
-    `fuzz_smoke_test`: every corpus file, then a bounded count of inputs from
-    fixed seeds through a hand-written PRNG (splitmix64), so the inputs are the
-    same under MSVC, GCC and Clang.
+    `UBSAN_OPTIONS` carrying `halt_on_error=1`. `ASAN_OPTIONS`,
+    `UBSAN_OPTIONS` and `LSAN_OPTIONS` pass the suppression files of
+    `native/tools/sanitizer-suppressions/` (`asan.supp`, `ubsan.supp`,
+    `lsan.supp`), which hold comments only: a suppression is for third-party
+    code and carries its reason on the comment line above it.
+  - `fuzz`: `-DSIANN_FUZZ=ON` (Clang only) builds one libFuzzer executable per
+    harness function of `native/fuzz/` with
+    `-fsanitize=fuzzer,address,undefined`: `siann_fuzz_protocol_frame` (the
+    protocol server's handling of one text frame, as the auth frame and on an
+    authenticated connection, over the in-memory transport),
+    `siann_fuzz_ws_request` (a sequence of JSON requests over the WebSocket),
+    `siann_fuzz_meter_frame` and `siann_fuzz_loudness_frame` (the binary frame
+    decoders of `realtime_channel.hpp`), `siann_fuzz_mcp_http` (the
+    `POST /v0/mcp` body through the adapter) and `siann_fuzz_command_json`
+    (command and plan JSON parsed and validated). Each runs for the same fixed
+    `-max_total_time` from its committed corpus, `native/fuzz/corpus/<target>/`
+    (generated from the protocol fixtures and the plan fixtures by
+    `scripts/generate-fuzz-corpus.js`), and any `crash-*`, `leak-*`,
+    `timeout-*` or `oom-*` input is uploaded. The same harness functions run in
+    every build as the ctest `fuzz_smoke_test`, so in the native job on three
+    OSes and in the RTSan job: every committed seed file, then a bounded count
+    of inputs from fixed seeds through a hand-written PRNG (splitmix64), so the
+    inputs are the same under MSVC, GCC and Clang.
   - `coverage`: `-DSIANN_COVERAGE=ON` (Clang `-fprofile-instr-generate
     -fcoverage-mapping`), ctest with `LLVM_PROFILE_FILE` per process (`%p`),
     `llvm-profdata merge`, then `llvm-cov show -format=html` and `llvm-cov
-    report` ignoring `_deps` and the tests; the HTML is uploaded and the
-    summary goes to the job summary. Report only, no threshold. The app job of
-    `ci.yml` prints the app's unit test coverage
-    (`--experimental-test-coverage`) in its job summary the same way.
+    report` with `--ignore-filename-regex` for `_deps` and the tests; the HTML
+    is uploaded as `native-coverage` and the summary goes to the job summary.
+    Report only, no threshold. The app job of `ci.yml` prints the app's unit
+    test coverage (`node --test --experimental-test-coverage`) in its job
+    summary the same way.
   - `perf`: `app/test/e2e/perf.spec.ts` with `SIANN_PERF=1`: a generated
-    64-track, 2,000-clip session playing on the fake device with meters
-    running; main-thread work per frame (median and 99th percentile, from the
-    renderer's `performance.measure` frame marks, which exist only under
-    `SIANN_SHELL_TEST=1`), the JS heap (`performance.memory`) and cold start
-    from engine ready to the first painted session, written to
-    `perf-report.json` against the budgets of UI redesign 5.6 and uploaded.
-    Report only at first: it fails on a crash or a missing measurement, never
-    on a budget.
+    64-track, 2,000-clip session (one plan, synthetic audio in a scratch
+    directory) playing on the fake device with meters running; main-thread
+    work per frame (median and 99th percentile, from the renderer's
+    `performance.measure('siann.frame')` marks around the work of the
+    animation-frame callbacks of the event display, the MixConsole meters, the
+    track list's meters and the transport display, which exist only under the
+    test hook, `window.siannTest`, so production pays nothing), the JS heap
+    (`performance.memory`) and cold start from the engine's ready line to the
+    first painted session, written to `perf-report.json` against the budgets
+    of UI redesign 5.6 and uploaded. Report only at first: it fails on a crash
+    or a missing measurement, never on a budget.
 
 Test layers:
 
@@ -4182,7 +4203,7 @@ Test layers:
 | Stress | fake device driving callbacks at small buffers; deadline-miss counting; rapid graph swaps; queue overflow; device hot-unplug; disk full; sample-rate mismatch |
 | PDC | null tests across direct, send, aux, sidechain; latency change during playback |
 | Parity | offline vs realtime null test (through the same SRC when SRC is active); single vs multi-thread bit-identical (when threading exists) |
-| Fuzz | command JSON and protocol messages (WebSocket frames, the MCP HTTP body): libFuzzer nightly, a seeded smoke run in every native job |
+| Fuzz | protocol input and command JSON: `siann_fuzz_protocol_frame`, `siann_fuzz_ws_request`, `siann_fuzz_meter_frame`, `siann_fuzz_loudness_frame`, `siann_fuzz_mcp_http`, `siann_fuzz_command_json` (libFuzzer nightly); the same harnesses as the seeded `fuzz_smoke_test` ctest in every native build. The media decoders (WAV, FLAC) are not fuzzed yet |
 | Plugin (L3) | a built-in hostile test plugin (`siann_hostile_plugin`: allocates, throws, changes latency, sleeps, calls back into the host, crashes on a parameter; outcomes under "siann-host: two targets, one interface", Hostile test plugin) plus pluginval-checked real plugins (VST3 and AU at strictness 5; pluginval is JUCE-based and checks no CLAP; `siann_test_plugin` in CI, the compatibility set on maintainer runs) |
 | Recovery | kill the engine at random points during recording and editing; verify recovery criteria |
 | L4 manual | DAWproject into Cubase / Studio One / Bitwig; recorded per release |
