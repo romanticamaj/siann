@@ -422,7 +422,6 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
   // The part, its sides, and whether a value is set again per Chinese locale.
   const holds = {
     composer: [['h'], false],
-    'tab-meter': [['w'], true],
   };
   for (const [part, [sides, perLocale]] of Object.entries(holds)) {
     assert.equal(MANIFEST.gates[ruleOf(part).gate], 'pending', `${part} is pending`);
@@ -448,7 +447,6 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
     'transport-record': ['w', 'h'],
-    'dsp-load': ['w'],
     'zone-button-channel': ['w', 'h'],
   };
   for (const [part, sides] of Object.entries(holds)) {
@@ -821,9 +819,42 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
     return '';
   };
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
-  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
+  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-transport-record, \.dsp, \.dsp-load-empty \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
+});
+
+// ---- m5b-ui-meter (UR-14; UI redesign 3.0, 10.7 5, 10.11): the DSP load, the
+// master's loudness and the Meter tab landed. Their gate is report; the hold
+// tokens of dsp-load and tab-meter are gone, and the empty boxes of an engine
+// without features.load or features.loudness take the same values from two
+// permanent tokens (tab-meter per locale), applied by shell.css only.
+
+test('m5b-ui-meter landed: its gate is report, its holds are gone, and two permanent empty-width tokens keep their values', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-meter'], 'report');
+  for (const id of ['dsp-load', 'strip-master-loudness', 'tab-meter']) assert.equal(ruleOf(id).gate, 'm5b-ui-meter', id);
+  // Dynamic content, masked in layer 3 as meter levels are.
+  for (const id of ['dsp-load', 'strip-master-loudness']) assert.ok(MANIFEST.pixels.dynamic.includes(id), id);
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  assert.doesNotMatch(tokens, /--hold-dsp-load-w|--hold-tab-meter-w/);
+  assert.doesNotMatch(shell, /hold-dsp-load|hold-tab-meter/);
+  const values = (name) => [...tokens.matchAll(new RegExp(`--${name}:\\s*([^;]+);`, 'g'))].map((m) => m[1].trim());
+  // The values the hold tokens carried (the mockup's measured boxes).
+  assert.deepEqual(values('dsp-load-empty-w'), ['calc(99.484px * var(--scale))']);
+  assert.deepEqual(values('tab-meter-empty-w'), ['calc(69.031px * var(--scale))', 'calc(70.688px * var(--scale))']);
+  // Set for :root, then again for zh-TW and zh-CN.
+  assert.match(tokens, /:root:lang\(zh-TW\), :root:lang\(zh-CN\) \{[^}]*--tab-meter-empty-w: calc\(70\.688px \* var\(--scale\)\);/);
+  // Applied by shell.css only, and hidden under 1300 px with the DSP load.
+  assert.match(shell, /\.dsp-load-empty \{[^}]*width: var\(--dsp-load-empty-w\);[^}]*height: var\(--icon-s\);[^}]*margin-right: var\(--space-half\);/);
+  assert.match(shell, /\.tab-meter-empty \{[^}]*width: var\(--tab-meter-empty-w\);[^}]*height: var\(--zone-head\);/);
+  const ui = fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui')).map((file) => read('app', 'renderer', 'ui', file)).join('\n');
+  assert.doesNotMatch(ui, /--dsp-load-empty-w|--tab-meter-empty-w/);
+  assert.doesNotMatch(MOCKUP, /dsp-load-empty|tab-meter-empty/);
+  // The Meter panel's rules are shell.css's, with class names of their own and existing tokens.
+  assert.match(shell, /\.meter-panel \{/);
+  assert.match(shell, /\.meter-panel \.meter \.ch \{ width: var\(--meter-master-w\); \}/);
+  assert.match(shell, /\.meter-panel \.meter \{[^}]*height: var\(--meter-scale-h\);/);
 });
 
 // ---- m5-ui-port-inspector (UI redesign 10.10, P1-14): the left zone ported from the mockup's template

@@ -32,6 +32,9 @@
 // window keeps of the old session: the track selection, and the timeline and
 // the Plans tab are mounted again, so their clip selection, zoom and plan
 // selection start afresh; a reconnect still clears the selections only.
+//
+// The Meter tab (m5b-ui-meter) is the right zone's second tab: its panel draws
+// the master from the MeterStore the mixer draws from, made here once.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -50,6 +53,7 @@ import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
 import type { ProjectController, SavedMark } from './model/project';
 import { studioSetupAvailable, type StudioSetupController } from './model/studio-setup';
+import { MeterStore } from './model/meter-store';
 import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
 import { pluginsListed } from './mixer/inserts';
@@ -65,6 +69,7 @@ import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
 import { Inspector } from './shell/Inspector';
+import { MeterPanel } from './shell/MeterPanel';
 import type { LayoutStore } from './shell/layout-store';
 import { Shell } from './shell/Shell';
 import { StartView } from './shell/StartView';
@@ -145,6 +150,7 @@ export function App({
     () => announceArrivals(plans, toasts, () => localeStore().getSnapshot(), () => capabilitySelector(client.getState().capabilities)),
     [plans, toasts, client],
   );
+  const [meterStore] = useState(() => new MeterStore(realtime));
   const [tracks, setTracks] = useState<TrackSelection>(NO_TRACKS);
   const order = () => client.model.getSnapshot()?.trackOrder ?? [];
   // A clip selected selects its track.
@@ -255,11 +261,12 @@ export function App({
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} meterStore={meterStore} />
             </Counted>
           }
           right={<PlanPanel key={epoch} client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
           rightMedia={<MediaTab key={epoch} client={client} media={media} />}
+          rightMeter={<MeterPanel client={client} realtime={realtime} store={meterStore} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
           startView={startView ? <StartView project={project} /> : null}
           studioSetup={<StudioSetup open={setupOpen} controller={studioSetup} engineStatus={engineStatus} sessionRate={sessionRate} onClose={closeSetup} />}

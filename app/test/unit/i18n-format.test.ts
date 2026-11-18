@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatDb, formatMilliDb, formatPan, formatPeakDb, formatSeconds } from '../../src/renderer/format';
+import { formatDb, formatLoadPercent, formatLufs, formatMilliDb, formatPan, formatPeakDb, formatSeconds, loadBarWidth } from '../../src/renderer/format';
 import { LOCALES } from '../../src/renderer/i18n/locale';
 import { catalogFor } from '../../src/renderer/i18n/t';
 import { formatBbt } from '../../src/renderer/timeline/musical-time';
@@ -90,4 +90,36 @@ test('formatPeakDb prints a linear peak in dBFS with one decimal', () => {
   assert.equal(formatPeakDb(0), '-inf');
   assert.equal(formatPeakDb(-1), '-inf');
   assert.equal(formatPeakDb(Number.NaN), '-inf');
+});
+
+// m5b-ui-meter (UR-14, acceptance 2): a loudness value is written as the peak
+// value beside it is: ASCII minus, one decimal, half away from zero, and
+// silence (minus infinity, or anything not finite) reads -inf.
+test('formatLufs prints LUFS with one decimal as formatPeakDb does, silence as -inf', () => {
+  assert.equal(formatLufs.length, 1);
+  assert.equal(formatLufs(-13.84), '-13.8');
+  assert.equal(formatLufs(-23), '-23.0');
+  assert.equal(formatLufs(-23.25), '-23.3', 'half away from zero');
+  assert.equal(formatLufs(-0.04), '0.0');
+  assert.equal(formatLufs(3.5), '+3.5');
+  assert.equal(formatLufs(-Infinity), '-inf');
+  assert.equal(formatLufs(Number.NaN), '-inf');
+  assert.equal(formatLufs(Infinity), '-inf');
+  // The same rounding as the peak value: -6.0206 dBFS reads -6.0 in both.
+  assert.equal(formatLufs(20 * Math.log10(0.5)), formatPeakDb(0.5));
+  for (const value of [-13.84, -23.25, 3.5]) assert.ok(!formatLufs(value).includes('−'), 'ASCII minus');
+});
+
+test('formatLoadPercent prints the DSP load as a whole percentage, the bar width is clamped to 100 %', () => {
+  assert.equal(formatLoadPercent(0.123), '12%');
+  assert.equal(formatLoadPercent(0), '0%');
+  assert.equal(formatLoadPercent(0.005), '1%');
+  assert.equal(formatLoadPercent(1.37), '137%', 'a load past the deadline is not clamped in the text');
+  assert.equal(formatLoadPercent(Number.NaN), '0%');
+  assert.equal(formatLoadPercent(-0.2), '0%');
+  assert.equal(loadBarWidth(0.123), '12.3%');
+  assert.equal(loadBarWidth(0), '0%');
+  assert.equal(loadBarWidth(1.37), '100%');
+  assert.equal(loadBarWidth(-1), '0%');
+  assert.equal(loadBarWidth(Number.NaN), '0%');
 });

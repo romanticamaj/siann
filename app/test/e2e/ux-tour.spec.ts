@@ -981,6 +981,26 @@ test('UX screenshot tour', async () => {
   // Discarded, so what follows is as before.
   await page.getByTestId('banner-discard').click();
   await expect(page.getByTestId('audition-banner')).toHaveCount(0);
+  // ---- 40 (m5b-ui-meter): the Meter tab while playing: the master's meters
+  // with peak hold, its peak value, momentary, short-term and integrated
+  // loudness and the reset; the top bar's DSP load and the master strip's LUFS-S.
+  await page.getByTestId('tab-right-meter').click();
+  await expect(page.getByTestId('meter-panel')).toBeVisible();
+  await page.getByTestId('transport-play').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('loudness-integrated')).toHaveText(/^[-+]?\d+\.\d$/, { timeout: 15_000 });
+  await expect(page.getByTestId('strip-master-lufs')).toHaveText(/^[-+]?\d+\.\d$/);
+  await expect(page.locator('[data-part="dsp-load"] .num')).toHaveText(/^\d+%$/);
+  await shoot(
+    page,
+    'Meter tab while playing',
+    `The right zone's Meter tab while the session plays (m5b-ui-meter): the master's two channel meters with their hold lines, the peak value (${await page.getByTestId('meter-panel-peak').textContent()}), momentary ${await page.getByTestId('loudness-momentary').textContent()}, short-term ${await page.getByTestId('loudness-short-term').textContent()} and integrated ${await page.getByTestId('loudness-integrated').textContent()} LUFS, and Reset for the integrated value; the master strip reads LUFS-S ${await page.getByTestId('strip-master-lufs').textContent()} and the top bar's DSP load ${await page.locator('[data-part="dsp-load"] .num').textContent()} (the fake device's load).`,
+    { number: 40 },
+  );
+  await page.getByTestId('transport-stop').click();
+  await expect(page.getByTestId('transport-play')).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('tab-right-plans').click();
+
   // ---- 41 (m5b-ui-plan-metadata): a titled plan with its intent, the agent
   // row connected. The tour's MCP client keeps its name (ux-tour).
   const titledClient = await agent();

@@ -48,6 +48,27 @@ export function formatPeakDb(linear: number): string {
   return oneDecimal(Math.sign(tenths) * Math.round(Math.abs(tenths)));
 }
 
+// A loudness in LUFS as the peak value beside it is written (m5b-ui-meter):
+// one decimal, half away from zero, ASCII minus; silence (minus infinity,
+// anything not finite) reads -inf. -13.84 -> -13.8.
+export function formatLufs(lufs: number): string {
+  if (!Number.isFinite(lufs)) return '-inf';
+  return oneDecimal(Math.sign(lufs) * Math.round(Math.abs(lufs) * 10));
+}
+
+// engine.status's load.average (a fraction of the device period) as the DSP
+// load's percentage: whole percents, not clamped (a load past the deadline
+// reads more than 100 %). 0.123 -> 12%.
+export function formatLoadPercent(fraction: number): string {
+  return `${fraction > 0 ? Math.round(fraction * 100) : 0}%`;
+}
+
+// The DSP load bar's width: the same fraction, clamped to the bar.
+export function loadBarWidth(fraction: number): string {
+  const clamped = fraction > 0 ? Math.min(1, fraction) : 0;
+  return `${Number((clamped * 100).toFixed(1))}%`;
+}
+
 // Pan is -10000 (hard left) to 10000 (hard right): L35 / C / R40.
 export function formatPan(pan: number): string {
   const percent = Math.round(Math.abs(pan) / 100);

@@ -537,3 +537,57 @@ test('the snap type menu and the repeat dialog fit in every locale at either win
   expect(failures).toEqual([]);
 });
 
+// m5b-ui-meter: the DSP load, the Meter tab, the master's loudness row and the
+// panel's controls (its head, the four readouts and Reset) fit on one line in
+// en, zh-TW, zh-CN and the pseudo-locale, at 1440 px and with the right zone
+// at its minimum width (the DSP load goes under 1300 px, spec 2.4).
+test('the DSP load, the Meter tab, the loudness row and the Meter panel fit in every locale', async () => {
+  test.setTimeout(120_000);
+  scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'siann-fit-meter-'));
+  const sessionDir = seedBundle(scratch, TRACKS);
+  app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
+  page = await app.firstWindow();
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await resize({ width: 1440, height: 900 });
+  if ((await page.getByTestId('zone-right').getAttribute('data-visible')) !== 'true') await page.getByTestId('plans-button').click();
+  await page.getByTestId('tab-right-meter').click();
+  await expect(page.getByTestId('meter-panel')).toBeVisible();
+  for (const id of ['dsp-load', 'strip-master-loudness', 'meter-reset-loudness', 'loudness-momentary', 'loudness-short-term', 'loudness-integrated']) await expect(page.getByTestId(id)).toBeVisible();
+  const separator = page.getByTestId('separator-right');
+  const SELECTORS = ['[data-part="dsp-load"]', '[data-part="tab-meter"]', '[data-part="tab-plans"]', '[data-part-of="loudness"]', '.meter-panel .z-head', '.meter-panel .readout', '[data-testid="meter-reset-loudness"]'];
+  const failures: string[] = [];
+  for (const locale of LOCALES) {
+    await page.evaluate((next) => {
+      const store = (window as unknown as { __siannLocale?: { setLocale(l: string): void } }).__siannLocale;
+      if (!store) throw new Error('window.__siannLocale is missing (SIANN_SHELL_TEST=1)');
+      store.setLocale(next);
+    }, locale);
+    await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
+    for (const edge of ['Enter', 'Home']) {
+      await separator.focus();
+      await page.keyboard.press(edge);
+      const report = await page.evaluate((selectors) => {
+        const out: string[] = [];
+        const zone = document.querySelector<HTMLElement>('[data-region="right-zone"]')!.getBoundingClientRect();
+        for (const selector of selectors) {
+          const all = [...document.querySelectorAll<HTMLElement>(selector)];
+          if (all.length === 0) out.push(`${selector} is missing`);
+          for (const el of all) {
+            if (el.scrollWidth > el.clientWidth) out.push(`${selector} "${(el.textContent ?? '').trim()}" ${el.scrollWidth} > ${el.clientWidth}`);
+            for (const node of el.childNodes) {
+              if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              const tops = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+              if (tops.size > 1) out.push(`${selector} "${node.textContent.trim()}" on ${tops.size} lines`);
+            }
+            if (el.closest('[data-region="right-zone"]') && el.getBoundingClientRect().right > zone.right + 0.5) out.push(`${selector} past the zone`);
+          }
+        }
+        return out;
+      }, SELECTORS);
+      for (const entry of report) failures.push(`${locale} ${edge === 'Home' ? 'minimum' : '1440'}: ${entry}`);
+    }
+  }
+  expect(failures).toEqual([]);
+});

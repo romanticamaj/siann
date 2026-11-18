@@ -6,7 +6,8 @@
 //
 //   aside.plans
 //     .p-head[right-tabs]   .tab.on[tab-plans] (spark), .tab[tab-media] (folder;
-//                           m5b-ui-media), the Meter tab's hold, .ab[hearing-switch] > svg + .seg > 2 .b
+//                           m5b-ui-media), .tab[tab-meter] (bars; m5b-ui-meter),
+//                           .ab[hearing-switch] > svg + .seg > 2 .b
 //     .agent[agent-row]     .av (spark) + span(b name, " · MCP") + .live(i + text)
 //     .p-scroll             .card[plan-card] > .card-h[plan-head] (.top[plan-meta]:
 //                           the badge, time and base, the hash; h3[plan-title]
@@ -53,7 +54,9 @@ const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.j
 const REDUCED = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-reduced.json'), 'utf8')) as Capabilities;
 
 // The parts of the right zone whose feature has not landed (manifest.json).
-const PENDING_PARTS = ['composer', 'tab-meter'];
+// The Media and Meter tabs landed with m5b-ui-media and m5b-ui-meter: the full
+// capabilities list media.import and features.loudness.
+const PENDING_PARTS = ['composer'];
 
 // The mockup's agent: connected, no tool call yet (lastAction null).
 const MOCKUP_AGENT: Agent = { id: 'agt_1', name: 'mix-assistant', transport: 'mcp', connected: true, lastAction: null, lastActionAt: null };
@@ -491,8 +494,8 @@ test("the Media tab is the mockup's span.tab with the folder icon and its label,
   assert.equal(textOf(tab), textOf(mock));
   assert.equal(textOf(tab), 'Media');
   assert.equal(textOf(find(mockRightZone('zh-TW'), (n) => partOf(n) === 'tab-media')!), '媒體');
-  // The Meter tab's hold follows it.
-  assert.deepEqual(head.children[2]!.classes, ['hold-tab-meter']);
+  // The Meter tab (m5b-ui-meter) follows it.
+  assert.equal(partOf(head.children[2]!), 'tab-meter');
 });
 
 test('a step that names a clip wraps its title in plan-step-N-title, as step() does', () => {
@@ -525,5 +528,5 @@ test('against capabilities without media.import the Media tab is absent and its 
   const head = find(zone, (n) => partOf(n) === 'right-tabs')!;
   assert.equal(partOf(head.children[0]!), 'tab-plans');
   assertEmptyBox(head.children[1], 'tab-media-empty');
-  assert.deepEqual(head.children[2]!.classes, ['hold-tab-meter'], "the Meter tab's box follows");
+  assert.deepEqual(head.children[2]!.classes, ['tab-meter-empty'], "the Meter tab's box follows (these capabilities have no features.loudness)");
 });
