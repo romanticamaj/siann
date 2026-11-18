@@ -3932,8 +3932,12 @@ MySong.siann/                    a directory
   Import and the drop exist only with the preload bridge (not in a plain
   browser tab) and only while the engine lists `media.import`; without it
   nothing of the Media tab is in the DOM and its box stays empty (UI redesign
-  3.0). The engine side, `media.import` (Jobs v0, import) and `session.create`
-  (Protocol v0 item 27), exists since m5b-engine-project-media.
+  3.0). While a proposal is heard the edit guard holds all of it (UI redesign
+  4.5 C5): a drop on the event display sends nothing and raises a toast with
+  the guard's reason, Import, a row's drag, rename and Remove are disabled with
+  that reason, and an import that began with main heard places no clip. The
+  engine side, `media.import` (Jobs v0, import) and `session.create` (Protocol
+  v0 item 27), exists since m5b-engine-project-media.
 - Projects and audio setup (m5b-ui-project; UI redesign UR-4): New
   (`session.create {path}` on a folder the shell's save dialog names), Open
   (`session.open {path}`), the last ten bundles and Save (`session.save`) are
