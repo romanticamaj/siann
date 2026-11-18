@@ -85,6 +85,12 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+      # m5b-bridge-cli-coverage: at least 70 % branch coverage of the CLI
+      # (bin/siann.js; test-matrix section 5). The CLI tests spawn it, and those
+      # runs count. Node 22.8+ only, so not in npm test (engines: Node 20).
+      - name: CLI branch coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test --experimental-test-coverage --test-coverage-include='bin/**' --test-coverage-branches=70 test/*.test.js
 
   native:
     name: Native core (${{ matrix.os }})
