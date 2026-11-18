@@ -46,6 +46,7 @@ class FakeClient implements RequestClient {
     lastSeq: null,
     syncCount: 0,
     connections: 0,
+    epoch: 0,
     error: null,
     legend: null,
     capabilities: null,

@@ -219,7 +219,7 @@ export interface PlanPanelProps {
 const NO_AGENTS = { subscribe: () => () => undefined, getSnapshot: () => null };
 const NO_REQUESTS = { subscribe: () => () => undefined, getSnapshot: () => null };
 
-export function PlanPanel({ client, plans, review, reconnects = 0, agents, commands, requests, selection }: PlanPanelProps) {
+export function PlanPanel({ client, plans, review, reconnects = 0, agents, commands, requests, selection: requestSelection }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
   const source = agents ?? NO_AGENTS;
   const subscribe = useMemo(() => (listener: () => void) => source.subscribe(listener), [source]);
@@ -228,7 +228,7 @@ export function PlanPanel({ client, plans, review, reconnects = 0, agents, comma
   const requestSource = requests ?? NO_REQUESTS;
   const subscribeRequests = useMemo(() => (listener: () => void) => requestSource.subscribe(listener), [requestSource]);
   const shownRequests = useSyncExternalStore(subscribeRequests, () => requestSource.getSnapshot());
-  const composer = useComposer(client, requests, agent, selection);
+  const composer = useComposer(client, requests, agent, requestSelection);
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
