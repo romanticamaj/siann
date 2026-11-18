@@ -291,6 +291,13 @@ export async function stageSession(app: ElectronApplication, page: Page, notes: 
   await expect(page.getByTestId('transport-cycle')).toHaveAttribute('aria-pressed', 'true');
   await engine.call('transport.locate', { frames: String(19 * RATE) });
   await expect.poll(async () => Math.round((await hook<number | null>(page, 'cursorX')) ?? -1)).toBe(Math.round((19 * RATE) / FRAMES_PER_PIXEL));
+  // The mockup's session is saved: Save (Ctrl+S, the renderer's session.save) clears the saved mark (m5b-ui-project).
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('ControlOrMeta+KeyS');
+  await expect
+    .poll(() => page.evaluate(() => window.__siannClient!.answered().filter((r) => r.method === 'session.save' && r.code === null).length))
+    .toBeGreaterThan(0);
+  await expect(page.getByTestId('session-name')).not.toHaveAttribute('data-unsaved', 'true');
   // Toasts are transient (the plan's arrival): dismissed, they are not chrome.
   await page.evaluate(() => {
     const toasts = (window as unknown as { __siannToasts?: { getSnapshot(): ReadonlyArray<{ id: number }>; dismiss(id: number): void } }).__siannToasts;
