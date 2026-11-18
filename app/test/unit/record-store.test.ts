@@ -39,7 +39,6 @@ import {
   nextMonitor,
   parseRecordState,
   recordGates,
-  type RecordState,
 } from '../../src/renderer/model/record';
 import { ProtocolError, SessionClient, type ClientState, type EventMessage } from '../../src/renderer/model/session-client';
 import { FakeScheduler, FakeSocket, settle, until, type Message } from './support/fakes';
@@ -100,7 +99,7 @@ function connect(engine: Engine, onEarlyEnd?: (takeId: string, endedBy: string) 
   return { client, store, sockets, socket: () => sockets[sockets.length - 1]!, scheduler };
 }
 
-const changed = (seq: number, state: Partial<RecordState> & Record<string, unknown>) => ({
+const changed = (seq: number, state: Record<string, unknown>) => ({
   schema: 'siann.event.v1',
   seq: String(BASE + seq),
   sessionId: SESSION,
@@ -244,8 +243,9 @@ function rig(options: { tracks?: TrackEntity[]; status?: EngineStatus | null; ca
     pendingTakes: parsePendingTakes(options.pending ?? []) ?? [],
   };
   const request = async (method: string, params: Record<string, unknown>) => {
-    sent.push({ method, params });
-    const result = options.answer?.(method, params) ?? {};
+    // The store's own engine.status reads are not the controller's requests.
+    if (method !== 'engine.status') sent.push({ method, params });
+    const result = method === 'engine.status' ? {} : (options.answer?.(method, params) ?? {});
     if (result instanceof Error) throw result;
     return result;
   };

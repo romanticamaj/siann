@@ -125,11 +125,15 @@ export class MeterStore {
     this.rms.fill(0);
     this.#channelPeak.fill(0);
     this.#playing = frame?.playing === true;
-    // Stopped, the engine repeats its last readings; nothing is metered then.
-    if (!frame || frame.epoch !== this.#epoch || !frame.playing) return true;
+    // Stopped, the engine repeats its last readings; nothing is metered then,
+    // but the input meters of armed tracks (input:<trackId>, m5b-ui-recording),
+    // which the engine measures whether the transport plays or not.
+    if (!frame || frame.epoch !== this.#epoch) return true;
+    const live = frame.playing;
     for (const entry of frame.entries) {
       const index = entry.entityIndex;
       if (index >= this.peak.length) continue;
+      if (!live && !this.#entities[index]!.startsWith('input:')) continue;
       let peak = 0;
       let rms = 0;
       for (const value of entry.peak) if (value > peak) peak = value;

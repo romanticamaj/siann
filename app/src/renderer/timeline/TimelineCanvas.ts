@@ -109,6 +109,7 @@ import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
 import type { ClipEntity, MediaEntity } from '../model/document';
 import type { MeterFrame } from '../model/meter-frames';
 import type { PeaksCache } from '../model/peaks-cache';
+import { WAVE_FRAMES, type RecordingClip } from '../model/record-clip';
 import type { ReadModel, Snapshot } from '../model/read-model';
 import { PlayheadClock } from '../transport/playhead-clock';
 import { nextScroll } from './auto-scroll';
@@ -157,6 +158,7 @@ import {
   type NudgeMode,
 } from './edit-commands';
 import {
+  CLIP_INSET_TOP,
   CLIP_RADIUS,
   CLIP_TITLE_HEIGHT,
   DEFAULT_LANE_HEIGHT,
@@ -314,6 +316,8 @@ export interface TimelineCanvasOptions {
   readonly now?: () => number;
   // The selected plan's ghosts (m5b-ui-ghosts); none when absent.
   readonly ghosts?: GhostSource;
+  // The takes being recorded (m5b-ui-recording): their red clips on the overlay.
+  readonly recording?: RecordingSource;
   // A glue the Glue tool or edit.glue refuses, and why (m5b-ui-edit-more):
   // the chrome words it as a toast; nothing is sent.
   readonly onRefuse?: (reason: GlueRefusal | 'selection') => void;
@@ -325,6 +329,26 @@ export interface TimelineCanvasOptions {
 // the descriptors to draw, the step whose ghosts are outlined (1-based, or
 // null), their changes, where a click on a ghost goes, and the requests to
 // bring a step's ghosts into view.
+// The takes being recorded (m5b-ui-recording; UI redesign 3.5): the red
+// clips at a playhead and each take's live waveform columns (WAVE_FRAMES
+// frames each, the input meter's loudest peak), and a change of either.
+export interface RecordingSource {
+  clips(playhead: bigint | null): readonly RecordingClip[];
+  columns(takeId: string): readonly number[];
+  subscribe(listener: () => void): () => void;
+}
+
+// A red clip as the last overlay frame drew it (the e2e reads it).
+export interface RecordingDrawn {
+  readonly takeId: string;
+  readonly trackId: string;
+  readonly start: string;
+  readonly end: string;
+  readonly x: number;
+  readonly width: number;
+  readonly columns: number;
+}
+
 export interface GhostSource {
   ghosts(): readonly Ghost[];
   outlineStep(): number | null;
@@ -414,6 +438,8 @@ export interface TimelineTestHooks {
   // The ghosts of the last content frame, and the step the last overlay frame outlined (m5b-ui-ghosts).
   ghosts(): Ghost[];
   ghostOutline(): number | null;
+  // The red clips of the last overlay frame (m5b-ui-recording).
+  recordingClips(): RecordingDrawn[];
 }
 
 // Why the last split at the cursor sent nothing, or what it built, with the
@@ -546,6 +572,10 @@ interface Palette {
   readonly bandOffFill: string;
   readonly bandOff: string;
   readonly bandTint: string;
+  // The red clip of a recording (m5b-ui-recording): its outline, body and waveform.
+  readonly rec: string;
+  readonly recBody: string;
+  readonly recWave: string;
   // The ghosts (m5b-ui-ghosts): draw()'s agent violet.
   readonly ai: string;
   readonly aiBody: string;
@@ -638,6 +668,7 @@ export class TimelineCanvas {
   #rulerLabels: string[] = [];
   #contentDraws = 0;
   #overlayDraws = 0;
+  #recordingDrawn: RecordingDrawn[] = [];
   #cursorX: number | null = null;
   // The last split's diagnostic (testHooks().lastEdit).
   #lastEdit: EditProbe | null = null;
@@ -695,6 +726,7 @@ export class TimelineCanvas {
     if (options.playhead) this.#unsubscribe.push(options.playhead.subscribe(() => this.#playheadChanged()));
     // The cycle flag: the band redraws from here, not through React.
     if (options.locators) this.#unsubscribe.push(options.locators.subscribe(() => this.#invalidateContent()));
+    if (options.recording) this.#unsubscribe.push(options.recording.subscribe(() => this.#invalidateOverlay()));
     if (options.ghosts) {
       const source = options.ghosts;
       this.#unsubscribe.push(source.subscribe(() => this.#ghostsChanged()));
@@ -1074,6 +1106,7 @@ export class TimelineCanvas {
       rulerLabels: () => [...this.#rulerLabels],
       contentDraws: () => this.#contentDraws,
       overlayDraws: () => this.#overlayDraws,
+      recordingClips: () => [...this.#recordingDrawn],
       cursorX: () => this.#cursorX,
       selectionOutline: () => this.#outline,
       dimmedLanes: () => [...this.#dimmed],
@@ -1829,6 +1862,9 @@ export class TimelineCanvas {
       bandOffFill: read('--white-a060'),
       bandOff: read('--tx-3'),
       bandTint: read('--white-a028'),
+      rec: read('--rec'),
+      recBody: read('--err-a140'),
+      recWave: read('--rec-line'),
       ai: read('--ai'),
       aiBody: read('--ai-a100'),
       aiHatch: read('--ai-a160'),
@@ -2566,6 +2602,7 @@ export class TimelineCanvas {
       ctx.restore();
     }
     this.#placeTooltip(snapshot, plan);
+    this.#drawRecording(ctx, snapshot, palette);
     // The project cursor, from the realtime playhead, as draw() draws it: a
     // glow over the lanes, the line from the ruler's lower half to the top of
     // the scroll-zoom bar, and the head in the lower half.
@@ -2602,6 +2639,66 @@ export class TimelineCanvas {
     // Display rate while playing: the next animation frame draws the cursor
     // again from the clock; stopped, the loop ends here.
     if (this.#clock.playing()) this.#invalidateOverlay();
+  }
+
+  // The takes being recorded (m5b-ui-recording; UI redesign 3.5): a red clip
+  // per take on its lane from the take's start to the cursor, in the clip's
+  // box (draw()'s insets and radius) filled with --err-a140 and outlined in
+  // --rec, with its live waveform in --rec-line, mirrored about the box's
+  // middle as draw() mirrors a waveform. Drawn on every overlay frame, which
+  // runs at display rate while the transport plays; no React state.
+  #drawRecording(ctx: CanvasRenderingContext2D | null, snapshot: Snapshot | null, palette: Palette | null): void {
+    const source = this.#options.recording;
+    this.#recordingDrawn = [];
+    if (!source || !snapshot) return;
+    const playhead = this.#playhead !== null && /^\d+$/.test(this.#playhead) ? BigInt(this.#playhead) : null;
+    const clips = source.clips(playhead);
+    if (clips.length === 0) return;
+    const view = this.#view;
+    const order = snapshot.trackOrder;
+    const tops = laneTops(order, view);
+    const top = lanesTopOf(view);
+    const height = view.height ?? 0;
+    const fpp = view.framesPerPixel;
+    if (ctx && palette) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, top, view.width, Math.max(0, height - top));
+      ctx.clip();
+    }
+    for (const clip of clips) {
+      const lane = order.indexOf(clip.trackId);
+      if (lane < 0) continue;
+      const x0 = frameToX(clip.start, view);
+      const x1 = frameToX(clip.end, view);
+      const columns = source.columns(clip.takeId);
+      this.#recordingDrawn.push({ takeId: clip.takeId, trackId: clip.trackId, start: clip.start.toString(), end: clip.end.toString(), x: x0, width: x1 - x0, columns: columns.length });
+      if (!ctx || !palette) continue;
+      const box = clipBox({ x: x0, y: tops[lane]!, width: Math.max(0, x1 - x0), height: laneHeightOf(clip.trackId, view) });
+      if (box.width <= 0) continue;
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = palette.recBody;
+      ctx.beginPath();
+      ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+      ctx.fill();
+      ctx.strokeStyle = palette.rec;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // The waveform: one column per WAVE_FRAMES frames, at least a pixel wide.
+      const middle = box.y + box.height / 2;
+      const half = box.height / 2 - CLIP_INSET_TOP;
+      const width = Math.max(1, WAVE_FRAMES / fpp);
+      ctx.fillStyle = palette.recWave;
+      for (let i = 0; i < columns.length; i += 1) {
+        const peak = Math.min(1, columns[i]!);
+        if (!(peak > 0)) continue;
+        const x = frameToX(clip.start + BigInt(i * WAVE_FRAMES), view);
+        if (x + width < box.x || x > box.x + box.width) continue;
+        const h = Math.max(1, peak * half);
+        ctx.fillRect(x, middle - h, Math.min(width, box.x + box.width - x), 2 * h);
+      }
+    }
+    if (ctx && palette) ctx.restore();
   }
 
   // A clip's volume control as draw() draws it: its box in --bg-well with a

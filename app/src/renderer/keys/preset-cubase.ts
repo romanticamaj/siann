@@ -136,4 +136,11 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Alt+Shift+ArrowLeft', commandId: 'edit.nudgeEndLeft', scope: 'project' },
   { chord: 'Alt+ArrowRight', commandId: 'edit.nudgeEndRight', scope: 'project' },
   { chord: 'Mod+Shift+A', commandId: 'edit.selectNone', scope: 'project' },
+  // Recording (m5b-ui-recording; UI redesign 3.1, 3.3): R arms the selected
+  // track; Num * records, Ctrl+Shift+R is its laptop fallback; I and O punch.
+  { chord: 'R', commandId: 'track.recordEnable', scope: 'project' },
+  { chord: 'NumpadMultiply', commandId: 'transport.record', scope: 'window' },
+  { chord: 'Mod+Shift+R', commandId: 'transport.record', scope: 'window' },
+  { chord: 'I', commandId: 'transport.punchIn', scope: 'window' },
+  { chord: 'O', commandId: 'transport.punchOut', scope: 'window' },
 ];

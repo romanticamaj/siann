@@ -74,6 +74,9 @@ import type { ToastStore } from './shell/toast-store';
 import { NO_TRACKS, pruneTracks, selectTrack, type TrackSelectMode, type TrackSelection } from './timeline/selection';
 import { Timeline } from './timeline/Timeline';
 import { MediaTab, type MediaHost } from './media/MediaTab';
+import { bindRecordCommands, recordGates } from './model/record';
+import { RecordContext, type RecordHost } from './shell/record-context';
+import { PendingTakes } from './shell/Recording';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MeterTestHooks } from './mixer/MixerMeters';
 
@@ -108,6 +111,8 @@ export interface AppProps {
   readonly inserts?: InsertsHost;
   // Importing audio and the Media tab (m5b-ui-media).
   readonly media?: MediaHost | null;
+  // Recording (m5b-ui-recording): the record state and its actions.
+  readonly record?: RecordHost | null;
 }
 
 export function App({
@@ -134,6 +139,7 @@ export function App({
   studioSetup,
   inserts,
   media = null,
+  record = null,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -205,8 +211,15 @@ export function App({
   const racks = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.racks);
   const openMedia = useCallback(() => void commands.run('window', 'media.open'), [commands]);
   const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
+  // R arms the selected track; Num * and Ctrl+Shift+R record (m5b-ui-recording).
+  const selectedRef = useRef(tracks.primary);
+  selectedRef.current = tracks.primary;
+  useEffect(() => (record ? bindRecordCommands(commands, record.controller, { selectedTrack: () => selectedRef.current }) : undefined), [record, commands]);
+  const can = capabilitySelector(capabilities);
+  const recoverable = record !== null && recordGates(can).record && can.has('record.recover_take');
   return (
     <CapabilitiesContext.Provider value={capabilities}>
+     <RecordContext.Provider value={record}>
      <InsertsContext.Provider value={inserts ?? null}>
       <TimeFormatContext.Provider value={timeFormat}>
        <ReviewContext.Provider value={review}>
@@ -267,11 +280,13 @@ export function App({
           onStudioSetup={setupAvailable ? openSetup : undefined}
         />
         {inserts && pluginsListed(capabilitySelector(capabilities)) ? <PluginPicker picker={inserts.picker} trackName={trackName} /> : null}
+        {recoverable ? <PendingTakes controller={record.controller} client={client} /> : null}
         </HeardContext.Provider>
         </GhostContext.Provider>
        </ReviewContext.Provider>
       </TimeFormatContext.Provider>
      </InsertsContext.Provider>
+     </RecordContext.Provider>
     </CapabilitiesContext.Provider>
   );
 }

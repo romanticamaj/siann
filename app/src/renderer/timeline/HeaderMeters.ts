@@ -14,6 +14,7 @@
 // frame; a frame is drawn only when a new meter frame arrived or a slot moved.
 
 import type { RealtimeClient } from '../model/realtime-client';
+import { armedMeterRef } from '../model/record';
 import { TOKENS } from '../tokens';
 
 export interface AnimationFrames {
@@ -61,6 +62,9 @@ export interface HeaderMetersOptions {
   readonly pixelRatio?: () => number;
   // The canvas's CSS size.
   readonly size: () => { width: number; height: number };
+  // The armed tracks' ids (m5b-ui-recording): their wells read their input
+  // meter, input:<trackId>, while the legend has it.
+  readonly armed?: () => readonly string[];
 }
 
 const browserFrames: AnimationFrames = {
@@ -97,6 +101,7 @@ export class HeaderMeters {
   readonly #frames: AnimationFrames;
   readonly #pixelRatio: () => number;
   readonly #size: () => { width: number; height: number };
+  readonly #armed: () => readonly string[];
   readonly #entries = new Set<Entry>();
   #handle: number | null = null;
   #drawnFrame = -1;
@@ -109,6 +114,7 @@ export class HeaderMeters {
     this.#frames = options.frames ?? browserFrames;
     this.#pixelRatio = options.pixelRatio ?? (() => globalThis.devicePixelRatio || 1);
     this.#size = options.size;
+    this.#armed = options.armed ?? (() => []);
   }
 
   // A header's well, painted while mounted; measured now.
@@ -164,10 +170,11 @@ export class HeaderMeters {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
     let lit = 0;
+    const armed = this.#armed();
     for (const { slot, rect } of this.#entries) {
       if (!rect || rect.width <= 0 || rect.height <= 0) continue;
       if (rect.y + rect.height < 0 || rect.y > height) continue;
-      const reading = this.#realtime.meter(slot.ref);
+      const reading = this.#realtime.meter(armedMeterRef(slot.ref, armed, (ref) => this.#realtime.meter(ref) !== null));
       const level = reading ? Math.max(0, ...reading.peak) : 0;
       const bar = Math.round(rect.width * meterFraction(level));
       if (bar <= 0) continue;

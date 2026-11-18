@@ -10,7 +10,9 @@
 //   .fad          .scale (the dB labels at the taper's positions), .ftrack
 //                 (the fader: .unity at 0 dB and the .cap), .meter (two .ch)
 //   .readout      the level (a double-click types one) and the peak value (.pk)
-//   .btns         R, W and record: an empty box (m6a-ui-automation, m5b-ui-recording)
+//   .btns         R and W (empty boxes, m6a-ui-automation) and record enable
+//                 (m5b-ui-recording; .msr.r, lit while armed), or an empty box
+//                 on an engine without features.recording
 //   .nametag      the name on the track colour (--c on the strip)
 //
 // The fader and the knob keep the behaviour of every value control
@@ -65,6 +67,9 @@ import { ISOLATE } from '../plans/isolate';
 import { RenameGhost, renameTitle } from '../plans/RenameGhost';
 import { useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
+import { recordGates } from '../model/record';
+import { useRecordHost } from '../shell/record-context';
+import { RecordEnable } from '../shell/Recording';
 import { trackColourVar } from '../timeline/track-colour';
 import { InsertRack } from './InsertSlot';
 import { pluginsListed } from './inserts';
@@ -345,6 +350,8 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
 export const Strip = memo(function Strip({ trackId, client, gestures, selected = false, inserts = true }: StripProps) {
   const t = useT();
   const can = useCapabilities();
+  const record = useRecordHost();
+  const recordHost = record && recordGates(can).record ? record : null;
   const track = useTrack(client, trackId);
   const view = useGhostView();
   const guard = useEditGuard();
@@ -431,7 +438,15 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
           <PeakValue meterRef={ref} testId={`peak-value-${trackId}`} label={t('strip.peakLabel', { track: track.name })} />
         )}
       </div>
-      <div className="btns" aria-hidden="true" />
+      {recordHost ? (
+        <div className="btns">
+          <Hold className="msr-box" />
+          <Hold className="msr-box" />
+          <RecordEnable host={recordHost} track={track} testId={`strip-record-${trackId}`} partOf="record" />
+        </div>
+      ) : (
+        <div className="btns" aria-hidden="true" />
+      )}
       <div className="nametag" data-testid={`strip-name-${trackId}`} data-part-of="name" dir={ISOLATE.dir} style={{ ...ISOLATE.style }} title={renameTitle(track.name, rename?.after)}>
         {rename ? <RenameGhost before={track.name} after={rename.after} step={rename.step} view={view} /> : track.name}
       </div>

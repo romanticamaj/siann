@@ -211,8 +211,6 @@ export const TOKENS = {
   "icon-s": "14px",
   "display-locators-empty-w": "101.7px",
   "tab-media-empty-w": "71.078px",
-  "hold-transport-record-w": "32px",
-  "hold-transport-record-h": "28px",
   "hold-dsp-load-w": "99.484px",
   "hold-zone-button-channel-w": "26px",
   "hold-zone-button-channel-h": "24px",

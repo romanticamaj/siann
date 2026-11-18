@@ -312,8 +312,10 @@ test('without the E-1 methods none of the controls is in the DOM and their boxes
   // Each sits where the mockup draws its part: the cycle's between start and stop,
   // the locators' between the display and the tempo, the click's after the tempo.
   const at = (needle: string) => markup.indexOf(needle);
-  const [cycle, locators, clickHold] = [...markup.matchAll(HOLDS)].map((m) => m.index!);
+  const [cycle, record, locators, clickHold] = [...markup.matchAll(HOLDS)].map((m) => m.index!);
   assert.ok(at('data-part="transport-start"') < cycle! && cycle! < at('data-part="transport-stop"'));
+  // Record's (m5b-ui-recording), after start and before the display.
+  assert.ok(at('data-part="transport-play"') < record! && record! < at('data-part="display"'));
   assert.ok(at('data-part="display"') < locators! && locators! < at('data-part="display-tempo"'));
   assert.ok(at('data-part="display-tempo"') < clickHold!);
 });

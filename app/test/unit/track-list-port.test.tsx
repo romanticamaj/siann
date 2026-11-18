@@ -9,7 +9,8 @@
 //   the headers (in the app inside the scroll wrappers, as their only
 //   children, so .th:nth-child(odd) keeps the mockup's parity);
 // - a header is .th with --c, .col, .idx, .body with .r1 (.name, .msr.m,
-//   .msr.s, then the empty boxes of record, read and write) and .r2 (.db.num,
+//   .msr.s, record enable .msr.r (m5b-ui-recording), then the empty boxes of
+//   read and write) and .r2 (.db.num,
 //   .pan.num, .hmeter); sel, muted and .on follow the track;
 // - the number, gain and pan read as the mockup's fdb / fpan for its seven
 //   tracks (the app's gain keeps its ASCII minus, as the strip's readout does);
@@ -36,6 +37,8 @@ import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document'
 import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { RecordContext } from '../../src/renderer/shell/record-context';
+import { recordHost } from './support/record-host';
 import { GhostContext } from '../../src/renderer/plans/ghost-context';
 import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
@@ -103,8 +106,10 @@ function render(
   options: { selected?: readonly string[]; caps?: Capabilities | null; locale?: Locale; clips?: number } = {},
 ): Element {
   const snap = snapshotWith(tracks, options.clips ?? 0);
+  const caps = options.caps === undefined ? FULL : options.caps;
   const node: ReactNode = (
-    <CapabilitiesContext.Provider value={options.caps === undefined ? FULL : options.caps}>
+    <CapabilitiesContext.Provider value={caps}>
+     <RecordContext.Provider value={recordHost(snap, caps)}>
       <TrackList
         client={fakeClient(snap)}
         realtime={null}
@@ -114,6 +119,7 @@ function render(
         selectedTrackIds={options.selected}
         onSelectTrack={() => undefined}
       />
+     </RecordContext.Provider>
     </CapabilitiesContext.Provider>
   );
   return withLocale(options.locale, () => parse(renderToStaticMarkup(node)));
@@ -217,7 +223,7 @@ test('each header equals th() for a non-ghost track: .th with --c, .col, .idx, .
     const body = find(header, byClass('body'));
     const mBody = find(mockup, byClass('body'));
     assert.deepEqual(elements(body).map(sig), elements(mBody).map(sig), `${what}: .r1, .r2`);
-    // .r1: the name, M and S, then the boxes of record, read and write (pending).
+    // .r1: the name, M, S and record enable (m5b-ui-recording), then the boxes of read and write (pending).
     const r1 = elements(find(body, byClass('r1')));
     const mR1 = elements(find(mBody, byClass('r1')));
     assert.equal(r1.length, mR1.length, what);
@@ -225,8 +231,10 @@ test('each header equals th() for a non-ghost track: .th with --c, .col, .idx, .
     assert.deepEqual(r1.slice(1, 3).map((el) => el.tag), ['button', 'button']);
     assert.equal(text(r1[0]!), MOCKUP_TRACKS[i]!.n);
     assert.deepEqual(r1.slice(1, 3).map(text), ['M', 'S']);
-    for (const box of r1.slice(3)) assertEmptyBox(box, `${what}: record, read and write`);
-    assert.deepEqual(r1.slice(3).map((el) => classes(el)), [['msr-box'], ['msr-box'], ['msr-box']]);
+    assert.equal(r1[3]!.tag, 'button');
+    assert.deepEqual(landed(r1[3]!).filter((c) => c !== 'on'), landed(mR1[3]!).filter((c) => c !== 'on'), `${what}: record enable`);
+    for (const box of r1.slice(4)) assertEmptyBox(box, `${what}: read and write`);
+    assert.deepEqual(r1.slice(4).map((el) => classes(el)), [['msr-box'], ['msr-box']]);
     // .r2: gain, pan and the meter well (DOM, empty: one canvas paints the bar).
     const r2 = elements(find(body, byClass('r2')));
     const mR2 = elements(find(mBody, byClass('r2')));
@@ -243,9 +251,10 @@ test('sel on a selected track, muted on a muted or implicitly muted one, .on fro
   assert.deepEqual(classes(b!).sort(), ['th'], 'the soloed track is heard');
   assert.deepEqual(classes(c!).sort(), ['muted', 'sel', 'th'], 'muted by the other\'s solo, and selected');
   const msr = (h: Element) => findAll(h, (el) => el.tag === 'button' && classes(el).includes('msr')).map((el) => classes(el).join(' '));
-  assert.deepEqual(msr(a!), ['msr m on', 'msr s']);
-  assert.deepEqual(msr(b!), ['msr m', 'msr s on']);
-  assert.deepEqual(msr(c!), ['msr m', 'msr s']);
+  // M, S and record enable (m5b-ui-recording; nothing armed here).
+  assert.deepEqual(msr(a!), ['msr m on', 'msr s', 'msr r']);
+  assert.deepEqual(msr(b!), ['msr m', 'msr s on', 'msr r']);
+  assert.deepEqual(msr(c!), ['msr m', 'msr s', 'msr r']);
   for (const h of [a!, b!, c!]) assert.ok(!('style' in h.attrs) || !/opacity/.test(h.attrs.style!), 'the shared rule dims, not an inline opacity');
   assert.equal(a!.attrs['data-dimmed'], 'true');
   assert.equal(c!.attrs['data-dimmed'], 'true');
@@ -275,20 +284,22 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const root = list(render(mockupEntities(), { clips: 17 }));
   const mockup = mockupHeaders();
   const mockupIds = findAll(mockup, byAttr('data-part')).map((el) => el.attrs['data-part']!);
-  // The mockup's list names the marker head, the record, read and write buttons: all pending.
-  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write']) {
+  // The mockup's list names the marker head, the read and write buttons: pending; record landed (m5b-ui-recording).
+  for (const id of ['marker-head', 'track-1-read', 'track-1-write']) {
     assert.ok(mockupIds.includes(id), `the mockup has ${id}`);
     assert.ok(pending(id), `${id} is pending`);
   }
+  assert.ok(mockupIds.includes('track-1-record') && !pending('track-1-record'));
   // The ghost track landed with m5b-ui-ghosts: it is drawn for a reviewable plan only, and there is none here.
   assert.ok(mockupIds.includes('track-ghost') && !pending('track-ghost'));
   assert.deepEqual(ids(root), mockupIds.filter((id) => !pending(id) && !/ghost/.test(id)).sort());
   for (const id of ids(root)) assert.ok(!pending(id), id);
-  assert.ok(!ids(root).some((id) => /^(marker-head|track-ghost|track-\d+-(record|read|write))$/.test(id)));
+  assert.ok(!ids(root).some((id) => /^(marker-head|track-ghost|track-\d+-(read|write))$/.test(id)));
+  assert.ok(ids(root).includes('track-1-record'));
   assert.ok(!findAll(root, byAttr('data-part')).some((el) => /ghost|marker/.test(el.attrs['data-part']!)));
   // The test ids the specs use stay.
   const h = headers(root)[0]!;
-  for (const part of ['colour', 'number', 'name', 'mute', 'solo', 'gain', 'pan', 'meter']) {
+  for (const part of ['colour', 'number', 'name', 'mute', 'solo', 'record', 'gain', 'pan', 'meter']) {
     assert.equal(find(h, byAttr('data-part-of', part)).attrs['data-testid'], `track-${part}-${IDS[0]}`, part);
   }
   assert.equal(h.attrs['data-testid'], `track-header-${IDS[0]}`);
@@ -299,6 +310,8 @@ test('reduced capabilities remove the add button, M and S, and their boxes stay'
   const noTrackCommands: Capabilities = {
     ...FULL,
     commands: (FULL.commands ?? []).filter((c) => !['track.add', 'track.set_mute', 'track.set_solo', 'track.rename'].includes(c)),
+    // Record enable needs features.recording (m5b-ui-recording).
+    features: { ...FULL.features, recording: false },
   };
   for (const caps of [noTrackCommands, null]) {
     const root = render([track('trk_a')], { caps });

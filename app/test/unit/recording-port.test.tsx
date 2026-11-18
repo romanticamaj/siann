@@ -218,7 +218,9 @@ test('track-N-record is th()\'s fourth .msr of .r1, lit while armed', () => {
 test('strip-N-record is the third .msr of strip()\'s second .btns, after the boxes of R and W', () => {
   const { mixer } = renderZones();
   const strip = find(mixer, (el) => el.attrs['data-testid'] === 'mixer-strip-trk_a');
-  const row = find(strip, byAttr('data-part-of', 'automation'));
+  // The row of R, W and record: the strip's last .btns (its id is m6a-ui-automation's, so it carries none).
+  const row = findAll(strip, byClass('btns')).at(-1)!;
+  assert.ok(!('data-part-of' in row.attrs) && !('aria-hidden' in row.attrs));
   const mRow = find(mockupStrip(), (el) => (el.attrs['data-part'] ?? '').endsWith('-automation'));
   assert.equal(elements(row).length, elements(mRow).length, 'R, W and record');
   assertEmptyBox(elements(row)[0]!, 'R');
@@ -346,7 +348,8 @@ test('against capabilities without features.recording none of the parts is in th
   elements(buttons).slice(2).forEach((el, i) => assertEmptyBox(el, `i-btns box ${i}`));
   const routing = find(zones.inspector, (el) => classes(el).includes('inspector-hold') && classes(el).includes('routing'));
   assertEmptyBox(routing, 'the Routing box');
-  const transport = renderTransport({ caps: REDUCED });
+  // The reduced fixture has no transport at all; the full one without recording keeps it.
+  const transport = renderTransport({ caps: { ...FULL, features: { ...FULL.features, recording: false } } });
   const group = find(transport, byAttr('data-part', 'transport-buttons'));
   const box = elements(group)[4]!;
   assert.deepEqual(classes(box).sort(), ['transport-hold', 'transport-hold-tbtn']);

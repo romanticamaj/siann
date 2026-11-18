@@ -23,6 +23,7 @@
 import type { FetchedEntity, SessionChanged, SyncChunk } from './document';
 import { isCapabilities, type Capabilities } from './capabilities';
 import { isMeterLegend, type MeterLegend } from './meter-frames';
+import { parsePendingTakes, type PendingTake } from './pending-takes';
 import { ReadModel, ReadModelError } from './read-model';
 
 export interface EngineEndpoint {
@@ -76,6 +77,10 @@ export interface ClientState {
   // reconnect, even to a restarted engine with a new session id, is not one:
   // what the window keeps per session (selection, view) resets on an epoch.
   readonly epoch: number;
+  // The pending takes (m5b-ui-recording; protocol-events-v1.md): from the
+  // auth reply, replaced by each sync's; absent before the first answer that
+  // carries them (an engine before m5b-engine-record never does).
+  readonly pendingTakes?: readonly PendingTake[];
 }
 
 export interface SessionClientOptions {
@@ -490,6 +495,7 @@ export class SessionClient {
       revision: typeof reply.revision === 'string' ? reply.revision : null,
       about: aboutWith((reply.about as AboutInfo | undefined) ?? null, this.#options.environment),
       legend: isMeterLegend(reply.meters) ? reply.meters : null,
+      pendingTakes: parsePendingTakes(reply.pendingTakes) ?? [],
     });
     // What this engine can do, once per connection; a failure keeps the last answer.
     this.#send(connection, 'engine.capabilities', {}).then(
@@ -612,11 +618,13 @@ export class SessionClient {
         connection.syncRetry = null;
       }
       const meters = chunks[0]?.meters;
+      const pending = parsePendingTakes((chunks[0] as { pendingTakes?: unknown } | undefined)?.pendingTakes);
       this.#update({
         lastSeq: snapshot.seq,
         syncCount: this.#state.syncCount + 1,
         error: null,
         legend: isMeterLegend(meters) ? meters : null,
+        ...(pending ? { pendingTakes: pending } : {}),
       });
     } catch (error) {
       if (connection.closed) return;

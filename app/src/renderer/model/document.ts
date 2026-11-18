@@ -57,6 +57,8 @@ export interface TrackEntity {
   // The input it records from (m5b-engine-record): the first device input channel
   // (0-based) and 1 or 2 channels; absent while none is set.
   readonly input?: { readonly port: number; readonly channels: number };
+  // Its monitoring mode (m5b-engine-monitoring); absent while off.
+  readonly monitor?: 'auto' | 'input';
   // Send ids in order and the bus it outputs to (m5b-engine-buses-sends); both
   // absent while empty, the output while the track feeds the master.
   readonly sends?: readonly string[];

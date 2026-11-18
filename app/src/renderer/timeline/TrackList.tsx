@@ -13,9 +13,10 @@
 // commit.
 //
 // Absent parts keep their space empty (spec 3.0): the marker row's box until
-// m5b-ui-markers, the boxes of record, read and write in .r1 (m5b-ui-recording,
-// m6a-ui-automation), and M, S and the add button when engine.capabilities
-// does not list their commands.
+// m5b-ui-markers, the boxes of read and write in .r1 (m6a-ui-automation), and
+// M, S, record enable and the add button when engine.capabilities does not
+// list their commands. Record enable (m5b-ui-recording) is th()'s .msr.r with
+// its dot, lit while the engine says the track is armed (shell/Recording.tsx).
 //
 // The plan under review (m5b-ui-ghosts; UI redesign 4.2): a proposed track is
 // th() for the mockup's ghost track (GhostHeader: .th.ghost, "+", its step
@@ -67,6 +68,9 @@ import { RenameGhost, renameTitle } from '../plans/RenameGhost';
 import { Capable, useCapabilities } from '../shell/Capable';
 import { Hold } from '../shell/Hold';
 import { Icon } from '../shell/icons';
+import { recordGates } from '../model/record';
+import { useRecordHost } from '../shell/record-context';
+import { RecordEnable } from '../shell/Recording';
 import type { LayoutStore } from '../shell/layout-store';
 import { dimmedTracks } from './dimming';
 import { DEFAULT_LANE_HEIGHT, clampLaneHeight } from './geometry';
@@ -131,6 +135,9 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
   const body = useRef<HTMLDivElement | null>(null);
   const column = useRef<HTMLDivElement | null>(null);
   const meters = useRef<HTMLCanvasElement | null>(null);
+  const record = useRecordHost();
+  const recordRef = useRef(record);
+  recordRef.current = record;
   const [surface, setSurface] = useState<HeaderMeters | null>(null);
   const order = snapshot?.trackOrder ?? [];
   const dimmed = dimmedTracks(snapshot?.tracks ?? []);
@@ -156,7 +163,13 @@ export function TrackList({ client, realtime, timeline, layout, sessionId = null
   useEffect(() => {
     const canvas = meters.current;
     if (!canvas || !realtime) return undefined;
-    const next = new HeaderMeters({ canvas, realtime, size: () => ({ width: canvas.clientWidth, height: canvas.clientHeight }) });
+    const next = new HeaderMeters({
+      canvas,
+      realtime,
+      size: () => ({ width: canvas.clientWidth, height: canvas.clientHeight }),
+      // An armed track's well reads its input meter (m5b-ui-recording).
+      armed: () => recordRef.current?.controller.store.getSnapshot()?.armed ?? [],
+    });
     next.start();
     setSurface(next);
     const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(() => next.remeasure()) : null;
@@ -305,6 +318,8 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
   const t = useT();
   const can = useCapabilities();
   const id = track.id;
+  const record = useRecordHost();
+  const recordHost = record && recordGates(can).record ? record : null;
 
   const commitName = (snapshot: Snapshot | null, name: string) => {
     onEditing(false);
@@ -435,8 +450,8 @@ export function TrackHeaderView({ track, number, height, dimmed, selected, canRe
           ) : (
             <Hold className="msr-box" />
           )}
-          {/* Record (m5b-ui-recording), read and write (m6a-ui-automation): empty boxes. */}
-          <Hold className="msr-box" />
+          {recordHost ? <RecordEnable host={recordHost} track={track} testId={`track-record-${id}`} partOf="record" /> : <Hold className="msr-box" />}
+          {/* Read and write (m6a-ui-automation): empty boxes. */}
           <Hold className="msr-box" />
           <Hold className="msr-box" />
         </div>

@@ -89,8 +89,8 @@ function rig(options: { caps?: Capabilities; device?: boolean } = {}) {
 test('parses punch, pre-roll and count-in beside cycle and the click; null where the engine has none', () => {
   assert.deepEqual(parseTransportState({ device: null, xruns: '0', ...BASE, ...OPTIONS }), { ...BASE, ...OPTIONS });
   assert.deepEqual(parseTransportState({ type: 'transport.changed', ...BASE, ...OPTIONS }), { ...BASE, ...OPTIONS });
-  // An engine before m5b-engine-punch-count-in.
-  assert.deepEqual(parseTransportState({ ...BASE }), { ...BASE, punch: null, preroll: null, countIn: null });
+  // An engine before m5b-engine-punch-count-in: no such fields.
+  assert.deepEqual(parseTransportState({ ...BASE }), { ...BASE });
   // A malformed option is null, the rest stays.
   assert.deepEqual(parseTransportState({ ...BASE, punch: { in: 'yes' }, preroll: { enabled: true, bars: 1.5 }, countIn: OPTIONS.countIn }), { ...BASE, punch: null, preroll: null, countIn: OPTIONS.countIn });
 });

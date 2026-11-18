@@ -7,13 +7,18 @@
 //   .z-head      the title and the key hint of the zone (.k)
 //   .i-track     the track block, its left stripe in the track's colour:
 //     .i-name    the colour swatch, the name, mono or stereo (<small>)
-//     .i-btns    M and S (.msr.m, .msr.s; .on from the track), then the boxes
-//                of record, monitor, read, write and e
+//     .i-btns    M and S (.msr.m, .msr.s; .on from the track), record enable
+//                (.msr.r, lit while armed) and monitor (.msr with the mon
+//                icon, lit while not off; m5b-ui-recording), then the boxes of
+//                read, write and e
 //     .i-row     Volume: the label, the slider (.hs: its fill <i> and thumb <u>
 //                at the taper's position), the value (b.num, dB)
 //     .i-row     Pan: the label, the slider (its thumb only), the value (C, L35)
 //   five boxes   where sec() draws Routing, Inserts, Sends, Automation and
-//                Notepad, and between the last two the Agent changes section
+//                Notepad, and between the last two the Agent changes section;
+//                the Routing box holds the In row (m5b-ui-recording: the
+//                input selector, sec('Routing')'s first .irow) at its place
+//                until m5b-ui-sends-buses ports the section around it
 //   .z-foot      the Track tab and the box of Editor
 //
 // The track is the app's selected track (trackId: a header clicked, or the
@@ -87,6 +92,9 @@ import { useCapabilities } from './Capable';
 import { Hold } from './Hold';
 import { InspectorInserts } from '../mixer/InsertSlot';
 import { pluginsListed } from '../mixer/inserts';
+import { recordGates } from '../model/record';
+import { useRecordHost } from './record-context';
+import { InputRow, MonitorButton, RecordEnable } from './Recording';
 
 export interface InspectorProps {
   readonly client: SessionClient;
@@ -274,6 +282,8 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
   const track = useTrack(client, trackId);
   const view = useGhostView();
   const guard = useEditGuard();
+  const record = useRecordHost();
+  const recordable = recordGates(can);
   if (!track) {
     return (
       <>
@@ -323,9 +333,9 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
           ) : (
             <Hold className="msr-box" />
           )}
-          {/* Record and monitor (m5b-ui-recording), read and write (m6a-ui-automation), e (m5b-ui-inserts-master). */}
-          <Hold className="msr-box" />
-          <Hold className="msr-box" />
+          {record && recordable.record ? <RecordEnable host={record} track={track} testId="inspector-record" part="inspector-record" /> : <Hold className="msr-box" />}
+          {record && recordable.monitor ? <MonitorButton host={record} track={track} /> : <Hold className="msr-box" />}
+          {/* Read and write (m6a-ui-automation), e (m5b-ui-editor-channel). */}
           <Hold className="msr-box" />
           <Hold className="msr-box" />
           <Hold className="msr-box" />
@@ -363,9 +373,17 @@ export function Inspector({ client, gestures, trackId, plans }: InspectorProps) 
           />
         </div>
       </div>
-      {SECTIONS.map((name) =>
-        name === 'inserts' && pluginsListed(can) ? <InspectorInserts key={name} client={client} track={track} view={view} /> : <Hold key={name} className={SECTION_HOLDS[name]} />,
-      )}
+      {SECTIONS.map((name) => {
+        if (name === 'inserts' && pluginsListed(can)) return <InspectorInserts key={name} client={client} track={track} view={view} />;
+        if (name === 'routing' && record && recordable.input) {
+          return (
+            <div key={name} className={SECTION_HOLDS.routing}>
+              <InputRow host={record} track={track} />
+            </div>
+          );
+        }
+        return <Hold key={name} className={SECTION_HOLDS[name]} />;
+      })}
       <AgentChanges client={client} track={track} plans={plans} />
       <Hold className={SECTION_HOLDS.notepad} />
       <Foot />
