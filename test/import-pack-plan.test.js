@@ -348,3 +348,129 @@ test('validateImportPackPlan reports commands that cannot be canonicalized', () 
   assert.equal(result.commandHash, null);
   assert.ok(result.issues.some((issue) => issue.code === 'command_not_canonicalizable'));
 });
+
+// m5b-bridge-cli-coverage (acceptance item 1; docs/schemas/import-pack-plan-v1.md,
+// "Rejection"): rejectImportPackPlan rejects any plan that loads, copies the
+// command and its hashes untouched and never recomputes one, so a tampered plan
+// stays tampered after the rejection.
+const { rejectImportPackPlan } = require('../src/workflows/import-pack-plan');
+
+function planFixture(prefix) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const manifestFile = path.join(tmp, 'manifest.json');
+  const planFile = path.join(tmp, 'plan.json');
+  const approvedFile = path.join(tmp, 'approved.json');
+  writeJson(manifestFile, manifest(tmp));
+  writeImportPackPlan(manifestFile, planFile);
+  approveImportPackPlan(planFile, approvedFile, { approvedBy: 'reviewer', approvedAt: '2026-11-18T09:00:00.000Z' });
+  return { tmp, planFile, approvedFile };
+}
+
+test('rejectImportPackPlan rejects a pending plan with its reviewer, time and reason and keeps the command and hash', () => {
+  const { tmp, planFile } = planFixture('siann-reject-pending-');
+  const sourceBytes = fs.readFileSync(planFile, 'utf8');
+  const before = JSON.parse(sourceBytes);
+  const out = path.join(tmp, 'rejected.json');
+
+  const summary = rejectImportPackPlan(planFile, out, {
+    rejectedBy: 'ana', rejectedAt: '2026-11-18T10:00:00.000Z', reason: 'wrong tempo',
+  });
+
+  assert.deepEqual(summary, {
+    ok: true,
+    workflow: 'reject-plan',
+    sourcePlanFile: planFile,
+    planFile: out,
+    reviewState: 'rejected',
+    rejectedBy: 'ana',
+    reason: 'wrong tempo',
+  });
+  const rejected = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.equal(rejected.review.state, 'rejected');
+  assert.equal(rejected.review.rejectedBy, 'ana');
+  assert.equal(rejected.review.rejectedAt, '2026-11-18T10:00:00.000Z');
+  assert.equal(rejected.review.reason, 'wrong tempo');
+  assert.equal(JSON.stringify(rejected.command), JSON.stringify(before.command));
+  assert.equal(rejected.integrity.commandHash, before.integrity.commandHash);
+  const validation = validateImportPackPlan(out);
+  assert.equal(validation.ok, true, JSON.stringify(validation.issues));
+  assert.equal(validation.reviewState, 'rejected');
+  assert.equal(validation.approvable, false);
+  assert.equal(validation.applicable, false);
+  assert.equal(validation.commandHash, before.integrity.commandHash);
+  assert.equal(fs.readFileSync(planFile, 'utf8'), sourceBytes, 'the source plan is untouched');
+});
+
+test('rejectImportPackPlan defaults the reason, takes the reviewer from USER, else unknown, and stamps the time', () => {
+  const { tmp, planFile } = planFixture('siann-reject-defaults-');
+  const saved = process.env.USER;
+  try {
+    process.env.USER = 'env-reviewer';
+    rejectImportPackPlan(planFile, path.join(tmp, 'a.json'));
+    delete process.env.USER;
+    rejectImportPackPlan(planFile, path.join(tmp, 'b.json'));
+  } finally {
+    if (saved === undefined) delete process.env.USER;
+    else process.env.USER = saved;
+  }
+  const a = JSON.parse(fs.readFileSync(path.join(tmp, 'a.json'), 'utf8')).review;
+  const b = JSON.parse(fs.readFileSync(path.join(tmp, 'b.json'), 'utf8')).review;
+  assert.equal(a.reason, 'Rejected during review.');
+  assert.equal(a.rejectedBy, 'env-reviewer');
+  assert.equal(b.rejectedBy, 'unknown');
+  assert.match(a.rejectedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+});
+
+test('rejectImportPackPlan rejects an approved plan, which apply then refuses', () => {
+  const { tmp, approvedFile } = planFixture('siann-reject-approved-');
+  const out = path.join(tmp, 'rejected.json');
+  const commandFile = path.join(tmp, 'command.json');
+
+  assert.equal(rejectImportPackPlan(approvedFile, out, { rejectedBy: 'ana' }).reviewState, 'rejected');
+  const validation = validateImportPackPlan(out);
+  assert.equal(validation.ok, true, JSON.stringify(validation.issues));
+  assert.equal(validation.applicable, false);
+  assert.throws(() => applyImportPackPlan(out, commandFile), /plan must be approved before apply/);
+  assert.throws(() => approveImportPackPlan(out, path.join(tmp, 'again.json')), /only pending plans can be approved/);
+  assert.equal(fs.existsSync(commandFile), false);
+  assert.equal(fs.existsSync(path.join(tmp, 'again.json')), false);
+});
+
+test('rejectImportPackPlan re-stamps an already rejected plan with the new reviewer, time and reason', () => {
+  const { tmp, planFile } = planFixture('siann-reject-twice-');
+  const once = path.join(tmp, 'once.json');
+  const twice = path.join(tmp, 'twice.json');
+  rejectImportPackPlan(planFile, once, { rejectedBy: 'ana', rejectedAt: '2026-11-18T10:00:00.000Z', reason: 'first' });
+  const summary = rejectImportPackPlan(once, twice, {
+    rejectedBy: 'ben', rejectedAt: '2026-11-18T11:00:00.000Z', reason: 'second',
+  });
+
+  assert.equal(summary.reviewState, 'rejected');
+  const first = JSON.parse(fs.readFileSync(once, 'utf8'));
+  const second = JSON.parse(fs.readFileSync(twice, 'utf8'));
+  assert.equal(second.review.rejectedBy, 'ben');
+  assert.equal(second.review.rejectedAt, '2026-11-18T11:00:00.000Z');
+  assert.equal(second.review.reason, 'second');
+  assert.equal(JSON.stringify(second.command), JSON.stringify(first.command));
+  assert.equal(second.integrity.commandHash, first.integrity.commandHash);
+  assert.equal(validateImportPackPlan(twice).ok, true);
+});
+
+test('rejectImportPackPlan rejects a tampered plan without laundering it: validate still reports command_hash_mismatch', () => {
+  const { tmp, planFile } = planFixture('siann-reject-tampered-');
+  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+  plan.command.commands[3].regionName = 'Tampered Region';
+  writeJson(planFile, plan);
+  const out = path.join(tmp, 'rejected.json');
+
+  assert.equal(rejectImportPackPlan(planFile, out, { rejectedBy: 'ana' }).reviewState, 'rejected');
+  const rejected = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.equal(rejected.review.state, 'rejected');
+  assert.equal(rejected.integrity.commandHash, plan.integrity.commandHash, 'the hash is not recomputed');
+  assert.equal(rejected.command.commands[3].regionName, 'Tampered Region');
+  const validation = validateImportPackPlan(out);
+  assert.equal(validation.ok, false);
+  assert.ok(validation.issues.some((issue) => issue.code === 'command_hash_mismatch'), JSON.stringify(validation.issues));
+  assert.equal(validation.approvable, false);
+  assert.equal(validation.applicable, false);
+});
