@@ -210,7 +210,7 @@ test('the track list, inspector, mixer strip and session name isolate the names 
   // The attribute that marks the element showing the name (the Inspector's is
   // the mockup's text node in .i-name, a span with no class of its own).
   const marks: Record<string, string> = {
-    'timeline/TrackList.tsx': 'className="track-name"',
+    'timeline/TrackList.tsx': 'className="name"',
     'shell/Inspector.tsx': 'data-testid="inspector-track"',
     'mixer/Strip.tsx': 'className="nametag"',
     'shell/TopBar.tsx': 'className="session"',

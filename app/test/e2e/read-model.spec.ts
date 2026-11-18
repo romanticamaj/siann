@@ -128,7 +128,7 @@ async function synced(): Promise<void> {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('revision')).toHaveText(/^r\d+$/);
   await expect(page.getByTestId('sync-count')).toHaveText('1');
-  await expect(page.getByTestId('track-count')).toHaveText('0');
+  await expect(page.getByTestId('about-track-count')).toHaveText('0');
 }
 
 test('a commit by another client reaches the renderer as a delta, without a reload', async () => {
@@ -140,11 +140,11 @@ test('a commit by another client reaches the renderer as a delta, without a relo
 
   const added = await execute(ADD_TRACK);
   await expect(page.getByTestId('revision')).toHaveText(added);
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
 
   const removed = await execute(REMOVE_TRACK);
   await expect(page.getByTestId('revision')).toHaveText(removed);
-  await expect(page.getByTestId('track-count')).toHaveText('0');
+  await expect(page.getByTestId('about-track-count')).toHaveText('0');
 
   // Deltas, not resyncs: one sync at connect, and the page was never reloaded.
   await expect(page.getByTestId('sync-count')).toHaveText('1');
@@ -154,7 +154,7 @@ test('a commit by another client reaches the renderer as a delta, without a relo
 test('a restarted engine is recovered through session.sync against the durable journal', async () => {
   await synced();
   const added = await execute(ADD_TRACK);
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(added);
   const firstSession = (await page.getByTestId('session-id').textContent()) ?? '';
   const syncsBefore = Number(await page.getByTestId('sync-count').textContent());
@@ -170,6 +170,6 @@ test('a restarted engine is recovered through session.sync against the durable j
   await expect(page.getByTestId('session-id')).toHaveText(/^ses_[0-9a-f]+$/);
   await expect(page.getByTestId('session-id')).not.toHaveText(firstSession);
   await expect.poll(async () => Number(await page.getByTestId('sync-count').textContent())).toBeGreaterThan(syncsBefore);
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(added);
 });

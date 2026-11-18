@@ -62,6 +62,8 @@ export const zhHant: Catalog = {
   'timeline.zoom': '水平縮放',
   'tracklist.label': '音軌列表',
   'tracklist.add': '新增音軌',
+  'tracklist.addLabel': '音軌',
+  'tracklist.count': ({ tracks, clips }) => `${tracks} 條音軌 · ${clips} 個片段`,
   'tracklist.rename': '重新命名 {track}',
   'tracklist.resize': '調整音軌列表寬度',
   'tracklist.height': '{track} 的高度',

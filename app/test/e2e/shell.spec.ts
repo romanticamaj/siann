@@ -167,7 +167,7 @@ test('the chrome and the ported lower, left, right and project zones take the mo
     const body = getComputedStyle(document.body);
     const bodyLh = parseFloat(body.lineHeight) / parseFloat(body.fontSize);
     const bodyLs = parseFloat(body.letterSpacing) / parseFloat(body.fontSize);
-    // Inherited values: the zone's own, through every element that does not set them.
+    // Inherited values: the pinned element's own, through every element that does not set them.
     const offenders: string[] = [];
     for (const zone of document.querySelectorAll('[data-zone]:not([data-zone="right"]):not([data-zone="lower"]):not([data-zone="left"]):not([data-zone="project"])')) {
       for (const el of zone.querySelectorAll('*')) {
@@ -176,7 +176,10 @@ test('the chrome and the ported lower, left, right and project zones take the mo
         if (s.ffs !== 'normal') offenders.push(`${el.tagName.toLowerCase()}.${el.getAttribute('class') ?? ''} font-feature-settings ${s.ffs}`);
       }
     }
-    const ported = ['lower', 'left', 'project'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) }));
+    const ported = [
+      ...['lower', 'left', 'project'].map((zone) => ({ zone, ...pick(document.querySelector(`[data-zone="${zone}"]`)!) })),
+      { zone: 'track list', ...pick(document.querySelector('[data-zone="project"] .headers')!) },
+    ];
     return { zones, right, bodyLh, bodyLs, lineHeight, offenders, body: pick(document.body), ported };
   });
   for (const zone of styles.zones) {

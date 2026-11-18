@@ -33,8 +33,9 @@ const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^
 // The project zone toolbar (m5-ui-port-toolbar): the tools, the snap, grid
 // type and auto-scroll fields, the info line's fields and the open Pool.
 const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testid=media-pool] .pool-head, [data-testid^=pool-]';
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
+// The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -117,7 +118,7 @@ test('no labelled control overflows or wraps its label in any locale at either w
   app = await launchApp({ sessionDir, userData: path.join(scratch, 'user-data'), languages: ['en-US'] });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   // The clip selected first (an auditioned plan holds the event display), so the info line holds its fields.
   const clip = await page.evaluate(async () => {
     const hooks = (window as unknown as { __siannTimeline?: { clips(): Array<{ clipId: string; x: number; y: number; width: number; height: number }> } }).__siannTimeline;
@@ -156,8 +157,12 @@ test('no labelled control overflows or wraps its label in any locale at either w
   await expect(page.locator('[data-part="plan-summary"] > span')).toHaveCount(3);
   // The track list (m5-ui-arrange) is in the check: its + button, M and S of
   // every header and the info line's fields (m5-ui-port-toolbar: .f, for
-  // the selected clip) are labelled controls.
+  // the selected clip) are labelled controls; the head's .add label and its
+  // count (m5-ui-port-track-list) are text in the head.
   await expect(page.getByTestId('track-add')).toBeVisible();
+  await expect(page.getByTestId('track-add')).toHaveText(/\S/);
+  await expect(page.getByTestId('track-count')).toBeVisible();
+  await expect(page.getByTestId('track-count')).toHaveText(`${TRACKS.length} tracks · 1 clip`);
   await expect(page.getByTestId('track-mute-trk_kick')).toBeVisible();
   // The transport bar (m5-ui-transport): its buttons, the position display,
   // the tempo, undo and redo in the top bar.

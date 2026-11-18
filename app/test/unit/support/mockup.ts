@@ -3,8 +3,8 @@
 // script, not from the code under test. This reads
 // docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html, takes the
 // pieces of its script a test names (the formatters and the fader taper, knob(),
-// strip(), the master strip, the left zone's block of the app.innerHTML
-// template with sec() and its icons) and runs them in a vm context whose tok() reads
+// strip(), the master strip, th() (the track header), the track list's and the
+// left zone's blocks of the app.innerHTML template with sec() and its icons) and runs them in a vm context whose tok() reads
 // the tokens from app/src/renderer/tokens.ts, the mirror of tokens.css the
 // mockup reads through getComputedStyle. A tiny HTML parser turns the markup
 // they return, and the markup react-dom/server renders, into trees a test can
@@ -59,6 +59,7 @@ export interface MockupTrack {
   readonly ins: readonly string[];
   readonly mute?: boolean;
   readonly sel?: boolean;
+  readonly ghost?: boolean;
 }
 
 export interface Mockup {
@@ -73,6 +74,13 @@ export interface Mockup {
   // The project zone's head as the template writes it: div.arr-toolbar (with tool()) and div.infoline.
   readonly projectHead: string;
   tool(icon: string, key: number, on?: boolean): string;
+  // The track header the mockup draws for track `index` of T.
+  th(track: MockupTrack, index: number): string;
+  // The track list as the app.innerHTML template writes it: div.headers, its head, the marker head and T.map(th).
+  readonly headers: string;
+  // The mockup's gain and pan formats (fdb(-2.5) = "−2.5", fpan(-35) = "L35").
+  fdb(db: number | null): string;
+  fpan(pan: number): string;
 }
 
 // The mockup's functions with LANG set to `lang` ('en' or 'zh-TW').
@@ -90,6 +98,7 @@ export function loadMockup(lang = 'en'): Mockup {
     between(source, 'const T=[', '// clips:'),
     between(source, 'const hex=', '/* ============================== knob */'),
     between(source, 'function knob(', '/* ============================== markup */'),
+    between(source, 'const th=', '// A MixConsole strip'),
     between(source, 'function strip(', '// clip: the title names a clip'),
     between(source, 'const P={', '// Fidelity ids'),
     line(source, 'const ic='),
@@ -99,14 +108,30 @@ export function loadMockup(lang = 'en'): Mockup {
     `const leftzone=\`${between(source, '<aside class="leftzone"', '<main class="center">').trim()}\`;`,
     // The project zone's toolbar and info line, the block of the template above div.arr-body.
     `const projectHead=\`${between(source, '<div class="arr-toolbar"', '<div class="arr-body"').trim()}\`;`,
-    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone,projectHead,tool};',
+    // The track list's block of the template, evaluated the same way.
+    `const headers=\`${between(source, '<div class="headers"', '<div class="lanes"').trim()}\`;`,
+    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan,projectHead,tool};',
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
   const out = context.out as Mockup;
   // Data made in the vm's realm is copied into this one, so deepStrictEqual compares it by value.
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-  return { knob: out.knob, strip: out.strip, master: out.master, pos: out.pos, SCALE: copy(out.SCALE), T: copy(out.T), leftzone: out.leftzone, projectHead: out.projectHead, tool: out.tool };
+  return {
+    knob: out.knob,
+    strip: out.strip,
+    master: out.master,
+    pos: out.pos,
+    SCALE: copy(out.SCALE),
+    T: copy(out.T),
+    leftzone: out.leftzone,
+    th: out.th,
+    headers: out.headers,
+    fdb: out.fdb,
+    fpan: out.fpan,
+    projectHead: out.projectHead,
+    tool: out.tool,
+  };
 }
 
 // ---------------------------------------------------------------- markup trees

@@ -94,12 +94,23 @@ async function launch(
 // pressed then is lost (arrange.spec.ts hit the same on the macOS runner).
 // Wait for what each shows: the undo and redo buttons exist once the
 // capabilities list session.undo, the clip count once the snapshot is in, and
-// the start button is enabled once the capabilities and a running device are.
+// a running device once engine.status reported one (deviceRunning).
 async function ready(expected: { clips: number; device: boolean }): Promise<void> {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('undo')).toBeVisible();
   await expect(page.getByTestId('clip-count')).toHaveText(String(expected.clips));
-  if (expected.device) await expect(playButton()).toBeEnabled();
+  if (expected.device) await deviceRunning();
+}
+
+// An enabled start button alone does not mean a device runs: connected and
+// before the first engine.status answer the transport is enabled too ("the
+// engine decides", transportAvailability), and a key pressed then reaches an
+// engine whose device may still be failing to open. The status bar shows the
+// device's latency only once an engine.status answer reported a running
+// device, so wait for that, then for the button it enables.
+async function deviceRunning(timeout?: number): Promise<void> {
+  await expect(page.getByTestId('latency')).toBeVisible({ timeout });
+  await expect(playButton()).toBeEnabled();
 }
 
 // The timeline's test hooks (the CSP allows no eval in the page).
@@ -610,7 +621,9 @@ test('with no audio device the transport is disabled, its tooltip gives the reas
 test('a device that opens after a few failed attempts enables the transport once engine.status reports it', async () => {
   test.setTimeout(90_000);
   await launch({ engineArgs: ['--fake-open-failures', '2'], device: false });
-  await expect(playButton()).toBeEnabled({ timeout: 30_000 });
+  // Two failed opens under the engine's default backoff (250 ms, then 500 ms)
+  // and the status bar's next 1 s poll: a few seconds on a loaded runner.
+  await deviceRunning(30_000);
   await expect(playButton()).toHaveAttribute('title', en['transport.startStop']);
   await focusProject();
   await page.keyboard.press('Space');

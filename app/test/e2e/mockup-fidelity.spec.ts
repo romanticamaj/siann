@@ -465,7 +465,7 @@ async function openApp(languages: readonly string[], notes: string[], beforeSetu
     await page.bringToFront();
   }
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   await expect(page.getByTestId('clip-count')).toHaveText(String(CLIPS.length));
   // The session names each clip's media as the mockup names the clip (UI
   // redesign 10.7), so every clip title of the side-by-side is the mockup's.
