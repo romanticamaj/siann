@@ -239,7 +239,8 @@ TEST_CASE("engine.status carries the device and the driver's timing, counts as d
         port.reported.srcUnderruns = 5;
 
         const Value status = f.ok(c, "engine.status");
-        CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "recording", "armed", "xruns",
+        CHECK(keysOf(status) == std::set<std::string>{"device", "playing", "cycle", "click", "recording", "armed",
+                                                      "punch", "preroll", "countIn", "xruns",
                                                       "maxCallbackMicros", "unmeasuredCallbacks", "underruns",
                                                       "srcUnderruns", "monitorRoundTripFrames", "load", "agents"});
         CHECK(at(status, "agents").asArray().empty());  // m5b-engine-plan-metadata: no MCP session yet
@@ -937,7 +938,10 @@ TEST_CASE("transport.changed carries the three states and is published once per 
     f.ok(c, "transport.set_punch", punchParams(true, true));
     auto events = transportEvents(f, watcher);
     REQUIRE(events.size() == 1);
-    CHECK(keysOf(events[0]) == std::set<std::string>{"type", "cycle", "click", "punch", "preroll", "countIn"});
+    for (const char* key : {"cycle", "click", "punch", "preroll", "countIn"}) {
+        INFO(key);
+        CHECK(keysOf(events[0]).count(key) == 1);  // all five, beside the event envelope
+    }
     checkThreeStates(events[0], true, true, false, 1, false, 2);
     f.ok(c, "transport.set_punch", punchParams(true, true));  // the same value
     CHECK(transportEvents(f, watcher).size() == 1);

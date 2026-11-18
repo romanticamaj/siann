@@ -52,6 +52,7 @@ struct Session::State {
     std::int64_t lastSeq = 0;
     command::PlanStore plans;  // in memory only (M3)
     bool cycle = false;        // written with every checkpoint
+    PunchFlags punch;          // written with every checkpoint, beside cycle
     Session::HeadGuard headGuard;  // engine state (setHeadGuard)
 
     State(detail::BundleLock held, fs::path path, History h, std::int64_t seq)
@@ -77,7 +78,8 @@ struct Session::State {
             {"coversSeq", Value(std::to_string(lastSeq))},
             {"head", envelopeToJson(head.envelope)},
             {"document", head.document.toJson()},
-            {"transport", Value(Object{{"cycle", Value(cycle)}})},
+            {"transport", Value(Object{{"cycle", Value(cycle)},
+                                       {"punch", Value(Object{{"in", Value(punch.in)}, {"out", Value(punch.out)}})}})},
         });
         io::writeFileAtomic(bundle / kCheckpointFile, jcs::canonicalize(checkpoint) + "\n");
     }
@@ -153,6 +155,7 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
     }
     std::int64_t coversSeq = 0;
     bool checkpointCycle = false;
+    PunchFlags checkpointPunch;
     if (checkpoint) {
         try {
             model::detail::FieldReader r(*checkpoint, "checkpoint");
@@ -163,6 +166,11 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
             if (const Value* transport = r.optional("transport")) {
                 model::detail::FieldReader t(*transport, "checkpoint.transport");
                 checkpointCycle = t.boolean("cycle");
+                if (const Value* punch = t.optional("punch")) {
+                    model::detail::FieldReader p(*punch, "checkpoint.transport.punch");
+                    checkpointPunch.in = p.boolean("in");
+                    checkpointPunch.out = p.boolean("out");
+                }
             }
         } catch (const model::ModelError& error) {
             throw SessionError("checkpoint_mismatch", error.what());
@@ -267,6 +275,7 @@ Session Session::open(const fs::path& bundle, OpenReport* report) {
 
     auto state = std::make_unique<State>(std::move(held), bundle, std::move(history), recordCount);
     state->cycle = checkpointCycle;
+    state->punch = checkpointPunch;
     state->installJournalHook();
     return Session(std::move(state));
 }
@@ -277,6 +286,14 @@ bool Session::cycle() const noexcept {
 
 void Session::setCycle(bool enabled) noexcept {
     state_->cycle = enabled;
+}
+
+PunchFlags Session::punch() const noexcept {
+    return state_->punch;
+}
+
+void Session::setPunch(PunchFlags flags) noexcept {
+    state_->punch = flags;
 }
 
 const fs::path& Session::bundlePath() const noexcept {

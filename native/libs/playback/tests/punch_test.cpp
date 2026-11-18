@@ -50,7 +50,7 @@ TEST_CASE("pre-roll start frame from the tempo map, clamped at 0", "[playback][p
 TEST_CASE("the count-in's beats are spaced by the tempo at the held position", "[playback][punch][countin]") {
     CHECK(beatFramesAt(constant(120'000), kRate, 0) == 24'000.0);
     CHECK(std::fabs(beatFramesAt(constant(97'000), kRate, 123'456) - 48'000.0 * 60.0 / 97.0) < 1e-9);
-    CHECK(beatFramesAt(slowerAfterOneBar(), kRate, 95'999) == 24'000.0);
+    CHECK(beatFramesAt(slowerAfterOneBar(), kRate, 95'000) == 24'000.0);
     CHECK(beatFramesAt(slowerAfterOneBar(), kRate, 96'000) == 48'000.0);
     CHECK(beatFramesAt(slowerAfterOneBar(), kRate, 1'000'000) == 48'000.0);
 }

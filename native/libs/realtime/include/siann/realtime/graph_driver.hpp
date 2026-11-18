@@ -43,6 +43,18 @@
 // output (after the master meter, the duck and the loudness meter) and before
 // device-side SRC.
 //
+// Count-in (m5b-engine-punch-count-in; spec, "Click"): a locate that carries a
+// start and a CountIn holds the transport at its position for `beats` beats of
+// click, beat k round(k x beatFrames) frames after the count-in starts (the
+// first and every fourth accented), at the click's gain whether or not the
+// metronome is on, added at the same tap. The transport then starts
+// round(beats x beatFrames) frames after the count-in started: the callback is
+// split there (input and output), rendered stopped before and playing after, so
+// the playhead and the capture start mid-block. It is counted in rendered
+// session frames, so through device-side SRC it is exact at the session rate. A
+// pause covering its generation, a newer locate or a device stop ends it with
+// the transport stopped. No allocation, lock or logging.
+//
 // Device-side SRC (spec, "Device-side SRC (M2)"): when the device opens at a
 // rate other than the session rate (AudioDeviceConfig::sampleRate), the graph
 // keeps running at the session rate in fixed blocks. Each step renders one
@@ -133,15 +145,38 @@ struct MeterFrame {
 };
 }  // namespace detail
 
+// A count-in before a start (m5b-engine-punch-count-in): `beats` clicks spaced by
+// `beatFrames` session frames (a fraction); none when beats is 0.
+struct CountIn {
+    std::int32_t beats = 0;
+    double beatFrames = 0.0;
+};
+
 // A transport command for the audio thread (revision 3.1, "Locate"). The
 // dispatcher sends a locate only after the butler is ready for its generation
 // (or its timeout passed). `play` starts the transport at the same block
 // boundary: play from stop is a locate to the current position with `play`.
+// With a count-in the start waits for it (see "Count-in" above).
 struct TransportCommand {
     std::uint64_t generation = 0;
     std::int64_t position = 0;
     bool play = false;
+    CountIn countIn{};
 };
+
+namespace detail {
+// The count-in in progress, audio side (at namespace scope for GCC, as Handoff).
+struct CountInRun {
+    bool active = false;
+    std::uint64_t generation = 0;
+    std::int32_t beats = 0;
+    double beatFrames = 0.0;
+    std::int64_t elapsed = 0;  // frames rendered since it started
+    std::int64_t end = 0;      // the frame the transport starts at
+    std::int32_t nextBeat = 0;
+    std::int64_t nextBeatFrame = 0;
+};
+}  // namespace detail
 
 // The master loudness (m5b-engine-load-loudness, Protocol v0 item 31), in LUFS;
 // minus infinity for silence.
@@ -352,6 +387,11 @@ public:
         playing_.store(false);
     }
     bool playing() const noexcept { return playing_.load(); }
+    // Any thread: a count-in holds the transport for a start that no pause covers.
+    bool countingIn() const noexcept {
+        return countingIn_.load(std::memory_order_acquire) &&
+               countInGeneration_.load(std::memory_order_acquire) > pausedThrough_.load();
+    }
     std::int64_t playhead() const noexcept { return playhead_.load(std::memory_order_acquire); }
     // The generation of the last locate the audio thread (or poll() while
     // stopped) applied (0: none). Read it before playhead(): the playhead then
@@ -448,17 +488,23 @@ private:
 
     void process(const host::AudioBufferView& input, const host::AudioBufferView& output) noexcept;
     std::int64_t nowNanos() const noexcept;  // audio thread: options_.nowNanos or the steady clock
-    void renderBlock(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept;
+    // `playing` turns true where a count-in ends inside the block.
+    void renderBlock(const host::AudioBufferView& output, int offset, int frames, bool& playing) noexcept;
     void renderSpan(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept;
     void wrapToLeft() noexcept;
     void addClick(const host::AudioBufferView& output, int offset, int frames, std::int64_t position) noexcept;
+    void addCountIn(const host::AudioBufferView& output, int offset, int frames) noexcept;
+    void startRolling(std::uint64_t generation) noexcept;
+    void endCountIn(bool start) noexcept;
+    void captureDirect(const host::AudioBufferView& input, int offset, int frames, std::int64_t stamp,
+                       bool playing) noexcept;
     void drainCycle() noexcept;
     void drainClickTempo() noexcept;  // audio thread (or the control side while stopped)
     void reclaimClickTempos();        // control side
     void lendClickTempo();            // control side: hands pendingClickTempo_ over if it fits
     void processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
                           bool playing) noexcept;
-    void srcStep(bool playing) noexcept;
+    void srcStep(bool& playing) noexcept;
     void pushMonitor(const host::AudioBufferView& resampled) noexcept;
     host::AudioBufferView takeMonitorBlock() noexcept;
     void setUpResampling(const host::AudioDeviceConfig& config);
@@ -494,6 +540,7 @@ private:
     static constexpr int kMaxRenderInputChannels = 64;
     host::AudioBufferView renderInput_{};
     std::array<float*, kMaxRenderInputChannels> renderInputPointers_{};
+    std::array<float*, kMaxRenderInputChannels> captureInputPointers_{};  // a count-in's split input
     rt::CallbackTimer timing_;
     rt::LoadWindow load_;
     // The master loudness meter: built by start(), audio side while running.
@@ -576,6 +623,12 @@ private:
     std::int64_t clickBeatFrame_ = 0;
     std::size_t clickBurst_ = 0;  // samples of the burst played; at its size, none sounds
     bool clickAccent_ = false;
+    // Count-in (audio side once started).
+    detail::CountInRun countIn_{};
+    std::size_t countInBurst_ = static_cast<std::size_t>(-1);  // samples played; at the burst's size, none
+    bool countInAccent_ = false;
+    std::atomic<bool> countingIn_{false};
+    std::atomic<std::uint64_t> countInGeneration_{0};
     rt::LatestMailbox<detail::MeterFrame> meterOutbox_;
     std::size_t meterCursor_ = 0;  // dispatcher side: next entry of meterOutbox_.front()
     std::atomic<std::uint64_t> meterDrops_{0};

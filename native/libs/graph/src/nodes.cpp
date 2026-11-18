@@ -354,16 +354,34 @@ bool MonitorInputNode::wantsInput(bool rolling) const noexcept {
 void MonitorInputNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
                                const AudioBufferView& output) noexcept {
     const int frames = std::min(context.frames, static_cast<int>(blend_.size()));
-    const int target = wantsInput(context.rolling) ? fadeFrames_ : 0;
+    const bool wanted = wantsInput(context.rolling);
+    // Auto monitoring while capturing follows the capture window frame by frame
+    // (m5b-engine-punch-count-in): [windowStart, windowEnd) in this block's frames.
+    int windowStart = 0;
+    int windowEnd = frames;
+    if (wanted && context.rolling && mode_ == MonitorInputMode::automatic && gate_ != nullptr) {
+        const std::int64_t from = gate_->captureFrom.load(std::memory_order_acquire);
+        const std::int64_t until = gate_->captureUntil.load(std::memory_order_acquire);
+        const std::int64_t start = context.blockStart;
+        if (from > start) {
+            windowStart = static_cast<int>(std::min<std::int64_t>(from - start, frames));
+        }
+        if (until < start + frames) {
+            windowEnd = static_cast<int>(std::max<std::int64_t>(until - start, 0));
+        }
+    }
+    const int target = wanted ? fadeFrames_ : 0;
     if (!primed_) {
-        position_ = target;  // the first block starts where it is: the graph's own rise covers it
+        // The first block starts where it is: the graph's own rise covers it.
+        position_ = wanted && windowStart == 0 && windowEnd > 0 ? fadeFrames_ : 0;
         primed_ = true;
     }
     const float fade = static_cast<float>(fadeFrames_);
     for (int i = 0; i < frames; ++i) {
-        if (position_ < target) {
+        const int frameTarget = i >= windowStart && i < windowEnd ? target : 0;
+        if (position_ < frameTarget) {
             ++position_;
-        } else if (position_ > target) {
+        } else if (position_ > frameTarget) {
             --position_;
         }
         blend_[static_cast<std::size_t>(i)] = static_cast<float>(position_) / fade;

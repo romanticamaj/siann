@@ -12,7 +12,9 @@
 //
 // Play from stop is a locate to the current position that carries the start:
 // the audio thread moves the playhead and starts it at the same block
-// boundary. stop() pauses at once.
+// boundary. stop() pauses at once. A start can name its position and carry a
+// count-in (m5b-engine-punch-count-in): one locate to that position whose start
+// waits for the count-in on the audio thread; it counts as playing meanwhile.
 //
 // Cycle (m5-ui-engine-loop-click, spec "Realtime data flow", "Cycle"): while
 // cycle is on and a region (the heard document's locators) is set, tick() arms
@@ -65,6 +67,9 @@ public:
     // While stopped: a locate to position() carrying the start (a pending
     // locate just gains the start). While playing: nothing.
     void play();
+    // While stopped: a locate to `from` (position() when empty) carrying the
+    // start and `countIn`. While playing or counting in: nothing.
+    void play(std::optional<std::int64_t> from, CountIn countIn);
 
     // Pauses the playhead at the next block. A pending locate is kept but no
     // longer starts the transport, and neither does one already sent.
@@ -82,8 +87,8 @@ public:
     // keeps the locate pending for the next tick.
     std::size_t tick(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
-    // True while the playhead advances, or a start is pending or on its way
-    // to the audio thread.
+    // True while the playhead advances, or a start is pending, on its way to
+    // the audio thread or waiting for its count-in.
     bool playing() const;
     // The pending or sent target until the audio thread has applied it, then
     // the playhead.
@@ -100,6 +105,7 @@ private:
         std::int64_t target = 0;
         bool play = false;
         std::optional<std::chrono::steady_clock::time_point> seenAt;  // first tick
+        CountIn countIn{};
     };
     struct Sent {
         std::uint64_t generation = 0;

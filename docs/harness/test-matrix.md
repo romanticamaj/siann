@@ -234,6 +234,53 @@ track.set_monitor and features.monitoring"; app unit `capabilities`
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
+| m5b-engine-punch-count-in | Y (`recording_test` capture window, `capture_bank_test` and `monitoring_test` the gate's window, `count_in_test`, `transport_test` counted start, `punch_test`, `locators_session_test` checkpoint punch, `engine_host_test` punch across rebind, `engine_record_test` punch, pre-roll and count-in on the manual device, `transport_methods_test`, `mcp_adapter_test`, `engine_launch_test` wire case) | Y (`recording_test`, `monitoring_test`, `capture_bank_test`, `count_in_test` and `engine_record_test` with `siann_rt_alloc_guard`) | | Y (`protocol-parity` fixture; app unit `capabilities` over `capabilities-full.json`) | all 3 | - (real-device count-in and punch: the audio-hardware human gate at the milestone exit; no UI until `m5b-ui-recording`; tour states changed: none) |
+
+Per acceptance item (`m5b-engine-punch-count-in`): 1 `recording_test` "a take
+with a capture window keeps exactly the frames inside it, mid-block at both ends"
+(with the alloc guard); `capture_bank_test` "the monitor gate follows the capture
+window: the bank hands it the window"; `monitoring_test` "the monitor gate follows
+the capture window to the frame"; `locators_session_test` "The punch flags
+round-trip in the checkpoint with the cycle flag", "A checkpoint without punch
+reads both flags false"; `engine_host_test` "session.open hands the opened
+session's punch flags to the host; pre-roll and count-in are kept";
+`engine_record_test` "a take recorded with punch in and out holds exactly the
+frames between the locators" (generated input sample by sample, and the loopback
+device's record offset), "auto monitoring switches at the punch frames",
+"playback runs on after the punch-out and one revision is committed". 2
+`punch_test` "pre-roll start frame from the tempo map, clamped at 0", "the
+count-in's beats are spaced by the tempo at the held position"; `count_in_test`
+"a count-in plays bars x 4 clicks with the playhead held, with the metronome off,
+and the playhead starts at the expected frame within one sample" (97 BPM, a start
+inside a callback, the alloc guard), "no click outside the count-in while the
+metronome is off", "a pause during the count-in ends it with the transport
+stopped"; `transport_test` "a start that carries a count-in and a start
+position"; `engine_record_test` "pre-roll starts bars before the record position,
+clamped at 0, and the take starts at the record position", "a one-bar count-in
+then four bars gives a four-bar take that starts at the record position", "the
+count-in click is not in the take and not in an offline render", "pre-roll and
+count-in apply only from a stopped transport; a stop during the count-in trashes
+the takes". 3 `engine_record_test` "punch without locators records as before",
+"cycle on: the recording still runs through, no second take" (the range is the
+locators entity; no second range exists in the model). 4 `transport_methods_test`
+"transport.set_punch, set_preroll and set_count_in reach the port and return the
+three states", "punch, pre-roll and count-in refuse bad params before the port",
+"... without a port not_supported, a port's no_device passes through",
+"transport.changed carries the three states and is published once per actual
+change", "... a duplicate requestId is cached and a stale expectedRevision runs
+nothing", "engine.capabilities lists set_punch, set_preroll and set_count_in with
+features punch, preroll and countIn"; `mcp_adapter_test` "set_punch, set_preroll
+and set_count_in wrap their methods one to one under propose" and the propose
+tool list; `protocol_parity_test` and Node `protocol-parity` (the tables, the
+three schema docs and `capabilities-full.json`); `engine_launch_test` "punch,
+pre-roll and count-in set on the wire read back in engine.status". 5 none
+(loop takes stay `m6b-loop-takes`; no UI, tour states changed: none). Under
+device-side SRC the count-in is exact in session frames and the punch switches
+within one graph block (spec, "Click", "Latency model"); the exact cases run on
+the non-SRC manual device.
+
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
 | m5b-protocol-parity | Y (`protocol_parity_test`, `mcp_adapter_test` `list_plans`, `preview_plan`, `undo`, `redo`) | Y (the same tests) | | Y (`protocol-parity`, `test-matrix`; app unit `capabilities`) | 3 + RTSan | - (tour states changed: none) |
 
 Per acceptance item (`m5b-protocol-parity`): 1 `protocol_parity_test` "every
@@ -511,8 +558,9 @@ window), `mockup-fidelity.test.js` "the chrome's gate is report ..." (gate
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
 ctest, ...): M5b 60/133 (the nine UI features that own mockup parts each gained an item for those parts, layer F: since 2026-11-17 "ported from the mockup's markup, side-by-side screenshot attached", with the fidelity run as a report; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
-`m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
+`m5b-engine-markers` 0/4,
+`m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` and `m5b-engine-punch-count-in`
+moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:
@@ -654,8 +702,9 @@ Not covered by the parity tests:
   `list_commands`, `reject_plan`, `discard_proposal`, `list_plans`,
   `preview_plan`, `undo`, `redo`, transport and device tools.
 - App: `plan.submit`, `plan.rollback`, `render.start`, `job.status`,
-  `session.create`, `media.import`, `record.*`, `meter.reset_loudness`, devices
-  and plugins have no app client yet (expected in M5b). `transport.play`/`stop`/`locate`
+  `session.create`, `media.import`, `record.*`, `meter.reset_loudness`,
+  `transport.set_punch`/`set_preroll`/`set_count_in` (until `m5b-ui-recording`),
+  devices and plugins have no app client yet (expected in M5b). `transport.play`/`stop`/`locate`
   and `session.undo`/`redo` have one since m5-ui-transport
   (`model/transport.ts`, `undo-redo.test`), `transport.set_cycle`/`set_click`
   since m5-ui-loop-click (`model/loop-click.ts`, `locator-commands.test`), and

@@ -2,6 +2,7 @@ add_library(siann_playback
   src/audition.cpp
   src/playback_engine.cpp
   src/plugin_instances.cpp
+  src/punch.cpp
 )
 add_library(siann::playback ALIAS siann_playback)
 target_include_directories(siann_playback PUBLIC include)

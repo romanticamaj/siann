@@ -78,6 +78,9 @@ void CaptureBank::process(const host::AudioBufferView& input, std::int64_t timel
             continue;  // the open input does not reach this map
         }
         if (gate != nullptr) {
+            // The window first: a node that sees `capturing` sees the take's window.
+            gate->captureFrom.store(slot.recorder.captureFrom(), std::memory_order_relaxed);
+            gate->captureUntil.store(slot.recorder.captureUntil(), std::memory_order_relaxed);
             gate->capturing.store(playing && slot.recorder.recording() && !slot.recorder.captureEnded(),
                                   std::memory_order_release);
         }
