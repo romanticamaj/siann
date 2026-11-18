@@ -115,6 +115,14 @@ async function chipFits(): Promise<string[]> {
     // A long name shortens; it never pushes the bar's right group out of the window.
     const plans = document.querySelector<HTMLElement>('[data-testid=plans-button]')!.getBoundingClientRect();
     if (plans.right > window.innerWidth + 0.5) out.push(`the Plans button is pushed out: ${plans.right} > ${window.innerWidth}`);
+    // The chip gives way first: the session's name stays whole (its text as
+    // wide as its box; an ellipsis shows at any fraction of a pixel short).
+    const session = document.querySelector<HTMLElement>('[data-testid=session-name] > span')!;
+    const range = document.createRange();
+    range.selectNodeContents(session);
+    const text = range.getBoundingClientRect().width;
+    const shown = session.getBoundingClientRect().width;
+    if (text > shown + 0.01) out.push(`the session's name is shortened: ${text} > ${shown}`);
     return out;
   });
 }

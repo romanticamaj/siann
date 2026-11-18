@@ -1294,4 +1294,11 @@ test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and 
   assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-branch-chip/);
   assert.match(shell, /\.app\[data-hearing="proposal"\]::after\s*\{[^}]*border:\s*var\(--space-half\) solid var\(--ai\)/);
   assert.match(shell, /\[data-ghost-mode="solid"\]/);
+  // A proposed track's header and strip lose the shared rules' hatch while
+  // heard: their body is the ghost tint, unhatched (UI redesign 4.3).
+  const unhatched = /\.th\.ghost\[data-ghost-mode="solid"\],\s*\.strip\.ghost\[data-ghost-mode="solid"\]\s*\{[^}]*background:\s*linear-gradient\(var\(--ai-a100\), var\(--ai-a100\)\), var\(--bg-alt\)/;
+  assert.match(shell, unhatched);
+  // The chip gives way before the session's name: while it is in the left
+  // group, the name does not shrink (above 1300 px, where the chip shows).
+  assert.match(shell, /\.tb-left:has\(> \[data-part="branch-chip"\]\) > \.session\s*\{\s*flex-shrink:\s*0;\s*\}/);
 });
