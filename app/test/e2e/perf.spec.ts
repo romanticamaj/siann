@@ -76,14 +76,39 @@ test('64 tracks, 2,000 clips playing with meters: frame work, JS heap and cold s
     .not.toBeNull()
     .catch(() => undefined);
 
-  // Playing, meters running: the frames from the first meter frame on.
-  await frames('clear', page);
+  // Playing, meters running: the frames from the first meter frame on. The
+  // meters' animation frame (and so the frame marks) runs on an idle window
+  // too, so the window starts only once the transport reports playing (the
+  // play button's aria-pressed follows the realtime channel's playing flag)
+  // and the track meters drew a meter frame that arrived after the click
+  // (data-frames is the realtime client's meter frame count when drawn). The
+  // report gets the playing state at both ends and the meter frames inside:
+  // without them the frames are a missing measurement (support/perf-report.ts).
+  const meters = page.getByTestId('track-meters');
+  const meterFramesDrawn = async () => Number((await meters.getAttribute('data-frames')) ?? '0');
+  const beforePlay = await meterFramesDrawn();
   await play.click();
-  await expect
-    .poll(async () => (await frames<number[]>('samples', page)).length, { timeout: 120_000 })
-    .toBeGreaterThanOrEqual(FRAMES)
+  let playingAtStart = false;
+  await expect(play)
+    .toHaveAttribute('aria-pressed', 'true', { timeout: 60_000 })
+    .then(() => (playingAtStart = true))
     .catch(() => undefined);
+  await expect
+    .poll(meterFramesDrawn, { timeout: 60_000 })
+    .toBeGreaterThan(beforePlay)
+    .catch(() => undefined);
+  const windowStart = await meterFramesDrawn();
+  playingAtStart = playingAtStart && windowStart > beforePlay && (await play.getAttribute('aria-pressed')) === 'true';
+  await frames('clear', page);
+  if (playingAtStart) {
+    await expect
+      .poll(async () => (await frames<number[]>('samples', page)).length, { timeout: 120_000 })
+      .toBeGreaterThanOrEqual(FRAMES)
+      .catch(() => undefined);
+  }
   const frameWorkMs = await frames<number[]>('samples', page);
+  const playingAtEnd = (await play.getAttribute('aria-pressed')) === 'true';
+  const meterFrames = (await meterFramesDrawn()) - windowStart;
   const heapBytes = await page.evaluate(() => {
     const memory = (performance as unknown as { memory?: { usedJSHeapSize?: number } }).memory;
     return typeof memory?.usedJSHeapSize === 'number' ? memory.usedJSHeapSize : null;
@@ -97,12 +122,14 @@ test('64 tracks, 2,000 clips playing with meters: frame work, JS heap and cold s
     frameWorkMs,
     heapBytes,
     coldStartMs,
+    playback: { playingAtStart, playingAtEnd, meterFrames },
   });
   const out = process.env.SIANN_PERF_OUT || path.join(APP_DIR, 'test-results', 'perf');
   fs.mkdirSync(out, { recursive: true });
   const file = path.join(out, 'perf-report.json');
   fs.writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
   await test.info().attach('perf-report.json', { path: file, contentType: 'application/json' });
+  console.log(`window: playing ${playingAtStart} -> ${playingAtEnd}, ${meterFrames} meter frames, ${frameWorkMs.length} frames`);
   for (const row of report.budgets) {
     console.log(`${row.name}: ${row.value ?? 'missing'} ${row.unit} (budget ${row.budget}; within: ${row.withinBudget})`);
   }

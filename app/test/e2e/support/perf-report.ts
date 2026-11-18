@@ -3,7 +3,12 @@
 // The budgets are those of UI redesign spec 5.6; the report says per budget
 // whether the measurement is within it, and missingMeasurements() names what
 // was not measured, which is the only thing that fails the spec (report only
-// at first: never a budget).
+// at first: never a budget). The frame figures count only when the window they
+// were taken in was played with the meters running (5.6 row 1): the spec hands
+// the transport's playing state at the window's start and end and the meter
+// frames drawn inside it, and without that evidence the frames are missing
+// (the header meters' animation frame, and so the frame marks, run on an idle
+// window as well).
 
 export const BUDGETS = {
   // Main-thread work per frame while playing, 64 tracks, 2,000 clips, meters running.
@@ -18,6 +23,9 @@ export const BUDGETS = {
 // Fewer frames than this is no frame measurement (one second at 60 Hz).
 export const MIN_FRAMES = 60;
 
+// Fewer meter frames than this inside the window is no "meters running".
+export const MIN_METER_FRAMES = 10;
+
 export const SCENARIO = { tracks: 64, clips: 2000 } as const;
 
 export interface PerfInput {
@@ -28,6 +36,14 @@ export interface PerfInput {
   readonly frameWorkMs: readonly number[];
   readonly heapBytes: number | null;
   readonly coldStartMs: number | null;
+  // The measured window: the transport's playing flag (the play button's
+  // aria-pressed, from the realtime channel) when it started and when it
+  // ended, and the meter frames the track meters drew inside it.
+  readonly playback?: {
+    readonly playingAtStart: boolean;
+    readonly playingAtEnd: boolean;
+    readonly meterFrames: number;
+  };
 }
 
 export type BudgetName = keyof typeof BUDGETS;
@@ -48,6 +64,10 @@ export interface PerfReport {
   readonly scenario: { readonly tracks: number; readonly clips: number };
   readonly measurements: {
     readonly frames: number;
+    // Playing at both ends of the window.
+    readonly playing: boolean;
+    // Meter frames drawn inside the window (0 without the evidence).
+    readonly meterFrames: number;
     readonly frameMedianMs: number | null;
     readonly frameP99Ms: number | null;
     readonly heapMb: number | null;
@@ -79,7 +99,14 @@ const round = (value: number): number => Math.round(value * 1000) / 1000;
 
 export function buildPerfReport(input: PerfInput): PerfReport {
   const frames = input.frameWorkMs;
-  const framesValid = frames.length >= MIN_FRAMES && frames.every((v) => Number.isFinite(v) && v >= 0);
+  const playing = input.playback?.playingAtStart === true && input.playback.playingAtEnd === true;
+  const rawMeterFrames = input.playback?.meterFrames;
+  const meterFrames = typeof rawMeterFrames === 'number' && Number.isFinite(rawMeterFrames) && rawMeterFrames > 0 ? rawMeterFrames : 0;
+  const framesValid =
+    playing &&
+    meterFrames >= MIN_METER_FRAMES &&
+    frames.length >= MIN_FRAMES &&
+    frames.every((v) => Number.isFinite(v) && v >= 0);
   const frameMedianMs = framesValid ? round(median(frames)) : null;
   const frameP99Ms = framesValid ? round(percentile(frames, 99)) : null;
   const heapMb =
@@ -106,16 +133,19 @@ export function buildPerfReport(input: PerfInput): PerfReport {
     commit: input.commit,
     platform: input.platform,
     scenario: { tracks: input.scenario.tracks, clips: input.scenario.clips },
-    measurements: { frames: frames.length, frameMedianMs, frameP99Ms, heapMb, coldStartMs },
+    measurements: { frames: frames.length, playing, meterFrames, frameMedianMs, frameP99Ms, heapMb, coldStartMs },
     budgets,
   };
 }
 
-// What the scenario failed to measure: a budget row without a value, or a
-// session that is not the 64-track, 2,000-clip one.
+// What the scenario failed to measure: a budget row without a value, a
+// session that is not the 64-track, 2,000-clip one, or a frame window that was
+// not played (playing) or drew too few meter frames (meterFrames).
 export function missingMeasurements(report: PerfReport): string[] {
   const missing: string[] = [];
   if (report.scenario.tracks !== SCENARIO.tracks || report.scenario.clips !== SCENARIO.clips) missing.push('scenario');
+  if (!report.measurements.playing) missing.push('playing');
+  if (report.measurements.meterFrames < MIN_METER_FRAMES) missing.push('meterFrames');
   for (const row of report.budgets) if (row.value === null) missing.push(row.name);
   return missing;
 }

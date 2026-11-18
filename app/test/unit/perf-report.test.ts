@@ -183,7 +183,7 @@ test('perf.spec.ts starts the window once playing with a meter frame drawn, and 
   };
   const click = at(/await play\.click\(\)/);
   const pressed = at(/toHaveAttribute\('aria-pressed', 'true'/);
-  const firstMeter = at(/meterFramesDrawn\(\)\)\.toBeGreaterThan\(/);
+  const firstMeter = at(/\.poll\(meterFramesDrawn, [^)]*\)\s*\.toBeGreaterThan\(beforePlay\)/);
   const clear = at(/await frames\('clear', page\)/);
   const samples = at(/const frameWorkMs = await frames/);
   const endState = at(/playingAtEnd = /);
