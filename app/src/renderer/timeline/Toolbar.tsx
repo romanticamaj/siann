@@ -105,8 +105,9 @@ const TOOL_HOLDS: Readonly<Record<number, string>> = {
 
 export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapToggle, onGrid, onSnapType, onAutoScroll, pill = null }: ToolbarProps) {
   const t = useT();
-  // The edit guard (m5b-ui-audition): the Split tool only splits, so it is
-  // disabled with the reason while a proposal is heard.
+  // The edit guard (m5b-ui-audition): the Split tool only splits, and Glue
+  // and Erase (m5b-ui-edit-more) only glue and erase, so they are disabled
+  // with the reason while a proposal is heard.
   const guard = useEditGuard();
   const locale = useLocale();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -125,7 +126,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
             if (!landed) return <span key={key} className={TOOL_HOLDS[key]} aria-hidden="true" />;
             if (!allowed(landed.tool)) return <span key={key} className="tool-empty" aria-hidden="true" />;
             const on = tool === landed.tool;
-            const guarded = landed.tool === 'split' ? guard : null;
+            const guarded = landed.tool === 'split' || landed.tool === 'glue' || landed.tool === 'erase' ? guard : null;
             return (
               <button
                 key={key}
