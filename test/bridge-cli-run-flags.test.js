@@ -205,7 +205,7 @@ test('rollback --run: the engine refuses a step, and its launch fails', (t) => {
   assert.equal(launch.run.error.code, 'session_locked');
 });
 
-test('a failed --run without --json prints the text summary with the error line', (t) => {
+test('a failed --run without --json prints the text summary', (t) => {
   const root = tempRoot(t, 'siann-run-text-');
   const commandFile = path.join(root, 'cmd.json');
   const result = siann(['workflow', 'import-pack', writeManifest(root), '--out', commandFile, '--run',
