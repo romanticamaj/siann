@@ -31,8 +31,9 @@ test('the command ids and the preset rows', () => {
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Enter').map((b) => b.commandId), ['plans.primary']);
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Enter').map((b) => b.commandId), ['focus.enterZone']);
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'NumpadEnter').map((b) => b.commandId), ['transport.start']);
-  // Cubase's Select None is Ctrl+Shift+A (research 7.2): not taken.
-  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Shift+A'), []);
+  // Cubase's Select None is Ctrl+Shift+A (research 7.2): not taken by the
+  // audition; it is edit.selectNone's (m5b-ui-edit-more).
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Shift+A').map((b) => b.commandId), ['edit.selectNone']);
 });
 
 test('Shift+A resolves from every zone, and not in a text field', () => {

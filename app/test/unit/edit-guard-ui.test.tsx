@@ -51,27 +51,31 @@ const toolbar = (heard: string | null) =>
       tool="select"
       snap={{ on: true, grid: 'bar' }}
       autoScroll={false}
-      gates={{ select: true, split: true, snap: true, autoScroll: true }}
+      gates={{ select: true, split: true, glue: true, erase: true, snap: true, autoScroll: true }}
       error={null}
       onTool={() => undefined}
       onSnapToggle={() => undefined}
       onGrid={() => undefined}
+      onSnapType={() => undefined}
       onAutoScroll={() => undefined}
     />,
   );
 
-test('the Split tool is disabled with the reason while a branch is heard; the Object Selection tool is not', () => {
+test('the Split, Glue and Erase tools are disabled with the reason while a branch is heard; the Object Selection tool is not', () => {
   const heard = toolbar('p1');
-  const split = find(heard, byAttr('data-testid', 'tool-split'));
-  assert.ok('disabled' in split.attrs);
-  assert.equal(split.attrs.title, REASON);
+  // Glue and Erase (m5b-ui-edit-more) only glue and erase, as Split only splits.
+  for (const id of ['tool-split', 'tool-glue', 'tool-erase']) {
+    const tool = find(heard, byAttr('data-testid', id));
+    assert.ok('disabled' in tool.attrs, id);
+    assert.equal(tool.attrs.title, REASON, id);
+    for (const side of ['main', null]) {
+      const free = find(toolbar(side), byAttr('data-testid', id));
+      assert.ok(!('disabled' in free.attrs), `${id} ${String(side)}`);
+      assert.notEqual(free.attrs.title, REASON, id);
+    }
+  }
   const select = find(heard, byAttr('data-testid', 'tool-select'));
   assert.ok(!('disabled' in select.attrs));
-  for (const side of ['main', null]) {
-    const free = find(toolbar(side), byAttr('data-testid', 'tool-split'));
-    assert.ok(!('disabled' in free.attrs), String(side));
-    assert.notEqual(free.attrs.title, REASON);
-  }
 });
 
 const gestures = {} as unknown as GestureController;
