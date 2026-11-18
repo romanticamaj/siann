@@ -39,6 +39,9 @@ const ERROR_KEYS = {
   queue_full: 'error.queue_full',
   lease_expired: 'error.lease_expired',
   invalid_name: 'error.invalid_name',
+  agent_busy: 'error.agent_busy',
+  agent_not_connected: 'error.agent_not_connected',
+  invalid_request_text: 'error.invalid_request_text',
 } as const satisfies Record<string, MessageKey>;
 
 type KnownCode = keyof typeof ERROR_KEYS;

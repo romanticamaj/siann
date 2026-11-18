@@ -8,7 +8,10 @@
 // it sends, a valid action that cannot run now disabled with its reason; the
 // stale reasons, the refusal line and the reason field as rows of their own)
 // and a history row for every other plan, newest first, under "Earlier";
-// then the composer's hold. With no plan selected (first load, after a
+// then the "ask the agent" box (m5b-ui-composer, plans/Composer: the request
+// rows above it, when engine.capabilities lists features.agentRequests and
+// agent.request; its empty box otherwise). An answered request selects the
+// plan it led to. With no plan selected (first load, after a
 // reconnect) the card is the newest plan that awaits a decision
 // (plans/selection.ts). The hearing switch is in the zone's tab row (Shell).
 // The list follows plan.changed, never an optimistic state; a chain that
@@ -28,14 +31,16 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { translator, useLocale } from '../i18n/t';
 import { shownAgent, type Agent, type AgentStore } from '../model/agents';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
+import type { RequestStore } from '../model/request-store';
 import type { ReviewStore } from '../model/review-store';
-import type { SessionClient } from '../model/session-client';
+import type { AgentRequest, AgentRequestSelection, SessionClient } from '../model/session-client';
 import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
 import type { CommandRegistry } from '../keys/commands';
 import { actionMethods, actionSet, landedLabel, primaryAction, runAction, type ActionEntry, type PlanAction } from './actions';
 import { AgentRow } from './AgentRow';
 import { cardOf, staleReasons as reasonsOf } from './card';
+import { ComposerView, RequestRows, useComposer } from './Composer';
 import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
 import { historyOf } from './history';
@@ -72,6 +77,15 @@ export interface PlanPanelViewProps {
   readonly agent?: Agent | null;
   // The step pinned by its target button or a click on a ghost (m5b-ui-ghosts).
   readonly pinnedStep?: number | null;
+  // The "ask the agent" box (m5b-ui-composer): the requests shown above it,
+  // its text and its refusal.
+  readonly requests?: { readonly open: readonly AgentRequest[]; readonly closed: AgentRequest | null };
+  readonly composerText?: string;
+  readonly composerRefusal?: PanelRefusal | null;
+  readonly onComposerText?: (text: string) => void;
+  readonly onSend?: () => void;
+  readonly onCancelRequest?: (request: string) => void;
+  readonly onDismissRequest?: () => void;
   readonly onSelect: (hash: string) => void;
   readonly onTicked: (ticked: ReadonlySet<number>) => void;
   readonly onNote: (note: string) => void;
@@ -143,10 +157,32 @@ export function PlanPanelView(props: PlanPanelViewProps) {
           </>
         ) : null}
       </div>
-      <Hold className="hold-composer" />
+      {can.feature('agentRequests') && can.has('agent.request') ? (
+        <>
+          <RequestRows
+            open={props.requests?.open ?? NONE}
+            closed={props.requests?.closed ?? null}
+            refusal={props.composerRefusal ?? null}
+            onCancel={props.onCancelRequest ?? IGNORE}
+            onDismiss={props.onDismissRequest ?? IGNORE}
+          />
+          <ComposerView
+            agent={props.agent ?? null}
+            text={props.composerText ?? ''}
+            refusal={props.composerRefusal ?? null}
+            onText={props.onComposerText ?? IGNORE}
+            onSend={props.onSend ?? IGNORE}
+          />
+        </>
+      ) : (
+        <Hold className="composer-empty" />
+      )}
     </>
   );
 }
+
+const NONE: readonly AgentRequest[] = Object.freeze([]);
+const IGNORE = () => undefined;
 
 type Entity = Readonly<Record<string, unknown>>;
 
@@ -174,16 +210,25 @@ export interface PlanPanelProps {
   readonly commands?: CommandRegistry;
   // The agents the engine lists (m5b-ui-plan-metadata).
   readonly agents?: AgentStore;
+  // The requests to the agent (m5b-ui-composer).
+  readonly requests?: RequestStore;
+  // The selected tracks and clips, sent with a request.
+  readonly selection?: AgentRequestSelection;
 }
 
 const NO_AGENTS = { subscribe: () => () => undefined, getSnapshot: () => null };
+const NO_REQUESTS = { subscribe: () => () => undefined, getSnapshot: () => null };
 
-export function PlanPanel({ client, plans, review, reconnects = 0, agents, commands }: PlanPanelProps) {
+export function PlanPanel({ client, plans, review, reconnects = 0, agents, commands, requests, selection }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
   const source = agents ?? NO_AGENTS;
   const subscribe = useMemo(() => (listener: () => void) => source.subscribe(listener), [source]);
   const listed = useSyncExternalStore(subscribe, () => source.getSnapshot());
   const agent = listed ? shownAgent(listed.agents) : null;
+  const requestSource = requests ?? NO_REQUESTS;
+  const subscribeRequests = useMemo(() => (listener: () => void) => requestSource.subscribe(listener), [requestSource]);
+  const shownRequests = useSyncExternalStore(subscribeRequests, () => requestSource.getSnapshot());
+  const composer = useComposer(client, requests, agent, selection);
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
@@ -241,6 +286,12 @@ export function PlanPanel({ client, plans, review, reconnects = 0, agents, comma
     setRejecting(false);
     setError(null);
   };
+  // An answered request selects the plan it led to. agent.request_changed
+  // follows the plan's plan.changed, so the store holds it; a plan it does not
+  // hold yet is still the selection, and the card shows it once it arrives.
+  const latestSelect = useRef(select);
+  latestSelect.current = select;
+  useEffect(() => requests?.onSelectPlan((hash) => latestSelect.current(hash)), [requests]);
 
   const actionFor = (entry: ActionEntry, current: PlanEntry): PlanAction | null => {
     const branch = current.proposalBranch;
@@ -320,6 +371,13 @@ export function PlanPanel({ client, plans, review, reconnects = 0, agents, comma
       hotStep={hotStep}
       agent={agent}
       pinnedStep={pinnedStep}
+      requests={shownRequests ?? undefined}
+      composerText={composer.text}
+      composerRefusal={composer.refusal}
+      onComposerText={composer.setText}
+      onSend={composer.send}
+      onCancelRequest={composer.cancel}
+      onDismissRequest={composer.dismiss}
       onLocate={(index) => review.locate(index)}
       onSelect={select}
       onTicked={(next) => review.setTicked(next)}

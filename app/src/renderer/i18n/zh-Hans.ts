@@ -271,6 +271,21 @@ export const zhHans: Catalog = {
   'actionReason.stale': '计划创建后，它要修改的内容已被改动',
   'actionReason.noneTicked': '请至少勾选一个步骤',
   // The agent row of the Plans tab (m5b-ui-plan-metadata; UI redesign 4.4): one entry per MCP tool of protocol-mcp-v0.md.
+  // The "ask the agent" box at the foot of the Plans tab (m5b-ui-composer; UI redesign 4.4).
+  'composer.placeholder': '请 {agent} 修改…',
+  'composer.placeholderNone': '请代理修改…',
+  'composer.label': '询问代理',
+  'composer.noAgent': '没有已连接的代理：请先通过 MCP 连接一个代理，再请它修改',
+  'composer.send': '发送',
+  'composer.requests': '给代理的请求',
+  'composer.cancel': '取消请求',
+  'composer.dismiss': '关闭',
+  'composer.state.pending': '已发送',
+  'composer.state.taken': '已接手',
+  'composer.state.answered': '已回复',
+  'composer.state.declined': '已婉拒',
+  'composer.state.cancelled': '已取消',
+  'composer.state.expired': '已过期',
   'agent.connected': '已连接',
   'agent.disconnected': '已断开',
   'agent.idle': '空闲',
@@ -451,6 +466,9 @@ export const zhHans: Catalog = {
   'error.queue_full': '引擎繁忙，请重试',
   'error.lease_expired': '租约已过期',
   'error.invalid_name': '名称不能包含控制字符、文字方向控制字符或分行符',
+  'error.agent_busy': '代理的待处理请求已满',
+  'error.agent_not_connected': '代理未连接',
+  'error.invalid_request_text': '文字为空、太长，或包含无法发送的字符',
 
   // Projects and audio setup (m5b-ui-project): the application menu, the
   // start view, the refusals of New and Open, the saved mark, the transport's

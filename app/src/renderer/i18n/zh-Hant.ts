@@ -271,6 +271,21 @@ export const zhHant: Catalog = {
   'actionReason.stale': '計畫建立後，它要變更的項目已被修改',
   'actionReason.noneTicked': '請至少勾選一個步驟',
   // The agent row of the Plans tab (m5b-ui-plan-metadata; UI redesign 4.4): one entry per MCP tool of protocol-mcp-v0.md.
+  // The "ask the agent" box at the foot of the Plans tab (m5b-ui-composer; UI redesign 4.4).
+  'composer.placeholder': '請 {agent} 修改…',
+  'composer.placeholderNone': '請代理修改…',
+  'composer.label': '詢問代理',
+  'composer.noAgent': '沒有已連線的代理：請先以 MCP 連線一個代理，再請它修改',
+  'composer.send': '傳送',
+  'composer.requests': '給代理的請求',
+  'composer.cancel': '取消請求',
+  'composer.dismiss': '關閉',
+  'composer.state.pending': '已傳送',
+  'composer.state.taken': '已接手',
+  'composer.state.answered': '已回覆',
+  'composer.state.declined': '已婉拒',
+  'composer.state.cancelled': '已取消',
+  'composer.state.expired': '已逾期',
   'agent.connected': '已連線',
   'agent.disconnected': '已中斷',
   'agent.idle': '閒置',
@@ -451,6 +466,9 @@ export const zhHant: Catalog = {
   'error.queue_full': '引擎忙碌中，請再試一次',
   'error.lease_expired': '租約已過期',
   'error.invalid_name': '名稱不能包含控制字元、文字方向控制字元或分行符號',
+  'error.agent_busy': '代理的待處理請求已滿',
+  'error.agent_not_connected': '代理未連線',
+  'error.invalid_request_text': '文字是空的、太長，或包含無法傳送的字元',
 
   // Projects and audio setup (m5b-ui-project): the application menu, the
   // start view, the refusals of New and Open, the saved mark, the transport's

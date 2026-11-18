@@ -156,6 +156,13 @@ const PATHS = {
       <path d="M13 3v10" />
     </>
   ),
+  // The "ask the agent" box's send control (m5b-ui-composer).
+  send: (
+    <>
+      <path d="M8 12.5v-9" />
+      <path d="M4.5 7 8 3.5 11.5 7" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

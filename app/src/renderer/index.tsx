@@ -63,6 +63,7 @@ import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { BranchSnapshotStore } from './model/branch-snapshot';
 import { AgentStore } from './model/agents';
+import { RequestStore } from './model/request-store';
 import { PlanStore } from './model/plan-store';
 import { ReviewStore } from './model/review-store';
 import type { Ghost } from './plans/ghosts';
@@ -194,6 +195,9 @@ branches.attach(client);
 // The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
 const agents = new AgentStore();
 agents.attach(client);
+// The requests to the agent the "ask the agent" box shows (m5b-ui-composer): agent.requests, then agent.request_changed.
+const requests = new RequestStore();
+requests.attach(client);
 // The plan under review, its preview and its ghosts (m5b-ui-ghosts).
 const review = new ReviewStore({ client, plans, branches });
 if (testHooks) {
@@ -350,6 +354,7 @@ const app = (
     peaks={peaks}
     plans={plans}
     agents={agents}
+    requests={requests}
     review={review}
     engineStatus={engineStatus}
     layout={layout}
