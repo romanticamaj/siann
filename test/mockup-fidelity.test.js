@@ -697,8 +697,9 @@ test('the decisions of the second round are written where contributors read them
   assert.match(spec, /applied early in `m5-ui-tokens-spacing` by the main session under the maintainer's 2026-11-15 authorisation 4a/);
   // A landed part that can be absent at runtime: a permanent width token, not a hold.
   assert.match(FEATURES.get('m5-ui-loop-click').acceptance.join('\n'), /its box keeps the width of --display-locators-empty-w/);
-  assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click`; `--dsp-load-empty-w` and `--tab-meter-empty-w`, in `m5b-ui-meter` \|/);
+  assert.match(rules, /`--<part>-empty-w` token[^\n]*\| `--display-locators-empty-w`, in `m5-ui-loop-click`; `--dsp-load-empty-w` and `--tab-meter-empty-w`, in `m5b-ui-meter`; `--tab-media-empty-w`, in `m5b-ui-media` \|/);
   assert.match(FEATURES.get('m5b-ui-meter').acceptance.join('\n'), /keep the widths of --dsp-load-empty-w and --tab-meter-empty-w/);
+  assert.match(FEATURES.get('m5b-ui-media').acceptance.join('\n'), /the empty box of tab-media keeps the width of --tab-media-empty-w/);
   assert.match(spec, /permanent `--<part>-empty-w` token/);
   assert.equal(ruleOf('display-locators').gate, CHROME);
   // The mixer's acceptance does not bend around the mockup's two corrected mistakes.
