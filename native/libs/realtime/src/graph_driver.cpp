@@ -73,6 +73,16 @@ struct GraphDriver::SrcPath {
     PlanarBuffer inputScratch;
     std::int64_t inputProduced = 0;  // session frames the input resampler produced so far
     std::int64_t stampLead = 0;      // srcOutputLatencyFrames + srcInputLatencyFrames
+
+    // Monitoring (m5b-engine-monitoring): the resampled input waits here for the
+    // step that renders it. A ring of `monitorCapacity` frames per channel,
+    // primed with srcMonitorFifoFrames of silence; each step takes one block
+    // into `monitorBlock`, the graph's input for that block.
+    PlanarBuffer monitorRing;
+    int monitorCapacity = 0;
+    int monitorRead = 0;
+    int monitorCount = 0;
+    PlanarBuffer monitorBlock;
 };
 
 GraphDriver::GraphDriver(Options options) : options_(options), meterOutbox_(emptyMeterFrame(options.meterCapacity)) {
@@ -146,6 +156,15 @@ void GraphDriver::setUpResampling(const host::AudioDeviceConfig& config) {
             path->inputScratch.allocate(inputChannels, path->input->maxOutputFrames());
             latency_.srcInputLatencyFrames =
                 toSessionFrames(path->input->lookaheadFrames(), sessionRate, deviceRate);
+            // The steps run ahead of the input resampler by less than a block plus
+            // its lookahead (and a frame or two of rounding): the FIFO starts that
+            // full, so a step never waits for input.
+            const int prime = static_cast<int>(latency_.srcInputLatencyFrames) + path->block + 4;
+            path->monitorCapacity = prime + 4 * (path->input->maxOutputFrames() + path->block);
+            path->monitorRing.allocate(inputChannels, path->monitorCapacity);
+            path->monitorBlock.allocate(inputChannels, path->block);
+            path->monitorCount = prime;  // silence
+            latency_.srcMonitorFifoFrames = prime;
         }
         path->stampLead = latency_.srcOutputLatencyFrames + latency_.srcInputLatencyFrames;
         src_ = std::move(path);
@@ -202,6 +221,8 @@ void GraphDriver::start(host::AudioDevice& device, const host::AudioDeviceConfig
     deviceStatus_ = device.open(config);
     setUpResampling(config);
     srcUnderruns_.store(0, std::memory_order_relaxed);
+    srcMonitorUnderruns_.store(0, std::memory_order_relaxed);
+    renderInput_ = {};
     timing_.reset();
     load_.reset();
     deviceLost_.store(false, std::memory_order_release);
@@ -322,6 +343,10 @@ LatencyReport GraphDriver::latency() const noexcept {
     const graph::PreparedGraph* live = liveGraph();
     report.monitoredPathLatencyFrames = live != nullptr ? live->totalLatency() : 0;
     report.recordOffsetFrames += report.monitoredPathLatencyFrames;
+    report.monitorInputPathFrames = live != nullptr ? live->monitorPathLatency() : 0;
+    report.monitorRoundTripFrames = report.inputLatencyFrames + report.outputLatencyFrames +
+                                    report.srcOutputLatencyFrames +
+                                    report.srcMonitorFifoFrames + report.monitorInputPathFrames;
     return report;
 }
 
@@ -470,6 +495,13 @@ void GraphDriver::applyLocate(const TransportCommand& command) noexcept {
         playing_.store(true);
         if (command.generation <= pausedThrough_.load()) {
             playing_.store(false);
+        } else if (current_ != nullptr && current_->monitors() && pathRise_ == 0 && !pathDuck_) {
+            // A graph that monitors was audible while stopped (its monitored
+            // input): raise only the sources, which were silent, so the input
+            // keeps its level across the start.
+            pathEdges_ = current_->startEdges();
+            pathRise_ = options_.fadeFrames;
+            startRise_ = true;
         } else {
             riseRemaining_ = options_.fadeFrames;  // from silence: fade in
         }
@@ -502,6 +534,7 @@ void GraphDriver::installDirectly(std::uint64_t epoch) {
     riseRemaining_ = options_.fadeFrames;
     pathRise_ = 0;
     pathEdges_ = {};
+    startRise_ = false;
     if (old != 0 && old != epoch) {
         retire(old);
     }
@@ -563,6 +596,7 @@ void GraphDriver::finishStop() {
     pathDuck_ = false;
     pathRise_ = 0;
     pathEdges_ = {};
+    startRise_ = false;
     if (locatePending_) {
         applyLocate(pendingLocate_);
         locatePending_ = false;
@@ -628,7 +662,11 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
         TransportCommand command;
         if (transportInbox_.pop(command)) {
             if (current_ == nullptr || !playing_.load(std::memory_order_acquire)) {
-                applyLocate(command);  // nothing audible to fade
+                // Stopped, nothing to duck: the players are silent and keep no
+                // position a listener hears, and a locate does not move the
+                // monitored input of a graph that monitors. A start raises the
+                // sources only in such a graph (applyLocate).
+                applyLocate(command);
             } else {
                 pendingLocate_ = command;
                 locatePending_ = true;
@@ -657,10 +695,13 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
     if (src_ != nullptr) {
         processResampled(input, output, playing);
     } else {
+        // The callback's own input, frame for frame with the output it renders.
+        renderInput_ = input.channels != nullptr && input.frames >= output.frames ? input : host::AudioBufferView{};
         const int chunk = current_ != nullptr ? current_->maxBlockFrames() : output.frames;
         for (int offset = 0; offset < output.frames; offset += chunk) {
             renderBlock(output, offset, std::min(chunk, output.frames - offset), playing);
         }
+        renderInput_ = {};
     }
 
     if (duckActive_ && duckRemaining_ == 0) {
@@ -681,14 +722,18 @@ void GraphDriver::process(const host::AudioBufferView& input, const host::AudioB
                 // with this graph and may still be filling. Merged before the
                 // old graph (which owns pathEdges_) goes to the butler.
                 const std::int64_t settle = std::min<std::int64_t>(current_->settleFrames(), INT_MAX / 2);
+                // A start's rise holds no delay line: it does not carry over
+                // (the whole output rises after this duck anyway).
                 const std::span<const std::uint8_t> carried =
-                    pathRise_ > 0 ? pathEdges_ : std::span<const std::uint8_t>{};
+                    pathRise_ > 0 && !startRise_ ? pathEdges_ : std::span<const std::uint8_t>{};
+                const int carriedRise = startRise_ ? 0 : pathRise_;
                 pathEdges_ = current_->holdEdges(carried);
-                pathRise_ = std::max(static_cast<int>(settle) + options_.fadeFrames, pathRise_);
+                pathRise_ = std::max(static_cast<int>(settle) + options_.fadeFrames, carriedRise);
             } else {
                 pathEdges_ = {};
                 pathRise_ = 0;  // a new graph rises as a whole
             }
+            startRise_ = false;
             if (!retireOutbox_.push(old)) {
                 unsentRetire_ = old;
                 retirePending_ = true;
@@ -755,7 +800,9 @@ void GraphDriver::pushMeters(std::int64_t position, int frames) noexcept {
 void GraphDriver::processResampled(const host::AudioBufferView& input, const host::AudioBufferView& output,
                                    bool playing) noexcept {
     SrcPath& s = *src_;
-    if ((recorder_ != nullptr || bank_) && s.input != nullptr && input.channelCount >= s.input->channels()) {
+    // The input resampler runs whenever the device has inputs: the recorder and
+    // the bank take its chunks, and so does the monitoring FIFO.
+    if (s.input != nullptr && input.channels != nullptr && input.channelCount >= s.input->channels()) {
         // Session frame m of the input resampler is device input time
         // m * deviceRate / sessionRate; the output path played timeline position
         // m + base there. Stamped as the playhead would be with that latency.
@@ -778,6 +825,7 @@ void GraphDriver::processResampled(const host::AudioBufferView& input, const hos
             if (bank_) {
                 bank_->process(resampled, stamp, playing);
             }
+            pushMonitor(resampled);
         }
     }
 
@@ -820,9 +868,11 @@ void GraphDriver::srcStep(bool playing) noexcept {
     const int fresh = s.head ^ 1;
     const host::AudioBufferView view{s.slots[fresh].pointers.data(), s.outputChannels, s.block};
     const int chunk = current_ != nullptr ? std::min(current_->maxBlockFrames(), s.block) : s.block;
+    renderInput_ = takeMonitorBlock();
     for (int offset = 0; offset < s.block; offset += chunk) {
         renderBlock(view, offset, std::min(chunk, s.block - offset), playing);
     }
+    renderInput_ = {};
     s.carryCount = s.output->process(s.slots[s.head].pointers.data(), s.block, s.carry.pointers.data());
     s.carryRead = 0;
     s.fed += s.block;
@@ -897,6 +947,56 @@ void GraphDriver::addClick(const host::AudioBufferView& output, int offset, int 
     clickCursor_ = position + frames;
 }
 
+void GraphDriver::pushMonitor(const host::AudioBufferView& resampled) noexcept {
+    SrcPath& s = *src_;
+    if (s.monitorCapacity == 0) {
+        return;
+    }
+    // Never full in practice (the steps drain a block each); what does not fit is dropped.
+    const int n = std::min(resampled.frames, s.monitorCapacity - s.monitorCount);
+    const int channels = std::min(resampled.channelCount, static_cast<int>(s.monitorRing.pointers.size()));
+    const int write = (s.monitorRead + s.monitorCount) % s.monitorCapacity;
+    for (int c = 0; c < channels; ++c) {
+        float* ring = s.monitorRing.pointers[static_cast<std::size_t>(c)];
+        const float* from = resampled.channel(c);
+        int at = write;
+        for (int i = 0; i < n; ++i) {
+            ring[at] = from[i];
+            if (++at == s.monitorCapacity) {
+                at = 0;
+            }
+        }
+    }
+    s.monitorCount += n;
+}
+
+host::AudioBufferView GraphDriver::takeMonitorBlock() noexcept {
+    SrcPath& s = *src_;
+    if (s.monitorCapacity == 0) {
+        return {};
+    }
+    const int channels = static_cast<int>(s.monitorBlock.pointers.size());
+    const int available = std::min(s.monitorCount, s.block);
+    for (int c = 0; c < channels; ++c) {
+        const float* ring = s.monitorRing.pointers[static_cast<std::size_t>(c)];
+        float* out = s.monitorBlock.pointers[static_cast<std::size_t>(c)];
+        int read = s.monitorRead;
+        for (int i = 0; i < available; ++i) {
+            out[i] = ring[read];
+            if (++read == s.monitorCapacity) {
+                read = 0;
+            }
+        }
+        std::fill(out + available, out + s.block, 0.0f);
+    }
+    s.monitorRead = (s.monitorRead + available) % s.monitorCapacity;
+    s.monitorCount -= available;
+    if (available < s.block) {
+        srcMonitorUnderruns_.fetch_add(static_cast<std::uint64_t>(s.block - available), std::memory_order_relaxed);
+    }
+    return host::AudioBufferView{s.monitorBlock.pointers.data(), channels, s.block};
+}
+
 void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, int frames, bool playing) noexcept {
     const std::int64_t position = playhead_.load(std::memory_order_relaxed);
     const host::AudioBufferView* source = nullptr;
@@ -915,16 +1015,33 @@ void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, in
         ramp.remaining = pathRise_;
         ramp.rising = true;
     }
-    if (current_ != nullptr && playing) {
-        current_->process(graph::ProcessContext{position, frames}, ramp);
+    // The input of this span: renderInput_ from the span's offset.
+    host::AudioBufferView spanInput{};
+    if (renderInput_.channels != nullptr && offset + frames <= renderInput_.frames) {
+        const int channels = std::min(renderInput_.channelCount, kMaxRenderInputChannels);
+        for (int c = 0; c < channels; ++c) {
+            renderInputPointers_[static_cast<std::size_t>(c)] = renderInput_.channels[c] + offset;
+        }
+        spanInput = host::AudioBufferView{renderInputPointers_.data(), channels, frames};
+    }
+    // A graph that monitors runs while stopped too (rolling false): the
+    // playhead stays and the meters publish.
+    if (current_ != nullptr && (playing || current_->monitors())) {
+        graph::ProcessContext context{position, frames};
+        context.rolling = playing;
+        context.input = spanInput.channels != nullptr ? &spanInput : nullptr;
+        current_->process(context, ramp);
         pushMeters(position, frames);
         source = &current_->output();
-        playhead_.store(position + frames, std::memory_order_release);
+        if (playing) {
+            playhead_.store(position + frames, std::memory_order_release);
+        }
     }
     if (pathDuck_) {
         duckRemaining_ = std::max(duckRemaining_ - frames, 0);
     } else if (pathRise_ > 0) {
         pathRise_ = std::max(pathRise_ - frames, 0);
+        startRise_ = startRise_ && pathRise_ > 0;
     }
     const float fade = static_cast<float>(options_.fadeFrames);
     for (int i = 0; i < frames; ++i) {
@@ -953,7 +1070,7 @@ void GraphDriver::renderSpan(const host::AudioBufferView& output, int offset, in
     meterLoudness(output, offset, frames, source != nullptr);
     // After the graph's output and its meters, before device-side SRC; only
     // while the graph plays.
-    if (source != nullptr) {
+    if (source != nullptr && playing) {
         addClick(output, offset, frames, position);
     }
 }

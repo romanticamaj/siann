@@ -218,15 +218,27 @@ MixWiring wireMix(GraphBuilder& builder, const model::Document& document, NodeId
     for (const FlatTrack& entry : flat) {
         const model::Track& track = *entry.track;
         const TrackTaps& taps = tracks.at(track.id);
-        builder.connect(taps.postFader, destination(track.output));
+        // A monitored track's edge into the master or a bus, and each send's edge
+        // into its bus, skip the compensation while it passes input
+        // (m5b-engine-monitoring).
+        const auto connect = [&builder, &taps](graph::NodeId from, graph::NodeId to) {
+            if (taps.monitor) {
+                builder.connectLowLatency(from, to, *taps.monitor);
+            } else {
+                builder.connect(from, to);
+            }
+        };
+        connect(taps.postFader, destination(track.output));
         for (const model::Send* send : document.sendsOnTrack(track.id)) {
             const int channels = send->pre ? track.channels : 2;
             const NodeId node = builder.add(std::make_unique<graph::SendNode>(channels, send->level.milliDb,
                                                                               send->enabled, track.mute,
                                                                               entry.soloSilenced),
                                             "send." + send->id);
+            // The send's own input needs no compensation (one input); its edge
+            // into the bus is the one that would delay the monitored input.
             builder.connect(send->pre ? taps.preFader : taps.postFader, node);
-            builder.connect(node, sums.at(send->busId));
+            connect(node, sums.at(send->busId));
             wiring.sends.emplace(send->id, node);
         }
     }
@@ -307,7 +319,7 @@ std::unique_ptr<graph::PreparedGraph> compileDocument(const model::Document& doc
             }
         }
         builder.connect(previous, fader);
-        taps.emplace(track.id, TrackTaps{previous, fader});
+        taps.emplace(track.id, TrackTaps{previous, fader, std::nullopt});  // offline: no monitor
     }
     // Buses, sends and each track's output (m5b-engine-buses-sends); a document
     // without buses connects every fader to the master, as before.

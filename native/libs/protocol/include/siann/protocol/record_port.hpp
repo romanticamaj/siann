@@ -74,6 +74,9 @@ public:
     // the recording and commits it as one revision.
     virtual TransportState record(bool enabled) = 0;
     virtual RecordState recordState() const = 0;
+    // m5b-engine-monitoring: features.monitoring, true when the engine records
+    // input (its driver has a capture bank).
+    virtual bool monitoringAvailable() const { return true; }
     virtual std::vector<PendingTake> pendingTakes() const = 0;
     // record.recover_take, committed with `actor` and `time` when accepted: on
     // `trackId` when given, else on the take's own track, or on a new track when

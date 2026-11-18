@@ -7,8 +7,8 @@
 //                hold, .sep, .iconbtn undo, .iconbtn redo (.dim when nothing
 //                is left to redo)
 //     .transport .tgroup (start, cycle, stop, .play, the Record hold),
-//                one .lcd (.cell position, time, locators, tempo, the
-//                signature's hold last), .tgroup with the metronome
+//                one .lcd (.cell position, time, locators, tempo, and the
+//                signature last: m5b-ui-signature), .tgroup with the metronome
 //     .tb-right  the DSP load's hold, .zones (the Channel button's hold and
 //                three .iconbtn), .aibtn with its .n
 //
@@ -37,6 +37,8 @@ import { effectiveLayout } from '../../src/renderer/shell/layout';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
 import { TopBar } from '../../src/renderer/shell/TopBar';
+import { translator } from '../../src/renderer/i18n/t';
+import { formatSignature } from '../../src/renderer/timeline/musical-time';
 import { sampleSnapshot } from './support/timeline';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
@@ -166,9 +168,9 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
     'div.cell[display-time]',
     'div.cell[display-locators]',
     'div.cell[display-tempo]',
-    'span.hold-display-signature',
+    'div.cell[display-signature]',
   ]);
-  for (const part of ['display-position', 'display-time', 'display-tempo']) {
+  for (const part of ['display-position', 'display-time', 'display-tempo', 'display-signature']) {
     assert.deepEqual(children(markup, new RegExp(`<div class="cell" data-part="${part}"`)).map((c) => c.split('[')[0]), ['span.lbl', part === 'display-position' ? 'span.val' : 'span.val.sm'], part);
   }
   assert.deepEqual(children(markup, /<div class="tgroup" data-testid="transport-click" data-part="transport-click"/), ['button.tbtn[transport-metronome]']);
@@ -197,7 +199,6 @@ test('every hold element is empty, hidden, has no role, no tabindex and no data-
   assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), [
     'hold-branch-chip',
     'hold-transport-record',
-    'hold-display-signature',
     'hold-dsp-load',
     'hold-zone-button-channel',
   ]);
@@ -208,6 +209,32 @@ test('every hold element is empty, hidden, has no role, no tabindex and no data-
   }
 });
 
+// m5b-ui-signature (UI redesign UR-15, 3.1; mockup.html line 237): the Sig
+// cell is the mockup's `.cell` with a `.lbl` over a `.val.sm`, its "/" in an
+// <em>, reading the metre the bar maths reads; a readout, not a control.
+test('the Sig cell is the mockup\'s markup, reads formatSignature() and is no control', () => {
+  const markup = render();
+  const open = /<div class="cell" data-part="display-signature"[^>]*>/.exec(markup);
+  assert.ok(open, 'the Sig cell is there');
+  const tagText = open[0];
+  assert.deepEqual(children(markup, /<div class="cell" data-part="display-signature"/), ['span.lbl', 'span.val.sm']);
+  const cell = markup.slice(open.index, markup.indexOf('</div>', open.index) + '</div>'.length);
+  assert.match(cell, /<span class="lbl" aria-hidden="true">Sig<\/span>/);
+  assert.match(cell, /<span class="val sm"[^>]*>4<em>\/<\/em>4<\/span>/);
+  // Its text is the module's, so it cannot disagree with the ruler.
+  assert.equal(cell.replace(/<[^>]+>/g, '').replace(/^Sig/, ''), formatSignature());
+  // Its tooltip is the sentence the position display gave up; its name is the readout's.
+  const en = translator('en');
+  assert.ok(tagText.includes(`title="${en('transport.fourFour')}"`), tagText);
+  assert.ok(tagText.includes(`aria-label="${en('transport.signature')} ${formatSignature()}"`), tagText);
+  // Not a control: no role, no focus, no button, no handler.
+  assert.ok(!/\b(role|tabindex|onclick|aria-pressed|disabled)=/i.test(cell), cell);
+  assert.ok(!cell.includes('<button'), cell);
+  // The position display no longer carries the sentence.
+  const display = /<div class="lcd"[^>]*>/.exec(markup)![0];
+  assert.ok(!display.includes('title='), display);
+});
+
 test('the locator cell without locators keeps --display-locators-empty-w and no id; the old wrapper is gone', () => {
   const markup = render({ snapshot: sampleSnapshot() });
   assert.ok(!markup.includes('data-part="display-locators"'));
@@ -216,7 +243,7 @@ test('the locator cell without locators keeps --display-locators-empty-w and no 
     'div.cell[display-time]',
     'span.cell.display-locators-empty',
     'div.cell[display-tempo]',
-    'span.hold-display-signature',
+    'div.cell[display-signature]',
   ]);
   assert.match(markup, /<span class="cell display-locators-empty" aria-hidden="true"><\/span>/);
   const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');

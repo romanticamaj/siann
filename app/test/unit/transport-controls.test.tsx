@@ -151,9 +151,13 @@ test('with no device the rendered buttons are disabled and their title gives the
     assert.match(button, /disabled=""/, id);
     assert.ok(button.includes(`title="${reason}"`), `${id}: ${button}`);
   }
-  // The position display is there, its tooltip says bars are 4/4. Auto-scroll
-  // is the project zone toolbar's (the mockup's), not the top bar's.
-  assert.ok(tag(markup, 'position-display').includes(`title="${translator('en')('transport.fourFour')}"`));
+  // The position display is there; the 4/4 sentence left its tooltip for the
+  // Sig cell's (m5b-ui-signature). Auto-scroll is the project zone toolbar's
+  // (the mockup's), not the top bar's.
+  const sentence = translator('en')('transport.fourFour');
+  assert.ok(!tag(markup, 'position-display').includes('title='), tag(markup, 'position-display'));
+  assert.ok(tag(markup, 'display-signature').includes(`title="${sentence}"`), tag(markup, 'display-signature'));
+  assert.match(sentence, /every project in 4\/4/);
   tag(markup, 'position-primary');
   tag(markup, 'position-secondary');
   assert.ok(!markup.includes('data-testid="auto-scroll"'));

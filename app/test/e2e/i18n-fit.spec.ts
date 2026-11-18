@@ -38,8 +38,8 @@ const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testi
 // the proposed strip's NEW · STEP label.
 const GHOSTS = '.overlaypill, .overlaypill .tog, .step .go, .th.ghost .r1 > span, .th.ghost .r2 > span, .strip.ghost .btns > span';
 // The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=display-signature], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=display-signature-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -192,6 +192,9 @@ test('no labelled control overflows or wraps its label in any locale at either w
     'transport-cycle',
     'transport-metronome',
     'display-locators',
+    // The Sig cell (m5b-ui-signature): hidden under 1100 px, which fits.
+    'display-signature',
+    'display-signature-value',
     // The MixConsole strip (m5-ui-port-mixer-strip) and its tab.
     'pan-trk_keys',
     'pan-value-trk_keys',

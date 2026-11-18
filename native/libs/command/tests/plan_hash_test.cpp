@@ -7,7 +7,9 @@
 #include <string_view>
 
 #include "fixture_util.hpp"
+#include "siann/command/command.hpp"
 #include "siann/command/plan.hpp"
+#include "siann/model/document.hpp"
 #include "siann/hash/jcs.hpp"
 
 using siann::command::CommandError;
@@ -43,6 +45,23 @@ std::string errorCode(const std::string& text) {
 }
 
 }  // namespace
+
+// m5b-engine-monitoring: the generator's set_monitor steps are the command's
+// own shape: each prepares against a document with the track, as one edit of it.
+TEST_CASE("The track_monitor_steps fixture prepares as track.set_monitor", "[plan][fixtures][monitor]") {
+    const Plan plan = Plan::fromJson(*validCase("track_monitor_steps").find("plan"));
+    REQUIRE(plan.steps.size() == 3);
+    siann::model::Document doc = siann::model::Document::create("Song", 48'000);
+    doc = siann::command::prepare(doc, siann::command::Command::fromJson(siann::json::parse(
+                                           R"({"op":"track.add","trackId":"trk_1","name":"T","channels":2})")))
+              .result;
+    const siann::model::Document before = doc;
+    for (const auto& step : plan.steps) {
+        CHECK(step.op() == "track.set_monitor");
+        doc = siann::command::prepare(doc, step).result;
+    }
+    CHECK(doc.documentHash() == before.documentHash());  // auto, input, then off again
+}
 
 TEST_CASE("The plan hash fixture has the expected schema", "[plan][fixtures]") {
     CHECK(fixture().find("schemaVersion")->asString() == "siann.plan_hash_fixtures.v1");

@@ -186,6 +186,54 @@ the realtime tests; 9 none (no UI).
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
+| m5b-engine-monitoring | Y (`document_test`/`commands_test`/`history_test` `track.set_monitor`, `plan_hash_test` set_monitor fixture, `graph_test` `[monitor]` (the INT32_MAX coverage edge values, no input replayed after a switch back), `offline_test` `[monitor]` (bus and send routing, the offline render), `monitoring_test`, `engine_record_test` loopback offset per mode (plain and latent insert), round trip and stopped meter, `live_recompile_test` set_monitor transition, `record_methods_test`, `transport_methods_test` engine.status keys, `mcp_adapter_test`) | Y (`monitoring_test` and `live_recompile_test` with `siann_rt_alloc_guard`) | | Y (`plan-hash` fixture parity; app unit `capabilities`, `i18n-describe`) | 3 | - (no UI: the monitor buttons come with `m5b-ui-recording`; tour states changed: none) |
+
+Per acceptance item (`m5b-engine-monitoring`): 1 `document_test` "A track's
+monitor round-trips and is omitted while off"; `commands_test` "track.set_monitor
+sets each mode and declares only the track", "track.set_monitor refuses another
+value, a bad field and an unknown track"; `history_test` "track.set_monitor is
+one revision each; undo restores the mode before it"; `plan_hash_test` "The
+track_monitor_steps fixture prepares as track.set_monitor" and Node `plan-hash`
+fixture parity over `fixtures/plan/plan-hash.json` (`track_monitor_steps`);
+`graph_test` "MonitorInputNode passes the mapped input when open and its port 0
+when closed", "MonitorInputNode's coverage check holds at the edge values up to
+INT32_MAX", "A stopped context silences the clip player"; `offline_test` "An
+offline render ignores a track's monitor mode and renders its clips";
+`monitoring_test`
+"Input monitoring reaches the output in the same callback, stopped and playing",
+"Auto monitoring follows the bank's gate: stopped and armed, or capturing", "A
+start through pushLocate keeps monitored input at full level and raises the
+clips", "A stopped monitoring graph publishes its meters; a graph without one
+stays idle"; `engine_record_test` "auto monitoring follows arming: the input
+while stopped and armed", "a monitored track's meter shows its input while the
+transport is stopped", "arming needs an input that covers the track's, and
+follows the document" (a port near INT32_MAX); `mcp_adapter_test` "execute carries track.set_monitor;
+list_commands names it and no tool is added"; app unit `i18n-describe` (the plan
+card wording in en, zh-Hant and zh-Hans). 2 `graph_test` "Monitored input
+bypasses compensation; the same track's clips stay aligned", "startEdges marks
+the edges leaving a source, in compile and recompile"; `offline_test` "A
+monitored track's bus input and send skip the compensation; the buses' own edges
+keep it"; `monitoring_test` "The
+monitored round trip is the device terms plus the monitored path", "Through
+device-side SRC the monitored input arrives after exactly the reported terms";
+`engine_record_test` "engine.status reports the monitored round trip, null
+without an input"; `record_methods_test` "engine.status carries
+monitorRoundTripFrames, null without an input"; `transport_methods_test` (the
+engine.status keys). 3 `engine_record_test` "a take recorded while monitoring
+lands within one sample in every mode" (GENERATE over off, auto and input) and
+"a take recorded through a latent insert on the monitored path lands where it
+was played" (the same GENERATE over off, auto and input; the monitored round trip
+leaves the other track's insert out). 4 `live_recompile_test` "track.set_monitor
+while playing goes through the structural transition without a step"; `graph_test`
+"Flipping the monitor gate mid-run crossfades without a step", "Switching a
+monitored strip back to its clips plays no input a second time"; `monitoring_test`
+"Gate flips and a publish while monitoring allocate nothing on the audio thread"
+(with `siann_rt_alloc_guard`); `record_methods_test` "engine.capabilities lists
+track.set_monitor and features.monitoring"; app unit `capabilities`
+(`capabilities-full.json`); tour states changed: none (no UI).
+
+| Feature | N | R | D | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
 | m5b-protocol-parity | Y (`protocol_parity_test`, `mcp_adapter_test` `list_plans`, `preview_plan`, `undo`, `redo`) | Y (the same tests) | | Y (`protocol-parity`, `test-matrix`; app unit `capabilities`) | 3 + RTSan | - (tour states changed: none) |
 
 Per acceptance item (`m5b-protocol-parity`): 1 `protocol_parity_test` "every
@@ -437,6 +485,23 @@ the request limits", app `capabilities` (`capabilities-full.json`) and
 `session-client` "agent.request, agent.cancel_request and agent.requests go out
 as typed calls; agent.request_changed reaches a listener"; 7 none (no UI).
 
+| Feature | N | D | U | E | F | M (tour) | Platforms | Gaps |
+|---|---|---|---|---|---|---|---|---|
+| m5b-ui-signature | | | Y (`signature`: `TIME_SIGNATURE`, `formatSignature`, the ruler, snap, `parsePosition`, the position and locator formats against it, the sources that import the metre and no second declaration or 4/4 literal; `top-bar`: the Sig cell's markup, value, tooltip, name and no control, the hold gone; `transport-controls`: the 4/4 sentence left the position display; `key-preset`: Shift+C unbound; `i18n-catalogs`) | Y (`transport.spec` "the Sig cell reads 4/4 ...": text, tooltip, Shift+C and a click send nothing and change no revision; `shell-layout.spec` "the top bar gives way at 1300 and 1100 px ...": shown at 1440 and 1280, hidden at 1080; `i18n-fit` the cell and its value at 1440x900 and 1024x700 in four locales) | report (gate `m5b-ui-signature`; `mockup-fidelity.test.js` checks the gate, the hold token's removal and the 1100 px rule) | the top bar in every state; appends none | 3 | - |
+
+Per acceptance item (`m5b-ui-signature`): 1 none (a decision); 2 app unit
+`signature` "musical-time holds the metre ...", "the bar maths agrees with the
+signature ...", "the Sig cell and the bar maths import the metre ...", `top-bar`
+"the Sig cell is the mockup's markup ..."; 3 `top-bar` (no role, tabindex,
+button or handler; the tooltip), `transport-controls` "with no device the
+rendered buttons ...", `key-preset` "Shift+C is unbound ...", e2e `transport`
+"the Sig cell reads 4/4 ..."; 4 e2e `shell-layout` "the top bar gives way at
+1300 and 1100 px ...", `mockup-fidelity.test.js` "the small-window breakpoints
+..."; 5 `i18n-catalogs`, e2e `i18n-fit`; the tour (no new state); 6 `top-bar`
+(structure against mockup.html line 237), e2e `transport` (the id in the
+window), `mockup-fidelity.test.js` "the chrome's gate is report ..." (gate
+`report`, no `--hold-display-signature-w`), the side-by-side screenshots by eye.
+
 | Feature | U | E | F | B | M (tour) | Platforms | Gaps |
 |---|---|---|---|---|---|---|---|
 | m5b-ui-ghosts (P2-1, P2-2) | Y (`plan-ghosts`: one test per kind of 4.2 (track.add with `track-ghost`, `lane-ghost`, `strip-ghost` and `ghost-2`, `ghost-3`; clip.place, clip.move, clip.trim, clip.remove, track.remove with its cascade (kept with the `track.remove` when entity-homes would home a clip to an earlier step that only shares its media), gain, pan, mute, solo, rename, locators), an unticked step contributes none, values from `before` with the ticked steps applied in order, the 1-based step number in the full plan, no ghost on a track that neither exists nor is added by a ticked step, no preview no ghosts; `plan-name`, `audition-banner` (the banner through the helper, the generic line); `review-store` (selection, ticks, preview, hot and pinned step, the toggle, the reviewable predicate, a reconnect); `timeline-ghosts` (the boxes, the arrow, the ghost lane, the locator band at two zooms; the 38 % and the hatch constants); `timeline-layers` (a ghost change redraws the content, a hovered step only the overlay, a playhead-only frame neither; the parts `clip-ghost-new`, `clip-ghost-move`, `lane-ghost`; a removed track's lane cross-hatched with its step, `lane-ghost-remove`; a reveal of a gain, pan, mute, solo or rename ghost scrolls the lanes to its track's row and never sideways); `track-list-port` (also the gain readout without units, both names in their own elements, a removed track's header dimmed with its step badge), `strip-port` (the rename as the name tag's one grid item), `knob`, `inspector-port` (also both values with the unit once, the dashed ring on M and S, Agent changes from the plan's ticked steps on the track and its clips with the ghosts shown or hidden, an applied plan that changed only the track's clips), `toolbar-port`, `plans-tab` against th(), strip(), knob(), sec(), the toolbar block and step() evaluated from mockup.html; `key-preset`, `key-dispatcher` (Mod+Alt+G); `i18n-catalogs`) | Y (`ghosts.spec`: the ghost list against every kind and the ticked steps, each id in the window, hover and `.go` (keyboard, the MixConsole shown, the pin, no request), a click on a ghost cap and a ghost clip pins the row, the pill and Ctrl+Alt+G, no ghost or pill for an applied, rejected or stale plan, the request log, room for both values and names (the header's gain clears its pan, the Inspector's values inside their row and zone, the name tag on one line, the header's old name giving way first), Agent changes listing a track's clip steps with the ghosts toggled off, a removed track's header and lane, the content draws while playing, reduced motion; `i18n-fit` (pill, `.tog`, `.go`, ghost labels in four locales)) | report (`m5b-ui-ghosts`; side-by-side screenshots of the toolbar, track list, event display, MixConsole and Inspector in en and zh-TW) | Y (`mockup-fidelity`: the gate report, the two hold tokens gone, `ghost-2` owned by the `*ghost*` rule; `ui-tokens`) | 13 to 18 (ghosts and the pill), the toolbar and the Inspector's Agent changes in every state with a selected track; 26 ghosts in the event display, 27 ghosts on the MixConsole; the Pool's state renumbered from 26 to 31 | 3 | - (8: the screenshots, by eye (maintainer)) |
@@ -455,7 +520,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 | Feature | Wave | After | Owns (layer F) | Tests its acceptance names |
 |---|---|---|---|---|
 | `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
-| `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
+| `m5b-ui-signature` (landed, see the table above) | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
 | `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
 | `m5b-engine-agent-requests` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds (4,000 characters, 16 open per agent, `agent_busy`), the `next_request` long poll, a second client; gate `agent-request-shape` (resolved) |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |

@@ -559,6 +559,49 @@ TEST_CASE("A malformed track input is rejected", "[model][input]") {
     CHECK(errorCode(mutated(input, R"("input":null)")) != "no error");
 }
 
+// m5b-engine-monitoring: a track's monitoring mode (off, auto, input) is part of
+// the track entity, omitted while off so every earlier hash holds.
+TEST_CASE("A track's monitor round-trips and is omitted while off", "[model][monitor]") {
+    Document doc = addTrack(Document::create("Song", 48'000), track("trk_1"));
+    const std::string before =
+        R"({"channels":2,"gainMilliDb":0,"id":"trk_1","kind":"audio","mute":false,"name":"Track trk_1","pan":0,)"
+        R"("schema":"siann.entity.track.v1","solo":false})";
+    CHECK(doc.track("trk_1")->monitor == siann::model::MonitorMode::off);
+    CHECK(siann::jcs::canonicalize(siann::model::toJson(*doc.track("trk_1"))) == before);
+    CHECK(doc.entityHash(EntityRef{EntityType::track, "trk_1"}) == sha256(before));
+
+    for (const auto& [mode, name] : {std::pair{siann::model::MonitorMode::automatic, "auto"},
+                                     std::pair{siann::model::MonitorMode::input, "input"}}) {
+        INFO(name);
+        Track monitored = *doc.track("trk_1");
+        monitored.monitor = mode;
+        const Document edited = doc.withTrack(monitored);
+        CHECK(edited.validate().empty());
+        const std::string json = siann::jcs::canonicalize(siann::model::toJson(*edited.track("trk_1")));
+        CHECK(json.find(std::string(R"("monitor":")") + name + "\"") != std::string::npos);
+        const Document back = Document::fromJson(edited.toJson());
+        CHECK(back.track("trk_1")->monitor == mode);
+        CHECK(back.documentHash() == edited.documentHash());
+        CHECK(edited.documentHash() != doc.documentHash());
+    }
+
+    // A stored "off" reads as off and writes as before.
+    const std::string text = siann::jcs::canonicalize(doc.toJson());
+    std::string withOff = text;
+    withOff.replace(withOff.find(R"("mute":false)"), 0, R"("monitor":"off",)");
+    const Document off = Document::fromJson(siann::json::parse(withOff));
+    CHECK(off.track("trk_1")->monitor == siann::model::MonitorMode::off);
+    CHECK(off.documentHash() == doc.documentHash());
+
+    // Any other value is rejected.
+    for (const char* bad : {R"("always")", R"("Auto")", "true", "null", "1"}) {
+        INFO(bad);
+        std::string copy = text;
+        copy.replace(copy.find(R"("mute":false)"), 0, std::string(R"("monitor":)") + bad + ",");
+        CHECK(errorCode(siann::json::parse(copy)) == "invalid_field");
+    }
+}
+
 // ---- m5b-engine-project-media: the media entity's optional name -------------
 
 namespace {

@@ -425,7 +425,6 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   const holds = {
     'branch-chip': ['w'],
     'transport-record': ['w', 'h'],
-    'display-signature': ['w'],
     'dsp-load': ['w'],
     'zone-button-channel': ['w', 'h'],
   };
@@ -438,6 +437,10 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   assert.doesNotMatch(ui, /var\(--hold-/);
   const shell = read('app', 'renderer', 'shell.css');
   for (const [part, sides] of Object.entries(holds)) for (const side of sides) assert.ok(shell.includes(`var(--hold-${part}-${side})`), `shell.css applies --hold-${part}-${side}`);
+  // m5b-ui-signature landed the Sig cell: its gate is report and its hold is gone.
+  assert.equal(MANIFEST.gates['m5b-ui-signature'], 'report');
+  assert.doesNotMatch(tokens, /--hold-display-signature-w/);
+  assert.doesNotMatch(shell, /hold-display-signature/);
 });
 
 test('the fidelity run passes the manifest\'s environment as SIANN_FIDELITY_ENVIRONMENT', () => {
@@ -787,7 +790,7 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
   assert.match(block(1300), /\.hold-branch-chip, \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
-  assert.match(block(1100), /\.hold-display-signature/);
+  assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
 });
 
 // ---- m5-ui-port-inspector (UI redesign 10.10, P1-14): the left zone ported from the mockup's template

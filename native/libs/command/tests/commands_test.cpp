@@ -405,8 +405,37 @@ TEST_CASE("The command catalog is listed", "[command]") {
                        "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass",
                        "send.add", "send.remove", "send.set_enabled", "send.set_level", "send.set_pre", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
-                       "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_output",
-                       "track.set_pan", "track.set_solo"});
+                       "track.rename", "track.set_gain", "track.set_input", "track.set_monitor", "track.set_mute",
+                       "track.set_output", "track.set_pan", "track.set_solo"});
+}
+
+// m5b-engine-monitoring: track.set_monitor {trackId, monitor: off | auto | input}.
+TEST_CASE("track.set_monitor sets each mode and declares only the track", "[command][monitor]") {
+    const Document doc = base();
+    CHECK(doc.track("trk_1")->monitor == siann::model::MonitorMode::off);
+    const auto automatic = prepare(doc, cmd(R"({"op":"track.set_monitor","trackId":"trk_1","monitor":"auto"})"));
+    CHECK(automatic.effects == DeclaredEffects{ref(EntityType::track, "trk_1")});
+    CHECK(automatic.result.track("trk_1")->monitor == siann::model::MonitorMode::automatic);
+
+    const auto input = prepare(automatic.result, cmd(R"({"op":"track.set_monitor","trackId":"trk_1","monitor":"input"})"));
+    CHECK(input.effects == DeclaredEffects{ref(EntityType::track, "trk_1")});
+    CHECK(input.result.track("trk_1")->monitor == siann::model::MonitorMode::input);
+
+    const auto off = prepare(input.result, cmd(R"({"op":"track.set_monitor","trackId":"trk_1","monitor":"off"})"));
+    CHECK(off.result.track("trk_1")->monitor == siann::model::MonitorMode::off);
+    CHECK(off.result.documentHash() == doc.documentHash());  // off is the track as it was
+}
+
+TEST_CASE("track.set_monitor refuses another value, a bad field and an unknown track", "[command][monitor]") {
+    const Document doc = base();
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_1","monitor":"always"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_1","monitor":"AUTO"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_1","monitor":true})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_1","monitor":null})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_1"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_1","monitor":"auto","x":1})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_monitor","trackId":"trk_9","monitor":"auto"})") == "not_found");
 }
 
 // m5b-engine-record: track.set_input {trackId, input: {port, channels} | null}.

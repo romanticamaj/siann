@@ -147,12 +147,11 @@ code, dd { font-family: var(--font-mono); }
 .session:has(> span) { min-width: 0; }
 .session > span { overflow: hidden; text-overflow: ellipsis; }
 /* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
-   branch chip, the Record button, the signature display, DSP load (with the
-   margin the mockup's .dsp has) and the Channel zone button. */
-.hold-branch-chip, .hold-transport-record, .hold-display-signature, .hold-dsp-load, .hold-zone-button-channel { display: block; flex: none; }
+   branch chip, the Record button, DSP load (with the margin the mockup's
+   .dsp has) and the Channel zone button. */
+.hold-branch-chip, .hold-transport-record, .hold-dsp-load, .hold-zone-button-channel { display: block; flex: none; }
 .hold-branch-chip { width: var(--hold-branch-chip-w); height: var(--control-h); }
 .hold-transport-record { width: var(--hold-transport-record-w); height: var(--hold-transport-record-h); }
-.hold-display-signature { width: var(--hold-display-signature-w); }
 .hold-dsp-load { width: var(--hold-dsp-load-w); height: var(--icon-s); margin-right: var(--space-half); }
 .hold-zone-button-channel { width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
 /* The boxes of parts that have landed but are absent here: cycle and the
@@ -669,7 +668,7 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
   .hold-branch-chip, .hold-dsp-load, .hold-transport-record { display: none; }
 }
 @media (max-width: 1100px) {
-  .lcd .cell[data-part="display-locators"], .lcd .display-locators-empty, .lcd .cell[data-part="display-tempo"], .hold-display-signature { display: none; }
+  .lcd .cell[data-part="display-locators"], .lcd .display-locators-empty, .lcd .cell[data-part="display-tempo"], .lcd .cell[data-part="display-signature"] { display: none; }
   .lcd .cell[data-part="display-time"] { border-right: 0; }
   .brand { display: none; }
   .statusbar [data-part="status-device"] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
