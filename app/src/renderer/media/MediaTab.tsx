@@ -10,7 +10,10 @@
 // it (media.rename) where the engine lists that command; Remove
 // (media.remove) is enabled only for media no clip uses and says why
 // otherwise. On an engine without media.import nothing of it is in the DOM
-// (Shell keeps the tab's box empty). The mockup draws the tab but not its
+// (Shell keeps the tab's box empty). While a proposal is heard the edit
+// guard (model/edit-guard.ts; UI redesign 4.5 C5) holds Import, the drag, the
+// rename and Remove, each disabled with the guard's reason; the search and
+// the list stay. The mockup draws the tab but not its
 // content, so the content's rules are shell.css's, from existing tokens.
 
 import { useContext, useMemo, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent } from 'react';
@@ -23,6 +26,7 @@ import type { MediaEntity } from '../model/document';
 import { acceptedFormats, MEDIA_ROW_TYPE, type MediaBridge } from '../model/media-bridge';
 import type { ImportClient, ImportToasts, MediaImporter, Placeholder } from '../model/media-import';
 import type { Snapshot } from '../model/read-model';
+import { useEditGuard } from '../plans/heard-context';
 import { CapabilitiesContext, useCapabilities } from '../shell/Capable';
 import type { TimelineCommand } from '../timeline/commands';
 
@@ -119,6 +123,8 @@ export interface MediaTabViewProps {
   readonly canImport: boolean;
   // The media whose name is being edited.
   readonly renaming: string | null;
+  // The edit guard's reason while a proposal is heard (every edit held), null otherwise.
+  readonly guard: string | null;
   readonly t: T;
   readonly onQuery: (query: string) => void;
   readonly onImport: () => void;
@@ -130,7 +136,10 @@ export interface MediaTabViewProps {
 }
 
 // The tab's content, without effects.
-export function MediaTabView({ rows, total, query, importing, can, canImport, renaming, t, onQuery, onImport, onStartRename, onRename, onCancelRename, onRemove, onDragStart }: MediaTabViewProps) {
+export function MediaTabView({ rows, total, query, importing, can: allowed, canImport, renaming: editing, guard, t, onQuery, onImport, onStartRename, onRename, onCancelRename, onRemove, onDragStart }: MediaTabViewProps) {
+  const held = guard !== null;
+  const can = { rename: allowed.rename, remove: allowed.remove, place: allowed.place && !held };
+  const renaming = held ? null : editing;
   const channels = (count: number) => (count === 1 ? t('media.mono') : count === 2 ? t('media.stereo') : t('media.channels', { count }));
   return (
     <div className="media-tab" data-testid="media-tab" aria-label={t('media.label')}>
@@ -145,7 +154,7 @@ export function MediaTabView({ rows, total, query, importing, can, canImport, re
           onChange={(event) => onQuery(event.target.value)}
         />
         {canImport ? (
-          <button type="button" className="media-import" data-testid="media-import" title={t('media.importTitle')} onClick={() => onImport()}>
+          <button type="button" className="media-import" data-testid="media-import" disabled={held} title={guard ?? t('media.importTitle')} onClick={() => (held ? undefined : onImport())}>
             {t('media.import')}
           </button>
         ) : null}
@@ -177,7 +186,7 @@ export function MediaTabView({ rows, total, query, importing, can, canImport, re
                 draggable={can.place ? true : undefined}
                 onDragStart={can.place ? (event: DragEvent<HTMLElement>) => onDragStart(row.id, event) : undefined}
               >
-                <td className="media-name" data-testid={`media-name-${row.id}`} dir="auto" title={row.name} onDoubleClick={can.rename ? () => onStartRename(row.id) : undefined}>
+                <td className="media-name" data-testid={`media-name-${row.id}`} dir="auto" title={row.name} onDoubleClick={can.rename && !held ? () => onStartRename(row.id) : undefined}>
                   {renaming === row.id ? (
                     <input
                       type="text"
@@ -211,9 +220,9 @@ export function MediaTabView({ rows, total, query, importing, can, canImport, re
                       type="button"
                       className="media-remove"
                       data-testid={`media-remove-${row.id}`}
-                      disabled={row.uses > 0}
-                      title={row.uses > 0 ? t('media.inUse', { count: row.uses }) : undefined}
-                      onClick={() => onRemove(row.id)}
+                      disabled={held || row.uses > 0}
+                      title={guard ?? (row.uses > 0 ? t('media.inUse', { count: row.uses }) : undefined)}
+                      onClick={() => (held ? undefined : onRemove(row.id))}
                     >
                       {t('media.remove')}
                     </button>
@@ -242,6 +251,7 @@ const noSubscribe = () => () => undefined;
 export function MediaTab({ client, media }: MediaTabProps) {
   const t = useT();
   const can = useCapabilities();
+  const guard = useEditGuard();
   const capabilities = useContext(CapabilitiesContext);
   const snapshot = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -268,6 +278,7 @@ export function MediaTab({ client, media }: MediaTabProps) {
       can={{ rename: can.command('media.rename'), remove: can.command('media.remove'), place: can.command('clip.place') && bridge !== null }}
       canImport={bridge !== null && importer !== undefined}
       renaming={renaming}
+      guard={guard}
       t={t}
       onQuery={setQuery}
       onImport={() => {

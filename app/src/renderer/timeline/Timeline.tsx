@@ -44,6 +44,9 @@
 // refused with a toast before any request, and a Media tab row dropped there
 // places one clip in one command.execute. While a file imports, a placeholder
 // over the canvas shows its name and progress where its clip will land.
+// While a proposal is heard the edit guard holds the drop: the event display
+// is marked data-drop-target="guarded", a drop there sends nothing (neither
+// media.import nor clip.place) and a toast gives the guard's reason.
 
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent } from 'react';
 
@@ -57,7 +60,7 @@ import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
-import { isStructural, structuralBlocked } from '../model/edit-guard';
+import { GUARD_REASON, isStructural, structuralBlocked } from '../model/edit-guard';
 import { useHeard } from '../plans/heard-context';
 import { useStepNames } from '../plans/hooks';
 import { planNameParts } from '../plans/plan-name';
@@ -575,6 +578,7 @@ export function Timeline({
   const mediaTab = can.has('media.import');
   const bridge = media?.bridge ?? null;
   const dropTarget = mediaTab && bridge !== null && media !== null;
+  const dropGuarded = structuralBlocked(heard);
   const importer = media?.importer;
   const placeholders = useSyncExternalStore(importer ? importer.subscribe : noSubscription, importer ? importer.getSnapshot : noPlaceholders, noPlaceholders);
   // The placeholders follow the canvas's zoom and scroll.
@@ -595,6 +599,12 @@ export function Timeline({
   const onDrop = (event: DragEvent<HTMLElement>) => {
     if (!carriesMedia(event) || !media || !bridge) return;
     event.preventDefault();
+    if (structuralBlocked(heardRef.current)) {
+      // The edit guard (UI redesign 4.5 C5): nothing is imported or placed onto main while a proposal is heard.
+      const text = (locale: Parameters<typeof translator>[0]) => translator(locale)(GUARD_REASON);
+      media.toasts.push(text(localeStore().getSnapshot()), text);
+      return;
+    }
     const current = client.model.getSnapshot();
     const caps = canRef.current;
     const rowMedia = event.dataTransfer.getData(MEDIA_ROW_TYPE);
@@ -671,7 +681,7 @@ export function Timeline({
           className="lanes"
           data-testid="event-display"
           data-part="event-display"
-          data-drop-target={dropTarget ? 'media' : undefined}
+          data-drop-target={dropTarget ? (dropGuarded ? 'guarded' : 'media') : undefined}
           ref={displayRef}
           onContextMenu={(event) => {
             event.preventDefault();

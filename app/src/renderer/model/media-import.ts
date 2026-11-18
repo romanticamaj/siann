@@ -15,10 +15,14 @@
 // and its clip is placed with the mediaId the job returns. A failed import
 // removes its placeholder and raises a toast with the engine's code and the
 // file name; the other files keep the lanes the drop gave them. The Media
-// tab's Import (importFiles()) imports and places nothing. Framework-free.
+// tab's Import (importFiles()) imports and places nothing. While `blocked`
+// says a proposal is heard (the edit guard, UI redesign 4.5 C5), a drop and
+// Import send nothing and a toast gives the guard's reason, and a drop whose
+// imports end once heard places no clip and says so. Framework-free.
 
 import type { Locale } from '../i18n/locale';
 import { translator } from '../i18n/t';
+import { GUARD_REASON } from './edit-guard';
 import type { MediaEntity } from './document';
 import type { Snapshot } from './read-model';
 import { baseName, type DroppedFile } from './media-bridge';
@@ -67,6 +71,8 @@ export interface MediaImporterOptions {
   readonly schedule: (fn: () => void, ms: number) => () => void;
   readonly toasts: ImportToasts;
   readonly locale: () => Locale;
+  // True while the edit guard holds structural edits (a proposal is heard).
+  readonly blocked?: () => boolean;
   readonly ids?: { readonly importId?: () => string; readonly trackId?: () => string; readonly clipId?: () => string };
 }
 
@@ -134,6 +140,7 @@ export class MediaImporter {
 
   // A drop of accepted files: import each, then place them as the plan says.
   async drop(files: readonly DroppedFile[], plan: DropPlan): Promise<void> {
+    if (this.#guarded()) return;
     let fresh = 0;
     const entries = files.map((file, index) => {
       const lane = plan.lanes[index] ?? { trackId: null };
@@ -141,17 +148,28 @@ export class MediaImporter {
       return this.#start(file.name, file.path, { trackId: lane.trackId, newIndex }, plan.position);
     });
     await Promise.all(entries.map((entry) => entry.ended));
+    // A proposal heard by now: the media stay imported, no clip is placed.
+    const placing = !this.#guarded();
     for (const entry of entries) {
-      if (entry.state === 'done' && entry.result) await this.#place(entry, entry.result);
+      if (placing && entry.state === 'done' && entry.result) await this.#place(entry, entry.result);
       this.#remove(entry);
     }
   }
 
   // The Media tab's Import: each file imported, nothing placed.
   async importFiles(paths: readonly string[]): Promise<void> {
+    if (this.#guarded()) return;
     const entries = paths.map((file) => this.#start(baseName(file), file, null, null));
     await Promise.all(entries.map((entry) => entry.ended));
     for (const entry of entries) this.#remove(entry);
+  }
+
+  // True, with a toast giving the edit guard's reason, while a proposal is heard.
+  #guarded(): boolean {
+    if (!this.#options.blocked?.()) return false;
+    const text = (locale: Locale) => translator(locale)(GUARD_REASON);
+    this.#options.toasts.push(text(this.#options.locale()), text);
+    return true;
   }
 
   #start(name: string, path: string, lane: Placeholder['lane'], position: bigint | null): Entry {

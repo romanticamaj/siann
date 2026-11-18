@@ -83,6 +83,7 @@ import { PickerController } from './mixer/picker';
 import { PluginActions } from './model/plugin-actions';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 import type { MediaBridge } from './model/media-bridge';
+import { structuralBlocked } from './model/edit-guard';
 import { MediaImporter, type ImportResult } from './model/media-import';
 import type { MediaHost } from './media/MediaTab';
 
@@ -233,7 +234,7 @@ const loopClick = new LoopClickController({
 
 // Importing audio (m5b-ui-media): media.import jobs for the drop and the Media
 // tab's Import; the drop and Import exist only with the preload bridge.
-const importer = new MediaImporter({ client, schedule, toasts, locale: () => locales.getSnapshot() });
+const importer = new MediaImporter({ client, schedule, toasts, locale: () => locales.getSnapshot(), blocked: () => structuralBlocked(plans.getSnapshot().heard) });
 const media: MediaHost = { bridge: bridge?.media ?? null, importer, toasts };
 if (testHooks) window.__siannMedia = { seen: () => importer.seen(), results: () => importer.results() };
 
