@@ -6,10 +6,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import {
   BUDGETS,
   MIN_FRAMES,
+  MIN_METER_FRAMES,
   assertComplete,
   buildPerfReport,
   median,
@@ -27,6 +30,7 @@ const input = (over: Partial<PerfInput> = {}): PerfInput => ({
   frameWorkMs: frames(MIN_FRAMES, 2),
   heapBytes: 120 * 1024 * 1024,
   coldStartMs: 900,
+  playback: { playingAtStart: true, playingAtEnd: true, meterFrames: 300 },
   ...over,
 });
 
@@ -65,6 +69,8 @@ test('the report: commit, platform, scenario, measurements and one budget row ea
   assert.equal(report.measurements.frameP99Ms, 9);
   assert.equal(report.measurements.heapMb, 120);
   assert.equal(report.measurements.coldStartMs, 900);
+  assert.equal(report.measurements.playing, true);
+  assert.equal(report.measurements.meterFrames, 300);
   assert.deepEqual(
     report.budgets.map((row) => [row.name, row.value, row.budget, row.unit, row.withinBudget]),
     [
@@ -124,4 +130,64 @@ test('assertComplete throws on a missing measurement and not on one over its bud
     assert.deepEqual(Object.keys(row).filter((k) => ['value', 'budget', 'withinBudget'].includes(k)).sort(),
       ['budget', 'value', 'withinBudget']);
   }
+});
+
+// The frame figures are those of a playing transport with the meters running
+// (5.6 row 1): the spec hands the transport's playing state at the start and
+// the end of the measured window and the meter frames drawn inside it. Frame
+// samples taken on an idle window (the meters' animation frame runs whether or
+// not the transport plays) are no frame measurement.
+test('frames measured on a transport that was not playing are missing, not idle figures', () => {
+  for (const playback of [
+    { playingAtStart: false, playingAtEnd: true, meterFrames: 300 },
+    { playingAtStart: true, playingAtEnd: false, meterFrames: 300 },
+    { playingAtStart: false, playingAtEnd: false, meterFrames: 0 },
+  ]) {
+    const report = buildPerfReport(input({ playback }));
+    assert.equal(report.measurements.playing, false);
+    assert.equal(report.measurements.frameMedianMs, null);
+    assert.equal(report.measurements.frameP99Ms, null);
+    assert.ok(missingMeasurements(report).includes('playing'), JSON.stringify(playback));
+    assert.ok(missingMeasurements(report).includes('frameMedianMs'));
+    assert.throws(() => assertComplete(report), /playing/);
+  }
+});
+
+test('frames measured without meter frames arriving are missing', () => {
+  for (const meterFrames of [0, MIN_METER_FRAMES - 1, Number.NaN]) {
+    const report = buildPerfReport(input({ playback: { playingAtStart: true, playingAtEnd: true, meterFrames } }));
+    assert.deepEqual(missingMeasurements(report), ['meterFrames', 'frameMedianMs', 'frameP99Ms']);
+    assert.throws(() => assertComplete(report), /meterFrames/);
+  }
+  const report = buildPerfReport(input({ playback: { playingAtStart: true, playingAtEnd: true, meterFrames: MIN_METER_FRAMES } }));
+  assert.deepEqual(missingMeasurements(report), []);
+  assert.equal(report.measurements.meterFrames, MIN_METER_FRAMES);
+});
+
+test('a report without the playback evidence is incomplete', () => {
+  const { playback: _omitted, ...rest } = input();
+  const report = buildPerfReport(rest as PerfInput);
+  assert.deepEqual(missingMeasurements(report), ['playing', 'meterFrames', 'frameMedianMs', 'frameP99Ms']);
+});
+
+// dist/test/unit -> app/test/e2e/perf.spec.ts (it runs only under SIANN_PERF=1,
+// so its order of steps is checked here, on every run).
+const PERF_SPEC = path.resolve(__dirname, '..', '..', '..', 'test', 'e2e', 'perf.spec.ts');
+
+test('perf.spec.ts starts the window once playing with a meter frame drawn, and hands the report its evidence', () => {
+  const source = fs.readFileSync(PERF_SPEC, 'utf8');
+  const at = (pattern: RegExp): number => {
+    const match = pattern.exec(source);
+    assert.ok(match, `perf.spec.ts has ${pattern}`);
+    return match.index;
+  };
+  const click = at(/await play\.click\(\)/);
+  const pressed = at(/toHaveAttribute\('aria-pressed', 'true'/);
+  const firstMeter = at(/meterFramesDrawn\(\)\)\.toBeGreaterThan\(/);
+  const clear = at(/await frames\('clear', page\)/);
+  const samples = at(/const frameWorkMs = await frames/);
+  const endState = at(/playingAtEnd = /);
+  assert.ok(click < pressed && pressed < firstMeter && firstMeter < clear && clear < samples && samples < endState,
+    'play, playing, a meter frame, then clear, the samples and the end state');
+  assert.match(source, /playback: \{ playingAtStart, playingAtEnd, meterFrames/);
 });
