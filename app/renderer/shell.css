@@ -450,7 +450,11 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
    open one is its hold, a shut one its head and hairline. */
 .inspector-hold { display: block; flex: none; }
 .inspector-hold.routing { height: var(--hold-inspector-routing-h); }
-.inspector-hold.inserts { height: var(--hold-inspector-inserts-h); }
+/* Inserts landed (m5b-ui-inserts-master); on an engine without plugins its
+   box is the section the shared rules draw: its head and hairline, the
+   body's padding, three slots and the two gaps between them (117 px in the
+   mockup; UI redesign 3.0). */
+.inspector-hold.inserts { height: calc(var(--section-head-h) + var(--hairline) + var(--space-7q) + var(--space-9q) + 3 * var(--control-h) + 2 * var(--space)); }
 .inspector-hold.sends, .inspector-hold.automation, .inspector-hold.notepad { height: calc(var(--section-head-h) + var(--hairline)); }
 /* The e box sits at the end of the row, as the mockup puts e. */
 .i-btns > .msr-box:last-child { margin-left: auto; }
@@ -682,6 +686,74 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .ghost-rename > .ghost-name { flex: 0 1 auto; min-width: 0; }
 .overlaypill .tog[aria-pressed="false"] { background: none; color: var(--ai-2); }
 .overlaypill > span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- the insert racks (m5b-ui-inserts-master; UI redesign 3.4, 4.2).
+   ui/lower-zone.css draws the mockup's .ins and .slot, ui/left-zone.css its
+   .islot and the section; these are the app's own pieces: the rack row of a
+   strip scrolls a chain longer than its two positions (by the wheel, and a
+   focused slot scrolls into view) with no scrollbar drawn; the controls the
+   mockup's slot does not have (bypass, e, Remove); the states it does not
+   show (bypassed, missing, a lit e); the slot ghosts on the --ai tokens. */
+.strip .ins { overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.strip .ins::-webkit-scrollbar { display: none; }
+.ins > .slot { flex: none; }
+.slot-name, .islot-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot.empty[role="button"], .islot.empty[role="button"] { cursor: pointer; }
+.slot-btn, .islot-btn { flex: none; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--tx-4); font: inherit; cursor: pointer; }
+.slot-btn { height: 100%; }
+.slot-btn > svg.i.s { width: var(--space-2h); height: var(--space-2h); }
+.slot-btn.edit, .islot-btn.edit { font-style: italic; font-family: Georgia, serif; font-weight: var(--fw-bold); }
+.slot-btn.edit { font-size: var(--fs-9h); }
+.islot-btn > svg.i.s { width: var(--space-3); height: var(--space-3); }
+.islot > em > .islot-btn { color: inherit; font: inherit; }
+.slot-btn:hover, .islot-btn:hover { color: var(--tx-1); }
+.slot-btn.on, .islot-btn.on { color: var(--tx-0); }
+.slot-btn.edit.on, .islot-btn.edit.on { color: var(--play); }
+.slot.bypassed, .islot.bypassed { color: var(--tx-4); }
+.slot.bypassed::before, .islot.bypassed::before { background: var(--tx-4); }
+.slot.missing::before, .islot.missing::before { background: var(--err); }
+.islot-state { flex: none; color: var(--err); font-size: var(--fs-micro); }
+/* A proposed insert: the slot dashed and hatched in the agent violet, its
+   step number first; a removal dims (.ghost-removed); a pending bypass rings
+   the button, as .msr.ghost rings M. */
+.slot.ghost, .islot.ghost { background: repeating-linear-gradient(135deg, var(--ai-a100) 0 var(--space-1h), var(--ai-a030) var(--space-1h) var(--space-3)); border: var(--hairline) dashed var(--ai-line); color: var(--ai-2); cursor: pointer; }
+.slot.ghost::before, .islot.ghost::before { display: none; }
+.slot.ghost > .stepn, .islot.ghost > .stepn { flex: none; }
+.slot-btn.ghost, .islot-btn.ghost { outline: var(--hairline-1h) dashed var(--ai); outline-offset: calc(var(--hairline) * -1); }
+/* The rack switches at the end of the lower zone's tab row: the mockup's
+   inline layout, the lit switch in --tx-1 as the mockup draws Inserts. */
+.mixer-racks { display: flex; gap: var(--space-2h); align-items: center; padding-right: var(--space-1h); }
+.rack-switch { padding: 0; border: 0; background: none; font: inherit; color: var(--tx-4); cursor: pointer; }
+.rack-switch.on { color: var(--tx-1); }
+/* The plugin picker (mixer/PluginPicker.tsx), a dialog the mockup does not draw. */
+.plugin-picker {
+  width: min(var(--dialog-w), calc(100vw - var(--dialog-margin)));
+  max-height: calc(100vh - var(--dialog-margin));
+  padding: calc(var(--space) * 3);
+  background: var(--bg-1);
+  color: var(--tx-1);
+  border: var(--hairline) solid var(--line-2);
+  border-radius: var(--radius-l);
+  font-size: var(--fs-body);
+  line-height: var(--line-height);
+}
+.plugin-picker[open] { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
+.plugin-picker::backdrop { background: var(--scrim); }
+.picker-head { display: flex; align-items: center; gap: var(--space); }
+.picker-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.picker-close { flex: none; display: grid; place-items: center; padding: var(--space-half); border: 0; background: none; color: var(--tx-3); cursor: pointer; }
+.picker-search { height: var(--control-h); padding: 0 var(--space-2); font-size: var(--fs-small); }
+.picker-error { margin: 0; color: var(--err); font-size: var(--fs-small); overflow-wrap: anywhere; }
+.picker-error > code { font-family: var(--font-num); }
+.picker-empty { margin: 0; color: var(--tx-3); font-size: var(--fs-small); }
+.picker-list { margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: var(--space-half); }
+.picker-row { display: flex; align-items: center; gap: var(--space-1h); min-height: var(--control-h); padding: 0 var(--space-1h); border-radius: var(--radius-4); background: var(--bg-4); border: var(--hairline) solid var(--line-2); font-size: var(--fs-small); }
+.picker-choose { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--space-1h); align-self: stretch; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.picker-choose:disabled { cursor: default; opacity: var(--offline-opacity); }
+.picker-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-format, .picker-state { flex: none; color: var(--tx-3); font-size: var(--fs-micro); white-space: nowrap; }
+.picker-state { color: var(--warn); }
+.picker-approve { flex: none; white-space: nowrap; }
 
 /* Small windows (2.4). Under 1100 px the top bar drops the locator, tempo
    and signature displays, and the boxes of the parts not built yet; under

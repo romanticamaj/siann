@@ -130,13 +130,15 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad' })) {
+  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'inspector-notepad': 'm5b-ui-notepad' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
-  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata).
+  // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata, m5b-ui-inserts-master).
   assert.equal(ruleOf('agent-row').gate, 'm5b-ui-plan-metadata');
   assert.equal(MANIFEST.gates['m5b-ui-plan-metadata'], 'report');
+  assert.equal(ruleOf('strip-3-inserts').gate, 'm5b-ui-inserts-master');
+  assert.equal(MANIFEST.gates['m5b-ui-inserts-master'], 'report');
   // The proposal pill stays m5b-ui-ghosts', which landed it (report).
   assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
   assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
@@ -614,10 +616,12 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
     'strip-master-fader': 'm5b-ui-inserts-master', 'strip-master-cap': 'm5b-ui-inserts-master', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-inserts': 'm5b-ui-inserts-master', 'mixer-racks': 'm5b-ui-inserts-master',
     'strip-3-edit': 'm5b-ui-editor-channel', 'inspector-edit': 'm5b-ui-editor-channel', 'tab-editor': 'm5b-ui-editor-channel',
   };
+  // m5b-ui-inserts-master landed its parts (report); the others are pending.
+  const landed = new Set(['m5b-ui-inserts-master']);
   for (const [id, gate] of Object.entries(owners)) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(ruleOf(id).feature, gate, id);
-    assert.equal(MANIFEST.gates[gate], 'pending', gate);
+    assert.equal(MANIFEST.gates[gate], landed.has(gate) ? 'report' : 'pending', gate);
     // The acceptance of the owner names the part.
     const text = FEATURES.get(gate).acceptance.join('\n');
     const name = id.replace(/^strip-3-/, 'strip-').replace(/^strip-(inserts|edit)$/, 'strip-');
@@ -803,10 +807,11 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
   assert.ok(app.includes('ui/left-zone.css'), 'index.html links ui/left-zone.css');
   assert.ok(app.indexOf('ui/top-bar.css') < app.indexOf('ui/left-zone.css') && app.indexOf('ui/left-zone.css') < app.indexOf('ui/project-zone.css'), 'in the mockup\'s order');
   assert.equal(MANIFEST.gates['m5-ui-port-inspector'], 'report');
-  // The three open sections are held by tokens until their features land; each names a pending part.
+  // The open sections are held by tokens until their features land; each names a pending part.
+  // Inserts landed (m5b-ui-inserts-master): its box on an engine without plugins is a shell.css calc().
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = [...tokens.matchAll(/--hold-(inspector-[a-z0-9-]+)-h\s*:/g)].map((m) => m[1]).sort();
-  assert.deepEqual(holds, ['inspector-inserts', 'inspector-routing']);
+  assert.deepEqual(holds, ['inspector-routing']);
   for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
   // The temporary pre-port rules #136 kept for the Inspector are gone.
   const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');

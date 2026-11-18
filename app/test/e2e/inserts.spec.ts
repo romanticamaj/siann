@@ -116,7 +116,8 @@ test.describe('block A: the test plugin on the core engine', () => {
     // Unapproved in this user data: Approve, after a confirmation that names the file.
     await expect(row.getByTestId('picker-choose')).toHaveCount(0);
     await row.getByTestId('picker-approve').click();
-    const confirm = page.getByTestId('confirm-dialog');
+    // The picker's own confirmation (the project zone has the track removal's).
+    const confirm = picker.getByTestId('confirm-dialog');
     await expect(confirm).toBeVisible();
     await expect(confirm).toContainText(path.basename(PLUGIN!));
     const unchanged = await revisions();

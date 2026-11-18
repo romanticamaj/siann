@@ -627,7 +627,8 @@ test('volume, pan, mute and solo from the Inspector make one revision each, and 
   expect(await zone.evaluate((el) => Array.from(el.children).map((c) => c.className))).toEqual(['z-head', 'z-foot']);
   await selectClip();
   expect(await zone.evaluate((el) => Array.from(el.children).map((c) => c.className.split(' ')[0]))).toEqual([
-    'z-head', 'i-track', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'sec', 'inspector-hold', 'z-foot',
+    // Routing's box, Inserts (m5b-ui-inserts-master), the boxes of Sends and Automation, Agent changes, Notepad's box.
+    'z-head', 'i-track', 'inspector-hold', 'sec', 'inspector-hold', 'inspector-hold', 'sec', 'inspector-hold', 'z-foot',
   ]);
   await expect(page.locator('[data-part="inspector-name"] small')).toHaveText('Stereo');
 
@@ -646,7 +647,9 @@ test('volume, pan, mute and solo from the Inspector make one revision each, and 
   ]);
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
-  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-edit', 'inspector-inserts', 'inspector-monitor', 'inspector-notepad', 'inspector-read', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  // inspector-inserts landed with m5b-ui-inserts-master (its gate report, its section in the window).
+  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-edit', 'inspector-monitor', 'inspector-notepad', 'inspector-read', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  expect(landed).toContain('inspector-inserts');
   expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
   expect(pending.filter((id) => shown.includes(id))).toEqual([]);
 

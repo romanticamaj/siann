@@ -249,8 +249,8 @@ test('the master strip is the mockup\'s .strip.master: scale, fader and meter, t
   assert.deepEqual(elements(fader!).filter((el) => !classes(el).includes('value-tooltip')).map(sig), elements(mFader!).map(sig));
   const [unity, cap] = elements(fader!);
   const [mUnity, mCap] = elements(mFader!);
-  assert.equal(styleOf(unity!, 'bottom'), styleOf(mUnity!, 'bottom'));
-  assert.equal(styleOf(cap!, 'bottom'), styleOf(mCap!, 'bottom'));
+  assert.equal(parseFloat(styleOf(unity!, 'bottom')!), parseFloat(styleOf(mUnity!, 'bottom')!), 'the mockup writes 75%');
+  assert.equal(parseFloat(styleOf(cap!, 'bottom')!), parseFloat(styleOf(mCap!, 'bottom')!));
   assert.equal(styleOf(cap!, 'bottom'), '75.0%');
   assert.equal(cap!.attrs['data-part-of'], 'cap');
   assert.equal(fader!.attrs.role, 'slider');
@@ -564,7 +564,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   }
   const master = find(root, (el) => classes(el).includes('master'));
   assert.deepEqual(appIds(master, 'master'), mockupIds(mockupMaster()).filter((id) => !pending(id)));
-  assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
+  assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-cap', 'strip-master-fader', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
   // The mixer itself.
   assert.equal(find(root, byClass('mixer')).attrs['data-part'], 'mixer');
   // Nothing else carries an id the manifest has pending.
