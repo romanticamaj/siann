@@ -112,6 +112,9 @@ async function chipFits(): Promise<string[]> {
     const name = chip.querySelector<HTMLElement>('span')!;
     if (name.getClientRects().length !== 1) out.push('the chip wraps');
     if (!chip.title || !chip.title.includes((name.textContent ?? '').slice(0, 4))) out.push(`the chip's title does not hold its name: ${chip.title}`);
+    // A long name shortens; it never pushes the bar's right group out of the window.
+    const plans = document.querySelector<HTMLElement>('[data-testid=plans-button]')!.getBoundingClientRect();
+    if (plans.right > window.innerWidth + 0.5) out.push(`the Plans button is pushed out: ${plans.right} > ${window.innerWidth}`);
     return out;
   });
 }
