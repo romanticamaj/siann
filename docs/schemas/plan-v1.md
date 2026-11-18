@@ -133,7 +133,10 @@ The plan methods of Protocol v0 item 14 (`plan.submit`, `plan.status`,
 `plan.approve`, `plan.reject`, `plan.apply`, `plan.rollback`, `plan.propose`) are
 joined by two read-only methods for the plan review UI (spec, Protocol v0 item 25).
 Both run on the command thread, honour `expectedRevision`, are listed in
-`engine.capabilities` `methods` and are not MCP tools in v0.
+`engine.capabilities` `methods` and are the MCP tools `list_plans` and
+`preview_plan` in the propose scope (m5b-protocol-parity,
+[Protocol MCP v0](protocol-mcp-v0.md)). Their params, results and errors are also
+in [Protocol events v1](protocol-events-v1.md), Methods.
 
 ### `plan.list`
 

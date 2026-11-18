@@ -33,14 +33,18 @@ struct McpTool {
 // The tools in tools/list order.
 const std::vector<McpTool>& mcpTools();
 
-// A protocol method that is deliberately no tool, with the reason on record
-// (test matrix 8.2: an MCP tool or an explicit reasoned exclusion).
+// A protocol method with no MCP tool, and why (kNotMcp). Every method of
+// protocolMethods() is a tool's method or one of these (protocol_parity_test).
 struct McpExclusion {
     std::string_view method;
     std::string_view reason;
 };
 
 const std::vector<McpExclusion>& mcpExclusions();
+
+// The methods engine.capabilities lists, in its order (kMethods,
+// protocol_server.cpp).
+const std::vector<std::string_view>& protocolMethods();
 
 // Who a tool call came from: the session's agent and the tool's name, for the
 // plan's actor and the agent's lastAction (never the arguments).

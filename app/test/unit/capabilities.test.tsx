@@ -48,6 +48,11 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   }
   assert.equal(reduced.has('plan.reject'), true);
   assert.equal(full.has('transport.punch'), false, 'a method no engine lists yet');
+  // m5b-protocol-parity: the full fixture lists every method the engine serves.
+  for (const method of ['transport.set_cycle', 'transport.set_click']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
   assert.equal(full.feature('gestures'), true);
   assert.equal(reduced.feature('gestures'), false);
   assert.equal(full.feature('plugins'), false, 'false is absent');

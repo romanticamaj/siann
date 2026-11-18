@@ -2578,7 +2578,9 @@ McpAdapter       MCP (JSON-RPC) tools mapped onto the command registry and the
                  submit_plan, plan_status, approve_plan, reject_plan,
                  apply_plan, rollback_plan, propose_plan, audition,
                  merge_proposal, discard_proposal, execute, job_status, render,
-                 open_session, save_session
+                 open_session, save_session, the transport, device, recording
+                 and project tools, list_plans, preview_plan, undo, redo
+                 (docs/schemas/protocol-mcp-v0.md has the table)
 AuditionPort     the server's way to the auditioner (below)
 ```
 
@@ -2594,6 +2596,21 @@ directly otherwise. Without a port `audition.hear` is `audition_unavailable`.
 Branch commits and merges publish `proposal.changed {branch, revision, changedIds}`
 and `proposal.closed {branch, merged, revision?}` events; main's `session.changed`
 is unchanged (`docs/schemas/protocol-events-v1.md`).
+
+Every protocol method is an MCP tool or has an entry with its reason in
+`kNotMcp`, the table beside the tool table in `mcp_adapter.cpp`
+(m5b-protocol-parity); the native `protocol_parity_test` and the Node
+`test/protocol-parity.test.js` enforce it, and the Node test also holds the
+methods against the protocol docs and the app's capabilities fixture: every
+method has a section or row there, and every dotted name a doc heading or
+`Method` column uses is a method or an event (a name only in prose is not
+checked). A method
+is documented by a section or a table row of its own in a
+`docs/schemas/protocol-*.md`; its row in the MCP tool table does not count, as
+it carries no params, result or errors, and neither does a heading that only
+adds a side detail (the core session, command, capability, plan, proposal,
+audition and job methods, `engine.capabilities` and `render.start` among them,
+are in `docs/schemas/protocol-core-v0.md`).
 
 Consistency rules:
 
@@ -2636,10 +2653,11 @@ Security rules:
 Scopes v0 (decided with m3-mcp). v0 has two MCP scopes: `propose` (the MCP
 default) and `trusted` (the "approve" scope above; read-only and operate stay with
 LAN mode). A tool that changes main's document or the served session needs
-`trusted`: `approve_plan`, `apply_plan`, `execute` (`command.execute`; undo and
-redo are not tools in v0 and would be `trusted`), `merge_proposal`,
+`trusted`: `approve_plan`, `apply_plan`, `execute` (`command.execute`), `undo` and
+`redo` (`session.undo`, `session.redo`, m5b-protocol-parity), `merge_proposal`,
 `rollback_plan`, `open_session`. Everything else is `propose`: `list_commands`,
 `describe_capabilities`, `inspect_session`, `submit_plan`, `plan_status`,
+`list_plans`, `preview_plan` (both read only, m5b-protocol-parity),
 `reject_plan`, `propose_plan` (a branch; main is unchanged), `audition`,
 `discard_proposal`, `render`, `job_status`, `save_session`. In M3 the scope is set
 by the launcher (`ServerOptions::mcpScope`; the `siann-engine` executable
@@ -3038,7 +3056,10 @@ with the M4 wave 2 and 3 plans):
     (m5-clap-editor-window). `--open-editor` and
     `SIANN_OPEN_EDITOR` are removed ("Process model"). All of them go through the
     command thread, honour `expectedRevision` and the idempotency cache, and are
-    in `engine.capabilities`' `methods`; none is an MCP tool yet.
+    in `engine.capabilities`' `methods`; none is an MCP tool (`kNotMcp` gives
+    the reasons: an editor needs a desktop window, agents reach plugin slots
+    through plan steps, and no command sets a plugin parameter, so in v0 agents
+    have no path to `plugin.set_parameter`'s live parameters).
 20. `plugin.set_parameter {slotId, paramId, value}` (m4-crash-recovery): the live
     parameter path for a hosted plugin. `paramId` is a string, the id the
     instance's parameter list reports (`PluginParameterInfo::id`; a CLAP plugin's
@@ -3317,8 +3338,10 @@ Protocol v0, plans in the UI (decided with m5-plan-review; the wire details are 
       `session.open` (which hears main of the new session). Hearing the side
       already heard publishes nothing. Without an audition port it never fires.
     - Both methods run on the command thread, honour `expectedRevision`, are
-      listed in `engine.capabilities` `methods`, and are not MCP tools in v0 (an
-      agent knows the plans it submitted). Plans stay in engine memory, not in
+      listed in `engine.capabilities` `methods`, and are the MCP tools
+      `list_plans` and `preview_plan` in the propose scope (m5b-protocol-parity:
+      read only, and an agent previewing its own plan sees what the reviewer
+      sees). Plans stay in engine memory, not in
       the bundle.
 
 Protocol v0, locators, cycle and click (decided with m5-ui-engine-loop-click, UI
@@ -3921,6 +3944,11 @@ Not used: Taskflow (allocates at runtime).
   install has no updater and never elevates), so the package holds no
   executable but `SIANN.exe` and `siann-engine.exe`. The package tests check the
   list, the npm part against the lock file.
+- The protocol parity tests run in `npm test` (`test/protocol-parity.test.js`, no
+  build: `kMethods`, the MCP tool table and `kNotMcp` read from the C++ sources
+  against the protocol docs, the MCP doc's tool table and the app's capabilities
+  fixtures) and in ctest (`protocol_parity_test`: `kMethods` is the union of the
+  tool methods and `kNotMcp`, disjoint, every exclusion with a reason).
 - Long tests are Catch2 tests tagged `[.][long]`: hidden, so the default ctest run
   leaves them out (a ctest guard checks that), and run by the scheduled or
   manually triggered `long-tests` workflow (`siann_cli_tests "[long]"`). M2's
@@ -4012,9 +4040,9 @@ review instead of pushing on.
 | M4 Plugins | CLAP host first (both targets), then JUCE VST3/AU; capabilities; hostile test plugin | Third-party plugins load, save state, compensate latency, survive restart; capability flags exposed to agents | — |
 | M5 Desktop UI v1 | Timeline, mixer, plan review UI in Electron | Arrange and mix by hand; review and approve an agent plan visually | — |
 | M5b Usable release | Phases 2 and 3 of the UI redesign (as far as its section "Usable release" lists them) with their engine tickets: launch with one command and an unsigned Windows installer; create, open and save sessions; audio import; recording through the protocol with monitoring, punch, pre-roll and count-in; clip fades; markers; master gain, buses and sends; ghosts and audition in place; the Cubase key preset completed. Added on 2026-11-15 so that no part of the UI mockup is unowned (UI redesign 10.5): plan title, intent and actor with connected agents; DSP load and a loudness meter; a read-only time signature display; requests from the user to a connected agent; track notes; the lower-zone editor and the Channel zone | A Cubase user's walkthrough (projects, import, arranging, transport, MixConsole, recording, plan review) passes end to end in English, Traditional Chinese and Simplified Chinese, in CI and against the installed build; the installer runs on a clean Windows machine | The walkthrough cannot be made deterministic on the fake device, or the unsigned installer needs a manual step on a clean machine: review the scope |
-| M6a Automation | Write/Touch/Latch/Trim, lanes, precision contract, and the automation controls of the UI mockup (`m6a-ui-automation`) | Automation passes recorded as single revisions; precision documented per format | — |
+| M6a Automation | Write/Touch/Latch/Trim, lanes, precision contract, and the automation controls of the UI mockup (`m6a-ui-automation`). Since 2026-11-18 also the tools of the mockup that M5b leaves out, with clip mute (`m6a-ui-tools`, `m6a-engine-clip-mute`; UI redesign 10.11) | Automation passes recorded as single revisions; precision documented per format | — |
 | M6b Recording production | Loop record, takes/playlists, MIDI recording, RF64 (punch, pre-roll, count-in and the monitoring modes moved to M5b) | One hour 16-track recording criterion passes | — |
-| M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems (buses and sends in the document moved to M5b) | Production-level criteria list passes | — |
+| M6c Mixing structure | Groups, VCAs, sidechain, bounce/stems (buses and sends in the document moved to M5b). Since 2026-11-18 also the master as a full channel: mute and plugin slots on the master, with their controls (`m6c-engine-master-channel`, `m6c-ui-master-channel`; UI redesign 10.11) | Production-level criteria list passes | — |
 | M7 Embedded | Headless host target on arm64, browser control | Engine runs on a Raspberry Pi class board controlled from a browser | — |
 
 Backlog change (2026-11-14): M5b was added between M5 and M6a for the maintainer's usable-release goal (GitHub #83). It takes from M6b the monitoring modes and punch, pre-roll and count-in, from M6c buses and sends in the document, and adds recording through the protocol, which no milestone owned (only `siann-cli record` records today). The mapping from the goal's criteria A to I to features is in `2026-11-13-siann-ui-redesign.md`, section "Usable release"; the manifest is `.claude/milestones/M5b.json`. M6a is not a prerequisite of M5b.

@@ -2,8 +2,8 @@
   "schemaVersion": "siann.milestone.v1",
   "id": "M6c",
   "title": "Mixing structure",
-  "goal": "Groups, VCAs, sidechain and bounce/stems in the document on top of M5b's buses and sends, meeting the production-level criteria list.",
-  "specSections": ["siann-model (pure C++)", "Latency model", "Channels and I/O", "Production-level criteria", "Milestones"],
+  "goal": "Groups, VCAs, sidechain and bounce/stems in the document on top of M5b's buses and sends, meeting the production-level criteria list. The master becomes a full channel: mute and an insert rack (decided by Fable, delegated by the maintainer, 2026-11-18; UI redesign 10.11).",
+  "specSections": ["siann-model (pure C++)", "Latency model", "Channels and I/O", "Master path", "Production-level criteria", "Milestones", "UI redesign: 3.4", "UI redesign: 10. Mockup fidelity"],
   "status": "not_started",
   "done": ["Graph-level PDC across send, aux and sidechain paths (M1)."],
   "prerequisites": [
@@ -19,7 +19,23 @@
     {"id": "m6c-sidechain", "title": "Sidechain routing", "wave": 1, "dependsOn": [], "specRefs": ["Latency model"],
      "acceptance": ["Sidechain inputs from the document line up with the main input (null test)."]},
     {"id": "m6c-bounce", "title": "Bounce and stems", "wave": 2, "dependsOn": ["m6c-groups-vca"], "specRefs": ["siann-graph and siann-engine"],
-     "acceptance": ["render.bounce job produces content-addressed outputs; stems per track or bus; offline equals realtime null test."]}
+     "acceptance": ["render.bounce job produces content-addressed outputs; stems per track or bus; offline equals realtime null test."]},
+    {"id": "m6c-engine-master-channel", "title": "The master as a channel: mute and plugin slots on the master", "wave": 1, "dependsOn": [], "specRefs": ["Master path", "siann-model (pure C++)", "Commands and jobs", "Gestures", "Latency model"],
+     "acceptance": [
+       "Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign 10.11): the engine work the master's M, insert rack and e of the UI mockup need, which no milestone owned. It amends the M5b rule that the master has gain only (architecture spec, Gestures: \"The master has no pan or mute target\"; m5b-engine-master); the master still has no pan.",
+       "master.set_mute {muted} is one revision on the master entity, undoable and usable as a plan step; a muted master outputs silence in realtime and in an offline render while every meter before it keeps running, and the click is not muted with it.",
+       "A plugin slot can belong to the master: plugin.instantiate and plugin.insert take the master as a third target beside trackId and busId, plugin.remove, plugin.set_bypass and the editor methods work on such a slot unchanged, and the registry and approval rules of m5-plugin-registry apply. The master's inserts run before the master gain and the master meter, and their latency is reported and compensated as the Latency model says (null test against the same chain on a bus).",
+       "engine.capabilities lists features.masterMute and features.masterInserts; a document without either reads and hashes as before; docs/schemas and the architecture spec's Master path, siann-model and Protocol text carry the changes, and the MCP adapter reaches the commands through execute."
+     ]},
+    {"id": "m6c-ui-master-channel", "title": "MixConsole: the master's mute, insert rack and e", "wave": 2, "dependsOn": ["m6c-engine-master-channel"],
+     "specRefs": ["UI redesign: 3.4", "UI redesign: 10. Mockup fidelity", "Master path", "Frontend"],
+     "acceptance": [
+       "The master strip has M (master.set_mute, one revision, restored by one undo, following other connections and applied plans) and an insert rack with the slots, picker, bypass, e and Remove of the track strips' racks (m5b-ui-inserts-master), bound to the master's plugin slots.",
+       "The master's e shows the master's strip in the Channel zone, as a track strip's e does for its track (m5b-ui-editor-channel), and is lit while it does.",
+       "Against capabilities without features.masterMute the M is not in the DOM, and without features.masterInserts neither is the rack; their boxes stay empty (UI redesign 3.0), as they have been since M5 (e2e with reduced capabilities fixtures).",
+       "Every new string is in the three catalogs, and the tour appends its states after the last state of the milestones before it. Tour states changed: the master strip in every state that shows the MixConsole.",
+       "Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign 10.11): the master's M, insert rack, e and their button row belong to this feature; until it lands they are absent and their boxes stay empty. Ported from the mockup's markup (decided by the maintainer, 2026-11-17; UI redesign 10.9; docs/harness/agent-rules.md, \"UI fidelity\"): this feature's parts, strip-master-mute, strip-master-inserts, strip-master-edit, strip-master-buttons, take the DOM structure, class names and data-part ids mockup.html gives them, are styled by the shared rules of app/renderer/ui and are wired to real data; a unit test holds the rendered structure to the mockup's markup and an e2e assertion finds each id in the window. Their gate in app/test/fidelity/manifest.json (m6c-ui-master-channel) goes from pending to report in this pull request; these parts have no --hold-* token (their rows are fixed by the shared rules); nothing sets a gate to enforce. A side-by-side screenshot of the app and the mockup is attached for each state this feature changes, in en and zh-TW, with the fidelity report; the maintainer reviews it by eye, and no geometry or pixel result blocks."
+     ]}
   ],
   "exit": [
     {"id": "m6c-exit-production", "text": "The production-level criteria list passes.", "how": "64 tracks at 48 kHz/128 samples for 30 minutes with zero xruns on the reference machines (human gate), PDC null tests, recovery and parity tests."}
