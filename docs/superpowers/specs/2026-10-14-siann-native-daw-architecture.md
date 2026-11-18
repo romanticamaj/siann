@@ -2588,6 +2588,27 @@ retried with the same id once the scope is granted. Note for the maintainer:
 hears without changing main; if that is unwanted, flip them to `trusted` (one row
 of the tool table in `docs/schemas/protocol-mcp-v0.md`).
 
+Trust model between agents (security fix after m5b-protocol-parity; decided by
+the main session, 2026-11-18). One served session can have several agents (item
+29), and they are not trusted with each other's work. Reading is across agents on
+purpose: `inspect_session` already shows the propose caller the whole session, and
+agents that work on one session coordinate by seeing each other's proposals, so
+`list_plans`, `plan_status` and `preview_plan` return every plan whoever its
+`actor` is. Changing a plan's lifecycle is its actor's: under `propose`,
+`reject_plan` rejects only a plan this agent's submission stored (an identical
+resubmission by another agent does not make it the actor; a partial approval's
+sub-plan keeps its parent's agent), and `discard_proposal` discards only a branch
+this agent proposed or the proposal of a plan it is the actor of. Anything else,
+a UI-submitted plan included, is `not_plan_actor` (a stable code), after the
+`not_found` check, and changes nothing. The command thread checks it with the
+agent id of the request's MCP session (not the sanitised `actor.name`, which two
+agents can share), from a server-side record of which agent stored each plan and
+proposed each branch, cleared when another session is served. A `trusted` MCP
+credential and the UI keep full reach. `propose_plan` (of a plan the user approved,
+whose agent can still discard the branch) and `audition` (what the user hears, like
+`play`) are not limited to the actor. The rule and its edge cases are in
+`docs/schemas/protocol-mcp-v0.md`, "Trust model".
+
 Credential-bound methods (m5b-engine-agent-requests, item 32). Two kinds of
 method belong to one credential whatever the scope: the user's side of an agent
 request, `agent.request`, `agent.cancel_request` and `agent.requests`, is UI-only

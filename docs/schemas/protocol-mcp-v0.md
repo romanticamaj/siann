@@ -246,6 +246,35 @@ previewing its own plan sees the diff the reviewer will see. `undo` and `redo`
 move main's head, so they are trusted; under `propose` they are `scope_denied`,
 run nothing and are not cached.
 
+### Trust model: agents read each other's plans, and change only their own
+
+Several agents can share one served session (each MCP session is an agent,
+"Agents" above), and none of them is trusted with another's work. The rule, on
+the command thread with the agent the request's `Mcp-Session-Id` names:
+
+- Reading is across agents, by design: `inspect_session` already shows the whole
+  session to a propose caller, and agents that work on one session coordinate by
+  seeing each other's proposals. `list_plans`, `plan_status` and `preview_plan`
+  return every plan in the session, whoever its `actor` is.
+- Changing a plan's lifecycle is the actor's. Under `propose`, `reject_plan`
+  rejects only a plan this agent submitted first (the agent the plan's `actor`
+  was set from; an identical resubmission by another agent returns the stored
+  plan and does not make it the actor, and the sub-plan of a partial approval
+  keeps its parent's agent). `discard_proposal` discards only a branch this
+  agent proposed or the proposal of a plan it is the actor of. Any other plan or
+  branch, a UI-submitted one included, is `not_plan_actor` (a stable code; an
+  unknown plan or branch is still `not_found`, checked first), and nothing
+  changes. A plan whose agent is gone (ended, or forgotten past
+  `limits.agentsRetained`; a new `initialize` is a new agent), or
+  one the session held when it was opened, has no MCP actor here: only the UI and a
+  trusted caller reject it.
+- `trusted` callers and the UI keep full reach: they reject any plan and discard
+  any proposal (they approve, apply and merge anyway).
+- `propose_plan` and `audition` are not limited to the actor. `propose_plan`
+  branches a plan the user has already approved, and the plan's agent can still
+  discard that branch; `audition` changes only what the user hears, like `play`
+  and `stop`, and leaves no trace in any plan (see the maintainer note below).
+
 ### Methods without a tool
 
 Every method of `engine.capabilities` `methods` is a tool's method above or a row
