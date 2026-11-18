@@ -502,6 +502,21 @@ rendered buttons ...", `key-preset` "Shift+C is unbound ...", e2e `transport`
 window), `mockup-fidelity.test.js` "the chrome's gate is report ..." (gate
 `report`, no `--hold-display-signature-w`), the side-by-side screenshots by eye.
 
+| Feature | N | D | U | E | F | M (tour) | Platforms | Gaps |
+|---|---|---|---|---|---|---|---|---|
+| m5b-ui-project (UR-4) | | | Y (`projects`: the recent list and the launch choice; `app-menu`: the renderer's menu model and main's template; `key-preset`: Mod+N/O/S, `studio.setup` and `project.openRecent.*` unbound; `project-controller`: New, Open, Save, the refusals, no shell port; `saved-mark`; `session-client`: the session epoch; `studio-setup`: rows, select, restore, status fields, SRC, capability; `transport-controls`: the no-device way into Studio Setup; `top-bar`: the name and the mark; `start-view`; `renderer-sources`, `i18n-catalogs`, `i18n-no-literals`, `test/ui-tokens.test.js`) | Y (`project.spec`: start view, New by Ctrl+N, relaunch on the last bundle, start view when it is gone, the native menu in en and zh-TW, Open Recent, one `session.save` per Ctrl+S, the lock refusal with the path, the saved mark across Save and a relaunch, criterion B's document hash round trip, `SIANN_SESSION_DIR`; `studio-setup.spec`: the fake device's channels, a selection and the status fields, the no-device tooltip and click, a refused open without a second select; `plain-tab.spec`: no start view, no New or Open; `i18n-fit` the new controls in four locales) | report (no part of `manifest.json` is this feature's; the top bar's session name changes in every state) | the top bar's title in every state; appends 29 (start view) and 30 (Studio Setup) | 3 | - (6: the restore after a refused open from a running device is unit only, section 3.2) |
+
+Per acceptance item (`m5b-ui-project`): 1 app unit `key-preset` "New, Open and
+Save are Cubase's keys ...", `app-menu` (the model in three locales, the
+template's accelerators, `registerAccelerator: false`, `triggeredByAccelerator`),
+`project-controller` "without a shell port ...", `renderer-sources`, e2e
+`project` (c), `plain-tab`; 2 `project-controller`, `session-client` "the
+session epoch ...", e2e `project` (a) and (d); 3 `projects` "launchSession ...",
+e2e `project` (b) and (g); 4 `saved-mark`, `top-bar`, e2e `project` (c) and (e);
+5 e2e `project` (f); 6 `studio-setup`, `transport-controls` "with no device and
+Studio Setup ...", e2e `studio-setup`; 7 `i18n-catalogs`, e2e `i18n-fit`, the
+tour (29 and 30, the top bar of every state).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -586,6 +601,7 @@ onto session.create, media.import, plans, session.save and render.start.
 | `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | the feature's build agent attaches the states; the maintainer reviews at the `ux-review` gate |
 | `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), as a report that never fails the job (decided by the maintainer, 2026-11-17), so it is run and uploaded on every such PR, not left to a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `mockup-fidelity.spec.ts` "the mockup's measurement (<locale>)" (F on the mockup alone) | `SIANN_FIDELITY_MOCKUP_ONLY=1` with `SIANN_FIDELITY=1` and `SIANN_FIDELITY_MOCKUP_ROOT` (set by `scripts/fidelity-mockup-compare.js`); with the flag set the spec's app gate test skips, without it this test skips | **Not in CI**: it measures a worktree of the base commit, which the CI checkout does not have. The implementer of a change to `tokens.css`, `app/renderer/ui/*.css` or the mockup's script runs `node scripts/fidelity-mockup-compare.js` before the PR (first `m5-ui-tokens-spacing`) and attaches the result; the reviewer checks it at review |
+| `studio-setup` "a refused selection sends the previous device again ..." (U only) | the fake device cannot refuse an open after one succeeded: `--fake-open-failures N` counts from the launch's open, so the e2e (`studio-setup.spec`) drives only the case with no device running, where nothing is sent back | the unit test runs in `npm test` on every OS; a hardware device held by another program is the maintainer's bench, at the `audio-hardware` gate |
 | `[.][hostile-crash-child]` | hidden helper | run by its parent test; fine |
 | M2 device bench, M0 macOS bundle signing, M4 JUCE `processBlock` audit, DAWproject into Cubase (L4) | human gates | maintainer, per milestone exit / release |
 

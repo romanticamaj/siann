@@ -342,9 +342,34 @@ years. Milestones are designed so that something useful exists at every stage.
 - Session at launch: `--session <bundle>` is required. When the directory does not
   exist the engine creates a new empty session there (`Session::create` with
   `Document::create(<bundle stem>, 48000, 120000)`), otherwise it calls
-  `Session::open`. In M0 the Electron shell passes
-  `<app.getPath('userData')>/sessions/Untitled.siann` (overridable by
-  `SIANN_SESSION_DIR` for tests); opening and recent sessions arrive with M5.
+  `Session::open`. Since m5b-ui-project the shell chooses the bundle in this
+  order: with `SIANN_SESSION_DIR` set (tests), `<dir>/Untitled.siann` and no
+  start view; else the bundle opened last, when its `session.json` exists;
+  else, when no record exists yet but the M0 default
+  `<userData>/sessions/Untitled.siann` does, that bundle, adopted as the last
+  one; else a scratch bundle `<userData>/start.siann`, never listed as recent,
+  with the renderer's start view (New, Open, the recent list) over the window.
+  The record is `<userData>/recent-projects.json`
+  (`{"schema": "siann.recent.v1", "recent": [<absolute bundle path>, ...]}`):
+  at most ten entries, newest first, deduplicated, the first being the last
+  opened; entries whose `session.json` is gone are dropped when it is read, and
+  a malformed file or a relative entry is ignored. It lives in user data,
+  never in the session. The protocol never tells a client the bundle's path
+  (`session.opened` and `session.open`'s result carry none), so the renderer
+  reports each successful `session.create` and `session.open` through the
+  preload bridge (`window.siann.project`: `state`, `chooseNew`, `chooseOpen`,
+  `opened`, `onChange`); the shell keeps it as the current bundle, which the
+  next engine restart is launched on, writes the record and rebuilds the menu.
+  The folder dialogs are the shell's (`dialog.showSaveDialog`, `.siann` by
+  default, and `dialog.showOpenDialog` on a directory). The application menu
+  is Electron's native menu, built by the shell from a model the renderer
+  sends (`window.siann.menu`: `set`, `onCommand`; command id, catalog label and
+  chord); its accelerators are shown but not registered
+  (`registerAccelerator: false`, and a click marked `triggeredByAccelerator`
+  is ignored on macOS), so the renderer's key dispatcher stays the one key
+  layer, and a click sends the command id back to the renderer. Every IPC
+  handler checks that the sender is `siann://app` and that a path is an
+  absolute string.
 - Crash-loop backoff: the shell restarts the engine after a delay that doubles from
   250 ms to a 10 s cap; the counter resets once the engine has stayed up 30 s;
   the shell allows 5 consecutive restarts (`SIANN_SHELL_MAX_RESTARTS`), so the exit
@@ -3793,6 +3818,20 @@ MySong.siann/                    a directory
   UI is not part of m5-timeline. The engine side,
   `media.import` (Jobs v0, import) and `session.create` (Protocol v0 item 27),
   exists since m5b-engine-project-media; the UI that drives it is M5b's.
+- Projects and audio setup (m5b-ui-project; UI redesign UR-4): New
+  (`session.create {path}` on a folder the shell's save dialog names), Open
+  (`session.open {path}`), the last ten bundles and Save (`session.save`) are
+  key commands (`Ctrl+N`, `Ctrl+O`, `Ctrl+S`) and items of the application
+  menu; New, Open and the recent list exist only with the preload bridge (a
+  plain browser tab has none), Save and Studio Setup need only the engine.
+  The window follows `session.opened`: a session epoch in the session client
+  (bumped by `session.opened` and by an event that names another session, not
+  by a reconnect) drops the old session's selection and view. The saved mark
+  is the renderer's: its baseline is the head revision at the first sync, at
+  every epoch and the revision `session.save` answers. Studio Setup lists
+  `engine.devices`, selects through `engine.select_device` and shows
+  `engine.status`; a refused selection sends the previous device again when
+  one ran.
 - The frontend holds a read model keyed by revision; it never owns session truth.
 - Plan review is a first-class UI (m5-plan-review, presented by m5-ui-plan-panel
   as the Plans tab of the right zone; UI redesign spec section 4 and P1-5 give
