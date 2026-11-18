@@ -313,8 +313,11 @@ test('the agent row and a titled card fit in every locale at 1440 px and at the 
 // Remove, the empty slot's +), the Inspector's Inserts section and the open
 // plugin picker fit in en, zh-TW and zh-CN at 1440x900. The slot's plugin
 // name ellipsises inside its box by design, so the check is on the controls.
+// A strip's slot shows its buttons while hovered: they are measured on the
+// hovered slot.
 const PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
-const INSERTS = '[data-part=mixer-racks] button, .slot.empty, .slot button, .islot button, .islot.empty, [data-part=inspector-inserts] .sec-h, .plugin-picker button, .plugin-picker .picker-format, .plugin-picker .picker-state';
+const RACKS = '[data-part=mixer-racks] button, .slot.empty, .slot:hover button, .islot button, .islot.empty, [data-part=inspector-inserts] .sec-h';
+const PICKER = '.plugin-picker button, .plugin-picker .picker-format, .plugin-picker .picker-state';
 
 test('the rack switch, the slots, the Inspector\'s Inserts section and the picker fit in every locale', async () => {
   test.skip(!PLUGIN, 'set SIANN_TEST_PLUGIN_CLAP');
@@ -337,10 +340,7 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
   for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) {
     await page.evaluate((next) => (window as unknown as { __siannLocale: { setLocale(l: string): void } }).__siannLocale.setLocale(next), locale);
     await expect(page.locator('html')).toHaveAttribute('data-locale', locale);
-    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
-    await expect(page.getByTestId('plugin-picker')).toBeVisible();
-    await expect(page.getByTestId('picker-install').first()).toBeVisible();
-    const report = await page.evaluate((selector) => {
+    const measure = (selector: string) => page.evaluate((selector) => {
       const out: string[] = [];
       for (const el of document.querySelectorAll<HTMLElement>(selector)) {
         if (el.getClientRects().length === 0) continue;
@@ -353,8 +353,14 @@ test('the rack switch, the slots, the Inspector\'s Inserts section and the picke
         }
       }
       return out;
-    }, INSERTS);
-    for (const entry of report) failures.push(`${locale}: ${entry}`);
+    }, selector);
+    await page.getByTestId('mixer-strip-trk_keys').locator('.slot:not(.empty)').hover();
+    await expect(page.getByTestId('mixer-strip-trk_keys').locator('.slot:hover button')).toHaveCount(3);
+    for (const entry of await measure(RACKS)) failures.push(`${locale}: ${entry}`);
+    await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+    await expect(page.getByTestId('plugin-picker')).toBeVisible();
+    await expect(page.getByTestId('picker-install').first()).toBeVisible();
+    for (const entry of await measure(PICKER)) failures.push(`${locale}: ${entry}`);
     await page.getByTestId('picker-close').click();
     await expect(page.getByTestId('plugin-picker')).toBeHidden();
   }

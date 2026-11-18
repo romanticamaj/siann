@@ -652,7 +652,7 @@ test('UX screenshot tour', async () => {
   }
   await gestureSettled();
   const held = (await fader.getAttribute('aria-valuetext')) ?? '';
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): the insert rack (m5b-ui-inserts-master: Vox Lead's SIANN Test Plugin with its bypass, e and Remove, and the empty + slots), pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the automation row is an empty box. The Inserts rack switch ends the lower zone's tab row.`);
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): the insert rack (m5b-ui-inserts-master: Vox Lead's SIANN Test Plugin, whose bypass, e and Remove show while the slot is hovered or focused, and the empty + slots), pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the automation row is an empty box. The Inserts rack switch ends the lower zone's tab row.`);
   await page.mouse.up();
   await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
   await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it. The master strip has its fader at 0.0 dB (m5b-ui-inserts-master), its meter, its level and peak value and its name; its M, rack and e are M6c's and their boxes stay empty.`);
@@ -951,11 +951,11 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
   await expect(page.getByTestId('plugin-picker')).toBeVisible();
   await expect(page.getByTestId('picker-install').first()).toBeVisible();
-  const listed = await page.getByTestId('picker-install').count();
+  const installs = await page.getByTestId('picker-install').count();
   await shoot(
     page,
     'Insert rack and plugin picker',
-    `Vox Lead's insert rack holds the SIANN Test Plugin (its name, bypass, e for its editor and Remove, added to the mockup's .slot) above one empty + slot; a click on an empty slot of Bass opened the plugin picker: the ${listed} installs of plugin.registry by name and format with a search field, an approved one chosen with its row, an unapproved one with Approve (after a confirmation that names the file). Choosing one inserts it at the end of the chain as one revision. The picker is app-only (the mockup draws none), so the review reads this state alone; a plugin's editor is a native window outside the page.`,
+    `Vox Lead's insert rack holds the SIANN Test Plugin (its name; bypass, e for its editor and Remove, added to the mockup's .slot, show while it is hovered or focused) above one empty + slot; a click on an empty slot of Bass opened the plugin picker: the ${installs} installs of plugin.registry by name and format with a search field, an approved one chosen with its row, an unapproved one with Approve (after a confirmation that names the file). Choosing one inserts it at the end of the chain as one revision. The picker is app-only (the mockup draws none), so the review reads this state alone; a plugin's editor is a native window outside the page.`,
     { number: 34 },
   );
   await page.getByTestId('picker-close').click();

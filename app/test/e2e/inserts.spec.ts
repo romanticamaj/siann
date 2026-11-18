@@ -140,6 +140,7 @@ test.describe('block A: the test plugin on the core engine', () => {
     const bypass = page.getByTestId(`slot-bypass-${slotId}`);
     await expect(bypass).toHaveAttribute('aria-pressed', 'false');
     before = await revisions();
+    await page.getByTestId(`slot-${slotId}`).hover();
     await bypass.click();
     await expect.poll(() => revisions()).toBe(before + 1);
     await expect(bypass).toHaveAttribute('aria-pressed', 'true');
@@ -150,6 +151,7 @@ test.describe('block A: the test plugin on the core engine', () => {
 
     // Remove: one revision; undo brings the slot back.
     before = await revisions();
+    await page.getByTestId(`slot-${slotId}`).hover();
     await page.getByTestId(`slot-remove-${slotId}`).click();
     await expect.poll(() => revisions()).toBe(before + 1);
     await expect(slots()).toHaveCount(0);
@@ -208,6 +210,7 @@ test.describe('block A: the test plugin on the core engine', () => {
     await launch();
     const [slotId] = await insertByProtocol(TRACK, 1);
     const edit = page.getByTestId(`slot-edit-${slotId}`);
+    await page.getByTestId(`slot-${slotId}`).hover();
     await edit.click();
     await expect(page.getByTestId('toast-message').filter({ hasText: 'editor_failed' })).toHaveCount(1);
     await expect(edit).toHaveAttribute('aria-pressed', 'false');
@@ -239,6 +242,7 @@ test.describe('block B: the editor on the desktop engine (Windows)', () => {
     const [slotId] = await insertByProtocol(TRACK, 1);
     const edit = page.getByTestId(`slot-edit-${slotId}`);
     await expect(edit).toHaveAttribute('aria-pressed', 'false');
+    await page.getByTestId(`slot-${slotId}`).hover();
     await edit.click();
     await expect(edit).toHaveAttribute('aria-pressed', 'true');
     const shellWindow = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getNativeWindowHandle().readBigUInt64LE(0).toString());

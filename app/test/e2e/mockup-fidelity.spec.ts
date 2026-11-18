@@ -263,7 +263,8 @@ async function openApp(locale: string, languages: readonly string[], notes: stri
       SIANN_USER_DATA: path.join(scratch, 'user-data'),
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      // The test plugin's directory, for the mockup's insert racks (m5b-ui-inserts-master).
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', ...(process.env.SIANN_TEST_PLUGIN_CLAP ? ['--plugin-dir', path.dirname(process.env.SIANN_TEST_PLUGIN_CLAP)] : [])]),
       // The mockup's device and build in the status bar (UI redesign 10.2).
       SIANN_FIDELITY_ENVIRONMENT: JSON.stringify(MANIFEST.environment),
     },

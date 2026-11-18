@@ -701,6 +701,14 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 .slot.empty[role="button"], .islot.empty[role="button"] { cursor: pointer; }
 .slot-btn, .islot-btn { flex: none; display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--tx-4); font: inherit; cursor: pointer; }
 .slot-btn { height: 100%; }
+/* In a strip's narrow slot the name comes first: its buttons show while the
+   slot is hovered or holds the focus (they stay in the tab order), and a
+   pressed one (bypassed, an open editor) always shows. */
+.ins > .slot > .slot-btn:not(.on, .ghost) { width: 0; overflow: hidden; }
+.ins > .slot:hover > .slot-btn, .ins > .slot:focus-within > .slot-btn { width: auto; overflow: visible; }
+/* Over the app's button reset (its minimum height, and the fill of a pressed or hovered button). */
+.slot-btn, .islot-btn, .rack-switch, .picker-close, .picker-choose { min-height: 0; border-radius: 0; }
+.slot-btn[aria-pressed], .islot-btn[aria-pressed], .rack-switch[aria-pressed], .slot-btn:hover, .islot-btn:hover, .rack-switch:hover, .picker-close:hover, .picker-choose:hover { background: none; border: 0; }
 .slot-btn > svg.i.s { width: var(--space-2h); height: var(--space-2h); }
 .slot-btn.edit, .islot-btn.edit { font-style: italic; font-family: Georgia, serif; font-weight: var(--fw-bold); }
 .slot-btn.edit { font-size: var(--fs-9h); }
