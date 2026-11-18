@@ -14,16 +14,12 @@ export const en = {
   'locale.label': 'Language',
 
   // The status panel.
-  'status.engine': 'Engine',
   'status.session': 'Session',
-  'status.revision': 'Revision',
   'status.tracks': 'Tracks',
   'status.clips': 'Clips',
   'status.syncs': 'Syncs',
   'status.connections': 'Connections',
-  'status.device': 'Device',
   'status.noDevice': 'none',
-  'status.latency': 'Latency',
   // The device segment's units (the mockup's, in every locale).
   'status.sampleRate': '{khz} kHz',
   'status.latencyValue': '{ms} ms',
@@ -37,12 +33,7 @@ export const en = {
   'status.hearProposal': 'proposal',
   'status.saved': 'Saved',
   'status.source': 'source',
-  'status.xruns': 'Xruns',
-  'status.heard': 'Hearing',
   'about.diagnostics': 'Diagnostics',
-  'connection.connecting': 'connecting',
-  'connection.connected': 'connected',
-  'connection.disconnected': 'disconnected',
   // The banner over the zones while the engine is away (m5-ui-connection; glossary 6.5).
   'connection.banner': 'Engine disconnected. The controls are paused until it reconnects.',
   'about.unknownCommit': 'unknown',
@@ -117,7 +108,6 @@ export const en = {
 
   // Mixer.
   'mixer.label': 'Mixer',
-  'strip.gain': 'Gain',
   'strip.pan': 'Pan',
   // The label of a MixConsole strip's pan row (the mockup's PAN).
   'strip.panRow': 'PAN',
@@ -151,7 +141,6 @@ export const en = {
   'transport.formatMenu': 'Time format',
   'transport.formatBars': 'Bars+Beats',
   'transport.formatSeconds': 'Seconds',
-  'transport.undoRedo': 'Undo and redo',
   'transport.undo': 'Undo',
   'transport.redo': 'Redo',
   // Locators, cycle and metronome (m5-ui-loop-click; spec 3.1, 3.2).
@@ -174,7 +163,6 @@ export const en = {
 
   // The Plans tab (m5-ui-plan-panel; UI redesign section 4 and P1-5).
   'plans.label': 'Plans',
-  'plans.list': 'Plans from the agent',
   'plans.none': 'No plans yet',
   'plans.steps': ({ count }: { count: number }): string =>
     plural('en', count, { one: `${count} step`, other: `${count} steps` }),
@@ -261,9 +249,6 @@ export const en = {
   'banner.generic': 'Hearing a proposal. Main is unchanged.',
 
   // The plan's diff, in user units; the raw entity is behind each row's disclosure.
-  'diff.entity': 'What',
-  'diff.change': 'Change',
-  'diff.stale': 'Stale',
   'diff.before': 'Before',
   'diff.after': 'After',
   'diff.kind.added': 'added',

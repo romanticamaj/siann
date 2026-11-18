@@ -212,8 +212,8 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
       expect(root[0], `${zone}: the page did not grow`).toBe(root[1]);
     }
     // The project zone scrolls by a transform in the event display, never by
-    // DOM overflow (m5-ui-arrange; spec 5.2): its body clips, and the page still does not grow.
-    const project = await page.getByTestId('zone-project-body').evaluate((el) => {
+    // DOM overflow (m5-ui-arrange; spec 5.2): its section.arrange clips, and the page still does not grow.
+    const project = await page.getByTestId('zone-project').evaluate((el) => {
       const filler = document.createElement('div');
       filler.style.height = '5000px';
       el.appendChild(filler);
@@ -419,22 +419,29 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
     await page.getByTestId('plans-button').click();
     await expectButton('right', true);
   }
-  await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
+  await page.getByTestId('zone-project').click({ position: { x: 5, y: 5 } });
   await expect(page.getByTestId('zone-button-project')).toHaveCount(0);
 
   // Tab and Shift+Tab move the focus frame through the visible zones in order.
   const focused = () =>
     page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[data-zone][data-focused="true"]')].map((el) => el.dataset.zone));
+  // The project zone's frame is the mockup's .arrange::after (m5-ui-port-cleanup),
+  // shown while the zone has the focus; the other zones' is an outline.
   const frame = (zone: string) =>
     page.locator(`[data-zone="${zone}"]`).evaluate((el) => {
       const style = getComputedStyle(el);
-      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
+      const after = getComputedStyle(el, '::after');
+      const outline = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
+      const border = after.display !== 'none' && after.content !== 'none' && after.borderTopStyle !== 'none' && parseFloat(after.borderTopWidth) > 0;
+      return outline || border;
     });
-  await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
+  await page.getByTestId('zone-project').click({ position: { x: 5, y: 5 } });
   expect(await focused()).toEqual(['project']);
   expect(await frame('project')).toBe(true);
   // The focus frame is --focus, the primary text at 20 % (m5-ui-tokens-spacing).
-  expect(await page.locator('[data-zone="project"]').evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(232, 235, 241, 0.2)');
+  expect(await page.locator('[data-zone="project"]').evaluate((el) => getComputedStyle(el, '::after').borderTopColor)).toBe('rgba(232, 235, 241, 0.2)');
+  // No second frame: the project zone's outline stays 0 wide.
+  expect(await page.locator('[data-zone="project"]').evaluate((el) => parseFloat(getComputedStyle(el).outlineWidth) || 0)).toBe(0);
   // The lower zone's tab row (.tabs) is --zone-tabs, 26 px; the right zone's
   // is the mockup's .p-head (--zone-head), since m5-ui-port-plans.
   const tabRows = await page.locator('.tabs').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height).filter((height) => height > 0));
@@ -564,7 +571,7 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
   await launch(sessionDir);
   const about = page.getByTestId('about');
   await expect(about).toContainText(/(A?GPL)-\d\.\d-or-later/);
-  const license = (await page.locator('.about .about-license').textContent()) ?? '';
+  const license = (await page.locator('.about [data-testid="about-license"]').textContent()) ?? '';
   expect(license).toMatch(/^(A?GPL)-\d\.\d-or-later$/);
   const title = (await about.getAttribute('title')) ?? '';
   expect(title).toContain(license);
@@ -596,11 +603,11 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
           const r = document.querySelector(selector)!.getBoundingClientRect();
           return { left: r.left, right: r.right, width: r.width };
         };
-        const span = document.querySelector<HTMLElement>('.about .about-license')!;
+        const span = document.querySelector<HTMLElement>('.about [data-testid="about-license"]')!;
         return {
           button: rect('[data-testid=about]'),
           bar: rect('[data-testid=status-bar]'),
-          license: rect('.about .about-license'),
+          license: rect('.about [data-testid="about-license"]'),
           clipped: span.scrollWidth > span.clientWidth,
           viewport: window.innerWidth,
         };

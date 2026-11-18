@@ -154,6 +154,21 @@ test('the zones keep their ids, focus attributes and dividers, positioned out of
   assert.ok(!('react-resizable-panels' in pkg.dependencies));
 });
 
+// m5-ui-port-cleanup (UI redesign 10.9, 1): the project zone is the mockup's
+// section.arrange, whose rows (toolbar, info line, arrange body) and focus
+// frame are the shared rules'; the zone's content is its direct child, with
+// no app body between them. The other zones keep their body, the app's
+// scroll wrapper (10.10).
+test('the project zone is the mockup\'s section.arrange, with its content as its direct children', () => {
+  const markup = render();
+  const project = /<section class="([^"]*)"[^>]*data-region="project-zone"[^>]*>/.exec(markup);
+  assert.ok(project, 'the project zone');
+  assert.deepEqual(project[1]!.split(/\s+/), ['arrange', 'zone', 'zone-project']);
+  assert.deepEqual(children(markup, /<section class="arrange[^"]*"[^>]*data-region="project-zone"/), ['p']);
+  assert.ok(!markup.includes('data-testid="zone-project-body"'), 'no app body in the project zone');
+  for (const zone of ['left', 'lower', 'right']) assert.ok(markup.includes(`data-testid="zone-${zone}-body"`), zone);
+});
+
 // m5-ui-port-mixer-strip (UI redesign 10.10, P1-12): the lower zone is the
 // mockup's section.lower, and its tab row is the mockup's .tabs with the
 // MixConsole tab (icon, label, the key); the Editor tab and the rack

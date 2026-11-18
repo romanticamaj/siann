@@ -95,7 +95,8 @@ test("a history row's title and rejection note, each step and the stale reasons 
   assertIsolated(markup, /<button[^>]*class="hrow"[^>]*>(<b[^>]*>)/g);
   assertIsolated(markup, /(<small[^>]*data-testid="plan-reason-[0-9a-f]{8}"[^>]*>)/g);
   assertIsolated(markup, 't');
-  assertIsolated(markup, 'plan-stale-reason');
+  // Each stale reason is a list item of the stale-reasons row.
+  assertIsolated(/data-testid="plan-stale-reasons"[\s\S]*?<\/ul>/.exec(markup)?.[0] ?? '', /(<li[^>]*>)/g);
 });
 
 test("the audition banner's text is bidi-isolated", () => {

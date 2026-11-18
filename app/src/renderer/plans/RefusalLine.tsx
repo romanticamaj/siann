@@ -57,12 +57,12 @@ export function RefusalLine({ refusal, locale, names, testId, className, role, o
     <div className={className} data-testid={testId} role={role} data-code={refusal?.code ?? undefined}>
       {refusal ? (
         <>
-          <span className="refusal-text">{refusalSummary(refusal, locale, names, t)}</span>{' '}
+          <span>{refusalSummary(refusal, locale, names, t)}</span>{' '}
           <button type="button" className="disclosure" data-testid={`${testId}-details`} aria-expanded={open} onClick={() => setOpen(!open)}>
             {t('plans.details')}
           </button>
           {open ? (
-            <pre className="refusal-raw" data-testid={`${testId}-raw`}>
+            <pre data-testid={`${testId}-raw`}>
               {[refusal.message, ...refusal.changedEntities].join('\n')}
             </pre>
           ) : null}

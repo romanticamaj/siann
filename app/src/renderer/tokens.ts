@@ -339,6 +339,15 @@ export const TOKENS = {
   "composer-send": "24px",
   "status-dot": "7px",
   "status-chip-h": "16px",
+  "black-a450": "rgb(0 0 0 / .45)",
+  "scrim": "rgb(0 0 0 / .45)",
+  "toast-max-w": "320px",
+  "toast-slide": "12px",
+  "toast-shadow-y": "6px",
+  "toast-shadow-blur": "18px",
+  "dialog-w": "560px",
+  "dialog-margin": "32px",
+  "drawer-shadow-blur": "24px",
 } as const;
 
 export type TokenName = keyof typeof TOKENS;

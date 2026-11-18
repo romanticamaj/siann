@@ -1,7 +1,7 @@
 // Catalog completeness (m5-ui-i18n; UI redesign spec 6.3). tsc enforces the
 // key set: zh-Hant.ts and zh-Hans.ts declare `const x: Catalog = {...}`, so a
 // missing key or an extra key is a compile error (checked by hand when this
-// test was written: deleting 'status.engine' from zhHant gives TS2741, adding
+// test was written: deleting 'status.engineConnected' from zhHant gives TS2741, adding
 // 'status.extra' gives TS2353). This test adds what types cannot see: no empty
 // value, every placeholder of the English message kept, no value identical to
 // the English one unless allow-listed, no character of the other script, and
@@ -9,6 +9,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import { en, type Catalog } from '../../src/renderer/i18n/en';
 import { pseudoCatalog } from '../../src/renderer/i18n/pseudo';
@@ -124,10 +126,10 @@ test('no catalog uses a character of the other Chinese script', () => {
 });
 
 test('the check itself catches each failure (fixture catalogs)', () => {
-  const zhBad: Record<string, unknown> = { ...zhHant, 'status.engine': '', 'strip.gainLabel': '音量', 'diff.entity': en['diff.entity'], 'status.tracks': '音轨' };
-  assert.equal(rendered(zhBad as Catalog, 'status.engine').trim(), '');
+  const zhBad: Record<string, unknown> = { ...zhHant, 'status.engineConnected': '', 'strip.gainLabel': '音量', 'plans.details': en['plans.details'], 'status.tracks': '音轨' };
+  assert.equal(rendered(zhBad as Catalog, 'status.engineConnected').trim(), '');
   assert.notDeepEqual(placeholders(zhBad['strip.gainLabel'] as string), placeholders(en['strip.gainLabel']));
-  assert.equal(rendered(zhBad as Catalog, 'diff.entity'), rendered(en, 'diff.entity'));
+  assert.equal(rendered(zhBad as Catalog, 'plans.details'), rendered(en, 'plans.details'));
   assert.ok(SIMPLIFIED_ONLY.some((c) => (zhBad['status.tracks'] as string).includes(c)));
 });
 
@@ -202,4 +204,30 @@ test('the toolbar, info line and Pool words are in every catalog, the mockup\'s 
   assert.equal(en['toolbar.autoScrollTitle'], 'Auto-Scroll (F)');
   // The old toolbar's words are gone: no Delete clip button, the gain field is the volume field.
   for (const gone of ['timeline.deleteClip', 'timeline.mediaPool', 'info.gain']) assert.ok(!(gone in en), gone);
+});
+
+// m5-ui-port-cleanup (acceptance 2): no catalog string is left that only the
+// markup before the port used. Every key of en.ts is named by the renderer: as
+// a quoted literal (a t('key') call, or a key table such as GRID_LABELS), or
+// through one of the dynamic prefixes below, each of which a renderer source
+// builds with a template (`zone.${zone}`).
+const DYNAMIC_PREFIXES = ['zone.', 'badge.', 'diff.kind.', 'actionReason.'] as const;
+
+test('every key of en.ts is used by the renderer', () => {
+  const renderer = path.resolve(__dirname, '..', '..', '..', 'src', 'renderer');
+  const catalogs = new Set(['en.ts', 'zh-Hant.ts', 'zh-Hans.ts'].map((name) => path.join(renderer, 'i18n', name)));
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return walk(full);
+      return /\.tsx?$/.test(entry.name) && !catalogs.has(full) ? [full] : [];
+    });
+  const text = walk(renderer)
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .join('\n');
+  for (const prefix of DYNAMIC_PREFIXES) assert.ok(text.includes(`t(\`${prefix}\${`), `a renderer source builds ${prefix}<name>`);
+  const quoted = (key: string) => text.includes(`'${key}'`) || text.includes(`"${key}"`) || text.includes(`\`${key}\``);
+  const unused = KEYS.filter((key) => !quoted(key) && !DYNAMIC_PREFIXES.some((prefix) => key.startsWith(prefix)));
+  assert.ok(KEYS.length > 300, `${KEYS.length} keys`);
+  assert.deepEqual(unused, [], 'catalog keys no renderer source names: delete them from every catalog');
 });

@@ -24,7 +24,7 @@ The path-to-step table is in `docs/harness/agent-rules.md` ("Checks") and in `st
 
 ### UI fidelity gate
 
-The UI is ported from the mockup, component by component, and compared with it (`docs/harness/agent-rules.md`, "UI fidelity"; UI redesign spec, section 10). Three layers; only the first blocks, and the other two are a report (decided by the maintainer, 2026-11-17):
+The UI is ported from the mockup, component by component, and compared with it (`docs/harness/agent-rules.md`, "UI fidelity"; UI redesign spec, section 10). The component port is finished for M5's parts (`m5-ui-port-cleanup`): the app links the mockup's stylesheets and then `shell.css`, which holds only what the mockup does not draw, and `app/test/fidelity/debt.json` is empty and stays empty (`test/ui-tokens.test.js` requires it). Three layers; only the first blocks, and the other two are a report (decided by the maintainer, 2026-11-17):
 
 | Layer | Command | Needs |
 |---|---|---|
