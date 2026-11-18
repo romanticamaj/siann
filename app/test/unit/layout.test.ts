@@ -29,6 +29,7 @@ import {
   parseLayout,
   reduce,
   serializeLayout,
+  shownRightTab,
   viewFor,
   type Layout,
   type ShellAction,
@@ -196,6 +197,31 @@ test('tabs: openTab shows a zone on a tab and leaves it shown when it already sh
   const again = reduce(right, { type: 'openTab', zone: 'right', tab: 'plans', viewport: WIDE });
   assert.equal(effectiveLayout(again, WIDE).zones.right.visible, true);
   assert.deepEqual(again, right);
+});
+
+// m5b-ui-meter (UI redesign 2.1: the right zone's tabs are Plans, Media,
+// Meter): the Meter tab is a right-zone tab, kept in siann.layout.v1; an
+// engine without features.loudness has no Meter tab, so the zone shows Plans
+// while the stored choice stays.
+test('the Meter tab is a right-zone tab: selected, toggled, stored, and shown as Plans when the engine has no loudness', () => {
+  const meter = reduce(start(), { type: 'tab', zone: 'right', tab: 'meter' });
+  assert.equal(meter.layout.tabs.right, 'meter');
+  assert.equal(reduce(meter, { type: 'tab', zone: 'right', tab: 'nonsense' }), meter, 'an unknown tab is refused');
+  // Selected again with showTab it hides the zone, as the other tabs do.
+  const hidden = reduce(meter, { type: 'showTab', zone: 'right', tab: 'meter', viewport: WIDE });
+  assert.equal(effectiveLayout(hidden, WIDE).zones.right.visible, false);
+  const shown = reduce(hidden, { type: 'showTab', zone: 'right', tab: 'meter', viewport: WIDE });
+  assert.equal(effectiveLayout(shown, WIDE).zones.right.visible, true);
+  // openTab plans (Ctrl+Alt+P, the Plans button) comes back to Plans.
+  assert.equal(reduce(meter, { type: 'openTab', zone: 'right', tab: 'plans', viewport: WIDE }).layout.tabs.right, 'plans');
+  // Kept in siann.layout.v1.
+  assert.equal(parseLayout(serializeLayout(meter.layout)).tabs.right, 'meter');
+  assert.equal(parseLayout(JSON.stringify({ tabs: { right: 'meter' } })).tabs.right, 'meter');
+  assert.equal(parseLayout(JSON.stringify({ tabs: { right: 'mixer' } })).tabs.right, 'plans');
+  // What the zone shows: the stored tab when the engine has it, Plans otherwise.
+  assert.equal(shownRightTab('meter', { meter: true }), 'meter');
+  assert.equal(shownRightTab('meter', { meter: false }), 'plans');
+  assert.equal(shownRightTab('plans', { meter: true }), 'plans');
 });
 
 test('the event display keeps 360x320: the lower zone, then the right, then the left give way, the stored layout untouched', () => {

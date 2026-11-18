@@ -25,7 +25,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { CommandRegistry } from '../../src/renderer/keys/commands';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
-import { parseEngineStatus, type EngineStatus } from '../../src/renderer/model/engine-status';
+import { parseEngineStatus, type EngineLoad, type EngineStatus } from '../../src/renderer/model/engine-status';
+import { bindDspLoad } from '../../src/renderer/shell/dsp-load';
 import { LoopClickController, TransportStateStore } from '../../src/renderer/model/loop-click';
 import { PlanStore } from '../../src/renderer/model/plan-store';
 import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
@@ -58,11 +59,45 @@ function withLocators(snapshot: Snapshot): Snapshot {
   return { ...snapshot, locators };
 }
 
+// A load channel that counts what reads it (m5b-ui-meter).
+interface CountingLoad {
+  getLoad(): EngineLoad | null;
+  subscribeLoad(listener: () => void): () => void;
+  set(load: EngineLoad | null): void;
+  readonly listeners: Set<() => void>;
+  reads: number;
+  subscriptions: number;
+}
+
+function countingLoad(): CountingLoad {
+  let value: EngineLoad | null = null;
+  const listeners = new Set<() => void>();
+  const load: CountingLoad = {
+    listeners,
+    reads: 0,
+    subscriptions: 0,
+    getLoad: () => {
+      load.reads += 1;
+      return value;
+    },
+    subscribeLoad: (listener) => {
+      load.subscriptions += 1;
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    set: (next) => {
+      value = next;
+      for (const listener of [...listeners]) listener();
+    },
+  };
+  return load;
+}
+
 function fixedHistory(value: UndoAvailability): Pick<UndoHistory, 'getSnapshot' | 'subscribe'> {
   return { getSnapshot: () => value, subscribe: () => () => undefined };
 }
 
-function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore; marked?: boolean; nameHidden?: boolean } = {}): string {
+function render(options: { snapshot?: Snapshot | null; history?: UndoAvailability; status?: EngineStatus | null; plans?: PlanStore; marked?: boolean; nameHidden?: boolean; capabilities?: Capabilities; load?: CountingLoad } = {}): string {
   const snapshot = options.snapshot === undefined ? withLocators(sampleSnapshot()) : options.snapshot;
   const model = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as unknown as ReadModel;
   const session = new SessionClient({
@@ -89,8 +124,9 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
   const layout = createLayoutStore({ storage: null });
   const zones = effectiveLayout(layout.getSnapshot(), { width: 1440, height: 900 }).zones;
   const status = options.status === undefined ? WITH_DEVICE : options.status;
+  const load = options.load ?? countingLoad();
   return renderToStaticMarkup(
-    <CapabilitiesContext.Provider value={FULL}>
+    <CapabilitiesContext.Provider value={options.capabilities ?? FULL}>
       <TopBar
         client={session}
         plans={options.plans ?? new PlanStore()}
@@ -98,7 +134,7 @@ function render(options: { snapshot?: Snapshot | null; history?: UndoAvailabilit
         onToggle={() => undefined}
         onPlans={() => undefined}
         realtime={null}
-        engineStatus={{ getSnapshot: () => status, subscribe: () => () => undefined }}
+        engineStatus={{ getSnapshot: () => status, subscribe: () => () => undefined, getLoad: load.getLoad, subscribeLoad: load.subscribeLoad }}
         layout={layout}
         commands={new CommandRegistry()}
         transport={transport}
@@ -180,7 +216,7 @@ test('the top bar has the mockup\'s structure: header.topbar > .tb-left + .trans
     assert.deepEqual(children(markup, new RegExp(`<div class="cell" data-part="${part}"`)).map((c) => c.split('[')[0]), ['span.lbl', part === 'display-position' ? 'span.val' : 'span.val.sm'], part);
   }
   assert.deepEqual(children(markup, /<div class="tgroup" data-testid="transport-click" data-part="transport-click"/), ['button.tbtn[transport-metronome]']);
-  assert.deepEqual(children(markup, /<div class="tb-right">/), ['span.hold-dsp-load', 'span.zones[zone-buttons]', 'button.aibtn[plans-button]']);
+  assert.deepEqual(children(markup, /<div class="tb-right">/), ['span.dsp[dsp-load]', 'span.zones[zone-buttons]', 'button.aibtn[plans-button]']);
   assert.deepEqual(children(markup, /<span class="zones" /), [
     'span.hold-zone-button-channel',
     'button.iconbtn.on[zone-button-left]',
@@ -204,7 +240,6 @@ test('every hold element is empty, hidden, has no role, no tabindex and no data-
   const holds = [...markup.matchAll(/<span class="hold-[^"]*"[^>]*>[^<]*<\/span>/g)].map((m) => m[0]);
   assert.deepEqual(holds.map((h) => /class="([^"]+)"/.exec(h)![1]), [
     'hold-transport-record',
-    'hold-dsp-load',
     'hold-zone-button-channel',
   ]);
   for (const hold of holds) {
@@ -254,6 +289,72 @@ test('the locator cell without locators keeps --display-locators-empty-w and no 
   const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'shell.css'), 'utf8');
   assert.match(css, /\.display-locators-empty\s*\{[^}]*width:\s*var\(--display-locators-empty-w\)/);
   assert.doesNotMatch(css, /\.transport-locators/);
+});
+
+// m5b-ui-meter (UR-14; mockup.html line 242): the DSP load is the mockup's
+// span.dsp, "DSP", .bar > i and .num, its values written through refs from
+// the load channel (no React state: the poll causes no commit, spec 5.6).
+const MOCKUP_HTML = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', '..', 'docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'), 'utf8');
+const WITHOUT_LOAD: Capabilities = { ...FULL, features: { ...FULL.features, load: false } };
+
+test('the DSP load is the mockup\'s markup: span.dsp[dsp-load] > DSP, span.bar > i, span.num', () => {
+  // The mockup's own markup, read from mockup.html.
+  const mock = /<span class="dsp" \$\{dp\('dsp-load'\)\}>(DSP )<span class="bar"><i><\/i><\/span><span class="num" style="color:var\(--tx-2\)">12%<\/span><\/span>/.exec(MOCKUP_HTML);
+  assert.ok(mock, 'mockup.html still draws the DSP load as this port reads it');
+  const load = countingLoad();
+  const markup = render({ load });
+  const open = /<span class="dsp" data-part="dsp-load"[^>]*>/.exec(markup);
+  assert.ok(open, markup);
+  assert.deepEqual(children(markup, /<span class="dsp" data-part="dsp-load"/), ['span.bar', 'span.num']);
+  const span = markup.slice(open.index, markup.indexOf('</span></span>', open.index) + '</span></span>'.length);
+  assert.match(span, /^<span class="dsp" data-part="dsp-load"[^>]*>DSP <span class="bar"><i><\/i><\/span><span class="num" style="color:var\(--tx-2\)"><\/span><\/span>$/, span);
+  assert.match(open[0], /data-testid="dsp-load"/);
+  assert.match(open[0], /role="meter"/);
+  assert.match(open[0], /aria-label="DSP load"/);
+  // Nothing of the load is read while rendering: the values are written by the binding.
+  assert.equal(load.reads, 0);
+  assert.equal(load.subscriptions, 0);
+});
+
+test('the DSP load binding writes the bar\'s width, the percentage and the peak tooltip on each load notification', () => {
+  const load = countingLoad();
+  const bar = { style: { width: '' } };
+  const num = { textContent: null as string | null };
+  const attrs = new Map<string, string>();
+  const root = { title: '', setAttribute: (name: string, value: string) => void attrs.set(name, value) };
+  const t = translator('en');
+  const off = bindDspLoad(load, { root, bar, num }, (percent) => t('topbar.dspPeak', { percent }));
+  assert.equal(load.subscriptions, 1);
+  // No load yet: an empty bar at 0 %.
+  assert.deepEqual([bar.style.width, num.textContent, root.title], ['0%', '0%', '']);
+  load.set({ average: 0.123, peak: 0.31 });
+  assert.deepEqual([bar.style.width, num.textContent], ['12.3%', '12%']);
+  assert.equal(root.title, t('topbar.dspPeak', { percent: '31%' }));
+  assert.equal(attrs.get('aria-valuenow'), '12');
+  // Past the deadline: the text says so, the bar stops at its end.
+  load.set({ average: 1.4, peak: 2.5 });
+  assert.deepEqual([bar.style.width, num.textContent], ['100%', '140%']);
+  assert.equal(root.title, t('topbar.dspPeak', { percent: '250%' }));
+  off();
+  assert.equal(load.listeners.size, 0);
+  load.set({ average: 0.5, peak: 0.5 });
+  assert.equal(num.textContent, '140%', 'nothing is written after unbinding');
+  // The tooltip names the peak in every catalog.
+  for (const locale of ['en', 'zh-Hant', 'zh-Hans'] as const) assert.ok(translator(locale)('topbar.dspPeak', { percent: '31%' }).includes('31%'), locale);
+});
+
+test('without features.load the DSP load is absent and its box is an empty span.dsp-load-empty', () => {
+  const markup = render({ capabilities: WITHOUT_LOAD });
+  assert.ok(!markup.includes('data-part="dsp-load"'), 'no dsp-load id');
+  assert.ok(!markup.includes('class="dsp"'), 'no .dsp');
+  assert.deepEqual(children(markup, /<div class="tb-right">/), ['span.dsp-load-empty', 'span.zones[zone-buttons]', 'button.aibtn[plans-button]']);
+  assert.match(markup, /<span class="dsp-load-empty" aria-hidden="true"><\/span>/);
+  const box = /<span class="dsp-load-empty"[^>]*>/.exec(markup)![0];
+  assert.ok(!/\b(role|tabindex|data-part|data-testid|title|aria-label)=/.test(box), box);
+  // Without engine.status there is no load either.
+  const noStatus = render({ capabilities: { ...FULL, methods: (FULL.methods ?? []).filter((m) => m !== 'engine.status') } });
+  assert.ok(!noStatus.includes('data-part="dsp-load"'));
+  assert.match(noStatus, /<span class="dsp-load-empty" aria-hidden="true"><\/span>/);
 });
 
 test('undo is lit and redo dim from the undo history; both lit while it is unknown', () => {

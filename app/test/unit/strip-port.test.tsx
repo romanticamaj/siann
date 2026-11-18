@@ -227,7 +227,7 @@ test('the selected track\'s strip is .sel', () => {
   assert.ok(classes(b!).includes('sel'));
 });
 
-test('the master strip is the mockup\'s .strip.master: scale, fader and meter, the level and the peak value, its name; the rest empty', () => {
+test('the master strip is the mockup\'s .strip.master: its loudness row, scale, fader and meter, the level and the peak value, its name; the rest empty', () => {
   const root = render([kick()]);
   const master = find(root, (el) => classes(el).includes('master'));
   const mockup = mockupMaster();
@@ -235,9 +235,19 @@ test('the master strip is the mockup\'s .strip.master: scale, fader and meter, t
   assert.deepEqual(elements(master).map(sig), elements(mockup).map(sig));
   assert.equal(styleOf(master, '--c'), 'var(--lit-1)');
   const [ins, loudness, buttons, fad, readout, automation, name] = elements(master);
-  // The master's M, rack and e are M6c's; its loudness row is m5b-ui-meter's.
+  // The master's M, rack and e are M6c's.
   assertEmptyBox(ins!, 'master .ins');
-  assertEmptyBox(loudness!, 'master loudness row');
+  // m5b-ui-meter (mockup.html line 201): the LUFS-S label and the value the meter surface writes.
+  assert.equal(loudness!.attrs['data-part-of'], 'loudness');
+  assert.equal(loudness!.attrs['data-testid'], 'strip-master-loudness');
+  const mockLoudness = elements(mockup)[1]!;
+  assert.deepEqual(elements(loudness!).map(sig), elements(mockLoudness).map(sig));
+  const [label, value] = elements(loudness!);
+  assert.equal(text(label!), 'LUFS-S');
+  assert.equal(styleOf(label!, 'color'), styleOf(elements(mockLoudness)[0]!, 'color'));
+  assert.equal(styleOf(value!, 'color'), styleOf(elements(mockLoudness)[1]!, 'color'));
+  assert.equal(text(value!), '', 'the value is written by the meter surface, not React');
+  assert.equal(value!.attrs['data-testid'], 'strip-master-lufs');
   assertEmptyBox(buttons!, 'master buttons');
   assertEmptyBox(automation!, 'master automation');
   const [mScale, mFader] = elements(elements(mockup)[3]!);
@@ -607,11 +617,22 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   }
   const master = find(root, (el) => classes(el).includes('master'));
   assert.deepEqual(appIds(master, 'master'), mockupIds(mockupMaster()).filter((id) => !pending(id)));
-  assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-cap', 'strip-master-fader', 'strip-master-fader-area', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
+  assert.deepEqual(appIds(master, 'master'), ['strip-master', 'strip-master-cap', 'strip-master-fader', 'strip-master-fader-area', 'strip-master-loudness', 'strip-master-meter', 'strip-master-name', 'strip-master-readout', 'strip-master-scale']);
   // The mixer itself.
   assert.equal(find(root, byClass('mixer')).attrs['data-part'], 'mixer');
   // Nothing else carries an id the manifest has pending.
   for (const el of findAll(root, byAttr('data-part'))) assert.ok(!pending(el.attrs['data-part']!), el.attrs['data-part']!);
+});
+
+test('without features.loudness the master's loudness row is the empty .panrow the shared rules size', () => {
+  const noLoudness: Capabilities = { ...FULL, features: { ...FULL.features, loudness: false } };
+  for (const caps of [noLoudness, null]) {
+    const master = find(render([kick()], { caps }), (el) => classes(el).includes('master'));
+    const row = elements(master)[1]!;
+    assert.equal(sig(row), 'div.panrow');
+    assertEmptyBox(row, 'the master loudness row');
+    assert.ok(!appIds(master, 'master').includes('strip-master-loudness'));
+  }
 });
 
 test('reduced capabilities still remove the controls, and the boxes stay', () => {
