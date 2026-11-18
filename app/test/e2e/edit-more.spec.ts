@@ -348,7 +348,10 @@ test('a refused glue shows a toast and sends nothing; Alt-click glues the run; a
   // Select p1 and p2 (not p3) and the two trk_b pieces: a click on a selected clip glues p1+p2, the rest are refused singletons.
   await tool(1, 'tool-select', 'select');
   await select('clp_p1', 'clp_p2', 'clp_q1');
-  await tool(4, 'tool-glue', 'glue');
+  // The project zone has the focus from the clicks: 4 without a click elsewhere, which would clear the selection.
+  await page.keyboard.press('Digit4');
+  await expect(page.getByTestId('tool-glue')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(selected).toEqual(['clp_p1', 'clp_p2', 'clp_q1']);
   await operation(
     'glue of a selection',
     async () => click(await middle('clp_p2')),
@@ -509,7 +512,8 @@ test('the info line edits the selection: relative with Enter, absolute with Ctrl
     { clipId: 'clp_i', trackId: 'trk_a', position: 24000, length: 24000 },
     { clipId: 'clp_j', trackId: 'trk_b', position: 48000, length: 12000 },
   ]);
-  await select('clp_i', 'clp_j');
+  // The primary clip, the info line's, is the last clicked: clp_i.
+  await select('clp_j', 'clp_i');
   await expect(page.getByTestId('info-start')).toHaveText('1.2.1.0');
   // End stays read-only.
   await page.getByTestId('info-end').click();
@@ -630,20 +634,25 @@ test('an engine without clip.remove leaves the Glue and Erase boxes empty, in th
   engine = undefined;
   await app!.close();
   await start(path.dirname(bundle), PIECES.length, { SIANN_TEST_CAPABILITIES: file }, false);
+  // The new window's locators.
+  const relaunched = page.locator('[data-part="tools"]');
   await expect(page.getByTestId('tool-split')).toBeVisible();
   for (const id of ['tool-4', 'tool-5']) await expect(page.locator(`[data-part="${id}"]`)).toHaveCount(0);
   for (const id of ['tool-glue', 'tool-erase']) await expect(page.getByTestId(id)).toHaveCount(0);
-  const empty = tools.locator('.tool-empty');
+  const empty = relaunched.locator('.tool-empty');
   await expect(empty).toHaveCount(2);
   for (const box of await empty.all()) {
     await expect(box).toHaveAttribute('aria-hidden', 'true');
     expect(await box.getAttribute('role')).toBeNull();
     expect(await box.getAttribute('tabindex')).toBeNull();
-    expect(await box.boundingBox()).not.toBeNull();
+    // The box keeps a tool's space (--tool-w), empty.
+    expect((await box.boundingBox())!.width).toBeGreaterThan(0);
+    expect(await box.textContent()).toBe('');
   }
-  // The tool group keeps its box.
-  const reducedBox = await tools.boundingBox();
-  expect(Math.abs(reducedBox!.width - full!.width)).toBeLessThanOrEqual(1);
+  // The tool group keeps its nine boxes and its row.
+  await expect(relaunched.locator(':scope > *')).toHaveCount(9);
+  const reducedBox = await relaunched.boundingBox();
+  expect(Math.abs(reducedBox!.y - full!.y)).toBeLessThanOrEqual(1);
   // 4 and 5 do nothing; a click with the arrow still selects.
   await focusProject();
   await page.keyboard.press('Digit4');

@@ -14,7 +14,12 @@
 // - a selection move: clip.move per clip, trackId only where the lane changed;
 // - the clip volume control: clip.set_gain;
 // - M, S and Shift+Delete: track.set_mute, track.set_solo, track.remove per
-//   selected track.
+//   selected track;
+// - m5b-ui-edit-more: glue (clip.remove of the following pieces and
+//   clip.trim of the first, clip.set_fade for the last piece's fade out, or a
+//   refusal), cut (clip.remove), paste and repeat (clip.place and
+//   clip.set_fade), and the nudges (clip.move; clip.trim with clip.move for
+//   the start; clip.trim for the end).
 //
 // Music-domain clips (which need the tempo map) are left alone, as the
 // timeline does not draw them yet. Framework-free.

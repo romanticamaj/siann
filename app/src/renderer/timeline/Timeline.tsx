@@ -1,7 +1,7 @@
 // The project zone's content (ADR-0019 point 3; UI redesign spec 2.1, 3.2,
 // 3.3, 5.2, 10.8): the toolbar (Toolbar.tsx, the mockup's: the Object
 // Selection and Split tools, snap and the grid type, auto-scroll, and the
-// last refusal), the read-only info line (InfoLine.tsx), and below them the
+// last refusal), the info line (InfoLine.tsx, editable since m5b-ui-edit-more), and below them the
 // track list, its boundary and the event display, whose two canvases the
 // imperative TimelineCanvas owns through refs. The Pool (Pool.tsx, Ctrl+P or
 // the event display's context menu) lists the media to place from. No drawing state passes through React:

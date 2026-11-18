@@ -1128,9 +1128,10 @@ test("every id of the event display is found, no pending part's id is, and the h
 
 // ---- m5-ui-port-toolbar: the toolbar, the info line and the Pool (UI redesign 10.8, 10.9, 10.10 P1-16)
 
-const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
+const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'tool-4', 'tool-5', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
 // The proposal pill (m5b-ui-ghosts) is absent too: no plan is under review here.
-const PENDING_IDS = ['tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill', 'info-fade-in', 'info-fade-out'];
+// Tools 4 and 5 landed with m5b-ui-edit-more.
+const PENDING_IDS = ['tool-2', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill', 'info-fade-in', 'info-fade-out'];
 
 test('the toolbar\'s tools, snap, grid type and auto-scroll show and change the timeline\'s state; every id is found and no pending one', async () => {
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
@@ -1143,7 +1144,7 @@ test('the toolbar\'s tools, snap, grid type and auto-scroll show and change the 
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
   for (const id of TOOLBAR_IDS) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
   for (const id of PENDING_IDS) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(0);
-  await expect(page.locator('.arr-toolbar[data-part="toolbar"] > .seg[data-part="tools"] > .b')).toHaveCount(2);
+  await expect(page.locator('.arr-toolbar[data-part="toolbar"] > .seg[data-part="tools"] > .b')).toHaveCount(4);
   await expect(page.locator('.arr-toolbar > .spacer')).toHaveCount(1);
   // No control the mockup does not draw.
   for (const gone of ['media-pool', 'delete-clip']) await expect(page.getByTestId(gone)).toHaveCount(0);
