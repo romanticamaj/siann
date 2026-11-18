@@ -1387,6 +1387,59 @@ TEST_CASE("a one-bar count-in then four bars gives a four-bar take that starts a
     CHECK(audio.samples[0] == ramp(0, started + kOffset));
 }
 
+TEST_CASE("punch in, pre-roll and count-in combine: playback starts at P or S, the take at R",
+          "[engine][record][punch][preroll][countin]") {
+    // Spec, "Recording" (b), (f) and (g): R = left with punch in and P < left, else
+    // P; pre-roll starts playback at S, computed from R; without pre-roll playback
+    // starts at the playhead P; a count-in holds the transport where playback starts.
+    struct Combination {
+        bool punchIn;
+        bool preroll;
+        bool countIn;
+    };
+    const Combination c = GENERATE(Combination{true, false, true}, Combination{true, true, false},
+                                   Combination{false, true, true}, Combination{true, true, true});
+    INFO("punch in " << c.punchIn << ", pre-roll " << c.preroll << ", count-in " << c.countIn);
+    constexpr std::int64_t kFrom = 120'000;  // P
+    constexpr std::int64_t kLeft = 150'000;  // on a tick, so S is exact
+    const std::int64_t recordAt = c.punchIn ? kLeft : kFrom;
+    const std::int64_t playFrom = c.preroll ? recordAt - kBar : kFrom;
+    RecordRig rig;
+    rig.openInput();
+    rig.device->setInputGenerator(&ramp);
+    rig.exec(setLocators(kLeft, kLeft + 4 * kBar));
+    rig.host->setPunch(c.punchIn, false);
+    rig.host->setPreroll(c.preroll, 1);
+    rig.host->setCountIn(c.countIn, 1);
+    rig.host->arm("trk_mono", true);
+    rig.host->locate(kFrom);
+    rig.settle();
+    rig.pump(1);
+    const std::int64_t requested = rig.frames;
+    CHECK(rig.host->record(true).position == playFrom);
+    rig.settle();
+    if (c.countIn) {
+        rig.pump(8);
+        // Held where playback starts from, not at R.
+        CHECK(rig.engine().driver().countingIn());
+        CHECK(rig.host->transportState().position == playFrom);
+    }
+    const std::int64_t started = pumpUntilStarted(rig, playFrom);
+    if (c.countIn) {
+        CHECK(started == requested + kBar);
+    }
+    const std::string takeId = rig.host->recordState().takes[0].takeId;
+    rig.pumpUntil(recordAt + kOffset + 10'000);
+    rig.host->record(false);
+    const model::Clip* clip = rig.fixture.doc().clip("clp_" + takeId);
+    REQUIRE(clip != nullptr);
+    CHECK(clip->position.value == recordAt);
+    const media::AudioBuffer audio = takeAudio(rig, *clip);
+    REQUIRE(audio.info.frames > 0);
+    // Its first sample is the input that landed at R, with playback from playFrom.
+    CHECK(audio.samples[0] == ramp(0, started + (recordAt + kOffset) - playFrom));
+}
+
 TEST_CASE("the count-in click is not in the take and not in an offline render", "[engine][record][countin][click]") {
     constexpr std::int64_t kFrom = 60'000;  // the source's impulse is long past
     RecordRig rig;
