@@ -377,6 +377,27 @@ test('the fidelity run writes the lower zone with a strip\'s fader held, in ever
   assert.match(read('docs', 'harness', 'test-matrix.md'), /\| m5-ui-port-mixer-strip \|[^\n]*lower-zone\.fader-held\.app\.png/);
 });
 
+// m5b-ui-edit-more: the states it adds that the mockup does not show (the
+// repeat dialog, the snap type menu, the info line with a value's text field
+// open) are written by the fidelity run as the app's alone, in en and zh-TW,
+// and the test matrix's row names those files.
+test('the fidelity run writes the repeat dialog, the snap type menu and an info-line field open, the app\'s alone', () => {
+  const spec = read('app', 'test', 'e2e', 'mockup-fidelity.spec.ts');
+  const states = {
+    'repeat-dialog': /page\.keyboard\.press\('ControlOrMeta\+KeyK'\)[\s\S]*getByTestId\('repeat-dialog'\)\)\.toBeVisible\(\)/,
+    'project-zone.snap-type-menu': /getByTestId\('snap-type-menu'\)\)\.toBeVisible\(\)/,
+    'project-zone.info-edit': /getByTestId\('info-start-input'\)\)\.toBeFocused\(\)/,
+  };
+  const matrix = read('docs', 'harness', 'test-matrix.md');
+  for (const [file, driven] of Object.entries(states)) {
+    const at = spec.indexOf(`'${file}.app.png'`);
+    assert.ok(at > 0, `the run writes ${file}.app.png`);
+    assert.match(spec.slice(Math.max(0, at - 1200), at), driven, `${file}: the state is driven before the screenshot`);
+    assert.match(spec, new RegExp(`notes\\.push\\(\`[^\`]*\\$\\{locale\\}/${file.replace(/\./g, '\\.')}\\.app\\.png, the app's alone`), `${file}: a note in the report`);
+    assert.match(matrix, new RegExp(`\\| m5b-ui-edit-more \\|[^\\n]*${file.replace(/\./g, '\\.')}\\.app\\.png`), `${file}: named in the matrix row`);
+  }
+});
+
 // ---- m5-ui-port-arrange-canvas: the event display ported from draw(); its gate stays report
 
 test('the event display\'s gate is report, shell.css leaves .arrange to the shared rules, and no marker row is held by a token', () => {
