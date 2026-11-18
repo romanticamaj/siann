@@ -70,6 +70,12 @@ export interface ClientState {
   // spec 3.0); the last known value is kept across a reconnect, null before
   // the first answer.
   readonly capabilities: Capabilities | null;
+  // The session epoch (m5b-ui-project): counts the sessions the engine opened
+  // while this client listened, from session.opened (New, Open) or an event
+  // that names another session (its session.opened lost in a gap). A
+  // reconnect, even to a restarted engine with a new session id, is not one:
+  // what the window keeps per session (selection, view) resets on an epoch.
+  readonly epoch: number;
 }
 
 export interface SessionClientOptions {
@@ -233,6 +239,7 @@ export class SessionClient {
     error: null,
     legend: null,
     capabilities: null,
+    epoch: 0,
   };
   #lastSeq: bigint | null = null;
   readonly #refused: Array<{ readonly method: string }> = [];
@@ -526,16 +533,20 @@ export class SessionClient {
     const at = seqOf(event.seq);
     if (at === null) return;
     if (this.#lastSeq !== null && at <= this.#lastSeq) return;
+    let adopted = false;
     if (typeof event.sessionId === 'string' && event.sessionId !== connection.sessionId) {
       // Every envelope names the current session: a session.opened lost in a
       // gap leaves the client naming the old one, which the engine refuses
       // (session_mismatch). Adopt the new id; the model is of another session,
       // so it is behind and the sync below replaces it.
       connection.sessionId = event.sessionId;
-      this.#update({ sessionId: event.sessionId });
+      this.#update({ sessionId: event.sessionId, epoch: this.#state.epoch + 1 });
       this.#behind();
+      adopted = true;
     }
     if (event.type === 'session.opened') {
+      // One epoch per opened session, whether or not its id was adopted above.
+      if (!adopted) this.#update({ epoch: this.#state.epoch + 1 });
       await this.#sync(connection);
       return;
     }

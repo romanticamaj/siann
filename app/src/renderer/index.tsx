@@ -36,16 +36,26 @@
 // bundle (renderer.profiling.js, served under SIANN_SHELL_PROFILING=1) calls
 // onRender; in the production bundle the count stays absent (UI redesign
 // spec 5.6).
+//
+// Projects (m5b-ui-project): the bridge's project half (the shell's record of
+// bundles, its folder dialogs and the report of a bundle the engine opened)
+// becomes the ProjectController's ShellPort here, and its menu half carries
+// the application menu's model (shell/app-menu.ts), sent again on every
+// locale, capability or recent-list change, and the command ids of the
+// clicks, run through the CommandRegistry. In a plain tab both are absent,
+// and so are New, Open and the recent list. The window title is the
+// session's name, the saved mark after it while the head is newer than the
+// last save, and the app's name.
 
 import { Profiler } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
-import { CommandRegistry } from './keys/commands';
+import { COMMAND_IDS, CommandRegistry, type CommandId } from './keys/commands';
 import { platformOf } from './keys/dispatcher';
 import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } from './i18n/locale';
 import { reconnectedMessage } from './i18n/messages';
-import { installLocaleStore } from './i18n/t';
+import { installLocaleStore, translator } from './i18n/t';
 import { ConnectionPhaseStore } from './model/connection-phase';
 import { EngineStatusStore } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
@@ -58,7 +68,10 @@ import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
 import { UndoHistory } from './model/undo-history';
 import { SessionClient, type AnsweredRequest, type EngineEndpoint, type SentRequest, type SocketLike, type TestEnvironment } from './model/session-client';
 import { LoopClickController, TransportStateStore, clientCapabilities } from './model/loop-click';
-import type { Capabilities } from './model/capabilities';
+import { capabilitySelector, type Capabilities } from './model/capabilities';
+import { ProjectController, SavedMark, type ShellPort, type ShellProjectState } from './model/project';
+import { StudioSetupController } from './model/studio-setup';
+import { appMenuModel, type MenuModel } from './shell/app-menu';
 import { TransportController } from './model/transport';
 import { createLayoutStore } from './shell/layout-store';
 import { announceReconnects, ToastStore } from './shell/toast-store';
@@ -76,6 +89,19 @@ declare global {
       engine: {
         current(): Promise<EngineEndpoint | null>;
         onChange(callback: (next: EngineEndpoint | null) => void): void;
+      };
+      // The shell's record of bundles and its folder dialogs (m5b-ui-project).
+      project?: {
+        state(): Promise<ShellProjectState | null>;
+        chooseNew(): Promise<string | null>;
+        chooseOpen(): Promise<string | null>;
+        opened(path: string): void;
+        onChange(callback: (state: ShellProjectState) => void): void;
+      };
+      // The application menu (m5b-ui-project): its model out, its clicks in.
+      menu?: {
+        set(model: MenuModel): void;
+        onCommand(callback: (command: string) => void): void;
       };
     };
     // The gesture controller, for the e2e tests to wait on (settled).
@@ -173,12 +199,12 @@ const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
-if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.latest()?.playheadSamples ?? null };
+if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.playhead()?.playheadSamples ?? null };
 // What undo and redo can do now (the top bar dims what cannot).
 const history = new UndoHistory(client);
 const transport = new TransportController({
   client,
-  playing: () => realtime.latest()?.playing ?? false,
+  playing: () => realtime.playhead()?.playing ?? false,
   toasts,
   locale: () => locales.getSnapshot(),
   onNothingLeft: (method) => history.refused(method),
@@ -214,6 +240,59 @@ function connect(next: EngineEndpoint | null): void {
 
 const layout = createLayoutStore({ storage: localStorageOrNull() });
 const commands = new CommandRegistry();
+
+// Projects and Studio Setup (m5b-ui-project).
+const projectBridge = bridge?.project;
+const EMPTY_PROJECTS: ShellProjectState = { current: null, startView: false, recent: [] };
+const shellPort: ShellPort | null = projectBridge
+  ? {
+      state: async () => (await projectBridge.state()) ?? EMPTY_PROJECTS,
+      chooseNew: () => projectBridge.chooseNew(),
+      chooseOpen: () => projectBridge.chooseOpen(),
+      opened: (path) => projectBridge.opened(path),
+      onChange: (listener) => projectBridge.onChange(listener),
+    }
+  : null;
+const saved = new SavedMark(client);
+const project = new ProjectController({ client, shell: shellPort, locale: () => locales.getSnapshot(), toasts, saved });
+void project.start();
+const studioSetup = new StudioSetupController({ client, status: engineStatus, locale: () => locales.getSnapshot() });
+
+const menuBridge = bridge?.menu;
+if (menuBridge) {
+  let sentMenu = '';
+  const pushMenu = () => {
+    const model = appMenuModel({
+      t: translator(locales.getSnapshot()),
+      recent: project.getSnapshot().recent,
+      shell: shellPort !== null,
+      can: capabilitySelector(client.getState().capabilities),
+    });
+    const text = JSON.stringify(model);
+    if (text === sentMenu) return;
+    sentMenu = text;
+    menuBridge.set(model);
+  };
+  locales.subscribe(pushMenu);
+  project.subscribe(pushMenu);
+  client.subscribe(pushMenu);
+  pushMenu();
+  menuBridge.onCommand((command) => {
+    if ((COMMAND_IDS as readonly string[]).includes(command)) commands.run('window', command as CommandId);
+  });
+}
+
+// The window title: the session's name, the saved mark, the app's name.
+const updateTitle = () => {
+  const t = translator(locales.getSnapshot());
+  const view = project.getSnapshot();
+  const name = view.shell && view.startView ? '' : (client.model.getSnapshot()?.root?.name ?? '');
+  const mark = saved.getSnapshot() ? ` ${t('session.unsavedMark')}` : '';
+  const title = name ? `${name}${mark} - ${t('app.title')}` : t('app.title');
+  if (document.title !== title) document.title = title;
+};
+for (const source of [locales, project, saved, client.model]) source.subscribe(updateTitle);
+updateTitle();
 
 const onTimelineHooks = testHooks?.timelineHooks
   ? (hooks: TimelineTestHooks | null) => {
@@ -261,6 +340,9 @@ const app = (
     history={history}
     onTimelineHooks={onTimelineHooks}
     onMeterHooks={onMeterHooks}
+    project={project}
+    saved={saved}
+    studioSetup={studioSetup}
     inserts={inserts}
   />
 );

@@ -16,6 +16,13 @@
 // no id and no text, sized by a --hold-<part> token in shell.css. The
 // project zone has no button: it is never hidden. The page's heading is
 // there for assistive technology and draws nothing.
+//
+// The session's name carries the saved mark (m5b-ui-project; UI redesign
+// UR-4): while the head revision is newer than the last save, a bullet after
+// the name, inside the same .session part and as text, so the part keeps the
+// mockup's structure; its tooltip says the session changed since the last
+// save. Over the start view the scratch bundle is nobody's project and the
+// name is empty.
 
 import { useSyncExternalStore } from 'react';
 
@@ -49,12 +56,36 @@ export interface TopBarProps {
   readonly loopClick: LoopClickController;
   // What undo and redo can do now (redo dims with nothing to redo).
   readonly history: Pick<UndoHistory, 'getSnapshot' | 'subscribe'>;
+  // The saved mark (model/project.ts SavedMark): true while the head is newer than the last save.
+  readonly saved?: { getSnapshot(): boolean; subscribe(listener: () => void): () => void };
+  // The start view is up: the scratch bundle's name is not shown.
+  readonly nameHidden?: boolean;
+  // Studio Setup's opener, for the transport's buttons without a device.
+  readonly onStudioSetup?: () => void;
 }
+
+const noMark = { getSnapshot: () => false, subscribe: () => () => undefined };
 
 const ZONE_ORDER: readonly Zone[] = ['left', 'lower', 'right'];
 const ZONE_ICON: Readonly<Record<Zone, IconName>> = { left: 'zLeft', lower: 'zLow', right: 'zRight' };
 
-export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engineStatus, layout, commands, transport, loopClick, history }: TopBarProps) {
+export function TopBar({
+  client,
+  plans,
+  zones,
+  onToggle,
+  onPlans,
+  realtime,
+  engineStatus,
+  layout,
+  commands,
+  transport,
+  loopClick,
+  history,
+  saved = noMark,
+  nameHidden = false,
+  onStudioSetup,
+}: TopBarProps) {
   const t = useT();
   const snapshot = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -66,7 +97,9 @@ export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engi
     () => plans.getSnapshot().plans.filter((plan) => plan.state === 'validated').length,
     () => plans.getSnapshot().plans.filter((plan) => plan.state === 'validated').length,
   );
-  const name = snapshot?.root?.name ?? '';
+  const marked = useSyncExternalStore(saved.subscribe, saved.getSnapshot, saved.getSnapshot);
+  const name = nameHidden ? '' : (snapshot?.root?.name ?? '');
+  const unsaved = marked && name !== '';
   return (
     <header className="topbar" data-region="top-bar" data-testid="top-bar">
       <div className="tb-left">
@@ -76,14 +109,30 @@ export function TopBar({ client, plans, zones, onToggle, onPlans, realtime, engi
             <i />
           </b>
         </div>
-        <div className="session" data-part="session-name" data-testid="session-name" title={name}>
-          <span {...ISOLATE}>{name}</span> <Icon name="chev" small />
+        <div
+          className="session"
+          data-part="session-name"
+          data-testid="session-name"
+          data-unsaved={unsaved ? 'true' : undefined}
+          title={unsaved ? t('session.unsavedTitle', { name }) : name}
+        >
+          <span {...ISOLATE}>{name}</span>
+          {unsaved ? ` ${t('session.unsavedMark')}` : null} <Icon name="chev" small />
         </div>
         <Hold className="hold-branch-chip" />
         <span className="sep" />
         <UndoRedo transport={transport} history={history} />
       </div>
-      <Transport client={client} realtime={realtime} engineStatus={engineStatus} layout={layout} commands={commands} transport={transport} loopClick={loopClick} />
+      <Transport
+        client={client}
+        realtime={realtime}
+        engineStatus={engineStatus}
+        layout={layout}
+        commands={commands}
+        transport={transport}
+        loopClick={loopClick}
+        onStudioSetup={onStudioSetup}
+      />
       <div className="tb-right">
         <Hold className="hold-dsp-load" />
         <span className="zones" data-part="zone-buttons" role="group" aria-label={t('zone.buttons')}>

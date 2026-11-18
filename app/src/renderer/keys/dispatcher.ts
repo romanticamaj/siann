@@ -30,6 +30,14 @@ export interface KeyInput {
   // and focus commands run, which send nothing; every zone command, which may,
   // is refused, and its chord falls through to the window's binding.
   readonly offline?: boolean;
+  // The start view covers the zones (m5b-ui-project): only the window's
+  // project, Studio Setup and focus commands run.
+  readonly startView?: boolean;
+}
+
+// What runs while the start view covers the zones.
+export function runsOnStartView(binding: Binding): boolean {
+  return binding.scope === 'window' && /^(project|studio|focus)\./.test(binding.commandId);
 }
 
 // What still runs while the engine is disconnected: the window's zone layout
@@ -64,6 +72,7 @@ export function resolveKey(input: KeyInput, preset: readonly Binding[]): Binding
   const chord = chordOf(input);
   let table = input.targetIsTextField ? preset.filter((b) => FOCUS_COMMANDS_IN_FIELDS.has(b.commandId)) : preset;
   if (input.offline) table = table.filter(runsOffline);
+  if (input.startView) table = table.filter(runsOnStartView);
   return (
     table.find((b) => b.chord === chord && b.scope === input.focusedZone) ??
     table.find((b) => b.chord === chord && b.scope === 'window') ??

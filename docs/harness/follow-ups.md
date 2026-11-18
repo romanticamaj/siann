@@ -273,6 +273,15 @@ None of these blocks M5b; each has no owner yet unless it names one.
 10. A strip's insert rack holds two slots and scrolls inside its row beyond that. A
     rack that grows with the chain needs `lower-zone.css` and `tokens.css`, which
     are the maintainer's.
+11. A session opened by another client (a trusted MCP agent's `create_session`,
+    or `session.open` from a second protocol client) is unknown to the shell's
+    recent list and to its restart path, which relaunches the bundle the renderer
+    last reported (`m5b-ui-project`): `session.opened` carries no path. A `path`
+    in `session.opened` (or in `session.sync`) would let the renderer report it.
+12. A remembered bundle that another program holds at launch (`session_locked`)
+    ends, after the restarts, in the supervisor's "keeps stopping" dialog instead
+    of the start view (`m5b-ui-project`). The shell could read the engine's last
+    stderr line and fall back to the scratch bundle with the start view.
 
 ## Where tests run
 

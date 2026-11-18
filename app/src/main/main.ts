@@ -7,11 +7,24 @@
 // permission and device is denied, and there are no devtools and no reload,
 // packaged or not.
 //
+// Projects (m5b-ui-project; architecture spec, "Session at launch"): the
+// engine is launched on the bundle projects.ts chooses (SIANN_SESSION_DIR,
+// the bundle opened last, the adopted M0 default, or the scratch bundle with
+// the renderer's start view), and on the current bundle after a restart. The
+// renderer reports each bundle the engine created or opened (the protocol
+// names none), and the shell records it in <userData>/recent-projects.json.
+// The folder dialogs are the shell's, behind the preload bridge. The
+// application menu is built from the renderer's model (menu.ts): labels from
+// its catalogs, accelerators shown and not registered, clicks sent back as
+// command ids. Every IPC handler checks that the sender is the window's
+// siann://app page, and a path that it is an absolute string.
+//
 // Environment:
 //   SIANN_ENGINE_EXE          the engine executable (default: the packaged
 //                             resources path, or the native dev build)
-//   SIANN_SESSION_DIR         directory of the M0 session bundle
-//                             Untitled.siann (default: <userData>/sessions)
+//   SIANN_SESSION_DIR         tests: the engine runs on <dir>/Untitled.siann and
+//                             the renderer shows no start view (default: the
+//                             bundle opened last, or the scratch bundle)
 //   SIANN_SHELL_BACKOFF_MS    first restart delay (default 250; cap 40x)
 //   SIANN_SHELL_MAX_RESTARTS  consecutive restarts before giving up (default 5)
 //   SIANN_SHELL_READY_MS      how long a launch may take to write its ready line
@@ -45,7 +58,8 @@ import {
   Menu,
   protocol,
   session,
-  type MenuItemConstructorOptions,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
 } from 'electron';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -53,6 +67,8 @@ import * as path from 'node:path';
 
 import { engineArgs, engineTestArgs, fidelityEnvironmentArgs, pluginRegistryFile, testCapabilitiesArgs } from './engine-args';
 import { focusFirstWindow } from './focus';
+import { menuTemplate, parseMenuModel, type MenuModel } from './menu';
+import { addRecent, bundleName, isBundlePath, launchSession, recentFile, scratchBundle, serializeRecent, type ProjectsFs } from './projects';
 import { rendererRequestPath } from './serve';
 import { DEFAULT_BACKOFF, EngineSupervisor, type Backoff, type EngineGaveUp, type EngineReady } from './supervisor';
 
@@ -63,6 +79,14 @@ const APP_URL = `${APP_SCHEME}://${APP_HOST}/index.html`;
 
 const IPC_CURRENT = 'siann:engine:current';
 const IPC_CHANGED = 'siann:engine:changed';
+const IPC_PROJECT_STATE = 'siann:project:state';
+const IPC_PROJECT_CHOOSE_NEW = 'siann:project:choose-new';
+const IPC_PROJECT_CHOOSE_OPEN = 'siann:project:choose-open';
+const IPC_PROJECT_OPENED = 'siann:project:opened';
+const IPC_PROJECT_CHANGED = 'siann:project:changed';
+const IPC_MENU_SET = 'siann:menu:set';
+const IPC_MENU_COMMAND = 'siann:menu:command';
+const BUNDLE_EXTENSION = 'siann';
 
 // app/ (this file is app/dist/src/main/main.js).
 const APP_DIR = path.resolve(__dirname, '..', '..', '..');
@@ -104,9 +128,52 @@ function engineExecutable(): string {
   return path.join(APP_DIR, '..', 'native', 'build', 'dev', 'apps', 'engine', name);
 }
 
+const projectsFs: ProjectsFs = {
+  readText: (file) => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+  },
+  writeText: (file, text) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  },
+  isFile: (file) => {
+    try {
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  },
+};
+
+// The bundle the engine serves: the launch choice, then each one the renderer reports.
+const launchChoice = launchSession({ sessionDir: process.env.SIANN_SESSION_DIR || undefined, userData: app.getPath('userData'), fs: projectsFs });
+let currentBundle = launchChoice.bundle;
+let startView = launchChoice.startView;
+let recent = launchChoice.recent;
+
+function writeRecent(): void {
+  try {
+    projectsFs.writeText(recentFile(app.getPath('userData')), serializeRecent(recent));
+  } catch {
+    // The record is a convenience: a read-only user data directory loses it, not the session.
+  }
+}
+if (launchChoice.write && primary) writeRecent();
+
 function sessionBundle(): string {
-  const dir = process.env.SIANN_SESSION_DIR || path.join(app.getPath('userData'), 'sessions');
-  return path.join(dir, 'Untitled.siann');
+  return currentBundle;
+}
+
+function projectState(): { current: string | null; startView: boolean; recent: Array<{ path: string; name: string }> } {
+  return {
+    current: startView ? null : currentBundle,
+    startView,
+    recent: recent.map((bundle) => ({ path: bundle, name: bundleName(bundle) })),
+  };
 }
 
 function positiveInt(name: string): number | undefined {
@@ -200,18 +267,71 @@ supervisor.on('gave-up', (info: EngineGaveUp) => {
 
 ipcMain.handle(IPC_CURRENT, () => endpointOf(supervisor.current()));
 
-// Role items without toggleDevTools, reload and forceReload (and no View menu,
-// which holds them); the same menu packaged or not.
-function applicationMenu(): Menu {
-  const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' } as const] : []),
-    { role: 'fileMenu' },
-    { role: 'editMenu' },
-    ...(devtools ? [{ role: 'viewMenu' } as const] : []),
-    { role: 'windowMenu' },
-  ];
-  return Menu.buildFromTemplate(template);
+// Only the window's own page, served from siann://app, reaches the project and menu handlers.
+function fromApp(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const url = event.senderFrame?.url ?? '';
+  return mainWindow !== null && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && url.startsWith(`${APP_SCHEME}://${APP_HOST}/`);
 }
+
+function notifyProject(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_PROJECT_CHANGED, projectState());
+}
+
+ipcMain.handle(IPC_PROJECT_STATE, (event) => (fromApp(event) ? projectState() : null));
+
+// New: a folder that does not exist yet, named <name>.siann unless the user gave an extension.
+ipcMain.handle(IPC_PROJECT_CHOOSE_NEW, async (event) => {
+  if (!fromApp(event) || !mainWindow) return null;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: path.join(app.getPath('documents'), `Untitled.${BUNDLE_EXTENSION}`),
+    filters: [{ name: 'SIANN', extensions: [BUNDLE_EXTENSION] }],
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+  });
+  const chosen = result.canceled ? undefined : result.filePath;
+  if (!isBundlePath(chosen)) return null;
+  return path.extname(chosen) === '' ? `${chosen}.${BUNDLE_EXTENSION}` : chosen;
+});
+
+// Open: an existing bundle's folder.
+ipcMain.handle(IPC_PROJECT_CHOOSE_OPEN, async (event) => {
+  if (!fromApp(event) || !mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+  const chosen = result.canceled ? undefined : result.filePaths[0];
+  return isBundlePath(chosen) ? chosen : null;
+});
+
+// The engine created or opened the bundle: it is the current one (an engine
+// restart opens it) and the newest of the record.
+ipcMain.on(IPC_PROJECT_OPENED, (event, bundle: unknown) => {
+  if (!fromApp(event) || !isBundlePath(bundle)) return;
+  currentBundle = path.resolve(bundle);
+  startView = false;
+  recent = addRecent(recent, currentBundle, scratchBundle(app.getPath('userData')));
+  writeRecent();
+  notifyProject();
+});
+
+let menuModel: MenuModel | null = null;
+
+function applyMenu(): void {
+  const template = menuTemplate(menuModel, {
+    platform: process.platform,
+    devtools,
+    send: (command) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC_MENU_COMMAND, command);
+    },
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+ipcMain.on(IPC_MENU_SET, (event, value: unknown) => {
+  if (!fromApp(event)) return;
+  const model = parseMenuModel(value);
+  if (!model) return;
+  menuModel = model;
+  applyMenu();
+});
+
 
 // F12 and Ctrl/Cmd+Shift+I (devtools), Ctrl/Cmd+R (and with Shift) and F5 (reload).
 function isDevtoolsOrReloadKey(input: Electron.Input): boolean {
@@ -296,7 +416,10 @@ if (!primary) {
   void app.whenReady().then(() => {
     // Before any page loads: the renderer needs no permission, the engine owns audio.
     denyPermissions();
-    Menu.setApplicationMenu(applicationMenu());
+    // Role items without toggleDevTools, reload and forceReload (and no View
+    // menu, which holds them) until the renderer sends its model; the same
+    // menu packaged or not.
+    applyMenu();
     protocol.handle(APP_SCHEME, serveApp);
     // The window first: the engine is told its handle at launch.
     createWindow();

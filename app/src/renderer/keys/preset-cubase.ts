@@ -103,4 +103,10 @@ export const CUBASE_PRESET: readonly Binding[] = [
   // The Pool (m5-ui-port-toolbar; spec 10.8, 1; research/cubase.md 7): Ctrl+P
   // (Cmd+P) is Cubase's Open Pool. P, Alt+P, Shift+P and Mod+Alt+P keep theirs.
   { chord: 'Mod+P', commandId: 'pool.open', scope: 'window' },
+  // Projects (m5b-ui-project; spec 3.6; research/cubase.md 7): Cubase's New
+  // Project, Open and Save. The File menu shows them as its accelerators and
+  // registers none. Studio Setup and Open Recent have no key.
+  { chord: 'Mod+N', commandId: 'project.new', scope: 'window' },
+  { chord: 'Mod+O', commandId: 'project.open', scope: 'window' },
+  { chord: 'Mod+S', commandId: 'project.save', scope: 'window' },
 ];

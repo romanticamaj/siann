@@ -186,6 +186,7 @@ function fakeClient(status: ClientState['status']) {
     error: null,
     legend: null,
     capabilities: null,
+    epoch: 0,
   };
   const listeners = new Set<() => void>();
   return {
@@ -277,6 +278,7 @@ test('the store follows the client and its model and notifies on a phase change'
     error: null,
     legend: null,
     capabilities: null,
+    epoch: 0,
   };
   let snapshot: { revision: string } | null = null;
   const clientListeners = new Set<() => void>();

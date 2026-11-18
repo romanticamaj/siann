@@ -7,7 +7,8 @@
 //   / buffer · latency ms" and the xruns (engine.status, only when
 //   engine.capabilities lists it), the side heard (.hear, only when it lists
 //   audition.hear), and on the right (.right) the language (.loc, with the
-//   language <select> laid over it), the saved revision, and the about line
+//   language <select> laid over it), the saved revision (the saved mark's
+//   baseline, UI redesign UR-4: never an unsaved head), and the about line
 //   "name version (commit) · licence · source"
 //
 // The about line is built only from engine.about and the auth reply
@@ -19,8 +20,8 @@
 // the bar is short the start of its line clips and the licence stays.
 // Reads the session client and the read model through useSyncExternalStore;
 // no meter or playhead value passes through React state (ADR-0019 point 3).
-// The session id and what the read model holds (tracks, clips, syncs,
-// connections) are diagnostics, not the bar's content: they sit in the About
+// The session id, the head revision and what the read model holds (tracks,
+// clips, syncs, connections) are diagnostics, not the bar's content: they sit in the About
 // panel, under the data-testids of the former status panel, so the specs that
 // read them keep working.
 
@@ -204,13 +205,24 @@ const ENGINE_WORDS: Readonly<Record<ConnectionStatus, 'status.engineConnecting' 
   disconnected: 'status.engineDisconnected',
 };
 
+// The saved mark's baseline (model/project.ts SavedMark): the revision last
+// saved, or synced first; null before that.
+export interface SavedRevisionSource {
+  savedRevision(): string | null;
+  subscribe(listener: () => void): () => void;
+}
+
+const NO_SAVED: SavedRevisionSource = { savedRevision: () => null, subscribe: () => () => undefined };
+
 export interface StatusBarProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
   readonly engineStatus: EngineStatusSource;
+  // Without one (a test's bar) no revision is called saved.
+  readonly saved?: SavedRevisionSource;
 }
 
-export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
+export function StatusBar({ client, plans, engineStatus, saved = NO_SAVED }: StatusBarProps) {
   const state = useClientState(client);
   const snapshot = useSnapshot(client.model);
   const status = useStore(engineStatus);
@@ -218,7 +230,9 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
   const can = useCapabilities();
   const t = translator(useLocale());
   const [aboutOpen, setAboutOpen] = useState(false);
+  // The head, a diagnostic; the bar's "Saved · rN" is the saved mark's baseline (UR-4).
   const revision = snapshot?.revision ?? state.revision ?? '';
+  const savedRevision = useSyncExternalStore(saved.subscribe, saved.savedRevision, saved.savedRevision) ?? '';
   const fields = status ? statusFields(status, t) : null;
   return (
     <footer className="statusbar" data-region="status-bar" data-testid="status-bar" aria-label={t('status.label')}>
@@ -264,7 +278,9 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
         <LocaleSwitch />
         <span data-part="status-saved">
           {`${t('status.saved')} · `}
-          <b className="num" data-testid="revision">{revision}</b>
+          <b className="num" data-testid="saved-revision">
+            {savedRevision}
+          </b>
         </span>
         <AboutButton about={state.about} onOpen={() => setAboutOpen(true)} />
       </span>
@@ -273,6 +289,8 @@ export function StatusBar({ client, plans, engineStatus }: StatusBarProps) {
         <dl className="about-diagnostics">
           <dt>{t('status.session')}</dt>
           <dd data-testid="session-id">{state.sessionId ?? ''}</dd>
+          <dt>{t('status.head')}</dt>
+          <dd data-testid="revision">{revision}</dd>
           <dt>{t('status.tracks')}</dt>
           <dd data-testid="about-track-count">{snapshot ? String(snapshot.tracks.length) : ''}</dd>
           <dt>{t('status.clips')}</dt>

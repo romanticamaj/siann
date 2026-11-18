@@ -175,7 +175,7 @@ test('the status bar shows device, latency, xruns and the side heard, and keeps 
   assert.match(outside, /<span data-part="status-xruns"><b class="num" data-testid="xruns">4<\/b> xruns<\/span>/);
   // The side heard in words (m5-ui-plan-panel): main or proposal, never a branch id; lower-case in the bar.
   assert.match(outside, /<span class="hear" data-part="status-hearing"><svg class="i s"[^>]*>.*?<\/svg>Hearing <b data-testid="status-heard" data-heard="main">main<\/b><\/span>/);
-  assert.match(outside, /data-testid="revision"/);
+  assert.match(outside, /data-testid="saved-revision"/);
   assert.match(outside, /data-testid="locale-switch"/);
   // The diagnostics row's test id is about-track-count (UI redesign 10.8, 4): track-count is the track list head's count.
   assert.ok(!bar.includes('data-testid="track-count"'), 'no track-count in the status bar or its About panel');
@@ -234,7 +234,7 @@ test('the status bar has the mockup\'s structure and words in en, zh-Hant and zh
       assert.ok(outside.includes(`</svg>${w.hearing} <b data-testid="status-heard" data-heard="main">${w.main}</b></span>`), locale);
       assert.match(outside, /<span class="right"><span class="loc" data-part="status-locale"><svg class="i s" viewBox="0 0 16 16"[^>]*>/);
       assert.match(outside, new RegExp(`</svg>${w.locale}<select[^>]*data-testid="locale-switch"`), locale);
-      assert.ok(outside.includes(`<span data-part="status-saved">${w.saved} · <b class="num" data-testid="revision"></b></span>`), locale);
+      assert.ok(outside.includes(`<span data-part="status-saved">${w.saved} · <b class="num" data-testid="saved-revision"></b></span>`), locale);
       // The order: engine, device, xruns, hearing, then the right-hand group.
       const order = ['status-engine', 'status-device', 'status-xruns', 'status-hearing', 'status-locale', 'status-saved'].map((id) => outside.indexOf(`data-part="${id}"`));
       assert.deepEqual([...order].sort((a, b) => a - b), order, locale);
@@ -248,4 +248,21 @@ test('the status bar has the mockup\'s structure and words in en, zh-Hant and zh
   assert.equal(zh('status.engineConnected'), '引擎已連線');
   assert.equal(zh('status.source'), '原始碼');
   assert.equal(translator('en')('status.engineConnected'), 'Engine connected');
+});
+
+test('the saved revision is the saved mark\'s baseline (UR-4); the head revision is the About panel\'s diagnostic', () => {
+  const saved = (revision: string | null) => ({ getSnapshot: () => true, savedRevision: () => revision, subscribe: () => () => undefined });
+  const t = translator('en');
+  const bar = renderToStaticMarkup(<StatusBar client={disconnectedClient()} plans={new PlanStore()} engineStatus={statusSource(null)} saved={saved('r1')} />);
+  const panelAt = bar.indexOf('data-testid="about-panel"');
+  const outside = bar.slice(0, panelAt);
+  const inside = bar.slice(panelAt);
+  assert.ok(outside.includes(`<span data-part="status-saved">${t('status.saved')} · <b class="num" data-testid="saved-revision">r1</b></span>`), outside);
+  assert.ok(!outside.includes('data-testid="revision"'), 'the head is not in the bar');
+  assert.ok(inside.includes(`<dt>${t('status.head')}</dt><dd data-testid="revision">`), inside);
+  // Before the first sync, or without a saved mark: nothing is called saved.
+  for (const props of [{ saved: saved(null) }, {}]) {
+    const empty = renderToStaticMarkup(<StatusBar client={disconnectedClient()} plans={new PlanStore()} engineStatus={statusSource(null)} {...props} />);
+    assert.ok(empty.includes('data-testid="saved-revision"></b>'), empty);
+  }
 });

@@ -233,7 +233,7 @@ export interface TimelineLocale {
 
 // The realtime playhead (RealtimeClient fits).
 export interface PlayheadSource {
-  latest(): MeterFrame | null;
+  playhead(): MeterFrame | null;
   subscribe(listener: () => void): () => void;
 }
 
@@ -778,7 +778,7 @@ export class TimelineCanvas {
       else if (!built.commands.every((c) => this.#allows(String((c as { op?: unknown }).op)))) reason = 'capability';
       else reason = `built ${built.commands.length}`;
     }
-    const frame = this.#options.playhead?.latest() ?? null;
+    const frame = this.#options.playhead?.playhead() ?? null;
     this.#lastEdit = {
       reason,
       cursor,
@@ -854,7 +854,7 @@ export class TimelineCanvas {
   // The project cursor now, from the clock (m5-ui-transport): while playing
   // the extrapolated position, not the one the last overlay frame drew.
   #cursorNow(): string | null {
-    this.#clock.observe(this.#options.playhead?.latest() ?? null);
+    this.#clock.observe(this.#options.playhead?.playhead() ?? null);
     return this.#clock.position(this.#options.model.getSnapshot()?.root?.sampleRate ?? 48000);
   }
 
@@ -1065,7 +1065,7 @@ export class TimelineCanvas {
   // runs on every animation frame anyway (#drawOverlay asks for the next);
   // stopped, a frame whose playhead did not move draws nothing.
   #playheadChanged(): void {
-    const frame = this.#options.playhead?.latest() ?? null;
+    const frame = this.#options.playhead?.playhead() ?? null;
     this.#clock.observe(frame);
     const playhead = frame ? frame.playheadSamples : null;
     const playing = frame?.playing ?? false;

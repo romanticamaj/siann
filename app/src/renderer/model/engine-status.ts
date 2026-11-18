@@ -17,6 +17,23 @@ export interface EngineDevice {
   readonly bufferFrames: number;
   readonly inputLatencyFrames: number;
   readonly outputLatencyFrames: number;
+  // The open input (m5b-engine-record), null while none is open: its id, the
+  // channels the device opened and its latency in frames (Studio Setup,
+  // m5b-ui-project).
+  readonly input: EngineInput | null;
+}
+
+export interface EngineInput {
+  readonly id: string;
+  readonly channels: number;
+  readonly latencyFrames: number;
+}
+
+function parseInput(value: unknown): EngineInput | null {
+  if (value === null || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string') return null;
+  return Object.freeze({ id: raw.id, channels: finite(raw.channels) ?? 0, latencyFrames: finite(raw.latencyFrames) ?? 0 });
 }
 
 export interface EngineStatus {
@@ -91,6 +108,7 @@ export function parseEngineStatus(value: unknown): EngineStatus | null {
         bufferFrames: finite(d.bufferFrames) ?? 0,
         inputLatencyFrames: finite(d.inputLatencyFrames) ?? 0,
         outputLatencyFrames: finite(d.outputLatencyFrames) ?? 0,
+        input: parseInput(d.input),
       });
     }
   }
