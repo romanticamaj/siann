@@ -24,6 +24,12 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+Alt+P', commandId: 'zone.right.plans', scope: 'window' },
   // The plan review (m5b-ui-ghosts; spec 4.2, 3.6): the ghosts of the overlaid plan on and off.
   { chord: 'Mod+Alt+G', commandId: 'plans.toggleGhosts', scope: 'window' },
+  // The audition (m5b-ui-audition; spec 4.3, 3.6, on keys Cubase leaves free):
+  // Shift+A hears the other side while a plan is auditioned; Ctrl+Return
+  // (Cmd+Return on macOS) with the right zone focused runs the selected plan's
+  // primary action. Enter and NumpadEnter keep theirs.
+  { chord: 'Shift+A', commandId: 'audition.flip', scope: 'window' },
+  { chord: 'Mod+Enter', commandId: 'plans.primary', scope: 'right' },
   // The focus frame (zone-focus.ts). Tab and Shift+Tab cycle the zones from a
   // zone or the page and walk a zone's controls from inside it; F6 and
   // Shift+F6 cycle the zones from anywhere; Enter on a zone enters it and

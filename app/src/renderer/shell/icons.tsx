@@ -43,6 +43,16 @@ const PATHS = {
     </>
   ),
   chev: <path d="M4.5 6.5 8 10l3.5-3.5" />,
+  // The branch chip's icon (m5b-ui-audition).
+  branch: (
+    <>
+      <circle cx="4.5" cy="4" r="1.5" />
+      <circle cx="4.5" cy="12" r="1.5" />
+      <circle cx="11.5" cy="5.5" r="1.5" />
+      <path d="M4.5 5.5v5" />
+      <path d="M11.5 7c0 2.5-7 1.5-7 3.5" />
+    </>
+  ),
   plus: <path d="M8 3.5v9M3.5 8h9" />,
   spark: (
     <>

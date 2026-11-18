@@ -382,11 +382,14 @@ async function waveformsDrawn(): Promise<void> {
     // drawn, not nonZero: a clip whose visible part is silence (the riser's
     // quiet start) has its columns drawn, all zero. The view's width is read
     // in the poll: after a resize the zones animate to their sizes (120 ms),
-    // so a clip at the right edge may leave the view while this waits.
+    // so a clip at the right edge may leave the view while this waits. While
+    // a proposal is heard a moved clip's original is main's place as a faint
+    // outline with no waveform (peakColumns says outline), and is passed by.
     await expect
       .poll(async () => {
         const width = (await timeline<{ width: number }>('view')).width;
-        return rect.x >= width || (await timeline<{ drawn: number }>('peakColumns', rect.clipId)).drawn > 0;
+        const columns = await timeline<{ drawn: number; outline?: true }>('peakColumns', rect.clipId);
+        return rect.x >= width || columns.outline === true || columns.drawn > 0;
       })
       .toBe(true);
   }
@@ -732,11 +735,13 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('plan-audition').click();
   await expect(page.getByTestId('audition-banner')).toBeVisible();
   await expect(page.getByTestId('hear-proposal')).toHaveAttribute('aria-pressed', 'true');
+  // m5b-ui-audition: the ghosts turn solid once the branch snapshot arrives.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __siannGhosts?: { list(): Array<{ mode?: string }> } }).__siannGhosts?.list().every((g) => g.mode === 'solid') ?? false)).toBe(true);
   await scrollTo('plan-review');
   await shoot(
     page,
     'Audition active',
-    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The plan is approved, neither applied, rejected nor stale, so its ghosts stay drawn (the Keys and Vox BG ghost caps and pan tick, the ring on Vox Lead's S) and the pill names it.`,
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action. The window has the 2 px violet frame; the branch chip in the top bar names the proposal as the banner does (its first step and "3 steps") instead of main r<head>; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge with its ⏎ (Ctrl+Return in the right zone) and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The ghosts are solid, drawn from the branch snapshot (what is playing): the Keys and Vox BG caps and the pan tick, the ring on Vox Lead's S, with main's caps as faint outlines. Structural edits are disabled with the reason as their tooltip. The mockup has no hearing state: this state is the app's alone.`,
   );
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -922,6 +927,25 @@ test('UX screenshot tour', async () => {
     { number: 27 },
   );
 
+  // ---- 28 (m5b-ui-audition; UI redesign 4.3, 4.5 C5): the same plan
+  // auditioned: its clip and track ghosts solid in the event display, the
+  // frame and the banner, and a structural control disabled with its reason.
+  await page.mouse.move(0, 0);
+  await page.getByTestId('plan-audition').click();
+  await expect(page.getByTestId('audition-banner')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __siannGhosts?: { list(): Array<{ mode?: string }> } }).__siannGhosts?.list().filter((g) => g.mode === 'solid').length ?? 0)).toBeGreaterThanOrEqual(ghostPlan.length);
+  await expect(page.getByTestId('tool-split')).toBeDisabled();
+  await page.getByTestId('tool-split').hover();
+  await waveformsDrawn();
+  await shoot(
+    page,
+    'Hearing a proposal with clip and track ghosts',
+    `The 6-step plan (${hash8(ghostHash)}) auditioned: the 2 px violet frame, the banner and the branch chip naming it, and its ghosts solid in the event display (the Strings lane, unhatched, and its placed clip; the moved Kick clip, its original now main's place as a faint outline), on the headers and the MixConsole (the Strings header and strip unhatched, the Bass cap solid with main's cap as a faint outline; Kick's M and the Keys knob solid, main's value the control itself), drawn from the branch snapshot. Structural edits are disabled while the proposal is heard: the Split tool, under the pointer, is dimmed and its tooltip gives the reason (the tooltip is the system's and is not in the capture); the fader and pan stay live and go to the side heard. The mockup has no hearing state: this state is the app's alone.`,
+    { number: 28 },
+  );
+  // Discarded, so what follows is as before.
+  await page.getByTestId('banner-discard').click();
+  await expect(page.getByTestId('audition-banner')).toHaveCount(0);
   // ---- 41 (m5b-ui-plan-metadata): a titled plan with its intent, the agent
   // row connected. The tour's MCP client keeps its name (ux-tour).
   const titledClient = await agent();

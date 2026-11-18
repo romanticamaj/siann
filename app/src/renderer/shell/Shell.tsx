@@ -30,6 +30,13 @@
 // buttons and the status bar send nothing and stay live. The toasts sit
 // outside the zones.
 //
+// The audition (m5b-ui-audition; spec 4.3, 3.6): while a branch is heard
+// (audition.changed) .app carries data-hearing="proposal", on which shell.css
+// draws the 2 px violet frame, and Shift+A (audition.flip) hears the other
+// side: main from a branch, the open proposal from main (plans/hearing.ts);
+// it declines, sending nothing, while the side is unknown, no proposal is
+// open or the engine does not list audition.hear.
+//
 // The transport (m5-ui-transport; spec 3.1, 3.6): the window's transport
 // keys, undo and redo are registered here over the TransportController
 // (model/transport.ts), and run only while the engine lists them and, for
@@ -73,6 +80,8 @@ import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { bindLoopClickCommands, type LoopClickController } from '../model/loop-click';
 import { bindTransportCommands, type TransportController } from '../model/transport';
+import { runAction } from '../plans/actions';
+import { flipTarget } from '../plans/hearing';
 import type { UndoHistory } from '../model/undo-history';
 import {
   effectiveLayout,
@@ -396,6 +405,11 @@ export function Shell({
 
   const frames = useRef<Partial<Record<ZoneScope, HTMLElement | null>>>({});
   const offline = phase === 'offline';
+  const hearing = useSyncExternalStore(
+    (listener) => plans.subscribe(listener),
+    () => plans.getSnapshot().heard,
+    () => plans.getSnapshot().heard,
+  );
   const covered = startView !== null && startView !== undefined && startView !== false;
   // The zones take no pointer, focus or key under the banner or the start view.
   const inert = offline || covered;
@@ -480,6 +494,19 @@ export function Shell({
     ];
     return () => offs.forEach((off) => off());
   }, [commands, dispatch, focusZone, isVisible]);
+
+  // Shift+A (m5b-ui-audition): the other side, from the PlanStore only.
+  useEffect(
+    () =>
+      commands.register('window', 'audition.flip', () => {
+        if (!capabilitySelector(client.getState().capabilities).has('audition.hear')) return false;
+        const side = flipTarget(plans.getSnapshot());
+        if (side === null) return false;
+        void runAction(client, { kind: 'hear', side });
+        return true;
+      }),
+    [commands, client, plans],
+  );
 
   // The plan review (m5b-ui-ghosts; UI redesign 4.2): Ctrl+Alt+G, and the zones a reveal asks for.
   useEffect(() => {
@@ -658,6 +685,7 @@ export function Shell({
       data-testid="shell"
       data-viewport={`${viewport.width}x${viewport.height}`}
       data-offline={offline ? 'true' : undefined}
+      data-hearing={hearing !== null && hearing !== 'main' ? 'proposal' : undefined}
       data-animate={String(animate)}
       style={grid}
     >

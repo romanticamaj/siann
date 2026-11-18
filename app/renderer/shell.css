@@ -151,11 +151,21 @@ code, dd { font-family: var(--font-mono); }
    in the app, which shortens with an ellipsis when the window is narrow. */
 .session:has(> span) { min-width: 0; }
 .session > span { overflow: hidden; text-overflow: ellipsis; }
+/* The branch chip (m5b-ui-audition): a proposal's name shortens with an
+   ellipsis inside .tb-left, the whole name in its title. */
+[data-part="branch-chip"] { min-width: 0; flex: 0 1000 auto; }
+/* The left group's column may then be narrower than the chip's whole name:
+   the chip gives way first, so the bar keeps the mockup's three columns. A
+   flex weight shares the shrink and the session's ellipsis shows at any
+   fraction of a pixel, so the session's name does not shrink at all beside
+   the chip (under 1300 px, where the chip is hidden, it does again). */
+.topbar > .tb-left:has(> [data-part="branch-chip"]) { min-width: 0; }
+.tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 0; }
+[data-part="branch-chip"] > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The boxes of the parts still pending (spec 3.0; --hold-* tokens): the
-   branch chip, the Record button, DSP load (with the margin the mockup's
-   .dsp has) and the Channel zone button. */
-.hold-branch-chip, .hold-transport-record, .hold-dsp-load, .hold-zone-button-channel { display: block; flex: none; }
-.hold-branch-chip { width: var(--hold-branch-chip-w); height: var(--control-h); }
+   Record button, DSP load (with the margin the mockup's .dsp has) and the
+   Channel zone button. */
+.hold-transport-record, .hold-dsp-load, .hold-zone-button-channel { display: block; flex: none; }
 .hold-transport-record { width: var(--hold-transport-record-w); height: var(--hold-transport-record-h); }
 .hold-dsp-load { width: var(--hold-dsp-load-w); height: var(--icon-s); margin-right: var(--space-half); }
 .hold-zone-button-channel { width: var(--hold-zone-button-channel-w); height: var(--hold-zone-button-channel-h); }
@@ -722,6 +732,22 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
 @media (prefers-reduced-motion: reduce) { [data-ghost] { transition: none; } }
 [data-ghost-hot] { outline: var(--hairline-1h) solid var(--ai); outline-offset: calc(var(--hairline) * -1); }
 .ghost-to, .ghost-name { color: var(--ai-2); }
+/* ---- hearing the proposal (m5b-ui-audition; UI redesign 4.3). The window's
+   2 px violet frame, and the ghosts solid (what is playing) with the value
+   each replaces, main's, as a faint outline. App-only drawings on the
+   existing --ai tokens; the mockup has no hearing state. */
+/* The frame is drawn over the zones (their backgrounds would cover a border of
+   .app itself) and takes no pointer. */
+.app[data-hearing="proposal"]::after { content: ""; position: fixed; inset: 0; z-index: 40; border: var(--space-half) solid var(--ai); pointer-events: none; }
+.cap.ghost[data-ghost-mode="solid"], .hs > .ghost-thumb[data-ghost-mode="solid"] { background: var(--ai); border-style: solid; }
+.cap[data-replaced], .hs > u[data-replaced] { background: transparent; border: var(--hairline) solid var(--ai-a300); box-shadow: none; }
+button.ghost[data-ghost-mode="solid"] { outline-style: solid; }
+.gline[data-ghost-mode="solid"], .hs > .ghost-line[data-ghost-mode="solid"] { background: var(--ai-line); }
+.th.ghost[data-ghost-mode="solid"]::after, .strip.ghost[data-ghost-mode="solid"]::after { border-style: solid; }
+/* A proposed track's header and strip, heard: the ghost tint without the hatch. */
+.th.ghost[data-ghost-mode="solid"], .strip.ghost[data-ghost-mode="solid"] { background: linear-gradient(var(--ai-a100), var(--ai-a100)), var(--bg-alt); }
+/* A proposed insert's slot, heard (m5b-ui-inserts-master's ghosts): the tint, no hatch, no dash. */
+.slot.ghost[data-ghost-mode="solid"], .islot.ghost[data-ghost-mode="solid"] { background: var(--ai-a100); border-style: solid; }
 .ghost-removed { opacity: var(--offline-opacity); }
 /* The Inspector's sliders (shell/Inspector.tsx): the Volume slider's ghost
    thumb at the pending value, the .hs u box in the strip's .cap.ghost look,
@@ -829,7 +855,8 @@ button.pool-item[aria-pressed="true"] { border-color: var(--select); }
    first. */
 @media (max-width: 1300px) {
   .topbar { grid-template-columns: auto auto minmax(0, 1fr); }
-  .hold-branch-chip, .hold-dsp-load, .hold-transport-record { display: none; }
+  [data-part="branch-chip"], .hold-dsp-load, .hold-transport-record { display: none; }
+  .tb-left:has(> [data-part="branch-chip"]) > .session { flex-shrink: 1; }
 }
 @media (max-width: 1100px) {
   .lcd .cell[data-part="display-locators"], .lcd .display-locators-empty, .lcd .cell[data-part="display-tempo"], .lcd .cell[data-part="display-signature"] { display: none; }

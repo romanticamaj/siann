@@ -267,6 +267,11 @@ export const zhHant: Catalog = {
   'banner.label': '試聽',
   'banner.hearing': '正在監聽提案：{lead}（{steps}）。主線未變更。',
   'banner.generic': '正在監聽一份提案。主線未變更。',
+  'chip.main': 'main',
+  'chip.mainTitle': '主線，位於 {revision}',
+  'chip.proposal': '{lead}，{steps}',
+  'chip.generic': '提案',
+  'guard.structural': '監聽提案時無法編輯：請切回主線',
   'banner.hearingTitled': '正在監聽提案：{title}。主線未變更。',
 
   'diff.before': '變更前',

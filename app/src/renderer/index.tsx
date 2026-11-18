@@ -60,6 +60,7 @@ import { ConnectionPhaseStore } from './model/connection-phase';
 import { EngineStatusStore } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
+import { BranchSnapshotStore } from './model/branch-snapshot';
 import { AgentStore } from './model/agents';
 import { PlanStore } from './model/plan-store';
 import { ReviewStore } from './model/review-store';
@@ -177,11 +178,14 @@ const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
+// The proposals' branch snapshots (m5b-ui-audition): the ghosts of a heard proposal are drawn solid from them.
+const branches = new BranchSnapshotStore();
+branches.attach(client);
 // The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
 const agents = new AgentStore();
 agents.attach(client);
 // The plan under review, its preview and its ghosts (m5b-ui-ghosts).
-const review = new ReviewStore({ client, plans });
+const review = new ReviewStore({ client, plans, branches });
 if (testHooks) {
   window.__siannGhosts = {
     list: () => review.ghosts(),

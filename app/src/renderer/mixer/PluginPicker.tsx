@@ -8,12 +8,15 @@
 // unapproved one reads "Not approved" and has Approve (when the engine lists
 // plugin.approve), which asks first in a ConfirmDialog that names the file.
 // Its own keydown handler keeps every key from the shell's dispatcher, and
-// Escape closes it. State: mixer/picker.ts.
+// Escape closes it. State: mixer/picker.ts. While a proposal is heard (the
+// side can flip from another connection while the picker is open) a choice is
+// held by the edit guard with its reason (m5b-ui-audition; 4.5 C5).
 
 import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent } from 'react';
 
 import { useT } from '../i18n/t';
 import type { RegistryEntry } from '../model/plugin-actions';
+import { useEditGuard } from '../plans/heard-context';
 import { useCapabilities } from '../shell/Capable';
 import { ConfirmDialog } from '../shell/ConfirmDialog';
 import { Icon } from '../shell/icons';
@@ -32,6 +35,7 @@ export const fileOf = (entry: RegistryEntry) => fileName(entry.path);
 export function PluginPicker({ picker, trackName }: PluginPickerProps) {
   const t = useT();
   const can = useCapabilities();
+  const guard = useEditGuard();
   const state = useSyncExternalStore(picker.subscribe, picker.getSnapshot, picker.getSnapshot);
   const dialog = useRef<HTMLDialogElement | null>(null);
   const search = useRef<HTMLInputElement | null>(null);
@@ -99,7 +103,7 @@ export function PluginPicker({ picker, trackName }: PluginPickerProps) {
           {visible.map((entry) => (
             <li key={`${entry.format}:${entry.path}`} className="picker-row" data-testid="picker-install" data-name={entry.name} data-file={fileOf(entry)} data-path={entry.path}>
               {entry.approved ? (
-                <button type="button" className="picker-choose" data-testid="picker-choose" disabled={state.busy} title={entry.path} onClick={() => void picker.choose(entry)}>
+                <button type="button" className="picker-choose" data-testid="picker-choose" disabled={state.busy || guard !== null} title={guard ?? entry.path} onClick={() => void picker.choose(entry)}>
                   <span className="picker-name">{entry.name}</span>
                   <span className="picker-format">{entry.format.toUpperCase()}</span>
                 </button>

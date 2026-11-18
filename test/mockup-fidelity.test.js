@@ -425,7 +425,6 @@ test('the chrome\'s gate is report, and the boxes of its absent parts are held b
   assert.ok(!Object.values(MANIFEST.gates).includes('enforce'), 'no gate is enforce');
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = {
-    'branch-chip': ['w'],
     'transport-record': ['w', 'h'],
     'dsp-load': ['w'],
     'zone-button-channel': ['w', 'h'],
@@ -794,7 +793,7 @@ test('the small-window breakpoints of shell.css are the ones spec 2.4 and 3.0 de
     return '';
   };
   assert.match(block(1300), /\.topbar \{ grid-template-columns: auto auto minmax\(0, 1fr\); \}/);
-  assert.match(block(1300), /\.hold-branch-chip, \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
+  assert.match(block(1300), /\[data-part="branch-chip"\], \.hold-dsp-load, \.hold-transport-record \{ display: none; \}/);
   assert.match(block(1100), /\.brand \{ display: none; \}/);
   assert.match(block(1100), /\.lcd \.cell\[data-part="display-signature"\]/);
 });
@@ -1280,4 +1279,53 @@ test("m5b-ui-ghosts: the gate is report, the pill's and the Agent changes' holds
     'track-ghost-2', 'track-ghost-2-name', 'lane-ghost-3', 'strip-ghost-2', 'strip-ghost-2-inserts', 'strip-ghost-2-name', 'clip-ghost-new-2', 'locator-band-ghost', 'proposal-pill', 'inspector-agent-changes']) {
     assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
   }
+});
+
+// ---- m5b-ui-audition (UI redesign 4.3, 2.4, 10.4): the branch chip landed, so
+// its gate is report and its hold is gone; it is always rendered while a head
+// revision is known, and the state before the first snapshot is exempt (the
+// test after this one), so no empty-width token replaces the hold (3.0). The
+// violet frame and the solid ghosts are app-only rules of shell.css on
+// existing tokens: the frame's 2 px is --space-half, its colour --ai.
+test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and the frame is drawn on existing tokens', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-audition'], 'report');
+  assert.equal(ruleOf('branch-chip').gate, 'm5b-ui-audition');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const name of ['--hold-branch-chip-w', '--branch-chip-empty-w']) {
+    assert.ok(!tokens.includes(name), `${name} is not in tokens.css`);
+    assert.ok(!shell.includes(name), `${name} is not in shell.css`);
+  }
+  assert.doesNotMatch(shell, /hold-branch-chip/);
+  assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-branch-chip/);
+  assert.match(shell, /\.app\[data-hearing="proposal"\]::after\s*\{[^}]*border:\s*var\(--space-half\) solid var\(--ai\)/);
+  assert.match(shell, /\[data-ghost-mode="solid"\]/);
+  // A proposed insert's slot, heard: the ghost tint without the hatch or the dash (m5b-ui-inserts-master's ghosts).
+  assert.match(shell, /\.slot\.ghost\[data-ghost-mode="solid"\],\s*\.islot\.ghost\[data-ghost-mode="solid"\]\s*\{\s*background:\s*var\(--ai-a100\);\s*border-style:\s*solid;\s*\}/);
+  // A proposed track's header and strip lose the shared rules' hatch while
+  // heard: their body is the ghost tint, unhatched (UI redesign 4.3).
+  const unhatched = /\.th\.ghost\[data-ghost-mode="solid"\],\s*\.strip\.ghost\[data-ghost-mode="solid"\]\s*\{[^}]*background:\s*linear-gradient\(var\(--ai-a100\), var\(--ai-a100\)\), var\(--bg-alt\)/;
+  assert.match(shell, unhatched);
+  // The chip gives way before the session's name: while it is in the left
+  // group, the name does not shrink (above 1300 px, where the chip shows).
+  assert.match(shell, /\.tb-left:has\(> \[data-part="branch-chip"\]\) > \.session\s*\{\s*flex-shrink:\s*0;\s*\}/);
+});
+
+// The state before the first snapshot is exempt from the empty box (UI
+// redesign 3.0; 10.11, 15: decided by Fable, delegated by the maintainer,
+// 2026-11-19): the session name is empty and the branch chip is absent, and
+// no permanent token is authorised for the chip.
+test('m5b-ui-audition: before the first snapshot the chip is exempt from the empty box, in the spec and the agent rules, with no token', () => {
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  const rules = read('docs', 'harness', 'agent-rules.md');
+  const rule = spec.slice(spec.indexOf('### 3.0 '), spec.indexOf('### 3.1 '));
+  assert.match(rule, /\n  - Before the first snapshot nothing is held\.[^\n]*session name is empty[^\n]*branch chip[^\n]*no `--branch-chip-empty-w` exists \(10\.11, 15\)/);
+  assert.match(rule, /\n  - Before the first snapshot[^\n]*covers that state only/);
+  const decisions = spec.slice(spec.indexOf('### 10.11 '));
+  assert.match(decisions, /\n\*\*15\. The branch chip before the first snapshot is exempt from the empty box\*\* \(`m5b-ui-audition`\)[^\n]*Decided by Fable, delegated by the maintainer, 2026-11-19\.\n/);
+  assert.match(rules, /The state before the first snapshot is exempt \(spec 3\.0; 10\.11, 15\)[^\n]*no `--branch-chip-empty-w`/);
+  assert.match(rules, /decided by Fable, delegated by the maintainer, 2026-11-19 \(spec 10\.11, 15\)/);
+  // The table of authorised permanent tokens does not name the chip.
+  assert.doesNotMatch(rules, /\| A permanent `--<part>-empty-w` token[^\n]*branch-chip/);
+  for (const file of [['app', 'renderer', 'tokens.css'], ['app', 'renderer', 'shell.css'], ['app', 'src', 'renderer', 'tokens.ts']]) assert.doesNotMatch(read(...file), /branch-chip-empty/, file.join('/'));
 });

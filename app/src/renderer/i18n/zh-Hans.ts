@@ -267,6 +267,11 @@ export const zhHans: Catalog = {
   'banner.label': '试听',
   'banner.hearing': '正在监听提案：{lead}（{steps}）。主线未改变。',
   'banner.generic': '正在监听一份提案。主线未改变。',
+  'chip.main': 'main',
+  'chip.mainTitle': '主线，位于 {revision}',
+  'chip.proposal': '{lead}，{steps}',
+  'chip.generic': '提案',
+  'guard.structural': '监听提案时无法编辑：请切回主线',
   'banner.hearingTitled': '正在监听提案：{title}。主线未改变。',
 
   'diff.before': '修改前',
