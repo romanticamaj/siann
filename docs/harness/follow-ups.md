@@ -261,6 +261,16 @@ None of these blocks M5b; each has no owner yet unless it names one.
    `m6a-engine-clip-mute`), Shuffle, slip, zoom history, the stationary cursor,
    context menus and the key-command editor stay in phase 3 of the UI redesign
    without a milestone.
+8. The left zone's Editor tab (the second span of `inspector-tabs`, Cubase's editor
+   Inspector) has no owner and no content defined: its box stays empty through M5b
+   (second round, 10.11, 11). Whoever defines it names the owner.
+9. The plugin picker of `m5b-ui-inserts-master` cannot choose among the plugins of
+   one library (a VST3 shell, a CLAP with several descriptors): `plugin.approve`
+   without a `uid` answers `invalid_params` naming them, and the picker shows that
+   refusal. A list of the uids to pick from would let such a library be approved.
+10. A strip's insert rack holds two slots and scrolls inside its row beyond that. A
+    rack that grows with the chain needs `lower-zone.css` and `tokens.css`, which
+    are the maintainer's.
 
 ## Where tests run
 

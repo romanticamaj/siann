@@ -443,7 +443,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 | `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
 | `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled; `agent_busy` shown |
 | `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |
-| `m5b-ui-editor-channel` | 4 | `m5b-ui-edit-more` | `tab-editor`, `zone-button-channel` | one revision and one undo per edit in the editor |
+| `m5b-ui-editor-channel` | 5 | `m5b-ui-edit-more`, `m5b-ui-fades` | `tab-editor`, `zone-button-channel`, `strip-N-edit`, `inspector-edit` | one revision and one undo per edit in the editor |
 | `m6a-ui-automation` (M6a) | 3 | `m6a-lanes`, `m6a-write-passes` | `*-read`, `*-write`, `strip-*-automation`, `inspector-automation` | e2e with a reduced capabilities fixture |
 
 `m5b-ui-keymap` (wave 6) now also waits for `m5b-ui-signature`, `m5b-ui-meter`,
