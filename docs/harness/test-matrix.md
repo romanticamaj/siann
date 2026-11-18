@@ -641,8 +641,9 @@ ctest tests passed with the suppression files passed and empty; the six
 libFuzzer targets for 180 s each found nothing; coverage 92.9 % of regions of
 SIANN sources (tests, `_deps` and Catch2 ignored), after the coverage step's
 executable list was fixed to skip a generated header carrying the x bit;
-`perf.spec.ts` on Windows: median 0.7 ms and p99 6.1 ms of frame work, 12 MB of
-heap, 483 ms cold start, all within 5.6.
+`perf.spec.ts` on Windows: median 0.5 ms and p99 4.5 ms of frame work, 20 MB of
+heap, 400 ms cold start (from the supervisor's ready line, after fix round 1
+moved the start there from the client's first connection), all within 5.6.
 
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
