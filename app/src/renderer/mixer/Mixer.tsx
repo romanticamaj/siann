@@ -37,6 +37,8 @@ export interface MixerProps {
   // The track list's selected track: its strip is .sel.
   readonly selectedTrackId?: string | null;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
+  // The rack switches (m5b-ui-inserts-master; siann.layout.v1): Inserts shows the strips' insert racks.
+  readonly racks?: { readonly inserts: boolean };
 }
 
 // The meter canvas and its registry of channels and peak values.
@@ -106,7 +108,7 @@ class MeterBoard implements MetersRegistry {
   }
 }
 
-export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks }: MixerProps) {
+export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks, racks }: MixerProps) {
   const t = useT();
   const order = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -162,10 +164,10 @@ export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMe
     <MetersContext.Provider value={board}>
       <section className="mixer" data-testid="mixer" data-part="mixer" aria-label={t('mixer.label')} ref={container}>
         {(order ?? []).map((trackId) => (
-          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} />
+          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} inserts={racks?.inserts ?? true} />
         ))}
         {view.ghosts.map((g) => (g.kind === 'track-add' ? <GhostStrip key={`ghost-${g.trackId}`} ghost={g} view={view} /> : null))}
-        {hasMaster ? <MasterStrip /> : null}
+        {hasMaster ? <MasterStrip client={client} gestures={gestures} /> : null}
         <KnobGradient />
         <canvas className="mixer-meters" data-testid="mixer-meters" ref={canvas} aria-hidden="true" />
       </section>

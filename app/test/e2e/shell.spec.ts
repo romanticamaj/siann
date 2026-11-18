@@ -323,7 +323,8 @@ test('the whole window has no id of a pending part and every landed id of the mo
     await launch(50, {
       SIANN_SESSION_DIR: bundleDir,
       SIANN_USER_DATA: path.join(scratch, 'user-data'),
-      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      // The test plugin's directory, for the mockup's insert racks (m5b-ui-inserts-master).
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', ...(process.env.SIANN_TEST_PLUGIN_CLAP ? ['--plugin-dir', path.dirname(process.env.SIANN_TEST_PLUGIN_CLAP)] : [])]),
       SIANN_FIDELITY_ENVIRONMENT: JSON.stringify(manifest.environment),
     });
     const view = { width: manifest.viewport.width, height: manifest.viewport.height };

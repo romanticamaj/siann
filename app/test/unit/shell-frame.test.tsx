@@ -204,8 +204,11 @@ test('the lower zone takes the mockup\'s .lower and .tabs with the MixConsole ta
   assert.match(tab[0], /data-testid="tab-lower-mixconsole"/);
   // The mockup's ic('sliders','s'), the label, then the key in a kbd.
   assert.match(tab[1]!, /^<svg class="i s" viewBox="0 0 16 16"[^>]*>[\s\S]*<\/svg>MixConsole <kbd>Alt\+F3<\/kbd>$/);
-  for (const id of ['tab-editor', 'mixer-racks']) assert.ok(!markup.includes(`data-part="${id}"`), `${id} is pending`);
-  assert.doesNotMatch(tabs[1]!, /class="spacer"/);
+  assert.ok(!markup.includes('data-part="tab-editor"'), 'tab-editor is pending');
+  // m5b-ui-inserts-master: the spacer, then the rack switches; with no capabilities known
+  // (this render) the switches are not in the DOM and the row ends at its spacer.
+  assert.ok(!markup.includes('data-part="mixer-racks"'), 'no rack switch without features.plugins');
+  assert.match(tabs[1]!, /<\/button><span class="spacer"><\/span>$/);
   // The right zone's row is the mockup's .p-head since m5-ui-port-plans.
   assert.match(markup, /<div class="p-head" role="tablist" data-part="right-tabs">/);
   assert.ok(!markup.includes('class="zone-tabs"'), 'no .zone-tabs row is left');

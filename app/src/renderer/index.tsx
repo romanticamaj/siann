@@ -66,6 +66,8 @@ import { announceReconnects, ToastStore } from './shell/toast-store';
 import { setCommitSink } from './shell/Counted';
 import { displayWrites, transportEnabled } from './shell/Transport';
 import type { MeterTestHooks } from './mixer/MixerMeters';
+import { PickerController } from './mixer/picker';
+import { PluginActions } from './model/plugin-actions';
 import type { TimelineTestHooks } from './timeline/TimelineCanvas';
 
 declare global {
@@ -196,6 +198,10 @@ const loopClick = new LoopClickController({
   locale: () => locales.getSnapshot(),
 });
 
+// The insert racks (m5b-ui-inserts-master): the plugin methods, the picker an empty slot opens, and engine.status for each slot's state.
+const pluginActions = new PluginActions({ client, toasts, locale: () => locales.getSnapshot() });
+const inserts = { actions: pluginActions, picker: new PickerController({ actions: pluginActions }), status: engineStatus };
+
 let endpoint: EngineEndpoint | null = null;
 const peaks = new PeaksCache({
   fetch: (url, init) => fetch(url, { headers: init.headers, cache: 'no-store' }),
@@ -259,6 +265,7 @@ const app = (
     history={history}
     onTimelineHooks={onTimelineHooks}
     onMeterHooks={onMeterHooks}
+    inserts={inserts}
   />
 );
 createRoot(container).render(

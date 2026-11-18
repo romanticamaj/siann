@@ -42,7 +42,10 @@ import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
 import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
+import { pluginsListed } from './mixer/inserts';
+import { InsertsContext, type InsertsHost } from './mixer/inserts-context';
 import { Mixer } from './mixer/Mixer';
+import { PluginPicker } from './mixer/PluginPicker';
 import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
 import { HearingSwitch } from './plans/HearingSwitch';
@@ -84,6 +87,8 @@ export interface AppProps {
   readonly history: UndoHistory;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
+  // The insert racks' plugin actions, picker and slot states (m5b-ui-inserts-master).
+  readonly inserts?: InsertsHost;
 }
 
 export function App({
@@ -105,6 +110,7 @@ export function App({
   history,
   onTimelineHooks,
   onMeterHooks,
+  inserts,
 }: AppProps) {
   const capabilities = useSyncExternalStore(
     (listener) => client.subscribe(listener),
@@ -146,8 +152,11 @@ export function App({
   const heard = useSyncExternalStore((listener) => plans.subscribe(listener), () => plans.getSnapshot().heard);
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
+  const racks = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.racks);
+  const trackName = useCallback((id: string) => (client.model.select(`track:${id}`) as { name?: string } | undefined)?.name ?? id, [client]);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
+     <InsertsContext.Provider value={inserts ?? null}>
       <TimeFormatContext.Provider value={timeFormat}>
        <ReviewContext.Provider value={review}>
         <GhostContext.Provider value={ghosts}>
@@ -191,16 +200,18 @@ export function App({
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} racks={racks} />
             </Counted>
           }
           right={<PlanPanel client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} commands={commands} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
         />
+        {inserts && pluginsListed(capabilitySelector(capabilities)) ? <PluginPicker picker={inserts.picker} trackName={trackName} /> : null}
         </HeardContext.Provider>
         </GhostContext.Provider>
        </ReviewContext.Provider>
       </TimeFormatContext.Provider>
+     </InsertsContext.Provider>
     </CapabilitiesContext.Provider>
   );
 }

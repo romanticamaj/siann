@@ -127,6 +127,39 @@ TEST_CASE("A capture bank arms and disarms its slots while the device runs, with
     CHECK(result.endedBy == realtime::EndedBy::stop);
 }
 
+// m5b-engine-punch-count-in: the bank writes the slot's capture window into its
+// monitor gate beside `capturing`, so the node can switch at the window's frames.
+TEST_CASE("the monitor gate follows the capture window: the bank hands it the window", "[record][bank][punch]") {
+    TempDir dir;
+    GraphDriver driver(withBank(2));
+    CaptureBank& bank = *driver.captureBank();
+    driver.publish(silentGraph());
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    graph::MonitorGate gate;
+    bank.arm(1, 0, 1);
+    bank.bindMonitorGate(1, &gate);
+    driver.play();
+    driver.start(device, config());
+    device.pump(1);
+    CHECK(gate.captureFrom.load() == realtime::CaptureWindow{}.from);  // no window: everything
+    CHECK(gate.captureUntil.load() == realtime::CaptureWindow{}.until);
+
+    bank.recorder(1).start(dir.path() / "take.wav", 48'000, {}, {}, 1, realtime::CaptureWindow{100, 300});
+    const auto before = rt::allocationViolations();
+    device.pump(2);
+    CHECK(gate.capturing.load());
+    CHECK(gate.captureFrom.load() == 100);
+    CHECK(gate.captureUntil.load() == 300);
+    device.pump(4);  // past the window's end
+    CHECK(rt::allocationViolations() == before);
+    CHECK(bank.recorder(1).captureEnded());
+    CHECK_FALSE(gate.capturing.load());
+    bank.recorder(1).drain();
+    CHECK(bank.recorder(1).stop().frames == 200);
+    driver.stop();
+}
+
 TEST_CASE("Each slot captures its own channels, and two slots share the block's stamp", "[record][bank]") {
     TempDir dir;
     GraphDriver driver(withBank(2));

@@ -2365,6 +2365,57 @@ TEST_CASE("session.open takes the opened bundle's cycle flag", "[engine][launch]
     CHECK_FALSE(session::Session::open(second).cycle());
 }
 
+// m5b-engine-punch-count-in (Protocol v0 item 34) on the wire: the three states set
+// through the engine read back in engine.status and the transport results, kept across
+// engine.select_device, and the punch flags written into the checkpoint by session.save.
+TEST_CASE("punch, pre-roll and count-in set on the wire read back in engine.status",
+          "[engine][launch][punch][preroll][countin]") {
+    ix::initNetSystem();
+    TempDir dir;
+    const fs::path bundle = dir.path() / "Song.siann";
+    writeBundle(bundle, dir.path());
+
+    PipedProcess child(SIANN_ENGINE_EXE, launchArgs(bundle));
+    const Value ready = readyLine(child);
+    {
+        EngineClient client(ready);
+        const Value idle = client.ok("engine.status");
+        CHECK_FALSE(at(at(idle, "punch"), "in").asBool());
+        CHECK_FALSE(at(at(idle, "punch"), "out").asBool());
+        CHECK_FALSE(at(at(idle, "preroll"), "enabled").asBool());
+        CHECK(at(at(idle, "preroll"), "bars").asNumber() == 1);
+        CHECK_FALSE(at(at(idle, "countIn"), "enabled").asBool());
+        CHECK(at(at(idle, "countIn"), "bars").asNumber() == 2);
+        const Value capabilities = client.ok("engine.capabilities");
+        CHECK(at(at(capabilities, "features"), "punch").asBool());
+        CHECK(at(at(capabilities, "features"), "preroll").asBool());
+        CHECK(at(at(capabilities, "features"), "countIn").asBool());
+
+        const Value punched =
+            client.ok("transport.set_punch", Value(Object{{"in", Value(true)}, {"out", Value(false)}}));
+        CHECK(at(at(punched, "punch"), "in").asBool());
+        client.ok("transport.set_preroll", Value(Object{{"enabled", Value(true)}, {"bars", Value(4)}}));
+        const Value counted = client.ok("transport.set_count_in", Value(Object{{"enabled", Value(true)}}));
+        CHECK(at(at(counted, "preroll"), "bars").asNumber() == 4);
+        CHECK(at(at(counted, "countIn"), "enabled").asBool());
+        CHECK(at(at(counted, "countIn"), "bars").asNumber() == 2);
+        const std::string head = at(client.ok("session.inspect"), "revision").asString();
+
+        client.ok("engine.select_device", Value(Object{{"id", Value("fake")}}));
+        const Value after = client.waitForDevice();
+        CHECK(at(at(after, "punch"), "in").asBool());
+        CHECK_FALSE(at(at(after, "punch"), "out").asBool());
+        CHECK(at(at(after, "preroll"), "enabled").asBool());
+        CHECK(at(at(after, "preroll"), "bars").asNumber() == 4);
+        CHECK(at(at(after, "countIn"), "enabled").asBool());
+        // None is a revision.
+        CHECK(at(client.ok("session.inspect"), "revision").asString() == head);
+        client.ok("session.save");
+    }
+    CHECK(stopEngine(child) == 0);
+    CHECK(session::Session::open(bundle).punch() == session::PunchFlags{true, false});
+}
+
 // ---- recording through the protocol (m5b-engine-record, Protocol v0 item 28) ----
 
 namespace {

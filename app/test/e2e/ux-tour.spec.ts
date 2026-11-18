@@ -262,7 +262,7 @@ async function launch(sessionDir: string, extraEnv: Record<string, string> = {})
       SIANN_USER_DATA: path.join(scratch, `user-data-${path.basename(sessionDir)}`),
       SIANN_SHELL_BACKOFF_MS: '50',
       SIANN_SHELL_TEST: '1',
-      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake']),
+      SIANN_ENGINE_TEST_ARGS: JSON.stringify(['--device', 'fake', ...(process.env.SIANN_TEST_PLUGIN_CLAP ? ['--plugin-dir', path.dirname(process.env.SIANN_TEST_PLUGIN_CLAP)] : [])]),
       ...extraEnv,
     },
   });
@@ -502,7 +502,21 @@ test.afterEach(async () => {
   scratch = '';
 });
 
+// siann_test_plugin's CLAP (m5b-ui-inserts-master): its directory is a
+// --plugin-dir of every launch, and state 34 and the racks of 04 onward need it.
+const TEST_PLUGIN = process.env.SIANN_TEST_PLUGIN_CLAP;
+
+// The test plugin's install in the engine's registry, approved.
+async function testPluginInstall(client: EngineClient): Promise<{ format: string; path: string }> {
+  const registry = (await client.call('plugin.registry')) as { plugins: Array<{ format: string; path: string; approved: boolean }> };
+  const install = registry.plugins.find((p) => path.basename(p.path) === path.basename(TEST_PLUGIN!));
+  if (!install) throw new Error(`the engine did not register ${TEST_PLUGIN}`);
+  if (!install.approved) await client.call('plugin.approve', { format: install.format, path: install.path, approved: true });
+  return install;
+}
+
 test('UX screenshot tour', async () => {
+  if (!TEST_PLUGIN) throw new Error('set SIANN_TEST_PLUGIN_CLAP to siann_test_plugin\'s CLAP (state 34 and the racks need it)');
   test.setTimeout(420_000);
   fs.mkdirSync(OUT, { recursive: true });
   for (const old of fs.readdirSync(OUT).filter((f) => /^\d\d-.*\.png$/.test(f) || f === 'index.json')) {
@@ -532,6 +546,12 @@ test('UX screenshot tour', async () => {
   const summary = 'Kick 0 dB, Snare -2.5 dB, Bass -4 dB, Keys -8 dB pan L35, Vox Lead +1.5 dB solo, Vox BG -9 dB pan R40, FX -12 dB muted';
   await shoot(page, 'Session loaded', `A 7-track session (${summary}); 10 clips with waveforms from the engine's peaks. Transport stopped.`);
   await shoot(page, 'Session loaded full page', 'The same state as the whole page: since m5-ui-shell the page never scrolls, so this is the window.', { fullPage: true });
+
+  // m5b-ui-inserts-master: Vox Lead gets the test plugin as an insert (approved
+  // and instantiated through the protocol), so the racks of 04 onward show a slot.
+  const install = await testPluginInstall(watcher);
+  await watcher.call('plugin.instantiate', { trackId: 'trk_voxlead', index: 0, descriptor: { format: install.format, path: install.path } });
+  await expect(page.getByTestId('mixer-strip-trk_voxlead').locator('.slot:not(.empty)')).toHaveCount(1);
 
   // Playing: the meters read (fake device). Vox Lead's solo is clicked off
   // first, so every unmuted track sounds, and back on after. The solo
@@ -635,10 +655,10 @@ test('UX screenshot tour', async () => {
   }
   await gestureSettled();
   const held = (await fader.getAttribute('aria-valuetext')) ?? '';
-  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the insert and automation rows are empty boxes.`);
+  await shoot(page, 'Fader drag held', `Bass fader held mid-drag (pointer down) at ${held} from ${startValue}: the cap, the level value and the tooltip show the gesture's value; no revision is committed until release. The MixConsole is the mockup's strip() (m5-ui-port-mixer-strip): the insert rack (m5b-ui-inserts-master: Vox Lead's SIANN Test Plugin, whose bypass, e and Remove show while the slot is hovered or focused, and the empty + slots), pan knob, M and S, the dB scale, the fader with its unity line, two meter channels, the level and peak readout and the name tag; the automation row is an empty box. The Inserts rack switch ends the lower zone's tab row.`);
   await page.mouse.up();
   await expect(page.getByTestId('fader-value-trk_bass')).toHaveText(held);
-  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it, the master strip shows its meter, peak value and name only.`);
+  await shoot(page, 'Fader released', `Bass fader released: one revision committed at ${held}; the strip's cap and readout show it. The master strip has its fader at 0.0 dB (m5b-ui-inserts-master), its meter, its level and peak value and its name; its M, rack and e are M6c's and their boxes stay empty.`);
   await scrollTop();
 
   // ---- 5. A clip selected, mid-move, and moved.
@@ -948,13 +968,22 @@ test('UX screenshot tour', async () => {
     { number: 41 },
   );
 
-  // ---- What the window has no surface for (unnumbered).
-  shots.push({
-    file: null,
-    state: 'Plugin insert and editor (not captured)',
-    notes:
-      'The renderer shows no plugin inserts and no editor inside its window: a plugin editor is a separate native window owned by the shell (editor.spec.ts, desktop engine only), so there is nothing in the window to capture.',
-  });
+  // ---- 34 (m5b-ui-inserts-master; UI redesign 3.4): an insert rack with a
+  // plugin, and the picker open from an empty slot.
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('mixer-strip-trk_voxlead').locator('.slot:not(.empty)')).toHaveCount(1);
+  await page.getByTestId('mixer-strip-trk_bass').locator('.slot.empty').first().click();
+  await expect(page.getByTestId('plugin-picker')).toBeVisible();
+  await expect(page.getByTestId('picker-install').first()).toBeVisible();
+  const installs = await page.getByTestId('picker-install').count();
+  await shoot(
+    page,
+    'Insert rack and plugin picker',
+    `Vox Lead's insert rack holds the SIANN Test Plugin (its name; bypass, e for its editor and Remove, added to the mockup's .slot, show while it is hovered or focused) above one empty + slot; a click on an empty slot of Bass opened the plugin picker: the ${installs} installs of plugin.registry by name and format with a search field, an approved one chosen with its row, an unapproved one with Approve (after a confirmation that names the file). Choosing one inserts it at the end of the chain as one revision. The picker is app-only (the mockup draws none), so the review reads this state alone; a plugin's editor is a native window outside the page.`,
+    { number: 34 },
+  );
+  await page.getByTestId('picker-close').click();
+  await expect(page.getByTestId('plugin-picker')).toBeHidden();
   fs.writeFileSync(path.join(OUT, 'index.json'), `${JSON.stringify(shots, null, 2)}\n`);
   console.log(`UX tour: ${shots.filter((s) => s.file !== null).length} screenshots in ${OUT}`);
 });

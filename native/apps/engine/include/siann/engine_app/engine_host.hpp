@@ -126,6 +126,16 @@ struct PluginHostSet;
 // captured nothing goes to trash/. tick() polls the recorders' atomics (and,
 // with the recorder's writerThread off, drains them: tests). shutdown() stops
 // the recorders and leaves the takes pending.
+//
+// Punch, pre-roll and count-in (m5b-engine-punch-count-in; spec, "Recording",
+// Protocol v0 item 34): the punch flags are the served session's (written with
+// its checkpoint, so session.open takes the opened bundle's), pre-roll and
+// count-in the host's own, kept across selectDevice and rebind. record(true)
+// fixes the record position R from the playhead and the locators, hands every
+// recorder the capture window [R + recordOffset, right + recordOffset) as the
+// flags ask, and from a stopped transport starts playback at the pre-roll's
+// start with the count-in; tick() ends the recording once the window's end has
+// passed (endedBy stop), and playback runs on.
 class EngineHost final : public protocol::TransportPort,
                          public protocol::RecordPort,
                          public protocol::PluginPort,
@@ -168,6 +178,11 @@ public:
     // the host's own and is not stored.
     protocol::TransportState setCycle(bool enabled) override;
     protocol::TransportState setClick(bool enabled, std::optional<std::int32_t> gainMilliDb) override;
+    // Protocol v0 item 34. The punch flags go to the served session (Session::
+    // punch(), written with its next checkpoint); `bars` empty keeps the value.
+    protocol::TransportState setPunch(bool punchIn, bool punchOut) override;
+    protocol::TransportState setPreroll(bool enabled, std::optional<std::int32_t> bars) override;
+    protocol::TransportState setCountIn(bool enabled, std::optional<std::int32_t> bars) override;
     protocol::EngineStatus status() const override;
     std::vector<protocol::DeviceDescription> devices() const override;
     protocol::DeviceInfo selectDevice(const std::string& id) override;
@@ -298,6 +313,9 @@ private:
     std::map<std::string, double> gestureStarts_;
     // The metronome, applied to every engine bind() makes.
     protocol::ClickState click_;
+    // Pre-roll and count-in (m5b-engine-punch-count-in): engine state only.
+    protocol::BarsState preroll_{false, protocol::BarsState::kDefaultPrerollBars};
+    protocol::BarsState countIn_{false, protocol::BarsState::kDefaultCountInBars};
     // The input selected with the device (m5b-engine-record) and the channels to
     // ask it for.
     std::optional<std::string> inputId_;

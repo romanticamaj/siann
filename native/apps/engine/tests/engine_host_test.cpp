@@ -1228,6 +1228,52 @@ TEST_CASE("rebind gives the new engine the opened session's cycle flag and keeps
     CHECK_FALSE(wraps(rig));
 }
 
+// m5b-engine-punch-count-in (Protocol v0 item 34): the punch flags are the served
+// session's, so session.open (rebind) hands the opened bundle's to the host; the
+// pre-roll and count-in states are the host's own, kept across selectDevice and
+// rebind like the click.
+TEST_CASE("session.open hands the opened session's punch flags to the host; pre-roll and count-in are kept",
+          "[engine][host][punch][rebind]") {
+    Rig rig;
+    const protocol::TransportState set = rig.host->setPunch(true, false);
+    CHECK(set.punch == protocol::PunchState{true, false});
+    CHECK(rig.fixture.session.punch() == session::PunchFlags{true, false});  // written with the next checkpoint
+    CHECK(rig.host->setPreroll(true, 3).preroll == protocol::BarsState{true, 3});
+    CHECK(rig.host->setCountIn(true, std::nullopt).countIn == protocol::BarsState{true, 2});
+    CHECK(rig.host->setCountIn(true, 4).countIn == protocol::BarsState{true, 4});
+    CHECK(rig.host->setPreroll(false, std::nullopt).preroll == protocol::BarsState{false, 3});
+    const protocol::EngineStatus status = rig.host->status();
+    CHECK(status.punch == protocol::PunchState{true, false});
+    CHECK(status.preroll == protocol::BarsState{false, 3});
+    CHECK(status.countIn == protocol::BarsState{true, 4});
+
+    rig.host->selectDevice("b");
+    rig.useMade();
+    CHECK(rig.host->transportState().punch == protocol::PunchState{true, false});
+    CHECK(rig.host->transportState().preroll == protocol::BarsState{false, 3});
+    CHECK(rig.host->transportState().countIn == protocol::BarsState{true, 4});
+
+    Fixture other;
+    other.session.setPunch(session::PunchFlags{false, true});
+    rig.host->rebind(other.session);
+    CHECK(rig.host->status().punch == protocol::PunchState{false, true});
+    CHECK(rig.host->status().countIn == protocol::BarsState{true, 4});
+    CHECK(rig.host->status().preroll == protocol::BarsState{false, 3});
+
+    // Without a device the setters answer no_device, as set_cycle does.
+    Rig none(1);  // the device refuses to open: no running device
+    for (const auto& call : std::vector<std::function<void()>>{
+             [&] { none.host->setPunch(true, true); }, [&] { none.host->setPreroll(true, 1); },
+             [&] { none.host->setCountIn(true, 1); }}) {
+        try {
+            call();
+            FAIL("no error");
+        } catch (const protocol::TransportPortError& error) {
+            CHECK(error.code() == "no_device");
+        }
+    }
+}
+
 #if defined(_WIN32) && !defined(_DLL)
 namespace {
 // _set_abort_behavior of the shared Universal CRT (ucrtbase.dll), whose flags a

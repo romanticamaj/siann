@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -185,15 +186,21 @@ private:
 // m5b-engine-monitoring (spec, "Recording"): what auto monitoring follows,
 // two atomics written on other threads and read by the node each block.
 // `armed` is the engine host's (arm and disarm); `capturing` is written on the
-// audio thread by the capture bank, for the slot the gate is bound to.
+// audio thread by the capture bank, for the slot the gate is bound to, with the
+// capture window [captureFrom, captureUntil) in stamp positions beside it
+// (m5b-engine-punch-count-in): while capturing, the node takes the input only for
+// the frames whose timeline position lies inside the window, so a punch switches
+// at the captured frames, not at the block.
 struct MonitorGate {
     std::atomic<bool> armed{false};
     std::atomic<bool> capturing{false};
+    std::atomic<std::int64_t> captureFrom{std::numeric_limits<std::int64_t>::min()};
+    std::atomic<std::int64_t> captureUntil{std::numeric_limits<std::int64_t>::max()};
 };
 
 // input: always the device input. automatic: the device input while the
 // transport is stopped and the gate is armed, or while it rolls and the gate
-// is capturing; port 0 otherwise.
+// is capturing (for the frames inside its capture window); port 0 otherwise.
 enum class MonitorInputMode { input, automatic };
 
 // The head of a monitored track's strip (spec, "Latency model", the monitoring

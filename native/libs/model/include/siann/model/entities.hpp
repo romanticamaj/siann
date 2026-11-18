@@ -176,7 +176,7 @@ struct PluginSlot {
 
 // The left and right locators (m5-ui-engine-loop-click): a singleton entity with
 // id "locators", audio-domain frames, 0 <= left < right <= kMaxPositionMagnitude.
-// Absent from a document until first set. The M6b punch range reuses it.
+// Absent from a document until first set. The M5b punch range (m5b-engine-punch-count-in) reuses it.
 struct Locators {
     std::int64_t left = 0;
     std::int64_t right = 0;

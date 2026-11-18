@@ -21,6 +21,7 @@
 #include "siann/media/audio.hpp"
 #include "siann/model/document.hpp"
 #include "siann/playback/plugin_instances.hpp"
+#include "siann/playback/punch.hpp"
 #if defined(SIANN_ENGINE_WITH_JUCE)
 #include "siann/host/juce_editor_window.hpp"
 #include "siann/host/juce_plugin_host.hpp"
@@ -807,11 +808,33 @@ protocol::TransportState EngineHost::setClick(bool enabled, std::optional<std::i
     return transportState();
 }
 
+protocol::TransportState EngineHost::setPunch(bool punchIn, bool punchOut) {
+    requireDevice();
+    session_->setPunch(session::PunchFlags{punchIn, punchOut});  // written with the next checkpoint
+    return transportState();
+}
+
+protocol::TransportState EngineHost::setPreroll(bool enabled, std::optional<std::int32_t> bars) {
+    requireDevice();
+    preroll_ = protocol::BarsState{enabled, bars.value_or(preroll_.bars)};
+    return transportState();
+}
+
+protocol::TransportState EngineHost::setCountIn(bool enabled, std::optional<std::int32_t> bars) {
+    requireDevice();
+    countIn_ = protocol::BarsState{enabled, bars.value_or(countIn_.bars)};
+    return transportState();
+}
+
 protocol::TransportState EngineHost::transportState() const {
     const realtime::Transport& transport = engine_->transport();
     protocol::TransportState out{transport.playing(), transport.position(), session_->cycle(), click_};
     out.recording = recording_;
     out.armed = armedTracks();
+    const session::PunchFlags punch = session_->punch();
+    out.punch = protocol::PunchState{punch.in, punch.out};
+    out.preroll = preroll_;
+    out.countIn = countIn_;
     return out;
 }
 
@@ -831,6 +854,10 @@ protocol::EngineStatus EngineHost::status() const {
     out.click = click_;
     out.recording = recording_;
     out.armed = armedTracks();
+    const session::PunchFlags punch = session_->punch();
+    out.punch = protocol::PunchState{punch.in, punch.out};
+    out.preroll = preroll_;
+    out.countIn = countIn_;
     if (loaded_) {
         const rt::CallbackTimer& timing = engine_->driver().callbackTiming();
         out.playing = engine_->transport().playing();
@@ -1199,6 +1226,36 @@ void EngineHost::startRecording() {
     const std::int64_t rate = doc.root().sampleRate;
     const std::int64_t offset = engine_->driver().latency().recordOffsetFrames;
     const fs::path bundle = session_->bundlePath();
+
+    // Punch, pre-roll and count-in (spec, "Recording"): the record position R, the
+    // capture window in stamps, and where and how playback starts.
+    realtime::Transport& transport = engine_->transport();
+    const bool fromStop = !transport.playing();
+    const std::int64_t playhead = transport.position();
+    const model::Locators* locators = doc.locators();
+    const session::PunchFlags punch = session_->punch();
+    std::int64_t recordAt = playhead;
+    const bool punchIn = locators != nullptr && punch.in && playhead < locators->left;
+    if (punchIn) {
+        recordAt = locators->left;
+    }
+    const bool punchOut = locators != nullptr && punch.out && recordAt < locators->right;
+    const bool preroll = fromStop && preroll_.enabled;
+    const bool countIn = fromStop && countIn_.enabled;
+    const std::int64_t playFrom = preroll ? playback::prerollStart(doc.root().tempo, rate, recordAt, preroll_.bars) : playhead;
+    realtime::CaptureWindow window;
+    if (punchIn || preroll || countIn) {
+        window.from = recordAt + offset;  // the take starts at R exactly
+    }
+    if (punchOut) {
+        window.until = locators->right + offset;
+    }
+    realtime::CountIn counted;
+    if (countIn) {
+        counted.beats = countIn_.bars * playback::kBeatsPerBar;
+        counted.beatFrames = playback::beatFramesAt(doc.root().tempo, rate, playFrom);
+    }
+
     std::vector<Take> takes;
     try {
         for (const auto& [trackId, slot] : armed_) {
@@ -1226,7 +1283,7 @@ void EngineHost::startRecording() {
             // position is durable before any of its audio.
             bank.recorder(slot).start(
                 audio, rate, [bundle, takeId](std::int64_t start) { session::markTakeStart(bundle, takeId, start); },
-                {}, input.channels);
+                {}, input.channels, window);
         }
     } catch (...) {
         for (const Take& take : takes) {
@@ -1248,7 +1305,9 @@ void EngineHost::startRecording() {
     // path it comes by (command, plan, merge, undo, redo, rollback).
     session_->setHeadGuard([this](const command::Revision& next) { guardRecordedTracks(next.document); });
     engine_->driver().setCaptureActive(true);  // the cycle records straight through
-    engine_->transport().play();
+    if (fromStop) {
+        transport.play(playFrom, counted);  // one locate carrying the start and the count-in
+    }
 }
 
 void EngineHost::pollRecording() {
@@ -1264,7 +1323,8 @@ void EngineHost::pollRecording() {
             take.state.startFrame = start - take.recordOffset;
         }
         take.state.durableFrames = recorder.durableFrames();
-        ended = ended || recorder.overflowed() || recorder.diskFailed();
+        // A punch-out: the window's end has passed (m5b-engine-punch-count-in).
+        ended = ended || recorder.overflowed() || recorder.diskFailed() || recorder.windowPassed();
     }
     if (ended) {
         finishRecording(std::nullopt);  // each take says how it ended

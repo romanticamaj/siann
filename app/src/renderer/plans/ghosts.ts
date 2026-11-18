@@ -18,7 +18,13 @@
 //   homed to that entity);
 // - the first track.add keeps the mockup's ids (key "ghost": track-ghost,
 //   lane-ghost, strip-ghost), later ones take "ghost-2", "ghost-3" in step
-//   order of the ticked ones.
+//   order of the ticked ones;
+// - the master-gain ghost takes its new value from the master.set_gain step
+//   and its old one from master:master, 0 dB while the entity is absent;
+// - an insert ghost (plugin.insert, plugin.remove, plugin.set_bypass) needs
+//   its track in the session: an insert on a proposed track gives none (the
+//   ghost strip's rack stays empty); an insert's index clamps to the end of
+//   the chain as the engine's does, after the ticked steps before it.
 // One descriptor per (step, kind, target): two steps on one field give two.
 
 import type { Snapshot } from '../model/read-model';
@@ -73,6 +79,11 @@ export type Ghost = (
   | ValueGhost<'solo', boolean>
   | { readonly kind: 'rename'; readonly step: number; readonly trackId: string; readonly before: string | null; readonly after: string }
   | { readonly kind: 'locators'; readonly step: number; readonly before: LocatorPair | null; readonly after: LocatorPair }
+  // m5b-ui-inserts-master: the master gain (0 dB while master:master is absent) and the insert kinds.
+  | { readonly kind: 'master-gain'; readonly step: number; readonly before: number; readonly after: number }
+  | { readonly kind: 'insert-add'; readonly step: number; readonly trackId: string; readonly slotId: string | null; readonly name: string; readonly index: number }
+  | { readonly kind: 'insert-remove'; readonly step: number; readonly trackId: string; readonly slotId: string }
+  | { readonly kind: 'insert-bypass'; readonly step: number; readonly trackId: string; readonly slotId: string; readonly before: boolean | null; readonly after: boolean }
 ) &
   GhostMode;
 
@@ -137,6 +148,10 @@ export function ghostsOf(
     return entity ? { ...entity } : null;
   };
   const trackKnown = (id: string | undefined): id is string => id !== undefined && read(`track:${id}`) !== null;
+  // The tracks a ticked track.add proposes: they have no rack.
+  const proposedTracks = new Set<string>();
+  const rackTrack = (id: string | undefined): id is string => trackKnown(id) && !proposedTracks.has(id);
+  const insertsOf = (track: Entity | null): string[] => (Array.isArray(track?.inserts) ? (track.inserts as unknown[]).filter((s): s is string => typeof s === 'string') : []);
 
   // The cascades of plan.preview: the removed clips of a removed track that
   // no clip.remove names, each under the step entityHomes homes it to when
@@ -191,6 +206,7 @@ export function ghostsOf(
       case 'track.add': {
         if (trackId === undefined) return;
         proposed += 1;
+        proposedTracks.add(trackId);
         out.push({ kind: 'track-add', step: n, trackId, name: str(step.name) ?? '', channels: num(step.channels) ?? null, key: proposed === 1 ? 'ghost' : `ghost-${proposed}` });
         state.set(`track:${trackId}`, { id: trackId, name: step.name, channels: step.channels, gainMilliDb: 0, pan: 0, mute: false, solo: false });
         return;
@@ -273,6 +289,49 @@ export function ghostsOf(
         state.set(ref, null);
         return;
       }
+      case 'master.set_gain': {
+        const after = num(step.gainMilliDb);
+        if (after === undefined) return;
+        const current = read('master:master');
+        out.push({ kind: 'master-gain', step: n, before: num(current?.gainMilliDb) ?? 0, after });
+        state.set('master:master', after === 0 ? null : { ...(current ?? { id: 'master' }), gainMilliDb: after });
+        return;
+      }
+      case 'plugin.insert': {
+        if (!rackTrack(trackId)) return;
+        const ref = `track:${trackId}`;
+        const track = read(ref);
+        const inserts = insertsOf(track);
+        const at = Math.min(Math.max(0, Math.trunc(num(step.index) ?? inserts.length)), inserts.length);
+        const descriptor = (step.descriptor ?? {}) as Record<string, unknown>;
+        const slotId = str(step.slotId) ?? null;
+        out.push({ kind: 'insert-add', step: n, trackId, slotId, name: str(descriptor.name) ?? str(descriptor.uid) ?? '', index: at });
+        if (slotId !== null) {
+          state.set(ref, { ...track, inserts: [...inserts.slice(0, at), slotId, ...inserts.slice(at)] });
+          state.set(`plugin_slot:${slotId}`, { id: slotId, trackId, name: descriptor.name, bypass: false });
+        }
+        return;
+      }
+      case 'plugin.remove':
+      case 'plugin.set_bypass': {
+        const slotId = str(step.slotId);
+        const ref = `plugin_slot:${slotId}`;
+        const slot = slotId !== undefined ? read(ref) : null;
+        const owner = str(slot?.trackId);
+        if (!slot || slotId === undefined || !rackTrack(owner)) return;
+        if (op === 'plugin.remove') {
+          out.push({ kind: 'insert-remove', step: n, trackId: owner, slotId });
+          const track = read(`track:${owner}`);
+          state.set(`track:${owner}`, { ...track, inserts: insertsOf(track).filter((s) => s !== slotId) });
+          state.set(ref, null);
+          return;
+        }
+        const after = bool(step.bypass);
+        if (after === undefined) return;
+        out.push({ kind: 'insert-bypass', step: n, trackId: owner, slotId, before: bool(slot.bypass) ?? null, after });
+        state.set(ref, { ...slot, bypass: after });
+        return;
+      }
       case 'session.set_locators': {
         const left = str(step.left);
         const right = str(step.right);
@@ -333,7 +392,27 @@ export function trackGhosts(ghosts: readonly Ghost[], trackId: string): TrackGho
   };
 }
 
+// The slot ghosts of one track's rack and Inspector section, by kind (m5b-ui-inserts-master).
+export interface SlotGhosts {
+  readonly add: ReadonlyArray<Extract<Ghost, { kind: 'insert-add' }>>;
+  readonly remove: ReadonlyArray<Extract<Ghost, { kind: 'insert-remove' }>>;
+  readonly bypass: ReadonlyArray<Extract<Ghost, { kind: 'insert-bypass' }>>;
+}
+
+export function slotGhosts(ghosts: readonly Ghost[], trackId: string): SlotGhosts {
+  const on = <K extends 'insert-add' | 'insert-remove' | 'insert-bypass'>(kind: K) =>
+    ghosts.filter((g): g is Extract<Ghost, { kind: K }> => g.kind === kind && (g as { trackId?: string }).trackId === trackId);
+  return { add: on('insert-add'), remove: on('insert-remove'), bypass: on('insert-bypass') };
+}
+
+// The master fader's ghosts, in step order.
+export function masterGhosts(ghosts: readonly Ghost[]): ReadonlyArray<Extract<Ghost, { kind: 'master-gain' }>> {
+  return ghosts.filter((g): g is Extract<Ghost, { kind: 'master-gain' }> => g.kind === 'master-gain');
+}
+
+const STRIP_KINDS: ReadonlySet<GhostKind> = new Set<GhostKind>(['track-add', 'track-remove', 'gain', 'pan', 'mute', 'solo', 'rename', 'master-gain', 'insert-add', 'insert-remove', 'insert-bypass']);
+
 // Whether a step has a ghost on a MixConsole strip (the target button shows the MixConsole for it).
 export function hasStripGhost(ghosts: readonly Ghost[], step: number): boolean {
-  return ghosts.some((g) => g.step === step && (g.kind === 'track-add' || g.kind === 'track-remove' || g.kind === 'gain' || g.kind === 'pan' || g.kind === 'mute' || g.kind === 'solo' || g.kind === 'rename'));
+  return ghosts.some((g) => g.step === step && STRIP_KINDS.has(g.kind));
 }

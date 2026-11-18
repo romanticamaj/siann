@@ -9,7 +9,10 @@
 // never a snapshot, and stays after gesture.end until the session.changed that
 // commits the entity arrives, so a recompile never snaps a held fader back. A
 // session.sync drops an ended overlay (the sync already holds any commit) and
-// a held one of another session.
+// a held one of another session. The master gain's gesture
+// (m5b-ui-inserts-master) stands on a synthetic master entity at 0 dB while
+// master:master is absent, so it begins, shows and survives deltas as a
+// track's does; the commit that adds or removes the entity drops it once ended.
 //
 // React reads it through useSyncExternalStore(subscribe, getSnapshot) or
 // (subscribe, getView): each identity is stable until the next change.
@@ -79,7 +82,21 @@ export type GestureField = 'gainMilliDb' | 'pan';
 
 const CONTINUOUS: Readonly<Record<string, readonly GestureField[]>> = {
   track: ['gainMilliDb', 'pan'],
+  // The master gain (m5b-ui-inserts-master; protocol-gestures-v0.md: the
+  // master target has gain only and always exists).
+  master: ['gainMilliDb'],
 };
+
+// The master entity is absent while its gain is 0 dB, and its gesture target
+// always exists: a master gesture overlays this entity until the commit adds
+// master:master (or while it stays absent).
+const MASTER_REF = 'master:master';
+const ABSENT_MASTER: MasterEntity = Object.freeze({ schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: 0 });
+
+// The entity a gesture on `ref` stands on: the committed one, or the absent master's 0 dB.
+function gestureBase(snapshot: Snapshot | null, ref: string): Entity | undefined {
+  return snapshot?.entities[ref] ?? (snapshot && ref === MASTER_REF ? ABSENT_MASTER : undefined);
+}
 
 export interface Gesture {
   readonly ref: string;
@@ -182,7 +199,7 @@ export class ReadModel {
       const snapshot = this.#snapshot;
       const gesture = this.#gesture;
       let overlaid: Entity | null = null;
-      const base = gesture && snapshot ? snapshot.entities[gesture.ref] : undefined;
+      const base = gesture ? gestureBase(snapshot, gesture.ref) : undefined;
       if (gesture && gesture.value !== null && base) {
         overlaid = Object.freeze({ ...base, [gesture.field]: gesture.value }) as Entity;
       }
@@ -248,7 +265,7 @@ export class ReadModel {
     const snapshot = buildSnapshot(first.revision, first.seq, first.documentHash, entities, hashes);
     const gesture = this.#gesture;
     const sameSession = sessionId !== null && sessionId === this.#sessionId;
-    if (gesture && (gesture.ended || !sameSession || !snapshot.entities[gesture.ref])) this.#gesture = null;
+    if (gesture && (gesture.ended || !sameSession || !gestureBase(snapshot, gesture.ref))) this.#gesture = null;
     this.#sessionId = sessionId;
     this.#commit(snapshot);
     return snapshot;
@@ -286,7 +303,7 @@ export class ReadModel {
     const gesture = this.#gesture;
     if (gesture) {
       const touched = event.changedIds.some((c) => c.ref === gesture.ref);
-      if (!snapshot.entities[gesture.ref] || (touched && gesture.ended)) this.#gesture = null;
+      if (!gestureBase(snapshot, gesture.ref) || (touched && gesture.ended)) this.#gesture = null;
     }
     this.#commit(snapshot);
     return snapshot;
@@ -298,7 +315,7 @@ export class ReadModel {
     if (!parsed || !(CONTINUOUS[parsed.type] ?? []).includes(field)) {
       throw new ReadModelError('not_continuous', `${ref} ${field} is not a continuous parameter`);
     }
-    if (!this.#snapshot?.entities[ref]) throw new ReadModelError('not_found', `${ref} is not in the model`);
+    if (!gestureBase(this.#snapshot, ref)) throw new ReadModelError('not_found', `${ref} is not in the model`);
     this.#setGesture({ ref, field, value: null, ended: false });
   }
 

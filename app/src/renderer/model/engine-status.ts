@@ -25,6 +25,49 @@ export interface EngineStatus {
   readonly deviceError: { readonly code: string } | null;
   // The deadline-miss count, a decimal string as the engine reports it.
   readonly xruns: string | null;
+  // One row per plugin slot of the heard document (m5b-ui-inserts-master;
+  // docs/schemas/protocol-plugins-v0.md, "engine.status plugins[]").
+  readonly plugins: readonly PluginStatus[];
+}
+
+// A slot's plugin as engine.status reports it: running or missing, and the
+// engine's error (a missing plugin's reason, or state_missing).
+export interface PluginStatus {
+  readonly slotId: string;
+  readonly trackId: string | null;
+  readonly busId: string | null;
+  readonly format: string;
+  readonly uid: string;
+  readonly state: string;
+  readonly error: { readonly code: string; readonly message: string } | null;
+}
+
+function parsePlugins(value: unknown): readonly PluginStatus[] {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  const out: PluginStatus[] = [];
+  for (const row of value) {
+    if (row === null || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r.slotId !== 'string') continue;
+    const e = r.error as { code?: unknown; message?: unknown } | null | undefined;
+    out.push(
+      Object.freeze({
+        slotId: r.slotId,
+        trackId: typeof r.trackId === 'string' ? r.trackId : null,
+        busId: typeof r.busId === 'string' ? r.busId : null,
+        format: typeof r.format === 'string' ? r.format : '',
+        uid: typeof r.uid === 'string' ? r.uid : '',
+        state: typeof r.state === 'string' ? r.state : '',
+        error: e && typeof e.code === 'string' ? Object.freeze({ code: e.code, message: typeof e.message === 'string' ? e.message : '' }) : null,
+      }),
+    );
+  }
+  return Object.freeze(out);
+}
+
+// The row of a slot, or null when engine.status has none (or is unknown).
+export function pluginOf(status: EngineStatus | null, slotId: string): PluginStatus | null {
+  return status?.plugins.find((p) => p.slotId === slotId) ?? null;
 }
 
 export interface EngineStatusSource {
@@ -53,7 +96,7 @@ export function parseEngineStatus(value: unknown): EngineStatus | null {
   }
   const error = raw.deviceError as { code?: unknown } | null | undefined;
   const deviceError = error && typeof error.code === 'string' ? Object.freeze({ code: error.code }) : null;
-  return Object.freeze({ device, deviceError, xruns: typeof raw.xruns === 'string' ? raw.xruns : null });
+  return Object.freeze({ device, deviceError, xruns: typeof raw.xruns === 'string' ? raw.xruns : null, plugins: parsePlugins(raw.plugins) });
 }
 
 // The status bar's device segment, the mockup's "type · name · kHz / buffer
@@ -117,6 +160,11 @@ export class EngineStatusStore implements EngineStatusSource {
 
   getSnapshot(): EngineStatus | null {
     return this.#snapshot;
+  }
+
+  // A slot's plugin row in the latest answer (m5b-ui-inserts-master).
+  plugin(slotId: string): PluginStatus | null {
+    return pluginOf(this.getSnapshot(), slotId);
   }
 
   subscribe(listener: () => void): () => void {

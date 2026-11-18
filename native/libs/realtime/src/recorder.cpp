@@ -41,6 +41,7 @@ Recorder::Recorder(int channels, Options options)
     for (auto& c : scratch_) {
         scratchPointers_.push_back(c.data());
     }
+    slicePointers_.assign(static_cast<std::size_t>(channels), nullptr);
 }
 
 Recorder::~Recorder() {
@@ -54,7 +55,7 @@ Recorder::~Recorder() {
 
 void Recorder::start(const std::filesystem::path& file, std::int64_t sampleRate,
                      std::function<void(std::int64_t)> onStart, std::function<void(std::int64_t)> onCheckpoint,
-                     int takeChannels) {
+                     int takeChannels, CaptureWindow window) {
     if (writer_) {
         throw std::logic_error("the recorder is already recording");
     }
@@ -77,6 +78,9 @@ void Recorder::start(const std::filesystem::path& file, std::int64_t sampleRate,
     captured_.store(0, std::memory_order_relaxed);
     durableFrames_.store(0, std::memory_order_relaxed);
     diskFailed_.store(false, std::memory_order_relaxed);
+    windowFrom_.store(window.from, std::memory_order_relaxed);
+    windowUntil_.store(window.until, std::memory_order_relaxed);
+    windowPassed_.store(false, std::memory_order_relaxed);
     lastCheckpoint_ = std::chrono::steady_clock::now();
     if (options_.writerThread) {
         writerRunning_.store(true, std::memory_order_release);
@@ -191,23 +195,42 @@ void Recorder::writerLoop() {
 
 void Recorder::capture(const host::AudioBufferView& input, std::int64_t timelinePosition, bool playing) noexcept {
     inCapture_.store(true);
-    std::int64_t frames = input.frames;
-    if (options_.maxFrames >= 0) {
-        // Only this thread writes captured_ while armed.
-        frames = std::min(frames, options_.maxFrames - captured_.load(std::memory_order_relaxed));
-    }
-    if (armed_.load() && playing && frames > 0 && !diskFailed_.load(std::memory_order_acquire)) {
-        if (startPosition_.load(std::memory_order_relaxed) == kNoStart) {
-            startPosition_.store(timelinePosition, std::memory_order_release);
+    if (armed_.load() && playing && input.frames > 0 && !diskFailed_.load(std::memory_order_acquire) &&
+        !windowPassed_.load(std::memory_order_relaxed)) {
+        // The block's part inside the capture window, [first, end) in its frames.
+        const std::int64_t from = windowFrom_.load(std::memory_order_relaxed);
+        const std::int64_t until = windowUntil_.load(std::memory_order_relaxed);
+        const std::int64_t blockEnd = timelinePosition + input.frames;
+        const std::int64_t first = from > timelinePosition ? std::min<std::int64_t>(from - timelinePosition, input.frames) : 0;
+        const std::int64_t end = until < blockEnd ? std::max<std::int64_t>(until - timelinePosition, 0) : input.frames;
+        std::int64_t frames = end - first;
+        if (options_.maxFrames >= 0) {
+            // Only this thread writes captured_ while armed.
+            frames = std::min(frames, options_.maxFrames - captured_.load(std::memory_order_relaxed));
         }
-        const auto n = static_cast<std::size_t>(frames);
-        // Reported, never a block. After the first block that did not fit the
-        // take has ended: writing later blocks would leave a hole in it.
-        if (overflows_.load(std::memory_order_relaxed) > 0 || ring_.writable() < n) {
-            overflows_.fetch_add(1, std::memory_order_release);
-        } else {
-            ring_.write(input, n);
-            captured_.fetch_add(frames, std::memory_order_release);
+        if (frames > 0) {
+            if (startPosition_.load(std::memory_order_relaxed) == kNoStart) {
+                startPosition_.store(timelinePosition + first, std::memory_order_release);
+            }
+            const auto n = static_cast<std::size_t>(frames);
+            // Reported, never a block. After the first block that did not fit the
+            // take has ended: writing later blocks would leave a hole in it.
+            if (overflows_.load(std::memory_order_relaxed) > 0 || ring_.writable() < n) {
+                overflows_.fetch_add(1, std::memory_order_release);
+            } else if (first == 0) {
+                ring_.write(input, n);
+                captured_.fetch_add(frames, std::memory_order_release);
+            } else {
+                const int channels = std::min(input.channelCount, static_cast<int>(slicePointers_.size()));
+                for (int c = 0; c < channels; ++c) {
+                    slicePointers_[static_cast<std::size_t>(c)] = input.channels[c] + first;
+                }
+                ring_.write(host::AudioBufferView{slicePointers_.data(), channels, static_cast<int>(frames)}, n);
+                captured_.fetch_add(frames, std::memory_order_release);
+            }
+        }
+        if (blockEnd >= until) {
+            windowPassed_.store(true, std::memory_order_release);  // nothing later is kept
         }
     }
     inCapture_.store(false, std::memory_order_release);

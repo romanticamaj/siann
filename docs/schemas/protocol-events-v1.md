@@ -253,13 +253,18 @@ publishes it.
 
 ### `transport.changed` (m5-ui-engine-loop-click)
 
-Published to every subscribed connection when the cycle flag or the click state
-actually changes, whoever asked (`transport.set_cycle`, `transport.set_click`, the
-MCP `set_cycle` and `set_click` tools, or a `session.open` that takes another
-bundle's cycle flag):
+Published to every subscribed connection when the cycle flag, the click state or
+(m5b-engine-punch-count-in) the punch, pre-roll or count-in state actually changes,
+whoever asked (`transport.set_cycle`, `transport.set_click`, `transport.set_punch`,
+`transport.set_preroll`, `transport.set_count_in`, the MCP `set_cycle`, `set_click`,
+`set_punch`, `set_preroll` and `set_count_in` tools, or a `session.open` that takes
+another bundle's cycle and punch flags). It carries all five fields, once per
+request that changed any of them:
 
 ```json
-{"type": "transport.changed", "cycle": true, "click": {"enabled": false, "gainMilliDb": -12000}}
+{"type": "transport.changed", "cycle": true, "click": {"enabled": false, "gainMilliDb": -12000},
+ "punch": {"in": true, "out": false}, "preroll": {"enabled": false, "bars": 1},
+ "countIn": {"enabled": true, "bars": 2}}
 ```
 
 Setting the value already set publishes nothing. Neither change is a revision, so

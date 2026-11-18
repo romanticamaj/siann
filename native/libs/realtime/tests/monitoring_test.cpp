@@ -331,6 +331,72 @@ TEST_CASE("Auto monitoring follows the bank's gate: stopped and armed, or captur
     driver.stop();
 }
 
+namespace {
+
+// A monitor node on input channel 1 as the graph's output (one channel, no fader):
+// the left output is the node's blend of silence and the input, frame by frame.
+std::unique_ptr<graph::PreparedGraph> monitorOnlyGraph(const MonitorGate* gate) {
+    graph::GraphBuilder b;
+    const graph::NodeId clips =
+        b.add(std::make_unique<graph::ClipPlayerNode>(1, std::vector<graph::ClipPlayerNode::Clip>{}), "trk.clips");
+    const graph::NodeId head =
+        b.add(std::make_unique<graph::MonitorInputNode>(1, MonitorInputMode::automatic, 1, 1, gate, kFade), "trk.monitor");
+    b.connect(clips, head);
+    b.setOutput(head);
+    return std::move(b).compile(kBlock);
+}
+
+}  // namespace
+
+// m5b-engine-punch-count-in (spec, "Latency model", the monitoring path): the
+// capture bank hands the gate the capture window, so auto monitoring's crossfade
+// starts at the first captured frame and its return at the first frame after the
+// last one, inside a block, without device-side SRC.
+TEST_CASE("the monitor gate follows the capture window to the frame", "[monitor][record][punch][rt]") {
+    TempDir dir;
+    GraphDriver driver(options(1));
+    realtime::CaptureBank& bank = *driver.captureBank();
+    MonitorGate gate;
+    gate.armed.store(true);
+    driver.publish(monitorOnlyGraph(&gate));
+    host::ManualAudioDevice device;
+    device.setInputGenerator(&inputValue);
+    bank.arm(0, 1, 1);
+    bank.bindMonitorGate(0, &gate);
+    driver.play();  // from frame 0: the stamps are the device frames
+    driver.start(device, config());
+
+    constexpr std::int64_t kFrom = 3 * kBlock + 19;
+    constexpr std::int64_t kUntil = 6 * kBlock + 45;
+    bank.recorder(0).start(dir.path() / "take.wav", 48'000, {}, {}, 1, realtime::CaptureWindow{kFrom, kUntil});
+    const auto before = rt::allocationViolations();
+    std::vector<float> out;
+    device.pump(10, &out);
+    CHECK(rt::allocationViolations() == before);
+    REQUIRE(out.size() == 10 * kBlock);
+    CHECK(gate.captureFrom.load() == kFrom);
+    CHECK(gate.captureUntil.load() == kUntil);
+
+    const auto expected = [](std::int64_t i, int position) {
+        return inputValue(1, i) * (static_cast<float>(position) / static_cast<float>(kFade));
+    };
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(out.size()); ++i) {
+        int position = 0;  // the node's crossfade position at frame i
+        if (i >= kFrom && i < kUntil) {
+            position = static_cast<int>(std::min<std::int64_t>(i - kFrom + 1, kFade));
+        } else if (i >= kUntil) {
+            position = static_cast<int>(std::max<std::int64_t>(kFade - (i - kUntil + 1), 0));
+        }
+        if (std::fabs(out[static_cast<std::size_t>(i)] - expected(i, position)) > 1e-6f) {
+            FAIL("frame " << i << ": " << out[static_cast<std::size_t>(i)] << ", expected "
+                          << expected(i, position));
+        }
+    }
+    bank.recorder(0).drain();
+    CHECK(bank.recorder(0).stop().frames == kUntil - kFrom);
+    driver.stop();
+}
+
 TEST_CASE("Gate flips and a publish while monitoring allocate nothing on the audio thread", "[monitor][rt]") {
     GraphDriver driver(options(1));
     realtime::CaptureBank& bank = *driver.captureBank();
