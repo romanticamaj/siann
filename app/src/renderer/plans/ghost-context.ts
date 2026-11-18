@@ -51,6 +51,13 @@ export function useReviewGhosts(store: ReviewStore | null): GhostView {
 // The attributes a DOM ghost takes besides the mockup's classes: data-ghost
 // (the 150 ms fade in of shell.css, which prefers-reduced-motion removes) and
 // data-ghost-hot on the ghosts of the hovered or pinned step (their outline).
-export function ghostAttrs(view: GhostView, steps: readonly number[]): { readonly 'data-ghost': string; readonly 'data-ghost-hot'?: string } {
-  return view.outline !== null && steps.includes(view.outline) ? { 'data-ghost': steps.join(' '), 'data-ghost-hot': 'true' } : { 'data-ghost': steps.join(' ') };
+// While the proposal is heard (m5b-ui-audition) a solid ghost also takes
+// data-ghost-mode="solid" (shell.css draws it solid); a dashed one is as before.
+export function ghostAttrs(
+  view: GhostView,
+  steps: readonly number[],
+  mode?: 'solid',
+): { readonly 'data-ghost': string; readonly 'data-ghost-hot'?: string; readonly 'data-ghost-mode'?: 'solid' } {
+  const base = view.outline !== null && steps.includes(view.outline) ? { 'data-ghost': steps.join(' '), 'data-ghost-hot': 'true' } : { 'data-ghost': steps.join(' ') };
+  return mode === 'solid' ? { ...base, 'data-ghost-mode': 'solid' } : base;
 }

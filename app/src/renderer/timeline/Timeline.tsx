@@ -31,6 +31,11 @@
 // Ctrl+Shift+A; the toolbar's snap type menu; the info line's typed values
 // (infoLineEditCommand, one command list through the canvas); a refused glue
 // is a toast (the `toasts` store) worded in the locale.
+// m5b-ui-audition (UI redesign 4.5 C5): while a proposal is heard the edit
+// guard (model/edit-guard.ts) holds every structural edit: the canvas's
+// `allows` refuses the structural ops, so no drag, split, place or volume
+// gesture begins, and the structural keys (Delete, Alt+X, Ctrl+D, M, S,
+// Shift+Delete, T) decline. Selecting, zooming and locating stay.
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 
@@ -44,6 +49,8 @@ import type { Viewport } from './geometry';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
+import { isStructural, structuralBlocked } from '../model/edit-guard';
+import { useHeard } from '../plans/heard-context';
 import { useStepNames } from '../plans/hooks';
 import { planNameParts } from '../plans/plan-name';
 import { useCapabilities } from '../shell/Capable';
@@ -173,6 +180,9 @@ export function editGates(can: CapabilitySelector): Record<EditCommand, boolean>
   };
 }
 
+// The editing commands that send structural commands (the edit guard holds them).
+const STRUCTURAL_EDITS: ReadonlySet<EditCommand> = new Set<EditCommand>(['edit.delete', 'edit.splitAtCursor', 'edit.duplicate', 'track.muteSelected', 'track.soloSelected', 'track.removeSelected']);
+
 export interface TimelineProps {
   readonly client: SessionClient;
   readonly peaks: PeaksCache;
@@ -272,6 +282,11 @@ export function Timeline({
   const can = useCapabilities();
   const canRef = useRef(can);
   canRef.current = can;
+  const heard = useHeard();
+  const heardRef = useRef(heard);
+  heardRef.current = heard;
+  // Whether `op` may be sent now: listed by the engine, and not held by the edit guard.
+  const allowed = useCallback((op: string) => canRef.current.command(op) && !(isStructural(op) && structuralBlocked(heardRef.current)), []);
   const locateRef = useRef(onLocate);
   locateRef.current = onLocate;
   const gates = editGates(can);
@@ -317,7 +332,7 @@ export function Timeline({
         t: () => translator(localeStore().getSnapshot()),
         subscribe: (listener) => localeStore().subscribe(listener),
       },
-      allows: (op) => canRef.current.command(op),
+      allows: allowed,
       playhead: realtime ?? undefined,
       laneHeights: {
         get: heights,
@@ -423,7 +438,7 @@ export function Timeline({
   const gateKey = JSON.stringify(gates);
   useEffect(() => {
     if (!timeline) return undefined;
-    const allowed = editGates(canRef.current);
+    const gated = editGates(canRef.current);
     const offs = [
       commands.register('project', 'edit.cancel', () => timeline.setPlacing(null)),
       commands.register('project', 'view.zoomIn', () => timeline.zoomIn()),
@@ -433,7 +448,10 @@ export function Timeline({
       commands.register('project', 'view.zoomFull', () => timeline.zoomFull()),
     ];
     const edit = (id: EditCommand, handler: () => boolean | void) => {
-      if (allowed[id]) offs.push(commands.register('project', id, handler));
+      if (!gated[id]) return;
+      // A structural edit declines while a proposal is heard (the edit guard).
+      const guarded = STRUCTURAL_EDITS.has(id) ? () => (structuralBlocked(heardRef.current) ? false : handler()) : handler;
+      offs.push(commands.register('project', id, guarded));
     };
     const tracks = () => tracksRef.current;
     const selection = () => ({ primary: primaryRef.current, ids: tracksRef.current });
@@ -483,7 +501,7 @@ export function Timeline({
       setRemoving(ids);
       return true;
     });
-    if (canAdd) offs.push(commands.register('project', 'track.add', () => addTrack(client, translator(localeStore().getSnapshot()))));
+    if (canAdd) offs.push(commands.register('project', 'track.add', () => (structuralBlocked(heardRef.current) ? false : addTrack(client, translator(localeStore().getSnapshot())))));
     return () => offs.forEach((off) => off());
   }, [timeline, commands, gateKey, canAdd, client, layout]);
 

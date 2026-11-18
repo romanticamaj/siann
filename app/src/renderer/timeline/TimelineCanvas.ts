@@ -27,7 +27,11 @@
 //   trimmed clip at 38 % with an arrow to its ghost, a removed clip at 38 %
 //   and cross-hatched, a removed track's lane cross-hatched with its step
 //   (under its clips, which are removed clips), and a locator change as a ghost band in the ruler's
-//   upper half. They appear at once (no fade: UI redesign 1.6). It is
+//   upper half. While the proposal is heard (m5b-ui-audition; UI redesign
+//   4.3) every one of them is solid (mode 'solid': no hatch, no dash, the
+//   ghost body over a proposed or removed lane), and the original of a moved
+//   or trimmed clip, main's place, is a faint outline instead of the clip at
+//   38 %. They appear at once (no fade: UI redesign 1.6). It is
 //   redrawn only when the snapshot, the selection, the zoom, the scroll, the
 //   size, the lane heights, the peaks, the locale or the ghosts change.
 // - The overlay layer draws the project cursor (the realtime playhead) as
@@ -113,7 +117,6 @@ import { clipTitle } from './clip-title';
 import { CLIP_DIMMED_ALPHA, dimmedTracks } from './dimming';
 import {
   ARROW,
-  GHOST_DASH,
   GHOST_HATCH_PITCH,
   GHOST_HATCH_WIDTH,
   GHOST_OUTLINE_W,
@@ -125,6 +128,7 @@ import {
   arrowOf,
   ghostClipBox,
   ghostLaneRects,
+  ghostStroke,
   locatorGhostRect,
   revealScroll,
   type GhostLane,
@@ -359,11 +363,21 @@ export interface SurfacePart {
   readonly h: number;
 }
 
+// A clip's drawn waveform columns, and how many are not silence.
+export interface PeakColumns {
+  readonly drawn: number;
+  readonly nonZero: number;
+  readonly outline?: true;
+}
+
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
 export interface TimelineTestHooks {
   // Each clip's lane rectangle and its title (clip-title.ts) as last drawn.
   clips(): Array<ClipRect & { readonly title: string }>;
-  peakColumns(clipId: string): { drawn: number; nonZero: number };
+  // Its peak columns as last drawn. While a proposal is heard the original of
+  // a moved or trimmed clip is main's place as a faint outline, with no
+  // waveform: it reports `outline: true` and no columns (m5b-ui-audition).
+  peakColumns(clipId: string): PeakColumns;
   // The outer half-heights of a clip's waveform columns in the last content frame.
   waveColumns(clipId: string): number[];
   // The surface's parts with the mockup's ids (ruler-upper, ruler-lower,
@@ -464,6 +478,8 @@ interface GhostBox {
   readonly pure: boolean;
   readonly clipId?: string;
   readonly ruler?: boolean;
+  // While the proposal is heard (m5b-ui-audition): the band drawn unbroken.
+  readonly mode?: 'solid';
 }
 
 // A ghost clip to draw: its box, the rectangle its waveform reads, its title
@@ -474,6 +490,8 @@ interface GhostShape {
   readonly rect: ClipRect;
   readonly title: string;
   readonly arrow: { x0: number; y0: number; x1: number; y1: number } | null;
+  // While the proposal is heard (m5b-ui-audition): drawn solid, unhatched.
+  readonly mode?: 'solid';
 }
 
 interface RulerDrag {
@@ -610,7 +628,7 @@ export class TimelineCanvas {
   #locatorBand: LocatorBandDrawn | null = null;
   #contentFrame: number | null = null;
   #overlayFrame: number | null = null;
-  #columns = new Map<string, { drawn: number; nonZero: number }>();
+  #columns = new Map<string, PeakColumns>();
   #rects: ClipRect[] = [];
   #resize: ResizeObserver | null = null;
   #ratio = 1;
@@ -1846,7 +1864,7 @@ export class TimelineCanvas {
     const view = this.#view;
     for (const listener of [...this.#viewListeners]) listener();
     this.#rects = snapshot ? clipRects(snapshot, view) : [];
-    const columns = new Map<string, { drawn: number; nonZero: number }>();
+    const columns = new Map<string, PeakColumns>();
     const waves = new Map<string, number[]>();
     const titles = new Map<string, string>();
     const dimmed = dimmedTracks(snapshot?.tracks ?? []);
@@ -1867,7 +1885,7 @@ export class TimelineCanvas {
     ghostLanes.forEach((lane) => parts.push({ id: `lane-${lane.key}`, x: lane.x, y: lane.y, w: lane.width, h: lane.height }));
     const lanesOf = new Map<string, { top: number; height: number }>(order.map((id, i) => [id, { top: tops[i]!, height: laneHeightOf(id, view) }]));
     adds.forEach((g, i) => lanesOf.set(g.trackId, { top: ghostLanes[i]!.y, height: ghostLanes[i]!.height }));
-    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), removed: new Map<string, number>(), lanesRemoved: [] };
+    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), outlined: new Set<string>(), removed: new Map<string, { step: number; mode?: 'solid' }>(), lanesRemoved: [] };
     const masks: Array<Omit<SurfacePart, 'id'>> = [];
     this.#rects.forEach((rect, index) => {
       const box = clipBox(rect);
@@ -1923,7 +1941,7 @@ export class TimelineCanvas {
       }
       ctx.fillStyle = palette.divider;
       order.forEach((trackId, index) => ctx.fillRect(0, tops[index]! + laneHeightOf(trackId, view) - 1, width, 1));
-      this.#drawGhostLanes(ctx, ghostLanes, palette);
+      this.#drawGhostLanes(ctx, ghostLanes, adds.map((g) => g.mode), palette);
       this.#drawRemovedLanes(ctx, ghostDraw.lanesRemoved, palette);
       ctx.restore();
     }
@@ -1935,12 +1953,19 @@ export class TimelineCanvas {
       ctx.clip();
       for (const rect of this.#rects) {
         if (rect.x > width || rect.x + rect.width < 0 || rect.y > height || rect.y + rect.height < top) continue;
+        if (ghostDraw.outlined.has(rect.clipId)) {
+          // Heard: the original of a moved or trimmed clip is main's place, as a faint outline.
+          this.#drawReplacedClip(ctx, clipBox(rect), palette);
+          columns.set(rect.clipId, { drawn: 0, nonZero: 0, outline: true });
+          waves.set(rect.clipId, []);
+          continue;
+        }
         const ghostOriginal = ghostDraw.originals.has(rect.clipId) || ghostDraw.removed.has(rect.clipId);
         const drawn = this.#drawClip(ctx, snapshot, rect, palette, selected.has(rect.clipId), dimmed.has(rect.trackId), titles.get(rect.clipId) ?? rect.mediaId, ghostOriginal ? MOVED_ORIGINAL_ALPHA : undefined);
         columns.set(rect.clipId, { drawn: drawn.length, nonZero: drawn.filter((c) => c.amplitude > 0).length });
         waves.set(rect.clipId, drawn.map((c) => c.outer));
-        const removedStep = ghostDraw.removed.get(rect.clipId);
-        if (removedStep !== undefined) this.#drawRemoved(ctx, clipBox(rect), removedStep, palette);
+        const removal = ghostDraw.removed.get(rect.clipId);
+        if (removal !== undefined) this.#drawRemoved(ctx, clipBox(rect), removal.step, removal.mode, palette);
       }
       for (const shape of ghostDraw.shapes) this.#drawGhostShape(ctx, snapshot, shape, palette);
       ctx.restore();
@@ -2103,8 +2128,10 @@ export class TimelineCanvas {
   #ghostShapes(ghosts: readonly Ghost[], lanes: ReadonlyMap<string, { top: number; height: number }>, view: Viewport, snapshot: Snapshot, parts: SurfacePart[]) {
     const shapes: GhostShape[] = [];
     const originals = new Map<string, number>();
-    const removed = new Map<string, number>();
-    const lanesRemoved: Array<{ step: number; box: Box }> = [];
+    // The originals drawn as main's faint outline while the proposal is heard.
+    const outlined = new Set<string>();
+    const removed = new Map<string, { step: number; mode?: 'solid' }>();
+    const lanesRemoved: Array<{ step: number; box: Box; mode?: 'solid' }> = [];
     const boxes: GhostBox[] = [];
     const rows: Array<{ step: number; top: number; height: number }> = [];
     const counts = new Map<string, number>();
@@ -2133,9 +2160,10 @@ export class TimelineCanvas {
           const from = g.kind === 'clip-place' ? undefined : original(g.clipId);
           if (from) {
             originals.set(g.clipId, g.step);
+            if (g.mode === 'solid') outlined.add(g.clipId);
             boxes.push({ step: g.step, box: clipBox(from), pure: false, clipId: g.clipId });
           }
-          shapes.push({ step: g.step, box, rect, title: clipTitle(snapshot, g), arrow: g.kind === 'clip-move' && from ? arrowOf(clipBox(from), box) : null });
+          shapes.push({ step: g.step, box, rect, title: clipTitle(snapshot, g), arrow: g.kind === 'clip-move' && from ? arrowOf(clipBox(from), box) : null, ...(g.mode ? { mode: g.mode } : {}) });
           boxes.push({ step: g.step, box, pure: true });
           part(g.kind === 'clip-place' ? 'clip-ghost-new' : g.kind === 'clip-move' ? 'clip-ghost-move' : 'clip-ghost-trim', box);
           break;
@@ -2145,7 +2173,7 @@ export class TimelineCanvas {
           const lane = lanes.get(g.trackId);
           if (!lane) break;
           const box = { x: 0, y: lane.top, width: view.width, height: lane.height };
-          lanesRemoved.push({ step: g.step, box });
+          lanesRemoved.push({ step: g.step, box, ...(g.mode ? { mode: g.mode } : {}) });
           boxes.push({ step: g.step, box, pure: false });
           part('lane-ghost-remove', box);
           break;
@@ -2153,7 +2181,7 @@ export class TimelineCanvas {
         case 'clip-remove': {
           const from = original(g.clipId);
           if (!from) break;
-          removed.set(g.clipId, g.step);
+          removed.set(g.clipId, { step: g.step, ...(g.mode ? { mode: g.mode } : {}) });
           const box = clipBox(from);
           boxes.push({ step: g.step, box, pure: false, clipId: g.clipId });
           part('clip-ghost-remove', box);
@@ -2162,7 +2190,7 @@ export class TimelineCanvas {
         case 'locators': {
           const band = locatorGhostRect({ left: BigInt(g.after.left), right: BigInt(g.after.right) }, view);
           if (!band) break;
-          boxes.push({ step: g.step, box: band, pure: false, ruler: true });
+          boxes.push({ step: g.step, box: band, pure: false, ruler: true, ...(g.mode ? { mode: g.mode } : {}) });
           part('locator-band-ghost', band);
           break;
         }
@@ -2182,18 +2210,26 @@ export class TimelineCanvas {
     }
     this.#ghostBoxes = boxes;
     this.#ghostRows = rows;
-    return { shapes, originals, removed, lanesRemoved };
+    return { shapes, originals, outlined, removed, lanesRemoved };
   }
 
   // A removed track's lane: the proposed lane's hatch, crossed, and its step
   // disc at the lane's start (its clips are drawn over it, each dimmed and
-  // cross-hatched with its own disc).
-  #drawRemovedLanes(ctx: CanvasRenderingContext2D, lanes: ReadonlyArray<{ step: number; box: Box }>, palette: Palette): void {
-    for (const { step, box } of lanes) {
+  // cross-hatched with its own disc). While the proposal is heard (solid):
+  // the ghost body over the lane, unhatched, with its disc.
+  #drawRemovedLanes(ctx: CanvasRenderingContext2D, lanes: ReadonlyArray<{ step: number; box: Box; mode?: 'solid' }>, palette: Palette): void {
+    for (const { step, box, mode } of lanes) {
       ctx.save();
       ctx.beginPath();
       ctx.rect(box.x, box.y, box.width, box.height - 1);
       ctx.clip();
+      if (!ghostStroke(mode).hatch) {
+        ctx.fillStyle = palette.aiBody;
+        ctx.fillRect(box.x, box.y, box.width, box.height - 1);
+        this.#drawStepDisc(ctx, box, step, palette);
+        ctx.restore();
+        continue;
+      }
       ctx.strokeStyle = palette.aiLane;
       ctx.lineWidth = LANE_HATCH_WIDTH;
       for (let x = -box.height; x < box.width + box.height; x += LANE_HATCH_PITCH) {
@@ -2209,11 +2245,17 @@ export class TimelineCanvas {
     }
   }
 
-  // A proposed track's lane: draw()'s hatch over the lane, clipped to it.
-  #drawGhostLanes(ctx: CanvasRenderingContext2D, lanes: readonly GhostLane[], palette: Palette): void {
-    for (const lane of lanes) {
+  // A proposed track's lane: draw()'s hatch over the lane, clipped to it;
+  // while the proposal is heard (solid), the ghost body, unhatched.
+  #drawGhostLanes(ctx: CanvasRenderingContext2D, lanes: readonly GhostLane[], modes: ReadonlyArray<'solid' | undefined>, palette: Palette): void {
+    lanes.forEach((lane, index) => {
       ctx.fillStyle = palette.divider;
       ctx.fillRect(0, lane.y + lane.height - 1, lane.width, 1);
+      if (!ghostStroke(modes[index]).hatch) {
+        ctx.fillStyle = palette.aiBody;
+        ctx.fillRect(lane.x, lane.y, lane.width, lane.height - 1);
+        return;
+      }
       ctx.save();
       ctx.beginPath();
       ctx.rect(lane.x, lane.y, lane.width, lane.height - 1);
@@ -2227,7 +2269,7 @@ export class TimelineCanvas {
         ctx.stroke();
       }
       ctx.restore();
-    }
+    });
   }
 
   // draw()'s clip() for a ghost: the violet body hatched, the title strip,
@@ -2235,6 +2277,7 @@ export class TimelineCanvas {
   // dashed outline; and a moved clip's arrow from its original.
   #drawGhostShape(ctx: CanvasRenderingContext2D, snapshot: Snapshot, shape: GhostShape, palette: Palette): void {
     const { box } = shape;
+    const stroke = ghostStroke(shape.mode);
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.beginPath();
@@ -2245,20 +2288,22 @@ export class TimelineCanvas {
     ctx.beginPath();
     ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
     ctx.clip();
-    ctx.strokeStyle = palette.aiHatch;
-    ctx.lineWidth = GHOST_HATCH_WIDTH;
-    for (let k = -box.height; k < box.width; k += GHOST_HATCH_PITCH) {
-      ctx.beginPath();
-      ctx.moveTo(box.x + k, box.y + box.height);
-      ctx.lineTo(box.x + k + box.height, box.y);
-      ctx.stroke();
+    if (stroke.hatch) {
+      ctx.strokeStyle = palette.aiHatch;
+      ctx.lineWidth = GHOST_HATCH_WIDTH;
+      for (let k = -box.height; k < box.width; k += GHOST_HATCH_PITCH) {
+        ctx.beginPath();
+        ctx.moveTo(box.x + k, box.y + box.height);
+        ctx.lineTo(box.x + k + box.height, box.y);
+        ctx.stroke();
+      }
     }
     const strip = titleStrip(box);
     ctx.fillStyle = palette.aiTitle;
     ctx.fillRect(strip.x, strip.y, strip.width, strip.height);
     const tones: ClipPalette = { body: palette.aiBody, title: palette.aiTitle, titleText: palette.aiTitleText, waveOuter: palette.aiWaveOuter, waveOuterAlpha: 1, waveInner: palette.aiWaveInner, outline: palette.ai, outlineWidth: GHOST_OUTLINE_W };
     this.#drawWaveform(ctx, snapshot, shape.rect, box, tones, 1);
-    this.#drawStepDisc(ctx, box, shape.step, palette);
+    if (shape.step > 0) this.#drawStepDisc(ctx, box, shape.step, palette);
     ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
@@ -2268,7 +2313,7 @@ export class TimelineCanvas {
       ctx.fillText(shape.title, x, box.y + TITLE_Y, Math.max(0, box.x + box.width - x - TITLE_X));
     }
     ctx.restore();
-    ctx.setLineDash([...GHOST_DASH]);
+    ctx.setLineDash([...stroke.dash]);
     ctx.strokeStyle = palette.ai;
     ctx.lineWidth = GHOST_OUTLINE_W;
     ctx.beginPath();
@@ -2298,27 +2343,50 @@ export class TimelineCanvas {
     ctx.restore();
   }
 
-  // A removed clip over its original at 38 %: cross-hatched in violet, dashed, with its step.
-  #drawRemoved(ctx: CanvasRenderingContext2D, box: Box & { readonly radius: number }, step: number, palette: Palette): void {
+  // A removed clip over its original at 38 %: cross-hatched in violet, dashed,
+  // with its step; while the proposal is heard (solid), the ghost body,
+  // unhatched, with an unbroken outline.
+  #drawRemoved(ctx: CanvasRenderingContext2D, box: Box & { readonly radius: number }, step: number, mode: 'solid' | undefined, palette: Palette): void {
+    const stroke = ghostStroke(mode);
     ctx.save();
     ctx.beginPath();
     ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+    if (!stroke.hatch) {
+      ctx.fillStyle = palette.aiBody;
+      ctx.fill();
+    }
     ctx.clip();
-    ctx.strokeStyle = palette.aiHatch;
-    ctx.lineWidth = GHOST_HATCH_WIDTH;
-    for (let k = -box.height; k < box.width + box.height; k += GHOST_HATCH_PITCH) {
-      ctx.beginPath();
-      ctx.moveTo(box.x + k, box.y + box.height);
-      ctx.lineTo(box.x + k + box.height, box.y);
-      ctx.moveTo(box.x + k, box.y);
-      ctx.lineTo(box.x + k + box.height, box.y + box.height);
-      ctx.stroke();
+    if (stroke.hatch) {
+      ctx.strokeStyle = palette.aiHatch;
+      ctx.lineWidth = GHOST_HATCH_WIDTH;
+      for (let k = -box.height; k < box.width + box.height; k += GHOST_HATCH_PITCH) {
+        ctx.beginPath();
+        ctx.moveTo(box.x + k, box.y + box.height);
+        ctx.lineTo(box.x + k + box.height, box.y);
+        ctx.moveTo(box.x + k, box.y);
+        ctx.lineTo(box.x + k + box.height, box.y + box.height);
+        ctx.stroke();
+      }
     }
     this.#drawStepDisc(ctx, box, step, palette);
     ctx.restore();
     ctx.save();
-    ctx.setLineDash([...GHOST_DASH]);
+    ctx.setLineDash([...stroke.dash]);
     ctx.strokeStyle = palette.ai;
+    ctx.lineWidth = GHOST_OUTLINE_W;
+    ctx.beginPath();
+    ctx.roundRect(box.x + OUTLINE_INSET, box.y + OUTLINE_INSET, box.width - 2 * OUTLINE_INSET, box.height - 2 * OUTLINE_INSET, box.radius);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Heard (m5b-ui-audition; UI redesign 4.3): the original of a moved or
+  // trimmed clip is the value its ghost replaces, main's place, drawn as a
+  // faint outline (--ai-a300, as the strip's replaced cap) with nothing in it.
+  #drawReplacedClip(ctx: CanvasRenderingContext2D, box: Box & { readonly radius: number }, palette: Palette): void {
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = palette.aiTitle;
     ctx.lineWidth = GHOST_OUTLINE_W;
     ctx.beginPath();
     ctx.roundRect(box.x + OUTLINE_INSET, box.y + OUTLINE_INSET, box.width - 2 * OUTLINE_INSET, box.height - 2 * OUTLINE_INSET, box.radius);
@@ -2339,13 +2407,14 @@ export class TimelineCanvas {
     ctx.textAlign = 'left';
   }
 
-  // The locator ghost band in the ruler's upper half: the new range, violet and dashed.
+  // The locator ghost band in the ruler's upper half: the new range, violet
+  // and dashed; unbroken while the proposal is heard (solid).
   #drawGhostBand(ctx: CanvasRenderingContext2D, shape: GhostBox, palette: Palette): void {
     const b = shape.box;
     ctx.save();
     ctx.fillStyle = palette.aiTitle;
     ctx.fillRect(b.x, b.y, b.width, b.height);
-    ctx.setLineDash([...GHOST_DASH]);
+    ctx.setLineDash([...ghostStroke(shape.mode).dash]);
     ctx.strokeStyle = palette.ai;
     ctx.lineWidth = GHOST_OUTLINE_W;
     ctx.strokeRect(b.x + OUTLINE_INSET, b.y + OUTLINE_INSET, b.width - 2 * OUTLINE_INSET, b.height - 2 * OUTLINE_INSET);

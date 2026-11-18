@@ -33,6 +33,7 @@ import { useEffect, useRef, useState } from 'react';
 import { refusalLine } from '../i18n/errors';
 import { useLocale, useT, type MessageKey } from '../i18n/t';
 import { Icon, type IconName } from '../shell/icons';
+import { useEditGuard } from '../plans/heard-context';
 import { ISOLATE } from '../plans/isolate';
 import { GRID_TYPES, SNAP_TYPES, type GridType, type SnapSettings, type SnapType } from './snap';
 import type { TimelineRefusal, Tool } from './TimelineCanvas';
@@ -104,6 +105,9 @@ const TOOL_HOLDS: Readonly<Record<number, string>> = {
 
 export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapToggle, onGrid, onSnapType, onAutoScroll, pill = null }: ToolbarProps) {
   const t = useT();
+  // The edit guard (m5b-ui-audition): the Split tool only splits, so it is
+  // disabled with the reason while a proposal is heard.
+  const guard = useEditGuard();
   const locale = useLocale();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [snapMenu, setSnapMenu] = useState<{ x: number; y: number } | null>(null);
@@ -121,6 +125,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
             if (!landed) return <span key={key} className={TOOL_HOLDS[key]} aria-hidden="true" />;
             if (!allowed(landed.tool)) return <span key={key} className="tool-empty" aria-hidden="true" />;
             const on = tool === landed.tool;
+            const guarded = landed.tool === 'split' ? guard : null;
             return (
               <button
                 key={key}
@@ -130,7 +135,8 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
                 data-testid={landed.testid}
                 aria-pressed={on}
                 aria-label={t(landed.label)}
-                title={t(landed.label)}
+                title={guarded ?? t(landed.label)}
+                disabled={guarded !== null}
                 onClick={() => onTool(landed.tool)}
               >
                 <Icon name={landed.icon} small />

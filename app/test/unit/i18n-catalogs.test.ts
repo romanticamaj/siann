@@ -28,6 +28,8 @@ const SAME_AS_ENGLISH: ReadonlySet<Key> = new Set<Key>([
   // The status bar's units, the mockup's in every locale (m5-ui-alignment-chrome).
   'status.sampleRate',
   'status.latencyValue',
+  // The branch chip's "main", the mockup's in every locale (m5b-ui-audition).
+  'chip.main',
   // The saved mark, a bullet, and Studio Setup's sample rate in Hz (m5b-ui-project).
   'session.unsavedMark',
   'setup.rateValue',

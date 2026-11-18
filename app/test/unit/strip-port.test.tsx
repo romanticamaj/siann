@@ -490,6 +490,49 @@ test('a proposed track: a dashed strip labelled NEW · STEP n before the master,
   assert.deepEqual(strips(two).filter((s) => classes(s).includes('ghost')).map((s) => s.attrs['data-part-key']), ['ghost', 'ghost-2']);
 });
 
+// m5b-ui-audition (UI redesign 4.3): while the proposal is heard its ghosts
+// are solid (data-ghost-mode="solid", shell.css) and the value each replaces,
+// main's, is the faint outline: the real cap stays at main's value, marked
+// data-replaced. A ghost without a step (a gesture on the branch) carries no
+// badge. The dashed ghosts carry neither attribute.
+test('solid ghosts while the proposal is heard: the ghost cap, the pan tick and the M ring solid, the real cap the outline', () => {
+  const solid: readonly Ghost[] = [
+    { kind: 'gain', step: 3, trackId: 'trk_bg', before: -9000, after: -4500, mode: 'solid', replaced: -9000 },
+    { kind: 'pan', step: 4, trackId: 'trk_keys', before: -3500, after: -2000, mode: 'solid', replaced: -3500 },
+    { kind: 'mute', step: 5, trackId: 'trk_fx', before: true, after: false, mode: 'solid', replaced: true },
+    { kind: 'gain', step: 0, trackId: 'trk_keys', before: -8000, after: -2500, mode: 'solid', replaced: -8000 },
+  ];
+  const root = renderGhosts([keys(), voxBg(), fx()], solid);
+  const bg = stripOf(root, 'Vox BG');
+  const ghostCap = find(bg, byClass('ghost'));
+  assert.equal(ghostCap.attrs['data-ghost-mode'], 'solid');
+  assert.equal(styleOf(ghostCap, 'bottom'), `${(milliDbToPosition(-4500) * 100).toFixed(1)}%`, 'at the branch value');
+  const cap = findAll(bg, (el) => el.attrs['data-part-of'] === 'cap')[0]!;
+  assert.equal(cap.attrs['data-replaced'], 'true');
+  assert.equal(styleOf(cap, 'bottom'), `${(milliDbToPosition(-9000) * 100).toFixed(1)}%`, 'the outline at main\'s value');
+  const tick = findAll(stripOf(root, 'Keys'), (el) => el.attrs['data-part-of'] === 'pan-knob-ghost')[0]!;
+  assert.equal(tick.attrs['data-ghost-mode'], 'solid');
+  const mute = findAll(stripOf(root, 'FX'), (el) => el.attrs['data-part-of'] === 'mute')[0]!;
+  assert.ok(classes(mute).includes('ghost'));
+  assert.equal(mute.attrs['data-ghost-mode'], 'solid');
+  // The un-numbered gain ghost on Keys: the solid cap, no badge.
+  const keysStrip = stripOf(root, 'Keys');
+  assert.equal(find(keysStrip, byClass('ghost')).attrs['data-ghost-mode'], 'solid');
+  assert.equal(findAll(keysStrip, (el) => el.attrs['data-part-of'] === 'gain-step-ghost').length, 0, 'no step badge');
+});
+
+test('dashed ghosts carry no solid mode and no replaced mark', () => {
+  const markup = renderToStaticMarkup(
+    <CapabilitiesContext.Provider value={FULL}>
+      <GhostContext.Provider value={{ ghosts: MOCKUP_GHOSTS, outline: null, pin: () => undefined }}>
+        <Mixer client={fakeClient(snapshotOf(['trk_keys', 'trk_bg', 'trk_fx'], [keys(), voxBg(), fx()], [], []))} gestures={gestures} realtime={realtime} />
+      </GhostContext.Provider>
+    </CapabilitiesContext.Provider>,
+  );
+  assert.ok(!markup.includes('data-ghost-mode'));
+  assert.ok(!markup.includes('data-replaced'));
+});
+
 test('a removed track\'s strip is dimmed by an added class; a rename shows both names', () => {
   const root = renderGhosts([keys(), voxBg()], [
     { kind: 'track-remove', step: 2, trackId: 'trk_keys' },

@@ -122,6 +122,10 @@ export const COMMAND_IDS = [
   'edit.nudgeEndLeft',
   'edit.nudgeEndRight',
   'edit.selectNone',
+  // The audition (m5b-ui-audition; spec 4.3, 3.6): hear the other side while
+  // a plan is auditioned, and run the selected plan's primary action.
+  'audition.flip',
+  'plans.primary',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

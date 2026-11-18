@@ -23,7 +23,7 @@ import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type GhostSource, type Playh
 import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
-import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
+import { clearFrames, fakeSurface, type Call, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
 import { media, sampleSnapshot, snapshotOf, track } from './support/timeline';
 
 installSurfaceGlobals();
@@ -1277,5 +1277,63 @@ test('a removed track\'s lane is cross-hatched in violet with its step disc (lan
     flushFrames();
     assert.ok(!r.hooks.parts().some((p) => p.id === 'lane-ghost-remove'));
     r.canvas.destroy();
+  });
+});
+
+// m5b-ui-audition (UI redesign 4.3): while the proposal is heard every ghost
+// the event display draws is solid (what is playing): the proposed lane, a
+// ghost clip, a removed lane and a removed clip lose their hatch and their
+// dashed outline, the locator ghost band its dash; the value each replaces,
+// main's, is the faint outline: a moved clip's original is its outline in
+// --ai-a300 instead of the clip at 38 %.
+test('while the proposal is heard every canvas ghost is solid, unhatched and undashed, a moved clip\'s original its faint outline', () => {
+  withNamedTokens(() => {
+    const solid = (ghosts: readonly Ghost[]) => ghosts.map((g) => ({ ...g, mode: 'solid' }) as Ghost);
+    const locators: Ghost = { kind: 'locators', step: 4, before: null, after: { left: '9600', right: '19200' } };
+    const removal: readonly Ghost[] = [
+      { kind: 'track-remove', step: 1, trackId: 'trk_a' },
+      { kind: 'clip-remove', step: 1, clipId: 'clp_2', trackId: 'trk_a', mediaId: 'med_si', position: '0', sourceStart: '1000', length: '9600', cascade: true },
+    ];
+    const hatch = (c: Call) => c.kind === 'stroke' && (c.style === '--ai-a070' || c.style === '--ai-a160');
+    const ghostStrokes = (calls: readonly Call[]) => calls.filter((c) => (c.kind === 'stroke' || c.kind === 'strokeRect') && c.style.startsWith('--ai'));
+    for (const set of [[...SAMPLE_GHOSTS, locators], removal]) {
+      // Dashed and hatched as m5b-ui-ghosts draws a proposal.
+      const dashed = ghostRig(set);
+      const before = dashed.surface.contentCalls.calls;
+      assert.ok(ghostStrokes(before).some((c) => c.dash.length > 0), 'a dashed ghost outline');
+      assert.ok(before.some(hatch), 'a hatch');
+      dashed.canvas.destroy();
+
+      const r = ghostRig(solid(set));
+      const calls = r.surface.contentCalls.calls;
+      assert.deepEqual(calls.filter(hatch), [], 'no lane or clip hatch');
+      assert.deepEqual(ghostStrokes(calls).filter((c) => c.dash.length > 0), [], 'no dashed ghost outline');
+      if (set === removal) {
+        // The removed lane and clip: the ghost body, an unbroken outline and the step disc.
+        const lane = r.hooks.parts().find((p) => p.id === 'lane-ghost-remove')!;
+        assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--ai-a100' && c.args[1] === lane.y && c.args[2] === lane.w), 'the removed lane\'s body');
+        const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_2')!);
+        assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai-a100' && c.path?.[0]?.op === 'roundRect' && c.path[0].args[0] === box.x && c.path[0].args[1] === box.y), 'the removed clip\'s body');
+        assert.ok(calls.some((c) => c.kind === 'stroke' && c.style === '--ai' && c.lineWidth === 1.25), 'the removed clip\'s outline');
+        assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai'), 'the step disc');
+      } else {
+        // The proposed lane: the ghost body over the lane, no hatch.
+        const lane = r.hooks.parts().find((p) => p.id === 'lane-ghost')!;
+        assert.ok(calls.some((c) => c.kind === 'fillRect' && c.style === '--ai-a100' && c.args[1] === lane.y && c.args[2] === lane.w), 'the proposed lane\'s body');
+        // The locator ghost band's outline, unbroken.
+        assert.ok(calls.some((c) => c.kind === 'strokeRect' && c.style === '--ai' && c.dash.length === 0), 'the band\'s outline');
+        // The moved clip's original: its faint outline, not the clip at 38 %.
+        assert.ok(!calls.some((c) => c.alpha === 0.38), 'no clip at 38 %');
+        const box = clipBox(r.hooks.clips().find((c) => c.clipId === 'clp_1')!);
+        const outline = calls.filter((c) => c.kind === 'stroke' && c.style === '--ai-a300' && c.path?.[0]?.op === 'roundRect');
+        assert.equal(outline.length, 1, 'one faint outline');
+        assert.ok(Math.abs(outline[0]!.path![0]!.args[0]! - box.x) < 1 && Math.abs(outline[0]!.path![0]!.args[1]! - box.y) < 1, 'at the original\'s box');
+        assert.deepEqual(outline[0]!.dash, []);
+        // Its peak columns are not drawn, and the hook says it is an outline,
+        // so a wait for every clip's waveform (the UX tour's) passes it by.
+        assert.deepEqual(r.hooks.peakColumns('clp_1'), { drawn: 0, nonZero: 0, outline: true });
+      }
+      r.canvas.destroy();
+    }
   });
 });

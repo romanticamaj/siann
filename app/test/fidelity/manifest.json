@@ -42,7 +42,7 @@
     "m5-ui-port-track-list": "report",
     "m5-ui-port-toolbar": "report",
     "m5b-ui-ghosts": "report",
-    "m5b-ui-audition": "pending",
+    "m5b-ui-audition": "report",
     "m5b-ui-media": "pending",
     "m5b-ui-edit-more": "report",
     "m5b-ui-fades": "pending",

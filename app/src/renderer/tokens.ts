@@ -210,7 +210,6 @@ export const TOKENS = {
   "icon": "16px",
   "icon-s": "14px",
   "display-locators-empty-w": "101.7px",
-  "hold-branch-chip-w": "86.719px",
   "hold-transport-record-w": "32px",
   "hold-transport-record-h": "28px",
   "hold-dsp-load-w": "99.484px",

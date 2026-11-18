@@ -60,6 +60,7 @@ import type { GestureController } from '../model/gesture-controller';
 import type { SessionClient } from '../model/session-client';
 import { ghostAttrs, useGhostView, type GhostView } from '../plans/ghost-context';
 import { masterGhosts, trackGhosts, type Ghost } from '../plans/ghosts';
+import { useEditGuard } from '../plans/heard-context';
 import { ISOLATE } from '../plans/isolate';
 import { RenameGhost, renameTitle } from '../plans/RenameGhost';
 import { useCapabilities } from '../shell/Capable';
@@ -173,6 +174,8 @@ interface GainGhost {
   readonly step: number;
   readonly before: number | null;
   readonly after: number;
+  // 'solid' while the proposal is heard (m5b-ui-audition).
+  readonly mode?: 'solid';
 }
 
 interface FaderProps {
@@ -227,16 +230,16 @@ function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderPro
     >
       <div className="unity" style={{ bottom: percent(milliDbToPosition(0)) }} />
       {ghosts.map((g) => {
-        const from = milliDbToPosition(g.before ?? value);
+        const from = milliDbToPosition(g.mode === 'solid' ? value : (g.before ?? value));
         const to = milliDbToPosition(g.after);
         return [
-          <div key={`l${g.step}`} className="gline" data-part-of="gain-line-ghost" {...ghostAttrs(view, [g.step])} style={{ bottom: percent(Math.min(from, to)), height: percent(Math.abs(to - from)) }} />,
+          <div key={`l${g.step}`} className="gline" data-part-of="gain-line-ghost" {...ghostAttrs(view, [g.step], g.mode)} style={{ bottom: percent(Math.min(from, to)), height: percent(Math.abs(to - from)) }} />,
           <div
             key={`c${g.step}`}
             className="cap ghost"
             data-part-of="cap-ghost"
             data-testid={`fader-${id}-ghost-${g.step}`}
-            {...ghostAttrs(view, [g.step])}
+            {...ghostAttrs(view, [g.step], g.mode)}
             style={{ bottom: percent(to) }}
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -245,7 +248,7 @@ function Fader({ entityRef, value, id, label, gestures, ghosts, view }: FaderPro
           />,
         ];
       })}
-      <div className="cap" data-part-of="cap" ref={cap} style={{ bottom: percent(position) }} />
+      <div className="cap" data-part-of="cap" ref={cap} {...(ghosts.some((g) => g.mode === 'solid') ? { 'data-replaced': 'true' } : {})} style={{ bottom: percent(position) }} />
       <span ref={tooltip} className="value-tooltip" data-testid={`fader-${id}-tooltip`} role="status" hidden />
     </div>
   );
@@ -281,7 +284,7 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
   const label: CSSProperties = { textAlign: 'right', color: 'var(--tx-4)', fontSize: locale.startsWith('zh') ? 'var(--fs-10h)' : 'var(--fs-micro)' };
   return (
     <div className="panrow" data-part-of="pan" ref={row}>
-      {ghost ? (
+      {ghost && ghost.step > 0 ? (
         <span className="lab" data-part-of="pan-step-ghost" {...ghostAttrs(view, [ghost.step])} style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={() => view.pin(ghost.step)}>
           <span className="stepn">{String(ghost.step)}</span>
         </span>
@@ -294,6 +297,7 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
         <Knob
           pan={value}
           ghost={ghost?.after}
+          ghostMode={ghost?.mode}
           ref={knob}
           data-part-of="pan-knob"
           data-testid={`pan-${track.id}`}
@@ -314,7 +318,7 @@ function PanRow({ track, gestures, listed, ghost, view }: ControlProps & { liste
       <span
         className="lab"
         data-testid={`pan-value-${track.id}`}
-        {...(ghost ? { 'data-part-of': 'pan-value-ghost', ...ghostAttrs(view, [ghost.step]), style: { color: 'var(--ai-2)' } } : {})}
+        {...(ghost ? { 'data-part-of': 'pan-value-ghost', ...ghostAttrs(view, [ghost.step], ghost.mode), style: { color: 'var(--ai-2)' } } : {})}
       >
         {editing ? (
           <TypedValue
@@ -343,6 +347,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
   const can = useCapabilities();
   const track = useTrack(client, trackId);
   const view = useGhostView();
+  const guard = useEditGuard();
   if (!track) return null;
   const ghosts = trackGhosts(view.ghosts, trackId);
   const gain = ghosts.gain.at(-1);
@@ -365,7 +370,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
       style={style}
       {...(ghosts.steps.length > 0 ? ghostAttrs(view, ghosts.steps) : {})}
     >
-      {gain ? (
+      {gain && gain.step > 0 ? (
         <span className="stepn" data-part-of="gain-step-ghost" {...ghostAttrs(view, [gain.step])} style={{ right: 'var(--space)', top: 'var(--strip-gain-step-top)' }} onClick={() => view.pin(gain.step)}>
           {String(gain.step)}
         </span>
@@ -373,25 +378,25 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
       {inserts && pluginsListed(can) ? <InsertRack client={client} track={track} view={view} /> : <div className="ins" aria-hidden="true" />}
       <PanRow track={track} gestures={gestures} listed={panListed} ghost={ghosts.pan.at(-1)} view={view} />
       <div className="btns" data-part-of="buttons">
-        {mute ? (
+        {mute && mute.step > 0 ? (
           <span className="stepn" data-part-of="mute-step-ghost" {...ghostAttrs(view, [mute.step])} style={{ position: 'absolute', zIndex: 2, left: 0 }} onClick={() => view.pin(mute.step)}>
             {String(mute.step)}
           </span>
         ) : null}
-        {solo ? (
+        {solo && solo.step > 0 ? (
           <span className="stepn" data-part-of="solo-step-ghost" {...ghostAttrs(view, [solo.step])} style={{ position: 'absolute', zIndex: 2, left: 'var(--ms-w)' }} onClick={() => view.pin(solo.step)}>
             {String(solo.step)}
           </span>
         ) : null}
         {can.command('track.set_mute') ? (
-          <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} data-testid={`mute-${trackId}`} data-part-of="mute" aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
+          <button type="button" className={`msr m${track.mute ? ' on' : ''}${mute ? ' ghost' : ''}`} data-testid={`mute-${trackId}`} data-part-of="mute" {...(mute?.mode ? { 'data-ghost-mode': mute.mode } : {})} disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.muteLabel', { track: track.name })} aria-pressed={track.mute} onClick={() => toggleTrack(client, track, 'track.set_mute')}>
             M
           </button>
         ) : (
           <Hold className="msr-box" />
         )}
         {can.command('track.set_solo') ? (
-          <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} data-testid={`solo-${trackId}`} data-part-of="solo" aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
+          <button type="button" className={`msr s${track.solo ? ' on' : ''}${solo ? ' ghost' : ''}`} data-testid={`solo-${trackId}`} data-part-of="solo" {...(solo?.mode ? { 'data-ghost-mode': solo.mode } : {})} disabled={guard !== null} title={guard ?? undefined} aria-label={t('strip.soloLabel', { track: track.name })} aria-pressed={track.solo} onClick={() => toggleTrack(client, track, 'track.set_solo')}>
             S
           </button>
         ) : (
@@ -419,7 +424,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
           typing={faderListed ? { testId: `gain-input-${trackId}`, label: t('strip.gainInput', { track: track.name }) } : undefined}
         />
         {gain ? (
-          <span className="to" data-testid={`fader-value-${trackId}-ghost`} {...ghostAttrs(view, [gain.step])}>
+          <span className="to" data-testid={`fader-value-${trackId}-ghost`} {...ghostAttrs(view, [gain.step], gain.mode)}>
             {`→ ${formatDb(gain.after).replace(/ dB$/, '')}`}
           </span>
         ) : (
@@ -454,7 +459,7 @@ export function GhostStrip({ ghost, view }: { ghost: Extract<Ghost, { kind: 'tra
       role="group"
       aria-label={t('ghost.proposedTrack', { name: ghost.name })}
       style={{ '--c': 'var(--ai)' } as CSSProperties}
-      {...ghostAttrs(view, [ghost.step])}
+      {...ghostAttrs(view, [ghost.step], ghost.mode)}
       onClick={() => view.pin(ghost.step)}
     >
       <div className="ins" data-part-of="inserts" aria-hidden="true" />
@@ -555,7 +560,7 @@ export function MasterStrip({ client, gestures }: { client: SessionClient; gestu
           />
         ) : null}
         {ghost ? (
-          <span className="to" data-testid="fader-value-master-ghost" {...ghostAttrs(view, [ghost.step])}>
+          <span className="to" data-testid="fader-value-master-ghost" {...ghostAttrs(view, [ghost.step], ghost.mode)}>
             {`→ ${formatDb(ghost.after).replace(/ dB$/, '')}`}
           </span>
         ) : (

@@ -313,7 +313,6 @@
      (m5-ui-port-toolbar): tools 2 and 6 to 9 (M6a), each the
      width of tool()'s .b, the proposal pill (m5b-ui-ghosts) and the Fade In
      and Fade Out fields (m5b-ui-fades); in en, and in Chinese below. */
-  --hold-branch-chip-w: calc(86.719px * var(--scale));
   --hold-transport-record-w: calc(32px * var(--scale));
   --hold-transport-record-h: calc(28px * var(--scale));
   --hold-dsp-load-w: calc(99.484px * var(--scale));

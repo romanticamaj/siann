@@ -21,6 +21,8 @@ export interface Call {
   readonly text?: string;
   // fill, stroke, clip: the current path.
   readonly path?: readonly Segment[];
+  // The line dash (setLineDash) the call drew with; [] for an unbroken line.
+  readonly dash: readonly number[];
 }
 
 export interface Recorded {
@@ -44,10 +46,10 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; recorded: Recorded
   const labels: Recorded['labels'] = [];
   const calls: Call[] = [];
   let path: Segment[] = [];
-  let state: Record<string | symbol, unknown> = { lineWidth: 1, globalAlpha: 1, fillStyle: '', strokeStyle: '', font: '' };
+  let state: Record<string | symbol, unknown> = { lineWidth: 1, globalAlpha: 1, fillStyle: '', strokeStyle: '', font: '', lineDash: [] as number[] };
   const stack: Array<Record<string | symbol, unknown>> = [];
   const call = (kind: Call['kind'], style: unknown, args: readonly number[], extra: Partial<Call> = {}) =>
-    calls.push({ kind, style: String(style), alpha: Number(state.globalAlpha), lineWidth: Number(state.lineWidth), font: String(state.font), args, ...extra });
+    calls.push({ kind, style: String(style), alpha: Number(state.globalAlpha), lineWidth: Number(state.lineWidth), font: String(state.font), args, dash: [...(state.lineDash as number[])], ...extra });
   const segment = (op: Segment['op']) => (...args: unknown[]) => void path.push({ op, args: args.filter((a): a is number => typeof a === 'number') });
   const target: Record<string | symbol, unknown> = {
     fillText: (text: string, ...args: number[]) => {
@@ -87,6 +89,9 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; recorded: Recorded
       if (previous) state = previous;
     },
     measureText: (text: string) => ({ width: text.length * 6 }),
+    setLineDash: (dash: readonly number[]) => {
+      state.lineDash = [...dash];
+    },
   };
   const ctx = new Proxy(target, {
     get: (t, key) => (key in t ? t[key] : key in state ? state[key] : () => undefined),

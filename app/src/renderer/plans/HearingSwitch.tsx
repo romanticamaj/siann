@@ -17,6 +17,7 @@ import type { SessionClient } from '../model/session-client';
 import { useCapabilities } from '../shell/Capable';
 import { Icon } from '../shell/icons';
 import { runAction } from './actions';
+import { heardSide, proposalBranch } from './hearing';
 import { usePlanSnapshot } from './hooks';
 
 export interface HearingSwitchProps {
@@ -31,9 +32,8 @@ export function HearingSwitch({ client, plans }: HearingSwitchProps) {
   const [busy, setBusy] = useState(false);
   if (!can.has('audition.hear')) return null;
   const heard = snapshot.heard;
-  const proposals = snapshot.plans.filter((p) => p.proposalBranch !== undefined).map((p) => p.proposalBranch!);
-  const proposal = heard !== null && heard !== 'main' ? heard : proposals[proposals.length - 1];
-  const side = heard === null ? 'unknown' : heard === 'main' ? 'main' : 'proposal';
+  const proposal = proposalBranch(snapshot);
+  const side = heardSide(heard);
   const hear = (target: string | undefined) => {
     if (target === undefined || busy) return;
     setBusy(true);

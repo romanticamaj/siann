@@ -3,15 +3,15 @@
 // agent-rules.md, "UI fidelity"): its DOM structure and class names are the
 // mockup's, so ui/top-bar.css draws it.
 //
-//   .tb-left    the brand, the session's name, the branch chip's box, a
-//               separator, undo and redo (Transport.tsx)
+//   .tb-left    the brand, the session's name, the branch chip
+//               (BranchChip.tsx, m5b-ui-audition), a separator, undo and
+//               redo (Transport.tsx)
 //   .transport  the transport bar of m5-ui-transport and m5-ui-loop-click
 //   .tb-right   DSP load's box, the zone buttons (the Channel button's box,
 //               then left, lower and right) and the Plans button with the
 //               number of plans waiting for review
 //
-// A part whose feature has not landed keeps its box empty (spec 3.0): the
-// branch chip (m5b-ui-audition), DSP load (m5b-ui-meter) and the Channel
+// A part whose feature has not landed keeps its box empty (spec 3.0): DSP load (m5b-ui-meter) and the Channel
 // zone button (m5b-ui-editor-channel) are elements with no role, no focus,
 // no id and no text, sized by a --hold-<part> token in shell.css. The
 // project zone has no button: it is never hidden. The page's heading is
@@ -35,6 +35,7 @@ import type { LoopClickController } from '../model/loop-click';
 import type { TransportController } from '../model/transport';
 import type { UndoHistory } from '../model/undo-history';
 import { ISOLATE } from '../plans/isolate';
+import { BranchChip } from './BranchChip';
 import { Hold } from './Hold';
 import { Icon, type IconName } from './icons';
 import type { EffectiveLayout, Zone } from './layout';
@@ -119,7 +120,7 @@ export function TopBar({
           <span {...ISOLATE}>{name}</span>
           {unsaved ? ` ${t('session.unsavedMark')}` : null} <Icon name="chev" small />
         </div>
-        <Hold className="hold-branch-chip" />
+        <BranchChip client={client} plans={plans} revision={snapshot?.revision ?? null} />
         <span className="sep" />
         <UndoRedo transport={transport} history={history} />
       </div>
