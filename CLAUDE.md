@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-SIANN is a local AI-native DAW. This repo is the **product/bridge layer**: the Node command-bridge CLI, workflow generators, exporters, fixtures, tests, and product documentation. The Ardour-derived audio engine lives in a separate sibling checkout (`../siann-engine` by default; override with `SIANN_ENGINE_DIR` or `--engine-dir`). Everything except `siann live ...` and gated engine tests runs with this repo alone — no engine build needed. That Node-only path (intake planning, manifest generation, DAWproject export, tests) is the recommended validation flow on Windows.
+SIANN is a local AI-native DAW. This repo is the **product/bridge layer**: the Node command-bridge CLI, workflow generators, exporters, fixtures, tests, and product documentation. The audio engine is the native C++ `siann-engine` under `native/` (architecture spec, `docs/superpowers/specs/2026-10-14-siann-native-daw-architecture.md`). The bridge starts it for every `--run`, `run` and `live` command: `SIANN_ENGINE_EXE`, else the core preset's build `native/build/dev/apps/engine/siann-engine` (`cmake --preset dev && cmake --build --preset dev --target siann-engine` in `native/`). Everything else (and every ungated test, which uses a fake engine) runs with Node alone — no engine build needed. That Node-only path (intake planning, manifest generation, DAWproject export, tests) is the recommended validation flow on Windows.
 
 `AGENTS.md` is the authoritative contributor guide, with the full command catalog and doc index. `README.md` is public/product-facing — do not put internal implementation details, ADR lists, or roadmap planning there.
 
@@ -16,10 +16,10 @@ node --test test/dawproject-export.test.js  # single test file
 npm run smoke:dawproject -- --json        # end-to-end DAWproject smoke, no engine needed
 ```
 
-Engine-gated integration tests (require the sibling engine checkout):
+Engine-gated integration tests (need a built `siann-engine`; `node scripts/check-all.js --only bridge` builds it and runs them):
 
 ```sh
-SIANN_RUN_ENGINE_TESTS=1 SIANN_ENGINE_DIR=../siann-engine node --test test/live-import-pack.test.js
+SIANN_RUN_ENGINE_TESTS=1 SIANN_ENGINE_EXE=native/build/dev/apps/engine/siann-engine node --test test/runtime-engine.test.js test/live-import-pack.test.js
 ```
 
 The CLI entrypoint is `bin/siann.js` (`node bin/siann.js --help` prints all subcommands). The core plan-review lifecycle:
@@ -30,7 +30,7 @@ node bin/siann.js workflow import-pack <manifest.json> --plan plan.json --json  
 node bin/siann.js workflow validate-plan plan.json --json
 node bin/siann.js workflow approve-plan plan.json --out approved.json --approved-by <name> --json
 node bin/siann.js workflow apply-plan approved.json --out cmd.json --run --json  # --run needs the engine
-node bin/siann.js rollback journal.json --source-command cmd.json --out rb.json --run --json
+node bin/siann.js rollback journal.json --out rb.json --run --json                # plan.rollback {revision} in a new engine process
 node bin/siann.js export dawproject <manifest.json> --out session.dawproject --copy-media --json  # no engine needed
 node bin/siann.js live import-pack <manifest.json> --json                     # full live-session smoke (engine required)
 ```
@@ -39,15 +39,15 @@ Helper scripts: `scripts/create-demo-import-pack.js` (demo audio + manifest), `s
 
 ## Architecture
 
-Four layers, top to bottom: **Studio UI** (not implemented) → **Agent Runtime** (not implemented) → **Command Bridge** (this repo, partial) → **Engine** (sibling checkout). The engine is the trust boundary: AI and UI layers never mutate session state directly — all mutation goes through typed JSON command files executed by the bridge.
+Four layers, top to bottom: **Studio UI** (not implemented) → **Agent Runtime** (not implemented) → **Command Bridge** (this repo, partial) → **Engine** (`native/`, the `siann-engine` executable). The engine is the trust boundary: AI and UI layers never mutate session state directly — all mutation goes through typed JSON command files executed by the bridge.
 
 Key invariants baked into the code:
 
 - **Review-before-apply lifecycle**: workflows generate a plan, which is validated, then explicitly approved (or rejected), then applied. Plan integrity is enforced via RFC 8785 (JCS) canonical-JSON `sha256:` hashes (`src/hash/jcs.js`, shared fixtures in `fixtures/jcs/`) so an approved plan can't be silently altered before apply.
-- **Journaled rollback**: every engine run writes a command journal (`siann.command_journal.v0`) with pre-state snapshots; `src/workflows/rollback.js` generates rollback commands from it. Schemas are versioned strings (`siann.result.v0`, etc.) and documented in `docs/schemas/`.
+- **Journaled rollback**: every engine run writes a command journal (`siann.command_journal.v1`, `docs/schemas/command-journal-v1.md`) with the bundle, the plan hash and the revisions it applied; `src/workflows/rollback.js` turns it into `plan.rollback {revision}` commands for a later engine process. Schemas are versioned strings (`siann.result.v0`, etc.) and documented in `docs/schemas/`.
 - **Commands target stable IDs, not mutable track names.** Name-based lookup may exist as a dry-run helper, but ambiguity must be rejected before mutation.
 
-Source layout: `src/bridge/runner.js` spawns the engine command runner and parses/validates its result JSON; `src/workflows/` owns plan generation, approval, live orchestration, and rollback; `src/exporters/` writes Cubase-compatible `.dawproject` packages (WAV media only) using a dependency-free zip writer; `src/runtime/client.js` wraps the live engine runtime protocol. `examples/` holds runnable command and manifest fixtures used by tests.
+Source layout: `src/bridge/runner.js` runs command files through the native protocol (session.create, media.import, one plan per batch, session.save, render.start) and writes the journal; `src/workflows/` owns plan generation, approval, live orchestration, and rollback; `src/exporters/` writes Cubase-compatible `.dawproject` packages (WAV media only) using a dependency-free zip writer; `src/runtime/client.js` starts `siann-engine`, reads its ready line and speaks its WebSocket protocol (token handshake, requests, jobs) with the built-in codec in `src/runtime/ws.js`. `examples/` holds runnable command and manifest fixtures used by tests.
 
 `.claude/skills/siann-intake/` and `.codex/skills/siann-intake/` are the committed agent-facing intake skill; `test/skill-docs.test.js` keeps them consistent with the code.
 
@@ -58,4 +58,4 @@ Source layout: `src/bridge/runner.js` spawns the engine command runner and parse
 - Commits use Conventional Commit subjects (`feat:`, `docs:`, `test:`, `refactor:`).
 - Architecture decisions are recorded as ADRs in `docs/adr/` (`NNNN-kebab-case-title.md`); update `0000-adr-index.md` when adding or superseding one. Dated specs/discussions use `YYYY-MM-DD-kebab-case-title.md`.
 - Tests live in `test/` next to nothing else — add deterministic command-bridge coverage (session creation, import, placement, save, render, replay) close to the module they cover.
-- GPL-2.0-or-later (Ardour-derived engine path); keep licensing changes explicit. Never commit provider keys, local audio assets, or rendered stems.
+- GPL-2.0-or-later; keep licensing changes explicit. Never commit provider keys, local audio assets, or rendered stems.

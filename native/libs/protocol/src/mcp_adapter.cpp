@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <optional>
-#include <random>
 #include <utility>
 
 #include "siann/hash/jcs.hpp"
@@ -38,8 +37,9 @@ const std::vector<McpTool> kTools = {
      "Returns main's head revision, document hash, revision count, open proposal branches and the side heard.",
      kEmpty},
     {"submit_plan", "plan.submit", McpScope::propose,
-     "Submits commands as a plan for review; returns the validated siann.plan.v1 with its hash.",
-     R"({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object"},"minItems":1,"description":"commands {op, ...}"},"readSet":{"type":"array","items":{"type":"string"},"description":"entities read, <type>:<id>"},"baseRevision":{"type":"string","description":"defaults to main's head"}},"required":["steps"],"additionalProperties":false})"},
+     "Submits commands as a plan for review, optionally with a title and an intent shown to the user; returns the "
+     "validated siann.plan.v1 with its hash and the actor the engine recorded.",
+     R"({"type":"object","properties":{"steps":{"type":"array","items":{"type":"object"},"minItems":1,"description":"commands {op, ...}"},"readSet":{"type":"array","items":{"type":"string"},"description":"entities read, <type>:<id>"},"baseRevision":{"type":"string","description":"defaults to main's head"},"title":{"type":"string","minLength":1,"maxLength":200,"description":"one line, at most 200 UTF-8 bytes, no control, bidi formatting or line separator characters; not part of the plan hash"},"intent":{"type":"string","minLength":1,"maxLength":2000,"description":"why, at most 2000 UTF-8 bytes; tab, LF and CR are the only control characters allowed, no bidi formatting or line separator characters; not part of the plan hash"},"request":{"type":"string","description":"an open request from next_request (arq_<hex>) this plan answers; not part of the plan hash"}},"required":["steps"],"additionalProperties":false})"},
     {"plan_status", "plan.status", McpScope::propose,
      "Returns a plan with the entities that changed since its base (stale) and its proposal branch.", kPlanOnly},
     {"approve_plan", "plan.approve", McpScope::trusted,
@@ -49,7 +49,9 @@ const std::vector<McpTool> kTools = {
      R"({"type":"object","properties":{"plan":{"type":"string"},"note":{"type":"string"}},"required":["plan"],"additionalProperties":false})"},
     {"apply_plan", "plan.apply", McpScope::trusted, "Applies an approved plan to main as one revision.", kPlanOnly},
     {"rollback_plan", "plan.rollback", McpScope::trusted,
-     "Rolls back an applied plan with an inverse revision (rollback_conflict lists changed entities).", kPlanOnly},
+     "Rolls back an applied plan with an inverse revision, by its hash or by the revision it was applied at "
+     "(exactly one; rollback_conflict lists changed entities).",
+     R"({"type":"object","properties":{"plan":{"type":"string","description":"the plan hash, sha256:<hex>"},"revision":{"type":"string","description":"the plan or branch-merge revision on main, r<n>, for a plan an earlier engine process applied"}},"additionalProperties":false})"},
     {"propose_plan", "plan.propose", McpScope::propose,
      "Applies an approved plan onto a new proposal branch instead of main.", kPlanOnly},
     {"audition", "audition.hear", McpScope::propose, "Hears main or an open proposal branch.",
@@ -77,7 +79,9 @@ const std::vector<McpTool> kTools = {
      "Turns the metronome on or off, optionally with its gain; returns {playing, position, cycle, click}.",
      R"({"type":"object","properties":{"enabled":{"type":"boolean"},"gainMilliDb":{"type":"integer","minimum":-60000,"maximum":0,"description":"default -12000; omitted keeps the current gain"}},"required":["enabled"],"additionalProperties":false})"},
     {"engine_status", "engine.status", McpScope::propose,
-     "Returns the device (or deviceError), playing, the driver's timing counters and the plugin instances.", kEmpty},
+     "Returns the device (or deviceError), playing, the driver's timing counters, the DSP load and the plugin "
+     "instances.",
+     kEmpty},
     {"list_devices", "engine.devices", McpScope::propose,
      "Lists the audio devices the engine can open: {id, type, name, isDefault, current, inputChannels, "
      "outputChannels}.",
@@ -113,6 +117,18 @@ const std::vector<McpTool> kTools = {
      kPlanOnly},
     {"undo", "session.undo", McpScope::trusted, "Undoes main's last revision with a new undo revision.", kEmpty},
     {"redo", "session.redo", McpScope::trusted, "Redoes the revision the last undo undid.", kEmpty},
+    // m5b-engine-agent-requests (Protocol v0 item 32): the agent's side of a
+    // request from the user. A request executes nothing; a plan the user
+    // approves stays the only way into the document, so both are propose.
+    {"next_request", "agent.next_request", McpScope::propose,
+     "Waits for the next request the user sent this agent and returns it, now taken: {request: {id, text, context: "
+     "{selection, locators, cursor, headRevision}, ...}}, or {request: null} when none arrived within waitMs "
+     "(at most the engine's agentRequestWaitMs). Call it again to keep listening.",
+     R"({"type":"object","properties":{"waitMs":{"type":"integer","minimum":0,"description":"how long to wait for a request, in ms; 0 answers at once; capped at limits.agentRequestWaitMs"}},"additionalProperties":false})"},
+    {"answer_request", "agent.answer_request", McpScope::propose,
+     "Answers a request with a plan this agent submitted, or with a message, or declines it (exactly one form); "
+     "submit_plan with request answers it too.",
+     R"({"type":"object","properties":{"request":{"type":"string","description":"the request id, arq_<hex>"},"plan":{"type":"string","description":"the hash of a plan this agent submitted"},"message":{"type":"string","minLength":1,"maxLength":4000,"description":"1 to 4000 characters; tab, LF and CR are the only control characters allowed, no bidi formatting or line separator characters"},"decline":{"const":true,"description":"declines the request, with an optional message"}},"required":["request"],"additionalProperties":false})"},
 };
 
 // The methods the engine serves that no tool wraps, each with its reason
@@ -137,20 +153,14 @@ const std::vector<McpExclusion> kNotMcp = {
     {"record.recover_take",
      "accepting or trashing a take a crash left is the user's decision about files on their disk; the UI offers "
      "it from pendingTakes"},
+    {"meter.reset_loudness",
+     "restarts the integrated value of the user's loudness meter: a display aid, not session state, and "
+     "nothing a plan needs; an agent measures loudness from a render"},
+    {"agent.request", "the user's side of an agent request (Protocol v0 item 32); the agent takes it with next_request"},
+    {"agent.cancel_request",
+     "the user's side of an agent request (Protocol v0 item 32); the agent takes it with next_request"},
+    {"agent.requests", "the user's side of an agent request (Protocol v0 item 32); the agent takes it with next_request"},
 };
-
-std::string randomHex(std::size_t bytes) {
-    static constexpr char kDigits[] = "0123456789abcdef";
-    std::random_device device;
-    std::uniform_int_distribution<unsigned> byte(0, 255);
-    std::string out;
-    for (std::size_t i = 0; i < bytes; ++i) {
-        const unsigned b = byte(device);
-        out.push_back(kDigits[b >> 4]);
-        out.push_back(kDigits[b & 0xF]);
-    }
-    return out;
-}
 
 HttpResponse reply(int status, std::string body, Headers headers = {}) {
     return HttpResponse{status, "application/json", std::move(body), std::move(headers)};
@@ -200,7 +210,21 @@ const std::vector<McpExclusion>& mcpExclusions() {
     return kNotMcp;
 }
 
-McpAdapter::McpAdapter(Submit submit) : submit_(std::move(submit)) {}
+McpAdapter::McpAdapter(Submit submit, AgentRegistry& agents) : submit_(std::move(submit)), agents_(agents) {}
+
+void McpAdapter::end(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
+    const Value nullId(nullptr);
+    auto header = request.headers.find("mcp-session-id");
+    if (header == request.headers.end()) {
+        complete(reply(400, rpcError(nullId, kInvalidRequest, "the Mcp-Session-Id header is required")));
+        return;
+    }
+    if (!agents_.end(header->second)) {
+        complete(reply(404, rpcError(nullId, kInvalidRequest, "unknown MCP session")));
+        return;
+    }
+    complete(reply(204, ""));
+}
 
 void McpAdapter::handle(const HttpRequest& request, const std::function<void(HttpResponse)>& complete) {
     const Value nullId(nullptr);
@@ -239,11 +263,10 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
             complete(reply(202, ""));
             return;
         }
-        const std::string session = "mcp_" + randomHex(16);
-        {
-            std::lock_guard lock(mutex_);
-            sessions_.insert(session);
-        }
+        const Value* clientInfo = params.find("clientInfo");
+        const Value* clientInfoName =
+            clientInfo != nullptr && clientInfo->kind() == Value::Kind::object ? clientInfo->find("name") : nullptr;
+        const std::string session = agents_.connect(sanitizeClientName(clientInfoName, kDefaultMcpName));
         const BuildInfo& build = buildInfo();
         complete(reply(200,
                        rpcResult(id, Value(Object{{"protocolVersion", Value(std::string(kMcpProtocolVersion))},
@@ -260,12 +283,10 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
         return;
     }
     const std::string session = header->second;
-    {
-        std::lock_guard lock(mutex_);
-        if (sessions_.count(session) == 0) {
-            complete(reply(404, rpcError(nullId, kInvalidRequest, "unknown MCP session; initialize again")));
-            return;
-        }
+    const std::optional<AgentRegistry::Caller> caller = agents_.seen(session);
+    if (!caller) {
+        complete(reply(404, rpcError(nullId, kInvalidRequest, "unknown MCP session; initialize again")));
+        return;
     }
     if (notification) {
         complete(reply(202, ""));
@@ -308,6 +329,7 @@ void McpAdapter::handle(const HttpRequest& request, const std::function<void(Htt
     // command thread (scope_denied, not cached), not here.
     const std::string requestId = session + "/" + jcs::canonicalize(id);
     const bool queued = submit_(requestId, std::string(tool->method), arguments != nullptr ? *arguments : Value(Object{}),
+                                McpCaller{caller->agentId, caller->name, std::string(tool->name)},
                                 [complete, id](const std::string& responseText) {
                                     complete(reply(200, rpcResult(id, toolResult(responseText))));
                                 });

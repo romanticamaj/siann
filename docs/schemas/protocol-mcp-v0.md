@@ -21,12 +21,41 @@ same params, same result, same error codes. There is no second API.
   `Origin` header not in the allow list: `403 origin_not_allowed`.
 - The body is one JSON-RPC 2.0 request or notification (no batches).
 - A request gets `200`, `Content-Type: application/json`, exactly one JSON-RPC
-  response. No SSE stream in v0; `GET /v0/mcp` is `405`.
+  response. No SSE stream in v0; `GET /v0/mcp` (any method but `POST` and
+  `DELETE`) is `405`.
 - A notification (no `id`) gets `202` with an empty body.
 - `initialize` assigns a session: the response carries the header
   `Mcp-Session-Id: mcp_<32 hex>`. Every later request must send it: missing is
   `400`, unknown is `404` (the client initializes again). Both carry a JSON-RPC
   error body with `id: null`.
+- `DELETE /v0/mcp` with the session header (m5b-engine-plan-metadata) ends the
+  session: `204` with an empty body, after which the header is unknown (`404`).
+  Without the header it is `400`, with an unknown one `404`; the bearer token and
+  the Origin are checked as for `POST`.
+
+### Agents (m5b-engine-plan-metadata)
+
+Every session is an agent (spec, Protocol v0 item 29): `engine.status` lists it
+in `agents` and `agent.changed` announces it ([Protocol events v1](protocol-events-v1.md)).
+
+- `initialize` reads `params.clientInfo.name` as the agent's name, sanitised:
+  control and display-unsafe characters ([Plan v1](plan-v1.md), "Metadata")
+  removed, leading and trailing spaces trimmed, cut to 64
+  UTF-8 bytes at a character boundary. Without `clientInfo`, or with a name that
+  is not a string or is empty after that, the name is `"MCP client"`. The name is
+  the `actor` of every plan the session submits: `{kind: "mcp", name}`
+  ([Plan v1](plan-v1.md), "Metadata").
+- The agent is connected from `initialize` until `DELETE /v0/mcp` or until no
+  request with its session header has arrived for `ServerOptions::agentIdleMs`
+  (default 300,000 ms, `engine.capabilities` `limits.agentIdleMs`). Any request
+  counts, `ping` and notifications included; after an idle spell the next one
+  connects it again (the session was not ended). An idle agent is not ended.
+- After every tool call the engine executed, the agent's `lastAction` is the
+  tool's name and `lastActionAt` the server's time. Its arguments are never
+  recorded.
+- At most `limits.agentsRetained` (32) agents are kept. A new `initialize` past
+  that forgets the oldest disconnected agent, or, when every one is connected,
+  the oldest agent, whose session ends (`404` afterwards).
 
 ### Methods
 
@@ -97,12 +126,12 @@ same JSON-RPC `id` runs against the session served now.
 | `list_commands` | `command.list` | propose | `{}` |
 | `describe_capabilities` | `engine.capabilities` | propose | `{}` |
 | `inspect_session` | `session.inspect` | propose | `{}` |
-| `submit_plan` | `plan.submit` | propose | `{steps: [command], readSet?: ["<type>:<id>"], baseRevision?}` |
+| `submit_plan` | `plan.submit` | propose | `{steps: [command], readSet?: ["<type>:<id>"], baseRevision?, title?, intent?, request?}` |
 | `plan_status` | `plan.status` | propose | `{plan: "sha256:..."}` |
 | `approve_plan` | `plan.approve` | trusted | `{plan, steps?: [index]}` |
 | `reject_plan` | `plan.reject` | propose | `{plan, note?}` |
 | `apply_plan` | `plan.apply` | trusted | `{plan}` |
-| `rollback_plan` | `plan.rollback` | trusted | `{plan}` |
+| `rollback_plan` | `plan.rollback` | trusted | `{plan}` or `{revision}` (exactly one; a revision for a plan an earlier engine process applied) |
 | `propose_plan` | `plan.propose` | propose | `{plan}` |
 | `audition` | `audition.hear` | propose | `{side: "main" \| "<branch>"}` |
 | `merge_proposal` | `proposal.merge` | trusted | `{branch}` |
@@ -128,6 +157,45 @@ same JSON-RPC `id` runs against the session served now.
 | `preview_plan` | `plan.preview` | propose | `{plan}` |
 | `undo` | `session.undo` | trusted | `{}` |
 | `redo` | `session.redo` | trusted | `{}` |
+| `next_request` | `agent.next_request` | propose | `{waitMs?}` |
+| `answer_request` | `agent.answer_request` | propose | `{request, plan}`, `{request, message}` or `{request, decline: true, message?}` |
+
+`next_request` and `answer_request` (m5b-engine-agent-requests, spec Protocol v0
+item 32, human gate `agent-request-shape`) are the agent's side of a request the
+user sent it from the UI (`agent.request`, [Protocol engine v0](protocol-engine-v0.md),
+"Agent requests"). A request executes nothing; the agent answers it with a plan
+the user then reviews, with a message, or declines it, so both tools are propose.
+The UI token calling `agent.next_request` or `agent.answer_request` is
+`scope_denied`, and no tool wraps the user's side (`agent.request`,
+`agent.cancel_request`, `agent.requests`): a `tools/call` naming one is the unknown
+tool `-32602`, under either scope, and the server answers `scope_denied` should an
+MCP credential's request reach one.
+
+- `next_request` is a long poll. It answers `{request}` at once with the agent's
+  oldest `pending` request, now `taken`. With none the command thread parks the
+  call (it never blocks) and answers it when a request is queued for this agent,
+  or with `{request: null}` once `min(waitMs, limits.agentRequestWaitMs)` has
+  passed (`ServerOptions::agentRequestWaitMs`, default 25,000 ms, clamped to at
+  most `mcpRequestTimeout` minus 1 s, so the call is answered before the
+  transport's `request_timeout`). `waitMs` is a non-negative integer; `0` answers
+  at once. A second call from the same agent answers the first one with `{request:
+  null}`. While parked the agent stays connected (no idle expiry); `DELETE
+  /v0/mcp` answers it with `{request: null}`. A retry with the same JSON-RPC `id`
+  returns the same request (the idempotency cache); an empty answer is not cached
+  and is not an action (no `lastAction`, no `agent.changed`).
+- `answer_request` takes exactly one form (`invalid_params` otherwise): `plan`, the
+  hash of a plan this agent submitted in the served session (another client's plan
+  is `invalid_params`, an unknown one `not_found`), answers it with the plan;
+  `message` answers it with text; `decline: true`, with an optional `message`,
+  declines it. `message` is 1 to 4,000 characters (code points) without a control
+  character other than tab, LF and CR and without a bidi formatting character or
+  U+2028/U+2029 (`invalid_request_text`). A request that is closed, or addressed to
+  another agent, is `request_not_open`; an unknown one `not_found`.
+- `submit_plan {..., request}` links the plan to an open request addressed to this
+  agent, which then counts as `answered` with the plan; the link is not part of the
+  plan (the hash is the same without it, [Plan v1](plan-v1.md)). A closed request or
+  another agent's is `request_not_open`, an unknown one `not_found`; nothing is
+  stored then.
 
 The eight from `play` to `select_device` (m5-engine-sessions-devices and m5-ui-engine-loop-click, Protocol v0
 items 18, 22 and 26) wrap the transport and device methods of
@@ -136,7 +204,16 @@ codes (`no_device` included). `select_device` is trusted because it changes the
 device the served session plays on for every client. The locators are set with the
 command `session.set_locators` through `execute` (trusted) or a plan, and the
 master gain (m5b-engine-master) with the command `master.set_gain` the same way; no
-tool is dedicated to either.
+tool is dedicated to either. Buses and sends (m5b-engine-buses-sends) likewise go
+through `execute` or a plan with their commands, and `list_commands` returns
+`command.list`'s `{commands, cascades}` unchanged.
+
+`engine_status` carries `load {average, peak}` (m5b-engine-load-loudness, Protocol
+v0 item 31) like the method it wraps. No tool wraps `meter.reset_loudness`, by
+decision: it restarts the integrated value of the user's loudness meter, a display
+aid, not session state, and nothing a plan needs; an agent reads loudness from a
+render, not from the live meter. The adapter lists the method in `kNotMcp`
+("Methods without a tool"), and a tool call naming it is refused like any unknown tool.
 
 `record_arm` and `record` (m5b-engine-record, Protocol v0 item 28) wrap the
 recording methods of [Protocol engine v0](protocol-engine-v0.md) in the trusted
@@ -148,6 +225,13 @@ decision about files on their disk, and the UI offers it from `pendingTakes`
 one, so while a recording runs both are `scope_denied` under `propose` and run
 nothing. Stopped, they work as before; under `trusted` (and from the UI) they end
 the recording as the UI's stop does.
+
+`submit_plan`'s `title` (at most 200 UTF-8 bytes, one line) and `intent` (at
+most 2,000 UTF-8 bytes) are the plan's metadata (m5b-engine-plan-metadata,
+[Plan v1](plan-v1.md)); the input schema lists them with `maxLength` 200 and
+2000, but the engine counts bytes and answers a longer or malformed value
+`invalid_plan_metadata`. An `actor` in the arguments is `invalid_params`: the
+engine records `{kind: "mcp", name}` from the session's `clientInfo.name`.
 
 `create_session` and `import_media` (m5b-engine-project-media, Protocol v0 item 27)
 wrap `session.create` and `media.import` of [Protocol engine v0](protocol-engine-v0.md).
@@ -187,6 +271,10 @@ one of them is `-32602` (unknown tool).
 | `session.sync` | read-model replication for UI clients; `inspect_session` serves agents |
 | `session.fetch` | read-model replication for UI clients; `inspect_session` serves agents |
 | `record.recover_take` | accepting or trashing a take a crash left is the user's decision about files on their disk; the UI offers it from `pendingTakes` |
+| `meter.reset_loudness` | restarts the integrated value of the user's loudness meter: a display aid, not session state, and nothing a plan needs; an agent measures loudness from a render |
+| `agent.request` | the user's side of an agent request (Protocol v0 item 32); the agent takes it with `next_request` |
+| `agent.cancel_request` | the user's side of an agent request (Protocol v0 item 32); the agent takes it with `next_request` |
+| `agent.requests` | the user's side of an agent request (Protocol v0 item 32); the agent takes it with `next_request` |
 
 Maintainer note: `propose_plan` and `audition` under `propose` let an agent
 change what the user hears without changing main. If that is unwanted, flip

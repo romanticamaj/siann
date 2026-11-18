@@ -376,6 +376,7 @@ std::optional<PluginInstanceStatus> PluginInstanceTable::status(std::string_view
     PluginInstanceStatus out;
     out.slotId = entry.slot.id;
     out.trackId = entry.slot.trackId;
+    out.busId = entry.slot.busId;
     out.format = entry.slot.format;
     out.uid = entry.slot.uid;
     out.error = entry.error;
@@ -396,19 +397,29 @@ std::optional<PluginInstanceStatus> PluginInstanceTable::status(std::string_view
 
 std::vector<PluginInstanceStatus> PluginInstanceTable::status(const model::Document& document) const {
     std::vector<PluginInstanceStatus> out;
+    auto add = [&](const model::PluginSlot& slot) {
+        if (auto one = status(slot.id)) {
+            out.push_back(std::move(*one));
+        } else {
+            PluginInstanceStatus missing;
+            missing.slotId = slot.id;
+            missing.trackId = slot.trackId;
+            missing.busId = slot.busId;
+            missing.format = slot.format;
+            missing.uid = slot.uid;
+            missing.error = PluginProblem{"plugin_missing", "the slot has not been loaded yet"};
+            out.push_back(std::move(missing));
+        }
+    };
+    // Tracks in order, then buses in order (m5b-engine-buses-sends).
     for (const model::Track* track : document.tracksInOrder()) {
         for (const model::PluginSlot* slot : document.slotsOnTrack(track->id)) {
-            if (auto one = status(slot->id)) {
-                out.push_back(std::move(*one));
-            } else {
-                PluginInstanceStatus missing;
-                missing.slotId = slot->id;
-                missing.trackId = slot->trackId;
-                missing.format = slot->format;
-                missing.uid = slot->uid;
-                missing.error = PluginProblem{"plugin_missing", "the slot has not been loaded yet"};
-                out.push_back(std::move(missing));
-            }
+            add(*slot);
+        }
+    }
+    for (const model::Bus* bus : document.busesInOrder()) {
+        for (const model::PluginSlot* slot : document.slotsOnBus(bus->id)) {
+            add(*slot);
         }
     }
     return out;

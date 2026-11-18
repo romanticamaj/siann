@@ -9,13 +9,16 @@
 // format.ts; positions follow the position display's primary format
 // (m5-ui-transport; UI redesign spec 7 P1-5): Bars+Beats through root.tempo
 // by default, or Seconds, from the frame string and the root's sample rate;
-// lengths are seconds. Names an agent or the user wrote are shown as written.
+// lengths are seconds. Names an agent or the user wrote are shown as written,
+// each in its own bidi isolate (isolate.ts, isolateName), so a name cannot
+// reorder the sentence it is in.
 
 import { formatMilliDb, formatPan, formatSeconds } from '../format';
 import { translator, type T } from '../i18n/t';
 import type { TempoPoint } from '../model/document';
 import type { Snapshot } from '../model/read-model';
 import { formatPosition, type TimeFormat } from '../timeline/transport-time';
+import { isolateName } from './isolate';
 
 const english = translator('en');
 
@@ -23,6 +26,8 @@ export interface ClipName {
   readonly trackId: string;
   // An audio-domain position in frames, as a decimal string.
   readonly position: string;
+  // The clip's length in frames, when known (the step rows' "ends on").
+  readonly length?: string;
 }
 
 export interface SlotName {
@@ -40,6 +45,10 @@ export interface StepNames {
   // format (Bars+Beats when absent), for positions.
   readonly tempo?: readonly TempoPoint[];
   readonly timeFormat?: TimeFormat;
+  // The track order and the media's names (the step rows of
+  // m5-ui-port-plans: "after <last track>", the placed clip's media).
+  readonly trackOrder?: readonly string[];
+  media?(id: string): string | undefined;
 }
 
 export const NO_NAMES: StepNames = {
@@ -62,8 +71,13 @@ export function namesFromSnapshot(snapshot: Snapshot | null, timeFormat: TimeFor
       const clip = entity(`clip:${id}`);
       const position = clip?.position as { domain?: unknown; value?: unknown } | undefined;
       if (typeof clip?.trackId !== 'string' || position?.domain !== 'audio' || typeof position.value !== 'string') return undefined;
-      return { trackId: clip.trackId, position: position.value };
+      return { trackId: clip.trackId, position: position.value, ...(typeof clip.length === 'string' ? { length: clip.length } : {}) };
     },
+    media: (id) => {
+      const name = entity(`media:${id}`)?.name;
+      return typeof name === 'string' && name !== '' ? name : undefined;
+    },
+    trackOrder: snapshot.trackOrder,
     slot: (id) => {
       const slot = entity(`plugin_slot:${id}`);
       if (typeof slot?.trackId !== 'string' || typeof slot.name !== 'string' || slot.name === '') return undefined;
@@ -83,7 +97,7 @@ function audioFrames(position: unknown): string | undefined {
 }
 
 // The names the session holds, then the ones earlier steps of the plan gave.
-function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]): StepNames {
+export function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]): StepNames {
   const tracks = new Map<string, string>();
   const clips = new Map<string, ClipName>();
   const slots = new Map<string, SlotName>();
@@ -97,13 +111,14 @@ function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]):
         break;
       case 'clip.place': {
         const position = audioFrames(step.position);
-        if (clipId && trackId && position !== undefined) clips.set(clipId, { trackId, position });
+        const length = str(step.length);
+        if (clipId && trackId && position !== undefined) clips.set(clipId, { trackId, position, ...(length !== undefined ? { length } : {}) });
         break;
       }
       case 'clip.move': {
         const known = clipId ? (clips.get(clipId) ?? names.clip(clipId)) : undefined;
         const position = audioFrames(step.position);
-        if (clipId && known && position !== undefined) clips.set(clipId, { trackId: trackId ?? known.trackId, position });
+        if (clipId && known && position !== undefined) clips.set(clipId, { ...known, trackId: trackId ?? known.trackId, position });
         break;
       }
       case 'plugin.insert': {
@@ -124,6 +139,8 @@ function overlay(names: StepNames, earlier: readonly Record<string, unknown>[]):
     sampleRate: names.sampleRate,
     tempo: names.tempo,
     timeFormat: names.timeFormat,
+    ...(names.trackOrder ? { trackOrder: names.trackOrder } : {}),
+    ...(names.media ? { media: names.media } : {}),
   };
 }
 
@@ -142,15 +159,21 @@ function seconds(frames: string | undefined, names: StepNames, t: T): string | u
   return t('step.seconds', { value: formatSeconds(Number(frames) / rate) });
 }
 
+// A known name, isolated; an unknown or empty one is undefined (the caller
+// then says "a track").
+function named(name: string | undefined): string | undefined {
+  return name === undefined || name === '' ? undefined : isolateName(name);
+}
+
 function trackOf(id: unknown, names: StepNames, t: T): string {
-  return (typeof id === 'string' ? names.track(id) : undefined) ?? t('step.aTrack');
+  return named(typeof id === 'string' ? names.track(id) : undefined) ?? t('step.aTrack');
 }
 
 // "a clip on Keys" (at its position with `at`), or "a clip".
 function clipOf(id: unknown, names: StepNames, t: T, at: boolean): string {
   const clip = typeof id === 'string' ? names.clip(id) : undefined;
   if (!clip) return t('step.aClip');
-  const track = names.track(clip.trackId);
+  const track = named(names.track(clip.trackId));
   if (!track) return t('step.aClip');
   const time = at ? position(clip.position, names) : undefined;
   return time ? t('step.clipOnAt', { track, time }) : t('step.clipOn', { track });
@@ -158,8 +181,9 @@ function clipOf(id: unknown, names: StepNames, t: T, at: boolean): string {
 
 function pluginOf(slot: SlotName | undefined, names: StepNames, t: T): string {
   if (!slot) return t('step.aPlugin');
-  const track = names.track(slot.trackId);
-  return track ? t('step.pluginOn', { plugin: slot.name, track }) : slot.name;
+  const track = named(names.track(slot.trackId));
+  const plugin = isolateName(slot.name);
+  return track ? t('step.pluginOn', { plugin, track }) : plugin;
 }
 
 // An entity ref ("<type>:<id>", as plan_stale's changedEntities name them)
@@ -191,12 +215,12 @@ export function describeStep(
   const track = () => trackOf(step.trackId, names, t);
   switch (step.op) {
     case 'track.add':
-      if (typeof step.name === 'string') return t('step.addTrack', { name: step.name });
+      if (typeof step.name === 'string') return t('step.addTrack', { name: isolateName(step.name) });
       break;
     case 'track.remove':
       return t('step.removeTrack', { track: track() });
     case 'track.rename':
-      if (typeof step.name === 'string') return t('step.renameTrack', { track: track(), name: step.name });
+      if (typeof step.name === 'string') return t('step.renameTrack', { track: track(), name: isolateName(step.name) });
       break;
     case 'track.set_gain':
       if (typeof step.gainMilliDb === 'number') return t('step.setGain', { track: track(), gain: formatMilliDb(step.gainMilliDb) });
@@ -245,7 +269,7 @@ export function describeStep(
     case 'media.remove':
       return t('step.removeMedia');
     case 'media.rename':
-      if (typeof step.name === 'string') return t('step.renameMedia', { name: step.name });
+      if (typeof step.name === 'string') return t('step.renameMedia', { name: isolateName(step.name) });
       if (step.name === null) return t('step.unnameMedia');
       break;
     case 'plugin.insert': {
@@ -261,7 +285,7 @@ export function describeStep(
       return t(step.bypass ? 'step.bypassPlugin' : 'step.unbypassPlugin', { plugin });
     }
     case 'session.rename':
-      if (typeof step.name === 'string') return t('step.renameSession', { name: step.name });
+      if (typeof step.name === 'string') return t('step.renameSession', { name: isolateName(step.name) });
       break;
     case 'session.set_tempo':
       if (Array.isArray(step.tempo)) {

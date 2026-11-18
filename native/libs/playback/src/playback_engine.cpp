@@ -68,9 +68,36 @@ bool isMasterTarget(const std::string& target) {
     return target == masterSlotKey();
 }
 
+bool hasPrefix(const std::string& text, std::string_view prefix) {
+    return text.size() > prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
+}
+
+// A bus or send target names its slot key; a track id never holds a ':'.
+bool isBusTarget(const std::string& target) {
+    return hasPrefix(target, "bus:");
+}
+bool isSendTarget(const std::string& target) {
+    return hasPrefix(target, "send:");
+}
+std::string targetId(const std::string& target) {
+    return target.substr(target.find(':') + 1);
+}
+
 // Fader parameters a gesture can commit, each through its own track command;
-// the master commits its gain only, through master.set_gain.
+// the master commits its gain only, through master.set_gain; a bus its gain
+// (bus.set_gain), a send its level (send.set_level).
 void requireCommittable(const std::string& target, std::uint32_t paramId) {
+    if (isBusTarget(target) && paramId != graph::TrackFaderNode::kGainMilliDb) {
+        throw std::invalid_argument("bus parameter " + std::to_string(paramId) +
+                                    " cannot be committed by a gesture: a bus gesture moves its gain");
+    }
+    if (isSendTarget(target) && paramId != graph::SendNode::kLevelMilliDb) {
+        throw std::invalid_argument("send parameter " + std::to_string(paramId) +
+                                    " cannot be committed by a gesture: a send gesture moves its level");
+    }
+    if (isBusTarget(target) || isSendTarget(target)) {
+        return;
+    }
     if (isMasterTarget(target)) {
         if (paramId != graph::TrackFaderNode::kGainMilliDb) {
             throw std::invalid_argument("master parameter " + std::to_string(paramId) +
@@ -87,7 +114,8 @@ void requireCommittable(const std::string& target, std::uint32_t paramId) {
 
 // The dispatcher's key of a gesture target's parameter.
 realtime::ParamKey gestureKey(const std::string& target, std::uint32_t paramId) {
-    return realtime::ParamKey{isMasterTarget(target) ? masterSlotKey() : trackSlotKey(target), paramId};
+    const bool keyed = isMasterTarget(target) || isBusTarget(target) || isSendTarget(target);
+    return realtime::ParamKey{keyed ? target : trackSlotKey(target), paramId};
 }
 
 // The master gain as the audio thread holds it: 0 dB while the entity is absent.
@@ -104,6 +132,20 @@ struct GestureCommit {
 };
 
 GestureCommit gestureCommit(const std::string& trackId, std::uint32_t paramId, double value) {
+    if (isBusTarget(trackId)) {
+        const std::int32_t milliDb = gainValue(value);
+        return {command::Command::fromJson(json::Object{{"op", "bus.set_gain"},
+                                                        {"busId", targetId(trackId)},
+                                                        {"gainMilliDb", static_cast<double>(milliDb)}}),
+                static_cast<double>(milliDb)};
+    }
+    if (isSendTarget(trackId)) {
+        const std::int32_t milliDb = gainValue(value);
+        return {command::Command::fromJson(json::Object{{"op", "send.set_level"},
+                                                        {"sendId", targetId(trackId)},
+                                                        {"levelMilliDb", static_cast<double>(milliDb)}}),
+                static_cast<double>(milliDb)};
+    }
     if (isMasterTarget(trackId)) {
         const std::int32_t milliDb = gainValue(value);
         return {command::Command::fromJson(
@@ -130,6 +172,25 @@ GestureCommit gestureCommit(const std::string& trackId, std::uint32_t paramId, d
             static_cast<double>(milliDb)};
 }
 
+// The document's value of a bus fader parameter, as the audio thread holds it.
+double busValue(const model::Bus& bus, std::uint32_t paramId) {
+    if (paramId == graph::TrackFaderNode::kPan) {
+        return static_cast<double>(bus.pan);
+    }
+    if (paramId == graph::TrackFaderNode::kMute) {
+        return bus.mute ? 1.0 : 0.0;
+    }
+    return static_cast<double>(bus.gain.milliDb);
+}
+
+// The document's value of a send parameter, as the audio thread holds it.
+double sendValue(const model::Send& send, std::uint32_t paramId) {
+    if (paramId == graph::SendNode::kEnabled) {
+        return send.enabled ? 1.0 : 0.0;
+    }
+    return static_cast<double>(send.level.milliDb);
+}
+
 // The document's value of a fader parameter, as the audio thread holds it.
 double documentValue(const model::Track& track, std::uint32_t paramId) {
     if (paramId == graph::TrackFaderNode::kPan) {
@@ -145,8 +206,8 @@ detail::StreamKey streamKey(const engine::FlatTrack& flat) {
     detail::StreamKey key;
     key.channels = flat.track->channels;
     for (const engine::FlatClip& clip : flat.clips) {
-        key.clips.push_back(
-            detail::StreamClipKey{clip.timelineStart, clip.sourceStart, clip.length, clip.gain, clip.media->contentHash});
+        key.clips.push_back(detail::StreamClipKey{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
+                                                  clip.media->contentHash, clip.fade});
     }
     return key;
 }
@@ -166,7 +227,9 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
     CompiledPlayback compiled;
     graph::GraphBuilder builder;
     const graph::NodeId master = builder.add(std::make_unique<graph::BusNode>(2), "master");
-    for (const engine::FlatTrack& flat : engine::flattenClips(document)) {
+    const std::vector<engine::FlatTrack> flatTracks = engine::flattenClips(document);
+    std::map<std::string, engine::TrackTaps> taps;
+    for (const engine::FlatTrack& flat : flatTracks) {
         const model::Track& track = *flat.track;
         detail::StreamKey key = streamKey(flat);
         realtime::DiskStream* stream = reuse ? reuse(track.id, key) : nullptr;
@@ -178,7 +241,7 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
                     found = readers.emplace(clip.media->contentHash, openReader(*clip.media, bundle)).first;
                 }
                 clips.push_back(realtime::StreamClip{clip.timelineStart, clip.sourceStart, clip.length, clip.gain,
-                                                     found->second});
+                                                     found->second, clip.fade});
             }
             compiled.streams.push_back(
                 std::make_unique<realtime::DiskStream>(track.channels, std::move(clips), options.ringFrames));
@@ -210,9 +273,29 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
         }
         builder.connect(previous, fader);
         builder.connect(fader, meter);
-        builder.connect(meter, master);
+        // The meter passes the fader's output through: the post-fader tap.
+        taps.emplace(track.id, engine::TrackTaps{previous, meter});
         compiled.slots.emplace(trackSlotKey(track.id), fader);
         compiled.meterSlots.emplace(trackSlotKey(track.id), meter);
+    }
+    // Buses (each with a meter after its fader), sends and every track's output,
+    // as in the offline graph (m5b-engine-buses-sends).
+    engine::MixHooks hooks;
+    hooks.insert = [&compiled](const model::PluginSlot& slot, graph::NodeId node) {
+        compiled.slots.emplace(pluginSlotKey(slot.id), node);
+    };
+    hooks.afterFader = [&compiled, &builder](const model::Bus& bus, graph::NodeId fader) {
+        const graph::NodeId meter = builder.add(std::make_unique<graph::MeterNode>(2), "bus." + bus.id + ".meter");
+        builder.connect(fader, meter);
+        compiled.meterSlots.emplace(busSlotKey(bus.id), meter);
+        return meter;
+    };
+    const engine::MixWiring wiring = engine::wireMix(builder, document, master, flatTracks, taps, plugins, hooks);
+    for (const auto& [busId, fader] : wiring.busFaders) {
+        compiled.slots.emplace(busSlotKey(busId), fader);
+    }
+    for (const auto& [sendId, node] : wiring.sends) {
+        compiled.slots.emplace(sendSlotKey(sendId), node);
     }
     // The master gain after the sum of the tracks (m5b-engine-master): a stereo
     // fader at pan centre, which multiplies by exactly 1.0f at 0 dB.
@@ -235,11 +318,39 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
 }
 
 // True when the edit changes nothing but track gain, pan or mute, the master
-// gain (a parameter of the master gain node however the entity changes), and
-// the locators (the transport's cycle range, never part of a graph).
+// gain (a parameter of the master gain node however the entity changes), bus
+// gain, pan or mute, send level or enabled (while the solo-silence set stays
+// the same), and the locators (the transport's cycle range, never part of a
+// graph).
 bool onlyFaderChanges(const model::Document& before, const model::Document& after) {
+    bool mixChanged = false;
     for (const model::DiffEntry& entry : model::diff(before, after)) {
         if (entry.entity.type == model::EntityType::locators || entry.entity.type == model::EntityType::master) {
+            continue;
+        }
+        if (entry.entity.type == model::EntityType::bus || entry.entity.type == model::EntityType::send) {
+            if (entry.change != model::DiffEntry::Change::modified) {
+                return false;
+            }
+            mixChanged = true;
+            if (entry.entity.type == model::EntityType::bus) {
+                model::Bus faderOnly = *before.bus(entry.entity.id);
+                const model::Bus& now = *after.bus(entry.entity.id);
+                faderOnly.gain = now.gain;
+                faderOnly.pan = now.pan;
+                faderOnly.mute = now.mute;
+                if (!(faderOnly == now)) {
+                    return false;
+                }
+            } else {
+                model::Send levelOnly = *before.send(entry.entity.id);
+                const model::Send& now = *after.send(entry.entity.id);
+                levelOnly.level = now.level;
+                levelOnly.enabled = now.enabled;
+                if (!(levelOnly == now)) {
+                    return false;
+                }
+            }
             continue;
         }
         if (entry.entity.type != model::EntityType::track || entry.change != model::DiffEntry::Change::modified) {
@@ -258,7 +369,66 @@ bool onlyFaderChanges(const model::Document& before, const model::Document& afte
             return false;
         }
     }
-    return true;
+    // An enabled flag decides what a channel reaches, so it can change who is
+    // solo-silenced: then the graph is compiled again.
+    return !mixChanged || engine::soloSilencedRefs(before) == engine::soloSilencedRefs(after);
+}
+
+// Every parameter set an edit that onlyFaderChanges() accepted needs, except the
+// locators (the transport's).
+void setParameters(realtime::ControlDispatcher& dispatcher, const model::Document& before,
+                   const model::Document& after) {
+    for (const model::DiffEntry& entry : model::diff(before, after)) {
+        switch (entry.entity.type) {
+            case model::EntityType::master:
+                dispatcher.setParameter(realtime::ParamKey{masterSlotKey(), graph::TrackFaderNode::kGainMilliDb},
+                                        masterValue(after), 0);
+                break;
+            case model::EntityType::bus: {
+                const model::Bus& old = *before.bus(entry.entity.id);
+                const model::Bus& now = *after.bus(entry.entity.id);
+                for (const std::uint32_t paramId : {graph::TrackFaderNode::kGainMilliDb, graph::TrackFaderNode::kPan,
+                                                    graph::TrackFaderNode::kMute}) {
+                    if (busValue(old, paramId) != busValue(now, paramId)) {
+                        dispatcher.setParameter(realtime::ParamKey{busSlotKey(now.id), paramId}, busValue(now, paramId), 0);
+                    }
+                }
+                break;
+            }
+            case model::EntityType::send: {
+                const model::Send& old = *before.send(entry.entity.id);
+                const model::Send& now = *after.send(entry.entity.id);
+                for (const std::uint32_t paramId : {graph::SendNode::kLevelMilliDb, graph::SendNode::kEnabled}) {
+                    if (sendValue(old, paramId) != sendValue(now, paramId)) {
+                        dispatcher.setParameter(realtime::ParamKey{sendSlotKey(now.id), paramId}, sendValue(now, paramId),
+                                                0);
+                    }
+                }
+                break;
+            }
+            case model::EntityType::track: {
+                const model::Track& old = *before.track(entry.entity.id);
+                const model::Track& now = *after.track(entry.entity.id);
+                const std::string key = trackSlotKey(now.id);
+                for (const std::uint32_t paramId :
+                     {graph::TrackFaderNode::kGainMilliDb, graph::TrackFaderNode::kPan, graph::TrackFaderNode::kMute}) {
+                    if (documentValue(old, paramId) != documentValue(now, paramId)) {
+                        dispatcher.setParameter(realtime::ParamKey{key, paramId}, documentValue(now, paramId), 0);
+                    }
+                }
+                // A track mute silences its sends too, pre-fader ones included.
+                if (old.mute != now.mute) {
+                    for (const std::string& sendId : now.sends) {
+                        dispatcher.setParameter(realtime::ParamKey{sendSlotKey(sendId), graph::SendNode::kSourceMute},
+                                                now.mute ? 1.0 : 0.0, 0);
+                    }
+                }
+                break;
+            }
+            default:
+                break;  // the locators go to the transport
+        }
+    }
 }
 
 // A new stream that does not report ready within this time is published
@@ -281,6 +451,14 @@ std::string masterMeterKey() {
 
 std::string masterSlotKey() {
     return "master:master";
+}
+
+std::string busSlotKey(const std::string& busId) {
+    return "bus:" + busId;
+}
+
+std::string sendSlotKey(const std::string& sendId) {
+    return "send:" + sendId;
 }
 
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
@@ -441,25 +619,7 @@ void PlaybackEngine::update(const model::Document& document) {
     // A compile that waits or is pending is older than this document: recompile.
     hearTimeline(document, &*latest_);
     if (!prepared_ && !pendingDoc_ && onlyFaderChanges(*latest_, document)) {
-        for (const model::DiffEntry& entry : model::diff(*latest_, document)) {
-            if (entry.entity.type == model::EntityType::master) {
-                dispatcher_.setParameter(realtime::ParamKey{masterSlotKey(), graph::TrackFaderNode::kGainMilliDb},
-                                         masterValue(document), 0);
-                continue;
-            }
-            if (entry.entity.type != model::EntityType::track) {
-                continue;  // the locators went to the transport above
-            }
-            const model::Track& old = *latest_->track(entry.entity.id);
-            const model::Track& now = *document.track(entry.entity.id);
-            const std::string key = trackSlotKey(now.id);
-            for (const std::uint32_t paramId :
-                 {graph::TrackFaderNode::kGainMilliDb, graph::TrackFaderNode::kPan, graph::TrackFaderNode::kMute}) {
-                if (documentValue(old, paramId) != documentValue(now, paramId)) {
-                    dispatcher_.setParameter(realtime::ParamKey{key, paramId}, documentValue(now, paramId), 0);
-                }
-            }
-        }
+        setParameters(dispatcher_, *latest_, document);
     } else {
         pendingDoc_ = document;
     }
@@ -496,6 +656,54 @@ void PlaybackEngine::beginGesture(const std::string& target, std::uint32_t param
 void PlaybackEngine::updateGesture(const std::string& target, std::uint32_t paramId, double value, int rampFrames) {
     requireCommittable(target, paramId);
     dispatcher_.updateGesture(gestureKey(target, paramId), value, rampFrames);
+    // A held track mute silences the track's sends as the committed mute will.
+    if (paramId == graph::TrackFaderNode::kMute && !isMasterTarget(target) && !isBusTarget(target) &&
+        !isSendTarget(target) && !std::isnan(value)) {
+        if (const model::Track* track = gestureDocument().track(target)) {
+            for (const std::string& sendId : track->sends) {
+                dispatcher_.setParameter(realtime::ParamKey{sendSlotKey(sendId), graph::SendNode::kSourceMute},
+                                         value != 0.0 ? 1.0 : 0.0, rampFrames);
+            }
+        }
+    }
+}
+
+const model::Document& PlaybackEngine::gestureDocument() const {
+    const command::History& history = session_.history();
+    return gestureBranch_ && history.isOpen(*gestureBranch_) ? history.branchHead(*gestureBranch_).document
+                                                             : history.head().document;
+}
+
+void PlaybackEngine::setGestureValue(const std::string& target, std::uint32_t paramId, double value) {
+    dispatcher_.setParameter(gestureKey(target, paramId), value, 0);
+    if (paramId == graph::TrackFaderNode::kMute && !isMasterTarget(target) && !isBusTarget(target) &&
+        !isSendTarget(target)) {
+        if (const model::Track* track = gestureDocument().track(target)) {
+            for (const std::string& sendId : track->sends) {
+                dispatcher_.setParameter(realtime::ParamKey{sendSlotKey(sendId), graph::SendNode::kSourceMute},
+                                         value != 0.0 ? 1.0 : 0.0, 0);
+            }
+        }
+    }
+}
+
+void PlaybackEngine::cancelGesture(const std::string& target, std::uint32_t paramId) {
+    requireCommittable(target, paramId);
+    (void)dispatcher_.endGesture(gestureKey(target, paramId));  // the value is dropped
+    const model::Document& document = gestureDocument();
+    if (isMasterTarget(target)) {
+        setGestureValue(target, paramId, masterValue(document));
+    } else if (isBusTarget(target)) {
+        if (const model::Bus* bus = document.bus(targetId(target))) {
+            setGestureValue(target, paramId, busValue(*bus, paramId));
+        }
+    } else if (isSendTarget(target)) {
+        if (const model::Send* send = document.send(targetId(target))) {
+            setGestureValue(target, paramId, sendValue(*send, paramId));
+        }
+    } else if (const model::Track* track = document.track(target)) {
+        setGestureValue(target, paramId, documentValue(*track, paramId));
+    }
 }
 
 const command::Revision* PlaybackEngine::endGesture(const std::string& target, std::uint32_t paramId,
@@ -518,18 +726,23 @@ const command::Revision* PlaybackEngine::endGesture(const std::string& target, s
             gestureBranch_ ? session_.commitOn(*gestureBranch_, {commit.command}, std::move(actor), std::move(time))
                            : session_.commit({commit.command}, std::move(actor), std::move(time));
         // The committed value reaches the audio thread through the dispatcher.
-        dispatcher_.setParameter(key, commit.value, 0);
+        setGestureValue(target, paramId, commit.value);
         return &revision;
     } catch (...) {
         // Nothing was committed: the sound returns to the document's value.
-        const command::History& history = session_.history();
-        const model::Document& document = gestureBranch_ && history.isOpen(*gestureBranch_)
-                                              ? history.branchHead(*gestureBranch_).document
-                                              : history.head().document;
+        const model::Document& document = gestureDocument();
         if (isMasterTarget(target)) {
-            dispatcher_.setParameter(key, masterValue(document), 0);
+            setGestureValue(target, paramId, masterValue(document));
+        } else if (isBusTarget(target)) {
+            if (const model::Bus* bus = document.bus(targetId(target))) {
+                setGestureValue(target, paramId, busValue(*bus, paramId));
+            }
+        } else if (isSendTarget(target)) {
+            if (const model::Send* send = document.send(targetId(target))) {
+                setGestureValue(target, paramId, sendValue(*send, paramId));
+            }
         } else if (const model::Track* track = document.track(target)) {
-            dispatcher_.setParameter(key, documentValue(*track, paramId), 0);
+            setGestureValue(target, paramId, documentValue(*track, paramId));
         }
         throw;
     }
@@ -580,9 +793,11 @@ AuditionCost PlaybackEngine::estimateCost(const model::Document& document) const
         ++cost.newStreams;
         cost.bytes += 2 * ringFrames * static_cast<std::size_t>(track.track->channels) * sizeof(float);
     }
-    // As compileWith(): the master bus, its gain and its meter, and per track a
-    // player, a fader and a meter.
-    cost.nodes = 3 + 3 * flat.size() + document.allPluginSlots().size();
+    // As compileWith(): the master bus, its gain and its meter, per track a
+    // player, a fader and a meter, per bus a sum, a fader and a meter, a node
+    // per send, and the plugin slots.
+    cost.nodes = 3 + 3 * flat.size() + 3 * document.allBuses().size() + document.allSends().size() +
+                 document.allPluginSlots().size();
     return cost;
 }
 

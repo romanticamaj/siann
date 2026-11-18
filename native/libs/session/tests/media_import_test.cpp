@@ -448,3 +448,15 @@ TEST_CASE("The media name is the source's base name, cut to 255 UTF-8 bytes at a
     straddle += u8"\U0001F3B5";
     CHECK(mediaNameFromPath(fs::path(straddle)) == std::string(253, 'a'));
 }
+
+// Follow-up to #123 (spec "siann-model", names): a file name is stripped of
+// control and display-unsafe characters, never refused, so a file called
+// "kick<RLO>vaw.exe" imports as "kickvaw.exe".
+TEST_CASE("The media name drops control and display-unsafe characters from the file name", "[import][job][names]") {
+    CHECK(mediaNameFromPath(fs::path(u8"/x/kick\u202Evaw.exe")) == "kickvaw.exe");
+    CHECK(mediaNameFromPath(fs::path(u8"/x/\u2066Loop\u2069 \u200F1.wav")) == "Loop 1.wav");
+    CHECK(mediaNameFromPath(fs::path(u8"/x/a\u2028b\tc.wav")) == "abc.wav");
+    // Nothing left but unsafe characters: the fallback name.
+    CHECK(mediaNameFromPath(fs::path(u8"/x/\u202E\u202C")) == "audio");
+    CHECK(mediaNameFromPath(fs::path(u8"/x/שירה 聲.wav")) == pathText(fs::path(u8"שירה 聲.wav")));
+}

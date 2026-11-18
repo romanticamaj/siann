@@ -56,5 +56,5 @@ export function createLayoutStore(options: { storage: LayoutStorage | null }): L
 }
 
 export function useShellState(store: LayoutStore): ShellState {
-  return useSyncExternalStore(store.subscribe, store.getSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }

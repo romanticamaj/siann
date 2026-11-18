@@ -118,3 +118,46 @@ test('the transport keys of Cubase with the laptop fallback, the position displa
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Shift+F').map((b) => b.commandId), ['view.zoomFull']);
   assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Enter').map((b) => b.commandId), ['focus.enterZone']);
 });
+
+test('the locator, cycle and metronome keys (m5-ui-loop-click; UI redesign spec 3.1, 3.2, 3.6)', () => {
+  const windowRows: Array<[string, string]> = [
+    ['P', 'transport.locatorsToSelection'],
+    ['Alt+P', 'transport.loopSelection'],
+    ['C', 'transport.metronomeToggle'],
+    // Num / toggles cycle; the slash key is its laptop fallback.
+    ['NumpadDivide', 'transport.cycleToggle'],
+    ['Slash', 'transport.cycleToggle'],
+    // Num 1 / Num 2 go to the locators; Shift+1 / Shift+2 are their laptop fallback.
+    ['Numpad1', 'transport.toLeftLocator'],
+    ['Numpad2', 'transport.toRightLocator'],
+    ['Shift+1', 'transport.toLeftLocator'],
+    ['Shift+2', 'transport.toRightLocator'],
+    // Ctrl+Num 1 / Ctrl+Num 2 (Mod) set them to the project cursor.
+    ['Mod+Numpad1', 'transport.setLeftLocator'],
+    ['Mod+Numpad2', 'transport.setRightLocator'],
+  ];
+  for (const [chord, commandId] of windowRows) {
+    const found = CUBASE_PRESET.filter((b) => b.chord === chord);
+    assert.deepEqual(found.map((b) => [b.scope, b.commandId]), [['window', commandId]], chord);
+  }
+  // No collision: 1 stays the Object Selection tool, Shift+P the position field.
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === '1').map((b) => [b.scope, b.commandId]), [['project', 'tool.select']]);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Shift+P').map((b) => [b.scope, b.commandId]), [['window', 'transport.enterPosition']]);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Alt+P').map((b) => b.commandId), ['zone.right.plans']);
+  // No zone binds these chords (the window's would then lose to it).
+  for (const [chord] of windowRows) assert.equal(CUBASE_PRESET.filter((b) => b.chord === chord && b.scope !== 'window').length, 0, chord);
+});
+
+test('Ctrl+P (Cmd+P on macOS) opens the Pool, Cubase\'s Open Pool key (m5-ui-port-toolbar; UI redesign 10.8, 1)', () => {
+  const found = CUBASE_PRESET.filter((b) => b.commandId === 'pool.open');
+  assert.deepEqual(found, [{ chord: 'Mod+P', commandId: 'pool.open', scope: 'window' }]);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+P').map((b) => [b.scope, b.commandId]), [['window', 'pool.open']]);
+  // The other P keys keep their commands.
+  const others: Array<[string, string]> = [
+    ['P', 'transport.locatorsToSelection'],
+    ['Alt+P', 'transport.loopSelection'],
+    ['Shift+P', 'transport.enterPosition'],
+    ['Mod+Alt+P', 'zone.right.plans'],
+  ];
+  for (const [chord, commandId] of others) assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === chord).map((b) => b.commandId), [commandId], chord);
+});

@@ -51,6 +51,12 @@
 // m5b-engine-project-media (spec, Protocol v0 item 27; Jobs v0, import):
 // session.create through ServerOptions::createSession, and media.import, a job
 // whose worker writes the files and whose media.add the command thread commits.
+//
+// m5b-engine-plan-metadata (spec, "Plans", decisions of 2026-11-15; Protocol v0
+// items 14, 15, 25 and 29): plan.submit's title and intent, the actor the server
+// sets from the credential and the client's name ({type:"auth", ..., client:
+// {name}} or MCP clientInfo.name), plan.changed with the metadata and the
+// rejection note, the agents in engine.status and agent.changed, DELETE /v0/mcp.
 
 #include <chrono>
 #include <cstddef>
@@ -138,6 +144,16 @@ struct ServerOptions {
     // measured on (empty: the steady clock; tests inject one).
     std::chrono::milliseconds gestureLeaseMs{5'000};
     std::function<std::chrono::steady_clock::time_point()> steadyClock;
+    // Agents (Protocol v0 item 29): an MCP session without a request for this
+    // long is shown disconnected (on steadyClock), and at most agentsRetained
+    // agents are kept.
+    std::chrono::milliseconds agentIdleMs{300'000};
+    std::size_t agentsRetained = 32;
+    // Agent requests (Protocol v0 item 32): at most this many open requests
+    // (pending or taken) per agent, and how long next_request waits for one
+    // (on steadyClock), clamped to at most mcpRequestTimeout minus 1 s.
+    std::size_t agentRequestsPerAgent = 16;
+    std::chrono::milliseconds agentRequestWaitMs{25'000};
     // session.open: opens the bundle and returns the session to serve from now
     // on (owned by the launcher, which rebinds its engine inside). Runs on the
     // command thread. Empty: session.open is not_supported.
@@ -196,7 +212,7 @@ public:
     // The session served now (session.open replaces it). Command thread.
     session::Session& session() noexcept;
 
-    // One MCP HTTP request (POST /v0/mcp, docs/schemas/protocol-mcp-v0.md)
+    // One MCP HTTP request (POST or DELETE /v0/mcp, docs/schemas/protocol-mcp-v0.md)
     // without blocking: `complete` runs with the response, at once when no
     // method has to run, otherwise on the command thread when pump() handles
     // the tool call. The transport's onHttp handler uses it and waits.

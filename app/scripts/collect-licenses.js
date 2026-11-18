@@ -11,7 +11,7 @@
 // - CLAP, IXWebSocket, r8brain and dr_libs, linked into siann-engine;
 // - the OFL texts of the fonts the renderer ships;
 // - <package>-LICENSE.txt for every npm package app/package-lock.json installs
-//   for run time (React, react-dom, its scheduler, react-resizable-panels: all
+//   for run time (React, react-dom and its scheduler: all
 //   MIT, bundled by esbuild into the renderer inside app.asar), from
 //   app/node_modules. The list follows the lock file, so a new runtime
 //   dependency cannot ship without its notice.

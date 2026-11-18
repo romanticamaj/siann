@@ -50,6 +50,44 @@ export function engineArgs(launch: EngineLaunch): string[] {
 // space in it (a plugin build path), or plain words split at spaces. Text that
 // starts with "[" and is not an array of strings throws: a test must not run with
 // arguments it did not mean.
+// The renderer argument of SIANN_TEST_CAPABILITIES (m5-ui-loop-click): the
+// file's JSON, which the session client uses in place of the engine's
+// engine.capabilities answer. Only under SIANN_SHELL_TEST=1; nothing otherwise.
+// The sandboxed preload reads no files, so the JSON travels in the argument.
+export const TEST_CAPABILITIES_ARG = '--siann-test-capabilities=';
+
+export function testCapabilitiesArgs(env: Readonly<Record<string, string | undefined>>, readFile: (file: string) => string): string[] {
+  const file = env.SIANN_TEST_CAPABILITIES;
+  if (env.SIANN_SHELL_TEST !== '1' || !file) return [];
+  const parsed: unknown = JSON.parse(readFile(file));
+  if (parsed === null || typeof parsed !== 'object' || !Array.isArray((parsed as { methods?: unknown }).methods)) {
+    throw new Error(`SIANN_TEST_CAPABILITIES is not an engine.capabilities answer: ${file}`);
+  }
+  return [`${TEST_CAPABILITIES_ARG}${encodeURIComponent(JSON.stringify(parsed))}`];
+}
+
+// The renderer argument of SIANN_FIDELITY_ENVIRONMENT (m5-ui-alignment-chrome;
+// UI redesign 10.2): the environment object of app/test/fidelity/manifest.json
+// as JSON, whose device and engineAbout the session client answers in place
+// of the engine's, so the status bar reads as the mockup's. Only under
+// SIANN_SHELL_TEST=1; nothing otherwise. Text that is not a JSON object throws.
+export const TEST_ENVIRONMENT_ARG = '--siann-test-environment=';
+
+export function fidelityEnvironmentArgs(env: Readonly<Record<string, string | undefined>>): string[] {
+  const text = env.SIANN_FIDELITY_ENVIRONMENT;
+  if (env.SIANN_SHELL_TEST !== '1' || !text) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`SIANN_FIDELITY_ENVIRONMENT is not JSON: ${text}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`SIANN_FIDELITY_ENVIRONMENT must be a JSON object: ${text}`);
+  }
+  return [`${TEST_ENVIRONMENT_ARG}${encodeURIComponent(JSON.stringify(parsed))}`];
+}
+
 export function engineTestArgs(text: string | undefined): string[] | undefined {
   if (text === undefined) return undefined;
   const trimmed = text.trim();

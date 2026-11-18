@@ -112,7 +112,7 @@ public:
     // commit(), so the plan revision is journaled before it is published.
     const command::PlanStore& plans() const noexcept;
     const command::Plan& submitPlan(std::vector<command::Command> steps, std::vector<model::EntityRef> readSet,
-                                    const std::string& baseRevision);
+                                    const std::string& baseRevision, command::PlanMetadata metadata = {});
     const command::Plan& approvePlan(std::string_view planHashText, std::string approvedBy, std::string time);
     const command::Plan& approvePlanPartial(std::string_view planHashText, const std::vector<std::size_t>& stepIndexes,
                                             std::string approvedBy, std::string time);
@@ -122,6 +122,13 @@ public:
     // Rolls back an applied plan through rollback(), so the inverse revision
     // is journaled before it is published (PlanStore::rollback).
     const command::Revision& rollbackPlan(std::string_view planHashText, std::string actor, std::string time);
+    // Rolls back a plan or branch-merge revision of main's first-parent chain
+    // by its id, through rollback() and without the plan store, so a plan an
+    // earlier process applied can be rolled back after a reopen (spec,
+    // siann-protocol item 14, plan.rollback {revision}). A revision that is
+    // not on main is not_found. A stored plan applied at that revision becomes
+    // rolled_back (PlanStore::markRolledBack).
+    const command::Revision& rollbackRevision(std::string_view revisionId, std::string actor, std::string time);
     // Applies an approved plan onto a new proposal branch instead of main: the
     // branch starts at the plan's base revision and gets one revision with
     // cause plan and the plan's steps (the entry point the MCP adapter

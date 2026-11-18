@@ -3,10 +3,35 @@
 // made on them, a hand-driven animation-frame queue, a ResizeObserver and a
 // devicePixelRatio media query the test fires itself. No DOM, no timers.
 
+// One path segment as the canvas code built it.
+export interface Segment {
+  readonly op: 'moveTo' | 'lineTo' | 'rect' | 'roundRect' | 'arc' | 'quadraticCurveTo' | 'bezierCurveTo' | 'closePath' | 'ellipse';
+  readonly args: readonly number[];
+}
+
+// Every drawing call in order, with the state it drew in.
+export interface Call {
+  readonly kind: 'fillRect' | 'strokeRect' | 'fill' | 'stroke' | 'fillText' | 'clip';
+  readonly style: string;
+  readonly alpha: number;
+  readonly lineWidth: number;
+  readonly font: string;
+  // fillRect, strokeRect: [x, y, w, h]; fillText: [x, y] (and maxWidth).
+  readonly args: readonly number[];
+  readonly text?: string;
+  // fill, stroke, clip: the current path.
+  readonly path?: readonly Segment[];
+}
+
 export interface Recorded {
   readonly texts: string[];
   readonly strokes: Array<{ lineWidth: number; rect: [number, number, number, number] }>;
   readonly alphas: number[];
+  // Every fillRect with the fillStyle it drew in.
+  readonly fills: Array<{ style: string; rect: [number, number, number, number] }>;
+  readonly paths: Array<{ style: string }>;
+  readonly labels: Array<{ text: string; style: string }>;
+  readonly calls: Call[];
   clear(): void;
 }
 
@@ -14,10 +39,53 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; recorded: Recorded
   const texts: string[] = [];
   const strokes: Recorded['strokes'] = [];
   const alphas: number[] = [];
-  const state: Record<string | symbol, unknown> = { lineWidth: 1, globalAlpha: 1 };
+  const fills: Recorded['fills'] = [];
+  const paths: Recorded['paths'] = [];
+  const labels: Recorded['labels'] = [];
+  const calls: Call[] = [];
+  let path: Segment[] = [];
+  let state: Record<string | symbol, unknown> = { lineWidth: 1, globalAlpha: 1, fillStyle: '', strokeStyle: '', font: '' };
+  const stack: Array<Record<string | symbol, unknown>> = [];
+  const call = (kind: Call['kind'], style: unknown, args: readonly number[], extra: Partial<Call> = {}) =>
+    calls.push({ kind, style: String(style), alpha: Number(state.globalAlpha), lineWidth: Number(state.lineWidth), font: String(state.font), args, ...extra });
+  const segment = (op: Segment['op']) => (...args: unknown[]) => void path.push({ op, args: args.filter((a): a is number => typeof a === 'number') });
   const target: Record<string | symbol, unknown> = {
-    fillText: (text: string) => void texts.push(text),
-    strokeRect: (x: number, y: number, w: number, h: number) => void strokes.push({ lineWidth: Number(state.lineWidth), rect: [x, y, w, h] }),
+    fillText: (text: string, ...args: number[]) => {
+      texts.push(text);
+      labels.push({ text, style: String(state.fillStyle) });
+      call('fillText', state.fillStyle, args, { text });
+    },
+    fillRect: (x: number, y: number, w: number, h: number) => {
+      fills.push({ style: String(state.fillStyle), rect: [x, y, w, h] });
+      call('fillRect', state.fillStyle, [x, y, w, h]);
+    },
+    fill: () => {
+      paths.push({ style: String(state.fillStyle) });
+      call('fill', state.fillStyle, [], { path: [...path] });
+    },
+    stroke: () => void call('stroke', state.strokeStyle, [], { path: [...path] }),
+    clip: () => void call('clip', '', [], { path: [...path] }),
+    strokeRect: (x: number, y: number, w: number, h: number) => {
+      strokes.push({ lineWidth: Number(state.lineWidth), rect: [x, y, w, h] });
+      call('strokeRect', state.strokeStyle, [x, y, w, h]);
+    },
+    beginPath: () => {
+      path = [];
+    },
+    moveTo: segment('moveTo'),
+    lineTo: segment('lineTo'),
+    rect: segment('rect'),
+    roundRect: segment('roundRect'),
+    arc: segment('arc'),
+    ellipse: segment('ellipse'),
+    quadraticCurveTo: segment('quadraticCurveTo'),
+    bezierCurveTo: segment('bezierCurveTo'),
+    closePath: segment('closePath'),
+    save: () => void stack.push({ ...state }),
+    restore: () => {
+      const previous = stack.pop();
+      if (previous) state = previous;
+    },
     measureText: (text: string) => ({ width: text.length * 6 }),
   };
   const ctx = new Proxy(target, {
@@ -32,10 +100,18 @@ function recordingContext(): { ctx: CanvasRenderingContext2D; recorded: Recorded
     texts,
     strokes,
     alphas,
+    fills,
+    paths,
+    labels,
+    calls,
     clear: () => {
       texts.length = 0;
       strokes.length = 0;
       alphas.length = 0;
+      fills.length = 0;
+      paths.length = 0;
+      labels.length = 0;
+      calls.length = 0;
     },
   };
   return { ctx: ctx as unknown as CanvasRenderingContext2D, recorded };

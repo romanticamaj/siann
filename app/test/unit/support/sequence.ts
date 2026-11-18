@@ -58,6 +58,21 @@ export interface Sequence {
     sync: Sequence['sync'];
     both: { document: Record<string, unknown>; documentHash: string; sync: Sequence['sync'] };
   };
+  // m5b-engine-plan-metadata: plan.changed with metadata and agent.changed after
+  // the base sync, which the read model does not model.
+  unmodelled: {
+    events: Array<{ schema: string; seq: string; sessionId: string; revision: string; type: string } & Record<string, unknown>>;
+  };
+  // m5b-engine-buses-sends: deltas on a bus and a send, and a sync that holds them.
+  buses: {
+    steps: SequenceStep[];
+    sync: Sequence['sync'];
+  };
+  // m5b-engine-clip-fades: after the master steps, set and remove clp_1's fades.
+  fades: {
+    before: { revision: string; documentHash: string };
+    steps: SequenceStep[];
+  };
 }
 
 export function sequence(): Sequence {

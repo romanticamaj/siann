@@ -11,8 +11,10 @@ import type { SyncChunk } from '../../src/renderer/model/document';
 import {
   ProtocolError,
   SessionClient,
+  type AgentRequest,
   type ClientState,
   type EngineEndpoint,
+  type SessionClientOptions,
   type SocketLike,
 } from '../../src/renderer/model/session-client';
 import { sequence, type SequenceStep } from './support/sequence';
@@ -131,6 +133,8 @@ interface ServerScript {
   // The next this-many session.sync starts answer internal_error.
   failSyncs: number;
   other: (message: Message) => Message | null;
+  // The auth reply's about, when a test needs another one.
+  about?: Message;
 }
 
 // The engine's side of one connection.
@@ -148,7 +152,7 @@ function serve(socket: FakeSocket, script: ServerScript): void {
           documentHash: script.sync[0]?.documentHash,
           seq: script.authSeq,
           meters: null,
-          about: { name: 'siann-engine', version: '0.1.0', license: 'GPL-2.0-or-later', source: { commit: 'f'.repeat(40) } },
+          about: script.about ?? { name: 'siann-engine', version: '0.1.0', license: 'GPL-2.0-or-later', source: { commit: 'f'.repeat(40) } },
         }),
       );
       return;
@@ -188,7 +192,7 @@ function fixtureFetch(params: Record<string, unknown>): Message {
   return { ok: true, result: step.fetch.result as unknown as Message };
 }
 
-function rig(overrides: Partial<ServerScript> = {}) {
+function rig(overrides: Partial<ServerScript> = {}, options: Partial<Pick<SessionClientOptions, 'environment'>> = {}) {
   const scheduler = new FakeScheduler();
   const sockets: FakeSocket[] = [];
   let endpoint: EngineEndpoint | null = { port: 1, token: 'tok' };
@@ -213,6 +217,7 @@ function rig(overrides: Partial<ServerScript> = {}) {
     },
     currentEndpoint: async () => endpoint,
     schedule: scheduler.schedule,
+    ...options,
   });
   client.subscribe(() => states.push(client.getState()));
   const last = () => sockets[sockets.length - 1]!;
@@ -694,6 +699,82 @@ test('(18) a session.changed reaches onEvent listeners once the model has applie
   assert.deepEqual(revisions, [seq.steps[0]!.event.revision]);
 });
 
+// m5b-engine-plan-metadata: a plan.changed with the metadata and the note, and an
+// agent.changed, are events the read model does not model. The client advances
+// lastSeq past them, hands them to their listeners, and changes nothing else.
+test('(18b) plan.changed with metadata and agent.changed advance lastSeq and leave the model as it was', async () => {
+  const r = rig();
+  const socket = await synced(r);
+  const before = r.client.model.getSnapshot();
+  const seen: string[] = [];
+  r.client.onEvent('plan.changed', (e) => seen.push(`${e.seq} ${String(e.title)} ${String(e.rejectionNote)}`));
+  r.client.onEvent('agent.changed', (e) => seen.push(`${e.seq} ${(e.agent as { name: string }).name}`));
+  const [plan, agent] = seq.unmodelled.events;
+  socket.deliver(plan);
+  socket.deliver(agent);
+  await until(() => r.client.getState().lastSeq === agent!.seq, 'lastSeq past the agent.changed');
+  assert.deepEqual(seen, ['8 Lower the drums Too much; try -3 dB', '9 mix-assistant']);
+  assert.equal(r.client.model.getSnapshot(), before);
+  assert.equal(socket.requests('session.fetch').length, 0);
+  assert.equal(r.client.getState().syncCount, 1, 'no gap, no sync');
+});
+
+// m5b-engine-agent-requests (Protocol v0 item 32): the composer's calls and event.
+test('(18c) agent.request, agent.cancel_request and agent.requests go out as typed calls; agent.request_changed reaches a listener', async () => {
+  const agentId = 'agt_00c0ffee00c0ffee';
+  const request: AgentRequest = {
+    id: 'arq_00c0ffee',
+    agentId,
+    text: 'Lower the drums',
+    context: { selection: { tracks: ['trk_1'], clips: [] }, locators: null, cursor: '0', headRevision: 'r3' },
+    state: 'pending',
+    createdAt: '2026-11-15T10:00:00Z',
+  };
+  const r = rig({
+    other: (message) => {
+      if (message.method === 'agent.request') return { ok: true, result: { request } };
+      if (message.method === 'agent.cancel_request') return { ok: true, result: { request: { ...request, state: 'cancelled' } } };
+      if (message.method === 'agent.requests') return { ok: true, result: { requests: [request] } };
+      return null;
+    },
+  });
+  const socket = await synced(r);
+  const before = r.client.model.getSnapshot();
+
+  assert.deepEqual(await r.client.agentRequest(agentId, 'Lower the drums', { tracks: ['trk_1'], clips: [] }), request);
+  assert.deepEqual(socket.requests('agent.request')[0]!.params, {
+    agentId,
+    text: 'Lower the drums',
+    selection: { tracks: ['trk_1'], clips: [] },
+  });
+  await r.client.agentRequest(agentId, 'Hi');
+  assert.deepEqual(socket.requests('agent.request')[1]!.params, { agentId, text: 'Hi' }, 'no selection, no param');
+  const cancelled = await r.client.cancelAgentRequest('arq_00c0ffee');
+  assert.equal(cancelled.state, 'cancelled');
+  assert.deepEqual(socket.requests('agent.cancel_request')[0]!.params, { request: 'arq_00c0ffee' });
+  assert.deepEqual(await r.client.agentRequests(), [request]);
+  assert.deepEqual(socket.requests('agent.requests')[0]!.params, {});
+
+  // A full queue rejects with agent_busy, for the box to show.
+  r.script.other = () => ({ ok: false, error: { code: 'agent_busy', message: '16 open requests' } });
+  await assert.rejects(r.client.agentRequest(agentId, 'one more'), (e: unknown) => e instanceof ProtocolError && e.code === 'agent_busy');
+
+  const seen: string[] = [];
+  r.client.onEvent('agent.request_changed', (e) => seen.push(`${e.seq} ${(e.request as AgentRequest).state}`));
+  const next = (BigInt(r.client.getState().lastSeq!) + 1n).toString();
+  socket.deliver({
+    schema: 'siann.event.v1',
+    seq: next,
+    sessionId: SESSION,
+    revision: 'r3',
+    type: 'agent.request_changed',
+    request: { ...request, state: 'taken' },
+  });
+  await until(() => r.client.getState().lastSeq === next, 'lastSeq past the agent.request_changed');
+  assert.deepEqual(seen, [`${next} taken`]);
+  assert.equal(r.client.model.getSnapshot(), before, 'a request changes nothing in the model');
+});
+
 test('(19) a request while disconnected is refused before the socket, sends no frame and is recorded', async () => {
   const r = rig();
   // Before any connection.
@@ -711,4 +792,41 @@ test('(19) a request while disconnected is refused before the socket, sends no f
   await assert.rejects(r.client.request('gesture.begin', { target: 'track:trk_1/gain' }), /not connected/);
   assert.equal(socket.sent.length, sentBefore, 'no frame reached the socket');
   assert.deepEqual(r.client.refused(), [{ method: 'command.execute' }, { method: 'plan.approve' }, { method: 'gesture.begin' }]);
+});
+
+// m5-ui-alignment-chrome (UI redesign 10.2): the fidelity run's environment
+// (app/test/fidelity/manifest.json, SIANN_FIDELITY_ENVIRONMENT under
+// SIANN_SHELL_TEST=1) answers engine.status's device and the about's name,
+// version, licence and commit field by field; the source URL stays the
+// engine's, so the "source" link stays. Without it nothing changes.
+const ENVIRONMENT = {
+  device: { id: 'ASIO/Scarlett 4i4', sampleRate: 48000, bufferFrames: 128, inputLatencyFrames: 128, outputLatencyFrames: 128 },
+  engineAbout: { name: 'siann-engine', version: '0.1.0', license: 'AGPL-3.0-or-later', source: { commit: '308d846'.padEnd(40, '0'), dirty: false } },
+};
+const ENGINE_ABOUT = { name: 'siann-engine', version: '0.3.0', license: 'GPL-2.0-or-later', source: { url: 'https://example.invalid/siann', commit: 'f'.repeat(40), dirty: true } };
+const ENGINE_STATUS = {
+  device: { id: 'fake', sampleRate: 44100, bufferFrames: 256, inputLatencyFrames: 0, outputLatencyFrames: 256 },
+  playing: false,
+  xruns: '0',
+};
+const statusServer = (message: Message): Message | null => (message.method === 'engine.status' ? { ok: true, result: structuredClone(ENGINE_STATUS) as unknown as Message } : null);
+
+test('(20) the fidelity environment answers the device of engine.status and the about field by field; without it nothing changes', async () => {
+  const withEnv = rig({ about: ENGINE_ABOUT, other: statusServer }, { environment: ENVIRONMENT });
+  await connected(withEnv);
+  assert.deepEqual(withEnv.client.getState().about, {
+    name: 'siann-engine',
+    version: '0.1.0',
+    license: 'AGPL-3.0-or-later',
+    source: { url: 'https://example.invalid/siann', commit: ENVIRONMENT.engineAbout.source.commit, dirty: false },
+  });
+  const status = (await withEnv.client.request('engine.status', {})) as typeof ENGINE_STATUS;
+  assert.deepEqual(status.device, ENVIRONMENT.device);
+  assert.equal(status.xruns, '0', 'the rest of the answer is the engine\'s');
+  assert.equal(status.playing, false);
+
+  const plain = rig({ about: ENGINE_ABOUT, other: statusServer });
+  await connected(plain);
+  assert.deepEqual(plain.client.getState().about, ENGINE_ABOUT);
+  assert.deepEqual(await plain.client.request('engine.status', {}), ENGINE_STATUS);
 });

@@ -21,6 +21,25 @@ struct PlanarAudio {
 // Linear gain for an integer milli-dB value; INT32_MIN (minus infinity) is 0.
 float gainFromMilliDb(std::int32_t milliDb) noexcept;
 
+// A clip's fades (m5b-engine-clip-fades), in frames; a length of 0 is no fade.
+enum class FadeCurve : std::uint8_t { linear, equal_power };
+
+struct ClipFade {
+    std::int64_t inLength = 0;
+    FadeCurve inCurve = FadeCurve::linear;
+    std::int64_t outLength = 0;
+    FadeCurve outCurve = FadeCurve::linear;
+
+    friend bool operator==(const ClipFade&, const ClipFade&) = default;
+};
+
+// The fade gain at clip offset `offset` (0-based) of a clip `length` frames
+// long: in(n) * out(n), computed in double and cast to float once (architecture
+// spec, "siann-graph and siann-engine", clip fades). Exactly 1 outside both
+// fades. The offline clip player and the realtime butler both call it, so they
+// produce the same float.
+float fadeGain(const ClipFade& fade, std::int64_t offset, std::int64_t length) noexcept;
+
 // Plays scheduled regions of media on the timeline. Overlapping clips sum.
 // Media channels map to the output: equal counts copy, mono feeds every
 // output channel, stereo into mono averages, otherwise the first channels.
@@ -32,6 +51,7 @@ public:
         std::int64_t length = 0;         // frames
         float gain = 1.0f;
         std::shared_ptr<const PlanarAudio> media;
+        ClipFade fade{};
     };
 
     ClipPlayerNode(int channels, std::vector<Clip> clips);
@@ -87,6 +107,46 @@ private:
     float rightStep_ = 0.0f;
     float leftTarget_ = 0.0f;
     float rightTarget_ = 0.0f;
+    int remaining_ = 0;
+};
+
+// A send (m5b-engine-buses-sends): scales its source by the send level, ramped
+// like a fader, into a stereo bus input. A mono source (a mono track's
+// pre-fader tap) is copied to both channels at unity; send pan is not in M5b.
+// It outputs silence while disabled, while its source track is muted (the
+// parameter a mute gesture writes), or while the track is solo-silenced (fixed
+// at compile time, so no parameter lifts it).
+class SendNode final : public Node {
+public:
+    static constexpr std::uint32_t kLevelMilliDb = 1;  // INT32_MIN is minus infinity
+    static constexpr std::uint32_t kEnabled = 2;       // 0 or 1
+    static constexpr std::uint32_t kSourceMute = 3;    // 0 or 1: the source track's mute
+    // The level range of the send entity (the track gain's, model::Gain).
+    static constexpr std::int32_t kMinLevelMilliDb = -144'000;
+    static constexpr std::int32_t kMaxLevelMilliDb = 24'000;
+
+    SendNode(int inputChannels, std::int32_t levelMilliDb, bool enabled, bool sourceMute,
+             bool soloSilenced = false);
+    std::vector<int> inputPorts() const override { return {inputChannels_}; }
+    int outputChannels() const override { return 2; }
+    void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                 const AudioBufferView& output) noexcept override;
+    void setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept override;
+
+    // The current (ramping) gain.
+    float gain() const noexcept { return gain_; }
+
+private:
+    void retarget(int rampFrames) noexcept;
+
+    int inputChannels_;
+    std::int32_t levelMilliDb_;
+    bool enabled_;
+    bool sourceMute_;
+    bool soloSilenced_;
+    float gain_ = 0.0f;
+    float step_ = 0.0f;
+    float target_ = 0.0f;
     int remaining_ = 0;
 };
 

@@ -17,7 +17,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { engineClient } from './support/engine-client';
-import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
+import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 type Zone = 'left' | 'lower' | 'right';
 const ZONES: readonly Zone[] = ['left', 'lower', 'right'];
@@ -189,11 +189,14 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
       await expect(page.getByTestId(`zone-${zone}`)).toHaveAttribute('data-visible', 'true');
     }
     for (const zone of ZONES) {
-      const body = page.getByTestId(`zone-${zone}-body`);
+      // The right zone is the mockup's column (m5-ui-port-plans): its .p-scroll scrolls.
+      const body = zone === 'right' ? page.getByTestId('plan-review') : page.getByTestId(`zone-${zone}-body`);
       const result = await body.evaluate((el) => {
         const filler = document.createElement('div');
         filler.style.height = '5000px';
         filler.style.width = '5000px';
+        // In a flex column (the right zone's .p-scroll) an item would shrink.
+        filler.style.flex = 'none';
         filler.dataset.filler = 'true';
         el.appendChild(filler);
         const style = getComputedStyle(el);
@@ -209,8 +212,8 @@ test('at 1440x900 and 1024x700 the page never scrolls; each zone scrolls inside'
       expect(root[0], `${zone}: the page did not grow`).toBe(root[1]);
     }
     // The project zone scrolls by a transform in the event display, never by
-    // DOM overflow (m5-ui-arrange; spec 5.2): its body clips, and the page still does not grow.
-    const project = await page.getByTestId('zone-project-body').evaluate((el) => {
+    // DOM overflow (m5-ui-arrange; spec 5.2): its section.arrange clips, and the page still does not grow.
+    const project = await page.getByTestId('zone-project').evaluate((el) => {
       const filler = document.createElement('div');
       filler.style.height = '5000px';
       el.appendChild(filler);
@@ -349,7 +352,7 @@ test('the layout survives a restart and a session.open, under one localStorage k
   await engine.call('session.open', { path: path.join(otherDir, 'Untitled.siann') });
   engine.close();
   await expect(page.getByTestId('session-id')).not.toHaveText(sessionId ?? '');
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
   await expectSize('left', before.left);
   await expectSize('lower', before.lower);
   expect(await visible('right')).toBe(false);
@@ -365,7 +368,7 @@ test('no protocol request carries the layout, and layout changes make no revisio
   page.on('websocket', (socket) => socket.on('framesent', (frame) => frames.push(String(frame.payload))));
   await page.reload();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText(String(TRACKS.length));
+  await expect(page.getByTestId('about-track-count')).toHaveText(String(TRACKS.length));
   expect(frames.some((f) => f.includes('"auth"')), 'the frames of the new page are collected').toBe(true);
   const revision = await page.getByTestId('revision').textContent();
 
@@ -416,24 +419,32 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
     await page.getByTestId('plans-button').click();
     await expectButton('right', true);
   }
-  await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
+  await page.getByTestId('zone-project').click({ position: { x: 5, y: 5 } });
   await expect(page.getByTestId('zone-button-project')).toHaveCount(0);
 
   // Tab and Shift+Tab move the focus frame through the visible zones in order.
   const focused = () =>
     page.evaluate(() => [...document.querySelectorAll<HTMLElement>('[data-zone][data-focused="true"]')].map((el) => el.dataset.zone));
+  // The project zone's frame is the mockup's .arrange::after (m5-ui-port-cleanup),
+  // shown while the zone has the focus; the other zones' is an outline.
   const frame = (zone: string) =>
     page.locator(`[data-zone="${zone}"]`).evaluate((el) => {
       const style = getComputedStyle(el);
-      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
+      const after = getComputedStyle(el, '::after');
+      const outline = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0;
+      const border = after.display !== 'none' && after.content !== 'none' && after.borderTopStyle !== 'none' && parseFloat(after.borderTopWidth) > 0;
+      return outline || border;
     });
-  await page.getByTestId('zone-project-body').click({ position: { x: 5, y: 5 } });
+  await page.getByTestId('zone-project').click({ position: { x: 5, y: 5 } });
   expect(await focused()).toEqual(['project']);
   expect(await frame('project')).toBe(true);
   // The focus frame is --focus, the primary text at 20 % (m5-ui-tokens-spacing).
-  expect(await page.locator('[data-zone="project"]').evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(232, 235, 241, 0.2)');
-  // Every zone's tab row is --zone-tabs, 26 px.
-  const tabRows = await page.locator('.zone-tabs').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height).filter((height) => height > 0));
+  expect(await page.locator('[data-zone="project"]').evaluate((el) => getComputedStyle(el, '::after').borderTopColor)).toBe('rgba(232, 235, 241, 0.2)');
+  // No second frame: the project zone's outline stays 0 wide.
+  expect(await page.locator('[data-zone="project"]').evaluate((el) => parseFloat(getComputedStyle(el).outlineWidth) || 0)).toBe(0);
+  // The lower zone's tab row (.tabs) is --zone-tabs, 26 px; the right zone's
+  // is the mockup's .p-head (--zone-head), since m5-ui-port-plans.
+  const tabRows = await page.locator('.tabs').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height).filter((height) => height > 0));
   expect(tabRows.length).toBeGreaterThan(0);
   for (const height of tabRows) expect(height).toBe(26);
   expect(await frame('lower')).toBe(false);
@@ -459,8 +470,11 @@ test('zone keys toggle their zones, nothing hides the project zone, Tab moves th
   // A key typed into the plan note field toggles nothing.
   const agent = await agentFor(app!);
   const plan = await agent.tool('submit_plan', { steps: [{ op: 'track.set_gain', trackId: 'trk_kick', gainMilliDb: -3000 }] });
-  await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
+  await selectPlan(page, plan.hash as string);
+  // The reason row opens with the first press of Reject (UI redesign 10.10, P1-13).
+  await page.getByTestId('plan-reject').click();
   const note = page.getByTestId('plan-note');
+  await expect(note).toBeFocused();
   await note.click();
   for (const key of [`${MOD}+Alt+KeyL`, 'Alt+KeyI', `${MOD}+Alt+KeyE`, 'Alt+F3', 'F3', `${MOD}+Alt+KeyR`, `${MOD}+Alt+KeyP`]) {
     await page.keyboard.press(key);
@@ -557,7 +571,7 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
   await launch(sessionDir);
   const about = page.getByTestId('about');
   await expect(about).toContainText(/(A?GPL)-\d\.\d-or-later/);
-  const license = (await page.locator('.about .about-license').textContent()) ?? '';
+  const license = (await page.locator('.about [data-testid="about-license"]').textContent()) ?? '';
   expect(license).toMatch(/^(A?GPL)-\d\.\d-or-later$/);
   const title = (await about.getAttribute('title')) ?? '';
   expect(title).toContain(license);
@@ -589,11 +603,11 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
           const r = document.querySelector(selector)!.getBoundingClientRect();
           return { left: r.left, right: r.right, width: r.width };
         };
-        const span = document.querySelector<HTMLElement>('.about .about-license')!;
+        const span = document.querySelector<HTMLElement>('.about [data-testid="about-license"]')!;
         return {
           button: rect('[data-testid=about]'),
           bar: rect('[data-testid=status-bar]'),
-          license: rect('.about .about-license'),
+          license: rect('.about [data-testid="about-license"]'),
           clipped: span.scrollWidth > span.clientWidth,
           viewport: window.innerWidth,
         };
@@ -624,4 +638,75 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
       await expect(panel).toBeHidden();
     }
   }
+});
+
+// The top bar in small windows (UI redesign spec 2.4 and 3.0). From 1440 down
+// to 1301 px the transport is centred and the boxes of the pending branch
+// chip, DSP load and Record button keep their space; from 1300 px down the
+// transport follows the left group and those three boxes go; from 1100 px
+// down the brand and the locator, tempo and signature displays go too, and
+// the session name shortens instead of going. The bar never overflows.
+test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
+  const sessionDir = seedBundle(scratch, TRACKS);
+  await launch(sessionDir);
+  const HOLDS = ['.hold-branch-chip', '.hold-dsp-load', '.hold-transport-record'];
+  const measure = () =>
+    page.evaluate((holds) => {
+      const bar = document.querySelector<HTMLElement>('[data-testid=top-bar]')!;
+      const shown = (selector: string) => {
+        const el = document.querySelector<HTMLElement>(selector);
+        return !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
+      };
+      const r = (selector: string) => document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+      const transport = r('[data-testid=transport]');
+      const left = r('.topbar .tb-left');
+      return {
+        // Centred in the grid's content box: the mockup's .topbar pads its right
+        // side only (ui/layout.css), so the content box's centre is half that
+        // padding left of the bar's.
+        centre: (() => {
+          const box = bar.getBoundingClientRect();
+          const style = getComputedStyle(bar);
+          const contentLeft = box.left + parseFloat(style.paddingLeft);
+          const contentRight = box.right - parseFloat(style.paddingRight);
+          return Math.abs((transport.left + transport.right) / 2 - (contentLeft + contentRight) / 2);
+        })(),
+        gapAfterLeft: transport.left - left.right,
+        holds: holds.map(shown),
+        brand: shown('[data-part=brand]'),
+        signature: shown('.hold-display-signature'),
+        tempo: shown('[data-part=display-tempo]'),
+        time: shown('[data-part=display-time]'),
+        position: shown('[data-part=display-position]'),
+        session: shown('[data-testid=session-name]'),
+        overflow: bar.scrollWidth - bar.clientWidth,
+      };
+    }, HOLDS);
+
+  await resize({ width: 1440, height: 900 });
+  let m = await measure();
+  expect(m.centre, '1440: centred').toBeLessThanOrEqual(1);
+  expect(m.holds, '1440: holds keep their space').toEqual([true, true, true]);
+  expect([m.brand, m.signature, m.tempo], '1440').toEqual([true, true, true]);
+
+  await resize({ width: 1301, height: 800 });
+  m = await measure();
+  expect(m.holds, '1301: holds keep their space').toEqual([true, true, true]);
+  expect(m.centre, '1301: centred').toBeLessThanOrEqual(1);
+
+  await resize({ width: 1280, height: 800 });
+  m = await measure();
+  expect(m.holds, '1280: holds gone').toEqual([false, false, false]);
+  expect(m.brand, '1280: brand stays').toBe(true);
+  expect([m.signature, m.tempo], '1280: displays stay').toEqual([true, true]);
+  // The transport follows the left group (the grid's gap only), not the centre.
+  expect(m.gapAfterLeft, '1280: transport follows the left group').toBeLessThanOrEqual(24);
+  expect(m.overflow, '1280').toBeLessThanOrEqual(0);
+
+  await resize({ width: 1080, height: 700 });
+  m = await measure();
+  expect(m.holds, '1080').toEqual([false, false, false]);
+  expect([m.brand, m.signature, m.tempo], '1080: brand and displays gone').toEqual([false, false, false]);
+  expect([m.position, m.time, m.session], '1080: position, time and session name stay').toEqual([true, true, true]);
+  expect(m.overflow, '1080').toBeLessThanOrEqual(0);
 });

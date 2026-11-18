@@ -110,9 +110,10 @@ The DAWproject smoke test creates demo audio, writes a portable manifest, and
 exports a Cubase-importable project exchange package with copied audio media and
 timeline placement. The live import-pack command starts the local SIANN engine
 runtime, creates a session, imports the manifest assets onto tracks, saves the
-session, and renders a preview file. That live engine path requires the separate
-`siann-engine` checkout. The generated session can be opened in Ardour when you
-want a visual compatibility check.
+session, and renders a preview file. That live engine path needs the native
+`siann-engine` built from `native/` in this repository (see below); the result
+is a SIANN session bundle, and the DAWproject export is the way to inspect it in
+another DAW.
 
 For a review-and-approve workflow before applying changes, generate an import
 plan first:
@@ -122,7 +123,7 @@ node bin/siann.js workflow import-pack examples/import-pack/manifest.json --plan
 node bin/siann.js workflow validate-plan /tmp/siann-import-pack-demo/plan.json --json
 node bin/siann.js workflow approve-plan /tmp/siann-import-pack-demo/plan.json --out /tmp/siann-import-pack-demo/approved-plan.json --approved-by "$USER" --json
 node bin/siann.js workflow apply-plan /tmp/siann-import-pack-demo/approved-plan.json --out /tmp/siann-import-pack-demo/import-pack.command.json --run --json
-node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json --source-command /tmp/siann-import-pack-demo/import-pack.command.json --out /tmp/siann-import-pack-demo/rollback.command.json --run --json
+node bin/siann.js rollback /tmp/siann-import-pack-demo/journal.json --out /tmp/siann-import-pack-demo/rollback.command.json --run --json
 ```
 
 For extracted DAW test packs that follow the `_DAW/` and `_SpliceSFX/` layout,
@@ -147,11 +148,18 @@ node bin/siann.js export dawproject \
   --json
 ```
 
-For live engine commands, the CLI expects the local SIANN engine checkout next
-to this repository at `../siann-engine`. Set
-`SIANN_ENGINE_DIR=/path/to/siann-engine` if your checkout lives elsewhere. The
-engine is kept as a sibling project for now so the product/bridge repo remains
-lightweight while the Ardour-derived runtime build is still being stabilized.
+Live engine commands (`run`, `--run`, `live`) start the SIANN engine,
+`siann-engine`, built from `native/` in this repository. The CLI uses
+`SIANN_ENGINE_EXE` when it is set, and otherwise the default build at
+`native/build/dev/apps/engine/siann-engine`:
+
+```sh
+cd native
+cmake --preset dev
+cmake --build --preset dev --target siann-engine
+```
+
+Pass `--device fake` to run without audio hardware.
 
 For Windows setup and Cubase DAWproject testing, see [Windows Setup](docs/setup/windows.md).
 
@@ -159,7 +167,7 @@ For contributor-specific architecture notes, implementation boundaries, and inte
 
 ## License
 
-SIANN is licensed under GPL-2.0-or-later. The engine path is Ardour-derived, so contributors should assume GPL-compatible licensing requirements for engine and bridge work.
+SIANN is licensed under GPL-2.0-or-later. Contributors should assume GPL-compatible licensing requirements for engine and bridge work.
 
 ## Keywords
 

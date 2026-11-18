@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -518,4 +521,200 @@ TEST_CASE("compile() lists metered nodes with their NodeIds in schedule order", 
     const NodeId only = plain.add(std::make_unique<BusNode>(1), "bus");
     plain.setOutput(only);
     CHECK(std::move(plain).compile(64)->meteredNodes().empty());
+}
+
+// ---- m5b-engine-buses-sends: SendNode ----------------------------------------
+
+namespace {
+
+// One block of a SendNode on a constant input; returns {left, right} per frame.
+std::vector<std::array<float, 2>> sendBlock(SendNode& node, int inputChannels, int frames, float left, float right) {
+    std::vector<std::vector<float>> in(static_cast<std::size_t>(inputChannels), std::vector<float>(static_cast<std::size_t>(frames)));
+    for (int i = 0; i < frames; ++i) {
+        in[0][static_cast<std::size_t>(i)] = left;
+        if (inputChannels > 1) {
+            in[1][static_cast<std::size_t>(i)] = right;
+        }
+    }
+    std::vector<float*> inPtrs;
+    for (auto& channel : in) {
+        inPtrs.push_back(channel.data());
+    }
+    std::vector<std::vector<float>> out(2, std::vector<float>(static_cast<std::size_t>(frames)));
+    std::vector<float*> outPtrs{out[0].data(), out[1].data()};
+    const AudioBufferView input{inPtrs.data(), inputChannels, frames};
+    const AudioBufferView output{outPtrs.data(), 2, frames};
+    node.process(ProcessContext{0, frames}, std::span<const AudioBufferView>(&input, 1), output);
+    std::vector<std::array<float, 2>> frames2;
+    for (int i = 0; i < frames; ++i) {
+        frames2.push_back({out[0][static_cast<std::size_t>(i)], out[1][static_cast<std::size_t>(i)]});
+    }
+    return frames2;
+}
+
+}  // namespace
+
+TEST_CASE("SendNode scales by its level and upmixes a mono source to both channels at unity", "[nodes][send]") {
+    SendNode stereo(2, -6000, true, false);
+    CHECK(stereo.inputPorts() == std::vector<int>{2});
+    CHECK(stereo.outputChannels() == 2);
+    CHECK(stereo.gain() == gainFromMilliDb(-6000));
+    const auto s = sendBlock(stereo, 2, 4, 1.0f, -0.5f);
+    CHECK(s[3][0] == gainFromMilliDb(-6000));
+    CHECK(s[3][1] == -0.5f * gainFromMilliDb(-6000));
+
+    SendNode mono(1, 0, true, false);
+    CHECK(mono.inputPorts() == std::vector<int>{1});
+    const auto m = sendBlock(mono, 1, 4, 0.25f, 0.0f);
+    CHECK(m[0][0] == 0.25f);
+    CHECK(m[0][1] == 0.25f);
+}
+
+TEST_CASE("SendNode is silent while disabled, while its source is muted or solo-silenced", "[nodes][send]") {
+    SendNode disabled(2, 0, false, false);
+    CHECK(disabled.gain() == 0.0f);
+    disabled.setParameter(SendNode::kEnabled, 1.0, 0);
+    CHECK(disabled.gain() == 1.0f);
+    disabled.setParameter(SendNode::kSourceMute, 1.0, 0);
+    CHECK(disabled.gain() == 0.0f);
+    disabled.setParameter(SendNode::kSourceMute, 0.0, 0);
+    CHECK(disabled.gain() == 1.0f);
+
+    // Solo silence is not a parameter: neither enabling nor unmuting lifts it.
+    SendNode soloSilenced(2, 0, true, false, true);
+    CHECK(soloSilenced.gain() == 0.0f);
+    soloSilenced.setParameter(SendNode::kSourceMute, 0.0, 0);
+    soloSilenced.setParameter(SendNode::kEnabled, 1.0, 0);
+    CHECK(soloSilenced.gain() == 0.0f);
+    CHECK(sendBlock(soloSilenced, 2, 2, 1.0f, 1.0f)[1][0] == 0.0f);
+}
+
+TEST_CASE("SendNode ramps a level change and clamps it into the gain range", "[nodes][send]") {
+    SendNode node(2, 0, true, false);
+    node.setParameter(SendNode::kLevelMilliDb, static_cast<double>(INT32_MIN), 4);
+    const auto ramp = sendBlock(node, 2, 4, 1.0f, 1.0f);
+    CHECK(ramp[0][0] == 0.75f);
+    CHECK(ramp[1][0] == 0.5f);
+    CHECK(ramp[3][0] == 0.0f);  // lands exactly on the target
+    node.setParameter(SendNode::kLevelMilliDb, 99'000.0, 0);
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMaxLevelMilliDb));
+    node.setParameter(SendNode::kLevelMilliDb, -200'000.0, 0);
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMinLevelMilliDb));
+    node.setParameter(SendNode::kLevelMilliDb, std::nan(""), 0);
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMinLevelMilliDb));
+    node.setParameter(99, 0.0, 0);  // an unknown parameter changes nothing
+    CHECK(node.gain() == gainFromMilliDb(SendNode::kMinLevelMilliDb));
+}
+
+// ---- m5b-engine-clip-fades: the clip player's fade gain ----------------------
+
+namespace {
+
+constexpr double kHalfPi = 1.57079632679489661923;
+
+// The architecture spec's curve, recomputed here in double ("siann-graph and
+// siann-engine", clip fades): g(n) = in(n) * out(n).
+double curveRef(FadeCurve curve, double x) {
+    return curve == FadeCurve::linear ? x : std::sin(x * kHalfPi);
+}
+
+double fadeRef(const ClipFade& fade, std::int64_t n, std::int64_t length) {
+    double g = 1.0;
+    if (n < fade.inLength) {
+        g *= curveRef(fade.inCurve, static_cast<double>(n) / static_cast<double>(fade.inLength));
+    }
+    const std::int64_t m = length - 1 - n;
+    if (m < fade.outLength) {
+        g *= curveRef(fade.outCurve, static_cast<double>(m) / static_cast<double>(fade.outLength));
+    }
+    return g;
+}
+
+std::shared_ptr<PlanarAudio> rampMedia(std::int64_t frames) {
+    auto media = std::make_shared<PlanarAudio>();
+    media->channels = 1;
+    media->frames = frames;
+    media->data.assign(1, std::vector<float>(static_cast<std::size_t>(frames)));
+    for (std::int64_t i = 0; i < frames; ++i) {
+        media->data[0][static_cast<std::size_t>(i)] = 0.25f + 0.5f * static_cast<float>(i % 13) / 13.0f;
+    }
+    return media;
+}
+
+// One faded clip of `length` frames at timeline 3 (sourceStart 2), rendered from 0.
+std::vector<float> renderFaded(const ClipFade& fade, std::int64_t length, float gain, int block,
+                               const std::shared_ptr<PlanarAudio>& media) {
+    ClipPlayerNode::Clip clip{3, 2, length, gain, media};
+    clip.fade = fade;
+    GraphBuilder b;
+    const NodeId player = b.add(std::make_unique<ClipPlayerNode>(2, std::vector<ClipPlayerNode::Clip>{clip}), "player");
+    b.setOutput(player);
+    auto graph = std::move(b).compile(512);
+    return run(*graph, length + 10, block);
+}
+
+}  // namespace
+
+TEST_CASE("ClipPlayerNode applies the fade formula per sample, both curves, in and out", "[nodes][fades]") {
+    struct Case {
+        ClipFade fade;
+        std::int64_t length;
+    };
+    const auto L = FadeCurve::linear;
+    const auto E = FadeCurve::equal_power;
+    const std::vector<Case> cases = {
+        {{1, L, 0, L}, 40},   {{0, L, 1, E}, 40},     {{2, E, 2, L}, 40},     {{7, L, 9, E}, 41},
+        {{9, E, 0, L}, 40},   {{0, L, 13, L}, 40},    {{20, L, 20, E}, 40},   {{21, E, 20, E}, 41},
+        {{41, E, 0, L}, 41},  {{0, L, 41, L}, 41},    {{1, E, 1, E}, 2},
+    };
+    const auto media = rampMedia(64);
+    const float gain = 0.70710677f;
+    for (const Case& c : cases) {
+        INFO("in " << c.fade.inLength << " out " << c.fade.outLength << " length " << c.length);
+        const auto out = renderFaded(c.fade, c.length, gain, 64, media);
+        double worst = 0.0;
+        for (std::int64_t t = 0; t < static_cast<std::int64_t>(out.size()); ++t) {
+            const std::int64_t n = t - 3;
+            double expected = 0.0;
+            if (n >= 0 && n < c.length) {
+                const double m = media->data[0][static_cast<std::size_t>(n + 2)];
+                expected = m * static_cast<double>(gain) * fadeRef(c.fade, n, c.length);
+            }
+            worst = std::max(worst, std::abs(static_cast<double>(out[static_cast<std::size_t>(t)]) - expected));
+        }
+        CHECK(worst <= 1.0 / 16'777'216.0);  // 2^-24: one float rounding of a value below 1
+        // The first frame of a fade in and the last of a fade out are silent.
+        if (c.fade.inLength > 0) {
+            CHECK(out[3] == 0.0f);
+        }
+        if (c.fade.outLength > 0) {
+            CHECK(out[static_cast<std::size_t>(3 + c.length - 1)] == 0.0f);
+        }
+    }
+}
+
+TEST_CASE("fadeGain is exactly 1 outside the fades, so those samples are the unfaded ones", "[nodes][fades]") {
+    const ClipFade fade{100, FadeCurve::equal_power, 50, FadeCurve::linear};
+    CHECK(fadeGain(fade, 100, 1'000) == 1.0f);
+    CHECK(fadeGain(fade, 949, 1'000) == 1.0f);
+    CHECK(fadeGain(fade, 99, 1'000) < 1.0f);
+    CHECK(fadeGain(fade, 950, 1'000) < 1.0f);
+    CHECK(fadeGain(ClipFade{}, 0, 1) == 1.0f);
+    const auto media = rampMedia(64);
+    const auto plain = renderFaded(ClipFade{}, 40, 0.5f, 64, media);
+    const auto faded = renderFaded(ClipFade{5, FadeCurve::linear, 6, FadeCurve::equal_power}, 40, 0.5f, 64, media);
+    for (std::size_t t = 3 + 5; t < 3 + 40 - 6; ++t) {
+        INFO(t);
+        CHECK(faded[t] == plain[t]);
+    }
+}
+
+TEST_CASE("A faded clip renders the same for any block size", "[nodes][fades]") {
+    const auto media = rampMedia(1'000);
+    const ClipFade fade{333, FadeCurve::equal_power, 401, FadeCurve::linear};
+    const auto reference = renderFaded(fade, 900, 0.9f, 512, media);
+    for (const int block : {1, 7, 64}) {
+        INFO(block);
+        CHECK(renderFaded(fade, 900, 0.9f, block, media) == reference);
+    }
 }

@@ -18,6 +18,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { CommandRegistry } from '../../src/renderer/keys/commands';
 import { Strip } from '../../src/renderer/mixer/Strip';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
+import { loopClickGates } from '../../src/renderer/model/loop-click';
+import { TOKENS } from '../../src/renderer/tokens';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { PeaksCache } from '../../src/renderer/model/peaks-cache';
 import { SessionClient } from '../../src/renderer/model/session-client';
@@ -45,7 +47,7 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
     assert.equal(reduced.has(method), false, method);
   }
   assert.equal(reduced.has('plan.reject'), true);
-  assert.equal(full.has('transport.no_such_method'), false, 'a method no engine serves');
+  assert.equal(full.has('transport.punch'), false, 'a method no engine lists yet');
   // m5b-protocol-parity: the full fixture lists every method the engine serves.
   for (const method of ['transport.set_cycle', 'transport.set_click']) {
     assert.equal(full.has(method), true, method);
@@ -55,7 +57,9 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(reduced.feature('gestures'), false);
   assert.equal(full.feature('plugins'), false, 'false is absent');
   assert.equal(capabilitySelector({ ...FULL, features: { plugins: { formats: ['clap'], flags: [] } } }).feature('plugins'), true);
-  assert.equal(full.feature('locators'), false);
+  // m5-ui-loop-click: the engine reports locators (and cycle and click with a transport port).
+  assert.equal(full.feature('locators'), true);
+  assert.equal(reduced.feature('locators'), false);
   // m5b-engine-record: recording through the protocol, reported only with a record port.
   assert.equal(full.feature('recording'), true);
   assert.equal(reduced.feature('recording'), false, 'the reduced engine has no features.recording');
@@ -79,6 +83,48 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(reduced.feature('masterGain'), false);
   assert.equal(full.command('master.set_gain'), true);
   assert.equal(reduced.command('master.set_gain'), false);
+  // m5b-engine-clip-fades: the fade command and its feature (no method of its own).
+  assert.equal(full.feature('clipFades'), true);
+  assert.equal(reduced.feature('clipFades'), false);
+  assert.equal(full.command('clip.set_fade'), true);
+  assert.equal(reduced.command('clip.set_fade'), false);
+  // m5b-engine-plan-metadata: plan titles, intents and actors, and the agents in
+  // engine.status (true with a transport port); the reduced engine predates both.
+  assert.equal(full.feature('planMetadata'), true);
+  assert.equal(full.feature('agents'), true);
+  assert.equal(reduced.feature('planMetadata'), false, 'the reduced engine has no features.planMetadata');
+  assert.equal(reduced.feature('agents'), false, 'the reduced engine has no features.agents');
+  // m5b-engine-agent-requests: the composer's feature, its methods and the limits.
+  assert.equal(full.feature('agentRequests'), true);
+  assert.equal(reduced.feature('agentRequests'), false, 'the reduced engine has no features.agentRequests');
+  for (const method of ['agent.request', 'agent.cancel_request', 'agent.requests', 'agent.next_request', 'agent.answer_request']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
+  assert.deepEqual(
+    {
+      perAgent: (FULL.limits as Record<string, unknown>).agentRequestsPerAgent,
+      textChars: (FULL.limits as Record<string, unknown>).agentRequestTextChars,
+      waitMs: (FULL.limits as Record<string, unknown>).agentRequestWaitMs,
+      closed: (FULL.limits as Record<string, unknown>).agentRequestsClosedRetained,
+    },
+    { perAgent: 16, textChars: 4000, waitMs: 25000, closed: 16 },
+  );
+  // m5b-engine-buses-sends: the bus and send features and commands.
+  assert.equal(full.feature('buses'), true);
+  assert.equal(full.feature('sends'), true);
+  assert.equal(reduced.feature('buses'), false);
+  assert.equal(full.command('bus.add'), true);
+  assert.equal(full.command('send.set_level'), true);
+  assert.equal(full.command('track.set_output'), true);
+  // m5b-engine-load-loudness: DSP load in engine.status, the loudness frame and
+  // its reset (true with a transport port); the reduced engine predates them.
+  assert.equal(full.has('meter.reset_loudness'), true);
+  assert.equal(reduced.has('meter.reset_loudness'), false);
+  assert.equal(full.feature('load'), true);
+  assert.equal(full.feature('loudness'), true);
+  assert.equal(reduced.feature('load'), false, 'the reduced engine has no features.load');
+  assert.equal(reduced.feature('loudness'), false, 'the reduced engine has no features.loudness');
   const none = capabilitySelector(null);
   assert.equal(none.has('engine.about'), false);
   assert.equal(none.feature('plans'), false);
@@ -171,18 +217,21 @@ test('mixer strip: fader, pan, mute and solo each need their command; the reduce
   for (const id of ['fader-trk_a', 'pan-trk_a', 'mute-trk_a', 'solo-trk_a']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
 });
 
-test('timeline: the media pool place buttons need clip.place and the delete button clip.remove', () => {
+// m5-ui-port-toolbar (UI redesign 10.8): the media buttons left the toolbar
+// for the Pool (Ctrl+P; its place buttons need clip.place, pool.test.tsx) and
+// the Delete clip button is gone (Delete and Backspace stay, behind clip.remove).
+test('timeline: the resting window has no media pool and no Delete clip button, whatever the capabilities', () => {
   const timeline = (caps: Capabilities | null) =>
     within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
-  const full = timeline(FULL);
-  assert.ok(full.includes('data-testid="pool-med_sq"'));
-  assert.ok(full.includes('data-testid="delete-clip"'));
-  for (const caps of [REDUCED, null]) {
+  for (const caps of [FULL, REDUCED, null]) {
     const shown = timeline(caps);
+    assert.ok(!shown.includes('data-testid="media-pool"'), 'no Pool at rest');
     assert.ok(!shown.includes('data-testid="pool-'), 'no place button');
     assert.ok(!shown.includes('data-testid="delete-clip"'), 'no delete button');
     assert.ok(shown.includes('data-testid="timeline-canvas"'), 'the canvas still draws the session');
   }
+  assert.equal(editGates(capabilitySelector(FULL))['edit.delete'], true);
+  assert.equal(editGates(capabilitySelector(REDUCED))['edit.delete'], false);
 });
 
 // The canvas's gestures (place, move, trim) send nothing the capabilities do not list.
@@ -278,11 +327,15 @@ test('timeline: the tool buttons and the snap controls need the clip commands th
     within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
   const full = timeline(FULL);
   for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) assert.ok(full.includes(`data-testid="${id}"`), id);
-  // Grid types Bar, Beat and Adapt to Zoom only (no snap type but Grid is rendered).
-  assert.deepEqual([...full.matchAll(/<option value="([a-z]+)"/g)].map((m) => m[1]), ['bar', 'beat', 'adapt']);
+  // The grid type is a field whose menu (Bar, Beat, Adapt to Zoom) opens on a click.
+  assert.ok(full.includes('aria-haspopup="menu"'));
+  assert.ok(!full.includes('<select'), 'no native select');
   for (const caps of [REDUCED, null]) {
     const shown = timeline(caps);
     for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) assert.ok(!shown.includes(`data-testid="${id}"`), id);
+    // The toolbar and its tool group keep their places, empty (UI redesign 3.0).
+    assert.ok(shown.includes('data-part="toolbar"'));
+    assert.ok(shown.includes('data-part="tools"'));
   }
   // Moves without splits: the selection tool and snap, no split tool.
   const moveOnly = timeline({ ...FULL, commands: ['clip.move'] });
@@ -355,7 +408,8 @@ test('timeline canvas: split, Alt-drag copy, duplicate, the volume control and d
     // Ctrl+D duplicates the selection.
     await timeline.duplicate();
     // The volume control: drag up 10 px.
-    const gainAt = { x: rect.x + 10, y: rect.y + rect.height - 3 };
+    // draw()'s volume box in the clip's inset box (m5-ui-port-arrange-canvas).
+    const gainAt = { x: rect.x + 20, y: rect.y + rect.height - 10 };
     fire('pointerdown', gainAt.x, gainAt.y);
     fire('pointermove', gainAt.x, gainAt.y - 10);
     fire('pointerup', gainAt.x, gainAt.y - 10);
@@ -428,4 +482,32 @@ test('the session client asks for engine.capabilities once per connection and ke
   await until(() => sockets[2]!.requests('engine.capabilities').length === 1, 'asked on the third connection');
   for (let i = 0; i < 20; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(client.getState().capabilities, REDUCED);
+});
+
+// m5-ui-loop-click (test-matrix rule 2): the full fixture lists E-1's methods,
+// features and command as the engine does; the reduced one lists none.
+test('locators, cycle and click: the full fixture lists them, the gates follow the capabilities', () => {
+  for (const method of ['transport.set_cycle', 'transport.set_click']) assert.ok(FULL.methods!.includes(method), method);
+  assert.ok(FULL.commands!.includes('session.set_locators'));
+  for (const feature of ['locators', 'cycle', 'click']) assert.equal(FULL.features![feature], true, feature);
+  assert.deepEqual(loopClickGates(capabilitySelector(FULL)), { locators: true, cycle: true, click: true });
+  assert.deepEqual(loopClickGates(capabilitySelector(REDUCED)), { locators: false, cycle: false, click: false });
+  assert.deepEqual(loopClickGates(capabilitySelector(null)), { locators: false, cycle: false, click: false });
+  // Each needs its method (or command) and its feature.
+  const without = (method: string): Capabilities => ({ ...FULL, methods: FULL.methods!.filter((m) => m !== method) });
+  assert.equal(loopClickGates(capabilitySelector(without('transport.set_cycle'))).cycle, false);
+  assert.equal(loopClickGates(capabilitySelector(without('transport.set_click'))).click, false);
+  assert.equal(loopClickGates(capabilitySelector({ ...FULL, commands: FULL.commands!.filter((c) => c !== 'session.set_locators') })).locators, false);
+  assert.equal(loopClickGates(capabilitySelector({ ...FULL, features: { ...FULL.features, cycle: false } })).cycle, false);
+});
+
+// The empty-width token of the locator display (UI redesign 3.0; 10.7, 5) is
+// permanent: not a --hold-* token, which the part's landing would delete.
+test('--display-locators-empty-w is a permanent token, not a hold token', () => {
+  const css = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'renderer', 'tokens.css'), 'utf8');
+  assert.match(css, /--display-locators-empty-w:\s*calc\([\d.]+px \* var\(--scale\)\);/);
+  assert.ok(!/--hold-display-locators/.test(css));
+  assert.ok(!'display-locators-empty-w'.startsWith('hold-'));
+  assert.equal(typeof TOKENS['display-locators-empty-w'], 'string');
+  assert.match(TOKENS['display-locators-empty-w'], /^[\d.]+px$/);
 });

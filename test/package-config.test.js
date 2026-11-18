@@ -110,7 +110,7 @@ test('the installer output stays out of git', () => {
 
 // Every package app/package-lock.json installs for the app at run time (not a
 // devDependency): esbuild bundles them into the renderer, so their notices
-// ship (React, react-dom, react-resizable-panels and react-dom's scheduler).
+// ship (React, react-dom and react-dom's scheduler).
 function runtimePackages() {
   const lock = readJson(path.join(APP, 'package-lock.json'));
   return Object.entries(lock.packages)
@@ -121,7 +121,7 @@ function runtimePackages() {
 
 test("collect-licenses copies the licence of every package bundled into the renderer", () => {
   const runtime = runtimePackages();
-  assert.deepEqual(runtime.map((p) => p.name), ['react', 'react-dom', 'react-resizable-panels', 'scheduler']);
+  assert.deepEqual(runtime.map((p) => p.name), ['react', 'react-dom', 'scheduler']);
   const { sources, npmLicenceName } = require('../app/scripts/collect-licenses.js');
   // A build directory that does not exist: only the names matter here.
   const names = Object.keys(sources(path.join(ROOT, 'no-such-build')));

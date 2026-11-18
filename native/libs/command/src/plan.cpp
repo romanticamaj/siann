@@ -4,6 +4,7 @@
 #include <atomic>
 #include <utility>
 
+#include "siann/command/display_text.hpp"
 #include "siann/hash/jcs.hpp"
 
 namespace siann::command {
@@ -38,7 +39,7 @@ bool setLess(const EntityRef& a, const EntityRef& b) noexcept {
 std::optional<EntityType> entityTypeFromName(std::string_view name) noexcept {
     for (const EntityType type :
          {EntityType::root, EntityType::media, EntityType::track, EntityType::clip, EntityType::plugin_slot,
-          EntityType::locators, EntityType::master}) {
+          EntityType::locators, EntityType::master, EntityType::bus, EntityType::send}) {
         if (model::entityTypeName(type) == name) {
             return type;
         }
@@ -125,6 +126,52 @@ std::optional<std::string> optionalString(const Value& plan, std::string_view ke
         invalidPlan(std::string(key) + " must be a string");
     }
     return value->asString();
+}
+
+// Plan metadata (m5b-engine-plan-metadata): `actor` is exactly {kind, name}.
+std::optional<PlanActor> optionalActor(const Value& plan) {
+    const Value* value = plan.find("actor");
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    if (value->kind() != Value::Kind::object) {
+        invalidPlan("actor must be {kind, name}");
+    }
+    for (const auto& member : value->asObject()) {
+        if (member.first != "kind" && member.first != "name") {
+            invalidPlan("actor has unknown field " + member.first);
+        }
+    }
+    const Value* kind = value->find("kind");
+    const Value* name = value->find("name");
+    if (kind == nullptr || kind->kind() != Value::Kind::string ||
+        (kind->asString() != "mcp" && kind->asString() != "ui")) {
+        invalidPlan("actor.kind must be mcp or ui");
+    }
+    if (name == nullptr || name->kind() != Value::Kind::string) {
+        invalidPlan("actor.name must be a string");
+    }
+    return PlanActor{kind->asString() == "mcp" ? PlanActorKind::mcp : PlanActorKind::ui, name->asString()};
+}
+
+[[noreturn]] void invalidMetadata(const std::string& message) {
+    throw CommandError("invalid_plan_metadata", message);
+}
+
+// Refuses `text` (the field `what`) unless it is well-formed UTF-8 without a
+// control character other than the `allowedControls` (`controlRule` says
+// which) and without a display-unsafe character (display_text.hpp).
+void checkDisplayText(const std::string& what, std::string_view text, std::string_view allowedControls,
+                      const std::string& controlRule) {
+    switch (textFault(text, allowedControls)) {
+        case TextFault::none: return;
+        case TextFault::invalid_utf8: invalidMetadata(what + " is not well-formed UTF-8");
+        case TextFault::control: invalidMetadata(what + " " + controlRule);
+        case TextFault::display_unsafe:
+            invalidMetadata(what +
+                            " has a bidi formatting character (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 "
+                            "to U+2069) or a line or paragraph separator (U+2028, U+2029)");
+    }
 }
 
 std::optional<PlanState> planStateFromName(std::string_view name) noexcept {
@@ -215,10 +262,31 @@ std::string_view planStateName(PlanState state) noexcept {
     return "draft";
 }
 
+std::string_view planActorKindName(PlanActorKind kind) noexcept {
+    return kind == PlanActorKind::mcp ? "mcp" : "ui";
+}
+
+void checkPlanMetadata(const PlanMetadata& metadata) {
+    if (const auto& title = metadata.title) {
+        if (title->empty() || title->size() > kPlanTitleMaxBytes) {
+            invalidMetadata("a plan title is 1 to " + std::to_string(kPlanTitleMaxBytes) + " UTF-8 bytes; this one is " +
+                            std::to_string(title->size()));
+        }
+        checkDisplayText("a plan title", *title, {}, "is one line without control characters");
+    }
+    if (const auto& intent = metadata.intent) {
+        if (intent->empty() || intent->size() > kPlanIntentMaxBytes) {
+            invalidMetadata("a plan intent is 1 to " + std::to_string(kPlanIntentMaxBytes) +
+                            " UTF-8 bytes; this one is " + std::to_string(intent->size()));
+        }
+        checkDisplayText("a plan intent", *intent, "\t\n\r", "has no control characters other than tab, LF and CR");
+    }
+}
+
 const std::vector<std::string_view>& planHashExcludedFields() {
-    static const std::vector<std::string_view> fields{"hash",       "state",         "approvedBy",
-                                                      "approvedAt", "rejectedBy",    "rejectedAt",
-                                                      "rejectionNote", "appliedRevision"};
+    static const std::vector<std::string_view> fields{
+        "hash",          "state",           "approvedBy", "approvedAt", "rejectedBy", "rejectedAt",
+        "rejectionNote", "appliedRevision", "title",      "intent",     "actor"};
     return fields;
 }
 
@@ -278,6 +346,9 @@ Plan Plan::fromJson(const Value& value) {
     plan.rejectedAt = optionalString(value, "rejectedAt");
     plan.rejectionNote = optionalString(value, "rejectionNote");
     plan.appliedRevision = optionalString(value, "appliedRevision");
+    plan.title = optionalString(value, "title");
+    plan.intent = optionalString(value, "intent");
+    plan.actor = optionalActor(value);
     return plan;
 }
 
@@ -321,6 +392,12 @@ Value Plan::toJson() const {
     put("rejectedAt", rejectedAt);
     put("rejectionNote", rejectionNote);
     put("appliedRevision", appliedRevision);
+    put("title", title);
+    put("intent", intent);
+    if (actor) {
+        out.emplace_back("actor", Value(Object{{"kind", Value(std::string(planActorKindName(actor->kind)))},
+                                               {"name", Value(actor->name)}}));
+    }
     return Value(std::move(out));
 }
 
@@ -399,7 +476,8 @@ void PlanStore::requireFresh(const History& history, const Plan& plan) const {
 }
 
 const Plan& PlanStore::submit(const History& history, std::vector<Command> steps, std::vector<EntityRef> readSet,
-                              const std::string& baseRevision) {
+                              const std::string& baseRevision, PlanMetadata metadata) {
+    checkPlanMetadata(metadata);
     const model::Document& base = requireRevision(history, baseRevision).document;
     const Prepared prepared = prepareTransaction(base, steps);
     Plan plan;
@@ -408,6 +486,9 @@ const Plan& PlanStore::submit(const History& history, std::vector<Command> steps
     plan.readSet = snapshot(base, std::move(readSet));
     plan.writeSet = writeSetOf(base, prepared.effects);
     plan.state = PlanState::validated;
+    plan.title = std::move(metadata.title);
+    plan.intent = std::move(metadata.intent);
+    plan.actor = std::move(metadata.actor);
     return store(std::move(plan));
 }
 
@@ -477,6 +558,9 @@ const Plan& PlanStore::approvePartial(const History& history, std::string_view p
     sub.writeSet = writeSetOf(base, prepared.effects);
     sub.parentPlan = original.hashText;
     sub.state = PlanState::validated;
+    sub.title = original.title;
+    sub.intent = original.intent;
+    sub.actor = original.actor;
     const std::string subHash = *store(std::move(sub)).hashText;
 
     original.state = PlanState::rejected;
@@ -547,6 +631,20 @@ const Revision& PlanStore::rollback(std::string_view planHashText, std::string a
     plan.state = PlanState::rolled_back;
     touch();
     return revision;
+}
+
+void PlanStore::markRolledBack(std::string_view revisionId) {
+    bool changed = false;
+    for (auto& entry : plans_) {
+        Plan& plan = entry.second;
+        if (plan.state == PlanState::applied && plan.appliedRevision && *plan.appliedRevision == revisionId) {
+            plan.state = PlanState::rolled_back;
+            changed = true;
+        }
+    }
+    if (changed) {
+        touch();
+    }
 }
 
 void PlanStore::requireNotProposed(std::string_view planHashText) const {

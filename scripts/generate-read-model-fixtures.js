@@ -10,8 +10,17 @@
 // entity: deltas that add, modify and remove locators:locators, and a sync of a
 // document that holds it (a single object after pluginSlots). A third part
 // (m5b-engine-master) does the same for the singleton master entity, and syncs a
-// document holding both singletons (master after locators). Hashes come from
-// the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
+// document holding both singletons (master after locators). A fourth part
+// (m5b-engine-plan-metadata) is two events the read model does not model, right
+// after the base sync: a plan.changed with the plan metadata and an
+// agent.changed; a client advances lastSeq past them and changes nothing else.
+// A fifth part (m5b-engine-buses-sends) adds a bus and a send, changes the bus and removes it
+// with its send, and syncs a document holding them (buses and sends after the
+// master, each table only in a chunk that holds rows). A sixth part
+// (m5b-engine-clip-fades), also after the master steps and independent of the
+// fifth, sets both fades on clp_1 and then removes them (clip.set_fade with
+// length "0"), so its hash and the document hash return to the values before
+// the first step. Hashes come from the bridge's fixture-verified src/hash (RFC 8785 and RFC 6962), independent
 // of the renderer code the fixture tests.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -113,7 +122,20 @@ function entitiesOf(document) {
   }
   if (document.locators) out.push({ type: 'locators', entity: document.locators });
   if (document.master) out.push({ type: 'master', entity: document.master });
+  // Buses and sends after the master, each in id order (m5b-engine-buses-sends).
+  for (const [table, type] of [['buses', 'bus'], ['sends', 'send']]) {
+    const rows = [...(document[table] || [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (const entity of rows) out.push({ type, entity });
+  }
   return out;
+}
+
+function bus(id, overrides = {}) {
+  return { schema: 'siann.entity.bus.v1', id, name: `Bus ${id}`, channels: 2, gainMilliDb: 0, pan: 0, mute: false, solo: false, ...overrides };
+}
+
+function send(id, trackId, busId) {
+  return { schema: 'siann.entity.send.v1', id, trackId, busId, levelMilliDb: 0, pre: false, enabled: true };
 }
 
 function locators(left, right) {
@@ -153,6 +175,11 @@ function syncChunks(document, revision, seq) {
     // The master likewise (m5b-engine-master), after the locators.
     const masterEntry = slice.find((e) => e.type === 'master');
     if (masterEntry) chunk.master = masterEntry.entity;
+    // Buses and sends only in a chunk that holds rows (m5b-engine-buses-sends).
+    for (const [table, type] of [['buses', 'bus'], ['sends', 'send']]) {
+      const rows = slice.filter((e) => e.type === type).map((e) => e.entity);
+      if (rows.length > 0) chunk[table] = rows;
+    }
     const end = offset + slice.length;
     chunks.push({
       revision,
@@ -234,6 +261,67 @@ function buildMasterSteps(after) {
   });
 }
 
+// After the master steps, in format v3: bus.add b1 with send.add s1 from trk_1,
+// bus.set_gain b1 -6000, then bus.remove b1, which removes the send too
+// (m5b-engine-buses-sends). changedIds come in the engine's diff order.
+function buildBusSteps(after) {
+  const start = clone(after.document);
+  start.schemaVersion = 'siann.session_document.v3';
+  const dropEmpty = (d) => {
+    if (d.buses.length === 0) delete d.buses;
+    if (d.sends.length === 0) delete d.sends;
+    if (d.root.busOrder.length === 0) delete d.root.busOrder;
+    const t = d.tracks.find((x) => x.id === 'trk_1');
+    if (t.sends.length === 0) delete t.sends;
+  };
+  return recordSteps(start, Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      d.buses = [bus('b1')];
+      d.sends = [send('s1', 'trk_1', 'b1')];
+      d.root.busOrder = ['b1'];
+      d.tracks.find((x) => x.id === 'trk_1').sends = ['s1'];
+    }, [
+      { ref: 'root:root', change: 'modified' },
+      { ref: 'track:trk_1', change: 'modified' },
+      { ref: 'bus:b1', change: 'added' },
+      { ref: 'send:s1', change: 'added' },
+    ]);
+    commit((d) => {
+      d.buses[0].gainMilliDb = -6000;
+    }, [{ ref: 'bus:b1', change: 'modified' }]);
+    commit((d) => {
+      d.buses = [];
+      d.sends = [];
+      d.root.busOrder = [];
+      d.tracks.find((x) => x.id === 'trk_1').sends = [];
+      dropEmpty(d);
+    }, [
+      { ref: 'root:root', change: 'modified' },
+      { ref: 'track:trk_1', change: 'modified' },
+      { ref: 'bus:b1', change: 'removed' },
+      { ref: 'send:s1', change: 'removed' },
+    ]);
+  });
+}
+
+// After the master steps: clip.set_fade on clp_1 (fadeIn linear 480, fadeOut
+// equal_power 960), then both sides set to length "0", which removes the fields
+// (m5b-engine-clip-fades).
+function buildFadeSteps(after) {
+  return recordSteps(clone(after.document), Number(after.event.seq), Number(after.event.revision.slice(1)), (commit) => {
+    commit((d) => {
+      const c = d.clips.find((x) => x.id === 'clp_1');
+      c.fadeIn = { length: '480', curve: 'linear' };
+      c.fadeOut = { length: '960', curve: 'equal_power' };
+    }, [{ ref: 'clip:clp_1', change: 'modified' }]);
+    commit((d) => {
+      const c = d.clips.find((x) => x.id === 'clp_1');
+      delete c.fadeIn;
+      delete c.fadeOut;
+    }, [{ ref: 'clip:clp_1', change: 'modified' }]);
+  });
+}
+
 function recordSteps(initial, firstSeq, firstRevision, run) {
   const steps = [];
   let document = initial;
@@ -282,6 +370,42 @@ function recordSteps(initial, firstSeq, firstRevision, run) {
   return steps;
 }
 
+// m5b-engine-plan-metadata (docs/schemas/protocol-events-v1.md, plan.changed and
+// agent.changed): the events that follow the base sync, at the base revision.
+function buildUnmodelled(base) {
+  const envelope = (offset, type) => ({
+    schema: 'siann.event.v1',
+    seq: String(Number(base.seq) + offset),
+    sessionId: SESSION_ID,
+    revision: base.revision,
+    type,
+  });
+  return {
+    events: [
+      {
+        ...envelope(1, 'plan.changed'),
+        plan: hashOf('a plan with metadata'),
+        state: 'rejected',
+        title: 'Lower the drums',
+        intent: 'The drums mask the vocal.\nLower them by 6 dB.',
+        actor: { kind: 'mcp', name: 'mix-assistant' },
+        rejectionNote: 'Too much; try -3 dB',
+      },
+      {
+        ...envelope(2, 'agent.changed'),
+        agent: {
+          id: 'agt_00c0ffee00c0ffee',
+          name: 'mix-assistant',
+          transport: 'mcp',
+          connected: true,
+          lastAction: 'submit_plan',
+          lastActionAt: '2026-11-15T10:00:05Z',
+        },
+      },
+    ],
+  };
+}
+
 function buildFixture() {
   const base = { revision: 'r3', seq: '7', document: BASE, documentHash: hashDocument(BASE) };
   const steps = buildSteps();
@@ -290,6 +414,10 @@ function buildFixture() {
   const masterSteps = buildMasterSteps(locatorSteps[locatorSteps.length - 1]);
   const withMaster = masterSteps[0];
   const withBoth = { ...clone(withMaster.document), locators: locators('96000', '480000') };
+  const masterEnd = masterSteps[masterSteps.length - 1];
+  const busSteps = buildBusSteps(masterEnd);
+  const withBus = busSteps[0];
+  const fadeSteps = buildFadeSteps(masterEnd);
   return {
     schemaVersion: 'siann.protocol_fixtures.v1',
     description:
@@ -311,6 +439,17 @@ function buildFixture() {
       // A document holding the locators and the master: the master is listed
       // after the locators, here across a chunk boundary.
       both: { document: withBoth, documentHash: hashDocument(withBoth), sync: syncChunks(withBoth, 'r20', '30') },
+    },
+    unmodelled: buildUnmodelled(base),
+    buses: {
+      steps: busSteps,
+      // A sync pinned at the revision that added the bus and the send.
+      sync: syncChunks(withBus.document, withBus.event.revision, withBus.event.seq),
+    },
+    fades: {
+      // The document hash before the first fade step; the last step returns to it.
+      before: { revision: masterEnd.event.revision, documentHash: masterEnd.documentHash },
+      steps: fadeSteps,
     },
   };
 }

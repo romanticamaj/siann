@@ -22,8 +22,7 @@ Key documents:
 SIANN is a local AI-native music production environment:
 
 ```text
-Ardour-derived audio core
-+ SIANN headless engine runtime
+native C++ audio engine (siann-engine)
 + command bridge
 + pluggable AI runtime
 + AI-friendly studio UI
@@ -31,8 +30,8 @@ Ardour-derived audio core
 
 The current milestone is the SIANN core command surface: prove that the
 headless runtime can create and own a session, observe it, apply editing
-commands, render previews, roll back safely, and still emit Ardour-compatible
-session artifacts for visual verification.
+commands, render previews, roll back safely, and export a DAWproject package for
+visual verification in another DAW.
 
 A newly accepted first slice can run before the engine is available:
 
@@ -53,7 +52,7 @@ platform.
 
 SIANN now has two active codebases:
 
-- `/Users/garyhsieh/siann-engine` is the Ardour-derived engine fork. It contains the C++ `session_utils/siann_command.cc` runner that directly opens and mutates Ardour sessions.
+- `native/` is the native C++ engine (architecture spec, `superpowers/specs/2026-10-14-siann-native-daw-architecture.md`); the `siann-engine` executable serves a session bundle over the protocol in `schemas/protocol-*.md`. The Node bridge starts it (`SIANN_ENGINE_EXE`, else the core preset's build) for every live command. The Ardour-derived engine fork it replaces is historical.
 - `/Users/garyhsieh/siann` is the product, docs, and developer bridge repo. It now contains a Node CLI wrapper, workflow generators, approval-gated plan files, example fixtures, and tests. It is not docs-only anymore, but it does not yet contain the future Studio UI or AI runtime.
 
 Current shipped workflow:
@@ -72,8 +71,8 @@ Current engine-backed workflow:
 multi-track manifest
 -> reviewable import plan
 -> explicit approval gate
--> engine command batch
--> Ardour session mutation
+-> engine plan (session.create, media.import, plan.submit, approve, apply)
+-> native session bundle
 -> preview render
 -> journaled rollback
 ```
@@ -87,11 +86,11 @@ The real-user DAW pack workflow supports:
 - One track per BGM bed or SFX cue.
 - `sourceStart` and `duration` trim metadata.
 - Rendered preview WAV output.
-- Ardour session output for visual inspection.
+- A SIANN session bundle written by the native engine.
 - DAWproject export for Cubase-compatible project exchange.
 - Windows-side DAWproject smoke tests through Node-only scripts.
 
-The next product layer is the SIANN headless engine runtime: a persistent,
-SIANN-owned session process that future UI and agent clients can control. Ardour
-compatibility remains useful for verification, but opening arbitrary Ardour
-projects is not the primary workflow.
+The headless engine is the native `siann-engine`: a persistent, SIANN-owned
+session process that the UI and agent clients control over the protocol. Opening
+projects from other DAWs is not the primary workflow; DAWproject export is the
+exchange path.

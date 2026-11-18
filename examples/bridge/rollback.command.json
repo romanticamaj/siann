@@ -2,9 +2,6 @@
   "schemaVersion": "siann.command.v0",
   "journalPath": "/tmp/siann-demo/rollback/journal.json",
   "batchRisk": "normal",
-  "snapshotRetention": {
-    "maxCount": 3
-  },
   "commands": [
     {
       "op": "create_session",
@@ -15,7 +12,6 @@
     {
       "op": "create_audio_track",
       "name": "Rollback Target",
-      "inputChannels": 1,
       "outputChannels": 2,
       "count": 1
     },

@@ -815,3 +815,73 @@ TEST_CASE("plugin table: an approved install inside the bundle or on a share is 
     CHECK(fromShare.error->code == "plugin_not_registered");
     CHECK(fromShare.error->message.find("unc_path") != std::string::npos);
 }
+
+// m5b-engine-buses-sends: latent inserts on buses in the live graph.
+namespace {
+
+std::string insertBusSlot(const std::string& slotId, const std::string& busId) {
+    return R"({"op":"plugin.insert","busId":")" + busId + R"(","index":0,"slotId":")" + slotId +
+           R"(","descriptor":{"format":"clap","uid":"org.siann.test-plugin","path":)" +
+           jcs::canonicalize(json::Value(std::string(SIANN_TEST_PLUGIN_CLAP))) + R"(},"stateBlob":null})";
+}
+
+std::string addBusJson(const std::string& id) {
+    return R"({"op":"bus.add","busId":")" + id + R"(","name":")" + id + R"("})";
+}
+
+// Settled: the live output is `reference` (the plugin-free render) `latency` frames late.
+bool lateBy(const Live& live, const std::vector<std::vector<float>>& reference, int latency, int fromBlock) {
+    for (int c = 0; c < 2; ++c) {
+        for (int i = fromBlock * kBlock; i < live.blockCount() * kBlock; ++i) {
+            const float expected = reference[static_cast<std::size_t>(c)][static_cast<std::size_t>(i - latency)];
+            if (live.out[static_cast<std::size_t>(c)][static_cast<std::size_t>(i)] != expected) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+TEST_CASE("plugin table: a bus's slot loads with two channels and reports its busId", "[playback][plugin][buses]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    f.exec(addBusJson("bus_fx"));
+    f.exec(insertBusSlot("slt_b", "bus_fx"));
+    Live live(f.session, pluginOptions(host));
+    const auto status = live.engine.plugins().status("slt_b");
+    REQUIRE(status.has_value());
+    CHECK(status->running);
+    CHECK(status->busId == "bus_fx");
+    CHECK(status->trackId.empty());
+    CHECK(live.engine.slots().count(playback::pluginSlotKey("slt_b")) == 1);
+    pump(live, host, 4);
+    CHECK(live.engine.plugins().status("slt_b")->callbacks == 4);
+}
+
+TEST_CASE("plugin table: PDC nulls in realtime across a send and a three-level bus chain with latent inserts",
+          "[playback][plugin][buses][pdc]") {
+    Fixture f;
+    host::ClapPluginHost host;
+    for (const char* id : {"bus_1", "bus_2", "bus_3", "bus_fx"}) {
+        f.exec(addBusJson(id));
+    }
+    f.exec(R"({"op":"track.set_output","trackId":"trk_a","output":{"busId":"bus_1"}})");
+    f.exec(R"({"op":"bus.set_output","busId":"bus_1","output":{"busId":"bus_2"}})");
+    f.exec(R"({"op":"bus.set_output","busId":"bus_2","output":{"busId":"bus_3"}})");
+    f.exec(R"({"op":"send.add","sendId":"snd_b","trackId":"trk_b","busId":"bus_fx","pre":true})");
+    const Document plain = f.doc();  // the same routing, no plugins
+    f.exec(insertSlot("slt_0", "trk_a", SIANN_TEST_PLUGIN_CLAP));
+    f.exec(insertBusSlot("slt_1", "bus_1"));
+    f.exec(insertBusSlot("slt_2", "bus_2"));
+    f.exec(insertBusSlot("slt_3", "bus_3"));
+    f.exec(insertBusSlot("slt_fx", "bus_fx"));
+    Live live(f.session, pluginOptions(host));
+    pump(live, host, 40);
+    REQUIRE(live.engine.driver().liveGraph() != nullptr);
+    const int latency = static_cast<int>(live.engine.driver().liveGraph()->totalLatency());
+    CHECK(latency == 4 * 64);  // the chain: one insert per level
+    const auto reference = offline(plain, f.bundle(), framesOf(live));
+    CHECK(lateBy(live, reference, latency, live.blockCount() - 16));
+}

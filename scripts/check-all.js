@@ -19,7 +19,10 @@
 //                                             and its crash tests,
 //                                             npm run dist in app/, the package tests and the
 //                                             packaged e2e against app/release/win-unpacked
-//   node scripts/check-all.js --only native   one step: node | native | desktop | app | package | gcc
+//   node scripts/check-all.js --only bridge   the engine-gated bridge tests (SIANN_RUN_ENGINE_TESTS=1) against
+//                                             the dev build's core-only siann-engine (built when the native
+//                                             step is not in the same run)
+//   node scripts/check-all.js --only native   one step: node | native | bridge | desktop | app | package | gcc
 //   node scripts/check-all.js --json          machine-readable summary
 //
 //   --base <ref>    with --changed: diff against <ref> itself instead of the merge-base
@@ -44,7 +47,7 @@ const ROOT = path.resolve(__dirname, '..');
 const NATIVE = path.join(ROOT, 'native');
 const isWindows = process.platform === 'win32';
 
-const ALL_STEPS = ['node', 'native', 'desktop', 'app', 'package', 'gcc'];
+const ALL_STEPS = ['node', 'native', 'bridge', 'desktop', 'app', 'package', 'gcc'];
 
 function parseArgs(argv) {
   const options = {
@@ -104,6 +107,13 @@ const PACKAGE_OTHER_PATHS = [
   /^test\/package\//,
 ];
 
+// What the bridge's engine-gated tests (m5b-bridge-native-client) run against: the
+// protocol server and siann-engine, besides the bridge and its tests.
+const BRIDGE_NATIVE_PATHS = [
+  /^native\/libs\/protocol\//,
+  /^native\/apps\/engine\//,
+];
+
 // The redesign's mockup (docs/harness/agent-rules.md, "UI fidelity").
 const MOCKUP_DIR = 'docs/superpowers/specs/2026-11-13-siann-ui-redesign/';
 
@@ -120,15 +130,18 @@ function stepsForPath(file) {
   // The UI mockup is what the app's fidelity gate compares the window with.
   if (p.startsWith(MOCKUP_DIR)) return ['node', 'app'];
   if (/^native\//.test(p)) {
-    return DESKTOP_PATHS.some((re) => re.test(p))
+    const steps = DESKTOP_PATHS.some((re) => re.test(p))
       ? ['node', 'native', 'desktop', 'package', 'gcc']
       : ['node', 'native', 'gcc'];
+    return BRIDGE_NATIVE_PATHS.some((re) => re.test(p)) ? [...steps, 'bridge'] : steps;
   }
   if (/^app\//.test(p)) return PACKAGE_APP_PATHS.some((re) => re.test(p)) ? ['node', 'app', 'package'] : ['node', 'app'];
   if (PACKAGE_OTHER_PATHS.some((re) => re.test(p))) return ['node', 'package'];
   // The native tests read the shared fixtures too.
   if (/^fixtures\//.test(p)) return ['node', 'native'];
-  if (/^(docs|\.claude|\.codex|\.github|scripts|test|src|bin|examples)\//.test(p)) return ['node'];
+  // The bridge and every Node test: also against siann-engine (the bridge step, CI's bridge-engine job).
+  if (/^(test|src|bin)\//.test(p)) return ['node', 'bridge'];
+  if (/^(docs|\.claude|\.codex|\.github|scripts|examples)\//.test(p)) return ['node'];
   if (/^(package\.json|package-lock\.json|LICENSE[^/]*|\.gitignore)$/.test(p)) return ['node'];
   // Anything else (.gitattributes, a new top-level directory, ...): everything.
   return [...ALL_STEPS];
@@ -429,6 +442,36 @@ function nodeTests() {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort().map((f) => path.join('test', f));
 }
 
+// The Node tests the SIANN_RUN_ENGINE_TESTS gate guards (test-matrix layer G): they read process.env.SIANN_RUN_ENGINE_TESTS.
+function engineTestFiles() {
+  return nodeTests().filter((file) => fs.readFileSync(path.join(ROOT, file), 'utf8').includes('process.env.SIANN_RUN_ENGINE_TESTS'));
+}
+
+// The core preset's siann-engine, built here unless the native step ran (and built
+// it) in the same run, as CI's bridge-engine job builds the app job's target.
+const BRIDGE_NATIVE = [
+  ['cmake', ['--preset', 'dev']],
+  ['cmake', ['--build', '--preset', 'dev', '--target', 'siann-engine']],
+];
+
+// m5b-bridge-native-client: the engine-gated Node tests against that siann-engine.
+async function bridgeStep(options = {}) {
+  const runNative = options.native || native;
+  const runTests = options.run || run;
+  const exists = options.exists || fs.existsSync;
+  if (!(options.selected || []).includes('native')) {
+    for (const [tool, args] of BRIDGE_NATIVE) {
+      const step = runNative(tool, args, options);
+      if (!step.ok) return { ...step, failedAt: `${tool} ${args.join(' ')}` };
+    }
+  }
+  const exe = path.join(NATIVE, 'build', 'dev', 'apps', 'engine', isWindows ? 'siann-engine.exe' : 'siann-engine');
+  if (!exists(exe)) return { ok: false, output: `run the native step first: ${exe} is missing` };
+  const env = { ...process.env, SIANN_RUN_ENGINE_TESTS: '1', SIANN_ENGINE_EXE: exe };
+  const tests = runTests(process.execPath, ['--test', ...engineTestFiles()], ROOT, env);
+  return tests.ok ? tests : { ...tests, failedAt: 'node --test (SIANN_RUN_ENGINE_TESTS=1)' };
+}
+
 // ---- npm installs ----------------------------------------------------------------
 
 // Written into node_modules after a successful `npm ci`: the package-lock.json hash it installed.
@@ -529,22 +572,16 @@ function appStep(options) {
   return fidelityGate(APP, env, npx);
 }
 
-// The mockup fidelity gate (docs/harness/agent-rules.md, "UI fidelity"): the window
+// The mockup fidelity run (docs/harness/agent-rules.md, "UI fidelity"): the window
 // against the mockup, geometry, computed styles and pixels, in en and zh-TW. The
-// report goes to app/test-results/fidelity. While no gate of the manifest is
-// `enforce` the gate only reports: a failed run is noted, not a failed step.
-function fidelityEnforced() {
-  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'test', 'fidelity', 'manifest.json'), 'utf8'));
-  return Object.values(manifest.gates).includes('enforce');
-}
-
+// report goes to app/test-results/fidelity. It is a visual aid (decided by the
+// maintainer, 2026-11-17): a run that did not pass is noted, never a failed step.
 function fidelityGate(APP, env, npx) {
   const out = path.join(APP, 'test-results', 'fidelity');
   const step = npx(['playwright', 'test', '--project', 'fidelity'], { ...env, SIANN_FIDELITY: '1', SIANN_FIDELITY_OUT: out });
   const report = path.join(out, 'report.md');
   if (step.ok) return { ok: true, output: '', note: `fidelity report: ${report}` };
-  if (fidelityEnforced()) return { ...step, failedAt: `the mockup fidelity gate (${report})` };
-  return { ok: true, output: '', note: `the mockup fidelity gate did not pass (report-only until the first gate is enforced, m5-ui-alignment-chrome): ${report}` };
+  return { ok: true, output: '', note: `the mockup fidelity run did not pass (a report, never blocking): ${report}` };
 }
 
 // app/'s locked dependencies are installed and current: npm's own record of the
@@ -620,6 +657,7 @@ async function packageStep(options = {}) {
 const STEPS = {
   node: () => run(process.execPath, ['--test', ...nodeTests()], ROOT),
   native: preset('dev'),
+  bridge: bridgeStep,
   desktop: preset('desktop'),
   app: appStep,
   package: packageStep,
@@ -668,7 +706,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  ALL_STEPS, appDepsFresh, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources, fidelityEnforced,
-  listSources, nativeEnv, needsInstall, PACKAGE_NATIVE, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps,
+  ALL_STEPS, appDepsFresh, BRIDGE_NATIVE, bridgeStep, buildTypeDefines, cacheRoot, changedPaths, dependencySource, desktopSources,
+  engineTestFiles, listSources, nativeEnv, needsInstall, PACKAGE_NATIVE, packageStep, parseArgs, presetBuildType, recordInstall, selectSteps,
   stepsForPath, stepsForPaths,
 };

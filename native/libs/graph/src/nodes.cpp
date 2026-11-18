@@ -15,6 +15,32 @@ float gainFromMilliDb(std::int32_t milliDb) noexcept {
     return static_cast<float>(std::pow(10.0, static_cast<double>(milliDb) / 20'000.0));
 }
 
+namespace {
+
+double fadeCurve(FadeCurve curve, std::int64_t position, std::int64_t length) noexcept {
+    const double x = static_cast<double>(position) / static_cast<double>(length);
+    return curve == FadeCurve::linear ? x : std::sin(x * (std::numbers::pi / 2.0));
+}
+
+}  // namespace
+
+float fadeGain(const ClipFade& fade, std::int64_t offset, std::int64_t length) noexcept {
+    const std::int64_t remaining = length - 1 - offset;  // frames after this one
+    const bool inFadeIn = offset < fade.inLength;
+    const bool inFadeOut = remaining < fade.outLength;
+    if (!inFadeIn && !inFadeOut) {
+        return 1.0f;
+    }
+    double g = 1.0;
+    if (inFadeIn) {
+        g *= fadeCurve(fade.inCurve, offset, fade.inLength);
+    }
+    if (inFadeOut) {
+        g *= fadeCurve(fade.outCurve, remaining, fade.outLength);
+    }
+    return static_cast<float>(g);
+}
+
 ClipPlayerNode::ClipPlayerNode(int channels, std::vector<Clip> clips) : channels_(channels), clips_(std::move(clips)) {
     std::stable_sort(clips_.begin(), clips_.end(),
                      [](const Clip& a, const Clip& b) { return a.timelineStart < b.timelineStart; });
@@ -42,21 +68,23 @@ void ClipPlayerNode::process(const ProcessContext& context, std::span<const Audi
             }
             const auto i = static_cast<std::size_t>(t - context.blockStart);
             const auto f = static_cast<std::size_t>(frame);
+            // The butler's expression too (siann-realtime), so both paths agree.
+            const float gain = clip.gain * fadeGain(clip.fade, t - clip.timelineStart, clip.length);
             if (media.channels == channels_) {
                 for (int c = 0; c < channels_; ++c) {
-                    output.channel(c)[i] += media.data[static_cast<std::size_t>(c)][f] * clip.gain;
+                    output.channel(c)[i] += media.data[static_cast<std::size_t>(c)][f] * gain;
                 }
             } else if (media.channels == 1) {
-                const float v = media.data[0][f] * clip.gain;
+                const float v = media.data[0][f] * gain;
                 for (int c = 0; c < channels_; ++c) {
                     output.channel(c)[i] += v;
                 }
             } else if (channels_ == 1 && media.channels == 2) {
-                output.channel(0)[i] += 0.5f * (media.data[0][f] + media.data[1][f]) * clip.gain;
+                output.channel(0)[i] += 0.5f * (media.data[0][f] + media.data[1][f]) * gain;
             } else {
                 const int shared = std::min(channels_, media.channels);
                 for (int c = 0; c < shared; ++c) {
-                    output.channel(c)[i] += media.data[static_cast<std::size_t>(c)][f] * clip.gain;
+                    output.channel(c)[i] += media.data[static_cast<std::size_t>(c)][f] * gain;
                 }
             }
         }
@@ -137,6 +165,69 @@ void TrackFaderNode::process(const ProcessContext& context, std::span<const Audi
         }
         output.channel(0)[i] = l[i] * left_;
         output.channel(1)[i] = r[i] * right_;
+    }
+}
+
+SendNode::SendNode(int inputChannels, std::int32_t levelMilliDb, bool enabled, bool sourceMute, bool soloSilenced)
+    : inputChannels_(inputChannels),
+      levelMilliDb_(levelMilliDb),
+      enabled_(enabled),
+      sourceMute_(sourceMute),
+      soloSilenced_(soloSilenced) {
+    retarget(0);
+}
+
+void SendNode::retarget(int rampFrames) noexcept {
+    const float target = enabled_ && !sourceMute_ && !soloSilenced_ ? gainFromMilliDb(levelMilliDb_) : 0.0f;
+    target_ = target;
+    if (rampFrames <= 0) {
+        gain_ = target;
+        remaining_ = 0;
+        return;
+    }
+    remaining_ = rampFrames;
+    step_ = (target - gain_) / static_cast<float>(rampFrames);
+}
+
+void SendNode::setParameter(std::uint32_t paramId, double value, int rampFrames) noexcept {
+    if (std::isnan(value)) {
+        return;
+    }
+    switch (paramId) {
+        case kLevelMilliDb:
+            levelMilliDb_ = value <= static_cast<double>(INT32_MIN)
+                                ? INT32_MIN
+                                : static_cast<std::int32_t>(std::lround(std::clamp(
+                                      value, static_cast<double>(kMinLevelMilliDb), static_cast<double>(kMaxLevelMilliDb))));
+            break;
+        case kEnabled:
+            enabled_ = value != 0.0;
+            break;
+        case kSourceMute:
+            sourceMute_ = value != 0.0;
+            break;
+        default:
+            return;
+    }
+    retarget(rampFrames);
+}
+
+void SendNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                       const AudioBufferView& output) noexcept {
+    const AudioBufferView& in = inputs[0];
+    const float* l = in.channel(0);
+    const float* r = inputChannels_ >= 2 ? in.channel(1) : in.channel(0);
+    for (int i = 0; i < context.frames; ++i) {
+        if (remaining_ > 0) {
+            remaining_ -= 1;
+            if (remaining_ == 0) {
+                gain_ = target_;  // land exactly on the target
+            } else {
+                gain_ += step_;
+            }
+        }
+        output.channel(0)[i] = l[i] * gain_;
+        output.channel(1)[i] = r[i] * gain_;
     }
 }
 

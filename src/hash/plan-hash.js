@@ -1,8 +1,10 @@
 // SIANN plan hash for siann.plan.v1 (architecture spec, "Plans" and
 // "Canonical JSON and hashes").
 //
-// planHash = sha256(JCS(plan)) over the plan without its lifecycle fields
-// (PLAN_HASH_EXCLUDED). The C++ engine (siann::command::planHash) implements
+// planHash = sha256(JCS(plan)) over the plan without its lifecycle fields and
+// its metadata, title, intent and actor (PLAN_HASH_EXCLUDED; m5b-engine-plan-
+// metadata). Only the metadata's shape is checked here; its limits are
+// plan.submit's (invalid_plan_metadata). The C++ engine (siann::command::planHash) implements
 // the same rules; both pass fixtures/plan/plan-hash.json.
 //
 // Error codes:
@@ -17,10 +19,12 @@ const { JcsError, sha256Jcs } = require('./jcs');
 const PLAN_SCHEMA = 'siann.plan.v1';
 const PLAN_HASH_EXCLUDED = Object.freeze([
   'hash', 'state', 'approvedBy', 'approvedAt', 'rejectedBy', 'rejectedAt', 'rejectionNote', 'appliedRevision',
+  'title', 'intent', 'actor',
 ]);
+const ACTOR_KINDS = Object.freeze(['mcp', 'ui']);
 const HASHED_FIELDS = Object.freeze(['schema', 'baseRevision', 'steps', 'readSet', 'writeSet', 'parentPlan']);
 const PLAN_STATES = Object.freeze(['draft', 'validated', 'approved', 'rejected', 'applied', 'rolled_back']);
-const ENTITY_TYPES = Object.freeze(['clip', 'locators', 'master', 'media', 'plugin_slot', 'root', 'track']);
+const ENTITY_TYPES = Object.freeze(['bus', 'clip', 'locators', 'master', 'media', 'plugin_slot', 'root', 'send', 'track']);
 // Singleton entity types, whose only id is their type name.
 const SINGLETON_TYPES = Object.freeze(['locators', 'master', 'root']);
 const ENTITY_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -91,10 +95,17 @@ function checkPlan(plan) {
   if (plan.parentPlan !== undefined && (typeof plan.parentPlan !== 'string' || !HASH_RE.test(plan.parentPlan))) {
     throw new PlanHashError('invalid_plan', 'parentPlan must be "sha256:<hex>"');
   }
-  // Lifecycle fields are not hashed but must still be well-typed, as in the engine.
+  // Lifecycle fields and metadata are not hashed but must still be well-typed, as in the engine.
   for (const key of PLAN_HASH_EXCLUDED) {
-    if (plan[key] !== undefined && typeof plan[key] !== 'string') {
+    if (key !== 'actor' && plan[key] !== undefined && typeof plan[key] !== 'string') {
       throw new PlanHashError('invalid_plan', `${key} must be a string`);
+    }
+  }
+  if (plan.actor !== undefined) {
+    const { actor } = plan;
+    if (!isObject(actor) || Object.keys(actor).some((key) => key !== 'kind' && key !== 'name')
+        || !ACTOR_KINDS.includes(actor.kind) || typeof actor.name !== 'string') {
+      throw new PlanHashError('invalid_plan', 'actor must be {kind: "mcp" | "ui", name}');
     }
   }
   if (plan.state !== undefined && !PLAN_STATES.includes(plan.state)) {

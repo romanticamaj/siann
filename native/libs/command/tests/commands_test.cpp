@@ -1,6 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "siann/command/command.hpp"
 
@@ -394,11 +398,15 @@ TEST_CASE("media.rename sets or removes the name and declares exactly the media"
 TEST_CASE("The command catalog is listed", "[command]") {
     const auto names = commandNames();
     CHECK(names == std::vector<std::string>{
-                       "clip.move", "clip.place", "clip.remove", "clip.set_gain", "clip.trim", "master.set_gain", "media.add",
-                       "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass", "session.rename",
+                       "bus.add", "bus.remove", "bus.rename", "bus.set_gain", "bus.set_mute", "bus.set_output",
+                       "bus.set_pan", "bus.set_solo",
+                       "clip.move", "clip.place", "clip.remove", "clip.set_fade", "clip.set_gain", "clip.trim", "master.set_gain",
+                       "media.add",
+                       "media.remove", "media.rename", "plugin.insert", "plugin.remove", "plugin.set_bypass",
+                       "send.add", "send.remove", "send.set_enabled", "send.set_level", "send.set_pre", "session.rename",
                        "session.set_locators", "session.set_tempo", "track.add", "track.remove",
-                       "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_pan",
-                       "track.set_solo"});
+                       "track.rename", "track.set_gain", "track.set_input", "track.set_mute", "track.set_output",
+                       "track.set_pan", "track.set_solo"});
 }
 
 // m5b-engine-record: track.set_input {trackId, input: {port, channels} | null}.
@@ -499,4 +507,501 @@ TEST_CASE("master.set_gain passes the declared-effects check inside a transactio
     CHECK(prepared.effects == DeclaredEffects{ref(EntityType::master, "master")});
     const auto back = prepareTransaction(doc, {setMaster("-6000"), setMaster("0")});
     CHECK(back.result.documentHash() == doc.documentHash());
+}
+
+// ---- m5b-engine-buses-sends: buses, sends and routing ----------------------
+
+namespace {
+
+Document applied(const Document& doc, const std::string& json) {
+    return prepare(doc, cmd(json)).result;
+}
+
+// trk_1 and trk_2, buses bus_a and bus_b (in that order), a post-fader send
+// snd_1 from trk_1 to bus_a.
+Document mixer() {
+    Document doc = base();
+    doc = applied(doc, R"({"op":"track.add","trackId":"trk_2","name":"Bass","channels":1})");
+    doc = applied(doc, R"({"op":"bus.add","busId":"bus_a","name":"Reverb"})");
+    doc = applied(doc, R"({"op":"bus.add","busId":"bus_b","name":"Group"})");
+    doc = applied(doc, R"({"op":"send.add","sendId":"snd_1","trackId":"trk_1","busId":"bus_a"})");
+    return doc;
+}
+
+std::string busInsertJson(const std::string& slotId, const std::string& busId, int index) {
+    return R"({"op":"plugin.insert","busId":")" + busId + R"(","index":)" + std::to_string(index) +
+           R"(,"slotId":")" + slotId + R"(","descriptor":{"format":"clap","uid":"u"},"stateBlob":null})";
+}
+
+}  // namespace
+
+TEST_CASE("bus.add adds a stereo bus feeding the master and declares root and the bus", "[command][buses]") {
+    const Document doc = base();
+    const auto added = prepare(doc, cmd(R"({"op":"bus.add","busId":"bus_a","name":"Reverb"})"));
+    CHECK(added.effects == DeclaredEffects{ref(EntityType::root, "root"), ref(EntityType::bus, "bus_a")});
+    const auto* b = added.result.bus("bus_a");
+    REQUIRE(b != nullptr);
+    CHECK(b->name == "Reverb");
+    CHECK(b->channels == 2);
+    CHECK(b->gain.milliDb == 0);
+    CHECK(b->pan == 0);
+    CHECK_FALSE(b->mute);
+    CHECK_FALSE(b->solo);
+    CHECK_FALSE(b->output.has_value());
+    CHECK(added.result.root().busOrder == std::vector<std::string>{"bus_a"});
+    const Document two = applied(added.result, R"({"op":"bus.add","busId":"bus_0","name":"First","index":0})");
+    CHECK(two.root().busOrder == std::vector<std::string>{"bus_0", "bus_a"});
+    CHECK(errorCode(two, R"({"op":"bus.add","busId":"bus_a","name":"Again"})") == "already_exists");
+    CHECK(errorCode(two, R"({"op":"bus.add","busId":"bus_9","name":"X","index":3})") == "invalid_params");
+    CHECK(errorCode(two, R"({"op":"bus.add","busId":"bus_9"})") == "invalid_params");
+    CHECK(errorCode(two, R"({"op":"bus.add","busId":"bus_9","name":"X","extra":1})") == "invalid_params");
+    CHECK(errorCode(two, R"({"op":"bus.add","busId":"bad id","name":"X"})") == "invalid_id");
+}
+
+TEST_CASE("The bus edits change one field and declare only the bus", "[command][buses]") {
+    const Document doc = mixer();
+    const DeclaredEffects onlyBus{ref(EntityType::bus, "bus_a")};
+    auto edit = [&](const std::string& json) {
+        const auto prepared = prepare(doc, cmd(json));
+        CHECK(prepared.effects == onlyBus);
+        return prepared.result;
+    };
+    CHECK(edit(R"({"op":"bus.rename","busId":"bus_a","name":"Hall"})").bus("bus_a")->name == "Hall");
+    CHECK(edit(R"({"op":"bus.set_gain","busId":"bus_a","gainMilliDb":-6000})").bus("bus_a")->gain.milliDb == -6000);
+    CHECK(edit(R"({"op":"bus.set_pan","busId":"bus_a","pan":2500})").bus("bus_a")->pan == 2500);
+    CHECK(edit(R"({"op":"bus.set_mute","busId":"bus_a","mute":true})").bus("bus_a")->mute);
+    CHECK(edit(R"({"op":"bus.set_solo","busId":"bus_a","solo":true})").bus("bus_a")->solo);
+    CHECK(edit(R"({"op":"bus.set_output","busId":"bus_a","output":{"busId":"bus_b"}})").bus("bus_a")->output ==
+          std::optional<std::string>("bus_b"));
+    const Document routedDoc = applied(doc, R"({"op":"bus.set_output","busId":"bus_a","output":{"busId":"bus_b"}})");
+    const auto back = prepare(routedDoc, cmd(R"({"op":"bus.set_output","busId":"bus_a","output":null})"));
+    CHECK(back.effects == onlyBus);
+    CHECK_FALSE(back.result.bus("bus_a")->output.has_value());
+    CHECK(back.result.documentHash() == doc.documentHash());
+
+    CHECK(errorCode(doc, R"({"op":"bus.rename","busId":"bus_x","name":"N"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_gain","busId":"bus_x","gainMilliDb":0})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_pan","busId":"bus_x","pan":0})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_mute","busId":"bus_x","mute":true})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_solo","busId":"bus_x","solo":true})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_x","output":null})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_a","output":{"busId":"bus_x"}})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.set_gain","busId":"bus_a","gainMilliDb":24001})") == "invalid_gain");
+    CHECK(errorCode(doc, R"({"op":"bus.set_pan","busId":"bus_a","pan":-10001})") == "invalid_pan");
+    CHECK(errorCode(doc, R"({"op":"bus.set_mute","busId":"bus_a","mute":1})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_a"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_a","output":"bus_b"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_a","output":{"busId":"bus_b","x":1}})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"bus.set_gain","busId":"bus_a","gainMilliDb":0,"x":1})") == "invalid_params");
+}
+
+TEST_CASE("bus.set_output refuses a route that reaches the bus itself and changes nothing", "[command][buses]") {
+    Document doc = mixer();
+    doc = applied(doc, R"({"op":"bus.add","busId":"bus_c","name":"Third"})");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_a","output":{"busId":"bus_a"}})") == "routing_cycle");
+    doc = applied(doc, R"({"op":"bus.set_output","busId":"bus_a","output":{"busId":"bus_b"}})");
+    doc = applied(doc, R"({"op":"bus.set_output","busId":"bus_b","output":{"busId":"bus_c"}})");
+    const auto hash = doc.documentHash();
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_b","output":{"busId":"bus_a"}})") == "routing_cycle");
+    CHECK(errorCode(doc, R"({"op":"bus.set_output","busId":"bus_c","output":{"busId":"bus_a"}})") == "routing_cycle");
+    CHECK(doc.documentHash() == hash);
+    // Inside a transaction the failing step is reported and nothing applies.
+    try {
+        (void)prepareTransaction(doc, {cmd(R"({"op":"bus.rename","busId":"bus_c","name":"X"})"),
+                                       cmd(R"({"op":"bus.set_output","busId":"bus_c","output":{"busId":"bus_a"}})")});
+        FAIL("expected routing_cycle");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "routing_cycle");
+        CHECK(error.step() == 1);
+    }
+}
+
+TEST_CASE("track.set_output routes a track to a bus or the master and declares only the track", "[command][buses]") {
+    const Document doc = mixer();
+    const auto routedTrack = prepare(doc, cmd(R"({"op":"track.set_output","trackId":"trk_2","output":{"busId":"bus_b"}})"));
+    CHECK(routedTrack.effects == DeclaredEffects{ref(EntityType::track, "trk_2")});
+    CHECK(routedTrack.result.track("trk_2")->output == std::optional<std::string>("bus_b"));
+    const auto back = prepare(routedTrack.result, cmd(R"({"op":"track.set_output","trackId":"trk_2","output":null})"));
+    CHECK(back.effects == DeclaredEffects{ref(EntityType::track, "trk_2")});
+    CHECK(back.result.documentHash() == doc.documentHash());
+    CHECK(errorCode(doc, R"({"op":"track.set_output","trackId":"trk_x","output":null})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"track.set_output","trackId":"trk_2","output":{"busId":"bus_x"}})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"track.set_output","trackId":"trk_2"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"track.set_output","trackId":"trk_2","output":{"trackId":"trk_1"}})") ==
+          "invalid_params");
+}
+
+TEST_CASE("send.add and the send edits declare exactly their entities", "[command][buses]") {
+    const Document doc = mixer();
+    const auto* s = doc.send("snd_1");
+    REQUIRE(s != nullptr);
+    CHECK(s->trackId == "trk_1");
+    CHECK(s->busId == "bus_a");
+    CHECK(s->level.milliDb == 0);
+    CHECK_FALSE(s->pre);
+    CHECK(s->enabled);
+    CHECK(doc.track("trk_1")->sends == std::vector<std::string>{"snd_1"});
+
+    const auto added = prepare(doc, cmd(R"({"op":"send.add","sendId":"snd_0","trackId":"trk_1","busId":"bus_b",
+        "levelMilliDb":-6000,"pre":true,"enabled":false,"index":0})"));
+    CHECK(added.effects == DeclaredEffects{ref(EntityType::track, "trk_1"), ref(EntityType::send, "snd_0")});
+    CHECK(added.result.track("trk_1")->sends == std::vector<std::string>{"snd_0", "snd_1"});
+    CHECK(added.result.send("snd_0")->level.milliDb == -6000);
+    CHECK(added.result.send("snd_0")->pre);
+    CHECK_FALSE(added.result.send("snd_0")->enabled);
+
+    const DeclaredEffects onlySend{ref(EntityType::send, "snd_1")};
+    auto edit = [&](const std::string& json) {
+        const auto prepared = prepare(doc, cmd(json));
+        CHECK(prepared.effects == onlySend);
+        return prepared.result;
+    };
+    CHECK(edit(R"({"op":"send.set_level","sendId":"snd_1","levelMilliDb":-3000})").send("snd_1")->level.milliDb ==
+          -3000);
+    CHECK(edit(R"({"op":"send.set_pre","sendId":"snd_1","pre":true})").send("snd_1")->pre);
+    CHECK_FALSE(edit(R"({"op":"send.set_enabled","sendId":"snd_1","enabled":false})").send("snd_1")->enabled);
+
+    const auto removed = prepare(doc, cmd(R"({"op":"send.remove","sendId":"snd_1"})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::track, "trk_1"), ref(EntityType::send, "snd_1")});
+    CHECK(removed.result.send("snd_1") == nullptr);
+    CHECK(removed.result.track("trk_1")->sends.empty());
+
+    CHECK(errorCode(doc, R"({"op":"send.add","sendId":"snd_1","trackId":"trk_1","busId":"bus_a"})") == "already_exists");
+    CHECK(errorCode(doc, R"({"op":"send.add","sendId":"snd_9","trackId":"trk_x","busId":"bus_a"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"send.add","sendId":"snd_9","trackId":"trk_1","busId":"bus_x"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"send.add","sendId":"snd_9","trackId":"trk_1","busId":"bus_a","index":2})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"send.add","sendId":"snd_9","trackId":"trk_1","busId":"bus_a","pan":0})") ==
+          "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"send.add","sendId":"snd_9","trackId":"trk_1","busId":"bus_a","levelMilliDb":24001})") ==
+          "invalid_gain");
+    CHECK(errorCode(doc, R"({"op":"send.remove","sendId":"snd_x"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"send.set_level","sendId":"snd_x","levelMilliDb":0})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"send.set_pre","sendId":"snd_x","pre":true})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"send.set_enabled","sendId":"snd_x","enabled":true})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"send.set_level","sendId":"snd_1","levelMilliDb":-144001})") == "invalid_gain");
+    CHECK(errorCode(doc, R"({"op":"send.set_pre","sendId":"snd_1","pre":"yes"})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"send.set_enabled","sendId":"snd_1"})") == "invalid_params");
+}
+
+TEST_CASE("bus.remove removes its sends and slots and routes its inputs to the master in one revision",
+          "[command][buses]") {
+    Document doc = mixer();
+    doc = applied(doc, R"({"op":"send.add","sendId":"snd_2","trackId":"trk_2","busId":"bus_a"})");
+    doc = applied(doc, R"({"op":"send.add","sendId":"snd_3","trackId":"trk_2","busId":"bus_b"})");
+    doc = applied(doc, R"({"op":"track.set_output","trackId":"trk_2","output":{"busId":"bus_a"}})");
+    doc = applied(doc, R"({"op":"bus.set_output","busId":"bus_b","output":{"busId":"bus_a"}})");
+    doc = applied(doc, busInsertJson("slt_a", "bus_a", 0));
+    doc = applied(doc, busInsertJson("slt_b", "bus_b", 0));
+
+    const auto removed = prepare(doc, cmd(R"({"op":"bus.remove","busId":"bus_a"})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::root, "root"), ref(EntityType::track, "trk_1"),
+                                             ref(EntityType::track, "trk_2"), ref(EntityType::plugin_slot, "slt_a"),
+                                             ref(EntityType::bus, "bus_a"), ref(EntityType::bus, "bus_b"),
+                                             ref(EntityType::send, "snd_1"), ref(EntityType::send, "snd_2")});
+    const Document& after = removed.result;
+    CHECK(after.validate().empty());
+    CHECK(after.bus("bus_a") == nullptr);
+    CHECK(after.send("snd_1") == nullptr);
+    CHECK(after.send("snd_2") == nullptr);
+    CHECK(after.send("snd_3") != nullptr);
+    CHECK(after.pluginSlot("slt_a") == nullptr);
+    CHECK(after.pluginSlot("slt_b") != nullptr);
+    CHECK(after.root().busOrder == std::vector<std::string>{"bus_b"});
+    CHECK(after.track("trk_1")->sends.empty());
+    CHECK(after.track("trk_2")->sends == std::vector<std::string>{"snd_3"});
+    CHECK_FALSE(after.track("trk_2")->output.has_value());
+    CHECK_FALSE(after.bus("bus_b")->output.has_value());
+    CHECK(errorCode(doc, R"({"op":"bus.remove","busId":"bus_x"})") == "not_found");
+    CHECK(errorCode(doc, R"({"op":"bus.remove"})") == "invalid_params");
+
+    // A bus nothing refers to declares the root and itself only.
+    const auto lone = prepare(applied(base(), R"({"op":"bus.add","busId":"bus_z","name":"Z"})"),
+                              cmd(R"({"op":"bus.remove","busId":"bus_z"})"));
+    CHECK(lone.effects == DeclaredEffects{ref(EntityType::root, "root"), ref(EntityType::bus, "bus_z")});
+    CHECK(lone.result.documentHash() == base().documentHash());
+}
+
+TEST_CASE("track.remove cascades the track's sends", "[command][buses]") {
+    const Document doc = mixer();
+    const auto removed = prepare(doc, cmd(R"({"op":"track.remove","trackId":"trk_1"})"));
+    CHECK(removed.effects.count(ref(EntityType::send, "snd_1")) == 1);
+    CHECK(removed.result.send("snd_1") == nullptr);
+    CHECK(removed.result.validate().empty());
+    CHECK(removed.result.bus("bus_a") != nullptr);
+}
+
+TEST_CASE("plugin.insert takes exactly one of trackId or busId", "[command][buses][plugin]") {
+    const Document doc = mixer();
+    const auto onBus = prepare(doc, cmd(busInsertJson("slt_1", "bus_a", 5)));
+    CHECK(onBus.effects == DeclaredEffects{ref(EntityType::bus, "bus_a"), ref(EntityType::plugin_slot, "slt_1")});
+    CHECK(onBus.result.bus("bus_a")->inserts == std::vector<std::string>{"slt_1"});
+    CHECK(onBus.result.pluginSlot("slt_1")->busId == "bus_a");
+    CHECK(onBus.result.pluginSlot("slt_1")->trackId.empty());
+    CHECK(errorCode(doc, busInsertJson("slt_1", "bus_x", 0)) == "not_found");
+    CHECK(errorCode(doc, R"({"op":"plugin.insert","trackId":"trk_1","busId":"bus_a","index":0,"slotId":"slt_1",
+        "descriptor":{"format":"clap","uid":"u"},"stateBlob":null})") == "invalid_params");
+    CHECK(errorCode(doc, R"({"op":"plugin.insert","index":0,"slotId":"slt_1",
+        "descriptor":{"format":"clap","uid":"u"},"stateBlob":null})") == "invalid_params");
+
+    // plugin.remove and plugin.set_bypass work on a bus's slot unchanged.
+    const auto bypassed = prepare(onBus.result, cmd(R"({"op":"plugin.set_bypass","slotId":"slt_1","bypass":true})"));
+    CHECK(bypassed.effects == DeclaredEffects{ref(EntityType::plugin_slot, "slt_1")});
+    const auto removed = prepare(onBus.result, cmd(R"({"op":"plugin.remove","slotId":"slt_1"})"));
+    CHECK(removed.effects == DeclaredEffects{ref(EntityType::bus, "bus_a"), ref(EntityType::plugin_slot, "slt_1")});
+    CHECK(removed.result.bus("bus_a")->inserts.empty());
+    CHECK(removed.result.documentHash() == doc.documentHash());
+}
+
+TEST_CASE("commandCascades lists what a command may remove or change besides its target", "[command][buses]") {
+    const auto cascades = siann::command::commandCascades();
+    const std::map<std::string, std::vector<std::string>> expected{
+        {"bus.remove", {"bus", "plugin_slot", "root", "send", "track"}},
+        {"track.remove", {"clip", "plugin_slot", "root", "send"}},
+    };
+    CHECK(cascades == expected);
+}
+
+// ---- display-safe names (follow-up to #123) ---------------------------------
+
+namespace {
+
+using siann::json::Object;
+using siann::json::Value;
+
+// A command whose "name" (or descriptor name) is `name`, built as a value so
+// it can carry bytes that JSON text could not (a name from the C++ API).
+Command withName(Object fields, const std::string& name) {
+    fields.emplace_back("name", Value(name));
+    return Command::fromJson(Value(std::move(fields)));
+}
+
+std::string errorCodeOf(const Document& doc, const Command& command) {
+    try {
+        (void)prepare(doc, command);
+    } catch (const CommandError& error) {
+        return error.code();
+    }
+    return "no error";
+}
+
+// RLO, LRI, PDI, ALM, LRM, a line separator, a C0 and a C1 control, and a
+// malformed byte: each refused anywhere in a name.
+const std::vector<std::string> kUnsafeNames = {
+    "Vox \xE2\x80\xAE" "6- ot",   // U+202E RLO
+    "Vox \xE2\x81\xA6" "x",       // U+2066 LRI, unclosed
+    "Vox \xE2\x81\xA9",           // U+2069 PDI
+    "\xD8\x9C" "Vox",             // U+061C ALM
+    "Vox\xE2\x80\x8E",            // U+200E LRM
+    "Vox\xE2\x80\xA8" "Bass",     // U+2028 line separator
+    "Vox\nBass",                  // LF
+    "Vox\xC2\x85",                // U+0085 NEL (C1)
+    "Vox \xC3\x28",               // malformed UTF-8
+};
+
+}  // namespace
+
+TEST_CASE("track.add and track.rename refuse a display-unsafe name with invalid_name", "[command][names]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("track.add")}, {"trackId", Value("trk_2")},
+                                               {"channels", Value(2.0)}},
+                                        name)) == "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("track.rename")}, {"trackId", Value("trk_1")}}, name)) ==
+              "invalid_name");
+    }
+    // Text in any script, with its own direction, is a name.
+    CHECK(errorCode(doc, R"({"op":"track.rename","trackId":"trk_1","name":"שירה 主唱 Vox"})") == "no error");
+    CHECK(errorCode(doc, R"({"op":"track.add","trackId":"trk_2","name":"Ünïcødé 🎸","channels":2})") == "no error");
+}
+
+TEST_CASE("media.add and media.rename refuse a display-unsafe name with invalid_name", "[command][names][media]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("media.add")}, {"mediaId", Value("med_2")},
+                                               {"contentHash", Value(kHash)}, {"format", Value("wav")},
+                                               {"channels", Value(2.0)}, {"sampleRate", Value(48000.0)},
+                                               {"frames", Value("48000")}},
+                                        name)) == "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("media.rename")}, {"mediaId", Value("med_1")}}, name)) ==
+              "invalid_name");
+    }
+    // The length rule stays invalid_params.
+    CHECK(errorCode(doc, R"({"op":"media.rename","mediaId":"med_1","name":""})") == "invalid_params");
+}
+
+TEST_CASE("bus.add and bus.rename refuse a display-unsafe name with invalid_name", "[command][names][bus]") {
+    const Document doc = applied(base(), R"({"op":"bus.add","busId":"bus_a","name":"Verb"})");
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("bus.add")}, {"busId", Value("bus_b")}}, name)) ==
+              "invalid_name");
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("bus.rename")}, {"busId", Value("bus_a")}}, name)) ==
+              "invalid_name");
+    }
+    CHECK(errorCode(doc, R"({"op":"bus.rename","busId":"bus_a","name":"混響 Verb"})") == "no error");
+}
+
+TEST_CASE("session.rename refuses a display-unsafe name with invalid_name", "[command][names]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        CHECK(errorCodeOf(doc, withName(Object{{"op", Value("session.rename")}}, name)) == "invalid_name");
+    }
+    CHECK(errorCode(doc, R"({"op":"session.rename","name":"夜 Drive"})") == "no error");
+}
+
+TEST_CASE("plugin.insert refuses a display-unsafe descriptor name with invalid_name", "[command][names][plugin]") {
+    const Document doc = base();
+    for (const std::string& name : kUnsafeNames) {
+        INFO(name);
+        Object descriptor{{"format", Value("clap")}, {"uid", Value("u")}, {"name", Value(name)}};
+        const Command insert = Command::fromJson(Value(Object{{"op", Value("plugin.insert")},
+                                                              {"trackId", Value("trk_1")},
+                                                              {"index", Value(0.0)},
+                                                              {"slotId", Value("slt_2")},
+                                                              {"descriptor", Value(std::move(descriptor))},
+                                                              {"stateBlob", Value(nullptr)}}));
+        CHECK(errorCodeOf(doc, insert) == "invalid_name");
+    }
+}
+
+TEST_CASE("A transaction stops at the step whose name is unsafe", "[command][names]") {
+    const Document doc = base();
+    try {
+        (void)prepareTransaction(doc, {cmd(R"({"op":"track.rename","trackId":"trk_1","name":"Kit"})"),
+                                       cmd(R"({"op":"track.rename","trackId":"trk_1","name":"Kit \u202e"})")});
+        FAIL("the transaction was not refused");
+    } catch (const CommandError& error) {
+        CHECK(error.code() == "invalid_name");
+        CHECK(error.step() == 1);
+    }
+}
+
+// ---- m5b-engine-clip-fades: clip.set_fade and clip.trim's shortening ---------
+
+namespace {
+
+using siann::model::Fade;
+using siann::model::FadeCurve;
+
+// base() with clp_1: 24000 frames of med_1 at 0.
+Document faded() {
+    return prepare(base(), cmd(R"({"op":"clip.place","clipId":"clp_1","trackId":"trk_1","mediaId":"med_1",)"
+                               R"("position":{"domain":"audio","value":"0"},"sourceStart":"0","length":"24000"})"))
+        .result;
+}
+
+std::string setFade(const std::string& sides) {
+    return R"({"op":"clip.set_fade","clipId":"clp_1")" + sides + "}";
+}
+
+std::string trim(std::int64_t sourceStart, std::int64_t length) {
+    return R"({"op":"clip.trim","clipId":"clp_1","sourceStart":")" + std::to_string(sourceStart) +
+           R"(","length":")" + std::to_string(length) + R"("})";
+}
+
+const EntityRef kClip1{EntityType::clip, "clp_1"};
+
+}  // namespace
+
+TEST_CASE("clip.set_fade sets either side or both and declares exactly clip:<id>", "[command][fades]") {
+    const Document doc = faded();
+    const auto plainHash = doc.entityHash(kClip1);
+
+    const auto in = prepare(doc, cmd(setFade(R"(,"fadeIn":{"length":"480","curve":"linear"})")));
+    CHECK(in.effects == DeclaredEffects{kClip1});
+    CHECK(in.result.clip("clp_1")->fadeIn == Fade{480, FadeCurve::linear});
+    CHECK(in.result.clip("clp_1")->fadeOut == Fade{});
+    CHECK(in.result.entityHash(kClip1) != plainHash);
+    // Only the clip changes.
+    const auto changes = siann::model::diff(doc, in.result);
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0].entity == kClip1);
+
+    const auto out = prepare(doc, cmd(setFade(R"(,"fadeOut":{"length":"960","curve":"equal_power"})")));
+    CHECK(out.effects == DeclaredEffects{kClip1});
+    CHECK(out.result.clip("clp_1")->fadeIn == Fade{});
+    CHECK(out.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+
+    const auto both = prepare(doc, cmd(setFade(R"(,"fadeIn":{"length":"480","curve":"linear"},)"
+                                               R"("fadeOut":{"length":"960","curve":"equal_power"})")));
+    CHECK(both.result.clip("clp_1")->fadeIn == Fade{480, FadeCurve::linear});
+    CHECK(both.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+
+    // An omitted side is unchanged.
+    const auto later = prepare(both.result, cmd(setFade(R"(,"fadeIn":{"length":"100","curve":"equal_power"})")));
+    CHECK(later.result.clip("clp_1")->fadeIn == Fade{100, FadeCurve::equal_power});
+    CHECK(later.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+
+    // Length "0" removes the side; both removed is the pre-fade hash.
+    const auto noIn = prepare(both.result, cmd(setFade(R"(,"fadeIn":{"length":"0","curve":"equal_power"})")));
+    CHECK(noIn.result.clip("clp_1")->fadeIn == Fade{});
+    CHECK(noIn.result.clip("clp_1")->fadeOut == Fade{960, FadeCurve::equal_power});
+    const auto none = prepare(noIn.result, cmd(setFade(R"(,"fadeOut":{"length":"0","curve":"linear"})")));
+    CHECK(none.result.entityHash(kClip1) == plainHash);
+    CHECK(none.result.documentHash() == doc.documentHash());
+
+    // The two fades may meet but not overlap.
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"12000","curve":"linear"},)"
+                                 R"("fadeOut":{"length":"12000","curve":"linear"})")) == "no error");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"24000","curve":"linear"})")) == "no error");
+    CHECK(errorCode(both.result, setFade(R"(,"fadeIn":{"length":"23041","curve":"linear"})")) == "invalid_fade");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"24001","curve":"linear"})")) == "invalid_fade");
+}
+
+TEST_CASE("clip.set_fade refuses a missing clip, a missing side and malformed fades", "[command][fades]") {
+    const Document doc = faded();
+    CHECK(errorCode(doc, R"({"op":"clip.set_fade","clipId":"clp_9","fadeIn":{"length":"1","curve":"linear"}})") ==
+          "not_found");
+    CHECK(errorCode(doc, setFade("")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480","curve":"log"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":480,"curve":"linear"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"-480","curve":"linear"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"0480","curve":"linear"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480"})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480","curve":"linear","x":1})")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":null)")) == "invalid_params");
+    CHECK(errorCode(doc, setFade(R"(,"fadeIn":{"length":"480","curve":"linear"},"extra":1)")) == "invalid_params");
+}
+
+TEST_CASE("clip.trim shortens fades that no longer fit, in the same revision", "[command][fades]") {
+    const Document doc =
+        prepare(faded(), cmd(setFade(R"(,"fadeIn":{"length":"6000","curve":"linear"},)"
+                                     R"("fadeOut":{"length":"8000","curve":"equal_power"})")))
+            .result;
+
+    // Still fits (14000 <= 20000): unchanged.
+    const auto fits = prepare(doc, cmd(trim(0, 20'000)));
+    CHECK(fits.result.clip("clp_1")->fadeIn == Fade{6'000, FadeCurve::linear});
+    CHECK(fits.result.clip("clp_1")->fadeOut == Fade{8'000, FadeCurve::equal_power});
+
+    // 10000 frames: the fade in keeps 6000, the fade out takes the 4000 left.
+    const auto shorter = prepare(doc, cmd(trim(0, 10'000)));
+    CHECK(shorter.effects == DeclaredEffects{kClip1});
+    CHECK(shorter.result.clip("clp_1")->length == 10'000);
+    CHECK(shorter.result.clip("clp_1")->fadeIn == Fade{6'000, FadeCurve::linear});
+    CHECK(shorter.result.clip("clp_1")->fadeOut == Fade{4'000, FadeCurve::equal_power});
+    const auto changes = siann::model::diff(doc, shorter.result);
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0].entity == kClip1);
+
+    // 5000 frames: the fade in is cut to the clip, the fade out is dropped.
+    const auto cut = prepare(doc, cmd(trim(1'000, 5'000)));
+    CHECK(cut.result.clip("clp_1")->fadeIn == Fade{5'000, FadeCurve::linear});
+    CHECK(cut.result.clip("clp_1")->fadeOut == Fade{});
+    CHECK(siann::model::toJson(*cut.result.clip("clp_1")).find("fadeOut") == nullptr);
+
+    // A fade out only shortens to the clip.
+    const Document outOnly =
+        prepare(faded(), cmd(setFade(R"(,"fadeOut":{"length":"8000","curve":"linear"})"))).result;
+    CHECK(prepare(outOnly, cmd(trim(0, 3'000))).result.clip("clp_1")->fadeOut == Fade{3'000, FadeCurve::linear});
+}
+
+TEST_CASE("commandNames lists clip.set_fade", "[command][fades]") {
+    const auto names = commandNames();
+    CHECK(std::find(names.begin(), names.end(), "clip.set_fade") != names.end());
 }

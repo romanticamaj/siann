@@ -24,6 +24,7 @@ import { zhHans } from '../../src/renderer/i18n/zh-Hans';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import { engineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
+import { armPlacing, chooseGrid, openPool } from './support/toolbar';
 
 const RATE = 48000;
 const FRAMES = 48000;
@@ -151,6 +152,8 @@ interface View {
   readonly framesPerPixel: number;
   readonly scrollFrames: string;
   readonly rulerHeight: number;
+  // The lanes' top: the ruler and the empty marker track row above (m5-ui-port-arrange-canvas).
+  readonly lanesTop: number;
   readonly laneHeight: number;
   readonly laneHeights?: Record<string, number>;
   readonly scrollY?: number;
@@ -169,7 +172,9 @@ type HookName =
   | 'selectionOutline'
   | 'dimmedLanes'
   | 'guidance'
-  | 'peakColumns';
+  | 'peakColumns'
+  | 'parts'
+  | 'waveColumns';
 
 // The test hooks, read with page.evaluate (the CSP allows no eval in the page).
 async function hook<T>(name: HookName, arg?: string): Promise<T> {
@@ -260,7 +265,7 @@ test('the track list shows each track, clips are never under it, double-click re
   );
   await launch();
   const frames = await recordFrames();
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
   const expected = [
     { id: 'trk_a', number: '1', name: 'Alpha', gain: '-3.5 dB', pan: 'L35' },
     { id: 'trk_b', number: '2', name: 'Beta', gain: '0.0 dB', pan: 'R40' },
@@ -319,10 +324,10 @@ test('the track list shows each track, clips are never under it, double-click re
   // (spec 3.3): one track.add each.
   await focusProject();
   await page.keyboard.press('KeyT');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
   await page.getByTestId('track-add').click();
-  await expect(page.getByTestId('track-count')).toHaveText('4');
+  await expect(page.getByTestId('about-track-count')).toHaveText('4');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 3}`);
   const adds = ops(frames, 'track.add');
   expect(adds).toHaveLength(2);
@@ -336,9 +341,9 @@ test('the track list shows each track, clips are never under it, double-click re
   const body = await box('track-list-body');
   const headers = await box('track-header-trk_a');
   await page.getByTestId('track-header-trk_a').dblclick({ position: { x: headers.width - 30, y: 4 } });
-  await expect(page.getByTestId('track-count')).toHaveText('4');
+  await expect(page.getByTestId('about-track-count')).toHaveText('4');
   await page.mouse.dblclick(body.x + body.width / 2, body.y + body.height - 10);
-  await expect(page.getByTestId('track-count')).toHaveText('5');
+  await expect(page.getByTestId('about-track-count')).toHaveText('5');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
   expect(ops(frames, 'track.add')).toHaveLength(3);
   await expect(page.getByTestId('track-list').getByText('Audio 3', { exact: true })).toBeVisible();
@@ -350,12 +355,15 @@ test('the track list shows each track, clips are never under it, double-click re
   await expect(page.getByTestId('track-rename-trk_b')).toHaveValue('t');
   await page.getByTestId('track-rename-trk_b').press('Escape');
   await expect(page.getByTestId('track-name-trk_b')).toHaveText('Beta');
-  await expect(page.getByTestId('track-count')).toHaveText('5');
+  await expect(page.getByTestId('about-track-count')).toHaveText('5');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 4}`);
   expect(ops(frames, 'track.add')).toHaveLength(3);
 });
 
-test('the canvas is the event display\'s box in device pixels after a resize and a boundary drag; the ruler is bars, then beats zoomed in', async () => {
+// The canvases end at the top of the scroll-zoom bar (--scrollbar-h), as the mockup's #tl does.
+const SCROLLBAR = 8;
+
+test('the canvas is the event display\'s box above the scroll-zoom bar in device pixels after a resize and a boundary drag; the ruler is bars, then beats zoomed in', async () => {
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
   await launch();
   const check = async (what: string) => {
@@ -364,8 +372,14 @@ test('the canvas is the event display\'s box in device pixels after a resize and
         const display = await box('event-display');
         const canvas = await box('timeline-canvas');
         const content = await box('timeline-content');
+        const bar = (await page.locator('[data-part="scroll-zoom"]').boundingBox())!;
         return [canvas, content].every(
-          (b) => Math.abs(b.x - display.x) < 1 && Math.abs(b.y - display.y) < 1 && Math.abs(b.width - display.width) < 1 && Math.abs(b.height - display.height) < 1,
+          (b) =>
+            Math.abs(b.x - display.x) < 1 &&
+            Math.abs(b.y - display.y) < 1 &&
+            Math.abs(b.width - display.width) < 1 &&
+            Math.abs(b.height - (display.height - SCROLLBAR)) < 1 &&
+            Math.abs(b.y + b.height - bar.y) < 1,
         );
       }, { message: what })
       .toBe(true);
@@ -521,6 +535,87 @@ test('H, G, Ctrl+wheel and a drag in the ruler\'s lower half zoom about the poin
   await pageStill('Shift+wheel');
 });
 
+// The zoom's visible handle is the mockup's u::after; the range input over u
+// has a transparent thumb. The handle must sit where that thumb is, follow the
+// zoom whichever way it changes, and a click on the bar must move both there.
+test('the scroll-zoom bar\'s handle shows the zoom: it follows H and G, and a click on the zoom moves it under the pointer', async () => {
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_1', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await focusProject();
+  await rect('clp_1');
+  const slider = page.getByTestId('zoom-slider');
+  // The handle's centre (u::after) and the thumb's centre for the slider's value, in window x.
+  const geometry = () =>
+    slider.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      const u = input.parentElement!;
+      const box = u.getBoundingClientRect();
+      const after = getComputedStyle(u, '::after');
+      const handle = parseFloat(after.width);
+      const inputBox = input.getBoundingClientRect();
+      const fraction = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
+      const bar = u.parentElement!.getBoundingClientRect();
+      return {
+        handle: box.left + parseFloat(after.left) + handle / 2,
+        thumb: inputBox.left + handle / 2 + fraction * (inputBox.width - handle),
+        uWidth: box.width,
+        target: { width: inputBox.width, height: inputBox.height, top: inputBox.top, bottom: inputBox.bottom },
+        handleBox: { top: box.top + parseFloat(after.top), bottom: box.top + parseFloat(after.top) + parseFloat(after.height) },
+        bar: { top: bar.top, bottom: bar.bottom },
+        handleSize: handle,
+      };
+    });
+  let g = await geometry();
+  expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+  // The pointer target: u's width and half a handle past each end, and the
+  // handle's height (the mockup's handle, from the bar's top), so a press
+  // anywhere on the visible handle reaches the input. It starts in the bar.
+  expect(g.target.width).toBeCloseTo(g.uWidth + g.handleSize, 0);
+  expect(Math.abs(g.target.top - g.handleBox.top)).toBeLessThan(0.5);
+  expect(Math.abs(g.target.bottom - g.handleBox.bottom)).toBeLessThan(0.5);
+  expect(g.target.top).toBeGreaterThanOrEqual(g.bar.top - 0.5);
+
+  for (const [key, direction] of [['KeyH', 1], ['KeyG', -1]] as const) {
+    const before = g.handle;
+    const fpp = (await view()).framesPerPixel;
+    await page.keyboard.press(key);
+    await expect.poll(async () => (await view()).framesPerPixel).not.toBe(fpp);
+    await expect.poll(async () => Math.sign((await geometry()).handle - before)).toBe(direction);
+    g = await geometry();
+    expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+  }
+
+  // A click near u's right end (zoomed in, within the zoom's range for this
+  // session): the zoom changes and the handle lands under the pointer.
+  const u = (await page.locator('.hscroll u').boundingBox())!;
+  const x = u.x + u.width * 0.9;
+  const fpp = (await view()).framesPerPixel;
+  // The handle is the visible control: it is on top of the lower divider's
+  // invisible grab margin, which reaches up into the bar.
+  for (const at of [g.handleBox.top + 1, u.y + u.height / 2, Math.min(g.handleBox.bottom, g.bar.bottom) - 1]) {
+    expect(await page.evaluate(([px, py]) => document.elementFromPoint(px!, py!)?.getAttribute('data-testid'), [x, at])).toBe('zoom-slider');
+  }
+  await page.mouse.click(x, u.y + u.height / 2);
+  await expect.poll(async () => (await view()).framesPerPixel).not.toBe(fpp);
+  // The view's listeners run with the next content frame, so the handle follows then.
+  await expect.poll(async () => Math.abs((await geometry()).handle - x)).toBeLessThan(2);
+  g = await geometry();
+  expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+
+  // A drag that starts on the handle itself (drawn over the input) zooms out.
+  const start = g.handle;
+  const y = u.y + u.height / 2;
+  const fppBefore = (await view()).framesPerPixel;
+  await page.mouse.move(start, y);
+  await page.mouse.down();
+  await page.mouse.move(start - u.width / 4, y, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(async () => (await view()).framesPerPixel).toBeGreaterThan(fppBefore);
+  await expect.poll(async () => Math.abs((await geometry()).handle - (start - u.width / 4))).toBeLessThan(2);
+  g = await geometry();
+  expect(Math.abs(g.handle - g.thumb)).toBeLessThan(1);
+});
+
 // Heights are kept per session id (spec 2.3). The engine names a session
 // anew each time it opens a bundle (protocol_server.cpp: "ses_" + random
 // hex), so they survive a reload of the window on the same engine, and a
@@ -559,7 +654,7 @@ test('dragging a header\'s lower border sizes that lane, Ctrl-drag sizes all; he
   await page.reload();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('session-id')).toHaveText(sessionId ?? '');
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect.poll(heights).toEqual([73, 73, 73]);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('siann.layout.v1') ?? '{}') as { trackHeights?: Record<string, unknown> });
   expect(stored.trackHeights?.[sessionId ?? '']).toEqual({ trk_a: 73, trk_b: 73, trk_c: 73 });
@@ -585,6 +680,13 @@ test('while playing with no edits the content layer is not redrawn and the overl
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
   await launch();
   await expect.poll(async () => (await hook<{ drawn: number }>('peakColumns', 'clp_sq')).drawn).toBeGreaterThan(0);
+  // Auto-scroll (on by default) turns the page when the cursor passes the
+  // view's right edge (under 4 s in at this zoom), and a page turn redraws the
+  // content: on a slow runner the measurement below outlasts that, so it is
+  // taken with auto-scroll off and the view is checked not to have moved.
+  const autoScroll = page.getByTestId('auto-scroll');
+  await autoScroll.click();
+  await expect(autoScroll).toHaveAttribute('aria-pressed', 'false');
   const engine = await engineClient(page);
   await engine.call('transport.play');
   await expect.poll(async () => (await hook<number | null>('cursorX')) ?? 0).toBeGreaterThan(0);
@@ -600,6 +702,7 @@ test('while playing with no edits the content layer is not redrawn and the overl
   const overlay = await hook<number>('overlayDraws');
   await expect.poll(async () => hook<number>('overlayDraws'), { timeout: 20_000 }).toBeGreaterThan(overlay + 20);
   expect(await hook<number>('contentDraws')).toBe(content);
+  expect((await view()).scrollFrames).toBe('0');
   await engine.call('transport.stop');
   engine.close();
 });
@@ -608,7 +711,9 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_x', trackId: 'trk_a', position: 96000, sourceStart: 24000, length: 48000, gain: -3500 }]);
   await launch();
   const line = page.getByTestId('info-line');
-  for (const field of ['start', 'end', 'length', 'offset', 'gain']) await expect(page.getByTestId(`info-${field}`)).toHaveText('');
+  // Nothing selected: the line, and nothing between its edges (m5-ui-port-toolbar).
+  await expect(line).toHaveText('');
+  await expect(line.locator('.f')).toHaveCount(0);
   // The whole session in view, so the clip can be clicked. "connected" comes
   // before the read model's first sync: Shift+F fits the clips loaded when it
   // is pressed (none yet, on a slow runner, and the zoom stays the default),
@@ -621,20 +726,24 @@ test('the info line shows the selected clip read-only, and nothing with no selec
   const target = await rect('clp_x');
   const canvas = await box('timeline-canvas');
   await page.mouse.click(canvas.x + target.x + target.width / 2, canvas.y + target.y + target.height / 2);
-  // 120 BPM: a bar is 96000 frames, a beat 24000.
-  await expect(page.getByTestId('info-start')).toHaveText('2.1.000');
-  await expect(page.getByTestId('info-end')).toHaveText('2.3.000');
-  await expect(page.getByTestId('info-length')).toHaveText('0.2.000');
-  await expect(page.getByTestId('info-offset')).toHaveText('0.1.000');
-  await expect(page.getByTestId('info-gain')).toHaveText('-3.5 dB');
+  // 120 BPM: a bar is 96000 frames, a beat 24000. bar.beat.sixteenth.tick
+  // and bars.beats.sixteenths.ticks, the volume with two decimals (UI redesign 3.2, 10.8).
+  await expect(page.getByTestId('info-start')).toHaveText('2.1.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('2.3.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.2.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.1.0.0');
+  await expect(page.getByTestId('info-volume')).toHaveText('-3.50 dB');
+  // The name is the clip's title (media.name, else the media id).
+  expect(['square', 'square.wav', 'med_sq']).toContain(await page.getByTestId('info-name').textContent());
   await expect(line).toHaveAttribute('data-clip', 'clp_x');
   expect(await line.locator('input, textarea, select, [contenteditable="true"]').count()).toBe(0);
   await focusProject();
-  for (const field of ['start', 'end', 'length', 'offset', 'gain']) await expect(page.getByTestId(`info-${field}`)).toHaveText('');
+  await expect(line).toHaveText('');
+  await expect(line.locator('.f')).toHaveCount(0);
   await expect(line).toHaveAttribute('data-clip', '');
 });
 
-test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim, place and delete commit one revision each', async () => {
+test('a selected clip has the 1.5 px outline of draw(), a drag shows a tooltip, and move, trim, place and delete commit one revision each', async () => {
   test.setTimeout(120_000);
   prepare(
     [
@@ -649,7 +758,7 @@ test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim
   const mid = { x: canvas.x + start.x + start.width / 2, y: canvas.y + start.y + start.height / 2 };
   await page.mouse.click(mid.x, mid.y);
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
-  await expect.poll(() => hook<number>('selectionOutline')).toBe(2);
+  await expect.poll(() => hook<number>('selectionOutline')).toBe(1.5);
 
   // Move, with the tooltip mid-drag.
   let before = await revision();
@@ -685,11 +794,11 @@ test('a selected clip has a 2 px outline, a drag shows a tooltip, and move, trim
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   await expect.poll(async () => (await rect('clp_sq')).width).toBeLessThan(start.width);
 
-  // Place from the media pool on the second lane.
+  // Place from the Pool (Ctrl+P) on the second lane.
   before = await revision();
-  await page.getByTestId('pool-med_sq').click();
+  await armPlacing(page, 'med_sq');
   const v = await view();
-  await page.mouse.click(canvas.x + 300, canvas.y + v.rulerHeight + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
+  await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
   await expect(page.getByTestId('clip-count')).toHaveText('2');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
 
@@ -711,7 +820,7 @@ test('muted and implicitly muted tracks are dimmed; an empty session shows guida
     { id: 'trk_c', name: 'Gamma' },
   ]);
   await launch();
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   await expect(page.getByTestId('track-header-trk_a')).toHaveAttribute('data-dimmed', 'true');
   await expect(page.getByTestId('track-header-trk_c')).toHaveAttribute('data-dimmed', 'true');
   await expect(page.getByTestId('track-header-trk_b')).not.toHaveAttribute('data-dimmed', 'true');
@@ -728,7 +837,7 @@ test('muted and implicitly muted tracks are dimmed; an empty session shows guida
     const empty = path.join(scratch, `empty-${language}`);
     fs.mkdirSync(empty, { recursive: true });
     await launch({ dir: empty, languages: [language], userData: path.join(scratch, `user-${language}`) });
-    await expect(page.getByTestId('track-count')).toHaveText('0');
+    await expect(page.getByTestId('about-track-count')).toHaveText('0');
     await expect.poll(() => hook<string | null>('guidance')).toBe(catalog['timeline.empty']);
     await app!.close();
     app = undefined;
@@ -737,7 +846,7 @@ test('muted and implicitly muted tracks are dimmed; an empty session shows guida
 
 test('the track list boundary drags within 140-420, never collapses, takes the keys, restores 216 and is kept in siann.layout.v1 only', async () => {
   test.setTimeout(150_000);
-  prepare([{ id: 'trk_a', name: 'Alpha' }]);
+  prepare([{ id: 'trk_a', name: 'Vox Lead' }]);
   const userData = path.join(scratch, 'user-data');
   await launch({ userData });
   const frames = await recordFrames();
@@ -763,6 +872,48 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   await expect(page.getByTestId('track-name-trk_a')).toBeVisible();
   await expect(page.getByTestId('track-mute-trk_a')).toBeVisible();
   await expect(page.getByTestId('track-solo-trk_a')).toBeVisible();
+  // At the minimum the header shows colour, name, M and S (spec 2.3): the name
+  // is not cut, and the empty boxes of record, read and write go with the
+  // number and the second row (spec 3.0), so they take none of its width.
+  const narrow = await page.getByTestId('track-header-trk_a').evaluate((th) => {
+    const name = th.querySelector<HTMLElement>('.r1 > .name')!;
+    const holds = [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].map((el) => el.getBoundingClientRect().width);
+    return { client: name.clientWidth, scroll: name.scrollWidth, holds };
+  });
+  expect(narrow.scroll).toBeGreaterThan(0);
+  expect(narrow.client).toBeGreaterThanOrEqual(narrow.scroll);
+  expect(narrow.holds).toEqual([0, 0, 0]);
+  // Nothing in the list is wider than the list (spec 2.3): the head, the
+  // marker row's box and every header end inside it, so M and S and the add
+  // button stay in the list and nothing paints over the divider; the count
+  // goes at the narrow end (spec 3.0), as the number and the second row do.
+  const fit = await page.getByTestId('track-list').evaluate((list) => {
+    const right = list.getBoundingClientRect().right;
+    const over = (el: Element | null) => (el ? Math.round(el.getBoundingClientRect().right - right) : null);
+    return {
+      children: [...list.children].map(over),
+      head: over(list.querySelector('.corner')),
+      add: over(list.querySelector('.corner .add')),
+      header: over(list.querySelector('.th')),
+      mute: over(list.querySelector('[data-testid="track-mute-trk_a"]')),
+      solo: over(list.querySelector('[data-testid="track-solo-trk_a"]')),
+      count: list.querySelector<HTMLElement>('.corner .cnt')!.getBoundingClientRect().width,
+    };
+  });
+  for (const edge of [...fit.children, fit.head, fit.add, fit.header, fit.mute, fit.solo]) expect(edge).toBeLessThanOrEqual(0);
+  expect(fit.count).toBe(0);
+  await separator.dblclick();
+  await expect.poll(width).toBe(216);
+  // At the default width the three boxes keep their space (spec 3.0).
+  expect(await page.getByTestId('track-header-trk_a').evaluate((th) =>
+    [...th.querySelectorAll<HTMLElement>('.r1 > .msr-box')].filter((el) => el.getBoundingClientRect().width > 0).length)).toBe(3);
+  // and the count is back, inside the head.
+  expect(await page.getByTestId('track-list').evaluate((list) => {
+    const cnt = list.querySelector<HTMLElement>('.corner .cnt')!.getBoundingClientRect();
+    return cnt.width > 0 && cnt.right <= list.querySelector('.corner')!.getBoundingClientRect().right;
+  })).toBe(true);
+  await dragBy(-1000);
+  await expect.poll(width).toBe(140);
   await separator.dblclick();
   await expect.poll(width).toBe(216);
 
@@ -790,7 +941,7 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   await page.keyboard.press('Enter');
   await expect.poll(width).toBe(216);
   // The keys were the boundary's: no zone toggled, no track added.
-  await expect(page.getByTestId('track-count')).toHaveText('1');
+  await expect(page.getByTestId('about-track-count')).toHaveText('1');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await expect.poll(width).toBe(232);
@@ -802,4 +953,483 @@ test('the track list boundary drags within 140-420, never collapses, takes the k
   app = undefined;
   await launch({ userData });
   await expect.poll(width).toBe(232);
+});
+
+// ---------------------------------------------------------------- m5-ui-port-arrange-canvas
+//
+// The event display is the mockup's draw() (UI redesign 10.9, 10.10): real
+// waveforms from the engine's peaks, the clip title from media.name, the
+// mockup's ids on the DOM and on the surface's parts, no part of a pending
+// feature, and the track list's rows level with the lanes under the empty
+// marker track row.
+
+// A mono 16-bit WAV of 1 s: a square wave at half scale for the first half,
+// silence for the second (written here, outside the code under test).
+function halfLoudWav(file: string): void {
+  const data = Buffer.alloc(FRAMES * 2);
+  for (let i = 0; i < FRAMES / 2; i += 1) data.writeInt16LE(Math.floor(i / 120) % 2 === 0 ? 16384 : -16384, i * 2);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVEfmt ', 8, 'latin1');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(RATE, 24);
+  header.writeUInt32LE(RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(data.length, 40);
+  fs.writeFileSync(file, Buffer.concat([header, data]));
+}
+
+// Two tracks with a clip each of the half-loud file (med_half, 1 s).
+function prepareHalf(): void {
+  sessionDir = path.join(scratch, 'sessions');
+  const bundle = path.join(sessionDir, 'Untitled.siann');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  cli('create', bundle, '--name', 'Waves', '--rate', String(RATE));
+  const exec = (command: Record<string, unknown>) => cli('exec', bundle, JSON.stringify(command));
+  halfLoudWav(path.join(scratch, 'half.wav'));
+  cli('import', bundle, path.join(scratch, 'half.wav'), '--media-id', 'med_half');
+  // clp_l starts 0.25 s in, so its left edge is clear of the track list's boundary.
+  for (const [trackId, clipId, position] of [['trk_a', 'clp_r', 0], ['trk_b', 'clp_l', FRAMES / 4]] as const) {
+    exec({ op: 'track.add', trackId, name: trackId, channels: 1 });
+    exec({ op: 'clip.place', clipId, trackId, mediaId: 'med_half', position: { domain: 'audio', value: String(position) }, sourceStart: '0', length: String(FRAMES) });
+  }
+}
+
+async function columns(clipId: string): Promise<number[]> {
+  return page.evaluate((id) => {
+    const hooks = (window as unknown as { __siannTimeline: { waveColumns(id: string): number[] } }).__siannTimeline;
+    return hooks.waveColumns(id);
+  }, clipId);
+}
+
+interface CanvasPart {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+async function parts(): Promise<CanvasPart[]> {
+  return page.evaluate(() => (window as unknown as { __siannTimeline: { parts(): CanvasPart[] } }).__siannTimeline.parts());
+}
+
+const mean = (values: readonly number[]) => values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+
+test('a placed clip of the demo audio draws its waveform from the peaks: a loud half and a silent half, following a right and a left trim', async () => {
+  test.setTimeout(120_000);
+  prepareHalf();
+  await launch();
+  // The default zoom draws 1 s in 480 px: 240 loud columns, then 240 silent ones.
+  await expect.poll(async () => (await columns('clp_r')).length).toBeGreaterThan(400);
+  const all = await columns('clp_r');
+  const half = Math.floor(all.length / 2);
+  const loud = all.slice(0, half - 2);
+  const quiet = all.slice(half + 2);
+  expect(mean(loud)).toBeGreaterThan(4);
+  expect(Math.min(...loud)).toBeGreaterThan(0.5);
+  expect(quiet.every((h) => h === 0.5)).toBe(true);
+  // The same file on the other lane draws the same columns.
+  expect(await columns('clp_l')).toEqual(all);
+
+  // Snap off, so a trim ends where it is dropped.
+  await page.getByTestId('snap-toggle').click();
+  await expect(page.getByTestId('snap-toggle')).toHaveAttribute('aria-pressed', 'false');
+  const canvas = await box('timeline-canvas');
+  const fpp = (await view()).framesPerPixel;
+
+  // Trim clp_r's right edge to the loud half: every column is loud.
+  let before = await revision();
+  const r = await rect('clp_r');
+  const right = { x: canvas.x + r.x + r.width - 2, y: canvas.y + r.y + r.height / 2 };
+  await page.mouse.move(right.x, right.y);
+  await page.mouse.down();
+  await page.mouse.move(right.x - Math.round(FRAMES / 2 / fpp) - 20, right.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect.poll(async () => (await rect('clp_r')).width).toBeLessThan(r.width / 2);
+  const trimmed = await columns('clp_r');
+  expect(trimmed.length).toBeLessThan(half);
+  expect(trimmed.every((h) => h > 0.5)).toBe(true);
+
+  // Trim clp_l's left edge past the loud half: the columns follow sourceStart, all silent.
+  before = await revision();
+  const l = await rect('clp_l');
+  const left = { x: canvas.x + l.x + 2.5, y: canvas.y + l.y + l.height / 2 };
+  await page.mouse.move(left.x, left.y);
+  await page.mouse.down();
+  await page.mouse.move(left.x + Math.round(FRAMES / 2 / fpp) + 20, left.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect.poll(async () => (await rect('clp_l')).x).toBeGreaterThan(l.x + FRAMES / 2 / fpp);
+  await expect.poll(async () => (await columns('clp_l')).every((h) => h === 0.5)).toBe(true);
+  expect((await columns('clp_l')).length).toBeGreaterThan(100);
+});
+
+test('the clip title is the media name and follows media.rename without a reload', async () => {
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  const title = async () => (await hook<Array<{ clipId: string; title: string }>>('clips')).find((c) => c.clipId === 'clp_sq')?.title;
+  await expect.poll(title).toBeTruthy();
+  // cli import names the media after the file (m5b-engine-project-media), or the id stands in.
+  expect(['square', 'square.wav', 'med_sq']).toContain(await title());
+  await page.evaluate(() => {
+    (window as unknown as { __noReload: boolean }).__noReload = true;
+  });
+  const engine = await engineClient(page);
+  await engine.call('command.execute', { commands: [{ op: 'media.rename', mediaId: 'med_sq', name: 'Square lead' }] });
+  await expect.poll(title).toBe('Square lead');
+  await engine.call('command.execute', { commands: [{ op: 'media.rename', mediaId: 'med_sq', name: null }] });
+  await expect.poll(title).toBe('med_sq');
+  engine.close();
+  expect(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload)).toBe(true);
+});
+
+test("every id of the event display is found, no pending part's id is, and the headers are level with the lanes", async () => {
+  prepare(
+    [
+      { id: 'trk_a', name: 'Alpha' },
+      { id: 'trk_b', name: 'Beta' },
+      { id: 'trk_c', name: 'Gamma' },
+    ],
+    [{ clipId: 'clp_sq', trackId: 'trk_b', position: 0 }],
+  );
+  await launch();
+  await rect('clp_sq');
+  for (const id of ['event-display', 'scroll-zoom', 'arrange']) await expect(page.locator(`[data-part="${id}"]`)).toBeVisible();
+  await expect(page.locator('.arr-body[data-part="arrange"] > .lanes[data-part="event-display"] > canvas#tl')).toHaveCount(1);
+  await expect(page.locator('.lanes > .hscroll[data-part="scroll-zoom"] > u [data-testid="zoom-slider"]')).toHaveCount(1);
+  const engine = await engineClient(page);
+  await engine.call('transport.locate', { frames: '4800' });
+  engine.close();
+  await expect.poll(async () => (await parts()).map((p) => p.id)).toEqual(['ruler-upper', 'ruler-lower', 'lane-1', 'lane-2', 'lane-3', 'clip-1', 'cursor', 'cursor-head']);
+  // No part of a pending feature: not in the DOM, not on the surface.
+  for (const pending of ['marker-track', 'marker-head', 'lane-ghost']) await expect(page.locator(`[data-part="${pending}"]`)).toHaveCount(0);
+  await expect(page.locator('[data-part^="clip-ghost-"]')).toHaveCount(0);
+  for (const id of (await parts()).map((p) => p.id)) expect(id).not.toMatch(/^(marker-track|marker-head|clip-ghost-|lane-ghost)/);
+  // Headers and lanes are level: the marker track row sits in both columns.
+  const display = await box('event-display');
+  const lanes = (await parts()).filter((p) => p.id.startsWith('lane-'));
+  for (const [index, trackId] of ['trk_a', 'trk_b', 'trk_c'].entries()) {
+    const header = await box(`track-header-${trackId}`);
+    expect(Math.abs(header.y - (display.y + lanes[index]!.y))).toBeLessThan(1);
+    expect(Math.abs(header.height - lanes[index]!.h)).toBeLessThan(1);
+  }
+  // The cursor ends at the top of the scroll-zoom bar.
+  const cursor = (await parts()).find((p) => p.id === 'cursor')!;
+  const bar = (await page.locator('[data-part="scroll-zoom"]').boundingBox())!;
+  expect(Math.abs(display.y + cursor.y + cursor.h - bar.y)).toBeLessThan(1);
+});
+
+// ---- m5-ui-port-toolbar: the toolbar, the info line and the Pool (UI redesign 10.8, 10.9, 10.10 P1-16)
+
+const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
+const PENDING_IDS = ['tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill', 'info-fade-in', 'info-fade-out'];
+
+test('the toolbar\'s tools, snap, grid type and auto-scroll show and change the timeline\'s state; every id is found and no pending one', async () => {
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await rect('clp_sq');
+  // Select the clip so the info line's ids are in the window too.
+  const canvas = await box('timeline-canvas');
+  const r = await rect('clp_sq');
+  await page.mouse.click(canvas.x + r.x + r.width / 2, canvas.y + r.y + r.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
+  for (const id of TOOLBAR_IDS) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(1);
+  for (const id of PENDING_IDS) await expect(page.locator(`[data-part="${id}"]`), id).toHaveCount(0);
+  await expect(page.locator('.arr-toolbar[data-part="toolbar"] > .seg[data-part="tools"] > .b')).toHaveCount(2);
+  await expect(page.locator('.arr-toolbar > .spacer')).toHaveCount(1);
+  // No control the mockup does not draw.
+  for (const gone of ['media-pool', 'delete-clip']) await expect(page.getByTestId(gone)).toHaveCount(0);
+  await expect(page.getByTestId('timeline-error')).toHaveText('');
+
+  // Tools: a click on 3 and on 1, then the keys 3 and 1; .on and aria-pressed follow.
+  const select = page.getByTestId('tool-select');
+  const split = page.getByTestId('tool-split');
+  const active = async (on: typeof select, off: typeof select) => {
+    await expect(on).toHaveClass(/\bon\b/);
+    await expect(on).toHaveAttribute('aria-pressed', 'true');
+    await expect(off).not.toHaveClass(/\bon\b/);
+    await expect(off).toHaveAttribute('aria-pressed', 'false');
+  };
+  await active(select, split);
+  await split.click();
+  await active(split, select);
+  await select.click();
+  await active(select, split);
+  await focusProject();
+  await page.keyboard.press('Digit3');
+  await active(split, select);
+  await page.keyboard.press('Digit1');
+  await active(select, split);
+
+  // Snap: a click and J.
+  const snap = page.getByTestId('snap-toggle');
+  await expect(snap).toHaveAttribute('aria-pressed', 'true');
+  await expect(snap).toHaveClass(/\bon\b/);
+  await snap.click();
+  await expect(snap).toHaveAttribute('aria-pressed', 'false');
+  await expect(snap).not.toHaveClass(/\bon\b/);
+  await focusProject();
+  await page.keyboard.press('KeyJ');
+  await expect(snap).toHaveAttribute('aria-pressed', 'true');
+  await expect(snap).toHaveClass(/\bon\b/);
+
+  // The grid type: each one from the field's menu, the field shows its label; Escape closes the menu.
+  for (const [grid, label] of [['bar', en['grid.bar']], ['beat', en['grid.beat']], ['adapt', en['grid.adapt']]] as const) {
+    await chooseGrid(page, grid);
+    await expect(page.getByTestId('grid-type')).toHaveText(label);
+  }
+  await page.getByTestId('grid-type').click();
+  await expect(page.getByTestId('grid-type-menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('grid-type-menu')).toHaveCount(0);
+
+  // Auto-scroll: a click and F.
+  const follow = page.getByTestId('auto-scroll');
+  await expect(follow).toHaveAttribute('aria-pressed', 'true');
+  await follow.click();
+  await expect(follow).toHaveAttribute('aria-pressed', 'false');
+  await expect(follow).not.toHaveClass(/\bon\b/);
+  await focusProject();
+  await page.keyboard.press('KeyF');
+  await expect(follow).toHaveAttribute('aria-pressed', 'true');
+  await expect(follow).toHaveClass(/\bon\b/);
+});
+
+test('the info line follows a move and a trim of the selected clip, in bar.beat.sixteenth.tick', async () => {
+  test.setTimeout(120_000);
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await chooseGrid(page, 'beat');
+  const canvas = await box('timeline-canvas');
+  let r = await rect('clp_sq');
+  const mid = { x: canvas.x + r.x + r.width / 2, y: canvas.y + r.y + r.height / 2 };
+  await page.mouse.click(mid.x, mid.y);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
+  await expect(page.getByTestId('info-start')).toHaveText('1.1.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('1.3.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.2.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.0.0.0');
+  await expect(page.getByTestId('info-volume')).toHaveText('0.00 dB');
+  const beat = 24000 / (await view()).framesPerPixel;
+
+  // Move one beat right, snapped to the beat grid.
+  let before = await revision();
+  await page.mouse.move(mid.x, mid.y);
+  await page.mouse.down();
+  await page.mouse.move(mid.x + beat + 4, mid.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect(page.getByTestId('info-start')).toHaveText('1.2.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('1.4.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.2.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.0.0.0');
+
+  // Trim the left edge one beat right: the start, the length and the offset follow.
+  await expect.poll(async () => (await rect('clp_sq')).x).toBeGreaterThan(r.x);
+  r = await rect('clp_sq');
+  before = await revision();
+  const left = { x: canvas.x + r.x + 2.5, y: canvas.y + r.y + r.height / 2 };
+  await page.mouse.move(left.x, left.y);
+  await page.mouse.down();
+  await page.mouse.move(left.x + beat + 4, left.y, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  await expect(page.getByTestId('info-start')).toHaveText('1.3.1.0');
+  await expect(page.getByTestId('info-end')).toHaveText('1.4.1.0');
+  await expect(page.getByTestId('info-length')).toHaveText('0.1.0.0');
+  await expect(page.getByTestId('info-offset')).toHaveText('0.1.0.0');
+});
+
+test('the Pool opens with Ctrl+P and from the event display\'s context menu, a click arms placing, and the resting window has none', async () => {
+  test.setTimeout(120_000);
+  prepare([{ id: 'trk_a', name: 'Alpha' }], [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }]);
+  await launch();
+  await rect('clp_sq');
+  await expect(page.getByTestId('media-pool')).toHaveCount(0);
+
+  // Ctrl+P (Cmd+P on macOS): the session's media by name, the media id when it has none.
+  await focusProject();
+  await page.keyboard.press(`${MOD}+KeyP`);
+  const pool = page.getByTestId('media-pool');
+  await expect(pool).toBeVisible();
+  expect(['square', 'square.wav', 'med_sq']).toContain(await page.getByTestId('pool-med_sq').textContent());
+  // The Pool sits over the project zone.
+  const zone = (await page.getByTestId('zone-project').boundingBox())!;
+  const over = (await pool.boundingBox())!;
+  expect(over.x).toBeGreaterThanOrEqual(zone.x);
+  expect(over.x + over.width).toBeLessThanOrEqual(zone.x + zone.width + 0.5);
+  expect(over.y).toBeGreaterThanOrEqual(zone.y);
+  // Escape closes it.
+  await page.keyboard.press('Escape');
+  await expect(pool).toHaveCount(0);
+
+  // A click on the media arms placing; a click in the event display places one clip, one revision.
+  const before = await revision();
+  await openPool(page);
+  await page.getByTestId('pool-med_sq').click();
+  await expect(pool).toHaveCount(0);
+  const canvas = await box('timeline-canvas');
+  const v = await view();
+  await page.mouse.click(canvas.x + canvas.width - 30, canvas.y + v.lanesTop + 10);
+  await expect(page.getByTestId('clip-count')).toHaveText('2');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+
+  // The event display's context menu opens it too; Escape closes the menu.
+  await page.mouse.click(canvas.x + canvas.width * 0.8, canvas.y + canvas.height - 40, { button: 'right' });
+  const menu = page.getByTestId('event-display-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitem')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await page.mouse.click(canvas.x + canvas.width * 0.8, canvas.y + canvas.height - 40, { button: 'right' });
+  await expect(menu).toBeVisible();
+  await menu.getByTestId('menu-open-pool').click();
+  await expect(menu).toHaveCount(0);
+  await expect(pool).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(pool).toHaveCount(0);
+  // The right-click placed nothing.
+  await expect(page.getByTestId('clip-count')).toHaveText('2');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+});
+
+// m5-ui-port-track-list: the list is the mockup's .headers, and its gestures
+// keep one revision each. The head's count is the mockup's "N tracks · M
+// clips" (UI redesign 10.8, 4), carrying the id track-count.
+test('add with the .add button, rename, select, mute and solo from the list, one revision each; the count follows a placed and a removed clip', async () => {
+  test.setTimeout(150_000);
+  prepare(
+    [
+      { id: 'trk_a', name: 'Alpha' },
+      { id: 'trk_b', name: 'Beta' },
+    ],
+    [{ clipId: 'clp_sq', trackId: 'trk_a', position: 0 }],
+  );
+  await launch();
+  const count = page.getByTestId('track-count');
+  await expect(count).toHaveText('2 tracks · 1 clip');
+  await expect(count).toHaveAttribute('data-part', 'track-count');
+  await expect(page.locator('.headers[data-part="track-list"] > .corner[data-part="track-list-head"] > .cnt[data-testid="track-count"]')).toHaveCount(1);
+  await expect(page.locator('.corner > button.add[data-part="track-add"]')).toHaveText('Track');
+
+  // Add: one track.add, a new .th at the end.
+  let before = await revision();
+  await page.getByTestId('track-add').click();
+  await expect(count).toHaveText('3 tracks · 1 clip');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  const added = page.locator('.track-list-column > .th').last();
+  const testId = (await added.getAttribute('data-testid'))!;
+  expect(testId).toMatch(/^track-header-trk_[0-9a-f]{16}$/);
+  const id = testId.slice('track-header-'.length);
+  await expect(page.getByTestId(`track-number-${id}`)).toHaveText('3');
+
+  // Rename: double-click the .name, Enter.
+  before = await revision();
+  await page.getByTestId(`track-name-${id}`).dblclick();
+  await page.getByTestId(`track-rename-${id}`).fill('Gamma');
+  await page.getByTestId(`track-rename-${id}`).press('Enter');
+  await expect(page.getByTestId(`track-name-${id}`)).toHaveText('Gamma');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+
+  // Select: a click on the header gives it .sel, and sends nothing.
+  before = await revision();
+  await added.click({ position: { x: 4, y: 4 } });
+  await expect(added).toHaveClass(/(^| )sel( |$)/);
+  await expect(page.getByTestId('track-header-trk_a')).not.toHaveClass(/(^| )sel( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before}`);
+
+  // Mute: .msr.m.on and the header .muted, one revision.
+  await page.getByTestId(`track-mute-${id}`).click();
+  await expect(page.getByTestId(`track-mute-${id}`)).toHaveClass(/(^| )on( |$)/);
+  await expect(page.getByTestId(`track-mute-${id}`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(added).toHaveClass(/(^| )muted( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  // Solo: .msr.s.on, one revision; the other tracks are muted by it.
+  await page.getByTestId(`track-solo-${id}`).click();
+  await expect(page.getByTestId(`track-solo-${id}`)).toHaveClass(/(^| )on( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
+  await expect(page.getByTestId('track-header-trk_a')).toHaveClass(/(^| )muted( |$)/);
+  await page.getByTestId(`track-mute-${id}`).click();
+  await expect(added).not.toHaveClass(/(^| )muted( |$)/);
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 3}`);
+
+  // The count follows a placed clip and a removed one.
+  const canvas = await box('timeline-canvas');
+  before = await revision();
+  await armPlacing(page, 'med_sq');
+  const v = await view();
+  await page.mouse.click(canvas.x + 300, canvas.y + v.lanesTop + (v.laneHeights?.trk_a ?? v.laneHeight) + 10);
+  await expect(count).toHaveText('3 tracks · 2 clips');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
+  const start = await rect('clp_sq');
+  await page.mouse.click(canvas.x + start.x + start.width / 2, canvas.y + start.y + start.height / 2);
+  await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_sq');
+  await page.keyboard.press('Delete');
+  await expect(count).toHaveText('3 tracks · 1 clip');
+  await expect(page.getByTestId('revision')).toHaveText(`r${before + 2}`);
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
+});
+
+test('every landed id of the track list is in the window and no pending one is, derived from the manifest', async () => {
+  prepare([
+    { id: 'trk_a', name: 'Alpha' },
+    { id: 'trk_b', name: 'Beta', mute: true },
+    { id: 'trk_c', name: 'Gamma' },
+  ]);
+  await launch();
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
+  const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', 'test', 'fidelity', 'manifest.json'), 'utf8')) as {
+    gates: Record<string, string>;
+    rules: Array<{ match: string[]; gate: string }>;
+  };
+  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+  const gateOf = (id: string) => manifest.gates[manifest.rules.find((rule) => rule.match.some((p) => glob(p).test(id)))!.gate];
+  // The mockup's track list ids (its template and th()) for three tracks and its ghost track.
+  const PER_TRACK = ['', '-colour', '-number', '-name', '-mute', '-solo', '-record', '-read', '-write', '-gain', '-pan', '-meter'];
+  const ids = [
+    'track-list',
+    'track-list-head',
+    'track-add',
+    'track-count',
+    'marker-head',
+    ...[1, 2, 3].flatMap((n) => PER_TRACK.map((suffix) => `track-${n}${suffix}`)),
+    ...PER_TRACK.map((suffix) => `track-ghost${suffix}`),
+  ];
+  // The ids the fidelity run reads (mockup-fidelity.spec.ts, collectDom).
+  const shown = await page.evaluate(() => {
+    const out = Array.from(document.querySelectorAll('[data-part]')).map((el) => el.getAttribute('data-part')!);
+    const counts = new Map<string, number>();
+    for (const item of Array.from(document.querySelectorAll('[data-part-item]'))) {
+      const name = item.getAttribute('data-part-item')!;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+      const id = `${name}-${item.getAttribute('data-part-key') ?? counts.get(name)}`;
+      out.push(id);
+      for (const child of Array.from(item.querySelectorAll('[data-part-of]'))) {
+        if (child.closest('[data-part-item]') === item) out.push(`${id}-${child.getAttribute('data-part-of')}`);
+      }
+    }
+    return out;
+  });
+  const landed = ids.filter((id) => gateOf(id) === 'report');
+  const pending = ids.filter((id) => gateOf(id) === 'pending');
+  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write', 'track-ghost']) expect(pending).toContain(id);
+  for (const id of landed) expect(shown, id).toContain(id);
+  for (const id of pending) expect(shown, id).not.toContain(id);
+  // The structure: .headers > .corner (.add, .cnt), the empty marker box, the headers as th() draws them.
+  await expect(page.locator('.headers > .corner > .add + .cnt')).toHaveCount(1);
+  await expect(page.locator('.headers > div[aria-hidden="true"]:not([class])')).toHaveCount(1);
+  await expect(page.locator('.th > .col + .idx + .body > .r1 + .r2')).toHaveCount(3);
+  await expect(page.locator('.th .r1 > .name + .msr.m + .msr.s + .msr-box + .msr-box + .msr-box')).toHaveCount(3);
+  await expect(page.locator('.th .r2 > .db.num + .pan.num + .hmeter')).toHaveCount(3);
+  await expect(page.getByTestId('track-header-trk_b')).toHaveClass(/(^| )muted( |$)/);
+  // The muted header dims as the shared rule does: its name and second row at 45 %, not the whole header.
+  expect(await page.getByTestId('track-name-trk_b').evaluate((el) => getComputedStyle(el).opacity)).toBe('0.45');
+  expect(await page.getByTestId('track-header-trk_b').evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
 });

@@ -13,9 +13,10 @@ const path = require('node:path');
 
 const { sha256Jcs } = require('../src/hash/jcs');
 
-// The architecture spec, "Canonical JSON and hashes": planHash excludes exactly these.
+// The architecture spec, "Canonical JSON and hashes": planHash excludes exactly these
+// (the lifecycle fields, and the metadata of m5b-engine-plan-metadata).
 const EXCLUDED = ['hash', 'state', 'approvedBy', 'approvedAt', 'rejectedBy', 'rejectedAt', 'rejectionNote',
-  'appliedRevision'];
+  'appliedRevision', 'title', 'intent', 'actor'];
 
 function expectedPlanHash(plan) {
   const hashed = {};
@@ -94,6 +95,17 @@ function buildFixture() {
       readSet: [],
       writeSet: [entry('master', 'master', null)],
     }],
+    // m5b-engine-buses-sends: bus and send refs in the read and write sets.
+    ['bus_and_send_sets', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r9',
+      steps: [
+        { op: 'bus.set_gain', busId: 'bus_1', gainMilliDb: -6000 },
+        { op: 'send.add', sendId: 'snd_1', trackId: 'trk_1', busId: 'bus_1' },
+      ],
+      readSet: [],
+      writeSet: [entry('bus', 'bus_1'), entry('send', 'snd_1', null), entry('track', 'trk_1')],
+    }],
     // m5b-engine-record: a track's input set and cleared (null is hashed as null).
     ['track_input_steps', {
       ...minimal,
@@ -102,6 +114,19 @@ function buildFixture() {
         { op: 'track.set_input', trackId: 'trk_1', input: null },
       ],
       writeSet: [entry('track', 'trk_1')],
+    }],
+    // m5b-engine-clip-fades: a step that sets both fades of a clip.
+    ['clip_set_fade_step', {
+      schema: 'siann.plan.v1',
+      baseRevision: 'r5',
+      steps: [{
+        op: 'clip.set_fade',
+        clipId: 'clp_1',
+        fadeIn: { length: '480', curve: 'linear' },
+        fadeOut: { length: '960', curve: 'equal_power' },
+      }],
+      readSet: [],
+      writeSet: [entry('clip', 'clp_1')],
     }],
     // m5b-engine-project-media: the media entity's optional name, set by media.add
     // and by media.rename (null removes it).
@@ -131,6 +156,18 @@ function buildFixture() {
       readSet: [],
       writeSet: [entry('media', 'med_1')],
     }],
+    // m5b-engine-plan-metadata: a title, an intent and an actor are metadata beside
+    // the plan; each case hashes as its untitled twin (minimal_plan, or two_steps).
+    ['titled_plan', { ...minimal, title: 'Lower the drums' }],
+    ['plan_with_intent', { ...minimal, intent: 'The drums mask the vocal.\nLower them by 6 dB.' }],
+    ['plan_with_actor', { ...minimal, actor: { kind: 'mcp', name: 'mix-assistant' } }],
+    ['non_ascii_title', {
+      ...minimal,
+      steps: [setGain, setPan],
+      title: '鼓聲降低 \u{1F941}',
+      intent: '讓人聲更清楚',
+      actor: { kind: 'ui', name: 'SIANN' },
+    }],
     ['non_bmp_key_in_step', {
       ...minimal,
       steps: [{ op: 'session.rename', name: 'Song \u{1F3B5}', '': 'private use', '\u{1F3B5}': 'note' }],
@@ -154,7 +191,7 @@ function buildFixture() {
       'invalid_entity_set'],
     ['duplicate_write_set_entry', text({ ...minimal, writeSet: [entry('track', 'trk_1'), entry('track', 'trk_1')] }),
       'invalid_entity_set'],
-    ['unknown_entity_type', text({ ...minimal, readSet: [entry('send', 'snd_1')] }), 'invalid_entity_set'],
+    ['unknown_entity_type', text({ ...minimal, readSet: [entry('vca', 'vca_1')] }), 'invalid_entity_set'],
     ['invalid_entity_id', text({ ...minimal, readSet: [entry('track', 'trk 1')] }), 'invalid_entity_set'],
     ['locators_with_another_id', text({ ...minimal, readSet: [entry('locators', 'loc_1')] }), 'invalid_entity_set'],
     ['master_with_another_id', text({ ...minimal, writeSet: [entry('master', 'main')] }), 'invalid_entity_set'],
@@ -165,11 +202,18 @@ function buildFixture() {
     ['malformed_parent_plan', text({ ...minimal, parentPlan: 'sha256:abc' }), 'invalid_plan'],
     ['unknown_state', text({ ...minimal, state: 'pending' }), 'invalid_plan'],
     ['missing_read_set', text({ ...minimal, readSet: undefined }), 'invalid_entity_set'],
+    // m5b-engine-plan-metadata: the metadata's shape is checked, its limits are plan.submit's.
+    ['title_not_a_string', text({ ...minimal, title: 7 }), 'invalid_plan'],
+    ['intent_not_a_string', text({ ...minimal, intent: ['a'] }), 'invalid_plan'],
+    ['actor_not_an_object', text({ ...minimal, actor: 'mix-assistant' }), 'invalid_plan'],
+    ['actor_unknown_kind', text({ ...minimal, actor: { kind: 'robot', name: 'x' } }), 'invalid_plan'],
+    ['actor_without_name', text({ ...minimal, actor: { kind: 'mcp' } }), 'invalid_plan'],
+    ['actor_extra_field', text({ ...minimal, actor: { kind: 'mcp', name: 'x', id: 'agt_1' } }), 'invalid_plan'],
   ].map(([name, planText, error]) => ({ name, planText, error }));
 
   return {
     schemaVersion: 'siann.plan_hash_fixtures.v1',
-    description: 'SIANN planHash: sha256 over the RFC 8785 JCS of a siann.plan.v1 object without hash, state, approvedBy, approvedAt, rejectedBy, rejectedAt, rejectionNote and appliedRevision. readSet and writeSet entries are {type, id, hash} sorted by (type, id) without duplicates; type is one of clip, locators, master, media, plugin_slot, root, track (root, locators and master are singletons whose id is their type); hash is "sha256:" plus 64 lowercase hex digits, or null for an entity absent at baseRevision. Invalid cases are JSON texts that must be rejected with the listed code. Generated by scripts/generate-plan-fixtures.js.',
+    description: 'SIANN planHash: sha256 over the RFC 8785 JCS of a siann.plan.v1 object without hash, state, approvedBy, approvedAt, rejectedBy, rejectedAt, rejectionNote, appliedRevision and the metadata title, intent and actor ({kind: mcp | ui, name}). readSet and writeSet entries are {type, id, hash} sorted by (type, id) without duplicates; type is one of clip, locators, master, media, plugin_slot, root, track (root, locators and master are singletons whose id is their type); hash is "sha256:" plus 64 lowercase hex digits, or null for an entity absent at baseRevision. Invalid cases are JSON texts that must be rejected with the listed code. Generated by scripts/generate-plan-fixtures.js.',
     excluded: EXCLUDED,
     valid,
     invalid,

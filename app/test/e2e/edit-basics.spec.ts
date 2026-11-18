@@ -21,6 +21,7 @@ import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
+import { chooseGrid } from './support/toolbar';
 
 const RATE = 48000;
 // The media: four seconds of square wave.
@@ -154,6 +155,40 @@ async function hook<T>(name: string, arg?: string): Promise<T> {
 const view = () => hook<View>('view');
 const selected = () => hook<string[]>('selectedClips');
 
+// The renderer's state an operation's failure reports (each part null when it
+// cannot be read): its last 4 answered requests as method:code (and the last 4
+// other than the engine.status polls), the cursor's x, the focused element,
+// the timeline error's code, the raw keydown each window listener saw and
+// what it ran, the last split's decision with the cursor, clock frame and
+// clips it read, and the selection.
+async function diagnostics(): Promise<Record<string, unknown>> {
+  const state = await page
+    .evaluate(() => {
+      const client = (window as unknown as { __siannClient?: { answered?(): ReadonlyArray<{ method: string; code: string | null }> } }).__siannClient;
+      const timeline = (window as unknown as { __siannTimeline?: { cursorX?(): number | null; lastEdit?(): unknown } }).__siannTimeline;
+      const keys = (window as unknown as { __siannKeys?: unknown }).__siannKeys ?? null;
+      const active = document.activeElement as HTMLElement | null;
+      return {
+        answered: client?.answered ? client.answered().slice(-4).map((r) => `${r.method}:${r.code ?? 'ok'}`) : null,
+        answeredOther: client?.answered
+          ? client
+              .answered()
+              .filter((r) => r.method !== 'engine.status')
+              .slice(-4)
+              .map((r) => `${r.method}:${r.code ?? 'ok'}`)
+          : null,
+        cursorX: timeline?.cursorX ? timeline.cursorX() : null,
+        active: active ? `${active.tagName}${active.dataset.testid ? `[${active.dataset.testid}]` : ''}` : null,
+        timelineError: document.querySelector('[data-testid="timeline-error"]')?.getAttribute('data-code') ?? null,
+        keys,
+        lastEdit: timeline?.lastEdit ? timeline.lastEdit() : null,
+      };
+    })
+    .catch((error: Error) => ({ evaluate: error.message }));
+  const selection = await selected().catch(() => null);
+  return { ...state, selection };
+}
+
 async function rect(clipId: string): Promise<Rect> {
   await expect.poll(async () => (await hook<Rect[]>('clips')).some((r) => r.clipId === clipId)).toBe(true);
   return (await hook<Rect[]>('clips')).find((r) => r.clipId === clipId)!;
@@ -227,7 +262,14 @@ async function operation(name: string, act: () => Promise<void>, check: () => Pr
   const before = await head();
   const next = `r${number(before.revision) + 1}`;
   await act();
-  await expect(page.getByTestId('revision'), name).toHaveText(next);
+  try {
+    await expect(page.getByTestId('revision'), name).toHaveText(next);
+  } catch (error) {
+    // Diagnostic (macOS flake of the Alt+X step, PR #120): what the renderer
+    // last heard from the engine, where its cursor and focus were, the
+    // timeline's error code and the selection when no revision came.
+    throw new Error(`${name}: no revision ${next}; ${JSON.stringify(await diagnostics())}\n${(error as Error).message}`);
+  }
   expect((await head()).revision, `${name}: exactly one revision`).toBe(next);
   await check();
   await engine!.call('session.undo');
@@ -250,7 +292,7 @@ async function snapState(): Promise<{ on: boolean; grid: string }> {
 }
 
 async function setSnap(on: boolean, grid?: 'bar' | 'beat' | 'adapt'): Promise<void> {
-  if (grid) await page.getByTestId('grid-type').selectOption(grid);
+  if (grid) await chooseGrid(page, grid);
   if ((await snapState()).on !== on) {
     await focusProject();
     await page.keyboard.press('KeyJ');
@@ -448,8 +490,9 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
   await expect.poll(async () => (await rect('clp_r')).width).toBe(90);
 
   const r = await rect('clp_r');
-  const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 3);
-  const lowerLeft = await at(r.x + 2, r.y + r.height - 3);
+  // The box is draw()'s clip(): inset 1 px from the bars, 3 px from the lane's top and 4 px from its bottom.
+  const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 6);
+  const lowerLeft = await at(r.x + 2.5, r.y + r.height - 6);
   await operation(
     'lower-right corner',
     () => drag(lowerRight, 100, 0),
@@ -485,8 +528,8 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
     },
   );
 
-  // The volume control just inside the lower-left corner: nothing is sent while held.
-  const gainAt = await at(r.x + 12, r.y + r.height - 4);
+  // The volume control, draw()'s box right of the lower-left corner: nothing is sent while held.
+  const gainAt = await at(r.x + 20, r.y + r.height - 10);
   const tip = page.getByTestId('drag-tooltip');
   await operation(
     'clip volume',
@@ -658,7 +701,7 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
   await page.getByTestId('confirm-cancel').click();
   await expect(dialog).toBeHidden();
   expect((await head()).revision).toBe(unchanged);
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
 
   await focusProject();
   await operation(
@@ -669,13 +712,13 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
       await page.getByTestId('confirm-ok').click();
     },
     async () => {
-      await expect(page.getByTestId('track-count')).toHaveText('1');
+      await expect(page.getByTestId('about-track-count')).toHaveText('1');
       expect((await track('trk_b')).missing).toBe(true);
       expect(await fetchClip('clp_c')).toBeNull();
     },
   );
   // The one undo brought the tracks and their clips back.
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   expect((await track('trk_c')).missing).toBeFalsy();
   expect(await fetchClip('clp_b')).not.toBeNull();
   expect(await fetchClip('clp_c')).not.toBeNull();

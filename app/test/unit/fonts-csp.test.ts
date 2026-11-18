@@ -7,6 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -34,6 +35,26 @@ test('Inter and JetBrains Mono are .woff2 files with their OFL texts beside them
     assert.ok(licence, `${family} OFL text`);
     assert.match(fs.readFileSync(path.join(FONTS, licence), 'utf8'), /SIL Open Font License,\s+Version 1\.1/);
   }
+});
+
+// m5-ui-alignment-chrome (decided by the maintainer, 2026-11-15): JetBrains
+// Mono Medium comes from the release the Regular file came from, and the
+// README names it with its SHA-256, which is the file's on disk.
+test('fonts/README.md lists JetBrainsMono-Medium.woff2 from release 2.304 with the SHA-256 of the file on disk', () => {
+  const readme = fs.readFileSync(path.join(FONTS, 'README.md'), 'utf8');
+  const row = readme.split(/\r?\n/).find((line) => line.startsWith('| `JetBrainsMono-Medium.woff2` |'));
+  assert.ok(row, 'a README row for JetBrainsMono-Medium.woff2');
+  assert.match(row, /JetBrains Mono Medium/);
+  assert.match(row, /JetBrains Mono 2\.304/);
+  assert.match(row, /JetBrainsMono-2\.304\.zip/);
+  assert.match(row, /`fonts\/webfonts\/JetBrainsMono-Medium\.woff2`/);
+  assert.match(row, /`JetBrainsMono-OFL\.txt`/);
+  const named = /file sha256 `([0-9a-f]{64})`/.exec(row)?.[1];
+  assert.ok(named, `the row names the file's sha256: ${row}`);
+  const bytes = fs.readFileSync(path.join(FONTS, 'JetBrainsMono-Medium.woff2'));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), named);
+  // Regular and Medium are two faces of the same release.
+  assert.match(readme, /\| `JetBrainsMono-Regular\.woff2` \|[^\n]*JetBrains Mono 2\.304/);
 });
 
 test('every @font-face url() is relative and names a bundled file', () => {

@@ -79,7 +79,6 @@ function buildDemoManifest(outRoot) {
     preview: {
       outputPath: path.join(absoluteOutRoot, 'preview.wav'),
       sampleRate: 48000,
-      bitDepth: '16',
     },
   };
 }

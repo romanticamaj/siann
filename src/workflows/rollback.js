@@ -1,77 +1,50 @@
+'use strict';
+
+// Rollback of what a bridge run applied (m5b-bridge-native-client; architecture
+// spec, siann-protocol item 14 and "Plans"). The run's siann.command_journal.v1
+// names the bundle and, per plan, the revision it applied. The rollback runs in
+// a later engine process, where the plan store is empty, so it opens the
+// bundle and rolls each applied plan revision back by its id
+// (plan.rollback {revision}), newest first. Only the document changes: the
+// imported media and the renders stay in the bundle.
+
 const fs = require('node:fs');
 const path = require('node:path');
+
+const { validateJournal } = require('../bridge/runner');
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function firstBatch(journal) {
-  if (!journal || journal.schemaVersion !== 'siann.command_journal.v0') {
-    throw new Error('journal schemaVersion must be siann.command_journal.v0');
+function appliedBatches(journal) {
+  validateJournal(journal);
+  const applied = journal.batches.filter((batch) => batch.status === 'applied' && batch.appliedRevision);
+  if (applied.length === 0) {
+    throw new Error(`the journal ${journal.journalId} has no applied plan to roll back`);
   }
-  if (!Array.isArray(journal.batches) || journal.batches.length === 0) {
-    throw new Error('journal batches must be a non-empty array');
-  }
-  return journal.batches[0];
+  return applied.reverse();
 }
 
-function snapshotPathFromJournal(journal) {
-  const batch = firstBatch(journal);
-  const snapshot = batch.preState && batch.preState.snapshot;
-  if (!snapshot || !snapshot.path) {
-    throw new Error('journal batch is missing preState.snapshot.path');
-  }
-  return snapshot.path;
-}
-
-function sessionCommand(sourceCommand) {
-  if (!sourceCommand || !Array.isArray(sourceCommand.commands)) {
-    throw new Error('source command file must include commands');
-  }
-  const command = sourceCommand.commands.find((entry) => entry.op === 'create_session' || entry.op === 'open_session');
-  if (!command) {
-    throw new Error('source command file must include create_session or open_session');
-  }
-  if (!command.sessionDir) {
-    throw new Error('source session command is missing sessionDir');
-  }
-  return command;
-}
-
-function buildRollbackCommand(journal, sourceCommand) {
-  const snapshotPath = snapshotPathFromJournal(journal);
-  const session = sessionCommand(sourceCommand);
+function buildRollbackCommand(journal) {
+  const batches = appliedBatches(journal);
   return {
     schemaVersion: 'siann.command.v0',
-    batchRisk: 'normal',
     commands: [
-      {
-        op: 'restore_batch_snapshot',
-        snapshotPath,
-        sessionDir: session.sessionDir,
-        sessionName: session.sessionName,
-      },
-      {
-        op: 'open_session',
-        sessionDir: session.sessionDir,
-        sessionName: session.sessionName,
-      },
-      {
-        op: 'observe_session',
-      },
+      { op: 'open_session', sessionDir: journal.bundle },
+      ...batches.map((batch) => ({ op: 'rollback_plan', revision: batch.appliedRevision, planHash: batch.planHash })),
+      { op: 'observe_session' },
     ],
   };
 }
 
 function writeRollbackCommand(journalFile, options = {}) {
   const absoluteJournalFile = path.resolve(journalFile);
-  const sourceCommandFile = options.sourceCommandFile
-    ? path.resolve(options.sourceCommandFile)
-    : path.join(path.dirname(absoluteJournalFile), 'import-pack.command.json');
   const outFile = options.outFile
     ? path.resolve(options.outFile)
     : path.join(path.dirname(absoluteJournalFile), 'rollback.command.json');
-  const command = buildRollbackCommand(readJson(absoluteJournalFile), readJson(sourceCommandFile));
+  const journal = readJson(absoluteJournalFile);
+  const command = buildRollbackCommand(journal);
 
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, `${JSON.stringify(command, null, 2)}\n`);
@@ -79,14 +52,14 @@ function writeRollbackCommand(journalFile, options = {}) {
     ok: true,
     workflow: 'rollback',
     journalFile: absoluteJournalFile,
-    sourceCommandFile,
     commandFile: outFile,
     commandCount: command.commands.length,
+    bundle: journal.bundle,
+    revisions: command.commands.filter((c) => c.op === 'rollback_plan').map((c) => c.revision),
   };
 }
 
 module.exports = {
   buildRollbackCommand,
-  snapshotPathFromJournal,
   writeRollbackCommand,
 };

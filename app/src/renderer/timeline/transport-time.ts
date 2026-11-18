@@ -1,7 +1,8 @@
 // The position display's text (m5-ui-transport; UI redesign spec 3.1): a
 // session frame in Bars+Beats (bar.beat.tick, 1-based, through root.tempo;
 // 4/4 until E-10, which the display's tooltip states) or in Seconds as a
-// fixed m:ss.mmm, the same bytes in every locale; a typed position read back
+// fixed hh:mm:ss.mmm (the mockup's format, UI redesign 10.7, 1), the same
+// bytes in every locale; a typed position read back
 // in the primary format; the exchange of the primary and secondary format
 // (the period key); and the tempo readout at the cursor (spec 3.1: "Tempo:
 // display P1-2"). Framework-free.
@@ -43,16 +44,18 @@ function frameBig(frames: number | string | bigint): bigint {
   return /^-?\d+$/.test(frames) ? BigInt(frames) : 0n;
 }
 
-// m:ss.mmm, the milliseconds truncated (a frame short of a second is still
-// x.999), minutes unbounded.
+// hh:mm:ss.mmm, the milliseconds truncated (a frame short of a second is
+// still x.999), hours unbounded (two digits at least).
 export function formatSeconds(frames: number | string | bigint, sampleRate: number): string {
   let value = frameBig(frames);
   if (value < 0n) value = 0n;
   const millis = (value * 1000n) / wholeRate(sampleRate);
-  const minutes = millis / 60_000n;
+  const hours = millis / 3_600_000n;
+  const minutes = (millis / 60_000n) % 60n;
   const seconds = (millis / 1000n) % 60n;
   const rest = millis % 1000n;
-  return `${minutes}:${String(seconds).padStart(2, '0')}.${String(rest).padStart(3, '0')}`;
+  const two = (n: bigint) => String(n).padStart(2, '0');
+  return `${two(hours)}:${two(minutes)}:${two(seconds)}.${String(rest).padStart(3, '0')}`;
 }
 
 export function formatPosition(frames: number | string | bigint, tempo: readonly TempoPoint[], sampleRate: number, format: TimeFormat): string {
@@ -76,17 +79,20 @@ export function tempoAt(frames: number | string | bigint, tempo: readonly TempoP
   return points[found]!.milliBpm;
 }
 
-// The transport's tempo readout: BPM with three decimals, as Cubase shows it.
+// The transport's tempo readout: BPM with two decimals (the mockup's 120.00;
+// UI redesign 10.7, 1), truncated as the time is.
 export function formatTempo(milliBpm: number): string {
-  return (milliBpm / 1000).toFixed(3);
+  const centi = Math.max(0, Math.trunc(milliBpm / 10));
+  return `${Math.trunc(centi / 100)}.${String(centi % 100).padStart(2, '0')}`;
 }
 
 const BARS = /^(\d+)(?:\.(\d+)(?:\.(\d+))?)?$/;
-const SECONDS = /^(?:(\d+):([0-5]?\d(?:\.\d+)?)|(\d+(?:\.\d+)?))$/;
+// hh:mm:ss(.mmm) with minutes below 60, m:ss(.mmm) with minutes unbounded, or seconds.
+const SECONDS = /^(?:(?:(\d+):([0-5]?\d):|(\d+):)([0-5]?\d(?:\.\d+)?)|(\d+(?:\.\d+)?))$/;
 
 // A typed position in `format` as frames (a decimal string), or null for
 // text that is no position: bar.beat.tick, bar.beat or bar (bar from 1, beat
-// 1-4, tick 0-1919); seconds, or m:ss.mmm.
+// 1-4, tick 0-1919); seconds, m:ss.mmm, or hh:mm:ss.mmm as the display shows it.
 export function parsePosition(text: string, tempo: readonly TempoPoint[], sampleRate: number, format: TimeFormat): string | null {
   const typed = text.trim();
   if (format === 'bars') {
@@ -102,7 +108,13 @@ export function parsePosition(text: string, tempo: readonly TempoPoint[], sample
   }
   const match = SECONDS.exec(typed);
   if (!match) return null;
-  const seconds = match[3] !== undefined ? Number(match[3]) : Number(match[1]) * 60 + Number(match[2]);
+  const [, hours, hourMinutes, minutes, rest, plain] = match;
+  const seconds =
+    plain !== undefined
+      ? Number(plain)
+      : hours !== undefined
+        ? Number(hours) * 3600 + Number(hourMinutes) * 60 + Number(rest)
+        : Number(minutes) * 60 + Number(rest);
   if (!Number.isFinite(seconds) || seconds < 0) return null;
   const frames = Math.round(seconds * Number(wholeRate(sampleRate)));
   return Number.isSafeInteger(frames) ? String(frames) : null;

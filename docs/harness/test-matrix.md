@@ -17,9 +17,9 @@ gaps here when it lands.
 | Gap (section 6) | Feature | Wave |
 |---|---|---|
 | 0 stale nested CMake cache (section 7) | fixed in #103 | |
-| 1 m5-ui-loop-click untested (m5-ui-transport closed its 8, m5-ui-edit-basics its 9); the alignment series after `m5-ui-tokens-spacing` (four `m5-ui-alignment-*`, `m5-ui-mockup-alignment`) not started | the M5 features themselves (in flight) | 8 to 11 |
+| 1 the component port after `m5-ui-tokens-spacing` (`m5-ui-alignment-chrome` in review; seven `m5-ui-port-*` not started, which replaced the other alignment features on 2026-11-17) (m5-ui-transport closed its 8, m5-ui-edit-basics its 9, m5-ui-loop-click its 11; gap 1 of section 6 is closed) | the chrome and the port features (in flight) | 9 to 12 |
 | 2 method/tool/doc/fixture parity | closed by `m5b-protocol-parity` (section 4) | 2 |
-| 3 bridge targets the Ardour engine, gated tests dead | `m5b-bridge-native-client` | 2 |
+| 3 bridge targets the Ardour engine, gated tests dead | closed by `m5b-bridge-native-client` (layer G in CI) | 2 |
 | 4 tour states only in the manual tour | `m5b-nightly-quality` | 3 |
 | 5 rollback never deletes media or renders | `m5b-bridge-cli-coverage` | 3 |
 | 6 no ASAN/UBSAN, no fuzzing | `m5b-nightly-quality` | 3 |
@@ -43,10 +43,10 @@ gaps here when it lands.
 | **U** | Electron unit tests (`app/test/unit`, `node --test` on `dist/`) | `app` job | ubuntu, windows, macos | PR when `app/` changes; push to main; nightly |
 | **E** | Playwright Electron e2e (`app/test/e2e`) against the core-only `siann-engine` on the fake device | `app` job | ubuntu (xvfb, 150 % scale), windows, macos | as U |
 | **Ew** | `editor.spec.ts` against the JUCE engine (editor owned by the Electron window) | `desktop` job | windows only | as D |
-| **F** | Mockup fidelity gate (`docs/harness/agent-rules.md`, "UI fidelity"). Tokens and the manifest: `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). Geometry within 1 px, identical computed styles and chrome pixels per region: `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **Report-only** (`continue-on-error`, report uploaded as `fidelity-<os>`) until `m5-ui-mockup-alignment` lands; failing from then on |
+| **F** | Mockup fidelity run (`docs/harness/agent-rules.md`, "UI fidelity"). Blocking: tokens and the manifest, `test/ui-tokens.test.js`, `test/mockup-fidelity.test.js` (in B). A report, never blocking (decided by the maintainer, 2026-11-17): geometry against 1 px, computed styles and chrome pixels per region, `app/test/e2e/mockup-fidelity.spec.ts`, the mockup in Chromium against the app in Electron at 1440x900 and device scale factor 1, en and zh-TW; its region images are the side-by-side screenshots a UI pull request attaches | `node` job (tokens, manifest); `app` job (the spec, `SIANN_FIDELITY=1`) | tokens: ubuntu, windows, macos; the spec: ubuntu (xvfb), windows; not macos | tokens: every PR. The spec: PR when `app/` or the mockup's directory changes; push to main; nightly. **A report for good** (`continue-on-error`, report uploaded as `fidelity-<os>`): no gate is `enforce` and the step never fails the job |
 | **B** | Node bridge, scripts and fixture tests (`test/*.js`, `npm test`) | `node` job | ubuntu, windows, macos (**since this PR**; ubuntu only before) | every PR |
 | **L** | `[.][long]` Catch2 tests (`siann_cli_tests "[long]"`) | `long-tests.yml` | ubuntu, windows | nightly + manual; never on PRs |
-| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`) | none | never | see 3.3 |
+| **G** | Engine-gated Node tests (`SIANN_RUN_ENGINE_TESTS=1`): `test/runtime-engine.test.js`, the engine case of `test/live-import-pack.test.js`, against the core-only `siann-engine` with `--device fake` | `bridge-engine` job (`npm test` with the gate on; locally `node scripts/check-all.js --only bridge`) | ubuntu, windows, macos | PR when `src/`, `bin/`, `test/`, `native/libs/protocol` or `native/apps/engine` change (the `bridge` step of `stepsForPath`); push to main; nightly |
 | **M** | Manual / env-gated (`SIANN_TEST_VST3`, `SIANN_TEST_AU`, `SIANN_TEST_CLAP`, `[hardware]`, `pluginval --compat`, `SIANN_UX_TOUR=1`, human gates) | maintainer's machines | never | see 3.2 |
 
 Sizes at the audit: ~1,000 native `TEST_CASE`s (protocol 174, apps/engine 93,
@@ -126,19 +126,42 @@ Platform column: which OSes the automated tests actually execute on in CI.
 | m5-ui-plan-panel | | | Y | Y (`plan-review.spec`) | 8 | 3 | 8: tour only |
 | m5-ui-transport | | | Y (`key-preset`, `key-dispatcher`, `transport-time`, `playhead-clock`, `auto-scroll`, `timeline-layers`, `undo-redo`, `transport-controls`, `layout`, `i18n-describe`) | Y (`transport.spec`, `i18n-fit`; F: report-only, its parts gated by `m5-ui-mockup-alignment`) | 8 | 3 | 8: tour only (state 04 and the top bar in every state); 1, 6: macOS Cmd+Z next to the Edit menu's accelerator is proven by the CI macOS e2e only |
 | m5-ui-edit-basics | | | Y (`edit-commands`, `snap`, `selection`, `tool-modifiers`, `edit-basics-mod-keys`, `timeline-geometry`, `timeline-layers`, `key-preset`, `key-dispatcher`, `capabilities`, `layout`) | Y (`edit-basics.spec`, six paths, one revision and one undo each; toolbar labels in `i18n-fit`) | 9 | 3 | 9: tour only |
-| m5-ui-loop-click (open) | - | | - | - | the top bar in every state; 23, 24 | - | 1-11: not on main. The tour line was corrected on 2026-11-15 from "none of 01-22": cycle and metronome join the transport in every state. Item 5 (2026-11-15): the empty locator display keeps the width of `--display-locators-empty-w`; unit test on the empty holder |
+| m5-ui-loop-click | | | Y (`locators`: band geometry from the exported upper-half constant (`RULER_UPPER`, `--ruler-upper-h`), hit zones, draw / move / end drag with snap on and off, the set rules of 3.2, P, 2^42; `locator-commands`: one `session.set_locators` per edit, Alt+P's order, no device, refusal toast, capability gate, the keys; `transport-state`: engine.status seed, `transport.changed`, results, reconnect and sync re-read; `transport-controls`: pressed and lit, disabled with the reason, the empty boxes without E-1 and the `--display-locators-empty-w` cell, bars and beats across a tempo change, the level control; `key-preset`, `key-dispatcher`; `timeline-layers`: light / grey band, tint, no band without the capability, redraw outside React, the upper-half gestures; `capabilities` (fixture and gates, the empty-width token is no hold token); `i18n-catalogs`) | Y (`loop-click.spec`: 1 draw / Ctrl-click / Alt-click / move / adjust / Ctrl+Num 1-2 / Ctrl+Z with no `invalid_locators` answered; 2 the 0..position and zero-length rules; 3 toggles and P / Alt+P / Num 1-2 / Shift+1-2; 6 metronome, C, level; 8 a second client, undo and an applied plan; 7 no device; 9 reopen; 10 `SIANN_TEST_CAPABILITIES` without the methods: no control, same boxes, no request; `i18n-fit` for the new controls; F: report-only, its parts gated by `m5-ui-alignment-chrome` and `m5-ui-port-arrange-canvas`; the five parts' sizes match the mockup in en and zh-TW, and their x positions, the locator cell's right border and the inherited text styles are left to those gates; `transport-controls` checks the ported markup and the holds' sizes; `locators` checks the band's `--locator-*` tokens) | the top bar in every state; 23, 24 | 3 | 11: tour only (states 23 and 24 appended with explicit numbers; 01-22 and 25 change in the top bar alone) |
 | m5-ui-tokens-spacing | | | Y (`timeline-ruler`: RULER_HEIGHT, RULER_UPPER, RULER_LOWER from TOKENS; `timeline-layers`: press and pointer switch at RULER_UPPER; `fidelity`: `compareMockupMeasurements`; `timeline-geometry`, `timeline-zoom`, `selection` fixtures on RULER_HEIGHT) | Y (`shell-layout.spec`: zone tab rows 26 px, focus frame at 20 %, the 2 px ring of controls and dividers at 55 % (`--focus-ring`); `mixer.spec`: meter slot 6 px; `arrange.spec`: track list head 40 px; F: report-only, report attached; F on the mockup alone, `SIANN_FIDELITY_MOCKUP_ONLY=1` through `scripts/fidelity-mockup-compare.js`, run by the implementer before the PR: base and branch identical in en and zh-TW) | every state, by four token values (manual, at the `ui-redesign-review` gate) | 3 | Items 1, 2, 3, 5 and 7: Node (B), `ui-tokens` (no literal or negative literal in `app/renderer/ui`, the SIZES table names tokens, the mockup's script reads through one helper with a floor of reads, the scale convention and one token per spacing step, every font weight of the shared rules and the mockup a `--fw-*` token or its value, `--focus-ring` at 55 % on the control and divider ring, no token entry and nothing of `app/renderer/ui` or the mockup in `debt.json`) and `mockup-fidelity` (the mockup's status bar). Item 4: Node (B) pins the four values from the spec's text; unit and e2e as listed. Item 6: F mockup-only compare, not in CI (it needs a worktree of the base commit; gate row in 3.2). Item 8: F report (report-only). Item 9: tour, manual |
-| m5-ui-alignment-chrome (open) | | | - | - (F: top bar and status bar, enforce) | every state | - | 1-10: not on main. Node (B): `mockup-fidelity` (first enforced gate, CI step without `continue-on-error`), `ui-tokens` (no font entry); a font test for JetBrains Mono Medium by the face used. Items 5 and 6 (2026-11-15): unit tests on the time format `hh:mm:ss.mmm`, the two-decimal tempo, the device segment with one round-trip latency and the 7-character commit, which change `m5-ui-transport`'s `transport-time` tests and `transport.spec`; a unit test that `SIANN_FIDELITY_ENVIRONMENT` does nothing without `SIANN_SHELL_TEST=1` |
-| m5-ui-alignment-arrange (open) | | | - | - (F: project zone, enforce) | every state | - | 1-9: not on main. Unit tests on canvas geometry and palette from `tokens.ts`; Node (B): no literal in `TimelineCanvas.ts`. Item 3 (2026-11-15): unit tests on the clip title (media name, else media id) and on the info line's name. UI redesign 10.8 (2026-11-15, under the maintainer's rulings): item 1, the track list's count per locale, `about-track-count` for the diagnostics row, specs press `Delete` instead of clicking `delete-clip`; item 4, a unit test on the `Mod+P` binding and an e2e that opens the Pool and arms placing; item 5, unit tests on `info-line.ts` and `musical-time.ts` for the mockup's formats, with `arrange.spec` and the specs that read them updated |
-| m5-ui-alignment-mixer-inspector (open) | | | - | - (F: left and lower zones, enforce) | every state | - | 1-6: not on main. Node (B): no literal in `MixerMeters.ts`; `mockup-fidelity` holds the mockup's taper to `mixer/taper.ts` and the `e` button on every strip (2026-11-15) |
-| m5-ui-alignment-plans (open) | | | - | - (F: right zone, enforce; the three history rows and the two step titles that name a clip masked) | 13-22 | - | 1-7: not on main. Items 3 and 4 (2026-11-15): unit tests on the count chips, "Approve N of M" with every step ticked and the step wording per locale; the plan e2e with those texts updated; the fidelity session with three earlier plans |
-| m5-ui-mockup-alignment (open) | | | - | - (F: the whole run clean on Windows and Linux; baseline 0 of 282 parts match) | the whole tour retaken | - | 1-7: not on main. Closes the alignment: the app's stylesheet links equal the mockup's, no pending part's id in the DOM, all four gates enforce and an empty `app/test/fidelity/debt.json` (Node, B). App-only tokens for the rules `shell.css` keeps; the scanner already skips container-query conditions (`ui-tokens`, 2026-11-15) |
+| m5-ui-alignment-chrome | | | Y (`top-bar`: the mockup's structure of header.topbar, the five holds (no role, focus, id or text), the locator cell's empty width, undo lit and redo dim from `UndoHistory`, the display separators; `shell-frame`: the .app grid's regions in the mockup's order, the zone sizes as custom properties, dividers out of the grid, no panel library; `status-bar`: the mockup's structure and words in three locales, the 7-character commit, the whole commit and +dirty in the About panel; `engine-status`: `statusFields` type · name · kHz / buffer · round-trip ms; `transport-time`: `hh:mm:ss.mmm`, two-decimal tempo, the three typed forms; `engine-args`: `fidelityEnvironmentArgs` only under `SIANN_SHELL_TEST=1`; `session-client` (20): the environment answers the device and the about field by field; `fonts-csp`: the Medium file's README row and SHA-256; `transport-controls`, `i18n-catalogs`, `i18n-describe`, `plan-bidi`) | Y (`fonts.spec`: the face Chromium used (CDP) is JetBrainsMono-Medium at 500 and Regular at 400 in the app and the mockup, and no mono text asks for another weight; `transport.spec`, `shell.spec`, `shell-layout.spec`, `i18n.spec`, `plan-review.spec`, `packaged.spec` updated for the formats and the markup; `shell-layout.spec`: the top bar in small windows (spec 2.4), centred with its holds at 1440 and 1301 px, the transport after the left group and the branch chip, DSP load and Record holds gone at 1280 px, the brand and the locator, tempo and signature displays gone at 1080 px with the session name kept, no overflow; `i18n-fit` unchanged; F: report (decided by the maintainer, 2026-11-17: the run never blocks), the report and the side-by-side screenshot of the top bar and the status bar attached, the run sets the locators as its one undoable command and checks 0 xruns and a two-digit revision) | every state (01, 02, 03 and 05 for review) | 3 | Node (B): `mockup-fidelity` (the chrome gate is `report`, check-all notes a failed fidelity run and CI's step keeps `continue-on-error`, the five hold tokens applied in `shell.css` only, the chrome's stylesheets linked in the mockup's order, `SIANN_FIDELITY_ENVIRONMENT` from the manifest, the UI spec builds the zones without react-resizable-panels in its four places, the breakpoints of `shell.css` are the 1300 and 1100 px of spec 2.4 and 3.0), `ui-tokens` (no font entry, the Medium `@font-face`, no rule asks JetBrains Mono for a weight but 400 or 500), `package-config` and `test/package/licences` (react-resizable-panels gone). Item 10: tour, manual |
+| m5-ui-port-arrange-canvas | | | Y (`timeline-geometry`: `MARKER_HEIGHT`, `LANES_TOP`, `clipBox`, `titleStrip`, `cornerHandles` from draw()'s numbers at two zooms, hit parts over the inset box, nothing in the marker row; `timeline-colour`: `clipPalette` from the tokens and draw()'s mix ratios, computed by hand; `timeline-waveform`: `waveformColumns` for a hand-built pyramid at two zooms (the level chosen), with `sourceStart`, at ratio 1 and 2, each column filled between the min and the max (a one-sided bin, a DC offset, a stereo pair), silence 1 px high, inner 52 %; `clip-title`: media.name, else the media id; `timeline-layers`: draw()'s order and colours, the empty marker row, a muted track's clip at .5, the title font and a rename without a new canvas, no fade, repeat or ghost, the cursor from RU+2 and its five-point head, `parts()` without a pending id, a selection redraws the content and a cursor move does not, a one-sided signal drawn above the middle only; `event-display`: `.lanes` / `#tl` / `.hscroll` against the mockup's template, `.arr-body`, the track list's empty marker row, `--zoom-at` on u from the zoom) | Y (`arrange.spec`: the demo WAV's loud and silent halves in `waveColumns`, after a right and a left trim; `media.rename` changes the title without a reload; every id found and no pending id; headers level with the lanes; the zoom handle on the thumb, following H, G and a click; `timeline`, `arrange`, `edit-basics`, `transport`, `loop-click`, `shell-layout`, `i18n-fit`, `ux-tour` on `LANES_TOP` and the inset box; F: the event display, report, resting and selected-clip screenshots attached; `mockup-fidelity.spec` reads the canvas parts from `parts()` and names each clip's media as the mockup names the clip, checked against its CLIPS table) | every state (01, 02, 06, 07, 10, 11, 12 for review) | 3 | Node (B): `ui-tokens` (no `TimelineCanvas.ts` entry in `debt.json`, `shell.css` lowered), `mockup-fidelity` (ui/project-zone.css linked in the mockup's order, the gate is report, no `.arrange` rule in `shell.css`, no `--hold-marker-*` token). Item 9: F report (report-only). Item 10: tour, manual |
+| m5-ui-port-mixer-strip | | | Y (`knob`: the Knob's path data and colours against the mockup's own knob() for C, L35, R100 and L100, run from mockup.html in a vm (`support/mockup.ts`); `strip-port`: per strip the rows, classes and order of strip(), the PAN label's style in en and zh-TW, .msr.m / .msr.s with .on and the empty box of e, the scale's seven labels and the cap at the taper's positions, two meter wells, the readout, muted and sel, the master's fader area, scale, meter, peak value and name with every other row an empty box, the fidelity ids equal to the mockup's minus the manifest's pending ones, reduced capabilities, a gain above +6 dB; `mixer-meters`: the gradient over --meter-scale-h, the hold line and the clip band from `tokens.ts`, no colour literal and no meter value in React state; `meter-store`: level and hold per channel, mono in both, carried across an epoch and reset; `shell-frame`: section.lower with the mockup's .tabs and the MixConsole tab, no Editor tab or rack switches; `strip-model`, `plan-bidi` updated) | Y (`mixer.spec`: every gesture, typed value, meter and clip path unchanged, two channels of 6 px and 9 px on the master, and a new path that finds every landed lower-zone id and none of a pending one, derived from the manifest; `i18n-fit`: the knob, pan value, M, S, readout and tab in four locales at two sizes; `shell-layout.spec`: the .tabs row is 26 px; F: the lower zone, report, and `lower-zone.fader-held.app.png` per locale (Bass held before the release, FX muted); side-by-side screenshots attached) | every state (04, 08 and 09 for review) | 3 | Wave 11, after `m5-ui-port-arrange-canvas`: M and S take `.msr` from `project-zone.css`, which the canvas links; the branch is built on `ms/M5/m5-ui-port-arrange-canvas` and lands after it. `mixer.spec` checks the chips: M and S off are the `--bg-4` box of `--ms-w` by `--ms-h` with a hairline border, M on is `--mute`, S on is `--solo`. Node (B): `mockup-fidelity` (lower-zone.css linked in the mockup's order, every `ui/*.css` that draws `.msr` linked and no `.msr` rule in `shell.css`, the gate report, no hold token, the ledger without `MixerMeters.ts`), `ui-tokens` (the ledger lowered for `shell.css`). The readout keeps the app's "-2.5 dB" format (the mockup writes "−2.5"), so the existing gesture specs and the Inspector agree with it. Item 9: F writes the lower-zone pair and `lower-zone.fader-held.app.png` in en and zh-TW (`mockup-fidelity` checks the spec writes it); the maintainer reviews them by eye at review. Node (B) `mockup-fidelity` also checks that `shell.css`'s pinned pre-port text styles do not reach the lower zone |
+| m5-ui-port-plans | | | Y (`plans-tab`: the right zone's tree (tags, classes, data-part and data-part-item ids) against the mockup's own template and `step()` evaluated from mockup.html, the six holds (no role, focus, id or text), no pending id, empty `.go`, no `kbd`, one steps-head link, the hot row, the old markup gone, the derived texts; `plan-chips`: order, omitted kinds, −N, edit, three locales, zh-Hant from the mockup's ZH table; `plan-step-rows`: titles and details of the six mockup steps and every other op, old values from `plan.preview` with earlier steps applied, no preview, the applied plan's "after", the dot's colour, zh-Hant equal to the mockup's; `plan-entity-homes`: every diff row has a home (each naming step, else the cascade's step, else the other row; `track.remove`, `plugin.remove`, a stale ref the preview lacks); `plan-actions`: "Approve N of M" with every step ticked, the three `.acts` cells per state; `plan-card`: the default selection, history rows (one badge, detail lines, split, part-of, the note), "Earlier" and "N plans" with plurals; `plan-panel`: card and rows, the link, no ids while closed, the step disclosure with its entities, a cascaded clip under `track.remove` and the "Other changes" row for an entity no step names, the reason row, the refusal and stale rows, capabilities; `plan-bidi`, `i18n-catalogs`) | Y (`plan-review.spec`: every id of acceptance 4 in the window and no pending id, the hot row, a row selects, "Approve 5 of 5", "Applied · r" badge, Select all / none, the reason row (Escape, Enter), the step disclosure; `connection`, `i18n`, `shell-layout` (the right zone scrolls in `.p-scroll`), `shell` (the right zone takes `base.css`'s text styles, the zones not ported keep the pinned ones), `i18n-fit` (the tab, the hearing segments, the link, the action buttons, the badges, the reason field) updated; F: report, the fidelity session submits stale (approved), rejected (the mockup's note) and applied (4 steps) plans before the pending one, no click, the pointer on step 3; side-by-side screenshots of the right zone in en and zh-TW and app-only ones of an auditioned and an applied card) | 13-22, the right zone's frame in every state | 3 | Node (B): `mockup-fidelity` (the six hold tokens, per locale where they differ, applied in `shell.css`; `right-zone.css` linked in the mockup's order after `project-zone.css` and `lower-zone.css`, whose `.tab`, `.seg` and `.stepn` draw the tab row, the hearing switch and the step numbers; the replaced `shell.css` rules gone; the gate report), `ui-tokens` (the ledger lowered to 42 sizes). 8: the screenshots, by eye (maintainer) |
+| m5-ui-port-inspector (open) | | | - | - (F: the left zone, report; side-by-side screenshot attached) | every state with the left zone | - | 1-8: not on main. Ports the left zone's markup (2026-11-17), after `m5-ui-port-arrange-canvas` (wave 11), whose `project-zone.css` draws M and S (`.msr`). Unit tests on the structure, the values and formats per locale and the empty state; e2e: volume, pan, mute and solo from the Inspector, one revision each, the strip and the header follow |
+| m5-ui-port-track-list | | | Y (`track-list-port`: `.headers` holding `.corner` (`.add`, `.cnt`), the empty marker box and the headers; each header against the mockup's own th() run from mockup.html in a vm (`support/mockup.ts`): `.th` with `--c`, `.col`, `.idx`, `.body`, `.r1` (`.name`, `.msr.m`, `.msr.s`, three empty boxes) and `.r2` (`.db.num`, `.pan.num`, `.hmeter`); `sel`, `muted` (muted and implicitly muted), `.on` from mute and solo; the number, `formatDb` and `formatPan` against fdb/fpan for the mockup's seven tracks; the fidelity ids equal to the mockup's minus the manifest's pending ones, no `marker-head`, record, read, write or ghost id; reduced capabilities; rename renders the input; the count in en (plurals), zh-Hant and zh-Hans with `track-count` as `data-part` and `data-testid`; `header-meters`: a horizontal bar inside each measured `.hmeter` slot, the gradient stops from `tokens.ts`, no draw without a new frame or moved slots; `status-bar`: `about-track-count`; `event-display`, `capabilities`, `plan-bidi` updated) | Y (`arrange.spec`: add with `.add`, rename, select, mute and solo from the list, one revision each; the count follows a placed and a removed clip; every non-pending id of the track-list rule found and no pending one, derived from the manifest; the specs reading the diagnostics row use `about-track-count`; `i18n-fit`: the add label and the count in four locales; F: the track list, report; side-by-side screenshots attached) | every state (01, 02, 06 and 07 for review) | 3 | Node (B): `ui-tokens` (the ledger lowered for `shell.css`), `mockup-fidelity` (the gate is report). The gain keeps the app's "-2.5 dB" format (the mockup writes "−2.5"), as the strip's readout does. Item 7: F report (report-only). Item 8: tour, manual |
+| m5-ui-port-toolbar | | | Y (`toolbar-port`: `div.arr-toolbar`'s children in the template's order against the mockup's own block and `tool()` evaluated from mockup.html, tools 1 and 3 as `.b` with the P table's icon and `kbd`, `.on` and `aria-pressed` on the active one, the seven empty boxes of tools 2 and 4 to 9 and the pill's (no role, focus, id or text), the snap field (magnet, label, `<em>` Grid, chevron, `.on`), the grid type field for Bar, Beat and Adapt to Zoom, auto-scroll (the follow icon, the inline padding, `.on`), the labels in en and zh-TW equal to `L()`, the ids minus the pending ones, the edit-basics test ids kept, no media button or Delete clip button, `timeline-error` empty with no refusal, an engine without the commands keeping every box; `info-line-port`: one `span.f` per field in the template's order, the name in the track's colour (`trackColourVar`) with the clip's title (media.name, else the media id), each field its label and `b.num` per locale, the mockup's row for the mockup's clip, the fades' boxes empty at the end, nothing between the edges with no selection, the primary clip of several; `timeline-info-line`: `formatPosition` and `formatLength` (bar.beat.sixteenth.tick, the boundaries at 479, 480, 1920 and 7680 ticks), the mockup's row, `formatDb2` (two decimals, `formatDb`'s sign, rounding and `-inf`), `formatBbt` kept for the top bar and the tooltip; `key-preset` and `key-dispatcher`: `Mod+P` is `pool.open` in the window, Cmd+P on macOS, no clash with P, Alt+P, Shift+P and Mod+Alt+P; `pool`: the list by name or id, `media-pool` and `pool-<id>`, the armed one pressed, a click arms and a second disarms, plain text without `clip.place`, closed is nothing, Escape closes; `capabilities` (no Pool and no Delete clip button at rest, the boxes kept), `i18n-catalogs` (the new words, the mockup's in en and zh-TW, the old keys gone)) | Y (`arrange.spec`: every id of acceptance 7 in the window and no pending one; tools by click and by 1 and 3, snap by click and J, each grid type from the field's menu, auto-scroll by click and F; the info line follows a move and a left trim in the new formats, empty with no selection; Ctrl+P opens the Pool over the project zone, Escape closes it, a click arms placing and a click in the event display places one clip in one revision, the event display's context menu opens it; `edit-basics`, `timeline`, `connection`, `i18n`, `i18n-fit` (the tools, fields, info line fields and the open Pool in four locales at both sizes) updated through `support/toolbar.ts` (`openPool`, `armPlacing`, `chooseGrid`); F: report, the fidelity session selects the mockup's clip with auto-scroll off; side-by-side screenshots of the project zone in en and zh-TW, and the Pool open from the app alone) | every state (the toolbar and the info line); 26, the Pool open | 3 | Node (B): `mockup-fidelity` (the ten hold tokens, per locale where they differ, applied in `shell.css`; the replaced `shell.css` rules gone and no second rule for `.arr-toolbar`, `.seg`, `.b`, `.field`, `.spacer`, `.infoline` or `.f`; the pinned pre-port text styles no longer reach the project zone; the gate report), `ui-tokens` (the ledger lowered to 27 sizes). 10: the screenshots, by eye (maintainer). The empty box of the snap or the grid type field on an engine without the clip commands is the field's height only: their width is the label's, and no permanent `--<part>-empty-w` token is authorised for them |
+| m5-ui-port-cleanup | | | Y (`port-cleanup`: every module of app/src/renderer reachable from index.tsx and every exported component rendered by the app, the whole window rendered with the zones' real components holding each `data-part` and `data-region` once; `i18n-catalogs`: every key of `en.ts` named by the renderer or one of four dynamic prefixes; `status-bar`, `plan-bidi`, `inspector-port`, `toolbar-port`: the hook classes gone and the computed class names looked up in literal tables) | Y (`shell.spec`: on the fidelity run's session, `support/fidelity-session.ts`, no id of a pending part in the window and every landed, non-dynamic id the mockup names; F: the whole window, report; side-by-side screenshot of the window attached) | the whole tour retaken once in en, zh-Hant and zh-Hans (manual, at the `ui-redesign-review` gate) | 3 | The component port is finished for M5's parts. Item 1: Node (B), `mockup-fidelity` (the app's links are the mockup's nine then `shell.css`; no selector of `shell.css` is one of `app/renderer/ui`'s outside a media or container query, with the parser's self-check; nothing pinned for unported zones; no comment inside a selector). Item 2: Node (B), `mockup-fidelity` (every class the renderer emits, the literal tables included, has a rule in `app/renderer/ui` or `shell.css`, and every class of `shell.css` is emitted; no computed class name), and unit as listed. Item 3: Node (B), `ui-tokens` (`debt.json` empty and this feature its gate, unconditionally; no literal in the renderer, `shell.css`'s negative ones included; the app-only tokens of 10.7 (4) declared, app-only, and every earlier token held to `test/fixtures/ui-tokens-before-cleanup.json`, a snapshot of origin/main's `tokens.css`; `--focus-ring` once; the focus widths as tokens). Item 4: e2e as listed; Node (B), `mockup-fidelity` (every rule owned, every `--hold-*` token a pending part's). Item 5: Node (B), `mockup-fidelity` (M5's seven gates report, none enforce; check-all and CI keep the report; the rules, the runbook and this matrix say the port is finished). Items 6 and 7: manual, attached to the pull request by the land agent and reviewed by the maintainer by eye |
 
 ### M5b Usable release (landed features)
 
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
+| m5b-bridge-native-client | Y (`plan_methods_test` plan.rollback {revision} after a reopen, both or neither param, not_a_plan, not on main, the stored plan rolled_back with plan.changed; `mcp_adapter_test` rollback_plan's argument) | | | Y (`ws-codec` RFC 6455 vectors; `runtime-client` against the in-process fake engine; `bridge-runner`, `bridge-cli`, `rollback-workflow`, `live-import-pack` against the fake engine (`test/helpers/fake-engine*.js`); G: `runtime-engine`, `live-import-pack` engine case against siann-engine) | 3 (B and G) | - |
 | m5b-engine-record | Y (`engine_record_test`, `record_methods_test`, `capture_bank_test`, `recording_test`, `takes_test`, `realtime_channel_test` input meters, `mcp_adapter_test` record tools and propose stop/locate while recording, `commands_test`/`document_test` `track.set_input`, `cycle_test`, `session_test` head guard, `engine_launch_test` kill-and-recover, wire loopback `track_recording` and a propose agent's stop over the wire) | Y | Y (the same engine tests with JUCE) | | 3 + RTSan | - (1: the real-device half (a JUCE input on hardware) only on the maintainer's bench; 9: no UI) |
+
+Per acceptance item (`m5b-bridge-native-client`): 1 `runtime-client` (start,
+envelope, `resolveEngineExe`, the source no longer names the Ardour runtime),
+`bridge-runner` "runner.js no longer spawns the Ardour command runner",
+`bridge-cli` "--engine-dir is an unknown option"; 2 `runtime-client` (refused
+token, unknown method, error mapping, failed and cancelled jobs, the engine
+exiting mid-request, stop with requests in flight; `client.js` branch coverage
+above 57 %); 3 `bridge-runner` (the method sequence, the Node plan hash, the
+v1 journal, the rate refusal, the render copied out, a render format,
+`inputChannels` or `snapshotRetention` the engine cannot honour refused),
+`import-pack-workflow` (the preview format refused when the command file is
+built), `rollback-workflow` (a
+second process rolls back by revision), G: `runtime-engine` "plan intake,
+validate, approve, apply --run and rollback --run against siann-engine"; 4 G:
+`runtime-engine`, `live-import-pack` "creates a native session"; 5
+`ci-workflow` (the `bridge-engine` job), `check-all-changed` (the `bridge`
+step); 6 `skill-docs` (the skills, and no doc still names the engine
+checkout or an Ardour session), `test-matrix`, and the PR's list of changed mentions; 7
+`plan_methods_test`, `mcp_adapter_test`.
 
 Per acceptance item: 1 `engine_record_test` "engine.devices carries channel
 counts ...", "an input reports the channels the device opened ...", "a device
@@ -180,6 +203,7 @@ test matrix names the protocol parity tests", "gap 2 ... left the gap list",
 | Feature | N | R | D | B | Platforms | Gaps |
 |---|---|---|---|---|---|---|
 | m5b-engine-master | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `master_session_test`, `master_methods_test`, `gesture_methods_test`, `mcp_adapter_test`, `playback_test`, `audition_test`, `click_test`, `offline_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a master gesture) | | Y (`fixture-parity`, `read-model-fixtures`; app unit `read-model`, `capabilities`) | 3 | - (no UI: the master strip stays a meter until `m5b-ui-inserts-master`; tour states changed: none) |
+| m5b-engine-buses-sends | Y (`document_test`, `commands_test`, `history_test`, `plan_test`, `plan_hash_test`, `buses_session_test`, `graph_test`, `offline_test`, `playback_test`, `plugin_instances_test`, `realtime_channel_test`, `buses_methods_test`, `gesture_methods_test`, `plugin_methods_test`, `mcp_adapter_test`, `engine_host_test`) | Y (`playback_test` alloc guard with a bus and a send gesture) | | Y (`fixture-parity`, `read-model-fixtures`, `plan-hash`; app unit `read-model`, `plan-diff`, `capabilities`) | 3 | - (no UI: buses reach the mixer in a later UI feature; tour states changed: none) |
 
 Per acceptance item (`m5b-engine-master`): 1 `document_test` "The master
 fixture gives the Node bridge's hashes ...", "A v2 document without the master
@@ -214,27 +238,226 @@ silence", "A document without the master renders bit-identically ...";
 features.masterGain", plan.preview and the second connection above;
 `mcp_adapter_test`; app unit `capabilities`.
 
+Per acceptance item (`m5b-engine-buses-sends`): 1 `document_test` "The buses
+fixture gives the Node bridge's hashes ...", "Empty bus and send fields are
+omitted ...", "validate() checks bus and send references, order and ranges", "A
+cyclic bus output chain is routing_cycle"; `commands_test` "bus.add adds a stereo
+bus ...", "The bus edits change one field ...", "bus.set_output refuses a route
+that reaches the bus itself ...", "track.set_output routes a track ...",
+"send.add and the send edits declare exactly their entities", "bus.remove removes
+its sends and slots and routes its inputs to the master in one revision",
+"track.remove cascades the track's sends", "commandCascades lists ...";
+`history_test` "One undo of bus.remove restores ..."; `plan_test` "Plan entity
+sets accept bus and send refs", "A bus plan goes stale when the bus changes",
+"Rolling back a plan that added a bus restores the bus order ...";
+`buses_methods_test` command.list cascades and routing_cycle. 2 `offline_test`
+"PDC null: a latent track insert and a send to a bus with a latent insert", "PDC
+null: a three-level bus chain ...", "A post-fader send follows the track's gain
+and pan; a pre-fader send does not", "Track mute silences both kinds of send
+...", "Solo with buses and sends follows the Channels and I/O rules";
+`plugin_instances_test` "PDC nulls in realtime across a send and a three-level bus
+chain with latent inserts"; `playback_test` "Realtime with buses and sends is
+sample-identical ...", "Realtime through a three-level bus chain ...";
+`graph_test` SendNode cases. 3 `gesture_methods_test` "bus:<id> takes gain and
+send:<id> takes level ...", "a bus gesture commits one bus.set_gain ...", "bus
+and send targets follow a track fader's lease rules"; `playback_test` "Bus gain
+and send level gestures move the sound with no recompile ...", "No allocations on
+the audio thread during bus and send gestures"; `engine_host_test` "bus and send
+gestures through the port"; `playback_test` "A bus meter reaches the dispatcher
+under bus:<id> ..." and `realtime_channel_test` "the meter legend lists every bus
+as bus:<id> ..."; `document_test` (slot with both or neither owner),
+`commands_test` "plugin.insert takes exactly one of trackId or busId";
+`plugin_methods_test` "plugin.instantiate takes exactly one of trackId or busId
+...". 4 `buses_session_test` "A v2 bundle opens with every recorded hash ...", "A
+bundle with buses and sends replays to identical hashes"; `buses_methods_test`
+"plan.preview shows buses and sends with before and after", "engine.capabilities
+lists features.buses and features.sends ...", sync chunks; `fixture-parity`,
+`read-model-fixtures`, `plan-hash`; app unit `read-model` "(f) bus and send refs
+parse ...", "the buses model fixture syncs ...". 5 none (no UI).
+
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-plan-metadata (E-7, E-14) | Y (`plan_hash_test`, `plan_test` `[metadata]`, `plan_methods_test` `[metadata]`, `mcp_adapter_test` `[metadata]` and DELETE, `agent_methods_test`, `transport_methods_test` engine.status keys) | Y | Y (`capabilities`, `session-client` (18b)) | Y (`plan-hash`, `read-model-fixtures`) | 3 | - (7: no UI, no tour state) |
+
+Per acceptance item: 1 `plan_methods_test` "plan.submit refuses a title or
+intent outside the limits with invalid_plan_metadata" (200 and 201 bytes, a
+multi-byte title in bytes, LF, CR, tab, C0 and C1 controls, empty and non-string,
+intent 2,000 and 2,001; nothing listed, no `plan.changed`), "plan.status,
+plan.list and plan.changed carry title, intent and actor" (also the resubmission
+that keeps the first title), `plan_test` "Submit stores the title, intent and
+actor; a resubmission keeps the first", "Submit refuses a title or intent outside
+the limits ...", `plan_hash_test` "A plan with and without title, intent and
+actor has the same planHash", Node `plan-hash` "a plan hashed with and without a
+title ..." over `fixtures/plan/plan-hash.json` (`titled_plan`, `plan_with_intent`,
+`plan_with_actor`, `non_ascii_title` and the malformed-metadata invalid cases);
+2 `plan_methods_test` "The actor of a UI submission comes from the auth frame,
+never from the params" (default, sanitised, malformed client; `actor`, `kind`,
+`name`, `owner` params are `invalid_params`), `mcp_adapter_test` "submit_plan
+stores title, intent and the actor from clientInfo.name", "the MCP actor's name:
+the default without clientInfo, sanitised otherwise", `plan_test` "A sub-plan
+keeps its parent's title, intent and actor; approve and apply ignore them",
+`plan_methods_test` "plan.changed and plan.status carry the rejection note; a
+split keeps the parent's metadata"; 3 the same test (`plan.reject {note}` and
+partial approval's "partially approved as ..."); 4 `agent_methods_test`
+"engine.status lists no agent before initialize, then the MCP session's agent",
+"a second client sees agent.changed on connect, action, idle, reconnect and
+DELETE" (marker in the arguments never in the payload, the injected steady
+clock), "past agentsRetained the oldest disconnected agent is forgotten",
+`mcp_adapter_test` "DELETE /v0/mcp ends the session; without the header it is
+400"; 5 `agent_methods_test` "engine.capabilities lists planMetadata, agents and
+the agent limits", `mcp_adapter_test` "tools/list: submit_plan takes a title of
+200 and an intent of 2000 at most", Node `read-model-fixtures` "the unmodelled
+events ...", app `session-client` (18b) and `capabilities` (`capabilities-full.json`
+with both features, `capabilities-reduced.json` without); 6 the tests above;
+7 none (no UI).
+
+Display-unsafe metadata (security fix after #121; `plan-v1.md`, "Metadata"):
+`plan_test` "Submit refuses bidi formatting, line separators and invalid UTF-8
+in a title or intent" (each of U+061C, U+200E, U+200F, U+202A to U+202E, U+2066
+to U+2069, U+2028 and U+2029 in a title and an intent; six malformed UTF-8
+sequences; CJK, Hebrew, Arabic and emoji with a ZWJ pass), `plan_methods_test`
+"plan.submit refuses a title or intent outside the limits ..." (RLO, RLI, RLM,
+ALM, LS, LRO and PS through the protocol), `mcp_adapter_test` "the MCP actor's
+name ..." (bidi formatting and separators stripped, CJK and emoji kept), app
+`plan-bidi` (the card's lead and rejection note, step text, stale reasons and
+the audition banner render with `dir="auto"` and `unicode-bidi: isolate`). Node
+has no mirror: `src/hash/plan-hash.js` checks only the metadata's shape.
+
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-clip-fades (UR-6, the fade half of E-9) | Y (`document_test` `[fades]`, `session_test` pre-fade bundle, `commands_test` `[fades]`, `history_test` `[fades]`, `plan_hash_test`, `graph_test` `[fades]`, `offline_test` `[fades]`, `playback_test` `[fades]`, `cycle_test` `[fades]`, `live_recompile_test` `[fades]`, `plan_methods_test` `[fades]`, `mcp_adapter_test` `list_commands`) | Y (`cycle_test` alloc guard with faded clips) | Y (`read-model`, `capabilities`, `edit-commands` fades) | Y (`plan-hash`, `read-model-fixtures`, `fixture-parity`) | 3 | - (no new method, so no MCP tool (rule 2): the command goes through `execute` and plans; 4: no UI, tour states changed: none) |
+
+Per acceptance item (`m5b-engine-clip-fades`): 1 `document_test` "A clip
+without fades keeps its literal pre-fade JSON and hash", "The fades fixture
+round-trips with the Node bridge's hashes", "A malformed fade is rejected when
+the clip is read", "validate reports invalid_fade ..."; `session_test` "A bundle
+whose journal and checkpoint are literal pre-fade text opens ..."; `commands_test`
+"clip.set_fade sets either side ...", "clip.set_fade refuses ...", "clip.trim
+shortens fades that no longer fit ..."; `history_test` "clip.set_fade is one revision ...". 2
+`graph_test` "ClipPlayerNode applies the fade formula ...", "A faded clip renders
+the same for any block size"; `offline_test` "The offline render of a faded clip equals the
+curve's formula within one LSB at 24 bit"; `playback_test` "Realtime output of
+faded clips is sample-identical to renderOffline ..."; `cycle_test` "A locate
+into the middle of a fade ...", "A cycle that starts inside a fade in and ends
+inside a fade out ...", the alloc guard; `live_recompile_test` "A fade-only edit
+replaces the track's stream ...". 3 `plan_methods_test` "engine.capabilities
+lists clip.set_fade and features.clipFades ...", "plan.preview of a clip.set_fade
+step ...", "command.execute of an over-long fade answers invalid_fade";
+`mcp_adapter_test`; `plan_hash_test` and Node `plan-hash` over
+`clip_set_fade_step`; Node `read-model-fixtures`; app unit `read-model`,
+`capabilities`. 4 app unit `edit-commands` "split carries a faded clip's fades ...",
+"duplicate and copy carry both fades ...". 5 none (no UI).
+
+Display-safe names (follow-up to #123; `protocol-engine-v0.md`, "Names"):
+`commands_test` "track.add and track.rename ...", "media.add and media.rename
+...", "bus.add and bus.rename ...", "session.rename ...", "plugin.insert refuses a display-unsafe descriptor
+name ..." (RLO, LRI, PDI, ALM, LRM, LS, LF, NEL and a malformed byte, each
+`invalid_name`; Hebrew, CJK and emoji pass) and "A transaction stops at the
+step whose name is unsafe"; `document_test` "Validation refuses display-unsafe
+names as invalid_name" (root, track, media and bus) and "Opening a document with a
+display-unsafe name is invalid_document" (a crafted v1 document with the
+character in a track, the session, a plugin slot and a media name);
+`session_create_test` "session.create refuses an unsafe given name and strips
+one taken from the folder"; `media_import_test` "The media name drops control
+and display-unsafe characters from the file name"; Node `display-name` (the
+import-pack manifest refuses them in session, track and region names; the
+DAW-pack intake strips them from names it derives from file names); app
+`plan-bidi` (each name in step text, stale reasons, refusal lines and diff rows
+is wrapped in U+2068 ... U+2069 in every locale; the track list, inspector,
+mixer strip and session name isolate the name they show).
+
+| Feature | N | R | U | B | Platforms | Gaps |
+|---|---|---|---|---|---|---|
+| m5b-engine-load-loudness (E-13, UR-14) | Y (`loudness_test` (new `siann_dsp_tests`), `load_window_test`, `graph_driver_test` `[loudness]` `[load]`, `realtime_channel_test` `[loudness]`, `transport_methods_test` `[loudness]` `[load]`, `mcp_adapter_test` `[loudness]`, `engine_host_test` `[loudness]` `[load]`) | Y (`loudness_test`, `load_window_test`, `graph_driver_test` alloc guard under `ScopedRealtimeThread`; RTSan build) | Y (`capabilities`, `meter-frames` "a SLUD frame is not an SMTR frame") | Y (`protocol-fixtures` loudness frames) | 3 + RTSan | - (6: no UI, no tour state) |
+| m5b-engine-agent-requests (UR-16; gate `agent-request-shape`) | Y (`agent_requests_test`, `mcp_adapter_test` `[requests]`, `plan_methods_test` `[metadata]` request link) | Y | Y (`capabilities`, `session-client` agent requests) | - | 3 | - (7: no UI, no tour state) |
+
+Per acceptance item (`m5b-engine-load-loudness`): 1 `load_window_test` "LoadWindow
+publishes the average and the peak of a full second of device frames", "LoadWindow
+reports nothing before the first full window", "LoadWindow: unmeasured callbacks
+contribute nothing", "LoadWindow: blocks of different sizes weigh by their period",
+"LoadWindow: reset clears ...", "LoadWindow: record does not allocate on a realtime
+thread"; `graph_driver_test` "The driver reports DSP load from the callback clock"
+(alloc guard, restart on start); `transport_methods_test` "engine.status carries
+load {average, peak} as numbers from the port"; `mcp_adapter_test` "engine_status
+passes the DSP load through"; `engine_host_test` "engine.status load is the
+driver's and 0 once the device is gone"; 2 `graph_driver_test` "The loudness meter
+reads the master output before the click" (equal readings with the click on, equal
+to a reference meter over the device output), "The master gain at -6 dB lowers the
+loudness by 6 LU", "A locate and a transport stop do not restart the integrated
+value; a reset request does"; `loudness_test` "reset restarts the integrated value
+and leaves momentary and short-term"; `realtime_channel_test` "the publisher sends
+SMTR then SLUD per tick with a subscriber"; `transport_methods_test`
+"meter.reset_loudness calls the port once and answers {}", "meter.reset_loudness: a
+duplicate requestId is cached ...", "meter.reset_loudness is not_supported without
+a transport port ..."; `engine_host_test` "a -23 dBFS 1 kHz tone through the engine
+reads -23 LUFS, and -6 dB of master gain 6 LU less", "a realtime client receives
+loudness frames while the session plays", "engine.select_device keeps the
+integrated value; meter.reset_loudness returns it to -inf"; `engine_launch_test` "a
+client on the fake device plays ..." (the loudness frame over the wire); 3
+`loudness_test` "EBU Tech 3341 case 1: ...", "EBU Tech 3341 case 2: ...", "EBU Tech
+3341 gating cases 3 to 5 read -23.0 LUFS integrated" (each at 44.1, 48 and 96 kHz),
+"the 48 kHz K-weighting equals the table of BS.1770-4 Annex 1", "silence reads minus
+infinity on all three values", "silence after a signal: ...", "the readings do not
+depend on the size of the process() calls"; `graph_driver_test` "The loudness meter
+runs at the session rate behind device-side SRC"; `realtime_channel_test` "loudness
+frames match the shared fixture byte for byte" (negative infinity as `00 00 80 ff`);
+the engine-level reading in `engine_host_test` above; 4 `realtime_channel_test`
+"with no subscriber the publisher never reads the loudness and sends no frame";
+`graph_driver_test` "The loudness history survives a graph swap and a device
+change", "Before the first start the loudness reads minus infinity"; `loudness_test`
+"process, processSilence and reset do not allocate on a realtime thread"; 5
+`transport_methods_test` "engine.capabilities lists meter.reset_loudness with
+features load and loudness", `mcp_adapter_test` "meter.reset_loudness is no MCP tool
+and the adapter lists its exclusion", app unit `capabilities` (`capabilities-full.json`
+with the method and both features) and `meter-frames` "a SLUD frame is not an SMTR
+frame and is ignored", Node `protocol-fixtures` (fixture, layout, doc rows); the
+schema docs; 6 none (no UI).
+
+Per acceptance item (`m5b-engine-agent-requests`): 1 `agent_requests_test` "agent.request from the UI returns
+the pending request with the stamped context; a second client sees
+agent.request_changed", "the text is 1 to 4,000 code points of display-safe
+UTF-8; selection ids are checked; the 17th open request is agent_busy",
+"agent.request to an unknown or disconnected agent is agent_not_connected",
+"the request methods belong to one credential: scope_denied otherwise"; 2
+"next_request returns the oldest pending request at once and marks it taken",
+"next_request parks with an empty queue: a later request, the wait, a second
+call and the clamp", "a retry of next_request with the same id returns the same
+request; an empty poll is no action", "answer_request: a message, a decline, a
+plan the agent submitted; the refusals", "plan.submit {request} links the plan
+and answers the request; the head revision is unchanged", `plan_methods_test`
+"a plan submitted with a request has the hash of the same plan without it",
+`mcp_adapter_test` "tools/list: next_request and answer_request are propose
+tools; submit_plan takes a request"; 3 "agent.cancel_request cancels an open
+request; next_request does not deliver it", "DELETE, idle and session.open
+expire the open requests", "agent.requests lists the open requests and the last
+16 closed ones"; 4 "plan.submit {request} ..." (plan `validated`,
+`session.inspect`'s head unchanged); 5 the gate's resolution in the manifest;
+6 "engine.capabilities lists the request methods, features.agentRequests and
+the request limits", app `capabilities` (`capabilities-full.json`) and
+`session-client` "agent.request, agent.cancel_request and agent.requests go out
+as typed calls; agent.request_changed reaches a listener"; 7 none (no UI).
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
 it will be tested. Share of acceptance items that name a test (unit, e2e,
-ctest, ...): M5b 61/137 (the nine UI features that own mockup parts each gained a fidelity-gate item, layer F; the four test-gap features appended later are not in this count; `m5b-engine-record` and `m5b-engine-master` moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
+ctest, ...): M5b 60/133 (the nine UI features that own mockup parts each gained an item for those parts, layer F: since 2026-11-17 "ported from the mockup's markup, side-by-side screenshot attached", with the fidelity run as a report; the four test-gap features appended later are not in this count; `m5b-engine-record`, `m5b-engine-master` and `m5b-engine-clip-fades` (1/4 before its plan, 4/4 since) moved to the table above), M6a 1/3, M6b 0/3, M6c 2/3, M7 1/3. Weakest in M5b:
 `m5b-engine-markers` 0/4, `m5b-engine-punch-count-in` 0/5,
-`m5b-engine-clip-fades` 1/4, `m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` names a test in 4/5 since its bus-routing decision of 2026-11-15).
+`m5b-ui-edit-more` 3/10 (`m5b-engine-buses-sends` moved to the table above).
 
 Added on 2026-11-15, with the maintainer's decision that no part of the mockup
 is unowned (UI redesign 10.5); not in the counts above:
 
 | Feature | Wave | After | Owns (layer F) | Tests its acceptance names |
 |---|---|---|---|---|
-| `m5b-engine-plan-metadata` (E-7, E-14) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
+| `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
 | `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
-| `m5b-engine-load-loudness` (E-13) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
-| `m5b-engine-agent-requests` | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds, a second client; gate `agent-request-shape` |
+| `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
+| `m5b-engine-agent-requests` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds (4,000 characters, 16 open per agent, `agent_busy`), the `next_request` long poll, a second client; gate `agent-request-shape` (resolved) |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
 | `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
 | `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
-| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled |
+| `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled; `agent_busy` shown |
 | `m5b-ui-notepad` | 4 | `m5b-engine-track-notes` | `inspector-notepad` | e2e with a reduced capabilities fixture; one revision per commit |
 | `m5b-ui-editor-channel` | 4 | `m5b-ui-edit-more` | `tab-editor`, `zone-button-channel` | one revision and one undo per edit in the editor |
 | `m6a-ui-automation` (M6a) | 3 | `m6a-lanes`, `m6a-write-passes` | `*-read`, `*-write`, `strip-*-automation`, `inspector-automation` | e2e with a reduced capabilities fixture |
@@ -260,13 +483,15 @@ board run cannot run on hosted runners and need a named owner (rule 6).
 | `live import-pack` | `live-import-pack` (fake runtime) | `live-import-pack.js` 93 % / branch 37 % | real run: G only |
 | `validate-journal` | `validateJournal` unit in `bridge-runner` | | CLI untested |
 | JCS / Merkle / plan hash | `jcs`, `merkle`, `plan-hash`, `fixture-parity` | 100 / 98 / 94 % | |
-| runtime client | `runtime-client` (fake), `runtime-engine` (G) | `client.js` 84 % / branch 57 % | |
+| runtime client | `ws-codec`, `runtime-client` (in-process fake engine), `runtime-engine` (G) | | |
+| command runner | `bridge-runner` (fake engine), `bridge-cli` and `rollback-workflow` (fake engine process), G | | |
 
 There is **no MCP server in Node**: MCP is served by the native engine
-(`native/libs/protocol/src/mcp_adapter.cpp`, `POST /v0/mcp`). And the Node
-bridge has **no client for the native protocol**: `src/runtime/client.js` and
-`src/bridge/runner.js` speak the legacy Ardour runtime
-(`ardour9-siann_runtime`, `ardour9-siann_command`).
+(`native/libs/protocol/src/mcp_adapter.cpp`, `POST /v0/mcp`). The Node bridge
+speaks the native protocol since `m5b-bridge-native-client`:
+`src/runtime/client.js` starts `siann-engine` and talks to its WebSocket with
+the codec in `src/runtime/ws.js`; `src/bridge/runner.js` maps command files
+onto session.create, media.import, plans, session.save and render.start.
 
 ## 3. Platforms and what never runs
 
@@ -294,9 +519,8 @@ bridge has **no client for the native protocol**: `src/runtime/client.js` and
 | `juce_device_test` `[hardware]` cases | an output device (SKIP on runners) | maintainer's bench, M2 exit |
 | `node scripts/pluginval.js --compat` | one env var per plugin in `scripts/compat-plugins.json` | maintainer, M4 exit, before a JUCE pin move |
 | `ux-tour.spec.ts` (every "Tour states changed" criterion) | `SIANN_UX_TOUR=1` (and `testIgnore`) | the feature's build agent attaches the states; the maintainer reviews at the `ux-review` gate |
-| `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), so this is a gate, not a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
+| `mockup-fidelity.spec.ts` (F) | `SIANN_FIDELITY=1` (and its own Playwright project, `fidelity`) | **In CI** on ubuntu and windows (the `app` job sets the variable), as a report that never fails the job (decided by the maintainer, 2026-11-17), so it is run and uploaded on every such PR, not left to a manual test; listed here because the plain `npm test` of `app/` skips it. Locally: `node scripts/check-all.js --only app`, or the command in the runbook. macOS does not run it: the reference rendering is compared on two OSes and the Mac lane would add font rasterisation without adding a layout engine |
 | `mockup-fidelity.spec.ts` "the mockup's measurement (<locale>)" (F on the mockup alone) | `SIANN_FIDELITY_MOCKUP_ONLY=1` with `SIANN_FIDELITY=1` and `SIANN_FIDELITY_MOCKUP_ROOT` (set by `scripts/fidelity-mockup-compare.js`); with the flag set the spec's app gate test skips, without it this test skips | **Not in CI**: it measures a worktree of the base commit, which the CI checkout does not have. The implementer of a change to `tokens.css`, `app/renderer/ui/*.css` or the mockup's script runs `node scripts/fidelity-mockup-compare.js` before the PR (first `m5-ui-tokens-spacing`) and attaches the result; the reviewer checks it at review |
-| `test/runtime-engine.test.js`, `test/live-import-pack.test.js` (engine case) | `SIANN_RUN_ENGINE_TESTS=1` + the legacy Ardour checkout | nobody: the Ardour engine is superseded (architecture spec, "Documents made stale"). Port or delete (gap 3) |
 | `[.][hostile-crash-child]` | hidden helper | run by its parent test; fine |
 | M2 device bench, M0 macOS bundle signing, M4 JUCE `processBlock` audit, DAWproject into Cubase (L4) | human gates | maintainer, per milestone exit / release |
 
@@ -311,11 +535,13 @@ schedule (18:30 UTC) runs everything.
 
 ## 4. Parity: protocol method x MCP tool x clients
 
-Closed by `m5b-protocol-parity` (gap 2). The engine serves 49 methods
-(`kMethods`, `protocol_server.cpp`, in `engine.capabilities` order); 34 are MCP
-tools (`kTools`, `mcp_adapter.cpp`) and the other 15 have a reasoned entry in
+Closed by `m5b-protocol-parity` (gap 2). The engine serves 55 methods
+(`kMethods`, `protocol_server.cpp`, in `engine.capabilities` order); 36 are MCP
+tools (`kTools`, `mcp_adapter.cpp`) and the other 19 have a reasoned entry in
 `kNotMcp` beside the tool table (`engine.about`, the five `gesture.*`, six
-`plugin.*`, `session.sync`, `session.fetch`, `record.recover_take`). Every method
+`plugin.*`, `session.sync`, `session.fetch`, `record.recover_take`,
+`meter.reset_loudness`, and the user's side of agent requests: `agent.request`,
+`agent.cancel_request`, `agent.requests`). Every method
 has a native test. What the parity tests assert:
 
 - `protocol_parity_test` (N, ctest on the three OSes, the gcc and RTSan jobs):
@@ -348,7 +574,8 @@ has a native test. What the parity tests assert:
   a missing entry for every check and asserts the check names it.
 - `mcp_adapter_test` covers each tool: `list_plans` and `preview_plan` (propose)
   answer what `plan.list` and `plan.preview` answer, errors included; `undo` and
-  `redo` are `scope_denied` under propose and move main's head under trusted.
+  `redo` are `scope_denied` under propose and move main's head under trusted;
+  `next_request` and `answer_request` are covered by their own feature's tests.
   App unit `capabilities` reads the full fixture with `transport.set_cycle` and
   `transport.set_click`.
 
@@ -358,10 +585,13 @@ Not covered by the parity tests:
   `list_commands`, `reject_plan`, `discard_proposal`, `list_plans`,
   `preview_plan`, `undo`, `redo`, transport and device tools.
 - App: `plan.submit`, `plan.rollback`, `render.start`, `job.status`,
-  `transport.set_cycle`/`set_click`, devices, plugins have no app client yet
-  (expected until m5-ui-loop-click, M5b). `transport.play`/`stop`/`locate`
+  `session.create`, `media.import`, `record.*`, `meter.reset_loudness`, devices
+  and plugins have no app client yet (expected in M5b). `transport.play`/`stop`/`locate`
   and `session.undo`/`redo` have one since m5-ui-transport
-  (`model/transport.ts`, `undo-redo.test`).
+  (`model/transport.ts`, `undo-redo.test`), `transport.set_cycle`/`set_click`
+  since m5-ui-loop-click (`model/loop-click.ts`, `locator-commands.test`), and
+  `agent.request`/`cancel_request` since m5b-engine-agent-requests
+  (`model/session-client.ts`).
 - Shared fixtures used by all three languages: `jcs`, `hash`, `peaks`,
   `meter-frames`. `plan/plan-hash.json` has no app test (the app hashes plans
   for display); `protocol/read-model-sequence.json` is generated in Node and
@@ -375,7 +605,7 @@ Taken on Windows, Node 22, 2026-11-14.
 
 | Area | How | Lines | Branches | Functions | Least covered |
 |---|---|---|---|---|---|
-| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 89.2 % | 70.9 % | 96.0 % | `bin/siann.js` 74/37, `import-pack-plan.js` 81/72, `client.js` 84/57, `rollback.js` 87/50, `live-import-pack.js` 93/37 (branch), `import-pack.js` 94/62 (branch) |
+| Node bridge (`src/`, `bin/`) | `node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-include='bin/**' test/*.test.js` | 92.7 % | 80.7 % | 97.0 % | Retaken with `m5b-bridge-native-client` (2026-11-15; the audit's figures were 89.2 / 70.9 / 96.0 with `client.js` 84/57): `bin/siann.js` 80/42, `import-pack-plan.js` 81/72, `live-import-pack.js` 100/46 (branch), `import-pack.js` 94/75 (branch), `runner.js` 94/79, `client.js` 95/84, `ws.js` 97/93, `rollback.js` 100/100 |
 | Node, incl. `scripts/` | same, no include filter | 86.5 % | 78.0 % | 91.2 % | `scripts/check-all.js` 53 % (the build steps), `create-daw-manifest.js` 73 % |
 | App, unit tests only | `npm run build` then `node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js` | 89.7 % of loaded files | 88.2 % | 79.7 % | `PlanPanel` 33 %, `TrackListDivider` 32 %, `ValueControl` 37 %, `Mixer` 42 %, `TrackList` 49 %, `Timeline` 51 %, `StepList` 72 %, `plans/diff` 79 %, `keys/commands` 80 %. Never loaded by a unit test: `main.ts`, `preload.ts`, `App.tsx`, `Shell.tsx`, `TopBar.tsx`, `index.tsx` (covered by e2e only) |
 | App e2e | not measured | | | | proposal: `NODE_V8_COVERAGE` for the main process and Playwright's `page.coverage` (Chromium) for the renderer, merged with c8-style tooling in the app job |
@@ -389,8 +619,6 @@ error paths of each subcommand (usage errors, `--run`).
 
 | # | Gap | Risk | Proposed test | Owner |
 |---|---|---|---|---|
-| 1 | m5-ui-loop-click: 11 acceptance items (8 before the corrections of 2026-11-15), no tests on main (m5-ui-transport's 8 and m5-ui-edit-basics' 9 are covered, section 2) | High: M5 exit depends on them | per the manifest: unit (band geometry and snapping) + e2e per operation (one revision, one undo) + capability-gated e2e | the features themselves (in flight) |
-| 3 | Node bridge's live path targets the superseded Ardour engine; `SIANN_RUN_ENGINE_TESTS` tests never run | High for AI-facing story: the bridge cannot drive the native engine, and its only integration tests are dead | port `src/runtime/client.js` to the native protocol (WebSocket + token, or MCP over HTTP), then a CI job that runs the Node integration tests against the core-only `siann-engine` built in the `app` job; meanwhile mark the two tests as legacy | `m5b-bridge-native-client` (M5b wave 2) |
 | 4 | "Tour states changed" criteria (7 features) only in the manual tour | Medium: layout regressions are visible only to a human | run `ux-tour.spec.ts` in a nightly job on one OS with `SIANN_UX_TOUR=1` and upload the screenshots as an artifact; later pixel-diff against committed baselines (the `test/mockup-fidelity` work) | M5 `ux-review` gate |
 | 5 | m3-rollback 2: media/renders never deleted by rollback | Medium: data loss | native: render a file, roll back the plan, assert the file and the media entry's blob remain | M3 follow-up |
 | 6 | No ASAN/UBSAN/TSAN, no fuzzing (spec test layers) | Medium: protocol server parses untrusted JSON and WAV headers | nightly ubuntu Clang job with `-fsanitize=address,undefined` over ctest; a libFuzzer target for protocol messages, command JSON and the WAV reader | M5b infra / M7 |
@@ -427,9 +655,8 @@ Proposed, not done (each needs a decision or touches build config others are edi
 1. Nightly `ux-tour` job with screenshot artifacts (gap 4).
 2. Nightly sanitizer job (ASAN+UBSAN) and a fuzz smoke (gap 6).
 3. Nightly native coverage job with llvm-cov, report-only (section 5).
-4. Engine-gated Node job against the native `siann-engine`, once the bridge
-   speaks the native protocol (gap 3). Running the current gated tests in CI is
-   not possible: they need the Ardour checkout.
+4. Engine-gated Node job against the native `siann-engine`: done by
+   `m5b-bridge-native-client` (the `bridge-engine` job, layer G; gap 3 closed).
 5. `long-tests.yml` on macos-latest (gap 12).
 6. Desktop job on core-library PRs (gap 7).
 7. App unit coverage printed in the app job (`--experimental-test-coverage`), no threshold.
@@ -445,10 +672,10 @@ Proposed, not done (each needs a decision or touches build config others are edi
    an explicit, reasoned exclusion (an entry in `kNotMcp` and a row of
    `protocol-mcp-v0.md`, "Methods without a tool"), the app's
    `capabilities-full.json` entry, and an app client unit test when the app
-   calls it. The parity tests enforce all but the first and the last:
+   calls it, and a Node bridge test (fake engine, plus layer G) when the bridge
+   calls it. The parity tests enforce all but the first and the last two:
    `protocol_parity_test` (ctest) and `test/protocol-parity.test.js` (`npm test`,
-   section 4). Node client tests follow once the bridge speaks the native
-   protocol.
+   section 4).
 3. **Every UI feature** gets unit tests for its pure logic, a Playwright e2e for
    each user path against the real engine, the i18n fit check covering its new
    controls, and the tour states it changes (until the tour runs in CI, the
@@ -467,9 +694,13 @@ Proposed, not done (each needs a decision or touches build config others are edi
 8. **This file changes with the feature**: the verifier checks the feature's
    row (section 2) and fails the round when the row is missing or claims a test
    that does not exist.
-9. **Every UI feature answers to the mockup fidelity gate (F)**: its parts are
-   owned by a rule of `app/test/fidelity/manifest.json`, its row in section 2
-   says so, and the pull request that lands it sets its gate to `enforce` and
-   attaches the report. A part skipped as pending or unowned is named in the
-   report, never silently dropped; a colour or size literal outside
-   `app/renderer/tokens.css` fails `test/ui-tokens.test.js` on every OS.
+9. **Every UI feature is ported from the mockup and reviewed by eye, and the
+   fidelity run (F) is its report** (decided by the maintainer, 2026-11-17): its
+   parts are owned by a rule of `app/test/fidelity/manifest.json`, its row in
+   section 2 says so, and the pull request that lands it sets its gate from
+   `pending` to `report` and attaches the side-by-side screenshots (app and
+   mockup) of the states it changes with the report. No gate is `enforce` and
+   no geometry or pixel result blocks. A part skipped as pending is named in
+   the report, never silently dropped; a colour or size literal outside
+   `app/renderer/tokens.css` fails `test/ui-tokens.test.js` on every OS, and
+   that does block.

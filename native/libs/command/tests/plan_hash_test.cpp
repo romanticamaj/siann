@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "fixture_util.hpp"
 #include "siann/command/plan.hpp"
@@ -141,4 +143,68 @@ TEST_CASE("A writeSet may name the master entity, and only by the id master", "[
     CHECK(plan.steps[0].op() == "master.set_gain");
     CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
     CHECK(formatHash(planHash(Plan::fromJson(plan.toJson()))) == c->find("planHash")->asString());
+}
+
+// m5b-engine-plan-metadata: title, intent and actor are metadata beside the plan.
+// Each fixture case hashes as its untitled twin, round-trips through JSON, and
+// the fields are in the excluded list.
+TEST_CASE("A plan with and without title, intent and actor has the same planHash", "[plan][fixtures][metadata]") {
+    const auto& excluded = siann::command::planHashExcludedFields();
+    for (const std::string_view key : {"title", "intent", "actor"}) {
+        INFO(key);
+        CHECK(std::find(excluded.begin(), excluded.end(), key) != excluded.end());
+    }
+    const auto hashOf = [](const std::string& name) { return planHash(Plan::fromJson(*validCase(name).find("plan"))); };
+    for (const char* name : {"titled_plan", "plan_with_intent", "plan_with_actor"}) {
+        INFO(name);
+        CHECK(hashOf(name) == hashOf("minimal_plan"));
+    }
+    CHECK(hashOf("non_ascii_title") == hashOf("two_steps"));
+
+    const Value* c = &validCase("non_ascii_title");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    CHECK(plan.title ==
+          std::optional<std::string>{"\xE9\xBC\x93\xE8\x81\xB2\xE9\x99\x8D\xE4\xBD\x8E \xF0\x9F\xA5\x81"});
+    CHECK(plan.intent ==
+          std::optional<std::string>{"\xE8\xAE\x93\xE4\xBA\xBA\xE8\x81\xB2\xE6\x9B\xB4\xE6\xB8\x85\xE6\xA5\x9A"});
+    REQUIRE(plan.actor.has_value());
+    CHECK(plan.actor->kind == siann::command::PlanActorKind::ui);
+    CHECK(plan.actor->name == "SIANN");
+    // toJson writes them back; fromJson reads the same plan again.
+    const Value json = plan.toJson();
+    CHECK(json.find("title")->asString() == *plan.title);
+    CHECK(json.find("intent")->asString() == *plan.intent);
+    CHECK(siann::jcs::canonicalize(*json.find("actor")) == R"({"kind":"ui","name":"SIANN"})");
+    const Plan again = Plan::fromJson(json);
+    CHECK(again.title == plan.title);
+    CHECK(again.intent == plan.intent);
+    CHECK(again.actor == plan.actor);
+    CHECK(formatHash(planHash(again)) == c->find("planHash")->asString());
+
+    // Without them nothing is written.
+    const Value bare = Plan::fromJson(*validCase("minimal_plan").find("plan")).toJson();
+    CHECK(bare.find("title") == nullptr);
+    CHECK(bare.find("intent") == nullptr);
+    CHECK(bare.find("actor") == nullptr);
+}
+
+// m5b-engine-clip-fades: a plan step may set a fade. The fixture's step hashes as
+// Node says and prepares against the v2 model fixture, touching clip:clp_1 only.
+TEST_CASE("A clip.set_fade step hashes as the fixture says and prepares against the document",
+          "[plan][fixtures][fades]") {
+    const Value* c = &validCase("clip_set_fade_step");  // a pointer: GCC's -Wdangling-reference
+    const Plan plan = Plan::fromJson(*c->find("plan"));
+    REQUIRE(plan.steps.size() == 1);
+    CHECK(plan.steps[0].op() == "clip.set_fade");
+    CHECK(formatHash(planHash(plan)) == c->find("planHash")->asString());
+    const auto doc = siann::model::Document::fromJson(
+        *siann::test::readFixture("model/session-document-v2.json").find("document"));
+    const auto prepared = siann::command::prepare(doc, plan.steps[0]);
+    CHECK(prepared.effects ==
+          siann::command::DeclaredEffects{siann::model::EntityRef{siann::model::EntityType::clip, "clp_1"}});
+    const auto* clip = prepared.result.clip("clp_1");
+    REQUIRE(clip != nullptr);
+    CHECK(clip->fadeIn.length == 480);
+    CHECK(clip->fadeOut.length == 960);
+    CHECK(clip->fadeOut.curve == siann::model::FadeCurve::equal_power);
 }

@@ -20,6 +20,7 @@ import type { Capabilities } from '../../src/renderer/model/capabilities';
 import { PlanStore } from '../../src/renderer/model/plan-store';
 import { AuditionBanner } from '../../src/renderer/plans/AuditionBanner';
 import { HearingSwitch } from '../../src/renderer/plans/HearingSwitch';
+import { isolateName } from '../../src/renderer/plans/isolate';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { BRANCH, fakePlanClient, hashOf, MIX_STEPS, planObject } from './support/plans';
 
@@ -49,7 +50,7 @@ const banner = (heard: string | null, caps: Capabilities | null = FULL) =>
 test('a heard branch shows a banner naming its plan, with Hear main, Merge and Discard', () => {
   const markup = banner(BRANCH);
   assert.match(markup, /data-testid="audition-banner"/);
-  assert.ok(markup.includes(`Set Keys volume to ${formatMilliDb(-3000)}`), markup);
+  assert.ok(markup.includes(`Set ${isolateName('Keys')} volume to ${formatMilliDb(-3000)}`), markup);
   assert.ok(markup.includes(translator('en')('plans.steps', { count: 3 })), markup);
   for (const id of ['banner-hear-main', 'banner-merge', 'banner-discard']) assert.match(markup, new RegExp(`data-testid="${id}"`), id);
   assert.ok(!new RegExp(`\\b${BRANCH}\\b`).test(markup), 'no branch id');
