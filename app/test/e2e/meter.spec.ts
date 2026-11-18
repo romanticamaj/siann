@@ -272,8 +272,18 @@ test('(d) against capabilities without load and loudness none of the three parts
   await expect(row).toHaveCount(1);
   await expect(row).toHaveAttribute('aria-hidden', 'true');
   expect(await row.evaluate((el) => el.childElementCount)).toBe(0);
-  // Nothing beside them moved.
-  expect(await neighbours()).toEqual(full);
+  // Nothing beside them moved: within 1 px, as media.spec and the fidelity
+  // run compare boxes. The empty box is the mockup's measured width and the
+  // tab its text's, which the platform's font lays out a fraction of a pixel
+  // apart (Windows CI: the hearing switch 0.016 px to the left).
+  const after = await neighbours();
+  expect(Object.keys(after)).toEqual(Object.keys(full));
+  for (const [id, box] of Object.entries(full)) {
+    const moved = after[id];
+    expect(box, id).not.toBeNull();
+    expect(moved, id).not.toBeNull();
+    for (const side of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(moved![side] - box![side]), `${id} ${side}`).toBeLessThan(1);
+  }
 });
 
 test('(e) under 1300 px neither the DSP load nor its empty box is displayed', async () => {
