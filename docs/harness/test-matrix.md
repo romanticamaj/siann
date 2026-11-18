@@ -512,7 +512,9 @@ template's accelerators, `registerAccelerator: false`, `triggeredByAccelerator`)
 `project-controller` "without a shell port ...", `renderer-sources`, e2e
 `project` (c), `plain-tab`; 2 `project-controller`, `session-client` "the
 session epoch ...", e2e `project` (a) and (d); 3 `projects` "launchSession ...",
-e2e `project` (b) and (g); 4 `saved-mark`, `top-bar`, e2e `project` (c) and (e);
+e2e `project` (b) and (g); 4 `saved-mark`, `top-bar`, `status-bar` "the saved
+revision is the saved mark's baseline ...", e2e `project` (c) and (e) (the status
+bar's saved revision with the mark);
 5 e2e `project` (f); 6 `studio-setup`, `transport-controls` "with no device and
 Studio Setup ...", e2e `studio-setup`; 7 `i18n-catalogs`, e2e `i18n-fit`, the
 tour (29 and 30, the top bar of every state).
