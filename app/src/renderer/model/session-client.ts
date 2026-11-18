@@ -380,7 +380,8 @@ export class SessionClient {
     if (method === 'engine.status' && device) {
       return this.#send(connection, method, params, expectedRevision).then((result) =>
         result !== null && typeof result === 'object' && (result as { device?: unknown }).device !== null
-          ? { ...(result as Record<string, unknown>), device: { ...device } }
+          ? // Field by field: the engine's own fields the environment does not name (the open input, m5b-ui-recording) stay.
+            { ...(result as Record<string, unknown>), device: { ...((result as { device?: object }).device ?? {}), ...device } }
           : result,
       );
     }
