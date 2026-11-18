@@ -199,12 +199,12 @@ const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
-if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.latest()?.playheadSamples ?? null };
+if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.playhead()?.playheadSamples ?? null };
 // What undo and redo can do now (the top bar dims what cannot).
 const history = new UndoHistory(client);
 const transport = new TransportController({
   client,
-  playing: () => realtime.latest()?.playing ?? false,
+  playing: () => realtime.playhead()?.playing ?? false,
   toasts,
   locale: () => locales.getSnapshot(),
   onNothingLeft: (method) => history.refused(method),

@@ -161,7 +161,7 @@ export function transportEnabled(status: EngineStatus | null, connected: boolean
 
 // The realtime playhead (RealtimeClient fits).
 export interface TransportPlayhead {
-  latest(): MeterFrame | null;
+  playhead(): MeterFrame | null;
   subscribe(listener: () => void): () => void;
 }
 
@@ -271,7 +271,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
   // The playing flag: a commit only when it flips.
   const playing = useSyncExternalStore(
     realtime ? (listener) => realtime.subscribe(listener) : noSubscription,
-    () => realtime?.latest()?.playing ?? false,
+    () => realtime?.playhead()?.playing ?? false,
     () => false,
   );
   const primary = useSyncExternalStore(
@@ -304,7 +304,7 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
     let frame: number | null = null;
     const write = () => {
       frame = null;
-      clock.observe(realtime?.latest() ?? null);
+      clock.observe(realtime?.playhead() ?? null);
       const root = client.model.getSnapshot()?.root;
       const rate = root?.sampleRate ?? DEFAULT_RATE;
       const tempo = root?.tempo ?? [];

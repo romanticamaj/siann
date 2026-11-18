@@ -54,7 +54,7 @@ function playheadOf() {
   let frame: MeterFrame | null = null;
   const listeners = new Set<() => void>();
   const source: PlayheadSource = {
-    latest: () => frame,
+    playhead: () => frame,
     subscribe: (fn) => {
       listeners.add(fn);
       return () => void listeners.delete(fn);

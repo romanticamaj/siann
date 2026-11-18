@@ -23,7 +23,7 @@ export interface TransportToasts {
 
 export interface TransportControllerOptions {
   readonly client: Pick<SessionClient, 'request'>;
-  // The realtime playing flag (RealtimeClient.latest().playing).
+  // The realtime playing flag (RealtimeClient.playhead().playing).
   readonly playing: () => boolean;
   readonly toasts: TransportToasts;
   readonly locale: () => Locale;

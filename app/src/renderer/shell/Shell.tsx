@@ -510,7 +510,7 @@ export function Shell({
         return true;
       }),
       commands.register('project', 'view.autoScroll', () => store.dispatch({ type: 'autoScroll' })),
-      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.latest()?.playheadSamples ?? null }),
+      bindLoopClickCommands(commands, loopClick, { cursor: () => realtime?.playhead()?.playheadSamples ?? null }),
     ];
     return () => offs.forEach((off) => off());
   }, [client, commands, engineStatus, store, transport, loopClick, realtime]);
