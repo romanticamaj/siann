@@ -369,8 +369,25 @@ test('while a branch is heard the chip names its plan as the banner does, the wh
   assert.equal(chip.attrs.title, 'Lift the chorus');
 });
 
-test('without a head revision there is no chip and no box', () => {
+// Before the first snapshot nothing is held (UI redesign 3.0; 10.11, 15): the
+// window has no document yet, so the session name is empty and the chip is
+// not rendered, with no box in its place. Every snapshot has a revision, so
+// from the first one on the chip is always there.
+test('before the first snapshot the session name is empty and the chip is absent with no box; any snapshot brings the chip', () => {
   const markup = render({ snapshot: null });
   assert.ok(!markup.includes('data-part="branch-chip"'));
   assert.ok(!markup.includes('hold-branch-chip'));
+  assert.ok(!markup.includes('branch-chip-empty'), 'no empty box');
+  // The left group is the mockup's without the chip: nothing stands in for it.
+  assert.deepEqual(children(markup, /<div class="tb-left">/).slice(1), ['div.brand[brand]', 'div.session[session-name]', 'span.sep', 'button.iconbtn[undo]', 'button.iconbtn.dim[redo]']);
+  // The session name is empty in the same state, and was never held.
+  const session = find(parse(markup), byAttr('data-part', 'session-name'));
+  assert.equal(text(session), '');
+  assert.equal(session.attrs.title, '');
+  // With a snapshot both are there: the name and main's head.
+  for (const snapshot of [planSnapshot(), sampleSnapshot()]) {
+    const withDocument = render({ snapshot });
+    assert.equal(text(elements(chipOf(withDocument))[2]!), snapshot.revision);
+    assert.equal(text(find(parse(withDocument), byAttr('data-part', 'session-name'))), snapshot.root?.name);
+  }
 });

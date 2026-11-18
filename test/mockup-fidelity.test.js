@@ -1302,3 +1302,22 @@ test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and 
   // group, the name does not shrink (above 1300 px, where the chip shows).
   assert.match(shell, /\.tb-left:has\(> \[data-part="branch-chip"\]\) > \.session\s*\{\s*flex-shrink:\s*0;\s*\}/);
 });
+
+// The state before the first snapshot is exempt from the empty box (UI
+// redesign 3.0; 10.11, 15: decided by Fable, delegated by the maintainer,
+// 2026-11-19): the session name is empty and the branch chip is absent, and
+// no permanent token is authorised for the chip.
+test('m5b-ui-audition: before the first snapshot the chip is exempt from the empty box, in the spec and the agent rules, with no token', () => {
+  const spec = read('docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign.md');
+  const rules = read('docs', 'harness', 'agent-rules.md');
+  const rule = spec.slice(spec.indexOf('### 3.0 '), spec.indexOf('### 3.1 '));
+  assert.match(rule, /\n  - Before the first snapshot nothing is held\.[^\n]*session name is empty[^\n]*branch chip[^\n]*no `--branch-chip-empty-w` exists \(10\.11, 15\)/);
+  assert.match(rule, /\n  - Before the first snapshot[^\n]*covers that state only/);
+  const decisions = spec.slice(spec.indexOf('### 10.11 '));
+  assert.match(decisions, /\n\*\*15\. The branch chip before the first snapshot is exempt from the empty box\*\* \(`m5b-ui-audition`\)[^\n]*Decided by Fable, delegated by the maintainer, 2026-11-19\.\n/);
+  assert.match(rules, /The state before the first snapshot is exempt \(spec 3\.0; 10\.11, 15\)[^\n]*no `--branch-chip-empty-w`/);
+  assert.match(rules, /decided by Fable, delegated by the maintainer, 2026-11-19 \(spec 10\.11, 15\)/);
+  // The table of authorised permanent tokens does not name the chip.
+  assert.doesNotMatch(rules, /\| A permanent `--<part>-empty-w` token[^\n]*branch-chip/);
+  for (const file of [['app', 'renderer', 'tokens.css'], ['app', 'renderer', 'shell.css'], ['app', 'src', 'renderer', 'tokens.ts']]) assert.doesNotMatch(read(...file), /branch-chip-empty/, file.join('/'));
+});
