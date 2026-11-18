@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { formatDb2 } from '../../src/renderer/format';
-import { infoLineEditCommand, parseDb, parseLength, parsePosition } from '../../src/renderer/timeline/info-line';
+import { INFO_EDIT_FIELDS, infoLine, infoLineEditCommand, parseDb, parseLength, parsePosition } from '../../src/renderer/timeline/info-line';
 import { formatLength, formatPosition } from '../../src/renderer/timeline/musical-time';
 import { applyClipCommands } from './support/apply';
 import { clip, media, snapshotOf, track } from './support/timeline';
@@ -149,4 +149,49 @@ test('nothing changes, an unknown primary or a value that does not parse: nothin
   assert.equal(infoLineEditCommand(s, [], 'clp_p', 'start', '3', true), null);
   // Absolute where one clip is there already: only the other moves.
   assert.deepEqual(infoLineEditCommand(s, IDS, 'clp_p', 'start', '2', true)!.commands.map((c) => c.clipId), ['clp_o']);
+});
+
+// An off-grid clip: position 96005, sourceStart 7, length 48003, -3.004 dB.
+// The line shows its values rounded to a tick and to 0.01 dB (2.1.1.0,
+// 0.2.0.1, 0.0.0.1, -3.00 dB). Enter on a field left as shown changes nothing
+// and sends nothing (spec 3.2, "Info line": nothing when nothing changes),
+// relative, or absolute for a lone clip; absolute over a selection sets the
+// other clips and leaves the primary where it is, unquantised.
+function offGrid() {
+  return snapshotOf(
+    ['trk_a', 'trk_b'],
+    [track('trk_a'), track('trk_b')],
+    [media('med_long', String(20 * 96000))],
+    [
+      { ...clip('clp_p', 'trk_a', 'med_long', '96005', '7', '48003'), gainMilliDb: -3004 },
+      clip('clp_o', 'trk_b', 'med_long', '384000', '0', '48000'),
+    ],
+  );
+}
+
+test('a value left as the line shows it sends nothing, though the clip is off a tick and off a hundredth of a dB', () => {
+  const s = offGrid();
+  const shown = infoLine(s, 'clp_p')!;
+  assert.deepEqual([shown.start, shown.length, shown.offset, shown.volume], ['2.1.1.0', '0.2.0.1', '0.0.0.1', '-3.00 dB']);
+  for (const field of INFO_EDIT_FIELDS) {
+    assert.equal(infoLineEditCommand(s, IDS, 'clp_p', field, shown[field], false), null, `${field} relative`);
+    assert.equal(infoLineEditCommand(s, ['clp_p'], 'clp_p', field, shown[field], false), null, `${field} relative, alone`);
+    assert.equal(infoLineEditCommand(s, ['clp_p'], 'clp_p', field, shown[field], true), null, `${field} absolute, alone`);
+    // The same value written another way (trailing part or unit left out) is the same value.
+    const rewritten = ` ${shown[field].replace(/\.0$/, '').replace(' dB', '')} `;
+    assert.equal(infoLineEditCommand(s, IDS, 'clp_p', field, rewritten, false), null, `${field} rewritten`);
+  }
+  // Absolute over the selection: the other clip is set, the primary stays exact.
+  for (const field of INFO_EDIT_FIELDS) {
+    const command = infoLineEditCommand(s, IDS, 'clp_p', field, shown[field], true);
+    assert.ok(command, field);
+    assert.deepEqual(command.commands.map((c) => c.clipId), ['clp_o'], field);
+  }
+  // A changed value still applies to the primary.
+  const moved = infoLineEditCommand(s, ['clp_p'], 'clp_p', 'start', '3.1.1.0', false);
+  assert.ok(moved);
+  assert.equal(applyClipCommands(s, moved.commands).get('clp_p')!.position.value, String(2 * 96000));
+  const louder = infoLineEditCommand(s, ['clp_p'], 'clp_p', 'volume', '-2.00 dB', false);
+  assert.ok(louder);
+  assert.equal(applyClipCommands(s, louder.commands).get('clp_p')!.gainMilliDb, -2000);
 });
