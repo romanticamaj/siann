@@ -382,11 +382,14 @@ async function waveformsDrawn(): Promise<void> {
     // drawn, not nonZero: a clip whose visible part is silence (the riser's
     // quiet start) has its columns drawn, all zero. The view's width is read
     // in the poll: after a resize the zones animate to their sizes (120 ms),
-    // so a clip at the right edge may leave the view while this waits.
+    // so a clip at the right edge may leave the view while this waits. While
+    // a proposal is heard a moved clip's original is main's place as a faint
+    // outline with no waveform (peakColumns says outline), and is passed by.
     await expect
       .poll(async () => {
         const width = (await timeline<{ width: number }>('view')).width;
-        return rect.x >= width || (await timeline<{ drawn: number }>('peakColumns', rect.clipId)).drawn > 0;
+        const columns = await timeline<{ drawn: number; outline?: true }>('peakColumns', rect.clipId);
+        return rect.x >= width || columns.outline === true || columns.drawn > 0;
       })
       .toBe(true);
   }

@@ -330,11 +330,21 @@ export interface SurfacePart {
   readonly h: number;
 }
 
+// A clip's drawn waveform columns, and how many are not silence.
+export interface PeakColumns {
+  readonly drawn: number;
+  readonly nonZero: number;
+  readonly outline?: true;
+}
+
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
 export interface TimelineTestHooks {
   // Each clip's lane rectangle and its title (clip-title.ts) as last drawn.
   clips(): Array<ClipRect & { readonly title: string }>;
-  peakColumns(clipId: string): { drawn: number; nonZero: number };
+  // Its peak columns as last drawn. While a proposal is heard the original of
+  // a moved or trimmed clip is main's place as a faint outline, with no
+  // waveform: it reports `outline: true` and no columns (m5b-ui-audition).
+  peakColumns(clipId: string): PeakColumns;
   // The outer half-heights of a clip's waveform columns in the last content frame.
   waveColumns(clipId: string): number[];
   // The surface's parts with the mockup's ids (ruler-upper, ruler-lower,
@@ -569,7 +579,7 @@ export class TimelineCanvas {
   #band: LocatorBandDrawn | null = null;
   #contentFrame: number | null = null;
   #overlayFrame: number | null = null;
-  #columns = new Map<string, { drawn: number; nonZero: number }>();
+  #columns = new Map<string, PeakColumns>();
   #rects: ClipRect[] = [];
   #resize: ResizeObserver | null = null;
   #ratio = 1;
@@ -1635,7 +1645,7 @@ export class TimelineCanvas {
     const view = this.#view;
     for (const listener of [...this.#viewListeners]) listener();
     this.#rects = snapshot ? clipRects(snapshot, view) : [];
-    const columns = new Map<string, { drawn: number; nonZero: number }>();
+    const columns = new Map<string, PeakColumns>();
     const waves = new Map<string, number[]>();
     const titles = new Map<string, string>();
     const dimmed = dimmedTracks(snapshot?.tracks ?? []);
@@ -1727,7 +1737,7 @@ export class TimelineCanvas {
         if (ghostDraw.outlined.has(rect.clipId)) {
           // Heard: the original of a moved or trimmed clip is main's place, as a faint outline.
           this.#drawReplacedClip(ctx, clipBox(rect), palette);
-          columns.set(rect.clipId, { drawn: 0, nonZero: 0 });
+          columns.set(rect.clipId, { drawn: 0, nonZero: 0, outline: true });
           waves.set(rect.clipId, []);
           continue;
         }
