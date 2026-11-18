@@ -1300,6 +1300,8 @@ test('m5b-ui-audition: the gate is report, the branch chip\'s hold is gone, and 
   assert.doesNotMatch(read('app', 'src', 'renderer', 'tokens.ts'), /hold-branch-chip/);
   assert.match(shell, /\.app\[data-hearing="proposal"\]::after\s*\{[^}]*border:\s*var\(--space-half\) solid var\(--ai\)/);
   assert.match(shell, /\[data-ghost-mode="solid"\]/);
+  // A proposed insert's slot, heard: the ghost tint without the hatch or the dash (m5b-ui-inserts-master's ghosts).
+  assert.match(shell, /\.slot\.ghost\[data-ghost-mode="solid"\],\s*\.islot\.ghost\[data-ghost-mode="solid"\]\s*\{\s*background:\s*var\(--ai-a100\);\s*border-style:\s*solid;\s*\}/);
   // A proposed track's header and strip lose the shared rules' hatch while
   // heard: their body is the ghost tint, unhatched (UI redesign 4.3).
   const unhatched = /\.th\.ghost\[data-ghost-mode="solid"\],\s*\.strip\.ghost\[data-ghost-mode="solid"\]\s*\{[^}]*background:\s*linear-gradient\(var\(--ai-a100\), var\(--ai-a100\)\), var\(--bg-alt\)/;

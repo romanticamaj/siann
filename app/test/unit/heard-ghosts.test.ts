@@ -89,3 +89,25 @@ test('a track main does not hold (a proposed track) adds no un-numbered ghost', 
   const out = heardGhosts(GHOSTS, branch({ 'track:trk_pad': { ...track('trk_pad'), name: 'Pad', gainMilliDb: -1000 } }), main);
   assert.equal(out.filter((g) => g.step === 0).length, 0);
 });
+
+// m5b-ui-inserts-master's ghosts while heard: the master gain takes the
+// branch's value where the snapshot holds master:master, main's as replaced;
+// the insert ghosts are solid as they are.
+test('the master gain and the insert ghosts are solid while heard', () => {
+  const ghosts: readonly Ghost[] = [
+    { kind: 'master-gain', step: 1, before: 0, after: -6000 },
+    { kind: 'insert-add', step: 2, trackId: 'trk_keys', slotId: null, name: 'Limiter', index: 0 },
+    { kind: 'insert-remove', step: 3, trackId: 'trk_keys', slotId: 'slt_1' },
+    { kind: 'insert-bypass', step: 4, trackId: 'trk_keys', slotId: 'slt_2', before: false, after: true },
+  ];
+  const mainWithMaster = { ...main, entities: { ...main.entities, 'master:master': { schema: 'siann.entity.master.v1', id: 'master', gainMilliDb: -1000 } } } as unknown as typeof main;
+  const out = heardGhosts(ghosts, branch({ 'master:master': { id: 'master', gainMilliDb: -4500 } }), mainWithMaster);
+  assert.deepEqual(out.map((g) => [g.kind, g.mode]), [['master-gain', 'solid'], ['insert-add', 'solid'], ['insert-remove', 'solid'], ['insert-bypass', 'solid']]);
+  const master = out[0] as Extract<Ghost, { kind: 'master-gain' }>;
+  assert.equal(master.after, -4500);
+  assert.equal(master.replaced, -1000);
+  // Without the entity on either side: the step's values.
+  const plain = heardGhosts(ghosts, branch({}), main)[0] as Extract<Ghost, { kind: 'master-gain' }>;
+  assert.equal(plain.after, -6000);
+  assert.equal(plain.replaced, 0);
+});
