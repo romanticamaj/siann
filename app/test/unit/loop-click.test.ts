@@ -167,3 +167,16 @@ test('nothing without a device, without the methods, or before the engine said i
   await settle();
   for (const r of [noDevice, reduced]) assert.deepEqual(r.sent.filter((s) => s.method !== 'engine.status'), []);
 });
+
+test('I then O before the first answer: the second request keeps the flag the first one set', async () => {
+  const r = rig();
+  await settle();
+  assert.equal(r.controller.togglePunchIn(), true);
+  assert.equal(r.controller.togglePunchOut(), true);
+  await settle();
+  assert.deepEqual(
+    r.sent.filter((s) => s.method === 'transport.set_punch').map((s) => s.params),
+    [{ in: false, out: false }, { in: false, out: true }],
+  );
+  assert.deepEqual(r.store.getSnapshot()?.punch, { in: false, out: true });
+});

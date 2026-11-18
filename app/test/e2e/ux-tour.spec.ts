@@ -1046,9 +1046,15 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('transport-record').click({ button: 'right' });
   const options = page.getByTestId('record-options');
   await expect(options).toBeVisible();
-  await options.getByTestId('record-option-punch-in').check();
-  await options.getByTestId('record-option-punch-out').check();
-  await options.getByTestId('record-option-count-in').check();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await options.getByTestId('record-option-punch-in').click();
+  await expect(options.getByTestId('record-option-punch-in')).toBeChecked();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await options.getByTestId('record-option-punch-out').click();
+  await expect(options.getByTestId('record-option-punch-out')).toBeChecked();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await options.getByTestId('record-option-count-in').click();
+  await expect(options.getByTestId('record-option-count-in')).toBeChecked();
   await expect.poll(async () => (await recorder.call('engine.status')).punch).toEqual({ in: true, out: true });
   await expect.poll(async () => ((await recorder.call('engine.status')).countIn as { enabled: boolean }).enabled).toBe(true);
   await shoot(

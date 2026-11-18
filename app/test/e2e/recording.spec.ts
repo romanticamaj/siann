@@ -37,7 +37,7 @@ import { launchApp, seedBundle } from './support/seed';
 const RATE = 48000;
 // 240 BPM: one bar of four quarter notes is one second.
 const BAR = RATE;
-const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
+const FIXTURES = path.resolve(__dirname, '..', 'unit', 'fixtures');
 
 interface Request {
   readonly method: string;
@@ -104,6 +104,8 @@ async function launch(env: Record<string, string> = {}, options: { input?: boole
 async function openInput(): Promise<void> {
   await engine!.call('engine.select_device', { id: 'fake', inputId: 'fake' });
   await expect.poll(async () => ((await engine!.call('engine.status')).device as { input: unknown } | null)?.input ?? null).not.toBeNull();
+  // The window's engine.status poll has seen the input.
+  await expect(page.getByTestId('transport-record')).not.toHaveAttribute('title', new RegExp(en['record.reason.noInput']));
 }
 
 async function sent(): Promise<Request[]> {
@@ -157,7 +159,8 @@ async function focusProject(): Promise<void> {
 }
 
 async function openOptions() {
-  await page.getByTestId('transport-record').click({ button: 'right' });
+  // force: Record may be aria-disabled (nothing armed), which Playwright's actionability check refuses; a person's right-click is not.
+  await page.getByTestId('transport-record').click({ button: 'right', force: true });
   const panel = page.getByTestId('record-options');
   await expect(panel).toBeVisible();
   return panel;
@@ -215,12 +218,13 @@ test('Record is disabled with its reason: no input open opens Studio Setup; noth
   const record = page.getByTestId('transport-record');
   await expect(record).toHaveAttribute('aria-disabled', 'true');
   await expect(record).toHaveAttribute('title', `${en['record.reason.noInput']}\n${en['transport.studioSetupHint']}`);
-  await record.click();
+  // aria-disabled: Playwright's actionability check refuses it, a person's click does not.
+  await record.click({ force: true });
   await expect(page.getByTestId('studio-setup')).toBeVisible();
   await page.keyboard.press('Escape');
   await openInput();
   await expect(record).toHaveAttribute('title', en['record.reason.nothingArmed']);
-  await record.click();
+  await record.click({ force: true });
   expect((await sent()).filter((r) => r.method === 'transport.record')).toEqual([]);
   // Arming enables it.
   await page.getByTestId('track-record-trk_rec').click();
@@ -231,14 +235,17 @@ test('a recording after a one-bar count-in starts at the record position, grows 
   await launch({ SIANN_SHELL_PROFILING: '1' });
   // The source's loopback is the only input: the recording track's monitor is off.
   const panel = await openOptions();
-  await panel.getByTestId('record-option-count-in').check();
+  // The box shows the engine's state, so it turns once the answer is in.
+  await panel.getByTestId('record-option-count-in').click();
+  await expect(panel.getByTestId('record-option-count-in')).toBeChecked();
   await panel.getByTestId('record-option-count-in-bars').fill('1');
   await panel.getByTestId('record-option-count-in-bars').press('Enter');
   await expect.poll(async () => (await engine!.call('engine.status')).countIn).toEqual({ enabled: true, bars: 1 });
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('transport-record')).toHaveAttribute('title', new RegExp(en['record.option.countIn']));
   await page.getByTestId('track-record-trk_rec').click();
   await expect(page.getByTestId('track-record-trk_rec')).toHaveAttribute('aria-pressed', 'true');
+  // Armed, Record's tooltip names the options that are on.
+  await expect(page.getByTestId('transport-record')).toHaveAttribute('title', new RegExp(en['record.option.countIn']));
   const before = (await clips()).length;
   const recordAt = 0;
   await page.getByTestId('transport-record').click();

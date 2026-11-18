@@ -95,8 +95,9 @@ test('the renderer connects with the token handshake', async () => {
   expect(preferences).toEqual({ contextIsolation: true, nodeIntegration: false, sandbox: true });
   // The preload bridge exposes the engine endpoint and, since m5b-ui-project,
   // the shell's project record and dialogs and the menu's two directions,
-  // since m5b-ui-media the audio file dialog and a dropped file's path, and
-  // nothing else; the MCP token stays in the main process.
+  // since m5b-ui-media the audio file dialog and a dropped file's path, since
+  // m5b-ui-recording a recording's start and end for the power-save blocker,
+  // and nothing else; the MCP token stays in the main process.
   const bridge = await page.evaluate(async () => {
     const siann = (window as unknown as { siann: Record<string, Record<string, unknown>> }).siann;
     const engine = siann.engine as { current(): Promise<Record<string, unknown> | null> };
@@ -107,14 +108,16 @@ test('the renderer connects with the token handshake', async () => {
       project: Object.keys(siann.project ?? {}),
       menu: Object.keys(siann.menu ?? {}),
       media: Object.keys(siann.media ?? {}),
+      power: Object.keys(siann.power ?? {}),
       current: current ? Object.keys(current) : null,
     };
   });
-  expect([...bridge.top].sort()).toEqual(['engine', 'media', 'menu', 'project']);
+  expect([...bridge.top].sort()).toEqual(['engine', 'media', 'menu', 'power', 'project']);
   expect([...bridge.project].sort()).toEqual(['chooseNew', 'chooseOpen', 'onChange', 'opened', 'state']);
   expect([...bridge.menu].sort()).toEqual(['onCommand', 'set']);
   expect([...bridge.engine].sort()).toEqual(['current', 'onChange']);
   expect([...bridge.media].sort()).toEqual(['choose', 'pathForFile']);
+  expect([...bridge.power]).toEqual(['recording']);
   expect([...(bridge.current ?? [])].sort()).toEqual(['port', 'token']);
 });
 

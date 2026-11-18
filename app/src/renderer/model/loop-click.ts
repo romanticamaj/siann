@@ -225,6 +225,8 @@ export function recordOptionGates(can: CapabilitySelector): { punch: boolean; pr
 export class LoopClickController {
   readonly #options: LoopClickOptions;
   #selection: (() => SelectionSpan) | null = null;
+  // The punch flags of a transport.set_punch in flight.
+  #punchSent: { in: boolean; out: boolean } | null = null;
 
   constructor(options: LoopClickOptions) {
     this.#options = options;
@@ -312,23 +314,34 @@ export class LoopClickController {
     return recordOptionGates(this.#options.capabilities());
   }
 
-  // Punch in and out (I, O): transport.set_punch with both flags.
+  // Punch in and out (I, O): transport.set_punch with both flags. A request
+  // in flight is what the next toggle builds on (I then O in quick succession
+  // must not send back the flag I just changed); the display still shows only
+  // what the engine said.
   setPunch(punchIn: boolean, punchOut: boolean): boolean {
-    const punch = this.state.getSnapshot()?.punch;
+    const punch = this.#punchBasis();
     if (!punch || !this.recordOptionGates().punch || !this.deviceReady()) return false;
     if (punch.in === punchIn && punch.out === punchOut) return false;
-    void this.#transport('transport.set_punch', { in: punchIn, out: punchOut });
+    const sent = { in: punchIn, out: punchOut };
+    this.#punchSent = sent;
+    void this.#transport('transport.set_punch', sent).finally(() => {
+      if (this.#punchSent === sent) this.#punchSent = null;
+    });
     return true;
   }
 
   togglePunchIn(): boolean {
-    const punch = this.state.getSnapshot()?.punch;
+    const punch = this.#punchBasis();
     return punch ? this.setPunch(!punch.in, punch.out) : false;
   }
 
   togglePunchOut(): boolean {
-    const punch = this.state.getSnapshot()?.punch;
+    const punch = this.#punchBasis();
     return punch ? this.setPunch(punch.in, !punch.out) : false;
+  }
+
+  #punchBasis(): { in: boolean; out: boolean } | null {
+    return this.#punchSent ?? this.state.getSnapshot()?.punch ?? null;
   }
 
   setPreroll(enabled: boolean): boolean {
