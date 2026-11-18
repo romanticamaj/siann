@@ -352,8 +352,10 @@ test('the Meter tab\'s surface: the master\'s two channels with peak hold and cl
   assert.equal(peak.textContent, '+6.0');
   assert.equal(peak.classList.on, true);
   tab.reset('master');
+  source.push([[0, 0.25]]);
   frames.run();
   assert.equal(peak.classList.on, false, 'a click on the peak value resets the clip');
+  assert.equal(peak.textContent, '-12.0');
   tab.destroy();
 });
 

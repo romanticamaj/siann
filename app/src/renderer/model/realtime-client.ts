@@ -13,11 +13,19 @@
 // command socket closes and opens again when the command socket has
 // reconnected.
 //
+// The same socket carries the master's loudness (m5b-ui-meter; "Loudness
+// frame"): a SLUD frame follows each SMTR frame, and the client tells them
+// apart by the magic. A loudness frame goes to the client's LoudnessStore and
+// its loudness listeners, and is no meter frame; the store reads minus
+// infinity again when the channel closes.
+//
 // Framework-free: the meter surfaces read latest() and meter() from their own
 // animation frame (ADR-0019 point 3: no meter value passes through React state),
 // the project cursor and the transport read playhead(); subscribe() is for
 // plain listeners.
 
+import { decodeLoudnessFrame, frameKind } from './loudness-frames';
+import { LoudnessStore } from './loudness-store';
 import { decodeMeterFrame, type MeterEntry, type MeterFrame, type MeterLegend } from './meter-frames';
 import type { SessionClient, SocketLike } from './session-client';
 
@@ -41,7 +49,10 @@ interface Channel {
 export class RealtimeClient {
   readonly #options: RealtimeClientOptions;
   readonly #listeners = new Set<() => void>();
+  readonly #loudnessListeners = new Set<() => void>();
   readonly #unsubscribe: () => void;
+  // The master's loudness, from the SLUD frames (read by the meter surfaces).
+  readonly loudness = new LoudnessStore();
   #channel: Channel | null = null;
   #legend: MeterLegend | null = null;
   #latest: MeterFrame | null = null;
@@ -90,6 +101,14 @@ export class RealtimeClient {
     };
   }
 
+  // A loudness frame arrived, or the loudness was cleared (plain listeners, no React).
+  subscribeLoudness(listener: () => void): () => void {
+    this.#loudnessListeners.add(listener);
+    return () => {
+      this.#loudnessListeners.delete(listener);
+    };
+  }
+
   close(): void {
     this.#closed = true;
     this.#unsubscribe();
@@ -135,6 +154,13 @@ export class RealtimeClient {
   }
 
   #receive(data: ArrayBuffer | ArrayBufferView): void {
+    if (frameKind(data) === 'loudness') {
+      const loudness = decodeLoudnessFrame(data);
+      if (!loudness) return;
+      this.loudness.set(loudness);
+      this.#tellLoudness();
+      return;
+    }
     const frame = decodeMeterFrame(data);
     if (!frame) return;
     this.#playhead = frame;
@@ -146,12 +172,20 @@ export class RealtimeClient {
     for (const listener of [...this.#listeners]) listener();
   }
 
+  #tellLoudness(): void {
+    for (const listener of [...this.#loudnessListeners]) listener();
+  }
+
   #drop(): void {
     const channel = this.#channel;
     this.#channel = null;
     this.#latest = null;
     this.#playhead = null;
     this.#readings = new Map();
+    if (this.loudness.momentary !== -Infinity || this.loudness.shortTerm !== -Infinity || this.loudness.integrated !== -Infinity) {
+      this.loudness.clear();
+      this.#tellLoudness();
+    }
     if (channel && !channel.closed) {
       channel.closed = true;
       channel.socket.close();

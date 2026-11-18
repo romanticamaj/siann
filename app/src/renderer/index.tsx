@@ -24,7 +24,8 @@
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
 // client's log of requests refused as disconnected, of requests sent and of
-// the engine's answers, window.siannTest.capabilities, when the test gave
+// the engine's answers, window.__siannLoad the DSP load last polled
+// (m5b-ui-meter), window.siannTest.capabilities, when the test gave
 // SIANN_TEST_CAPABILITIES, is the engine.capabilities answer the session
 // client uses instead of the engine's (m5-ui-loop-click),
 // window.siannTest.environment, when the fidelity run gave
@@ -57,7 +58,7 @@ import { createLocaleStore, htmlLang, type LocaleStorage, type LocaleStore } fro
 import { reconnectedMessage } from './i18n/messages';
 import { installLocaleStore, translator } from './i18n/t';
 import { ConnectionPhaseStore } from './model/connection-phase';
-import { EngineStatusStore } from './model/engine-status';
+import { EngineStatusStore, type EngineLoad } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
 import { BranchSnapshotStore } from './model/branch-snapshot';
@@ -130,6 +131,7 @@ declare global {
     __siannMeters?: MeterTestHooks;
     // The import's placeholders as shown and its jobs' results (m5b-ui-media).
     __siannMedia?: { seen(): ReadonlyArray<{ name: string; progress: number | null }>; results(): readonly ImportResult[] };
+    __siannLoad?: () => EngineLoad | null;
     // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
     __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
     // React commits counted at the root (profiling bundle only).
@@ -206,6 +208,8 @@ if (testHooks) {
 }
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
+// The DSP load the store last polled (m5b-ui-meter).
+if (testHooks) window.__siannLoad = () => engineStatus.getLoad();
 
 const connection = new ConnectionPhaseStore(client, { schedule });
 const toasts = new ToastStore({ schedule });

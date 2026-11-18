@@ -9,7 +9,7 @@
 //     .transport .tgroup (start, cycle, stop, .play, the Record hold),
 //                one .lcd (.cell position, time, locators, tempo, and the
 //                signature last: m5b-ui-signature), .tgroup with the metronome
-//     .tb-right  the DSP load's hold, .zones (the Channel button's hold and
+//     .tb-right  the DSP load (span.dsp; m5b-ui-meter), .zones (the Channel button's hold and
 //                three .iconbtn), .aibtn with its .n
 //
 // An absent part's box is an element with no role, no tabindex, no data-part

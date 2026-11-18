@@ -431,6 +431,12 @@ export class SessionClient {
     return result.requests;
   }
 
+  // meter.reset_loudness (m5b-ui-meter): restarts the master's integrated
+  // loudness; engine state, no revision and no event.
+  async resetLoudness(): Promise<void> {
+    await this.request('meter.reset_loudness', {});
+  }
+
   #send(connection: Connection, method: string, params: Record<string, unknown>, expectedRevision?: string): Promise<unknown> {
     if (connection.closed) return Promise.reject(new ProtocolError('disconnected', 'the connection closed'));
     this.#nextId += 1;
