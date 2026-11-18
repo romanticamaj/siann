@@ -44,6 +44,7 @@ import type { ValueKind } from '../mixer/value-control';
 import { formatValue, showTooltip, toPosition, useValueGesture } from '../mixer/value-gesture';
 import type { TrackEntity } from '../model/document';
 import type { GestureController } from '../model/gesture-controller';
+import type { PlanStore } from '../model/plan-store';
 import type { SessionClient } from '../model/session-client';
 import { ISOLATE } from '../plans/isolate';
 import { trackColourVar } from '../timeline/track-colour';
@@ -54,6 +55,8 @@ export interface InspectorProps {
   readonly client: SessionClient;
   readonly gestures: GestureController;
   readonly trackId: string | null;
+  // The plans, for the Agent changes section (m5b-ui-ghosts).
+  readonly plans?: PlanStore;
 }
 
 // The zone's key hint: the preset's last chord that shows it (Alt+I, as the mockup writes it).

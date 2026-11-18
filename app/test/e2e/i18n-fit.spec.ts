@@ -33,9 +33,13 @@ const MIXER = '[role=slider], [data-testid^=pan-value-], .readout, [data-testid^
 // The project zone toolbar (m5-ui-port-toolbar): the tools, the snap, grid
 // type and auto-scroll fields, the info line's fields and the open Pool.
 const TOOLBAR = '.arr-toolbar .b, .arr-toolbar .field, .infoline .f, [data-testid=media-pool] .pool-head, [data-testid^=pool-]';
+// The ghosts (m5b-ui-ghosts): the toolbar's proposal pill and its Ghosts
+// toggle, the steps' target buttons, the proposed track's header labels and
+// the proposed strip's NEW · STEP label.
+const GHOSTS = '.overlaypill, .overlaypill .tog, .step .go, .th.ghost .r1 > span, .th.ghost .r2 > span, .strip.ghost .btns > span';
 // The track list head (m5-ui-port-track-list): the .add button is a button; its count is text that must fit too.
-const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
-const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}`;
+const LABELLED = `button, select, summary, label, th, dt, [role=tab], [role=button], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
+const ONE_LINE = `button, summary, th, dt, [role=tab], [role=menuitemradio], [data-testid^=position-], [data-testid=transport-tempo], [data-testid=display-locators-value], [data-testid=track-count], ${PLANS}, ${MIXER}, ${TOOLBAR}, ${GHOSTS}`;
 
 // The tour's tracks (ux-tour.spec.ts), without the audio.
 const TRACKS = [
@@ -155,6 +159,10 @@ test('no labelled control overflows or wraps its label in any locale at either w
     await expect(page.getByTestId(id)).toBeVisible();
   }
   await expect(page.locator('[data-part="plan-summary"] > span')).toHaveCount(3);
+  // m5b-ui-ghosts: the plan under review is reviewable, so its pill ends the toolbar and its ghosts are drawn.
+  await expect(page.locator('[data-part="proposal-pill"]')).toBeVisible();
+  await expect(page.locator('[data-part="proposal-pill"] .tog')).toBeVisible();
+  await expect(page.locator('.step .go').first()).toBeVisible();
   // The track list (m5-ui-arrange) is in the check: its + button, M and S of
   // every header and the info line's fields (m5-ui-port-toolbar: .f, for
   // the selected clip) are labelled controls; the head's .add label and its

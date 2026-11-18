@@ -74,6 +74,7 @@
 // the catalogs through the `t` it is given and is redrawn on a locale change.
 
 import { formatDb } from '../format';
+import type { Ghost } from '../plans/ghosts';
 import { TOKENS } from '../tokens';
 import { translator, type T } from '../i18n/t';
 import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
@@ -245,6 +246,20 @@ export interface TimelineCanvasOptions {
   // The cursor clock's time in milliseconds (performance.now when absent;
   // the tests move it by hand).
   readonly now?: () => number;
+  // The selected plan's ghosts (m5b-ui-ghosts); none when absent.
+  readonly ghosts?: GhostSource;
+}
+
+// The ghosts of the plan under review (m5b-ui-ghosts; model/review-store.ts):
+// the descriptors to draw, the step whose ghosts are outlined (1-based, or
+// null), their changes, where a click on a ghost goes, and the requests to
+// bring a step's ghosts into view.
+export interface GhostSource {
+  ghosts(): readonly Ghost[];
+  outlineStep(): number | null;
+  subscribe(listener: () => void): () => void;
+  pin(step: number): void;
+  onReveal?(listener: (step: number) => void): () => void;
 }
 
 // The locator band's link to the engine (m5-ui-loop-click): whether the
@@ -315,6 +330,9 @@ export interface TimelineTestHooks {
   locatorBand(): LocatorBandDrawn | null;
   // Diagnostic: what the last Alt+X decided and from what (PR #120's macOS e2e).
   lastEdit(): EditProbe | null;
+  // The ghosts of the last content frame, and the step the last overlay frame outlined (m5b-ui-ghosts).
+  ghosts(): Ghost[];
+  ghostOutline(): number | null;
 }
 
 // Why the last split at the cursor sent nothing, or what it built, with the
@@ -836,6 +854,8 @@ export class TimelineCanvas {
       snapGuide: () => this.#guideX,
       locatorBand: () => (this.#band ? { ...this.#band } : null),
       lastEdit: () => this.#lastEdit,
+      ghosts: () => [],
+      ghostOutline: () => null,
     };
   }
 

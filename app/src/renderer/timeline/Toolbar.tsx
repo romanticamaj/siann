@@ -47,6 +47,15 @@ export interface ToolbarProps {
   readonly onSnapToggle: () => void;
   readonly onGrid: (grid: GridType) => void;
   readonly onAutoScroll: () => void;
+  // The proposal pill (m5b-ui-ghosts): the overlaid plan's name and its ghosts toggle; null without a reviewable plan.
+  readonly pill?: ProposalPillProps | null;
+}
+
+export interface ProposalPillProps {
+  readonly lead: string;
+  readonly steps: string;
+  readonly on: boolean;
+  readonly onToggle: () => void;
 }
 
 // The mockup's nine tools in tool()'s order; the ones SIANN has carry their tool.

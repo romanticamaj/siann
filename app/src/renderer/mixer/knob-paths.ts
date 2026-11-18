@@ -11,6 +11,8 @@ export interface KnobPaths {
   // Null at the centre: knob() draws no arc there.
   readonly arc: string | null;
   readonly needle: string;
+  // The pending plan's pan (m5b-ui-ghosts): null without one.
+  readonly ghost: string | null;
 }
 
 const CENTRE = 12;
@@ -22,7 +24,7 @@ const NEEDLE_OUTER = 6.5;
 const angle = (p: number) => ((-135 + ((p + 100) / 200) * 270) * Math.PI) / 180;
 const point = (a: number, r: number): [number, number] => [CENTRE + r * Math.sin(a), CENTRE - r * Math.cos(a)];
 
-export function knobPaths(pan: number): KnobPaths {
+export function knobPaths(pan: number, _ghost?: number): KnobPaths {
   const p = pan / 100;
   const [bx0, by0] = point(angle(-100), TRACK_RADIUS);
   const [bx1, by1] = point(angle(100), TRACK_RADIUS);
@@ -37,5 +39,5 @@ export function knobPaths(pan: number): KnobPaths {
   }
   const [nx, ny] = point(angle(p), NEEDLE_OUTER);
   const [cx, cy] = point(angle(p), NEEDLE_INNER);
-  return { track, arc, needle: `M${cx} ${cy}L${nx} ${ny}` };
+  return { track, arc, needle: `M${cx} ${cy}L${nx} ${ny}`, ghost: null };
 }

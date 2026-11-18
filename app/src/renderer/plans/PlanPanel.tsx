@@ -59,6 +59,8 @@ export interface PlanPanelViewProps {
   readonly rejecting: boolean;
   // The step under the pointer.
   readonly hotStep: number | null;
+  // The step pinned by its target button or a click on a ghost (m5b-ui-ghosts).
+  readonly pinnedStep?: number | null;
   readonly onSelect: (hash: string) => void;
   readonly onTicked: (ticked: ReadonlySet<number>) => void;
   readonly onNote: (note: string) => void;

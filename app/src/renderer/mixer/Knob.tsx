@@ -15,10 +15,12 @@ import { knobPaths } from './knob-paths';
 export interface KnobProps extends Omit<SVGProps<SVGSVGElement>, 'ref'> {
   // -10000 (L100) .. 10000 (R100).
   readonly pan: number;
+  // The pending plan's pan (m5b-ui-ghosts).
+  readonly ghost?: number;
   readonly ref?: Ref<SVGSVGElement>;
 }
 
-export function Knob({ pan, ref, ...rest }: KnobProps) {
+export function Knob({ pan, ghost: _ghost, ref, ...rest }: KnobProps) {
   const paths = knobPaths(pan);
   return (
     <svg className="knob" viewBox="0 0 24 24" ref={ref} {...rest}>

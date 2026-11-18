@@ -19,7 +19,8 @@ import type { ReadModel, Snapshot } from '../../src/renderer/model/read-model';
 import { LANES_TOP, clipBox, cornerHandles, xToFrame } from '../../src/renderer/timeline/geometry';
 import type { PeakPyramid } from '../../src/renderer/model/peaks';
 import { TOKENS } from '../../src/renderer/tokens';
-import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
+import { RULER_HEIGHT, RULER_UPPER, TimelineCanvas, type GhostSource, type PlayheadSource, type LaneHeightSource, type LocatorBandSource } from '../../src/renderer/timeline/TimelineCanvas';
+import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { bandRect, type LocatorRange } from '../../src/renderer/timeline/locators';
 import type { LocatorsEntity } from '../../src/renderer/model/document';
 import { clearFrames, fakeSurface, flushFrames, installSurfaceGlobals, setDevicePixelRatio } from './support/surface';
@@ -1057,4 +1058,171 @@ test('the waveform fills between the min and the max: a one-sided signal is draw
     }
     r.canvas.destroy();
   });
+});
+
+// ---- m5b-ui-ghosts (UI redesign 4.2, 5.2): the ghosts are drawn on the
+// content layer, which redraws when the ghosts change (the selected plan, its
+// preview, its ticked steps, the toggle); the hovered step's outline is the
+// overlay's, and a frame in which only the cursor moved leaves the content alone.
+
+function ghostSource(initial: readonly Ghost[] = []) {
+  let ghosts = initial;
+  let outline: number | null = null;
+  const pinned: number[] = [];
+  const listeners = new Set<() => void>();
+  const reveals = new Set<(step: number) => void>();
+  const source: GhostSource = {
+    ghosts: () => ghosts,
+    outlineStep: () => outline,
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => void listeners.delete(fn);
+    },
+    pin: (step) => void pinned.push(step),
+    onReveal: (fn) => {
+      reveals.add(fn);
+      return () => void reveals.delete(fn);
+    },
+  };
+  return {
+    source,
+    pinned,
+    set(next: readonly Ghost[]) {
+      ghosts = next;
+      for (const fn of [...listeners]) fn();
+    },
+    hover(step: number | null) {
+      outline = step;
+      for (const fn of [...listeners]) fn();
+    },
+    reveal(step: number) {
+      for (const fn of [...reveals]) fn(step);
+    },
+  };
+}
+
+const SAMPLE_GHOSTS: readonly Ghost[] = [
+  { kind: 'track-add', step: 1, trackId: 'trk_new', name: 'Pad', channels: 2, key: 'ghost' },
+  { kind: 'clip-place', step: 2, clipId: 'clp_new', trackId: 'trk_new', mediaId: 'med_sq', position: '0', sourceStart: '0', length: '9600' },
+  { kind: 'clip-move', step: 3, clipId: 'clp_1', mediaId: 'med_sq', fromTrackId: 'trk_b', trackId: 'trk_b', from: '4800', position: '19200', sourceStart: '0', length: '24000' },
+];
+
+function ghostRig(initial: readonly Ghost[] = SAMPLE_GHOSTS) {
+  clearFrames();
+  setDevicePixelRatio(1);
+  const surface = fakeSurface(800, 300);
+  const m = modelOf(sampleSnapshot());
+  const playhead = playheadOf();
+  const ghosts = ghostSource(initial);
+  const canvas = new TimelineCanvas({
+    content: surface.content,
+    overlay: surface.overlay,
+    container: surface.container,
+    model: m.model,
+    peaks,
+    execute: async () => ({}),
+    framesPerPixel: 100,
+    playhead: playhead.source,
+    ghosts: ghosts.source,
+  });
+  flushFrames();
+  return { surface, canvas, playhead, ghosts, hooks: canvas.testHooks() };
+}
+
+test('new ghosts, the toggle and a ticked step redraw the content once; the hovered step redraws the overlay only', () => {
+  const r = ghostRig([]);
+  let content = r.hooks.contentDraws();
+  const expectContent = (what: string) => {
+    flushFrames();
+    assert.equal(r.hooks.contentDraws(), content + 1, what);
+    content = r.hooks.contentDraws();
+  };
+  r.ghosts.set(SAMPLE_GHOSTS);
+  expectContent('ghosts of a selected plan');
+  r.ghosts.set(SAMPLE_GHOSTS.filter((g) => g.step !== 2));
+  expectContent('a step unticked');
+  r.ghosts.set([]);
+  expectContent('the toggle off');
+  r.ghosts.set(SAMPLE_GHOSTS);
+  expectContent('the toggle on');
+  const overlay = r.hooks.overlayDraws();
+  r.ghosts.hover(2);
+  flushFrames();
+  assert.equal(r.hooks.contentDraws(), content, 'a hover leaves the content alone');
+  assert.equal(r.hooks.overlayDraws(), overlay + 1);
+  assert.equal(r.hooks.ghostOutline(), 2);
+  r.ghosts.hover(null);
+  flushFrames();
+  assert.equal(r.hooks.ghostOutline(), null);
+  assert.equal(r.hooks.contentDraws(), content);
+  r.canvas.destroy();
+});
+
+test('with ghosts on, a playhead-only frame does not redraw the content', () => {
+  const r = ghostRig();
+  const content = r.hooks.contentDraws();
+  for (let i = 1; i <= 5; i += 1) {
+    r.playhead.emit(String(i * 4800), true);
+    flushFrames();
+  }
+  assert.equal(r.hooks.contentDraws(), content);
+  r.canvas.destroy();
+});
+
+test('the hooks give the ghosts of the last content frame and their parts: clip-ghost-new, clip-ghost-move, lane-ghost', () => {
+  withNamedTokens(() => {
+    const r = ghostRig();
+    assert.deepEqual(r.hooks.ghosts(), SAMPLE_GHOSTS);
+    const parts = new Map(r.hooks.parts().map((p) => [p.id, p]));
+    // trk_b and trk_a, 53 px each from LANES_TOP: the proposed lane is the third.
+    assert.deepEqual(parts.get('lane-ghost'), { id: 'lane-ghost', x: 0, y: LANES_TOP + 2 * 53, w: 800, h: 53 });
+    assert.deepEqual(parts.get('clip-ghost-new'), { id: 'clip-ghost-new', x: 1, y: LANES_TOP + 2 * 53 + 3, w: 94, h: 46 });
+    assert.deepEqual(parts.get('clip-ghost-move'), { id: 'clip-ghost-move', x: 193, y: LANES_TOP + 3, w: 238, h: 46 });
+    // Drawn in the agent violet, dashed and hatched; the original of the moved clip at 38 %.
+    const calls = r.surface.contentCalls.calls;
+    assert.ok(calls.some((c) => c.kind === 'stroke' && c.style === '--ai' && c.lineWidth === 1.25), 'the dashed outline');
+    assert.ok(calls.some((c) => c.kind === 'stroke' && c.style === '--ai-a160' && c.lineWidth === 4), 'the clip hatch');
+    assert.ok(calls.some((c) => c.kind === 'stroke' && c.style === '--ai-a070' && c.lineWidth === 5), 'the lane hatch');
+    assert.ok(calls.some((c) => c.kind === 'fill' && c.style === '--ai-a100'), 'the ghost body');
+    assert.ok(calls.some((c) => c.alpha === 0.38), 'the original at 38 %');
+    r.ghosts.set([]);
+    flushFrames();
+    assert.deepEqual(r.hooks.ghosts(), []);
+    assert.ok(!r.hooks.parts().some((p) => /ghost/.test(p.id)));
+    r.canvas.destroy();
+  });
+});
+
+test('a click on a ghost clip pins its step and selects nothing; a click on a moved original selects it and pins its step', () => {
+  const r = ghostRig();
+  const parts = new Map(r.hooks.parts().map((p) => [p.id, p]));
+  const ghost = parts.get('clip-ghost-new')!;
+  r.surface.fire('pointerdown', { clientX: ghost.x + 20, clientY: ghost.y + 20 });
+  r.surface.fire('pointerup', { clientX: ghost.x + 20, clientY: ghost.y + 20 });
+  flushFrames();
+  assert.deepEqual(r.ghosts.pinned, [2]);
+  assert.deepEqual(r.hooks.selectedClips(), []);
+  const original = r.hooks.clips().find((c) => c.clipId === 'clp_1')!;
+  const box = clipBox(original);
+  r.surface.fire('pointerdown', { clientX: box.x + 10, clientY: box.y + 20 });
+  r.surface.fire('pointerup', { clientX: box.x + 10, clientY: box.y + 20 });
+  flushFrames();
+  assert.deepEqual(r.hooks.selectedClips(), ['clp_1']);
+  assert.deepEqual(r.ghosts.pinned, [2, 3]);
+  r.canvas.destroy();
+});
+
+test('a reveal scrolls by the least amount that shows the step\'s ghosts', () => {
+  const far: readonly Ghost[] = [{ kind: 'clip-place', step: 1, clipId: 'clp_far', trackId: 'trk_a', mediaId: 'med_sq', position: '200000', sourceStart: '0', length: '9600' }];
+  const r = ghostRig(far);
+  assert.equal(r.hooks.view().scrollFrames, '0');
+  r.ghosts.reveal(1);
+  flushFrames();
+  // The ghost's box ends at x 2095 (200000 / 100 + 96 - 1); the view is 800 px wide: 1295 px of scroll.
+  assert.equal(r.hooks.view().scrollFrames, String(1295 * 100));
+  // Already in view: no scroll.
+  r.ghosts.reveal(1);
+  flushFrames();
+  assert.equal(r.hooks.view().scrollFrames, String(1295 * 100));
+  r.canvas.destroy();
 });

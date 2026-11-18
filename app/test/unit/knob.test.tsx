@@ -79,3 +79,21 @@ test('the knob\'s colours are the tokens\' values, and M5 draws no ghost', () =>
   // Decorative paths: the slider is the svg itself (its role and value live on it).
   assert.equal(elements(svg).length, 5);
 });
+
+// m5b-ui-ghosts (UI redesign 4.2): a pending pan change draws knob()'s ghost
+// group, the violet tick at the new angle, with its id; without one, none.
+test('a ghost pan draws knob(pan, ghost)\'s group: the tick from r 5 to r 10.5 and its dot, in --ai, with the -ghost id', () => {
+  for (const [name, pan, ghost] of [['L35 to L20', -35, -20], ['C to R60', 0, 60], ['R100 to L100', 100, -100]] as const) {
+    const mockup = svgOf(MOCKUP.knobGhost(pan, ghost, 'strip-4-pan-knob'));
+    const app = svgOf(renderToStaticMarkup(<Knob pan={pan * 100} ghost={ghost * 100} data-part-of="pan-knob" />));
+    assert.deepEqual(drawing(app), drawing(mockup), name);
+    const [mockGroup] = findAll(mockup, (el) => el.tag === 'g');
+    const [appGroup] = findAll(app, (el) => el.tag === 'g');
+    assert.ok(mockGroup && appGroup, name);
+    assert.deepEqual(drawing(appGroup), drawing(mockGroup), name);
+    assert.equal(mockGroup.attrs['data-part'], 'strip-4-pan-knob-ghost');
+    assert.equal(appGroup.attrs['data-part-of'], 'pan-knob-ghost');
+    assert.equal(findAll(appGroup, (el) => el.tag === 'path')[0]!.attrs.d, knobPaths(pan * 100, ghost * 100).ghost);
+  }
+  assert.equal(knobPaths(-3500).ghost, null);
+});
