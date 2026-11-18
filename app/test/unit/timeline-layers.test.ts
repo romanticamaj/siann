@@ -1321,6 +1321,9 @@ test('while the proposal is heard every canvas ghost is solid, unhatched and und
         assert.equal(outline.length, 1, 'one faint outline');
         assert.ok(Math.abs(outline[0]!.path![0]!.args[0]! - box.x) < 1 && Math.abs(outline[0]!.path![0]!.args[1]! - box.y) < 1, 'at the original\'s box');
         assert.deepEqual(outline[0]!.dash, []);
+        // Its peak columns are not drawn, and the hook says it is an outline,
+        // so a wait for every clip's waveform (the UX tour's) passes it by.
+        assert.deepEqual(r.hooks.peakColumns('clp_1'), { drawn: 0, nonZero: 0, outline: true });
       }
       r.canvas.destroy();
     }
