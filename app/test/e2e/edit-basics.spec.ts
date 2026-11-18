@@ -21,6 +21,7 @@ import * as path from 'node:path';
 
 import { engineClient, type EngineClient } from './support/engine-client';
 import { exeFromEnv, launchApp } from './support/seed';
+import { chooseGrid } from './support/toolbar';
 
 const RATE = 48000;
 // The media: four seconds of square wave.
@@ -291,7 +292,7 @@ async function snapState(): Promise<{ on: boolean; grid: string }> {
 }
 
 async function setSnap(on: boolean, grid?: 'bar' | 'beat' | 'adapt'): Promise<void> {
-  if (grid) await page.getByTestId('grid-type').selectOption(grid);
+  if (grid) await chooseGrid(page, grid);
   if ((await snapState()).on !== on) {
     await focusProject();
     await page.keyboard.press('KeyJ');
@@ -489,8 +490,9 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
   await expect.poll(async () => (await rect('clp_r')).width).toBe(90);
 
   const r = await rect('clp_r');
-  const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 3);
-  const lowerLeft = await at(r.x + 2, r.y + r.height - 3);
+  // The box is draw()'s clip(): inset 1 px from the bars, 3 px from the lane's top and 4 px from its bottom.
+  const lowerRight = await at(r.x + r.width - 2, r.y + r.height - 6);
+  const lowerLeft = await at(r.x + 2.5, r.y + r.height - 6);
   await operation(
     'lower-right corner',
     () => drag(lowerRight, 100, 0),
@@ -526,8 +528,8 @@ test('a clip resizes from its lower corners onto the grid, Ctrl ignores snap; th
     },
   );
 
-  // The volume control just inside the lower-left corner: nothing is sent while held.
-  const gainAt = await at(r.x + 12, r.y + r.height - 4);
+  // The volume control, draw()'s box right of the lower-left corner: nothing is sent while held.
+  const gainAt = await at(r.x + 20, r.y + r.height - 10);
   const tip = page.getByTestId('drag-tooltip');
   await operation(
     'clip volume',
@@ -699,7 +701,7 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
   await page.getByTestId('confirm-cancel').click();
   await expect(dialog).toBeHidden();
   expect((await head()).revision).toBe(unchanged);
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
 
   await focusProject();
   await operation(
@@ -710,13 +712,13 @@ test('M and S toggle the selected tracks; Ctrl-click and Shift-click select trac
       await page.getByTestId('confirm-ok').click();
     },
     async () => {
-      await expect(page.getByTestId('track-count')).toHaveText('1');
+      await expect(page.getByTestId('about-track-count')).toHaveText('1');
       expect((await track('trk_b')).missing).toBe(true);
       expect(await fetchClip('clp_c')).toBeNull();
     },
   );
   // The one undo brought the tracks and their clips back.
-  await expect(page.getByTestId('track-count')).toHaveText('3');
+  await expect(page.getByTestId('about-track-count')).toHaveText('3');
   expect((await track('trk_c')).missing).toBeFalsy();
   expect(await fetchClip('clp_b')).not.toBeNull();
   expect(await fetchClip('clp_c')).not.toBeNull();

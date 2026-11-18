@@ -1,53 +1,51 @@
-// The MixConsole in the lower zone (UI redesign spec 3.4, 5.1, 5.3): one
-// strip per track in the user-visible order (snapshot.trackOrder), keyed by
-// track id, then the meter-only master strip when the meter legend names
-// "master". All meters are drawn by one canvas over the strips (MixerMeters),
-// fed from the realtime channel through a MeterStore; the strips register
-// their meter slots and peak values with it. React renders the chrome once
-// per revision; no meter value reaches it.
+// The MixConsole in the lower zone (UI redesign spec 3.4, 5.1, 5.3; ported
+// from the mockup's markup by m5-ui-port-mixer-strip, 10.10 P1-12): the
+// mockup's .mixer with one strip per track in the user-visible order
+// (snapshot.trackOrder), keyed by track id, then the master strip when the
+// meter legend names "master". All meters are drawn by one canvas over the
+// strips (MixerMeters), fed from the realtime channel through a MeterStore;
+// the strips register their meter channels and peak values with it. React
+// renders the chrome once per revision; no meter value reaches it.
 //
-// The canvas's test hooks (window.__siannMeters under SIANN_SHELL_TEST=1) are
-// handed to index.tsx through onMeterHooks.
+// The canvas and the knob's gradient come after the strips, so the strips
+// are the mixer's first children as in the mockup (its alternating
+// backgrounds count them). The canvas's test hooks (window.__siannMeters
+// under SIANN_SHELL_TEST=1) are handed to index.tsx through onMeterHooks.
+//
+// The plan under review (m5b-ui-ghosts; UI redesign 4.2): a proposed track's
+// strip (GhostStrip) follows the tracks' strips, before the master, in step
+// order; a request to reveal a step's ghosts (a hovered or located step)
+// scrolls the mixer by the least amount that shows its strips.
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { useT } from '../i18n/t';
 import type { GestureController } from '../model/gesture-controller';
 import { MeterStore } from '../model/meter-store';
 import type { RealtimeClient } from '../model/realtime-client';
 import type { SessionClient } from '../model/session-client';
+import { KnobGradient } from './Knob';
 import { MetersContext, type MetersRegistry } from './meters-context';
-import { DEFAULT_PALETTE, MixerMeters, type MeterPalette, type MeterTestHooks, type PeakText } from './MixerMeters';
-import { MasterStrip, Strip } from './Strip';
+import { MixerMeters, type MeterTestHooks, type PeakText } from './MixerMeters';
+import { GhostStrip, MasterStrip, Strip } from './Strip';
+import { ReviewContext, useGhostView } from '../plans/ghost-context';
 
 export interface MixerProps {
   readonly client: SessionClient;
   readonly gestures: GestureController;
   readonly realtime: RealtimeClient;
+  // The track list's selected track: its strip is .sel.
+  readonly selectedTrackId?: string | null;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
 }
 
-function paletteFromTokens(): MeterPalette {
-  const style = getComputedStyle(document.documentElement);
-  const token = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
-  return {
-    well: token('--bg-0', DEFAULT_PALETTE.well),
-    green: token('--meter-green', DEFAULT_PALETTE.green),
-    yellow: token('--meter-yellow', DEFAULT_PALETTE.yellow),
-    red: token('--meter-red', DEFAULT_PALETTE.red),
-    hold: token('--meter-hold', DEFAULT_PALETTE.hold),
-    clip: token('--meter-red', DEFAULT_PALETTE.clip),
-  };
-}
-
-// The meter canvas and its registry of slots and peak values.
+// The meter canvas and its registry of channels and peak values.
 class MeterBoard implements MetersRegistry {
   readonly meters: MixerMeters;
   #container: HTMLElement | null = null;
   #canvas: HTMLCanvasElement | null = null;
-  readonly #peaks = new Map<string, HTMLElement>();
-  // The slots, observed while mounted: a slot can change size without the
-  // mixer changing size (a strip's row growing), and its rect is measured
+  // The channels, observed while mounted: a channel can change size without
+  // the mixer changing size (a strip's row growing), and its rect is measured
   // only when something says so.
   readonly #slots = new Set<HTMLElement>();
   #observer: ResizeObserver | null = null;
@@ -73,18 +71,10 @@ class MeterBoard implements MetersRegistry {
     this.meters.attach(canvas);
   }
 
-  slot(ref: string, element: HTMLElement): () => void {
-    const peaks = this.#peaks;
-    const board = this;
+  slot(ref: string, channel: number, element: HTMLElement): () => void {
     this.#slots.add(element);
     this.#observer?.observe(element);
-    const remove = this.meters.addSlot({
-      ref,
-      measure: () => board.#measure(element),
-      get peakText(): PeakText | null {
-        return peaks.get(ref) ?? null;
-      },
-    });
+    const remove = this.meters.addSlot({ ref, channel, measure: () => this.#measure(element) });
     return () => {
       this.#slots.delete(element);
       this.#observer?.unobserve(element);
@@ -93,28 +83,30 @@ class MeterBoard implements MetersRegistry {
   }
 
   peak(ref: string, element: HTMLElement): () => void {
-    this.#peaks.set(ref, element);
-    this.meters.invalidate();
-    return () => {
-      if (this.#peaks.get(ref) === element) this.#peaks.delete(ref);
-    };
+    return this.meters.addPeak(ref, element as PeakText);
   }
 
   reset(ref: string): void {
     this.meters.reset(ref);
   }
 
+  // The channel's inside: its well's border box less the border.
   #measure(element: HTMLElement) {
     const canvas = this.#canvas;
     if (!canvas || !element.isConnected) return null;
     const origin = canvas.getBoundingClientRect();
     const box = element.getBoundingClientRect();
-    if (box.width === 0 || box.height === 0) return null;
-    return { x: box.left - origin.left, y: box.top - origin.top, width: box.width, height: box.height };
+    if (element.clientWidth === 0 || element.clientHeight === 0) return null;
+    return {
+      x: box.left - origin.left + element.clientLeft,
+      y: box.top - origin.top + element.clientTop,
+      width: element.clientWidth,
+      height: element.clientHeight,
+    };
   }
 }
 
-export function Mixer({ client, gestures, realtime, onMeterHooks }: MixerProps) {
+export function Mixer({ client, gestures, realtime, selectedTrackId = null, onMeterHooks }: MixerProps) {
   const t = useT();
   const order = useSyncExternalStore(
     (listener) => client.model.subscribe(listener),
@@ -127,6 +119,8 @@ export function Mixer({ client, gestures, realtime, onMeterHooks }: MixerProps) 
     () => client.getState().legend?.entities.includes('master') === true,
   );
   const [board] = useState(() => new MeterBoard(realtime));
+  const view = useGhostView();
+  const review = useContext(ReviewContext);
   const container = useRef<HTMLElement | null>(null);
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
@@ -135,7 +129,6 @@ export function Mixer({ client, gestures, realtime, onMeterHooks }: MixerProps) 
     const surface = canvas.current;
     if (!el || !surface) return undefined;
     const meters = board.meters;
-    meters.setPalette(paletteFromTokens());
     board.mount(el, surface);
     const offFrames = realtime.subscribe(() => meters.onFrame());
     const visible = () => meters.wake();
@@ -150,16 +143,31 @@ export function Mixer({ client, gestures, realtime, onMeterHooks }: MixerProps) 
   }, [board, realtime, onMeterHooks]);
 
   // Strips moved without changing size (a new track order): measure again.
-  useEffect(() => board.meters.invalidate(), [board, order, hasMaster]);
+  const proposed = view.ghosts.filter((g) => g.kind === 'track-add').length;
+  useEffect(() => board.meters.invalidate(), [board, order, hasMaster, proposed]);
+
+  // A step's ghosts brought into view: the least scroll that shows its strips (after the zone has opened).
+  useEffect(
+    () =>
+      review?.onReveal(({ step }) => {
+        requestAnimationFrame(() => {
+          const el = container.current?.querySelector(`[data-ghost~="${step}"]`);
+          el?.closest('.strip')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+      }),
+    [review],
+  );
 
   return (
     <MetersContext.Provider value={board}>
       <section className="mixer" data-testid="mixer" data-part="mixer" aria-label={t('mixer.label')} ref={container}>
-        <canvas className="mixer-meters" data-testid="mixer-meters" ref={canvas} aria-hidden="true" />
         {(order ?? []).map((trackId) => (
-          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} />
+          <Strip key={trackId} trackId={trackId} client={client} gestures={gestures} selected={trackId === selectedTrackId} />
         ))}
+        {view.ghosts.map((g) => (g.kind === 'track-add' ? <GhostStrip key={`ghost-${g.trackId}`} ghost={g} view={view} /> : null))}
         {hasMaster ? <MasterStrip /> : null}
+        <KnobGradient />
+        <canvas className="mixer-meters" data-testid="mixer-meters" ref={canvas} aria-hidden="true" />
       </section>
     </MetersContext.Provider>
   );

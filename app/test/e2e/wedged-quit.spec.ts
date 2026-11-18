@@ -69,7 +69,7 @@ test.afterEach(async () => {
 });
 
 test('quitting with a wedged engine returns within the graces, exits 0 and ends the engine', async () => {
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   const pid = await app!.evaluate(() => {
     const shell = (globalThis as { __siannShell?: { pid(): number | null } }).__siannShell;
     return shell ? shell.pid() : null;

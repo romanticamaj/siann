@@ -190,9 +190,11 @@ Deferred:
 3. Record the start value next to the end value in the journal entry of a
    gesture's commit, with automation write passes (spec, "Gestures", M5
    amendments); `gesture.end` and `gesture.ended` report it until then.
-4. The fake device meters only while the transport plays (frames carry no entries
-   while stopped); the mixer's meters e2e test plays the transport. Decide whether a
-   stopped engine should still meter its inputs once input monitoring arrives.
+4. Done by `m5b-engine-monitoring` (M5b): a live graph with a monitoring node runs
+   while the transport is stopped, so a monitored track's meter reads its input
+   (`engine_record_test`); a graph without one still meters nothing while stopped,
+   and an armed track's `input:<trackId>` entry meters either way. The mixer's
+   meters e2e test still plays the transport.
 5. A realtime socket the engine closes on its own while the command socket stays
    open is reopened at the session client's next state change, not at once.
 
@@ -232,6 +234,45 @@ Items 1 and 2 are done by `m5b-engine-record` (M5b, 2026-11-14), where recording
    `nothing_armed` or `track_recording` yet: until the record UI lands, a refused
    edit while recording shows the engine's English message in every locale. Add
    both codes with the record UI, in en, zh-Hant and zh-Hans.
+
+## Later: from the plan phase of M5b (2026-11-18)
+
+Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign spec, 10.11).
+None of these blocks M5b; each has no owner yet unless it names one.
+
+1. A plugin editor closed from its title bar is not reported: `editorOpen` exists
+   only in the results of `plugin.open_editor` and `plugin.close_editor`. A slot's
+   `e` follows the last result. An `editor.changed` event, or `editorOpen` in
+   `engine.status` `plugins[]`, would let it follow the window.
+2. The gesture protocol takes only `gain` on `bus:<id>`, so a bus's pan is one
+   `bus.set_pan` when the drag ends and does not sound while dragged. A pan gesture
+   target on a bus would make it behave as a track's.
+3. "Narrow" and the menu beside the rack switches of the mockup (`mixer-racks`)
+   are not rendered: the strip width of UI redesign 2.3 is stored in
+   `siann.layout.v1` but no narrow strip layout exists, and the menu has no
+   content defined. Whoever defines them names the owner.
+4. `session.inspect` returns branch ids without their head revisions, so a renderer
+   that reconnects while a proposal is open shows dashed ghosts until the next
+   `proposal.changed` (UI redesign 4.3).
+5. The saved mark of `m5b-ui-project` is the renderer's and does not survive a
+   relaunch: a session reopened with journaled, unsaved revisions starts unmarked.
+   A checkpoint revision in `session.sync` would let it.
+6. `plan-step-2-title` stays masked in the fidelity run until a clip has a name of
+   its own (the clip half of E-4, which no milestone owns).
+7. Crossfades (the rest of E-9 after `m5b-engine-clip-fades` and
+   `m6a-engine-clip-mute`), Shuffle, slip, zoom history, the stationary cursor,
+   context menus and the key-command editor stay in phase 3 of the UI redesign
+   without a milestone.
+8. The left zone's Editor tab (the second span of `inspector-tabs`, Cubase's editor
+   Inspector) has no owner and no content defined: its box stays empty through M5b
+   (second round, 10.11, 11). Whoever defines it names the owner.
+9. The plugin picker of `m5b-ui-inserts-master` cannot choose among the plugins of
+   one library (a VST3 shell, a CLAP with several descriptors): `plugin.approve`
+   without a `uid` answers `invalid_params` naming them, and the picker shows that
+   refusal. A list of the uids to pick from would let such a library be approved.
+10. A strip's insert rack holds two slots and scrolls inside its row beyond that. A
+    rack that grows with the chain needs `lower-zone.css` and `tokens.css`, which
+    are the maintainer's.
 
 ## Where tests run
 

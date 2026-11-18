@@ -15,7 +15,7 @@ paths, generated artifacts, and local repository references.
 - `docs/schemas/` stores command, observation, journal, and bridge contract drafts.
 - `docs/superpowers/specs/` stores larger design specifications.
 - `docs/harness/` holds the milestone harness: agent rules and the per-milestone runbook; manifests live in `.claude/milestones/` and the workflow in `.claude/workflows/siann-milestone.js`.
-- UI work is checked against the redesign's mockup, which is the reference implementation of styling and markup: `docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html` and the stylesheets it shares with the app (`app/renderer/tokens.css`, `app/renderer/ui/`). The rule and the fidelity gate are in `docs/harness/agent-rules.md`, "UI fidelity".
+- UI work is ported from the redesign's mockup, component by component; the mockup is the reference implementation of styling and markup: `docs/superpowers/specs/2026-11-13-siann-ui-redesign/mockup.html` and the stylesheets it shares with the app (`app/renderer/tokens.css`, `app/renderer/ui/`). The rule is in `docs/harness/agent-rules.md`, "UI fidelity": token rules block, the fidelity run is a report, and a UI pull request attaches side-by-side screenshots of the app and the mockup (decided by the maintainer, 2026-11-17).
 - `.codex/skills/siann-intake/SKILL.md` is the canonical agent-facing intake skill for arbitrary audio files, placement notes, and DAWproject export.
 - `.claude/skills/siann-intake/SKILL.md` points Claude-style agents at the same SIANN intake boundary.
 - `src/bridge/` contains the Node-based developer bridge wrapper around the engine command runner.

@@ -19,6 +19,16 @@
   font-display: swap;
 }
 
+/* Medium, from the same release (decided by the maintainer, 2026-11-15): the
+   display values and the key hints the rules draw at 500. */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
 
@@ -135,6 +145,13 @@
 :root:lang(zh-CN) {
   --font-ui: "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", sans-serif;
   --line-height: 1.4;
+}
+
+/* The holds whose labels differ in Chinese (m5-ui-port-toolbar): the width
+   the fidelity run measures in the mockup's zh-TW, for both Chinese locales. */
+:root:lang(zh-TW), :root:lang(zh-CN) {
+  --hold-info-fade-in-w: calc(77.031px * var(--scale));
+  --hold-info-fade-out-w: calc(83.156px * var(--scale));
 }
 
 /* Tokens taken from the redesign's mockup (docs/superpowers/specs/
@@ -283,6 +300,46 @@
      the same in en and zh-TW (m5-ui-loop-click). */
   --display-locators-empty-w: calc(101.7px * var(--scale));
 
+  /* The boxes of parts still pending (UI redesign 3.0; agent-rules "UI
+     fidelity"): the size the fidelity gate measures for each in the mockup,
+     the same in en and zh-TW (m5-ui-alignment-chrome). Applied by shell.css
+     only; the feature that lands the part deletes its hold. The branch chip
+     (m5b-ui-audition), the Record button (m5b-ui-recording), DSP load
+     (m5b-ui-meter), the Channel zone button (m5b-ui-editor-channel). The Inspector's three open sections
+     (m5-ui-port-inspector): Routing (m5b-ui-sends-buses), Inserts
+     (m5b-ui-inserts-master) and Agent changes (m5b-ui-ghosts), their whole
+     box with its hairline; Agent changes in en (its text wraps to one line
+     less in zh-TW, 78.891 px). The project zone toolbar's and info line's
+     (m5-ui-port-toolbar): tools 2 and 4 to 9 (m5b-ui-edit-more), each the
+     width of tool()'s .b, the proposal pill (m5b-ui-ghosts) and the Fade In
+     and Fade Out fields (m5b-ui-fades); in en, and in Chinese below. */
+  --hold-branch-chip-w: calc(86.719px * var(--scale));
+  --hold-transport-record-w: calc(32px * var(--scale));
+  --hold-transport-record-h: calc(28px * var(--scale));
+  --hold-dsp-load-w: calc(99.484px * var(--scale));
+  --hold-zone-button-channel-w: calc(26px * var(--scale));
+  --hold-zone-button-channel-h: calc(24px * var(--scale));
+  /* The Plans tab's (m5-ui-port-plans; UI redesign 10.10, P1-13 notes): the
+     composer with its bottom margin (m5b-ui-composer), the Media tab
+     (m5b-ui-media) and the Meter tab (m5b-ui-meter); the tabs are set again
+     per Chinese locale below. The agent row, the plan's title and its intent
+     landed with m5b-ui-plan-metadata: shell.css sizes their empty boxes by a
+     calc() of the tokens the shared rules size them with. */
+  --hold-composer-h: calc(54px * var(--scale));
+  --hold-tab-media-w: calc(71.078px * var(--scale));
+  --hold-tab-meter-w: calc(69.031px * var(--scale));
+  --hold-inspector-routing-h: calc(91px * var(--scale));
+  --hold-inspector-inserts-h: calc(117px * var(--scale));
+  --hold-tool-2-w: calc(27.172px * var(--scale));
+  --hold-tool-4-w: calc(27.172px * var(--scale));
+  --hold-tool-5-w: calc(27.172px * var(--scale));
+  --hold-tool-6-w: calc(27.172px * var(--scale));
+  --hold-tool-7-w: calc(27.172px * var(--scale));
+  --hold-tool-8-w: calc(27.172px * var(--scale));
+  --hold-tool-9-w: calc(27.172px * var(--scale));
+  --hold-info-fade-in-w: calc(94.047px * var(--scale));
+  --hold-info-fade-out-w: calc(109.422px * var(--scale));
+
   /* The locator band in the ruler's upper half (m5-ui-loop-click; UI
      redesign 3.2), the mockup's draw() values: the band starts 2 px below
      the ruler's top and ends 1 px above the upper half's bottom (y 2, height
@@ -424,6 +481,31 @@
   --status-chip-h: calc(16px * var(--scale));
 }
 
+/* App-only tokens (m5-ui-port-cleanup; UI redesign 10.7, 4, authorised by the
+   maintainer, 2026-11-15): the values of the shell.css rules for what the
+   mockup does not draw, the toasts, the dialogs, the small window's drawer and
+   the scrim behind a dialog. Neither the shared rules nor the mockup name
+   them, and they change no token above. The 2 px focus ring is --focus-ring
+   (10.7, 4a). */
+:root {
+  --black-a450: rgb(0 0 0 / .45);
+  --scrim: var(--black-a450);
+  --toast-max-w: calc(320px * var(--scale));
+  --toast-slide: calc(12px * var(--scale));
+  --toast-shadow-y: calc(6px * var(--scale));
+  --toast-shadow-blur: calc(18px * var(--scale));
+  --dialog-w: calc(560px * var(--scale));
+  --dialog-margin: calc(32px * var(--scale));
+  --drawer-shadow-blur: calc(24px * var(--scale));
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root { --panel-motion: 0s; }
+}
+
+/* The Plans tab's holds in Chinese (m5-ui-port-plans): the mockup's zh-TW
+   boxes, for zh-CN too, as the font stacks above. */
+:root:lang(zh-TW), :root:lang(zh-CN) {
+  --hold-tab-media-w: calc(59.125px * var(--scale));
+  --hold-tab-meter-w: calc(70.688px * var(--scale));
 }

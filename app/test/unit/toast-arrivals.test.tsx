@@ -13,9 +13,12 @@ import * as path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { Locale } from '../../src/renderer/i18n/locale';
-import { planArrivedMessage } from '../../src/renderer/i18n/messages';
+import { planArrivedMessage, planArrivedTitledMessage } from '../../src/renderer/i18n/messages';
+import { translator } from '../../src/renderer/i18n/t';
+import { capabilitySelector } from '../../src/renderer/model/capabilities';
 import { PlanStore } from '../../src/renderer/model/plan-store';
 import { announceArrivals } from '../../src/renderer/plans/arrivals';
+import { isolateName } from '../../src/renderer/plans/isolate';
 import { ToastStore, TOAST_MS, MAX_TOASTS } from '../../src/renderer/shell/toast-store';
 import { Toasts } from '../../src/renderer/shell/Toasts';
 import { FakeScheduler } from './support/fakes';
@@ -77,6 +80,28 @@ test('a plan arrival pushes the planArrived message in the current locale', () =
   plans.applyChanged({ schema: 'siann.event.v1', seq: '3', type: 'plan.changed', plan: third, state: 'validated' });
   plans.setStatus(planObject(third, 'validated'));
   assert.equal(toasts.getSnapshot().length, 2, 'unsubscribed');
+});
+
+// m5b-ui-plan-metadata (UI redesign 4.3, 4.4): the toast names a titled plan.
+test('with features.planMetadata the toast names a titled plan by its title; M5 wording without it or without a title', () => {
+  const toasts = new ToastStore({ schedule: new FakeScheduler().schedule });
+  const plans = new PlanStore({ now: () => 0 });
+  let can = capabilitySelector({ methods: ['plan.list'], features: { planMetadata: true } });
+  announceArrivals(plans, toasts, () => 'en', () => can);
+  const arrive = (digit: string, extra: Record<string, unknown>) => {
+    const hash = 'sha256:' + digit.repeat(64);
+    plans.applyChanged({ schema: 'siann.event.v1', seq: digit, type: 'plan.changed', plan: hash, state: 'validated' });
+    plans.setStatus(planObject(hash, 'validated', extra));
+  };
+  arrive('1', { title: 'Lift the chorus' });
+  assert.equal(toasts.getSnapshot()[0]!.text, planArrivedTitledMessage('en', { title: isolateName('Lift the chorus') }));
+  assert.equal(translator('en')('toast.planArrivedTitled', { title: 'X' }).includes('X'), true);
+  assert.equal(toasts.getSnapshot()[0]!.reword?.('zh-Hant'), planArrivedTitledMessage('zh-Hant', { title: isolateName('Lift the chorus') }));
+  arrive('2', {});
+  assert.equal(toasts.getSnapshot()[1]!.text, planArrivedMessage('en', { steps: 3 }));
+  can = capabilitySelector({ methods: ['plan.list'], features: {} });
+  arrive('3', { title: 'Lift the chorus' });
+  assert.equal(toasts.getSnapshot()[2]!.text, planArrivedMessage('en', { steps: 3 }));
 });
 
 test('the toast region is a polite status region that never takes the focus', () => {

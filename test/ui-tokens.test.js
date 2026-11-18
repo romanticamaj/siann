@@ -25,9 +25,9 @@
 //   - app/src/renderer/tokens.ts, the mirror for canvas code, is the generated
 //     copy of tokens.css.
 //
-// What does not hold yet is written down in app/test/fidelity/debt.json, the
-// debt m5-ui-mockup-alignment pays: the test fails on anything not in it, and
-// on an entry that no longer applies, so the ledger only shrinks.
+// app/test/fidelity/debt.json, the ledger of what did not hold yet, is empty
+// since m5-ui-port-cleanup, its gate: the test requires it empty, for tokens,
+// fonts and literals alike, and every file above holds no literal at all.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -39,7 +39,6 @@ const { readTokens, resolve, simplify, generate, OUT } = require('../scripts/gen
 const ROOT = path.resolve(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8').replace(/\r\n/g, '\n');
 const MOCKUP_PATH = ['docs', 'superpowers', 'specs', '2026-11-13-siann-ui-redesign', 'mockup.html'];
-const MOCKUP_FILE = MOCKUP_PATH.join('/');
 const TOKENS_CSS = read('app', 'renderer', 'tokens.css');
 const MOCKUP = read(...MOCKUP_PATH);
 const MOCKUP_JS = MOCKUP.slice(MOCKUP.indexOf('<script>') + 8, MOCKUP.lastIndexOf('</script>'));
@@ -174,7 +173,8 @@ test('the ruler, the zone tab rows, the meter slot and the focus frame carry the
 // The zone frame is --focus at 20 %; the 2 px keyboard ring of a control and
 // of a divider keeps its 55 % through an app-only token (UI redesign 2.1:
 // every stop shows a visible focus ring; 10.7, 4a: the 2 px focus ring is an
-// app-only token), so the frame's new value dims nothing else.
+// app-only token), so the frame's new value dims nothing else. The widths
+// name tokens too (m5-ui-port-cleanup): 1 px for the frame, 2 px for the ring.
 test('the zone frame is --focus and the 2 px ring of a control and a divider is --focus-ring at 55 %', () => {
   assert.equal(colour(value('focus-ring')), '232,235,241,0.55');
   const shell = noComments(read('app', 'renderer', 'shell.css'));
@@ -183,9 +183,16 @@ test('the zone frame is --focus and the 2 px ring of a control and a divider is 
     assert.ok(at >= 0, `shell.css has ${selector}`);
     return shell.slice(at, shell.indexOf('}', at));
   };
-  assert.match(rule('.zone[data-focused="true"]'), /outline: 1px solid var\(--focus\);/);
-  assert.match(rule(':where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible'), /outline: 2px solid var\(--focus-ring\);/);
-  assert.match(rule('.divider:focus-visible'), /outline: 2px solid var\(--focus-ring\);/);
+  // The width of `outline: var(--<width>) solid var(--<colour>)`, resolved.
+  const outline = (selector, colourToken) => {
+    const m = new RegExp(String.raw`outline: var\(--([\w-]+)\) solid var\(--${colourToken}\);`).exec(rule(selector));
+    assert.ok(m, `${selector}: outline: var(--<width>) solid var(--${colourToken})`);
+    return value(m[1]);
+  };
+  // The project zone's frame is .arrange::after (the SIZES table holds it); the other zones' is an outline.
+  assert.equal(outline('.zone-right[data-focused="true"]', 'focus'), '1px');
+  assert.equal(outline(':where(a[href], button, input, select, textarea, [tabindex]:not(.zone)):focus-visible', 'focus-ring'), '2px');
+  assert.equal(outline('.divider:focus-visible', 'focus-ring'), '2px');
   assert.doesNotMatch(rule('.divider:focus-visible'), /var\(--focus\)/);
 });
 
@@ -332,18 +339,11 @@ test('size tokens scale with the UI, and a spacing step has one token', () => {
   for (const n of [1, 2, 3, 4]) assert.ok(steps.has(`${4 * n}px`), `the grid step ${4 * n}px has a token`);
 });
 
-test('the renderer and the mockup hold no colour or size literal beyond the ledger\'s debts', () => {
-  const found = rendererLiterals();
-  for (const [file, counts] of Object.entries(found)) {
-    const debt = DEBT.literals[file] || { colours: 0, sizes: 0 };
-    assert.ok(counts.colours <= debt.colours, `${file}: ${counts.colours} colour literals (debt.json allows ${debt.colours}); name a token of app/renderer/tokens.css instead`);
-    assert.ok(counts.sizes <= debt.sizes, `${file}: ${counts.sizes} size literals (debt.json allows ${debt.sizes}); name a token of app/renderer/tokens.css instead`);
-  }
-  // The ledger only shrinks: an entry above what is there is lowered or removed.
-  for (const [file, debt] of Object.entries(DEBT.literals)) {
-    const counts = found[file] || { colours: 0, sizes: 0 };
-    assert.deepEqual(counts, { colours: debt.colours, sizes: debt.sizes }, `${file} has fewer literals than debt.json records: lower the entry`);
-  }
+// m5-ui-port-cleanup: no file of the renderer or the mockup holds a colour or
+// size literal, shell.css included, and shell.css holds no negative one either.
+test('the renderer and the mockup hold no colour or size literal', () => {
+  assert.deepEqual(rendererLiterals(), {}, 'name a token of app/renderer/tokens.css instead');
+  assert.deepEqual(negativeLiterals(read('app', 'renderer', 'shell.css')), [], 'app/renderer/shell.css: a negative size is calc(var(--token) * -1)');
 });
 
 // A font weight in the shared rules or the mockup is a weight token or the
@@ -385,24 +385,158 @@ test('the literal scanners see what they should', () => {
   assert.deepEqual(codeLiterals('class A { #abc = 1; f() { return this.#abc; } }'), { colours: 0, sizes: 0 });
 });
 
-test('the debt ledger is owned by a feature of M5', () => {
-  const m5 = JSON.parse(read('.claude', 'milestones', 'M5.json'));
-  assert.ok(m5.features.some((f) => f.id === DEBT.gate), `${DEBT.gate} is a feature of M5`);
-  for (const entry of DEBT.fonts) assert.ok(entry.family && entry.why, `debt.json font entry ${JSON.stringify(entry)}`);
-  assert.ok(!m5.done.includes(DEBT.gate) || (DEBT.tokens.length === 0 && Object.keys(DEBT.literals).length === 0), `${DEBT.gate} is done: debt.json must be empty`);
+// The ledger is empty and stays empty (m5-ui-port-cleanup is its gate;
+// decided by the maintainer, 2026-11-15: no allowlist). Unconditional: the
+// test does not read the milestone's done list.
+test('the debt ledger is empty: no token, no font and no literal entry, and m5-ui-port-cleanup is its gate', () => {
+  assert.equal(DEBT.gate, 'm5-ui-port-cleanup');
+  assert.deepEqual(DEBT.tokens, [], 'every token carries the mockup\'s value');
+  assert.deepEqual(DEBT.fonts, [], 'every face the rules ask for is bundled');
+  assert.deepEqual(DEBT.literals, {}, 'no file holds a colour or size literal');
 });
 
-// m5-ui-tokens-spacing cleared the token entries and the literals of the
-// shared rules and of the mockup; what is left belongs to the alignment
-// features of the regions, and the font entry to m5-ui-alignment-chrome.
-test('the ledger holds no token entry and nothing of the shared rules or the mockup', () => {
-  assert.deepEqual(DEBT.tokens, [], 'every token carries the mockup\'s value');
-  const files = Object.keys(DEBT.literals);
-  assert.deepEqual(files.filter((file) => file.startsWith('app/renderer/ui/')), []);
-  assert.ok(!files.includes(MOCKUP_FILE), 'the mockup\'s script has no literal debt');
-  const left = ['app/renderer/shell.css', 'app/src/renderer/mixer/MixerMeters.ts', 'app/src/renderer/timeline/TimelineCanvas.ts'];
-  assert.deepEqual(files.filter((file) => !left.includes(file)), [], 'what is left belongs to the alignment features');
-  assert.equal(DEBT.fonts.length, 1, 'the JetBrains Mono Medium entry stays until m5-ui-alignment-chrome');
+// The app-only tokens of m5-ui-port-cleanup (UI redesign 10.7, 4; authorised
+// by the maintainer, 2026-11-15, for this feature only): the values of the
+// shell.css rules the mockup does not draw. They are named for the app's own
+// elements, so neither the shared rules nor the mockup name them, and no token
+// that was there before changes its value: the expectation is a snapshot of
+// tokens.css taken from origin/main before the feature
+// (test/fixtures/ui-tokens-before-cleanup.json), not the file under test.
+//
+// The snapshot does not freeze the token set. A hold token (--hold-*) comes
+// and goes with its part: the feature that lands the part deletes it, and a
+// feature that leaves a pending box empty may add one (spec 3.0, 10.5;
+// test/mockup-fidelity.test.js fails on a hold whose part has landed). Any
+// later token, such as another permanent --<part>-empty-w (10.7, 5), may be
+// added. What the snapshot holds is that a token of origin/main other than a
+// hold is still declared with its value.
+const APP_ONLY = {
+  'toast-max-w': '320px',
+  'toast-slide': '12px',
+  'toast-shadow-y': '6px',
+  'toast-shadow-blur': '18px',
+  'dialog-w': '560px',
+  'dialog-margin': '32px',
+  'drawer-shadow-blur': '24px',
+  'black-a450': '0,0,0,0.45',
+  scrim: '0,0,0,0.45',
+};
+
+// The tokens of `before` that `now` no longer declares, or declares with
+// another value, as `--name: before -> now`; hold tokens excepted, and a new
+// token is never a change.
+function changedSince(before, now) {
+  return Object.entries(before)
+    .filter(([name, raw]) => !name.startsWith('hold-') && now.get(name) !== raw)
+    .map(([name, raw]) => `--${name}: ${raw} -> ${now.has(name) ? now.get(name) : '(removed)'}`);
+}
+
+test('the snapshot check lets hold tokens go and new tokens come, and catches a changed or removed token', () => {
+  const before = { 'bg-0': '#090A0D', 'space': 'calc(4px * var(--scale))', 'hold-tab-media-w': 'calc(60px * var(--scale))' };
+  const now = (entries) => new Map(Object.entries(entries));
+  // The feature that lands the Media tab deletes its hold token.
+  assert.deepEqual(changedSince(before, now({ 'bg-0': '#090A0D', space: 'calc(4px * var(--scale))' })), []);
+  // A new hold, a new --<part>-empty-w and a remeasured hold are not changes.
+  assert.deepEqual(changedSince(before, now({ ...before, 'hold-tab-media-w': 'calc(61px * var(--scale))', 'hold-x-w': 'calc(9px * var(--scale))', 'display-x-empty-w': 'calc(9px * var(--scale))' })), []);
+  // A changed value or a removed token is.
+  assert.deepEqual(changedSince(before, now({ ...before, 'bg-0': '#000000' })), ['--bg-0: #090A0D -> #000000']);
+  assert.deepEqual(changedSince(before, now({ 'bg-0': '#090A0D' })), ['--space: calc(4px * var(--scale)) -> (removed)']);
+});
+
+test('tokens.css declares the app-only tokens of the toasts, dialogs, drawer and scrim, and no earlier token changes', () => {
+  const before = JSON.parse(read('test', 'fixtures', 'ui-tokens-before-cleanup.json')).tokens;
+  assert.ok(Object.keys(before).length > 300, 'the snapshot holds the tokens of origin/main');
+  assert.deepEqual(changedSince(before, tokens), [], 'a token of origin/main other than a hold keeps its value');
+  const shared = `${UI_CSS}\n${MOCKUP}`;
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const [name, want] of Object.entries(APP_ONLY)) {
+    assert.ok(tokens.has(name), `tokens.css declares --${name}`);
+    assert.ok(!(name in before), `--${name} is new`);
+    assert.equal(colour(value(name)) ?? value(name), want, `--${name}`);
+    assert.ok(!new RegExp(`--${name}(?![\\w-])`).test(shared), `--${name} is app-only: no shared rule and not the mockup name it`);
+    // The shadow colour is named by the shadow tokens' rules; the rest by shell.css.
+    if (name !== 'black-a450') assert.ok(shell.includes(`var(--${name})`), `shell.css uses --${name}`);
+  }
+  assert.ok(/box-shadow:[^;]*var\(--black-a450\)/.test(shell), 'the toast\'s and the drawer\'s shadows are black at 45 %');
+  // --focus-ring is not added again (applied early in m5-ui-tokens-spacing, 10.7, 4a).
+  assert.equal((TOKENS_CSS.match(/--focus-ring\s*:/g) || []).length, 1, '--focus-ring is declared once');
+});
+
+// Shell sets the zone sizes on .app inline, to the zone's current size and to
+// 0 for a hidden zone or the drawer (Shell.tsx, the grid's custom
+// properties): inside the window they are the live layout, not the mockup's
+// sizes, so a shell.css rule that names one follows the user's layout. The
+// audition banner's text keeps 16 times the body text's size before its
+// buttons wrap (16em, whatever the left zone does), and the drawer takes the
+// width Shell sets on it, with no fallback to a size that is 0 in drawer mode.
+test('shell.css names none of the zone sizes Shell overrides on .app', () => {
+  const shellTsx = read('app', 'src', 'renderer', 'shell', 'Shell.tsx');
+  const grid = /const grid = \{([\s\S]*?)\} as CSSProperties;/.exec(shellTsx);
+  assert.ok(grid, 'Shell.tsx sets the grid\'s custom properties in `const grid`');
+  const overridden = [...grid[1].matchAll(/'(--[\w-]+)':/g)].map((m) => m[1]);
+  assert.deepEqual(overridden.sort(), ['--left-zone-w', '--lower-zone-h', '--right-zone-w']);
+  const shell = noComments(read('app', 'renderer', 'shell.css'));
+  for (const name of overridden) assert.ok(!shell.includes(`var(${name}`), `shell.css names ${name}, which Shell sets to the live zone size (0 when hidden)`);
+  const rule = (selector) => {
+    const at = shell.indexOf(`${selector} {`);
+    assert.ok(at >= 0, `shell.css has ${selector}`);
+    return shell.slice(at, shell.indexOf('}', at));
+  };
+  assert.match(rule('.audition-banner-text'), /flex: 1 1 calc\(var\(--fs-body\) \* 16\);/);
+  assert.match(rule('.zone-right[data-drawer="true"]'), /width: var\(--drawer-width\);/);
+  assert.match(shellTsx, /style=\{drawer \? \(\{ '--drawer-width': `\$\{drawer\.width\}px` \}/, 'Shell sets --drawer-width on the drawer');
+});
+
+// m5-ui-alignment-chrome (decided by the maintainer, 2026-11-15): JetBrains
+// Mono Medium (500) is bundled beside Regular, from the same release, and has
+// its own @font-face.
+test('tokens.css has an @font-face for JetBrains Mono 500 naming fonts/JetBrainsMono-Medium.woff2', () => {
+  const faces = TOKENS_CSS.match(/@font-face\s*{[^}]*}/g) || [];
+  const mono = faces.filter((face) => /font-family:\s*["']?JetBrains Mono["']?\s*;/.test(face));
+  const weightOf = (face) => /font-weight:\s*(\d+)\s*;/.exec(face)?.[1];
+  assert.deepEqual(mono.map(weightOf).sort(), ['400', '500'], 'Regular and Medium');
+  const medium = mono.find((face) => weightOf(face) === '500');
+  assert.match(medium, /src:\s*url\(["']?fonts\/JetBrainsMono-Medium\.woff2["']?\)\s*format\(["']?woff2["']?\)/);
+  assert.match(medium, /font-style:\s*normal/);
+  assert.ok(fs.existsSync(path.join(ROOT, 'app', 'renderer', 'fonts', 'JetBrainsMono-Medium.woff2')), 'the file is bundled');
+});
+
+// No rule asks JetBrains Mono for a weight that is not bundled: a rule that
+// names --font-num or --font-mono, or styles .mono, sets no weight, or 400 or
+// 500 (600 of JetBrains Mono is not bundled; Inter is variable and carries the
+// rest). The runtime sweep of app/test/e2e/fonts.spec.ts covers inherited weights.
+function monoWeights(css, where) {
+  const weights = new Set(['400', '500']);
+  const found = [];
+  for (const m of noComments(css).matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    const [, selector, body] = m;
+    const mono = /--font-(num|mono)\b/.test(body) || /\.mono\b/.test(selector);
+    if (!mono) continue;
+    for (const decl of body.matchAll(/(?:^|;)\s*(font-weight|font)\s*:\s*([^;]+)/g)) {
+      const first = decl[2].trim().split(/\s+/)[0];
+      const token = /^var\(--(fw-[\w-]+)\)$/.exec(first);
+      const weight = token ? value(token[1]) : first;
+      // A font shorthand without a weight starts with a size or a style.
+      if (decl[1] === 'font' && !token && !/^\d{3}$/.test(first)) continue;
+      if (!weights.has(String(weight))) found.push(`${where}: ${selector.trim()} { ${decl[0].replace(/^;/, '').trim()} }`);
+    }
+  }
+  return found;
+}
+
+test('no rule of tokens.css, ui/*.css, shell.css or mockup.html that names --font-num, --font-mono or .mono asks for a weight other than 400 or 500', () => {
+  const found = [
+    ...monoWeights(TOKENS_CSS, 'tokens.css'),
+    ...UI_FILES.flatMap((f) => monoWeights(read('app', 'renderer', 'ui', f), `ui/${f}`)),
+    ...monoWeights(read('app', 'renderer', 'shell.css'), 'shell.css'),
+    // The mockup's inline styles, as one rule each.
+    ...[...MOCKUP.matchAll(/class="([^"]*)"[^>]*style="([^"]*)"/g)].flatMap((m) => monoWeights(`.${m[1].trim().split(/\s+/).join('.')}{${m[2]}}`, 'mockup.html')),
+  ];
+  assert.deepEqual(found, []);
+  // The scanner sees a 600 asked of the mono family.
+  assert.equal(monoWeights('.x{font:var(--fw-strong) var(--fs-small) var(--font-num)}', 't').length, 1);
+  assert.equal(monoWeights('.mono{font-weight:600}', 't').length, 1);
+  assert.equal(monoWeights('.mono{font-weight:var(--fw-ui)}.y{font-weight:700}', 't').length, 0);
 });
 
 test('tokens.ts is the generated mirror of tokens.css', () => {

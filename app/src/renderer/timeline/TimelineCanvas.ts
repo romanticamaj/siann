@@ -4,21 +4,45 @@
 // device-pixel-ratio media query) and never to the session; scrolling changes
 // what is drawn, not a DOM scroll offset.
 //
-// - The content layer draws the ruler (bars and beats through root.tempo, in
-//   two halves), the lanes in root.trackOrder at their heights, and each
-//   audio clip in three tones of its track's colour with a title strip and its
-//   waveform as min/max columns from the engine's peak pyramid (PeaksCache).
-//   It is redrawn only when the snapshot, the zoom, the scroll, the size, the
-//   lane heights, the peaks or the locale change.
-// - The overlay layer draws the project cursor (the realtime playhead), the
-//   2 px outline of every selected clip, the handles of the selected and the
-//   hovered clip (the resize squares in the lower corners and the volume
-//   control just inside the lower-left one), the preview of a drag (a move,
-//   an Alt-drag copy, a resize), the snap guide and the Split tool's line,
-//   and positions the drag tooltip. It redraws on its own animation frame,
-//   scheduled only when one of those moved, so while stopped and idle
-//   nothing runs, and a frame in which only the cursor moved leaves the
-//   content alone.
+// - The content layer is the mockup's draw() (m5-ui-port-arrange-canvas; UI
+//   redesign 10.9), its sizes from tokens.ts and its colours from tokens.css:
+//   the lanes in root.trackOrder at their heights in --lane-even and
+//   --lane-odd, the locator range's tint, the beat and bar lines (bars and
+//   beats through root.tempo), the lane dividers, the ruler's two halves
+//   with the locator band, ticks and bar numbers, the --marker-h marker
+//   track row left empty until m5b-ui-markers, and each audio clip as
+//   draw()'s clip(): its box inset from its bars and lane, the body and the
+//   title strip in its track's colour mixed into the tokens, the title
+//   (clip-title.ts), the waveform in two tones from the engine's peak
+//   pyramid (PeaksCache, waveform.ts), the outline, and a selected clip's
+//   palette and lower corner squares. A clip of a muted (or solo-muted) track
+//   is drawn at 50 %. Fade curves (m5b-ui-fades) and the repeat handle are
+//   not drawn. The selected plan's ghosts (m5b-ui-ghosts; UI redesign 4.2,
+//   5.2) are, from the `ghosts` source (model/review-store.ts), in the agent
+//   violet as draw() draws its ghosts (ghost-geometry.ts): a proposed track
+//   as a hatched lane under the last lane, a placed clip, the new place of a
+//   moved clip and the new box of a trimmed one as a hatched, dashed ghost
+//   clip with its waveform and its step number, the original of a moved or
+//   trimmed clip at 38 % with an arrow to its ghost, a removed clip at 38 %
+//   and cross-hatched, a removed track's lane cross-hatched with its step
+//   (under its clips, which are removed clips), and a locator change as a ghost band in the ruler's
+//   upper half. They appear at once (no fade: UI redesign 1.6). It is
+//   redrawn only when the snapshot, the selection, the zoom, the scroll, the
+//   size, the lane heights, the peaks, the locale or the ghosts change.
+// - The overlay layer draws the project cursor (the realtime playhead) as
+//   draw() does, its line from the ruler's lower half to the top of the
+//   scroll-zoom bar with its head, the handles of the hovered clip and the
+//   volume control of the selected and the hovered clip (draw()'s box with
+//   its value), the preview of a drag (a move, an Alt-drag copy, a resize),
+//   the snap guide and the Split tool's line, and positions the drag
+//   tooltip, and outlines the ghosts of the hovered or pinned step. It
+//   redraws on its own animation frame, scheduled only when one of those
+//   moved, so while stopped and idle nothing runs, and a frame in which only
+//   the cursor moved leaves the content alone. A click on a ghost clip or a
+//   ghost lane pins its step (and selects nothing); a click on the original
+//   of a moved, trimmed or removed clip selects it as before and pins the
+//   step too; reveal(step) scrolls by the least amount that shows a step's
+//   ghosts.
 //
 // Pointer gestures end in one command.execute each (timeline/commands.ts and
 // edit-commands.ts), with the revision of the snapshot the gesture began on;
@@ -64,18 +88,37 @@
 // the catalogs through the `t` it is given and is redrawn on a locale change.
 
 import { formatDb } from '../format';
+import type { Ghost } from '../plans/ghosts';
 import { TOKENS } from '../tokens';
 import { translator, type T } from '../i18n/t';
 import { toolModifiers, type ModifierFlags } from '../keys/tool-modifiers';
 import type { ClipEntity, MediaEntity } from '../model/document';
 import type { MeterFrame } from '../model/meter-frames';
-import { chooseLevel, columnRange } from '../model/peaks';
 import type { PeaksCache } from '../model/peaks-cache';
 import type { ReadModel, Snapshot } from '../model/read-model';
 import { PlayheadClock } from '../transport/playhead-clock';
 import { nextScroll } from './auto-scroll';
 import { gestureCommand, newClipId, type TimelineCommand } from './commands';
-import { DIMMED_ALPHA, dimmedTracks } from './dimming';
+import { clipTitle } from './clip-title';
+import { CLIP_DIMMED_ALPHA, dimmedTracks } from './dimming';
+import {
+  ARROW,
+  GHOST_DASH,
+  GHOST_HATCH_PITCH,
+  GHOST_HATCH_WIDTH,
+  GHOST_OUTLINE_W,
+  HOT_OUTLINE_W,
+  LANE_HATCH_PITCH,
+  LANE_HATCH_WIDTH,
+  MOVED_ORIGINAL_ALPHA,
+  STEP_DISC,
+  arrowOf,
+  ghostClipBox,
+  ghostLaneRects,
+  locatorGhostRect,
+  revealScroll,
+  type GhostLane,
+} from './ghost-geometry';
 import {
   clipGainCommand,
   constrainAxis,
@@ -87,12 +130,17 @@ import {
   splitCommand,
 } from './edit-commands';
 import {
+  CLIP_RADIUS,
+  CLIP_TITLE_HEIGHT,
   DEFAULT_LANE_HEIGHT,
+  GAIN_RADIUS,
+  LANES_TOP,
   RULER_HEIGHT,
   RULER_LOWER,
   RULER_UPPER,
+  clipBox,
   clipRects,
-  cornerSize,
+  cornerHandles,
   deltaFrames,
   frameToX,
   gainBox,
@@ -100,18 +148,21 @@ import {
   laneHeightOf,
   laneTops,
   lanesHeight,
+  lanesTopOf,
   snapMove,
   snapTrim,
+  titleStrip,
   trackAt,
   trimEdgeOf,
   xToFrame,
+  type Box,
   type ClipRect,
   type HitPart,
   type TrimEdge,
   type Viewport,
 } from './geometry';
 import { formatBbt, formatBbtDelta, framesToTicks } from './musical-time';
-import { rulerMarks } from './ruler';
+import { barOf, gridMarks, rulerMarks } from './ruler';
 import {
   clickSelection,
   nextClipFrame,
@@ -141,7 +192,8 @@ import {
   type LocatorRange,
 } from './locators';
 import { DEFAULT_SNAP, gridStepFrames, snappedMoveDelta, snapperFor, type SnapSettings, type Snapper } from './snap';
-import { clipTones, trackColourVar } from './track-colour';
+import { SELECTED_OUTLINE_W, clipPalette, trackColourVar, type ClipPalette } from './track-colour';
+import { waveformColumns, type WaveColumn } from './waveform';
 import { ZOOM_STEP, maxScrollY, scrollFramesBy, scrollYBy, stepLaneHeight, zoomAbout, zoomFull, zoomToRange } from './zoom';
 
 // The tools of P1-8: 1 Object Selection, 3 Split (UI redesign spec 3.2).
@@ -227,6 +279,20 @@ export interface TimelineCanvasOptions {
   // The cursor clock's time in milliseconds (performance.now when absent;
   // the tests move it by hand).
   readonly now?: () => number;
+  // The selected plan's ghosts (m5b-ui-ghosts); none when absent.
+  readonly ghosts?: GhostSource;
+}
+
+// The ghosts of the plan under review (m5b-ui-ghosts; model/review-store.ts):
+// the descriptors to draw, the step whose ghosts are outlined (1-based, or
+// null), their changes, where a click on a ghost goes, and the requests to
+// bring a step's ghosts into view.
+export interface GhostSource {
+  ghosts(): readonly Ghost[];
+  outlineStep(): number | null;
+  subscribe(listener: () => void): () => void;
+  pin(step: number): void;
+  onReveal?(listener: (step: number) => void): () => void;
 }
 
 // The locator band's link to the engine (m5-ui-loop-click): whether the
@@ -250,10 +316,28 @@ export interface LocatorBandDrawn extends BandRect {
   readonly right: string;
 }
 
+// A part of the surface as the mockup's draw() records it for the fidelity
+// run (window.__fidelity): its id and box in canvas pixels.
+export interface SurfacePart {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
 // What the e2e reads through window.__siannTimeline (SIANN_SHELL_TEST=1 only).
 export interface TimelineTestHooks {
-  clips(): ClipRect[];
+  // Each clip's lane rectangle and its title (clip-title.ts) as last drawn.
+  clips(): Array<ClipRect & { readonly title: string }>;
   peakColumns(clipId: string): { drawn: number; nonZero: number };
+  // The outer half-heights of a clip's waveform columns in the last content frame.
+  waveColumns(clipId: string): number[];
+  // The surface's parts with the mockup's ids (ruler-upper, ruler-lower,
+  // lane-N, clip-N, locator-band, cursor, cursor-head) and the waveform
+  // interiors, as the last frames drew them.
+  parts(): SurfacePart[];
+  masks(): Array<Omit<SurfacePart, 'id'>>;
   view(): Viewport;
   lanes(): string[];
   // The ruler labels of the last content frame, left to right.
@@ -263,7 +347,7 @@ export interface TimelineTestHooks {
   overlayDraws(): number;
   // The project cursor's x in the last overlay frame, or null without a playhead.
   cursorX(): number | null;
-  // The width of the selected clip's outline in the last overlay frame (0: none).
+  // The width of the selected clips' outline in the last content frame (0: none in view).
   selectionOutline(): number;
   // The dimmed lanes of the last content frame (muted, or implicitly by a solo).
   dimmedLanes(): string[];
@@ -279,6 +363,9 @@ export interface TimelineTestHooks {
   locatorBand(): LocatorBandDrawn | null;
   // Diagnostic: what the last Alt+X decided and from what (PR #120's macOS e2e).
   lastEdit(): EditProbe | null;
+  // The ghosts of the last content frame, and the step the last overlay frame outlined (m5b-ui-ghosts).
+  ghosts(): Ghost[];
+  ghostOutline(): number | null;
 }
 
 // Why the last split at the cursor sent nothing, or what it built, with the
@@ -321,6 +408,28 @@ type Plan =
   | { readonly kind: 'move' | 'copy'; readonly delta: bigint; readonly lanes: number; readonly guide: bigint | null }
   | { readonly kind: 'trim'; readonly edge: TrimEdge; readonly delta: bigint; readonly guide: bigint | null };
 
+// A ghost's box in the last content frame (m5b-ui-ghosts): `pure` for a
+// ghost clip or a proposed lane (a click pins its step), the clip id of an
+// original drawn at 38 % (a click selects it and pins the step), `ruler` for
+// the locator ghost band.
+interface GhostBox {
+  readonly step: number;
+  readonly box: Box;
+  readonly pure: boolean;
+  readonly clipId?: string;
+  readonly ruler?: boolean;
+}
+
+// A ghost clip to draw: its box, the rectangle its waveform reads, its title
+// and a moved clip's arrow.
+interface GhostShape {
+  readonly step: number;
+  readonly box: Box & { readonly radius: number };
+  readonly rect: ClipRect;
+  readonly title: string;
+  readonly arrow: { x0: number; y0: number; x1: number; y1: number } | null;
+}
+
 interface RulerDrag {
   readonly startX: number;
   readonly startY: number;
@@ -342,17 +451,28 @@ interface LocatorDrag {
   preview: LocatorRange | null;
 }
 
+// The colours of draw(), read from tokens.css on the container.
 interface Palette {
-  readonly bg0: string;
-  readonly bg1: string;
   readonly bg2: string;
-  readonly bg3: string;
-  readonly line: string;
-  readonly line2: string;
+  readonly bgWell: string;
+  readonly laneEven: string;
+  readonly laneOdd: string;
+  readonly beatLine: string;
+  readonly barLine: string;
+  readonly barLine4: string;
+  readonly divider: string;
+  readonly rulerUpper: string;
+  readonly rulerLine: string;
+  readonly rulerMajor: string;
+  readonly rulerMinor: string;
+  readonly rulerQuarter: string;
+  readonly lit1: string;
   readonly tx1: string;
-  readonly tx2: string;
   readonly tx3: string;
   readonly select: string;
+  readonly clipOutline: string;
+  readonly cursorGlow: string;
+  readonly gainLine: string;
   readonly font: string;
   // The locator band (m5-ui-loop-click): light, grey, its labels, the tint.
   readonly bandFill: string;
@@ -361,6 +481,16 @@ interface Palette {
   readonly bandOffFill: string;
   readonly bandOff: string;
   readonly bandTint: string;
+  // The ghosts (m5b-ui-ghosts): draw()'s agent violet.
+  readonly ai: string;
+  readonly aiBody: string;
+  readonly aiHatch: string;
+  readonly aiTitle: string;
+  readonly aiWaveOuter: string;
+  readonly aiWaveInner: string;
+  readonly aiTitleText: string;
+  readonly aiInk: string;
+  readonly aiLane: string;
   track(trackId: string): string;
 }
 
@@ -377,10 +507,40 @@ const RULER_DRAG_PX_PER_STEP = 40;
 // Ctrl+wheel: this many px of wheel delta are one H or G step.
 const WHEEL_PX_PER_STEP = 300;
 const LINE_PX = 16;
-const TITLE_PX = 14;
-export const OUTLINE_PX = 2;
 // A drag's preview (a moved, copied or resized clip) over the lanes.
 const PREVIEW_ALPHA = 0.35;
+// The scroll-zoom bar under the canvases (--scrollbar-h): the canvases end
+// at its top, where the mockup's #tl ends.
+const SCROLLBAR_H = Number.parseFloat(TOKENS['scrollbar-h']);
+// draw()'s numbers. The ruler's lower half: a major tick every fourth bar
+// from RU + 3, a minor one MINOR_TICK high, quarter ticks QUARTER_TICK high,
+// the bar number LABEL_X right of its bar at RU + LABEL_Y.
+const BARS_PER_MAJOR = 4;
+const MAJOR_TICK_TOP = 3;
+const MINOR_TICK = 9;
+const QUARTER_TICK = 5;
+const LABEL_X = 4;
+const LABEL_Y = 10;
+// A clip: its title TITLE_X inside the box at the strip's middle, drawn
+// on a box wider than TITLE_MIN_W; the outline half a pixel inside (a
+// quarter when selected).
+const TITLE_X = 6;
+const TITLE_Y = 7;
+const TITLE_MIN_W = 26;
+const OUTLINE_INSET = 0.5;
+const SELECTED_OUTLINE_INSET = 0.25;
+// The waveform's half-height leaves WAVE_MARGIN above and below.
+const WAVE_MARGIN = 2;
+// The project cursor: its line and head from RU + CURSOR_TOP, the head
+// CURSOR_HEAD_W wide down to RU + 8 and its point at RU + 13, the glow
+// CURSOR_GLOW wide over the lanes.
+const CURSOR_TOP = 2;
+const CURSOR_HEAD_HALF = 5.5;
+const CURSOR_HEAD_SIDE = 8;
+const CURSOR_HEAD_POINT = 13;
+const CURSOR_GLOW = 6;
+// The volume control's value: GAIN_TEXT_X inside its box, at its middle.
+const GAIN_TEXT_X = 4;
 
 export class TimelineCanvas {
   readonly #options: TimelineCanvasOptions;
@@ -423,8 +583,25 @@ export class TimelineCanvas {
   #outline = 0;
   #dimmed: string[] = [];
   #guidance: string | null = null;
+  // What the last content frame drew, for the hooks: each clip's title and
+  // waveform columns (outer half-heights), the parts and the waveform interiors.
+  #titles = new Map<string, string>();
+  #waves = new Map<string, number[]>();
+  #contentParts: SurfacePart[] = [];
+  #masks: Array<Omit<SurfacePart, 'id'>> = [];
+  // The cursor's parts in the last overlay frame (none out of view).
+  #cursorParts: SurfacePart[] = [];
   #lastPointer: { x: number; y: number } | null = null;
   #heightRequests: Array<(trackIds: readonly string[], height: number) => void> = [];
+  // The ghosts of the last content frame, their boxes (for the outline, the
+  // hit test and reveal) and the step the last overlay frame outlined.
+  #ghosts: readonly Ghost[] = [];
+  #ghostBoxes: GhostBox[] = [];
+  // The lanes of the tracks whose ghosts live on the header and the strip only
+  // (gain, pan, mute, solo, rename): reveal scrolls to them, nothing draws them.
+  #ghostRows: Array<{ readonly step: number; readonly top: number; readonly height: number }> = [];
+  #ghostOutline: number | null = null;
+  #ghostLanes = 0;
 
   constructor(options: TimelineCanvasOptions) {
     this.#options = options;
@@ -437,6 +614,7 @@ export class TimelineCanvas {
       framesPerPixel: options.framesPerPixel ?? DEFAULT_FRAMES_PER_PIXEL,
       scrollFrames: '0',
       rulerHeight: RULER_HEIGHT,
+      lanesTop: LANES_TOP,
       laneHeight: DEFAULT_LANE_HEIGHT,
       laneHeights: options.laneHeights?.get() ?? {},
       scrollY: 0,
@@ -449,6 +627,11 @@ export class TimelineCanvas {
     if (options.playhead) this.#unsubscribe.push(options.playhead.subscribe(() => this.#playheadChanged()));
     // The cycle flag: the band redraws from here, not through React.
     if (options.locators) this.#unsubscribe.push(options.locators.subscribe(() => this.#invalidateContent()));
+    if (options.ghosts) {
+      const source = options.ghosts;
+      this.#unsubscribe.push(source.subscribe(() => this.#ghostsChanged()));
+      if (source.onReveal) this.#unsubscribe.push(source.onReveal((step) => this.reveal(step)));
+    }
     if (options.laneHeights) {
       const source = options.laneHeights;
       this.#unsubscribe.push(source.subscribe(() => this.#setView({ ...this.#view, laneHeights: source.get() })));
@@ -727,8 +910,14 @@ export class TimelineCanvas {
 
   testHooks(): TimelineTestHooks {
     return {
-      clips: () => this.#rects.map((r) => ({ ...r })),
+      clips: () => this.#rects.map((r) => ({ ...r, title: this.#titles.get(r.clipId) ?? r.mediaId })),
       peakColumns: (clipId) => ({ ...(this.#columns.get(clipId) ?? { drawn: 0, nonZero: 0 }) }),
+      waveColumns: (clipId) => [...(this.#waves.get(clipId) ?? [])],
+      parts: () => {
+        const band = this.#band ? [{ id: 'locator-band', x: this.#band.x, y: this.#band.y, w: this.#band.width, h: this.#band.height }] : [];
+        return [...this.#contentParts, ...band, ...this.#cursorParts].map((p) => ({ ...p }));
+      },
+      masks: () => this.#masks.map((m) => ({ ...m })),
       view: () => ({ ...this.#view, laneHeights: { ...(this.#view.laneHeights ?? {}) } }),
       lanes: () => [...(this.#options.model.getSnapshot()?.trackOrder ?? [])],
       rulerLabels: () => [...this.#rulerLabels],
@@ -744,7 +933,41 @@ export class TimelineCanvas {
       snapGuide: () => this.#guideX,
       locatorBand: () => (this.#band ? { ...this.#band } : null),
       lastEdit: () => this.#lastEdit,
+      ghosts: () => [...this.#ghosts],
+      ghostOutline: () => this.#ghostOutline,
     };
+  }
+
+  // Scrolls by the least amount that shows the ghosts of `step` (1-based) as
+  // the last content frame drew them; nothing when they show already. A ghost
+  // on a track header only (gain, pan, mute, solo, rename) scrolls the lanes,
+  // which the track list follows, to its track's row and never sideways.
+  reveal(step: number): void {
+    const boxes = this.#ghostBoxes.filter((b) => b.step === step);
+    const rows = this.#ghostRows.filter((r) => r.step === step);
+    if (boxes.length === 0 && rows.length === 0) return;
+    const view = this.#view;
+    const top = lanesTopOf(view);
+    const x0 = boxes.length > 0 ? Math.min(...boxes.map((b) => b.box.x)) : 0;
+    const x1 = boxes.length > 0 ? Math.max(...boxes.map((b) => b.box.x + b.box.width)) : 0;
+    // The ruler's ghost (the locator band) scrolls only sideways.
+    const lanes = [...boxes.filter((b) => !b.ruler).map((b) => ({ y: b.box.y, bottom: b.box.y + b.box.height })), ...rows.map((r) => ({ y: r.top, bottom: r.top + r.height }))];
+    const y0 = lanes.length > 0 ? Math.min(...lanes.map((b) => b.y)) : top;
+    const y1 = lanes.length > 0 ? Math.max(...lanes.map((b) => b.bottom)) : top;
+    const order = this.#options.model.getSnapshot()?.trackOrder ?? [];
+    const limit = maxScrollY(view, lanesHeight(order, view) + this.#ghostLanes * view.laneHeight);
+    const move = revealScroll({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 }, view, top, limit);
+    if (!move) return;
+    const frames = BigInt(view.scrollFrames) + BigInt(move.dx) * BigInt(view.framesPerPixel);
+    this.#setView({ ...view, scrollFrames: (frames < 0n ? 0n : frames).toString(), scrollY: (view.scrollY ?? 0) + move.dy });
+  }
+
+  // The ghost source changed: new ghosts redraw the content, a new outline the overlay.
+  #ghostsChanged(): void {
+    const source = this.#options.ghosts;
+    if (!source) return;
+    if (source.ghosts() !== this.#ghosts) this.#invalidateContent();
+    if (source.outlineStep() !== this.#ghostOutline) this.#invalidateOverlay();
   }
 
   // Schedules one redraw of both layers on the next animation frame.
@@ -810,7 +1033,8 @@ export class TimelineCanvas {
   #sizeChanged(): void {
     if (this.#destroyed) return;
     const width = Math.max(1, Math.round(this.#container.clientWidth));
-    const height = Math.max(1, Math.round(this.#container.clientHeight));
+    // Above the scroll-zoom bar: the cursor ends at its top, as in the mockup.
+    const height = Math.max(1, Math.round(this.#container.clientHeight - SCROLLBAR_H));
     const ratio = globalThis.devicePixelRatio || 1;
     this.#ratio = ratio;
     for (const canvas of [this.#content, this.#overlay]) {
@@ -854,6 +1078,8 @@ export class TimelineCanvas {
   #update(patch: Partial<TimelineState>): void {
     const next = { ...this.#state, ...patch };
     if ((Object.keys(patch) as Array<keyof TimelineState>).every((k) => next[k] === this.#state[k])) return;
+    // A selected clip is drawn in its selected palette (draw()): the content follows the selection.
+    if (next.selectedClipIds !== this.#state.selectedClipIds) this.#invalidateContent();
     this.#state = Object.freeze(next);
     for (const listener of [...this.#listeners]) listener();
     this.#invalidateOverlay();
@@ -894,7 +1120,7 @@ export class TimelineCanvas {
       this.#setView(scrollFramesBy(this.#view, dx));
       return;
     }
-    const content = lanesHeight(snapshot?.trackOrder ?? [], this.#view);
+    const content = lanesHeight(snapshot?.trackOrder ?? [], this.#view) + this.#ghostLanes * this.#view.laneHeight;
     this.#setView(scrollYBy(this.#view, dy, content));
   }
 
@@ -934,6 +1160,8 @@ export class TimelineCanvas {
       }
       return;
     }
+    // The marker track row is empty until m5b-ui-markers: a press there does nothing.
+    if (y < lanesTopOf(this.#view)) return;
     // Shift+Alt-click in the event display locates too (spec 3.1, "Set the
     // cursor"), on a clip or not, and neither selects, drags nor places.
     if (e.shiftKey && e.altKey) {
@@ -952,9 +1180,18 @@ export class TimelineCanvas {
       }
       return;
     }
+    // A ghost clip or a proposed lane: its step is pinned, nothing else happens.
+    const ghost = this.#ghostAt(x, y);
+    if (ghost !== null) {
+      this.#options.ghosts?.pin(ghost);
+      return;
+    }
     const flags = this.#flags(e);
     const mods = toolModifiers(flags, this.#platform());
     const hit = hitTest(clipRects(snapshot, this.#view), x, y);
+    // The original of a moved, trimmed or removed clip is a clip: it selects as before, and pins its step.
+    const original = hit ? this.#ghostBoxes.find((b) => b.clipId === hit.rect.clipId) : undefined;
+    if (original) this.#options.ghosts?.pin(original.step);
     if (this.#state.tool === 'split') {
       // The Split tool: a click splits the clip under the pointer there.
       if (!hit || !this.#allows('clip.trim') || !this.#allows('clip.place')) return;
@@ -1035,7 +1272,7 @@ export class TimelineCanvas {
       this.#invalidateOverlay();
       return;
     }
-    const hit = y >= this.#view.rulerHeight ? hitTest(this.#rects, x, y) : null;
+    const hit = y >= lanesTopOf(this.#view) ? hitTest(this.#rects, x, y) : null;
     const hover = hit?.rect.clipId ?? null;
     if (hover !== this.#hoverClipId || this.#state.tool === 'split') {
       this.#hoverClipId = hover;
@@ -1055,6 +1292,7 @@ export class TimelineCanvas {
       const hit = locatorHit(rangeOf(this.#options.model.getSnapshot()?.locators), this.#view, x, y);
       return hit === 'left' || hit === 'right' ? 'ew-resize' : hit === 'body' ? 'grab' : 'default';
     }
+    if (y < lanesTopOf(this.#view)) return 'default';
     if (this.#state.tool === 'split') return part ? 'crosshair' : 'default';
     switch (part) {
       case null:
@@ -1316,16 +1554,26 @@ export class TimelineCanvas {
     const read = (name: string) => style?.getPropertyValue(name).trim() ?? '';
     const tracks = new Map<string, string>();
     return {
-      bg0: read('--bg-0'),
-      bg1: read('--bg-1'),
       bg2: read('--bg-2'),
-      bg3: read('--bg-3'),
-      line: read('--line'),
-      line2: read('--line-2'),
+      bgWell: read('--bg-well'),
+      laneEven: read('--lane-even'),
+      laneOdd: read('--lane-odd'),
+      beatLine: read('--white-a026'),
+      barLine: read('--white-a060'),
+      barLine4: read('--white-a110'),
+      divider: read('--divider'),
+      rulerUpper: read('--ruler-upper'),
+      rulerLine: read('--white-a050'),
+      rulerMajor: read('--ruler-major'),
+      rulerMinor: read('--ruler-minor'),
+      rulerQuarter: read('--button-line'),
+      lit1: read('--lit-1'),
       tx1: read('--tx-1'),
-      tx2: read('--tx-2'),
       tx3: read('--tx-3'),
       select: read('--select'),
+      clipOutline: read('--black-a550'),
+      cursorGlow: read('--white-a070'),
+      gainLine: read('--white-a700'),
       font: read('--font-ui') || 'sans-serif',
       bandFill: read('--tx-1-a200'),
       bandLine: read('--tx-1'),
@@ -1333,6 +1581,15 @@ export class TimelineCanvas {
       bandOffFill: read('--white-a060'),
       bandOff: read('--tx-3'),
       bandTint: read('--white-a028'),
+      ai: read('--ai'),
+      aiBody: read('--ai-a100'),
+      aiHatch: read('--ai-a160'),
+      aiTitle: read('--ai-a300'),
+      aiWaveOuter: read('--ai-2-a550'),
+      aiWaveInner: read('--ai-wave-a900'),
+      aiTitleText: read('--ai-title'),
+      aiInk: read('--ai-ink'),
+      aiLane: read('--ai-a070'),
       track: (trackId) => {
         let colour = tracks.get(trackId);
         if (colour === undefined) {
@@ -1352,98 +1609,180 @@ export class TimelineCanvas {
     return ctx;
   }
 
+  // draw(), in its order: the lanes, the locator range's tint, the beat and
+  // bar lines, the lane dividers (all below the marker row, under which the
+  // lanes scroll), the ruler's two halves, the empty marker row, the clips.
   #drawContent(): void {
     this.#contentDraws += 1;
     const snapshot = this.#options.model.getSnapshot();
     const order = snapshot?.trackOrder ?? [];
-    // The scroll stays inside the lanes when tracks go or shrink.
-    const limit = maxScrollY(this.#view, lanesHeight(order, this.#view));
+    // The plan's ghosts, as the source gives them now (m5b-ui-ghosts).
+    const ghosts = snapshot ? (this.#options.ghosts?.ghosts() ?? []) : [];
+    this.#ghosts = ghosts;
+    const adds = ghosts.filter((g): g is Extract<Ghost, { kind: 'track-add' }> => g.kind === 'track-add');
+    this.#ghostLanes = adds.length;
+    // The scroll stays inside the lanes (the proposed ones too) when tracks go or shrink.
+    const limit = maxScrollY(this.#view, lanesHeight(order, this.#view) + adds.length * this.#view.laneHeight);
     if ((this.#view.scrollY ?? 0) > limit) this.#view = { ...this.#view, scrollY: limit };
     const view = this.#view;
     for (const listener of [...this.#viewListeners]) listener();
     this.#rects = snapshot ? clipRects(snapshot, view) : [];
     const columns = new Map<string, { drawn: number; nonZero: number }>();
+    const waves = new Map<string, number[]>();
+    const titles = new Map<string, string>();
     const dimmed = dimmedTracks(snapshot?.tracks ?? []);
     this.#dimmed = order.filter((id) => dimmed.has(id));
     const words = this.#options.locale?.t() ?? translator('en');
     this.#guidance = snapshot && order.length === 0 ? words('timeline.empty') : null;
+    const width = view.width;
+    const height = view.height ?? 0;
+    const top = lanesTopOf(view);
+    const tops = laneTops(order, view);
+    // The parts the fidelity run reads (window.__fidelity in the mockup).
+    const parts: SurfacePart[] = [
+      { id: 'ruler-upper', x: 0, y: 0, w: width, h: RULER_UPPER },
+      { id: 'ruler-lower', x: 0, y: RULER_UPPER, w: width, h: view.rulerHeight - RULER_UPPER },
+    ];
+    order.forEach((trackId, index) => parts.push({ id: `lane-${index + 1}`, x: 0, y: tops[index]!, w: width, h: laneHeightOf(trackId, view) }));
+    const ghostLanes = ghostLaneRects(order, adds.map((g) => g.key), view);
+    ghostLanes.forEach((lane) => parts.push({ id: `lane-${lane.key}`, x: lane.x, y: lane.y, w: lane.width, h: lane.height }));
+    const lanesOf = new Map<string, { top: number; height: number }>(order.map((id, i) => [id, { top: tops[i]!, height: laneHeightOf(id, view) }]));
+    adds.forEach((g, i) => lanesOf.set(g.trackId, { top: ghostLanes[i]!.y, height: ghostLanes[i]!.height }));
+    const ghostDraw = snapshot ? this.#ghostShapes(ghosts, lanesOf, view, snapshot, parts) : { shapes: [], originals: new Map<string, number>(), removed: new Map<string, number>(), lanesRemoved: [] };
+    const masks: Array<Omit<SurfacePart, 'id'>> = [];
+    this.#rects.forEach((rect, index) => {
+      const box = clipBox(rect);
+      parts.push({ id: `clip-${index + 1}`, x: box.x, y: box.y, w: box.width, h: box.height });
+      masks.push({ x: box.x, y: box.y + CLIP_TITLE_HEIGHT, w: box.width, h: Math.max(0, box.height - CLIP_TITLE_HEIGHT) });
+      if (snapshot) titles.set(rect.clipId, clipTitle(snapshot, rect));
+    });
+    this.#contentParts = parts;
+    this.#masks = masks;
+    this.#titles = titles;
+    const selected = new Set(this.#state.selectedClipIds);
+    this.#outline = this.#rects.some((r) => selected.has(r.clipId) && r.x < width && r.x + r.width > 0) ? SELECTED_OUTLINE_W : 0;
     const ctx = this.#context(this.#content);
     if (!ctx) {
       this.#columns = columns;
+      this.#waves = waves;
+      this.#band = null;
       return;
     }
     const palette = this.#palette();
-    const width = view.width;
-    const height = view.height ?? 0;
     ctx.globalAlpha = 1;
-    ctx.fillStyle = palette.bg1;
-    ctx.fillRect(0, 0, width, height);
     if (snapshot) {
-      const tops = laneTops(order, view);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, top, width, Math.max(0, height - top));
+      ctx.clip();
       order.forEach((trackId, index) => {
-        const top = tops[index]!;
+        const laneTop = tops[index]!;
         const laneHeight = laneHeightOf(trackId, view);
-        if (top + laneHeight < view.rulerHeight || top > height) return;
-        ctx.globalAlpha = dimmed.has(trackId) ? DIMMED_ALPHA : 1;
-        ctx.fillStyle = palette.bg0;
-        ctx.fillRect(0, top, width, laneHeight);
-        ctx.fillStyle = palette.line;
-        ctx.fillRect(0, top + laneHeight - 1, width, 1);
+        if (laneTop + laneHeight < top || laneTop > height) return;
+        ctx.fillStyle = index % 2 ? palette.laneOdd : palette.laneEven;
+        ctx.fillRect(0, laneTop, width, laneHeight);
       });
-      ctx.globalAlpha = 1;
+      ghostLanes.forEach((lane, i) => {
+        ctx.fillStyle = (order.length + i) % 2 ? palette.laneOdd : palette.laneEven;
+        ctx.fillRect(lane.x, lane.y, lane.width, lane.height);
+      });
       const band = this.#bandEnabled() ? this.#bandRange(snapshot) : null;
       if (band) {
         // The locator range's tint over the lanes, under the clips.
         const x0 = frameToX(band.left, view);
         ctx.fillStyle = palette.bandTint;
-        ctx.fillRect(x0, view.rulerHeight, frameToX(band.right, view) - x0, height - view.rulerHeight);
+        ctx.fillRect(x0, top, frameToX(band.right, view) - x0, height - top);
       }
+      // The beat lines, then the bar lines over them (--white-a110 every fourth bar).
+      const grid = gridMarks(view, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000);
+      ctx.fillStyle = palette.beatLine;
+      for (const mark of grid) if (mark.kind !== 'bar') ctx.fillRect(Math.round(mark.x), top, 1, height - top);
+      for (const mark of grid) {
+        if (mark.kind !== 'bar') continue;
+        ctx.fillStyle = (barOf(mark) - 1) % BARS_PER_MAJOR === 0 ? palette.barLine4 : palette.barLine;
+        ctx.fillRect(Math.round(mark.x), top, 1, height - top);
+      }
+      ctx.fillStyle = palette.divider;
+      order.forEach((trackId, index) => ctx.fillRect(0, tops[index]! + laneHeightOf(trackId, view) - 1, width, 1));
+      this.#drawGhostLanes(ctx, ghostLanes, palette);
+      this.#drawRemovedLanes(ctx, ghostDraw.lanesRemoved, palette);
+      ctx.restore();
+    }
+    this.#drawRuler(ctx, snapshot, palette);
+    if (snapshot) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, top, width, Math.max(0, height - top));
+      ctx.clip();
       for (const rect of this.#rects) {
-        if (rect.x > width || rect.x + rect.width < 0 || rect.y > height || rect.y + rect.height < view.rulerHeight) continue;
-        ctx.globalAlpha = dimmed.has(rect.trackId) ? DIMMED_ALPHA : 1;
-        columns.set(rect.clipId, this.#drawClip(ctx, snapshot, rect, palette, width));
+        if (rect.x > width || rect.x + rect.width < 0 || rect.y > height || rect.y + rect.height < top) continue;
+        const ghostOriginal = ghostDraw.originals.has(rect.clipId) || ghostDraw.removed.has(rect.clipId);
+        const drawn = this.#drawClip(ctx, snapshot, rect, palette, selected.has(rect.clipId), dimmed.has(rect.trackId), titles.get(rect.clipId) ?? rect.mediaId, ghostOriginal ? MOVED_ORIGINAL_ALPHA : undefined);
+        columns.set(rect.clipId, { drawn: drawn.length, nonZero: drawn.filter((c) => c.amplitude > 0).length });
+        waves.set(rect.clipId, drawn.map((c) => c.outer));
+        const removedStep = ghostDraw.removed.get(rect.clipId);
+        if (removedStep !== undefined) this.#drawRemoved(ctx, clipBox(rect), removedStep, palette);
       }
+      for (const shape of ghostDraw.shapes) this.#drawGhostShape(ctx, snapshot, shape, palette);
+      ctx.restore();
       ctx.globalAlpha = 1;
       if (this.#guidance) {
         ctx.fillStyle = palette.tx3;
-        ctx.font = `12px ${palette.font}`;
+        ctx.font = `${TOKENS['fs-body']} ${palette.font}`;
         ctx.textAlign = 'center';
-        ctx.fillText(this.#guidance, width / 2, view.rulerHeight + Math.max(40, (height - view.rulerHeight) / 2));
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(this.#guidance, width / 2, top + Math.max(RULER_HEIGHT, (height - top) / 2));
         ctx.textAlign = 'left';
       }
     }
-    this.#drawRuler(ctx, snapshot, palette);
     this.#columns = columns;
+    this.#waves = waves;
   }
 
+  // The ruler as draw() draws it: the upper half (the locators': the band),
+  // a line, the lower half with a tick per bar (a tall one every fourth),
+  // quarter ticks and the labels, and the divider under it. The marker track
+  // row below is left empty.
   #drawRuler(ctx: CanvasRenderingContext2D, snapshot: Snapshot | null, palette: Palette): void {
     const view = this.#view;
-    const upper = RULER_UPPER;
-    const lower = view.rulerHeight - upper;
+    const ru = RULER_UPPER;
+    const ruler = view.rulerHeight;
     ctx.globalAlpha = 1;
-    // Upper half: the locators'; lower half: bars and beats, cursor and zoom.
-    ctx.fillStyle = palette.bg2;
-    ctx.fillRect(0, 0, view.width, upper);
-    ctx.fillStyle = palette.bg3;
-    ctx.fillRect(0, upper, view.width, lower);
-    ctx.fillStyle = palette.line2;
-    ctx.fillRect(0, view.rulerHeight - 1, view.width, 1);
+    ctx.fillStyle = palette.rulerUpper;
+    ctx.fillRect(0, 0, view.width, ru);
     this.#band = null;
-    if (!snapshot) {
-      this.#rulerLabels = [];
-      return;
-    }
-    this.#drawBand(ctx, snapshot, palette);
-    const marks = rulerMarks(view, snapshot.root?.tempo ?? [], snapshot.root?.sampleRate ?? 48000);
-    ctx.font = `10px ${palette.font}`;
+    if (snapshot) this.#drawBand(ctx, snapshot, palette);
+    for (const shape of this.#ghostBoxes) if (shape.ruler) this.#drawGhostBand(ctx, shape, palette);
+    ctx.fillStyle = palette.rulerLine;
+    ctx.fillRect(0, ru, view.width, 1);
+    ctx.fillStyle = palette.bg2;
+    ctx.fillRect(0, ru + 1, view.width, ruler - ru - 1);
     const labels: string[] = [];
-    for (const mark of marks) {
-      const tall = mark.kind === 'bar' ? lower : mark.kind === 'beat' ? lower / 2 : lower / 3;
-      ctx.fillStyle = mark.kind === 'bar' ? palette.tx2 : palette.tx3;
-      ctx.fillRect(Math.round(mark.x), view.rulerHeight - tall, 1, tall);
-      labels.push(mark.label);
-      ctx.fillText(mark.label, Math.round(mark.x) + 3, upper + 10);
+    if (snapshot) {
+      const tempo = snapshot.root?.tempo ?? [];
+      const rate = snapshot.root?.sampleRate ?? 48000;
+      for (const mark of gridMarks(view, tempo, rate)) {
+        const x = Math.round(mark.x);
+        if (mark.kind === 'bar') {
+          const major = (barOf(mark) - 1) % BARS_PER_MAJOR === 0;
+          ctx.fillStyle = major ? palette.rulerMajor : palette.rulerMinor;
+          ctx.fillRect(x, major ? ru + MAJOR_TICK_TOP : ruler - MINOR_TICK, 1, major ? ruler - ru - MAJOR_TICK_TOP : MINOR_TICK);
+        } else {
+          ctx.fillStyle = palette.rulerQuarter;
+          ctx.fillRect(x, ruler - QUARTER_TICK, 1, QUARTER_TICK);
+        }
+      }
+      ctx.font = `${TOKENS['fw-ui']} ${TOKENS['fs-micro']} ${palette.font}`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      for (const mark of rulerMarks(view, tempo, rate)) {
+        ctx.fillStyle = mark.kind === 'bar' && (barOf(mark) - 1) % BARS_PER_MAJOR === 0 ? palette.lit1 : palette.tx3;
+        ctx.fillText(mark.label, Math.round(mark.x) + LABEL_X, ru + LABEL_Y);
+        labels.push(mark.label);
+      }
     }
+    ctx.fillStyle = palette.divider;
+    ctx.fillRect(0, ruler - 1, view.width, 1);
     this.#rulerLabels = labels;
   }
 
@@ -1486,63 +1825,348 @@ export class TimelineCanvas {
     this.#band = { ...rect, cycle, left: range.left.toString(), right: range.right.toString() };
   }
 
-  // A clip in its track's three tones: body, title strip, waveform. Returns
-  // the waveform columns drawn from the pyramid and how many are not silent.
-  #drawClip(ctx: CanvasRenderingContext2D, snapshot: Snapshot, rect: ClipRect, palette: Palette, width: number): { drawn: number; nonZero: number } {
-    const tones = clipTones(palette.track(rect.trackId), palette.bg0);
-    const x = rect.x;
-    const top = rect.y + 1;
-    const h = rect.height - 2;
+  // draw()'s clip(): the rounded body, then inside it the title strip, the
+  // waveform in two tones and the title, then the outline; a selected clip in
+  // its selected palette with its two lower corner squares; a dimmed track's
+  // clip at 50 %. Returns the waveform's columns.
+  #drawClip(ctx: CanvasRenderingContext2D, snapshot: Snapshot, rect: ClipRect, palette: Palette, selected: boolean, dimmed: boolean, title: string, override?: number): WaveColumn[] {
+    const box = clipBox(rect);
+    const tones = clipPalette(palette.track(rect.trackId), { bgWell: palette.bgWell, select: palette.select, outline: palette.clipOutline }, selected);
+    // The original of a moved, trimmed or removed clip: draw()'s 38 % (m5b-ui-ghosts).
+    const alpha = override ?? (dimmed ? CLIP_DIMMED_ALPHA : 1);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
     ctx.fillStyle = tones.body;
-    ctx.fillRect(x, top, rect.width, h);
-    const title = Math.min(TITLE_PX, Math.max(0, h - 8));
-    if (title >= 10) {
-      ctx.fillStyle = tones.title;
-      ctx.fillRect(x, top, rect.width, title);
-      ctx.fillStyle = palette.bg0;
-      ctx.font = `10px ${palette.font}`;
-      const name = rect.mediaId;
-      ctx.fillText(name, Math.max(x, 0) + 4, top + title - 3);
+    ctx.fill();
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+    ctx.clip();
+    const strip = titleStrip(box);
+    ctx.fillStyle = tones.title;
+    ctx.fillRect(strip.x, strip.y, strip.width, strip.height);
+    const columns = this.#drawWaveform(ctx, snapshot, rect, box, tones, alpha);
+    ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = tones.titleText;
+    if (box.width > TITLE_MIN_W) {
+      // The title stays in view when the clip begins left of the canvas.
+      const x = Math.max(box.x, 0) + TITLE_X;
+      ctx.fillText(title, x, box.y + TITLE_Y, Math.max(0, box.x + box.width - x - TITLE_X));
     }
-    return this.#drawWaveform(ctx, snapshot, { ...rect, y: top + title, height: h - title }, tones.wave, width);
+    ctx.restore();
+    ctx.beginPath();
+    const inset = selected ? SELECTED_OUTLINE_INSET : OUTLINE_INSET;
+    ctx.roundRect(box.x + inset, box.y + inset, box.width - 2 * inset, box.height - 2 * inset, box.radius);
+    ctx.strokeStyle = tones.outline;
+    ctx.lineWidth = tones.outlineWidth;
+    ctx.stroke();
+    if (selected) {
+      ctx.fillStyle = palette.select;
+      for (const corner of cornerHandles(box)) ctx.fillRect(corner.x, corner.y, corner.width, corner.height);
+    }
+    ctx.restore();
+    return columns;
   }
 
-  // The clip's waveform: one min/max column per pixel from the level the zoom
-  // picks, over the media frames the column covers.
-  #drawWaveform(ctx: CanvasRenderingContext2D, snapshot: Snapshot, rect: ClipRect, colour: string, width: number): { drawn: number; nonZero: number } {
-    const counts = { drawn: 0, nonZero: 0 };
-    const media = snapshot.entities[`media:${rect.mediaId}`] as MediaEntity | undefined;
-    if (!media) return counts;
-    const pyramid = this.#options.peaks.get(media.contentHash);
-    if (!pyramid) return counts;
-    const fpp = this.#view.framesPerPixel;
-    const level = chooseLevel(pyramid, 1 / fpp);
-    const sourceStart = Number(rect.sourceStart);
-    const sourceEnd = sourceStart + Number(rect.length);
-    const middle = rect.y + rect.height / 2;
-    const half = Math.max(1, rect.height / 2 - 2);
-    ctx.fillStyle = colour;
-    const first = Math.max(0, Math.floor(rect.x));
-    const last = Math.min(width, Math.ceil(rect.x + rect.width));
-    for (let px = first; px < last; px += 1) {
-      const start = Math.max(sourceStart, sourceStart + (px - rect.x) * fpp);
-      const end = Math.min(sourceEnd, sourceStart + (px + 1 - rect.x) * fpp);
-      let min = Infinity;
-      let max = -Infinity;
-      for (let c = 0; c < pyramid.channels; c += 1) {
-        const range = columnRange(pyramid, level, c, start, end);
-        if (!range) continue;
-        min = Math.min(min, range.min);
-        max = Math.max(max, range.max);
+  // Where each ghost of the frame goes (m5b-ui-ghosts): the shapes to draw
+  // over the clips, the originals drawn at 38 % and the removed clips, by
+  // clip id with their step; their boxes for the outline, the hit test and
+  // reveal; their parts for the fidelity run.
+  #ghostShapes(ghosts: readonly Ghost[], lanes: ReadonlyMap<string, { top: number; height: number }>, view: Viewport, snapshot: Snapshot, parts: SurfacePart[]) {
+    const shapes: GhostShape[] = [];
+    const originals = new Map<string, number>();
+    const removed = new Map<string, number>();
+    const lanesRemoved: Array<{ step: number; box: Box }> = [];
+    const boxes: GhostBox[] = [];
+    const rows: Array<{ step: number; top: number; height: number }> = [];
+    const counts = new Map<string, number>();
+    const part = (name: string, box: Box) => {
+      const n = (counts.get(name) ?? 0) + 1;
+      counts.set(name, n);
+      parts.push({ id: n === 1 ? name : `${name}-${n}`, x: box.x, y: box.y, w: box.width, h: box.height });
+    };
+    const original = (clipId: string) => this.#rects.find((r) => r.clipId === clipId);
+    for (const g of ghosts) {
+      switch (g.kind) {
+        case 'track-add': {
+          const lane = lanes.get(g.trackId);
+          if (lane) boxes.push({ step: g.step, box: { x: 0, y: lane.top, width: view.width, height: lane.height }, pure: true });
+          break;
+        }
+        case 'clip-place':
+        case 'clip-move':
+        case 'clip-trim': {
+          const lane = lanes.get(g.trackId);
+          if (!lane) break;
+          const length = g.kind === 'clip-trim' ? g.to.length : g.length;
+          const sourceStart = g.kind === 'clip-trim' ? g.to.sourceStart : g.sourceStart;
+          const box = ghostClipBox(lane.top, lane.height, g.position, length, view);
+          const rect: ClipRect = { clipId: g.clipId, trackId: g.trackId, mediaId: g.mediaId, position: g.position, sourceStart, length, x: box.x - 1, y: lane.top, width: box.width + 2, height: lane.height };
+          const from = g.kind === 'clip-place' ? undefined : original(g.clipId);
+          if (from) {
+            originals.set(g.clipId, g.step);
+            boxes.push({ step: g.step, box: clipBox(from), pure: false, clipId: g.clipId });
+          }
+          shapes.push({ step: g.step, box, rect, title: clipTitle(snapshot, g), arrow: g.kind === 'clip-move' && from ? arrowOf(clipBox(from), box) : null });
+          boxes.push({ step: g.step, box, pure: true });
+          part(g.kind === 'clip-place' ? 'clip-ghost-new' : g.kind === 'clip-move' ? 'clip-ghost-move' : 'clip-ghost-trim', box);
+          break;
+        }
+        case 'track-remove': {
+          // The removed track's lane (4.2: "cross-hatched in violet"), under its clips.
+          const lane = lanes.get(g.trackId);
+          if (!lane) break;
+          const box = { x: 0, y: lane.top, width: view.width, height: lane.height };
+          lanesRemoved.push({ step: g.step, box });
+          boxes.push({ step: g.step, box, pure: false });
+          part('lane-ghost-remove', box);
+          break;
+        }
+        case 'clip-remove': {
+          const from = original(g.clipId);
+          if (!from) break;
+          removed.set(g.clipId, g.step);
+          const box = clipBox(from);
+          boxes.push({ step: g.step, box, pure: false, clipId: g.clipId });
+          part('clip-ghost-remove', box);
+          break;
+        }
+        case 'locators': {
+          const band = locatorGhostRect({ left: BigInt(g.after.left), right: BigInt(g.after.right) }, view);
+          if (!band) break;
+          boxes.push({ step: g.step, box: band, pure: false, ruler: true });
+          part('locator-band-ghost', band);
+          break;
+        }
+        case 'gain':
+        case 'pan':
+        case 'mute':
+        case 'solo':
+        case 'rename': {
+          // Drawn on the header and the strip; the lane is where reveal scrolls.
+          const lane = lanes.get(g.trackId);
+          if (lane) rows.push({ step: g.step, top: lane.top, height: lane.height });
+          break;
+        }
+        default:
+          break;
       }
-      if (min === Infinity) continue;
-      counts.drawn += 1;
-      if (min !== 0 || max !== 0) counts.nonZero += 1;
-      const top = middle - (max / 32767) * half;
-      const bottom = middle - (min / 32767) * half;
-      ctx.fillRect(px, top, 1, Math.max(1, bottom - top));
     }
-    return counts;
+    this.#ghostBoxes = boxes;
+    this.#ghostRows = rows;
+    return { shapes, originals, removed, lanesRemoved };
+  }
+
+  // A removed track's lane: the proposed lane's hatch, crossed, and its step
+  // disc at the lane's start (its clips are drawn over it, each dimmed and
+  // cross-hatched with its own disc).
+  #drawRemovedLanes(ctx: CanvasRenderingContext2D, lanes: ReadonlyArray<{ step: number; box: Box }>, palette: Palette): void {
+    for (const { step, box } of lanes) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(box.x, box.y, box.width, box.height - 1);
+      ctx.clip();
+      ctx.strokeStyle = palette.aiLane;
+      ctx.lineWidth = LANE_HATCH_WIDTH;
+      for (let x = -box.height; x < box.width + box.height; x += LANE_HATCH_PITCH) {
+        ctx.beginPath();
+        ctx.moveTo(x, box.y + box.height);
+        ctx.lineTo(x + box.height, box.y);
+        ctx.moveTo(x, box.y);
+        ctx.lineTo(x + box.height, box.y + box.height);
+        ctx.stroke();
+      }
+      this.#drawStepDisc(ctx, box, step, palette);
+      ctx.restore();
+    }
+  }
+
+  // A proposed track's lane: draw()'s hatch over the lane, clipped to it.
+  #drawGhostLanes(ctx: CanvasRenderingContext2D, lanes: readonly GhostLane[], palette: Palette): void {
+    for (const lane of lanes) {
+      ctx.fillStyle = palette.divider;
+      ctx.fillRect(0, lane.y + lane.height - 1, lane.width, 1);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(lane.x, lane.y, lane.width, lane.height - 1);
+      ctx.clip();
+      ctx.strokeStyle = palette.aiLane;
+      ctx.lineWidth = LANE_HATCH_WIDTH;
+      for (let x = -lane.height; x < lane.width; x += LANE_HATCH_PITCH) {
+        ctx.beginPath();
+        ctx.moveTo(x, lane.y + lane.height);
+        ctx.lineTo(x + lane.height, lane.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // draw()'s clip() for a ghost: the violet body hatched, the title strip,
+  // the waveform from the media's peaks, the step disc and the title, the
+  // dashed outline; and a moved clip's arrow from its original.
+  #drawGhostShape(ctx: CanvasRenderingContext2D, snapshot: Snapshot, shape: GhostShape, palette: Palette): void {
+    const { box } = shape;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+    ctx.fillStyle = palette.aiBody;
+    ctx.fill();
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+    ctx.clip();
+    ctx.strokeStyle = palette.aiHatch;
+    ctx.lineWidth = GHOST_HATCH_WIDTH;
+    for (let k = -box.height; k < box.width; k += GHOST_HATCH_PITCH) {
+      ctx.beginPath();
+      ctx.moveTo(box.x + k, box.y + box.height);
+      ctx.lineTo(box.x + k + box.height, box.y);
+      ctx.stroke();
+    }
+    const strip = titleStrip(box);
+    ctx.fillStyle = palette.aiTitle;
+    ctx.fillRect(strip.x, strip.y, strip.width, strip.height);
+    const tones: ClipPalette = { body: palette.aiBody, title: palette.aiTitle, titleText: palette.aiTitleText, waveOuter: palette.aiWaveOuter, waveOuterAlpha: 1, waveInner: palette.aiWaveInner, outline: palette.ai, outlineWidth: GHOST_OUTLINE_W };
+    this.#drawWaveform(ctx, snapshot, shape.rect, box, tones, 1);
+    this.#drawStepDisc(ctx, box, shape.step, palette);
+    ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-micro']} ${palette.font}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = palette.aiTitleText;
+    if (box.width > TITLE_MIN_W) {
+      const x = box.x + STEP_DISC.titleX;
+      ctx.fillText(shape.title, x, box.y + TITLE_Y, Math.max(0, box.x + box.width - x - TITLE_X));
+    }
+    ctx.restore();
+    ctx.setLineDash([...GHOST_DASH]);
+    ctx.strokeStyle = palette.ai;
+    ctx.lineWidth = GHOST_OUTLINE_W;
+    ctx.beginPath();
+    ctx.roundRect(box.x + OUTLINE_INSET, box.y + OUTLINE_INSET, box.width - 2 * OUTLINE_INSET, box.height - 2 * OUTLINE_INSET, box.radius);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (shape.arrow) {
+      const { x0, y0, x1, y1 } = shape.arrow;
+      const angle = Math.atan2(y1 - y0, x1 - x0);
+      const back = (d: number, side: number) => [x1 - d * Math.cos(angle) - side * Math.sin(angle), y1 - d * Math.sin(angle) + side * Math.cos(angle)] as const;
+      ctx.strokeStyle = palette.ai;
+      ctx.fillStyle = palette.ai;
+      ctx.lineWidth = ARROW.width;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(...back(ARROW.head - 2, 0));
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(...back(ARROW.head, -ARROW.half));
+      ctx.lineTo(...back(ARROW.head, ARROW.half));
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x0, y0, ARROW.dot, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // A removed clip over its original at 38 %: cross-hatched in violet, dashed, with its step.
+  #drawRemoved(ctx: CanvasRenderingContext2D, box: Box & { readonly radius: number }, step: number, palette: Palette): void {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+    ctx.clip();
+    ctx.strokeStyle = palette.aiHatch;
+    ctx.lineWidth = GHOST_HATCH_WIDTH;
+    for (let k = -box.height; k < box.width + box.height; k += GHOST_HATCH_PITCH) {
+      ctx.beginPath();
+      ctx.moveTo(box.x + k, box.y + box.height);
+      ctx.lineTo(box.x + k + box.height, box.y);
+      ctx.moveTo(box.x + k, box.y);
+      ctx.lineTo(box.x + k + box.height, box.y + box.height);
+      ctx.stroke();
+    }
+    this.#drawStepDisc(ctx, box, step, palette);
+    ctx.restore();
+    ctx.save();
+    ctx.setLineDash([...GHOST_DASH]);
+    ctx.strokeStyle = palette.ai;
+    ctx.lineWidth = GHOST_OUTLINE_W;
+    ctx.beginPath();
+    ctx.roundRect(box.x + OUTLINE_INSET, box.y + OUTLINE_INSET, box.width - 2 * OUTLINE_INSET, box.height - 2 * OUTLINE_INSET, box.radius);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  #drawStepDisc(ctx: CanvasRenderingContext2D, box: Box, step: number, palette: Palette): void {
+    ctx.fillStyle = palette.ai;
+    ctx.beginPath();
+    ctx.arc(box.x + STEP_DISC.x, box.y + STEP_DISC.y, STEP_DISC.r, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.fillStyle = palette.aiInk;
+    ctx.font = `${TOKENS['fw-bold']} ${TOKENS['fs-8h']} ${palette.font}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(step), box.x + STEP_DISC.x, box.y + STEP_DISC.y + 0.5);
+    ctx.textAlign = 'left';
+  }
+
+  // The locator ghost band in the ruler's upper half: the new range, violet and dashed.
+  #drawGhostBand(ctx: CanvasRenderingContext2D, shape: GhostBox, palette: Palette): void {
+    const b = shape.box;
+    ctx.save();
+    ctx.fillStyle = palette.aiTitle;
+    ctx.fillRect(b.x, b.y, b.width, b.height);
+    ctx.setLineDash([...GHOST_DASH]);
+    ctx.strokeStyle = palette.ai;
+    ctx.lineWidth = GHOST_OUTLINE_W;
+    ctx.strokeRect(b.x + OUTLINE_INSET, b.y + OUTLINE_INSET, b.width - 2 * OUTLINE_INSET, b.height - 2 * OUTLINE_INSET);
+    ctx.restore();
+  }
+
+  // The step of a ghost clip or a proposed lane under the point, or null.
+  #ghostAt(x: number, y: number): number | null {
+    for (let i = this.#ghostBoxes.length - 1; i >= 0; i -= 1) {
+      const { box, pure, step } = this.#ghostBoxes[i]!;
+      if (pure && x >= box.x && x < box.x + box.width && y >= box.y && y < box.y + box.height) return step;
+    }
+    return null;
+  }
+
+  // The waveform from the clip's media's peak pyramid, one min/max column per
+  // device pixel (waveform.ts): the outer layer fills between the min and the
+  // max at half the clip's alpha, the inner layer the same range at 52 %.
+  // Nothing before the peaks arrive.
+  #drawWaveform(ctx: CanvasRenderingContext2D, snapshot: Snapshot, rect: ClipRect, box: Box, tones: ClipPalette, alpha: number): WaveColumn[] {
+    const media = snapshot.entities[`media:${rect.mediaId}`] as MediaEntity | undefined;
+    if (!media) return [];
+    const pyramid = this.#options.peaks.get(media.contentHash);
+    if (!pyramid) return [];
+    const half = (box.height - CLIP_TITLE_HEIGHT) / 2 - WAVE_MARGIN;
+    if (!(half > 0)) return [];
+    const mid = box.y + CLIP_TITLE_HEIGHT + (box.height - CLIP_TITLE_HEIGHT) / 2;
+    const { columns } = waveformColumns(pyramid, {
+      sourceStart: Number(rect.sourceStart),
+      length: Number(rect.length),
+      framesPerPixel: this.#view.framesPerPixel,
+      ratio: this.#ratio,
+      x: rect.x,
+      clipLeft: Math.max(box.x, 0),
+      clipRight: Math.min(box.x + box.width, this.#view.width),
+      mid,
+      half,
+    });
+    ctx.globalAlpha = alpha * tones.waveOuterAlpha;
+    ctx.fillStyle = tones.waveOuter;
+    for (const c of columns) ctx.fillRect(c.x, mid - c.outerSpan.up, c.w, c.outerSpan.up + c.outerSpan.down);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = tones.waveInner;
+    for (const c of columns) ctx.fillRect(c.x, mid - c.innerSpan.up, c.w, c.innerSpan.up + c.innerSpan.down);
+    return columns;
   }
 
   #drawOverlay(): void {
@@ -1565,89 +2189,137 @@ export class TimelineCanvas {
       this.#invalidateContent();
     }
     const view = this.#view;
+    const top = lanesTopOf(view);
+    const height = view.height ?? 0;
     const snapshot = this.#options.model.getSnapshot();
     const ctx = this.#context(this.#overlay);
     const palette = ctx ? this.#palette() : null;
     const drag = this.#drag;
     const plan = drag && drag.kind === 'clip' && snapshot ? this.#plan(drag) : null;
-    this.#outline = 0;
     this.#guideX = null;
-    const inView = (r: ClipRect) => r.x < view.width && r.x + r.width > 0;
     const selected = new Set(this.#state.selectedClipIds);
-    // Each selected clip's outline, at its preview when the drag moves or resizes it.
-    const outlines: ClipRect[] = [];
-    const previews: ClipRect[] = [];
+    // The previews of a drag, and the outline of a selected clip at its preview.
+    const previews: Array<{ rect: ClipRect; outlined: boolean }> = [];
     for (const rect of this.#rects) {
       const preview = plan && drag && snapshot ? this.#preview(rect, snapshot, plan, drag) : rect;
-      if (preview !== rect) previews.push(preview);
-      if (!selected.has(rect.clipId)) continue;
-      outlines.push(preview !== rect && plan?.kind !== 'copy' ? preview : rect);
-      if (plan?.kind === 'copy' && preview !== rect) outlines.push(preview);
+      if (preview !== rect) previews.push({ rect: preview, outlined: selected.has(rect.clipId) });
     }
-    if (outlines.some(inView)) this.#outline = OUTLINE_PX;
-    // The handles: the selected clips and the one under the pointer.
-    const handles = this.#rects.filter((r) => !drag && (selected.has(r.clipId) || r.clipId === this.#hoverClipId));
+    // The hovered clip's handles; the volume control of the selected clips
+    // and the hovered one (their corner squares are the content layer's).
+    const hovered = this.#rects.filter((r) => !drag && r.clipId === this.#hoverClipId && !selected.has(r.clipId));
+    const gains = this.#rects.filter((r) => !drag && (selected.has(r.clipId) || r.clipId === this.#hoverClipId));
     if (plan && (plan.kind === 'move' || plan.kind === 'copy' || plan.kind === 'trim') && plan.guide !== null) {
       this.#guideX = frameToX(plan.guide, view);
+    }
+    // The hovered (or pinned) step's ghosts, outlined (m5b-ui-ghosts).
+    this.#ghostOutline = this.#options.ghosts?.outlineStep() ?? null;
+    if (ctx && palette && this.#ghostOutline !== null) {
+      ctx.save();
+      ctx.strokeStyle = palette.ai;
+      ctx.lineWidth = HOT_OUTLINE_W;
+      for (const shape of this.#ghostBoxes) {
+        if (shape.step !== this.#ghostOutline) continue;
+        const b = shape.box;
+        ctx.beginPath();
+        ctx.roundRect(b.x - HOT_OUTLINE_W / 2, b.y - HOT_OUTLINE_W / 2, b.width + HOT_OUTLINE_W, b.height + HOT_OUTLINE_W, CLIP_RADIUS);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
     if (ctx && palette) {
       ctx.save();
       ctx.beginPath();
-      ctx.rect(0, view.rulerHeight, view.width, (view.height ?? 0) - view.rulerHeight);
+      ctx.rect(0, top, view.width, Math.max(0, height - top));
       ctx.clip();
-      for (const rect of previews) {
+      for (const { rect, outlined } of previews) {
+        const box = clipBox(rect);
         ctx.globalAlpha = PREVIEW_ALPHA;
         ctx.fillStyle = palette.track(rect.trackId);
-        ctx.fillRect(rect.x, rect.y + 1, rect.width, rect.height - 2);
+        ctx.beginPath();
+        ctx.roundRect(box.x, box.y, box.width, box.height, box.radius);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        if (!outlined) continue;
+        const inset = SELECTED_OUTLINE_INSET;
+        ctx.beginPath();
+        ctx.roundRect(box.x + inset, box.y + inset, box.width - 2 * inset, box.height - 2 * inset, box.radius);
+        ctx.strokeStyle = palette.select;
+        ctx.lineWidth = SELECTED_OUTLINE_W;
+        ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = palette.select;
-      ctx.lineWidth = OUTLINE_PX;
-      for (const rect of outlines) {
-        if (!inView(rect)) continue;
-        ctx.strokeRect(rect.x + 1, rect.y + 2, Math.max(0, rect.width - 2), Math.max(0, rect.height - 4));
-      }
-      for (const rect of handles) this.#drawHandles(ctx, rect, palette);
-      if (drag?.kind === 'gain') this.#drawHandles(ctx, drag.rect, palette, true);
+      ctx.fillStyle = palette.select;
+      for (const rect of hovered) for (const corner of cornerHandles(clipBox(rect))) ctx.fillRect(corner.x, corner.y, corner.width, corner.height);
+      for (const rect of gains) this.#drawGain(ctx, snapshot, rect, palette);
+      if (drag?.kind === 'gain') this.#drawGain(ctx, snapshot, drag.rect, palette, gainFromDrag(drag.gain, drag.dy, toolModifiers(drag.flags, this.#platform()).fine));
       if (this.#guideX !== null) {
         ctx.fillStyle = palette.select;
-        ctx.fillRect(Math.round(this.#guideX), view.rulerHeight, 1, (view.height ?? 0) - view.rulerHeight);
+        ctx.fillRect(Math.round(this.#guideX), top, 1, height - top);
       }
       this.#drawSplitLine(ctx, snapshot, palette);
       ctx.restore();
     }
     this.#placeTooltip(snapshot, plan);
-    // The project cursor, from the realtime playhead.
+    // The project cursor, from the realtime playhead, as draw() draws it: a
+    // glow over the lanes, the line from the ruler's lower half to the top of
+    // the scroll-zoom bar, and the head in the lower half.
     const playhead = this.#playhead;
     this.#cursorX = playhead === null ? null : frameToX(playhead, view);
-    if (ctx && palette && this.#cursorX !== null && this.#cursorX >= 0 && this.#cursorX <= view.width) {
-      ctx.fillStyle = palette.tx1;
-      ctx.fillRect(Math.round(this.#cursorX), 0, 1, view.height ?? 0);
+    this.#cursorParts = [];
+    if (this.#cursorX !== null && this.#cursorX >= 0 && this.#cursorX <= view.width) {
+      const px = Math.round(this.#cursorX) + 0.5;
+      const from = RULER_UPPER + CURSOR_TOP;
+      this.#cursorParts = [
+        { id: 'cursor', x: px - 0.5, y: from, w: 1, h: height - from },
+        { id: 'cursor-head', x: px - CURSOR_HEAD_HALF, y: from, w: 2 * CURSOR_HEAD_HALF, h: 2 * CURSOR_HEAD_HALF },
+      ];
+      if (ctx && palette) {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = palette.cursorGlow;
+        ctx.fillRect(px - CURSOR_GLOW / 2, top, CURSOR_GLOW, height - top);
+        ctx.strokeStyle = palette.select;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(px, from);
+        ctx.lineTo(px, height);
+        ctx.stroke();
+        ctx.fillStyle = palette.select;
+        ctx.beginPath();
+        ctx.moveTo(px - CURSOR_HEAD_HALF, from);
+        ctx.lineTo(px + CURSOR_HEAD_HALF, from);
+        ctx.lineTo(px + CURSOR_HEAD_HALF, RULER_UPPER + CURSOR_HEAD_SIDE);
+        ctx.lineTo(px, RULER_UPPER + CURSOR_HEAD_POINT);
+        ctx.lineTo(px - CURSOR_HEAD_HALF, RULER_UPPER + CURSOR_HEAD_SIDE);
+        ctx.fill();
+      }
     }
     // Display rate while playing: the next animation frame draws the cursor
     // again from the clock; stopped, the loop ends here.
     if (this.#clock.playing()) this.#invalidateOverlay();
   }
 
-  // A clip's resize squares in its lower corners and its volume control (a
-  // box with a level mark), on hover or selection; the control is filled
-  // while it is held.
-  #drawHandles(ctx: CanvasRenderingContext2D, rect: ClipRect, palette: Palette, held = false): void {
-    const corner = cornerSize(rect);
-    const bottom = rect.y + rect.height - 1;
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = palette.tx1;
-    ctx.fillRect(rect.x + 1, bottom - corner, corner, corner);
-    ctx.fillRect(rect.x + rect.width - corner - 1, bottom - corner, corner, corner);
+  // A clip's volume control as draw() draws it: its box in --bg-well with a
+  // --white-a700 line and the gain in --select (the held value while dragged).
+  #drawGain(ctx: CanvasRenderingContext2D, snapshot: Snapshot | null, rect: ClipRect, palette: Palette, held?: number): void {
     const gain = gainBox(rect);
-    if (gain) {
-      ctx.fillStyle = held ? palette.select : palette.bg0;
-      ctx.fillRect(gain.x + 1, gain.y, gain.width - 2, gain.height - 1);
-      ctx.fillStyle = palette.tx1;
-      ctx.fillRect(gain.x + 3, gain.y + gain.height / 2, gain.width - 6, 1);
-      ctx.fillRect(gain.x + gain.width / 2, gain.y + 3, 1, gain.height - 6);
-    }
+    if (!gain) return;
+    const clip = snapshot?.entities[`clip:${rect.clipId}`] as ClipEntity | undefined;
+    const value = held ?? clip?.gainMilliDb ?? 0;
     ctx.globalAlpha = 1;
+    ctx.fillStyle = palette.bgWell;
+    ctx.beginPath();
+    ctx.roundRect(gain.x, gain.y, gain.width, gain.height, GAIN_RADIUS);
+    ctx.fill();
+    ctx.strokeStyle = palette.gainLine;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(gain.x + 0.5, gain.y + 0.5, gain.width - 1, gain.height - 1, GAIN_RADIUS);
+    ctx.stroke();
+    ctx.fillStyle = palette.select;
+    ctx.font = `${TOKENS['fw-strong']} ${TOKENS['fs-8']} ${palette.font}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(formatDb(value), gain.x + GAIN_TEXT_X, gain.y + gain.height / 2 - 0.5, gain.width - 2 * GAIN_TEXT_X);
   }
 
   // The Split tool's line: where a click would split the clip under the pointer.
@@ -1657,8 +2329,9 @@ export class TimelineCanvas {
     const hit = hitTest(this.#rects, pointer.x, pointer.y);
     if (!hit) return;
     const x = frameToX(this.#snapper(snapshot)(xToFrame(pointer.x, this.#view)), this.#view);
+    const box = clipBox(hit.rect);
     ctx.fillStyle = palette.tx1;
-    ctx.fillRect(Math.round(x), hit.rect.y + 1, 1, hit.rect.height - 2);
+    ctx.fillRect(Math.round(x), box.y, 1, box.height);
   }
 
   // The drag tooltip: for a clip the new position (start, or the resized

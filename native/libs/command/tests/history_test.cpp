@@ -1039,6 +1039,32 @@ TEST_CASE("Rolling back a branch-merge revision after main changed one of its en
     CHECK(rollbackConflicts(h, mergedId) == std::vector<EntityRef>{EntityRef{EntityType::track, "trk_c"}});
 }
 
+// m5b-engine-monitoring: each track.set_monitor is one revision; undo restores
+// the mode before it, down to off and the track's original hash.
+TEST_CASE("track.set_monitor is one revision each; undo restores the mode before it", "[history][monitor]") {
+    History history = fresh();
+    history.commit({cmd(R"({"op":"track.add","trackId":"trk_1","name":"Vox","channels":1})")}, "a", "t");
+    const auto none = history.head().envelope.documentHash;
+    auto setMonitor = [](const std::string& mode) {
+        return cmd(R"({"op":"track.set_monitor","trackId":"trk_1","monitor":")" + mode + R"("})");
+    };
+    const Revision& a = history.commit({setMonitor("auto")}, "a", "t");
+    REQUIRE(a.diff.size() == 1);
+    CHECK(a.diff[0].entity == (EntityRef{EntityType::track, "trk_1"}));
+    CHECK(a.diff[0].change == DiffEntry::Change::modified);
+    const auto withAuto = a.envelope.documentHash;
+    const Revision& b = history.commit({setMonitor("input")}, "a", "t");
+    REQUIRE(b.diff.size() == 1);
+    CHECK(history.head().document.track("trk_1")->monitor == siann::model::MonitorMode::input);
+
+    const Revision& u1 = history.undo("a", "t");
+    CHECK(u1.envelope.documentHash == withAuto);
+    CHECK(history.head().document.track("trk_1")->monitor == siann::model::MonitorMode::automatic);
+    const Revision& u2 = history.undo("a", "t");
+    CHECK(u2.envelope.documentHash == none);
+    CHECK(history.head().document.track("trk_1")->monitor == siann::model::MonitorMode::off);
+}
+
 // m5b-engine-master: each master.set_gain is one revision; undo and redo walk the
 // first set, a change and the removal at 0 dB back and forth.
 TEST_CASE("master.set_gain is one revision each; undo and redo restore the first set, a change and the removal",

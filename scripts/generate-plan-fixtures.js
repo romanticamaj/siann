@@ -115,6 +115,16 @@ function buildFixture() {
       ],
       writeSet: [entry('track', 'trk_1')],
     }],
+    // m5b-engine-monitoring: a track's monitoring mode set to each value.
+    ['track_monitor_steps', {
+      ...minimal,
+      steps: [
+        { op: 'track.set_monitor', trackId: 'trk_1', monitor: 'auto' },
+        { op: 'track.set_monitor', trackId: 'trk_1', monitor: 'input' },
+        { op: 'track.set_monitor', trackId: 'trk_1', monitor: 'off' },
+      ],
+      writeSet: [entry('track', 'trk_1')],
+    }],
     // m5b-engine-track-notes: a track's notes set (multi-line, non-ASCII) and
     // removed with "".
     ['track_notes_steps', {

@@ -182,6 +182,63 @@ private:
     MeterReading reading_{};
 };
 
+// m5b-engine-monitoring (spec, "Recording"): what auto monitoring follows,
+// two atomics written on other threads and read by the node each block.
+// `armed` is the engine host's (arm and disarm); `capturing` is written on the
+// audio thread by the capture bank, for the slot the gate is bound to.
+struct MonitorGate {
+    std::atomic<bool> armed{false};
+    std::atomic<bool> capturing{false};
+};
+
+// input: always the device input. automatic: the device input while the
+// transport is stopped and the gate is armed, or while it rolls and the gate
+// is capturing; port 0 otherwise.
+enum class MonitorInputMode { input, automatic };
+
+// The head of a monitored track's strip (spec, "Latency model", the monitoring
+// path). Port 0 is the track's clip source; each block the node outputs it or
+// the device input of the block (ProcessContext::input) through the track's
+// channel map {inputPort, inputChannels}, decided on the audio thread, and
+// crossfades over fadeFrames when that flips (the first block starts where it
+// is). Channels map as ClipPlayerNode's: equal counts copy, a mono input feeds
+// every channel, a stereo input into a mono track averages. Without an input in
+// the context, or with a map past its channels (or inputChannels 0), the input
+// is silence. inputBlend() is the input's weight per frame of the last block,
+// which the strip's low-latency edge follows (GraphBuilder::connectLowLatency).
+class MonitorInputNode final : public Node {
+public:
+    // A null gate is never armed nor capturing; it must outlive the node.
+    MonitorInputNode(int channels, MonitorInputMode mode, int inputPort, int inputChannels, const MonitorGate* gate,
+                     int fadeFrames);
+    std::vector<int> inputPorts() const override { return {channels_}; }
+    int outputChannels() const override { return channels_; }
+    void prepare(int maxBlockFrames) override;
+    void process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                 const AudioBufferView& output) noexcept override;
+
+    MonitorInputMode mode() const noexcept { return mode_; }
+    int fadeFrames() const noexcept { return fadeFrames_; }
+    // 0 (clips) to 1 (input) at frame i of the last processed block.
+    float inputBlend(int frame) const noexcept {
+        return frame >= 0 && static_cast<std::size_t>(frame) < blend_.size() ? blend_[static_cast<std::size_t>(frame)]
+                                                                               : 0.0f;
+    }
+
+private:
+    bool wantsInput(bool rolling) const noexcept;
+
+    int channels_;
+    MonitorInputMode mode_;
+    int inputPort_;
+    int inputChannels_;
+    const MonitorGate* gate_;
+    int fadeFrames_;
+    int position_ = 0;  // 0 (clips) to fadeFrames_ (input)
+    bool primed_ = false;
+    std::vector<float> blend_;
+};
+
 // Delays its input by its latency and reports it. Used to test PDC.
 //
 // The latency can change at runtime, like a plugin reporting a new latency:

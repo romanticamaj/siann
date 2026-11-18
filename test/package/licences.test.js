@@ -29,7 +29,6 @@ const REQUIRED = {
   'resources/licenses/react-LICENSE.txt': /Copyright \(c\) Meta Platforms[\s\S]*Permission is hereby granted/,
   'resources/licenses/react-dom-LICENSE.txt': /Copyright \(c\) Meta Platforms[\s\S]*Permission is hereby granted/,
   'resources/licenses/scheduler-LICENSE.txt': /Copyright \(c\) Meta Platforms[\s\S]*Permission is hereby granted/,
-  'resources/licenses/react-resizable-panels-LICENSE.txt': /Copyright[\s\S]*Permission is hereby granted/,
   'LICENSE.electron.txt': /Electron|Permission is hereby granted/,
   'LICENSES.chromium.html': /Chromium|<html/i,
 };

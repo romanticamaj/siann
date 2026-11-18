@@ -19,13 +19,17 @@
 // renderer stays disconnected. Under SIANN_SHELL_TEST=1
 // (the preload's window.siannTest) the timeline's test hooks are
 // window.__siannTimeline, the mixer's meter canvas is window.__siannMeters,
+// the plan review's ghosts are window.__siannGhosts (m5b-ui-ghosts),
 // the locale store is window.__siannLocale (which accepts the pseudo-locale),
 // window.siannTest.languages, when the test pinned them, stands in for
 // navigator.languages, window.__siannClient hands the e2e tests the session
 // client's log of requests refused as disconnected, of requests sent and of
 // the engine's answers, window.siannTest.capabilities, when the test gave
 // SIANN_TEST_CAPABILITIES, is the engine.capabilities answer the session
-// client uses instead of the engine's (m5-ui-loop-click), and
+// client uses instead of the engine's (m5-ui-loop-click),
+// window.siannTest.environment, when the fidelity run gave
+// SIANN_FIDELITY_ENVIRONMENT, is the device and build the session client
+// answers in place of the engine's (m5-ui-alignment-chrome), and
 // a <Profiler> at the
 // root counts React commits in window.__siannCommits, and each <Counted id>
 // (shell/Counted.tsx) those under it in window.__siannCommitsBy[id]. Only the profiling
@@ -46,9 +50,13 @@ import { ConnectionPhaseStore } from './model/connection-phase';
 import { EngineStatusStore } from './model/engine-status';
 import { GestureController } from './model/gesture-controller';
 import { PeaksCache } from './model/peaks-cache';
+import { AgentStore } from './model/agents';
 import { PlanStore } from './model/plan-store';
+import { ReviewStore } from './model/review-store';
+import type { Ghost } from './plans/ghosts';
 import { RealtimeClient, type RealtimeSocket } from './model/realtime-client';
-import { SessionClient, type AnsweredRequest, type EngineEndpoint, type SentRequest, type SocketLike } from './model/session-client';
+import { UndoHistory } from './model/undo-history';
+import { SessionClient, type AnsweredRequest, type EngineEndpoint, type SentRequest, type SocketLike, type TestEnvironment } from './model/session-client';
 import { LoopClickController, TransportStateStore, clientCapabilities } from './model/loop-click';
 import type { Capabilities } from './model/capabilities';
 import { TransportController } from './model/transport';
@@ -71,7 +79,7 @@ declare global {
     // The gesture controller, for the e2e tests to wait on (settled).
     __siannGestures?: GestureController;
     // Present only when the shell runs under SIANN_SHELL_TEST=1.
-    siannTest?: { timelineHooks?: boolean; languages?: readonly string[]; capabilities?: Capabilities };
+    siannTest?: { timelineHooks?: boolean; languages?: readonly string[]; capabilities?: Capabilities; environment?: TestEnvironment };
     __siannTimeline?: TimelineTestHooks;
     __siannLocale?: LocaleStore;
     // The toast store, for the fit test to raise a toast per locale.
@@ -85,6 +93,8 @@ declare global {
       answered(): ReadonlyArray<AnsweredRequest>;
     };
     __siannMeters?: MeterTestHooks;
+    // The plan review's ghosts as the window draws them (m5b-ui-ghosts).
+    __siannGhosts?: { list(): readonly Ghost[]; ticked(): number[] | null; outline(): number | null };
     // React commits counted at the root (profiling bundle only).
     __siannCommits?: number;
     // React commits under each <Counted id> (profiling bundle only).
@@ -129,6 +139,7 @@ const client = new SessionClient({
   schedule,
   initialStatus: bridge ? 'connecting' : 'disconnected',
   ...(testHooks?.capabilities ? { capabilities: testHooks.capabilities } : {}),
+  ...(testHooks?.environment ? { environment: testHooks.environment } : {}),
 });
 const realtime = new RealtimeClient({
   session: client,
@@ -138,6 +149,21 @@ const gestures = new GestureController({ client, schedule });
 window.__siannGestures = gestures;
 const plans = new PlanStore();
 plans.attach(client);
+// The agents the engine lists (m5b-ui-plan-metadata): engine.status, then agent.changed.
+const agents = new AgentStore();
+agents.attach(client);
+// The plan under review, its preview and its ghosts (m5b-ui-ghosts).
+const review = new ReviewStore({ client, plans });
+if (testHooks) {
+  window.__siannGhosts = {
+    list: () => review.ghosts(),
+    ticked: () => {
+      const ticked = review.getSnapshot().ticked;
+      return ticked === null ? null : [...ticked].sort((a, b) => a - b);
+    },
+    outline: () => review.outlineStep(),
+  };
+}
 const engineStatus = new EngineStatusStore({ client, schedule });
 if (testHooks) window.__siannClient = { refused: () => client.refused(), sent: () => client.sent(), answered: () => client.answered() };
 
@@ -146,11 +172,14 @@ const toasts = new ToastStore({ schedule });
 if (testHooks) window.__siannToasts = toasts;
 announceReconnects(connection, toasts, (revision) => reconnectedMessage(locales.getSnapshot(), { revision }));
 if (testHooks) window.__siannTransport = { displayWrites, playhead: () => realtime.latest()?.playheadSamples ?? null };
+// What undo and redo can do now (the top bar dims what cannot).
+const history = new UndoHistory(client);
 const transport = new TransportController({
   client,
   playing: () => realtime.latest()?.playing ?? false,
   toasts,
   locale: () => locales.getSnapshot(),
+  onNothingLeft: (method) => history.refused(method),
 });
 const transportState = new TransportStateStore(client);
 const loopClick = new LoopClickController({
@@ -213,6 +242,8 @@ const app = (
     realtime={realtime}
     peaks={peaks}
     plans={plans}
+    agents={agents}
+    review={review}
     engineStatus={engineStatus}
     layout={layout}
     commands={commands}
@@ -221,6 +252,7 @@ const app = (
     toasts={toasts}
     transport={transport}
     loopClick={loopClick}
+    history={history}
     onTimelineHooks={onTimelineHooks}
     onMeterHooks={onMeterHooks}
   />

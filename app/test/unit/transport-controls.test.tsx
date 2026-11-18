@@ -30,7 +30,7 @@ import { TransportController } from '../../src/renderer/model/transport';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { createLayoutStore } from '../../src/renderer/shell/layout-store';
 import { ToastStore } from '../../src/renderer/shell/toast-store';
-import { ClickLevel, TimeFormatMenu, Transport, transportAvailability } from '../../src/renderer/shell/Transport';
+import { ClickLevel, TimeFormatMenu, Transport, transportAvailability, UndoRedo } from '../../src/renderer/shell/Transport';
 import { sampleSnapshot } from './support/timeline';
 
 // dist/test/unit -> app/test/unit/fixtures
@@ -102,6 +102,7 @@ function render(capabilities: Capabilities | null, status: EngineStatus | null, 
   });
   return renderToStaticMarkup(
     <CapabilitiesContext.Provider value={capabilities}>
+      <UndoRedo transport={controller} history={{ getSnapshot: () => ({ undo: 'yes', redo: 'no' }), subscribe: () => () => undefined }} />
       <Transport
         client={session}
         realtime={null}
@@ -150,9 +151,13 @@ test('with no device the rendered buttons are disabled and their title gives the
     assert.match(button, /disabled=""/, id);
     assert.ok(button.includes(`title="${reason}"`), `${id}: ${button}`);
   }
-  // The position display is there, its tooltip says bars are 4/4. Auto-scroll
-  // is the project zone toolbar's (the mockup's), not the top bar's.
-  assert.ok(tag(markup, 'position-display').includes(`title="${translator('en')('transport.fourFour')}"`));
+  // The position display is there; the 4/4 sentence left its tooltip for the
+  // Sig cell's (m5b-ui-signature). Auto-scroll is the project zone toolbar's
+  // (the mockup's), not the top bar's.
+  const sentence = translator('en')('transport.fourFour');
+  assert.ok(!tag(markup, 'position-display').includes('title='), tag(markup, 'position-display'));
+  assert.ok(tag(markup, 'display-signature').includes(`title="${sentence}"`), tag(markup, 'display-signature'));
+  assert.match(sentence, /every project in 4\/4/);
   tag(markup, 'position-primary');
   tag(markup, 'position-secondary');
   assert.ok(!markup.includes('data-testid="auto-scroll"'));
@@ -168,13 +173,18 @@ test('the transport parts carry the mockup ids in the mockup order', () => {
     ['transport-stop', 'transport-stop'],
     ['transport-play', 'transport-play'],
     ['position-display', 'display'],
-    ['position-primary', 'display-position'],
-    ['position-secondary', 'display-time'],
-    ['transport-tempo', 'display-tempo'],
     ['undo', 'undo'],
     ['redo', 'redo'],
   ];
   for (const [id, part] of parts) assert.ok(tag(markup, id).includes(`data-part="${part}"`), `${id}: data-part="${part}"`);
+  // The values sit in the mockup's cells, which carry the ids: .cell > .lbl + .val.
+  for (const [id, part] of [
+    ['position-primary', 'display-position'],
+    ['position-secondary', 'display-time'],
+    ['transport-tempo', 'display-tempo'],
+  ] as const) {
+    assert.match(markup, new RegExp(`<div class="cell" data-part="${part}"[^>]*><span class="lbl" aria-hidden="true">[^<]+</span><span class="val[^"]*" data-testid="${id}">`), id);
+  }
   assert.ok(markup.includes('data-part="transport-buttons"'));
   const order = ['transport-start', 'transport-stop', 'transport-play'].map((part) => markup.indexOf(`data-part="${part}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'go to start, stop, start');
@@ -274,7 +284,7 @@ test('without a device cycle and the metronome are disabled with the reason, in 
   }
 });
 
-const HOLDS = /<span class="(transport-hold [\w-]+|transport-locators-empty)"[^>]*><\/span>/g;
+const HOLDS = /<span class="(transport-hold [\w-]+|cell display-locators-empty)"[^>]*><\/span>/g;
 
 test('without the E-1 methods none of the controls is in the DOM and their boxes stay empty', () => {
   for (const capabilities of [REDUCED, WITHOUT_E1, null]) {
@@ -288,7 +298,7 @@ test('without the E-1 methods none of the controls is in the DOM and their boxes
   const holds = [...markup.matchAll(HOLDS)].map((m) => m[0]);
   assert.deepEqual(
     holds.map((h) => /class="([^"]+)"/.exec(h)![1]),
-    ['transport-hold transport-hold-tbtn', 'transport-locators-empty', 'transport-hold transport-hold-tgroup'],
+    ['transport-hold transport-hold-tbtn', 'cell display-locators-empty', 'transport-hold transport-hold-tgroup'],
   );
   for (const hold of holds) {
     assert.match(hold, /aria-hidden="true"/, hold);
@@ -320,21 +330,23 @@ test('the empty boxes take their size from the shell\'s rules: the button\'s rul
   // A .tgroup's around one .tbtn: its padding inside, and its border as a
   // transparent hairline outside the width, so it rounds to device pixels as
   // the .tgroup's and the .lcd's borders do (at 150 % a 1 px border is 2/3 px).
-  const frame = rule(/^\.transport-hold-tgroup, \.transport-locators-empty \{/);
+  const frame = rule(/^\.transport-hold-tgroup \{/);
   assert.match(frame.body, /box-sizing:\s*content-box/);
   assert.match(frame.body, /border:\s*var\(--hairline\) solid transparent/);
   const tgroup = rule(/^\.transport-hold-tgroup \{/);
   assert.match(tgroup.body, /width:\s*calc\(var\(--transport-w\) \+ 2 \* var\(--space-3q\)\)/);
   assert.match(tgroup.body, /height:\s*calc\(var\(--transport-h\) \+ 2 \* var\(--space-3q\)\)/);
-  // The locator cell's width, inside that border.
-  assert.match(rule(/^\.transport-locators-empty \{/).body, /width:\s*var\(--display-locators-empty-w\)/);
-  assert.match(rule(/^\.transport-locators \.cell \{/).body, /min-width:\s*var\(--display-locators-empty-w\)/);
+  // The locator cell: an empty .cell of the display's one .lcd (its border-right
+  // is the mockup's), --display-locators-empty-w wide, and the cell's least width.
+  assert.match(rule(/^\.display-locators-empty \{/).body, /width:\s*var\(--display-locators-empty-w\)/);
+  assert.match(rule(/^\.lcd \.cell\[data-part="display-locators"\] \{/).body, /min-width:\s*var\(--display-locators-empty-w\)/);
+  assert.doesNotMatch(css, /\.transport-locators/);
 });
 
 test('with full capabilities and no locators the locator cell is the empty box; with locators it reads bars and beats', () => {
   const none = render(FULL, WITH_DEVICE, { state: OFF, snapshot: sampleSnapshot() });
   assert.ok(!none.includes('data-part="display-locators"'));
-  assert.ok(none.includes('<span class="transport-locators-empty" aria-hidden="true"></span>'));
+  assert.ok(none.includes('<span class="cell display-locators-empty" aria-hidden="true"></span>'));
   // 120 BPM at 48 kHz: bars 9.1 and 13.1.
   const set = render(FULL, WITH_DEVICE, { state: OFF, snapshot: withLocators(String(8 * 96000), String(12 * 96000)) });
   const cell = tag(set, 'display-locators');
@@ -342,9 +354,12 @@ test('with full capabilities and no locators the locator cell is the empty box; 
   assert.ok(set.includes('>9<em>.</em>1 <em>\u2013</em> 13<em>.</em>1<'), set);
   // The mockup's markup: an .lcd .cell with a .lbl over a .val.sm.
   assert.match(cell, /^<div class="cell"/);
-  assert.ok(set.includes('<div class="lcd transport-locators"><div class="cell"'), set);
+  // One .lcd: the locator cell sits between the time and the tempo, with no wrapper of its own.
+  assert.ok(!set.includes('transport-locators'), set);
+  const where = (part: string) => set.indexOf(`data-part="${part}"`);
+  assert.ok(where('display-time') < where('display-locators') && where('display-locators') < where('display-tempo'));
   assert.ok(set.includes('<span class="lbl" aria-hidden="true">Locators</span><span class="val sm" data-testid="display-locators-value">'), set);
-  assert.ok(!set.includes('transport-locators-empty'));
+  assert.ok(!set.includes('display-locators-empty'));
   // Across a tempo change: 60 BPM from bar 3, a beat is 1 s.
   const base = sampleSnapshot();
   const tempo = [

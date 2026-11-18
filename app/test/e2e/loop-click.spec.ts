@@ -199,14 +199,21 @@ async function frameAt(x: number): Promise<bigint> {
 }
 
 // The band shows what the engine holds: a gesture starts on the committed
-// range, not on one whose session.changed has not arrived yet.
+// range, not on one whose session.changed has not arrived yet. Checked again
+// two animation frames later: right after a release the last frame can still
+// show the drag's preview (equal to what was sent) while the model holds the
+// old range, until the next content frame draws the document's.
 async function inStep(): Promise<void> {
-  await expect
-    .poll(async () => {
-      const [drawn, held] = [await band(), await locators()];
-      return drawn === null ? held === null : held !== null && drawn.left === held.left && drawn.right === held.right;
-    })
-    .toBe(true);
+  const check = () =>
+    expect
+      .poll(async () => {
+        const [drawn, held] = [await band(), await locators()];
+        return drawn === null ? held === null : held !== null && drawn.left === held.left && drawn.right === held.right;
+      })
+      .toBe(true);
+  await check();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await check();
 }
 
 // A press, a move and a release in the ruler's upper half, canvas x; with
@@ -262,7 +269,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   await snapOff();
   // No locators yet: no display, its cell empty at --display-locators-empty-w; no band.
   await expect(page.getByTestId('display-locators')).toHaveCount(0);
-  await expect(page.locator('.transport-locators-empty')).toHaveCount(1);
+  await expect(page.locator('.display-locators-empty')).toHaveCount(1);
   expect(await band()).toBeNull();
   const start = await revisions();
 
@@ -276,7 +283,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   expect(await locators()).toEqual(drawn);
   await expect.poll(async () => (await band())?.right).toBe(drawn.right);
   await expect(page.getByTestId('display-locators')).toBeVisible();
-  await expect(page.locator('.transport-locators-empty')).toHaveCount(0);
+  await expect(page.locator('.display-locators-empty')).toHaveCount(0);
 
   // Ctrl-click sets the left locator, Alt-click the right one.
   await upperDrag(150, 150, [MOD]);
@@ -324,7 +331,7 @@ test('drawing, Ctrl-click, Alt-click, moving, adjusting, Ctrl+Num 1 / 2 and Ctrl
   await expect.poll(locators).toBeNull();
   await expect.poll(band).toBeNull();
   await expect(page.getByTestId('display-locators')).toHaveCount(0);
-  await expect(page.locator('.transport-locators-empty')).toHaveCount(1);
+  await expect(page.locator('.display-locators-empty')).toHaveCount(1);
   await expectNoInvalidLocators();
   await expect(page.getByTestId('toast')).toHaveCount(0);
 });
@@ -478,6 +485,7 @@ test('without a device cycle and the metronome are disabled with the reason and 
   // is gone until session.changed brings the commit: never optimistic).
   const committed = (await locators())!;
   await expect.poll(async () => (await band())?.left).toBe(committed.left);
+  await inStep();
   const drawn = (await band())!;
   // A click on the range, the keys and Alt+P send nothing.
   const polls = (await sent()).filter((r) => r.method === 'engine.status').length;
@@ -537,7 +545,7 @@ test('against an engine whose capabilities lack the methods none of the controls
   expect(await band()).toBeNull();
   // The other parts keep their boxes: the empty ones hold the space.
   expect(await boxes()).toEqual(full);
-  const holds = page.locator('.transport-hold, .transport-locators-empty');
+  const holds = page.locator('.transport-hold, .display-locators-empty');
   await expect(holds).toHaveCount(3);
   for (const hold of await holds.all()) {
     await expect(hold).toHaveAttribute('aria-hidden', 'true');

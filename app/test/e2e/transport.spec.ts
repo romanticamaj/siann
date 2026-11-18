@@ -6,7 +6,8 @@
 // Shift+P types a position; the period key exchanges Bars+Beats and Seconds;
 // auto-scroll pages the view while playing, not while a clip drag is held,
 // and F turns it off; Ctrl+Z and Ctrl+Shift+Z undo and redo, a refusal is a
-// toast; and with no audio device the transport is disabled with the reason.
+// toast; with no audio device the transport is disabled with the reason;
+// and the Sig cell reads 4/4 and is no control (m5b-ui-signature).
 //
 // The bundle comes from support/seed.ts (siann-cli); the app runs the real
 // siann-engine on the fake device under SIANN_SHELL_TEST=1. Requests the
@@ -94,12 +95,23 @@ async function launch(
 // pressed then is lost (arrange.spec.ts hit the same on the macOS runner).
 // Wait for what each shows: the undo and redo buttons exist once the
 // capabilities list session.undo, the clip count once the snapshot is in, and
-// the start button is enabled once the capabilities and a running device are.
+// a running device once engine.status reported one (deviceRunning).
 async function ready(expected: { clips: number; device: boolean }): Promise<void> {
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId('undo')).toBeVisible();
   await expect(page.getByTestId('clip-count')).toHaveText(String(expected.clips));
-  if (expected.device) await expect(playButton()).toBeEnabled();
+  if (expected.device) await deviceRunning();
+}
+
+// An enabled start button alone does not mean a device runs: connected and
+// before the first engine.status answer the transport is enabled too ("the
+// engine decides", transportAvailability), and a key pressed then reaches an
+// engine whose device may still be failing to open. The status bar shows the
+// device's latency only once an engine.status answer reported a running
+// device, so wait for that, then for the button it enables.
+async function deviceRunning(timeout?: number): Promise<void> {
+  await expect(page.getByTestId('latency')).toBeVisible({ timeout });
+  await expect(playButton()).toBeEnabled();
 }
 
 // The timeline's test hooks (the CSP allows no eval in the page).
@@ -425,23 +437,23 @@ test('Shift+P types a position in the primary format; Enter locates, Escape canc
 test('the period key exchanges the primary and the secondary format', async () => {
   await launch();
   await locate(4 * RATE, '3.1.000');
-  await expect(secondary()).toHaveText('0:04.000');
+  await expect(secondary()).toHaveText('00:00:04.000');
   // The tempo at the cursor (a new session's 120 BPM).
-  await expect(page.getByTestId('transport-tempo')).toHaveText('120.000');
+  await expect(page.getByTestId('transport-tempo')).toHaveText('120.00');
   await focusProject();
   await page.keyboard.press('Period');
-  await expect(primary()).toHaveText('0:04.000');
+  await expect(primary()).toHaveText('00:00:04.000');
   await expect(secondary()).toHaveText('3.1.000');
   // Shift+P now reads seconds.
   await page.keyboard.press('Shift+KeyP');
   const field = page.getByTestId('position-field');
-  await expect(field).toHaveValue('0:04.000');
+  await expect(field).toHaveValue('00:00:04.000');
   await field.fill('2');
   await field.press('Enter');
-  await expect(primary()).toHaveText('0:02.000');
+  await expect(primary()).toHaveText('00:00:02.000');
   await page.keyboard.press('Period');
   await expect(primary()).toHaveText('2.1.000');
-  await expect(secondary()).toHaveText('0:02.000');
+  await expect(secondary()).toHaveText('00:00:02.000');
 });
 
 test('a right-click on the position display opens the time format menu; choosing a format makes it primary', async () => {
@@ -454,14 +466,14 @@ test('a right-click on the position display opens the time format menu; choosing
   await expect(page.getByTestId('time-format-seconds')).toHaveAttribute('aria-checked', 'false');
   await page.getByTestId('time-format-seconds').click();
   await expect(menu).toBeHidden();
-  await expect(primary()).toHaveText('0:04.000');
+  await expect(primary()).toHaveText('00:00:04.000');
   await expect(secondary()).toHaveText('3.1.000');
   // Escape closes it without a change.
   await page.getByTestId('position-display').click({ button: 'right' });
   await expect(page.getByTestId('time-format-seconds')).toHaveAttribute('aria-checked', 'true');
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
-  await expect(primary()).toHaveText('0:04.000');
+  await expect(primary()).toHaveText('00:00:04.000');
   // Back to Bars+Beats; nothing was sent for it.
   await page.getByTestId('position-display').click({ button: 'right' });
   await page.getByTestId('time-format-bars').click();
@@ -610,11 +622,43 @@ test('with no audio device the transport is disabled, its tooltip gives the reas
 test('a device that opens after a few failed attempts enables the transport once engine.status reports it', async () => {
   test.setTimeout(90_000);
   await launch({ engineArgs: ['--fake-open-failures', '2'], device: false });
-  await expect(playButton()).toBeEnabled({ timeout: 30_000 });
+  // Two failed opens under the engine's default backoff (250 ms, then 500 ms)
+  // and the status bar's next 1 s poll: a few seconds on a loaded runner.
+  await deviceRunning(30_000);
   await expect(playButton()).toHaveAttribute('title', en['transport.startStop']);
   await focusProject();
   await page.keyboard.press('Space');
   await expectPlaying(true);
   await page.keyboard.press('Space');
   await expectPlaying(false);
+});
+
+// m5b-ui-signature (UI redesign UR-15, 3.1): the Sig cell reads the metre the
+// bars are counted in, its tooltip says every project is counted in 4/4 (the
+// sentence the position display gave up), and it is a readout: Shift+C and a
+// click send nothing and change no revision.
+test('the Sig cell reads 4/4 with the 4/4 sentence as its tooltip; Shift+C and a click send nothing', async () => {
+  await launch();
+  const cell = page.locator('[data-part=display-signature]');
+  await expect(cell).toBeVisible();
+  await expect(cell).toHaveText(`${en['transport.labelSignature']}4/4`);
+  await expect(page.getByTestId('display-signature-value')).toHaveText('4/4');
+  await expect(cell).toHaveAttribute('title', en['transport.fourFour']);
+  await expect(page.getByTestId('position-display')).not.toHaveAttribute('title', /./);
+  await expect(cell).not.toHaveAttribute('role', /./);
+  await expect(cell).not.toHaveAttribute('tabindex', /./);
+  await focusProject();
+  const before = await revisions();
+  const others = async () => (await sent()).filter((r) => r.method !== 'engine.status').map((r) => r.method);
+  const requests = await others();
+  const polls = (await sentOf('engine.status')).length;
+  await cell.hover();
+  await page.keyboard.press('Shift+KeyC');
+  await cell.click();
+  await page.keyboard.press('Shift+KeyC');
+  // A key or a click sends at once; the status bar's next engine.status poll comes after.
+  await expect.poll(async () => (await sentOf('engine.status')).length).toBeGreaterThan(polls);
+  expect(await others()).toEqual(requests);
+  expect(await revisions()).toBe(before);
+  await expect(page.getByTestId('display-signature-value')).toHaveText('4/4');
 });

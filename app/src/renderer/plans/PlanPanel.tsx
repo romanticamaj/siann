@@ -1,39 +1,48 @@
 // The Plans tab of the right zone (m5-ui-plan-panel; spec "Frontend", plan
-// review; UI redesign section 4 and P1-5). The hearing switch at the top,
-// then a card per plan (newest first: first step, step count, time, badge,
-// short hash; split label, rejection reason), and for the selected plan its
-// steps (numbered from 1, all ticked, Select all / none), why it is stale in
-// user units, the actions valid in its state with one primary
-// (plans/actions.ts; each only when engine.capabilities lists what it sends;
-// a valid action that cannot run now disabled with its reason), the refusal
-// line (plans/RefusalLine: no ids, the engine's text behind a disclosure),
-// and its diff against the current revision (plan.preview, re-read when
-// the head or the plan changes). Raw steps, refs and entity JSON are behind
-// per-row disclosures. The list follows plan.changed, never an optimistic
-// state; a chain that stops shows where (the engine's state stays as it
-// reports it).
+// review; UI redesign section 4 and P1-5), ported from the mockup's markup by
+// m5-ui-port-plans (10.10, P1-13): the agent row (m5b-ui-plan-metadata, when
+// engine.capabilities lists features.agents; its empty box otherwise), then .p-scroll with
+// one card for the selected plan (plans/PlanCard: its badge, time and hash,
+// the count chips, the steps in the mockup's wording, the actions valid in
+// its state with one primary, each only when engine.capabilities lists what
+// it sends, a valid action that cannot run now disabled with its reason; the
+// stale reasons, the refusal line and the reason field as rows of their own)
+// and a history row for every other plan, newest first, under "Earlier";
+// then the composer's hold. With no plan selected (first load, after a
+// reconnect) the card is the newest plan that awaits a decision
+// (plans/selection.ts). The hearing switch is in the zone's tab row (Shell).
+// The list follows plan.changed, never an optimistic state; a chain that
+// stops shows where (the engine's state stays as it reports it). Raw steps,
+// refs and entity JSON are behind each step's disclosure.
 //
 // PlanPanelView is the pure view (static-markup tests); PlanPanel reads the
-// stores, plan.preview and session.fetch at the plan's base revision (for
-// the stale reasons), and runs the actions.
+// stores and runs the actions. The selected plan, its ticked steps, its
+// plan.preview (and session.fetch at its base revision, for the stale
+// reasons), the hovered and the pinned step live in the review store
+// (model/review-store.ts, m5b-ui-ghosts), so the ghosts exist with the zone
+// closed; a step's target button locates its ghosts through it, and a click
+// on a ghost brings its row into view here.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { translator, useLocale } from '../i18n/t';
+import { shownAgent, type Agent, type AgentStore } from '../model/agents';
 import type { PlanEntry, PlanStore } from '../model/plan-store';
+import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
+import { Hold } from '../shell/Hold';
 import { useCapabilities } from '../shell/Capable';
-import { actionLabel, actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type ActionId, type PlanAction } from './actions';
+import { actionMethods, actionSet, landedLabel, runAction, type ActionEntry, type PlanAction } from './actions';
+import { AgentRow } from './AgentRow';
 import { cardOf, staleReasons as reasonsOf } from './card';
 import type { StepNames } from './describe';
 import { selection, type PlanPreview } from './diff';
-import { HearingSwitch } from './HearingSwitch';
+import { historyOf } from './history';
+import { HistoryRow } from './HistoryRow';
 import { usePlanSnapshot, useModelSnapshot, useStepNames } from './hooks';
-import { ISOLATE } from './isolate';
 import { PlanCard } from './PlanCard';
-import { PlanDiff } from './PlanDiff';
-import { RefusalLine, refusalOf, type Refusal } from './RefusalLine';
-import { StepList } from './StepList';
+import { refusalOf, type Refusal } from './RefusalLine';
+import { cardPlan } from './selection';
 
 export type PanelRefusal = Refusal;
 
@@ -43,6 +52,8 @@ export interface PlanPanelViewProps {
   readonly firstSeen: ReadonlyMap<string, number>;
   readonly nowMs: number;
   readonly names: StepNames;
+  // The plan the user selected; null (or a plan the store no longer holds):
+  // the default selection.
   readonly selected: string | null;
   // null: every step ticked (the default).
   readonly ticked: ReadonlySet<number> | null;
@@ -52,194 +63,91 @@ export interface PlanPanelViewProps {
   readonly preview: PlanPreview | null;
   readonly previewError: PanelRefusal | null;
   readonly staleReasons: readonly string[];
+  // The reason field is open (the first press of Reject).
+  readonly rejecting: boolean;
+  // The step under the pointer.
+  readonly hotStep: number | null;
+  // The agent the row shows (model/agents.ts, shownAgent); none: "No agent connected".
+  readonly agent?: Agent | null;
+  // The step pinned by its target button or a click on a ghost (m5b-ui-ghosts).
+  readonly pinnedStep?: number | null;
   readonly onSelect: (hash: string) => void;
   readonly onTicked: (ticked: ReadonlySet<number>) => void;
   readonly onNote: (note: string) => void;
   readonly onRun: (entry: ActionEntry) => void;
-  // Above the cards (the hearing switch).
-  readonly header?: ReactNode;
+  readonly onRejecting: (open: boolean) => void;
+  readonly onHotStep: (index: number | null) => void;
+  readonly onLocate?: (index: number) => void;
   // Disclosures that start open (tests).
   readonly openSteps?: ReadonlySet<number>;
-  readonly openRows?: ReadonlySet<number>;
   readonly openError?: boolean;
+  readonly openOther?: boolean;
 }
 
-const TEST_IDS: Record<ActionId, string> = {
-  approveApply: 'plan-approve-apply',
-  apply: 'plan-apply',
-  audition: 'plan-audition',
-  reject: 'plan-reject',
-  merge: 'plan-merge',
-  hearMain: 'plan-hear-main',
-  hearProposal: 'plan-hear-proposal',
-  discard: 'plan-discard',
-};
+export { cardPlan };
 
 export function PlanPanelView(props: PlanPanelViewProps) {
-  const { plans, heard, firstSeen, nowMs, names, selected, ticked, note, busy, error } = props;
+  const { plans, heard, firstSeen, nowMs, names, ticked } = props;
   const locale = useLocale();
   const t = translator(locale);
   const can = useCapabilities();
-  const plan = selected !== null ? plans.find((p) => p.hash === selected) : undefined;
-  const newestFirst = [...plans].reverse();
+  const plan = cardPlan(plans, props.selected);
+  const rows = historyOf(plans, plan?.hash ?? null, nowMs, firstSeen, locale, names, can);
   const chosen = selection(ticked, plan?.steps.length ?? 0);
   const set = plan ? actionSet(plan, heard, chosen) : null;
-  const entries = set && plan ? [...(set.primary ? [set.primary] : []), ...set.secondary].filter((e) => actionMethods(e.id, plan).every((m) => can.has(m))) : [];
-  const landed = plan ? landedLabel(plan, t) : null;
-  // The selected plan's detail, directly under its card.
-  const detail =
-    plan && set ? (
-        <div className="plan-detail" data-testid="plan-detail" data-part="plan-card">
-          <StepList
-            key={plan.hash}
-            steps={plan.steps}
-            names={names}
-            ticked={ticked}
-            selectable={plan.state === 'validated' && can.has('plan.approve')}
-            disabled={busy}
-            onTicked={props.onTicked}
-            openSteps={props.openSteps}
-          />
-          {props.staleReasons.length > 0 ? (
-            <div className="plan-stale-reasons" data-testid="plan-stale-reasons">
-              <h3>{t('plans.staleTitle')}</h3>
-              <ul>
-                {props.staleReasons.map((reason, index) => (
-                  <li key={index} className="plan-stale-reason" {...ISOLATE}>
-                    {reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {entries.length > 0 ? (
-            <div className="plan-actions" data-part="plan-actions">
-              {entries.some((e) => e.id === 'reject') ? (
-                <label className="plan-note">
-                  {t('plans.reason')}{' '}
-                  <input data-testid="plan-note" value={note} onChange={(event) => props.onNote(event.target.value)} />
-                </label>
-              ) : null}
-              {entries.map((entry) => {
-                const reason = set.disabled.get(entry.id);
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={entry === set.primary ? 'plan-action primary' : 'plan-action'}
-                    data-testid={TEST_IDS[entry.id]}
-                    data-part={`plan-${entry.id === 'approveApply' ? 'approve' : entry.id}`}
-                    disabled={busy || reason !== undefined}
-                    title={reason !== undefined ? t(`actionReason.${reason}`) : undefined}
-                    onClick={() => props.onRun(entry)}
-                  >
-                    {actionLabel(entry, plan.steps.length, t)}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-          <RefusalLine
-            key={error ? `${error.code ?? ''}:${error.message}` : ''}
-            refusal={error}
-            locale={locale}
-            names={names}
-            testId="plan-error"
-            className="plan-error"
-            role="status"
-            open={props.openError}
-          />
-          {landed !== null ? (
-            <p className="plan-landed" data-testid="plan-landed">
-              {landed}
-            </p>
-          ) : null}
-          {landed === null && props.preview ? (
-            <PlanDiff key={plan.hash} preview={props.preview} stale={plan.stale} names={names} openRows={props.openRows} />
-          ) : null}
-          {landed === null && props.previewError ? (
-            <RefusalLine refusal={props.previewError} locale={locale} names={names} testId="plan-preview-error" className="plan-preview-error" />
-          ) : null}
-        </div>
-      ) : null;
   return (
-    <section className="plan-review" data-testid="plan-review" aria-label={t('plans.label')}>
-      {props.header}
-      {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
-      <ul className="plan-list" data-testid="plan-list" aria-label={t('plans.list')}>
-        {newestFirst.map((entry) => (
-          <li key={entry.hash}>
-            <PlanCard
-              plan={entry}
-              card={cardOf(entry, plans, heard, nowMs, firstSeen.get(entry.hash), locale, names)}
-              selected={entry.hash === selected}
-              onSelect={() => props.onSelect(entry.hash)}
-            />
-            {entry.hash === selected ? detail : null}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <>
+      {can.feature('agents') ? <AgentRow agent={props.agent ?? null} /> : <Hold className="agent-row-empty" />}
+      <div className="p-scroll" data-testid="plan-review" aria-label={t('plans.label')}>
+        {plans.length === 0 ? <p className="plan-none">{t('plans.none')}</p> : null}
+        {plan && set ? (
+          <PlanCard
+            key={plan.hash}
+            plan={plan}
+            card={cardOf(plan, plans, heard, nowMs, firstSeen.get(plan.hash), locale, names)}
+            names={names}
+            set={set}
+            allowed={(entry) => actionMethods(entry.id, plan).every((m) => can.has(m))}
+            selectable={plan.state === 'validated' && can.has('plan.approve')}
+            ticked={ticked}
+            busy={props.busy}
+            note={props.note}
+            rejecting={props.rejecting}
+            hotStep={props.hotStep}
+            pinnedStep={props.pinnedStep ?? null}
+            onLocate={props.onLocate}
+            error={props.error}
+            preview={landedLabel(plan) === null ? props.preview : null}
+            previewError={landedLabel(plan) === null ? props.previewError : null}
+            staleReasons={props.staleReasons}
+            openSteps={props.openSteps}
+            openError={props.openError}
+            openOther={props.openOther}
+            onTicked={props.onTicked}
+            onNote={props.onNote}
+            onRun={props.onRun}
+            onRejecting={props.onRejecting}
+            onHotStep={props.onHotStep}
+          />
+        ) : null}
+        {rows.length > 0 ? (
+          <>
+            <div className="hist-h up" data-part="plan-history-head">
+              {t('plans.earlier')}
+              <span>{t('plans.count', { count: rows.length })}</span>
+            </div>
+            {rows.map((row) => (
+              <HistoryRow key={row.hash} row={row} onSelect={() => props.onSelect(row.hash)} />
+            ))}
+          </>
+        ) : null}
+      </div>
+      <Hold className="hold-composer" />
+    </>
   );
 }
 
 type Entity = Readonly<Record<string, unknown>>;
-
-interface PreviewState {
-  readonly plan: string;
-  readonly preview?: PlanPreview;
-  readonly error?: PanelRefusal;
-  // The stale refs at the plan's base revision; null when that read was refused.
-  readonly base?: ReadonlyMap<string, Entity | null> | null;
-}
-
-// plan.preview of the selected plan (and, for a stale one, its stale entities
-// at the base revision), read again when the head revision, the plan's state
-// or its staleness changes; none for a plan that has landed.
-function usePreview(client: SessionClient, plan: PlanEntry | undefined, revision: string | null): PreviewState | null {
-  const [state, setState] = useState<PreviewState | null>(null);
-  const hash = plan && landedLabel(plan) === null ? plan.hash : null;
-  const planState = plan?.state ?? null;
-  const staleRefs = plan ? plan.stale.map((s) => s.ref) : [];
-  const staleKey = plan ? plan.stale.map((s) => `${s.ref}:${s.change}`).join(',') : '';
-  const baseRevision = typeof plan?.raw.baseRevision === 'string' ? plan.raw.baseRevision : null;
-  useEffect(() => {
-    if (hash === null) {
-      setState(null);
-      return undefined;
-    }
-    let current = true;
-    const base = async (): Promise<ReadonlyMap<string, Entity | null> | null> => {
-      if (staleRefs.length === 0 || baseRevision === null) return new Map();
-      try {
-        const fetched = (await client.request('session.fetch', { refs: staleRefs, revision: baseRevision })) as {
-          entities?: Array<{ ref?: unknown; entity?: unknown }>;
-        };
-        const map = new Map<string, Entity | null>();
-        for (const item of fetched.entities ?? []) {
-          if (typeof item.ref === 'string') map.set(item.ref, (item.entity as Entity | undefined) ?? null);
-        }
-        return map;
-      } catch {
-        return null;
-      }
-    };
-    void client.request('plan.preview', { plan: hash }).then(
-      async (result) => {
-        const atBase = await base();
-        if (current) setState({ plan: hash, preview: result as PlanPreview, base: atBase });
-      },
-      (error: unknown) => {
-        if (current) setState({ plan: hash, error: refusalOf(error) });
-      },
-    );
-    return () => {
-      current = false;
-    };
-    // staleRefs is staleKey's content.
-  }, [client, hash, planState, staleKey, revision, baseRevision]);
-  return state !== null && state.plan === hash ? state : null;
-}
 
 // The clock at this render; the relative times are re-rendered every 30 s.
 function useNow(): number {
@@ -254,33 +162,64 @@ function useNow(): number {
 export interface PlanPanelProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // The plan review's state (model/review-store.ts): a reconnect clears its
+  // selection there (UI redesign spec 4.5 C8).
+  readonly review: ReviewStore;
   // The reconnects so far (model/connection-phase.ts); each one clears the
-  // selected plan and its ticked steps (UI redesign spec 4.5 C8).
+  // refusal and the reason field.
   readonly reconnects?: number;
+  // The agents the engine lists (m5b-ui-plan-metadata).
+  readonly agents?: AgentStore;
 }
 
-export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
+const NO_AGENTS = { subscribe: () => () => undefined, getSnapshot: () => null };
+
+export function PlanPanel({ client, plans, review, reconnects = 0, agents }: PlanPanelProps) {
   const snapshot = usePlanSnapshot(plans);
+  const source = agents ?? NO_AGENTS;
+  const subscribe = useMemo(() => (listener: () => void) => source.subscribe(listener), [source]);
+  const listed = useSyncExternalStore(subscribe, () => source.getSnapshot());
+  const agent = listed ? shownAgent(listed.agents) : null;
   const model = useModelSnapshot(client);
   const names = useStepNames(client);
   const locale = useLocale();
   const now = useNow();
-  const [selected, setSelected] = useState<string | null>(null);
-  const [ticked, setTicked] = useState<ReadonlySet<number> | null>(null);
+  const reviewState = useSyncExternalStore((listener) => review.subscribe(listener), () => review.getSnapshot(), () => review.getSnapshot());
+  const { selected, ticked, hotStep, pinnedStep } = reviewState;
   const [note, setNote] = useState('');
+  const [rejecting, setRejecting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<PanelRefusal | null>(null);
-  const plan = selected !== null ? snapshot.byHash.get(selected) : undefined;
-  // A reconnect clears the selection and its ticked steps.
+  const plan = cardPlan(snapshot.plans, selected);
+  // Another plan on the card (a selection, or the default moving on): its
+  // own ticks, reason and refusal.
+  const shown = plan?.hash ?? null;
+  const lastShown = useRef(shown);
+  useEffect(() => {
+    if (lastShown.current === shown) return;
+    lastShown.current = shown;
+    setRejecting(false);
+    setError(null);
+  }, [shown]);
+  // A reconnect clears the refusal and the reason field (the store clears the selection).
   const seenReconnects = useRef(reconnects);
   useEffect(() => {
     if (reconnects === seenReconnects.current) return;
     seenReconnects.current = reconnects;
-    setSelected(null);
-    setTicked(null);
+    setRejecting(false);
     setError(null);
   }, [reconnects]);
-  const preview = usePreview(client, plan, model?.revision ?? null);
+  const preview = reviewState.preview !== null && reviewState.preview.plan === plan?.hash ? reviewState.preview : null;
+  void model;
+  // A click on a ghost brings its row into view.
+  useEffect(
+    () =>
+      review.onReveal(({ step, plans: toPlans }) => {
+        if (!toPlans) return;
+        requestAnimationFrame(() => document.querySelector(`[data-testid="step-${step - 1}"]`)?.scrollIntoView({ block: 'nearest' }));
+      }),
+    [review],
+  );
 
   const reasons = useMemo(() => {
     if (!plan || plan.stale.length === 0 || !preview?.preview) return [];
@@ -293,8 +232,8 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
   }, [plan, preview, client, locale, names]);
 
   const select = (hash: string) => {
-    setSelected(hash);
-    setTicked(null);
+    review.select(hash);
+    setRejecting(false);
     setError(null);
   };
 
@@ -324,16 +263,22 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
     if (!plan || busy) return;
     const action = actionFor(entry, plan);
     if (!action) return;
+    // The card stays on the plan it acted on.
+    review.select(plan.hash);
     setBusy(true);
     void runAction(client, action).then((outcome) => {
       setBusy(false);
       // A partial approval goes on with its sub-plan: follow it.
       if (outcome.plan !== undefined) {
-        setSelected(outcome.plan);
-        setTicked(null);
+        // Followed, not chosen: the refusal of the chain stays shown.
+        lastShown.current = outcome.plan;
+        review.select(outcome.plan);
       }
       setError(outcome.ok ? null : { code: outcome.code, message: outcome.engineMessage, changedEntities: outcome.changedEntities });
-      if (outcome.ok && entry.id === 'reject') setNote('');
+      if (outcome.ok && entry.id === 'reject') {
+        setNote('');
+        setRejecting(false);
+      }
     });
   };
 
@@ -344,19 +289,25 @@ export function PlanPanel({ client, plans, reconnects = 0 }: PlanPanelProps) {
       firstSeen={snapshot.firstSeen}
       nowMs={now}
       names={names}
-      selected={plan ? selected : null}
+      selected={shown}
       ticked={ticked}
       note={note}
       busy={busy}
       error={error}
       preview={preview?.preview ?? null}
-      previewError={preview?.error ?? null}
+      previewError={preview?.error !== undefined ? refusalOf(preview.error) : null}
       staleReasons={reasons}
+      rejecting={rejecting}
+      hotStep={hotStep}
+      agent={agent}
+      pinnedStep={pinnedStep}
+      onLocate={(index) => review.locate(index)}
       onSelect={select}
-      onTicked={setTicked}
+      onTicked={(next) => review.setTicked(next)}
       onNote={setNote}
       onRun={run}
-      header={<HearingSwitch client={client} plans={plans} />}
+      onRejecting={setRejecting}
+      onHotStep={(index) => review.setHot(index)}
     />
   );
 }

@@ -107,7 +107,7 @@ async function launch(env: Record<string, string> = {}): Promise<void> {
     },
   });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId(`mixer-strip-${TRACK}`)).toBeVisible();
   client = await engineClient(page);
 }
@@ -148,7 +148,8 @@ async function valueNow(control: Locator): Promise<number> {
 // The centre of a fader's cap, where a drag starts.
 async function capCentre(fader: Locator): Promise<{ x: number; y: number }> {
   await fader.scrollIntoViewIfNeeded();
-  const box = await fader.locator('.fader-cap').boundingBox();
+  // The strip's cap is the mockup's .cap; the Inspector's slider thumb its .hs u.
+  const box = await fader.locator('.cap, u').boundingBox();
   if (!box) throw new Error('the fader cap has no box');
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
@@ -215,9 +216,12 @@ test('strips in track order, a master strip, values in dB and L/C/R', async () =
   ]);
   const master = page.getByTestId('mixer-strip-master');
   await expect(master.getByTestId('meter-master')).toBeVisible();
-  // The meter slot is --meter-w, 6 px (UI redesign spec 1.4; m5-ui-tokens-spacing).
-  for (const meter of [page.getByTestId(`meter-${TRACK}`), master.getByTestId('meter-master')]) {
-    expect((await meter.boundingBox())!.width).toBe(6);
+  // Two channels per meter, as the mockup draws them: --meter-w (6 px) on a
+  // track, --meter-master-w (9 px) on the master (UI redesign 1.4; m5-ui-port-mixer-strip).
+  for (const [meter, width] of [[page.getByTestId(`meter-${TRACK}`), 6], [master.getByTestId('meter-master'), 9]] as const) {
+    const channels = meter.locator('.ch');
+    await expect(channels).toHaveCount(2);
+    for (const box of await channels.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width))) expect(box).toBe(width);
   }
   await expect(master.getByTestId('peak-value-master')).toBeVisible();
   await expect(master.locator('[role="slider"]')).toHaveCount(0);
@@ -231,11 +235,68 @@ test('strips in track order, a master strip, values in dB and L/C/R', async () =
   });
   await expect(page.getByTestId(`fader-value-${TRACK}`)).toHaveText('-6.5 dB');
   await expect(page.getByTestId(`fader-${TRACK}`)).toHaveAttribute('aria-valuetext', '-6.5 dB');
-  await expect(page.getByTestId(`pan-${TRACK}`)).toHaveText('L35');
+  await expect(page.getByTestId(`pan-value-${TRACK}`)).toHaveText('L35');
+  await expect(page.getByTestId(`pan-${TRACK}`)).toHaveAttribute('aria-valuetext', 'L35');
   await expect(page.getByTestId(`fader-value-${OTHER}`)).toHaveText('0.0 dB');
-  await expect(page.getByTestId(`pan-${OTHER}`)).toHaveText('C');
+  await expect(page.getByTestId(`pan-value-${OTHER}`)).toHaveText('C');
   // No milli-dB or internal pan unit anywhere in the lower zone.
   expect(await page.getByTestId('mixer').innerText()).not.toMatch(/\d{4,}/);
+});
+
+// m5-ui-port-mixer-strip (UI redesign 10.9, 10.10): the window carries every
+// lower-zone id of the mockup whose gate in app/test/fidelity/manifest.json is
+// report, and none whose gate is pending. The ids are counted as
+// mockup-fidelity.spec.ts counts them: data-region, data-part, and
+// data-part-item (numbered in document order, or named by data-part-key) with
+// its data-part-of children.
+test('the lower zone carries the mockup\'s ids of every landed part and none of a pending one', async () => {
+  await launch();
+  const manifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'test', 'fidelity', 'manifest.json'), 'utf8')) as {
+    gates: Record<string, string>;
+    rules: Array<{ match: string[]; gate: string }>;
+  };
+  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+  const gateOf = (id: string) => manifest.gates[manifest.rules.find((rule) => rule.match.some((p) => glob(p).test(id)))!.gate];
+  // The ids the mockup's strip() and master give (two tracks here, and the master).
+  const STRIP = ['', '-inserts', '-pan', '-pan-knob', '-buttons', '-mute', '-solo', '-edit', '-fader-area', '-scale', '-fader', '-cap', '-meter', '-readout', '-automation', '-read', '-write', '-record', '-name'];
+  const MASTER = ['', '-inserts', '-loudness', '-buttons', '-mute', '-edit', '-fader-area', '-scale', '-fader', '-cap', '-meter', '-readout', '-automation', '-name'];
+  const ids = [
+    'lower-zone', 'lower-tabs', 'tab-mixconsole', 'tab-editor', 'mixer-racks', 'mixer',
+    ...['1', '2'].flatMap((n) => STRIP.map((suffix) => `strip-${n}${suffix}`)),
+    ...MASTER.map((suffix) => `strip-master${suffix}`),
+  ];
+  const shown = await page.evaluate(() => {
+    const out = new Set<string>();
+    for (const el of Array.from(document.querySelectorAll('[data-region]'))) out.add(el.getAttribute('data-region')!);
+    for (const el of Array.from(document.querySelectorAll('[data-part]'))) out.add(el.getAttribute('data-part')!);
+    const counts = new Map<string, number>();
+    for (const item of Array.from(document.querySelectorAll('[data-part-item]'))) {
+      const name = item.getAttribute('data-part-item')!;
+      let key = item.getAttribute('data-part-key');
+      if (!key) {
+        counts.set(name, (counts.get(name) ?? 0) + 1);
+        key = String(counts.get(name));
+      }
+      out.add(`${name}-${key}`);
+      for (const child of Array.from(item.querySelectorAll('[data-part-of]'))) {
+        if (child.closest('[data-part-item]') === item) out.add(`${name}-${key}-${child.getAttribute('data-part-of')}`);
+      }
+    }
+    return [...out];
+  });
+  const landed = ids.filter((id) => gateOf(id) === 'report');
+  const pending = ids.filter((id) => gateOf(id) === 'pending');
+  expect(pending).toEqual(expect.arrayContaining(['strip-1-inserts', 'strip-1-edit', 'strip-master-fader', 'tab-editor', 'mixer-racks']));
+  expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
+  expect(pending.filter((id) => shown.includes(id))).toEqual([]);
+  // Every strip's button row is M, S and the empty box of e; the box has no role, focus or text.
+  for (const id of [TRACK, OTHER]) {
+    const buttons = page.getByTestId(`mixer-strip-${id}`).locator('.btns').first();
+    await expect(buttons.locator('> *')).toHaveCount(3);
+    const box = buttons.locator('> *').nth(2);
+    await expect(box).toHaveAttribute('aria-hidden', 'true');
+    expect(await box.evaluate((el) => [el.getAttribute('role'), el.getAttribute('tabindex'), el.textContent, el.getBoundingClientRect().width > 0])).toEqual([null, null, '', true]);
+  }
 });
 
 test('a fader drag commits exactly one revision at release, shows a tooltip, and nothing while held', async () => {
@@ -325,7 +386,7 @@ test('Ctrl-click resets a fader to 0.0 dB and a pan to C in one revision each, o
   const fader = page.getByTestId(`fader-${TRACK}`);
   const pan = page.getByTestId(`pan-${TRACK}`);
   await expect(page.getByTestId(`fader-value-${TRACK}`)).toHaveText('-4.0 dB');
-  await expect(pan).toHaveText('L35');
+  await expect(page.getByTestId(`pan-value-${TRACK}`)).toHaveText('L35');
 
   let before = await revisions();
   await withKey('Control', () => fader.click());
@@ -337,7 +398,7 @@ test('Ctrl-click resets a fader to 0.0 dB and a pan to C in one revision each, o
   await withKey('Control', () => pan.click());
   await expect.poll(() => revisions()).toBe(before + 1);
   expect((await fetchedTrack()).pan).toBe(0);
-  await expect(pan).toHaveText('C');
+  await expect(page.getByTestId(`pan-value-${TRACK}`)).toHaveText('C');
   await gestureIdle();
   expect(await revisions()).toBe(before + 1);
 
@@ -393,7 +454,7 @@ test('double-clicking a value takes a typed gain or pan; Enter commits one revis
   await panInput.press('Enter');
   await expect.poll(() => revisions()).toBe(before + 1);
   expect((await fetchedTrack()).pan).toBe(4000);
-  await expect(page.getByTestId(`pan-${TRACK}`)).toHaveText('R40');
+  await expect(page.getByTestId(`pan-value-${TRACK}`)).toHaveText('R40');
 });
 
 test('a gain above +6 dB stored by another client pins the cap at the top and shows the true value', async () => {
@@ -404,8 +465,9 @@ test('a gain above +6 dB stored by another client pins the cap at the top and sh
   await expect(page.getByTestId(`fader-value-${TRACK}`)).toHaveText('+9.0 dB');
   await expect(page.getByTestId(`fader-value-${TRACK}`)).toHaveClass(/\bwarn\b/);
   const track = (await fader.boundingBox())!;
-  const cap = (await fader.locator('.fader-cap').boundingBox())!;
-  expect(cap.y - track.y).toBeLessThanOrEqual(1);
+  // The mockup's cap is centred on its position: at the top, its centre is the track's top.
+  const cap = (await fader.locator('.cap').boundingBox())!;
+  expect(Math.abs(cap.y + cap.height / 2 - track.y)).toBeLessThanOrEqual(1);
   await setGain(6000);
   await expect(page.getByTestId(`fader-value-${TRACK}`)).not.toHaveClass(/\bwarn\b/);
   await setGain(INT32_MIN);
@@ -462,6 +524,91 @@ test('the Inspector agrees with the strip, during a held drag and after the comm
   await gestureIdle();
   await same();
   expect((await fetchedTrack()).gainMilliDb).toBe(await valueNow(fader));
+});
+
+// The Inspector port (m5-ui-port-inspector): volume, pan, M and S from the
+// Inspector issue the strip's commands, one revision each, and the strip and
+// the track header follow; the zone carries the mockup's ids of its landed
+// parts and none of a pending one; with no track selected it shows its head
+// and foot only.
+test('volume, pan, mute and solo from the Inspector make one revision each, and the strip and the header follow', async () => {
+  await launch();
+  // No track selected: the head and the foot, nothing between them.
+  const zone = page.getByTestId('zone-left-body');
+  expect(await zone.evaluate((el) => Array.from(el.children).map((c) => c.className))).toEqual(['z-head', 'z-foot']);
+  await selectClip();
+  expect(await zone.evaluate((el) => Array.from(el.children).map((c) => c.className.split(' ')[0]))).toEqual([
+    'z-head', 'i-track', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'inspector-hold', 'sec', 'inspector-hold', 'z-foot',
+  ]);
+  await expect(page.locator('[data-part="inspector-name"] small')).toHaveText('Stereo');
+
+  // The ids: every landed one of the left zone, no pending one.
+  const manifest = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'test', 'fidelity', 'manifest.json'), 'utf8')) as {
+    gates: Record<string, string>;
+    rules: Array<{ match: string[]; gate: string }>;
+  };
+  const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+  const gateOf = (id: string) => manifest.gates[manifest.rules.find((rule) => rule.match.some((p) => glob(p).test(id)))!.gate];
+  // The ids of the mockup's left zone.
+  const ids = ['left-zone', 'inspector-head', 'inspector-track', 'inspector-name', 'inspector-buttons', 'inspector-mute', 'inspector-solo', 'inspector-record', 'inspector-monitor', 'inspector-read', 'inspector-write', 'inspector-edit', 'inspector-volume', 'inspector-pan', 'inspector-routing', 'inspector-inserts', 'inspector-sends', 'inspector-automation', 'inspector-agent-changes', 'inspector-notepad', 'inspector-tabs'];
+  const shown = await page.evaluate(() => [
+    ...Array.from(document.querySelectorAll('[data-region]')).map((el) => el.getAttribute('data-region')!),
+    ...Array.from(document.querySelectorAll('[data-part]')).map((el) => el.getAttribute('data-part')!),
+  ]);
+  const landed = ids.filter((id) => gateOf(id) === 'report');
+  const pending = ids.filter((id) => gateOf(id) === 'pending');
+  expect(pending.sort()).toEqual(['inspector-automation', 'inspector-edit', 'inspector-inserts', 'inspector-monitor', 'inspector-notepad', 'inspector-read', 'inspector-record', 'inspector-routing', 'inspector-sends', 'inspector-write']);
+  expect(landed.filter((id) => !shown.includes(id))).toEqual([]);
+  expect(pending.filter((id) => shown.includes(id))).toEqual([]);
+
+  // Volume: a drag to the left lowers it, one revision at release.
+  const volume = page.getByTestId('inspector-volume');
+  let before = await revisions();
+  await dragWithoutRelease(volume, -40, 0);
+  await gestureSettled();
+  expect(await revisions()).toBe(before);
+  await page.mouse.up();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await gestureIdle();
+  expect(await revisions()).toBe(before + 1);
+  const gain = (await fetchedTrack()).gainMilliDb as number;
+  expect(gain).toBeLessThan(0);
+  const gainText = (await page.getByTestId('inspector-volume-value').innerText()).trim();
+  await expect(page.getByTestId(`fader-value-${TRACK}`)).toHaveText(gainText);
+  await expect(page.getByTestId(`fader-${TRACK}`)).toHaveAttribute('aria-valuenow', String(gain));
+  await expect(page.getByTestId(`track-gain-${TRACK}`)).toHaveText(gainText);
+
+  // Pan: a drag to the right, one revision.
+  const pan = page.getByTestId('inspector-pan');
+  before = await revisions();
+  await dragWithoutRelease(pan, 30, 0);
+  await page.mouse.up();
+  await expect.poll(() => revisions()).toBe(before + 1);
+  await gestureIdle();
+  expect(await revisions()).toBe(before + 1);
+  const panValue = (await fetchedTrack()).pan as number;
+  expect(panValue).toBeGreaterThan(0);
+  const panText = (await page.getByTestId('inspector-pan-value').innerText()).trim();
+  expect(panText).toMatch(/^R\d+$/);
+  await expect(page.getByTestId(`pan-value-${TRACK}`)).toHaveText(panText);
+  await expect(page.getByTestId(`track-pan-${TRACK}`)).toHaveText(panText);
+
+  // M and S: one revision each, the strip's and the header's buttons follow.
+  for (const [what, field] of [['mute', 'mute'], ['solo', 'solo']] as const) {
+    before = await revisions();
+    await page.getByTestId(`inspector-${what}`).click();
+    await expect.poll(() => revisions()).toBe(before + 1);
+    expect((await fetchedTrack())[field]).toBe(true);
+    await expect(page.getByTestId(`inspector-${what}`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId(`inspector-${what}`)).toHaveClass(/\bon\b/);
+    await expect(page.getByTestId(`${what}-${TRACK}`)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId(`track-${what}-${TRACK}`)).toHaveAttribute('aria-pressed', 'true');
+  }
+
+  // A change made elsewhere (another client) shows in the Inspector without a reload.
+  await client.call('command.execute', { commands: [{ op: 'track.set_gain', trackId: TRACK, gainMilliDb: -6500 }, { op: 'track.set_pan', trackId: TRACK, pan: -3500 }] });
+  await expect(page.getByTestId('inspector-volume-value')).toHaveText('-6.5 dB');
+  await expect(page.getByTestId('inspector-pan-value')).toHaveText('L35');
 });
 
 test('one meter canvas draws every strip from the realtime frames while playing', async () => {
@@ -563,20 +710,70 @@ test('zero React commits while playing (profiling bundle), and the counter does 
   await client.call('transport.stop');
 });
 
+// A token's computed colour, read through a probe element, so the
+// expectations below come from tokens.css and not from a literal.
+async function tokenColour(token: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement('i');
+    probe.style.background = `var(${name})`;
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return colour;
+  }, token);
+}
+
+// The drawn chip of M or S: ui/project-zone.css's .msr (the mockup's grey
+// box, --ms-w by --ms-h with a hairline border) and its .on colours, not
+// bare letters.
+async function chip(testId: string): Promise<{ background: string; border: string; width: number; height: number }> {
+  return page.getByTestId(testId).evaluate((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return { background: style.backgroundColor, border: style.borderTopWidth, width: Math.round(box.width), height: Math.round(box.height) };
+  });
+}
+
 test('mute and solo commit one revision each and the buttons show the commit', async () => {
   await launch();
   const before = await revisions();
   const mute = page.getByTestId(`mute-${TRACK}`);
   const solo = page.getByTestId(`solo-${TRACK}`);
+  const [idle, muteOn, soloOn] = [await tokenColour('--bg-4'), await tokenColour('--mute'), await tokenColour('--solo')];
   await expect(mute).toHaveAttribute('aria-pressed', 'false');
+  // Off: the mockup's .msr chip, drawn by the shared rules.
+  const size = await page.evaluate(() => {
+    const probe = document.createElement('i');
+    probe.style.cssText = 'position:absolute;width:var(--ms-w);height:var(--ms-h);border-top:var(--hairline) solid';
+    document.body.append(probe);
+    const box = probe.getBoundingClientRect();
+    const border = getComputedStyle(probe).borderTopWidth;
+    probe.remove();
+    return { border, width: Math.round(box.width), height: Math.round(box.height) };
+  });
+  for (const id of [`mute-${TRACK}`, `solo-${TRACK}`]) {
+    expect(await chip(id)).toEqual({ background: idle, ...size });
+  }
   await mute.click();
   await expect(mute).toHaveAttribute('aria-pressed', 'true');
   expect(await revisions()).toBe(before + 1);
   expect((await fetchedTrack()).mute).toBe(true);
+  // On: M is lit with --mute, S stays the idle chip.
+  await expect.poll(async () => (await chip(`mute-${TRACK}`)).background).toBe(muteOn);
+  expect((await chip(`solo-${TRACK}`)).background).toBe(idle);
   await solo.click();
   await expect(solo).toHaveAttribute('aria-pressed', 'true');
   expect(await revisions()).toBe(before + 2);
   expect((await fetchedTrack()).solo).toBe(true);
+  await expect.poll(async () => (await chip(`solo-${TRACK}`)).background).toBe(soloOn);
+
+  // The Inspector's M and S are the same .msr chips (m5-ui-port-inspector):
+  // --ms-w by --ms-h with a hairline border, lit with --mute and --solo.
+  await selectClip();
+  for (const [id, on] of [['inspector-mute', muteOn], ['inspector-solo', soloOn]] as const) {
+    await expect(page.getByTestId(id)).toHaveAttribute('aria-pressed', 'true');
+    expect(await chip(id)).toEqual({ background: on, ...size });
+  }
 });
 
 test('a reload during a held drag ends the gesture as disconnected within the lease, and the renderer syncs to it', async () => {
@@ -597,6 +794,6 @@ test('a reload during a held drag ends the gesture as disconnected within the le
   expect(ended.reason).toBe('disconnected');
   expect(ended.value).toBe(held);
   expect(await revisions()).toBe(before + 1);
-  await expect(page.getByTestId('status')).toHaveText('connected');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
   await expect(page.getByTestId(`fader-${TRACK}`)).toHaveAttribute('aria-valuenow', String(held));
 });

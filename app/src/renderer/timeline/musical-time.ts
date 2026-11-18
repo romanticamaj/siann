@@ -1,4 +1,4 @@
-// Bars and beats for display (UI redesign spec 3.2, 6.2): sample frames to
+// Bars and beats for display (UI redesign spec 3.2, 6.2, 10.8): sample frames to
 // musical ticks and back through root.tempo, the engine's tempo map of
 // constant-tempo segments with step changes (native/libs/time: a point is
 // {ticks, milliBpm}, 120 BPM is 120000, kTicksPerQuarter is 1920). The
@@ -6,13 +6,29 @@
 // and the info line only, in doubles, rounded to the nearest tick. 4/4 until
 // the meter map arrives (E-10). An empty tempo list reads as 120 BPM, as a new
 // session's. Positions are 1-based (bar 1, beat 1); lengths 0-based. The text
-// is the same in every locale. Framework-free.
+// is the same in every locale. The top bar's position display and the drag
+// tooltip read bar.beat.tick (formatBbt); the info line reads the mockup's
+// four parts, bar.beat.sixteenth.tick (formatPosition, formatLength;
+// m5-ui-port-toolbar). Framework-free.
 
 import type { TempoPoint } from '../model/document';
 
 export const TICKS_PER_QUARTER = 1920;
+// The metre bars are counted in: the one source the ruler, the grid, snap,
+// the position and locator displays and the top bar's Sig cell read
+// (m5b-ui-signature), so none can disagree with another. 4/4 for every
+// project until the meter map arrives (E-10); a beat is a quarter.
 export const BEATS_PER_BAR = 4;
-export const TICKS_PER_BAR = TICKS_PER_QUARTER * BEATS_PER_BAR;
+export const BEAT_UNIT = 4;
+export const TIME_SIGNATURE: { readonly beats: number; readonly unit: number } = Object.freeze({ beats: BEATS_PER_BAR, unit: BEAT_UNIT });
+export const TICKS_PER_BAR = TICKS_PER_QUARTER * TIME_SIGNATURE.beats;
+
+// The signature as the Sig cell writes it: beats/unit (4/4), the same in every locale.
+export function formatSignature(): string {
+  return `${TIME_SIGNATURE.beats}/${TIME_SIGNATURE.unit}`;
+}
+// A sixteenth: the info line's third part (480 ticks).
+export const TICKS_PER_SIXTEENTH = TICKS_PER_QUARTER / 4;
 export const DEFAULT_MILLI_BPM = 120_000;
 
 interface Segment {
@@ -83,6 +99,24 @@ export function formatBbt(ticks: number): string {
 export function formatBbtLength(ticks: number): string {
   const { bars, beats, rest } = parts(ticks);
   return `${bars}.${beats}.${String(rest).padStart(3, '0')}`;
+}
+
+function sixteenths(ticks: number): { bars: number; beats: number; sixteenths: number; rest: number } {
+  const { bars, beats, rest } = parts(ticks);
+  return { bars, beats, sixteenths: Math.floor(rest / TICKS_PER_SIXTEENTH), rest: rest % TICKS_PER_SIXTEENTH };
+}
+
+// The info line's position: bar.beat.sixteenth.tick, the bar, beat and
+// sixteenth 1-based, the tick within the sixteenth (0 to 479), no padding (9.1.1.0).
+export function formatPosition(ticks: number): string {
+  const p = sixteenths(ticks);
+  return `${p.bars + 1}.${p.beats + 1}.${p.sixteenths + 1}.${p.rest}`;
+}
+
+// The info line's length: bars.beats.sixteenths.ticks counted from zero (3.3.0.0).
+export function formatLength(ticks: number): string {
+  const p = sixteenths(ticks);
+  return `${p.bars}.${p.beats}.${p.sixteenths}.${p.rest}`;
 }
 
 // A signed length, for the drag tooltip's delta.

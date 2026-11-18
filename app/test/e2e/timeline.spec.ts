@@ -15,6 +15,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { launchElectron } from './support/launch';
+import { armPlacing } from './support/toolbar';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -101,8 +102,8 @@ async function launch(): Promise<void> {
     },
   });
   page = await app.firstWindow();
-  await expect(page.getByTestId('status')).toHaveText('connected');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
   // Snap is on by default since m5-ui-edit-basics; these gestures are checked
   // unsnapped (edit-basics.spec.ts checks the snapped ones), so J turns it off.
   await page.keyboard.press('KeyJ');
@@ -129,7 +130,7 @@ interface Rect {
 interface TimelineHooks {
   clips(): Rect[];
   peakColumns(clipId: string): { drawn: number; nonZero: number };
-  view(): { framesPerPixel: number; scrollFrames: string; rulerHeight: number; laneHeight: number };
+  view(): { framesPerPixel: number; scrollFrames: string; rulerHeight: number; lanesTop: number; laneHeight: number };
   lanes(): string[];
 }
 
@@ -252,16 +253,16 @@ test('clips render from peak pyramids', async () => {
   await expect(page.getByTestId('clip-count')).toHaveText('2');
 });
 
-test('placing a clip from the media pool issues clip.place', async () => {
+test('placing a clip from the Pool issues clip.place', async () => {
   prepare([]);
   await launch();
   await expect(page.getByTestId('clip-count')).toHaveText('0');
   const before = await revision();
-  await page.getByTestId('pool-med_sq').click();
+  await armPlacing(page, 'med_sq');
   const view = await hooks.view();
   const box = await canvasBox();
   // The second lane (trk_b), 150 px in.
-  const y = view.rulerHeight + view.laneHeight * 1.5;
+  const y = view.lanesTop + view.laneHeight * 1.5;
   await page.mouse.click(box.x + 150, box.y + y);
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
@@ -337,7 +338,7 @@ test('delete issues clip.remove', async () => {
   await expect(page.getByTestId('info-line')).toHaveAttribute('data-clip', 'clp_si');
   // Selecting is no command.
   await expect(page.getByTestId('revision')).toHaveText(`r${before}`);
-  await page.getByTestId('delete-clip').click();
+  await page.keyboard.press('Delete');
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   expect(await fetchClip('clp_si')).toBeNull();

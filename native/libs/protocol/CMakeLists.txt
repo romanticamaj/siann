@@ -33,6 +33,7 @@ if(SIANN_BUILD_TESTS)
     tests/plan_methods_test.cpp
     tests/agent_methods_test.cpp
     tests/agent_requests_test.cpp
+    tests/plan_actor_test.cpp
     tests/audition_methods_test.cpp
     tests/transport_methods_test.cpp
     tests/locators_methods_test.cpp
@@ -44,6 +45,7 @@ if(SIANN_BUILD_TESTS)
     tests/session_create_test.cpp
     tests/media_import_test.cpp
     tests/mcp_adapter_test.cpp
+    tests/protocol_parity_test.cpp
     tests/mcp_e2e_test.cpp
     tests/gesture_methods_test.cpp
     tests/record_methods_test.cpp

@@ -43,6 +43,9 @@ const STEPS = {
   inputMono: { op: 'track.set_input', trackId: 'trk_a', input: { port: 3, channels: 1 } },
   inputStereo: { op: 'track.set_input', trackId: 'trk_a', input: { port: 2, channels: 2 } },
   inputClear: { op: 'track.set_input', trackId: 'trk_a', input: null },
+  monitorOff: { op: 'track.set_monitor', trackId: 'trk_a', monitor: 'off' },
+  monitorAuto: { op: 'track.set_monitor', trackId: 'trk_a', monitor: 'auto' },
+  monitorInput: { op: 'track.set_monitor', trackId: 'trk_a', monitor: 'input' },
   notes: { op: 'track.set_notes', trackId: 'trk_v', notes: 'Double the chorus 1234\nkeep trk_a breaths' },
   notesClear: { op: 'track.set_notes', trackId: 'trk_v', notes: '' },
   explode: { op: 'track.explode', trackId: 'trk_k' },
@@ -104,6 +107,9 @@ test('English wording for every op the engine accepts, and a generic line for an
     inputMono: `Record ${n('Lead')} from input 4`,
     inputStereo: `Record ${n('Lead')} from inputs 3-4`,
     inputClear: `Clear the input of ${n('Lead')}`,
+    monitorOff: `Turn monitoring off on ${n('Lead')}`,
+    monitorAuto: `Set ${n('Lead')} to auto monitoring`,
+    monitorInput: `Monitor the input of ${n('Lead')}`,
     notes: `Edit the notes of ${n('Vox BG 主唱')}`,
     notesClear: `Clear the notes of ${n('Vox BG 主唱')}`,
     explode: `Split ${n('Keys')} into one track per channel`,
@@ -159,9 +165,9 @@ test('a track, clip or plugin made by an earlier step of the plan is named from 
 test('positions follow the primary display format and the tempo map', () => {
   const t = translator('en');
   const seconds: StepNames = { ...NAMES, timeFormat: 'seconds' };
-  assert.equal(describeStep(STEPS.place, t, seconds), `Place a clip on ${n('Keys')} at 0:02.000`);
-  assert.equal(describeStep(STEPS.move, t, seconds), `Move a clip on ${n('Keys')} to 0:00.250`);
-  assert.equal(describeStep(STEPS.clipRemove, t, seconds), `Remove a clip on ${n('Keys')} at 0:01.500`);
+  assert.equal(describeStep(STEPS.place, t, seconds), `Place a clip on ${n('Keys')} at 00:00:02.000`);
+  assert.equal(describeStep(STEPS.move, t, seconds), `Move a clip on ${n('Keys')} to 00:00:00.250`);
+  assert.equal(describeStep(STEPS.clipRemove, t, seconds), `Remove a clip on ${n('Keys')} at 00:00:01.500`);
   assert.equal(describeStep(STEPS.trim, t, seconds), `Trim a clip on ${n('Keys')} to 2.5 s`);
   // At 60 BPM a quarter is a second: 2 s is beat 3 of bar 1.
   const slow: StepNames = { ...NAMES, tempo: [{ ticks: '0', milliBpm: 60_000 }] };
@@ -184,8 +190,8 @@ test('no step description shows an entity id, a raw pan value or a milli-dB inte
 
 test('Chinese step descriptions use the glossary terms', () => {
   const terms: Record<'zh-Hant' | 'zh-Hans', Partial<Record<StepName, string>>> = {
-    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', notes: '記事本', notesClear: '記事本' },
-    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', notes: '记事本', notesClear: '记事本' },
+    'zh-Hant': { add: '音軌', removeUnknown: '音軌', gain: '音量', pan: '聲相', mute: '靜音', unmute: '靜音', solo: '獨奏', unsolo: '獨奏', move: '片段', clipRemove: '片段', insert: '外掛', tempo: '速度', inputMono: '輸入', inputClear: '輸入', monitorOff: '監聽', monitorAuto: '監聽', monitorInput: '監聽', notes: '記事本', notesClear: '記事本' },
+    'zh-Hans': { add: '音轨', removeUnknown: '音轨', gain: '音量', pan: '声像', mute: '静音', unmute: '静音', solo: '独奏', unsolo: '独奏', move: '片段', clipRemove: '片段', insert: '插件', tempo: '速度', inputMono: '输入', inputClear: '输入', monitorOff: '监听', monitorAuto: '监听', monitorInput: '监听', notes: '记事本', notesClear: '记事本' },
   };
   for (const [locale, table] of Object.entries(terms) as Array<['zh-Hant' | 'zh-Hans', Record<string, string>]>) {
     for (const [step, term] of Object.entries(table)) {

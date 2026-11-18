@@ -15,9 +15,10 @@ import { en, type Catalog } from '../../src/renderer/i18n/en';
 import { zhHans } from '../../src/renderer/i18n/zh-Hans';
 import { zhHant } from '../../src/renderer/i18n/zh-Hant';
 import { translator } from '../../src/renderer/i18n/t';
-import { formatMilliDb } from '../../src/renderer/format';
-import { describePlan, type StepNames } from '../../src/renderer/plans/describe';
-import { agentFor, hash8, launchApp, seedBundle } from './support/seed';
+import { formatDb } from '../../src/renderer/format';
+import type { StepNames } from '../../src/renderer/plans/describe';
+import { stepRows } from '../../src/renderer/plans/step-rows';
+import { agentFor, launchApp, seedBundle, selectPlan } from './support/seed';
 
 type Locale = 'en' | 'zh-Hant' | 'zh-Hans';
 const CATALOGS: Record<Locale, Catalog> = { en, 'zh-Hant': zhHant, 'zh-Hans': zhHans };
@@ -40,7 +41,7 @@ async function launch(languages: readonly string[], hook = true): Promise<void> 
   app = await launchApp({ sessionDir, userData, languages, hook });
   page = await app.firstWindow();
   await expect(page.getByTestId('status')).toHaveAttribute('data-status', 'connected');
-  await expect(page.getByTestId('track-count')).toHaveText('2');
+  await expect(page.getByTestId('about-track-count')).toHaveText('2');
 }
 
 test.beforeEach(() => {
@@ -112,10 +113,14 @@ async function expectLocale(locale: Locale): Promise<void> {
   await expect(page.locator('html')).toHaveAttribute('lang', locale === 'en' ? 'en' : locale === 'zh-Hant' ? 'zh-TW' : 'zh-CN');
   await expect(page.getByTestId('locale-switch')).toHaveValue(locale);
   const t = translator(locale);
-  await expect(page.getByTestId('status')).toHaveText(catalog['connection.connected']);
-  await expect(page.getByTestId('status-bar').locator('dt').first()).toHaveText(catalog['status.engine']);
-  await expect(page.getByTestId('delete-clip')).toHaveText(catalog['timeline.deleteClip']);
-  await expect(page.getByTestId('plan-approve-apply')).toHaveText(catalog['plans.approveApply']);
+  await expect(page.getByTestId('status')).toHaveText(catalog['status.engineConnected']);
+  await expect(page.locator('[data-part="status-saved"]')).toContainText(catalog['status.saved']);
+  // The project zone toolbar's words (m5-ui-port-toolbar): Snap and its type, the grid type, the tools' names.
+  await expect(page.getByTestId('snap-toggle')).toHaveText(`${catalog['snap.toggle']}${catalog['snap.typeGrid']}`);
+  await expect(page.getByTestId('tool-select')).toHaveAttribute('aria-label', catalog['tool.select']);
+  await expect(page.getByTestId('auto-scroll')).toHaveAttribute('title', catalog['toolbar.autoScrollTitle']);
+  // Every step ticked reads "Approve N of M" (UI redesign 4.5 C4, P1-13).
+  await expect(page.getByTestId('plan-approve-apply')).toHaveText(t('plans.approveSome', { count: STEPS.length, total: STEPS.length }));
   await expect(page.getByTestId('fader-trk_a')).toHaveAttribute('aria-label', t('strip.gainLabel', { track: 'trk_a' }));
   await expect(page.getByTestId('mixer')).toHaveAttribute('aria-label', catalog['mixer.label']);
   const names: StepNames = {
@@ -124,13 +129,14 @@ async function expectLocale(locale: Locale): Promise<void> {
     slot: () => undefined,
     sampleRate: 48000,
   };
-  for (const [index, text] of describePlan(STEPS, t, names).entries()) {
-    await expect(page.getByTestId(`step-text-${index}`)).toHaveText(text);
+  // Each step's title in the mockup's wording (plans/step-rows.ts).
+  for (const [index, row] of stepRows(STEPS, null, names, t).entries()) {
+    await expect(page.getByTestId(`step-text-${index}`)).toContainText(row.title.map((segment) => segment.text).join(''));
   }
   // The letters stay M and S, and the dB value is the same bytes.
   await expect(page.getByTestId('mute-trk_a')).toHaveText('M');
   await expect(page.getByTestId('solo-trk_a')).toHaveText('S');
-  await expect(page.getByTestId('step-1')).toContainText(formatMilliDb(-600));
+  await expect(page.getByTestId('step-1')).toContainText(formatDb(-600).replace('-', '−'));
   // The canvas ruler is bars and beats, the same bytes in every locale (spec
   // 6.2): its first label is bar 1.
   await expect
@@ -158,8 +164,8 @@ async function expectLocale(locale: Locale): Promise<void> {
 async function submitAndSelect(): Promise<void> {
   const agent = await agentFor(app!);
   const plan = await agent.tool('submit_plan', { steps: STEPS });
-  await page.getByTestId(`plan-${hash8(plan.hash as string)}`).click();
-  await expect(page.getByTestId('plan-detail')).toBeVisible();
+  await selectPlan(page, plan.hash as string);
+  await expect(page.getByTestId('plan-card')).toBeVisible();
 }
 
 // The real detection path: no test hook, only Chromium's --lang, which fills

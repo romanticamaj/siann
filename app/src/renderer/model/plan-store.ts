@@ -13,6 +13,13 @@
 // (firstSeen, by an injected clock; a plan of a plan.list has none), raises
 // an arrival for a new validated plan that is not a sub-plan (the toast), and
 // re-reads plan.status when a held plan becomes rejected or approved.
+//
+// m5b-ui-plan-metadata (E-7): a plan carries its title, intent and actor, and
+// plan.changed carries them with the rejection note, so the store merges the
+// event's state, proposal branch, metadata and note into a held plan. The
+// re-read on rejected ends there: only an event without a note (an engine
+// before E-7) still reads plan.status. The re-read on approved stays, for
+// approvedAt, which plan.changed does not carry.
 
 import type { ClientState, EventMessage } from './session-client';
 
@@ -21,6 +28,12 @@ export type PlanState = 'draft' | 'validated' | 'approved' | 'rejected' | 'appli
 export interface StaleRef {
   readonly ref: string;
   readonly change: 'added' | 'removed' | 'modified';
+}
+
+// Who submitted a plan, as the server recorded it (docs/schemas/plan-v1.md, "Metadata").
+export interface PlanActor {
+  readonly kind: 'mcp' | 'ui';
+  readonly name: string;
 }
 
 export interface PlanEntry {
@@ -33,6 +46,10 @@ export interface PlanEntry {
   readonly rejectionNote?: string;
   // The revision an applied (or since rolled-back) plan landed at.
   readonly appliedRevision?: string;
+  // The plan's metadata (E-7, outside its hash): an optional title and intent, and the actor.
+  readonly title?: string;
+  readonly intent?: string;
+  readonly actor?: PlanActor;
   // The plan object as the engine answered it (plan.status / plan.list).
   readonly raw: Readonly<Record<string, unknown>>;
 }
@@ -78,6 +95,15 @@ function staleOf(value: unknown): StaleRef[] {
   );
 }
 
+function actorOf(value: unknown): PlanActor | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const actor = value as Record<string, unknown>;
+  if ((actor.kind !== 'mcp' && actor.kind !== 'ui') || typeof actor.name !== 'string') return undefined;
+  return Object.freeze({ kind: actor.kind, name: actor.name });
+}
+
+const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+
 // A plan object of plan.status or plan.list, or null when it is not one.
 export function planEntry(raw: unknown): PlanEntry | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -93,6 +119,9 @@ export function planEntry(raw: unknown): PlanEntry | null {
     ...(typeof plan.parentPlan === 'string' ? { parentPlan: plan.parentPlan } : {}),
     ...(typeof plan.rejectionNote === 'string' ? { rejectionNote: plan.rejectionNote } : {}),
     ...(typeof plan.appliedRevision === 'string' ? { appliedRevision: plan.appliedRevision } : {}),
+    ...(text(plan.title) !== undefined ? { title: text(plan.title)! } : {}),
+    ...(text(plan.intent) !== undefined ? { intent: text(plan.intent)! } : {}),
+    ...(actorOf(plan.actor) !== undefined ? { actor: actorOf(plan.actor)! } : {}),
     raw: Object.freeze({ ...plan }),
   };
   return Object.freeze(entry);
@@ -165,10 +194,11 @@ export class PlanStore {
     this.#arrived(entry);
   }
 
-  // A plan.changed event: the plan's state and proposal link. Returns true
-  // when the plan needs plan.status: one the store does not hold (marked as
-  // needing it, its firstSeen recorded), or a held one that became rejected
-  // or approved (the event carries neither the note nor the times, E-7).
+  // A plan.changed event: the plan's state, proposal link, metadata and
+  // rejection note. Returns true when the plan needs plan.status: one the
+  // store does not hold (marked as needing it, its firstSeen recorded), a
+  // held one that became approved (the event has no approvedAt), or one that
+  // became rejected by an event without its note (an engine before E-7).
   applyChanged(event: PlanEvent): boolean {
     const hash = event.plan;
     if (typeof hash !== 'string' || !isState(event.state)) return false;
@@ -184,14 +214,21 @@ export class PlanStore {
       return true;
     }
     const branch = typeof event.proposalBranch === 'string' ? event.proposalBranch : undefined;
-    if (current.state === event.state && current.proposalBranch === branch) return false;
     const raw: Record<string, unknown> = { ...current.raw, state: event.state };
     if (branch === undefined) delete raw.proposalBranch;
     else raw.proposalBranch = branch;
+    // The metadata and the note, each only when the event carries it.
+    for (const field of ['title', 'intent', 'actor', 'rejectionNote'] as const) {
+      if (event[field] !== undefined) raw[field] = event[field];
+    }
     const next = planEntry(raw)!;
+    const noted = typeof event.rejectionNote === 'string';
+    const became = current.state !== event.state;
+    const reread = became && (event.state === 'approved' || (event.state === 'rejected' && !noted));
+    if (JSON.stringify(next.raw) === JSON.stringify(current.raw)) return reread;
     const plans = snapshot.plans.map((p) => (p.hash === hash ? next : p));
     this.#set(freezeSnapshot(plans, [...snapshot.needsStatus], snapshot.heard, snapshot.firstSeen));
-    return current.state !== event.state && (event.state === 'rejected' || event.state === 'approved');
+    return reread;
   }
 
   setHeard(heard: string | null): void {

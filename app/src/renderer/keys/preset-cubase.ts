@@ -22,6 +22,8 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Mod+Alt+R', commandId: 'zone.right.toggle', scope: 'window' },
   // SIANN addition: show the right zone on the Plans tab.
   { chord: 'Mod+Alt+P', commandId: 'zone.right.plans', scope: 'window' },
+  // The plan review (m5b-ui-ghosts; spec 4.2, 3.6): the ghosts of the overlaid plan on and off.
+  { chord: 'Mod+Alt+G', commandId: 'plans.toggleGhosts', scope: 'window' },
   // The focus frame (zone-focus.ts). Tab and Shift+Tab cycle the zones from a
   // zone or the page and walk a zone's controls from inside it; F6 and
   // Shift+F6 cycle the zones from anywhere; Enter on a zone enters it and
@@ -98,4 +100,7 @@ export const CUBASE_PRESET: readonly Binding[] = [
   { chord: 'Shift+2', commandId: 'transport.toRightLocator', scope: 'window' },
   { chord: 'Mod+Numpad1', commandId: 'transport.setLeftLocator', scope: 'window' },
   { chord: 'Mod+Numpad2', commandId: 'transport.setRightLocator', scope: 'window' },
+  // The Pool (m5-ui-port-toolbar; spec 10.8, 1; research/cubase.md 7): Ctrl+P
+  // (Cmd+P) is Cubase's Open Pool. P, Alt+P, Shift+P and Mod+Alt+P keep theirs.
+  { chord: 'Mod+P', commandId: 'pool.open', scope: 'window' },
 ];

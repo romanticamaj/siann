@@ -44,6 +44,38 @@ test('every flag that gates an app e2e test has a row in section 3.2 of the test
   }
 });
 
+function matrixSection(heading) {
+  const text = fs.readFileSync(MATRIX, 'utf8').replace(/\r\n/g, '\n');
+  const start = text.indexOf(`\n## ${heading}`);
+  assert.ok(start >= 0, `the matrix has a section "${heading}"`);
+  const end = text.indexOf('\n## ', start + 1);
+  return text.slice(start, end < 0 ? undefined : end);
+}
+
+// m5b-protocol-parity: section 4 is the parity the tests assert, gap 2 is closed
+// and rule 2 of section 8 names the parity tests.
+test('section 4 of the test matrix names the protocol parity tests', () => {
+  const section = matrixSection('4. ');
+  assert.ok(section.includes('test/protocol-parity.test.js'), 'section 4 names test/protocol-parity.test.js');
+  assert.ok(section.includes('protocol_parity_test'), 'section 4 names protocol_parity_test');
+});
+
+test('gap 2 (method/tool/doc/fixture parity) left the gap list of section 6', () => {
+  const rows = matrixSection('6. ').split('\n').filter((line) => line.startsWith('| '));
+  assert.ok(rows.length > 2, 'section 6 has its table');
+  assert.equal(rows.find((line) => /^\|\s*2\s*\|/.test(line)), undefined, 'section 6 has no row for gap 2');
+});
+
+test('rule 2 of section 8 names the protocol parity tests', () => {
+  const section = matrixSection('8. ');
+  const start = section.indexOf('\n2. ');
+  assert.ok(start >= 0, 'section 8 has rule 2');
+  const end = section.indexOf('\n3. ', start);
+  const rule = section.slice(start, end);
+  assert.ok(rule.includes('test/protocol-parity.test.js'), 'rule 2 names test/protocol-parity.test.js');
+  assert.ok(rule.includes('protocol_parity_test'), 'rule 2 names protocol_parity_test');
+});
+
 // m5b-bridge-native-client (acceptance item 6): layer G, the engine-gated Node
 // tests, runs in CI (the bridge-engine job) on the three OSes; its section 3.2
 // row and gap 3 are closed.
@@ -68,4 +100,107 @@ test('the Ardour-era rows are gone: section 3.2 has no engine-gated row and sect
   const section6 = text.slice(start, text.indexOf('\n## ', start + 1));
   assert.ok(!section6.split('\n').some((line) => /^\| 3 \|/.test(line)), 'gap 3 is closed');
   assert.doesNotMatch(text, /legacy Ardour checkout/);
+});
+// Rule 8.1: every acceptance item names its test. A paragraph headed
+// "Per acceptance item (`<feature>`):" maps the manifest's items, in order, to
+// the tests that cover them; a quoted title belongs to the last test file named
+// before it and must be a title in that file ("..." elides part of it). Every
+// native test the feature's row credits is one the paragraph cites.
+const REQUIRE_ITEM_PARAGRAPH = ['m5b-engine-monitoring'];
+
+function walk(dir, out) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === 'build' || entry.name.startsWith('.')) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, out);
+    else out.push(full);
+  }
+  return out;
+}
+
+function testFileIndex() {
+  const files = new Map();
+  for (const file of walk(path.join(ROOT, 'native'), [])) {
+    if (path.basename(path.dirname(file)) === 'tests' && file.endsWith('.cpp')) {
+      files.set(path.basename(file, '.cpp'), { file, native: true });
+    }
+  }
+  for (const file of walk(path.join(ROOT, 'app', 'test', 'unit'), [])) {
+    const match = /^(.+)\.test\.tsx?$/.exec(path.basename(file));
+    if (match && !files.has(match[1])) files.set(match[1], { file, native: false });
+  }
+  for (const name of fs.readdirSync(path.join(ROOT, 'test'))) {
+    const match = /^(.+)\.test\.js$/.exec(name);
+    if (match && !files.has(match[1])) files.set(match[1], { file: path.join(ROOT, 'test', name), native: false });
+  }
+  return files;
+}
+
+function manifestFeatures() {
+  const dir = path.join(ROOT, '.claude', 'milestones');
+  const features = new Map();
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue;
+    for (const feature of JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')).features ?? []) {
+      features.set(feature.id, feature);
+    }
+  }
+  return features;
+}
+
+const squash = (s) => s.replace(/\s+/g, ' ');
+
+function itemParagraphs(text) {
+  const paragraphs = new Map();
+  for (const block of text.split(/\n(?=\n|\|)/)) {
+    const match = /^\n?Per acceptance item \(`([a-z0-9-]+)`\):/.exec(block);
+    if (match) paragraphs.set(match[1], squash(block).trim());
+  }
+  return paragraphs;
+}
+
+test('a feature\'s "Per acceptance item" paragraph covers every item and cites real test titles', () => {
+  const text = fs.readFileSync(MATRIX, 'utf8').replace(/\r\n/g, '\n');
+  const paragraphs = itemParagraphs(text);
+  const features = manifestFeatures();
+  const files = testFileIndex();
+  for (const id of REQUIRE_ITEM_PARAGRAPH) {
+    assert.ok(paragraphs.has(id), `the matrix has a "Per acceptance item (\`${id}\`):" paragraph`);
+  }
+  // Only the features listed are held to the form: the paragraphs of features
+  // that landed before the check was added follow no fixed form.
+  for (const id of REQUIRE_ITEM_PARAGRAPH) {
+    const paragraph = paragraphs.get(id);
+    const feature = features.get(id);
+    assert.ok(feature, `${id} is a feature of a milestone manifest`);
+    const items = [...paragraph.matchAll(/(?:: |[.;] )(\d+) (?=`|Node |app |none|G: )/g)].map((m) => Number(m[1]));
+    assert.deepEqual(items, feature.acceptance.map((_, i) => i + 1),
+      `${id}: the paragraph names items 1 to ${feature.acceptance.length} in order`);
+
+    const cited = new Set();
+    let current = null;
+    for (const [, name, title] of paragraph.matchAll(/`([^`]+)`|"([^"]+)"/g)) {
+      if (name !== undefined) {
+        if (files.has(name)) {
+          current = name;
+          cited.add(name);
+        }
+        continue;
+      }
+      assert.ok(current, `${id}: "${title}" follows a test file`);
+      const source = squash(fs.readFileSync(files.get(current).file, 'utf8')).replace(/\\'/g, "'");
+      let at = 0;
+      for (const piece of title.split('...').map((p) => p.trim()).filter(Boolean)) {
+        const found = source.indexOf(piece, at);
+        assert.ok(found >= 0, `${id}: "${title}" is a test in ${current}`);
+        at = found + piece.length;
+      }
+    }
+
+    const row = text.split('\n').find((line) => line.startsWith(`| ${id} `));
+    assert.ok(row, `${id} has a row in the matrix`);
+    for (const [, name] of row.matchAll(/`([^`]+)`/g)) {
+      if (files.get(name)?.native) assert.ok(cited.has(name), `${id}: the row credits ${name}, so the paragraph cites it`);
+    }
+  }
 });

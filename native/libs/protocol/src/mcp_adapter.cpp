@@ -45,7 +45,7 @@ const std::vector<McpTool> kTools = {
     {"approve_plan", "plan.approve", McpScope::trusted,
      "Approves a plan, or with steps a sub-plan of those step indexes (the original is rejected).",
      R"({"type":"object","properties":{"plan":{"type":"string"},"steps":{"type":"array","items":{"type":"integer","minimum":0}}},"required":["plan"],"additionalProperties":false})"},
-    {"reject_plan", "plan.reject", McpScope::propose, "Rejects a plan with an optional note.",
+    {"reject_plan", "plan.reject", McpScope::propose, "Rejects a plan with an optional note; under the propose scope only a plan this agent submitted.",
      R"({"type":"object","properties":{"plan":{"type":"string"},"note":{"type":"string"}},"required":["plan"],"additionalProperties":false})"},
     {"apply_plan", "plan.apply", McpScope::trusted, "Applies an approved plan to main as one revision.", kPlanOnly},
     {"rollback_plan", "plan.rollback", McpScope::trusted,
@@ -57,7 +57,7 @@ const std::vector<McpTool> kTools = {
     {"audition", "audition.hear", McpScope::propose, "Hears main or an open proposal branch.",
      R"({"type":"object","properties":{"side":{"type":"string","description":"main or a branch p<n>"}},"required":["side"],"additionalProperties":false})"},
     {"merge_proposal", "proposal.merge", McpScope::trusted, "Merges a proposal branch into main.", kBranchOnly},
-    {"discard_proposal", "proposal.discard", McpScope::propose, "Discards a proposal branch.", kBranchOnly},
+    {"discard_proposal", "proposal.discard", McpScope::propose, "Discards a proposal branch; under the propose scope only one this agent proposed or of its own plan.", kBranchOnly},
     {"execute", "command.execute", McpScope::trusted, "Executes commands on main as one revision.",
      R"({"type":"object","properties":{"commands":{"type":"array","items":{"type":"object"},"minItems":1}},"required":["commands"],"additionalProperties":false})"},
     {"job_status", "job.status", McpScope::propose, "Returns a job's state and, when done, its result.",
@@ -107,6 +107,16 @@ const std::vector<McpTool> kTools = {
     {"import_media", "media.import", McpScope::trusted,
      "Imports a WAV or FLAC file into the media pool as a job (converted to the session rate); poll job_status.",
      R"({"type":"object","properties":{"path":{"type":"string","description":"absolute path of the audio file"},"clientImportId":{"type":"string","minLength":1,"maxLength":128,"description":"chosen by the client; a repeat answers the first job"}},"required":["path","clientImportId"],"additionalProperties":false})"},
+    // m5b-protocol-parity: the plan review reads, so an agent previews its plan as
+    // the reviewer will see it; undo and redo move main's head, so they are trusted.
+    {"list_plans", "plan.list", McpScope::propose,
+     "Lists every plan of the session in submission order, each as plan_status returns it.", kEmpty},
+    {"preview_plan", "plan.preview", McpScope::propose,
+     "Returns what apply_plan would produce now at main's head ({revision, documentHash, stale, entities} with "
+     "each entity before and after), committing nothing.",
+     kPlanOnly},
+    {"undo", "session.undo", McpScope::trusted, "Undoes main's last revision with a new undo revision.", kEmpty},
+    {"redo", "session.redo", McpScope::trusted, "Redoes the revision the last undo undid.", kEmpty},
     // m5b-engine-agent-requests (Protocol v0 item 32): the agent's side of a
     // request from the user. A request executes nothing; a plan the user
     // approves stays the only way into the document, so both are propose.
@@ -119,6 +129,39 @@ const std::vector<McpTool> kTools = {
      "Answers a request with a plan this agent submitted, or with a message, or declines it (exactly one form); "
      "submit_plan with request answers it too.",
      R"({"type":"object","properties":{"request":{"type":"string","description":"the request id, arq_<hex>"},"plan":{"type":"string","description":"the hash of a plan this agent submitted"},"message":{"type":"string","minLength":1,"maxLength":4000,"description":"1 to 4000 characters; tab, LF and CR are the only control characters allowed, no bidi formatting or line separator characters"},"decline":{"const":true,"description":"declines the request, with an optional message"}},"required":["request"],"additionalProperties":false})"},
+};
+
+// The methods the engine serves that no tool wraps, each with its reason
+// (m5b-protocol-parity). Every method of kMethods is a tool's method or one of
+// these, never both (protocol_parity_test, test/protocol-parity.test.js);
+// docs/schemas/protocol-mcp-v0.md, "Methods without a tool", lists them in this order.
+const std::vector<McpExclusion> kNotMcp = {
+    {"engine.about", "its content is the about object of describe_capabilities"},
+    {"gesture.begin", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.update", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.hold", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.end", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"gesture.cancel", "a pointer lease of a UI, not an agent's verb; agents change values through commands and plans"},
+    {"plugin.registry", "approving what code loads is the user's decision (Protocol v0 item 21)"},
+    {"plugin.approve", "approving what code loads is the user's decision (Protocol v0 item 21)"},
+    {"plugin.open_editor", "a plugin editor needs a desktop window"},
+    {"plugin.close_editor", "a plugin editor needs a desktop window"},
+    {"plugin.instantiate", "agents reach plugins through plan steps (plugin.insert and the plugin commands)"},
+    {"plugin.set_parameter",
+     "a live parameter of a running instance, not journaled; no command sets a plugin parameter, so agents have "
+     "no path to plugin parameters in v0"},
+    {"session.sync", "read-model replication for UI clients; inspect_session serves agents"},
+    {"session.fetch", "read-model replication for UI clients; inspect_session serves agents"},
+    {"record.recover_take",
+     "accepting or trashing a take a crash left is the user's decision about files on their disk; the UI offers "
+     "it from pendingTakes"},
+    {"meter.reset_loudness",
+     "restarts the integrated value of the user's loudness meter: a display aid, not session state, and "
+     "nothing a plan needs; an agent measures loudness from a render"},
+    {"agent.request", "the user's side of an agent request (Protocol v0 item 32); the agent takes it with next_request"},
+    {"agent.cancel_request",
+     "the user's side of an agent request (Protocol v0 item 32); the agent takes it with next_request"},
+    {"agent.requests", "the user's side of an agent request (Protocol v0 item 32); the agent takes it with next_request"},
 };
 
 HttpResponse reply(int status, std::string body, Headers headers = {}) {
@@ -166,13 +209,7 @@ const std::vector<McpTool>& mcpTools() {
 }
 
 const std::vector<McpExclusion>& mcpExclusions() {
-    static const std::vector<McpExclusion> exclusions = {
-        // m5b-engine-load-loudness (Protocol v0 item 31, docs/schemas/protocol-mcp-v0.md).
-        {"meter.reset_loudness",
-         "restarts the integrated value of the user's loudness meter: a display aid, not session state, and "
-         "nothing a plan needs; an agent measures loudness from a render"},
-    };
-    return exclusions;
+    return kNotMcp;
 }
 
 McpAdapter::McpAdapter(Submit submit, AgentRegistry& agents) : submit_(std::move(submit)), agents_(agents) {}

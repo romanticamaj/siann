@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -106,6 +107,11 @@ public:
 struct TrackTaps {
     graph::NodeId preFader = 0;   // the last insert, or the player without inserts (the track's channels)
     graph::NodeId postFader = 0;  // the fader's output, or a node passing it through (stereo)
+    // The track's MonitorInputNode in the realtime graph (m5b-engine-monitoring):
+    // its output edge and each send's edge into its bus are low-latency edges
+    // that follow the node (GraphBuilder::connectLowLatency). The offline graph
+    // has none.
+    std::optional<graph::NodeId> monitor;
 };
 
 // What compileForPlayback adds to the mix wiring: a callback per bus insert node

@@ -25,7 +25,7 @@
 // metronome (m5-ui-loop-click) are the LoopClickController's: its buttons in
 // the transport, its band in the event display's ruler, its keys in the shell.
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { localeStore } from './i18n/t';
 import type { CommandRegistry } from './keys/commands';
@@ -33,14 +33,20 @@ import type { ConnectionPhaseStore } from './model/connection-phase';
 import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
+import type { AgentStore } from './model/agents';
+import { capabilitySelector } from './model/capabilities';
 import type { PlanStore } from './model/plan-store';
+import type { ReviewStore } from './model/review-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
+import type { UndoHistory } from './model/undo-history';
 import type { TransportController } from './model/transport';
 import { Mixer } from './mixer/Mixer';
 import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
+import { HearingSwitch } from './plans/HearingSwitch';
+import { GhostContext, ReviewContext, useReviewGhosts } from './plans/ghost-context';
 import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
@@ -60,6 +66,10 @@ export interface AppProps {
   readonly realtime: RealtimeClient;
   readonly peaks: PeaksCache;
   readonly plans: PlanStore;
+  // The agents the engine lists (m5b-ui-plan-metadata: the Plans tab's agent row).
+  readonly agents?: AgentStore;
+  // The plan review and its ghosts (m5b-ui-ghosts).
+  readonly review: ReviewStore;
   readonly engineStatus: EngineStatusSource;
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
@@ -69,6 +79,8 @@ export interface AppProps {
   readonly transport: TransportController;
   // Locators, cycle and metronome (m5-ui-loop-click).
   readonly loopClick: LoopClickController;
+  // What undo and redo can do now (the top bar's undo and redo).
+  readonly history: UndoHistory;
   readonly onTimelineHooks?: (hooks: TimelineTestHooks | null) => void;
   readonly onMeterHooks?: (hooks: MeterTestHooks | null) => void;
 }
@@ -79,6 +91,8 @@ export function App({
   realtime,
   peaks,
   plans,
+  agents,
+  review,
   engineStatus,
   layout,
   commands,
@@ -87,6 +101,7 @@ export function App({
   toasts,
   transport,
   loopClick,
+  history,
   onTimelineHooks,
   onMeterHooks,
 }: AppProps) {
@@ -96,7 +111,10 @@ export function App({
   );
   const phase = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().phase);
   const reconnects = useSyncExternalStore(connection.subscribe, () => connection.getSnapshot().reconnect?.count ?? 0);
-  useEffect(() => announceArrivals(plans, toasts, () => localeStore().getSnapshot()), [plans, toasts]);
+  useEffect(
+    () => announceArrivals(plans, toasts, () => localeStore().getSnapshot(), () => capabilitySelector(client.getState().capabilities)),
+    [plans, toasts, client],
+  );
   const [tracks, setTracks] = useState<TrackSelection>(NO_TRACKS);
   const order = () => client.model.getSnapshot()?.trackOrder ?? [];
   // A clip selected selects its track.
@@ -115,14 +133,25 @@ export function App({
   // Removed tracks leave the selection.
   useEffect(() => client.model.subscribe(() => setTracks((current) => pruneTracks(current, order()))), [client]);
   useEffect(() => setTracks(NO_TRACKS), [reconnects]);
+  // A reconnect clears the plan review's selection, its ticks and its pin (spec 4.5 C8).
+  const seenReconnects = useRef(reconnects);
+  useEffect(() => {
+    if (reconnects === seenReconnects.current) return;
+    seenReconnects.current = reconnects;
+    review.reset();
+  }, [review, reconnects]);
+  const ghosts = useReviewGhosts(review);
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
       <TimeFormatContext.Provider value={timeFormat}>
+       <ReviewContext.Provider value={review}>
+        <GhostContext.Provider value={ghosts}>
         <Shell
           client={client}
           plans={plans}
+          review={review}
           engineStatus={engineStatus}
           store={layout}
           commands={commands}
@@ -133,7 +162,8 @@ export function App({
           realtime={realtime}
           transport={transport}
           loopClick={loopClick}
-          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} />}
+          history={history}
+          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} />}
           project={
             <Counted id="timeline">
               <Timeline
@@ -151,16 +181,20 @@ export function App({
                 onLocate={locate}
                 loopClick={loopClick}
                 reconnects={reconnects}
+                review={review}
               />
             </Counted>
           }
           lower={
             <Counted id="mixer">
-              <Mixer client={client} gestures={gestures} realtime={realtime} onMeterHooks={onMeterHooks} />
+              <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
             </Counted>
           }
-          right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
+          right={<PlanPanel client={client} plans={plans} agents={agents} review={review} reconnects={reconnects} />}
+          rightHead={<HearingSwitch client={client} plans={plans} />}
         />
+        </GhostContext.Provider>
+       </ReviewContext.Provider>
       </TimeFormatContext.Provider>
     </CapabilitiesContext.Provider>
   );

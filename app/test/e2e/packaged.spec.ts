@@ -84,8 +84,9 @@ test('the packaged app starts its own engine, connects, reports AGPL and the com
 
   // The licence line: the JUCE build's licence and the build's commit.
   const about = page.getByTestId('about');
-  await expect(about.locator('.about-license')).toHaveText('AGPL-3.0-or-later');
-  await expect(about.locator('.about-summary')).toContainText(new RegExp(`\\(${commit.slice(0, 12)}(\\+dirty)?\\)`));
+  await expect(about.getByTestId('about-license')).toHaveText('AGPL-3.0-or-later');
+  // The bar shows the commit's first 7 characters (the whole one is the About panel's).
+  await expect(about.locator('.about-summary')).toContainText(new RegExp(`\\(${commit.slice(0, 7)}$`));
 
   // Playback on the fake device moves the playhead.
   const client = await engineClient(page);

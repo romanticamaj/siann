@@ -48,6 +48,11 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   }
   assert.equal(reduced.has('plan.reject'), true);
   assert.equal(full.has('transport.punch'), false, 'a method no engine lists yet');
+  // m5b-protocol-parity: the full fixture lists every method the engine serves.
+  for (const method of ['transport.set_cycle', 'transport.set_click']) {
+    assert.equal(full.has(method), true, method);
+    assert.equal(reduced.has(method), false, method);
+  }
   assert.equal(full.feature('gestures'), true);
   assert.equal(reduced.feature('gestures'), false);
   assert.equal(full.feature('plugins'), false, 'false is absent');
@@ -78,6 +83,11 @@ test('has(method) and feature(name) over the full and the reduced capabilities',
   assert.equal(reduced.feature('masterGain'), false);
   assert.equal(full.command('master.set_gain'), true);
   assert.equal(reduced.command('master.set_gain'), false);
+  // m5b-engine-monitoring: the monitor command, and the feature with a record port.
+  assert.equal(full.command('track.set_monitor'), true);
+  assert.equal(reduced.command('track.set_monitor'), false);
+  assert.equal(full.feature('monitoring'), true);
+  assert.equal(reduced.feature('monitoring'), false, 'the reduced engine has no features.monitoring');
   // m5b-engine-clip-fades: the fade command and its feature (no method of its own).
   assert.equal(full.feature('clipFades'), true);
   assert.equal(reduced.feature('clipFades'), false);
@@ -215,18 +225,21 @@ test('mixer strip: fader, pan, mute and solo each need their command; the reduce
   for (const id of ['fader-trk_a', 'pan-trk_a', 'mute-trk_a', 'solo-trk_a']) assert.ok(!unknown.includes(`data-testid="${id}"`), id);
 });
 
-test('timeline: the media pool place buttons need clip.place and the delete button clip.remove', () => {
+// m5-ui-port-toolbar (UI redesign 10.8): the media buttons left the toolbar
+// for the Pool (Ctrl+P; its place buttons need clip.place, pool.test.tsx) and
+// the Delete clip button is gone (Delete and Backspace stay, behind clip.remove).
+test('timeline: the resting window has no media pool and no Delete clip button, whatever the capabilities', () => {
   const timeline = (caps: Capabilities | null) =>
     within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
-  const full = timeline(FULL);
-  assert.ok(full.includes('data-testid="pool-med_sq"'));
-  assert.ok(full.includes('data-testid="delete-clip"'));
-  for (const caps of [REDUCED, null]) {
+  for (const caps of [FULL, REDUCED, null]) {
     const shown = timeline(caps);
+    assert.ok(!shown.includes('data-testid="media-pool"'), 'no Pool at rest');
     assert.ok(!shown.includes('data-testid="pool-'), 'no place button');
     assert.ok(!shown.includes('data-testid="delete-clip"'), 'no delete button');
     assert.ok(shown.includes('data-testid="timeline-canvas"'), 'the canvas still draws the session');
   }
+  assert.equal(editGates(capabilitySelector(FULL))['edit.delete'], true);
+  assert.equal(editGates(capabilitySelector(REDUCED))['edit.delete'], false);
 });
 
 // The canvas's gestures (place, move, trim) send nothing the capabilities do not list.
@@ -322,11 +335,15 @@ test('timeline: the tool buttons and the snap controls need the clip commands th
     within(caps, <Timeline client={fakeClient()} peaks={{} as unknown as PeaksCache} commands={new CommandRegistry()} />);
   const full = timeline(FULL);
   for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) assert.ok(full.includes(`data-testid="${id}"`), id);
-  // Grid types Bar, Beat and Adapt to Zoom only (no snap type but Grid is rendered).
-  assert.deepEqual([...full.matchAll(/<option value="([a-z]+)"/g)].map((m) => m[1]), ['bar', 'beat', 'adapt']);
+  // The grid type is a field whose menu (Bar, Beat, Adapt to Zoom) opens on a click.
+  assert.ok(full.includes('aria-haspopup="menu"'));
+  assert.ok(!full.includes('<select'), 'no native select');
   for (const caps of [REDUCED, null]) {
     const shown = timeline(caps);
     for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type']) assert.ok(!shown.includes(`data-testid="${id}"`), id);
+    // The toolbar and its tool group keep their places, empty (UI redesign 3.0).
+    assert.ok(shown.includes('data-part="toolbar"'));
+    assert.ok(shown.includes('data-part="tools"'));
   }
   // Moves without splits: the selection tool and snap, no split tool.
   const moveOnly = timeline({ ...FULL, commands: ['clip.move'] });
@@ -399,7 +416,8 @@ test('timeline canvas: split, Alt-drag copy, duplicate, the volume control and d
     // Ctrl+D duplicates the selection.
     await timeline.duplicate();
     // The volume control: drag up 10 px.
-    const gainAt = { x: rect.x + 10, y: rect.y + rect.height - 3 };
+    // draw()'s volume box in the clip's inset box (m5-ui-port-arrange-canvas).
+    const gainAt = { x: rect.x + 20, y: rect.y + rect.height - 10 };
     fire('pointerdown', gainAt.x, gainAt.y);
     fire('pointermove', gainAt.x, gainAt.y - 10);
     fire('pointerup', gainAt.x, gainAt.y - 10);

@@ -36,17 +36,18 @@ const NOTE = `Keep ${RLO}lacov eht${PDF} please`;
 const REJECTED = hashOf('4');
 const FRESH = hashOf('1');
 
-// The opening tag of the element with this class, or '' when there is none.
-function openingTags(markup: string, className: string): string[] {
-  return [...markup.matchAll(new RegExp(`<[a-z]+[^>]*class="${className}"[^>]*>`, 'g'))].map((match) => match[0]);
+// The opening tags of the elements with this class (or matching this pattern).
+function openingTags(markup: string, what: string | RegExp): string[] {
+  const re = typeof what === 'string' ? new RegExp(`<[a-z]+[^>]*class="${what}"[^>]*>`, 'g') : what;
+  return [...markup.matchAll(re)].map((match) => match[1] ?? match[0]);
 }
 
-function assertIsolated(markup: string, className: string) {
-  const tags = openingTags(markup, className);
-  assert.ok(tags.length > 0, `no element with class ${className}`);
+function assertIsolated(markup: string, what: string | RegExp) {
+  const tags = openingTags(markup, what);
+  assert.ok(tags.length > 0, `no element for ${String(what)}`);
   for (const tag of tags) {
-    assert.match(tag, /\sdir="auto"/, `${className}: ${tag}`);
-    assert.match(tag, /style="[^"]*unicode-bidi:isolate/, `${className}: ${tag}`);
+    assert.match(tag, /\sdir="auto"/, `${String(what)}: ${tag}`);
+    assert.match(tag, /style="[^"]*unicode-bidi:isolate/, `${String(what)}: ${tag}`);
   }
 }
 
@@ -65,10 +66,14 @@ function panel(overrides: Partial<PlanPanelViewProps> = {}): string {
     preview: null,
     previewError: null,
     staleReasons: [`Vox ${RLO}emulov${PDF} changed`],
+    rejecting: false,
+    hotStep: null,
     onSelect: () => undefined,
     onTicked: () => undefined,
     onNote: () => undefined,
     onRun: () => undefined,
+    onRejecting: () => undefined,
+    onHotStep: () => undefined,
     ...overrides,
   };
   return renderToStaticMarkup(
@@ -83,13 +88,15 @@ test('ISOLATE is dir="auto" with unicode-bidi: isolate', () => {
   assert.equal(ISOLATE.style.unicodeBidi, 'isolate');
 });
 
-test("the card's lead and rejection note, each step and the stale reasons are bidi-isolated", () => {
+test("a history row's title and rejection note, each step and the stale reasons are bidi-isolated", () => {
   const markup = panel();
   assert.ok(markup.includes(NOTE), 'the note is shown as sent');
-  assertIsolated(markup, 'plan-card-lead');
-  assertIsolated(markup, 'plan-card-reason');
-  assertIsolated(markup, 'step-text');
-  assertIsolated(markup, 'plan-stale-reason');
+  assert.ok(markup.includes(isolateName(NOTE)), 'the note is its own isolate inside its line');
+  assertIsolated(markup, /<button[^>]*class="hrow"[^>]*>(<b[^>]*>)/g);
+  assertIsolated(markup, /(<small[^>]*data-testid="plan-reason-[0-9a-f]{8}"[^>]*>)/g);
+  assertIsolated(markup, 't');
+  // Each stale reason is a list item of the stale-reasons row.
+  assertIsolated(/data-testid="plan-stale-reasons"[\s\S]*?<\/ul>/.exec(markup)?.[0] ?? '', /(<li[^>]*>)/g);
 });
 
 test("the audition banner's text is bidi-isolated", () => {
@@ -102,6 +109,15 @@ test("the audition banner's text is bidi-isolated", () => {
     </CapabilitiesContext.Provider>,
   );
   assertIsolated(markup, 'audition-banner-text');
+});
+
+// m5b-ui-plan-metadata: the plan's title and intent and the agent's name.
+test("the card's title and intent and the agent row's name are bidi-isolated", () => {
+  const plans = [entry(FRESH, 'validated', MIX_STEPS, { title: `Lift ${RLO}surohc`, intent: `Pad ${RLO}sdrawrof`, actor: { kind: 'mcp', name: `mix${RLO}` } })];
+  const markup = panel({ plans, agent: { id: 'agt_1', name: `mix${RLO}tnatsissa`, transport: 'mcp', connected: true, lastAction: null, lastActionAt: null } });
+  assertIsolated(markup, /(<h3[^>]*data-part="plan-title"[^>]*>)/g);
+  assertIsolated(markup, /(<p[^>]*data-part="plan-intent"[^>]*>)/g);
+  assertIsolated(/data-part="agent-row"[\s\S]*?<\/div>/.exec(markup)?.[0] ?? '', /(<b[^>]*>)/g);
 });
 
 // Follow-up to #123: the step text is isolated as a whole, but a name inside
@@ -207,15 +223,17 @@ test('stale reasons and the diff table isolate each name', () => {
 
 test('the track list, inspector, mixer strip and session name isolate the names they show', () => {
   const sources = ['timeline/TrackList.tsx', 'shell/Inspector.tsx', 'mixer/Strip.tsx', 'shell/TopBar.tsx'];
-  const classes: Record<string, string> = {
-    'timeline/TrackList.tsx': 'track-name',
-    'shell/Inspector.tsx': 'inspector-track',
-    'mixer/Strip.tsx': 'strip-name',
-    'shell/TopBar.tsx': 'session-name',
+  // The attribute that marks the element showing the name (the Inspector's is
+  // the mockup's text node in .i-name, a span with no class of its own).
+  const marks: Record<string, string> = {
+    'timeline/TrackList.tsx': 'className="name"',
+    'shell/Inspector.tsx': 'data-testid="inspector-track"',
+    'mixer/Strip.tsx': 'className="nametag"',
+    'shell/TopBar.tsx': 'className="session"',
   };
   for (const source of sources) {
     const text = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'src', 'renderer', source), 'utf8');
-    const at = text.indexOf(`className="${classes[source]}"`);
+    const at = text.indexOf(marks[source]!);
     assert.ok(at >= 0, source);
     // The element's opening tag and the start of its children.
     assert.match(text.slice(at, at + 300), /\{\.\.\.ISOLATE\}|\.\.\.ISOLATE\.style/, source);
