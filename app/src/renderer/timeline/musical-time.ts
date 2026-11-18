@@ -14,8 +14,19 @@
 import type { TempoPoint } from '../model/document';
 
 export const TICKS_PER_QUARTER = 1920;
+// The metre bars are counted in: the one source the ruler, the grid, snap,
+// the position and locator displays and the top bar's Sig cell read
+// (m5b-ui-signature), so none can disagree with another. 4/4 for every
+// project until the meter map arrives (E-10); a beat is a quarter.
 export const BEATS_PER_BAR = 4;
-export const TICKS_PER_BAR = TICKS_PER_QUARTER * BEATS_PER_BAR;
+export const BEAT_UNIT = 4;
+export const TIME_SIGNATURE: { readonly beats: number; readonly unit: number } = Object.freeze({ beats: BEATS_PER_BAR, unit: BEAT_UNIT });
+export const TICKS_PER_BAR = TICKS_PER_QUARTER * TIME_SIGNATURE.beats;
+
+// The signature as the Sig cell writes it: beats/unit (4/4), the same in every locale.
+export function formatSignature(): string {
+  return `${TIME_SIGNATURE.beats}/${TIME_SIGNATURE.unit}`;
+}
 // A sixteenth: the info line's third part (480 ticks).
 export const TICKS_PER_SIXTEENTH = TICKS_PER_QUARTER / 4;
 export const DEFAULT_MILLI_BPM = 120_000;

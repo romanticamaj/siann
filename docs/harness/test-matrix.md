@@ -437,6 +437,23 @@ the request limits", app `capabilities` (`capabilities-full.json`) and
 `session-client` "agent.request, agent.cancel_request and agent.requests go out
 as typed calls; agent.request_changed reaches a listener"; 7 none (no UI).
 
+| Feature | N | D | U | E | F | M (tour) | Platforms | Gaps |
+|---|---|---|---|---|---|---|---|---|
+| m5b-ui-signature | | | Y (`signature`: `TIME_SIGNATURE`, `formatSignature`, the ruler, snap, `parsePosition`, the position and locator formats against it, the sources that import the metre and no second declaration or 4/4 literal; `top-bar`: the Sig cell's markup, value, tooltip, name and no control, the hold gone; `transport-controls`: the 4/4 sentence left the position display; `key-preset`: Shift+C unbound; `i18n-catalogs`) | Y (`transport.spec` "the Sig cell reads 4/4 ...": text, tooltip, Shift+C and a click send nothing and change no revision; `shell-layout.spec` "the top bar gives way at 1300 and 1100 px ...": shown at 1440 and 1280, hidden at 1080; `i18n-fit` the cell and its value at 1440x900 and 1024x700 in four locales) | report (gate `m5b-ui-signature`; `mockup-fidelity.test.js` checks the gate, the hold token's removal and the 1100 px rule) | the top bar in every state; appends none | 3 | - |
+
+Per acceptance item (`m5b-ui-signature`): 1 none (a decision); 2 app unit
+`signature` "musical-time holds the metre ...", "the bar maths agrees with the
+signature ...", "the Sig cell and the bar maths import the metre ...", `top-bar`
+"the Sig cell is the mockup's markup ..."; 3 `top-bar` (no role, tabindex,
+button or handler; the tooltip), `transport-controls` "with no device the
+rendered buttons ...", `key-preset` "Shift+C is unbound ...", e2e `transport`
+"the Sig cell reads 4/4 ..."; 4 e2e `shell-layout` "the top bar gives way at
+1300 and 1100 px ...", `mockup-fidelity.test.js` "the small-window breakpoints
+..."; 5 `i18n-catalogs`, e2e `i18n-fit`; the tour (no new state); 6 `top-bar`
+(structure against mockup.html line 237), e2e `transport` (the id in the
+window), `mockup-fidelity.test.js` "the chrome's gate is report ..." (gate
+`report`, no `--hold-display-signature-w`), the side-by-side screenshots by eye.
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -451,7 +468,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 | Feature | Wave | After | Owns (layer F) | Tests its acceptance names |
 |---|---|---|---|---|
 | `m5b-engine-plan-metadata` (E-7, E-14; landed, see the table above) | 1 | | | protocol and MCP tests: limits, actor, note in status and changed, `agent.changed`; hash unchanged by a title (native and `src/hash/plan-hash.js`) |
-| `m5b-ui-signature` | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
+| `m5b-ui-signature` (landed, see the table above) | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
 | `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
 | `m5b-engine-agent-requests` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds (4,000 characters, 16 open per agent, `agent_busy`), the `next_request` long poll, a second client; gate `agent-request-shape` (resolved) |
 | `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |

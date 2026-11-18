@@ -14,9 +14,13 @@
 //   than the display), and once after a frame changed while stopped. React
 //   hears of the transport only when the playing flag flips (the start
 //   button's pressed state), the formats are exchanged or the field opens.
-//   Its tooltip says bars are counted in 4/4 (spec 3.0, E-10). Beside it, the
-//   tempo in force at the cursor (root.tempo; editing it is phase 3), written
-//   the same way.
+//   Beside it, the tempo in force at the cursor (root.tempo; editing it is
+//   phase 3), written the same way, and last the Sig cell (m5b-ui-signature;
+//   spec UR-15, 3.1): the metre bars are counted in, read from
+//   timeline/musical-time as the ruler, the grid and snap read it, so it cannot
+//   disagree with them. It is a readout, not a control (no role, no focus, no
+//   key: Shift+C stays unbound until E-10), and its tooltip says this version
+//   counts every project in 4/4 (spec 3.0).
 // - Shift+P opens a real text field over the display, so the dispatcher's
 //   text-field rule keeps every key in it; Enter locates to the typed
 //   position (read in the primary format), Escape or leaving it cancels, and
@@ -36,8 +40,9 @@
 //   transport.changed, method results), are disabled with the reason without
 //   a device, as the transport buttons are, and a right-click on the
 //   metronome opens its level. The locator display reads the range in bars
-//   and beats (4/4) and exists only while the session has locators. Whatever
-//   the engine's capabilities do not list is absent and its box stays empty
+//   and beats (the Sig cell's metre) and exists only while the session has
+//   locators. Whatever the engine's capabilities do not list is absent and
+//   its box stays empty
 //   (spec 3.0): an element of the part's size with no role, no focus, no
 //   data-part, hidden from assistive technology; the locator display's empty
 //   box is --display-locators-empty-w wide.
@@ -60,6 +65,7 @@ import type { SessionClient } from '../model/session-client';
 import type { TransportController } from '../model/transport';
 import type { UndoHistory } from '../model/undo-history';
 import { formatLocators, rangeOf } from '../timeline/locators';
+import { formatSignature } from '../timeline/musical-time';
 import { formatPosition, formatTempo, otherFormat, parsePosition, tempoAt, type TimeFormat } from '../timeline/transport-time';
 import { PlayheadClock } from '../transport/playhead-clock';
 import { useCapabilities } from './Capable';
@@ -391,7 +397,6 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
         data-editing={editing ? 'true' : undefined}
         role="group"
         aria-label={t('transport.position')}
-        title={t('transport.fourFour')}
         onContextMenu={(event: MouseEvent<HTMLDivElement>) => {
           event.preventDefault();
           setMenu({ x: event.clientX, y: event.clientY });
@@ -448,7 +453,20 @@ function TransportBar({ client, realtime, engineStatus, layout, commands, transp
           </span>
           <span className="val sm" data-testid="transport-tempo" ref={tempoRef} />
         </div>
-        <Hold className="hold-display-signature" />
+        <div
+          className="cell"
+          data-part="display-signature"
+          data-testid="display-signature"
+          title={t('transport.fourFour')}
+          aria-label={`${t('transport.signature')} ${formatSignature()}`}
+        >
+          <span className="lbl" aria-hidden="true">
+            {t('transport.labelSignature')}
+          </span>
+          <span className="val sm" data-testid="display-signature-value">
+            {lcdDigits(formatSignature())}
+          </span>
+        </div>
       </div>
       {menu ? (
         <TimeFormatMenu

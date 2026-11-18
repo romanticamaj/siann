@@ -644,8 +644,9 @@ test('the licence line stays visible at 1440x900 and 1024x700 in every locale, a
 // to 1301 px the transport is centred and the boxes of the pending branch
 // chip, DSP load and Record button keep their space; from 1300 px down the
 // transport follows the left group and those three boxes go; from 1100 px
-// down the brand and the locator, tempo and signature displays go too, and
-// the session name shortens instead of going. The bar never overflows.
+// down the brand and the locator, tempo and signature displays go too (the
+// Sig cell, m5b-ui-signature), and the session name shortens instead of
+// going. The bar never overflows.
 test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
   const sessionDir = seedBundle(scratch, TRACKS);
   await launch(sessionDir);
@@ -674,7 +675,7 @@ test('the top bar gives way at 1300 and 1100 px as spec 2.4 says', async () => {
         gapAfterLeft: transport.left - left.right,
         holds: holds.map(shown),
         brand: shown('[data-part=brand]'),
-        signature: shown('.hold-display-signature'),
+        signature: shown('[data-part=display-signature]'),
         tempo: shown('[data-part=display-tempo]'),
         time: shown('[data-part=display-time]'),
         position: shown('[data-part=display-position]'),
