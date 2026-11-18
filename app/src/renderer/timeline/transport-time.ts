@@ -1,6 +1,6 @@
 // The position display's text (m5-ui-transport; UI redesign spec 3.1): a
 // session frame in Bars+Beats (bar.beat.tick, 1-based, through root.tempo;
-// 4/4 until E-10, which the display's tooltip states) or in Seconds as a
+// 4/4 until E-10, which the Sig cell shows) or in Seconds as a
 // fixed hh:mm:ss.mmm (the mockup's format, UI redesign 10.7, 1), the same
 // bytes in every locale; a typed position read back
 // in the primary format; the exchange of the primary and secondary format

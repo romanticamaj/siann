@@ -132,8 +132,11 @@ export const en = {
   // Why the transport is disabled: the device error's code goes in front.
   'transport.noDevice': 'No audio device is running, so the transport is unavailable',
   'transport.position': 'Project cursor position',
-  // The position display's tooltip (spec 3.0: no time signature until E-10).
-  'transport.fourFour': 'Bars and beats are counted in 4/4',
+  // The Sig cell's tooltip (m5b-ui-signature; spec UR-15, 3.0: the signature
+  // is a readout until E-10).
+  'transport.fourFour': 'This version counts every project in 4/4',
+  // The Sig cell's accessible name, read before its value (m5b-ui-signature).
+  'transport.signature': 'Time signature',
   'transport.positionField': 'Go to position',
   'transport.autoScroll': 'Auto-scroll',
   'transport.tempo': 'Tempo at the project cursor (BPM)',
@@ -154,6 +157,7 @@ export const en = {
   'transport.labelBars': 'Bar · Beat · Tick',
   'transport.labelTime': 'Time',
   'transport.labelTempo': 'Tempo',
+  'transport.labelSignature': 'Sig',
   'transport.toLeftLocator': 'Go to left locator',
   'transport.toRightLocator': 'Go to right locator',
   'transport.setLeftLocator': 'Set left locator to the project cursor',

@@ -213,7 +213,6 @@ export const TOKENS = {
   "hold-branch-chip-w": "86.719px",
   "hold-transport-record-w": "32px",
   "hold-transport-record-h": "28px",
-  "hold-display-signature-w": "45.625px",
   "hold-dsp-load-w": "99.484px",
   "hold-zone-button-channel-w": "26px",
   "hold-zone-button-channel-h": "24px",
