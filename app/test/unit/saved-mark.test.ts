@@ -87,3 +87,31 @@ test('each epoch takes the opened session\'s first sync as its baseline', () => 
   assert.equal(mark.getSnapshot(), true);
   mark.destroy();
 });
+
+test('the saved revision is the baseline: the status bar names it, never an unsaved head', () => {
+  const engine = fakeClient();
+  const mark = new SavedMark(engine.client);
+  assert.equal(mark.savedRevision(), null, 'nothing synced: no saved revision');
+  engine.sync('r3');
+  assert.equal(mark.savedRevision(), 'r3');
+  engine.head('r4');
+  assert.equal(mark.getSnapshot(), true);
+  assert.equal(mark.savedRevision(), 'r3', 'marked: the saved revision stays the baseline');
+  let told = 0;
+  mark.subscribe(() => (told += 1));
+  // The head moved on while Save ran: still marked, but the baseline moved, and the listeners hear it.
+  mark.saved('r2');
+  assert.equal(mark.getSnapshot(), true);
+  assert.equal(mark.savedRevision(), 'r2');
+  assert.equal(told, 1);
+  mark.saved('r2');
+  assert.equal(told, 1, 'the same baseline again: nothing changed');
+  mark.saved('r4');
+  assert.equal(mark.savedRevision(), 'r4');
+  assert.equal(mark.getSnapshot(), false);
+  engine.epoch();
+  assert.equal(mark.savedRevision(), null, 'between the epoch and its sync there is no saved revision');
+  engine.sync('r12');
+  assert.equal(mark.savedRevision(), 'r12');
+  mark.destroy();
+});

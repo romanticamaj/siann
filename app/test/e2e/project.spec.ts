@@ -276,13 +276,23 @@ test('(e) the saved mark: an edit marks the title and the top bar, Save clears i
   await newProject(bundle);
   const name = page.getByTestId('session-name');
   await expect(name).not.toHaveAttribute('data-unsaved', 'true');
+  // The status bar's saved revision is the mark's baseline; the head is the About panel's diagnostic.
+  const savedAt = page.getByTestId('saved-revision');
+  await expect(savedAt).toHaveText(/^r\d+$/);
+  const baseline = (await savedAt.textContent()) ?? '';
+  await expect(page.getByTestId('revision')).toHaveText(baseline);
   await addTrack(await client(), 'trk_a', 'A');
   await expect(name).toHaveAttribute('data-unsaved', 'true');
   await expect(name).toContainText(en['session.unsavedMark']);
   await expect.poll(windowTitle).toContain(`Marked ${en['session.unsavedMark']}`);
+  await expect(page.getByTestId('revision')).not.toHaveText(baseline);
+  // Marked: the bar does not call the unsaved head saved.
+  await expect(savedAt).toHaveText(baseline);
+  const head = (await page.getByTestId('revision').textContent()) ?? '';
   await page.keyboard.press(`${MOD}+KeyS`);
   await expect(name).not.toHaveAttribute('data-unsaved', 'true');
   await expect.poll(windowTitle).not.toContain(en['session.unsavedMark']);
+  await expect(savedAt).toHaveText(head);
 
   // An edit, then quit without Save: no prompt, and the edit is there after a relaunch, unmarked.
   await addTrack(await client(), 'trk_b', 'B');

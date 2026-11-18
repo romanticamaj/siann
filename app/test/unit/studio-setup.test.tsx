@@ -17,7 +17,7 @@ import { translator } from '../../src/renderer/i18n/t';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import { parseEngineStatus, type EngineStatus, type EngineStatusSource } from '../../src/renderer/model/engine-status';
 import { ProtocolError } from '../../src/renderer/model/session-client';
-import { StudioSetupController, parseDevices, setupFields, studioSetupAvailable } from '../../src/renderer/model/studio-setup';
+import { StudioSetupController, initialOutput, parseDevices, setupFields, studioSetupAvailable } from '../../src/renderer/model/studio-setup';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { StudioSetup } from '../../src/renderer/shell/StudioSetup';
 
@@ -155,6 +155,28 @@ test('a refusal shows the code, then one select with the previous id and inputId
     assert.deepEqual(selects, [{ id: 'Windows Audio/Speakers' }, { id: 'fake', inputId: 'fake' }], locale);
     assert.match(controller.getSnapshot().error ?? '', /^device_open_failed: /, locale);
   }
+});
+
+test('with no entry current the output list starts on the default output, else the first, so Apply needs no change event', async () => {
+  const notCurrent = (list: ReadonlyArray<Record<string, unknown>>) => ({ devices: list.map((d) => ({ ...d, current: false })) });
+  // The current entry wins; without one the default output device; without one the first output.
+  assert.equal(initialOutput(parseDevices(DEVICES)), 'fake');
+  assert.equal(initialOutput(parseDevices(notCurrent(DEVICES.devices))), 'Windows Audio/Speakers');
+  assert.equal(initialOutput(parseDevices(notCurrent(DEVICES.devices.map((d) => ({ ...d, isDefault: false }))))), 'fake');
+  // An input-only default is no output.
+  assert.equal(initialOutput(parseDevices({ devices: [{ id: 'mic', isDefault: true, outputChannels: 0 }, { id: 'out', outputChannels: 2 }] })), 'out');
+  assert.equal(initialOutput([]), '');
+  // One output device, not current (no device runs): the shown option is the chosen one, and Apply is live for it.
+  const client = scripted({ 'engine.devices': notCurrent([DEVICES.devices[0]]) });
+  const controller = new StudioSetupController({ client, status: fixedStatus(NONE), locale: () => 'en' });
+  await controller.load();
+  const markup = renderToStaticMarkup(
+    <CapabilitiesContext.Provider value={CAPS}>
+      <StudioSetup open={false} controller={controller} engineStatus={fixedStatus(NONE)} sessionRate={48000} onClose={() => undefined} />
+    </CapabilitiesContext.Provider>,
+  );
+  assert.match(markup, /<option value="fake" selected="">fake<\/option>/, markup);
+  assert.match(markup, /<button type="button" data-testid="setup-apply">/, markup);
 });
 
 test('nothing is sent back when no device ran', async () => {

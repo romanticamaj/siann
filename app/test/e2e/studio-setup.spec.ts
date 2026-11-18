@@ -90,7 +90,9 @@ test('with no device the transport\'s tooltip names Studio Setup, a click opens 
   await expect(page.getByTestId('studio-setup')).toBeVisible();
   // The transport sent nothing.
   expect(await page.evaluate(() => window.__siannClient!.sent().filter((r) => r.method.startsWith('transport.')).length)).toBe(0);
-  await page.getByTestId('setup-output').selectOption('fake');
+  // The list shows the device Apply selects, as a person sees it: no selectOption, whose change event a person cannot make on the shown option.
+  await expect(page.getByTestId('setup-output')).toHaveValue('fake');
+  await expect(page.getByTestId('setup-apply')).toBeEnabled();
   await page.getByTestId('setup-apply').click();
   await expect(page.getByTestId('setup-error')).toContainText('device_open_failed');
   expect(await selects()).toEqual([{ id: 'fake' }]);
