@@ -83,6 +83,8 @@ export const COMMAND_IDS = [
   'transport.setRightLocator',
   // The Pool (m5-ui-port-toolbar; spec 10.8, 1): Cubase's Open Pool.
   'pool.open',
+  // The plan review (m5b-ui-ghosts; spec 4.2): the proposal pill's toggle, the ghosts on and off.
+  'plans.toggleGhosts',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

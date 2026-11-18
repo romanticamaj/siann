@@ -81,6 +81,8 @@ export interface PlanCardProps {
   readonly note: string;
   readonly rejecting: boolean;
   readonly hotStep: number | null;
+  // The step pinned by its target button or a click on a ghost (m5b-ui-ghosts).
+  readonly pinnedStep?: number | null;
   readonly error: Refusal | null;
   readonly preview: PlanPreview | null;
   readonly previewError: Refusal | null;
@@ -93,6 +95,8 @@ export interface PlanCardProps {
   readonly onRun: (entry: ActionEntry) => void;
   readonly onRejecting: (open: boolean) => void;
   readonly onHotStep: (index: number | null) => void;
+  // The target button of a step (m5b-ui-ghosts): locate its ghosts.
+  readonly onLocate?: (index: number) => void;
 }
 
 export function PlanCard(props: PlanCardProps) {
@@ -257,7 +261,9 @@ export function PlanCard(props: PlanCardProps) {
             names={names}
             ticked={props.selectable ? tickedSet.has(index) : null}
             disabled={busy}
-            hot={props.hotStep === index}
+            hot={props.hotStep === index || props.pinnedStep === index}
+            pinned={props.pinnedStep === index}
+            onLocate={() => props.onLocate?.(index)}
             open={open.has(index)}
             entities={rowsAt(homes.steps[index] ?? [])}
             onTick={() => tick(index)}

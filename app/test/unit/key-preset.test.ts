@@ -148,6 +148,13 @@ test('the locator, cycle and metronome keys (m5-ui-loop-click; UI redesign spec 
   for (const [chord] of windowRows) assert.equal(CUBASE_PRESET.filter((b) => b.chord === chord && b.scope !== 'window').length, 0, chord);
 });
 
+test('Ctrl+Alt+G (Cmd+Alt+G on macOS) toggles the ghosts of the overlaid plan, in the window (m5b-ui-ghosts; UI redesign 4.2, 3.6)', () => {
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.commandId === 'plans.toggleGhosts'), [{ chord: 'Mod+Alt+G', commandId: 'plans.toggleGhosts', scope: 'window' }]);
+  assert.deepEqual(CUBASE_PRESET.filter((b) => b.chord === 'Mod+Alt+G').map((b) => b.commandId), ['plans.toggleGhosts']);
+  // G and Shift+G keep the zoom.
+  assert.ok(CUBASE_PRESET.some((b) => b.chord === 'G' && b.commandId !== 'plans.toggleGhosts'));
+});
+
 test('Ctrl+P (Cmd+P on macOS) opens the Pool, Cubase\'s Open Pool key (m5-ui-port-toolbar; UI redesign 10.8, 1)', () => {
   const found = CUBASE_PRESET.filter((b) => b.commandId === 'pool.open');
   assert.deepEqual(found, [{ chord: 'Mod+P', commandId: 'pool.open', scope: 'window' }]);

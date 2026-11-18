@@ -5,6 +5,7 @@
 #include <climits>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -521,6 +522,410 @@ TEST_CASE("compile() lists metered nodes with their NodeIds in schedule order", 
     const NodeId only = plain.add(std::make_unique<BusNode>(1), "bus");
     plain.setOutput(only);
     CHECK(std::move(plain).compile(64)->meteredNodes().empty());
+}
+
+// ---- m5b-engine-monitoring: the monitor input node and the low-latency path ----
+
+namespace {
+
+// A constant on every channel (a track's clips in the monitoring tests).
+class ConstantNode final : public Node {
+public:
+    ConstantNode(int channels, float value) : channels_(channels), value_(value) {}
+    int outputChannels() const override { return channels_; }
+    void process(const ProcessContext& context, std::span<const AudioBufferView>,
+                 const AudioBufferView& output) noexcept override {
+        for (int c = 0; c < channels_; ++c) {
+            std::fill_n(output.channel(c), context.frames, value_);
+        }
+    }
+
+private:
+    int channels_;
+    float value_;
+};
+
+// 1.0 at timeline frame `at` on every channel, silence elsewhere: a clip's impulse.
+class ImpulseNode final : public Node {
+public:
+    ImpulseNode(int channels, std::int64_t at) : channels_(channels), at_(at) {}
+    int outputChannels() const override { return channels_; }
+    void process(const ProcessContext& context, std::span<const AudioBufferView>,
+                 const AudioBufferView& output) noexcept override {
+        for (int c = 0; c < channels_; ++c) {
+            for (int i = 0; i < context.frames; ++i) {
+                output.channel(c)[i] = context.blockStart + i == at_ ? 1.0f : 0.0f;
+            }
+        }
+    }
+
+private:
+    int channels_;
+    std::int64_t at_;
+};
+
+// A device input of `channels` channels, `frames` long, from a generator.
+struct InputBlock {
+    std::vector<std::vector<float>> data;
+    std::vector<float*> pointers;
+
+    InputBlock(int channels, std::int64_t frames)
+        : data(static_cast<std::size_t>(channels), std::vector<float>(static_cast<std::size_t>(frames), 0.0f)) {
+        for (auto& channel : data) {
+            pointers.push_back(channel.data());
+        }
+    }
+    // The view of frames [start, start + n).
+    AudioBufferView at(std::int64_t start, int n) {
+        for (std::size_t c = 0; c < data.size(); ++c) {
+            pointers[c] = data[c].data() + start;
+        }
+        return AudioBufferView{pointers.data(), static_cast<int>(data.size()), n};
+    }
+};
+
+// Renders like run(), handing each block its slice of `input`; `before` runs
+// ahead of every block (the gate flips of a test).
+std::vector<float> runWithInput(PreparedGraph& graph, InputBlock& input, std::int64_t frames, int block,
+                                bool rolling, const std::function<void(std::int64_t start)>& before = {}) {
+    std::vector<float> out;
+    for (std::int64_t start = 0; start < frames; start += block) {
+        const int n = static_cast<int>(std::min<std::int64_t>(block, frames - start));
+        if (before) {
+            before(start);
+        }
+        const AudioBufferView view = input.at(start, n);
+        ProcessContext context{start, n};
+        context.rolling = rolling;
+        context.input = &view;
+        graph.process(context);
+        for (int i = 0; i < n; ++i) {
+            out.push_back(graph.output().channel(0)[i]);
+        }
+    }
+    return out;
+}
+
+std::int64_t firstPeak(const std::vector<float>& samples, float threshold = 0.5f) {
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        if (std::abs(samples[i]) >= threshold) {
+            return static_cast<std::int64_t>(i);
+        }
+    }
+    return -1;
+}
+
+float maxStep(const std::vector<float>& samples) {
+    float step = 0.0f;
+    for (std::size_t i = 1; i < samples.size(); ++i) {
+        step = std::max(step, std::abs(samples[i] - samples[i - 1]));
+    }
+    return step;
+}
+
+}  // namespace
+
+TEST_CASE("MonitorInputNode passes the mapped input when open and its port 0 when closed", "[graph][monitor]") {
+    InputBlock input(3, 256);
+    for (int i = 0; i < 256; ++i) {
+        input.data[0][static_cast<std::size_t>(i)] = 0.5f;
+        input.data[1][static_cast<std::size_t>(i)] = 0.001f * static_cast<float>(i);
+        input.data[2][static_cast<std::size_t>(i)] = -0.002f * static_cast<float>(i);
+    }
+
+    SECTION("input mode passes the input sample for sample, rolling or not") {
+        for (const bool rolling : {true, false}) {
+            GraphBuilder b;
+            const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.25f), "clips");
+            const NodeId monitor = b.add(
+                std::make_unique<MonitorInputNode>(1, MonitorInputMode::input, 1, 1, nullptr, 16), "monitor");
+            b.connect(clips, monitor);
+            b.setOutput(monitor);
+            auto graph = std::move(b).compile(64);
+            CHECK(graph->monitors());
+            const auto out = runWithInput(*graph, input, 256, 64, rolling);
+            for (int i = 0; i < 256; ++i) {
+                INFO(i);
+                CHECK(out[static_cast<std::size_t>(i)] == input.data[1][static_cast<std::size_t>(i)]);
+            }
+        }
+    }
+
+    SECTION("a mono input feeds both channels of a stereo track, a stereo input maps channel for channel") {
+        GraphBuilder b;
+        const NodeId clips = b.add(std::make_unique<ConstantNode>(2, 0.25f), "clips");
+        const NodeId mono = b.add(
+            std::make_unique<MonitorInputNode>(2, MonitorInputMode::input, 1, 1, nullptr, 16), "mono");
+        const NodeId pair = b.add(
+            std::make_unique<MonitorInputNode>(2, MonitorInputMode::input, 1, 2, nullptr, 16), "pair");
+        const NodeId sum = b.add(std::make_unique<BusNode>(2), "sum");
+        b.connect(clips, mono);
+        b.connect(clips, pair);
+        b.connect(mono, sum);
+        b.connect(pair, sum);
+        b.setOutput(sum);
+        auto graph = std::move(b).compile(64);
+        const AudioBufferView view = input.at(0, 64);
+        ProcessContext context{0, 64};
+        context.input = &view;
+        graph->process(context);
+        for (int i = 0; i < 64; ++i) {
+            const auto f = static_cast<std::size_t>(i);
+            CHECK(graph->output().channel(0)[i] == input.data[1][f] + input.data[1][f]);
+            CHECK(graph->output().channel(1)[i] == input.data[1][f] + input.data[2][f]);
+        }
+    }
+
+    SECTION("auto plays port 0 while rolling unarmed and passes the input while stopped and armed") {
+        MonitorGate gate;
+        GraphBuilder b;
+        const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.25f), "clips");
+        const NodeId monitor = b.add(
+            std::make_unique<MonitorInputNode>(1, MonitorInputMode::automatic, 1, 1, &gate, 16), "monitor");
+        b.connect(clips, monitor);
+        b.setOutput(monitor);
+        auto graph = std::move(b).compile(64);
+        // Rolling, unarmed: the clips.
+        for (const float v : runWithInput(*graph, input, 64, 64, true)) {
+            CHECK(v == 0.25f);
+        }
+        // Stopped and unarmed: the clips' port, which a stopped player leaves silent.
+        // Stopped and armed: the input (after the fade).
+        gate.armed.store(true);
+        const auto armed = runWithInput(*graph, input, 256, 64, false);
+        for (int i = 64; i < 256; ++i) {
+            CHECK(armed[static_cast<std::size_t>(i)] == input.data[1][static_cast<std::size_t>(i)]);
+        }
+        // Rolling, armed but not capturing: the clips again; capturing: the input.
+        const auto rollingArmed = runWithInput(*graph, input, 256, 64, true);
+        CHECK(rollingArmed.back() == 0.25f);
+        gate.capturing.store(true);
+        const auto capturing = runWithInput(*graph, input, 256, 64, true);
+        CHECK(capturing.back() == input.data[1].back());
+    }
+
+    SECTION("without an input in the context, or past its channels, the input is silence") {
+        GraphBuilder b;
+        const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.25f), "clips");
+        const NodeId wide = b.add(
+            std::make_unique<MonitorInputNode>(1, MonitorInputMode::input, 2, 2, nullptr, 16), "wide");
+        b.connect(clips, wide);
+        b.setOutput(wide);
+        auto graph = std::move(b).compile(64);
+        graph->process(ProcessContext{0, 64});
+        CHECK(graph->output().channel(0)[10] == 0.0f);
+        for (const float v : runWithInput(*graph, input, 64, 64, true)) {
+            CHECK(v == 0.0f);  // ports 2 and 3 of a 3-channel input: not covered
+        }
+    }
+}
+
+// The track's channel map comes from the document (Track.input.port is 0 to
+// INT32_MAX): the check that the open input covers it must not overflow.
+TEST_CASE("MonitorInputNode's coverage check holds at the edge values up to INT32_MAX", "[graph][monitor]") {
+    InputBlock input(3, 64);
+    for (int i = 0; i < 64; ++i) {
+        input.data[0][static_cast<std::size_t>(i)] = 0.125f;
+        input.data[1][static_cast<std::size_t>(i)] = 0.25f;
+        input.data[2][static_cast<std::size_t>(i)] = 0.5f;
+    }
+    struct Case {
+        int port;
+        int channels;
+        float expected;  // the mono track's output: the input, or silence
+    };
+    const std::vector<Case> cases = {
+        {2, 1, 0.5f},                    // the last channel: covered
+        {1, 2, 0.375f},                  // the last pair, averaged into mono: covered
+        {0, 2, 0.1875f},                 // the first pair
+        {3, 1, 0.0f},                    // one past the last channel
+        {2, 2, 0.0f},                    // a pair that runs one past
+        {INT_MAX, 1, 0.0f},              // port + channels would overflow an int
+        {INT_MAX, 2, 0.0f},
+        {INT_MAX - 1, 2, 0.0f},
+        {INT_MAX - 2, 2, 0.0f},
+    };
+    for (const Case& c : cases) {
+        INFO("port " << c.port << " channels " << c.channels);
+        GraphBuilder b;
+        const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.75f), "clips");
+        const NodeId monitor = b.add(
+            std::make_unique<MonitorInputNode>(1, MonitorInputMode::input, c.port, c.channels, nullptr, 16), "monitor");
+        b.connect(clips, monitor);
+        b.setOutput(monitor);
+        auto graph = std::move(b).compile(64);
+        for (const float v : runWithInput(*graph, input, 64, 64, true)) {
+            CHECK(v == c.expected);
+        }
+    }
+}
+
+TEST_CASE("Monitored input bypasses compensation; the same track's clips stay aligned", "[graph][monitor][pdc]") {
+    // Track A: its clips (or the input) -> its own 30-frame insert -> master over
+    // a low-latency edge. Track B: a 100-frame insert -> master.
+    auto build = [](MonitorInputMode mode, const MonitorGate* gate, NodeId& monitorEdge, NodeId& master) {
+        GraphBuilder b;
+        const NodeId clips = b.add(std::make_unique<ImpulseNode>(1, 300), "a.clips");
+        const NodeId monitor =
+            b.add(std::make_unique<MonitorInputNode>(1, mode, 0, 1, gate, 16), "a.monitor");
+        const NodeId insertA = b.add(std::make_unique<FakeLatencyNode>(1, 30), "a.insert");
+        const NodeId silent = b.add(std::make_unique<ConstantNode>(1, 0.0f), "b.clips");
+        const NodeId insertB = b.add(std::make_unique<FakeLatencyNode>(1, 100), "b.insert");
+        master = b.add(std::make_unique<BusNode>(1), "master");
+        b.connect(clips, monitor);
+        b.connect(monitor, insertA);
+        b.connectLowLatency(insertA, master, monitor);
+        b.connect(silent, insertB);
+        b.connect(insertB, master);
+        b.setOutput(master);
+        monitorEdge = insertA;
+        return std::move(b).compile(64);
+    };
+    InputBlock input(1, 2'048);
+    input.data[0][500] = 1.0f;
+
+    NodeId from = 0;
+    NodeId master = 0;
+    auto monitored = build(MonitorInputMode::input, nullptr, from, master);
+    CHECK(monitored->edgeCompensation(from, master) == 70);
+    CHECK(monitored->totalLatency() == 100);
+    CHECK(monitored->monitorPathLatency() == 30);  // its own insert, not the compensation
+    const auto heard = runWithInput(*monitored, input, 2'048, 64, true);
+    CHECK(firstPeak(heard) == 530);
+
+    // Auto, unarmed and rolling: the track's clip at 300 lines up with track B (100).
+    MonitorGate gate;
+    auto clips = build(MonitorInputMode::automatic, &gate, from, master);
+    CHECK(clips->edgeCompensation(from, master) == 70);
+    const auto played = runWithInput(*clips, input, 2'048, 64, true);
+    CHECK(firstPeak(played) == 400);
+}
+
+TEST_CASE("Flipping the monitor gate mid-run crossfades without a step", "[graph][monitor]") {
+    constexpr int kFade = 32;
+    MonitorGate gate;
+    GraphBuilder b;
+    const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.0f), "a.clips");
+    const NodeId monitor =
+        b.add(std::make_unique<MonitorInputNode>(1, MonitorInputMode::automatic, 0, 1, &gate, kFade), "a.monitor");
+    const NodeId other = b.add(std::make_unique<ConstantNode>(1, 0.0f), "b.clips");
+    const NodeId latent = b.add(std::make_unique<FakeLatencyNode>(1, 100), "b.insert");
+    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
+    b.connect(clips, monitor);
+    b.connectLowLatency(monitor, master, monitor);
+    b.connect(other, latent);
+    b.connect(latent, master);
+    b.setOutput(master);
+    auto graph = std::move(b).compile(64);
+    REQUIRE(graph->edgeCompensation(monitor, master) == 100);
+
+    InputBlock input(1, 6'400);
+    for (std::size_t i = 0; i < input.data[0].size(); ++i) {
+        input.data[0][i] = 1.0f;  // DC: any switch without a fade is a full-scale step
+    }
+    gate.armed.store(true);
+    const auto out = runWithInput(*graph, input, 6'400, 64, true, [&](std::int64_t start) {
+        if (start == 640) {
+            gate.capturing.store(true);  // to the input, mid-run
+        } else if (start == 3'200) {
+            gate.capturing.store(false);  // and back to the clips
+        }
+    });
+    CHECK(out[600] == 0.0f);
+    CHECK(out[3'000] == 1.0f);  // the input, undelayed
+    CHECK(out.back() == 0.0f);
+    // Each crossfade moves at most 1 / fade per sample on either path.
+    CHECK(maxStep(out) <= 2.0f / static_cast<float>(kFade) + 1e-4f);
+}
+
+// The compensation delay line of a low-latency edge must not hold the input it
+// passed: a switch back to the clips (a punch-out, auto at the end of a capture)
+// would otherwise play the last `compensation` frames of the performer's input
+// a second time, late.
+TEST_CASE("Switching a monitored strip back to its clips plays no input a second time", "[graph][monitor]") {
+    constexpr int kFade = 32;
+    constexpr std::int64_t kComp = 100;
+    MonitorGate gate;
+    GraphBuilder b;
+    const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.25f), "a.clips");
+    const NodeId monitor =
+        b.add(std::make_unique<MonitorInputNode>(1, MonitorInputMode::automatic, 0, 1, &gate, kFade), "a.monitor");
+    const NodeId other = b.add(std::make_unique<ConstantNode>(1, 0.0f), "b.clips");
+    const NodeId latent = b.add(std::make_unique<FakeLatencyNode>(1, kComp), "b.insert");
+    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
+    b.connect(clips, monitor);
+    b.connectLowLatency(monitor, master, monitor);
+    b.connect(other, latent);
+    b.connect(latent, master);
+    b.setOutput(master);
+    auto graph = std::move(b).compile(64);
+    REQUIRE(graph->edgeCompensation(monitor, master) == kComp);
+
+    InputBlock input(1, 6'400);
+    for (std::size_t i = 0; i < input.data[0].size(); ++i) {
+        input.data[0][i] = 1.0f;  // DC input, four times the clips' level
+    }
+    gate.armed.store(true);
+    const auto out = runWithInput(*graph, input, 6'400, 64, true, [&](std::int64_t start) {
+        if (start == 640) {
+            gate.capturing.store(true);
+        } else if (start == 3'200) {
+            gate.capturing.store(false);
+        }
+    });
+    CHECK(out[600] == 0.25f);   // the clips, compensated
+    CHECK(out[3'000] == 1.0f);  // the input, undelayed
+    // From the end of the crossfade back, the compensated path carries what it
+    // stored while the input passed: silence, never the input again.
+    for (std::int64_t i = 3'200 + kFade; i < 3'200 + kComp; ++i) {
+        INFO(i);
+        CHECK(out[static_cast<std::size_t>(i)] == 0.0f);
+    }
+    // The clips come back, faded in rather than stepped in (from frame 200: the
+    // line starts silent, so the clips first arrive at frame 100 with a step).
+    CHECK(out.back() == 0.25f);
+    CHECK(maxStep(std::vector<float>(out.begin() + 200, out.end())) <= 2.0f / static_cast<float>(kFade) + 1e-4f);
+}
+
+TEST_CASE("A stopped context silences the clip player", "[graph][monitor][nodes]") {
+    auto media = std::make_shared<PlanarAudio>();
+    media->channels = 1;
+    media->frames = 8;
+    media->data = {{1, 1, 1, 1, 1, 1, 1, 1}};
+    GraphBuilder b;
+    const NodeId player = b.add(
+        std::make_unique<ClipPlayerNode>(1, std::vector<ClipPlayerNode::Clip>{{0, 0, 8, 1.0f, media}}), "player");
+    b.setOutput(player);
+    auto graph = std::move(b).compile(8);
+    CHECK_FALSE(graph->monitors());
+    ProcessContext stopped{0, 8};
+    stopped.rolling = false;
+    graph->process(stopped);
+    for (int i = 0; i < 8; ++i) {
+        CHECK(graph->output().channel(0)[i] == 0.0f);
+    }
+    graph->process(ProcessContext{0, 8});
+    CHECK(graph->output().channel(0)[0] == 1.0f);
+}
+
+TEST_CASE("startEdges marks the edges leaving a source, in compile and recompile", "[graph][monitor]") {
+    GraphBuilder b;
+    const NodeId clips = b.add(std::make_unique<ClipPlayerNode>(1, std::vector<ClipPlayerNode::Clip>{}), "clips");
+    const NodeId monitor =
+        b.add(std::make_unique<MonitorInputNode>(1, MonitorInputMode::input, 0, 1, nullptr, 4), "monitor");
+    const NodeId tape = b.add(std::make_unique<ClipPlayerNode>(1, std::vector<ClipPlayerNode::Clip>{}), "tape");
+    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
+    b.connect(clips, monitor);   // edge 0: a source
+    b.connect(monitor, master);  // edge 1: carries the monitored input
+    b.connect(tape, master);     // edge 2: a source
+    b.setOutput(master);
+    auto graph = std::move(b).compile(8);
+    const std::vector<std::uint8_t> expected{1, 0, 1};
+    const auto edges = graph->startEdges();
+    CHECK(std::vector<std::uint8_t>(edges.begin(), edges.end()) == expected);
+    auto again = graph->recompile();
+    const auto recompiled = again->startEdges();
+    CHECK(std::vector<std::uint8_t>(recompiled.begin(), recompiled.end()) == expected);
 }
 
 // ---- m5b-engine-buses-sends: SendNode ----------------------------------------

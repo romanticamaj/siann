@@ -12,7 +12,7 @@ import * as path from 'node:path';
 import { translator } from '../../src/renderer/i18n/t';
 import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
 import { describeStep, namesFromSnapshot } from '../../src/renderer/plans/describe';
-import { planName } from '../../src/renderer/plans/plan-name';
+import { planName, planNameParts } from '../../src/renderer/plans/plan-name';
 import { entry, hashOf, MIX_STEPS, planSnapshot } from './support/plans';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
@@ -54,4 +54,16 @@ test('a plan with no steps, or no plan, is named by the generic word', () => {
   assert.deepEqual(planName(undefined, t, names, FULL), { kind: 'generic' });
   // A titled plan with no steps still has its title.
   assert.deepEqual(planName(entry(hashOf('2'), 'validated', [], { title: 'Empty' }), t, names, FULL), { kind: 'title', title: 'Empty' });
+});
+
+// The pill and the Agent changes section (m5b-ui-ghosts) read the name as a
+// lead and a step count: the title leads a titled plan, as the mockup's pill
+// reads "<b>Lift the chorus</b> · 6 changes"; a plan without steps has none.
+test('the pill and the Agent changes take the title as the lead with the step count, the first step without a title, nothing without steps', () => {
+  const steps = t('plans.steps', { count: 3 });
+  assert.deepEqual(planNameParts(entry(hashOf('1'), 'validated', MIX_STEPS, { title: 'Lift the chorus' }), t, names, FULL), { lead: 'Lift the chorus', steps });
+  assert.deepEqual(planNameParts(entry(hashOf('1'), 'validated', MIX_STEPS, { title: 'Lift the chorus' }), t, names, REDUCED), { lead: describeStep(MIX_STEPS[0]!, t, names), steps });
+  assert.deepEqual(planNameParts(entry(hashOf('1'), 'validated'), t, names, FULL), { lead: describeStep(MIX_STEPS[0]!, t, names), steps });
+  assert.equal(planNameParts(entry(hashOf('2'), 'validated', [], { title: 'Empty' }), t, names, FULL), null);
+  assert.equal(planNameParts(entry(hashOf('3'), 'validated', []), t, names, FULL), null);
 });

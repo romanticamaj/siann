@@ -1007,6 +1007,32 @@ TEST_CASE("execute and a plan carry master.set_gain; list_commands names it", "[
     CHECK(listed);
 }
 
+// m5b-engine-monitoring (Protocol v0 item 33): track.set_monitor is a command,
+// so execute carries it and no tool of its own exists.
+TEST_CASE("execute carries track.set_monitor; list_commands names it and no tool is added",
+          "[protocol][mcp][monitor]") {
+    Fixture f(trusted());
+    Mcp mcp(f);
+    mcp.initialize();
+    mcp.ok("execute", Value(Object{{"commands", Value(Array{trackAdd("trk_a")})}}));
+    const Value monitor = Value(Object{{"op", Value("track.set_monitor")}, {"trackId", Value("trk_a")},
+                                       {"monitor", Value("input")}});
+    const Value executed = mcp.ok("execute", Value(Object{{"commands", Value(Array{monitor})}}));
+    CHECK(at(at(executed, "revision"), "diff").asArray().at(0).asString() == "track:trk_a");
+    CHECK(f.head().document.track("trk_a")->monitor == model::MonitorMode::input);
+
+    bool listed = false;
+    const Value commands = mcp.tool("list_commands");
+    for (const Value& name : at(at(commands, "structuredContent"), "commands").asArray()) {
+        listed = listed || name.asString() == "track.set_monitor";
+    }
+    CHECK(listed);
+    const Value tools = at(at(mcp.call(Value(5), "tools/list"), "result"), "tools");
+    for (const Value& tool : tools.asArray()) {
+        CHECK(at(tool, "name").asString().find("monitor") == std::string::npos);
+    }
+}
+
 // m5b-engine-plan-metadata (spec, "Plans", decisions of 2026-11-15; Protocol v0
 // items 15 and 29; docs/schemas/protocol-mcp-v0.md): submit_plan's title and
 // intent, the actor from initialize's clientInfo.name, and DELETE /v0/mcp.

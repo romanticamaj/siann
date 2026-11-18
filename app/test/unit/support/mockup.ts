@@ -60,10 +60,20 @@ export interface MockupTrack {
   readonly mute?: boolean;
   readonly sel?: boolean;
   readonly ghost?: boolean;
+  // What the mockup's pending plan changes on the track (m5b-ui-ghosts): the
+  // new gain (dB), pan (-100..100) or unmute, and the step that does it.
+  readonly gDb?: number;
+  readonly gPan?: number;
+  readonly gUnmute?: boolean;
+  readonly gStep?: number;
 }
 
 export interface Mockup {
   knob(pan: number): string;
+  // knob() with the pending plan's ghost pan and the knob's id (m5b-ui-ghosts).
+  knobGhost(pan: number, ghost: number, id: string): string;
+  // The Inspector's sec(): .sec with its head and body (m5b-ui-ghosts: Agent changes).
+  sec(title: string, body: string, right?: string): string;
   strip(track: MockupTrack, index: number): string;
   readonly master: string;
   pos(db: number): number;
@@ -110,7 +120,7 @@ export function loadMockup(lang = 'en'): Mockup {
     `const projectHead=\`${between(source, '<div class="arr-toolbar"', '<div class="arr-body"').trim()}\`;`,
     // The track list's block of the template, evaluated the same way.
     `const headers=\`${between(source, '<div class="headers"', '<div class="lanes"').trim()}\`;`,
-    'this.out={knob:(p)=>knob(p),strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan,projectHead,tool};',
+    'this.out={knob:(p)=>knob(p),knobGhost:(p,g,id)=>knob(p,g,id),sec,strip,master,pos,SCALE,T,leftzone,th,headers,fdb,fpan,projectHead,tool};',
   ].join('\n');
   const context: Record<string, unknown> = { TOKENS, Math, JSON, Error };
   vm.runInNewContext(code, context);
@@ -119,6 +129,8 @@ export function loadMockup(lang = 'en'): Mockup {
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
   return {
     knob: out.knob,
+    knobGhost: out.knobGhost,
+    sec: out.sec,
     strip: out.strip,
     master: out.master,
     pos: out.pos,

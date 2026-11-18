@@ -148,10 +148,9 @@ const partOf = (n: Node) => n.attrs['data-part'];
 // The mockup's children as the app must render them: inline text elements of
 // a step's text (b, s, em) are the wording's (plan-step-rows.test.ts), a
 // clip-naming title's wrapper (plan-step-N-title) is a pending part the app
-// does not carry, the step's .go is empty and the primary's kbd is not drawn
+// does not carry, the step's .go holds the target icon (m5b-ui-ghosts) and the primary's kbd is not drawn
 // (UI redesign 3.0: no control without a backend).
 function mockChildren(node: Node): Node[] {
-  if (node.classes.includes('go')) return [];
   let out = node.children;
   if (node.classes.includes('t') || node.classes.includes('d')) {
     out = out.flatMap((c) => (/^plan-step-\d+-title$/.test(partOf(c) ?? '') ? c.children : [c])).filter((c) => !['b', 's', 'em'].includes(c.tag));
@@ -250,23 +249,38 @@ test('every id of the Plans tab is in the markup, and no id of a pending part', 
   assert.ok(!/plan-step-\d+-title/.test(markup), 'no plan-step-N-title id');
 });
 
-test('the holds carry nothing, the .go cells are empty, the primary has no kbd, the steps head one link', () => {
+test('the holds carry nothing, the .go cells are target buttons, the primary has no kbd, the steps head one link', () => {
   const zone = appRightZone(render());
   const holds = findAll(zone, (n) => n.classes.some((c) => c.startsWith('hold-')));
   assert.deepEqual(holds.map((h) => h.classes[0]).sort(), PENDING_PARTS.map((p) => `hold-${p}`).sort());
   for (const hold of holds) assertHold(hold, hold.classes[0]!.slice('hold-'.length), 'hold');
   assert.equal(findAll(zone, (n) => n.tag === 'kbd').length, 0, 'no kbd');
+  // m5b-ui-ghosts: .go is the keyboard path to a step's ghosts, a button with the mockup's target icon and a name.
   const go = findAll(zone, (n) => n.classes.includes('go'));
   assert.equal(go.length, 6);
-  for (const cell of go) {
-    assert.equal(cell.children.length + cell.text.length, 0, 'an empty .go');
-    assert.ok(!('role' in cell.attrs) && !('tabindex' in cell.attrs), 'no control in .go');
-  }
+  go.forEach((cell, index) => {
+    assert.equal(cell.tag, 'button');
+    assert.equal(cell.attrs.type, 'button');
+    assert.ok(cell.attrs['aria-label']?.includes(String(index + 1)), 'named with its step');
+    const icon = cell.children[0]!;
+    assert.equal(icon.tag, 'svg');
+    assert.deepEqual(icon.classes, ['i', 's']);
+  });
   const head = find(zone, (n) => partOf(n) === 'plan-steps-head')!;
   assert.equal(head.children.filter((n) => n.tag === 'a').length, 1, 'one link');
   // The row under the pointer is hot, and only that one.
   const steps = findAll(zone, (n) => n.attrs['data-part-item'] === 'plan-step');
   assert.deepEqual(steps.map((s) => s.classes.includes('hot')), [false, false, true, false, false, false]);
+  assert.ok(steps.every((s) => !('aria-current' in s.attrs)), 'no row pinned');
+});
+
+test("a pinned step's row is .hot with aria-current, also with the pointer elsewhere", () => {
+  const zone = appRightZone(render({ hotStep: null, pinnedStep: 4 }));
+  const steps = findAll(zone, (n) => n.attrs['data-part-item'] === 'plan-step');
+  assert.deepEqual(steps.map((s) => s.classes.includes('hot')), [false, false, false, false, true, false]);
+  assert.deepEqual(steps.map((s) => s.attrs['aria-current'] ?? null), [null, null, null, null, 'step', null]);
+  const both = findAll(appRightZone(render({ hotStep: 1, pinnedStep: 4 })), (n) => n.attrs['data-part-item'] === 'plan-step');
+  assert.deepEqual(both.map((s) => s.classes.includes('hot')), [false, true, false, false, true, false]);
 });
 
 test('the old Plans markup is gone', () => {

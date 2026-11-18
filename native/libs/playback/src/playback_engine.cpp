@@ -214,12 +214,15 @@ detail::StreamKey streamKey(const engine::FlatTrack& flat) {
 
 // Returns an existing stream to reuse for a track, or nullptr for a new one.
 using StreamReuse = std::function<realtime::DiskStream*(const std::string& trackId, const detail::StreamKey& key)>;
+// Returns a monitored track's gate (m5b-engine-monitoring), or nullptr for none.
+using GateFor = std::function<const graph::MonitorGate*(const std::string& trackId)>;
 
 // compileForPlayback() with stream reuse. `tracks` receives every track's
 // stream (reused or new); compiled.streams holds only the new ones.
 CompiledPlayback compileWith(const model::Document& document, const std::filesystem::path& bundle,
                              const PlaybackOptions& options, const StreamReuse& reuse,
-                             std::map<std::string, detail::TrackStream>* tracks, PluginInstanceTable* plugins) {
+                             std::map<std::string, detail::TrackStream>* tracks, PluginInstanceTable* plugins,
+                             const GateFor& gateFor) {
     if (plugins != nullptr) {
         plugins->sync(document);
     }
@@ -259,8 +262,23 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
                                                     flat.soloSilenced),
                                                 track.id + ".fader");
         const graph::NodeId meter = builder.add(std::make_unique<graph::MeterNode>(2), track.id + ".meter");
+        // m5b-engine-monitoring: the strip of a monitored track starts with its
+        // monitor input (the clips or the device input, decided per block).
+        std::optional<graph::NodeId> monitor;
+        if (track.monitor != model::MonitorMode::off) {
+            const graph::MonitorInputMode mode = track.monitor == model::MonitorMode::input
+                                                     ? graph::MonitorInputMode::input
+                                                     : graph::MonitorInputMode::automatic;
+            const int port = track.input ? track.input->port : 0;
+            const int inputChannels = track.input ? track.input->channels : 0;
+            monitor = builder.add(std::make_unique<graph::MonitorInputNode>(track.channels, mode, port, inputChannels,
+                                                                            gateFor ? gateFor(track.id) : nullptr,
+                                                                            options.fadeFrames),
+                                  track.id + ".monitor");
+            builder.connect(player, *monitor);
+        }
         // The inserts, in order; a missing plugin has no node and passes through.
-        graph::NodeId previous = player;
+        graph::NodeId previous = monitor.value_or(player);
         if (plugins != nullptr) {
             for (const model::PluginSlot* slot : document.slotsOnTrack(track.id)) {
                 if (auto node = plugins->pluginNode(*slot, track.channels)) {
@@ -273,8 +291,9 @@ CompiledPlayback compileWith(const model::Document& document, const std::filesys
         }
         builder.connect(previous, fader);
         builder.connect(fader, meter);
-        // The meter passes the fader's output through: the post-fader tap.
-        taps.emplace(track.id, engine::TrackTaps{previous, meter});
+        // The meter passes the fader's output through: the post-fader tap. A
+        // monitored track's output and sends are low-latency edges (wireMix).
+        taps.emplace(track.id, engine::TrackTaps{previous, meter, monitor});
         compiled.slots.emplace(trackSlotKey(track.id), fader);
         compiled.meterSlots.emplace(trackSlotKey(track.id), meter);
     }
@@ -463,7 +482,15 @@ std::string sendSlotKey(const std::string& sendId) {
 
 CompiledPlayback compileForPlayback(const model::Document& document, const std::filesystem::path& bundle,
                                     const PlaybackOptions& options, PluginInstanceTable* plugins) {
-    return compileWith(document, bundle, options, nullptr, nullptr, plugins);
+    return compileWith(document, bundle, options, nullptr, nullptr, plugins, nullptr);
+}
+
+graph::MonitorGate& PlaybackEngine::monitorGate(const std::string& trackId) {
+    std::unique_ptr<graph::MonitorGate>& gate = gates_[trackId];
+    if (!gate) {
+        gate = std::make_unique<graph::MonitorGate>();
+    }
+    return *gate;
 }
 
 PlaybackEngine::PlaybackEngine(session::Session& session, PlaybackOptions options)
@@ -532,7 +559,8 @@ void PlaybackEngine::compile(const model::Document& document) {
             const auto live = liveTracks_.find(trackId);
             return live != liveTracks_.end() && live->second.key == key ? live->second.stream : nullptr;
         },
-        &prepared.tracks, &plugins_);
+        &prepared.tracks, &plugins_,
+        [this](const std::string& trackId) -> const graph::MonitorGate* { return &monitorGate(trackId); });
     ++compileCount_;
     prepared.graph = std::move(compiled.graph);
     prepared.slots = std::move(compiled.slots);
@@ -794,10 +822,15 @@ AuditionCost PlaybackEngine::estimateCost(const model::Document& document) const
         cost.bytes += 2 * ringFrames * static_cast<std::size_t>(track.track->channels) * sizeof(float);
     }
     // As compileWith(): the master bus, its gain and its meter, per track a
-    // player, a fader and a meter, per bus a sum, a fader and a meter, a node
-    // per send, and the plugin slots.
+    // player, a fader and a meter (and a monitor input when it monitors), per
+    // bus a sum, a fader and a meter, a node per send, and the plugin slots.
     cost.nodes = 3 + 3 * flat.size() + 3 * document.allBuses().size() + document.allSends().size() +
                  document.allPluginSlots().size();
+    for (const engine::FlatTrack& track : flat) {
+        if (track.track->monitor != model::MonitorMode::off) {
+            ++cost.nodes;
+        }
+    }
     return cost;
 }
 

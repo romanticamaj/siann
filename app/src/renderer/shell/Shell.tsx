@@ -63,6 +63,7 @@ import { FOCUS_COMMANDS, focusMove, ringStep, type FocusPlace } from '../keys/zo
 import type { Phase } from '../model/connection-phase';
 import type { EngineStatusSource } from '../model/engine-status';
 import type { PlanStore } from '../model/plan-store';
+import type { ReviewStore } from '../model/review-store';
 import type { SessionClient } from '../model/session-client';
 import { bindLoopClickCommands, type LoopClickController } from '../model/loop-click';
 import { bindTransportCommands, type TransportController } from '../model/transport';
@@ -165,6 +166,9 @@ export function useViewport(): Viewport {
 export interface ShellProps {
   readonly client: SessionClient;
   readonly plans: PlanStore;
+  // The plan review (m5b-ui-ghosts): Ctrl+Alt+G toggles its ghosts, and a
+  // located step or a clicked ghost shows the MixConsole or the Plans tab.
+  readonly review?: ReviewStore;
   // engine.status as last polled, for the status bar.
   readonly engineStatus: EngineStatusSource;
   readonly store: LayoutStore;
@@ -345,6 +349,7 @@ function ZoneSeparator({
 export function Shell({
   client,
   plans,
+  review,
   engineStatus,
   store,
   commands,
@@ -451,6 +456,20 @@ export function Shell({
     ];
     return () => offs.forEach((off) => off());
   }, [commands, dispatch, focusZone, isVisible]);
+
+  // The plan review (m5b-ui-ghosts; UI redesign 4.2): Ctrl+Alt+G, and the zones a reveal asks for.
+  useEffect(() => {
+    if (!review) return undefined;
+    const offToggle = commands.register('window', 'plans.toggleGhosts', () => review.toggleGhosts());
+    const offReveal = review.onReveal(({ mixer, plans: toPlans }) => {
+      if (mixer) dispatch((viewport) => ({ type: 'openTab', zone: 'lower', tab: 'mixconsole', viewport }));
+      if (toPlans) dispatch((viewport) => ({ type: 'openTab', zone: 'right', tab: 'plans', viewport }));
+    });
+    return () => {
+      offToggle();
+      offReveal();
+    };
+  }, [commands, dispatch, review]);
 
   // The transport, undo and redo; the position display's formats and auto-scroll.
   useEffect(() => {

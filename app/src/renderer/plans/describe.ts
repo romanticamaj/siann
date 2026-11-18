@@ -242,6 +242,11 @@ export function describeStep(
       }
       break;
     }
+    case 'track.set_monitor':
+      if (step.monitor === 'off') return t('step.setMonitorOff', { track: track() });
+      if (step.monitor === 'auto') return t('step.setMonitorAuto', { track: track() });
+      if (step.monitor === 'input') return t('step.setMonitorInput', { track: track() });
+      break;
     case 'track.explode':
       return t('step.explodeTrack', { track: track() });
     case 'clip.place':

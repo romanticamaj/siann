@@ -36,6 +36,8 @@ import type { Snapshot } from '../../src/renderer/model/read-model';
 import type { RealtimeClient } from '../../src/renderer/model/realtime-client';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
+import { GhostContext, type GhostView } from '../../src/renderer/plans/ghost-context';
+import type { Ghost } from '../../src/renderer/plans/ghosts';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
 import { snapshotOf, track } from './support/timeline';
 
@@ -269,4 +271,131 @@ test('a stored gain above +6 dB pins the cap at the top and warns on the fader a
   const level = elements(find(strip, byClass('readout')))[0]!;
   assert.equal(text(level), '+9.0 dB');
   assert.ok(classes(level).includes('warn'));
+});
+
+// ---- m5b-ui-ghosts (UI redesign 4.2): what a pending plan adds to a strip,
+// held to strip() for the mockup's Keys (pan, step 4), Vox BG (gain, step 3),
+// FX (unmute, step 5) and its proposed track Pad (step 1).
+
+const keys = (): TrackEntity => ({ ...track('trk_keys'), name: 'Keys', gainMilliDb: -8000, pan: -3500 });
+const voxBg = (): TrackEntity => ({ ...track('trk_bg'), name: 'Vox BG', gainMilliDb: -9000, pan: 4000 });
+const fx = (): TrackEntity => ({ ...track('trk_fx'), name: 'FX', gainMilliDb: -12000, mute: true });
+const MOCKUP_GHOSTS: readonly Ghost[] = [
+  { kind: 'track-add', step: 1, trackId: 'trk_pad', name: 'Pad', channels: 2, key: 'ghost' },
+  { kind: 'gain', step: 3, trackId: 'trk_bg', before: -9000, after: -6000 },
+  { kind: 'pan', step: 4, trackId: 'trk_keys', before: -3500, after: -2000 },
+  { kind: 'mute', step: 5, trackId: 'trk_fx', before: true, after: false },
+];
+
+function renderGhosts(tracks: TrackEntity[], ghosts: readonly Ghost[], locale?: Locale): Element {
+  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], []);
+  const view: GhostView = { ghosts, outline: null, pin: () => undefined };
+  const before = localeStore();
+  if (locale) installLocaleStore({ subscribe: () => () => undefined, getSnapshot: () => locale, setLocale: () => undefined } as unknown as LocaleStore);
+  try {
+    return parse(
+      renderToStaticMarkup(
+        <CapabilitiesContext.Provider value={FULL}>
+          <GhostContext.Provider value={view}>
+            <Mixer client={fakeClient(snap)} gestures={gestures} realtime={realtime} />
+          </GhostContext.Provider>
+        </CapabilitiesContext.Provider>,
+      ),
+    );
+  } finally {
+    installLocaleStore(before);
+  }
+}
+
+const stripOf = (root: Element, name: string) => strips(root).find((s) => text(find(s, byClass('nametag'))).includes(name))!;
+
+test('a gain ghost: strip()\'s badge, the line from the real cap to the ghost cap, and the readout with both values', () => {
+  const root = renderGhosts([keys(), voxBg(), fx()], MOCKUP_GHOSTS);
+  const app = stripOf(root, 'Vox BG');
+  const mockup = mockupStrip(5);
+  assert.deepEqual(elements(app).map(sig), elements(mockup).map(sig));
+  const [appBadge] = elements(app);
+  const [mockBadge] = elements(mockup);
+  assert.equal(text(appBadge!), '3');
+  for (const property of ['right', 'top']) assert.equal(styleOf(appBadge!, property), styleOf(mockBadge!, property), property);
+  const fader = (strip: Element) => elements(find(strip, byClass('ftrack'))).filter((el) => !classes(el).includes('value-tooltip'));
+  assert.deepEqual(fader(app).map(sig), fader(mockup).map(sig));
+  const [, appLine, appGhost, appCap] = fader(app);
+  const [, mockLine, mockGhost, mockCap] = fader(mockup);
+  for (const [a, m] of [[appLine, mockLine], [appGhost, mockGhost], [appCap, mockCap]] as const) assert.equal(styleOf(a!, 'bottom'), styleOf(m!, 'bottom'));
+  assert.equal(styleOf(appLine!, 'height'), styleOf(mockLine!, 'height'));
+  const readout = find(app, byClass('readout'));
+  assert.equal(text(elements(readout)[0]!), '-9.0 dB');
+  assert.equal(text(find(readout, byClass('to'))), '→ -6.0', 'the new value without its unit, as the mockup writes it, so both fit');
+  const ids = appIds(app, '6');
+  for (const id of ['strip-6-gain-step-ghost', 'strip-6-gain-line-ghost', 'strip-6-cap-ghost']) assert.ok(ids.includes(id), id);
+});
+
+test('a pan ghost: the badge in the PAN label\'s place, knob()\'s ghost tick and the new value in violet', () => {
+  const app = find(stripOf(renderGhosts([keys(), voxBg(), fx()], MOCKUP_GHOSTS), 'Keys'), byClass('panrow'));
+  const mockup = find(mockupStrip(3), byClass('panrow'));
+  const visible = (row: Element) => elements(row).filter((el) => !classes(el).includes('value-tooltip'));
+  assert.deepEqual(visible(app).map(sig), visible(mockup).map(sig));
+  const [badge, knob, value] = visible(app);
+  const [mBadge, , mValue] = visible(mockup);
+  assert.equal(badge!.attrs['data-part-of'], 'pan-step-ghost');
+  assert.equal(styleOf(badge!, 'justify-content'), styleOf(mBadge!, 'justify-content'));
+  assert.equal(text(find(badge!, byClass('stepn'))), '4');
+  assert.equal(findAll(knob!, (el) => el.tag === 'g')[0]?.attrs['data-part-of'], 'pan-knob-ghost');
+  assert.equal(value!.attrs['data-part-of'], 'pan-value-ghost');
+  assert.equal(styleOf(value!, 'color'), styleOf(mValue!, 'color'));
+  assert.equal(text(value!), 'L20');
+});
+
+test('a mute ghost: the badge out of the flow and the dashed ring on M', () => {
+  const app = find(stripOf(renderGhosts([keys(), voxBg(), fx()], MOCKUP_GHOSTS), 'FX'), byClass('btns'));
+  const mockup = find(mockupStrip(6), byClass('btns'));
+  const [badge, mute] = elements(app);
+  const [mBadge, mMute] = elements(mockup);
+  assert.equal(sig(badge!), sig(mBadge!));
+  assert.equal(badge!.attrs['data-part-of'], 'mute-step-ghost');
+  assert.equal(text(badge!), '5');
+  for (const property of ['position', 'z-index', 'left']) assert.equal(styleOf(badge!, property), styleOf(mBadge!, property), property);
+  assert.equal(sig(mute!).replace('button', 'span'), sig(mMute!));
+});
+
+test('a proposed track: a dashed strip labelled NEW · STEP n before the master, its insert row an empty box, with the mockup\'s ids', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const root = renderGhosts([keys(), voxBg(), fx()], MOCKUP_GHOSTS, locale);
+    const all = strips(root);
+    const ghost = all.find((s) => classes(s).includes('ghost'))!;
+    assert.equal(all.indexOf(ghost), 3, 'after the tracks');
+    assert.ok(classes(all[4]!).includes('master') || all.length === 4);
+    const mockup = find(parse(loadMockup(lang).strip(MOCKUP.T[7]!, 7)), byClass('strip'));
+    assert.equal(sig(ghost), sig(mockup));
+    assert.deepEqual(elements(ghost).map(sig), elements(mockup).map(sig));
+    assert.equal(ghost.attrs['data-part-key'], 'ghost');
+    assert.deepEqual(appIds(ghost, 'ghost'), mockupIds(mockup));
+    const label = elements(find(ghost, byClass('btns')))[0]!;
+    assert.equal(text(label), text(elements(find(mockup, byClass('btns')))[0]!).replace('1', '1'), locale);
+    const ins = find(ghost, byClass('ins'));
+    assert.deepEqual(ins.children, []);
+    assert.ok(!('role' in ins.attrs));
+    assert.equal(findAll(ghost, (el) => el.attrs.role === 'slider' || el.tag === 'button').length, 0, 'nothing to operate on a proposed track');
+    assert.equal(text(find(ghost, byClass('nametag'))), 'Pad');
+  }
+  // A second proposed track takes ghost-2.
+  const two = renderGhosts([keys()], [...MOCKUP_GHOSTS, { kind: 'track-add', step: 7, trackId: 'trk_two', name: 'Two', channels: 1, key: 'ghost-2' }]);
+  assert.deepEqual(strips(two).filter((s) => classes(s).includes('ghost')).map((s) => s.attrs['data-part-key']), ['ghost', 'ghost-2']);
+});
+
+test('a removed track\'s strip is dimmed by an added class; a rename shows both names', () => {
+  const root = renderGhosts([keys(), voxBg()], [
+    { kind: 'track-remove', step: 2, trackId: 'trk_keys' },
+    { kind: 'rename', step: 3, trackId: 'trk_bg', before: 'Vox BG', after: 'Vox Pad' },
+  ]);
+  assert.ok(classes(stripOf(root, 'Keys')).includes('ghost-removed'));
+  const name = find(stripOf(root, 'Vox BG'), byClass('nametag'));
+  assert.equal(text(name), 'Vox BG → Vox Pad');
+  assert.equal(text(find(name, byClass('ghost-name'))), 'Vox Pad');
+  // .nametag is a grid: the pair is its one item (a bare text node beside an
+  // element would be a second grid item, on a second row the tag cuts off).
+  assert.equal(name.children.length, 1);
+  assert.deepEqual(elements(name).map(sig), ['span.ghost-rename']);
+  assert.equal(name.attrs.title, 'Vox BG → Vox Pad');
 });

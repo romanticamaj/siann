@@ -130,13 +130,16 @@ test('each component of M5 has the port feature that owns its parts', () => {
   for (const [id, gate] of Object.entries(owner)) assert.equal(ruleOf(id).gate, gate, id);
   for (const gate of PORTS) assert.ok(Object.values(owner).includes(gate), gate);
   // Parts of a later feature inside a ported component stay that feature's, pending.
-  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad', 'proposal-pill': 'm5b-ui-ghosts' })) {
+  for (const [id, gate] of Object.entries({ 'tool-4': 'm5b-ui-edit-more', 'info-fade-in': 'm5b-ui-fades', 'marker-head': 'm5b-ui-markers', 'track-2-record': 'm5b-ui-recording', 'strip-3-inserts': 'm5b-ui-inserts-master', 'inspector-notepad': 'm5b-ui-notepad' })) {
     assert.equal(ruleOf(id).gate, gate, id);
     assert.equal(MANIFEST.gates[gate], 'pending', gate);
   }
   // A later feature that landed its parts keeps them, its gate report (m5b-ui-plan-metadata).
   assert.equal(ruleOf('agent-row').gate, 'm5b-ui-plan-metadata');
   assert.equal(MANIFEST.gates['m5b-ui-plan-metadata'], 'report');
+  // The proposal pill stays m5b-ui-ghosts', which landed it (report).
+  assert.equal(ruleOf('proposal-pill').gate, 'm5b-ui-ghosts');
+  assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
 });
 
 test('a feature that owns parts names its gate in its acceptance, asks for a side-by-side screenshot and never for enforce', () => {
@@ -591,7 +594,8 @@ test('the mockup\'s fader taper is the app\'s (spec 4.5 C7), and every strip has
   for (const id of ['strip-7-mute-step-ghost', 'strip-6-gain-step-ghost', 'strip-6-gain-line-ghost', 'strip-4-pan-step-ghost', 'strip-4-pan-value-ghost', 'strip-4-pan-knob-ghost']) {
     assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
   }
-  assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'pending');
+  // m5b-ui-ghosts landed: its parts are measured and reported.
+  assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
   assert.equal(ruleOf('strip-7-mute').gate, 'm5-ui-port-mixer-strip');
   // Decided by Fable, delegated by the maintainer, 2026-11-18 (UI redesign 10.11): e opens the Channel zone.
   assert.equal(ruleOf('strip-7-edit').gate, 'm5b-ui-editor-channel');
@@ -802,7 +806,7 @@ test('the Inspector port links ui/left-zone.css in the mockup\'s order, its gate
   // The three open sections are held by tokens until their features land; each names a pending part.
   const tokens = read('app', 'renderer', 'tokens.css');
   const holds = [...tokens.matchAll(/--hold-(inspector-[a-z0-9-]+)-h\s*:/g)].map((m) => m[1]).sort();
-  assert.deepEqual(holds, ['inspector-agent-changes', 'inspector-inserts', 'inspector-routing']);
+  assert.deepEqual(holds, ['inspector-inserts', 'inspector-routing']);
   for (const id of holds) assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
   // The temporary pre-port rules #136 kept for the Inspector are gone.
   const shell = read('app', 'renderer', 'shell.css').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -816,7 +820,7 @@ test('the toolbar port: its gate is report, its holds name pending parts and she
   const tokens = read('app', 'renderer', 'tokens.css');
   // The en values, and the Chinese ones of the pill and the fades.
   const holds = [...new Set([...tokens.matchAll(/--hold-((?:tool|proposal|info)-[a-z0-9-]+)-w\s*:/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'proposal-pill', 'tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
+  assert.deepEqual(holds, ['info-fade-in', 'info-fade-out', 'tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9']);
   for (const id of holds) {
     assert.equal(MANIFEST.gates[ruleOf(id).gate], 'pending', id);
     assert.match(tokens, new RegExp(`--hold-${id}-w:\\s*calc\\([\\d.]+px \\* var\\(--scale\\)\\);`), `--hold-${id}-w`);
@@ -1172,7 +1176,7 @@ test('no leftover class: every class the renderer emits is styled, and every cla
   const { classes, computed } = emittedClasses();
   // The scan is exact: no class name is computed from a value it cannot enumerate.
   assert.deepEqual(computed, [], 'build the class from a literal table (const NAME = { key: \'class\' })');
-  for (const name of ['app', 'zone', 'zone-lower', 'zone-project', 'zone-left', 'zone-right', 'divider-left', 'divider-right', 'divider-lower', 'hold-tool-2', 'hold-tool-9', 'strip', 'msr', 'badge', 'rolled-back', 'clip', 'shut', 'agent-changes']) {
+  for (const name of ['app', 'zone', 'zone-lower', 'zone-project', 'zone-left', 'zone-right', 'divider-left', 'divider-right', 'divider-lower', 'hold-tool-2', 'hold-tool-9', 'strip', 'msr', 'badge', 'rolled-back', 'clip', 'shut', 'overlaypill']) {
     assert.ok(classes.has(name), `the scan finds .${name}`);
   }
   for (const name of classes) assert.match(name, /^-?[_a-zA-Z][\w-]*$/, `"${name}" is a class name`);
@@ -1251,4 +1255,24 @@ test("the plan metadata's gate is report, its holds are gone, and shell.css size
   assert.match(shell, /\.card-h p\[data-part="plan-intent"\]\s*\{[^}]*min-height:\s*calc\(\s*2 \* 1\.45 \* var\(--fs-11h\)\s*\)/);
   // The history rows are unmasked (UI redesign 10.7, 3).
   assert.ok(!MANIFEST.pixels.dynamic.some((pattern) => /plan-history/.test(pattern)), 'no plan-history mask');
+});
+
+// ---- m5b-ui-ghosts (UI redesign 4.2, 10.4): the ghosts, the proposal pill and
+// the Inspector's Agent changes landed, so their gate is report and their
+// holds are gone; the pill needs no box when absent, so no empty-width token
+// replaces its hold (UI redesign 3.0).
+test("m5b-ui-ghosts: the gate is report, the pill's and the Agent changes' holds are gone, and every ghost id is the ghosts'", () => {
+  assert.equal(MANIFEST.gates['m5b-ui-ghosts'], 'report');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  for (const name of ['--hold-proposal-pill-w', '--hold-inspector-agent-changes-h', '--proposal-pill-empty-w']) {
+    assert.ok(!tokens.includes(name), `${name} is not in tokens.css`);
+    assert.ok(!shell.includes(name), `${name} is not in shell.css`);
+  }
+  assert.doesNotMatch(shell, /\.hold-proposal-pill|\.inspector-hold\.agent-changes/);
+  // The mockup's ids and the ones a later proposed track takes (ghost-2, ghost-3) are the ghosts'.
+  for (const id of ['track-ghost', 'track-ghost-name', 'lane-ghost', 'strip-ghost', 'strip-ghost-inserts', 'clip-ghost-new', 'clip-ghost-move', 'strip-6-cap-ghost', 'strip-6-gain-line-ghost', 'strip-7-mute-step-ghost', 'strip-4-pan-knob-ghost',
+    'track-ghost-2', 'track-ghost-2-name', 'lane-ghost-3', 'strip-ghost-2', 'strip-ghost-2-inserts', 'strip-ghost-2-name', 'clip-ghost-new-2', 'locator-band-ghost', 'proposal-pill', 'inspector-agent-changes']) {
+    assert.equal(ruleOf(id).gate, 'm5b-ui-ghosts', id);
+  }
 });

@@ -23,3 +23,14 @@ export function planName(plan: PlanEntry | undefined, t: T, names: StepNames, ca
   if (!first) return { kind: 'generic' };
   return { kind: 'steps', lead: describeStep(first, t, names), steps: t('plans.steps', { count: plan.steps.length }) };
 }
+
+// The name as the toolbar's proposal pill and the Inspector's Agent changes
+// section show it (m5b-ui-ghosts): a lead (the title, else the first step in
+// user wording) and the step count, as the mockup's pill reads "<b>Lift the
+// chorus</b> · 6 changes". A plan without steps has none.
+export function planNameParts(plan: PlanEntry | undefined, t: T, names: StepNames, can: CapabilitySelector): { readonly lead: string; readonly steps: string } | null {
+  if (!plan || plan.steps.length === 0) return null;
+  const name = planName(plan, t, names, can);
+  if (name.kind === 'generic') return null;
+  return { lead: name.kind === 'title' ? name.title : name.lead, steps: t('plans.steps', { count: plan.steps.length }) };
+}

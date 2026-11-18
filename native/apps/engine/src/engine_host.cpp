@@ -841,12 +841,20 @@ protocol::EngineStatus EngineHost::status() const {
         out.underruns = engine_->underruns();
         out.srcUnderruns = engine_->driver().srcUnderruns();
     }
+    // m5b-engine-monitoring: what a monitored input takes, while an input is open.
+    if (running_ && loaded_ && openInputChannels() > 0) {
+        out.monitorRoundTripFrames = engine_->driver().latency().monitorRoundTripFrames;
+    }
     if (loaded_ && running_) {
         // Protocol v0 item 31: 0 while no device runs.
         const rt::LoadWindow& load = engine_->driver().load();
         out.load = protocol::DspLoad{load.average(), load.peak()};
     }
     return out;
+}
+
+bool EngineHost::monitoringAvailable() const {
+    return engine_ ? engine_->driver().captureBank() != nullptr : playbackOptions_.capture.slots > 0;
 }
 
 void EngineHost::resetLoudness() {
@@ -1005,7 +1013,10 @@ int EngineHost::openInputChannels() const {
 }
 
 bool EngineHost::covers(const model::TrackInput& input) const {
-    return input.port >= 0 && input.channels >= 1 && input.port + input.channels <= openInputChannels();
+    // channels <= open - port with port < open first: a port near INT32_MAX (the
+    // document allows it) cannot overflow port + channels.
+    const int open = openInputChannels();
+    return input.port >= 0 && input.channels >= 1 && input.port < open && input.channels <= open - input.port;
 }
 
 // Whether main's head still gives the track an input the open input covers.
@@ -1043,14 +1054,32 @@ void EngineHost::followHead() {
 
 void EngineHost::clearArms() {
     if (engine_) {
-        if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
-            for (const auto& [trackId, slot] : armed_) {
-                (void)trackId;
-                bank->disarm(slot);
-            }
+        for (const auto& [trackId, slot] : armed_) {
+            unbindMonitor(trackId, slot);
         }
     }
     armed_.clear();
+}
+
+// m5b-engine-monitoring: the track's gate (the playback engine's, which every
+// graph's monitor node of that track reads) follows the arm, and the slot writes
+// its capturing.
+void EngineHost::bindMonitor(const std::string& trackId, std::size_t slot) {
+    graph::MonitorGate& gate = engine_->monitorGate(trackId);
+    gate.armed.store(true, std::memory_order_release);
+    if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
+        bank->bindMonitorGate(slot, &gate);
+    }
+}
+
+void EngineHost::unbindMonitor(const std::string& trackId, std::size_t slot) {
+    graph::MonitorGate& gate = engine_->monitorGate(trackId);
+    if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
+        bank->bindMonitorGate(slot, nullptr);
+        bank->disarm(slot);
+    }
+    gate.armed.store(false, std::memory_order_release);
+    gate.capturing.store(false, std::memory_order_release);
 }
 
 // Every armed track whose input is gone, or past what the open input holds, is
@@ -1064,9 +1093,7 @@ void EngineHost::pruneArms() {
     for (auto it = armed_.begin(); it != armed_.end();) {
         const model::Track* track = doc.track(it->first);
         if (track == nullptr || !track->input || !covers(*track->input)) {
-            if (bank != nullptr) {
-                bank->disarm(it->second);
-            }
+            unbindMonitor(it->first, it->second);
             it = armed_.erase(it);
             continue;
         }
@@ -1085,9 +1112,7 @@ protocol::RecordState EngineHost::arm(const std::string& trackId, bool armed) {
     if (!armed) {
         const auto found = armed_.find(trackId);
         if (found != armed_.end()) {
-            if (realtime::CaptureBank* bank = engine_->driver().captureBank()) {
-                bank->disarm(found->second);
-            }
+            unbindMonitor(found->first, found->second);
             armed_.erase(found);
         }
         return recordState();
@@ -1125,6 +1150,7 @@ protocol::RecordState EngineHost::arm(const std::string& trackId, bool armed) {
         found = armed_.emplace(trackId, static_cast<std::size_t>(free - used.begin())).first;
     }
     bank->arm(found->second, track->input->port, track->input->channels);
+    bindMonitor(trackId, found->second);
     return recordState();
 }
 

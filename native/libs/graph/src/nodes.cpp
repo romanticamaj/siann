@@ -49,6 +49,9 @@ ClipPlayerNode::ClipPlayerNode(int channels, std::vector<Clip> clips) : channels
 void ClipPlayerNode::process(const ProcessContext& context, std::span<const AudioBufferView>,
                              const AudioBufferView& output) noexcept {
     output.clear();
+    if (!context.rolling) {
+        return;  // stopped: silence (the position is the context's, so nothing moves)
+    }
     const std::int64_t blockEnd = context.blockStart + context.frames;
     for (const Clip& clip : clips_) {
         if (clip.timelineStart >= blockEnd) {
@@ -319,6 +322,91 @@ void FakeLatencyNode::process(const ProcessContext& context, std::span<const Aud
         }
     }
     position_ = (position_ + static_cast<std::size_t>(context.frames)) % length;
+}
+
+MonitorInputNode::MonitorInputNode(int channels, MonitorInputMode mode, int inputPort, int inputChannels,
+                                   const MonitorGate* gate, int fadeFrames)
+    : channels_(channels),
+      mode_(mode),
+      inputPort_(inputPort),
+      inputChannels_(inputChannels),
+      gate_(gate),
+      fadeFrames_(std::max(fadeFrames, 1)) {
+    if (channels < 1 || inputPort < 0 || inputChannels < 0 || inputChannels > 2) {
+        throw std::invalid_argument("a monitor input needs channels >= 1, a port >= 0 and 0 to 2 input channels");
+    }
+}
+
+void MonitorInputNode::prepare(int maxBlockFrames) {
+    blend_.assign(static_cast<std::size_t>(std::max(maxBlockFrames, 0)), 0.0f);
+}
+
+bool MonitorInputNode::wantsInput(bool rolling) const noexcept {
+    if (mode_ == MonitorInputMode::input) {
+        return true;
+    }
+    if (gate_ == nullptr) {
+        return false;
+    }
+    return rolling ? gate_->capturing.load(std::memory_order_acquire) : gate_->armed.load(std::memory_order_acquire);
+}
+
+void MonitorInputNode::process(const ProcessContext& context, std::span<const AudioBufferView> inputs,
+                               const AudioBufferView& output) noexcept {
+    const int frames = std::min(context.frames, static_cast<int>(blend_.size()));
+    const int target = wantsInput(context.rolling) ? fadeFrames_ : 0;
+    if (!primed_) {
+        position_ = target;  // the first block starts where it is: the graph's own rise covers it
+        primed_ = true;
+    }
+    const float fade = static_cast<float>(fadeFrames_);
+    for (int i = 0; i < frames; ++i) {
+        if (position_ < target) {
+            ++position_;
+        } else if (position_ > target) {
+            --position_;
+        }
+        blend_[static_cast<std::size_t>(i)] = static_cast<float>(position_) / fade;
+    }
+
+    const AudioBufferView* in = context.input;
+    // Covered: [port, port + channels) lies inside the open input. Compared as
+    // channels <= count - port with port < count first, so a port near INT32_MAX
+    // (the document allows it) cannot overflow the sum.
+    const bool haveInput = in != nullptr && in->channels != nullptr && inputChannels_ > 0 &&
+                           inputPort_ < in->channelCount && inputChannels_ <= in->channelCount - inputPort_ &&
+                           in->frames >= frames;
+    const AudioBufferView& clips = inputs[0];
+    for (int c = 0; c < channels_; ++c) {
+        const float* source = clips.channel(c);
+        float* out = output.channel(c);
+        // The input channel(s) this output channel takes: equal counts copy, mono
+        // feeds every channel, stereo into mono averages.
+        const float* first = nullptr;
+        const float* second = nullptr;
+        if (haveInput) {
+            if (inputChannels_ == channels_) {
+                first = in->channel(inputPort_ + c);
+            } else if (inputChannels_ == 1) {
+                first = in->channel(inputPort_);
+            } else if (channels_ == 1) {
+                first = in->channel(inputPort_);
+                second = in->channel(inputPort_ + 1);
+            } else {
+                first = in->channel(inputPort_ + std::min(c, inputChannels_ - 1));
+            }
+        }
+        for (int i = 0; i < frames; ++i) {
+            const float blend = blend_[static_cast<std::size_t>(i)];
+            float live = 0.0f;
+            if (first != nullptr) {
+                live = second != nullptr ? 0.5f * (first[i] + second[i]) : first[i];
+            }
+            out[i] = blend == 0.0f   ? source[i]
+                     : blend == 1.0f ? live
+                                     : source[i] * (1.0f - blend) + live * blend;
+        }
+    }
 }
 
 }  // namespace siann::graph

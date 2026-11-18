@@ -29,14 +29,22 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { Locale, LocaleStore } from '../../src/renderer/i18n/locale';
 import { installLocaleStore, localeStore } from '../../src/renderer/i18n/t';
 import { milliDbToPosition } from '../../src/renderer/mixer/taper';
-import type { Capabilities } from '../../src/renderer/model/capabilities';
-import type { TrackEntity } from '../../src/renderer/model/document';
+import { toPosition } from '../../src/renderer/mixer/value-gesture';
+import { capabilitySelector, type Capabilities } from '../../src/renderer/model/capabilities';
+import type { ClipEntity, TrackEntity } from '../../src/renderer/model/document';
 import type { GestureController } from '../../src/renderer/model/gesture-controller';
 import type { SessionClient } from '../../src/renderer/model/session-client';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { Inspector } from '../../src/renderer/shell/Inspector';
+import { translator } from '../../src/renderer/i18n/t';
+import { PlanStore } from '../../src/renderer/model/plan-store';
+import { namesFromSnapshot } from '../../src/renderer/plans/describe';
+import { GhostContext } from '../../src/renderer/plans/ghost-context';
+import type { Ghost } from '../../src/renderer/plans/ghosts';
+import { planNameParts } from '../../src/renderer/plans/plan-name';
+import { BAR, hashOf, mockupPlans, PENDING, RISER, T } from './support/mockup-plan';
 import { byAttr, byClass, classes, elements, find, findAll, loadMockup, parse, sig, styleOf, text, type Element } from './support/mockup';
-import { snapshotOf, track } from './support/timeline';
+import { clip, snapshotOf, track } from './support/timeline';
 
 const FIXTURES = path.resolve(__dirname, '..', '..', '..', 'test', 'unit', 'fixtures');
 const FULL = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'capabilities-full.json'), 'utf8')) as Capabilities;
@@ -52,8 +60,8 @@ const pending = (id: string) => {
   return MANIFEST.gates[rule.gate] === 'pending';
 };
 
-function fakeClient(tracks: TrackEntity[]) {
-  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], []);
+function fakeClient(tracks: TrackEntity[], clips: readonly ClipEntity[] = []) {
+  const snap = snapshotOf(tracks.map((t) => t.id), tracks, [], clips);
   const model = {
     getSnapshot: () => snap,
     getView: () => ({ snapshot: snap, gesture: null, overlaid: null }),
@@ -218,12 +226,13 @@ test('the pan row: the label, .hs with its thumb only, the value as C, L35, R100
   }
 });
 
-test('the six sections keep their rows as empty boxes, the open three and the shut three', () => {
+test('the five pending sections keep their rows as empty boxes, the open two and the shut three; Agent changes is sec()', () => {
   const app = render([vox()]);
   const holds = findAll(app, byClass('inspector-hold'));
-  const mockup = findAll(mockupZone(), byClass('sec'));
-  assert.equal(holds.length, 6);
-  assert.equal(mockup.length, 6);
+  // Agent changes landed with m5b-ui-ghosts: its section is the mockup's sec() (the next tests).
+  const mockup = findAll(mockupZone(), byClass('sec')).filter((sec) => sec.attrs['data-part'] !== 'inspector-agent-changes');
+  assert.equal(holds.length, 5);
+  assert.equal(mockup.length, 5);
   for (const [i, hold] of holds.entries()) {
     assertEmptyBox(hold, `section ${i + 1}`);
     const id = mockup[i]!.attrs['data-part']!;
@@ -252,7 +261,7 @@ test('the ids are the mockup\'s minus the pending parts\', and no pending id is 
   const app = render([vox()]);
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
   assert.deepEqual(ids(app), ids(mockupZone()).filter((id) => !pending(id)));
-  assert.deepEqual(ids(app), ['inspector-buttons', 'inspector-head', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
+  assert.deepEqual(ids(app), ['inspector-agent-changes', 'inspector-buttons', 'inspector-head', 'inspector-mute', 'inspector-name', 'inspector-pan', 'inspector-solo', 'inspector-tabs', 'inspector-track', 'inspector-volume'].sort());
 });
 
 test('with no track selected, or a track gone, the zone shows its head and foot and nothing between them', () => {
@@ -286,6 +295,220 @@ test('reduced capabilities remove the controls, and their boxes stay', () => {
     assert.equal(elements(row).length, 3);
     assertEmptyBox(elements(row)[1]!, 'an unlisted slider');
   }
+});
+
+// ---- m5b-ui-ghosts (UI redesign 4.2, 4.4): the Agent changes section is
+// sec('Agent changes'): .sec > .sec-h (chevron, title, the empty right span)
+// and .sec-b with one .hist row per applied plan that touched the track ("rN ·
+// <the step> by <b>plan name</b>"), then the pending line, or "No pending
+// change on this track.". The Volume and Pan rows carry the pending values as
+// added elements.
+
+interface ReviewOptions {
+  readonly clips?: readonly ClipEntity[];
+  // The ticked steps of the plan under review (0-based; null: all).
+  readonly ticked?: ReadonlySet<number> | null;
+  // More plans for the store, as plan.list gives them.
+  readonly extra?: readonly unknown[];
+}
+
+function renderReview(tracks: TrackEntity[], trackId: string, ghosts: readonly Ghost[], locale?: Locale, options: ReviewOptions = {}): Element {
+  const plans = new PlanStore({ now: () => 0 });
+  plans.fromList({ plans: [...mockupPlans().map((p) => p.raw), ...(options.extra ?? [])] });
+  const plan = plans.getSnapshot().byHash.get(PENDING);
+  const node: ReactNode = (
+    <CapabilitiesContext.Provider value={FULL}>
+      <GhostContext.Provider value={{ ghosts, outline: null, pin: () => undefined, plan, ticked: options.ticked ?? null }}>
+        <Inspector client={fakeClient(tracks, options.clips)} gestures={gestures} trackId={trackId} plans={plans} />
+      </GhostContext.Provider>
+    </CapabilitiesContext.Provider>
+  );
+  const before = localeStore();
+  if (locale) installLocaleStore({ subscribe: () => () => undefined, getSnapshot: () => locale, setLocale: () => undefined } as unknown as LocaleStore);
+  try {
+    return parse(renderToStaticMarkup(node));
+  } finally {
+    installLocaleStore(before);
+  }
+}
+
+const keysTrack = (): TrackEntity => ({ ...track(T.keys), name: 'Keys', gainMilliDb: -8000, pan: -3500 });
+const voxTrack = (): TrackEntity => ({ ...track(T.lead), name: 'Vox Lead', gainMilliDb: 1500 });
+
+test('Agent changes is sec(): its head, and a .hist row per applied plan that touched the track, then the pending line', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const zone = renderReview([keysTrack()], T.keys, [{ kind: 'pan', step: 4, trackId: T.keys, before: -3500, after: -2000 }], locale);
+    const app = find(zone, byAttr('data-part', 'inspector-agent-changes'));
+    const mockup = find(mockupZone(lang), byAttr('data-part', 'inspector-agent-changes'));
+    assert.equal(sig(app), sig(mockup));
+    assert.deepEqual(elements(app).map(sig), elements(mockup).map(sig));
+    const [head, body] = elements(app);
+    const [mHead] = elements(mockup);
+    assert.deepEqual(elements(head!).map(sig), elements(mHead!).map(sig));
+    assert.equal(text(head!), text(mHead!), locale);
+    const rows = elements(body!);
+    assert.ok(rows.every((row) => sig(row) === 'div.hist'));
+    // The applied plan of the mockup's history changed Keys' pan at r31.
+    const t = translator(locale);
+    const plan = mockupPlans()[2]!;
+    // The mockup's applied plan carries a title, so it leads the row (m5b-ui-plan-metadata).
+    const name = planNameParts(plan, t, namesFromSnapshot(null), capabilitySelector(FULL))!;
+    assert.equal(name.lead, plan.title);
+    const [applied, pendingRow] = rows;
+    assert.equal(text(find(applied!, byClass('mono'))), 'r31');
+    assert.equal(text(find(applied!, (el) => el.tag === 'b')), name.lead);
+    assert.ok(text(applied!).includes(name.steps), locale);
+    assert.ok(text(pendingRow!).includes('4'), 'the pending step\'s number');
+  }
+});
+
+test('a track no plan touched or will touch reads the mockup\'s "No pending change on this track."; the section is in the window with any track selected', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const app = find(renderReview([voxTrack()], T.lead, [], locale), byAttr('data-part', 'inspector-agent-changes'));
+    const mockRows = elements(elements(find(mockupZone(lang), byAttr('data-part', 'inspector-agent-changes')))[1]!);
+    const rows = elements(elements(app)[1]!);
+    assert.equal(text(rows.at(-1)!), text(mockRows.at(-1)!), locale);
+    assert.equal(styleOf(rows.at(-1)!, 'color'), styleOf(mockRows.at(-1)!, 'color'));
+  }
+  // The hold of the section is gone.
+  assert.equal(findAll(render([vox()]), byClass('agent-changes')).length, 0);
+});
+
+test('the Volume and Pan rows show a pending value beside the current one; a rename shows both names', () => {
+  const zone = renderReview([keysTrack()], T.keys, [
+    { kind: 'gain', step: 3, trackId: T.keys, before: -8000, after: -6000 },
+    { kind: 'pan', step: 4, trackId: T.keys, before: -3500, after: -2000 },
+    { kind: 'rename', step: 5, trackId: T.keys, before: 'Keys', after: 'Rhodes' },
+  ]);
+  const [volume, pan] = findAll(zone, byClass('i-row'));
+  // The current value without its unit, then the pending one: 4.2's "the value
+  // shows both" in the value column, which shell.css lets grow (ghosts.spec.ts
+  // checks nothing is cut off).
+  const value = (row: Element) => find(row, (el) => el.tag === 'b');
+  assert.equal(text(value(volume!)), '-8.0 → -6.0 dB');
+  assert.equal(text(find(volume!, byClass('ghost-to'))), '→ -6.0 dB');
+  assert.equal(text(value(pan!)), 'L35 → L20');
+  assert.equal(text(find(pan!, byClass('ghost-to'))), '→ L20');
+  assert.equal(text(find(zone, byAttr('data-testid', 'inspector-track'))), 'Keys → Rhodes');
+  assert.deepEqual(elements(find(zone, byClass('ghost-rename'))).map(sig), ['span.ghost-was', 'span.ghost-arrow', 'span.ghost-name']);
+  // Without a ghost the values keep their unit.
+  const [plainVolume] = findAll(renderReview([keysTrack()], T.keys, []), byClass('i-row'));
+  assert.equal(text(value(plainVolume!)), '-8.0 dB');
+});
+
+// 4.2: a pending gain puts a ghost cap on the Volume slider at the new
+// position, joined to the real one; a pending pan a violet tick on the Pan
+// slider. The marks are the ticked steps' (the ghost list is), aria-hidden,
+// and go with the ghosts.
+test('the Volume slider carries a ghost thumb at each pending gain, joined to the thumb before it; the Pan slider a violet tick', () => {
+  const at = (kind: 'gain' | 'pan', value: number) => `${(toPosition(kind, value) * 100).toFixed(1)}%`;
+  const span = (kind: 'gain', from: number, to: number) => ((toPosition(kind, to) - toPosition(kind, from)) * 100).toFixed(1);
+  const zone = renderReview([keysTrack()], T.keys, [
+    { kind: 'gain', step: 3, trackId: T.keys, before: -8000, after: -6000 },
+    { kind: 'gain', step: 6, trackId: T.keys, before: -6000, after: 0 },
+    { kind: 'pan', step: 4, trackId: T.keys, before: -3500, after: -2000 },
+  ]);
+  const volume = find(zone, byAttr('data-testid', 'inspector-volume'));
+  const pan = find(zone, byAttr('data-testid', 'inspector-pan'));
+  // The marks sit before the thumb, so the fill and the thumb stay the mockup's <i> and <u>.
+  assert.deepEqual(withoutTooltip(volume).map(sig), ['i', 'span.ghost-line', 'span.ghost-thumb', 'span.ghost-line', 'span.ghost-thumb', 'u']);
+  assert.deepEqual(withoutTooltip(pan).map(sig), ['span.ghost-tick', 'u']);
+  const [, line3, thumb3, line6, thumb6] = withoutTooltip(volume);
+  // Step 3 runs from the real thumb (-8.0 dB) to -6.0 dB; step 6 on from there to 0.0 dB.
+  assert.equal(styleOf(thumb3!, 'left'), at('gain', -6000));
+  assert.equal(styleOf(line3!, 'left'), at('gain', -8000));
+  assert.equal(parseFloat(styleOf(line3!, 'width')!).toFixed(1), span('gain', -8000, -6000));
+  assert.equal(styleOf(thumb6!, 'left'), at('gain', 0));
+  assert.equal(styleOf(line6!, 'left'), at('gain', -6000));
+  assert.equal(parseFloat(styleOf(line6!, 'width')!).toFixed(1), span('gain', -6000, 0));
+  const [tick] = withoutTooltip(pan);
+  assert.equal(styleOf(tick!, 'left'), at('pan', -2000));
+  // Hidden from assistive technology (the value text says both values), each with its step.
+  for (const [el, step] of [[line3, '3'], [thumb3, '3'], [line6, '6'], [thumb6, '6'], [tick, '4']] as const) {
+    assert.equal(el!.attrs['aria-hidden'], 'true');
+    assert.equal(el!.attrs['data-ghost'], step);
+  }
+  assert.equal(thumb3!.attrs['data-testid'], 'inspector-volume-ghost-3');
+  assert.equal(tick!.attrs['data-testid'], 'inspector-pan-ghost-4');
+  // The sliders' own values are the track's, not the plan's.
+  assert.equal(volume.attrs['aria-valuenow'], '-8000');
+  assert.equal(pan.attrs['aria-valuenow'], '-3500');
+  // Step 3 unticked: only step 6's mark, joined to the real thumb (its before is then the track's value).
+  const one = withoutTooltip(find(renderReview([keysTrack()], T.keys, [{ kind: 'gain', step: 6, trackId: T.keys, before: -8000, after: 0 }]), byAttr('data-testid', 'inspector-volume')));
+  assert.deepEqual(one.map(sig), ['i', 'span.ghost-line', 'span.ghost-thumb', 'u']);
+  assert.equal(styleOf(one[1]!, 'left'), at('gain', -8000));
+  // A ghost with no known before starts at the real thumb too.
+  const unknown = withoutTooltip(find(renderReview([keysTrack()], T.keys, [{ kind: 'gain', step: 3, trackId: T.keys, before: null, after: -6000 }]), byAttr('data-testid', 'inspector-volume')));
+  assert.equal(styleOf(unknown[1]!, 'left'), at('gain', -8000));
+  // The ghosts toggled off (the plan still pending) or no ghost: the mockup's sliders alone.
+  const off = renderReview([keysTrack()], T.keys, []);
+  assert.deepEqual(withoutTooltip(find(off, byAttr('data-testid', 'inspector-volume'))).map(sig), ['i', 'u']);
+  assert.deepEqual(withoutTooltip(find(off, byAttr('data-testid', 'inspector-pan'))).map(sig), ['u']);
+  // Another track's ghosts stay off this track's sliders.
+  const other = renderReview([keysTrack(), voxTrack()], T.lead, [{ kind: 'gain', step: 3, trackId: T.keys, before: -8000, after: -6000 }]);
+  assert.equal(findAll(other, byClass('ghost-thumb')).length, 0);
+});
+
+test('the slider ghost marks are drawn on the --ai tokens, the thumb in the strip\'s .cap.ghost look (shell.css)', () => {
+  const renderer = path.resolve(__dirname, '..', '..', '..', 'renderer');
+  const css = fs.readFileSync(path.join(renderer, 'shell.css'), 'utf8');
+  const rule = (selector: string) => {
+    const start = css.indexOf(`${selector} {`);
+    assert.ok(start >= 0, selector);
+    return css.slice(start + selector.length + 2, css.indexOf('}', start));
+  };
+  const squash = (decl: string) => decl.replace(/\s+/g, '');
+  const capGhost = /\.cap\.ghost\{([^}]*)\}/.exec(fs.readFileSync(path.join(renderer, 'ui', 'lower-zone.css'), 'utf8'))![1]!;
+  const thumb = squash(rule('.hs > .ghost-thumb'));
+  // The strip's ghost cap's hatch, dashed violet edge and glow, declaration for declaration.
+  for (const decl of capGhost.split(';')) assert.ok(thumb.includes(squash(decl)), decl);
+  for (const selector of ['.hs > .ghost-line', '.hs > .ghost-tick', '.hs > .ghost-tick::after']) assert.match(rule(selector), /background: var\(--ai\)/, selector);
+  // No literal colour: the --ai tokens only.
+  for (const selector of ['.hs > .ghost-thumb', '.hs > .ghost-line', '.hs > .ghost-tick', '.hs > .ghost-tick::after']) assert.doesNotMatch(rule(selector), /#[0-9a-f]{3,8}\b|rgb\(/i, selector);
+});
+
+test('a pending mute or solo puts the dashed ring on the Inspector\'s M or S (.msr.ghost), as on the header and the strip', () => {
+  const zone = renderReview([keysTrack()], T.keys, [
+    { kind: 'mute', step: 3, trackId: T.keys, before: false, after: true },
+    { kind: 'solo', step: 4, trackId: T.keys, before: false, after: true },
+  ]);
+  const mute = find(zone, byAttr('data-testid', 'inspector-mute'));
+  const solo = find(zone, byAttr('data-testid', 'inspector-solo'));
+  assert.deepEqual(classes(mute).sort(), ['ghost', 'm', 'msr']);
+  assert.deepEqual(classes(solo).sort(), ['ghost', 'msr', 's']);
+  assert.equal(mute.attrs['data-ghost'], '3');
+  assert.equal(solo.attrs['data-ghost'], '4');
+  const plain = renderReview([keysTrack()], T.keys, [{ kind: 'solo', step: 4, trackId: T.keys, before: false, after: true }]);
+  assert.ok(!classes(find(plain, byAttr('data-testid', 'inspector-mute'))).includes('ghost'));
+});
+
+const fxTrack = (): TrackEntity => ({ ...track(T.fx), name: 'FX', gainMilliDb: -12000, mute: true });
+const riser = () => clip(RISER, T.fx, 'med_fx', String(5 * BAR), '0', String(2 * BAR));
+const pendingRows = (zone: Element) => findAll(find(zone, byAttr('data-part', 'inspector-agent-changes')), byAttr('data-testid')).map((el) => el.attrs['data-testid']!).filter((id) => id.startsWith('agent-pending-'));
+
+test('what is pending on a track is every ticked step of the plan under review on it, its clips\' steps too, with the ghosts shown or not', () => {
+  // Step 5 unmutes FX, step 6 moves the Riser, a clip on FX (the step names the clip only).
+  const shown = renderReview([fxTrack()], T.fx, [{ kind: 'mute', step: 5, trackId: T.fx, before: true, after: false }], undefined, { clips: [riser()] });
+  assert.deepEqual(pendingRows(shown), ['agent-pending-5', 'agent-pending-6']);
+  // The ghosts toggled off (Ctrl+Alt+G): the plan is still pending.
+  const hidden = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()] });
+  assert.deepEqual(pendingRows(hidden), ['agent-pending-5', 'agent-pending-6']);
+  // An unticked step is not what approving would do.
+  const ticked = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()], ticked: new Set([0, 1, 2, 3, 5]) });
+  assert.deepEqual(pendingRows(ticked), ['agent-pending-6']);
+  // A track whose only pending change is a clip's: its row, not "No pending change".
+  const onlyClip = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()], ticked: new Set([5]) });
+  assert.deepEqual(pendingRows(onlyClip), ['agent-pending-6']);
+  assert.ok(!text(find(onlyClip, byAttr('data-part', 'inspector-agent-changes'))).includes('No pending change'));
+});
+
+test('an applied plan that only changed a track\'s clips is listed as touching it', () => {
+  const trimmed = { schema: 'siann.plan.v1', hash: hashOf('e'), state: 'applied', appliedRevision: 'r35', baseRevision: 'r34', steps: [{ op: 'clip.trim', clipId: RISER, sourceStart: '0', length: String(BAR) }], readSet: [], writeSet: [], stale: [] };
+  const zone = renderReview([fxTrack()], T.fx, [], undefined, { clips: [riser()], extra: [trimmed] });
+  const row = find(zone, byAttr('data-testid', `agent-change-${'e'.repeat(8)}`));
+  assert.equal(text(find(row, byClass('mono'))), 'r35');
+  // A plan that touched neither the track nor its clips is not.
+  assert.equal(findAll(renderReview([keysTrack()], T.keys, [], undefined, { clips: [riser()], extra: [trimmed] }), byAttr('data-testid', `agent-change-${'e'.repeat(8)}`)).length, 0);
 });
 
 test('a stored gain above +6 dB pins the thumb at the end and warns on the value', () => {

@@ -43,6 +43,12 @@ using host::AudioBufferView;
 struct ProcessContext {
     std::int64_t blockStart = 0;  // timeline position of the first frame, in samples
     int frames = 0;
+    // m5b-engine-monitoring: false while the transport is stopped (a graph that
+    // monitors runs then): players output silence and keep their position.
+    bool rolling = true;
+    // The block's device input at the session rate, at least `frames` long, or
+    // nullptr without one. MonitorInputNode reads it.
+    const AudioBufferView* input = nullptr;
 };
 
 class Node {
@@ -82,7 +88,7 @@ public:
     GraphError(std::string code, const std::string& message);
 
     // One of: unknown_node, invalid_port, channel_mismatch, cycle, no_output,
-    // compensation_limit, invalid_block_size.
+    // compensation_limit, invalid_block_size, not_a_monitor.
     const std::string& code() const noexcept { return code_; }
 
 private:
@@ -129,6 +135,14 @@ public:
     NodeId add(std::unique_ptr<Node> node, std::string name);
     // Sums the source's output, times gain, into the destination's input port.
     void connect(NodeId from, NodeId to, int port = 0, float gain = 1.0f);
+    // The same, as the low-latency monitoring edge of a strip (spec, "Latency
+    // model", m5b-engine-monitoring): `monitor` is the MonitorInputNode at the
+    // head of the strip `from` ends. The edge's compensation delay line keeps
+    // running, and its output crossfades from the delayed to the undelayed
+    // signal by the node's input blend, frame for frame, so monitored input
+    // skips the compensation and the strip's clips keep it. compile() throws
+    // not_a_monitor when `monitor` is no MonitorInputNode.
+    void connectLowLatency(NodeId from, NodeId to, NodeId monitor, int port = 0, float gain = 1.0f);
     void setOutput(NodeId node);
 
     // Default limit on any single edge's compensation delay, in samples.
@@ -143,7 +157,9 @@ private:
         NodeId to;
         int port;
         float gain;
+        NodeId monitor;  // kNoMonitor for an ordinary edge
     };
+    static constexpr NodeId kNoMonitor = static_cast<NodeId>(-1);
     std::vector<std::unique_ptr<Node>> nodes_;
     std::vector<std::string> names_;
     std::vector<EdgeSpec> edges_;
@@ -193,6 +209,20 @@ public:
 
     // Output latency of the output node: how far its signal trails the timeline.
     std::int64_t totalLatency() const noexcept;
+
+    // m5b-engine-monitoring: true when a node is a MonitorInputNode (the driver
+    // then runs the graph while the transport is stopped).
+    bool monitors() const noexcept;
+    // Per edge, 1 when it leaves a source (a node without input ports: a clip
+    // player, a disk stream). A transport start of a graph that monitors raises
+    // only these edges, since such a graph is audible while stopped: the
+    // timeline fades in and the monitored input (which enters through a
+    // MonitorInputNode, never a source) keeps its level.
+    std::span<const std::uint8_t> startEdges() const noexcept;
+    // The latency of the slowest low-latency monitoring path: the output latency
+    // of its edge's source (the strip's own inserts) plus what the graph adds
+    // after the edge's destination (the master path). 0 without one.
+    std::int64_t monitorPathLatency() const noexcept;
 
     // Compensation delay applied on the edge from -> to at port; -1 if absent.
     std::int64_t edgeCompensation(NodeId from, NodeId to, int port = 0) const noexcept;

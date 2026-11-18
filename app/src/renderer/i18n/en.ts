@@ -351,6 +351,9 @@ export const en = {
   'step.setInput': 'Record {track} from input {input}',
   'step.setInputPair': 'Record {track} from inputs {first}-{second}',
   'step.clearInput': 'Clear the input of {track}',
+  'step.setMonitorOff': 'Turn monitoring off on {track}',
+  'step.setMonitorAuto': 'Set {track} to auto monitoring',
+  'step.setMonitorInput': 'Monitor the input of {track}',
   'step.explodeTrack': 'Split {track} into one track per channel',
   'step.placeClip': 'Place a clip on {track} at {time}',
   'step.moveClip': 'Move {clip} to {time}',
@@ -418,6 +421,20 @@ export const en = {
   'error.queue_full': 'The engine is busy; try again',
   'error.lease_expired': 'The lease expired',
   'error.invalid_name': 'A name cannot contain control characters, text-direction controls or line separators',
+  // The plan review in place (m5b-ui-ghosts; UI redesign 4.2).
+  'ghost.proposed': 'proposed track',
+  'ghost.proposedTrack': 'Proposed track {name}',
+  'ghost.trackSummary': '{channels} · {gain} · {pan} · no inserts',
+  'ghost.newStep': 'NEW · STEP {n}',
+  'pill.label': 'The plan under review, drawn in place',
+  'pill.toggle': 'Show the plan in place (Ctrl+Alt+G)',
+  'pill.ghosts': 'Ghosts',
+  'plans.locate': 'Show step {n} in place',
+  'inspector.agentChanges': 'Agent changes',
+  'agent.appliedBy': '{change} by',
+  'agent.step': 'step {n}',
+  'agent.pendingIn': 'pending in',
+  'agentChanges.none': 'No pending change on this track.',
 };
 
 export type Catalog = typeof en;

@@ -14,3 +14,11 @@ export function defaultSelection(plans: readonly PlanEntry[]): string | null {
     newestFirst.find((p) => awaiting(p) && p.stale.length === 0) ?? newestFirst.find(awaiting) ?? newestFirst[0];
   return pick?.hash ?? null;
 }
+
+// The plan on the card: the selected one while the store holds it, else the default.
+export function cardPlan(plans: readonly PlanEntry[], selected: string | null): PlanEntry | undefined {
+  const chosen = selected !== null ? plans.find((p) => p.hash === selected) : undefined;
+  if (chosen) return chosen;
+  const hash = defaultSelection(plans);
+  return hash !== null ? plans.find((p) => p.hash === hash) : undefined;
+}

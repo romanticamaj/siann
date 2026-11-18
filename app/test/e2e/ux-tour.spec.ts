@@ -680,15 +680,15 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Plan submitted with diff',
-    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; m5b-ui-plan-metadata: the agent row heads the tab, "ux-tour · MCP", connected, its last tool in user wording ("submitted a plan"), and the plan, submitted without a title, leads its card with its first step while its intent box stays empty; the composer's box is left empty until m5b-ui-composer), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text.`,
+    `An MCP agent submitted a 5-step mix plan (${hash8(mixHash)}): a toast says a plan arrived and the Plans button counts it. The Plans tab is the mockup's (m5-ui-port-plans): the tab row with the hearing switch, the plan as its card (a Needs review badge, when it arrived, its base revision and short hash; the count chips +1 track, 3 mix, 1 edit; m5b-ui-plan-metadata: the agent row heads the tab, "ux-tour · MCP", connected, its last tool in user wording ("submitted a plan"), and the plan, submitted without a title, leads its card with its first step while its intent box stays empty; the composer's box is left empty until m5b-ui-composer), the steps numbered from 1 and all ticked under "Steps · 5 of 5 selected" and its Select none link, each in the mockup's wording with the old value struck and the new one emphasised (dB, L/C/R pan, names, no ids), and the three actions: Audition, the violet primary "Approve 5 of 5" and the icon-only Reject. Each step's raw JSON and entity diff are behind a click on its text. Since m5b-ui-ghosts the plan's ghosts are drawn in place (UI redesign 4.2): the proposed Pad as a dashed header, a hatched lane under the last one and a dashed strip labelled NEW · STEP 1 before the master; the Vox BG fader's ghost cap joined to its cap with both values and its step badge, the violet tick on the Keys pan knob, the dashed ring on FX's M and both names of the rename; the toolbar ends with the proposal pill naming the plan (its first step and the step count) with its Ghosts toggle.`,
   );
-  await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls).', { fullPage: true });
+  await shoot(page, 'Plan submitted full page', 'The same state as the whole page (the window: the page never scrolls), with the plan\'s ghosts and the proposal pill.', { fullPage: true });
 
   // Partial approval: steps 3 and 5 unticked, the primary reads "Approve 3 of 5".
   for (const step of [2, 4]) await page.getByTestId(`step-${step}`).getByRole('checkbox').uncheck();
   await expect(page.getByTestId('plan-approve-apply')).toBeEnabled();
   await scrollTo('plan-review');
-  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): their boxes empty, the head reads "Steps · 3 of 5 selected" with its link now Select all, and the primary "Approve 3 of 5".');
+  await shoot(page, 'Partial approval steps checked', 'Steps 3 and 5 unticked (pan Keys, rename FX): their boxes empty, the head reads "Steps · 3 of 5 selected" with its link now Select all, and the primary "Approve 3 of 5". The ghosts of the unticked steps are gone (the Keys pan tick, the second FX name): the picture shows what Approve 3 of 5 would do.');
   await page.getByTestId('plan-approve-apply').click();
   await expect(page.getByTestId(`plan-state-${hash8(mixHash)}`)).toHaveAttribute('data-state', 'rejected');
   const listed = (await watcher.call('plan.list')).plans as Array<Record<string, unknown>>;
@@ -699,7 +699,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Partial approval sub-plan approved',
-    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted): the card follows the sub-plan, its badge "Applied · <revision>" and "(part of ${hash8(mixHash)})" under it, its steps without boxes; the original plan is a history row under "Earlier" reading "Split, 3 of 5 approved".`,
+    `"Approve 3 of 5" approved a 3-step sub-plan (${hash8(subHash)}, part of ${hash8(mixHash)}) and applied it as one revision (Pad added, Vox BG volume, FX unmuted): the card follows the sub-plan, its badge "Applied · <revision>" and "(part of ${hash8(mixHash)})" under it, its steps without boxes; the original plan is a history row under "Earlier" reading "Split, 3 of 5 approved". An applied plan has no ghosts and the toolbar no pill.`,
   );
 
   // Audition: a plan approved, proposed and heard in one action.
@@ -716,7 +716,7 @@ test('UX screenshot tour', async () => {
   await shoot(
     page,
     'Audition active',
-    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged.`,
+    `Audition on a validated 3-step plan (${hash8(liftHash)}): approved, proposed and heard in one action; the card (selected from its history row) reads "Approved for audition" with Hear main, the primary Merge and the icon-only Discard; the banner under the top bar names the plan (untitled: by its first step and "3 steps") with Hear main, Merge and Discard; the hearing switch in the tab row and the status bar show Proposal; main is unchanged. The plan is approved, neither applied, rejected nor stale, so its ghosts stay drawn (the Keys and Vox BG ghost caps and pan tick, the ring on Vox Lead's S) and the pill names it.`,
   );
   await page.getByTestId('banner-hear-main').click();
   await expect(page.getByTestId('hear-main')).toHaveAttribute('aria-pressed', 'true');
@@ -733,7 +733,7 @@ test('UX screenshot tour', async () => {
   await page.getByTestId('plan-reject').click();
   await page.getByTestId('plan-note').fill('Keep the FX riser; kick is loud enough');
   await scrollTo('plan-review');
-  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected; the first press of Reject opened the reason row above the actions, and a reason is typed in "Reason (sent to agent)" (Enter or Reject again sends it, Escape closes it).`);
+  await shoot(page, 'Reject note typed', `A second plan (${hash8(tidyHash)}: remove FX, kick +3 dB) selected; the first press of Reject opened the reason row above the actions, and a reason is typed in "Reason (sent to agent)" (Enter or Reject again sends it, Escape closes it). The plan is still validated: its ghosts (FX's strip dimmed and its clip cross-hatched, the Kick ghost cap) and the pill stay until it is rejected.`);
   await page.getByTestId('plan-reject').click();
   await expect(page.getByTestId(`plan-state-${hash8(tidyHash)}`)).toHaveAttribute('data-state', 'rejected');
   await expect(page.getByTestId(`plan-reason-${hash8(tidyHash)}`)).toBeVisible();
@@ -854,7 +854,8 @@ test('UX screenshot tour', async () => {
     { number: 24 },
   );
 
-  // ---- 26 (m5-ui-port-toolbar): the Pool, opened with Ctrl+P (Cmd+P on
+  // ---- 31 (m5-ui-port-toolbar; 26 until m5b-ui-ghosts renumbered it, UI
+  // redesign 10.11, 8): the Pool, opened with Ctrl+P (Cmd+P on
   // macOS) over the project zone: the session's media by name, a click arms
   // placing. The mockup has no Pool, so the review reads this state alone.
   await page.keyboard.press('Escape');
@@ -865,10 +866,41 @@ test('UX screenshot tour', async () => {
     page,
     'Pool open',
     `The Pool (Cubase's, UI redesign 10.8), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu has Open Pool too): an app-only window over the project zone listing the session's ${poolItems} media by name (the media id when there is none); a click on one arms placing and the next click in the event display places it. Escape closes it; the resting window does not show it.`,
-    { number: 26 },
+    { number: 31 },
   );
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('media-pool')).toHaveCount(0);
+
+  // ---- 26 and 27 (m5b-ui-ghosts; UI redesign 4.2, 5.2): a plan's ghosts in
+  // the event display and on the MixConsole.
+  const ghostPlan = [
+    { op: 'track.add', trackId: 'trk_strings', name: 'Strings', channels: 2 },
+    { op: 'clip.place', clipId: 'clp_ghost_strings', trackId: 'trk_strings', mediaId: 'med_keys', position: { domain: 'audio', value: String(RATE) }, sourceStart: '0', length: String(2 * RATE) },
+    { op: 'clip.move', clipId: 'clp_01_kick', position: { domain: 'audio', value: String(RATE / 2) } },
+    { op: 'track.set_gain', trackId: 'trk_bass', gainMilliDb: -1000 },
+    { op: 'track.set_pan', trackId: 'trk_keys', pan: 3000 },
+    { op: 'track.set_mute', trackId: 'trk_kick', mute: true },
+  ];
+  // The engine restarted at 21: a new agent connection.
+  const ghostHash = await submit(await agent(), ghostPlan);
+  await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(ghostHash));
+  await expect(page.locator('[data-part="proposal-pill"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __siannGhosts?: { list(): unknown[] } }).__siannGhosts?.list().length ?? 0)).toBe(ghostPlan.length);
+  await page.keyboard.press('Shift+KeyF');
+  await waveformsDrawn();
+  await shoot(
+    page,
+    'Ghosts in the event display',
+    `A 6-step plan (${hash8(ghostHash)}) selected: its ghosts on the event display's content layer in the agent violet, dashed and hatched, each with its step number: the proposed Strings track as a hatched lane under the last one with a dashed header, a ghost clip with its waveform placed on it, the first Kick clip moved half a second earlier (its original at 38 %, the ghost at the new place, an arrow between them), and in the headers the Bass gain with both values and the dashed ring on Kick's M. The toolbar's pill names the plan; Ctrl+Alt+G hides the ghosts.`,
+    { number: 26 },
+  );
+  await page.getByTestId('step-3').hover();
+  await shoot(
+    page,
+    'Ghosts on the MixConsole',
+    'The same plan on the MixConsole, the pointer on step 4 (Bass gain): its ghosts outlined; the Bass strip\'s ghost cap joined to the real cap with its step badge and both values in the readout, the violet tick on the Keys pan knob with the new value, the dashed ring on Kick\'s M with its badge, and the dashed Strings strip labelled NEW · STEP 1 before the master, its insert row empty.',
+    { number: 27 },
+  );
 
   // ---- 41 (m5b-ui-plan-metadata): a titled plan with its intent, the agent
   // row connected. The tour's MCP client keeps its name (ux-tour).

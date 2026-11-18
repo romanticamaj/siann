@@ -150,7 +150,6 @@
 /* The holds whose labels differ in Chinese (m5-ui-port-toolbar): the width
    the fidelity run measures in the mockup's zh-TW, for both Chinese locales. */
 :root:lang(zh-TW), :root:lang(zh-CN) {
-  --hold-proposal-pill-w: calc(190.188px * var(--scale));
   --hold-info-fade-in-w: calc(77.031px * var(--scale));
   --hold-info-fade-out-w: calc(83.156px * var(--scale));
 }
@@ -331,7 +330,6 @@
   --hold-tab-meter-w: calc(69.031px * var(--scale));
   --hold-inspector-routing-h: calc(91px * var(--scale));
   --hold-inspector-inserts-h: calc(117px * var(--scale));
-  --hold-inspector-agent-changes-h: calc(94.836px * var(--scale));
   --hold-tool-2-w: calc(27.172px * var(--scale));
   --hold-tool-4-w: calc(27.172px * var(--scale));
   --hold-tool-5-w: calc(27.172px * var(--scale));
@@ -339,7 +337,6 @@
   --hold-tool-7-w: calc(27.172px * var(--scale));
   --hold-tool-8-w: calc(27.172px * var(--scale));
   --hold-tool-9-w: calc(27.172px * var(--scale));
-  --hold-proposal-pill-w: calc(251.438px * var(--scale));
   --hold-info-fade-in-w: calc(94.047px * var(--scale));
   --hold-info-fade-out-w: calc(109.422px * var(--scale));
 
