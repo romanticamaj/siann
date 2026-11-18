@@ -326,7 +326,7 @@ test('a gain ghost: strip()\'s badge, the line from the real cap to the ghost ca
   assert.equal(styleOf(appLine!, 'height'), styleOf(mockLine!, 'height'));
   const readout = find(app, byClass('readout'));
   assert.equal(text(elements(readout)[0]!), '-9.0 dB');
-  assert.equal(text(find(readout, byClass('to'))), '→ -6.0 dB');
+  assert.equal(text(find(readout, byClass('to'))), '→ -6.0', 'the new value without its unit, as the mockup writes it, so both fit');
   const ids = appIds(app, '6');
   for (const id of ['strip-6-gain-step-ghost', 'strip-6-gain-line-ghost', 'strip-6-cap-ghost']) assert.ok(ids.includes(id), id);
 });

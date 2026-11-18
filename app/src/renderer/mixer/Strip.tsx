@@ -388,7 +388,7 @@ export const Strip = memo(function Strip({ trackId, client, gestures, selected =
         />
         {gain ? (
           <span className="to" data-testid={`fader-value-${trackId}-ghost`} {...ghostAttrs(view, [gain.step])}>
-            {`→ ${formatDb(gain.after)}`}
+            {`→ ${formatDb(gain.after).replace(/ dB$/, '')}`}
           </span>
         ) : (
           <PeakValue meterRef={ref} testId={`peak-value-${trackId}`} label={t('strip.peakLabel', { track: track.name })} />

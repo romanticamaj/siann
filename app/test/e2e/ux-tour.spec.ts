@@ -881,7 +881,8 @@ test('UX screenshot tour', async () => {
     { op: 'track.set_pan', trackId: 'trk_keys', pan: 3000 },
     { op: 'track.set_mute', trackId: 'trk_kick', mute: true },
   ];
-  const ghostHash = await submit(client, ghostPlan);
+  // The engine restarted at 21: a new agent connection.
+  const ghostHash = await submit(await agent(), ghostPlan);
   await expect(page.getByTestId('plan-card')).toHaveAttribute('data-plan', hash8(ghostHash));
   await expect(page.locator('[data-part="proposal-pill"]')).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __siannGhosts?: { list(): unknown[] } }).__siannGhosts?.list().length ?? 0)).toBe(ghostPlan.length);
