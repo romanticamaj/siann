@@ -3,7 +3,7 @@
 // None takes a locale; the words around them come from the catalogs.
 
 // The model's minus infinity (Gain::kMinusInfinity, INT32_MIN).
-const MINUS_INFINITY_MILLI_DB = -2147483648;
+export const MINUS_INFINITY_MILLI_DB = -2147483648;
 
 // Gains are integer milli-dB (spec, "siann-model").
 export function formatMilliDb(milliDb: number): string {

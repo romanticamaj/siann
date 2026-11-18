@@ -19,9 +19,10 @@
 // Music-domain clips (which need the tempo map) are left alone, as the
 // timeline does not draw them yet. Framework-free.
 
-import type { ClipEntity, TrackEntity } from '../model/document';
+import type { ClipEntity, MediaEntity, TrackEntity } from '../model/document';
 import type { Snapshot } from '../model/read-model';
 import { newClipId, type TimelineCommand } from './commands';
+import { snapTrim } from './geometry';
 import type { TrackSelection } from './selection';
 
 type Command = Record<string, unknown>;
@@ -59,8 +60,11 @@ function audio(value: bigint): { domain: 'audio'; value: string } {
   return { domain: 'audio', value: value.toString() };
 }
 
+// What a placed copy takes of a clip (a clip entity or a clipboard item).
+type ClipContent = Pick<ClipEntity, 'mediaId' | 'sourceStart' | 'length' | 'gainMilliDb' | 'fadeIn' | 'fadeOut'>;
+
 // A copy of the clip under a new id, with its fades.
-function placeCopy(clip: ClipEntity, clipId: string, trackId: string, position: bigint): Command[] {
+function placeCopy(clip: ClipContent, clipId: string, trackId: string, position: bigint): Command[] {
   const place: Command = {
     op: 'clip.place',
     clipId,
@@ -290,4 +294,232 @@ export function removeTracksCommand(snapshot: Snapshot, trackIds: readonly strin
     snapshot,
     tracksOf(snapshot, trackIds).map((track) => ({ op: 'track.remove', trackId: track.id })),
   );
+}
+
+// ---- m5b-ui-edit-more (UI redesign spec 3.2 "Tools", "Clip handles" and
+// "Editing"): glue, cut, copy, paste, repeat and nudge.
+
+// Why two clips do not glue: the next clip is on another track, it does not
+// start where the first ends (a gap or an overlap), it plays other media, or
+// its source position does not continue the first's. no_next: nothing follows
+// on the track.
+export type GlueRefusal = 'no_next' | 'gap' | 'other_media' | 'source_not_continuous' | 'other_track';
+
+export interface GlueRefused {
+  readonly refused: GlueRefusal;
+}
+
+export function isGlueRefused(value: unknown): value is GlueRefused {
+  return typeof value === 'object' && value !== null && 'refused' in value;
+}
+
+// Whether `next` continues `first`: the same track, adjacent on the timeline,
+// the same media, the source running on. Null when they glue.
+export function glueCheck(first: ClipEntity, next: ClipEntity): GlueRefusal | null {
+  if (first.trackId !== next.trackId) return 'other_track';
+  const end = BigInt(first.position.value) + BigInt(first.length);
+  if (BigInt(next.position.value) !== end) return 'gap';
+  if (next.mediaId !== first.mediaId) return 'other_media';
+  if (BigInt(next.sourceStart) !== BigInt(first.sourceStart) + BigInt(first.length)) return 'source_not_continuous';
+  return null;
+}
+
+// The audio clips of each track, by start (then id).
+function lanesOf(snapshot: Snapshot): Map<string, ClipEntity[]> {
+  const lanes = new Map<string, ClipEntity[]>();
+  for (const clip of snapshot.clips) {
+    if (clip.schema !== 'siann.entity.clip.v1' || clip.position.domain !== 'audio') continue;
+    const lane = lanes.get(clip.trackId) ?? [];
+    lane.push(clip);
+    lanes.set(clip.trackId, lane);
+  }
+  for (const lane of lanes.values()) {
+    lane.sort((a, b) => {
+      const d = BigInt(a.position.value) - BigInt(b.position.value);
+      return d < 0n ? -1 : d > 0n ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+  }
+  return lanes;
+}
+
+// The clip after `clip` on its track: the nearest later start.
+function nextOnTrack(lane: readonly ClipEntity[], clip: ClipEntity): ClipEntity | null {
+  const index = lane.findIndex((c) => c.id === clip.id);
+  return index >= 0 ? (lane[index + 1] ?? null) : null;
+}
+
+// The commands that join a run of pieces into its first: clip.remove of each
+// following piece, clip.trim of the first to the run's length, and
+// clip.set_fade when the fade out changes (the last piece's, "0" when it has
+// none and the first had one). The first piece keeps its fade in and volume.
+function joinRun(run: readonly ClipEntity[]): Command[] {
+  const first = run[0]!;
+  const last = run[run.length - 1]!;
+  let length = 0n;
+  for (const piece of run) length += BigInt(piece.length);
+  const commands: Command[] = run.slice(1).map((piece) => ({ op: 'clip.remove', clipId: piece.id }));
+  commands.push({ op: 'clip.trim', clipId: first.id, sourceStart: first.sourceStart, length: length.toString() });
+  if (last.fadeOut) commands.push({ op: 'clip.set_fade', clipId: first.id, fadeOut: { ...last.fadeOut } });
+  else if (first.fadeOut) commands.push({ op: 'clip.set_fade', clipId: first.id, fadeOut: { length: '0', curve: first.fadeOut.curve } });
+  return commands;
+}
+
+// The Glue tool: the clip and the next clip of its track, or with `all`
+// (Alt-click) every following piece that continues the run; a refusal when
+// the next clip does not continue this one; null for an unknown clip.
+export function glueCommand(snapshot: Snapshot, clipId: string, options: { readonly all?: boolean } = {}): TimelineCommand | GlueRefused | null {
+  const clip = audioClip(snapshot, clipId);
+  if (!clip) return null;
+  const lane = lanesOf(snapshot).get(clip.trackId) ?? [];
+  const run = [clip];
+  for (;;) {
+    const last = run[run.length - 1]!;
+    const next = nextOnTrack(lane, last);
+    const refusal = next ? glueCheck(last, next) : 'no_next';
+    if (refusal || !next) {
+      if (run.length === 1) return { refused: refusal ?? 'no_next' };
+      break;
+    }
+    run.push(next);
+    if (!options.all) break;
+  }
+  return issue(snapshot, joinRun(run));
+}
+
+// edit.glue: each run of consecutive selected pieces that glue, per track in
+// track order; a selected clip with no selected neighbour to join is left alone.
+export function glueSelectionCommand(snapshot: Snapshot, clipIds: readonly string[]): TimelineCommand | null {
+  const wanted = new Set(audioClips(snapshot, clipIds).map((c) => c.id));
+  const lanes = lanesOf(snapshot);
+  const commands: Command[] = [];
+  for (const trackId of snapshot.trackOrder) {
+    let run: ClipEntity[] = [];
+    const flush = () => {
+      if (run.length > 1) commands.push(...joinRun(run));
+      run = [];
+    };
+    for (const clip of lanes.get(trackId) ?? []) {
+      if (!wanted.has(clip.id)) {
+        flush();
+        continue;
+      }
+      const last = run[run.length - 1];
+      if (last && glueCheck(last, clip) !== null) flush();
+      run.push(clip);
+    }
+    flush();
+  }
+  return issue(snapshot, commands);
+}
+
+// One clip of the clipboard: what a paste places, its track, and its offset
+// from the earliest copied clip's start.
+export interface ClipboardItem extends ClipContent {
+  readonly trackId: string;
+  readonly offset: bigint;
+}
+
+// Copied clips (Ctrl+C, Ctrl+X): where the earliest one started and each clip.
+export interface ClipboardContent {
+  readonly origin: bigint;
+  readonly items: readonly ClipboardItem[];
+}
+
+// Ctrl+C: the selected audio clips as a clipboard value; null when none is known.
+export function copyClips(snapshot: Snapshot, clipIds: readonly string[]): ClipboardContent | null {
+  const clips = audioClips(snapshot, clipIds);
+  const range = span(clips);
+  if (!range) return null;
+  const items = clips.map(
+    (clip): ClipboardItem => ({
+      trackId: clip.trackId,
+      mediaId: clip.mediaId,
+      sourceStart: clip.sourceStart,
+      length: clip.length,
+      gainMilliDb: clip.gainMilliDb,
+      ...(clip.fadeIn ? { fadeIn: { ...clip.fadeIn } } : {}),
+      ...(clip.fadeOut ? { fadeOut: { ...clip.fadeOut } } : {}),
+      offset: BigInt(clip.position.value) - range.start,
+    }),
+  );
+  return Object.freeze({ origin: range.start, items: Object.freeze(items) });
+}
+
+// Ctrl+X once copied: clip.remove of every selected clip.
+export function cutCommand(snapshot: Snapshot, clipIds: readonly string[]): TimelineCommand | null {
+  return issue(
+    snapshot,
+    audioClips(snapshot, clipIds).map((clip) => ({ op: 'clip.remove', clipId: clip.id })),
+  );
+}
+
+// Ctrl+V at the cursor, Alt+V at the origin: the clipboard placed with its
+// relative positions and tracks; a clip whose track or media is gone is left out.
+export function pasteCommand(snapshot: Snapshot, clipboard: ClipboardContent, at: bigint | 'origin', clipId: () => string = newClipId): TimelineCommand | null {
+  const base = at === 'origin' ? clipboard.origin : at < 0n ? 0n : at;
+  const lanes = new Set(snapshot.trackOrder);
+  const commands: Command[] = [];
+  for (const item of clipboard.items) {
+    if (!lanes.has(item.trackId) || !snapshot.entities[`track:${item.trackId}`]) continue;
+    if (!snapshot.entities[`media:${item.mediaId}`]) continue;
+    commands.push(...placeCopy(item, clipId(), item.trackId, base + item.offset));
+  }
+  return issue(snapshot, commands);
+}
+
+// The most copies one repeat makes (the Ctrl+K dialog's range is 1 to it).
+export const MAX_REPEAT = 99;
+
+// Ctrl+K and the repeat handle: `count` copies of the selection, copy k
+// shifted by k times the selection's span, keeping tracks and offsets.
+export function repeatCommand(snapshot: Snapshot, clipIds: readonly string[], count: number, clipId: () => string = newClipId): TimelineCommand | null {
+  if (!Number.isInteger(count) || count < 1 || count > MAX_REPEAT) return null;
+  const clips = audioClips(snapshot, clipIds);
+  const range = span(clips);
+  if (!range) return null;
+  const by = range.end - range.start;
+  const commands: Command[] = [];
+  for (let k = 1; k <= count; k += 1) {
+    for (const clip of clips) commands.push(...placeCopy(clip, clipId(), clip.trackId, BigInt(clip.position.value) + BigInt(k) * by));
+  }
+  return issue(snapshot, commands);
+}
+
+// The selection's span in frames (the start of its earliest clip to the end of its latest), or 0n.
+export function selectionLength(snapshot: Snapshot, clipIds: readonly string[]): bigint {
+  const range = span(audioClips(snapshot, clipIds));
+  return range ? range.end - range.start : 0n;
+}
+
+// The copies a drag of the repeat handle by `dx` frames makes: the drag in
+// selection spans, rounded (half a span is one copy), 0 to MAX_REPEAT.
+export function repeatCountFromDrag(dx: bigint, selectionSpan: bigint): number {
+  if (dx <= 0n || selectionSpan <= 0n) return 0;
+  const count = (2n * dx + selectionSpan) / (2n * selectionSpan);
+  return count > BigInt(MAX_REPEAT) ? MAX_REPEAT : Number(count);
+}
+
+export type NudgeMode = 'position' | 'startLeft' | 'startRight' | 'endLeft' | 'endRight';
+
+// Ctrl+Left/Right ('position', by the signed step: clip.move, the whole
+// selection stopping at 0) and the Alt arrows (the step's magnitude): the
+// start moved with clip.trim and clip.move (the audio stays where it is,
+// within the media, the timeline's start and one frame), the end with
+// clip.trim (within the media and one frame). One list for the selection.
+export function nudgeCommand(snapshot: Snapshot, clipIds: readonly string[], stepFrames: bigint, mode: NudgeMode): TimelineCommand | null {
+  if (stepFrames === 0n) return null;
+  if (mode === 'position') return moveSelectionCommand(snapshot, clipIds, stepFrames, 0);
+  const step = stepFrames < 0n ? -stepFrames : stepFrames;
+  const edge = mode === 'startLeft' || mode === 'startRight' ? 'left' : 'right';
+  const delta = mode === 'startLeft' || mode === 'endLeft' ? -step : step;
+  const commands: Command[] = [];
+  for (const clip of audioClips(snapshot, clipIds)) {
+    const media = snapshot.entities[`media:${clip.mediaId}`] as MediaEntity | undefined;
+    if (!media || media.schema !== 'siann.entity.media.v1') continue;
+    const trimmed = snapTrim(clip, media.frames, edge, delta);
+    if (trimmed.length === clip.length && trimmed.sourceStart === clip.sourceStart) continue;
+    commands.push({ op: 'clip.trim', clipId: clip.id, sourceStart: trimmed.sourceStart, length: trimmed.length });
+    if (edge === 'left') commands.push({ op: 'clip.move', clipId: clip.id, position: audio(BigInt(trimmed.position)) });
+  }
+  return issue(snapshot, commands);
 }
