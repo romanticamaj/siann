@@ -454,6 +454,23 @@ rendered buttons ...", `key-preset` "Shift+C is unbound ...", e2e `transport`
 window), `mockup-fidelity.test.js` "the chrome's gate is report ..." (gate
 `report`, no `--hold-display-signature-w`), the side-by-side screenshots by eye.
 
+| Feature | N | D | U | E | F | M (tour) | Platforms | Gaps |
+|---|---|---|---|---|---|---|---|---|
+| m5b-ui-plan-metadata | | | Y (`plan-store`: title, intent and actor kept, a rejected plan.changed with its note merged with no request, an event without a note re-reads, approved re-reads; `plan-name`: the title, the first step and "N steps", M5 wording without the feature, generic; `agents`: engine.status and agent.changed parsed, the shown agent, the row's words, a catalog entry per MCP tool of `protocol-mcp-v0.md` in three locales, cleared without an engine, nothing requested without the feature; `plans-tab`: the agent row, title and intent against mockup.html, the three empty boxes with reduced capabilities, an untitled plan, "No agent connected"; `plan-panel`, `plan-card`: history titles, the actor in the detail, the rejection note; `audition-banner`, `toast-arrivals`: the title; `plan-bidi`: isolates; `i18n-catalogs`) | Y (`plan-review.spec` "the agent row, the title and the intent ...": an MCP client named mix-assistant, agent.changed without a reload, toast, history row, reject note, banner, DELETE /v0/mcp; "with reduced capabilities ...": the ids absent, the empty boxes, the same boxes for right-tabs, .p-scroll and plan-summary; `i18n-fit` the row and the titled card in three locales at 1440 and at the right zone's minimum; `mockup-fidelity.spec` the three ids) | report (gate `m5b-ui-plan-metadata`; `mockup-fidelity.test.js` checks the gate, the hold tokens' removal, the calc rules and the unmasked history rows) | 13 to 22, 41 | all three | - |
+
+Per acceptance item (`m5b-ui-plan-metadata`): 1 `plan-name`, `plans-tab`,
+`plan-panel`, `audition-banner`, `toast-arrivals`, e2e `plan-review`; 2
+`agents`, `plans-tab`, e2e `plan-review` (connected, idle, the tool's wording,
+disconnected); 3 `plan-store` (no request), `plan-card`, e2e `plan-review`
+(the note on the card); 4 `plans-tab` (reduced capabilities, an untitled plan),
+`mockup-fidelity.test.js` (calc rules, no hold token), e2e `plan-review`
+(reduced capabilities, the same boxes); 5 e2e `mockup-fidelity.spec` with
+`support/fidelity-session.ts`; 6 `i18n-catalogs`, `agents` (the tool catalog),
+the tour (13 to 22, 41); 7 `plans-tab` (structure against mockup.html lines
+306, 311, 312), e2e `plan-review` and `mockup-fidelity.spec` (the ids in the
+window), `mockup-fidelity.test.js` (gate `report`, history rows unmasked), the
+side-by-side screenshots by eye.
+
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
 No code, so no tests. What matters now is whether each acceptance item says how
@@ -471,7 +488,7 @@ is unowned (UI redesign 10.5); not in the counts above:
 | `m5b-ui-signature` (landed, see the table above) | 1 | | `display-signature` | unit: the cell and the bar maths read one constant |
 | `m5b-engine-load-loudness` (E-13; landed, see the table above) | 2 | | | conformance: BS.1770 / EBU Tech 3341 signals at three rates; realtime allocation guard |
 | `m5b-engine-agent-requests` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | | protocol tests: states, scopes, bounds (4,000 characters, 16 open per agent, `agent_busy`), the `next_request` long poll, a second client; gate `agent-request-shape` (resolved) |
-| `m5b-ui-plan-metadata` | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
+| `m5b-ui-plan-metadata` (landed, see the table above) | 2 | `m5b-engine-plan-metadata` | `agent-row`, `plan-title`, `plan-intent` | e2e with a reduced capabilities fixture; the fidelity session's plan carries its title; unmasks the history rows (`plan-history-1` to `plan-history-3` leave `pixels.dynamic`) |
 | `m5b-engine-track-notes` | 3 | | | command tests: validation, undo, replay |
 | `m5b-ui-meter` | 3 | `m5b-engine-load-loudness` | `dsp-load`, `strip-master-loudness`, `tab-meter` | e2e with a reduced capabilities fixture |
 | `m5b-ui-composer` | 3 | `m5b-engine-agent-requests`, `m5b-ui-plan-metadata` | `composer` | e2e with an MCP client: sent, taken, answered by a plan, declined, cancelled; `agent_busy` shown |
