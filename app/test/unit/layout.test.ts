@@ -558,7 +558,7 @@ test('tabs: the right zone has plans and media; openTab media opens a collapsed 
   assert.deepEqual(reduce(media, { type: 'openTab', zone: 'right', tab: 'media', viewport: WIDE }), media, 'pressed again it stays');
   const back = reduce(media, { type: 'tab', zone: 'right', tab: 'plans' });
   assert.equal(back.layout.tabs.right, 'plans');
-  assert.equal(reduce(back, { type: 'tab', zone: 'right', tab: 'meter' }).layout.tabs.right, 'plans', 'no Meter tab yet');
+  assert.equal(reduce(back, { type: 'tab', zone: 'right', tab: 'meter' }).layout.tabs.right, 'meter', 'the Meter tab (m5b-ui-meter)');
   // Kept under siann.layout.v1 and read back.
   assert.equal(parseLayout(serializeLayout(media.layout)).tabs.right, 'media');
   assert.equal(parseLayout(JSON.stringify({ tabs: { right: 'pool' } })).tabs.right, 'plans');

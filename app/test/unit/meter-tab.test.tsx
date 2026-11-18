@@ -136,7 +136,7 @@ test('with features.loudness the tab row holds the mockup\'s Meter tab: button.t
   const zone = shell(FULL);
   const head = find(zone, (n) => partOf(n) === 'right-tabs')!;
   // (No hearing switch is passed to this Shell.)
-  assert.deepEqual(head.children.map(sig), ['button.tab.on[tab-plans]', 'span.hold-tab-media', 'button.tab[tab-meter]']);
+  assert.deepEqual(head.children.map(sig), ['button.tab.on[tab-plans]', 'button.tab[tab-media]', 'button.tab[tab-meter]']);
   const tab = find(zone, (n) => partOf(n) === 'tab-meter')!;
   assert.equal(tab.attrs['data-testid'], 'tab-right-meter');
   assert.equal(tab.attrs.role, 'tab');
@@ -171,7 +171,7 @@ test('without features.loudness the Meter tab is absent and its box is an empty 
   const zone = shell(WITHOUT_LOUDNESS);
   assert.equal(find(zone, (n) => partOf(n) === 'tab-meter'), undefined);
   const head = find(zone, (n) => partOf(n) === 'right-tabs')!;
-  assert.deepEqual(head.children.map(sig), ['button.tab.on[tab-plans]', 'span.hold-tab-media', 'span.tab-meter-empty']);
+  assert.deepEqual(head.children.map(sig), ['button.tab.on[tab-plans]', 'button.tab[tab-media]', 'span.tab-meter-empty']);
   const box = head.children[2]!;
   assert.equal(box.attrs['aria-hidden'], 'true');
   for (const attr of ['role', 'tabindex', 'data-part', 'data-testid', 'title', 'aria-label']) assert.ok(!(attr in box.attrs), attr);
