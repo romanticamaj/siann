@@ -635,7 +635,14 @@ moved (ASAN); 3 `fuzz_smoke_test` (ctest, three OSes), `native-quality-options`
 long tests run on ubuntu, windows and macos"; 6 app unit `perf-report` and
 `frame-marks`, `perf.spec.ts` in the nightly run; 7 `ci-workflow` "no nightly
 job blocks a pull request ..." and `test-matrix` (section 1 rows, 3.1, the gaps,
-section 7, this row, the tour's 3.2 row). Tour states changed: none.
+section 7, this row, the tour's 3.2 row). Tour states changed: none. The
+branch's local runs (Clang 20.1.8, WSL, 2026-11-18): ASAN + UBSAN, all 1,174
+ctest tests passed with the suppression files passed and empty; the six
+libFuzzer targets for 180 s each found nothing; coverage 92.9 % of regions of
+SIANN sources (tests, `_deps` and Catch2 ignored), after the coverage step's
+executable list was fixed to skip a generated header carrying the x bit;
+`perf.spec.ts` on Windows: median 0.7 ms and p99 6.1 ms of frame work, 12 MB of
+heap, 483 ms cold start, all within 5.6.
 
 ### M5b (not landed), M6a, M6b, M6c, M7 (not started)
 
@@ -822,7 +829,7 @@ Taken on Windows, Node 22, 2026-11-14.
 | Node, incl. `scripts/` | same, no include filter | 86.5 % | 78.0 % | 91.2 % | `scripts/check-all.js` 53 % (the build steps), `create-daw-manifest.js` 73 % |
 | App, unit tests only | `npm run build` then `node --test --experimental-test-coverage --test-coverage-exclude='dist/test/**' dist/test/unit/*.test.js` | 89.7 % of loaded files | 88.2 % | 79.7 % | `PlanPanel` 33 %, `TrackListDivider` 32 %, `ValueControl` 37 %, `Mixer` 42 %, `TrackList` 49 %, `Timeline` 51 %, `StepList` 72 %, `plans/diff` 79 %, `keys/commands` 80 %. Never loaded by a unit test: `main.ts`, `preload.ts`, `App.tsx`, `Shell.tsx`, `TopBar.tsx`, `index.tsx` (covered by e2e only) |
 | App e2e | not measured | | | | proposal: `NODE_V8_COVERAGE` for the main process and Playwright's `page.coverage` (Chromium) for the renderer, merged with c8-style tooling in the app job |
-| Native | nightly (layer C): the `coverage` job of `nightly.yml`, Clang `-DSIANN_COVERAGE=ON`, ctest with `LLVM_PROFILE_FILE=%p-%m.profraw`, `llvm-profdata merge`, `llvm-cov report --ignore-filename-regex='(_deps\|/tests?)/'`. The figures of the newest run are in that run's job summary, the per-line HTML in its `native-coverage` artifact (since `m5b-nightly-quality`) | see the run | see the run | see the run | report only, no minimum |
+| Native | nightly (layer C): the `coverage` job of `nightly.yml`, Clang `-DSIANN_COVERAGE=ON`, ctest with `LLVM_PROFILE_FILE=%p-%m.profraw`, `llvm-profdata merge`, `llvm-cov report --ignore-filename-regex='(_deps|/tests?|/catch2)/\|/tests?)/'`. The figures of the newest run are in that run's job summary, the per-line HTML in its `native-coverage` artifact (since `m5b-nightly-quality`) | see the run | see the run | see the run | report only, no minimum |
 | App, unit tests, per pull request | the `app` job's "Unit test coverage" step prints the command above into each run's job summary, per OS (since `m5b-nightly-quality`) | see the run | | | report only, no minimum |
 
 The low React-component numbers are expected: those components are exercised by

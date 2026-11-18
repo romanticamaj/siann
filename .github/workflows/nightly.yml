@@ -286,14 +286,15 @@ jobs:
         run: |
           cd native/build/coverage
           llvm-profdata-20 merge -sparse profiles/*.profraw -o merged.profdata
-          bins=$(find . -path ./_deps -prune -o -type f -perm -u+x \( -name 'siann_*' -o -name 'siann-*' \) -print | sort)
+          # The instrumented executables: no extension (a generated header can carry the x bit).
+          bins=$(find . -path ./_deps -prune -o -type f -perm -u+x \( -name 'siann_*' -o -name 'siann-*' \) ! -name '*.*' -print | sort)
           set -- $bins
           first=$1
           shift
           objects=""
           for bin in "$@"; do objects="$objects -object=$bin"; done
-          ignore='(_deps|/tests?)/'
-          llvm-cov-20 show "$first" $objects -instr-profile=merged.profdata -format=html -output-dir=html --ignore-filename-regex='(_deps|/tests?)/'
+          ignore='(_deps|/tests?|/catch2)/'
+          llvm-cov-20 show "$first" $objects -instr-profile=merged.profdata -format=html -output-dir=html --ignore-filename-regex='(_deps|/tests?|/catch2)/'
           llvm-cov-20 report "$first" $objects -instr-profile=merged.profdata --ignore-filename-regex="$ignore" > report.txt
           {
             echo '## Native coverage (llvm-cov, report only)'
