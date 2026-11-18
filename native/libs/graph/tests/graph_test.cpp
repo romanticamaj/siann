@@ -838,6 +838,55 @@ TEST_CASE("Flipping the monitor gate mid-run crossfades without a step", "[graph
     CHECK(maxStep(out) <= 2.0f / static_cast<float>(kFade) + 1e-4f);
 }
 
+// The compensation delay line of a low-latency edge must not hold the input it
+// passed: a switch back to the clips (a punch-out, auto at the end of a capture)
+// would otherwise play the last `compensation` frames of the performer's input
+// a second time, late.
+TEST_CASE("Switching a monitored strip back to its clips plays no input a second time", "[graph][monitor]") {
+    constexpr int kFade = 32;
+    constexpr std::int64_t kComp = 100;
+    MonitorGate gate;
+    GraphBuilder b;
+    const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.25f), "a.clips");
+    const NodeId monitor =
+        b.add(std::make_unique<MonitorInputNode>(1, MonitorInputMode::automatic, 0, 1, &gate, kFade), "a.monitor");
+    const NodeId other = b.add(std::make_unique<ConstantNode>(1, 0.0f), "b.clips");
+    const NodeId latent = b.add(std::make_unique<FakeLatencyNode>(1, kComp), "b.insert");
+    const NodeId master = b.add(std::make_unique<BusNode>(1), "master");
+    b.connect(clips, monitor);
+    b.connectLowLatency(monitor, master, monitor);
+    b.connect(other, latent);
+    b.connect(latent, master);
+    b.setOutput(master);
+    auto graph = std::move(b).compile(64);
+    REQUIRE(graph->edgeCompensation(monitor, master) == kComp);
+
+    InputBlock input(1, 6'400);
+    for (std::size_t i = 0; i < input.data[0].size(); ++i) {
+        input.data[0][i] = 1.0f;  // DC input, four times the clips' level
+    }
+    gate.armed.store(true);
+    const auto out = runWithInput(*graph, input, 6'400, 64, true, [&](std::int64_t start) {
+        if (start == 640) {
+            gate.capturing.store(true);
+        } else if (start == 3'200) {
+            gate.capturing.store(false);
+        }
+    });
+    CHECK(out[600] == 0.25f);   // the clips, compensated
+    CHECK(out[3'000] == 1.0f);  // the input, undelayed
+    // From the end of the crossfade back, the compensated path carries what it
+    // stored while the input passed: silence, never the input again.
+    for (std::int64_t i = 3'200 + kFade; i < 3'200 + kComp; ++i) {
+        INFO(i);
+        CHECK(out[static_cast<std::size_t>(i)] == 0.0f);
+    }
+    // The clips come back, faded in rather than stepped in (from frame 200: the
+    // line starts silent, so the clips first arrive at frame 100 with a step).
+    CHECK(out.back() == 0.25f);
+    CHECK(maxStep(std::vector<float>(out.begin() + 200, out.end())) <= 2.0f / static_cast<float>(kFade) + 1e-4f);
+}
+
 TEST_CASE("A stopped context silences the clip player", "[graph][monitor][nodes]") {
     auto media = std::make_shared<PlanarAudio>();
     media->channels = 1;

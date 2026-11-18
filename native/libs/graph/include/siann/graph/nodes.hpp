@@ -218,6 +218,7 @@ public:
                  const AudioBufferView& output) noexcept override;
 
     MonitorInputMode mode() const noexcept { return mode_; }
+    int fadeFrames() const noexcept { return fadeFrames_; }
     // 0 (clips) to 1 (input) at frame i of the last processed block.
     float inputBlend(int frame) const noexcept {
         return frame >= 0 && static_cast<std::size_t>(frame) < blend_.size() ? blend_[static_cast<std::size_t>(frame)]

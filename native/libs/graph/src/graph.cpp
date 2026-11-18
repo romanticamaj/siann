@@ -39,6 +39,10 @@ struct Storage {
 struct DelayLine {
     std::vector<std::vector<float>> ring;
     std::size_t position = 0;
+    // A low-latency edge's weight on what it stores (m5b-engine-monitoring):
+    // 0 while its monitor passes any input, so the line never holds the input,
+    // then back to 1 over the monitor's fade, so the clips return without a step.
+    float resume = 1.0f;
 
     DelayLine(int channels, std::int64_t delay)
         : ring(static_cast<std::size_t>(channels), std::vector<float>(static_cast<std::size_t>(delay), 0.0f)) {}
@@ -351,19 +355,27 @@ void PreparedGraph::process(const ProcessContext& context, const EdgeRamp& ramp)
             if (edge.delay) {
                 DelayLine& delay = *edge.delay;
                 const std::size_t length = delay.ring.front().size();
+                const float resumeStep =
+                    edge.monitor != nullptr ? 1.0f / static_cast<float>(edge.monitor->fadeFrames()) : 0.0f;
+                float resumed = delay.resume;  // where the envelope ends this block
                 for (int c = 0; c < source.channelCount; ++c) {
                     auto& ring = delay.ring[static_cast<std::size_t>(c)];
                     std::size_t pos = delay.position;
+                    float resume = delay.resume;  // the same envelope on every channel
                     for (int i = 0; i < frames; ++i) {
                         const float now = source.channel(c)[i];
                         float delayed = ring[pos];
-                        ring[pos] = now;
                         if (edge.monitor != nullptr) {
-                            // Monitored input skips the compensation (crossfaded).
+                            // Monitored input skips the compensation (crossfaded),
+                            // and the line stores none of it (see DelayLine::resume).
                             const float blend = edge.monitor->inputBlend(i);
+                            resume = blend > 0.0f ? 0.0f : std::min(1.0f, resume + resumeStep);
+                            ring[pos] = resume == 1.0f ? now : now * resume;
                             delayed = blend == 0.0f   ? delayed
                                       : blend == 1.0f ? now
                                                       : delayed * (1.0f - blend) + now * blend;
+                        } else {
+                            ring[pos] = now;
                         }
                         const float gain = ramped ? edge.gain * rampGain(ramp, i) : edge.gain;
                         target.channel(c)[i] += delayed * gain;
@@ -371,7 +383,9 @@ void PreparedGraph::process(const ProcessContext& context, const EdgeRamp& ramp)
                             pos = 0;
                         }
                     }
+                    resumed = resume;
                 }
+                delay.resume = resumed;
                 delay.position = (delay.position + static_cast<std::size_t>(frames)) % length;
             } else {
                 for (int c = 0; c < source.channelCount; ++c) {
