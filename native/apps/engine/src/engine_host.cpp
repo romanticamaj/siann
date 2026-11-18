@@ -1013,7 +1013,10 @@ int EngineHost::openInputChannels() const {
 }
 
 bool EngineHost::covers(const model::TrackInput& input) const {
-    return input.port >= 0 && input.channels >= 1 && input.port + input.channels <= openInputChannels();
+    // channels <= open - port with port < open first: a port near INT32_MAX (the
+    // document allows it) cannot overflow port + channels.
+    const int open = openInputChannels();
+    return input.port >= 0 && input.channels >= 1 && input.port < open && input.channels <= open - input.port;
 }
 
 // Whether main's head still gives the track an input the open input covers.

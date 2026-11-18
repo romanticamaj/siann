@@ -720,6 +720,46 @@ TEST_CASE("MonitorInputNode passes the mapped input when open and its port 0 whe
     }
 }
 
+// The track's channel map comes from the document (Track.input.port is 0 to
+// INT32_MAX): the check that the open input covers it must not overflow.
+TEST_CASE("MonitorInputNode's coverage check holds at the edge values up to INT32_MAX", "[graph][monitor]") {
+    InputBlock input(3, 64);
+    for (int i = 0; i < 64; ++i) {
+        input.data[0][static_cast<std::size_t>(i)] = 0.125f;
+        input.data[1][static_cast<std::size_t>(i)] = 0.25f;
+        input.data[2][static_cast<std::size_t>(i)] = 0.5f;
+    }
+    struct Case {
+        int port;
+        int channels;
+        float expected;  // the mono track's output: the input, or silence
+    };
+    const std::vector<Case> cases = {
+        {2, 1, 0.5f},                    // the last channel: covered
+        {1, 2, 0.375f},                  // the last pair, averaged into mono: covered
+        {0, 2, 0.1875f},                 // the first pair
+        {3, 1, 0.0f},                    // one past the last channel
+        {2, 2, 0.0f},                    // a pair that runs one past
+        {INT_MAX, 1, 0.0f},              // port + channels would overflow an int
+        {INT_MAX, 2, 0.0f},
+        {INT_MAX - 1, 2, 0.0f},
+        {INT_MAX - 2, 2, 0.0f},
+    };
+    for (const Case& c : cases) {
+        INFO("port " << c.port << " channels " << c.channels);
+        GraphBuilder b;
+        const NodeId clips = b.add(std::make_unique<ConstantNode>(1, 0.75f), "clips");
+        const NodeId monitor = b.add(
+            std::make_unique<MonitorInputNode>(1, MonitorInputMode::input, c.port, c.channels, nullptr, 16), "monitor");
+        b.connect(clips, monitor);
+        b.setOutput(monitor);
+        auto graph = std::move(b).compile(64);
+        for (const float v : runWithInput(*graph, input, 64, 64, true)) {
+            CHECK(v == c.expected);
+        }
+    }
+}
+
 TEST_CASE("Monitored input bypasses compensation; the same track's clips stay aligned", "[graph][monitor][pdc]") {
     // Track A: its clips (or the input) -> its own 30-frame insert -> master over
     // a low-latency edge. Track B: a 100-frame insert -> master.

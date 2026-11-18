@@ -335,6 +335,15 @@ TEST_CASE("arming needs an input that covers the track's, and follows the docume
     CHECK(codeOf([&] { rig.host->arm("trk_missing", true); }) == "not_found");
     rig.exec(setInput("trk_dry", 1, 2));  // channels 1 and 2 of a two-channel input
     CHECK(codeOf([&] { rig.host->arm("trk_dry", true); }) == "no_input");
+    // The document allows a port up to INT32_MAX: port + channels must not overflow.
+    for (const int port : {INT32_MAX, INT32_MAX - 1}) {
+        INFO(port);
+        rig.exec(setInput("trk_dry", port, 2));
+        CHECK(codeOf([&] { rig.host->arm("trk_dry", true); }) == "no_input");
+        rig.exec(setInput("trk_dry", port, 1));
+        CHECK(codeOf([&] { rig.host->arm("trk_dry", true); }) == "no_input");
+    }
+    CHECK(rig.host->status().armed.empty());
 
     const protocol::RecordState armed = rig.host->arm("trk_mono", true);
     CHECK(armed.armed == std::vector<std::string>{"trk_mono"});

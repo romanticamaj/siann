@@ -370,8 +370,12 @@ void MonitorInputNode::process(const ProcessContext& context, std::span<const Au
     }
 
     const AudioBufferView* in = context.input;
+    // Covered: [port, port + channels) lies inside the open input. Compared as
+    // channels <= count - port with port < count first, so a port near INT32_MAX
+    // (the document allows it) cannot overflow the sum.
     const bool haveInput = in != nullptr && in->channels != nullptr && inputChannels_ > 0 &&
-                           inputPort_ + inputChannels_ <= in->channelCount && in->frames >= frames;
+                           inputPort_ < in->channelCount && inputChannels_ <= in->channelCount - inputPort_ &&
+                           in->frames >= frames;
     const AudioBufferView& clips = inputs[0];
     for (int c = 0; c < channels_; ++c) {
         const float* source = clips.channel(c);
