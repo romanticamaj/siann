@@ -329,4 +329,18 @@ export const zhHans: Catalog = {
   'error.queue_full': '引擎繁忙，请重试',
   'error.lease_expired': '租约已过期',
   'error.invalid_name': '名称不能包含控制字符、文字方向控制字符或分行符',
+  // The plan review in place (m5b-ui-ghosts; UI redesign 4.2).
+  'ghost.proposed': '提案音轨',
+  'ghost.proposedTrack': '提案音轨 {name}',
+  'ghost.trackSummary': '{channels} · {gain} · {pan} · 无插入效果',
+  'ghost.newStep': '新增 · 步骤 {n}',
+  'pill.label': '审核中的计划，就地显示',
+  'pill.toggle': '就地显示计划（Ctrl+Alt+G）',
+  'pill.ghosts': '预览',
+  'plans.locate': '就地显示步骤 {n}',
+  'inspector.agentChanges': '代理变更',
+  'agent.appliedBy': '{change}：',
+  'agent.step': '步骤 {n}',
+  'agent.pendingIn': '待审核，于',
+  'agent.none': '这条音轨没有待审核的变更。',
 };

@@ -10,19 +10,26 @@
 // to the shared rules, as for .tbtn and .msr), with aria-pressed and a name.
 //
 // Absent parts keep their space empty (spec 3.0): tools 2 and 4 to 9 until
-// m5b-ui-edit-more and the proposal pill until m5b-ui-ghosts, each box sized
-// by its --hold-*-w token (shell.css); a tool, snap, the grid type or
+// their features land, each box sized by its --hold-*-w token (shell.css); a tool, snap, the grid type or
 // auto-scroll on an engine that does not list its commands leaves an empty
 // box where it was. No empty box has a role, focus, a name or a part id.
 //
 // The refusal line (timeline-error) is the app's own, after the spacer: it
 // draws nothing unless a refusal is shown.
+//
+// The proposal pill (m5b-ui-ghosts; UI redesign 4.2) ends the toolbar while a
+// reviewable plan is selected: the mockup's span.overlaypill with the spark
+// icon, the plan's name (<b>its first step</b> · N steps, plans/plan-name.ts
+// until E-7) and the Ghosts toggle (.tog, a button with aria-pressed; Ctrl+Alt+G
+// does the same). Without one it is not in the DOM and no box replaces it:
+// nothing follows it in the row (spec 3.0).
 
 import { useEffect, useRef, useState } from 'react';
 
 import { refusalLine } from '../i18n/errors';
 import { useLocale, useT, type MessageKey } from '../i18n/t';
 import { Icon, type IconName } from '../shell/icons';
+import { ISOLATE } from '../plans/isolate';
 import { GRID_TYPES, type GridType, type SnapSettings } from './snap';
 import type { TimelineRefusal, Tool } from './TimelineCanvas';
 
@@ -47,6 +54,15 @@ export interface ToolbarProps {
   readonly onSnapToggle: () => void;
   readonly onGrid: (grid: GridType) => void;
   readonly onAutoScroll: () => void;
+  // The proposal pill (m5b-ui-ghosts): the overlaid plan's name and its ghosts toggle; null without a reviewable plan.
+  readonly pill?: ProposalPillProps | null;
+}
+
+export interface ProposalPillProps {
+  readonly lead: string;
+  readonly steps: string;
+  readonly on: boolean;
+  readonly onToggle: () => void;
 }
 
 // The mockup's nine tools in tool()'s order; the ones SIANN has carry their tool.
@@ -73,7 +89,7 @@ const TOOL_HOLDS: Readonly<Record<number, string>> = {
   9: 'hold-tool-9',
 };
 
-export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapToggle, onGrid, onAutoScroll }: ToolbarProps) {
+export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapToggle, onGrid, onAutoScroll, pill = null }: ToolbarProps) {
   const t = useT();
   const locale = useLocale();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -157,8 +173,7 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
         <output className="timeline-error" data-testid="timeline-error" data-code={error?.code ?? undefined} title={t('timeline.lastError')}>
           {error ? refusalLine(error.code, error.message, locale) : ''}
         </output>
-        {/* The proposal pill (m5b-ui-ghosts): its box, empty. */}
-        <span className="hold-proposal-pill" aria-hidden="true" />
+        {pill ? <ProposalPill {...pill} /> : null}
       </div>
       {menu && gates.snap ? (
         <GridTypeMenu
@@ -173,6 +188,24 @@ export function Toolbar({ tool, snap, autoScroll, gates, error, onTool, onSnapTo
         />
       ) : null}
     </>
+  );
+}
+
+// The mockup's span.overlaypill: the overlaid plan's name and its ghosts toggle.
+function ProposalPill({ lead, steps, on, onToggle }: ProposalPillProps) {
+  const t = useT();
+  return (
+    <span className="overlaypill" data-part="proposal-pill" data-testid="proposal-pill" title={t('pill.label')}>
+      <Icon name="spark" small />
+      <span {...ISOLATE}>
+        <b>{lead}</b>
+        {` · ${steps}`}
+      </span>
+      <button type="button" className="tog" data-testid="proposal-pill-toggle" aria-pressed={on} aria-label={t('pill.toggle')} title={t('pill.toggle')} onClick={onToggle}>
+        <Icon name="check" small />
+        {t('pill.ghosts')}
+      </button>
+    </span>
   );
 }
 

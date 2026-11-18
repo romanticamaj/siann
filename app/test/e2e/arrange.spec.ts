@@ -1108,7 +1108,7 @@ test("every id of the event display is found, no pending part's id is, and the h
   await engine.call('transport.locate', { frames: '4800' });
   engine.close();
   await expect.poll(async () => (await parts()).map((p) => p.id)).toEqual(['ruler-upper', 'ruler-lower', 'lane-1', 'lane-2', 'lane-3', 'clip-1', 'cursor', 'cursor-head']);
-  // No part of a pending feature: not in the DOM, not on the surface.
+  // No part of a pending feature, and no ghost without a plan (m5b-ui-ghosts): not in the DOM, not on the surface.
   for (const pending of ['marker-track', 'marker-head', 'lane-ghost']) await expect(page.locator(`[data-part="${pending}"]`)).toHaveCount(0);
   await expect(page.locator('[data-part^="clip-ghost-"]')).toHaveCount(0);
   for (const id of (await parts()).map((p) => p.id)) expect(id).not.toMatch(/^(marker-track|marker-head|clip-ghost-|lane-ghost)/);
@@ -1129,6 +1129,7 @@ test("every id of the event display is found, no pending part's id is, and the h
 // ---- m5-ui-port-toolbar: the toolbar, the info line and the Pool (UI redesign 10.8, 10.9, 10.10 P1-16)
 
 const TOOLBAR_IDS = ['toolbar', 'tools', 'tool-1', 'tool-3', 'snap', 'grid-type', 'auto-scroll', 'info-line', 'info-name', 'info-start', 'info-end', 'info-length', 'info-offset', 'info-volume'];
+// The proposal pill (m5b-ui-ghosts) is absent too: no plan is under review here.
 const PENDING_IDS = ['tool-2', 'tool-4', 'tool-5', 'tool-6', 'tool-7', 'tool-8', 'tool-9', 'proposal-pill', 'info-fade-in', 'info-fade-out'];
 
 test('the toolbar\'s tools, snap, grid type and auto-scroll show and change the timeline\'s state; every id is found and no pending one', async () => {
@@ -1419,8 +1420,11 @@ test('every landed id of the track list is in the window and no pending one is, 
   });
   const landed = ids.filter((id) => gateOf(id) === 'report');
   const pending = ids.filter((id) => gateOf(id) === 'pending');
-  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write', 'track-ghost']) expect(pending).toContain(id);
-  for (const id of landed) expect(shown, id).toContain(id);
+  for (const id of ['marker-head', 'track-1-record', 'track-1-read', 'track-1-write']) expect(pending).toContain(id);
+  // The ghost track landed with m5b-ui-ghosts and is drawn for a reviewable plan only: none here.
+  expect(landed).toContain('track-ghost');
+  for (const id of landed.filter((id) => !/ghost/.test(id))) expect(shown, id).toContain(id);
+  expect(shown.filter((id) => /ghost/.test(id))).toEqual([]);
   for (const id of pending) expect(shown, id).not.toContain(id);
   // The structure: .headers > .corner (.add, .cnt), the empty marker box, the headers as th() draws them.
   await expect(page.locator('.headers > .corner > .add + .cnt')).toHaveCount(1);

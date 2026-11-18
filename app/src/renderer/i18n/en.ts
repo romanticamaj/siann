@@ -373,6 +373,20 @@ export const en = {
   'error.queue_full': 'The engine is busy; try again',
   'error.lease_expired': 'The lease expired',
   'error.invalid_name': 'A name cannot contain control characters, text-direction controls or line separators',
+  // The plan review in place (m5b-ui-ghosts; UI redesign 4.2).
+  'ghost.proposed': 'proposed track',
+  'ghost.proposedTrack': 'Proposed track {name}',
+  'ghost.trackSummary': '{channels} · {gain} · {pan} · no inserts',
+  'ghost.newStep': 'NEW · STEP {n}',
+  'pill.label': 'The plan under review, drawn in place',
+  'pill.toggle': 'Show the plan in place (Ctrl+Alt+G)',
+  'pill.ghosts': 'Ghosts',
+  'plans.locate': 'Show step {n} in place',
+  'inspector.agentChanges': 'Agent changes',
+  'agent.appliedBy': '{change} by',
+  'agent.step': 'step {n}',
+  'agent.pendingIn': 'pending in',
+  'agent.none': 'No pending change on this track.',
 };
 
 export type Catalog = typeof en;

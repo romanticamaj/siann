@@ -20,7 +20,9 @@ import type { Capabilities } from '../../src/renderer/model/capabilities';
 import { PlanStore } from '../../src/renderer/model/plan-store';
 import { AuditionBanner } from '../../src/renderer/plans/AuditionBanner';
 import { HearingSwitch } from '../../src/renderer/plans/HearingSwitch';
+import { namesFromSnapshot } from '../../src/renderer/plans/describe';
 import { isolateName } from '../../src/renderer/plans/isolate';
+import { planName } from '../../src/renderer/plans/plan-name';
 import { CapabilitiesContext } from '../../src/renderer/shell/Capable';
 import { BRANCH, fakePlanClient, hashOf, MIX_STEPS, planObject } from './support/plans';
 
@@ -67,6 +69,20 @@ test('main or an unknown side: no banner; a branch no plan holds: the generic ba
   assert.match(generic, /data-testid="audition-banner"/);
   assert.ok(generic.includes(translator('en')('banner.generic')), generic);
   assert.ok(!generic.includes('Keys'), 'no plan named');
+});
+
+// m5b-ui-ghosts: the banner names its plan through the helper the pill and
+// the Agent changes section share (plans/plan-name.ts), with the same text.
+test('the banner\'s name is the plan-name helper\'s, and a branch no plan owns reads the generic line', () => {
+  const t = translator('en');
+  const store = storeHearing(BRANCH);
+  const plan = store.getSnapshot().plans.find((p) => p.proposalBranch === BRANCH)!;
+  const name = planName(plan, t, namesFromSnapshot(fakePlanClient().client.model.getSnapshot()));
+  assert.ok(name);
+  const markup = banner(BRANCH);
+  const text = /<span class="audition-banner-text"[^>]*>([^<]*)<\/span>/.exec(markup)?.[1] ?? '';
+  assert.equal(text.replace(/&#x27;/g, "'"), t('banner.hearing', { lead: name.lead, steps: name.steps }));
+  assert.equal(/<span class="audition-banner-text"[^>]*>([^<]*)<\/span>/.exec(banner('p9'))?.[1], t('banner.generic'));
 });
 
 const switcher = (heard: string | null, caps: Capabilities | null = FULL) =>

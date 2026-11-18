@@ -4,7 +4,7 @@
 // themselves are the mockup's markup: the strip's .ftrack and knob (Strip.tsx)
 // and the Inspector's .hs (Inspector.tsx), all on value-gesture.ts.
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 import type { GestureController } from '../model/gesture-controller';
 import { isAboveCap } from './taper';
@@ -27,9 +27,12 @@ export interface ValueReadoutProps {
   // the Inspector's value its b.num.
   readonly tag?: 'span' | 'b';
   readonly className?: string;
+  // After the value: the pending plan's value (m5b-ui-ghosts, the Inspector's
+  // rows), which then carries the unit alone ("-9.0 → -6.0 dB").
+  readonly suffix?: ReactNode;
 }
 
-export function ValueReadout({ kind, entityRef, value, gestures, testId, label, typing, tag: Tag = 'span', className }: ValueReadoutProps) {
+export function ValueReadout({ kind, entityRef, value, gestures, testId, label, typing, tag: Tag = 'span', className, suffix }: ValueReadoutProps) {
   const [editing, setEditing] = useState(false);
   const text = formatValue(kind, value);
   if (editing && typing) {
@@ -42,7 +45,8 @@ export function ValueReadout({ kind, entityRef, value, gestures, testId, label, 
   const classes = [className, warn ? 'warn' : ''].filter(Boolean).join(' ') || undefined;
   return (
     <Tag className={classes} data-testid={testId} aria-label={label} onDoubleClick={typing ? () => setEditing(true) : undefined}>
-      {text}
+      {suffix ? `${text.replace(/ dB$/, '')} ` : text}
+      {suffix}
     </Tag>
   );
 }

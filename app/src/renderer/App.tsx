@@ -25,7 +25,7 @@
 // metronome (m5-ui-loop-click) are the LoopClickController's: its buttons in
 // the transport, its band in the event display's ruler, its keys in the shell.
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { localeStore } from './i18n/t';
 import type { CommandRegistry } from './keys/commands';
@@ -34,6 +34,7 @@ import type { EngineStatusSource } from './model/engine-status';
 import type { GestureController } from './model/gesture-controller';
 import type { PeaksCache } from './model/peaks-cache';
 import type { PlanStore } from './model/plan-store';
+import type { ReviewStore } from './model/review-store';
 import type { RealtimeClient } from './model/realtime-client';
 import type { SessionClient } from './model/session-client';
 import type { LoopClickController } from './model/loop-click';
@@ -43,6 +44,7 @@ import { Mixer } from './mixer/Mixer';
 import { announceArrivals } from './plans/arrivals';
 import { AuditionBanner } from './plans/AuditionBanner';
 import { HearingSwitch } from './plans/HearingSwitch';
+import { GhostContext, ReviewContext, useReviewGhosts } from './plans/ghost-context';
 import { PlanPanel } from './plans/PlanPanel';
 import { CapabilitiesContext } from './shell/Capable';
 import { Counted } from './shell/Counted';
@@ -62,6 +64,8 @@ export interface AppProps {
   readonly realtime: RealtimeClient;
   readonly peaks: PeaksCache;
   readonly plans: PlanStore;
+  // The plan review and its ghosts (m5b-ui-ghosts).
+  readonly review: ReviewStore;
   readonly engineStatus: EngineStatusSource;
   readonly layout: LayoutStore;
   readonly commands: CommandRegistry;
@@ -83,6 +87,7 @@ export function App({
   realtime,
   peaks,
   plans,
+  review,
   engineStatus,
   layout,
   commands,
@@ -120,14 +125,25 @@ export function App({
   // Removed tracks leave the selection.
   useEffect(() => client.model.subscribe(() => setTracks((current) => pruneTracks(current, order()))), [client]);
   useEffect(() => setTracks(NO_TRACKS), [reconnects]);
+  // A reconnect clears the plan review's selection, its ticks and its pin (spec 4.5 C8).
+  const seenReconnects = useRef(reconnects);
+  useEffect(() => {
+    if (reconnects === seenReconnects.current) return;
+    seenReconnects.current = reconnects;
+    review.reset();
+  }, [review, reconnects]);
+  const ghosts = useReviewGhosts(review);
   const locate = useCallback((frames: string) => void transport.locate(frames), [transport]);
   const timeFormat = useSyncExternalStore(layout.subscribe, () => layout.getSnapshot().layout.timeFormat);
   return (
     <CapabilitiesContext.Provider value={capabilities}>
       <TimeFormatContext.Provider value={timeFormat}>
+       <ReviewContext.Provider value={review}>
+        <GhostContext.Provider value={ghosts}>
         <Shell
           client={client}
           plans={plans}
+          review={review}
           engineStatus={engineStatus}
           store={layout}
           commands={commands}
@@ -139,7 +155,7 @@ export function App({
           transport={transport}
           loopClick={loopClick}
           history={history}
-          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} />}
+          left={<Inspector client={client} gestures={gestures} trackId={tracks.primary} plans={plans} />}
           project={
             <Counted id="timeline">
               <Timeline
@@ -157,6 +173,7 @@ export function App({
                 onLocate={locate}
                 loopClick={loopClick}
                 reconnects={reconnects}
+                review={review}
               />
             </Counted>
           }
@@ -165,9 +182,11 @@ export function App({
               <Mixer client={client} gestures={gestures} realtime={realtime} selectedTrackId={tracks.primary} onMeterHooks={onMeterHooks} />
             </Counted>
           }
-          right={<PlanPanel client={client} plans={plans} reconnects={reconnects} />}
+          right={<PlanPanel client={client} plans={plans} review={review} reconnects={reconnects} />}
           rightHead={<HearingSwitch client={client} plans={plans} />}
         />
+        </GhostContext.Provider>
+       </ReviewContext.Provider>
       </TimeFormatContext.Provider>
     </CapabilitiesContext.Provider>
   );

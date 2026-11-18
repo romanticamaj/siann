@@ -94,24 +94,50 @@ function assertIcon(app: Element, mockup: Element, what: string): void {
   );
 }
 
-test('the toolbar has the template\'s children in its order and classes', () => {
+test('the toolbar has the template\'s children in its order and classes; without a reviewable plan nothing follows the refusal line', () => {
   const app = render();
   const mockup = mockupToolbar();
   assert.equal(app.tag, 'div');
   assert.equal(app.attrs['data-part'], 'toolbar');
   const mine = ported(app);
   const theirs = elements(mockup);
-  assert.equal(mine.length, theirs.length);
-  // The pill's place is an empty box (m5b-ui-ghosts); the rest keep the mockup's signature, .on aside.
+  // No reviewable plan: the pill is not in the DOM, and no box replaces it (UI redesign 3.0, m5b-ui-ghosts).
+  assert.equal(mine.length, theirs.length - 1);
   const strip = (el: Element) => sig(el).replace(/\.on\b/, '');
-  assert.deepEqual(mine.slice(0, -1).map((el) => strip(el).replace(/^button/, 'span')), theirs.slice(0, -1).map(strip));
+  assert.deepEqual(mine.map((el) => strip(el).replace(/^button/, 'span')), theirs.slice(0, -1).map(strip));
   assert.deepEqual(mine.slice(0, 5).map((el) => el.attrs['data-part'] ?? (classes(el).includes('spacer') ? 'spacer' : '?')), ['tools', 'snap', 'grid-type', 'auto-scroll', 'spacer']);
   assert.equal(sig(theirs.at(-1)!), 'span.overlaypill');
-  assertEmptyBox(mine.at(-1)!, 'the proposal pill');
-  // The refusal line sits after the spacer, before the pill's box.
   const all = elements(app);
-  const error = all.findIndex((el) => el.attrs['data-testid'] === 'timeline-error');
-  assert.ok(error > all.findIndex((el) => classes(el).includes('spacer')) && error < all.length - 1, 'timeline-error after the spacer');
+  assert.equal(all.at(-1)!.attrs['data-testid'], 'timeline-error', 'the refusal line ends the toolbar');
+  assert.ok(!findAll(app, byAttr('data-part', 'proposal-pill')).length);
+  assert.ok(!findAll(app, (el) => classes(el).some((c) => /proposal|pill/.test(c))).length, 'no hold');
+});
+
+// m5b-ui-ghosts (UI redesign 4.2): the pill names the overlaid plan and toggles its ghosts.
+test('with a reviewable plan the pill ends the toolbar: span.overlaypill, the spark icon, <b>lead</b> · steps, .tog as a button with aria-pressed', () => {
+  for (const [locale, lang] of [['en', 'en'], ['zh-Hant', 'zh-TW']] as const) {
+    const app = render({ pill: { lead: 'Add track Pad', steps: '6 steps', on: true, onToggle: noop } }, locale);
+    const mockup = mockupToolbar(lang);
+    const pill = elements(app).at(-1)!;
+    const mPill = elements(mockup).at(-1)!;
+    assert.equal(sig(pill), sig(mPill));
+    assert.equal(pill.attrs['data-part'], 'proposal-pill');
+    assert.deepEqual(elements(pill).map(sig).map((s) => s.replace(/^button/, 'span')), elements(mPill).map(sig));
+    const [icon, name, tog] = elements(pill);
+    assertIcon(icon!, elements(mPill)[0]!, 'the spark');
+    assert.equal(text(find(name!, (el) => el.tag === 'b')), 'Add track Pad');
+    assert.equal(text(name!), 'Add track Pad · 6 steps');
+    assert.equal(tog!.tag, 'button');
+    assert.equal(tog!.attrs['aria-pressed'], 'true');
+    assert.ok(tog!.attrs['aria-label']);
+    assert.equal(text(tog!), text(elements(mPill)[2]!), locale);
+    assertIcon(elements(tog!)[0]!, elements(elements(mPill)[2]!)[0]!, 'the check');
+    // The refusal line stays before the pill.
+    const all = elements(app);
+    assert.ok(all.findIndex((el) => el.attrs['data-testid'] === 'timeline-error') < all.length - 1);
+  }
+  const off = elements(render({ pill: { lead: 'x', steps: '1 step', on: false, onToggle: noop } })).at(-1)!;
+  assert.equal(find(off, byClass('tog')).attrs['aria-pressed'], 'false');
 });
 
 test('the tools: 1 and 3 as tool() returns them, the boxes of 2 and 4 to 9 empty in their places', () => {
@@ -218,7 +244,9 @@ test('the labels are the mockup\'s in en and zh-TW', () => {
 test('the ids are the mockup\'s minus the pending parts\'; no media button, no Delete clip button', () => {
   const app = render();
   const ids = (root: Element) => findAll(root, byAttr('data-part')).map((el) => el.attrs['data-part']!).sort();
-  assert.deepEqual(ids(app), ids(mockupToolbar()).filter((id) => !pending(id)));
+  // The pill (m5b-ui-ghosts) is there only with a reviewable plan.
+  assert.deepEqual(ids(app), ids(mockupToolbar()).filter((id) => !pending(id) && id !== 'proposal-pill'));
+  assert.deepEqual(ids(render({ pill: { lead: 'x', steps: '1 step', on: true, onToggle: noop } })), ids(mockupToolbar()).filter((id) => !pending(id)));
   assert.deepEqual(ids(app), ['auto-scroll', 'grid-type', 'snap', 'tool-1', 'tool-3', 'toolbar', 'tools'].sort());
   const testids = findAll(app, byAttr('data-testid')).map((el) => el.attrs['data-testid']!);
   for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type', 'auto-scroll', 'timeline-error']) assert.ok(testids.includes(id), id);
@@ -238,7 +266,8 @@ test('an engine without the tools, snap or the transport keeps their boxes, empt
   assert.equal(tools.length, 9, 'every tool keeps its box');
   tools.forEach((box, i) => assertEmptyBox(box, `tool ${i + 1}`));
   const row = ported(app);
-  assert.equal(row.length, elements(mockupToolbar()).length, 'no field collapses');
+  // Every box but the pill's, which is not in the DOM without a reviewable plan (UI redesign 3.0).
+  assert.equal(row.length, elements(mockupToolbar()).length - 1, 'no field collapses');
   for (const box of row.slice(1, 4)) assertEmptyBox(box, 'a field');
   for (const id of ['tool-select', 'tool-split', 'snap-toggle', 'grid-type', 'auto-scroll']) assert.ok(!findAll(app, byAttr('data-testid', id)).length, id);
 });

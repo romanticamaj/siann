@@ -78,6 +78,13 @@ const PATHS = {
     </>
   ),
   check: <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />,
+  // A step's locate button (m5b-ui-ghosts; the mockup's .go).
+  target: (
+    <>
+      <circle cx="8" cy="8" r="5" />
+      <circle cx="8" cy="8" r="1.4" fill="currentColor" />
+    </>
+  ),
   x: <path d="M4 4l8 8M12 4l-8 8" />,
   zRight: (
     <>
