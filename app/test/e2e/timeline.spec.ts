@@ -15,7 +15,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { launchElectron } from './support/launch';
-import { armPlacing } from './support/toolbar';
+import { placeMedia } from './support/toolbar';
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const MAIN = path.join(APP_DIR, 'dist', 'src', 'main', 'main.js');
@@ -253,17 +253,15 @@ test('clips render from peak pyramids', async () => {
   await expect(page.getByTestId('clip-count')).toHaveText('2');
 });
 
-test('placing a clip from the Pool issues clip.place', async () => {
+test('placing a clip from the Media tab issues clip.place', async () => {
   prepare([]);
   await launch();
   await expect(page.getByTestId('clip-count')).toHaveText('0');
   const before = await revision();
-  await armPlacing(page, 'med_sq');
   const view = await hooks.view();
-  const box = await canvasBox();
-  // The second lane (trk_b), 150 px in.
+  // The second lane (trk_b), 150 px in: a Media tab row dragged there.
   const y = view.lanesTop + view.laneHeight * 1.5;
-  await page.mouse.click(box.x + 150, box.y + y);
+  await placeMedia(page, 'med_sq', 150, y);
   await expect(page.getByTestId('clip-count')).toHaveText('1');
   await expect(page.getByTestId('revision')).toHaveText(`r${before + 1}`);
   // The canvas redraws on the next animation frame after the model changed.

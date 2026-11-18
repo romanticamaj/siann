@@ -422,7 +422,6 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
   // The part, its sides, and whether a value is set again per Chinese locale.
   const holds = {
     composer: [['h'], false],
-    'tab-media': [['w'], true],
     'tab-meter': [['w'], true],
   };
   for (const [part, [sides, perLocale]] of Object.entries(holds)) {
@@ -434,7 +433,7 @@ test('the Plans tab\'s absent parts keep their boxes through hold tokens applied
       assert.ok(shell.includes(`var(--hold-${part}-${side})`), `shell.css applies --hold-${part}-${side}`);
     }
   }
-  if (Object.values(holds).some(([, perLocale]) => perLocale)) assert.match(tokens, /:root:lang\(zh-TW\)[^{]*\{[^}]*--hold-tab-media-w/);
+  if (Object.values(holds).some(([, perLocale]) => perLocale)) assert.match(tokens, /:root:lang\(zh-TW\)[^{]*\{[^}]*--hold-tab-meter-w/);
   // The rules the port replaced are gone from shell.css: the old card, the
   // hearing label, the badges by state key, and the right zone's .zone-tabs.
   for (const selector of ['.plan-review', '.plan-list', '.plan-card', '.plan-detail', '.plan-steps-select', '.plan-step ', '.step-label', '.hearing-switch', '.hearing-label', '.badge-', '.plan-diff', '.plan-action', '.plan-landed', '.plan-card-lead']) {
@@ -668,7 +667,12 @@ test('the tools M5b leaves out, the master\'s mute, rack and e, and the strips\'
 test('the Plans tab masks only what M5 cannot derive, and each mask names the feature that removes it', () => {
   const dynamic = MANIFEST.pixels.dynamic;
   const masked = (id) => dynamic.some((pattern) => glob(pattern).test(id));
-  for (const id of ['plan-step-2-title', 'plan-step-6-title']) assert.ok(masked(id), `${id} is masked`);
+  // m5b-ui-media names a clip by its media: step 6 ("Move Riser on FX") is
+  // compared, step 2 ("Pad swell" from pad_swell.wav) keeps its mask (10.11).
+  assert.ok(masked('plan-step-2-title'), 'plan-step-2-title is masked');
+  assert.ok(!masked('plan-step-6-title'), 'plan-step-6-title is compared');
+  assert.ok(dynamic.includes('plan-step-2-title'), 'pixels.dynamic names plan-step-2-title');
+  assert.ok(!dynamic.includes('plan-step-*-title'), 'pixels.dynamic no longer names plan-step-*-title');
   // m5b-ui-plan-metadata shows the titles and the agent's name: the history rows are compared.
   for (const id of ['plan-history-1', 'plan-history-2', 'plan-history-3']) assert.ok(!masked(id), `${id} is compared`);
   // Derived in M5, so compared: the summary chips, the approve button, the steps, the history head.
@@ -680,7 +684,8 @@ test('the Plans tab masks only what M5 cannot derive, and each mask names the fe
   // step titles that name a clip are pending parts of the feature that shows names.
   assert.equal(ruleOf('plan-history-2').gate, 'm5-ui-port-plans');
   assert.equal(ruleOf('plan-step-6-title').gate, 'm5b-ui-media');
-  assert.equal(MANIFEST.gates['m5b-ui-media'], 'pending');
+  assert.equal(ruleOf('plan-step-2-title').gate, 'm5b-ui-media');
+  assert.equal(MANIFEST.gates['m5b-ui-media'], 'report');
   // The mockup marks a title as a part only where it names a clip: steps 2 and 6.
   assert.equal((MOCKUP.match(/\$\{step\(\d,[^\n]*,false,true\)\}/g) || []).length, 2);
   assert.match(MOCKUP, /\$\{step\(2,'Place <b>Pad swell<\/b> on Pad',[^\n]*,false,true\)\}/);
@@ -1373,4 +1378,34 @@ test('m5b-ui-audition: before the first snapshot the chip is exempt from the emp
   // The table of authorised permanent tokens does not name the chip.
   assert.doesNotMatch(rules, /\| A permanent `--<part>-empty-w` token[^\n]*branch-chip/);
   for (const file of [['app', 'renderer', 'tokens.css'], ['app', 'renderer', 'shell.css'], ['app', 'src', 'renderer', 'tokens.ts']]) assert.doesNotMatch(read(...file), /branch-chip-empty/, file.join('/'));
+});
+
+// ---- m5b-ui-media (UR-5; UI redesign 3.0, 10.7, 5 and 10.11, 9): the Media
+// tab landed, so its gate is report and its hold is gone; on an engine
+// without media.import its box keeps its width through the permanent
+// --tab-media-empty-w, the hold's values per locale, applied from shell.css.
+test('m5b-ui-media: the gate is report, --hold-tab-media-w is gone and --tab-media-empty-w keeps the tab box per locale', () => {
+  assert.equal(MANIFEST.gates['m5b-ui-media'], 'report');
+  assert.equal(ruleOf('tab-media').gate, 'm5b-ui-media');
+  const tokens = read('app', 'renderer', 'tokens.css');
+  const shell = read('app', 'renderer', 'shell.css');
+  assert.ok(!tokens.includes('--hold-tab-media-w'), 'no --hold-tab-media-w in tokens.css');
+  assert.ok(!shell.includes('--hold-tab-media-w'), 'no --hold-tab-media-w in shell.css');
+  assert.doesNotMatch(shell, /\.hold-tab-media/);
+  const blocks = [...tokens.matchAll(/(:root[^{]*)\{([^}]*)\}/g)].map((m) => ({ selector: m[1].trim(), body: m[2] }));
+  const value = (block) => /--tab-media-empty-w:\s*calc\(([\d.]+)px \* var\(--scale\)\);/.exec(block.body)?.[1];
+  const root = blocks.filter((block) => block.selector === ':root').map(value).filter(Boolean);
+  assert.deepEqual(root, ['71.078'], ':root sets --tab-media-empty-w once, the mockup en box');
+  const zh = blocks.filter((block) => /:root:lang\(zh-TW\)/.test(block.selector) && /:root:lang\(zh-CN\)/.test(block.selector)).map(value).filter(Boolean);
+  assert.deepEqual(zh, ['59.125'], 'the zh-TW / zh-CN block sets it again, the mockup zh-TW box');
+  // Applied from shell.css only, never from the shared rules.
+  assert.match(shell, /\.tab-media-empty\s*\{[^}]*width:\s*var\(--tab-media-empty-w\)/);
+  for (const file of fs.readdirSync(path.join(ROOT, 'app', 'renderer', 'ui'))) {
+    assert.ok(!read('app', 'renderer', 'ui', file).includes('--tab-media-empty-w'), `ui/${file} does not apply it`);
+  }
+  // pixels.dynamic narrows to the one title that needs a clip name of its own.
+  assert.ok(MANIFEST.pixels.dynamic.includes('plan-step-2-title'));
+  assert.ok(!MANIFEST.pixels.dynamic.includes('plan-step-*-title'));
+  // The rule itself does not change.
+  assert.deepEqual(MANIFEST.rules.find((rule) => rule.gate === 'm5b-ui-media').match, ['tab-media', 'plan-step-*-title']);
 });

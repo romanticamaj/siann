@@ -469,6 +469,9 @@ function prepareBundle(): string {
     const file = path.join(audio, `${name}.wav`);
     writeWav(file, stem.seconds, stem.sample);
     cli('import', bundle, file, '--media-id', `med_${slug(name).replace(/-/g, '')}`);
+    // Named as the Media tab's import names a file (m5b-ui-media): the clips
+    // of states 01, 02, 06, 10, 11, 12 and 25 are titled with it.
+    cliExec(bundle, { op: 'media.rename', mediaId: `med_${slug(name).replace(/-/g, '')}`, name: `${name}.wav` });
   }
   let clipNumber = 0;
   for (const track of TRACKS) {
@@ -879,22 +882,22 @@ test('UX screenshot tour', async () => {
     { number: 24 },
   );
 
-  // ---- 31 (m5-ui-port-toolbar; 26 until m5b-ui-ghosts renumbered it, UI
-  // redesign 10.11, 8): the Pool, opened with Ctrl+P (Cmd+P on
-  // macOS) over the project zone: the session's media by name, a click arms
-  // placing. The mockup has no Pool, so the review reads this state alone.
+  // ---- 31 (m5b-ui-media; the Pool's state until the Media tab replaced it,
+  // UI redesign 10.11, 8): the Media tab with imported files, opened with
+  // Ctrl+P (Cmd+P on macOS). The mockup draws the tab but not its content, so
+  // the review reads this state alone.
   await page.keyboard.press('Escape');
   await page.keyboard.press('ControlOrMeta+KeyP');
-  await expect(page.getByTestId('media-pool')).toBeVisible();
-  const poolItems = await page.locator('[data-testid^="pool-"]').count();
+  await expect(page.getByTestId('media-tab')).toBeVisible();
+  const mediaItems = await page.locator('[data-testid^="media-row-"]').count();
   await shoot(
     page,
-    'Pool open',
-    `The Pool (Cubase's, UI redesign 10.8), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu has Open Pool too): an app-only window over the project zone listing the session's ${poolItems} media by name (the media id when there is none); a click on one arms placing and the next click in the event display places it. Escape closes it; the resting window does not show it.`,
+    'Media tab with imported files',
+    `The right zone's Media tab (UR-5), opened with Ctrl+P (Cmd+P on macOS; the event display's context menu opens it too): the session's ${mediaItems} imported files by name with their length, channels, sample rate and use count, a search field and Import (the shell's file dialog). A row drags to the event display to place a clip, a double-click renames it, and Remove is enabled only for media no clip uses. Files dropped from the desktop on the event display import and land at the drop position.`,
     { number: 31 },
   );
-  await page.keyboard.press('Escape');
-  await expect(page.getByTestId('media-pool')).toHaveCount(0);
+  await page.getByTestId('tab-right-plans').click();
+  await expect(page.getByTestId('media-tab')).toBeHidden();
 
   // ---- 32 (m5b-ui-edit-more; UI redesign 3.2): the two pieces of the Keys
   // clip split at 25 glued again with the Glue tool (4; a click on a selected

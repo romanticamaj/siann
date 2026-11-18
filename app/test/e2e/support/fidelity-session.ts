@@ -53,6 +53,12 @@ export const CLIPS: ReadonlyArray<readonly [number, number, number, string]> = [
 ];
 // The pending plan's ghost clip, the mockup's eighteenth.
 export const PAD_SWELL = 'Pad swell';
+// Its media's name: the file the mockup's step 2 names in its detail line
+// ("bar 9.1 → 17.1 · pad_swell.wav"). A step names a clip by its media's name
+// (m5b-ui-media), so step 2's title reads "Place pad_swell.wav on Pad" where
+// the mockup names the clip "Pad swell": plan-step-2-title stays masked
+// (UI redesign 10.11).
+export const PAD_SWELL_MEDIA = 'pad_swell.wav';
 // The media of a clip name.
 export const mediaId = (name: string): string => `med_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`;
 
@@ -126,7 +132,7 @@ export function prepareBundle(scratch: string): string {
     const wav = path.join(scratch, `${mediaId(name)}.wav`);
     writeWav(wav, 55 * (track + 1));
     cli('import', bundle, wav, '--media-id', mediaId(name));
-    exec({ op: 'media.rename', mediaId: mediaId(name), name });
+    exec({ op: 'media.rename', mediaId: mediaId(name), name: name === PAD_SWELL ? PAD_SWELL_MEDIA : name });
   }
   TRACKS.forEach((track, index) => {
     const id = TRACK_IDS[index]!;

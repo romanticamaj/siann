@@ -1,27 +1,48 @@
-// The project zone toolbar's helpers for the e2e specs (m5-ui-port-toolbar;
-// UI redesign 10.8): the media buttons left the toolbar for the Pool, which
-// Ctrl+P (Cmd+P) opens, and the grid type is a field whose menu holds Bar,
-// Beat and Adapt to Zoom. Every spec that placed from the toolbar's pool or
-// chose a grid type in the old select goes through these.
+// The project zone's helpers for the e2e specs (m5-ui-port-toolbar;
+// UI redesign 10.8): the grid type is a field whose menu holds Bar, Beat and
+// Adapt to Zoom. Placing goes through the right zone's Media tab
+// (m5b-ui-media; UR-5), which replaced the Pool: Ctrl+P (Cmd+P) opens it, and
+// a row dragged to the event display places a clip there. Every spec that
+// placed from the Pool or chose a grid type goes through these.
 
 import { expect, type Locator, type Page } from '@playwright/test';
 
 import type { GridType, SnapType } from '../../../src/renderer/timeline/snap';
 
-// Opens the Pool with Ctrl+P (Cmd+P on macOS) unless it is open.
-export async function openPool(page: Page): Promise<Locator> {
-  const pool = page.getByTestId('media-pool');
-  if ((await pool.count()) === 0) await page.keyboard.press('ControlOrMeta+KeyP');
-  await expect(pool).toBeVisible();
-  return pool;
+// Opens the Media tab with Ctrl+P (Cmd+P on macOS) unless it shows.
+export async function openMedia(page: Page): Promise<Locator> {
+  const tab = page.getByTestId('media-tab');
+  if (!(await tab.isVisible().catch(() => false))) await page.keyboard.press('ControlOrMeta+KeyP');
+  await expect(tab).toBeVisible();
+  return tab;
 }
 
-// Arms placing for one media from the Pool: the next click in the event
-// display places it. The Pool steps aside once it is armed.
-export async function armPlacing(page: Page, mediaId: string): Promise<void> {
-  await openPool(page);
-  await page.getByTestId(`pool-${mediaId}`).click();
-  await expect(page.getByTestId('media-pool')).toHaveCount(0);
+// Drags a Media tab row to a client point of the event display: dragstart on
+// the row (it writes the app's drag type), then dragenter, dragover and drop
+// on the event display at the point, as the window's drag does.
+export async function dragMediaRow(page: Page, mediaId: string, at: { x: number; y: number }): Promise<void> {
+  await openMedia(page);
+  await expect(page.getByTestId(`media-row-${mediaId}`)).toHaveAttribute('draggable', 'true');
+  await page.evaluate(
+    ({ id, x, y }) => {
+      const row = document.querySelector(`[data-testid="media-row-${id}"]`)!;
+      const target = document.querySelector('[data-testid="event-display"]')!;
+      const data = new DataTransfer();
+      row.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: data }));
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data, clientX: x, clientY: y }));
+      }
+      row.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: data }));
+    },
+    { id: mediaId, x: at.x, y: at.y },
+  );
+}
+
+// Places one media at a canvas point (canvas pixels of the event display) by
+// dragging its Media tab row there.
+export async function placeMedia(page: Page, mediaId: string, canvasX: number, canvasY: number): Promise<void> {
+  const box = (await page.getByTestId('event-display').boundingBox())!;
+  await dragMediaRow(page, mediaId, { x: box.x + canvasX, y: box.y + canvasY });
 }
 
 // Chooses a grid type from the grid type field's menu.
